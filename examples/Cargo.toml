@@ -35,6 +35,7 @@ listenfd = "1.0.2"
 
 [build-dependencies]
 tonic-prost-build = "0.14"
+toni-build = { path = "../toni-build" }
 protoc-bin-vendored = "3"
 
 [[example]]

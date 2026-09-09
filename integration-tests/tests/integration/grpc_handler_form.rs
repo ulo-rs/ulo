@@ -16,6 +16,7 @@ use toni::extractors::Payload as Aliased;
 use toni::extractors::{Inbound, Payload};
 use toni::toni_factory::ToniFactory;
 use toni::{async_trait, injectable, module, ErrorKind, GrpcCode, GrpcStatus};
+use toni_grpc::GrpcRequest;
 use toni_macros::{controller, grpc_methods, new, use_error_handlers, use_guards};
 
 mod greeter_pb {
@@ -136,14 +137,14 @@ impl GreeterService {
         Ok(tokio_stream::wrappers::UnboundedReceiverStream::new(rx))
     }
 
-    /// The request written bare, which is how an RPC handler spells it, with
-    /// the execution's bag beside it.
+    /// The execution's bag beside the request — and before it, since the
+    /// request is one extractor among the others and holds no position.
     #[grpc_method]
     #[use_guards(MarkGuard)]
     async fn greet_with_bag(
         &self,
-        Payload(req): Payload<greeter_pb::GreetRequest>,
         extensions: Extensions,
+        Payload(req): Payload<greeter_pb::GreetRequest>,
     ) -> Result<greeter_pb::GreetReply, NoName> {
         // The guard wrote this before the handler ran, so finding it here is
         // what says the bag is the execution's rather than one made per param.
@@ -153,11 +154,10 @@ impl GreeterService {
         })
     }
 
-    /// The escape hatch: the whole request, for what the shapes above do not
-    /// cover — trailers, peer address, the metadata map as it arrived.
     /// Spelled through an alias, which a macro reading tokens cannot resolve.
-    /// The request type is asked of `GrpcRequest` instead, so serving this call
-    /// at all says the compiler did the resolving.
+    /// The wire type comes from the method's shape and the parameter is an
+    /// extractor like any other, so serving this call at all says no name was
+    /// read.
     #[grpc_method]
     async fn greet_aliased(
         &self,
@@ -168,14 +168,17 @@ impl GreeterService {
         })
     }
 
+    /// The escape hatch: the whole request as tonic decoded it, for what the
+    /// context does not carry — the metadata map with its binary entries, the
+    /// peer, the extensions.
     #[grpc_method]
     async fn greet_raw(
         &self,
-        request: tonic::Request<greeter_pb::GreetRequest>,
+        request: GrpcRequest<greeter_pb::GreetRequest>,
     ) -> Result<greeter_pb::GreetReply, NoName> {
         let peer = request.remote_addr().is_some();
         Ok(greeter_pb::GreetReply {
-            message: format!("{}:{peer}", request.into_inner().name),
+            message: format!("{}:{peer}", request.into_inner().into_inner().name),
         })
     }
 

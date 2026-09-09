@@ -795,10 +795,17 @@ pub fn event_pattern(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// The request comes first, as `Payload<T>`, `Inbound<T>` for the caller's
-/// stream, or `tonic::Request<T>` where the handler wants the wire shape. Every
-/// parameter after it is a `FromContext<GrpcContext>` — `Extensions`, a custom
-/// extractor — and `&GrpcContext` passes through.
+/// Every parameter is a `FromContext<GrpcContext>`, in any order: `Payload<T>`
+/// for the message, `Inbound<T>` for the caller's stream, `toni_grpc::GrpcRequest<T>`
+/// for the whole request as tonic decoded it, `Extensions`, a custom extractor.
+/// `&GrpcContext` passes through. The request is taken once, so two of the
+/// first three in one handler fail to compile naming both.
+///
+/// What each method carries is read off the proto, not the handler: `build.rs`
+/// runs `toni_build::shapes("pkg")` after tonic's codegen, which writes a
+/// `{service}_toni` module beside the `{service}_server` one, and this macro
+/// projects through it. A companion written elsewhere is named on the
+/// attribute: `#[grpc_methods(pb::orders_server::Orders, shapes = pb::my_shapes)]`.
 ///
 /// A handler answers with the reply message, or with `tonic::Response<T>` to set
 /// reply metadata itself. Its error implements `toni::Error`, so `#[catch]`

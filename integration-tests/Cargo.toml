@@ -56,6 +56,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14"
+toni-build = { path = "../toni-build" }
 # The manual (no-proto) codegen path, for a service whose method name and route
 # name diverge — see tests/integration/grpc_stream_optin.rs.
 tonic-build = "0.14"

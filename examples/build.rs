@@ -5,5 +5,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::set_var("PROTOC", protoc);
     }
     tonic_prost_build::compile_protos("proto/orders.proto")?;
+    toni_build::shapes("toni_examples.orders")?;
     Ok(())
 }

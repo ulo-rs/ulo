@@ -1,23 +1,27 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::context::Metadata;
+use crate::grpc_runtime::{RequestCarrier, RequestError};
 
 use super::{CancellationToken, Extensions, HandlerContext, shared::SharedState};
 
 /// Per-request context for gRPC handlers.
 ///
 /// gRPC payloads are method-typed protobuf messages and can't sit in a
-/// non-generic struct, so the context deliberately holds only what every
-/// enhancer can name without a type parameter: the method path, the
-/// inbound metadata (ASCII headers), and the optional peer address.
+/// non-generic struct, so what every enhancer can name without a type
+/// parameter is held typed: the method path, the inbound metadata (ASCII
+/// headers), and the optional peer address. The message itself rides erased,
+/// in a slot a handler parameter takes once — `Payload<T>`, `Inbound<T>`, or
+/// `toni_grpc::GrpcRequest<T>` — which is how a `#[grpc_methods]` handler's
+/// parameters are all extractors.
 ///
-/// The same constraint decides how a handler sees this context at all. A gRPC handler's signature
-/// is the tonic trait's and never includes one, so guards, interceptors and error handlers receive
-/// it as a parameter and a handler takes it off the request instead — [`GrpcContext::of`], or
-/// `Extensions::adopt(request.extensions())` for the bag alone.
+/// Guards, interceptors and error handlers receive this context as a
+/// parameter. A service written against tonic's own trait and registered
+/// through `add_service` takes it off the request instead — [`GrpcContext::of`],
+/// or `Extensions::adopt(request.extensions())` for the bag alone.
 #[derive(Clone)]
 pub struct GrpcContext {
     inner: Arc<GrpcInner>,
@@ -31,6 +35,15 @@ struct GrpcInner {
     /// Read from `grpc-timeout` at construction, so every reader sees one
     /// deadline rather than each recomputing from a clock that has moved.
     deadline: Option<Instant>,
+    request: Mutex<RequestSlot>,
+}
+
+/// One request per execution, taken once: a stream has nothing to hand a
+/// second reader, and a message follows the same rule so the two extract alike.
+enum RequestSlot {
+    Empty,
+    Installed(Box<dyn RequestCarrier>),
+    Taken,
 }
 
 impl GrpcContext {
@@ -51,7 +64,30 @@ impl GrpcContext {
                 headers,
                 peer,
                 deadline,
+                request: Mutex::new(RequestSlot::Empty),
             }),
+        }
+    }
+
+    /// Hand the execution its request. `#[grpc_methods]` does this once, before
+    /// the handler's parameters are extracted.
+    #[doc(hidden)]
+    pub fn install_request(&self, carrier: Box<dyn RequestCarrier>) {
+        let mut slot = self.inner.request.lock().unwrap_or_else(|e| e.into_inner());
+        *slot = RequestSlot::Installed(carrier);
+    }
+
+    /// Take the request, once. The first line of an extractor that reads the
+    /// message; the built-in ones downcast what comes back.
+    pub fn take_request(&self) -> Result<Box<dyn RequestCarrier>, RequestError> {
+        let mut slot = self.inner.request.lock().unwrap_or_else(|e| e.into_inner());
+        match std::mem::replace(&mut *slot, RequestSlot::Taken) {
+            RequestSlot::Installed(carrier) => Ok(carrier),
+            RequestSlot::Taken => Err(RequestError::Taken),
+            RequestSlot::Empty => {
+                *slot = RequestSlot::Empty;
+                Err(RequestError::Missing)
+            }
         }
     }
 
@@ -199,5 +235,55 @@ mod tests {
     fn a_context_without_the_header_carries_none() {
         let ctx = GrpcContext::new("pkg.Svc/Method", HashMap::new(), None, None);
         assert!(ctx.deadline().is_none());
+    }
+
+    /// Stands in for the carriers toni-grpc builds around `tonic::Request`.
+    struct Carrying(u32);
+
+    impl RequestCarrier for Carrying {
+        fn take_message(self: Box<Self>) -> Box<dyn std::any::Any + Send> {
+            Box::new(self.0)
+        }
+        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send> {
+            self
+        }
+        fn carries(&self) -> &'static str {
+            "u32"
+        }
+    }
+
+    #[test]
+    fn the_request_is_taken_once_and_each_failure_says_why() {
+        let ctx = GrpcContext::new("pkg.Svc/Method", HashMap::new(), None, None);
+        assert_eq!(ctx.take_request().err(), Some(RequestError::Missing));
+
+        ctx.install_request(Box::new(Carrying(7)));
+        let carrier = ctx.take_request().expect("installed");
+        assert_eq!(
+            carrier.take_message().downcast::<u32>().ok(),
+            Some(Box::new(7))
+        );
+
+        assert_eq!(ctx.take_request().err(), Some(RequestError::Taken));
+    }
+
+    #[tokio::test]
+    async fn a_message_extractor_names_both_types_when_the_call_carries_another() {
+        use crate::extractors::{FromContext, Payload};
+
+        let ctx = GrpcContext::new("pkg.Svc/Method", HashMap::new(), None, None);
+        ctx.install_request(Box::new(Carrying(7)));
+
+        let err = <Payload<String> as FromContext<GrpcContext>>::extract(&ctx)
+            .await
+            .expect_err("a String is not what the call carries");
+        assert_eq!(
+            err,
+            RequestError::Mismatch {
+                asked: std::any::type_name::<String>(),
+                carried: "u32",
+            }
+        );
+        assert!(err.to_string().contains("u32"), "{err}");
     }
 }
