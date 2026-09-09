@@ -1,0 +1,14 @@
+[package]
+name = "toni-build"
+version = "0.1.0"
+edition = "2024"
+description = "Build-script companion for toni-grpc: writes what each proto method carries beside the trait tonic generated"
+license = "MIT"
+keywords = ["toni", "grpc", "tonic", "build", "codegen"]
+categories = ["development-tools::build-utils"]
+
+[dependencies]
+syn = { version = "2", features = ["full", "parsing", "printing"] }
+quote = "1"
+proc-macro2 = "1"
+prettyplease = "0.2"

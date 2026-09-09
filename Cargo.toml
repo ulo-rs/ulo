@@ -12,6 +12,7 @@ members = [
     "toni-udp",
     "toni-nats",
     "toni-grpc",
+    "toni-build",
     "toni-tungstenite",
     "toni-actix",
     "toni-config",

@@ -3667,6 +3667,7 @@ dependencies = [
  "toni-actix",
  "toni-async-graphql",
  "toni-axum",
+ "toni-build",
  "toni-config",
  "toni-grpc",
  "toni-macros",
@@ -8003,6 +8004,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "toni-build"
+version = "0.1.0"
+dependencies = [
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "toni-cli"
 version = "0.1.2"
 dependencies = [
@@ -8071,6 +8082,7 @@ dependencies = [
  "tokio-stream",
  "toni",
  "toni-axum",
+ "toni-build",
  "toni-config",
  "toni-grpc",
  "toni-macros",
