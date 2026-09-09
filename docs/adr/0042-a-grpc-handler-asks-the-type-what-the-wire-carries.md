@@ -1,6 +1,8 @@
 # 0042 — A gRPC handler asks the type what the wire carries
 
-Status: accepted
+Status: superseded by [ADR-0043](0043-a-grpc-method-s-shape-comes-from-the-proto.md), which
+reads the request type off the proto rather than off the handler. The context and the diagnostic
+half of the decision stand.
 
 ## Context
 
@@ -102,6 +104,11 @@ It buys the spelling and loses on every other count. A typed move becomes a runt
 extensions and cannot hand it back. And the positional rule survives regardless: the macro must name
 the message type in the signature it writes, and only a parameter can tell it which — erasing the
 value does not change where the type comes from.
+
+*Corrected by ADR-0043.* The whole request does survive extraction: a carrier written where
+`tonic::Request` is nameable keeps it whole, and `toni_grpc::GrpcRequest<T>` takes it back. And a
+parameter is not the only thing that can name the type — the proto can, through a build step. Both
+halves of this paragraph were the case for the position rule, and both were narrower than stated.
 
 `GrpcContext` carries the method, the headers, the peer address and the deadline, not the message.
 That is what the comparison turns on, and it is why the request is handed over rather than looked
