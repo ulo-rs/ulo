@@ -57,6 +57,8 @@ jobs:
       # tests behind feature gates and are compile-checked in the check job.
       - run: cargo test -p toni --lib --locked
       - run: cargo test -p integration-tests --locked
+      # The build-script companion: pure functions over tonic's generated text.
+      - run: cargo test -p toni-build --locked
       # Startup-failure reporting and connection-string redaction for the database modules.
       # Hermetic: no server is contacted. Their service-dependent suites stay behind the
       # `integration` feature and are compile-checked by the job above.

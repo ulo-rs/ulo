@@ -471,3 +471,64 @@ impl<S: futures::Stream> IntoScoped<ScopedGrpcStream<S>> for S {
         ScopedGrpcStream::new(self, context)
     }
 }
+
+/// The request a gRPC call arrived with, held by the execution until a
+/// handler parameter takes it.
+///
+/// `#[grpc_methods]` installs one before the handler's parameters are
+/// extracted, through the `MethodShape` toni-build wrote for the method. A
+/// carrier is built where `tonic::Request` is nameable and reaches this crate
+/// erased, which is what lets `Payload<T>` and `Inbound<T>` take a message
+/// without core naming the wire crate.
+pub trait RequestCarrier: Send + 'static {
+    /// The message in the shape a handler reads it: `T` for one message,
+    /// `Inbound<T>` for a stream the caller sends.
+    fn take_message(self: Box<Self>) -> Box<dyn std::any::Any + Send>;
+
+    /// The carrier whole, for an extractor that wants the wire's own view.
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send>;
+
+    /// What the call carries, named for the diagnostic when a handler asks
+    /// for something else.
+    fn carries(&self) -> &'static str;
+}
+
+/// Why a handler parameter could not take the request.
+///
+/// Each is a fault in the handler or the dispatch rather than in the call, so
+/// the generated method answers `Internal` with the message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequestError {
+    /// A parameter before this one took it. The macro rejects two takers at
+    /// compile time; this is what an extractor written around that sees.
+    Taken,
+    /// Nothing was installed: the method was reached outside toni's dispatch.
+    Missing,
+    /// The handler asked for one type and the call carries another.
+    Mismatch {
+        asked: &'static str,
+        carried: &'static str,
+    },
+}
+
+impl std::fmt::Display for RequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequestError::Taken => {
+                f.write_str("the request was already taken by an earlier parameter")
+            }
+            RequestError::Missing => f.write_str(
+                "no request was installed on this execution — the method was reached outside \
+                 toni's dispatch",
+            ),
+            RequestError::Mismatch { asked, carried } => {
+                write!(
+                    f,
+                    "the handler asked for `{asked}` but the call carries `{carried}`"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RequestError {}

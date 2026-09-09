@@ -89,10 +89,11 @@ that wants the wire shape — trailers, the peer address, the metadata map as it
 naming none of those is read as the request message, the way an RPC handler spells its payload; a
 misspelled extractor lands there and fails as a type mismatch against the proto message.
 
-*Superseded by [ADR-0042](0042-a-grpc-handler-asks-the-type-what-the-wire-carries.md).* Reading the
-request off a parameter's name is what the bare-message form rests on, and both are gone: the
-request is the first parameter, its type is asked rather than read, and everything after it is a
-`FromContext<GrpcContext>`.
+*Superseded by [ADR-0042](0042-a-grpc-handler-asks-the-type-what-the-wire-carries.md), then
+[ADR-0043](0043-a-grpc-method-s-shape-comes-from-the-proto.md).* Reading the request off a
+parameter's name is what the bare-message form rests on, and both are gone. What a method carries
+is read off the proto by a build step, every parameter is a `FromContext<GrpcContext>` in any order,
+and the wire shape is taken as `toni_grpc::GrpcRequest<T>`.
 
 The raw request is what keeps this form from being a subset of what the trait impl expressed, so
 nothing was stranded when that form was removed.

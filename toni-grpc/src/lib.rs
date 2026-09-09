@@ -9,6 +9,15 @@
 //!
 //! # Minimal example
 //!
+//! The build script compiles the proto and writes what each method carries
+//! beside the trait, which is what lets a handler's parameters be extractors:
+//!
+//! ```ignore
+//! // build.rs
+//! tonic_prost_build::compile_protos("proto/orders.proto")?;
+//! toni_build::shapes("toni_examples.orders")?;
+//! ```
+//!
 //! ```ignore
 //! use std::net::SocketAddr;
 //! use toni::ToniFactory;
@@ -141,12 +150,12 @@
 
 mod drain_layer;
 mod grpc_adapter;
-mod grpc_request;
 mod method_path_layer;
+pub mod shape;
 mod tracing_layer;
 
 pub use grpc_adapter::GrpcAdapter;
-pub use grpc_request::GrpcRequest;
+pub use shape::{GrpcRequest, MethodShape};
 
 /// Maps a domain error to a `tonic::Status` by its
 /// [`kind`](toni::Error::kind), the way every transport renders one, and

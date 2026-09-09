@@ -31,16 +31,22 @@ tokio = { version = "1", features = ["full"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14"
+toni-build = "0.1"
 ```
 
-A `build.rs` compiles your `.proto` into Rust:
+A `build.rs` compiles your `.proto` into Rust, then writes what each method
+carries beside the trait tonic generated — that is what lets a handler's
+parameters be extractors in any order:
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_prost_build::compile_protos("proto/orders.proto")?;
+    toni_build::shapes("toni_examples.orders")?;
     Ok(())
 }
 ```
+
+`shapes` takes the string you hand to `tonic::include_proto!`.
 
 ## Quick Start
 

@@ -6,11 +6,12 @@
 //! is marked `#[grpc_method]` or, for a streaming reply, `#[grpc_stream]`; anything unmarked stays
 //! in the inherent impl, which is where the constructor and `#[on_*]` hooks live.
 //!
-//! The request is the first parameter, and the generated signature names its message type through
-//! `<Ty as toni_grpc::GrpcRequest>::Arg` rather than by reading `Ty`'s last path segment — a macro
-//! runs before name resolution, so an aliased `Payload<T>` is an identifier it cannot resolve
-//! (ADR-0042). Every parameter after it is a `FromContext<GrpcContext>`, and `&GrpcContext` passes
-//! through as it does on the other three transports.
+//! The generated signature names each method's request type through a marker toni-build wrote
+//! beside the trait — `<greeter_toni::Greet as toni_grpc::MethodShape>::Arg` — rather than by
+//! reading anything off the handler: a macro runs before name resolution, so a parameter's type
+//! is an identifier it cannot resolve (ADR-0043). The marker also installs the request on the
+//! execution, and every parameter of the handler is then a `FromContext<GrpcContext>`, in any
+//! order, with `&GrpcContext` passing through as it does on the other three transports.
 //!
 //! Lowering runs first: each handler keeps its body under `__toni_grpc_<name>` and gains a proto
 //! trait method that unwraps the request, calls it, and renders its answer. The hidden name is what
@@ -72,24 +73,33 @@ struct GrpcMethodsArgs {
     /// it in its own header and leaves this empty.
     proto_trait: Option<Path>,
     server: Option<Path>,
+    /// The module holding the method markers toni-build wrote. Defaults to
+    /// `{trait_snake}_toni` beside the trait's module, which is where
+    /// `toni_build::shapes` puts it.
+    shapes: Option<Path>,
 }
 
 impl syn::parse::Parse for GrpcMethodsArgs {
     fn parse(input: syn::parse::ParseStream) -> Result<Self> {
         let mut proto_trait: Option<Path> = None;
         let mut server: Option<Path> = None;
+        let mut shapes: Option<Path> = None;
 
         while !input.is_empty() {
             let fork = input.fork();
             let keyed = fork
                 .parse::<syn::Ident>()
-                .map(|key| key == "server" && fork.peek(Token![=]))
-                .unwrap_or(false);
+                .ok()
+                .filter(|key| (key == "server" || key == "shapes") && fork.peek(Token![=]));
 
-            if keyed {
+            if let Some(key) = keyed {
                 let _key: syn::Ident = input.parse()?;
                 let _: Token![=] = input.parse()?;
-                server = Some(input.parse()?);
+                if key == "server" {
+                    server = Some(input.parse()?);
+                } else {
+                    shapes = Some(input.parse()?);
+                }
             } else {
                 let path: Path = input.parse()?;
                 if proto_trait.is_some() {
@@ -111,6 +121,7 @@ impl syn::parse::Parse for GrpcMethodsArgs {
         Ok(GrpcMethodsArgs {
             proto_trait,
             server,
+            shapes,
         })
     }
 }
@@ -126,8 +137,9 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
             &written,
             "#[grpc_methods] goes on the inherent impl that holds the handlers, naming the \
              proto trait it serves — `#[grpc_methods(orders_server::Orders)] impl MyService`. \
-             Each handler takes its request as `Payload<T>` or `Inbound<T>`, answers with the \
-             reply message, and is marked `#[grpc_method]` or `#[grpc_stream]`.",
+             Each handler is marked `#[grpc_method]` or `#[grpc_stream]`, takes what it needs \
+             as extractors (`Payload<T>`, `Inbound<T>`, `Extensions`, `&GrpcContext`), and \
+             answers with the reply message.",
         ));
     }
 
@@ -138,7 +150,11 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
              — `#[grpc_methods(orders_server::Orders)]`",
         )
     })?;
-    let (impl_block, handlers_impl) = lower_handlers_impl(&written, &proto_trait)?;
+    let shapes = args
+        .shapes
+        .clone()
+        .unwrap_or_else(|| infer_shapes_path(&proto_trait));
+    let (impl_block, handlers_impl) = lower_handlers_impl(&written, &proto_trait, &shapes)?;
 
     let trait_path = impl_block
         .trait_
@@ -541,7 +557,11 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
 /// and move to a `__toni_grpc_`-prefixed name, which is what the generated
 /// trait method calls: same name in both impls would leave the call resolving
 /// by inherent-first precedence, and a rename that ever slipped would recurse.
-fn lower_handlers_impl(inherent: &ItemImpl, proto_trait: &Path) -> Result<(ItemImpl, ItemImpl)> {
+fn lower_handlers_impl(
+    inherent: &ItemImpl,
+    proto_trait: &Path,
+    shapes: &Path,
+) -> Result<(ItemImpl, ItemImpl)> {
     let mut handler_items: Vec<syn::ImplItem> = Vec::new();
     let mut generated_items: Vec<syn::ImplItem> = Vec::new();
 
@@ -569,7 +589,7 @@ fn lower_handlers_impl(inherent: &ItemImpl, proto_trait: &Path) -> Result<(ItemI
             continue;
         }
 
-        let (handler, generated) = lower_handler(method, streams)?;
+        let (handler, generated) = lower_handler(method, streams, shapes)?;
         handler_items.push(syn::ImplItem::Fn(handler));
         generated_items.extend(generated);
     }
@@ -608,6 +628,86 @@ fn lower_handlers_impl(inherent: &ItemImpl, proto_trait: &Path) -> Result<(ItemI
     Ok((generated, handlers))
 }
 
+/// `pkg::greeter_server::Greeter` → `pkg::greeter_toni`, which is where
+/// `toni_build::shapes` writes the markers: beside the trait's module, named
+/// from the trait the way tonic names its own modules.
+fn infer_shapes_path(proto_trait: &Path) -> Path {
+    let mut path = proto_trait.clone();
+    let trait_ident = path
+        .segments
+        .pop()
+        .map(|pair| pair.into_value().ident)
+        .expect("a trait path has a last segment");
+    // Drop the `*_server` module the trait lives in.
+    path.segments.pop();
+    path.segments.push(syn::PathSegment::from(format_ident!(
+        "{}_toni",
+        to_snake(&trait_ident.to_string())
+    )));
+    path
+}
+
+/// tonic-build's own snake-casing, copied so the derived module name is the
+/// one toni-build wrote; the two crates test the same table.
+fn to_snake(name: &str) -> String {
+    let mut out = String::new();
+    let mut chars = name.chars().peekable();
+    while let Some(c) = chars.next() {
+        out.push(c.to_ascii_lowercase());
+        if chars.peek().is_some_and(|next| next.is_uppercase()) {
+            out.push('_');
+        }
+    }
+    out
+}
+
+/// `greet_all` names the marker `GreetAll`, as toni-build wrote it.
+fn to_upper_camel(ident: &str) -> String {
+    ident
+        .trim_start_matches("r#")
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+/// The request is taken once — a stream has nothing to hand a second reader,
+/// and a message follows the same rule. Which parameters take it comes off
+/// `FromContext::CONSUMES`, one assertion per pair so the message names both;
+/// `#[routes]` does the same for the HTTP body.
+fn one_taker_assertion(params: &[(syn::Ident, syn::Type)]) -> TokenStream {
+    let mut assertions = Vec::new();
+    for (i, (first_name, first_ty)) in params.iter().enumerate() {
+        for (second_name, second_ty) in params.iter().skip(i + 1) {
+            let message = format!(
+                "`{first_name}` and `{second_name}` both take the request, and it can only be \
+                 taken once.\nKeep one of them: `Payload<T>` for the message, `Inbound<T>` for \
+                 the caller's stream, or `GrpcRequest<T>` for the whole request.",
+            );
+            assertions.push(quote! {
+                const _: () = {
+                    assert!(
+                        !(<#first_ty as ::toni::extractors::FromContext<
+                            ::toni::context::GrpcContext,
+                        >>::CONSUMES
+                            && <#second_ty as ::toni::extractors::FromContext<
+                                ::toni::context::GrpcContext,
+                            >>::CONSUMES),
+                        #message
+                    );
+                };
+            });
+        }
+    }
+    quote! { #(#assertions)* }
+}
+
 /// `&GrpcContext` — the context itself, not something extracted from it, which
 /// is how the other three transports read it too.
 fn is_grpc_context_ref(ty: &syn::Type) -> bool {
@@ -624,6 +724,7 @@ fn is_grpc_context_ref(ty: &syn::Type) -> bool {
 fn lower_handler(
     method: &syn::ImplItemFn,
     streams: Option<Option<syn::Ident>>,
+    shapes: &Path,
 ) -> Result<(syn::ImplItemFn, Vec<syn::ImplItem>)> {
     let name = &method.sig.ident;
     let hidden = format_ident!("__toni_grpc_{}", name);
@@ -635,40 +736,25 @@ fn lower_handler(
         ));
     }
 
-    // The request is the first parameter, and its type says what the wire
-    // carries. That is a position rather than a name: the macro reads tokens,
-    // so an aliased `P<GreetRequest>` would tell it nothing, and the type is
-    // asked through `GrpcRequest` instead (ADR-0042).
-    let mut params = method.sig.inputs.iter().filter_map(|arg| match arg {
-        syn::FnArg::Typed(typed) => Some(typed),
-        syn::FnArg::Receiver(_) => None,
-    });
+    // What the wire carries is asked of the method's marker, not of the handler:
+    // the trait's request type is a fact of the proto, and toni-build wrote it
+    // beside the trait where a projection can reach it (ADR-0043).
+    let marker = format_ident!("{}", to_upper_camel(&name.to_string()));
+    let shape = quote! { #shapes::#marker };
 
-    let request_param = params.next().ok_or_else(|| {
-        syn::Error::new_spanned(
-            &method.sig,
-            "a gRPC handler takes its request first — `Payload<T>` for the message, \
-             `Inbound<T>` for the caller's stream, or `tonic::Request<T>` for the wire's \
-             own view",
-        )
-    })?;
-    let request_ty = request_param.ty.as_ref().clone();
-
-    let mut call_args: Vec<TokenStream> = vec![quote! {
-        <#request_ty as ::toni_grpc::GrpcRequest>::from_request(request)
-    }];
+    // Every parameter is read from the context, the way a handler's parameters
+    // are read on the other three transports. The request is one of them.
+    let mut call_args: Vec<TokenStream> = Vec::new();
     let mut extractions: Vec<TokenStream> = Vec::new();
+    let mut extracted: Vec<(syn::Ident, syn::Type)> = Vec::new();
 
-    // Everything after it is read from the context, the way a handler's
-    // parameters are read on the other three transports.
-    for typed in params {
+    for arg in &method.sig.inputs {
+        let syn::FnArg::Typed(typed) = arg else {
+            continue;
+        };
         let ty = typed.ty.as_ref();
         if is_grpc_context_ref(ty) {
-            call_args.push(quote! {
-                __ctx.as_ref().expect(
-                    "a gRPC context — this method was reached outside toni's dispatch",
-                )
-            });
+            call_args.push(quote! { &__ctx });
             continue;
         }
         let name = crate::controller_macro::extractor_params::extract_param_name(&typed.pat)
@@ -678,11 +764,7 @@ fn lower_handler(
         extractions.push(quote! {
             let #name = match <#ty as ::toni::extractors::FromContext<
                 ::toni::context::GrpcContext,
-            >>::extract(
-                __ctx.as_ref().expect(
-                    "a gRPC context — this method was reached outside toni's dispatch",
-                ),
-            ).await {
+            >>::extract(&__ctx).await {
                 ::std::result::Result::Ok(__value) => __value,
                 ::std::result::Result::Err(__e) => {
                     return ::std::result::Result::Err(::tonic::Status::internal(__e.to_string()));
@@ -690,10 +772,24 @@ fn lower_handler(
             };
         });
         call_args.push(quote! { #name });
+        extracted.push((name, ty.clone()));
     }
 
-    let request_arg_ty = quote! { <#request_ty as ::toni_grpc::GrpcRequest>::Arg };
-    let bind_request = quote! { #(#extractions)* };
+    let one_taker = one_taker_assertion(&extracted);
+    let request_arg_ty = quote! { <#shape as ::toni_grpc::MethodShape>::Arg };
+    let bind_request = quote! {
+        #one_taker
+        let __ctx = match ::toni::context::GrpcContext::of(request.extensions()) {
+            ::std::option::Option::Some(__ctx) => __ctx,
+            ::std::option::Option::None => {
+                return ::std::result::Result::Err(::tonic::Status::internal(
+                    "this method was reached outside toni's dispatch: no execution rides the request",
+                ));
+            }
+        };
+        <#shape as ::toni_grpc::MethodShape>::install(request, &__ctx);
+        #(#extractions)*
+    };
 
     // A handler that cannot fail answers with the reply itself, as an HTTP
     // handler returning a bare `Body` does.
@@ -1276,4 +1372,43 @@ fn infer_server_path(trait_path: &Path) -> Path {
         last.arguments = syn::PathArguments::None;
     }
     path
+}
+
+#[cfg(test)]
+mod naming_tests {
+    use super::*;
+
+    /// The table toni-build tests against; a divergence here is a module the
+    /// macro names and toni-build never wrote.
+    #[test]
+    fn the_shapes_module_is_named_as_toni_build_names_it() {
+        for (input, expected) in [
+            ("Service", "service"),
+            ("ThatHasALongName", "that_has_a_long_name"),
+            ("greeter", "greeter"),
+            ("ABCServiceX", "a_b_c_service_x"),
+        ] {
+            assert_eq!(to_snake(input), expected);
+        }
+        assert_eq!(to_upper_camel("greet"), "Greet");
+        assert_eq!(to_upper_camel("greet_all"), "GreetAll");
+        assert_eq!(to_upper_camel("r#type"), "Type");
+    }
+
+    #[test]
+    fn the_shapes_path_sits_beside_the_trait_s_module() {
+        let trait_path: Path = syn::parse_quote!(pb::greeter_server::Greeter);
+        let shapes = infer_shapes_path(&trait_path);
+        assert_eq!(
+            quote!(#shapes).to_string(),
+            quote!(pb::greeter_toni).to_string()
+        );
+
+        let bare: Path = syn::parse_quote!(watcher_server::Watcher);
+        let beside = infer_shapes_path(&bare);
+        assert_eq!(
+            quote!(#beside).to_string(),
+            quote!(watcher_toni).to_string()
+        );
+    }
 }
