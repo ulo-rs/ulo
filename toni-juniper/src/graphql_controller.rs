@@ -7,7 +7,7 @@ use juniper::{
 use serde::Deserialize;
 use std::sync::Arc;
 use toni::traits_helpers::{Controller, ControllerFactory, Dispatch, Provider, Route};
-use toni::{http_helpers::Body, FxHashMap, HttpMethod, HttpRequest, HttpResponse};
+use toni::{FxHashMap, HttpMethod, HttpRequest, HttpResponse, http_helpers::Body};
 
 /// GraphQL request payload
 #[derive(Debug, Deserialize)]

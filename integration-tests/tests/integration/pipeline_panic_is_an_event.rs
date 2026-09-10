@@ -19,10 +19,10 @@ use toni::context::{GrpcContext, HttpContext};
 use toni::errors::PanicRecovered;
 use toni::extractors::{Inbound, Payload};
 use toni::toni_factory::ToniFactory;
-use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
 use toni::traits_helpers::MiddlewareConsumer;
+use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
 use toni::traits_helpers::{Interceptor, InterceptorNext};
-use toni::{catch, controller, get, injectable, module, routes, GrpcStatus, HttpResponse};
+use toni::{GrpcStatus, HttpResponse, catch, controller, get, injectable, module, routes};
 use toni_macros::{grpc_methods, new, use_error_handlers, use_interceptors};
 
 use crate::common::TestServer;

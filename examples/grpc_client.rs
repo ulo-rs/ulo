@@ -23,7 +23,7 @@
 
 use std::net::SocketAddr;
 
-use toni::{module, provider_factory, Body, ToniFactory};
+use toni::{Body, ToniFactory, module, provider_factory};
 use toni_axum::AxumAdapter;
 use toni_macros::{controller, get, grpc_methods, new, routes};
 

@@ -4,13 +4,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::SinkExt;
-use rumqttc::v5::mqttbytes::v5::{Packet, PublishProperties};
 use rumqttc::v5::mqttbytes::QoS;
+use rumqttc::v5::mqttbytes::v5::{Packet, PublishProperties};
 use rumqttc::v5::{AsyncClient, Event, MqttOptions};
-use tokio::sync::{mpsc, oneshot, OnceCell};
+use tokio::sync::{OnceCell, mpsc, oneshot};
 use toni::rpc::wire::{self, ReplyFrame};
 use toni::rpc::{ReplySink, RpcReplyStream};
-use toni::{async_trait, RpcClientError, RpcClientTransport, RpcData};
+use toni::{RpcClientError, RpcClientTransport, RpcData, async_trait};
 
 use crate::wire::data_to_bytes;
 

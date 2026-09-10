@@ -9,10 +9,10 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
 use toni::module;
-use toni::{async_trait, WsClient};
+use toni::{WsClient, async_trait};
 use toni_async_graphql::{
-    async_graphql::{self, Context, EmptyMutation, Object, Schema, Subscription},
     DefaultContextBuilder, GraphQLModule, SubscriptionContextBuilder,
+    async_graphql::{self, Context, EmptyMutation, Object, Schema, Subscription},
 };
 
 use crate::common::TestServer;

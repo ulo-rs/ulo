@@ -4,8 +4,8 @@
 //! message goes through normally. Sibling connections on the same gateway
 //! are unaffected.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use toni::async_trait;
 use toni::context::WsContext;

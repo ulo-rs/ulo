@@ -170,6 +170,6 @@ pub mod prelude {
     pub use crate::graphql_module::GraphQLModule;
     pub use crate::graphql_service::GraphQLService;
     pub use juniper::{
-        graphql_object, graphql_value, EmptyMutation, EmptySubscription, FieldResult, RootNode,
+        EmptyMutation, EmptySubscription, FieldResult, RootNode, graphql_object, graphql_value,
     };
 }

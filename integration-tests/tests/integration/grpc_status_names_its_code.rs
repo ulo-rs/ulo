@@ -11,7 +11,7 @@ use serial_test::serial;
 use toni::context::GrpcContext;
 use toni::extractors::{Inbound, Payload};
 use toni::toni_factory::ToniFactory;
-use toni::{async_trait, injectable, module, ErrorKind, GrpcCode, GrpcStatus};
+use toni::{ErrorKind, GrpcCode, GrpcStatus, async_trait, injectable, module};
 use toni_macros::{controller, grpc_methods, new, use_error_handlers};
 
 use crate::common::NotServed;

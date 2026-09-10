@@ -14,7 +14,7 @@ use std::time::Duration;
 use crate::common::NotServed;
 use futures_util::Stream;
 use toni::extractors::{Inbound, Payload};
-use toni::{module, provider_factory, ToniFactory};
+use toni::{ToniFactory, module, provider_factory};
 use toni_macros::{controller, get, grpc_methods, new, routes};
 
 mod probe_pb {

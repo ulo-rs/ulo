@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serial_test::serial;
 use toni::context::{HandlerContext, HttpContext};
-use toni::{controller, get, module, routes, Body as ToniBody};
+use toni::{Body as ToniBody, controller, get, module, routes};
 
 use crate::common::TestServer;
 

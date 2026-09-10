@@ -9,8 +9,8 @@ use toni::http_helpers::HttpResponse;
 use toni::traits_helpers::{Guard, Interceptor, InterceptorNext};
 use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
 use toni::{
-    controller, get, injectable, module, routes, use_guards, use_interceptors, Body as ToniBody,
-    Request,
+    Body as ToniBody, Request, controller, get, injectable, module, routes, use_guards,
+    use_interceptors,
 };
 use toni_macros::{new, subscriptions, websocket_gateway};
 

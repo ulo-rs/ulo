@@ -25,7 +25,7 @@ use toni::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
 use toni::toni_factory::ToniFactory;
 use toni::traits_helpers::Guard;
 use toni::websocket::{WsHandlerResult, WsMessage};
-use toni::{catch, injectable, module, Error, GrpcStatus};
+use toni::{Error, GrpcStatus, catch, injectable, module};
 use toni_macros::{
     controller, grpc_methods, message_pattern, new, patterns, subscribe_message, subscriptions,
     use_error_handlers, use_guards, websocket_gateway,
@@ -239,8 +239,8 @@ impl RejectionGrpcService {
         Payload(_req): Payload<rejection_pb::WatchRequest>,
     ) -> Result<
         impl futures_util::Stream<Item = Result<rejection_pb::ProgressEvent, NotServed>>
-            + Send
-            + 'static,
+        + Send
+        + 'static,
         NotServed,
     > {
         Ok(futures_util::stream::empty())

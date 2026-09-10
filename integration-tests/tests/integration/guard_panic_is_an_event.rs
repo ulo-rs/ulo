@@ -23,7 +23,7 @@ use toni::extractors::{Inbound, Payload};
 use toni::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
 use toni::toni_factory::ToniFactory;
 use toni::traits_helpers::Guard;
-use toni::{catch, injectable, module, GrpcStatus};
+use toni::{GrpcStatus, catch, injectable, module};
 use toni_macros::{
     controller, grpc_methods, message_pattern, new, patterns, use_error_handlers, use_guards,
 };

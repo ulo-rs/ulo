@@ -11,14 +11,13 @@
 use std::sync::Arc;
 
 use toni::{
-    async_trait, catch,
+    Body as ToniBody, Error, HttpResponse, async_trait, catch,
     context::HttpContext,
     controller,
     errors::{GuardRejection, HttpError},
     get, module, routes,
     toni_factory::ToniFactory,
     traits_helpers::Guard,
-    Body as ToniBody, Error, HttpResponse,
 };
 use toni_axum::AxumAdapter;
 use toni_macros::use_guards;

@@ -6,7 +6,7 @@
 //! when deciding 405 vs 404.
 
 use toni::extractors::Path;
-use toni::{controller, get, module, routes, Body as ToniBody, ToniFactory};
+use toni::{Body as ToniBody, ToniFactory, controller, get, module, routes};
 
 use crate::common::TestServer;
 

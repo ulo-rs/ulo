@@ -5,8 +5,8 @@ use toni::http_helpers::HttpResponse;
 use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
 use toni::traits_helpers::{Guard, Interceptor, InterceptorNext, MiddlewareConsumer};
 use toni::{
-    controller, get, injectable, module, new, provider_value, routes, use_guards, use_interceptors,
-    Body as ToniBody, RequestPart,
+    Body as ToniBody, RequestPart, controller, get, injectable, module, new, provider_value,
+    routes, use_guards, use_interceptors,
 };
 
 use crate::common::TestServer;

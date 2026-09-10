@@ -11,15 +11,15 @@
 //! request is consumed.
 #![cfg(feature = "integration")]
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::kafka::apache::{Kafka, KAFKA_PORT};
+use testcontainers_modules::kafka::apache::{KAFKA_PORT, Kafka};
 use toni::context::RpcContext;
 use toni::rpc::{RpcData, RpcError};
-use toni::{controller, module, new, patterns, RpcClient, ToniFactory};
+use toni::{RpcClient, ToniFactory, controller, module, new, patterns};
 use toni_kafka::{KafkaAdapter, KafkaClientTransport};
 
 static BROKERS: OnceLock<String> = OnceLock::new();

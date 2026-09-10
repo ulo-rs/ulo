@@ -3,7 +3,7 @@
 //! token, so the declared export and the built instance meet.
 
 use toni::toni_factory::ToniFactory;
-use toni::{injectable, module, ProviderContext};
+use toni::{ProviderContext, injectable, module};
 use toni_async_graphql::async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
 use toni_async_graphql::{DefaultContextBuilder, GraphQLModule, GraphQLService};
 

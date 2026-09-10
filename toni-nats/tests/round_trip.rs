@@ -8,8 +8,8 @@
 //!   producer observes the execution's cancellation token
 #![cfg(feature = "integration")]
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
@@ -17,7 +17,7 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::nats::Nats;
 use toni::context::{HandlerContext, RpcContext};
 use toni::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
-use toni::{controller, module, new, patterns, RpcClient, ToniFactory};
+use toni::{RpcClient, ToniFactory, controller, module, new, patterns};
 use toni_nats::{NatsAdapter, NatsClientTransport};
 
 static URL: OnceLock<String> = OnceLock::new();

@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 use crate::common::NotServed;
 use futures_util::Stream;
 use serial_test::serial;
+use toni::ToniFactory;
 use toni::context::{GrpcContext, HandlerContext};
 use toni::extractors::{Inbound, Payload};
-use toni::ToniFactory;
 use toni_macros::{controller, grpc_methods, module, new};
 
 mod deadline_pb {

@@ -16,10 +16,10 @@ use std::time::Duration;
 
 use crate::common::NotServed;
 use serial_test::serial;
+use toni::ToniFactory;
 use toni::context::GrpcContext;
 use toni::extractors::{Inbound, Payload};
 use toni::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
-use toni::ToniFactory;
 use toni::{GrpcHandlerResult, GrpcStatus};
 use toni_macros::{controller, grpc_methods, injectable, module, new, use_guards};
 

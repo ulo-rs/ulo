@@ -1,6 +1,6 @@
 use crate::common::TestServer;
 use std::sync::Arc;
-use toni::{controller, get, injectable, module, provide, routes, Body as ToniBody};
+use toni::{Body as ToniBody, controller, get, injectable, module, provide, routes};
 
 // Shared plugin trait used across all tests in this file
 trait Plugin: Send + Sync {

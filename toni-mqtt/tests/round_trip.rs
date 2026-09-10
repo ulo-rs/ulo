@@ -7,15 +7,15 @@
 //!   properties and reaches the handler's `RpcContext`
 #![cfg(feature = "integration")]
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::mosquitto::Mosquitto;
 use toni::context::RpcContext;
 use toni::rpc::{RpcData, RpcError};
-use toni::{controller, module, new, patterns, RpcClient, ToniFactory};
+use toni::{RpcClient, ToniFactory, controller, module, new, patterns};
 use toni_mqtt::{MqttAdapter, MqttClientTransport};
 
 static HOST: OnceLock<String> = OnceLock::new();

@@ -6,10 +6,10 @@ use anyhow::{Context, Result};
 use futures_util::FutureExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{watch, Mutex, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 use toni::rpc::wire;
-use toni::{async_trait, BindTarget, RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks};
+use toni::{BindTarget, RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks, async_trait};
 use tracing::Instrument;
 
 const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);

@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
-use tokio::sync::{mpsc, oneshot, OnceCell};
+use tokio::sync::{OnceCell, mpsc, oneshot};
 use toni::rpc::wire::{self, ReplyFrame};
 use toni::rpc::{ReplySink, RpcReplyStream};
-use toni::{async_trait, RpcClientError, RpcClientTransport, RpcData};
+use toni::{RpcClientError, RpcClientTransport, RpcData, async_trait};
 
 use crate::wire::RequestEnvelope;
 

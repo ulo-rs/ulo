@@ -11,8 +11,8 @@
 
 use std::time::Duration;
 
-use futures::stream;
 use futures::StreamExt;
+use futures::stream;
 use serde_json::json;
 use toni::extractors::{BodyStream, Bytes, Path};
 use toni::*;

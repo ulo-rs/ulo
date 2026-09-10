@@ -18,13 +18,13 @@ use std::time::Duration;
 use crate::common::NotServed;
 use futures_util::{Stream, StreamExt};
 use serial_test::serial;
-use toni::extractors::{Inbound, Payload};
 use toni::ToniFactory;
+use toni::extractors::{Inbound, Payload};
 use toni_macros::{controller, grpc_methods, module, new};
+use tonic_reflection::pb::v1::ServerReflectionRequest;
 use tonic_reflection::pb::v1::server_reflection_client::ServerReflectionClient;
 use tonic_reflection::pb::v1::server_reflection_request::MessageRequest;
 use tonic_reflection::pb::v1::server_reflection_response::MessageResponse;
-use tonic_reflection::pb::v1::ServerReflectionRequest;
 
 mod reflect_pb {
     tonic::include_proto!("toni_test.orders");

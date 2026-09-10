@@ -5,16 +5,16 @@
 //! so the teardown path only ever handles sockets. Interleaved, a separate-port WebSocket gateway
 //! would already be listening by the time the RPC adapter is asked for its patterns.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use toni::context::RpcContext;
 use toni::rpc::{RpcData, RpcError};
 use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
 use toni::{
-    async_trait, module, RpcAdapter, RpcLifecycleHandle, RpcMessageCallbacks, StartupError,
-    ToniFactory,
+    RpcAdapter, RpcLifecycleHandle, RpcMessageCallbacks, StartupError, ToniFactory, async_trait,
+    module,
 };
 use toni_macros::{
     controller, message_pattern, new, patterns, subscribe_message, subscriptions, websocket_gateway,

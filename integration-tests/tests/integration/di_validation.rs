@@ -1,4 +1,4 @@
-use toni::{injectable, module, toni_factory::ToniFactory, ProviderContext};
+use toni::{ProviderContext, injectable, module, toni_factory::ToniFactory};
 
 #[tokio::test]
 async fn valid_singleton_injects_singleton() {

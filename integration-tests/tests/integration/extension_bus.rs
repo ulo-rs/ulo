@@ -14,8 +14,8 @@ use toni::middleware::{Middleware, MiddlewareResult, NextHandle};
 use toni::traits_helpers::Guard;
 use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
 use toni::{
-    controller, get, injectable, module, new, post, routes, set_metadata, subscriptions,
-    toni_factory::ToniFactory, websocket_gateway, Body as ToniBody,
+    Body as ToniBody, controller, get, injectable, module, new, post, routes, set_metadata,
+    subscriptions, toni_factory::ToniFactory, websocket_gateway,
 };
 
 use crate::common::TestServer;

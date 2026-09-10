@@ -1,5 +1,5 @@
-use toni::toni_factory::ToniFactory;
 use toni::ModuleMetadata;
+use toni::toni_factory::ToniFactory;
 use toni_axum::AxumAdapter;
 
 /// Install a tracing subscriber that reads `RUST_LOG` (e.g. `RUST_LOG=toni=debug`).

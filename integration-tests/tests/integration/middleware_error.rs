@@ -7,9 +7,9 @@
 use crate::common::TestServer;
 use toni::async_trait;
 use toni::errors::HttpError;
-use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
 use toni::traits_helpers::MiddlewareConsumer;
-use toni::{controller, get, module, routes, Body as ToniBody};
+use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
+use toni::{Body as ToniBody, controller, get, module, routes};
 
 // ── Test 1: custom status code ────────────────────────────────────────────────
 

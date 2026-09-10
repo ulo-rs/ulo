@@ -13,14 +13,14 @@
 //!   just hands tonic an instance of the trait impl, and tonic dispatches.
 
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::common::NotServed;
 use futures_util::{Stream, StreamExt};
-use toni::extractors::{Inbound, Payload};
 use toni::ToniFactory;
+use toni::extractors::{Inbound, Payload};
 use toni_macros::{controller, grpc_methods, injectable, module, new, set_metadata};
 
 mod orders_pb {

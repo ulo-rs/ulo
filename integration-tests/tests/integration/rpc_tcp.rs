@@ -10,8 +10,8 @@
 //!   with an `"overloaded"` frame and the slot is released when the
 //!   in-flight handler completes
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use toni::rpc::{RpcHandlerOutput, RpcHandlerResult};
 

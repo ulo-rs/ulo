@@ -2,10 +2,10 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use crate::common::TestServer;
-use futures_util::{stream, StreamExt};
+use futures_util::{StreamExt, stream};
 use tokio::sync::broadcast;
 use toni::{
-    controller, extractors::Bytes, get, module, post, routes, sse, HttpResponse, Sse, SseEvent,
+    HttpResponse, Sse, SseEvent, controller, extractors::Bytes, get, module, post, routes, sse,
 };
 use toni_macros::{injectable, new};
 

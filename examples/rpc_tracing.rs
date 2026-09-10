@@ -43,8 +43,8 @@
 //! attached to `tracing::info!` calls inside the handler — the user
 //! handler never had to mention them.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use toni::ToniFactory;
 use toni_macros::{controller, grpc_methods, injectable, module, new, patterns};

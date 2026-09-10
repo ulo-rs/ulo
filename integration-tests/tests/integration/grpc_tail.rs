@@ -14,15 +14,15 @@
 #![allow(dead_code)]
 
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures_util::{Stream, StreamExt};
 use serial_test::serial;
+use toni::ToniFactory;
 use toni::context::{CancellationToken, GrpcContext, HandlerContext};
 use toni::extractors::{Inbound, Payload};
-use toni::ToniFactory;
 use toni_macros::{controller, grpc_methods, module, new};
 
 use crate::common::NotServed;

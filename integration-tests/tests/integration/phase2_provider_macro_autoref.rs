@@ -10,7 +10,7 @@ use toni::async_trait;
 use toni::context::HttpContext;
 use toni::traits_helpers::Guard;
 use toni::{
-    controller, get, module, provider_factory, provider_value, routes, use_guards, Body as ToniBody,
+    Body as ToniBody, controller, get, module, provider_factory, provider_value, routes, use_guards,
 };
 
 use crate::common::TestServer;

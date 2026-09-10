@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -7,11 +7,11 @@ use tokio::net::TcpListener;
 use tokio::sync::watch;
 
 use axum::{
+    Router, ServiceExt as AxumServiceExt,
     body::Body,
-    extract::{ws::WebSocketUpgrade, Path},
+    extract::{Path, ws::WebSocketUpgrade},
     http::{HeaderMap, HeaderName, HeaderValue, Request, Response, StatusCode},
     routing::{MethodFilter, MethodRouter},
-    Router, ServiceExt as AxumServiceExt,
 };
 use futures_util::{FutureExt, SinkExt, StreamExt};
 use std::str::FromStr;
@@ -19,11 +19,10 @@ use tower::ServiceExt as TowerServiceExt;
 
 use toni::websocket::{WsMessage, WsSink};
 use toni::{
-    async_trait,
-    http_helpers::{PathParams, RequestBody, RequestPart},
     AdapterContext, BindTarget, Body as ToniBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
     HttpRequest, HttpResponse, MessageCallbackResult, RequestHandler, WebSocketAdapter,
-    WsConnectionCallbacks,
+    WsConnectionCallbacks, async_trait,
+    http_helpers::{PathParams, RequestBody, RequestPart},
 };
 
 use crate::axum_websocket_adapter::{axum_to_ws_message, ws_message_to_axum};

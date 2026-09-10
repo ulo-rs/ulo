@@ -10,7 +10,7 @@ use std::net::TcpListener;
 use toni::context::RpcContext;
 use toni::rpc::{RpcData, RpcError};
 use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
-use toni::{module, StartupError, ToniFactory};
+use toni::{StartupError, ToniFactory, module};
 use toni_axum::AxumAdapter;
 use toni_macros::{
     controller, message_pattern, new, patterns, subscribe_message, subscriptions, websocket_gateway,

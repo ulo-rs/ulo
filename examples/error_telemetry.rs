@@ -37,13 +37,13 @@ use std::sync::Arc;
 use serde_json::json;
 use toni::extractors::Payload;
 use toni::{
+    Body as ToniBody, Error, ErrorKind, HttpResponse, RpcClient, RpcError, ToniFactory,
     async_trait,
     context::HttpContext,
     controller,
     extractors::Path,
     get, module, routes,
     traits_helpers::{ChainError, ErrorHandler},
-    Body as ToniBody, Error, ErrorKind, HttpResponse, RpcClient, RpcError, ToniFactory,
 };
 use toni_macros::{event_pattern, new, patterns};
 

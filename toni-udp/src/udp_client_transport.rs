@@ -1,14 +1,14 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures_util::SinkExt;
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use toni::rpc::wire::{self, ReplyFrame};
 use toni::rpc::{ReplySink, RpcReplyStream};
-use toni::{async_trait, RpcClientError, RpcClientTransport, RpcData};
+use toni::{RpcClientError, RpcClientTransport, RpcData, async_trait};
 
 /// Maximum UDP datagram payload (theoretical max minus IPv4 + UDP headers).
 const MAX_DATAGRAM: usize = 65_507;

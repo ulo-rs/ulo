@@ -9,12 +9,12 @@ use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::message::Message;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use rdkafka::util::Timeout;
-use tokio::sync::{mpsc, oneshot, OnceCell};
+use tokio::sync::{OnceCell, mpsc, oneshot};
 use toni::rpc::wire::{self, ReplyFrame};
 use toni::rpc::{ReplySink, RpcReplyStream};
-use toni::{async_trait, RpcClientError, RpcClientTransport, RpcData};
+use toni::{RpcClientError, RpcClientTransport, RpcData, async_trait};
 
-use crate::wire::{build_headers, header_str, HEADER_CORRELATION_ID};
+use crate::wire::{HEADER_CORRELATION_ID, build_headers, header_str};
 
 /// One awaited call in the correlation map.
 enum PendingSlot {

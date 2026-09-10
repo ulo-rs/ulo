@@ -13,7 +13,7 @@ use std::net::TcpListener;
 use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use toni::toni_factory::ToniFactory;
-use toni::{controller, get, module, routes, Body as ToniBody};
+use toni::{Body as ToniBody, controller, get, module, routes};
 use toni_axum::AxumAdapter;
 
 #[controller("/generation")]

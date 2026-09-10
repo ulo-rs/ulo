@@ -5,8 +5,8 @@ use toni::di::{APP_GUARD, APP_INTERCEPTOR};
 use toni::http_helpers::HttpResponse;
 use toni::traits_helpers::{Guard, Interceptor, InterceptorNext};
 use toni::{
-    controller, get, injectable, module, new, provider_token, provider_value, routes,
-    Body as ToniBody,
+    Body as ToniBody, controller, get, injectable, module, new, provider_token, provider_value,
+    routes,
 };
 
 use crate::common::TestServer;

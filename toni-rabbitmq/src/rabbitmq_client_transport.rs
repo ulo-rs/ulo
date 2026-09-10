@@ -7,10 +7,10 @@ use futures::{SinkExt, StreamExt};
 use lapin::options::{BasicConsumeOptions, BasicPublishOptions, ExchangeDeclareOptions};
 use lapin::types::{AMQPValue, FieldTable};
 use lapin::{BasicProperties, Channel, Connection};
-use tokio::sync::{mpsc, oneshot, OnceCell};
+use tokio::sync::{OnceCell, mpsc, oneshot};
 use toni::rpc::wire::{self, ReplyFrame};
 use toni::rpc::{ReplySink, RpcReplyStream};
-use toni::{async_trait, RpcClientError, RpcClientTransport, RpcData};
+use toni::{RpcClientError, RpcClientTransport, RpcData, async_trait};
 
 use crate::wire::data_to_bytes;
 

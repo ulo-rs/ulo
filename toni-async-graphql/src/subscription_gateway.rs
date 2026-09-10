@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use toni::traits_helpers::{Provider, ProviderContext};
 use toni::{
-    context::WsContext, DisconnectReason, GatewayTrait, ProviderScope, WsClient, WsError,
-    WsHandlerOutput, WsMessage,
+    DisconnectReason, GatewayTrait, ProviderScope, WsClient, WsError, WsHandlerOutput, WsMessage,
+    context::WsContext,
 };
 
 use crate::subscription_context_builder::SubscriptionContextBuilder;
@@ -193,7 +193,7 @@ where
             _ => {
                 return Err(WsError::InvalidMessage(
                     "graphql-ws expects text frames only".into(),
-                ))
+                ));
             }
         };
 

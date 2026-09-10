@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use toni::context::{HttpContext, RpcContext};
 use toni::http_helpers::RequestPart;
 use toni::toni_factory::ToniFactory;
-use toni::{injectable, module, new, ProviderContext, RpcData};
+use toni::{ProviderContext, RpcData, injectable, module, new};
 use uuid::Uuid;
 
 #[derive(Debug)]
