@@ -1,6 +1,6 @@
 use crate::common::TestServer;
 use serial_test::serial;
-use toni::{controller, get, injectable, module, routes, Body as ToniBody};
+use toni::{Body as ToniBody, controller, get, injectable, module, routes};
 use toni_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]
@@ -87,10 +87,14 @@ impl AppModule {}
 #[serial]
 #[tokio_localset_test::localset_test]
 async fn config_read_from_env_vars() {
-    std::env::set_var("APP_NAME", "E2ETestApp");
-    std::env::set_var("APP_VERSION", "2.0.0");
-    std::env::set_var("DATABASE_URL", "postgres://localhost/e2e_test");
-    std::env::set_var("MAX_CONNECTIONS", "50");
+    // SAFETY: `#[serial]` runs this test alone, so nothing else reads the
+    // environment while it is written.
+    unsafe {
+        std::env::set_var("APP_NAME", "E2ETestApp");
+        std::env::set_var("APP_VERSION", "2.0.0");
+        std::env::set_var("DATABASE_URL", "postgres://localhost/e2e_test");
+        std::env::set_var("MAX_CONNECTIONS", "50");
+    }
 
     let server = TestServer::start(AppModule).await;
 
@@ -128,19 +132,27 @@ async fn config_read_from_env_vars() {
     assert_eq!(json["database_url"], "postgres://localhost/e2e_test");
     assert_eq!(json["max_connections"], 50);
 
-    std::env::remove_var("APP_NAME");
-    std::env::remove_var("APP_VERSION");
-    std::env::remove_var("DATABASE_URL");
-    std::env::remove_var("MAX_CONNECTIONS");
+    // SAFETY: `#[serial]` runs this test alone, so nothing else reads the
+    // environment while it is written.
+    unsafe {
+        std::env::remove_var("APP_NAME");
+        std::env::remove_var("APP_VERSION");
+        std::env::remove_var("DATABASE_URL");
+        std::env::remove_var("MAX_CONNECTIONS");
+    }
 }
 
 #[serial]
 #[tokio_localset_test::localset_test]
 async fn config_falls_back_to_defaults() {
-    std::env::remove_var("APP_NAME");
-    std::env::remove_var("APP_VERSION");
-    std::env::remove_var("DATABASE_URL");
-    std::env::remove_var("MAX_CONNECTIONS");
+    // SAFETY: `#[serial]` runs this test alone, so nothing else reads the
+    // environment while it is written.
+    unsafe {
+        std::env::remove_var("APP_NAME");
+        std::env::remove_var("APP_VERSION");
+        std::env::remove_var("DATABASE_URL");
+        std::env::remove_var("MAX_CONNECTIONS");
+    }
 
     let server = TestServer::start(AppModule).await;
 

@@ -5,7 +5,7 @@
 
 use serial_test::serial;
 use toni::toni_factory::ToniFactory;
-use toni::{async_trait, module, RequestPart};
+use toni::{RequestPart, async_trait, module};
 use toni_async_graphql::async_graphql::{Data, EmptyMutation, EmptySubscription, Object, Schema};
 use toni_async_graphql::{ContextBuilder, DefaultContextBuilder, GraphQLModule};
 use toni_axum::AxumAdapter;

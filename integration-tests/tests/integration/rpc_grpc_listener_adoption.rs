@@ -116,10 +116,10 @@ async fn udp_serves_on_caller_supplied_socket() {
 
 #[tokio_localset_test::localset_test]
 async fn grpc_serves_on_caller_supplied_listener() {
+    use tonic_health::ServingStatus;
+    use tonic_health::pb::HealthCheckRequest;
     use tonic_health::pb::health_check_response::ServingStatus as PbServingStatus;
     use tonic_health::pb::health_client::HealthClient;
-    use tonic_health::pb::HealthCheckRequest;
-    use tonic_health::ServingStatus;
 
     #[toni::module()]
     struct EmptyModule;

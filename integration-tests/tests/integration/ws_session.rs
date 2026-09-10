@@ -11,8 +11,8 @@ use toni::context::{HandlerContext, WsContext};
 use toni::traits_helpers::Guard;
 use toni::websocket::{Session, WsClient, WsHandlerResult, WsMessage};
 use toni::{
-    injectable, module, new, on_connect, on_disconnect, set_metadata, subscribe_message,
-    subscriptions, use_guards, websocket_gateway, DisconnectReason,
+    DisconnectReason, injectable, module, new, on_connect, on_disconnect, set_metadata,
+    subscribe_message, subscriptions, use_guards, websocket_gateway,
 };
 
 use crate::common::TestServer;

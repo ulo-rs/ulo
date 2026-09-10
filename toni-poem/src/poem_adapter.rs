@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use http_body_util::BodyExt;
 use tokio::sync::watch;
@@ -17,11 +17,10 @@ use poem::{
 
 use toni::websocket::{WsMessage, WsSink};
 use toni::{
-    async_trait,
-    http_helpers::{PathParams, RequestBody, RequestPart},
     AdapterContext, BindTarget, Body as ToniBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
     HttpRequest, HttpResponse, MessageCallbackResult, RequestHandler, WebSocketAdapter,
-    WsConnectionCallbacks,
+    WsConnectionCallbacks, async_trait,
+    http_helpers::{PathParams, RequestBody, RequestPart},
 };
 
 use crate::poem_websocket_adapter::{poem_to_ws_message, ws_message_to_poem};

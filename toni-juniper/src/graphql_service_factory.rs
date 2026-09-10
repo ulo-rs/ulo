@@ -6,8 +6,8 @@ use juniper::{
     ScalarValue,
 };
 use std::sync::Arc;
-use toni::traits_helpers::{Injectable, Provider, ProviderFactory};
 use toni::FxHashMap;
+use toni::traits_helpers::{Injectable, Provider, ProviderFactory};
 
 /// `ProviderFactory` for `GraphQLService` — registered during module scanning.
 pub struct GraphQLServiceFactory<Query, Mutation, Subscription, Ctx, S = DefaultScalarValue>

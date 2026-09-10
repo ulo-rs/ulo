@@ -1,5 +1,5 @@
 use toni::{module, toni_factory::ToniFactory};
-use toni_async_graphql::{prelude::*, DefaultContextBuilder};
+use toni_async_graphql::{DefaultContextBuilder, prelude::*};
 use toni_axum::AxumAdapter;
 
 // Define Query type
@@ -35,8 +35,8 @@ struct User {
     email: String,
 }
 
-fn build_graphql_module(
-) -> GraphQLModule<Query, EmptyMutation, EmptySubscription, DefaultContextBuilder> {
+fn build_graphql_module()
+-> GraphQLModule<Query, EmptyMutation, EmptySubscription, DefaultContextBuilder> {
     let schema = Schema::build(Query, EmptyMutation, EmptySubscription).finish();
     GraphQLModule::for_root(schema, DefaultContextBuilder)
         .with_path("/graphql")

@@ -27,9 +27,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use toni::extractors::Payload;
 use toni::{
-    controller,
+    Body as ToniBody, RpcClient, ToniFactory, controller,
     extractors::{Json, Query},
-    get, injectable, module, post, routes, Body as ToniBody, RpcClient, ToniFactory,
+    get, injectable, module, post, routes,
 };
 use toni_macros::{new, patterns, provider_value};
 

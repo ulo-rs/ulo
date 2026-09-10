@@ -1,9 +1,9 @@
 use crate::common::TestServer;
 use futures_util::stream;
 use toni::{
-    controller,
+    Body as ToniBody, controller,
     extractors::{BodyStream, Bytes},
-    module, post, routes, Body as ToniBody,
+    module, post, routes,
 };
 
 #[controller("/stream")]
@@ -18,7 +18,7 @@ impl StreamingController {
 
     #[post("/bs-size")]
     async fn bs_size(&self, stream: BodyStream) -> ToniBody {
-        use futures_util::{pin_mut, StreamExt};
+        use futures_util::{StreamExt, pin_mut};
         let s = stream.into_stream();
         pin_mut!(s);
         let mut total = 0usize;

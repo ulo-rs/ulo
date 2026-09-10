@@ -1,21 +1,21 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use actix_web::body::BoxBody;
 use actix_web::dev::{
-    forward_ready, Payload, Service as ActixService, ServiceRequest, ServiceResponse, Transform,
+    Payload, Service as ActixService, ServiceRequest, ServiceResponse, Transform, forward_ready,
 };
 use actix_web::{
-    web, web::Bytes, App, Error as ActixError, FromRequest, HttpMessage,
-    HttpRequest as ActixHttpRequest, HttpResponse as ActixHttpResponse, HttpServer, ResponseError,
+    App, Error as ActixError, FromRequest, HttpMessage, HttpRequest as ActixHttpRequest,
+    HttpResponse as ActixHttpResponse, HttpServer, ResponseError, web, web::Bytes,
 };
 use futures_util::future::LocalBoxFuture;
 use toni::{
-    http_helpers::{PathParams, RequestBody},
     AdapterContext, BindTarget, Body as ToniBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
     HttpRequest, HttpResponse, RequestHandler,
+    http_helpers::{PathParams, RequestBody},
 };
 
 pub struct ActixAdapter {

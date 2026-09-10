@@ -35,7 +35,7 @@ use toni::websocket::{
     WsMessage,
 };
 
-use toni::{controller, module, post, routes, Body as ToniBody};
+use toni::{Body as ToniBody, controller, module, post, routes};
 use toni_axum::AxumAdapter;
 use toni_macros::{new, on_connect, subscriptions, websocket_gateway};
 use toni_tungstenite::TungsteniteAdapter;

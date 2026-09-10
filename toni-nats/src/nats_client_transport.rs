@@ -4,9 +4,9 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::OnceCell;
-use toni::rpc::wire::{self, parse_response, ReplyFrame};
+use toni::rpc::wire::{self, ReplyFrame, parse_response};
 use toni::rpc::{ReplySink, RpcReplyStream};
-use toni::{async_trait, RpcClientError, RpcClientTransport, RpcData};
+use toni::{RpcClientError, RpcClientTransport, RpcData, async_trait};
 
 use crate::IntoNatsServers;
 

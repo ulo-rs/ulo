@@ -1,4 +1,4 @@
-use juniper::{graphql_object, EmptyMutation, EmptySubscription, RootNode};
+use juniper::{EmptyMutation, EmptySubscription, RootNode, graphql_object};
 use toni::{module, toni_factory::ToniFactory};
 use toni_axum::AxumAdapter;
 use toni_juniper::{DefaultContext, DefaultContextBuilder, GraphQLModule};

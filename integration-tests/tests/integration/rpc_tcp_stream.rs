@@ -11,8 +11,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use futures_util::stream::BoxStream;
 use futures_util::StreamExt;
+use futures_util::stream::BoxStream;
 use toni::context::{HandlerContext, RpcContext};
 use toni::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
 use toni_macros::{controller, module, new, patterns};

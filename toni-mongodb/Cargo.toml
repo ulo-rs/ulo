@@ -1,11 +1,11 @@
 [package]
 name = "toni-mongodb"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 description = "MongoDB integration for the Toni framework"
-license = "MIT"
-repository = "https://github.com/monterxto/toni-rs"
-homepage = "https://github.com/monterxto/toni-rs"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [features]
 health = ["dep:toni-terminus", "dep:serde_json", "dep:futures"]
@@ -15,19 +15,19 @@ integration = ["health"]
 toni = { path = "../toni", default-features = false }
 # Timer for the startup check's retry delay. Executor-independent, so core stays free of a
 # runtime and this crate does not acquire one either.
-futures-timer = "3"
+futures-timer.workspace = true
 mongodb = { version = "3" }
-async-trait = "0.1"
-tracing = "0.1"
+async-trait.workspace = true
+tracing.workspace = true
 toni-terminus = { path = "../toni-terminus", default-features = false, optional = true }
-serde_json = { version = "1", optional = true }
-futures = { version = "0.3", default-features = false, features = ["std"], optional = true }
+serde_json = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
 
 [dev-dependencies]
 mongodb = { version = "3" }
-testcontainers = "0.27.3"
-testcontainers-modules = { version = "0.15.0", features = ["mongo"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+testcontainers.workspace = true
+testcontainers-modules = { workspace = true, features = ["mongo"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 toni-axum = { path = "../toni-axum" }
 reqwest = { version = "0.13.2", features = ["json"] }
-futures = { version = "0.3", features = ["std"] }
+futures = { workspace = true, features = ["async-await", "executor"] }

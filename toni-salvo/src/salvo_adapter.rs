@@ -1,25 +1,24 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
 use tokio::sync::watch;
 
+use salvo::Router;
 use salvo::conn::tcp::TcpAcceptor;
 use salvo::http::body::ResBody;
 use salvo::http::{Request as SalvoRequest, Response as SalvoResponse};
 use salvo::websocket::WebSocketUpgrade;
-use salvo::Router;
-use salvo::{async_trait as salvo_async_trait, Depot, FlowCtrl, Handler, Server};
+use salvo::{Depot, FlowCtrl, Handler, Server, async_trait as salvo_async_trait};
 
 use toni::websocket::{WsMessage, WsSink};
 use toni::{
-    async_trait,
-    http_helpers::{PathParams, RequestBody, RequestPart},
     AdapterContext, BindTarget, Body as ToniBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
     HttpRequest, HttpResponse, MessageCallbackResult, RequestHandler, WebSocketAdapter,
-    WsConnectionCallbacks,
+    WsConnectionCallbacks, async_trait,
+    http_helpers::{PathParams, RequestBody, RequestPart},
 };
 
 use crate::salvo_websocket_adapter::{salvo_to_ws_message, ws_message_to_salvo};

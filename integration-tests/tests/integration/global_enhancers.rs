@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use toni::async_trait;
 use toni::http_helpers::HttpResponse;
 use toni::{
-    controller, get, module, routes, use_guards, use_interceptors, Body as ToniBody, ToniFactory,
+    Body as ToniBody, ToniFactory, controller, get, module, routes, use_guards, use_interceptors,
 };
 use toni_axum::AxumAdapter;
 

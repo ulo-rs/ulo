@@ -12,7 +12,7 @@
 
 use std::net::TcpListener;
 
-use toni::{controller, get, module, routes, Body as ToniBody, ToniFactory};
+use toni::{Body as ToniBody, ToniFactory, controller, get, module, routes};
 
 use crate::common::TestServer;
 

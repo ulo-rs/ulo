@@ -1,15 +1,15 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use futures_util::SinkExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use toni::rpc::wire::{self, ReplyFrame};
 use toni::rpc::{ReplySink, RpcReplyStream};
-use toni::{async_trait, RpcClientError, RpcClientTransport, RpcData};
+use toni::{RpcClientError, RpcClientTransport, RpcData, async_trait};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 

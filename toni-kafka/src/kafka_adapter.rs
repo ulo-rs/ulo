@@ -12,8 +12,8 @@ use rdkafka::util::Timeout;
 use toni::{RpcAdapter, RpcCallInfo, RpcMessageCallbacks};
 
 use crate::wire::{
-    build_headers, bytes_to_data, header_str, metadata_from_headers, HEADER_CORRELATION_ID,
-    HEADER_REPLY_TO,
+    HEADER_CORRELATION_ID, HEADER_REPLY_TO, build_headers, bytes_to_data, header_str,
+    metadata_from_headers,
 };
 use toni::rpc::wire::{frame_panic, frame_response};
 

@@ -10,7 +10,7 @@ use crate::common::NotServed;
 use serial_test::serial;
 use toni::extractors::{Inbound, Payload};
 use toni::toni_factory::ToniFactory;
-use toni::{module, ErrorKind};
+use toni::{ErrorKind, module};
 use toni_macros::{controller, grpc_methods, new};
 
 mod lift_pb {

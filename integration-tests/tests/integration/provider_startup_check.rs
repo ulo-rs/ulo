@@ -10,7 +10,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use toni::traits_helpers::{Injectable, Provider, ProviderContext, ProviderFactory};
-use toni::{async_trait, DynamicModule, FxHashMap, InitResult, StartupError, ToniFactory};
+use toni::{DynamicModule, FxHashMap, InitResult, StartupError, ToniFactory, async_trait};
 
 const TOKEN: &str = "PROBE_CONNECTION";
 

@@ -7,7 +7,7 @@
 //! disagree — each test pins one pair.
 
 use toni::toni_factory::ToniFactory;
-use toni::{injectable, module, provider_factory, provider_value, ProviderContext};
+use toni::{ProviderContext, injectable, module, provider_factory, provider_value};
 use toni_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Clone)]

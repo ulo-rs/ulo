@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use toni::async_trait;
 use toni::context::{Extensions, HttpContext};
 use toni::traits_helpers::Guard;
-use toni::{controller, get, injectable, module, routes, Body as ToniBody, Extension};
+use toni::{Body as ToniBody, Extension, controller, get, injectable, module, routes};
 
 use crate::common::TestServer;
 

@@ -1,6 +1,6 @@
 # toni-seaorm
 
-SeaORM integration for the [Toni framework](https://github.com/monterxto/toni-rs).
+SeaORM integration for the [Toni framework](https://github.com/ifeanyi-ugwu/toni-rs).
 
 Registers a `DatabaseConnection` in Toni's DI container so any injectable can declare it as a dependency. The connection is backed by a SeaORM connection pool and closed cleanly on application shutdown.
 

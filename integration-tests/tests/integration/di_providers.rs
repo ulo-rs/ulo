@@ -1,8 +1,8 @@
 use crate::common::TestServer;
 use std::time::Duration;
 use toni::{
-    controller, get, injectable, module, new, provider_alias, provider_factory, provider_token,
-    provider_value, routes, Body as ToniBody,
+    Body as ToniBody, controller, get, injectable, module, new, provider_alias, provider_factory,
+    provider_token, provider_value, routes,
 };
 
 #[tokio_localset_test::localset_test]

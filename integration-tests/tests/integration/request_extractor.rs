@@ -1,6 +1,6 @@
 use crate::common::TestServer;
 use serde::Deserialize;
-use toni::{controller, extractors::Json, get, module, post, routes, Body as ToniBody, Request};
+use toni::{Body as ToniBody, Request, controller, extractors::Json, get, module, post, routes};
 
 #[derive(Debug, Deserialize)]
 struct CreateDto {

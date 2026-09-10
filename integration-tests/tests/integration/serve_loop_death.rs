@@ -10,8 +10,8 @@ use anyhow::Result;
 use tokio::sync::oneshot;
 use toni::http_helpers::HttpMethod;
 use toni::{
-    async_trait, controller, get, module, routes, AdapterContext, BindTarget, Body as ToniBody,
-    HttpAdapter, HttpLifecycleHandle, RequestHandler, ToniFactory,
+    AdapterContext, BindTarget, Body as ToniBody, HttpAdapter, HttpLifecycleHandle, RequestHandler,
+    ToniFactory, async_trait, controller, get, module, routes,
 };
 
 #[controller("/probe")]

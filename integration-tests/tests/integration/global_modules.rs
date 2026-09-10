@@ -1,6 +1,6 @@
 use crate::common::TestServer;
 use serial_test::serial;
-use toni::{controller, get, injectable, module, routes, Body as ToniBody};
+use toni::{Body as ToniBody, controller, get, injectable, module, routes};
 use toni_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]
@@ -153,8 +153,12 @@ impl AppModule {}
 #[serial]
 #[tokio_localset_test::localset_test]
 async fn global_module_providers_accessible_across_feature_modules() {
-    std::env::set_var("GLOBAL_TEST_VALUE", "production");
-    std::env::set_var("GLOBAL_TEST_COUNT", "999");
+    // SAFETY: `#[serial]` runs this test alone, so nothing else reads the
+    // environment while it is written.
+    unsafe {
+        std::env::set_var("GLOBAL_TEST_VALUE", "production");
+        std::env::set_var("GLOBAL_TEST_COUNT", "999");
+    }
 
     let server = TestServer::start(AppModule).await;
 
@@ -192,8 +196,12 @@ async fn global_module_providers_accessible_across_feature_modules() {
     assert!(body.contains("Creating order for laptop"));
     assert!(body.contains("INSERT INTO orders"));
 
-    std::env::remove_var("GLOBAL_TEST_VALUE");
-    std::env::remove_var("GLOBAL_TEST_COUNT");
+    // SAFETY: `#[serial]` runs this test alone, so nothing else reads the
+    // environment while it is written.
+    unsafe {
+        std::env::remove_var("GLOBAL_TEST_VALUE");
+        std::env::remove_var("GLOBAL_TEST_COUNT");
+    }
 }
 
 // ---- builder method: .global() ----

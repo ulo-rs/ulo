@@ -3,25 +3,25 @@ use std::convert::TryFrom;
 use std::io::Cursor;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::watch;
 
+use rocket::Config;
 use rocket::data::{ByteUnit, Data};
 use rocket::fairing::AdHoc;
 use rocket::http::{Method as RocketMethod, Status};
 use rocket::request::{FromRequest, Request as RocketRequest};
 use rocket::response::Response as RocketResponse;
 use rocket::route::{Handler, Outcome, Route};
-use rocket::Config;
 use rocket_ws::WebSocket as RocketWs;
 
 use toni::websocket::{WsMessage, WsSink};
 use toni::{
-    http_helpers::{PathParams, RequestBody, RequestPart},
     AdapterContext, BindTarget, Body as ToniBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
     HttpRequest, HttpResponse, MessageCallbackResult, RequestHandler, WsConnectionCallbacks,
+    http_helpers::{PathParams, RequestBody, RequestPart},
 };
 
 use crate::rocket_websocket_adapter::{rocket_to_ws_message, ws_message_to_rocket};

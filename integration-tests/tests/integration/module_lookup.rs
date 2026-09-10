@@ -3,7 +3,7 @@
 //! it resolves providers in that module's scope.
 
 use toni::toni_factory::ToniFactory;
-use toni::{injectable, module, provider_value, DynamicModule};
+use toni::{DynamicModule, injectable, module, provider_value};
 use toni_async_graphql::async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
 use toni_async_graphql::{DefaultContextBuilder, GraphQLModule};
 use toni_config::{Config, ConfigModule, ConfigService};

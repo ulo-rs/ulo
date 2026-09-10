@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-gRPC transport adapter for the [Toni](https://github.com/monterxto/toni-rs) framework.
+gRPC transport adapter for the [Toni](https://github.com/ifeanyi-ugwu/toni-rs) framework.
 
 Drives a [`tonic`](https://github.com/hyperium/tonic) server through Toni's bind / serve / drain lifecycle, with first-class dependency injection, per-call guards, interceptors, error handlers, and panic recovery on every method dispatched through `#[grpc_methods]`.
 

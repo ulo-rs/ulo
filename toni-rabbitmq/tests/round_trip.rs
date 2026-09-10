@@ -7,15 +7,15 @@
 //!   and reaches the handler's `RpcContext`
 #![cfg(feature = "integration")]
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::rabbitmq::RabbitMq;
 use toni::context::RpcContext;
 use toni::rpc::{RpcData, RpcError};
-use toni::{controller, module, new, patterns, RpcClient, ToniFactory};
+use toni::{RpcClient, ToniFactory, controller, module, new, patterns};
 use toni_rabbitmq::{RabbitMqAdapter, RabbitMqClientTransport};
 
 static URI: OnceLock<String> = OnceLock::new();

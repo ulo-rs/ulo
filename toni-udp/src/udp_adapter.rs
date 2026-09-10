@@ -5,10 +5,10 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures_util::FutureExt;
 use tokio::net::UdpSocket;
-use tokio::sync::{watch, Mutex, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 use toni::rpc::wire;
-use toni::{async_trait, RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks};
+use toni::{RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks, async_trait};
 use tracing::Instrument;
 
 /// Maximum UDP datagram payload (theoretical max minus IPv4 + UDP headers).

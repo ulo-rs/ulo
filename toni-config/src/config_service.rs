@@ -3,9 +3,9 @@
 use crate::Config;
 use std::any::Any;
 use std::sync::Arc;
+use toni::FxHashMap;
 use toni::async_trait;
 use toni::traits_helpers::{Provider, ProviderContext, ProviderFactory};
-use toni::FxHashMap;
 
 /// Service that provides access to configuration
 ///

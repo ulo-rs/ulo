@@ -3,8 +3,8 @@ use crate::graphql_service::GraphQLService;
 use async_graphql::{ObjectType, Schema, SubscriptionType};
 use async_trait::async_trait;
 use std::sync::Arc;
-use toni::traits_helpers::{Injectable, Provider, ProviderFactory};
 use toni::FxHashMap;
+use toni::traits_helpers::{Injectable, Provider, ProviderFactory};
 
 /// `ProviderFactory` for `GraphQLService` — registered during module scanning.
 pub struct GraphQLServiceFactory<Query, Mutation, Subscription, Ctx>

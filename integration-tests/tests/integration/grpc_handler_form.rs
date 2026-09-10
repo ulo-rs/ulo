@@ -15,7 +15,7 @@ use toni::context::{Extensions, GrpcContext, HandlerContext};
 use toni::extractors::Payload as Aliased;
 use toni::extractors::{Inbound, Payload};
 use toni::toni_factory::ToniFactory;
-use toni::{async_trait, injectable, module, ErrorKind, GrpcCode, GrpcStatus};
+use toni::{ErrorKind, GrpcCode, GrpcStatus, async_trait, injectable, module};
 use toni_grpc::GrpcRequest;
 use toni_macros::{controller, grpc_methods, new, use_error_handlers, use_guards};
 

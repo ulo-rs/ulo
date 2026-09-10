@@ -21,7 +21,7 @@ use toni::errors::Unrouted;
 use toni::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
 use toni::toni_factory::ToniFactory;
 use toni::websocket::{WsHandlerResult, WsMessage};
-use toni::{catch, module, Error};
+use toni::{Error, catch, module};
 use toni_macros::{
     controller, message_pattern, new, patterns, subscribe_message, subscriptions, websocket_gateway,
 };

@@ -19,8 +19,8 @@ use std::time::Duration;
 use crate::common::NotServed;
 use futures_util::Stream;
 use serial_test::serial;
-use toni::extractors::{Inbound, Payload};
 use toni::ToniFactory;
+use toni::extractors::{Inbound, Payload};
 use toni_macros::{controller, grpc_methods, module, new};
 use tonic::transport::{Certificate, ClientTlsConfig, Identity, ServerTlsConfig};
 

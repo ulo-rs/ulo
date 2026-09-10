@@ -1,7 +1,7 @@
 use crate::common::TestServer;
 use serial_test::serial;
 use std::sync::atomic::{AtomicU32, Ordering};
-use toni::{controller, get, injectable, module, new, routes, Body as ToniBody};
+use toni::{Body as ToniBody, controller, get, injectable, module, new, routes};
 use toni_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]

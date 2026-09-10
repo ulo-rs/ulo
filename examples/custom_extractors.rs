@@ -67,7 +67,7 @@ use std::fmt;
 use toni::context::HttpContext;
 use toni::extractors::Json;
 use toni::http_helpers::Body as ToniBody;
-use toni::{controller, get, module, post, routes, FromContext};
+use toni::{FromContext, controller, get, module, post, routes};
 
 // ============================================================================
 // SECTION 1: AUTHENTICATION EXTRACTORS

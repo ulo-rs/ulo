@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use toni::async_trait;
 use toni::context::HttpContext;
 use toni::traits_helpers::Guard;
-use toni::{controller, get, injectable, module, new, routes, Body as ToniBody};
+use toni::{Body as ToniBody, controller, get, injectable, module, new, routes};
 
 use crate::common::TestServer;
 

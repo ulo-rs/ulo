@@ -2,8 +2,8 @@ use crate::common::TestServer;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use toni::{
-    controller, extractors::Json, get, injectable, module, new, post, routes, Body as ToniBody,
-    Request,
+    Body as ToniBody, Request, controller, extractors::Json, get, injectable, module, new, post,
+    routes,
 };
 use toni_config::{Config, ConfigModule, ConfigService};
 
@@ -254,8 +254,8 @@ async fn json_body_and_request_extraction() {
 #[tokio_localset_test::localset_test]
 async fn request_extensions_pattern() {
     use toni::async_trait;
-    use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
     use toni::traits_helpers::MiddlewareConsumer;
+    use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
 
     #[derive(Clone)]
     struct UserId(String);

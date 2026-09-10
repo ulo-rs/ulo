@@ -1,9 +1,9 @@
 use crate::common::TestServer;
 use serde::Deserialize;
 use toni::{
-    controller,
+    Body as ToniBody, controller,
     extractors::{Bytes as RenamedBytes, Json, Path, Query, Validated},
-    get, module, post, routes, Body as ToniBody,
+    get, module, post, routes,
 };
 use validator::Validate;
 

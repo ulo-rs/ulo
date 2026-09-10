@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use toni::middleware::{AllowedOrigins, CorsMiddleware, CorsOptions};
-use toni::{controller, get, module, routes, Body as ToniBody, ToniFactory};
+use toni::{Body as ToniBody, ToniFactory, controller, get, module, routes};
 
 use crate::common::TestServer;
 
@@ -63,9 +63,11 @@ async fn preflight_answered_without_options_route() {
 
     assert_eq!(resp.status(), 204);
     assert_eq!(header(&resp, "access-control-allow-origin"), Some("*"));
-    assert!(header(&resp, "access-control-allow-methods")
-        .unwrap()
-        .contains("GET"));
+    assert!(
+        header(&resp, "access-control-allow-methods")
+            .unwrap()
+            .contains("GET")
+    );
     // No allowed_headers configured — the requested set is reflected.
     assert_eq!(
         header(&resp, "access-control-allow-headers"),

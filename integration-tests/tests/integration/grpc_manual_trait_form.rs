@@ -15,10 +15,10 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use serial_test::serial;
+use toni::ToniFactory;
 use toni::context::{GrpcContext, HandlerContext};
 use toni::extractors::Payload;
-use toni::ToniFactory;
-use toni::{module, ErrorKind};
+use toni::{ErrorKind, module};
 use toni_macros::{controller, grpc_methods, new};
 
 // The manual fixture in `build.rs` names its message types by path, and that

@@ -18,7 +18,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use toni::{async_trait, controller, get, module, routes, Body as ToniBody, ToniFactory};
+use toni::{Body as ToniBody, ToniFactory, async_trait, controller, get, module, routes};
 
 use crate::common::TestServer;
 

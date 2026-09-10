@@ -1,6 +1,6 @@
 # toni-redis
 
-Redis integration for the [Toni framework](https://github.com/monterxto/toni-rs).
+Redis integration for the [Toni framework](https://github.com/ifeanyi-ugwu/toni-rs).
 
 Registers a `redis::aio::ConnectionManager` in Toni's DI container so any injectable can declare it as a dependency. The connection manager automatically reconnects on failure and multiplexes commands over a single connection.
 

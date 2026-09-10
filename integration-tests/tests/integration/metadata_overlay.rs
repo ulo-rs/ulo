@@ -4,7 +4,7 @@
 //! an annotation on the impl block compiled and did nothing.
 
 use toni::context::{HandlerContext, HttpContext};
-use toni::{controller, get, module, routes, set_metadata, Body as ToniBody};
+use toni::{Body as ToniBody, controller, get, module, routes, set_metadata};
 
 use crate::common::TestServer;
 

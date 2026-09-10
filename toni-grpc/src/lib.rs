@@ -1,4 +1,4 @@
-//! gRPC transport adapter for the [Toni](https://github.com/monterxto/toni-rs) framework.
+//! gRPC transport adapter for the [Toni](https://github.com/ifeanyi-ugwu/toni-rs) framework.
 //!
 //! Drives a [`tonic`](https://docs.rs/tonic) server through Toni's bind /
 //! serve / drain lifecycle. Services declared with the framework's

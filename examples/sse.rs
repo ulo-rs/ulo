@@ -25,8 +25,8 @@
 use std::pin::Pin;
 use std::time::Duration;
 
-use futures::stream;
 use futures::Stream;
+use futures::stream;
 use tokio::sync::broadcast;
 use toni::extractors::Bytes;
 use toni::*;

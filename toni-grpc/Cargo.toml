@@ -1,9 +1,11 @@
 [package]
 name = "toni-grpc"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 description = "gRPC transport adapter for the Toni framework"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["toni", "grpc", "tonic", "framework", "adapter"]
 categories = ["network-programming"]
 
@@ -16,12 +18,12 @@ tls-aws-lc = ["tonic/tls-aws-lc"]
 [dependencies]
 toni = { path = "../toni", default-features = false }
 tonic = "0.14"
-tower = { version = "0.5", features = ["util", "limit"] }
-tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
-tokio-stream = { version = "0.1", features = ["net"] }
-http = "1"
-futures-util = "0.3"
-anyhow = "1.0"
-tracing = "0.1"
+tower = { workspace = true, features = ["util", "limit"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+tokio-stream = { workspace = true, features = ["net"] }
+http.workspace = true
+futures-util.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
 http-body = "1"
-async-trait = "0.1"
+async-trait.workspace = true

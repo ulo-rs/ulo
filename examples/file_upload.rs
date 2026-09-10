@@ -17,7 +17,7 @@
 //!        -F "username=alice" \
 //!        -F "avatar=@/path/to/avatar.png"
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use toni::extractors::Multipart;
 use toni::*;
 use toni_axum::AxumAdapter;

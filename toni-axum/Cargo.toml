@@ -1,23 +1,25 @@
 [package]
 name = "toni-axum"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "Axum adapter for the Toni framework"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["toni", "axum", "web", "framework", "adapter"]
 categories = ["web-programming::http-server"]
 
 [dependencies]
 toni = { path = "../toni", default-features = false }
 axum = { version = "0.8", features = ["ws"] }
-tower = { version = "0.5", features = ["util"] }
-tokio = { version = "1", features = ["full"] }
-anyhow = "1.0"
-tracing = "0.1"
-serde_json = "1.0"
-futures-util = "0.3"
-http-body-util = "0.1"
-uuid = { version = "1.0", features = ["v4"] }
+tower = { workspace = true, features = ["util"] }
+tokio = { workspace = true, features = ["full"] }
+anyhow.workspace = true
+tracing.workspace = true
+serde_json.workspace = true
+futures-util.workspace = true
+http-body-util.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }

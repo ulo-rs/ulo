@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use futures::FutureExt;
-use rumqttc::v5::mqttbytes::v5::{Packet, Publish, PublishProperties};
 use rumqttc::v5::mqttbytes::QoS;
+use rumqttc::v5::mqttbytes::v5::{Packet, Publish, PublishProperties};
 use rumqttc::v5::{AsyncClient, Event, MqttOptions};
 use toni::{RpcAdapter, RpcCallInfo, RpcMessageCallbacks};
 

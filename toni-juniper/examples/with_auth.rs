@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use juniper::{graphql_object, EmptySubscription, FieldResult, RootNode};
+use juniper::{EmptySubscription, FieldResult, RootNode, graphql_object};
 use std::sync::Arc;
 use toni::{injectable, module, toni_factory::ToniFactory};
 use toni_axum::AxumAdapter;
@@ -195,8 +195,8 @@ impl Mutation {
 // App Module (with DI providers)
 // ============================================================================
 
-fn build_graphql_module(
-) -> GraphQLModule<Query, Mutation, EmptySubscription<GraphQLContext>, _GraphQLContextBuilder> {
+fn build_graphql_module()
+-> GraphQLModule<Query, Mutation, EmptySubscription<GraphQLContext>, _GraphQLContextBuilder> {
     let schema = RootNode::new(Query, Mutation, EmptySubscription::new());
 
     // Create context builder (will be injected with services by Toni!)
@@ -244,7 +244,9 @@ async fn main() {
     println!("   query {{ users {{ id username email }} }}");
 
     println!("\n4. Update profile (requires auth):");
-    println!("   mutation {{ updateProfile(username: \"newname\", email: \"new@example.com\") {{ id username email }} }}\n");
+    println!(
+        "   mutation {{ updateProfile(username: \"newname\", email: \"new@example.com\") {{ id username email }} }}\n"
+    );
 
     // Create Toni app
     let mut app = ToniFactory::create(AppModule).await.unwrap();
