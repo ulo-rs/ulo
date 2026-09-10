@@ -65,6 +65,10 @@ jobs:
       - run: cargo test -p toni-seaorm -p toni-redis -p toni-mongodb --lib --test startup --locked
       - run: cargo test -p toni-sqlx --features postgres --lib --test startup --locked
       - run: cargo test -p toni-diesel --features postgres --lib --test startup --locked
+      # Doc examples compile in no other job: `--all-targets` skips them and the
+      # docs job renders without running them. Only examples not marked `ignore`
+      # are covered.
+      - run: cargo test --workspace --all-features --doc --locked
 
   scaffold:
     name: cli scaffold
