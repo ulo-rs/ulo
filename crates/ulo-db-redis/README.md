@@ -1,6 +1,6 @@
 # ulo-db-redis
 
-Redis integration for the [Ulo framework](https://github.com/ifeanyi-ugwu/ulo).
+Redis integration for the [Ulo framework](https://github.com/ulo-rs/ulo).
 
 Registers a `redis::aio::ConnectionManager` in Ulo's DI container so any injectable can declare it as a dependency. The connection manager automatically reconnects on failure and multiplexes commands over a single connection.
 

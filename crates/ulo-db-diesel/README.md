@@ -1,6 +1,6 @@
 # ulo-db-diesel
 
-Diesel async integration for the [Ulo framework](https://github.com/ifeanyi-ugwu/ulo).
+Diesel async integration for the [Ulo framework](https://github.com/ulo-rs/ulo).
 
 Registers a `diesel-async` deadpool connection pool in Ulo's DI container so any injectable can declare it as a dependency. The pool is closed cleanly on application shutdown.
 

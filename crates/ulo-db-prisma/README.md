@@ -1,6 +1,6 @@
 # ulo-db-prisma
 
-Prisma integration for the [Ulo framework](https://github.com/ifeanyi-ugwu/ulo).
+Prisma integration for the [Ulo framework](https://github.com/ulo-rs/ulo).
 
 Registers a `prisma-client-rust` generated client in Ulo's DI container so any injectable can declare it as a dependency.
 
