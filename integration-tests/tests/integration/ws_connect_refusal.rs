@@ -12,12 +12,12 @@
 
 use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
-use toni::async_trait;
-use toni::context::WsContext;
-use toni::traits_helpers::Guard;
-use toni::websocket::{WsHandlerResult, WsMessage};
-use toni::{injectable, module};
-use toni_macros::{new, subscribe_message, subscriptions, websocket_gateway};
+use ulo::async_trait;
+use ulo::context::WsContext;
+use ulo::traits_helpers::Guard;
+use ulo::websocket::{WsHandlerResult, WsMessage};
+use ulo::{injectable, module};
+use ulo_macros::{new, subscribe_message, subscriptions, websocket_gateway};
 
 use crate::common::TestServer;
 

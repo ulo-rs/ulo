@@ -13,10 +13,10 @@
 use std::net::SocketAddr;
 
 use futures_util::{SinkExt, StreamExt};
-use toni::module;
-use toni::toni_factory::ToniFactory;
-use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
-use toni_macros::{new, subscribe_message, subscriptions, websocket_gateway};
+use ulo::module;
+use ulo::ulo_factory::UloFactory;
+use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo_macros::{new, subscribe_message, subscriptions, websocket_gateway};
 
 /// Never bound by anything. Its only job is to pair the gateway with the
 /// socket passed to `use_websocket_listener`.
@@ -41,14 +41,14 @@ impl AdoptedGateway {
 #[module(providers: [AdoptedGateway])]
 struct AdoptedModule;
 
-async fn case_serves_on_caller_socket(adapter: impl toni::WebSocketAdapter) {
+async fn case_serves_on_caller_socket(adapter: impl ulo::WebSocketAdapter) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let expected = listener.local_addr().unwrap();
 
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(AdoptedModule).await.unwrap();
+        let mut app = UloFactory::create(AdoptedModule).await.unwrap();
         app.use_websocket_adapter(adapter).unwrap();
         app.use_websocket_listener(DECLARED_PORT, listener).unwrap();
         let bound = app.bind().await.unwrap();
@@ -99,7 +99,7 @@ macro_rules! ws_adoption_suite {
     };
 }
 
-ws_adoption_suite!(axum, toni_axum::AxumAdapter::new());
-ws_adoption_suite!(poem, toni_poem::PoemAdapter::new());
-ws_adoption_suite!(salvo, toni_salvo::SalvoAdapter::new());
-ws_adoption_suite!(tungstenite, toni_tungstenite::TungsteniteAdapter::new());
+ws_adoption_suite!(axum, ulo_http_axum::AxumAdapter::new());
+ws_adoption_suite!(poem, ulo_http_poem::PoemAdapter::new());
+ws_adoption_suite!(salvo, ulo_http_salvo::SalvoAdapter::new());
+ws_adoption_suite!(tungstenite, ulo_ws_tungstenite::TungsteniteAdapter::new());

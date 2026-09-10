@@ -1,6 +1,6 @@
 //! A gRPC client is a provider like any other.
 //!
-//! toni has no client module for any transport — an `RpcClient` is constructed
+//! ulo has no client module for any transport — an `RpcClient` is constructed
 //! in a provider too. What this pins is that the ordinary DI path carries a
 //! tonic-generated client with nothing framework-side added: registered under
 //! its own type, injected with a bare `#[inject]`, and connected lazily so
@@ -13,12 +13,12 @@ use std::time::Duration;
 
 use crate::common::NotServed;
 use futures_util::Stream;
-use toni::extractors::{Inbound, Payload};
-use toni::{ToniFactory, module, provider_factory};
-use toni_macros::{controller, get, grpc_methods, new, routes};
+use ulo::extractors::{Inbound, Payload};
+use ulo::{UloFactory, module, provider_factory};
+use ulo_macros::{controller, get, grpc_methods, new, routes};
 
 mod probe_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use probe_pb::orders_client::OrdersClient;
@@ -94,7 +94,7 @@ pub struct CallerController {
 #[routes]
 impl CallerController {
     #[get("/place")]
-    async fn place(&self) -> toni::Body {
+    async fn place(&self) -> ulo::Body {
         let mut orders = self.orders.clone();
         let reply = orders
             .create(probe_pb::CreateOrderRequest {
@@ -103,7 +103,7 @@ impl CallerController {
             })
             .await
             .expect("the injected client must reach the server");
-        toni::Body::text(reply.into_inner().status)
+        ulo::Body::text(reply.into_inner().status)
     }
 }
 
@@ -124,14 +124,14 @@ impl ProbeClientModule {}
 
 #[serial_test::serial]
 #[tokio_localset_test::localset_test]
-async fn an_injected_tonic_client_reaches_a_toni_server() {
+async fn an_injected_tonic_client_reaches_a_ulo_server() {
     // Server first, so the port is known before the client factory runs.
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(ProbeServerModule).await.unwrap();
-        app.use_grpc_adapter(toni_grpc::GrpcAdapter::new(addr))
+        let mut app = UloFactory::create(ProbeServerModule).await.unwrap();
+        app.use_grpc_adapter(ulo_grpc::GrpcAdapter::new(addr))
             .unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.grpc.expect("grpc must bind").port());

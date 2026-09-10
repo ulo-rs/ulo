@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use toni::middleware::{AllowedOrigins, CorsMiddleware, CorsOptions};
-use toni::{Body as ToniBody, ToniFactory, controller, get, module, routes};
+use ulo::middleware::{AllowedOrigins, CorsMiddleware, CorsOptions};
+use ulo::{Body as UloBody, UloFactory, controller, get, module, routes};
 
 use crate::common::TestServer;
 
@@ -17,8 +17,8 @@ pub struct DataController {}
 #[routes]
 impl DataController {
     #[get("/data")]
-    fn data(&self) -> ToniBody {
-        ToniBody::text("payload")
+    fn data(&self) -> UloBody {
+        UloBody::text("payload")
     }
 }
 
@@ -26,13 +26,13 @@ impl DataController {
 impl CorsModule {}
 
 async fn permissive_server() -> TestServer {
-    let mut factory = ToniFactory::new();
+    let mut factory = UloFactory::new();
     factory.use_global_middleware(Arc::new(CorsMiddleware::permissive()));
     TestServer::start_with(factory, CorsModule).await
 }
 
 async fn allowlist_server() -> TestServer {
-    let mut factory = ToniFactory::new();
+    let mut factory = UloFactory::new();
     factory.use_global_middleware(Arc::new(CorsMiddleware::new(CorsOptions {
         origins: AllowedOrigins::List(vec!["http://allowed.dev".into()]),
         credentials: true,

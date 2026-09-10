@@ -9,14 +9,14 @@
 
 use crate::common::NotServed;
 use serial_test::serial;
-use toni::context::GrpcContext;
-use toni::extractors::{Inbound, Payload};
-use toni::toni_factory::ToniFactory;
-use toni::{ErrorKind, GrpcCode, GrpcStatus, async_trait, injectable, module};
-use toni_macros::{controller, grpc_methods, new, use_error_handlers};
+use ulo::context::GrpcContext;
+use ulo::extractors::{Inbound, Payload};
+use ulo::ulo_factory::UloFactory;
+use ulo::{ErrorKind, GrpcCode, GrpcStatus, async_trait, injectable, module};
+use ulo_macros::{controller, grpc_methods, new, use_error_handlers};
 
 mod chain_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use chain_pb::orders_client::OrdersClient;
@@ -35,7 +35,7 @@ impl std::fmt::Display for OutOfStock {
 
 impl std::error::Error for OutOfStock {}
 
-impl toni::Error for OutOfStock {
+impl ulo::Error for OutOfStock {
     fn kind(&self) -> ErrorKind {
         ErrorKind::Conflict
     }
@@ -47,10 +47,10 @@ impl toni::Error for OutOfStock {
 pub struct RestockHandler {}
 
 #[async_trait]
-impl toni::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for RestockHandler {
+impl ulo::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for RestockHandler {
     async fn handle_error(
         &self,
-        error: toni::traits_helpers::ChainError<'_>,
+        error: ulo::traits_helpers::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         let out_of_stock = error.downcast_ref::<OutOfStock>()?;
@@ -184,13 +184,13 @@ impl UnclaimedGrpcService {
 #[module(controllers: [UnclaimedGrpcService])]
 impl UnclaimedGrpcModule {}
 
-async fn boot(module: impl toni::ModuleMetadata + 'static) -> u16 {
+async fn boot(module: impl ulo::ModuleMetadata + 'static) -> u16 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::new().create_with(module).await.unwrap();
+        let mut app = UloFactory::new().create_with(module).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.grpc.expect("grpc must bind").port());

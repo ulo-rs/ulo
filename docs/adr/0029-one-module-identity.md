@@ -7,7 +7,7 @@ Status: accepted
 `ModuleMetadata` carried two identity methods. `get_id` was the registry key — a type name for
 static modules, `base#fingerprint` for dynamic ones (and, since ADR-0028's follow-ups, for the
 GraphQL modules). `get_name` was a display string, hand-written per module in formats that never
-agreed: the bare ident for `#[module]` types, `ConfigModule<full::path>` for toni-config,
+agreed: the bare ident for `#[module]` types, `ConfigModule<full::path>` for ulo-config,
 the constant `"GraphQLModule"` for both GraphQL crates, the builder-given base for `DynamicModule`.
 
 The name channel carried no information the id lacked. A `DynamicModule` is given its name at

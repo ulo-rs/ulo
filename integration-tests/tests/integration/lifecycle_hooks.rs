@@ -4,7 +4,7 @@
 //   module:on_module_init → provider:on_module_init
 //     → module:on_application_bootstrap → provider:on_application_bootstrap
 //
-// on_module_init fires during ToniFactory::create(); on_application_bootstrap
+// on_module_init fires during UloFactory::create(); on_application_bootstrap
 // fires during app.bind(). This split matters: providers that open connections
 // in init are ready by the time bootstrap runs.
 
@@ -12,13 +12,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::common::NotServed;
 use serial_test::serial;
-use toni::extractors::{Inbound, Payload};
-use toni::{
-    injectable, module, on_application_bootstrap, on_module_init, toni_factory::ToniFactory,
-};
-use toni_axum::AxumAdapter;
-use toni_macros::{controller, on_application_shutdown, on_module_destroy, patterns, routes};
-use toni_tcp::TcpAdapter;
+use ulo::extractors::{Inbound, Payload};
+use ulo::{injectable, module, on_application_bootstrap, on_module_init, ulo_factory::UloFactory};
+use ulo_http_axum::AxumAdapter;
+use ulo_macros::{controller, on_application_shutdown, on_module_destroy, patterns, routes};
+use ulo_rpc_tcp::TcpAdapter;
 
 static EVENT_LOG: OnceLock<Arc<Mutex<Vec<&'static str>>>> = OnceLock::new();
 
@@ -32,13 +30,13 @@ fn get_log() -> Arc<Mutex<Vec<&'static str>>> {
 pub struct HookedService {}
 impl HookedService {
     #[on_module_init]
-    async fn on_module_init(&self) -> toni::InitResult {
+    async fn on_module_init(&self) -> ulo::InitResult {
         get_log().lock().unwrap().push("provider:init");
         Ok(())
     }
 
     #[on_application_bootstrap]
-    async fn on_application_bootstrap(&self) -> toni::InitResult {
+    async fn on_application_bootstrap(&self) -> ulo::InitResult {
         get_log().lock().unwrap().push("provider:bootstrap");
         Ok(())
     }
@@ -47,13 +45,13 @@ impl HookedService {
 #[module(providers: [HookedService])]
 impl HookModule {
     #[on_module_init]
-    async fn on_module_init(&self) -> toni::InitResult {
+    async fn on_module_init(&self) -> ulo::InitResult {
         get_log().lock().unwrap().push("module:init");
         Ok(())
     }
 
     #[on_application_bootstrap]
-    async fn on_module_bootstrap(&self) -> toni::InitResult {
+    async fn on_module_bootstrap(&self) -> ulo::InitResult {
         get_log().lock().unwrap().push("module:bootstrap");
         Ok(())
     }
@@ -64,7 +62,7 @@ impl HookModule {
 async fn startup_hooks_fire_in_order() {
     get_log().lock().unwrap().clear();
 
-    let mut app = ToniFactory::create(HookModule).await.unwrap();
+    let mut app = UloFactory::create(HookModule).await.unwrap();
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
         .unwrap();
     app.bind().await.unwrap();
@@ -94,14 +92,14 @@ async fn path_qualified_module_hook_attr_fires() {
 
     #[module(providers: [])]
     impl QualifiedHookModule {
-        #[toni::on_module_init]
-        async fn on_module_init(&self) -> toni::InitResult {
+        #[ulo::on_module_init]
+        async fn on_module_init(&self) -> ulo::InitResult {
             qualified_log().lock().unwrap().push("module:init");
             Ok(())
         }
     }
 
-    let _app = ToniFactory::create(QualifiedHookModule).await.unwrap();
+    let _app = UloFactory::create(QualifiedHookModule).await.unwrap();
     assert_eq!(qualified_log().lock().unwrap().clone(), vec!["module:init"]);
 }
 
@@ -111,13 +109,13 @@ pub struct HookedRpcController {}
 #[patterns]
 impl HookedRpcController {
     #[on_module_init]
-    async fn ready(&self) -> toni::InitResult {
+    async fn ready(&self) -> ulo::InitResult {
         get_log().lock().unwrap().push("rpc-controller:init");
         Ok(())
     }
 
     #[on_application_bootstrap]
-    async fn started(&self) -> toni::InitResult {
+    async fn started(&self) -> ulo::InitResult {
         get_log().lock().unwrap().push("rpc-controller:bootstrap");
         Ok(())
     }
@@ -134,7 +132,7 @@ impl RpcHookModule {}
 async fn an_rpc_controller_still_gets_its_startup_hooks() {
     get_log().lock().unwrap().clear();
 
-    let mut app = ToniFactory::create(RpcHookModule).await.unwrap();
+    let mut app = UloFactory::create(RpcHookModule).await.unwrap();
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
         .unwrap();
     // The declared patterns need a transport to reach: `bind()` refuses an RPC controller with
@@ -152,32 +150,32 @@ async fn an_rpc_controller_still_gets_its_startup_hooks() {
 }
 
 mod orders_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
-#[toni_macros::controller]
+#[ulo_macros::controller]
 pub struct HookedGrpcService {}
 
 impl HookedGrpcService {
-    #[toni_macros::new]
+    #[ulo_macros::new]
     pub fn new() -> Self {
         Self {}
     }
 
     #[on_module_init]
-    async fn ready(&self) -> toni::InitResult {
+    async fn ready(&self) -> ulo::InitResult {
         get_log().lock().unwrap().push("grpc-service:init");
         Ok(())
     }
 
     #[on_application_bootstrap]
-    async fn started(&self) -> toni::InitResult {
+    async fn started(&self) -> ulo::InitResult {
         get_log().lock().unwrap().push("grpc-service:bootstrap");
         Ok(())
     }
 }
 
-#[toni_macros::grpc_methods(orders_pb::orders_server::Orders)]
+#[ulo_macros::grpc_methods(orders_pb::orders_server::Orders)]
 impl HookedGrpcService {
     #[grpc_method]
     async fn create(
@@ -233,7 +231,7 @@ impl GrpcHookModule {}
 async fn a_grpc_service_still_gets_its_startup_hooks() {
     get_log().lock().unwrap().clear();
 
-    let mut app = ToniFactory::create(GrpcHookModule).await.unwrap();
+    let mut app = UloFactory::create(GrpcHookModule).await.unwrap();
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
         .unwrap();
     app.bind().await.unwrap();
@@ -266,14 +264,14 @@ impl ContextHookedController {
 impl ContextHookModule {}
 
 /// An application context has no HTTP server, and its shutdown hooks used to reach providers only —
-/// the controller pass lived on `ToniApplication`. Every dispatch target is a controller now, so a
+/// the controller pass lived on `UloApplication`. Every dispatch target is a controller now, so a
 /// worker built with `create_application_context` would otherwise close without running any of them.
 #[serial]
 #[tokio_localset_test::localset_test]
 async fn an_application_context_runs_its_controllers_shutdown_hooks() {
     get_log().lock().unwrap().clear();
 
-    let mut ctx = ToniFactory::create_application_context(ContextHookModule)
+    let mut ctx = UloFactory::create_application_context(ContextHookModule)
         .await
         .unwrap();
     ctx.close().await;
@@ -294,7 +292,7 @@ async fn an_application_context_runs_its_controllers_shutdown_hooks() {
 async fn an_application_runs_its_controllers_teardown_hooks_once() {
     get_log().lock().unwrap().clear();
 
-    let mut app = ToniFactory::create(ContextHookModule).await.unwrap();
+    let mut app = UloFactory::create(ContextHookModule).await.unwrap();
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
         .unwrap();
     app.bind().await.unwrap();

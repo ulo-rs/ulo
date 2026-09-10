@@ -8,12 +8,12 @@
 use std::time::Duration;
 
 use serde::Deserialize;
-use toni::context::RpcContext;
-use toni::extractors::{Payload, Validated};
-use toni::module;
-use toni::rpc::{RpcData, RpcError};
-use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
-use toni_macros::{controller, new, patterns, subscriptions, websocket_gateway};
+use ulo::context::RpcContext;
+use ulo::extractors::{Payload, Validated};
+use ulo::module;
+use ulo::rpc::{RpcData, RpcError};
+use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo_macros::{controller, new, patterns, subscriptions, websocket_gateway};
 use validator::Validate;
 
 use crate::common::TestServer;
@@ -85,13 +85,13 @@ async fn pick_free_port() -> u16 {
     port
 }
 
-async fn start_rpc_server(module: impl toni::ModuleMetadata + 'static) -> u16 {
-    use toni::toni_factory::ToniFactory;
+async fn start_rpc_server(module: impl ulo::ModuleMetadata + 'static) -> u16 {
+    use ulo::ulo_factory::UloFactory;
     let port = pick_free_port().await;
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(module).await.unwrap();
-        app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", port))
+        let mut app = UloFactory::create(module).await.unwrap();
+        app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", port))
             .unwrap();
         app.start().await.unwrap();
     });

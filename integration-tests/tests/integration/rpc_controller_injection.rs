@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
-use toni::context::RpcContext;
-use toni::rpc::{RpcData, RpcError};
-use toni::*;
-use toni_macros::{controller, message_pattern, new, patterns};
+use ulo::context::RpcContext;
+use ulo::rpc::{RpcData, RpcError};
+use ulo::*;
+use ulo_macros::{controller, message_pattern, new, patterns};
 
 #[controller]
 pub struct OrdersController {}
@@ -46,7 +46,7 @@ impl AppModule {}
 /// `providers:` does not compile, because the macro emits no provider factory for one.
 #[tokio::test]
 async fn an_rpc_controller_is_not_resolvable_as_a_dependency() {
-    let message = ToniFactory::create_application_context(AppModule)
+    let message = UloFactory::create_application_context(AppModule)
         .await
         .err()
         .expect("an injected dispatch target must fail initialization")

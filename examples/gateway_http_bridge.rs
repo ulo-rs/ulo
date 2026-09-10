@@ -21,11 +21,11 @@
 //! Every connected WebSocket client receives the message.
 
 use serde::Deserialize;
-use toni::extractors::Json;
-use toni::websocket::{BroadcastModule, BroadcastService, WsClient, WsMessage};
-use toni::*;
-use toni_axum::AxumAdapter;
-use toni_macros::{module, new, subscriptions, websocket_gateway};
+use ulo::extractors::Json;
+use ulo::websocket::{BroadcastModule, BroadcastService, WsClient, WsMessage};
+use ulo::*;
+use ulo_http_axum::AxumAdapter;
+use ulo_macros::{module, new, subscriptions, websocket_gateway};
 
 // ---- gateway -----------------------------------------------------------------
 
@@ -92,14 +92,14 @@ impl AppModule {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("🔔 toni gateway → HTTP bridge\n");
+    println!("🔔 ulo gateway → HTTP bridge\n");
     println!("  WS   ws://127.0.0.1:3000/notifications");
     println!("  POST http://127.0.0.1:3000/notify  {{\"message\": \"hello\"}}");
     println!();
     println!("Every connected WS client receives messages POSTed to /notify.");
     println!();
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
         .unwrap();

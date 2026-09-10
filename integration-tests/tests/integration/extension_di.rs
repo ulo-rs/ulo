@@ -8,10 +8,10 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use toni::async_trait;
-use toni::context::{Extensions, HttpContext};
-use toni::traits_helpers::Guard;
-use toni::{Body as ToniBody, Extension, controller, get, injectable, module, routes};
+use ulo::async_trait;
+use ulo::context::{Extensions, HttpContext};
+use ulo::traits_helpers::Guard;
+use ulo::{Body as UloBody, Extension, controller, get, injectable, module, routes};
 
 use crate::common::TestServer;
 
@@ -73,19 +73,19 @@ pub struct OrderController {
 #[use_guards(AuthGuard)]
 impl OrderController {
     #[get("/place")]
-    fn place(&self) -> ToniBody {
-        ToniBody::text(self.orders.place())
+    fn place(&self) -> UloBody {
+        UloBody::text(self.orders.place())
     }
 
     /// The bag injects directly too, without declaring a view per type.
     #[get("/raw")]
-    fn raw(&self) -> ToniBody {
+    fn raw(&self) -> UloBody {
         let who = self
             .bag
             .get::<CurrentUser>()
             .map(|u| u.0)
             .unwrap_or_else(|| "ABSENT".into());
-        ToniBody::text(who)
+        UloBody::text(who)
     }
 }
 
@@ -151,8 +151,8 @@ pub struct OnceController {
 #[use_guards(OnceGuard)]
 impl OnceController {
     #[get("/who")]
-    fn who(&self) -> ToniBody {
-        ToniBody::text(
+    fn who(&self) -> UloBody {
+        UloBody::text(
             self.user
                 .get()
                 .map(|u| u.0)

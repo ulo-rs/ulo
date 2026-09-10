@@ -14,7 +14,7 @@ lazily inside the serve future.
 
 In Rust, `bind` is not a neutral word. `TcpListener::bind`, `UdpSocket::bind`, and every server
 framework's bind call acquire a socket. An SPI that uses the word for registration misleads on
-first contact — and `ToniApplication::bind`, which does acquire sockets, used the same word one
+first contact — and `UloApplication::bind`, which does acquire sockets, used the same word one
 level up with the standard meaning.
 
 This surface has a history of renames, several driven by symmetry rather than by what the method
@@ -48,7 +48,7 @@ Applied to the SPI:
   effect verb (`bind`, `connect`, `start`) would misname part of the fleet: listener transports
   bind synchronously there, brokered transports connect to their broker instead, and the
   orchestrator never branches on which.
-- **`bind` means socket acquisition, nothing else.** `ToniApplication::bind` keeps it. gRPC's
+- **`bind` means socket acquisition, nothing else.** `UloApplication::bind` keeps it. gRPC's
   socket acquisition moved out of registration into `into_lifecycle`, making `register_services`
   registration-only like its siblings; port-in-use still surfaces as `Err` from `app.bind()`,
   which awaits `into_lifecycle`.

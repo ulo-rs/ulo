@@ -22,7 +22,7 @@ on the module, and an interception in `resolve_dependencies` that runs before th
 
 Filing `#[rpc_controller]` under `providers:` was a deliberate divergence. Nest keeps `controllers`
 and `providers` as separate collections and resolves only the latter, so a Nest microservice
-controller cannot be injected; toni's could. That bought a property, which is why the divergence was
+controller cannot be injected; ulo's could. That bought a property, which is why the divergence was
 recorded as possibly right rather than wrong.
 
 ADR-0016 removed the property. What remains is the divergence with nothing behind it.
@@ -103,7 +103,7 @@ control would cost the loader its say over the order registration happens in.
 ### Dispatch stops travelling through the provider role channel
 
 `ProviderRole::RpcController` and `ProviderRole::GrpcService` are removed. So are
-`Module::dispatch_targets` and `ToniContainer::dispatch_target_tokens`: a dispatch target declared in
+`Module::dispatch_targets` and `UloContainer::dispatch_target_tokens`: a dispatch target declared in
 `controllers:` is absent from `providers_instances` structurally, exactly as an HTTP controller is, and
 is kept for lifecycle in `controller_objects` alongside one.
 

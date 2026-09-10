@@ -1,0 +1,18 @@
+[package]
+name = "ulo-rpc-udp"
+version = "0.1.0"
+edition.workspace = true
+description = "UDP transport adapter for the Ulo RPC gateway"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "udp", "rpc", "framework", "adapter"]
+categories = ["network-programming"]
+
+[dependencies]
+ulo = { path = "../ulo", default-features = false }
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+futures-util.workspace = true

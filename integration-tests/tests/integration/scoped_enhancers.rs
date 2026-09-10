@@ -3,16 +3,16 @@
 //! from contributing to the enhancer pipeline — a fresh instance is constructed
 //! per request using the DynGuardFactory / DynInterceptorFactory path.
 
-use toni::async_trait;
-use toni::context::{HttpContext, WsContext};
-use toni::http_helpers::HttpResponse;
-use toni::traits_helpers::{Guard, Interceptor, InterceptorNext};
-use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
-use toni::{
-    Body as ToniBody, Request, controller, get, injectable, module, routes, use_guards,
+use ulo::async_trait;
+use ulo::context::{HttpContext, WsContext};
+use ulo::http_helpers::HttpResponse;
+use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext};
+use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::{
+    Body as UloBody, Request, controller, get, injectable, module, routes, use_guards,
     use_interceptors,
 };
-use toni_macros::{new, subscriptions, websocket_gateway};
+use ulo_macros::{new, subscriptions, websocket_gateway};
 
 use crate::common::TestServer;
 
@@ -77,8 +77,8 @@ pub struct GateController {}
 #[use_guards(RequestGuard)]
 impl GateController {
     #[get("/check")]
-    fn check(&self) -> ToniBody {
-        ToniBody::text("passed".to_string())
+    fn check(&self) -> UloBody {
+        UloBody::text("passed".to_string())
     }
 }
 
@@ -89,8 +89,8 @@ pub struct SecretController {}
 #[use_guards(HeaderGuard)]
 impl SecretController {
     #[get("/unlock")]
-    fn unlock(&self) -> ToniBody {
-        ToniBody::text("unlocked".to_string())
+    fn unlock(&self) -> UloBody {
+        UloBody::text("unlocked".to_string())
     }
 }
 
@@ -101,8 +101,8 @@ pub struct TransientController {}
 #[use_interceptors(TransientInterceptor)]
 impl TransientController {
     #[get("/ping")]
-    fn ping(&self) -> ToniBody {
-        ToniBody::text("pong".to_string())
+    fn ping(&self) -> UloBody {
+        UloBody::text("pong".to_string())
     }
 }
 

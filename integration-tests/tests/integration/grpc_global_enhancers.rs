@@ -16,15 +16,15 @@ use std::time::Duration;
 
 use crate::common::NotServed;
 use serial_test::serial;
-use toni::ToniFactory;
-use toni::context::GrpcContext;
-use toni::extractors::{Inbound, Payload};
-use toni::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
-use toni::{GrpcHandlerResult, GrpcStatus};
-use toni_macros::{controller, grpc_methods, injectable, module, new, use_guards};
+use ulo::UloFactory;
+use ulo::context::GrpcContext;
+use ulo::extractors::{Inbound, Payload};
+use ulo::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo::{GrpcHandlerResult, GrpcStatus};
+use ulo_macros::{controller, grpc_methods, injectable, module, new, use_guards};
 
 mod globals_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use globals_pb::orders_client::OrdersClient;
@@ -44,7 +44,7 @@ fn seen() -> Vec<String> {
 
 struct GlobalGuard;
 
-#[toni::async_trait]
+#[ulo::async_trait]
 impl Guard<GrpcContext> for GlobalGuard {
     async fn can_activate(&self, _ctx: &GrpcContext) -> bool {
         record("global:guard");
@@ -54,7 +54,7 @@ impl Guard<GrpcContext> for GlobalGuard {
 
 struct DenyingGlobalGuard;
 
-#[toni::async_trait]
+#[ulo::async_trait]
 impl Guard<GrpcContext> for DenyingGlobalGuard {
     async fn can_activate(&self, _ctx: &GrpcContext) -> bool {
         record("global:deny");
@@ -64,7 +64,7 @@ impl Guard<GrpcContext> for DenyingGlobalGuard {
 
 struct GlobalInterceptor;
 
-#[toni::async_trait]
+#[ulo::async_trait]
 impl Interceptor<GrpcContext, GrpcHandlerResult> for GlobalInterceptor {
     async fn intercept(
         &self,
@@ -82,7 +82,7 @@ impl Interceptor<GrpcContext, GrpcHandlerResult> for GlobalInterceptor {
 /// whatever the method did.
 struct GlobalErrorHandler;
 
-#[toni::async_trait]
+#[ulo::async_trait]
 impl ErrorHandler<GrpcContext, GrpcStatus> for GlobalErrorHandler {
     async fn handle_error(&self, _error: ChainError<'_>, _ctx: &GrpcContext) -> Option<GrpcStatus> {
         record("global:error_handler");
@@ -93,7 +93,7 @@ impl ErrorHandler<GrpcContext, GrpcStatus> for GlobalErrorHandler {
 #[injectable]
 pub struct ServiceGuard {}
 
-#[toni::async_trait]
+#[ulo::async_trait]
 impl Guard<GrpcContext> for ServiceGuard {
     async fn can_activate(&self, _ctx: &GrpcContext) -> bool {
         record("service:guard");
@@ -126,9 +126,9 @@ impl std::fmt::Display for InvalidQty {
 
 impl std::error::Error for InvalidQty {}
 
-impl toni::Error for InvalidQty {
-    fn kind(&self) -> toni::ErrorKind {
-        toni::ErrorKind::BadRequest
+impl ulo::Error for InvalidQty {
+    fn kind(&self) -> ulo::ErrorKind {
+        ulo::ErrorKind::BadRequest
     }
 }
 
@@ -186,17 +186,17 @@ impl GlobalsGrpcModule {}
 
 // ── harness ────────────────────────────────────────────────────────────────
 
-async fn boot<F>(configure: F) -> (u16, toni::ShutdownHandle)
+async fn boot<F>(configure: F) -> (u16, ulo::ShutdownHandle)
 where
-    F: FnOnce(&mut ToniFactory) + Send + 'static,
+    F: FnOnce(&mut UloFactory) + Send + 'static,
 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut factory = ToniFactory::new();
+        let mut factory = UloFactory::new();
         configure(&mut factory);
         let mut app = factory.create_with(GlobalsGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
@@ -227,7 +227,7 @@ fn order(item: &str, qty: u32) -> globals_pb::CreateOrderRequest {
     }
 }
 
-async fn stop(shutdown: toni::ShutdownHandle) {
+async fn stop(shutdown: ulo::ShutdownHandle) {
     shutdown.shutdown();
     let _ = tokio::time::timeout(Duration::from_secs(2), shutdown.completed()).await;
 }

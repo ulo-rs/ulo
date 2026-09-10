@@ -1,11 +1,11 @@
 use std::sync::{Arc, Mutex, OnceLock};
-use toni::async_trait;
-use toni::context::HttpContext;
-use toni::di::{APP_GUARD, APP_INTERCEPTOR};
-use toni::http_helpers::HttpResponse;
-use toni::traits_helpers::{Guard, Interceptor, InterceptorNext};
-use toni::{
-    Body as ToniBody, controller, get, injectable, module, new, provider_token, provider_value,
+use ulo::async_trait;
+use ulo::context::HttpContext;
+use ulo::di::{APP_GUARD, APP_INTERCEPTOR};
+use ulo::http_helpers::HttpResponse;
+use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext};
+use ulo::{
+    Body as UloBody, controller, get, injectable, module, new, provider_token, provider_value,
     routes,
 };
 
@@ -126,9 +126,9 @@ impl TestController {
     }
 
     #[get("/test")]
-    fn test_endpoint(&self) -> ToniBody {
+    fn test_endpoint(&self) -> UloBody {
         self.tracker.track("controller:handler");
-        ToniBody::text("OK".to_string())
+        UloBody::text("OK".to_string())
     }
 }
 

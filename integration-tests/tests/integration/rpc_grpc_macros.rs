@@ -19,12 +19,12 @@ use std::time::Duration;
 
 use crate::common::NotServed;
 use futures_util::{Stream, StreamExt};
-use toni::ToniFactory;
-use toni::extractors::{Inbound, Payload};
-use toni_macros::{controller, grpc_methods, injectable, module, new, set_metadata};
+use ulo::UloFactory;
+use ulo::extractors::{Inbound, Payload};
+use ulo_macros::{controller, grpc_methods, injectable, module, new, set_metadata};
 
 mod orders_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use orders_pb::orders_client::OrdersClient;
@@ -72,9 +72,9 @@ impl std::fmt::Display for InvalidQty {
 
 impl std::error::Error for InvalidQty {}
 
-impl toni::Error for InvalidQty {
-    fn kind(&self) -> toni::ErrorKind {
-        toni::ErrorKind::BadRequest
+impl ulo::Error for InvalidQty {
+    fn kind(&self) -> ulo::ErrorKind {
+        ulo::ErrorKind::BadRequest
     }
 }
 
@@ -89,9 +89,9 @@ impl std::fmt::Display for UserSaid {
 
 impl std::error::Error for UserSaid {}
 
-impl toni::Error for UserSaid {
-    fn kind(&self) -> toni::ErrorKind {
-        toni::ErrorKind::BadRequest
+impl ulo::Error for UserSaid {
+    fn kind(&self) -> ulo::ErrorKind {
+        ulo::ErrorKind::BadRequest
     }
 }
 
@@ -108,9 +108,9 @@ impl std::fmt::Display for HandlerFailed {
 
 impl std::error::Error for HandlerFailed {}
 
-impl toni::Error for HandlerFailed {
-    fn kind(&self) -> toni::ErrorKind {
-        toni::ErrorKind::Conflict
+impl ulo::Error for HandlerFailed {
+    fn kind(&self) -> ulo::ErrorKind {
+        ulo::ErrorKind::Conflict
     }
 }
 
@@ -207,9 +207,9 @@ struct GrpcMacrosModule;
 pub struct AuthGuard {}
 impl AuthGuard {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::Guard<toni::GrpcContext> for AuthGuard {
-    async fn can_activate(&self, ctx: &toni::GrpcContext) -> bool {
+#[ulo::async_trait]
+impl ulo::traits_helpers::Guard<ulo::GrpcContext> for AuthGuard {
+    async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
         ctx.header("authorization").is_some()
     }
 }
@@ -218,9 +218,9 @@ impl toni::traits_helpers::Guard<toni::GrpcContext> for AuthGuard {
 pub struct AdminGuard {}
 impl AdminGuard {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::Guard<toni::GrpcContext> for AdminGuard {
-    async fn can_activate(&self, ctx: &toni::GrpcContext) -> bool {
+#[ulo::async_trait]
+impl ulo::traits_helpers::Guard<ulo::GrpcContext> for AdminGuard {
+    async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
         ctx.header("x-role") == Some("admin")
     }
 }
@@ -298,14 +298,14 @@ impl GuardedOrdersGrpcService {
 #[module(controllers: [GuardedOrdersGrpcService], providers: [OrdersCounter, AuthGuard, AdminGuard])]
 struct GuardedGrpcModule;
 
-async fn boot_guarded() -> (u16, toni::ShutdownHandle) {
+async fn boot_guarded() -> (u16, ulo::ShutdownHandle) {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(GuardedGrpcModule).await.unwrap();
+        let mut app = UloFactory::create(GuardedGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let port = bound
@@ -354,17 +354,17 @@ fn lock_interceptor_test() -> std::sync::MutexGuard<'static, ()> {
 pub struct ServiceInterceptor {}
 impl ServiceInterceptor {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::Interceptor<toni::GrpcContext, toni::GrpcHandlerResult>
+#[ulo::async_trait]
+impl ulo::traits_helpers::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult>
     for ServiceInterceptor
 {
     async fn intercept(
         &self,
-        ctx: &toni::GrpcContext,
+        ctx: &ulo::GrpcContext,
         next: Box<
-            dyn toni::traits_helpers::InterceptorNext<toni::GrpcContext, toni::GrpcHandlerResult>,
+            dyn ulo::traits_helpers::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>,
         >,
-    ) -> toni::GrpcHandlerResult {
+    ) -> ulo::GrpcHandlerResult {
         log_interceptor("service:before");
         let answer = next.run(ctx).await;
         log_interceptor("service:after");
@@ -376,17 +376,17 @@ impl toni::traits_helpers::Interceptor<toni::GrpcContext, toni::GrpcHandlerResul
 pub struct MethodInterceptor {}
 impl MethodInterceptor {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::Interceptor<toni::GrpcContext, toni::GrpcHandlerResult>
+#[ulo::async_trait]
+impl ulo::traits_helpers::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult>
     for MethodInterceptor
 {
     async fn intercept(
         &self,
-        ctx: &toni::GrpcContext,
+        ctx: &ulo::GrpcContext,
         next: Box<
-            dyn toni::traits_helpers::InterceptorNext<toni::GrpcContext, toni::GrpcHandlerResult>,
+            dyn ulo::traits_helpers::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>,
         >,
-    ) -> toni::GrpcHandlerResult {
+    ) -> ulo::GrpcHandlerResult {
         log_interceptor("method:before");
         let answer = next.run(ctx).await;
         log_interceptor("method:after");
@@ -398,21 +398,19 @@ impl toni::traits_helpers::Interceptor<toni::GrpcContext, toni::GrpcHandlerResul
 pub struct DenyInterceptor {}
 impl DenyInterceptor {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::Interceptor<toni::GrpcContext, toni::GrpcHandlerResult>
+#[ulo::async_trait]
+impl ulo::traits_helpers::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult>
     for DenyInterceptor
 {
     async fn intercept(
         &self,
-        _ctx: &toni::GrpcContext,
+        _ctx: &ulo::GrpcContext,
         _next: Box<
-            dyn toni::traits_helpers::InterceptorNext<toni::GrpcContext, toni::GrpcHandlerResult>,
+            dyn ulo::traits_helpers::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>,
         >,
-    ) -> toni::GrpcHandlerResult {
+    ) -> ulo::GrpcHandlerResult {
         log_interceptor("deny:short-circuit");
-        Err(toni::GrpcStatus::permission_denied(
-            "blocked by interceptor",
-        ))
+        Err(ulo::GrpcStatus::permission_denied("blocked by interceptor"))
     }
 }
 
@@ -559,14 +557,14 @@ impl DenyOrdersGrpcService {
 #[module(controllers: [DenyOrdersGrpcService], providers: [OrdersCounter, DenyInterceptor])]
 struct DenyGrpcModule;
 
-async fn boot_intercepted() -> (u16, toni::ShutdownHandle) {
+async fn boot_intercepted() -> (u16, ulo::ShutdownHandle) {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(InterceptedGrpcModule).await.unwrap();
+        let mut app = UloFactory::create(InterceptedGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let port = bound
@@ -581,14 +579,14 @@ async fn boot_intercepted() -> (u16, toni::ShutdownHandle) {
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
-async fn boot_deny() -> (u16, toni::ShutdownHandle) {
+async fn boot_deny() -> (u16, ulo::ShutdownHandle) {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(DenyGrpcModule).await.unwrap();
+        let mut app = UloFactory::create(DenyGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let port = bound
@@ -604,23 +602,23 @@ async fn boot_deny() -> (u16, toni::ShutdownHandle) {
 }
 
 /// Boots the gRPC server with the default drain timeout.
-async fn boot() -> (u16, toni::ShutdownHandle) {
+async fn boot() -> (u16, ulo::ShutdownHandle) {
     boot_with(|a| a).await
 }
 
 /// Boots the gRPC server, applying a custom configuration to the adapter
 /// before it's registered (e.g. `with_drain_timeout`).
-async fn boot_with<F>(configure: F) -> (u16, toni::ShutdownHandle)
+async fn boot_with<F>(configure: F) -> (u16, ulo::ShutdownHandle)
 where
-    F: FnOnce(toni_grpc::GrpcAdapter) -> toni_grpc::GrpcAdapter + Send + 'static,
+    F: FnOnce(ulo_grpc::GrpcAdapter) -> ulo_grpc::GrpcAdapter + Send + 'static,
 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = configure(toni_grpc::GrpcAdapter::new(addr));
+    let adapter = configure(ulo_grpc::GrpcAdapter::new(addr));
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(GrpcMacrosModule).await.unwrap();
+        let mut app = UloFactory::create(GrpcMacrosModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let port = bound
@@ -953,19 +951,19 @@ async fn grpc_guard_method_level_stacks_on_block_level() {
 pub struct ConditionalErrorHandler {}
 impl ConditionalErrorHandler {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::ErrorHandler<toni::GrpcContext, toni::GrpcStatus>
+#[ulo::async_trait]
+impl ulo::traits_helpers::ErrorHandler<ulo::GrpcContext, ulo::GrpcStatus>
     for ConditionalErrorHandler
 {
     async fn handle_error(
         &self,
-        error: toni::traits_helpers::ChainError<'_>,
-        _ctx: &toni::GrpcContext,
-    ) -> ::std::option::Option<toni::GrpcStatus> {
+        error: ulo::traits_helpers::ChainError<'_>,
+        _ctx: &ulo::GrpcContext,
+    ) -> ::std::option::Option<ulo::GrpcStatus> {
         let msg = error.to_string();
         if msg.contains("remap-me") {
-            Some(toni::GrpcStatus::new(
-                toni::GrpcCode::FailedPrecondition,
+            Some(ulo::GrpcStatus::new(
+                ulo::GrpcCode::FailedPrecondition,
                 "remapped by handler",
             ))
         } else {
@@ -1036,14 +1034,14 @@ impl ErrorHandledOrdersGrpcService {
 #[module(controllers: [ErrorHandledOrdersGrpcService], providers: [OrdersCounter, ConditionalErrorHandler])]
 struct ErrorHandledGrpcModule;
 
-async fn boot_error_handled() -> (u16, toni::ShutdownHandle) {
+async fn boot_error_handled() -> (u16, ulo::ShutdownHandle) {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(ErrorHandledGrpcModule).await.unwrap();
+        let mut app = UloFactory::create(ErrorHandledGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let port = bound
@@ -1119,14 +1117,14 @@ impl PanickyOrdersGrpcService {
 #[module(controllers: [PanickyOrdersGrpcService], providers: [OrdersCounter])]
 struct PanickyGrpcModule;
 
-async fn boot_panicky() -> (u16, toni::ShutdownHandle) {
+async fn boot_panicky() -> (u16, ulo::ShutdownHandle) {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(PanickyGrpcModule).await.unwrap();
+        let mut app = UloFactory::create(PanickyGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let port = bound
@@ -1350,9 +1348,9 @@ async fn grpc_panic_in_handler_surfaces_as_internal() {
 pub struct PanickingGrpcGuard {}
 impl PanickingGrpcGuard {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::Guard<toni::GrpcContext> for PanickingGrpcGuard {
-    async fn can_activate(&self, _ctx: &toni::GrpcContext) -> bool {
+#[ulo::async_trait]
+impl ulo::traits_helpers::Guard<ulo::GrpcContext> for PanickingGrpcGuard {
+    async fn can_activate(&self, _ctx: &ulo::GrpcContext) -> bool {
         panic!("guard kaboom");
     }
 }
@@ -1424,17 +1422,17 @@ struct GuardPanicGrpcModule;
 pub struct PanickingGrpcInterceptor {}
 impl PanickingGrpcInterceptor {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::Interceptor<toni::GrpcContext, toni::GrpcHandlerResult>
+#[ulo::async_trait]
+impl ulo::traits_helpers::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult>
     for PanickingGrpcInterceptor
 {
     async fn intercept(
         &self,
-        _ctx: &toni::GrpcContext,
+        _ctx: &ulo::GrpcContext,
         _next: Box<
-            dyn toni::traits_helpers::InterceptorNext<toni::GrpcContext, toni::GrpcHandlerResult>,
+            dyn ulo::traits_helpers::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>,
         >,
-    ) -> toni::GrpcHandlerResult {
+    ) -> ulo::GrpcHandlerResult {
         panic!("interceptor kaboom");
     }
 }
@@ -1502,14 +1500,14 @@ impl InterceptorPanicGrpcService {
 #[module(controllers: [InterceptorPanicGrpcService], providers: [OrdersCounter, PanickingGrpcInterceptor])]
 struct InterceptorPanicGrpcModule;
 
-async fn boot_guard_panic() -> (u16, toni::ShutdownHandle) {
+async fn boot_guard_panic() -> (u16, ulo::ShutdownHandle) {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(GuardPanicGrpcModule).await.unwrap();
+        let mut app = UloFactory::create(GuardPanicGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let port = bound
@@ -1524,14 +1522,14 @@ async fn boot_guard_panic() -> (u16, toni::ShutdownHandle) {
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
-async fn boot_interceptor_panic() -> (u16, toni::ShutdownHandle) {
+async fn boot_interceptor_panic() -> (u16, ulo::ShutdownHandle) {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(InterceptorPanicGrpcModule)
+        let mut app = UloFactory::create(InterceptorPanicGrpcModule)
             .await
             .unwrap();
         app.use_grpc_adapter(adapter).unwrap();
@@ -1620,15 +1618,15 @@ async fn grpc_panic_in_interceptor_surfaces_as_internal() {
 pub struct PanickingGrpcErrorHandler {}
 impl PanickingGrpcErrorHandler {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::ErrorHandler<toni::GrpcContext, toni::GrpcStatus>
+#[ulo::async_trait]
+impl ulo::traits_helpers::ErrorHandler<ulo::GrpcContext, ulo::GrpcStatus>
     for PanickingGrpcErrorHandler
 {
     async fn handle_error(
         &self,
-        _error: toni::traits_helpers::ChainError<'_>,
-        _ctx: &toni::GrpcContext,
-    ) -> Option<toni::GrpcStatus> {
+        _error: ulo::traits_helpers::ChainError<'_>,
+        _ctx: &ulo::GrpcContext,
+    ) -> Option<ulo::GrpcStatus> {
         panic!("error-handler kaboom");
     }
 }
@@ -1693,14 +1691,14 @@ impl ErrorHandlerPanicGrpcService {
 #[module(controllers: [ErrorHandlerPanicGrpcService], providers: [OrdersCounter, PanickingGrpcErrorHandler])]
 struct ErrorHandlerPanicGrpcModule;
 
-async fn boot_error_handler_panic() -> (u16, toni::ShutdownHandle) {
+async fn boot_error_handler_panic() -> (u16, ulo::ShutdownHandle) {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(ErrorHandlerPanicGrpcModule)
+        let mut app = UloFactory::create(ErrorHandlerPanicGrpcModule)
             .await
             .unwrap();
         app.use_grpc_adapter(adapter).unwrap();
@@ -1814,17 +1812,17 @@ impl SlowOrdersGrpcService {
 #[module(controllers: [SlowOrdersGrpcService], providers: [OrdersCounter])]
 struct SlowGrpcModule;
 
-async fn boot_slow_with<F>(configure: F) -> (u16, toni::ShutdownHandle)
+async fn boot_slow_with<F>(configure: F) -> (u16, ulo::ShutdownHandle)
 where
-    F: FnOnce(toni_grpc::GrpcAdapter) -> toni_grpc::GrpcAdapter + Send + 'static,
+    F: FnOnce(ulo_grpc::GrpcAdapter) -> ulo_grpc::GrpcAdapter + Send + 'static,
 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = configure(toni_grpc::GrpcAdapter::new(addr));
+    let adapter = configure(ulo_grpc::GrpcAdapter::new(addr));
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(SlowGrpcModule).await.unwrap();
+        let mut app = UloFactory::create(SlowGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let port = bound
@@ -1914,10 +1912,10 @@ pub struct BusPrincipal(String);
 pub struct BusGuard {}
 impl BusGuard {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::Guard<toni::GrpcContext> for BusGuard {
-    async fn can_activate(&self, ctx: &toni::GrpcContext) -> bool {
-        use toni::context::HandlerContext;
+#[ulo::async_trait]
+impl ulo::traits_helpers::Guard<ulo::GrpcContext> for BusGuard {
+    async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
+        use ulo::context::HandlerContext;
         ctx.extensions().insert(BusPrincipal("carol".into()));
         true
     }
@@ -1940,7 +1938,7 @@ impl BusOrdersGrpcService {
     async fn create(
         &self,
         Payload(_req): Payload<orders_pb::CreateOrderRequest>,
-        extensions: toni::context::Extensions,
+        extensions: ulo::context::Extensions,
     ) -> Result<orders_pb::CreateOrderResponse, NotServed> {
         let who = extensions
             .get::<BusPrincipal>()
@@ -1991,11 +1989,11 @@ struct BusGrpcModule;
 #[tokio_localset_test::localset_test]
 async fn grpc_guard_write_reaches_the_handler() {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(BusGrpcModule).await.unwrap();
+        let mut app = UloFactory::create(BusGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let port = bound
@@ -2061,10 +2059,10 @@ pub struct GrpcCallScopedGuard {
     scoped: GrpcCallScoped,
 }
 
-#[toni::async_trait]
-impl toni::traits_helpers::Guard<toni::GrpcContext> for GrpcCallScopedGuard {
-    async fn can_activate(&self, ctx: &toni::GrpcContext) -> bool {
-        use toni::context::HandlerContext;
+#[ulo::async_trait]
+impl ulo::traits_helpers::Guard<ulo::GrpcContext> for GrpcCallScopedGuard {
+    async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
+        use ulo::context::HandlerContext;
         ctx.extensions().insert(GrpcGuardSaw(self.scoped.id()));
         true
     }
@@ -2098,7 +2096,7 @@ impl PerCallGrpcService {
     async fn create(
         &self,
         Payload(_req): Payload<orders_pb::CreateOrderRequest>,
-        extensions: toni::context::Extensions,
+        extensions: ulo::context::Extensions,
     ) -> Result<orders_pb::CreateOrderResponse, NotServed> {
         let guard_saw = extensions.get::<GrpcGuardSaw>().map(|s| s.0);
         Ok(orders_pb::CreateOrderResponse {
@@ -2212,17 +2210,17 @@ impl SingletonGrpcService {
 #[module(controllers: [SingletonGrpcService])]
 struct SingletonGrpcModule;
 
-async fn boot_module<M>(module: M) -> (u16, toni::ShutdownHandle)
+async fn boot_module<M>(module: M) -> (u16, ulo::ShutdownHandle)
 where
-    M: toni::traits_helpers::ModuleMetadata + 'static,
+    M: ulo::traits_helpers::ModuleMetadata + 'static,
 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(module).await.unwrap();
+        let mut app = UloFactory::create(module).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(
@@ -2342,10 +2340,10 @@ static DECLARED_SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec:
 #[injectable]
 pub struct RecordDeclared {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::Guard<toni::GrpcContext> for RecordDeclared {
-    async fn can_activate(&self, ctx: &toni::GrpcContext) -> bool {
-        use toni::context::HandlerContext as _;
+#[ulo::async_trait]
+impl ulo::traits_helpers::Guard<ulo::GrpcContext> for RecordDeclared {
+    async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
+        use ulo::context::HandlerContext as _;
         let m = ctx.metadata();
         let tier = m
             .and_then(|m| m.get::<Tier>())
@@ -2459,12 +2457,12 @@ async fn declared_metadata_reaches_a_grpc_guard() {
     let seen = DECLARED_SEEN.lock().unwrap().clone();
     assert!(
         seen.iter()
-            .any(|s| s == "toni_test.orders.Orders/Create:standard/internal"),
+            .any(|s| s == "ulo_test.orders.Orders/Create:standard/internal"),
         "an unannotated method inherits the service's entries: {seen:?}"
     );
     assert!(
         seen.iter()
-            .any(|s| s == "toni_test.orders.Orders/BulkCreate:premium/internal"),
+            .any(|s| s == "ulo_test.orders.Orders/BulkCreate:premium/internal"),
         "an annotated method shadows one entry and keeps the rest: {seen:?}"
     );
     shutdown.shutdown();

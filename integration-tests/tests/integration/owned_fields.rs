@@ -7,8 +7,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use toni::{injectable, module};
-use toni_config::{Config, ConfigModule, ConfigService};
+use ulo::{injectable, module};
+use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]
 struct TestConfig {
@@ -189,9 +189,9 @@ impl TestModule {}
 
 #[tokio::test]
 async fn test_owned_fields_runtime() {
-    use toni::toni_factory::ToniFactory;
+    use ulo::ulo_factory::UloFactory;
 
-    let app = ToniFactory::create(TestModule).await.unwrap();
+    let app = UloFactory::create(TestModule).await.unwrap();
 
     let standalone = app
         .get::<StandaloneService>()

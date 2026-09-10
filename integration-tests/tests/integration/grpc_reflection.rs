@@ -18,16 +18,16 @@ use std::time::Duration;
 use crate::common::NotServed;
 use futures_util::{Stream, StreamExt};
 use serial_test::serial;
-use toni::ToniFactory;
-use toni::extractors::{Inbound, Payload};
-use toni_macros::{controller, grpc_methods, module, new};
 use tonic_reflection::pb::v1::ServerReflectionRequest;
 use tonic_reflection::pb::v1::server_reflection_client::ServerReflectionClient;
 use tonic_reflection::pb::v1::server_reflection_request::MessageRequest;
 use tonic_reflection::pb::v1::server_reflection_response::MessageResponse;
+use ulo::UloFactory;
+use ulo::extractors::{Inbound, Payload};
+use ulo_macros::{controller, grpc_methods, module, new};
 
 mod reflect_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use reflect_pb::orders_server::{Orders, OrdersServer};
@@ -93,20 +93,20 @@ impl ReflectedOrders {
 #[module(controllers: [ReflectedOrders])]
 impl ReflectionModule {}
 
-async fn boot() -> (u16, toni::ShutdownHandle) {
+async fn boot() -> (u16, ulo::ShutdownHandle) {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
 
     let reflection = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(ORDERS_DESCRIPTOR)
         .build_v1()
         .expect("the descriptor set must build a reflection service");
-    let adapter = toni_grpc::GrpcAdapter::new(addr).add_service(reflection);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr).add_service(reflection);
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(ReflectionModule).await.unwrap();
+        let mut app = UloFactory::create(ReflectionModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let port = bound.grpc.expect("grpc must bind").port();
@@ -156,7 +156,7 @@ async fn reflection_lists_the_services_the_framework_registered() {
     };
 
     assert!(
-        listed.iter().any(|name| name == "toni_test.orders.Orders"),
+        listed.iter().any(|name| name == "ulo_test.orders.Orders"),
         "the DI-registered service must be discoverable: {listed:?}"
     );
 

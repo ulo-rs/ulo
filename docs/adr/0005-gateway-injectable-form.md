@@ -43,18 +43,18 @@ impl ChatGateway {
   *complete* gateway on its own. It re-emits the struct with `Clone`/`InjectFields`, emits the provider
   wiring carrying the gateway **role** (so the resolver discovers it), and emits `impl GatewayTrait` with
   identity/path/namespace/port baked from the attribute. Each behavior method (`after_init`,
-  `on_connect`, `on_disconnect`, `handle_event`, `enhancers`) delegates to `Self::__toni_ws_*` at the
+  `on_connect`, `on_disconnect`, `handle_event`, `enhancers`) delegates to `Self::__ulo_ws_*` at the
   concrete type, resolving to the `__ws::WsHandlersBridge` default unless a `#[subscriptions]` impl
   (`handle_event` / `enhancers`) or a connection-hook macro (`on_connect` / `on_disconnect` /
   `after_init`) shadows it. Construction and lifecycle reuse the provider bridges (`__construct` /
   `__lifecycle`), so `#[inject]` fields, `#[new]`, and `#[on_*]` hooks behave as on any injectable.
 - `#[subscriptions]` is an **impl** attribute and is *purely additive*: it scans the
   `#[subscribe_message]` handlers into the `handle_event` match and the gateway- and handler-level
-  enhancer attrs into the `enhancers` descriptor, emitting those two inherent `__toni_ws_*` fns
+  enhancer attrs into the `enhancers` descriptor, emitting those two inherent `__ulo_ws_*` fns
   (dispatch-not-detect, the same pattern as `#[new]`). It leaves `#[new]`, `#[on_*]`, and the
   connection-hook attrs intact for their own macros.
 - `#[on_connect]` / `#[on_disconnect]` / `#[after_init]` are **single-slot** connection hooks, so
-  each is its own per-method macro emitting one `__toni_ws_*` forwarder — exactly like `#[new]` and
+  each is its own per-method macro emitting one `__ulo_ws_*` forwarder — exactly like `#[new]` and
   `#[on_module_init]`. A hook stands alone (no `#[subscriptions]` impl required), and declaring one
   twice is a duplicate-definition compile error instead of a silent last-wins.
 

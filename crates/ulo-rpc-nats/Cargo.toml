@@ -1,0 +1,30 @@
+[package]
+name = "ulo-rpc-nats"
+version = "0.1.0"
+edition.workspace = true
+description = "NATS transport adapter for the Ulo RPC gateway"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "nats", "rpc", "framework", "adapter"]
+categories = ["network-programming"]
+
+[features]
+# Gates tests that need a live NATS (via testcontainers + Docker).
+integration = []
+
+[dependencies]
+ulo = { path = "../ulo", default-features = false }
+async-nats = "0.46"
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+bytes.workspace = true
+futures = { workspace = true, features = ["async-await", "executor"] }
+
+[dev-dependencies]
+testcontainers.workspace = true
+testcontainers-modules = { workspace = true, features = ["nats"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio-stream.workspace = true

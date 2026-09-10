@@ -6,11 +6,11 @@
 //!
 //! Each guard below is applied with `#[use_guards("TOKEN")]` and gates a route 403/200.
 
-use toni::async_trait;
-use toni::context::HttpContext;
-use toni::traits_helpers::Guard;
-use toni::{
-    Body as ToniBody, controller, get, module, provider_factory, provider_value, routes, use_guards,
+use ulo::async_trait;
+use ulo::context::HttpContext;
+use ulo::traits_helpers::Guard;
+use ulo::{
+    Body as UloBody, controller, get, module, provider_factory, provider_value, routes, use_guards,
 };
 
 use crate::common::TestServer;
@@ -46,14 +46,14 @@ pub struct GuardedController;
 impl GuardedController {
     #[get("/value")]
     #[use_guards("VALUE_GUARD")]
-    fn value_route(&self) -> ToniBody {
-        ToniBody::text("value ok".to_string())
+    fn value_route(&self) -> UloBody {
+        UloBody::text("value ok".to_string())
     }
 
     #[get("/factory")]
     #[use_guards("FACTORY_GUARD")]
-    fn factory_route(&self) -> ToniBody {
-        ToniBody::text("factory ok".to_string())
+    fn factory_route(&self) -> UloBody {
+        UloBody::text("factory ok".to_string())
     }
 }
 

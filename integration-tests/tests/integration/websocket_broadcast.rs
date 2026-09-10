@@ -11,8 +11,8 @@
 
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use toni::websocket::{BroadcastService, WsMessage, WsSink};
-use toni_axum::TokioSender;
+use ulo::websocket::{BroadcastService, WsMessage, WsSink};
+use ulo_http_axum::TokioSender;
 
 // Helpers
 
@@ -142,17 +142,17 @@ async fn leave_room_stops_room_messages() {
 
 mod di_tests {
     use std::sync::Arc;
-    use toni::module;
-    use toni::toni_factory::ToniFactory;
-    use toni::websocket::{BroadcastModule, BroadcastService, WsMessage, WsSink};
-    use toni_axum::TokioSender;
+    use ulo::module;
+    use ulo::ulo_factory::UloFactory;
+    use ulo::websocket::{BroadcastModule, BroadcastService, WsMessage, WsSink};
+    use ulo_http_axum::TokioSender;
 
     #[module(imports: [BroadcastModule::new()])]
     struct WsTestModule;
 
     #[tokio_localset_test::localset_test]
     async fn broadcast_module_provides_broadcast_service() {
-        let app = ToniFactory::create(WsTestModule).await.unwrap();
+        let app = UloFactory::create(WsTestModule).await.unwrap();
         let result = app.get::<BroadcastService>().await;
         assert!(
             result.is_ok(),
@@ -163,7 +163,7 @@ mod di_tests {
 
     #[tokio_localset_test::localset_test]
     async fn broadcast_service_can_send_to_connected_client() {
-        let app = ToniFactory::create(WsTestModule).await.unwrap();
+        let app = UloFactory::create(WsTestModule).await.unwrap();
         let bs = app
             .get::<BroadcastService>()
             .await

@@ -11,9 +11,9 @@
 //! Connect with: wscat -c ws://localhost:3000/ws
 //! Press Ctrl+C or send SIGTERM to trigger graceful shutdown
 
-use toni::websocket::{BroadcastModule, BroadcastService, WsClient, WsError, WsMessage};
-use toni::*;
-use toni_macros::{module, new, subscriptions, websocket_gateway};
+use ulo::websocket::{BroadcastModule, BroadcastService, WsClient, WsError, WsMessage};
+use ulo::*;
+use ulo_macros::{module, new, subscriptions, websocket_gateway};
 
 #[websocket_gateway("/ws")]
 pub struct SimpleGateway {
@@ -81,9 +81,9 @@ async fn shutdown_signal() -> String {
 async fn main() -> anyhow::Result<()> {
     println!("🚀 Starting server with graceful shutdown support...\n");
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
-    app.use_http_adapter(toni_axum::AxumAdapter::new(), ("127.0.0.1", 3000))
+    app.use_http_adapter(ulo_http_axum::AxumAdapter::new(), ("127.0.0.1", 3000))
         .unwrap();
 
     app.bind().await?;

@@ -11,11 +11,11 @@
 //! Connect with: websocat ws://localhost:3000/chat
 
 use serde::{Deserialize, Serialize};
-use toni::websocket::{
+use ulo::websocket::{
     BroadcastModule, BroadcastService, WsClient, WsError, WsHandlerOutput, WsMessage,
 };
-use toni::*;
-use toni_macros::{module, new, subscriptions, websocket_gateway};
+use ulo::*;
+use ulo_macros::{module, new, subscriptions, websocket_gateway};
 
 // Message types
 
@@ -300,9 +300,9 @@ struct ChatModule;
 async fn main() -> anyhow::Result<()> {
     println!("🚀 Starting WebSocket chat server with rooms...\n");
 
-    let mut app = ToniFactory::new().create_with(ChatModule).await?;
+    let mut app = UloFactory::new().create_with(ChatModule).await?;
 
-    app.use_http_adapter(toni_axum::AxumAdapter::new(), ("127.0.0.1", 3000))
+    app.use_http_adapter(ulo_http_axum::AxumAdapter::new(), ("127.0.0.1", 3000))
         .unwrap();
 
     // Adapter auto-discovers and registers all gateways from the container

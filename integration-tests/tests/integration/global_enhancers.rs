@@ -1,7 +1,7 @@
 //! Test for three-level enhancer hierarchy: global < controller < method
 //!
 //! This test verifies that:
-//! 1. Global enhancers are registered via ToniFactory
+//! 1. Global enhancers are registered via UloFactory
 //! 2. Controller-level enhancers apply to all methods
 //! 3. Method-level enhancers add to controller-level
 //! 4. Execution order is: global → controller → method
@@ -10,16 +10,16 @@
 
 use serial_test::serial;
 use std::sync::{Arc, Mutex};
-use toni::async_trait;
-use toni::http_helpers::HttpResponse;
-use toni::{
-    Body as ToniBody, ToniFactory, controller, get, module, routes, use_guards, use_interceptors,
+use ulo::async_trait;
+use ulo::http_helpers::HttpResponse;
+use ulo::{
+    Body as UloBody, UloFactory, controller, get, module, routes, use_guards, use_interceptors,
 };
-use toni_axum::AxumAdapter;
+use ulo_http_axum::AxumAdapter;
 
-use toni::context::HttpContext;
-use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use toni::traits_helpers::{Guard, Interceptor, InterceptorNext};
+use ulo::context::HttpContext;
+use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext};
 
 // ============================================================================
 // EXECUTION ORDER TRACKER
@@ -214,30 +214,30 @@ pub struct TestController {}
 #[use_interceptors(ControllerInterceptor{})]
 impl TestController {
     /// Endpoint with all three levels:
-    /// - Global (from ToniFactory)
+    /// - Global (from UloFactory)
     /// - Controller (from impl block)
     /// - Method (from this method)
     #[use_guards(MethodGuard{})]
     #[use_interceptors(MethodInterceptor{})]
     #[get("/three-level")]
-    fn three_level_endpoint(&self) -> ToniBody {
+    fn three_level_endpoint(&self) -> UloBody {
         get_tracker().track("controller:three_level");
-        ToniBody::text("Three-level test".to_string())
+        UloBody::text("Three-level test".to_string())
     }
 
     /// Endpoint with only global + controller levels (no method-level)
     #[get("/two-level")]
-    fn two_level_endpoint(&self) -> ToniBody {
+    fn two_level_endpoint(&self) -> UloBody {
         get_tracker().track("controller:two_level");
-        ToniBody::text("Two-level test".to_string())
+        UloBody::text("Two-level test".to_string())
     }
 
     /// Endpoint with duplicated guard at all three levels
     #[use_guards(GlobalGuard{})]
     #[get("/duplicate")]
-    fn duplicate_endpoint(&self) -> ToniBody {
+    fn duplicate_endpoint(&self) -> UloBody {
         get_tracker().track("controller:duplicate");
-        ToniBody::text("Duplicate test".to_string())
+        UloBody::text("Duplicate test".to_string())
     }
 }
 
@@ -261,7 +261,7 @@ async fn test_three_level_enhancer_hierarchy() {
 
     local.spawn_local(async move {
         // Create factory and register GLOBAL enhancers
-        let mut factory = ToniFactory::new();
+        let mut factory = UloFactory::new();
         factory
             .use_global_middleware(Arc::new(GlobalMiddleware::new()))
             .use_global_http_guards(Arc::new(GlobalGuard::new()))

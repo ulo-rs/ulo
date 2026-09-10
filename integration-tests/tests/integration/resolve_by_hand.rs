@@ -6,10 +6,10 @@
 
 use std::collections::HashMap;
 
-use toni::context::{HttpContext, RpcContext};
-use toni::http_helpers::RequestPart;
-use toni::toni_factory::ToniFactory;
-use toni::{ProviderContext, RpcData, injectable, module, new};
+use ulo::context::{HttpContext, RpcContext};
+use ulo::http_helpers::RequestPart;
+use ulo::ulo_factory::UloFactory;
+use ulo::{ProviderContext, RpcData, injectable, module, new};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -36,7 +36,7 @@ fn request_parts() -> RequestPart {
 
 #[tokio::test]
 async fn one_execution_holds_one_instance() {
-    let app = ToniFactory::create(TestModule).await.unwrap();
+    let app = UloFactory::create(TestModule).await.unwrap();
     let execution = ProviderContext::standalone();
 
     let first = app
@@ -56,7 +56,7 @@ async fn one_execution_holds_one_instance() {
 
 #[tokio::test]
 async fn a_second_execution_builds_its_own() {
-    let app = ToniFactory::create(TestModule).await.unwrap();
+    let app = UloFactory::create(TestModule).await.unwrap();
 
     let first = app
         .resolve::<Stamp>(&ProviderContext::standalone())
@@ -72,7 +72,7 @@ async fn a_second_execution_builds_its_own() {
 
 #[tokio::test]
 async fn a_transport_execution_resolves_the_same_way() {
-    let app = ToniFactory::create(TestModule).await.unwrap();
+    let app = UloFactory::create(TestModule).await.unwrap();
 
     let http: ProviderContext = HttpContext::from_parts(request_parts()).into();
     let first = app
@@ -105,7 +105,7 @@ async fn a_transport_execution_resolves_the_same_way() {
 
 #[tokio::test]
 async fn without_an_execution_there_is_nothing_to_resolve_in() {
-    let app = ToniFactory::create(TestModule).await.unwrap();
+    let app = UloFactory::create(TestModule).await.unwrap();
 
     let error = app
         .resolve::<Stamp>(&ProviderContext::None)

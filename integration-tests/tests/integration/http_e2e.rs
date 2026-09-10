@@ -1,11 +1,11 @@
 use crate::common::TestServer;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
-use toni::{
-    Body as ToniBody, Request, controller, extractors::Json, get, injectable, module, new, post,
+use ulo::{
+    Body as UloBody, Request, controller, extractors::Json, get, injectable, module, new, post,
     routes,
 };
-use toni_config::{Config, ConfigModule, ConfigService};
+use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]
 struct AppConfig {
@@ -34,9 +34,9 @@ async fn async_controller_methods_with_http_server() {
     #[routes]
     impl TestController {
         #[get("/async")]
-        async fn async_endpoint(&self) -> ToniBody {
+        async fn async_endpoint(&self) -> UloBody {
             let result = self.service.process().await;
-            ToniBody::text(result)
+            UloBody::text(result)
         }
     }
 
@@ -68,8 +68,8 @@ async fn config_service_injection_in_controllers() {
     #[routes]
     impl TestController {
         #[get("/env")]
-        fn get_env(&self) -> ToniBody {
-            ToniBody::text(self.config.get_ref().env.clone())
+        fn get_env(&self) -> UloBody {
+            UloBody::text(self.config.get_ref().env.clone())
         }
     }
 
@@ -108,8 +108,8 @@ async fn singleton_controllers_share_state() {
         }
 
         #[get("/id")]
-        fn get_id(&self) -> ToniBody {
-            ToniBody::text(format!("{}", self.instance_id))
+        fn get_id(&self) -> UloBody {
+            UloBody::text(format!("{}", self.instance_id))
         }
     }
 
@@ -149,8 +149,8 @@ async fn request_scoped_controllers_create_per_request() {
         }
 
         #[get("/id")]
-        fn get_id(&self) -> ToniBody {
-            ToniBody::text(format!("{}", self.request_id))
+        fn get_id(&self) -> UloBody {
+            UloBody::text(format!("{}", self.request_id))
         }
     }
 
@@ -187,9 +187,9 @@ async fn optional_request_extractor() {
     #[routes]
     impl TestController {
         #[get("/headers")]
-        fn get_headers(&self, req: Request) -> ToniBody {
+        fn get_headers(&self, req: Request) -> UloBody {
             let has_header = req.header("X-Test-Header").is_some();
-            ToniBody::text(format!("{}", has_header))
+            UloBody::text(format!("{}", has_header))
         }
     }
 
@@ -222,9 +222,9 @@ async fn json_body_and_request_extraction() {
     #[routes]
     impl TestController {
         #[post("/users")]
-        fn create_user(&self, Json(user): Json<CreateUser>, req: Request) -> ToniBody {
+        fn create_user(&self, Json(user): Json<CreateUser>, req: Request) -> UloBody {
             let content_type = req.header("content-type").unwrap_or("unknown");
-            ToniBody::text(format!("created {} ({})", user.name, content_type))
+            UloBody::text(format!("created {} ({})", user.name, content_type))
         }
     }
 
@@ -253,9 +253,9 @@ async fn json_body_and_request_extraction() {
 
 #[tokio_localset_test::localset_test]
 async fn request_extensions_pattern() {
-    use toni::async_trait;
-    use toni::traits_helpers::MiddlewareConsumer;
-    use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
+    use ulo::async_trait;
+    use ulo::traits_helpers::MiddlewareConsumer;
+    use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
 
     #[derive(Clone)]
     struct UserId(String);
@@ -278,11 +278,11 @@ async fn request_extensions_pattern() {
     #[routes]
     impl TestController {
         #[get("/user")]
-        fn get_user(&self, req: Request) -> ToniBody {
+        fn get_user(&self, req: Request) -> UloBody {
             let user_id = req.extensions().get::<UserId>();
             match user_id {
-                Some(id) => ToniBody::text(id.0.clone()),
-                None => ToniBody::text("no_user".to_string()),
+                Some(id) => UloBody::text(id.0.clone()),
+                None => UloBody::text("no_user".to_string()),
             }
         }
     }

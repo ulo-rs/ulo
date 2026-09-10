@@ -1,30 +1,30 @@
 [package]
-name = "toni-examples"
+name = "ulo-examples"
 version = "0.1.0"
 edition.workspace = true
 publish = false
 
 [dev-dependencies]
-toni = { path = "../toni" }
-toni-macros = { path = "../toni-macros" }
+ulo = { path = "../crates/ulo" }
+ulo-macros = { path = "../crates/ulo-macros" }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 validator = { workspace = true, features = ["derive"] }
-toni-axum = { path = "../toni-axum" }
-toni-salvo = { path = "../toni-salvo" }
-toni-poem = { path = "../toni-poem" }
-toni-rocket = { path = "../toni-rocket" }
-toni-config = { path = "../toni-config" }
-toni-tcp = { path = "../toni-tcp" }
-toni-udp = { path = "../toni-udp" }
-toni-nats = { path = "../toni-nats" }
-toni-rabbitmq = { path = "../toni-rabbitmq" }
-toni-grpc = { path = "../toni-grpc" }
+ulo-http-axum = { path = "../crates/ulo-http-axum" }
+ulo-http-salvo = { path = "../crates/ulo-http-salvo" }
+ulo-http-poem = { path = "../crates/ulo-http-poem" }
+ulo-http-rocket = { path = "../crates/ulo-http-rocket" }
+ulo-config = { path = "../crates/ulo-config" }
+ulo-rpc-tcp = { path = "../crates/ulo-rpc-tcp" }
+ulo-rpc-udp = { path = "../crates/ulo-rpc-udp" }
+ulo-rpc-nats = { path = "../crates/ulo-rpc-nats" }
+ulo-rpc-rabbitmq = { path = "../crates/ulo-rpc-rabbitmq" }
+ulo-grpc = { path = "../crates/ulo-grpc" }
 tonic = "0.14"
 tonic-prost = "0.14"
 prost = "0.14"
-toni-terminus = { path = "../toni-terminus", features = ["http", "memory", "disk", "timeout"] }
+ulo-health = { path = "../crates/ulo-health", features = ["http", "memory", "disk", "timeout"] }
 chrono = "0.4"
 anyhow.workspace = true
 futures = { workspace = true, features = ["async-await", "executor"] }
@@ -35,7 +35,7 @@ listenfd = "1.0.2"
 
 [build-dependencies]
 tonic-prost-build = "0.14"
-toni-build = { path = "../toni-build" }
+ulo-build = { path = "../crates/ulo-build" }
 protoc-bin-vendored = "3"
 
 [[example]]

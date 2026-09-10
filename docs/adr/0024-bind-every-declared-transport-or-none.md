@@ -4,7 +4,7 @@ Status: accepted
 
 ## Context
 
-`ToniApplication::bind` wires four transports: same-port and separate-port WebSocket, RPC, gRPC, and
+`UloApplication::bind` wires four transports: same-port and separate-port WebSocket, RPC, gRPC, and
 HTTP. Only the HTTP path propagated failure. Every other adapter's registration and bind errors were
 logged at `error` level and execution continued, as were four configuration errors — a same-port
 gateway with no HTTP adapter, a separate-port gateway with no WebSocket adapter, RPC controllers with

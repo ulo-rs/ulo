@@ -1,4 +1,4 @@
-// RPC client example — calling a remote service from inside a toni app.
+// RPC client example — calling a remote service from inside a ulo app.
 //
 // Requires a running NATS server: `nats-server` or `docker run -p 4222:4222 nats`
 //
@@ -25,13 +25,13 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use toni::extractors::Payload;
-use toni::{
-    Body as ToniBody, RpcClient, ToniFactory, controller,
+use ulo::extractors::Payload;
+use ulo::{
+    Body as UloBody, RpcClient, UloFactory, controller,
     extractors::{Json, Query},
     get, injectable, module, post, routes,
 };
-use toni_macros::{new, patterns, provider_value};
+use ulo_macros::{new, patterns, provider_value};
 
 // ============================================================================
 // DTOs
@@ -98,10 +98,10 @@ impl OrdersRpcController {
     async fn create_order(
         &self,
         Payload(payload): Payload<CreateOrderDto>,
-        _ctx: &toni::context::RpcContext,
-    ) -> Result<OrderDto, toni::RpcError> {
+        _ctx: &ulo::context::RpcContext,
+    ) -> Result<OrderDto, ulo::RpcError> {
         if payload.qty == 0 {
-            return Err(toni::RpcError::Internal("qty must be positive".into()));
+            return Err(ulo::RpcError::Internal("qty must be positive".into()));
         }
         Ok(self.service.create_order(&payload.item, payload.qty))
     }
@@ -110,8 +110,8 @@ impl OrdersRpcController {
     async fn on_order_shipped(
         &self,
         Payload(payload): Payload<ShipOrderDto>,
-        _ctx: &toni::context::RpcContext,
-    ) -> Result<(), toni::RpcError> {
+        _ctx: &ulo::context::RpcContext,
+    ) -> Result<(), ulo::RpcError> {
         self.service.handle_shipment(payload.order_id);
         Ok(())
     }
@@ -131,7 +131,7 @@ pub struct OrdersHttpController {
 #[routes]
 impl OrdersHttpController {
     #[get("/create")]
-    async fn create_order(&self, Query(params): Query<CreateOrderDto>) -> ToniBody {
+    async fn create_order(&self, Query(params): Query<CreateOrderDto>) -> UloBody {
         println!(
             "[HTTP] GET /order/create → calling order.create via RpcClient (item={}, qty={})",
             params.item, params.qty
@@ -143,13 +143,13 @@ impl OrdersHttpController {
             .send_json::<_, serde_json::Value>("order.create", &req_dto)
             .await
         {
-            Ok(order) => ToniBody::json(order),
-            Err(e) => ToniBody::json(json!({ "error": e.to_string() })),
+            Ok(order) => UloBody::json(order),
+            Err(e) => UloBody::json(json!({ "error": e.to_string() })),
         }
     }
 
     #[post("/ship")]
-    async fn ship_order(&self, Json(payload): Json<serde_json::Value>) -> ToniBody {
+    async fn ship_order(&self, Json(payload): Json<serde_json::Value>) -> UloBody {
         let order_id = payload["order_id"].as_u64().unwrap_or(0);
         println!(
             "[HTTP] POST /order/ship → emitting order.shipped for order_id={} via RpcClient",
@@ -157,8 +157,8 @@ impl OrdersHttpController {
         );
 
         match self.client.emit_json("order.shipped", &payload).await {
-            Ok(()) => ToniBody::json(json!({ "status": "accepted" })),
-            Err(e) => ToniBody::json(json!({ "error": e.to_string() })),
+            Ok(()) => UloBody::json(json!({ "status": "accepted" })),
+            Err(e) => UloBody::json(json!({ "error": e.to_string() })),
         }
     }
 }
@@ -171,7 +171,7 @@ impl OrdersHttpController {
     providers: [OrdersService, // Register the RpcClient under a named token so it can be injected.
         provider_value!(
             "ORDER_SERVICE_CLIENT",
-            toni::RpcClient::new(toni_nats::NatsClientTransport::new("nats://127.0.0.1:4222"))
+            ulo::RpcClient::new(ulo_rpc_nats::NatsClientTransport::new("nats://127.0.0.1:4222"))
         )],
     controllers: [OrdersHttpController, OrdersRpcController],
 )]
@@ -189,11 +189,11 @@ async fn main() -> anyhow::Result<()> {
     println!("  POST /order/ship   {{\"order_id\":1001}}    → fire-and-forget via RpcClient");
     println!();
 
-    let mut app = ToniFactory::new().create_with(OrdersModule).await?;
+    let mut app = UloFactory::new().create_with(OrdersModule).await?;
 
-    app.use_http_adapter(toni_axum::AxumAdapter::new(), ("127.0.0.1", 8080))
+    app.use_http_adapter(ulo_http_axum::AxumAdapter::new(), ("127.0.0.1", 8080))
         .unwrap();
-    app.use_rpc_adapter(toni_nats::NatsAdapter::new("nats://127.0.0.1:4222"))
+    app.use_rpc_adapter(ulo_rpc_nats::NatsAdapter::new("nats://127.0.0.1:4222"))
         .unwrap();
 
     app.start().await?;

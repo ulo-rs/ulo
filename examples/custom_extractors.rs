@@ -1,11 +1,11 @@
-//! # TONI CUSTOM EXTRACTORS: GUIDE FOR NESTJS DEVELOPERS
+//! # ULO CUSTOM EXTRACTORS: GUIDE FOR NESTJS DEVELOPERS
 //!
-//! This example demonstrates how to create custom extractors in Toni,
+//! This example demonstrates how to create custom extractors in Ulo,
 //! which are equivalent to NestJS's `createParamDecorator()`.
 //!
-//! ## NestJS vs Toni Comparison:
+//! ## NestJS vs Ulo Comparison:
 //!
-//! | Concept | NestJS | Toni |
+//! | Concept | NestJS | Ulo |
 //! |---------|--------|------|
 //! | Define custom extractor | `createParamDecorator()` | `impl FromContext` trait |
 //! | Use in handler | `@CurrentUser()` decorator | `CurrentUser(user): CurrentUser` |
@@ -27,7 +27,7 @@
 //! @Get('admin')
 //! adminOnly() { ... }
 //! ```
-//! **Toni Equivalent:** Use `#[set_metadata(YourType { ... })]` on route + custom guards that
+//! **Ulo Equivalent:** Use `#[set_metadata(YourType { ... })]` on route + custom guards that
 //! read metadata via `context.metadata()` + `.get::<YourType>()`
 //!
 //! ### 3. **Class Decorators** (Apply to all methods)
@@ -36,7 +36,7 @@
 //! @Controller('users')
 //! export class UserController { ... }
 //! ```
-//! **Toni Equivalent:** Controller-level `#[use_guards]`, `#[use_interceptors]`
+//! **Ulo Equivalent:** Controller-level `#[use_guards]`, `#[use_interceptors]`
 //!
 //! ### 4. **Property Decorators** (Dependency Injection)
 //! ```typescript
@@ -46,7 +46,7 @@
 //!   private userRepo: Repository<User>;
 //! }
 //! ```
-//! **Toni Equivalent:** Field injection in `#[controller]` or `#[injectable]`
+//! **Ulo Equivalent:** Field injection in `#[controller]` or `#[injectable]`
 //!
 //! ## This Example Focuses On: Parameter Extractors (createParamDecorator)
 //!
@@ -64,10 +64,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use toni::context::HttpContext;
-use toni::extractors::Json;
-use toni::http_helpers::Body as ToniBody;
-use toni::{FromContext, controller, get, module, post, routes};
+use ulo::context::HttpContext;
+use ulo::extractors::Json;
+use ulo::http_helpers::Body as UloBody;
+use ulo::{FromContext, controller, get, module, post, routes};
 
 // ============================================================================
 // SECTION 1: AUTHENTICATION EXTRACTORS
@@ -497,7 +497,7 @@ impl FromContext<HttpContext> for Cookies {
 ///
 /// This shows how to create parameterized extractors.
 /// In NestJS: `@Cookies('sessionId')`
-/// In Toni: We need a different approach since we can't pass parameters to extractors directly.
+/// In Ulo: We need a different approach since we can't pass parameters to extractors directly.
 ///
 /// Solution: Create specific extractor types or use the Cookies extractor and extract manually.
 
@@ -625,8 +625,8 @@ impl AuthController {
     /// }
     /// ```
     #[get("/profile")]
-    fn get_profile(&self, CurrentUser(user): CurrentUser) -> ToniBody {
-        ToniBody::json(serde_json::json!({
+    fn get_profile(&self, CurrentUser(user): CurrentUser) -> UloBody {
+        UloBody::json(serde_json::json!({
             "id": user.id,
             "email": user.email,
             "name": user.name,
@@ -644,8 +644,8 @@ impl AuthController {
     /// }
     /// ```
     #[get("/token")]
-    fn get_token(&self, BearerToken(token): BearerToken) -> ToniBody {
-        ToniBody::json(serde_json::json!({
+    fn get_token(&self, BearerToken(token): BearerToken) -> UloBody {
+        UloBody::json(serde_json::json!({
             "token": token,
             "length": token.len()
         }))
@@ -668,8 +668,8 @@ impl ApiController {
     /// }
     /// ```
     #[get("/data")]
-    fn get_data(&self, ApiKey(key): ApiKey) -> ToniBody {
-        ToniBody::json(serde_json::json!({
+    fn get_data(&self, ApiKey(key): ApiKey) -> UloBody {
+        UloBody::json(serde_json::json!({
             "message": "Authenticated with API key",
             "key_prefix": &key[..8]
         }))
@@ -692,8 +692,8 @@ impl MetadataController {
     /// }
     /// ```
     #[get("/ip")]
-    fn get_ip(&self, ClientIp(ip): ClientIp) -> ToniBody {
-        ToniBody::text(format!("Your IP: {}", ip))
+    fn get_ip(&self, ClientIp(ip): ClientIp) -> UloBody {
+        UloBody::text(format!("Your IP: {}", ip))
     }
 
     /// Example 5: Extract user agent
@@ -706,8 +706,8 @@ impl MetadataController {
     /// }
     /// ```
     #[get("/user-agent")]
-    fn get_user_agent(&self, UserAgent(ua): UserAgent) -> ToniBody {
-        ToniBody::json(serde_json::json!({
+    fn get_user_agent(&self, UserAgent(ua): UserAgent) -> UloBody {
+        UloBody::json(serde_json::json!({
             "userAgent": ua
         }))
     }
@@ -722,8 +722,8 @@ impl MetadataController {
     /// }
     /// ```
     #[get("/trace")]
-    fn trace(&self, RequestId(id): RequestId) -> ToniBody {
-        ToniBody::json(serde_json::json!({
+    fn trace(&self, RequestId(id): RequestId) -> UloBody {
+        UloBody::json(serde_json::json!({
             "requestId": id,
             "message": "Use this ID for request tracing"
         }))
@@ -746,8 +746,8 @@ impl SessionController {
     /// }
     /// ```
     #[get("/cookies")]
-    fn get_cookies(&self, Cookies(cookies): Cookies) -> ToniBody {
-        ToniBody::json(serde_json::json!(cookies))
+    fn get_cookies(&self, Cookies(cookies): Cookies) -> UloBody {
+        UloBody::json(serde_json::json!(cookies))
     }
 
     /// Example 8: Extract specific cookie
@@ -760,8 +760,8 @@ impl SessionController {
     /// }
     /// ```
     #[get("/session")]
-    fn get_session(&self, SessionCookie(session_id): SessionCookie) -> ToniBody {
-        ToniBody::json(serde_json::json!({
+    fn get_session(&self, SessionCookie(session_id): SessionCookie) -> UloBody {
+        UloBody::json(serde_json::json!({
             "sessionId": session_id
         }))
     }
@@ -775,15 +775,15 @@ pub struct OptionalController {}
 impl OptionalController {
     /// Optional authentication - returns None when extraction fails instead of 400 error
     #[get("/feed")]
-    fn get_feed(&self, user: Option<CurrentUser>) -> ToniBody {
+    fn get_feed(&self, user: Option<CurrentUser>) -> UloBody {
         if let Some(CurrentUser(user)) = user {
-            ToniBody::json(serde_json::json!({
+            UloBody::json(serde_json::json!({
                 "type": "personalized",
                 "message": format!("Welcome back, {}!", user.name),
                 "items": ["Based on your interests", "Recommended for you"]
             }))
         } else {
-            ToniBody::json(serde_json::json!({
+            UloBody::json(serde_json::json!({
                 "type": "public",
                 "message": "Sign in for personalized content",
                 "items": ["Popular posts", "Trending articles"]
@@ -793,22 +793,22 @@ impl OptionalController {
 
     /// Multiple optional extractors - supports JWT, API key, or public access
     #[get("/data")]
-    fn get_data(&self, user: Option<CurrentUser>, api_key: Option<ApiKey>) -> ToniBody {
+    fn get_data(&self, user: Option<CurrentUser>, api_key: Option<ApiKey>) -> UloBody {
         if let Some(CurrentUser(user)) = user {
-            return ToniBody::json(serde_json::json!({
+            return UloBody::json(serde_json::json!({
                 "auth": "jwt",
                 "userId": user.id
             }));
         }
 
         if let Some(ApiKey(key)) = api_key {
-            return ToniBody::json(serde_json::json!({
+            return UloBody::json(serde_json::json!({
                 "auth": "apiKey",
                 "keyPrefix": &key[..8]
             }));
         }
 
-        ToniBody::json(serde_json::json!({
+        UloBody::json(serde_json::json!({
             "auth": "none",
             "message": "Public access (limited)"
         }))
@@ -840,8 +840,8 @@ impl AdvancedController {
         CurrentUser(user): CurrentUser,
         ClientIp(ip): ClientIp,
         Json(data): Json<AuditData>,
-    ) -> ToniBody {
-        ToniBody::json(serde_json::json!({
+    ) -> UloBody {
+        UloBody::json(serde_json::json!({
             "user": {
                 "id": user.id,
                 "email": user.email
@@ -862,8 +862,8 @@ impl AdvancedController {
     /// }
     /// ```
     #[get("/context")]
-    fn get_context(&self, context: AuthContext) -> ToniBody {
-        ToniBody::json(serde_json::json!({
+    fn get_context(&self, context: AuthContext) -> UloBody {
+        UloBody::json(serde_json::json!({
             "user": {
                 "id": context.user.id,
                 "email": context.user.email
@@ -904,7 +904,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Custom Extractors Example");
     println!("=====================================");
     println!();
-    println!("This example demonstrates custom extractors in Toni,");
+    println!("This example demonstrates custom extractors in Ulo,");
     println!("which are equivalent to NestJS's createParamDecorator().");
     println!();
     println!("Available endpoints:");
@@ -942,7 +942,7 @@ async fn main() -> anyhow::Result<()> {
     println!(r#"   curl http://localhost:3000/metadata/ip"#);
     println!();
     println!("Key Takeaway:");
-    println!("   Toni's FromContext trait = NestJS's createParamDecorator()");
+    println!("   Ulo's FromContext trait = NestJS's createParamDecorator()");
     println!("   - More type-safe (compile-time errors)");
     println!("   - More explicit (no hidden magic)");
     println!("   - More composable (wrap extractors)");
@@ -951,10 +951,10 @@ async fn main() -> anyhow::Result<()> {
     println!("=====================================");
     println!();
 
-    use toni::ToniFactory;
-    use toni_axum::AxumAdapter;
+    use ulo::UloFactory;
+    use ulo_http_axum::AxumAdapter;
 
-    let mut app = ToniFactory::create(AppModule).await?;
+    let mut app = UloFactory::create(AppModule).await?;
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
         .unwrap();
     app.start().await?;

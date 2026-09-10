@@ -15,11 +15,11 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use toni::async_trait;
-use toni::context::HttpContext;
-use toni::traits_helpers::Guard;
+use ulo::async_trait;
+use ulo::context::HttpContext;
+use ulo::traits_helpers::Guard;
 
-// ---- the probe: lives in `toni` in the real thing; defined locally for the POC --------------
+// ---- the probe: lives in `ulo` in the real thing; defined locally for the POC --------------
 
 /// Value probe: `Arc<T>` -> `Option<Arc<dyn Guard<HttpContext>>>`.
 struct GuardProbe<T>(Arc<T>);

@@ -8,11 +8,11 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serial_test::serial;
-use toni::{
+use ulo::{
     before_application_shutdown, injectable, module, on_application_bootstrap,
-    on_application_shutdown, on_module_destroy, on_module_init, toni_factory::ToniFactory,
+    on_application_shutdown, on_module_destroy, on_module_init, ulo_factory::UloFactory,
 };
-use toni_axum::AxumAdapter;
+use ulo_http_axum::AxumAdapter;
 
 static EVENT_LOG: OnceLock<Arc<Mutex<Vec<&'static str>>>> = OnceLock::new();
 
@@ -30,13 +30,13 @@ pub struct HookedService {
 
 impl HookedService {
     #[on_module_init]
-    async fn init(&self) -> toni::InitResult {
+    async fn init(&self) -> ulo::InitResult {
         get_log().lock().unwrap().push("init");
         Ok(())
     }
 
     #[on_application_bootstrap]
-    async fn bootstrap(&self) -> toni::InitResult {
+    async fn bootstrap(&self) -> ulo::InitResult {
         get_log().lock().unwrap().push("bootstrap");
         Ok(())
     }
@@ -75,7 +75,7 @@ struct LifecycleModule {}
 async fn derive_startup_hooks_fire() {
     get_log().lock().unwrap().clear();
 
-    let mut app = ToniFactory::create(LifecycleModule).await.unwrap();
+    let mut app = UloFactory::create(LifecycleModule).await.unwrap();
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
         .unwrap();
     app.bind().await.unwrap();
@@ -93,11 +93,11 @@ async fn derive_startup_hooks_fire() {
 async fn derive_shutdown_hooks_fire() {
     get_log().lock().unwrap().clear();
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
 
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(LifecycleModule).await.unwrap();
+        let mut app = UloFactory::create(LifecycleModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
         app.bind().await.unwrap();

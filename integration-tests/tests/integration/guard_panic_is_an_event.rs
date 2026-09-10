@@ -16,20 +16,20 @@ use std::time::Duration;
 
 use crate::common::NotServed;
 use serial_test::serial;
-use toni::async_trait;
-use toni::context::{GrpcContext, RpcContext};
-use toni::errors::PanicRecovered;
-use toni::extractors::{Inbound, Payload};
-use toni::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
-use toni::toni_factory::ToniFactory;
-use toni::traits_helpers::Guard;
-use toni::{GrpcStatus, catch, injectable, module};
-use toni_macros::{
+use ulo::async_trait;
+use ulo::context::{GrpcContext, RpcContext};
+use ulo::errors::PanicRecovered;
+use ulo::extractors::{Inbound, Payload};
+use ulo::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
+use ulo::traits_helpers::Guard;
+use ulo::ulo_factory::UloFactory;
+use ulo::{GrpcStatus, catch, injectable, module};
+use ulo_macros::{
     controller, grpc_methods, message_pattern, new, patterns, use_error_handlers, use_guards,
 };
 
 mod panic_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use panic_pb::orders_client::OrdersClient;
@@ -46,10 +46,10 @@ async fn rpc_panic_catcher(err: &PanicRecovered, _ctx: &RpcContext) -> RpcData {
 pub struct GrpcPanicCatcher {}
 
 #[async_trait]
-impl toni::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for GrpcPanicCatcher {
+impl ulo::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for GrpcPanicCatcher {
     async fn handle_error(
         &self,
-        error: toni::traits_helpers::ChainError<'_>,
+        error: ulo::traits_helpers::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         let panic = error.downcast_ref::<PanicRecovered>()?;
@@ -112,10 +112,10 @@ async fn a_panicking_rpc_guard_is_answered_by_the_chain() {
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut factory = ToniFactory::new();
+        let mut factory = UloFactory::new();
         factory.use_global_rpc_error_handler(Arc::new(rpc_panic_catcher));
         let mut app = factory.create_with(RpcGuardPanicEventModule).await.unwrap();
-        app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", 0))
+        app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
             .unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.rpc.expect("rpc must bind").port());
@@ -205,11 +205,11 @@ impl GrpcGuardPanicEventModule {}
 #[tokio_localset_test::localset_test]
 async fn a_panicking_grpc_guard_is_answered_by_the_chain() {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::new()
+        let mut app = UloFactory::new()
             .create_with(GrpcGuardPanicEventModule)
             .await
             .unwrap();

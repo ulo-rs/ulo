@@ -11,16 +11,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serial_test::serial;
-use toni::context::{Extensions, GrpcContext, HandlerContext};
-use toni::extractors::Payload as Aliased;
-use toni::extractors::{Inbound, Payload};
-use toni::toni_factory::ToniFactory;
-use toni::{ErrorKind, GrpcCode, GrpcStatus, async_trait, injectable, module};
-use toni_grpc::GrpcRequest;
-use toni_macros::{controller, grpc_methods, new, use_error_handlers, use_guards};
+use ulo::context::{Extensions, GrpcContext, HandlerContext};
+use ulo::extractors::Payload as Aliased;
+use ulo::extractors::{Inbound, Payload};
+use ulo::ulo_factory::UloFactory;
+use ulo::{ErrorKind, GrpcCode, GrpcStatus, async_trait, injectable, module};
+use ulo_grpc::GrpcRequest;
+use ulo_macros::{controller, grpc_methods, new, use_error_handlers, use_guards};
 
 mod greeter_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use greeter_pb::greeter_client::GreeterClient;
@@ -42,7 +42,7 @@ impl std::fmt::Display for NoName {
 
 impl std::error::Error for NoName {}
 
-impl toni::Error for NoName {
+impl ulo::Error for NoName {
     fn kind(&self) -> ErrorKind {
         ErrorKind::BadRequest
     }
@@ -54,10 +54,10 @@ impl toni::Error for NoName {
 pub struct NoNameHandler {}
 
 #[async_trait]
-impl toni::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for NoNameHandler {
+impl ulo::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for NoNameHandler {
     async fn handle_error(
         &self,
-        error: toni::traits_helpers::ChainError<'_>,
+        error: ulo::traits_helpers::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         error.downcast_ref::<NoName>()?;
@@ -74,7 +74,7 @@ impl toni::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for NoNameHandl
 pub struct MarkGuard {}
 
 #[async_trait]
-impl toni::traits_helpers::Guard<GrpcContext> for MarkGuard {
+impl ulo::traits_helpers::Guard<GrpcContext> for MarkGuard {
     async fn can_activate(&self, ctx: &GrpcContext) -> bool {
         ctx.extensions().insert(Seen("from-guard".to_string()));
         true
@@ -258,11 +258,11 @@ impl GreeterModule {}
 
 async fn boot() -> u16 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::new().create_with(GreeterModule).await.unwrap();
+        let mut app = UloFactory::new().create_with(GreeterModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.grpc.expect("grpc must bind").port());
@@ -296,7 +296,7 @@ async fn a_handler_answers_with_its_own_reply_type() {
         .into_inner();
 
     // The context param arrived too: the method path is what the caller dialled.
-    assert_eq!(reply.message, "ada on toni_test.orders.Greeter/Greet");
+    assert_eq!(reply.message, "ada on ulo_test.orders.Greeter/Greet");
 }
 
 #[serial]

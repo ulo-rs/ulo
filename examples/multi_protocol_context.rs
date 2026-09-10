@@ -27,13 +27,13 @@
 //!     → handshake guard rejects, server closes the connection.
 
 use serde_json::json;
-use toni::async_trait;
-use toni::context::{HttpContext, RpcContext, WsContext};
-use toni::rpc::RpcHandlerResult;
-use toni::traits_helpers::{Guard, Interceptor, InterceptorNext};
-use toni::websocket::{WsClient, WsError, WsHandlerResult, WsMessage};
-use toni::*;
-use toni_macros::{controller, injectable, module, patterns, subscriptions, websocket_gateway};
+use ulo::async_trait;
+use ulo::context::{HttpContext, RpcContext, WsContext};
+use ulo::rpc::RpcHandlerResult;
+use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext};
+use ulo::websocket::{WsClient, WsError, WsHandlerResult, WsMessage};
+use ulo::*;
+use ulo_macros::{controller, injectable, module, patterns, subscriptions, websocket_gateway};
 
 // ---- one guard, three transport-shaped impls --------------------------------
 
@@ -209,11 +209,11 @@ async fn main() -> anyhow::Result<()> {
     println!("or `?token=` query param (WS).");
     println!();
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
-    app.use_http_adapter(toni_axum::AxumAdapter::new(), ("127.0.0.1", 3000))
+    app.use_http_adapter(ulo_http_axum::AxumAdapter::new(), ("127.0.0.1", 3000))
         .unwrap();
-    app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", 4000))
+    app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 4000))
         .unwrap();
 
     app.start().await?;

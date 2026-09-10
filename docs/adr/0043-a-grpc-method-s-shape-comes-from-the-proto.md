@@ -5,8 +5,8 @@ Status: proposed. Supersedes the decision of
 
 ## Context
 
-`#[grpc_methods]` writes the tonic trait impl around handlers spelled in toni's shapes
-([ADR-0038](0038-a-grpc-handler-is-written-in-tonis-shapes.md)). The trait tonic generated declares
+`#[grpc_methods]` writes the tonic trait impl around handlers spelled in ulo's shapes
+([ADR-0038](0038-a-grpc-handler-is-written-in-ulos-shapes.md)). The trait tonic generated declares
 each method with its request type — `tonic::Request<GreetRequest>`, or
 `tonic::Request<tonic::Streaming<GreetRequest>>` where the caller streams — and the impl has to
 repeat it. A macro runs before name resolution, so it cannot learn a type from anything it reads.
@@ -22,17 +22,17 @@ The type is a fact of the proto, not of the handler. The proto is also the one p
 
 ## Decision
 
-**The build step writes what each method carries, and the macro reads that.** `toni-build` runs
+**The build step writes what each method carries, and the macro reads that.** `ulo-build` runs
 after tonic's own codegen and appends a companion module beside each service's `*_server` module,
 one marker per method:
 
 ```rust
-pub mod greeter_toni {
+pub mod greeter_ulo {
     pub struct GreetAll;
-    impl ::toni_grpc::MethodShape for GreetAll {
+    impl ::ulo_grpc::MethodShape for GreetAll {
         type Arg = ::tonic::Streaming<super::GreetRequest>;
-        fn install(request: ::tonic::Request<Self::Arg>, ctx: &::toni::context::GrpcContext) {
-            ::toni_grpc::shape::stream(request, ctx)
+        fn install(request: ::tonic::Request<Self::Arg>, ctx: &::ulo::context::GrpcContext) {
+            ::ulo_grpc::shape::stream(request, ctx)
         }
     }
 }
@@ -45,19 +45,19 @@ sits at the same depth so they resolve to the same items. The rewrite is in plac
 script and the companion with it.
 
 `#[grpc_methods]` derives the module from the trait path — `pkg::greeter_server::Greeter` names
-`pkg::greeter_toni`, the trait snake-cased the way tonic names its own modules — and the marker
+`pkg::greeter_ulo`, the trait snake-cased the way tonic names its own modules — and the marker
 from the method name. The generated signature projects through the marker:
 
 ```rust
-async fn greet_all(&self, request: ::tonic::Request<<pkg::greeter_toni::GreetAll as MethodShape>::Arg>)
+async fn greet_all(&self, request: ::tonic::Request<<pkg::greeter_ulo::GreetAll as MethodShape>::Arg>)
     -> Result<::tonic::Response<GreetReply>, ::tonic::Status>
 ```
 
 **Every parameter of a handler is a `FromContext<GrpcContext>`, in any order.** The generated body
 hands the request to the execution through the marker's `install`, which erases it into a slot on
 the context, and then extracts each parameter as the other three transports do. `Payload<T>` takes
-the message from the slot, `Inbound<T>` the caller's stream with tonic's statuses mapped to toni's,
-`toni_grpc::GrpcRequest<T>` the whole request as tonic decoded it. The slot is taken once, so all
+the message from the slot, `Inbound<T>` the caller's stream with tonic's statuses mapped to ulo's,
+`ulo_grpc::GrpcRequest<T>` the whole request as tonic decoded it. The slot is taken once, so all
 three declare `CONSUMES`, and the macro asserts per pair of parameters that at most one takes it —
 the HTTP body's rule, applied to the one thing a gRPC call carries that cannot be handed out twice.
 
@@ -69,7 +69,7 @@ The typed move ADR-0042 had is a downcast that cannot fail when the handler is r
 
 **The build step is required for `#[grpc_methods]`.** Generated code names the marker, so a crate
 without the companion does not compile. A trait tonic did not write — hand-written, or generated
-where the build script cannot reach — gets its companion from `toni_build::shapes_in_file`.
+where the build script cannot reach — gets its companion from `ulo_build::shapes_in_file`.
 
 ## Consequences
 
@@ -79,9 +79,9 @@ where the build script cannot reach — gets its companion from `toni_build::sha
   whole-request extractor, so a handler spelling `tonic::Request<T>` now spells that. ADR-0042's
   road-not-taken paragraph said the whole-request form could not survive extraction; it survives
   as this type, rebuilt from nothing because the carrier keeps the request whole.
-- `build.rs` gains one line, `toni_build::shapes("pkg")`, taking the string `include_proto!`
-  takes. A crate that already had to depend on `toni-grpc` to compile (ADR-0042) now also has a
-  build-dependency on `toni-build`.
+- `build.rs` gains one line, `ulo_build::shapes("pkg")`, taking the string `include_proto!`
+  takes. A crate that already had to depend on `ulo-grpc` to compile (ADR-0042) now also has a
+  build-dependency on `ulo-build`.
 - One `Box`, one lock and one downcast per call, beside tonic's own per-call allocations.
 - `#[grpc_stream]` stays. It marks the reply, which changes what code the macro emits, and no type
   can tell a macro that at expansion. A manifest the build step writes and the macro reads could

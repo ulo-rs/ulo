@@ -55,16 +55,16 @@ jobs:
       # Hermetic suites only — everything here runs against localhost with no
       # external services. Broker and DB crates keep their service-dependent
       # tests behind feature gates and are compile-checked in the check job.
-      - run: cargo test -p toni --lib --locked
+      - run: cargo test -p ulo --lib --locked
       - run: cargo test -p integration-tests --locked
       # The build-script companion: pure functions over tonic's generated text.
-      - run: cargo test -p toni-build --locked
+      - run: cargo test -p ulo-build --locked
       # Startup-failure reporting and connection-string redaction for the database modules.
       # Hermetic: no server is contacted. Their service-dependent suites stay behind the
       # `integration` feature and are compile-checked by the job above.
-      - run: cargo test -p toni-seaorm -p toni-redis -p toni-mongodb --lib --test startup --locked
-      - run: cargo test -p toni-sqlx --features postgres --lib --test startup --locked
-      - run: cargo test -p toni-diesel --features postgres --lib --test startup --locked
+      - run: cargo test -p ulo-db-seaorm -p ulo-db-redis -p ulo-db-mongodb --lib --test startup --locked
+      - run: cargo test -p ulo-db-sqlx --features postgres --lib --test startup --locked
+      - run: cargo test -p ulo-db-diesel --features postgres --lib --test startup --locked
       # Doc examples compile in no other job: `--all-targets` skips them and the
       # docs job renders without running them. Only examples not marked `ignore`
       # are covered.
@@ -77,20 +77,20 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build -p toni-cli --locked
-      # `toni new` output pins published crate versions; patching them to the
+      - run: cargo build -p ulo-cli --locked
+      # `ulo new` output pins published crate versions; patching them to the
       # checkout verifies the templates against the code under review. A version
       # bump that forgets to update the templates fails here loudly.
       - name: scaffold a project and compile it
         run: |
           cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/target/debug/toni" new scaffold-smoke
+          "$GITHUB_WORKSPACE/target/debug/ulo" new scaffold-smoke
           cd scaffold-smoke
-          "$GITHUB_WORKSPACE/target/debug/toni" generate resource user
+          "$GITHUB_WORKSPACE/target/debug/ulo" generate resource user
           cat >> Cargo.toml <<EOF
           [patch.crates-io]
-          toni = { path = "$GITHUB_WORKSPACE/toni" }
-          toni-macros = { path = "$GITHUB_WORKSPACE/toni-macros" }
-          toni-axum = { path = "$GITHUB_WORKSPACE/toni-axum" }
+          ulo = { path = "$GITHUB_WORKSPACE/crates/ulo" }
+          ulo-macros = { path = "$GITHUB_WORKSPACE/crates/ulo-macros" }
+          ulo-http-axum = { path = "$GITHUB_WORKSPACE/crates/ulo-http-axum" }
           EOF
           cargo check

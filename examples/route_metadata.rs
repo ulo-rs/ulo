@@ -3,7 +3,7 @@
 //! Demonstrates how to use #[set_metadata(...)] to pass handler-level configuration
 //! to guards, interceptors, and other enhancers.
 //!
-//! This is Toni's equivalent to NestJS's @SetMetadata() + Reflector pattern,
+//! This is Ulo's equivalent to NestJS's @SetMetadata() + Reflector pattern,
 //! but type-safe and without runtime reflection.
 //!
 //! ## How It Works
@@ -25,11 +25,11 @@
 //! `RolesGuard` below is written that way: it reads the requirement from metadata and the caller
 //! from the extension bag, leaving how the caller got there to whatever is transport-specific.
 
-use toni::{
+use ulo::{
     async_trait,
     context::{HandlerContext, HttpContext},
     controller, get,
-    http_helpers::Body as ToniBody,
+    http_helpers::Body as UloBody,
     module, routes, set_metadata,
     traits_helpers::Guard,
     use_guards,
@@ -158,28 +158,28 @@ impl ApiController {
     /// `Public` is declared here and nowhere above, so it applies to this handler alone.
     #[set_metadata(Public)]
     #[get("/health")]
-    fn health(&self) -> ToniBody {
-        ToniBody::json(serde_json::json!({ "status": "ok" }))
+    fn health(&self) -> UloBody {
+        UloBody::json(serde_json::json!({ "status": "ok" }))
     }
 
     /// Inherits both of the block's entries and declares nothing itself.
     #[get("/profile")]
-    fn profile(&self) -> ToniBody {
-        ToniBody::json(serde_json::json!({ "user": "current_user" }))
+    fn profile(&self) -> UloBody {
+        UloBody::json(serde_json::json!({ "user": "current_user" }))
     }
 
     /// Overrides `Roles` and keeps the block's `RateLimit`.
     #[set_metadata(Roles(&["admin"]))]
     #[get("/admin/stats")]
-    fn admin_stats(&self) -> ToniBody {
-        ToniBody::json(serde_json::json!({ "total_users": 1000 }))
+    fn admin_stats(&self) -> UloBody {
+        UloBody::json(serde_json::json!({ "total_users": 1000 }))
     }
 
     /// Overrides `Roles` with a wider set; the rate limit is still the block's.
     #[set_metadata(Roles(&["admin", "moderator"]))]
     #[get("/moderate")]
-    fn moderate(&self) -> ToniBody {
-        ToniBody::json(serde_json::json!({ "queue": [] }))
+    fn moderate(&self) -> UloBody {
+        UloBody::json(serde_json::json!({ "queue": [] }))
     }
 }
 
@@ -207,12 +207,12 @@ fn main() {
     println!("  curl -H 'x-user-role: user' http://localhost:3000/api/profile");
     println!();
 
-    use toni::ToniFactory;
-    use toni_axum::AxumAdapter;
+    use ulo::UloFactory;
+    use ulo_http_axum::AxumAdapter;
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let mut app = ToniFactory::create(AppModule).await.unwrap();
+        let mut app = UloFactory::create(AppModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
             .unwrap();
         app.start().await.expect("failed to start");

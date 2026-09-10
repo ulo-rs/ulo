@@ -13,11 +13,11 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use toni::context::RpcContext;
-use toni::module;
-use toni::rpc::{RpcData, RpcError};
-use toni::toni_factory::ToniFactory;
-use toni_macros::{controller, message_pattern, new, patterns};
+use ulo::context::RpcContext;
+use ulo::module;
+use ulo::rpc::{RpcData, RpcError};
+use ulo::ulo_factory::UloFactory;
+use ulo_macros::{controller, message_pattern, new, patterns};
 
 #[controller]
 pub struct AdoptionController {}
@@ -40,11 +40,11 @@ impl AdoptionModule {}
 
 /// Start an app whose RPC adapter was built from a caller-owned socket, and
 /// return the address `bind()` reports for it.
-async fn start_rpc_on(adapter: impl toni::RpcAdapter) -> SocketAddr {
+async fn start_rpc_on(adapter: impl ulo::RpcAdapter) -> SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(AdoptionModule).await.unwrap();
+        let mut app = UloFactory::create(AdoptionModule).await.unwrap();
         app.use_rpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = addr_tx.send(bound.rpc.expect("RPC adapter must report its address"));
@@ -59,7 +59,7 @@ async fn tcp_serves_on_caller_supplied_listener() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let expected = listener.local_addr().unwrap();
 
-    let reported = start_rpc_on(toni_tcp::TcpAdapter::from_listener(listener)).await;
+    let reported = start_rpc_on(ulo_rpc_tcp::TcpAdapter::from_listener(listener)).await;
     assert_eq!(
         reported, expected,
         "adapter reported a different address than the listener it was given"
@@ -91,7 +91,7 @@ async fn udp_serves_on_caller_supplied_socket() {
     let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let expected = socket.local_addr().unwrap();
 
-    let reported = start_rpc_on(toni_udp::UdpAdapter::from_socket(socket)).await;
+    let reported = start_rpc_on(ulo_rpc_udp::UdpAdapter::from_socket(socket)).await;
     assert_eq!(
         reported, expected,
         "adapter reported a different address than the socket it was given"
@@ -121,7 +121,7 @@ async fn grpc_serves_on_caller_supplied_listener() {
     use tonic_health::pb::health_check_response::ServingStatus as PbServingStatus;
     use tonic_health::pb::health_client::HealthClient;
 
-    #[toni::module()]
+    #[ulo::module()]
     struct EmptyModule;
 
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
@@ -131,12 +131,12 @@ async fn grpc_serves_on_caller_supplied_listener() {
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let expected = listener.local_addr().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::from_listener(listener).add_service(health_service);
+    let adapter = ulo_grpc::GrpcAdapter::from_listener(listener).add_service(health_service);
 
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(EmptyModule).await.unwrap();
+        let mut app = UloFactory::create(EmptyModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = addr_tx.send(bound.grpc.expect("gRPC adapter must report its address"));

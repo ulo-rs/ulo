@@ -6,11 +6,11 @@
 
 use std::sync::Arc;
 
-use toni::async_trait;
-use toni::context::HttpContext;
-use toni::traits_helpers::Guard;
-use toni::{
-    Body as ToniBody, controller, get, injectable, module, new, routes, toni_factory::ToniFactory,
+use ulo::async_trait;
+use ulo::context::HttpContext;
+use ulo::traits_helpers::Guard;
+use ulo::{
+    Body as UloBody, controller, get, injectable, module, new, routes, ulo_factory::UloFactory,
     use_guards,
 };
 
@@ -187,8 +187,8 @@ pub struct ApiController;
 impl ApiController {
     #[get("/guarded")]
     #[use_guards(PortGuard)]
-    fn guarded(&self) -> ToniBody {
-        ToniBody::text("ok".to_string())
+    fn guarded(&self) -> UloBody {
+        UloBody::text("ok".to_string())
     }
 }
 
@@ -205,15 +205,15 @@ pub struct ReqController {
 #[routes]
 impl ReqController {
     #[get("/port")]
-    fn port(&self) -> ToniBody {
-        ToniBody::text(self.server.port().to_string())
+    fn port(&self) -> UloBody {
+        UloBody::text(self.server.port().to_string())
     }
 
     // ReqFacade was built via #[new] injecting the request-scoped ReqServer — exercises the
     // request-context threading through the constructor bridge.
     #[get("/facade-port")]
-    fn facade_port(&self) -> ToniBody {
-        ToniBody::text(self.facade.port().to_string())
+    fn facade_port(&self) -> UloBody {
+        UloBody::text(self.facade.port().to_string())
     }
 }
 
@@ -234,7 +234,7 @@ struct NewCtorModule {}
 
 #[tokio_localset_test::localset_test]
 async fn new_ctor_injects_without_storing() {
-    let app = ToniFactory::create_application_context(NewCtorModule)
+    let app = UloFactory::create_application_context(NewCtorModule)
         .await
         .unwrap();
 
@@ -276,7 +276,7 @@ async fn new_ctor_built_guard_still_auto_detects_role() {
 
 #[tokio_localset_test::localset_test]
 async fn new_ctor_transient_scope_resolves() {
-    let app = ToniFactory::create_application_context(NewCtorModule)
+    let app = UloFactory::create_application_context(NewCtorModule)
         .await
         .unwrap();
     // Transient is resolvable through the application context; the constructor must have run.
@@ -323,7 +323,7 @@ async fn new_ctor_can_inject_request_scoped_dependency() {
 
 #[tokio_localset_test::localset_test]
 async fn new_ctor_builds_non_default_field() {
-    let app = ToniFactory::create_application_context(NewCtorModule)
+    let app = UloFactory::create_application_context(NewCtorModule)
         .await
         .unwrap();
     // `Handle` has no `Default`; the field is built solely by the constructor. Resolving proves the
@@ -337,7 +337,7 @@ async fn new_ctor_builds_non_default_field() {
 
 #[tokio_localset_test::localset_test]
 async fn new_ctor_strips_inject_attr_from_params() {
-    let app = ToniFactory::create_application_context(NewCtorModule)
+    let app = UloFactory::create_application_context(NewCtorModule)
         .await
         .unwrap();
     let server: ExplicitInjectServer = app
@@ -362,7 +362,7 @@ async fn new_ctor_path_qualified_inject_token() {
 
     impl Greeter {
         #[new]
-        fn new(#[toni::inject("GREETING")] greeting: String) -> Self {
+        fn new(#[ulo::inject("GREETING")] greeting: String) -> Self {
             Self { greeting }
         }
 
@@ -372,12 +372,12 @@ async fn new_ctor_path_qualified_inject_token() {
     }
 
     #[module(providers: [
-        toni::provider_value!("GREETING", "hello".to_string()),
+        ulo::provider_value!("GREETING", "hello".to_string()),
         Greeter,
     ])]
     struct GreetModule {}
 
-    let app = ToniFactory::create_application_context(GreetModule)
+    let app = UloFactory::create_application_context(GreetModule)
         .await
         .unwrap();
     let greeter: Greeter = app.get::<Greeter>().await.expect("Greeter resolves");

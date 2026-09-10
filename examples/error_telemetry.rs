@@ -1,6 +1,6 @@
 // Observing errors off the request path.
 //
-// toni has no error-observer hook. Anything the framework calls when an error
+// ulo has no error-observer hook. Anything the framework calls when an error
 // happens runs where the error happened — on the request path, with the client
 // waiting — so a reporter that must not cost the client latency cannot live
 // there. Detaching it inside the framework would mean core owning a runtime,
@@ -35,17 +35,16 @@
 use std::sync::Arc;
 
 use serde_json::json;
-use toni::extractors::Payload;
-use toni::{
-    Body as ToniBody, Error, ErrorKind, HttpResponse, RpcClient, RpcError, ToniFactory,
-    async_trait,
+use ulo::extractors::Payload;
+use ulo::{
+    Body as UloBody, Error, ErrorKind, HttpResponse, RpcClient, RpcError, UloFactory, async_trait,
     context::HttpContext,
     controller,
     extractors::Path,
     get, module, routes,
     traits_helpers::{ChainError, ErrorHandler},
 };
-use toni_macros::{event_pattern, new, patterns};
+use ulo_macros::{event_pattern, new, patterns};
 
 const ERROR_BUS_PATTERN: &str = "errors.reported";
 const RABBIT_URI: &str = "amqp://guest:guest@127.0.0.1:5672/%2f";
@@ -154,11 +153,11 @@ impl CheckoutController {
     /// A handler error, not a framework event: the chain sees both, so the
     /// reporter above needs no second registration to catch domain failures.
     #[get("/{sku}")]
-    async fn checkout(&self, Path(sku): Path<u32>) -> Result<ToniBody, OutOfStock> {
+    async fn checkout(&self, Path(sku): Path<u32>) -> Result<UloBody, OutOfStock> {
         if sku == 0 {
             return Err(OutOfStock { sku });
         }
-        Ok(ToniBody::json(json!({ "sku": sku, "status": "confirmed" })))
+        Ok(UloBody::json(json!({ "sku": sku, "status": "confirmed" })))
     }
 }
 
@@ -176,17 +175,17 @@ async fn main() -> anyhow::Result<()> {
     println!("  GET http://127.0.0.1:8080/checkout/42  → 200");
     println!();
 
-    let mut factory = ToniFactory::new();
+    let mut factory = UloFactory::new();
 
     // One client, one connection, shared by every call into the reporter.
     factory.use_global_http_error_handler(Arc::new(ErrorReporter {
-        client: RpcClient::new(toni_rabbitmq::RabbitMqClientTransport::new(RABBIT_URI)),
+        client: RpcClient::new(ulo_rpc_rabbitmq::RabbitMqClientTransport::new(RABBIT_URI)),
     }));
 
     let mut app = factory.create_with(CheckoutModule).await?;
-    app.use_http_adapter(toni_axum::AxumAdapter::new(), ("127.0.0.1", 8080))
+    app.use_http_adapter(ulo_http_axum::AxumAdapter::new(), ("127.0.0.1", 8080))
         .unwrap();
-    app.use_rpc_adapter(toni_rabbitmq::RabbitMqAdapter::new(RABBIT_URI))
+    app.use_rpc_adapter(ulo_rpc_rabbitmq::RabbitMqAdapter::new(RABBIT_URI))
         .unwrap();
 
     app.start().await?;

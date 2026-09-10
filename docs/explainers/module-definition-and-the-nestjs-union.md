@@ -47,9 +47,9 @@ union exists.
 
 ## Member 1 — `Type` and `DynamicModule` collapse into one trait object
 
-In toni, both kinds of module implement one trait, [`ModuleMetadata`](../../toni/src/traits_helpers/module_metadata.rs).
+In ulo, both kinds of module implement one trait, [`ModuleMetadata`](../../ulo/src/traits_helpers/module_metadata.rs).
 The trait is the shared interface TypeScript lacks. A macro-generated module and a runtime-built
-[`DynamicModule`](../../toni/src/module_helpers/dynamic_module.rs) satisfy the same method set:
+[`DynamicModule`](../../ulo/src/module_helpers/dynamic_module.rs) satisfy the same method set:
 
 ```rust
 // #[module] generates this for a user struct
@@ -73,7 +73,7 @@ knowing which concrete type it holds. The vtable does the job NestJS's `isDynami
 — dispatch, not detection. The two systems line up like this:
 
 ```text
-NestJS                                    toni
+NestJS                                    ulo
 ──────                                    ────
 class CatsModule        ─┐                struct AppModule: ModuleMetadata  ─┐
                           ├─ no common                                        ├─ SAME trait
@@ -117,7 +117,7 @@ JavaScript resolves the deadlock by giving `b.module.ts` a temporarily-`undefine
 is corrupt before Nest starts. `forwardRef(() => AModule)` wraps the reference in a closure — a value
 that exists now and defers reading `AModule` until evaluation finishes.
 
-Two properties of toni make that failure unreachable. First, the macro-generated `imports()`
+Two properties of ulo make that failure unreachable. First, the macro-generated `imports()`
 constructs each imported module inside a method body:
 
 ```rust
@@ -132,7 +132,7 @@ fn imports(&self) -> Option<Vec<Box<dyn ModuleMetadata>>> {
 
 Second, the remaining hazard — infinite traversal of a cyclic module graph — is broken by the
 scanner's visited-name set. In `scan_for_modules_with_imports`
-([toni/src/scanner.rs](../../toni/src/scanner.rs)), `ctx_registry` records every module already seen and
+([ulo/src/scanner.rs](../../ulo/src/scanner.rs)), `ctx_registry` records every module already seen and
 skips re-pushing it:
 
 ```text
@@ -151,7 +151,7 @@ A) is a separate layer that the `ModuleDefinition` union never addressed in Nest
 ## Member 3 — `Promise<DynamicModule>` targets the wrong layer
 
 `Promise<DynamicModule>` lets an `imports` entry be awaited while Nest builds the module graph
-(`ConfigModule.forRootAsync(...)`). toni's graph scan is synchronous, but the capability it enables —
+(`ConfigModule.forRootAsync(...)`). ulo's graph scan is synchronous, but the capability it enables —
 running IO before the application serves traffic — already exists one layer down. A `for_root`
 function only stores configuration:
 
@@ -180,7 +180,7 @@ So the two systems place the await at different stages:
 
 ```text
 NestJS:  [await IO] → build module → build graph → instantiate providers
-toni:    build module (sync data) → build graph (sync) → [await IO in provider build]
+ulo:    build module (sync data) → build graph (sync) → [await IO in provider build]
 ```
 
 Awaiting *during graph construction* would require making `ModuleMetadata::imports()` async, which

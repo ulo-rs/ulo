@@ -20,15 +20,15 @@ use std::time::Duration;
 
 use futures_util::{Stream, StreamExt};
 use serial_test::serial;
-use toni::ToniFactory;
-use toni::context::{CancellationToken, GrpcContext, HandlerContext};
-use toni::extractors::{Inbound, Payload};
-use toni_macros::{controller, grpc_methods, module, new};
+use ulo::UloFactory;
+use ulo::context::{CancellationToken, GrpcContext, HandlerContext};
+use ulo::extractors::{Inbound, Payload};
+use ulo_macros::{controller, grpc_methods, module, new};
 
 use crate::common::NotServed;
 
 mod tail_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use tail_pb::orders_client::OrdersClient;
@@ -104,7 +104,7 @@ impl TailGrpcService {
         });
         reply
             .metadata_mut()
-            .insert("x-served-by", "toni".parse().unwrap());
+            .insert("x-served-by", "ulo".parse().unwrap());
         Ok(reply)
     }
 
@@ -151,25 +151,25 @@ impl TailGrpcModule {}
 
 // ── harness ────────────────────────────────────────────────────────────────
 
-async fn boot<M>(module: M) -> (u16, toni::ShutdownHandle)
+async fn boot<M>(module: M) -> (u16, ulo::ShutdownHandle)
 where
-    M: toni::ModuleMetadata + 'static,
+    M: ulo::ModuleMetadata + 'static,
 {
     boot_with(module, |a| a).await
 }
 
-async fn boot_with<M, F>(module: M, configure: F) -> (u16, toni::ShutdownHandle)
+async fn boot_with<M, F>(module: M, configure: F) -> (u16, ulo::ShutdownHandle)
 where
-    M: toni::ModuleMetadata + 'static,
-    F: FnOnce(toni_grpc::GrpcAdapter) -> toni_grpc::GrpcAdapter + Send + 'static,
+    M: ulo::ModuleMetadata + 'static,
+    F: FnOnce(ulo_grpc::GrpcAdapter) -> ulo_grpc::GrpcAdapter + Send + 'static,
 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = configure(toni_grpc::GrpcAdapter::new(addr));
+    let adapter = configure(ulo_grpc::GrpcAdapter::new(addr));
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(module).await.unwrap();
+        let mut app = UloFactory::create(module).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let port = bound.grpc.expect("grpc must bind").port();
@@ -297,7 +297,7 @@ async fn a_handler_reads_its_context_off_the_request() {
 
     assert_eq!(
         METHOD.lock().unwrap().as_deref(),
-        Some("toni_test.orders.Orders/Create"),
+        Some("ulo_test.orders.Orders/Create"),
         "the handler must see the path the caller dialled, not the Rust names"
     );
 
@@ -387,7 +387,7 @@ async fn metadata_a_handler_sets_on_its_reply_reaches_the_caller() {
             .metadata()
             .get("x-served-by")
             .map(|value| value.to_str().unwrap()),
-        Some("toni"),
+        Some("ulo"),
         "the wrapper must return the reply's metadata, not only its body"
     );
 

@@ -4,11 +4,13 @@
 //! only an identical import dedups as a diamond.
 
 use serial_test::serial;
-use toni::toni_factory::ToniFactory;
-use toni::{RequestPart, async_trait, module};
-use toni_async_graphql::async_graphql::{Data, EmptyMutation, EmptySubscription, Object, Schema};
-use toni_async_graphql::{ContextBuilder, DefaultContextBuilder, GraphQLModule};
-use toni_axum::AxumAdapter;
+use ulo::ulo_factory::UloFactory;
+use ulo::{RequestPart, async_trait, module};
+use ulo_graphql_async_graphql::async_graphql::{
+    Data, EmptyMutation, EmptySubscription, Object, Schema,
+};
+use ulo_graphql_async_graphql::{ContextBuilder, DefaultContextBuilder, GraphQLModule};
+use ulo_http_axum::AxumAdapter;
 
 use crate::common::TestServer;
 
@@ -87,7 +89,7 @@ fn a_second_context_builder_on_one_path_is_refused() {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
-                let mut app = ToniFactory::create(ClashModule).await.unwrap();
+                let mut app = UloFactory::create(ClashModule).await.unwrap();
                 app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
                     .unwrap();
                 let _ = app.bind().await;

@@ -5,8 +5,8 @@
 //! own route table (salvo, actix, rocket) must recognize a `{param}` segment
 //! when deciding 405 vs 404.
 
-use toni::extractors::Path;
-use toni::{Body as ToniBody, ToniFactory, controller, get, module, routes};
+use ulo::extractors::Path;
+use ulo::{Body as UloBody, UloFactory, controller, get, module, routes};
 
 use crate::common::TestServer;
 
@@ -16,16 +16,16 @@ pub struct UsersController {}
 #[routes]
 impl UsersController {
     #[get("/{id}")]
-    fn get_user(&self, Path(id): Path<u32>) -> ToniBody {
-        ToniBody::text(format!("user:{id}"))
+    fn get_user(&self, Path(id): Path<u32>) -> UloBody {
+        UloBody::text(format!("user:{id}"))
     }
 }
 
 #[module(controllers: [UsersController])]
 impl ParamSyntaxModule {}
 
-async fn boot(adapter: impl toni::HttpAdapter + 'static) -> TestServer {
-    TestServer::start_adapter(ToniFactory::new(), ParamSyntaxModule, adapter).await
+async fn boot(adapter: impl ulo::HttpAdapter + 'static) -> TestServer {
+    TestServer::start_adapter(UloFactory::new(), ParamSyntaxModule, adapter).await
 }
 
 async fn case_param_extracted(server: TestServer) {
@@ -67,8 +67,8 @@ macro_rules! param_syntax_suite {
     };
 }
 
-param_syntax_suite!(axum, toni_axum::AxumAdapter::new());
-param_syntax_suite!(poem, toni_poem::PoemAdapter::new());
-param_syntax_suite!(salvo, toni_salvo::SalvoAdapter::new());
-param_syntax_suite!(actix, toni_actix::ActixAdapter::new());
-param_syntax_suite!(rocket, toni_rocket::RocketAdapter::new());
+param_syntax_suite!(axum, ulo_http_axum::AxumAdapter::new());
+param_syntax_suite!(poem, ulo_http_poem::PoemAdapter::new());
+param_syntax_suite!(salvo, ulo_http_salvo::SalvoAdapter::new());
+param_syntax_suite!(actix, ulo_http_actix::ActixAdapter::new());
+param_syntax_suite!(rocket, ulo_http_rocket::RocketAdapter::new());

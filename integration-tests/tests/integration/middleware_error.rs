@@ -5,11 +5,11 @@
 // losing type information, and always produced 500.
 
 use crate::common::TestServer;
-use toni::async_trait;
-use toni::errors::HttpError;
-use toni::traits_helpers::MiddlewareConsumer;
-use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use toni::{Body as ToniBody, controller, get, module, routes};
+use ulo::async_trait;
+use ulo::errors::HttpError;
+use ulo::traits_helpers::MiddlewareConsumer;
+use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::{Body as UloBody, controller, get, module, routes};
 
 // ── Test 1: custom status code ────────────────────────────────────────────────
 
@@ -30,8 +30,8 @@ async fn middleware_http_error_preserves_status() {
     #[routes]
     impl PingController {
         #[get("/ping")]
-        fn ping(&self) -> ToniBody {
-            ToniBody::text("pong")
+        fn ping(&self) -> UloBody {
+            UloBody::text("pong")
         }
     }
 
@@ -72,8 +72,8 @@ async fn middleware_http_error_unauthorized() {
     #[routes]
     impl AuthController {
         #[get("/secret")]
-        fn secret(&self) -> ToniBody {
-            ToniBody::text("secret")
+        fn secret(&self) -> UloBody {
+            UloBody::text("secret")
         }
     }
 

@@ -43,7 +43,7 @@ re-emitted struct, the construction bridges, and the one construction machine.
 ### The handler impl answers with a `Dispatch`
 
 A `DispatchBridge` replaces `RoutesBridge`: a blanket default
-`__toni_dispatch(&DispatchSource<Self>) -> Dispatch` answering `Dispatch::Http(Vec::new())`, so a
+`__ulo_dispatch(&DispatchSource<Self>) -> Dispatch` answering `Dispatch::Http(Vec::new())`, so a
 controller with no handler impl stays valid and dispatches nothing, as today. Each handler-impl
 macro shadows it with an inherent fn:
 
@@ -56,14 +56,14 @@ macro shadows it with an inherent fn:
 
 ### One transport per struct
 
-Two handler impls on one struct each emit `__toni_dispatch`, and the duplicate inherent definition
+Two handler impls on one struct each emit `__ulo_dispatch`, and the duplicate inherent definition
 fails to compile. The error is rustc's — duplicate definitions with that name — not a named
 refusal; the macros cannot see each other to say more.
 
 ### A prefix on a non-HTTP controller warns at startup
 
 The route prefix is HTTP's argument, and only `#[routes]` reads it. The `#[patterns]` and
-`#[grpc_methods]` dispatch bodies check `__toni_prefix()` and warn when a controller declares a
+`#[grpc_methods]` dispatch bodies check `__ulo_prefix()` and warn when a controller declares a
 path its transport cannot use.
 
 ### The gRPC declaration becomes ordinary

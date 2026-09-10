@@ -8,9 +8,9 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
-use toni::module;
-use toni::{WsClient, async_trait};
-use toni_async_graphql::{
+use ulo::module;
+use ulo::{WsClient, async_trait};
+use ulo_graphql_async_graphql::{
     DefaultContextBuilder, GraphQLModule, SubscriptionContextBuilder,
     async_graphql::{self, Context, EmptyMutation, Object, Schema, Subscription},
 };

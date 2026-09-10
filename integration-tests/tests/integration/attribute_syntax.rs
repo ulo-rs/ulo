@@ -3,8 +3,8 @@
 //! New syntax: #[injectable] pub struct Foo { ... }
 //! Old syntax: #[injectable(pub struct Foo { ... })]
 
-use toni::{injectable, module, new};
-use toni_config::{Config, ConfigModule, ConfigService};
+use ulo::{injectable, module, new};
+use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]
 struct TestConfig {
@@ -88,9 +88,9 @@ impl TestModule {}
 
 #[tokio::test]
 async fn test_attribute_syntax_runtime() {
-    use toni::toni_factory::ToniFactory;
+    use ulo::ulo_factory::UloFactory;
 
-    let app = ToniFactory::create(TestModule).await.unwrap();
+    let app = UloFactory::create(TestModule).await.unwrap();
 
     let simple = app
         .get::<SimpleService>()

@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package toni_test.orders;
+package ulo_test.orders;
 
-// One unary rpc, for the handler form where toni writes the trait impl.
+// One unary rpc, for the handler form where ulo writes the trait impl.
 service Greeter {
     rpc Greet (GreetRequest) returns (GreetReply);
 

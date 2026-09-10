@@ -6,11 +6,11 @@
 //! registered paths never carry one. The query string survives trimming, and
 //! the root path `/` is preserved.
 //!
-//! [`AdapterContext`]: toni::AdapterContext
+//! [`AdapterContext`]: ulo::AdapterContext
 
 use serde::Deserialize;
-use toni::extractors::{Path, Query};
-use toni::{Body as ToniBody, ToniFactory, controller, get, module, routes};
+use ulo::extractors::{Path, Query};
+use ulo::{Body as UloBody, UloFactory, controller, get, module, routes};
 
 use crate::common::TestServer;
 
@@ -25,23 +25,23 @@ pub struct AppController {}
 #[routes]
 impl AppController {
     #[get("/")]
-    fn root(&self) -> ToniBody {
-        ToniBody::text("root")
+    fn root(&self) -> UloBody {
+        UloBody::text("root")
     }
 
     #[get("/user/{id}")]
-    fn user(&self, Path(id): Path<u32>) -> ToniBody {
-        ToniBody::text(format!("user:{id}"))
+    fn user(&self, Path(id): Path<u32>) -> UloBody {
+        UloBody::text(format!("user:{id}"))
     }
 
     #[get("/echo")]
-    fn echo(&self, Query(params): Query<EchoParams>) -> ToniBody {
-        ToniBody::text(params.name)
+    fn echo(&self, Query(params): Query<EchoParams>) -> UloBody {
+        UloBody::text(params.name)
     }
 
     #[get("/slashed/")]
-    fn slashed(&self) -> ToniBody {
-        ToniBody::text("slashed")
+    fn slashed(&self) -> UloBody {
+        UloBody::text("slashed")
     }
 }
 
@@ -51,16 +51,16 @@ pub struct RootController {}
 #[routes]
 impl RootController {
     #[get("/")]
-    fn index(&self) -> ToniBody {
-        ToniBody::text("index")
+    fn index(&self) -> UloBody {
+        UloBody::text("index")
     }
 }
 
 #[module(controllers: [AppController, RootController])]
 impl TrailingSlashModule {}
 
-async fn boot(adapter: impl toni::HttpAdapter + 'static) -> TestServer {
-    TestServer::start_adapter(ToniFactory::new(), TrailingSlashModule, adapter).await
+async fn boot(adapter: impl ulo::HttpAdapter + 'static) -> TestServer {
+    TestServer::start_adapter(UloFactory::new(), TrailingSlashModule, adapter).await
 }
 
 async fn expect_text(server: &TestServer, path: &str, body: &str) {
@@ -126,8 +126,8 @@ macro_rules! trailing_slash_suite {
     };
 }
 
-trailing_slash_suite!(axum, toni_axum::AxumAdapter::new());
-trailing_slash_suite!(poem, toni_poem::PoemAdapter::new());
-trailing_slash_suite!(salvo, toni_salvo::SalvoAdapter::new());
-trailing_slash_suite!(actix, toni_actix::ActixAdapter::new());
-trailing_slash_suite!(rocket, toni_rocket::RocketAdapter::new());
+trailing_slash_suite!(axum, ulo_http_axum::AxumAdapter::new());
+trailing_slash_suite!(poem, ulo_http_poem::PoemAdapter::new());
+trailing_slash_suite!(salvo, ulo_http_salvo::SalvoAdapter::new());
+trailing_slash_suite!(actix, ulo_http_actix::ActixAdapter::new());
+trailing_slash_suite!(rocket, ulo_http_rocket::RocketAdapter::new());

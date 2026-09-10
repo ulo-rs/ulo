@@ -4,33 +4,33 @@ version = "0.1.0"
 edition.workspace = true
 publish = false
 
-# This crate exists purely for integration testing across the Toni framework.
+# This crate exists purely for integration testing across the Ulo framework.
 # It depends on all components to test their interactions.
 
 [dependencies]
-toni = { path = "../toni", features = ["tower-compat"] }
+ulo = { path = "../crates/ulo", features = ["tower-compat"] }
 tower = { workspace = true, features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "set-header", "compression-gzip"] }
 http.workspace = true
-toni-config = { path = "../toni-config" }
-toni-macros = { path = "../toni-macros" }
-toni-axum = { path = "../toni-axum" }
-toni-poem = { path = "../toni-poem" }
-toni-salvo = { path = "../toni-salvo" }
-toni-actix = { path = "../toni-actix" }
-toni-rocket = { path = "../toni-rocket" }
-toni-tungstenite = { path = "../toni-tungstenite" }
-toni-tcp = { path = "../toni-tcp" }
-toni-udp = { path = "../toni-udp" }
-toni-grpc = { path = "../toni-grpc", features = ["tls-ring"] }
+ulo-config = { path = "../crates/ulo-config" }
+ulo-macros = { path = "../crates/ulo-macros" }
+ulo-http-axum = { path = "../crates/ulo-http-axum" }
+ulo-http-poem = { path = "../crates/ulo-http-poem" }
+ulo-http-salvo = { path = "../crates/ulo-http-salvo" }
+ulo-http-actix = { path = "../crates/ulo-http-actix" }
+ulo-http-rocket = { path = "../crates/ulo-http-rocket" }
+ulo-ws-tungstenite = { path = "../crates/ulo-ws-tungstenite" }
+ulo-rpc-tcp = { path = "../crates/ulo-rpc-tcp" }
+ulo-rpc-udp = { path = "../crates/ulo-rpc-udp" }
+ulo-grpc = { path = "../crates/ulo-grpc", features = ["tls-ring"] }
 tonic = { version = "0.14", features = ["tls-ring"] }
 tonic-health = "0.14"
 tonic-prost = "0.14"
 tonic-reflection = "0.14"
 prost = "0.14"
-toni-async-graphql = { path = "../toni-async-graphql" }
+ulo-graphql-async-graphql = { path = "../crates/ulo-graphql-async-graphql" }
 # Direct dependency required by the async-graphql derive macros: they emit
-# crate-anchored ::async_graphql paths, which the toni-async-graphql
+# crate-anchored ::async_graphql paths, which the ulo-graphql-async-graphql
 # re-export cannot satisfy. Matches the documented consumer setup.
 async-graphql = "7"
 
@@ -56,7 +56,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14"
-toni-build = { path = "../toni-build" }
+ulo-build = { path = "../crates/ulo-build" }
 # The manual (no-proto) codegen path, for a service whose method name and route
 # name diverge — see tests/integration/grpc_stream_optin.rs.
 tonic-build = "0.14"

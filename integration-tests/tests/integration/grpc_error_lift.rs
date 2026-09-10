@@ -1,6 +1,6 @@
 //! A domain error answers a gRPC call with its canonical code.
 //!
-//! Every transport renders a `toni::Error` by its `kind()`: `Conflict` is 409
+//! Every transport renders a `ulo::Error` by its `kind()`: `Conflict` is 409
 //! on HTTP, the `Conflict` envelope on RPC and WebSocket, and ABORTED here.
 //! The handler returns `Err(OutOfStock)`; nothing in it names a status.
 
@@ -8,13 +8,13 @@
 
 use crate::common::NotServed;
 use serial_test::serial;
-use toni::extractors::{Inbound, Payload};
-use toni::toni_factory::ToniFactory;
-use toni::{ErrorKind, module};
-use toni_macros::{controller, grpc_methods, new};
+use ulo::extractors::{Inbound, Payload};
+use ulo::ulo_factory::UloFactory;
+use ulo::{ErrorKind, module};
+use ulo_macros::{controller, grpc_methods, new};
 
 mod lift_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use lift_pb::orders_client::OrdersClient;
@@ -33,7 +33,7 @@ impl std::fmt::Display for OutOfStock {
 
 impl std::error::Error for OutOfStock {}
 
-impl toni::Error for OutOfStock {
+impl ulo::Error for OutOfStock {
     fn kind(&self) -> ErrorKind {
         ErrorKind::Conflict
     }
@@ -99,11 +99,11 @@ impl GrpcErrorLiftModule {}
 #[tokio_localset_test::localset_test]
 async fn a_domain_error_answers_with_the_code_its_kind_maps_to() {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::new()
+        let mut app = UloFactory::new()
             .create_with(GrpcErrorLiftModule)
             .await
             .unwrap();

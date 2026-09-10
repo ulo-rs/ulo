@@ -16,13 +16,13 @@ use std::sync::{Arc, Mutex};
 use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
 use tokio_tungstenite::tungstenite::Message;
-use toni::async_trait;
-use toni::context::WsContext;
-use toni::toni_factory::ToniFactory;
-use toni::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
-use toni::websocket::{WsError, WsHandlerResult, WsMessage};
-use toni::{injectable, module};
-use toni_macros::{new, subscribe_message, subscriptions, use_guards, websocket_gateway};
+use ulo::async_trait;
+use ulo::context::WsContext;
+use ulo::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo::ulo_factory::UloFactory;
+use ulo::websocket::{WsError, WsHandlerResult, WsMessage};
+use ulo::{injectable, module};
+use ulo_macros::{new, subscribe_message, subscriptions, use_guards, websocket_gateway};
 
 use crate::common::TestServer;
 
@@ -141,9 +141,9 @@ async fn ask(ws: &mut Socket, event: &str) -> String {
 
 async fn boot<F>(configure: F) -> (TestServer, Socket)
 where
-    F: FnOnce(&mut ToniFactory),
+    F: FnOnce(&mut UloFactory),
 {
-    let mut factory = ToniFactory::new();
+    let mut factory = UloFactory::new();
     configure(&mut factory);
     let server = TestServer::start_with(factory, GlobalsWsModule).await;
     let url = format!("ws://127.0.0.1:{}/ws-globals", server.port);

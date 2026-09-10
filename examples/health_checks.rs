@@ -1,4 +1,4 @@
-//! Application health checks with toni-terminus
+//! Application health checks with ulo-health
 //!
 //! Demonstrates four patterns:
 //!   1. ping_check   — simple 2xx/3xx pass
@@ -23,12 +23,12 @@ use std::time::{Duration, Instant};
 
 use futures::future::BoxFuture;
 use serde_json::json;
-use toni::*;
-use toni_axum::AxumAdapter;
-use toni_terminus::{
+use ulo::*;
+use ulo_health::{
     DiskHealthIndicator, HealthCheckService, HealthEntry, HealthIndicator, HealthIndicatorResult,
     HttpHealthIndicator, MemoryHealthIndicator, TerminusModule,
 };
+use ulo_http_axum::AxumAdapter;
 
 // ── Custom indicator ──────────────────────────────────────────────────────────
 
@@ -124,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  GET http://127.0.0.1:3000/health/ready — readiness probe");
     println!();
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
         .unwrap();

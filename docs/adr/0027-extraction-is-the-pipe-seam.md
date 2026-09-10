@@ -15,7 +15,7 @@ handler gets. That is the whole point of the role: `ParseIntPipe` turns `"42"` i
 TypeScript's types are erased before the request arrives, so the framework has to rebuild them at
 runtime from `design:paramtypes`.
 
-toni's pipe could not do that, and the reason is structural rather than incidental.
+ulo's pipe could not do that, and the reason is structural rather than incidental.
 
 ### It ran on the wrong side of extraction
 
@@ -100,11 +100,11 @@ permanent `None` are removed. What it modelled is `Validated<E>`.
 ## Consequences
 
 - Breaking. `#[use_pipes]` no longer resolves, `Pipe` is not importable, and the three
-  `use_global_*_pipes` methods are gone from `ToniFactory`. The framework is pre-release, so there is
+  `use_global_*_pipes` methods are gone from `UloFactory`. The framework is pre-release, so there is
   no upgrade path to keep and none is provided.
 - `PipelineSegment` loses a variant. It is `#[non_exhaustive]`, so a downstream `match` already needed
   a wildcard arm.
-- `toni::traits_helpers::validate::Validatable` is gone from the public API, and `Route` loses
+- `ulo::traits_helpers::validate::Validatable` is gone from the public API, and `Route` loses
   `get_body_dto` — a breaking change for a hand-written `Route`, of which the two GraphQL controllers
   were the only ones.
 - Enhancer registration is now three roles per transport instead of four, everywhere: the detection

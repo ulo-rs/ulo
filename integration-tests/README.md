@@ -1,6 +1,6 @@
 # Integration Tests
 
-This crate contains integration tests for the Toni framework. It tests the interactions between different components (toni, toni-config, toni-axum, etc.) to ensure they work together correctly.
+This crate contains integration tests for the Ulo framework. It tests the interactions between different components (ulo, ulo-config, ulo-http-axum, etc.) to ensure they work together correctly.
 
 ## Purpose
 
@@ -9,7 +9,7 @@ This crate exists to:
 - Keep core crates lean by avoiding heavy dev-dependencies in production crates
 - Test cross-crate interactions in a realistic environment
 - Provide end-to-end tests with actual HTTP servers
-- Prevent circular dev-dependencies (e.g., toni depending on toni-axum for tests)
+- Prevent circular dev-dependencies (e.g., ulo depending on ulo-http-axum for tests)
 
 ## Test Organization
 

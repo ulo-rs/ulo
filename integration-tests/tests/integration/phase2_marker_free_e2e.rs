@@ -1,17 +1,15 @@
 //! End-to-end proof that a guard needs no marker: `#[injectable]` + `impl Guard<HttpContext>`,
 //! applied with `#[use_guards(AdminGuard)]`, blocks/admits real HTTP requests.
 //!
-//! The provider factory auto-detects the `Guard<HttpContext>` impl (via `toni::__detect`) and
+//! The provider factory auto-detects the `Guard<HttpContext>` impl (via `ulo::__detect`) and
 //! registers the role; `#[use_guards]` and the role registry resolve it unchanged. Contrast
 //! `enhancers_di.rs`, where the equivalent guard still carries `#[injectable(struct …)]` +
 //! `#[guard(http)]`.
 
-use toni::async_trait;
-use toni::context::HttpContext;
-use toni::traits_helpers::Guard;
-use toni::{
-    Body as ToniBody, RequestPart, controller, get, injectable, module, routes, use_guards,
-};
+use ulo::async_trait;
+use ulo::context::HttpContext;
+use ulo::traits_helpers::Guard;
+use ulo::{Body as UloBody, RequestPart, controller, get, injectable, module, routes, use_guards};
 
 use crate::common::TestServer;
 use serial_test::serial;
@@ -65,14 +63,14 @@ pub struct ApiController;
 impl ApiController {
     #[get("/admin")]
     #[use_guards(AdminGuard)]
-    fn admin(&self) -> ToniBody {
-        ToniBody::text("admin ok".to_string())
+    fn admin(&self) -> UloBody {
+        UloBody::text("admin ok".to_string())
     }
 
     #[get("/scoped")]
     #[use_guards(RequestScopedGuard)]
-    fn scoped(&self) -> ToniBody {
-        ToniBody::text("scoped ok".to_string())
+    fn scoped(&self) -> UloBody {
+        UloBody::text("scoped ok".to_string())
     }
 }
 

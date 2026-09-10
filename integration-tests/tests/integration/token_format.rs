@@ -6,9 +6,9 @@
 //! `resolve::<T>()` on the app. Generic written types are where the paths can
 //! disagree — each test pins one pair.
 
-use toni::toni_factory::ToniFactory;
-use toni::{ProviderContext, injectable, module, provider_factory, provider_value};
-use toni_config::{Config, ConfigModule, ConfigService};
+use ulo::ulo_factory::UloFactory;
+use ulo::{ProviderContext, injectable, module, provider_factory, provider_value};
+use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Clone)]
 pub struct Marker;
@@ -37,7 +37,7 @@ mod bare_inject_generic {
 
     #[tokio::test]
     async fn a_generic_field_finds_a_type_registered_provider() {
-        let app = ToniFactory::create(TestModule)
+        let app = UloFactory::create(TestModule)
             .await
             .expect("a `Handle<Marker>` field must find the `Handle<Marker>` registration");
 
@@ -49,7 +49,7 @@ mod bare_inject_generic {
 
 #[derive(Config, Clone)]
 pub struct TokenTestConfig {
-    #[env("TONI_TOKEN_TEST_NAME")]
+    #[env("ULO_TOKEN_TEST_NAME")]
     #[default("token-test".to_string())]
     pub name: String,
 }
@@ -66,7 +66,7 @@ mod resolve_generic {
 
     #[tokio::test]
     async fn resolve_finds_a_library_registered_generic() {
-        let app = ToniFactory::create(TestModule).await.unwrap();
+        let app = UloFactory::create(TestModule).await.unwrap();
 
         let service = app
             .resolve::<ConfigService<TokenTestConfig>>(&ProviderContext::standalone())
@@ -94,7 +94,7 @@ mod factory_dep_generic {
 
     #[tokio::test]
     async fn a_factory_dep_written_generic_is_found() {
-        let app = ToniFactory::create(TestModule)
+        let app = UloFactory::create(TestModule)
             .await
             .expect("the closure's `ConfigService<TokenTestConfig>` dep must be found");
 
@@ -126,7 +126,7 @@ mod explicit_inject_generic {
 
     #[tokio::test]
     async fn explicit_and_bare_inject_agree_on_the_token() {
-        let app = ToniFactory::create(TestModule)
+        let app = UloFactory::create(TestModule)
             .await
             .expect("both spellings must find the one registration");
 
@@ -147,7 +147,7 @@ mod qualified_path_inject {
     use super::*;
 
     pub mod helpers {
-        #[toni::injectable]
+        #[ulo::injectable]
         pub struct Service {
             #[default("qualified".to_string())]
             pub label: String,
@@ -167,7 +167,7 @@ mod qualified_path_inject {
 
     #[tokio::test]
     async fn a_qualified_written_type_finds_the_registration() {
-        let app = ToniFactory::create(TestModule)
+        let app = UloFactory::create(TestModule)
             .await
             .expect("`helpers::Service` and `Service` are the same type, so the same token");
 
@@ -183,7 +183,7 @@ mod qualified_path_inject {
 /// directly.
 mod const_token_lookup {
     use super::*;
-    use toni::di::Token;
+    use ulo::di::Token;
 
     const NAMED_VALUE: Token<String> = Token::new("NAMED_VALUE");
 
@@ -194,7 +194,7 @@ mod const_token_lookup {
 
     #[tokio::test]
     async fn a_token_const_reaches_a_string_registration() {
-        let app = ToniFactory::create(TestModule).await.unwrap();
+        let app = UloFactory::create(TestModule).await.unwrap();
 
         // The const's parameter fixes the result type: binding this to anything
         // but String is a compile error.

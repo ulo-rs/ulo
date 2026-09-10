@@ -1,8 +1,8 @@
-//! toni-rocket proof-of-concept
+//! ulo-http-rocket proof-of-concept
 //!
 //! Smoke test for the rocket adapter: HTTP routes, response streaming, body
 //! extractors, and a same-port WebSocket. Rocket buffers request bodies up
-//! to 32 MiB before handing them to toni, so the `BodyStream` extractor
+//! to 32 MiB before handing them to ulo, so the `BodyStream` extractor
 //! still works but won't show per-frame chunks.
 //!
 //! Run with: cargo run --example rocket_poc
@@ -16,10 +16,10 @@ use std::time::Duration;
 use futures::StreamExt;
 use futures::stream;
 use serde_json::json;
-use toni::extractors::{BodyStream, Bytes, Path};
-use toni::*;
-use toni_macros::{module, new, subscriptions, websocket_gateway};
-use toni_rocket::RocketAdapter;
+use ulo::extractors::{BodyStream, Bytes, Path};
+use ulo::*;
+use ulo_http_rocket::RocketAdapter;
+use ulo_macros::{module, new, subscriptions, websocket_gateway};
 
 #[controller("/hello")]
 pub struct HelloController;
@@ -28,7 +28,7 @@ pub struct HelloController;
 impl HelloController {
     #[get("/")]
     fn hello(&self) -> Body {
-        Body::json(json!({ "message": "Hello from rocket!", "framework": "toni" }))
+        Body::json(json!({ "message": "Hello from rocket!", "framework": "ulo" }))
     }
 
     #[get("/{name}")]
@@ -95,12 +95,12 @@ impl AppModule {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("toni-rocket PoC");
+    println!("ulo-http-rocket PoC");
     println!("  HTTP   :3001 GET /hello, GET /hello/{{name}}, GET /hello/_/stream");
     println!("  HTTP   :3001 POST /hello/_/echo, POST /hello/_/count");
     println!("  WS     :3001 /chat        (same-port upgrade via rocket_ws)");
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
     app.use_http_adapter(RocketAdapter::new(), ("127.0.0.1", 3001))
         .unwrap();

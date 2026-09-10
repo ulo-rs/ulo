@@ -16,13 +16,13 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
-use toni::context::{RpcContext, WsContext};
-use toni::errors::Unrouted;
-use toni::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
-use toni::toni_factory::ToniFactory;
-use toni::websocket::{WsHandlerResult, WsMessage};
-use toni::{Error, catch, module};
-use toni_macros::{
+use ulo::context::{RpcContext, WsContext};
+use ulo::errors::Unrouted;
+use ulo::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
+use ulo::ulo_factory::UloFactory;
+use ulo::websocket::{WsHandlerResult, WsMessage};
+use ulo::{Error, catch, module};
+use ulo_macros::{
     controller, message_pattern, new, patterns, subscribe_message, subscriptions, websocket_gateway,
 };
 
@@ -61,15 +61,15 @@ impl UnroutedRpcModule {}
 
 async fn boot_rpc<F>(configure: F) -> u16
 where
-    F: FnOnce(&mut ToniFactory) + Send + 'static,
+    F: FnOnce(&mut UloFactory) + Send + 'static,
 {
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut factory = ToniFactory::new();
+        let mut factory = UloFactory::new();
         configure(&mut factory);
         let mut app = factory.create_with(UnroutedRpcModule).await.unwrap();
-        app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", 0))
+        app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
             .unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.rpc.expect("rpc must bind").port());
@@ -146,7 +146,7 @@ impl SomethingGateway {
 #[module(providers: [SomethingGateway])]
 impl UnroutedWsModule {}
 
-async fn ask_ws(factory: ToniFactory, event: &str) -> String {
+async fn ask_ws(factory: UloFactory, event: &str) -> String {
     let server = TestServer::start_with(factory, UnroutedWsModule).await;
     let url = format!("ws://127.0.0.1:{}/ws-unrouted", server.port);
     let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
@@ -168,7 +168,7 @@ async fn ask_ws(factory: ToniFactory, event: &str) -> String {
 #[serial]
 #[tokio_localset_test::localset_test]
 async fn an_unrouted_ws_event_is_claimable() {
-    let mut factory = ToniFactory::new();
+    let mut factory = UloFactory::new();
     factory.use_global_ws_error_handler(Arc::new(ws_unrouted));
 
     assert_eq!(
@@ -181,7 +181,7 @@ async fn an_unrouted_ws_event_is_claimable() {
 #[serial]
 #[tokio_localset_test::localset_test]
 async fn an_unclaimed_ws_miss_renders_as_before() {
-    let reply = ask_ws(ToniFactory::new(), "nobody-claims-this").await;
+    let reply = ask_ws(UloFactory::new(), "nobody-claims-this").await;
     let reply: serde_json::Value = serde_json::from_str(&reply).expect("an error envelope");
 
     assert_eq!(reply["status"], "error");

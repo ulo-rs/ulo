@@ -1,4 +1,4 @@
-//! toni-salvo proof-of-concept
+//! ulo-http-salvo proof-of-concept
 //!
 //! Smoke test for the salvo adapter: HTTP routes, same-port WebSocket on
 //! port 3001, and a separate-port WebSocket on port 3002.
@@ -14,10 +14,10 @@ use std::time::Duration;
 use futures::StreamExt;
 use futures::stream;
 use serde_json::json;
-use toni::extractors::{BodyStream, Bytes, Path};
-use toni::*;
-use toni_macros::{module, new, subscriptions, websocket_gateway};
-use toni_salvo::SalvoAdapter;
+use ulo::extractors::{BodyStream, Bytes, Path};
+use ulo::*;
+use ulo_http_salvo::SalvoAdapter;
+use ulo_macros::{module, new, subscriptions, websocket_gateway};
 
 #[controller("/hello")]
 pub struct HelloController;
@@ -26,7 +26,7 @@ pub struct HelloController;
 impl HelloController {
     #[get("/")]
     fn hello(&self) -> Body {
-        Body::json(json!({ "message": "Hello from salvo!", "framework": "toni" }))
+        Body::json(json!({ "message": "Hello from salvo!", "framework": "ulo" }))
     }
 
     #[get("/{name}")]
@@ -50,7 +50,7 @@ impl HelloController {
         Body::stream(s).with_content_type("text/plain; charset=utf-8")
     }
 
-    /// Reads the request body via toni's buffered `Bytes` extractor (collects
+    /// Reads the request body via ulo's buffered `Bytes` extractor (collects
     /// the streaming body) and echoes its size.
     #[post("/_/echo")]
     async fn echo(&self, body: Bytes) -> Body {
@@ -114,12 +114,12 @@ impl AppModule {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("toni-salvo PoC");
+    println!("ulo-http-salvo PoC");
     println!("  HTTP   :3001 GET /hello, GET /hello/{{name}}");
     println!("  WS     :3001 /chat        (same-port upgrade)");
     println!("  WS     :3002 /ping        (separate-port adapter)");
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
     app.use_http_adapter(SalvoAdapter::new(), ("127.0.0.1", 3001))
         .unwrap();

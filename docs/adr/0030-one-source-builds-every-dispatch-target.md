@@ -16,7 +16,7 @@ A dispatch target is built once at startup and shared by every call, or rebuilt 
 fork in its own type:
 
 - **HTTP** — `ControllerInstance::{Singleton(Arc<dyn Any + Send + Sync>), Request(dependency map)}`.
-  The fork is expanded at startup: `__toni_routes` matches the state and instantiates one of two
+  The fork is expanded at startup: `__ulo_routes` matches the state and instantiates one of two
   generated wrapper sets per handler — a singleton set that downcasts `Arc<dyn Any>` on every
   request, and a per-call set that rebuilds through a direct bridge call.
 - **RPC** — a macro-emitted `{Singleton(Arc<Box<dyn RpcControllerTrait>>), PerCall(provider)}`

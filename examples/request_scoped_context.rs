@@ -9,11 +9,11 @@
 //! Test:      curl -H 'authorization: Bearer alice-token' http://127.0.0.1:3000/orders
 //!            curl http://127.0.0.1:3000/orders
 
-use toni::async_trait;
-use toni::context::HttpContext;
-use toni::traits_helpers::Guard;
-use toni::*;
-use toni_axum::AxumAdapter;
+use ulo::async_trait;
+use ulo::context::HttpContext;
+use ulo::traits_helpers::Guard;
+use ulo::*;
+use ulo_http_axum::AxumAdapter;
 
 #[derive(Clone, Debug)]
 pub struct CurrentUser {
@@ -125,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  curl http://127.0.0.1:3000/orders    # 403, the guard rejects");
     println!();
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))?;
     app.start().await?;

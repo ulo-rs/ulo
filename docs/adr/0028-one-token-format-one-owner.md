@@ -13,10 +13,10 @@ built in two formats, depending on where it was built:
   `DynamicModule::export::<T>()`.
 - **Bare last segment plus full-path parameters.** `Pool<sqlx_postgres::database::Postgres>` —
   produced by the inject macro's generic branch, and matched by hand at the registration sites that
-  serve generic types: `toni-config`'s `ConfigService<{}>`, core's `Extension<{}>`.
+  serve generic types: `ulo-config`'s `ConfigService<{}>`, core's `Extension<{}>`.
 
-The two formats met nowhere. `#[inject] pool: Pool<Postgres>` could not find toni-sqlx's
-registration; `resolve::<ConfigService<T>>()` could not find toni-config's; a factory closure
+The two formats met nowhere. `#[inject] pool: Pool<Postgres>` could not find ulo-db-sqlx's
+registration; `resolve::<ConfigService<T>>()` could not find ulo-config's; a factory closure
 depending on a generic could not find either. Which spelling a user wrote decided whether startup
 succeeded: `PgPool` (an alias, canonicalized by `type_name`) worked where `Pool<Postgres>` (the
 written generic, bare-base) aborted. The bare-base pairs that did work — `ConfigService`,
@@ -28,12 +28,12 @@ but left the generic branch's base un-migrated. Two smaller defects rode along. 
 branch emitted `type_name` over the written type's *last segment only*, so a field written
 `my_mod::Type` compiled only if `Type` happened to be in scope — and silently produced the wrong
 token if a *different* `Type` was. And the format knowledge had no owner: five places (the inject
-macro, the provider macros, core runtime lookups, toni-config, `Extension`) each encoded their own
+macro, the provider macros, core runtime lookups, ulo-config, `Extension`) each encoded their own
 copy of what a token looks like.
 
 ## Decision
 
-One function owns the format: `toni::di::token_of::<T>() -> String`, the type's fully-qualified
+One function owns the format: `ulo::di::token_of::<T>() -> String`, the type's fully-qualified
 `type_name`, base and generic parameters alike.
 
 Every site that turns a type into a container key calls it — macro-generated registration and

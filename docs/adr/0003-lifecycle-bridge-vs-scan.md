@@ -38,7 +38,7 @@ across a module and its provider.
 ## Consequences
 
 **Good.** Each macro uses the simplest mechanism its position allows. The scan-based paths
-(`toni-macros/src/shared/lifecycle_hooks.rs` + each macro's `instance_injection.rs`) stay
+(`ulo-macros/src/shared/lifecycle_hooks.rs` + each macro's `instance_injection.rs`) stay
 straightforward; the bridge is confined to the one path that needs it. Users see one naming + shape
 everywhere regardless.
 

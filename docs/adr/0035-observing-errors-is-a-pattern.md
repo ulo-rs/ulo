@@ -49,7 +49,7 @@ consumer does the observing. `examples/error_telemetry.rs` is the worked one, ov
 
 That is a better answer than detaching would have been. A detached task dies with the process and
 scales with it; a published message survives both, and the consumer can be slow, restarted, or
-scaled on its own. toni ships seven RPC transports, so the pattern costs an app one handler and one
+scaled on its own. ulo ships seven RPC transports, so the pattern costs an app one handler and one
 `#[event_pattern]`.
 
 **`Cancelled` goes with it.** The event existed only to be delivered through the observer, and
@@ -61,7 +61,7 @@ the fact.
 ## Consequences
 
 - Breaking for any app calling `use_global_error_observer`, and for anything naming
-  `toni::errors::Cancelled`.
+  `ulo::errors::Cancelled`.
 - A panicking `#[catch]` handler and a panicking renderer are logged, and the pipeline carries on as
   before: the next handler for the first, a hardcoded envelope for the second.
 - A guard panic reaches the chain wherever there is an answer to shape, so `#[catch(PanicRecovered)]`

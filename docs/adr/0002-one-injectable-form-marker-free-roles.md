@@ -26,7 +26,7 @@ A provider is a plain struct plus its normal `impl`s. One attribute, no restatem
 - A constructor is a `fn` tagged `#[new]`; a lifecycle hook is a `fn` tagged `#[on_module_init]` (etc.).
   See [0001](0001-dispatch-not-detect-autoref-bridge.md) for how these reach the struct macro.
 - An enhancer is a provider that implements the role trait — `impl Guard<HttpContext> for Foo` *is* the
-  declaration. The role is detected from the impl at registration (the `toni::__detect` probes); there
+  declaration. The role is detected from the impl at registration (the `ulo::__detect` probes); there
   is no `#[guard]` / `#[interceptor]` / `#[pipe]` / `#[error_handler]` / `#[middleware]` marker. The
   context type in the trait (`HttpContext` vs `WsContext` …) names the transport, so that isn't
   restated either.

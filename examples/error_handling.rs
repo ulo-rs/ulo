@@ -1,7 +1,7 @@
 //! Error handling.
 //!
 //! Demonstrates:
-//! 1. Domain error types with `#[derive(toni::Error)]` — the 95% path
+//! 1. Domain error types with `#[derive(ulo::Error)]` — the 95% path
 //! 2. Returning `Result<T, MyError>` from handlers — auto-converted into
 //!    `HttpError` at the dispatcher boundary and rendered to a canonical
 //!    JSON envelope
@@ -20,17 +20,17 @@
 
 use serde::Serialize;
 use serde_json::json;
-use toni::{
+use ulo::{
     Error, HttpRequest, HttpResponse, async_trait, catch, context::HttpContext, controller,
     errors::HttpError, get, http_helpers::Body, injectable, module, post, routes,
-    toni_factory::ToniFactory, traits_helpers::Guard,
+    traits_helpers::Guard, ulo_factory::UloFactory,
 };
-use toni_axum::AxumAdapter;
-use toni_macros::use_guards;
+use ulo_http_axum::AxumAdapter;
+use ulo_macros::use_guards;
 
-// ---- Domain error: derived toni::Error, default canonical envelope -------------
+// ---- Domain error: derived ulo::Error, default canonical envelope -------------
 
-#[derive(Debug, toni::Error)]
+#[derive(Debug, ulo::Error)]
 enum UserError {
     #[error_kind(NotFound)]
     NotFound(String),
@@ -75,8 +75,8 @@ impl std::fmt::Display for PaymentDeclined {
 impl std::error::Error for PaymentDeclined {}
 
 impl Error for PaymentDeclined {
-    fn kind(&self) -> toni::ErrorKind {
-        toni::ErrorKind::UnprocessableEntity
+    fn kind(&self) -> ulo::ErrorKind {
+        ulo::ErrorKind::UnprocessableEntity
     }
 }
 
@@ -87,7 +87,7 @@ impl Error for PaymentDeclined {
 #[catch(PaymentDeclined)]
 async fn render_payment_declined(err: &PaymentDeclined, _ctx: &HttpContext) -> HttpResponse {
     HttpResponse::builder()
-        .status(toni::errors::http_status(err.kind()))
+        .status(ulo::errors::http_status(err.kind()))
         .header("Retry-After", err.retry_after_secs.to_string())
         .json(json!({
             "type": "payment_declined",
@@ -157,10 +157,10 @@ impl Guard<HttpContext> for AuthGuard {
 // response; returning `None` declines it and leaves the canonical rendering
 // in place.
 
-#[catch(toni::errors::GuardRejection)]
-async fn auth_failure(err: &toni::errors::GuardRejection, _ctx: &HttpContext) -> HttpResponse {
+#[catch(ulo::errors::GuardRejection)]
+async fn auth_failure(err: &ulo::errors::GuardRejection, _ctx: &HttpContext) -> HttpResponse {
     HttpResponse::builder()
-        .status(toni::errors::http_status(err.kind()))
+        .status(ulo::errors::http_status(err.kind()))
         .json(json!({
             "error": "auth_required",
             "hint": "Send `x-auth-token: <token>`",
@@ -187,7 +187,7 @@ impl UserController {
     fn get_user(&self, req: HttpRequest) -> Result<Body, UserError> {
         let id = req
             .extensions()
-            .get::<toni::http_helpers::PathParams>()
+            .get::<ulo::http_helpers::PathParams>()
             .and_then(|p| p.0.get("id").map(|s| s.as_str()))
             .ok_or_else(|| UserError::InvalidId("(missing)".into()))?;
 
@@ -198,7 +198,7 @@ impl UserController {
     #[post("/")]
     async fn create_user(
         &self,
-        toni::extractors::Json(body): toni::extractors::Json<serde_json::Value>,
+        ulo::extractors::Json(body): ulo::extractors::Json<serde_json::Value>,
     ) -> Result<HttpResponse, UserError> {
         let email = body
             .get("email")
@@ -226,9 +226,9 @@ impl UserController {
 pub struct BillingController {}
 
 #[routes]
-#[toni_macros::use_error_handlers(render_payment_declined)]
+#[ulo_macros::use_error_handlers(render_payment_declined)]
 impl BillingController {
-    /// `PaymentDeclined` is a plain `toni::Error`; the registered
+    /// `PaymentDeclined` is a plain `ulo::Error`; the registered
     /// `#[catch(PaymentDeclined)]` handler reshapes it with a Retry-After
     /// header and a domain-specific JSON body.
     #[post("/charge")]
@@ -245,7 +245,7 @@ pub struct AdminController {}
 
 #[routes]
 #[use_guards(AuthGuard {})]
-#[toni_macros::use_error_handlers(auth_failure)]
+#[ulo_macros::use_error_handlers(auth_failure)]
 impl AdminController {
     /// Guard rejection is a framework-generated error. The `#[catch]` handler
     /// registered above reshapes the 403 envelope.
@@ -278,7 +278,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  GET  /admin/dashboard         -> 403 reshaped by #[catch(GuardRejection)]");
     println!("  GET  /admin/dashboard with x-auth-token: any -> 200 OK\n");
 
-    let factory = ToniFactory::new();
+    let factory = UloFactory::new();
     let mut app = factory.create_with(AppModule).await?;
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))?;
     app.run().await;

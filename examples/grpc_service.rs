@@ -16,7 +16,7 @@
 //!     -d '{"item":"keyboard","qty":3}' \
 //!     -proto examples/proto/orders.proto \
 //!     -import-path examples/proto \
-//!     127.0.0.1:50051 toni_examples.orders.Orders/Create
+//!     127.0.0.1:50051 ulo_examples.orders.Orders/Create
 //!
 //! # Missing header — the guard rejects with PermissionDenied; the handler
 //! # never runs.
@@ -24,7 +24,7 @@
 //!     -d '{"item":"keyboard","qty":3}' \
 //!     -proto examples/proto/orders.proto \
 //!     -import-path examples/proto \
-//!     127.0.0.1:50051 toni_examples.orders.Orders/Create
+//!     127.0.0.1:50051 ulo_examples.orders.Orders/Create
 //!
 //! # qty=0 — the handler fails with an `InvalidQty` domain error; the error
 //! # handler downcasts it and remaps to FailedPrecondition.
@@ -33,27 +33,27 @@
 //!     -d '{"item":"keyboard","qty":0}' \
 //!     -proto examples/proto/orders.proto \
 //!     -import-path examples/proto \
-//!     127.0.0.1:50051 toni_examples.orders.Orders/Create
+//!     127.0.0.1:50051 ulo_examples.orders.Orders/Create
 //!
 //! # Out of stock — a domain error carrying `ErrorKind::Conflict`, lifted by
-//! # `toni_grpc::to_status`, which answers ABORTED.
+//! # `ulo_grpc::to_status`, which answers ABORTED.
 //! grpcurl -plaintext \
 //!     -H 'authorization: Bearer secret-token' \
 //!     -d '{"item":"unobtainium","qty":1}' \
 //!     -proto examples/proto/orders.proto \
 //!     -import-path examples/proto \
-//!     127.0.0.1:50051 toni_examples.orders.Orders/Create
+//!     127.0.0.1:50051 ulo_examples.orders.Orders/Create
 //! ```
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use toni::ToniFactory;
-use toni_macros::{controller, grpc_methods, injectable, module, new};
+use ulo::UloFactory;
+use ulo_macros::{controller, grpc_methods, injectable, module, new};
 
 mod orders_pb {
-    tonic::include_proto!("toni_examples.orders");
+    tonic::include_proto!("ulo_examples.orders");
 }
 
 use orders_pb::orders_server::{Orders, OrdersServer};
@@ -82,12 +82,12 @@ impl OrdersCounter {
 
 // ─── Domain error ───────────────────────────────────────────────────────────
 //
-// The same `toni::Error` a handler on any other transport would return. Its
+// The same `ulo::Error` a handler on any other transport would return. Its
 // `kind()` decides the wire shape everywhere: 400 and 409 on HTTP, `BadRequest`
 // and `Conflict` in the RPC and WebSocket envelopes, INVALID_ARGUMENT and
 // ABORTED here.
 
-#[derive(Debug, toni::Error)]
+#[derive(Debug, ulo::Error)]
 enum OrderError {
     #[error_kind(BadRequest)]
     InvalidQty { qty: u32 },
@@ -118,9 +118,9 @@ impl std::error::Error for OrderError {}
 pub struct AuthGuard {}
 impl AuthGuard {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::Guard<toni::GrpcContext> for AuthGuard {
-    async fn can_activate(&self, ctx: &toni::GrpcContext) -> bool {
+#[ulo::async_trait]
+impl ulo::traits_helpers::Guard<ulo::GrpcContext> for AuthGuard {
+    async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
         matches!(ctx.header("authorization"), Some("Bearer secret-token"))
     }
 }
@@ -136,17 +136,17 @@ impl toni::traits_helpers::Guard<toni::GrpcContext> for AuthGuard {
 pub struct LoggingInterceptor {}
 impl LoggingInterceptor {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::Interceptor<toni::GrpcContext, toni::GrpcHandlerResult>
+#[ulo::async_trait]
+impl ulo::traits_helpers::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult>
     for LoggingInterceptor
 {
     async fn intercept(
         &self,
-        ctx: &toni::GrpcContext,
+        ctx: &ulo::GrpcContext,
         next: Box<
-            dyn toni::traits_helpers::InterceptorNext<toni::GrpcContext, toni::GrpcHandlerResult>,
+            dyn ulo::traits_helpers::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>,
         >,
-    ) -> toni::GrpcHandlerResult {
+    ) -> ulo::GrpcHandlerResult {
         let method = ctx.method().to_string();
         tracing::info!(target: "grpc_service", method = %method, "before handler");
         let answer = next.run(ctx).await;
@@ -167,20 +167,20 @@ impl toni::traits_helpers::Interceptor<toni::GrpcContext, toni::GrpcHandlerResul
 pub struct QtyErrorHandler {}
 impl QtyErrorHandler {}
 
-#[toni::async_trait]
-impl toni::traits_helpers::ErrorHandler<toni::GrpcContext, toni::GrpcStatus> for QtyErrorHandler {
+#[ulo::async_trait]
+impl ulo::traits_helpers::ErrorHandler<ulo::GrpcContext, ulo::GrpcStatus> for QtyErrorHandler {
     async fn handle_error(
         &self,
-        error: toni::traits_helpers::ChainError<'_>,
-        _ctx: &toni::GrpcContext,
-    ) -> Option<toni::GrpcStatus> {
+        error: ulo::traits_helpers::ChainError<'_>,
+        _ctx: &ulo::GrpcContext,
+    ) -> Option<ulo::GrpcStatus> {
         // The chain is handed the handler's own error, so this matches a
         // variant rather than a substring of a message.
         let OrderError::InvalidQty { qty } = error.downcast_ref::<OrderError>()? else {
             return None;
         };
-        Some(toni::GrpcStatus::new(
-            toni::GrpcCode::FailedPrecondition,
+        Some(ulo::GrpcStatus::new(
+            ulo::GrpcCode::FailedPrecondition,
             format!("qty must be positive, got {qty}"),
         ))
     }
@@ -215,7 +215,7 @@ impl OrdersGrpcService {
     #[use_interceptors(LoggingInterceptor)]
     async fn create(
         &self,
-        toni::extractors::Payload(req): toni::extractors::Payload<orders_pb::CreateOrderRequest>,
+        ulo::extractors::Payload(req): ulo::extractors::Payload<orders_pb::CreateOrderRequest>,
     ) -> Result<orders_pb::CreateOrderResponse, OrderError> {
         if req.qty == 0 {
             // The chain claims this one and answers FailedPrecondition. With
@@ -245,9 +245,9 @@ async fn main() {
     local
         .run_until(async move {
             let addr: SocketAddr = "127.0.0.1:50051".parse().unwrap();
-            let adapter = toni_grpc::GrpcAdapter::new(addr);
+            let adapter = ulo_grpc::GrpcAdapter::new(addr);
 
-            let mut app = ToniFactory::create(GrpcExampleModule).await.unwrap();
+            let mut app = UloFactory::create(GrpcExampleModule).await.unwrap();
             app.use_grpc_adapter(adapter).unwrap();
             tracing::info!("gRPC server listening on 127.0.0.1:50051");
             app.start().await.expect("server failed to start");

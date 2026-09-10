@@ -12,15 +12,15 @@
 //!   curl http://127.0.0.1:3000/config
 
 use serde_json::json;
-use toni::toni_factory::ToniFactory;
-use toni::{Body, controller, get, injectable, module, routes};
-use toni_axum::AxumAdapter;
-use toni_config::{Config, ConfigModule, ConfigService};
+use ulo::ulo_factory::UloFactory;
+use ulo::{Body, controller, get, injectable, module, routes};
+use ulo_config::{Config, ConfigModule, ConfigService};
+use ulo_http_axum::AxumAdapter;
 
 #[derive(Config, Clone)]
 struct AppConfig {
     #[env("APP_NAME")]
-    #[default("toni-app".to_string())]
+    #[default("ulo-app".to_string())]
     pub name: String,
 
     #[env("APP_PORT")]
@@ -76,14 +76,14 @@ impl AppModule {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("⚙️  toni config module\n");
+    println!("⚙️  ulo config module\n");
     println!("  GET http://127.0.0.1:3000/config");
     println!();
     println!("Override any value with env vars before running:");
     println!("  APP_NAME=MyApp APP_PORT=9000 cargo run --example config_module");
     println!();
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
         .unwrap();

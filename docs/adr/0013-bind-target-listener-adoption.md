@@ -19,12 +19,12 @@ bound its own socket. Three callers want the inverse — to acquire the socket f
 All three are the same request, and none can be satisfied from outside the framework. The
 convention for passing a socket into a process is settled (`LISTEN_FDS`, systemd's protocol, which
 the `listenfd` crate reads), and supervisors that speak it already exist. What was missing is a
-parameter of listener type anywhere in toni's API: an inherited socket could reach the process but
+parameter of listener type anywhere in ulo's API: an inherited socket could reach the process but
 had nowhere to go.
 
 Addressing is not expressed one way across the framework, which decides how far the change reaches:
 
-- **HTTP** — core owns the address. It is stored on `ToniApplication` and passed to the adapter.
+- **HTTP** — core owns the address. It is stored on `UloApplication` and passed to the adapter.
 - **RPC and gRPC** — the adapter owns the address, as a constructor argument (`TcpAdapter::new(host,
   port)`); `into_lifecycle()` takes none.
 - **Separate-port WebSocket** — the gateway declaration owns the address (`#[websocket_gateway(port
@@ -39,8 +39,8 @@ in `use_http_adapter` and in `HttpAdapter::into_lifecycle`, and both are reached
 
 `std::net::TcpListener` is the currency rather than a runtime-specific type: it is what fd
 inheritance produces, and it keeps the SPI free of a runtime commitment. Adapters convert on
-adoption — `set_nonblocking(true)` then `from_std`, already the idiom in toni-grpc, toni-tcp, and
-toni-udp. `BindTarget::into_std_listener` collapses both arms to one listener, binding only for the
+adoption — `set_nonblocking(true)` then `from_std`, already the idiom in ulo-grpc, ulo-rpc-tcp, and
+ulo-rpc-udp. `BindTarget::into_std_listener` collapses both arms to one listener, binding only for the
 address form, which is the whole of the change for an adapter that already serves on a constructed
 listener.
 

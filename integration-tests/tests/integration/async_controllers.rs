@@ -1,5 +1,5 @@
 use crate::common::TestServer;
-use toni::{Body as ToniBody, controller, get, injectable, module, routes};
+use ulo::{Body as UloBody, controller, get, injectable, module, routes};
 
 #[injectable]
 pub struct AsyncService;
@@ -24,25 +24,25 @@ pub struct AsyncController {
 #[routes]
 impl AsyncController {
     #[get("/data")]
-    async fn get_data(&self) -> ToniBody {
-        ToniBody::text(self.service.fetch_data().await)
+    async fn get_data(&self) -> UloBody {
+        UloBody::text(self.service.fetch_data().await)
     }
 
     #[get("/compute")]
-    async fn compute(&self) -> ToniBody {
-        ToniBody::text(format!("Result: {}", self.service.compute(42).await))
+    async fn compute(&self) -> UloBody {
+        UloBody::text(format!("Result: {}", self.service.compute(42).await))
     }
 
     #[get("/sync")]
-    fn sync_method(&self) -> ToniBody {
-        ToniBody::text("sync response".to_string())
+    fn sync_method(&self) -> UloBody {
+        UloBody::text("sync response".to_string())
     }
 
     #[get("/multi")]
-    async fn multi_await(&self) -> ToniBody {
+    async fn multi_await(&self) -> UloBody {
         let data = self.service.fetch_data().await;
         let result = self.service.compute(10).await;
-        ToniBody::text(format!("{} - {}", data, result))
+        UloBody::text(format!("{} - {}", data, result))
     }
 }
 

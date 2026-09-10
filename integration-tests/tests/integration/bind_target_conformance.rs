@@ -12,7 +12,7 @@
 
 use std::net::TcpListener;
 
-use toni::{Body as ToniBody, ToniFactory, controller, get, module, routes};
+use ulo::{Body as UloBody, UloFactory, controller, get, module, routes};
 
 use crate::common::TestServer;
 
@@ -22,20 +22,20 @@ pub struct InheritedController {}
 #[routes]
 impl InheritedController {
     #[get("/ping")]
-    fn ping(&self) -> ToniBody {
-        ToniBody::text("pong")
+    fn ping(&self) -> UloBody {
+        UloBody::text("pong")
     }
 }
 
 #[module(controllers: [InheritedController])]
 impl BindTargetModule {}
 
-async fn case_serves_on_caller_socket(adapter: impl toni::HttpAdapter + 'static) {
+async fn case_serves_on_caller_socket(adapter: impl ulo::HttpAdapter + 'static) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let expected = listener.local_addr().unwrap();
 
     let server =
-        TestServer::start_target(ToniFactory::new(), BindTargetModule, adapter, listener).await;
+        TestServer::start_target(UloFactory::new(), BindTargetModule, adapter, listener).await;
 
     assert_eq!(
         server.base_url,
@@ -64,20 +64,20 @@ macro_rules! bind_target_suite {
     };
 }
 
-bind_target_suite!(axum, toni_axum::AxumAdapter::new());
-bind_target_suite!(poem, toni_poem::PoemAdapter::new());
-bind_target_suite!(salvo, toni_salvo::SalvoAdapter::new());
-bind_target_suite!(actix, toni_actix::ActixAdapter::new());
+bind_target_suite!(axum, ulo_http_axum::AxumAdapter::new());
+bind_target_suite!(poem, ulo_http_poem::PoemAdapter::new());
+bind_target_suite!(salvo, ulo_http_salvo::SalvoAdapter::new());
+bind_target_suite!(actix, ulo_http_actix::ActixAdapter::new());
 
 #[tokio_localset_test::localset_test]
 async fn rocket_refuses_a_pre_bound_listener() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
 
-    let mut app = ToniFactory::new()
+    let mut app = UloFactory::new()
         .create_with(BindTargetModule)
         .await
         .unwrap();
-    app.use_http_adapter(toni_rocket::RocketAdapter::new(), listener)
+    app.use_http_adapter(ulo_http_rocket::RocketAdapter::new(), listener)
         .unwrap();
 
     let err = app

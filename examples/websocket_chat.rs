@@ -14,8 +14,8 @@
 //! Send:      {"event": "message", "data": "Hello"}
 //!            {"event": "ping"}
 
-use toni::*;
-use toni_macros::{module, new, subscriptions, websocket_gateway};
+use ulo::*;
+use ulo_macros::{module, new, subscriptions, websocket_gateway};
 
 #[websocket_gateway("/chat")]
 pub struct EchoGateway {}
@@ -56,9 +56,9 @@ async fn main() -> anyhow::Result<()> {
     println!(r#"          {{"event": "ping"}}"#);
     println!();
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
-    app.use_http_adapter(toni_axum::AxumAdapter::new(), ("127.0.0.1", 8080))
+    app.use_http_adapter(ulo_http_axum::AxumAdapter::new(), ("127.0.0.1", 8080))
         .unwrap();
 
     app.start().await?;

@@ -17,16 +17,16 @@ use std::time::Duration;
 use crate::common::NotServed;
 use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
-use toni::async_trait;
-use toni::context::{GrpcContext, RpcContext, WsContext};
-use toni::errors::GuardRejection;
-use toni::extractors::{Inbound, Payload};
-use toni::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
-use toni::toni_factory::ToniFactory;
-use toni::traits_helpers::Guard;
-use toni::websocket::{WsHandlerResult, WsMessage};
-use toni::{Error, GrpcStatus, catch, injectable, module};
-use toni_macros::{
+use ulo::async_trait;
+use ulo::context::{GrpcContext, RpcContext, WsContext};
+use ulo::errors::GuardRejection;
+use ulo::extractors::{Inbound, Payload};
+use ulo::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
+use ulo::traits_helpers::Guard;
+use ulo::ulo_factory::UloFactory;
+use ulo::websocket::{WsHandlerResult, WsMessage};
+use ulo::{Error, GrpcStatus, catch, injectable, module};
+use ulo_macros::{
     controller, grpc_methods, message_pattern, new, patterns, subscribe_message, subscriptions,
     use_error_handlers, use_guards, websocket_gateway,
 };
@@ -34,7 +34,7 @@ use toni_macros::{
 use crate::common::TestServer;
 
 mod rejection_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use rejection_pb::orders_client::OrdersClient;
@@ -56,10 +56,10 @@ async fn rpc_catcher(err: &GuardRejection, _ctx: &RpcContext) -> RpcData {
 pub struct GrpcCatcher {}
 
 #[async_trait]
-impl toni::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for GrpcCatcher {
+impl ulo::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for GrpcCatcher {
     async fn handle_error(
         &self,
-        error: toni::traits_helpers::ChainError<'_>,
+        error: ulo::traits_helpers::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         let rejection = error.downcast_ref::<GuardRejection>()?;
@@ -128,7 +128,7 @@ impl WsRejectionModule {}
 #[serial]
 #[tokio_localset_test::localset_test]
 async fn a_refused_ws_message_is_answered_by_the_chain() {
-    let mut factory = ToniFactory::new();
+    let mut factory = UloFactory::new();
     factory.use_global_ws_error_handler(Arc::new(ws_catcher));
     let server = TestServer::start_with(factory, WsRejectionModule).await;
 
@@ -178,10 +178,10 @@ async fn a_refused_rpc_call_is_answered_by_the_chain() {
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut factory = ToniFactory::new();
+        let mut factory = UloFactory::new();
         factory.use_global_rpc_error_handler(Arc::new(rpc_catcher));
         let mut app = factory.create_with(RpcRejectionModule).await.unwrap();
-        app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", 0))
+        app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
             .unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.rpc.expect("rpc must bind").port());
@@ -273,11 +273,11 @@ impl GrpcRejectionModule {}
 #[tokio_localset_test::localset_test]
 async fn a_refused_grpc_call_is_answered_by_the_chain() {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::new()
+        let mut app = UloFactory::new()
             .create_with(GrpcRejectionModule)
             .await
             .unwrap();

@@ -1,7 +1,7 @@
 use crate::common::TestServer;
 use futures_util::stream;
-use toni::{
-    Body as ToniBody, controller,
+use ulo::{
+    Body as UloBody, controller,
     extractors::{BodyStream, Bytes},
     module, post, routes,
 };
@@ -12,12 +12,12 @@ pub struct StreamingController;
 #[routes]
 impl StreamingController {
     #[post("/echo")]
-    async fn echo(&self, Bytes(body): Bytes) -> ToniBody {
-        ToniBody::text(String::from_utf8_lossy(&body).into_owned())
+    async fn echo(&self, Bytes(body): Bytes) -> UloBody {
+        UloBody::text(String::from_utf8_lossy(&body).into_owned())
     }
 
     #[post("/bs-size")]
-    async fn bs_size(&self, stream: BodyStream) -> ToniBody {
+    async fn bs_size(&self, stream: BodyStream) -> UloBody {
         use futures_util::{StreamExt, pin_mut};
         let s = stream.into_stream();
         pin_mut!(s);
@@ -25,7 +25,7 @@ impl StreamingController {
         while let Some(chunk) = s.next().await {
             total += chunk.unwrap().len();
         }
-        ToniBody::text(total.to_string())
+        UloBody::text(total.to_string())
     }
 }
 

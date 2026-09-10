@@ -8,16 +8,16 @@
 //! - Isolation: a method-level enhancer does not affect sibling handlers ("plain").
 
 use std::time::Duration;
-use toni::rpc::{RpcHandlerOutput, RpcHandlerResult};
+use ulo::rpc::{RpcHandlerOutput, RpcHandlerResult};
 
-use toni::async_trait;
-use toni::context::{HandlerContext, RpcContext, WsContext};
-use toni::injectable;
-use toni::module;
-use toni::rpc::{RpcData, RpcError};
-use toni::traits_helpers::{ErrorHandler, Guard, Interceptor, InterceptorNext};
-use toni::websocket::{WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsMessage};
-use toni_macros::{controller, new, patterns, subscriptions, websocket_gateway};
+use ulo::async_trait;
+use ulo::context::{HandlerContext, RpcContext, WsContext};
+use ulo::injectable;
+use ulo::module;
+use ulo::rpc::{RpcData, RpcError};
+use ulo::traits_helpers::{ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo::websocket::{WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsMessage};
+use ulo_macros::{controller, new, patterns, subscriptions, websocket_gateway};
 
 use crate::common::TestServer;
 
@@ -59,7 +59,7 @@ impl RecoveryErrorHandler {}
 impl ErrorHandler<RpcContext, RpcData> for RecoveryErrorHandler {
     async fn handle_error(
         &self,
-        _error: toni::traits_helpers::ChainError<'_>,
+        _error: ulo::traits_helpers::ChainError<'_>,
         _ctx: &RpcContext,
     ) -> Option<RpcData> {
         Some(RpcData::json(serde_json::json!("recovered")))
@@ -70,7 +70,7 @@ impl ErrorHandler<RpcContext, RpcData> for RecoveryErrorHandler {
 impl ErrorHandler<WsContext, WsMessage> for RecoveryErrorHandler {
     async fn handle_error(
         &self,
-        _error: toni::traits_helpers::ChainError<'_>,
+        _error: ulo::traits_helpers::ChainError<'_>,
         _ctx: &WsContext,
     ) -> Option<WsMessage> {
         Some(WsMessage::text("recovered"))
@@ -263,13 +263,13 @@ async fn pick_free_port() -> u16 {
     port
 }
 
-async fn start_rpc_server(module: impl toni::ModuleMetadata + 'static) -> u16 {
-    use toni::toni_factory::ToniFactory;
+async fn start_rpc_server(module: impl ulo::ModuleMetadata + 'static) -> u16 {
+    use ulo::ulo_factory::UloFactory;
     let port = pick_free_port().await;
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(module).await.unwrap();
-        app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", port))
+        let mut app = UloFactory::create(module).await.unwrap();
+        app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", port))
             .unwrap();
         app.start().await.unwrap();
     });

@@ -60,7 +60,7 @@ only `RedisBroadcastModule::for_root(url)`, say) required hand-constructing the 
 The entry points state their actual requirement directly:
 
 ```rust
-pub async fn create(module: impl ModuleMetadata + 'static) -> ToniApplication
+pub async fn create(module: impl ModuleMetadata + 'static) -> UloApplication
 ```
 
 The enum, the macro-generated `From`, and the hand-written `From` impls are deleted. The scanner
@@ -77,8 +77,8 @@ integration test is gone.
 **Less macro output.** `#[module]` no longer emits a `From` impl per module.
 
 **Breaking, narrowly.** Code naming `ModuleDefinition` (the type was public at
-`toni::module_helpers::module_enum`) must pass the module value directly instead. Ordinary call
-sites — `ToniFactory::create(AppModule)` — compile unchanged.
+`ulo::module_helpers::module_enum`) must pass the module value directly instead. Ordinary call
+sites — `UloFactory::create(AppModule)` — compile unchanged.
 
 **Boundary for the future.** New kinds of module belong behind `impl ModuleMetadata`, not behind a
 new entry-point wrapper type. If a capability cannot be expressed as a `ModuleMetadata`

@@ -1,5 +1,5 @@
 use crate::common::TestServer;
-use toni::{Body as ToniBody, HttpRequest, controller, get, injectable, module, routes};
+use ulo::{Body as UloBody, HttpRequest, controller, get, injectable, module, routes};
 
 #[controller("/static")]
 pub struct StaticController {}
@@ -7,13 +7,13 @@ pub struct StaticController {}
 #[routes]
 impl StaticController {
     #[get("/hello")]
-    fn hello(_req: HttpRequest) -> ToniBody {
-        ToniBody::text("Hello from static method".to_string())
+    fn hello(_req: HttpRequest) -> UloBody {
+        UloBody::text("Hello from static method".to_string())
     }
 
     #[get("/world")]
-    fn world(_req: HttpRequest) -> ToniBody {
-        ToniBody::text("World from static method".to_string())
+    fn world(_req: HttpRequest) -> UloBody {
+        UloBody::text("World from static method".to_string())
     }
 }
 
@@ -60,13 +60,13 @@ pub struct MixedController {
 #[routes]
 impl MixedController {
     #[get("/instance")]
-    fn instance_method(&self) -> ToniBody {
-        ToniBody::text(self.service.get_instance_message())
+    fn instance_method(&self) -> UloBody {
+        UloBody::text(self.service.get_instance_message())
     }
 
     #[get("/static")]
-    fn static_method(_req: HttpRequest) -> ToniBody {
-        ToniBody::text("From static method".to_string())
+    fn static_method(_req: HttpRequest) -> UloBody {
+        UloBody::text("From static method".to_string())
     }
 }
 
@@ -102,8 +102,8 @@ pub struct RequestScopedStaticController {}
 #[routes]
 impl RequestScopedStaticController {
     #[get("/test")]
-    fn test(_req: HttpRequest) -> ToniBody {
-        ToniBody::text("Static method in request-scoped controller".to_string())
+    fn test(_req: HttpRequest) -> UloBody {
+        UloBody::text("Static method in request-scoped controller".to_string())
     }
 }
 
@@ -133,9 +133,9 @@ pub struct AsyncStaticController {}
 #[routes]
 impl AsyncStaticController {
     #[get("/test")]
-    async fn test(_req: HttpRequest) -> ToniBody {
+    async fn test(_req: HttpRequest) -> UloBody {
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-        ToniBody::text("Async static method".to_string())
+        UloBody::text("Async static method".to_string())
     }
 }
 
