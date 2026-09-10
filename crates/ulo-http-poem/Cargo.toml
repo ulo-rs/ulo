@@ -23,7 +23,7 @@ http-body-util.workspace = true
 bytes.workspace = true
 
 [dev-dependencies]
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { workspace = true, features = ["json"] }
 tokio-tungstenite.workspace = true
 ulo-macros = { path = "../ulo-macros" }
 serde = { workspace = true, features = ["derive"] }
