@@ -9,8 +9,12 @@ ADRs remain the primary record; these are the descriptions that accompanied each
 Descriptions are reproduced verbatim, so those written before ADR-0044 name the framework `toni`.
 A process record describes what was written at the time and is not corrected in place.
 
-251 pull requests, #1–#251, merged 2026-01-24 to 2026-09-10.
+The archive stops at the pull request that last extended it. The one PR it cannot contain is
+the one that adds the final entry, whose own commit message carries what it did.
 
+252 pull requests, #1–#252, merged 2026-01-24 to 2026-09-10.
+
+- [#252 — Archive every merged pull request](0252-archive-every-merged-pull-request.md) — 2026-09-10
 - [#251 — Point the crate links at the org](0251-point-the-crate-links-at-the-org.md) — 2026-09-10
 - [#250 — Point the crate links at the renamed repository](0250-point-the-crate-links-at-the-renamed-repository.md) — 2026-09-10
 - [#249 — Rename the framework to ulo](0249-rename-the-framework-to-ulo.md) — 2026-09-10
