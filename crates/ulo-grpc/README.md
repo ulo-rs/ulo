@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-gRPC transport adapter for the [Ulo](https://github.com/ifeanyi-ugwu/ulo) framework.
+gRPC transport adapter for the [Ulo](https://github.com/ulo-rs/ulo) framework.
 
 Drives a [`tonic`](https://github.com/hyperium/tonic) server through Ulo's bind / serve / drain lifecycle, with first-class dependency injection, per-call guards, interceptors, error handlers, and panic recovery on every method dispatched through `#[grpc_methods]`.
 

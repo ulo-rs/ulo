@@ -1,6 +1,6 @@
 # ulo-db-seaorm
 
-SeaORM integration for the [Ulo framework](https://github.com/ifeanyi-ugwu/ulo).
+SeaORM integration for the [Ulo framework](https://github.com/ulo-rs/ulo).
 
 Registers a `DatabaseConnection` in Ulo's DI container so any injectable can declare it as a dependency. The connection is backed by a SeaORM connection pool and closed cleanly on application shutdown.
 

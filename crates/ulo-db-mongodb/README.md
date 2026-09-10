@@ -1,6 +1,6 @@
 # ulo-db-mongodb
 
-MongoDB integration for the [Ulo framework](https://github.com/ifeanyi-ugwu/ulo).
+MongoDB integration for the [Ulo framework](https://github.com/ulo-rs/ulo).
 
 Registers a `mongodb::Database` in Ulo's DI container so any injectable can declare it as a dependency. The underlying connection pool is shut down cleanly on application shutdown.
 

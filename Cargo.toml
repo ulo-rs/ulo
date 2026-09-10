@@ -9,8 +9,8 @@ members = [
 [workspace.package]
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/ifeanyi-ugwu/ulo"
-homepage = "https://github.com/ifeanyi-ugwu/ulo"
+repository = "https://github.com/ulo-rs/ulo"
+homepage = "https://github.com/ulo-rs/ulo"
 
 [workspace.dependencies]
 anyhow = "1.0.95"
