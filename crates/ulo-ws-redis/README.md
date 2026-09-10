@@ -1,6 +1,6 @@
 # ulo-ws-redis
 
-Redis Pub/Sub adapter for cross-process WebSocket broadcasting in the [Ulo](https://github.com/ifeanyi-ugwu/toni-rs) framework.
+Redis Pub/Sub adapter for cross-process WebSocket broadcasting in the [Ulo](https://github.com/ifeanyi-ugwu/ulo) framework.
 
 ## The problem
 
