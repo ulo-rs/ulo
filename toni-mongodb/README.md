@@ -1,6 +1,6 @@
 # toni-mongodb
 
-MongoDB integration for the [Toni framework](https://github.com/monterxto/toni-rs).
+MongoDB integration for the [Toni framework](https://github.com/ifeanyi-ugwu/toni-rs).
 
 Registers a `mongodb::Database` in Toni's DI container so any injectable can declare it as a dependency. The underlying connection pool is shut down cleanly on application shutdown.
 

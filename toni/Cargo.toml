@@ -6,8 +6,8 @@ keywords = ["http", "web", "framework"]
 categories = ["asynchronous", "network-programming", "web-programming"]
 description = "Fast and modular web framework for scalable applications"
 license = "MIT"
-repository = "https://github.com/monterxto/toni-rs"
-homepage = "https://github.com/monterxto/toni-rs"
+repository = "https://github.com/ifeanyi-ugwu/toni-rs"
+homepage = "https://github.com/ifeanyi-ugwu/toni-rs"
 readme = "README.md"
 
 [features]

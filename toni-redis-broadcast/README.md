@@ -1,6 +1,6 @@
 # toni-redis-broadcast
 
-Redis Pub/Sub adapter for cross-process WebSocket broadcasting in the [Toni](https://github.com/monterxto/toni-rs) framework.
+Redis Pub/Sub adapter for cross-process WebSocket broadcasting in the [Toni](https://github.com/ifeanyi-ugwu/toni-rs) framework.
 
 ## The problem
 

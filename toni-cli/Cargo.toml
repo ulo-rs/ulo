@@ -4,8 +4,8 @@ version = "0.1.2"
 edition = "2024"
 description = "CLI for Toni"
 license = "MIT"
-repository = "https://github.com/monterxto/toni-rs"
-homepage = "https://github.com/monterxto/toni-rs"
+repository = "https://github.com/ifeanyi-ugwu/toni-rs"
+homepage = "https://github.com/ifeanyi-ugwu/toni-rs"
 
 [[bin]]
 name = "toni"

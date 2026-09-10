@@ -1,6 +1,6 @@
 # toni-prisma
 
-Prisma integration for the [Toni framework](https://github.com/monterxto/toni-rs).
+Prisma integration for the [Toni framework](https://github.com/ifeanyi-ugwu/toni-rs).
 
 Registers a `prisma-client-rust` generated client in Toni's DI container so any injectable can declare it as a dependency.
 

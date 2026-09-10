@@ -1,6 +1,6 @@
 # toni-sqlx
 
-SQLx integration for the [Toni framework](https://github.com/monterxto/toni-rs).
+SQLx integration for the [Toni framework](https://github.com/ifeanyi-ugwu/toni-rs).
 
 Registers a SQLx connection pool in Toni's DI container so any injectable can declare it as a dependency. The pool is closed cleanly on application shutdown.
 
