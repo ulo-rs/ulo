@@ -1,4 +1,4 @@
-//! gRPC transport adapter for the [Ulo](https://github.com/ifeanyi-ugwu/toni-rs) framework.
+//! gRPC transport adapter for the [Ulo](https://github.com/ifeanyi-ugwu/ulo) framework.
 //!
 //! Drives a [`tonic`](https://docs.rs/tonic) server through Ulo's bind /
 //! serve / drain lifecycle. Services declared with the framework's
