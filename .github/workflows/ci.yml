@@ -70,6 +70,48 @@ jobs:
       # are covered.
       - run: cargo test --workspace --all-features --doc --locked
 
+  msrv-matrix:
+    name: msrv matrix
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.read.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Read from the manifests rather than listed here, so a crate that changes
+      # its floor moves between legs without this file being touched.
+      - id: read
+        run: |
+          v=$(cargo metadata --no-deps --format-version 1 \
+            | jq -c '[.packages[] | select(.rust_version) | .rust_version] | unique')
+          echo "versions=$v" >> "$GITHUB_OUTPUT"
+          echo "declared floors: $v"
+
+  msrv:
+    name: msrv ${{ matrix.rust }}
+    needs: msrv-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ${{ fromJSON(needs.msrv-matrix.outputs.versions) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - uses: Swatinem/rust-cache@v2
+      # A declared `rust-version` is a promise to a user on that compiler, and the
+      # floors come from third-party dependencies that raise theirs without notice.
+      # Compile the crates making the promise with the compiler they name.
+      - run: |
+          pkgs=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r --arg v '${{ matrix.rust }}' '.packages[] | select(.rust_version == $v) | "-p " + .name' \
+            | tr '\n' ' ')
+          test -n "$pkgs" || { echo "no crate declares ${{ matrix.rust }}"; exit 1; }
+          echo "checking: $pkgs"
+          cargo check --all-features --locked $pkgs
+
   scaffold:
     name: cli scaffold
     runs-on: ubuntu-latest

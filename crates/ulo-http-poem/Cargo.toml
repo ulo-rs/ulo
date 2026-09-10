@@ -2,6 +2,7 @@
 name = "ulo-http-poem"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 description = "Poem adapter for the Ulo framework"
 license.workspace = true
 repository.workspace = true

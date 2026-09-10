@@ -2,6 +2,7 @@
 name = "ulo-db-redis"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 description = "Redis integration for the Ulo framework"
 license.workspace = true
 repository.workspace = true
