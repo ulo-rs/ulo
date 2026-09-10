@@ -8,7 +8,7 @@ The global chain's documentation promised "runs before the adapter's routing on 
 The implementations did not deliver that: all five HTTP adapters invoked `AdapterContext::execute`
 *inside* each matched route's handler, plus once more in a path fallback for 404s. That anchor point
 misses an entire request class — a known path with an unregistered method. The native router (axum's
-`MethodRouter`, and each framework's equivalent) answers 405 before any toni code runs.
+`MethodRouter`, and each framework's equivalent) answers 405 before any ulo code runs.
 
 The gap is not cosmetic. CORS preflight is exactly the 405 shape: browsers send `OPTIONS /users` to a
 route that only registers `GET`, so a `CorsMiddleware` on the global chain would never see the one
@@ -42,9 +42,9 @@ pass.
 routing closure handed to `ctx.execute` is the entire router, not one handler. Both conversion
 directions are re-wraps, not copies:
 
-- *Requests*: `HttpRequest` wraps `http::Request<RequestBody>`, so native → toni → native preserves
+- *Requests*: `HttpRequest` wraps `http::Request<RequestBody>`, so native → ulo → native preserves
   extensions (path params, hyper's upgrade slot) and body streaming.
-- *Responses*: whatever the router produces — a toni handler's response, a native 405, a WebSocket
+- *Responses*: whatever the router produces — a ulo handler's response, a native 405, a WebSocket
   handshake reply — is re-wrapped into `HttpResponse` for the chain to observe, body included.
   This rests on the Send-only response body model: `BoxBody` is `UnsyncBoxBody`, so axum's `!Sync`
   native body fits without buffering and streaming responses (SSE) flow through untouched.
@@ -80,7 +80,7 @@ mismatch.
 
 **Rocket realization**: the internal-matching case. Fairings cannot short-circuit with a response,
 so rocket offers no pre-routing anchor at all; instead one catch-all route per method hosts the
-chain and routing is internal (`match_route` over the toni route table, including param capture and
+chain and routing is internal (`match_route` over the ulo route table, including param capture and
 the 405/`Allow` logic). Rocket's router reduces to connection serving. WebSocket upgrades need the
 borrowed rocket request, which the `'static` routing closure cannot hold — the closure returns a
 marker response for WS paths, and the outer handler performs the upgrade only if the marker
@@ -88,7 +88,7 @@ survived the chain, so middleware can reject upgrades by replacing the response.
 
 ## Considered and rejected
 
-**A toni-owned router (`matchit`) in the serve path.** It would make the five native routers dumb
+**A ulo-owned router (`matchit`) in the serve path.** It would make the five native routers dumb
 byte-pumps and re-implement path matching the hosts already do well. Nest never does this; the
 adapter contract doesn't need it. `matchit` remains a legitimate private mechanism for an adapter
 whose host offers no anchor point (rocket's fairings cannot short-circuit), and for a future

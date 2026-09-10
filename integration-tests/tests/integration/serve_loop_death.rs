@@ -8,10 +8,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::oneshot;
-use toni::http_helpers::HttpMethod;
-use toni::{
-    AdapterContext, BindTarget, Body as ToniBody, HttpAdapter, HttpLifecycleHandle, RequestHandler,
-    ToniFactory, async_trait, controller, get, module, routes,
+use ulo::http_helpers::HttpMethod;
+use ulo::{
+    AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, RequestHandler,
+    UloFactory, async_trait, controller, get, module, routes,
 };
 
 #[controller("/probe")]
@@ -20,8 +20,8 @@ pub struct ProbeController {}
 #[routes]
 impl ProbeController {
     #[get("/ping")]
-    fn ping(&self) -> ToniBody {
-        ToniBody::text("pong")
+    fn ping(&self) -> UloBody {
+        UloBody::text("pong")
     }
 }
 
@@ -70,7 +70,7 @@ impl HttpAdapter for DyingAdapter {
 async fn a_dead_serve_loop_closes_the_application() {
     let (die, dies) = oneshot::channel();
 
-    let mut app = ToniFactory::create(ProbeModule).await.unwrap();
+    let mut app = UloFactory::create(ProbeModule).await.unwrap();
     app.use_http_adapter(DyingAdapter { die: dies }, ("127.0.0.1", 0))
         .unwrap();
     app.bind().await.unwrap();

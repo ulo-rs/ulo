@@ -7,9 +7,9 @@
 //! Run with:  cargo run --example provider_patterns
 
 use std::time::Duration;
-use toni::{
+use ulo::{
     injectable, module, new, provider_alias, provider_factory, provider_token, provider_value,
-    toni_factory::ToniFactory,
+    ulo_factory::UloFactory,
 };
 
 // ---- providers ---------------------------------------------------------------
@@ -103,7 +103,7 @@ impl AppInfo {
         LoggerService,
 
         // provider_value! — static constants under string or type tokens
-        provider_value!("APP_NAME", "ToniApp".to_string()),
+        provider_value!("APP_NAME", "UloApp".to_string()),
         provider_value!("PORT", 3000_u16),
         provider_value!(Duration, Duration::from_secs(60)),
 
@@ -142,9 +142,9 @@ impl ProviderPatternsModule {}
 
 #[tokio::main]
 async fn main() {
-    println!("🔧 toni provider patterns\n");
+    println!("🔧 ulo provider patterns\n");
 
-    let app = ToniFactory::new()
+    let app = UloFactory::new()
         .create_with(ProviderPatternsModule)
         .await
         .unwrap();

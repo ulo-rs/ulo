@@ -1,0 +1,29 @@
+[package]
+name = "ulo-rpc-kafka"
+version = "0.1.0"
+edition.workspace = true
+description = "Apache Kafka transport adapter for the Ulo RPC gateway"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "kafka", "rpc", "framework", "adapter"]
+categories = ["network-programming"]
+
+[features]
+# Gates tests that need a live Kafka broker (via testcontainers + Docker).
+integration = []
+
+[dependencies]
+ulo = { path = "../ulo", default-features = false }
+rdkafka = "0.39"
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+futures = { workspace = true, features = ["async-await", "executor"] }
+
+[dev-dependencies]
+testcontainers.workspace = true
+testcontainers-modules = { workspace = true, features = ["kafka"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio-stream.workspace = true

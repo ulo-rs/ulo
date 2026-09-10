@@ -15,20 +15,20 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use serial_test::serial;
-use toni::ToniFactory;
-use toni::context::{GrpcContext, HandlerContext};
-use toni::extractors::Payload;
-use toni::{ErrorKind, module};
-use toni_macros::{controller, grpc_methods, new};
+use ulo::UloFactory;
+use ulo::context::{GrpcContext, HandlerContext};
+use ulo::extractors::Payload;
+use ulo::{ErrorKind, module};
+use ulo_macros::{controller, grpc_methods, new};
 
 // The manual fixture in `build.rs` names its message types by path, and that
 // path is this module — the generated trait will accept no other.
 pub mod msgs {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 mod watch_svc {
-    tonic::include_proto!("toni_test.watch.Watcher");
+    tonic::include_proto!("ulo_test.watch.Watcher");
 }
 
 use watch_svc::watcher_client::WatcherClient;
@@ -36,8 +36,8 @@ use watch_svc::watcher_server::{Watcher, WatcherServer};
 
 static SAW_CANCEL: AtomicBool = AtomicBool::new(false);
 
-/// A handler's error type implements `toni::Error`. `GrpcStatus` does not —
-/// it is what a `toni::Error` maps into — so a handler names its own.
+/// A handler's error type implements `ulo::Error`. `GrpcStatus` does not —
+/// it is what a `ulo::Error` maps into — so a handler names its own.
 #[derive(Debug)]
 struct WatchFailed;
 
@@ -49,7 +49,7 @@ impl std::fmt::Display for WatchFailed {
 
 impl std::error::Error for WatchFailed {}
 
-impl toni::Error for WatchFailed {
+impl ulo::Error for WatchFailed {
     fn kind(&self) -> ErrorKind {
         ErrorKind::Unavailable
     }
@@ -102,11 +102,11 @@ impl ManualWatcherModule {}
 
 async fn boot() -> u16 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::new()
+        let mut app = UloFactory::new()
             .create_with(ManualWatcherModule)
             .await
             .unwrap();

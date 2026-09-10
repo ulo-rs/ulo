@@ -5,7 +5,7 @@ Status: accepted
 ## Context
 
 Two parameter syntaxes floated through the framework. Routes were originally declared Express-style
-(`/users/:id` — the "toni-form" the adapter internals translate from), while the documentation and
+(`/users/:id` — the "ulo-form" the adapter internals translate from), while the documentation and
 newer code write OpenAPI-style `/users/{id}`. Which one worked depended on the adapter: `:id` was
 translated for axum and salvo, native on poem, and matched internally on rocket and actix; `{id}`
 was native on axum, actix, and salvo but a dead literal on poem and rocket, and invisible to the
@@ -21,7 +21,7 @@ while raw `{` `}` are illegal in URIs and therefore unambiguous delimiters.
 ## Decision
 
 `{param}` is the parameter syntax. Declaring a route segment with a leading `:` is a compile
-error with a migration hint (`route path segment ':id' uses ':param' syntax; toni's parameter
+error with a migration hint (`route path segment ':id' uses ':param' syntax; ulo's parameter
 syntax is '{id}'`), emitted where the macros parse the path literal — the controller prefix and
 the verb/`#[sse]` sub-paths. Mid-segment colons stay legal; only a segment-leading colon is
 rejected.

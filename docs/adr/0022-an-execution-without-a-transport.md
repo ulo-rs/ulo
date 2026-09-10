@@ -10,7 +10,7 @@ Request scope stopped being an HTTP privilege at that point. Reaching an executi
 
 ### Resolving by hand required an HTTP request that meant nothing
 
-`ToniApplicationContext::resolve` took `&RequestPart` and built an `HttpContext` from it. A CLI tool,
+`UloApplicationContext::resolve` took `&RequestPart` and built an `HttpContext` from it. A CLI tool,
 a cron tick or a test that wanted a request-scoped provider therefore wrote:
 
 ```rust
@@ -100,7 +100,7 @@ ever call one.
 
 ## Consequences
 
-- `resolve` and `resolve_by_token` change signature on `ToniApplicationContext` and `ToniApplication`.
+- `resolve` and `resolve_by_token` change signature on `UloApplicationContext` and `UloApplication`.
   Breaking for callers that passed request parts; the fix is `HttpContext::from_parts(parts).into()`
   where the execution is genuinely an HTTP one, and `ProviderContext::standalone()` where it never was.
 - `ModuleRef` can reach a request-scoped provider, which it could not before.

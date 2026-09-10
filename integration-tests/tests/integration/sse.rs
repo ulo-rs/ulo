@@ -4,10 +4,10 @@ use std::time::Duration;
 use crate::common::TestServer;
 use futures_util::{StreamExt, stream};
 use tokio::sync::broadcast;
-use toni::{
+use ulo::{
     HttpResponse, Sse, SseEvent, controller, extractors::Bytes, get, module, post, routes, sse,
 };
-use toni_macros::{injectable, new};
+use ulo_macros::{injectable, new};
 
 // ── Service ──────────────────────────────────────────────────────────────────
 
@@ -53,7 +53,7 @@ pub struct SseController {
 #[routes]
 impl SseController {
     #[get("/basic")]
-    async fn basic(&self) -> impl toni::IntoResponse {
+    async fn basic(&self) -> impl ulo::IntoResponse {
         sse(stream::iter([
             SseEvent::data("hello"),
             SseEvent::data("world"),
@@ -61,7 +61,7 @@ impl SseController {
     }
 
     #[get("/fields")]
-    async fn fields(&self) -> impl toni::IntoResponse {
+    async fn fields(&self) -> impl ulo::IntoResponse {
         sse(stream::iter([SseEvent::data("payload")
             .event("update")
             .id("42")
@@ -69,12 +69,12 @@ impl SseController {
     }
 
     #[get("/multiline")]
-    async fn multiline(&self) -> impl toni::IntoResponse {
+    async fn multiline(&self) -> impl ulo::IntoResponse {
         sse(stream::iter([SseEvent::data("line1\nline2\nline3")]))
     }
 
     #[get("/fallible")]
-    async fn fallible(&self) -> impl toni::IntoResponse {
+    async fn fallible(&self) -> impl ulo::IntoResponse {
         Sse::new(stream::iter([Ok::<SseEvent, std::io::Error>(
             SseEvent::data("ok-event"),
         )]))
@@ -82,7 +82,7 @@ impl SseController {
 
     // Bounded to 2 events so the test connection closes after receiving them
     #[get("/live")]
-    async fn live(&self) -> impl toni::IntoResponse {
+    async fn live(&self) -> impl ulo::IntoResponse {
         sse(self.events.subscribe().take(2))
     }
 
@@ -101,7 +101,7 @@ impl SseController {
     }
 
     #[post("/emit")]
-    async fn emit_event(&self, Bytes(data): Bytes) -> impl toni::IntoResponse {
+    async fn emit_event(&self, Bytes(data): Bytes) -> impl ulo::IntoResponse {
         self.events
             .emit(String::from_utf8_lossy(&data).into_owned());
         HttpResponse::no_content().build()

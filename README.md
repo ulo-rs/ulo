@@ -3,14 +3,14 @@
 
 ## Description
 
-Toni is a framework for building efficient and scalable server-side Rust applications. It was inspired by NestJS architecture, offering a clean architecture and a developer-friendly experience.
+Ulo is a framework for building efficient and scalable server-side Rust applications. It was inspired by NestJS architecture, offering a clean architecture and a developer-friendly experience.
 
-Toni is framework-agnostic and is built to be easily integrated with other HTTP servers.
+Ulo is framework-agnostic and is built to be easily integrated with other HTTP servers.
 
 ## Features
 
 - **Modular Architecture**: Organize your application into reusable modules.
-- **HTTP Server Flexibility**: Choose Axum (`toni-axum`), Actix-web (`toni-actix`), or bring your own by implementing the `HttpAdapter` trait.
+- **HTTP Server Flexibility**: Choose Axum (`ulo-http-axum`), Actix-web (`ulo-http-actix`), or bring your own by implementing the `HttpAdapter` trait.
 - **Dependency Injection**: Manage dependencies cleanly with module providers.
 - **Macro-Driven Syntax**: Reduce boilerplate with intuitive procedural macros.
 
@@ -21,19 +21,19 @@ Toni is framework-agnostic and is built to be easily integrated with other HTTP 
 ### Prerequisites
 
 - **[Rust & Cargo](https://www.rust-lang.org/tools/install)**: Ensure Rust is installed.
-- **Toni CLI**: Install the CLI tool globally:
+- **Ulo CLI**: Install the CLI tool globally:
   ```bash
-  cargo install toni-cli
+  cargo install ulo-cli
   ```
 
 ---
 
 ## Quickstart: Build a CRUD App
 
-Use the Toni CLI to create a new project:
+Use the Ulo CLI to create a new project:
 
 ```bash
-toni new my_app
+ulo new my_app
 ```
 
 ## Project Structure
@@ -70,10 +70,10 @@ Test your endpoints at `http://localhost:3000/app`.
 
 ### HTTP Server Adapters
 
-Toni is decoupled from HTTP servers. Choose your adapter:
+Ulo is decoupled from HTTP servers. Choose your adapter:
 
-- **toni-axum**: Axum + Tokio (I/O-bound workloads)
-- **toni-actix**: Actix-web (CPU-bound workloads)
+- **ulo-http-axum**: Axum + Tokio (I/O-bound workloads)
+- **ulo-http-actix**: Actix-web (CPU-bound workloads)
 - **Bring your own**: Implement the `HttpAdapter` trait to integrate any HTTP server
 
 ## Code Example
@@ -81,12 +81,12 @@ Toni is decoupled from HTTP servers. Choose your adapter:
 **`main.rs`** (with Axum)
 
 ```rust
-use toni::ToniFactory;
-use toni_axum::AxumAdapter;
+use ulo::UloFactory;
+use ulo_http_axum::AxumAdapter;
 
 #[tokio::main]
 async fn main() {
-    let mut app = ToniFactory::create(AppModule).await.unwrap();
+    let mut app = UloFactory::create(AppModule).await.unwrap();
     app.use_http_adapter(AxumAdapter::new(), 3000, "127.0.0.1")
         .unwrap();
     app.start().await.unwrap();
@@ -96,12 +96,12 @@ async fn main() {
 **Or with Actix:**
 
 ```rust
-use toni::ToniFactory;
-use toni_actix::ActixAdapter;
+use ulo::UloFactory;
+use ulo_http_actix::ActixAdapter;
 
 #[actix_web::main]
 async fn main() {
-    let mut app = ToniFactory::create(AppModule).await.unwrap();
+    let mut app = UloFactory::create(AppModule).await.unwrap();
     app.use_http_adapter(ActixAdapter::new(), 3000, "127.0.0.1")
         .unwrap();
     app.start().await.unwrap();
@@ -162,4 +162,4 @@ impl AppService {
 
 ## License
 
-Toni is [MIT licensed](LICENSE).
+Ulo is [MIT licensed](LICENSE).

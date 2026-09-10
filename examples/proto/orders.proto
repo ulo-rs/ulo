@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package toni_examples.orders;
+package ulo_examples.orders;
 
 service Orders {
     rpc Create (CreateOrderRequest) returns (CreateOrderResponse);

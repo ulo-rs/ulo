@@ -1,6 +1,6 @@
 use crate::common::TestServer;
 use serde::{Deserialize, Serialize};
-use toni::{Body as ToniBody, controller, extractors::Bytes, get, post, routes};
+use ulo::{Body as UloBody, controller, extractors::Bytes, get, post, routes};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CreateUserDto {
@@ -14,9 +14,9 @@ struct SearchParams {
     limit: Option<usize>,
 }
 
-/// This controller demonstrates Toni's NestJS-style attribute-based parameter extraction.
+/// This controller demonstrates Ulo's NestJS-style attribute-based parameter extraction.
 ///
-/// Toni supports clean, attribute-based syntax similar to NestJS/Spring:
+/// Ulo supports clean, attribute-based syntax similar to NestJS/Spring:
 /// - `#[body]`: Extract JSON request body
 /// - `#[param("name")]`: Extract path parameters
 /// - `#[query("name")]`: Extract query string parameters
@@ -29,8 +29,8 @@ pub struct AttributeController {}
 impl AttributeController {
     /// Extract JSON body using #[body] attribute
     #[post("/users")]
-    fn create_user(&self, #[body] dto: CreateUserDto) -> ToniBody {
-        ToniBody::text(format!("Created user: {} <{}>", dto.name, dto.email))
+    fn create_user(&self, #[body] dto: CreateUserDto) -> UloBody {
+        UloBody::text(format!("Created user: {} <{}>", dto.name, dto.email))
     }
 
     /// Extract individual query parameters using #[query] attributes
@@ -39,22 +39,22 @@ impl AttributeController {
         &self,
         #[query("q")] query: String,
         #[query("limit")] limit: Option<usize>,
-    ) -> ToniBody {
+    ) -> UloBody {
         let limit = limit.unwrap_or(10);
-        ToniBody::text(format!("Searching for '{}' with limit {}", query, limit))
+        UloBody::text(format!("Searching for '{}' with limit {}", query, limit))
     }
 
     /// Extract path parameter using #[param] attribute
     #[get("/users/{id}")]
-    fn get_user(&self, #[param("id")] user_id: i32) -> ToniBody {
-        ToniBody::text(format!("User ID: {}", user_id))
+    fn get_user(&self, #[param("id")] user_id: i32) -> UloBody {
+        UloBody::text(format!("User ID: {}", user_id))
     }
 
     /// Extract ALL query params as struct using #[query] without argument
     #[get("/advanced-search")]
-    fn advanced_search(&self, #[query] params: SearchParams) -> ToniBody {
+    fn advanced_search(&self, #[query] params: SearchParams) -> UloBody {
         let limit = params.limit.unwrap_or(10);
-        ToniBody::text(format!(
+        UloBody::text(format!(
             "Advanced search: '{}' (limit: {})",
             params.q, limit
         ))
@@ -66,14 +66,14 @@ impl AttributeController {
         &self,
         #[query("page", default = "1")] page: usize,
         #[query("pageSize", default = "20")] page_size: usize,
-    ) -> ToniBody {
-        ToniBody::text(format!("Products page {} (size: {})", page, page_size))
+    ) -> UloBody {
+        UloBody::text(format!("Products page {} (size: {})", page, page_size))
     }
 
     /// Mix multiple attribute extractors: #[param] + #[body]
     #[post("/users/{id}")]
-    fn update_user(&self, #[param("id")] user_id: i32, #[body] dto: CreateUserDto) -> ToniBody {
-        ToniBody::text(format!(
+    fn update_user(&self, #[param("id")] user_id: i32, #[body] dto: CreateUserDto) -> UloBody {
+        UloBody::text(format!(
             "Updated user {}: {} <{}>",
             user_id, dto.name, dto.email
         ))
@@ -81,22 +81,22 @@ impl AttributeController {
 
     /// Extract binary data using Bytes extractor
     #[post("/upload")]
-    fn upload_file(&self, data: Bytes) -> ToniBody {
-        ToniBody::text(format!("Uploaded {} bytes", data.len()))
+    fn upload_file(&self, data: Bytes) -> UloBody {
+        UloBody::text(format!("Uploaded {} bytes", data.len()))
     }
 
     /// Path-qualified marker spellings work the same as the bare ones
     #[post("/users-qualified")]
     fn create_user_qualified(
         &self,
-        #[toni::query("tag")] tag: String,
-        #[toni::body] dto: CreateUserDto,
-    ) -> ToniBody {
-        ToniBody::text(format!("Created {} user: {}", tag, dto.name))
+        #[ulo::query("tag")] tag: String,
+        #[ulo::body] dto: CreateUserDto,
+    ) -> UloBody {
+        UloBody::text(format!("Created {} user: {}", tag, dto.name))
     }
 }
 
-#[toni::module(
+#[ulo::module(
     controllers: [AttributeController],
     providers: [],
 )]

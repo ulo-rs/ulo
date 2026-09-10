@@ -1,0 +1,269 @@
+//! End-to-end coverage for the Kafka RPC transport against a live broker
+//! (testcontainers). Gated behind the `integration` feature.
+//!
+//! - `send` round-trips a request via a private reply topic + correlation id
+//! - `emit` reaches a fire-and-forget handler with no reply topic
+//! - metadata set via `RpcClient::request().metadata(..)` rides Kafka headers
+//!   and reaches the handler's `RpcContext`
+//!
+//! Topics auto-create on the broker. Budgets are generous: a Kafka broker boots
+//! slowly and consumer-group assignment adds several seconds before the first
+//! request is consumed.
+#![cfg(feature = "integration")]
+
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+use testcontainers::runners::AsyncRunner;
+use testcontainers_modules::kafka::apache::{KAFKA_PORT, Kafka};
+use ulo::context::RpcContext;
+use ulo::rpc::{RpcData, RpcError};
+use ulo::{RpcClient, UloFactory, controller, module, new, patterns};
+use ulo_rpc_kafka::{KafkaAdapter, KafkaClientTransport};
+
+static BROKERS: OnceLock<String> = OnceLock::new();
+static EVENTS: AtomicUsize = AtomicUsize::new(0);
+
+#[controller]
+pub struct MathController {}
+#[patterns]
+impl MathController {
+    #[new]
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    #[message_pattern("math.add")]
+    async fn add(&self, data: RpcData, _c: &RpcContext) -> Result<RpcData, RpcError> {
+        let v = data.as_json().cloned().unwrap_or_default();
+        let a = v["a"].as_i64().unwrap_or(0);
+        let b = v["b"].as_i64().unwrap_or(0);
+        Ok(RpcData::json(serde_json::json!({ "sum": a + b })))
+    }
+
+    #[message_pattern("meta.echo")]
+    async fn meta_echo(&self, _d: RpcData, c: &RpcContext) -> Result<RpcData, RpcError> {
+        let trace = c.header("trace").unwrap_or("none").to_string();
+        Ok(RpcData::json(serde_json::json!({ "trace": trace })))
+    }
+
+    #[event_pattern("event.fire")]
+    async fn fire(&self, _d: RpcData, _c: &RpcContext) -> Result<(), RpcError> {
+        EVENTS.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[module(controllers: [MathController])]
+impl MathModule {}
+
+#[tokio::test]
+async fn kafka_rpc_send_emit_and_metadata() {
+    let container = Kafka::default().start().await.unwrap();
+    let port = container.get_host_port_ipv4(KAFKA_PORT).await.unwrap();
+    let brokers = format!("127.0.0.1:{port}");
+    BROKERS.set(brokers.clone()).ok();
+
+    tokio::task::LocalSet::new()
+        .run_until(async move {
+            tokio::task::spawn_local(async move {
+                let mut app = UloFactory::new().create_with(MathModule).await.unwrap();
+                app.use_rpc_adapter(KafkaAdapter::new(BROKERS.get().unwrap().clone()))
+                    .unwrap();
+                app.bind().await.unwrap();
+                app.run().await;
+            });
+
+            let client = RpcClient::new(
+                KafkaClientTransport::new(brokers.clone()).with_timeout(Duration::from_secs(5)),
+            );
+
+            // Broker boot + consumer-group assignment can take many seconds;
+            // retry until the handler topic is assigned and answers.
+            let mut sum = None;
+            for _ in 0..60u8 {
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+                if let Ok(resp) = client
+                    .send(
+                        "math.add",
+                        RpcData::json(serde_json::json!({"a": 2, "b": 3})),
+                    )
+                    .await
+                {
+                    sum = resp.as_json().and_then(|v| v["sum"].as_i64());
+                    if sum.is_some() {
+                        break;
+                    }
+                }
+            }
+            assert_eq!(sum, Some(5), "send round-trip should return the sum");
+
+            EVENTS.store(0, Ordering::SeqCst);
+            client
+                .emit("event.fire", RpcData::json(serde_json::json!({})))
+                .await
+                .unwrap();
+            let mut fired = false;
+            for _ in 0..30u8 {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if EVENTS.load(Ordering::SeqCst) == 1 {
+                    fired = true;
+                    break;
+                }
+            }
+            assert!(
+                fired,
+                "emit should reach the fire-and-forget handler exactly once"
+            );
+
+            let resp = client
+                .request("meta.echo")
+                .header("trace", "abc123")
+                .send(RpcData::json(serde_json::json!({})))
+                .await
+                .expect("metadata request should round-trip");
+            let trace = resp.as_json().and_then(|v| v["trace"].as_str());
+            assert_eq!(
+                trace,
+                Some("abc123"),
+                "client metadata must reach the handler"
+            );
+        })
+        .await;
+}
+
+#[controller]
+pub struct StreamController {}
+#[patterns]
+impl StreamController {
+    #[new]
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    #[message_pattern("count.stream")]
+    async fn count(&self, _d: RpcData) -> ulo::rpc::RpcHandlerResult {
+        use futures::StreamExt;
+        // 50 items: every frame of one call is keyed by its correlation id,
+        // so ordering across a real broker is what this pins.
+        Ok(ulo::rpc::RpcHandlerOutput::Stream(
+            futures::stream::iter((1..=50).map(|n| Ok(RpcData::json(serde_json::json!(n)))))
+                .boxed(),
+        ))
+    }
+
+    #[message_pattern("probe.cancel")]
+    async fn probe_cancel(&self, _d: RpcData, ctx: &RpcContext) -> ulo::rpc::RpcHandlerResult {
+        use futures::StreamExt;
+        use ulo::context::HandlerContext;
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<RpcData, RpcError>>(1);
+        let token = ctx.cancellation().clone();
+        tokio::spawn(async move {
+            let mut n = 0u32;
+            loop {
+                tokio::select! {
+                    _ = token.cancelled() => {
+                        STREAM_CANCELLED.store(true, std::sync::atomic::Ordering::SeqCst);
+                        break;
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(30)) => {
+                        n += 1;
+                        if tx.send(Ok(RpcData::json(serde_json::json!(n)))).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        Ok(ulo::rpc::RpcHandlerOutput::Stream(
+            tokio_stream::wrappers::ReceiverStream::new(rx).boxed(),
+        ))
+    }
+}
+
+#[module(controllers: [StreamController])]
+impl StreamModule {}
+
+static STREAM_BROKERS: OnceLock<String> = OnceLock::new();
+static STREAM_CANCELLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tokio::test]
+async fn kafka_rpc_streams_and_cancels() {
+    use futures::StreamExt;
+
+    let container = Kafka::default().start().await.unwrap();
+    let port = container.get_host_port_ipv4(KAFKA_PORT).await.unwrap();
+    let brokers = format!("127.0.0.1:{port}");
+    STREAM_BROKERS.set(brokers.clone()).ok();
+
+    tokio::task::LocalSet::new()
+        .run_until(async move {
+            tokio::task::spawn_local(async move {
+                let mut app = UloFactory::new().create_with(StreamModule).await.unwrap();
+                app.use_rpc_adapter(
+                    KafkaAdapter::new(STREAM_BROKERS.get().unwrap().clone())
+                        .with_group_id("ulo-rpc-stream-test"),
+                )
+                .unwrap();
+                app.bind().await.unwrap();
+                app.run().await;
+            });
+
+            let client = RpcClient::new(
+                KafkaClientTransport::new(brokers.clone()).with_timeout(Duration::from_secs(5)),
+            );
+
+            // The server's group rebalances after spawn; probe with retries
+            // so a slow broker does not flake the run.
+            let mut items: Vec<i64> = Vec::new();
+            for _ in 0..40u8 {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if let Ok(stream) = client
+                    .stream("count.stream", RpcData::json(serde_json::json!(null)))
+                    .await
+                {
+                    items = stream
+                        .filter_map(|item| async move {
+                            item.ok().and_then(|d| d.as_json().and_then(|v| v.as_i64()))
+                        })
+                        .collect()
+                        .await;
+                    if !items.is_empty() {
+                        break;
+                    }
+                }
+            }
+            assert_eq!(items, (1..=50).collect::<Vec<i64>>());
+
+            // Dropping the reply stream produces the cancel notice; the
+            // producer observes the execution's cancellation token.
+            let mut stream = client
+                .stream("probe.cancel", RpcData::json(serde_json::json!(null)))
+                .await
+                .unwrap();
+            let mut got_first = false;
+            for _ in 0..40u8 {
+                match tokio::time::timeout(Duration::from_millis(500), stream.next()).await {
+                    Ok(Some(Ok(_))) => {
+                        got_first = true;
+                        break;
+                    }
+                    _ => continue,
+                }
+            }
+            assert!(got_first, "first item");
+            drop(stream);
+
+            let mut cancelled = false;
+            for _ in 0..60u8 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if STREAM_CANCELLED.load(std::sync::atomic::Ordering::SeqCst) {
+                    cancelled = true;
+                    break;
+                }
+            }
+            assert!(cancelled, "producer never observed the cancellation token");
+        })
+        .await;
+}

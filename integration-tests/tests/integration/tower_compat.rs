@@ -6,15 +6,15 @@ use crate::common::TestServer;
 use http::header::{HeaderName, HeaderValue};
 use reqwest;
 use serde_json::json;
-use toni::async_trait;
-use toni::traits_helpers::MiddlewareConsumer;
-use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use toni::{Body as ToniBody, TowerLayer, controller, get, module, post, routes};
 use tower::Layer;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
+use ulo::async_trait;
+use ulo::traits_helpers::MiddlewareConsumer;
+use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::{Body as UloBody, TowerLayer, controller, get, module, post, routes};
 
 // ── Test 1: basic header injection ───────────────────────────────────────────
 //
@@ -29,8 +29,8 @@ async fn tower_layer_adds_response_header() {
     #[routes]
     impl PingController {
         #[get("/ping")]
-        fn ping(&self) -> ToniBody {
-            ToniBody::text("pong")
+        fn ping(&self) -> UloBody {
+            UloBody::text("pong")
         }
     }
 
@@ -77,8 +77,8 @@ async fn tower_layer_cors_permissive() {
     #[routes]
     impl ApiController {
         #[get("/data")]
-        fn get_data(&self) -> ToniBody {
-            ToniBody::text("ok")
+        fn get_data(&self) -> UloBody {
+            UloBody::text("ok")
         }
     }
 
@@ -124,9 +124,9 @@ async fn tower_layer_request_body_round_trip() {
         #[post("/json")]
         async fn echo_json(
             &self,
-            toni::extractors::Json(val): toni::extractors::Json<serde_json::Value>,
-        ) -> ToniBody {
-            ToniBody::json(val)
+            ulo::extractors::Json(val): ulo::extractors::Json<serde_json::Value>,
+        ) -> UloBody {
+            UloBody::json(val)
         }
     }
 
@@ -169,16 +169,16 @@ async fn tower_layer_request_body_round_trip() {
 
 // ── Test 4: extensions visible to Tower ───────────────────────────────────────
 //
-// A toni middleware sets a typed extension. A custom Tower layer reads it via
+// A ulo middleware sets a typed extension. A custom Tower layer reads it via
 // req.extensions() directly — no bridge needed, because HttpRequest IS
 // http::Request<Bytes>.
 
 #[derive(Clone)]
 struct RequestId(String);
 
-// Custom Tower layer that reads a toni-typed extension and echoes it as a
+// Custom Tower layer that reads a ulo-typed extension and echoes it as a
 // response header. Works like any standard Tower layer — extensions set by
-// toni middleware are visible in http::Extensions directly.
+// ulo middleware are visible in http::Extensions directly.
 #[derive(Clone)]
 struct EchoExtensionLayer;
 
@@ -196,13 +196,13 @@ impl<S> Layer<S> for EchoExtensionLayer {
 
 impl<S, B> tower::Service<http::Request<B>> for EchoExtensionService<S>
 where
-    S: tower::Service<http::Request<B>, Response = http::Response<toni::http_helpers::BoxBody>>
+    S: tower::Service<http::Request<B>, Response = http::Response<ulo::http_helpers::BoxBody>>
         + Send,
     S::Future: Send + 'static,
     S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     B: Send + 'static,
 {
-    type Response = http::Response<toni::http_helpers::BoxBody>;
+    type Response = http::Response<ulo::http_helpers::BoxBody>;
     type Error = Box<dyn std::error::Error + Send + Sync>;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -211,7 +211,7 @@ where
     }
 
     fn call(&mut self, req: http::Request<B>) -> Self::Future {
-        // Read the RequestId extension set by the preceding toni middleware.
+        // Read the RequestId extension set by the preceding ulo middleware.
         let request_id = req
             .extensions()
             .get::<RequestId>()
@@ -230,7 +230,7 @@ where
     }
 }
 
-// Toni middleware that stamps a typed RequestId extension before Tower runs.
+// Ulo middleware that stamps a typed RequestId extension before Tower runs.
 struct StampRequestIdMiddleware;
 
 #[async_trait]
@@ -244,26 +244,26 @@ impl Middleware for StampRequestIdMiddleware {
 }
 
 #[tokio_localset_test::localset_test]
-async fn tower_layer_reads_toni_extensions() {
+async fn tower_layer_reads_ulo_extensions() {
     #[controller("/")]
     pub struct ExtController {}
 
     #[routes]
     impl ExtController {
         #[get("/ext")]
-        fn ext(&self) -> ToniBody {
-            ToniBody::text("ok")
+        fn ext(&self) -> UloBody {
+            UloBody::text("ok")
         }
     }
 
     #[module(controllers: [ExtController])]
     impl ExtModule {
         fn configure_middleware(&self, consumer: &mut MiddlewareConsumer) {
-            // Toni middleware runs first and stamps the extension.
+            // Ulo middleware runs first and stamps the extension.
             consumer
                 .apply(StampRequestIdMiddleware)
                 .for_routes(vec!["/*"]);
-            // Tower layer runs second and reads the extension via toni_extensions().
+            // Tower layer runs second and reads the extension via ulo_extensions().
             consumer
                 .apply(TowerLayer::new(EchoExtensionLayer))
                 .for_routes(vec!["/*"]);
@@ -282,7 +282,7 @@ async fn tower_layer_reads_toni_extensions() {
     assert_eq!(
         resp.headers().get("x-request-id-echo").unwrap(),
         "req-42",
-        "Tower layer should read the RequestId extension set by preceding toni middleware"
+        "Tower layer should read the RequestId extension set by preceding ulo middleware"
     );
 }
 
@@ -299,8 +299,8 @@ async fn tower_service_builder_composition() {
     #[routes]
     impl ComposedController {
         #[get("/composed")]
-        fn composed(&self) -> ToniBody {
-            ToniBody::text("composed")
+        fn composed(&self) -> UloBody {
+            UloBody::text("composed")
         }
     }
 
@@ -338,21 +338,21 @@ async fn tower_service_builder_composition() {
     assert_eq!(resp.text().await.unwrap(), "composed");
 }
 
-// ── Test 6: Tower layer interleaved with toni middleware ──────────────────────
+// ── Test 6: Tower layer interleaved with ulo middleware ──────────────────────
 //
-// Confirms that toni middleware and Tower layers can be applied in the same
+// Confirms that ulo middleware and Tower layers can be applied in the same
 // configure_middleware and that both run in declaration order.
 
 #[tokio_localset_test::localset_test]
-async fn tower_and_toni_middleware_interleaved() {
-    struct AddToniHeader;
+async fn tower_and_ulo_middleware_interleaved() {
+    struct AddUloHeader;
 
     #[async_trait]
-    impl Middleware for AddToniHeader {
+    impl Middleware for AddUloHeader {
         async fn handle(&self, next: NextHandle) -> MiddlewareResult {
             let mut resp = next.run().await?;
             resp.headers
-                .push(("x-toni-mw".to_string(), "ran".to_string()));
+                .push(("x-ulo-mw".to_string(), "ran".to_string()));
             Ok(resp)
         }
     }
@@ -363,15 +363,15 @@ async fn tower_and_toni_middleware_interleaved() {
     #[routes]
     impl InterleavedController {
         #[get("/interleaved")]
-        fn interleaved(&self) -> ToniBody {
-            ToniBody::text("ok")
+        fn interleaved(&self) -> UloBody {
+            UloBody::text("ok")
         }
     }
 
     #[module(controllers: [InterleavedController])]
     impl InterleavedModule {
         fn configure_middleware(&self, consumer: &mut MiddlewareConsumer) {
-            consumer.apply(AddToniHeader).for_routes(vec!["/*"]);
+            consumer.apply(AddUloHeader).for_routes(vec!["/*"]);
             consumer
                 .apply(TowerLayer::new(SetResponseHeaderLayer::overriding(
                     HeaderName::from_static("x-tower-mw"),
@@ -390,7 +390,7 @@ async fn tower_and_toni_middleware_interleaved() {
         .unwrap();
 
     assert_eq!(resp.status(), 200);
-    assert_eq!(resp.headers().get("x-toni-mw").unwrap(), "ran");
+    assert_eq!(resp.headers().get("x-ulo-mw").unwrap(), "ran");
     assert_eq!(resp.headers().get("x-tower-mw").unwrap(), "ran");
 }
 
@@ -408,7 +408,7 @@ async fn tower_and_toni_middleware_interleaved() {
 async fn tower_compression_layer_transforms_body() {
     // Large enough that gzip will actually compress (small strings may not be
     // worth compressing and some implementations skip them).
-    let large_body = "toni ".repeat(500);
+    let large_body = "ulo ".repeat(500);
     let expected = large_body.clone();
 
     #[controller("/")]
@@ -417,8 +417,8 @@ async fn tower_compression_layer_transforms_body() {
     #[routes]
     impl CompressController {
         #[get("/data")]
-        fn data(&self) -> ToniBody {
-            ToniBody::text("toni ".repeat(500))
+        fn data(&self) -> UloBody {
+            UloBody::text("ulo ".repeat(500))
         }
     }
 

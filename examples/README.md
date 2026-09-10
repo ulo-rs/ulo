@@ -1,4 +1,4 @@
-# toni examples
+# ulo examples
 
 Each file here runs on its own with `cargo run --example <name>`. Start with
 [hello_world.rs](hello_world.rs) for the smallest working app, or with the guide below if you are
@@ -7,7 +7,7 @@ arriving from NestJS.
 ## Parsing, validating and refusing input
 
 [validation_complete_guide.rs](validation_complete_guide.rs) is the one to read if you are looking
-for pipes. toni has no pipe: what `PipeTransform` does — receive the value a handler is about to be
+for pipes. ulo has no pipe: what `PipeTransform` does — receive the value a handler is about to be
 given, then reshape or refuse it — is what an extractor does here, so the rules that apply are
 visible in the handler's signature.
 
@@ -49,4 +49,4 @@ compression, rate limiting. They illustrate the shape rather than being producti
 
 ## License
 
-MIT, same as toni.
+MIT, same as ulo.

@@ -6,7 +6,7 @@
 
 use crate::common::TestServer;
 use futures_util::future::join_all;
-use toni::{Body as ToniBody, controller, get, module, provider_factory, routes};
+use ulo::{Body as UloBody, controller, get, module, provider_factory, routes};
 use uuid::Uuid;
 
 #[tokio_localset_test::localset_test]
@@ -25,8 +25,8 @@ async fn request_scoped_instances_are_isolated_under_concurrency() {
     #[routes]
     impl TestController {
         #[get("/id")]
-        fn get_id(&self) -> ToniBody {
-            ToniBody::text(self.req_id.id.clone())
+        fn get_id(&self) -> UloBody {
+            UloBody::text(self.req_id.id.clone())
         }
     }
 

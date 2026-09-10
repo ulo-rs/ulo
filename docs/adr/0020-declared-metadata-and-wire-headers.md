@@ -20,7 +20,7 @@ Almost nothing fills it.
 - Controller-level `#[set_metadata]` is collected nowhere, HTTP included. The class half does not exist
   on any transport.
 
-Against Nest's `getAllAndOverride([getHandler(), getClass()])`, toni has the handler half on one
+Against Nest's `getAllAndOverride([getHandler(), getClass()])`, ulo has the handler half on one
 transport out of four.
 
 ### An empty map does not fail; it authorises
@@ -47,7 +47,7 @@ type.
 
 Nest has the same collision and never feels it: `Reflector` is an injected service reading off
 `getHandler()`/`getClass()`, while wire metadata hangs off the request. They are never two methods on
-one object. toni puts both on the context, so toni has to disambiguate by name where Nest disambiguates
+one object. ulo puts both on the context, so ulo has to disambiguate by name where Nest disambiguates
 by access path.
 
 ### The carrier is misfiled, and so is its storage
@@ -116,7 +116,7 @@ index under the spec term, so the word still finds them.
 `http_helpers::Extensions` becomes `TypeMap`, keeping its synchronous shape, and its module doc stops
 describing the request bag. `context::Extensions` is then the only `Extensions` in the crate.
 
-It moves to `toni::type_map` rather than staying under `http_helpers`, its two users being a declared
+It moves to `ulo::type_map` rather than staying under `http_helpers`, its two users being a declared
 map read on four transports and an RPC call descriptor. Leaving it there would repeat one level down
 the misfiling this ADR corrects one level up.
 

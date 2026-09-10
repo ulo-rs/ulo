@@ -1,0 +1,16 @@
+[package]
+name = "ulo-build"
+version = "0.1.0"
+edition.workspace = true
+description = "Build-script companion for ulo-grpc: writes what each proto method carries beside the trait tonic generated"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "grpc", "tonic", "build", "codegen"]
+categories = ["development-tools::build-utils"]
+
+[dependencies]
+syn = { version = "2", features = ["full", "parsing", "printing"] }
+quote = "1"
+proc-macro2 = "1"
+prettyplease = "0.2"

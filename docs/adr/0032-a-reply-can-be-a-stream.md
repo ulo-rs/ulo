@@ -61,7 +61,7 @@ an interceptor is scoped too.
 
 ### Core speaks the grammar and drives the drain; adapters carry the bytes
 
-A `toni::rpc::wire` module owns the framing in both directions — single replies, stream items, end
+A `ulo::rpc::wire` module owns the framing in both directions — single replies, stream items, end
 markers, error rendering, panic frames, parsing — and a drive loop that drains a handler's stream
 through a transport-supplied frame sender. The seven copies collapse into it. An adapter contributes
 its carrier: a closure that puts bytes on its reply channel (TCP and UDP splice `"id"` there), a
@@ -101,11 +101,11 @@ flight for a connection when its read loop ends.
 | --- | --- | --- |
 | TCP | `{"id": …, "cancel": true}` on the same connection | `id` |
 | UDP | the same frame, a datagram to the server socket | `(source, id)` |
-| NATS | subject `toni.rpc.cancel`, no queue group — the owner acts | reply inbox |
-| Redis | channel `toni:rpc:cancel` | reply channel |
-| RabbitMQ | fanout exchange `toni.rpc.cancel`, an exclusive auto-delete queue per instance | `correlation_id` |
-| MQTT | topic `toni/rpc/cancel`, QoS 1 | correlation data |
-| Kafka | topic `toni.rpc.cancel`, a unique consumer group per instance | `correlation_id` |
+| NATS | subject `ulo.rpc.cancel`, no queue group — the owner acts | reply inbox |
+| Redis | channel `ulo:rpc:cancel` | reply channel |
+| RabbitMQ | fanout exchange `ulo.rpc.cancel`, an exclusive auto-delete queue per instance | `correlation_id` |
+| MQTT | topic `ulo/rpc/cancel`, QoS 1 | correlation data |
+| Kafka | topic `ulo.rpc.cancel`, a unique consumer group per instance | `correlation_id` |
 
 Broker cancel bodies are `{"cancel": true, "key": "<correlation>"}`.
 

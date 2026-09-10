@@ -7,30 +7,30 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use toni::async_trait;
-use toni::context::WsContext;
-use toni::errors::{ErrorKind, PanicRecovered, PipelineSegment};
-use toni::injectable;
-use toni::module;
-use toni::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
-use toni::websocket::{WsClient, WsError, WsHandlerResult, WsMessage};
-use toni_macros::{new, subscriptions, websocket_gateway};
+use ulo::async_trait;
+use ulo::context::WsContext;
+use ulo::errors::{ErrorKind, PanicRecovered, PipelineSegment};
+use ulo::injectable;
+use ulo::module;
+use ulo::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo::websocket::{WsClient, WsError, WsHandlerResult, WsMessage};
+use ulo_macros::{new, subscriptions, websocket_gateway};
 
 use crate::common::TestServer;
 
 /// Start an Axum-backed app with the supplied global WS error handlers wired
 /// before bootstrap.
 async fn start_ws_server_with_handlers(
-    module: impl toni::ModuleMetadata + 'static,
+    module: impl ulo::ModuleMetadata + 'static,
     handlers: Vec<Arc<dyn ErrorHandler<WsContext, WsMessage>>>,
 ) -> u16 {
-    use toni::toni_factory::ToniFactory;
-    use toni_axum::AxumAdapter;
+    use ulo::ulo_factory::UloFactory;
+    use ulo_http_axum::AxumAdapter;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut factory = ToniFactory::new();
+        let mut factory = UloFactory::new();
         for h in handlers {
             factory.use_global_ws_error_handler(h);
         }
@@ -360,7 +360,7 @@ impl std::fmt::Display for WsRenderBomb {
 
 impl std::error::Error for WsRenderBomb {}
 
-impl toni::Error for WsRenderBomb {
+impl ulo::Error for WsRenderBomb {
     fn kind(&self) -> ErrorKind {
         ErrorKind::Internal
     }

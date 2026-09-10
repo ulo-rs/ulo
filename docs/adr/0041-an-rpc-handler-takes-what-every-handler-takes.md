@@ -27,7 +27,7 @@ A handler's own type sharing a framework extractor's name is read as the framewo
 failure asks the author to implement a trait they have never heard of rather than to rename their
 type. The name that caused it appears nowhere in the message.
 
-An aliased extractor takes the other branch. `use toni::extractors::Payload as P` then `P<Order>`
+An aliased extractor takes the other branch. `use ulo::extractors::Payload as P` then `P<Order>`
 falls to the bare form, and the failure is that `Payload<Order>` does not implement
 `DeserializeOwned` — a fact about a trait the author never mentioned.
 

@@ -3,8 +3,8 @@
 //! The class half existed nowhere before: `#[set_metadata]` was read from method attributes only, so
 //! an annotation on the impl block compiled and did nothing.
 
-use toni::context::{HandlerContext, HttpContext};
-use toni::{Body as ToniBody, controller, get, module, routes, set_metadata};
+use ulo::context::{HandlerContext, HttpContext};
+use ulo::{Body as UloBody, controller, get, module, routes, set_metadata};
 
 use crate::common::TestServer;
 
@@ -24,15 +24,15 @@ pub struct MetaController {}
 impl MetaController {
     /// Inherits both.
     #[get("/inherited")]
-    fn inherited(&self, ctx: &HttpContext) -> ToniBody {
-        ToniBody::text(read(ctx))
+    fn inherited(&self, ctx: &HttpContext) -> UloBody {
+        UloBody::text(read(ctx))
     }
 
     /// Overrides one and inherits the other.
     #[get("/overridden")]
     #[set_metadata(Tier("premium"))]
-    fn overridden(&self, ctx: &HttpContext) -> ToniBody {
-        ToniBody::text(read(ctx))
+    fn overridden(&self, ctx: &HttpContext) -> UloBody {
+        UloBody::text(read(ctx))
     }
 }
 
@@ -88,15 +88,15 @@ pub struct AccumulateController {}
 impl AccumulateController {
     /// Declares nothing, so one entry exists.
     #[get("/inherited")]
-    fn inherited(&self, ctx: &HttpContext) -> ToniBody {
-        ToniBody::text(read_roles(ctx))
+    fn inherited(&self, ctx: &HttpContext) -> UloBody {
+        UloBody::text(read_roles(ctx))
     }
 
     /// Declares its own, so two exist: the block's first, this one second.
     #[get("/added")]
     #[set_metadata(Roles(vec!["admin"]))]
-    fn added(&self, ctx: &HttpContext) -> ToniBody {
-        ToniBody::text(read_roles(ctx))
+    fn added(&self, ctx: &HttpContext) -> UloBody {
+        UloBody::text(read_roles(ctx))
     }
 }
 

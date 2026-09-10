@@ -18,9 +18,9 @@
 //!        -F "avatar=@/path/to/avatar.png"
 
 use serde_json::{Value, json};
-use toni::extractors::Multipart;
-use toni::*;
-use toni_axum::AxumAdapter;
+use ulo::extractors::Multipart;
+use ulo::*;
+use ulo_http_axum::AxumAdapter;
 
 #[controller("/")]
 pub struct UploadController;
@@ -88,7 +88,7 @@ impl AppModule {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("🚀 toni file upload example\n");
+    println!("🚀 ulo file upload example\n");
     println!("  POST http://127.0.0.1:3000/upload   — upload a file field + description");
     println!("  POST http://127.0.0.1:3000/inspect  — echo back all multipart fields");
     println!();
@@ -96,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
     println!("       -F \"description=hello\" -F \"file=@/path/to/file.txt\"");
     println!();
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
         .unwrap();

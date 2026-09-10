@@ -1,12 +1,12 @@
 use std::sync::{Arc, Mutex, OnceLock};
-use toni::async_trait;
-use toni::context::HttpContext;
-use toni::http_helpers::HttpResponse;
-use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use toni::traits_helpers::{Guard, Interceptor, InterceptorNext, MiddlewareConsumer};
-use toni::{
-    Body as ToniBody, RequestPart, controller, get, injectable, module, new, provider_value,
-    routes, use_guards, use_interceptors,
+use ulo::async_trait;
+use ulo::context::HttpContext;
+use ulo::http_helpers::HttpResponse;
+use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext, MiddlewareConsumer};
+use ulo::{
+    Body as UloBody, RequestPart, controller, get, injectable, module, new, provider_value, routes,
+    use_guards, use_interceptors,
 };
 
 use crate::common::TestServer;
@@ -113,9 +113,9 @@ impl Middleware for HeaderValidationMiddleware {
             .tracker
             .track("middleware:header_validation");
         if !next.request().headers().contains_key("x-request-id") {
-            let mut response = toni::HttpResponse::new();
+            let mut response = ulo::HttpResponse::new();
             response.status = 400;
-            response.body = Some(ToniBody::text("Missing X-Request-ID header".to_string()));
+            response.body = Some(UloBody::text("Missing X-Request-ID header".to_string()));
             return Ok(response);
         }
         next.run().await
@@ -231,23 +231,23 @@ impl EnhancerTestController {
     #[get("/admin")]
     #[use_guards(AdminGuard)]
     #[use_interceptors(LoggingInterceptor)]
-    fn admin_endpoint(&self) -> ToniBody {
+    fn admin_endpoint(&self) -> UloBody {
         self.tracker.track("controller:admin");
-        ToniBody::text("Admin access granted".to_string())
+        UloBody::text("Admin access granted".to_string())
     }
 
     #[get("/user")]
     #[use_guards(UserGuard)]
     #[use_interceptors(TimingInterceptor, LoggingInterceptor)]
-    fn user_endpoint(&self) -> ToniBody {
+    fn user_endpoint(&self) -> UloBody {
         self.tracker.track("controller:user");
-        ToniBody::text("User access granted".to_string())
+        UloBody::text("User access granted".to_string())
     }
 
     #[get("/public")]
-    fn public_endpoint(&self) -> ToniBody {
+    fn public_endpoint(&self) -> UloBody {
         self.tracker.track("controller:public");
-        ToniBody::text("Public access".to_string())
+        UloBody::text("Public access".to_string())
     }
 }
 

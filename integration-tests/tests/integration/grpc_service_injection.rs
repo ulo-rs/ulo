@@ -1,14 +1,14 @@
 #![allow(dead_code)]
 
 use futures_util::Stream;
-use toni::extractors::{Inbound, Payload};
-use toni::*;
-use toni_macros::{controller, grpc_methods, new};
+use ulo::extractors::{Inbound, Payload};
+use ulo::*;
+use ulo_macros::{controller, grpc_methods, new};
 
 use crate::common::NotServed;
 
 mod orders_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 // `OrdersServer` reads as unused here — `#[grpc_methods]` names it in the code it emits.
@@ -93,7 +93,7 @@ impl AppModule {}
 /// `providers:` does not compile, because the macro emits no provider factory for one.
 #[tokio::test]
 async fn a_grpc_service_is_not_resolvable_as_a_dependency() {
-    let message = ToniFactory::create_application_context(AppModule)
+    let message = UloFactory::create_application_context(AppModule)
         .await
         .err()
         .expect("an injected dispatch target must fail initialization")

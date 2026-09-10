@@ -3663,20 +3663,6 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite 0.28.0",
  "tokio_localset_test",
- "toni",
- "toni-actix",
- "toni-async-graphql",
- "toni-axum",
- "toni-build",
- "toni-config",
- "toni-grpc",
- "toni-macros",
- "toni-poem",
- "toni-rocket",
- "toni-salvo",
- "toni-tcp",
- "toni-tungstenite",
- "toni-udp",
  "tonic",
  "tonic-build",
  "tonic-health",
@@ -3686,6 +3672,20 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing-subscriber",
+ "ulo",
+ "ulo-build",
+ "ulo-config",
+ "ulo-graphql-async-graphql",
+ "ulo-grpc",
+ "ulo-http-actix",
+ "ulo-http-axum",
+ "ulo-http-poem",
+ "ulo-http-rocket",
+ "ulo-http-salvo",
+ "ulo-macros",
+ "ulo-rpc-tcp",
+ "ulo-rpc-udp",
+ "ulo-ws-tungstenite",
  "uuid",
  "validator",
 ]
@@ -7923,523 +7923,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
-name = "toni"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64",
- "bytes",
- "event-listener 5.4.1",
- "futures",
- "futures-executor",
- "http 1.4.2",
- "http-body 1.0.1",
- "http-body-util",
- "multer",
- "parking_lot",
- "reqwest 0.12.28",
- "rustc-hash",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "thiserror 2.0.18",
- "tokio",
- "toni-macros",
- "tower",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "validator",
-]
-
-[[package]]
-name = "toni-actix"
-version = "0.1.0"
-dependencies = [
- "actix-rt",
- "actix-web",
- "anyhow",
- "futures-util",
- "http 1.4.2",
- "http-body-util",
- "reqwest 0.12.28",
- "serde_json",
- "tokio",
- "toni",
- "tracing",
-]
-
-[[package]]
-name = "toni-async-graphql"
-version = "0.1.0"
-dependencies = [
- "async-graphql",
- "async-trait",
- "futures",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tokio",
- "toni",
- "toni-axum",
- "toni-macros",
-]
-
-[[package]]
-name = "toni-axum"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "futures-util",
- "http-body-util",
- "reqwest 0.12.28",
- "serde_json",
- "tokio",
- "toni",
- "tower",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "toni-build"
-version = "0.1.0"
-dependencies = [
- "prettyplease",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "toni-cli"
-version = "0.1.2"
-dependencies = [
- "anyhow",
- "clap",
- "colored",
- "ignore-files",
- "libc",
- "regex",
- "serde",
- "serde_json",
- "tokio",
- "watchexec",
- "watchexec-events",
- "watchexec-filterer-globset",
- "watchexec-signals",
-]
-
-[[package]]
-name = "toni-config"
-version = "0.1.0"
-dependencies = [
- "dotenv",
- "serial_test",
- "thiserror 2.0.18",
- "toni",
- "toni-macros",
- "tracing",
- "validator",
-]
-
-[[package]]
-name = "toni-diesel"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "diesel",
- "diesel-async",
- "futures",
- "futures-timer",
- "reqwest 0.13.4",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "toni",
- "toni-axum",
- "toni-terminus",
- "tracing",
-]
-
-[[package]]
-name = "toni-examples"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "chrono",
- "futures",
- "listenfd",
- "prost",
- "protoc-bin-vendored",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "toni",
- "toni-axum",
- "toni-build",
- "toni-config",
- "toni-grpc",
- "toni-macros",
- "toni-nats",
- "toni-poem",
- "toni-rabbitmq",
- "toni-rocket",
- "toni-salvo",
- "toni-tcp",
- "toni-terminus",
- "toni-udp",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
- "tracing",
- "validator",
-]
-
-[[package]]
-name = "toni-grpc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "futures-util",
- "http 1.4.2",
- "http-body 1.0.1",
- "tokio",
- "tokio-stream",
- "toni",
- "tonic",
- "tower",
- "tracing",
-]
-
-[[package]]
-name = "toni-juniper"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "juniper",
- "serde",
- "serde_json",
- "tokio",
- "toni",
- "toni-axum",
- "toni-macros",
-]
-
-[[package]]
-name = "toni-kafka"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures",
- "rdkafka",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "tokio-stream",
- "toni",
- "tracing",
-]
-
-[[package]]
-name = "toni-macros"
-version = "0.2.0"
-dependencies = [
- "indexmap 2.14.0",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "toni-mongodb"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures",
- "futures-timer",
- "mongodb",
- "reqwest 0.13.4",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "toni",
- "toni-axum",
- "toni-terminus",
- "tracing",
-]
-
-[[package]]
-name = "toni-mqtt"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures",
- "rumqttc",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "tokio-stream",
- "toni",
- "tracing",
-]
-
-[[package]]
-name = "toni-nats"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "bytes",
- "futures",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "tokio-stream",
- "toni",
- "tracing",
-]
-
-[[package]]
-name = "toni-poem"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "futures-util",
- "http 1.4.2",
- "http-body-util",
- "poem",
- "reqwest 0.13.4",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "toni",
- "toni-macros",
- "tracing",
-]
-
-[[package]]
-name = "toni-prisma"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "toni",
-]
-
-[[package]]
-name = "toni-rabbitmq"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures",
- "lapin",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "tokio-stream",
- "toni",
- "tracing",
-]
-
-[[package]]
-name = "toni-redis"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures",
- "futures-timer",
- "redis",
- "reqwest 0.13.4",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "toni",
- "toni-axum",
- "toni-terminus",
- "tracing",
-]
-
-[[package]]
-name = "toni-redis-broadcast"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures-util",
- "redis",
- "serde",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "toni",
- "toni-axum",
- "tracing",
-]
-
-[[package]]
-name = "toni-redis-rpc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures",
- "redis",
- "serde",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "tokio-stream",
- "toni",
- "tracing",
-]
-
-[[package]]
-name = "toni-rocket"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "futures-util",
- "http 1.4.2",
- "http-body-util",
- "reqwest 0.13.4",
- "rocket",
- "rocket_ws",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "tokio-util",
- "toni",
- "toni-macros",
- "tracing",
-]
-
-[[package]]
-name = "toni-salvo"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "futures-util",
- "http 1.4.2",
- "http-body-util",
- "reqwest 0.13.4",
- "salvo",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "toni",
- "toni-macros",
- "tracing",
-]
-
-[[package]]
-name = "toni-seaorm"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures",
- "futures-timer",
- "parking_lot",
- "reqwest 0.13.4",
- "sea-orm",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "toni",
- "toni-axum",
- "toni-terminus",
- "tracing",
-]
-
-[[package]]
-name = "toni-sqlx"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures",
- "futures-timer",
- "parking_lot",
- "reqwest 0.13.4",
- "serde_json",
- "sqlx",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "toni",
- "toni-axum",
- "toni-terminus",
- "tracing",
-]
-
-[[package]]
-name = "toni-tcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures-util",
- "serde_json",
- "tokio",
- "toni",
- "tracing",
-]
-
-[[package]]
-name = "toni-terminus"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures",
- "reqwest 0.12.28",
- "serde_json",
- "sysinfo",
- "tokio",
- "toni",
-]
-
-[[package]]
-name = "toni-tungstenite"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "futures-util",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "toni",
- "tracing",
-]
-
-[[package]]
-name = "toni-udp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures-util",
- "serde_json",
- "tokio",
- "toni",
- "tracing",
-]
-
-[[package]]
 name = "tonic"
 version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8790,6 +8273,523 @@ checksum = "470dbf6591da1b39d43c14523b2b469c86879a53e8b758c8e090a470fe7b1fbe"
 dependencies = [
  "rand 0.9.5",
  "web-time",
+]
+
+[[package]]
+name = "ulo"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64",
+ "bytes",
+ "event-listener 5.4.1",
+ "futures",
+ "futures-executor",
+ "http 1.4.2",
+ "http-body 1.0.1",
+ "http-body-util",
+ "multer",
+ "parking_lot",
+ "reqwest 0.12.28",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "ulo-macros",
+ "uuid",
+ "validator",
+]
+
+[[package]]
+name = "ulo-build"
+version = "0.1.0"
+dependencies = [
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "ulo-cli"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "clap",
+ "colored",
+ "ignore-files",
+ "libc",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "watchexec",
+ "watchexec-events",
+ "watchexec-filterer-globset",
+ "watchexec-signals",
+]
+
+[[package]]
+name = "ulo-config"
+version = "0.1.0"
+dependencies = [
+ "dotenv",
+ "serial_test",
+ "thiserror 2.0.18",
+ "tracing",
+ "ulo",
+ "ulo-macros",
+ "validator",
+]
+
+[[package]]
+name = "ulo-db-diesel"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "diesel",
+ "diesel-async",
+ "futures",
+ "futures-timer",
+ "reqwest 0.13.4",
+ "serde_json",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+ "ulo",
+ "ulo-health",
+ "ulo-http-axum",
+]
+
+[[package]]
+name = "ulo-db-mongodb"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "futures-timer",
+ "mongodb",
+ "reqwest 0.13.4",
+ "serde_json",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+ "ulo",
+ "ulo-health",
+ "ulo-http-axum",
+]
+
+[[package]]
+name = "ulo-db-prisma"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "ulo",
+]
+
+[[package]]
+name = "ulo-db-redis"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "futures-timer",
+ "redis",
+ "reqwest 0.13.4",
+ "serde_json",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+ "ulo",
+ "ulo-health",
+ "ulo-http-axum",
+]
+
+[[package]]
+name = "ulo-db-seaorm"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "futures-timer",
+ "parking_lot",
+ "reqwest 0.13.4",
+ "sea-orm",
+ "serde_json",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+ "ulo",
+ "ulo-health",
+ "ulo-http-axum",
+]
+
+[[package]]
+name = "ulo-db-sqlx"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "futures-timer",
+ "parking_lot",
+ "reqwest 0.13.4",
+ "serde_json",
+ "sqlx",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+ "ulo",
+ "ulo-health",
+ "ulo-http-axum",
+]
+
+[[package]]
+name = "ulo-examples"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "chrono",
+ "futures",
+ "listenfd",
+ "prost",
+ "protoc-bin-vendored",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tracing",
+ "ulo",
+ "ulo-build",
+ "ulo-config",
+ "ulo-grpc",
+ "ulo-health",
+ "ulo-http-axum",
+ "ulo-http-poem",
+ "ulo-http-rocket",
+ "ulo-http-salvo",
+ "ulo-macros",
+ "ulo-rpc-nats",
+ "ulo-rpc-rabbitmq",
+ "ulo-rpc-tcp",
+ "ulo-rpc-udp",
+ "validator",
+]
+
+[[package]]
+name = "ulo-graphql-async-graphql"
+version = "0.1.0"
+dependencies = [
+ "async-graphql",
+ "async-trait",
+ "futures",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "ulo",
+ "ulo-http-axum",
+ "ulo-macros",
+]
+
+[[package]]
+name = "ulo-graphql-juniper"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "juniper",
+ "serde",
+ "serde_json",
+ "tokio",
+ "ulo",
+ "ulo-http-axum",
+ "ulo-macros",
+]
+
+[[package]]
+name = "ulo-grpc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "http 1.4.2",
+ "http-body 1.0.1",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tower",
+ "tracing",
+ "ulo",
+]
+
+[[package]]
+name = "ulo-health"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "reqwest 0.12.28",
+ "serde_json",
+ "sysinfo",
+ "tokio",
+ "ulo",
+]
+
+[[package]]
+name = "ulo-http-actix"
+version = "0.1.0"
+dependencies = [
+ "actix-rt",
+ "actix-web",
+ "anyhow",
+ "futures-util",
+ "http 1.4.2",
+ "http-body-util",
+ "reqwest 0.12.28",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "ulo",
+]
+
+[[package]]
+name = "ulo-http-axum"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures-util",
+ "http-body-util",
+ "reqwest 0.12.28",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tracing",
+ "ulo",
+ "uuid",
+]
+
+[[package]]
+name = "ulo-http-poem"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures-util",
+ "http 1.4.2",
+ "http-body-util",
+ "poem",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tracing",
+ "ulo",
+ "ulo-macros",
+]
+
+[[package]]
+name = "ulo-http-rocket"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures-util",
+ "http 1.4.2",
+ "http-body-util",
+ "reqwest 0.13.4",
+ "rocket",
+ "rocket_ws",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tokio-util",
+ "tracing",
+ "ulo",
+ "ulo-macros",
+]
+
+[[package]]
+name = "ulo-http-salvo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures-util",
+ "http 1.4.2",
+ "http-body-util",
+ "reqwest 0.13.4",
+ "salvo",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tracing",
+ "ulo",
+ "ulo-macros",
+]
+
+[[package]]
+name = "ulo-macros"
+version = "0.2.0"
+dependencies = [
+ "indexmap 2.14.0",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "ulo-rpc-kafka"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "rdkafka",
+ "serde_json",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "ulo",
+]
+
+[[package]]
+name = "ulo-rpc-mqtt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "rumqttc",
+ "serde_json",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "ulo",
+]
+
+[[package]]
+name = "ulo-rpc-nats"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "bytes",
+ "futures",
+ "serde_json",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "ulo",
+]
+
+[[package]]
+name = "ulo-rpc-rabbitmq"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "lapin",
+ "serde_json",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "ulo",
+]
+
+[[package]]
+name = "ulo-rpc-redis"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "redis",
+ "serde",
+ "serde_json",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "ulo",
+]
+
+[[package]]
+name = "ulo-rpc-tcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "ulo",
+]
+
+[[package]]
+name = "ulo-rpc-udp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "ulo",
+]
+
+[[package]]
+name = "ulo-ws-redis"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "redis",
+ "serde",
+ "serde_json",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+ "ulo",
+ "ulo-http-axum",
+]
+
+[[package]]
+name = "ulo-ws-tungstenite"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tracing",
+ "ulo",
 ]
 
 [[package]]

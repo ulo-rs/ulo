@@ -7,7 +7,7 @@
 //!
 //! Run with:  cargo run --example derive_injectable
 
-use toni::{injectable, module, new, toni_factory::ToniFactory};
+use ulo::{injectable, module, new, ulo_factory::UloFactory};
 
 #[injectable]
 pub struct Config {
@@ -79,7 +79,7 @@ struct AppModule {}
 async fn main() {
     println!("🔧 #[injectable] field injection\n");
 
-    let app = ToniFactory::new().create_with(AppModule).await.unwrap();
+    let app = UloFactory::new().create_with(AppModule).await.unwrap();
 
     let greeter = app
         .get::<Greeter>()

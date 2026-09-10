@@ -1,13 +1,13 @@
 //! # Parsing, validating and refusing input — the complete guide
 //!
 //! Written for developers arriving from NestJS, where all of this is the job of
-//! `PipeTransform`. toni has no pipe. What a Nest pipe does — receive the value
+//! `PipeTransform`. ulo has no pipe. What a Nest pipe does — receive the value
 //! a handler is about to be given, and either reshape it or refuse it — is what
 //! an extractor does here, and the handler's signature says which rules ran.
 //!
 //! ## The map
 //!
-//! | NestJS | toni |
+//! | NestJS | ulo |
 //! | --- | --- |
 //! | `@Body()` | `Json<T>` |
 //! | `@Body(ValidationPipe)` | `Validated<Json<T>>` |
@@ -36,15 +36,15 @@
 use std::fmt;
 
 use serde::{Deserialize, Deserializer};
-use toni::async_trait;
-use toni::context::HttpContext;
-use toni::extractors::{FromContext, Json, Path, Payload, Query, Validated};
-use toni::http_helpers::{Body, HttpResponse};
-use toni::rpc::{RpcData, RpcError};
-use toni::traits_helpers::{Guard, Interceptor, InterceptorNext};
-use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
-use toni::{controller, get, injectable, module, patterns, post, routes};
-use toni_macros::{new, subscriptions, websocket_gateway};
+use ulo::async_trait;
+use ulo::context::HttpContext;
+use ulo::extractors::{FromContext, Json, Path, Payload, Query, Validated};
+use ulo::http_helpers::{Body, HttpResponse};
+use ulo::rpc::{RpcData, RpcError};
+use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext};
+use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::{controller, get, injectable, module, patterns, post, routes};
+use ulo_macros::{new, subscriptions, websocket_gateway};
 use validator::Validate;
 
 // Parsing: what ParseIntPipe and its siblings were for
@@ -408,10 +408,10 @@ impl CatalogModule {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let mut app = toni::ToniFactory::create(CatalogModule).await?;
+    let mut app = ulo::UloFactory::create(CatalogModule).await?;
 
-    app.use_http_adapter(toni_axum::AxumAdapter::new(), ("127.0.0.1", 3000))?;
-    app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", 3001))?;
+    app.use_http_adapter(ulo_http_axum::AxumAdapter::new(), ("127.0.0.1", 3000))?;
+    app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 3001))?;
 
     println!("HTTP on http://127.0.0.1:3000, RPC on 127.0.0.1:3001, WebSocket at /ws");
     println!();

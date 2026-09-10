@@ -6,14 +6,14 @@ half of the decision stand.
 
 ## Context
 
-[ADR-0038](0038-a-grpc-handler-is-written-in-tonis-shapes.md) made `#[grpc_methods]` write the proto
-trait impl from handlers spelled in toni's shapes. To write it, the macro has to know the message
+[ADR-0038](0038-a-grpc-handler-is-written-in-ulos-shapes.md) made `#[grpc_methods]` write the proto
+trait impl from handlers spelled in ulo's shapes. To write it, the macro has to know the message
 type: the trait's method is declared `request: tonic::Request<GreetRequest>`, and that token has to
 appear in the generated signature.
 
 It read the type off the parameter's name. `Payload<T>` and `Inbound<T>` were recognised by their
 last path segment, and anything else was taken to be the message itself. A proc macro runs before
-name resolution, so `use toni::extractors::Payload as P` gives it the identifier `P` and nothing
+name resolution, so `use ulo::extractors::Payload as P` gives it the identifier `P` and nothing
 else — the alias fell to the bare-message case, and the generated method declared
 `tonic::Request<Payload<GreetRequest>>`. That fails, which is
 [ADR-0040](0040-a-name-the-framework-reads-is-backed-by-a-type.md)'s rule met, but it fails as an
@@ -59,10 +59,10 @@ T` overlaps `impl<T> GrpcRequest for Payload<T>`, because coherence must assume 
 could implement `Message` for `Payload<T>`. Specialization would resolve it and is unstable. A
 handler takes `Payload<T>`, which is the spelling every other transport now uses.
 
-**The trait lives in `toni-grpc`.** Its impls name `tonic::Request`, which toni core does not
-depend on; a trait declared in core could not be implemented in `toni-grpc` for `Payload<T>`,
-since both would be foreign there. Generated code therefore names `::toni_grpc::GrpcRequest`, so a
-crate that writes `#[grpc_methods]` depends on `toni-grpc` at compile time rather than only to
+**The trait lives in `ulo-grpc`.** Its impls name `tonic::Request`, which ulo core does not
+depend on; a trait declared in core could not be implemented in `ulo-grpc` for `Payload<T>`,
+since both would be foreign there. Generated code therefore names `::ulo_grpc::GrpcRequest`, so a
+crate that writes `#[grpc_methods]` depends on `ulo-grpc` at compile time rather than only to
 serve.
 
 ## Consequences
@@ -79,7 +79,7 @@ serve.
 - `#[grpc_stream]` stays. It marks the reply, which no parameter type can tell the macro.
 - `Payload<T>` reads as an extractor on the other three transports and as a request shape here. The
   spelling is shared and the mechanism is not, which is the price of gRPC being the one transport
-  whose signature toni does not own.
+  whose signature ulo does not own.
 
 ## Roads not taken
 
@@ -106,7 +106,7 @@ the message type in the signature it writes, and only a parameter can tell it wh
 value does not change where the type comes from.
 
 *Corrected by ADR-0043.* The whole request does survive extraction: a carrier written where
-`tonic::Request` is nameable keeps it whole, and `toni_grpc::GrpcRequest<T>` takes it back. And a
+`tonic::Request` is nameable keeps it whole, and `ulo_grpc::GrpcRequest<T>` takes it back. And a
 parameter is not the only thing that can name the type — the proto can, through a build step. Both
 halves of this paragraph were the case for the position rule, and both were narrower than stated.
 

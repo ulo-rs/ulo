@@ -13,42 +13,42 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use toni::rpc::{RpcHandlerOutput, RpcHandlerResult};
+use ulo::rpc::{RpcHandlerOutput, RpcHandlerResult};
 
 use serde::{Deserialize, Serialize};
-use toni::async_trait;
-use toni::context::{Extensions, HandlerContext, RpcContext};
-use toni::errors::{ErrorKind, PanicRecovered, PipelineSegment};
-use toni::extractors::Payload;
-use toni::injectable;
-use toni::module;
-use toni::rpc::{RpcData, RpcError};
-use toni::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
-use toni_macros::{controller, new, patterns, set_metadata};
+use ulo::async_trait;
+use ulo::context::{Extensions, HandlerContext, RpcContext};
+use ulo::errors::{ErrorKind, PanicRecovered, PipelineSegment};
+use ulo::extractors::Payload;
+use ulo::injectable;
+use ulo::module;
+use ulo::rpc::{RpcData, RpcError};
+use ulo::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo_macros::{controller, new, patterns, set_metadata};
 
 /// Spawn an app with the TCP RPC adapter on an OS-assigned port and wait
 /// for `app.bind().await` to surface the listening address before returning.
 /// The caller is guaranteed the listener is live by the time it gets the port.
-async fn start_rpc_server(module: impl toni::ModuleMetadata + 'static) -> u16 {
+async fn start_rpc_server(module: impl ulo::ModuleMetadata + 'static) -> u16 {
     start_rpc_server_with_handlers(module, vec![]).await
 }
 
 /// Spawn an app with the TCP RPC adapter on an OS-assigned port and
 /// register the supplied global RPC error handlers before bootstrap.
 async fn start_rpc_server_with_handlers(
-    module: impl toni::ModuleMetadata + 'static,
+    module: impl ulo::ModuleMetadata + 'static,
     handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcData>>>,
 ) -> u16 {
-    use toni::toni_factory::ToniFactory;
+    use ulo::ulo_factory::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut factory = ToniFactory::new();
+        let mut factory = UloFactory::new();
         for h in handlers {
             factory.use_global_rpc_error_handler(h);
         }
         let mut app = factory.create_with(module).await.unwrap();
-        app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", 0))
+        app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
             .unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(
@@ -191,14 +191,14 @@ impl ShutdownTcpModule {}
 #[tokio_localset_test::localset_test]
 async fn tcp_app_shutdown_stops_the_accept_loop() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use toni::toni_factory::ToniFactory;
+    use ulo::ulo_factory::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(ShutdownTcpModule).await.unwrap();
-        app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", 0))
+        let mut app = UloFactory::create(ShutdownTcpModule).await.unwrap();
+        app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
             .unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(
@@ -271,14 +271,14 @@ impl SlowTcpModule {}
 #[tokio_localset_test::localset_test]
 async fn tcp_in_flight_request_completes_during_drain() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use toni::toni_factory::ToniFactory;
+    use ulo::ulo_factory::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(SlowTcpModule).await.unwrap();
-        app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", 0))
+        let mut app = UloFactory::create(SlowTcpModule).await.unwrap();
+        app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
             .unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(
@@ -327,15 +327,15 @@ async fn tcp_in_flight_request_completes_during_drain() {
 #[tokio_localset_test::localset_test]
 async fn tcp_drain_aborts_after_timeout() {
     use tokio::io::AsyncWriteExt;
-    use toni::toni_factory::ToniFactory;
+    use ulo::ulo_factory::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(SlowTcpModule).await.unwrap();
-        let adapter =
-            toni_tcp::TcpAdapter::new("127.0.0.1", 0).with_drain_timeout(Duration::from_millis(50));
+        let mut app = UloFactory::create(SlowTcpModule).await.unwrap();
+        let adapter = ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0)
+            .with_drain_timeout(Duration::from_millis(50));
         app.use_rpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(
@@ -376,13 +376,13 @@ async fn tcp_drain_aborts_after_timeout() {
 #[tokio_localset_test::localset_test]
 async fn tcp_backpressure_rejects_excess_and_releases_after_completion() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use toni::toni_factory::ToniFactory;
+    use ulo::ulo_factory::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(SlowTcpModule).await.unwrap();
-        let adapter = toni_tcp::TcpAdapter::new("127.0.0.1", 0).with_max_inflight(1);
+        let mut app = UloFactory::create(SlowTcpModule).await.unwrap();
+        let adapter = ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0).with_max_inflight(1);
         app.use_rpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(
@@ -741,7 +741,7 @@ impl std::fmt::Display for RpcRenderBomb {
 
 impl std::error::Error for RpcRenderBomb {}
 
-impl toni::Error for RpcRenderBomb {
+impl ulo::Error for RpcRenderBomb {
     fn kind(&self) -> ErrorKind {
         ErrorKind::Internal
     }
@@ -815,10 +815,10 @@ impl TcpMetaModule {}
 
 #[tokio_localset_test::localset_test]
 async fn tcp_client_metadata_reaches_handler() {
-    use toni::RpcClient;
+    use ulo::RpcClient;
 
     let port = start_rpc_server(TcpMetaModule).await;
-    let client = RpcClient::new(toni_tcp::TcpClientTransport::new("127.0.0.1", port));
+    let client = RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
 
     let resp = client
         .request("meta.echo")

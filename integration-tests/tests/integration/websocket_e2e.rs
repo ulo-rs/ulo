@@ -29,16 +29,16 @@ use crate::common::TestServer;
 use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
 use std::sync::atomic::{AtomicBool, Ordering};
-use toni::toni_factory::ToniFactory;
-use toni::websocket::{
+use ulo::ulo_factory::UloFactory;
+use ulo::websocket::{
     BroadcastModule, BroadcastService, WsClient, WsError, WsHandlerOutput, WsHandlerResult,
     WsMessage,
 };
 
-use toni::{Body as ToniBody, controller, module, post, routes};
-use toni_axum::AxumAdapter;
-use toni_macros::{new, on_connect, subscriptions, websocket_gateway};
-use toni_tungstenite::TungsteniteAdapter;
+use ulo::{Body as UloBody, controller, module, post, routes};
+use ulo_http_axum::AxumAdapter;
+use ulo_macros::{new, on_connect, subscriptions, websocket_gateway};
+use ulo_ws_tungstenite::TungsteniteAdapter;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Echo gateway — simple request-response, no BroadcastModule
@@ -84,7 +84,7 @@ struct BareModule;
 
 static ON_CONNECT_FIRED: AtomicBool = AtomicBool::new(false);
 
-// `#[on_connect]` is its own macro (it emits the `__toni_ws_on_connect` bridge fn), so a connection
+// `#[on_connect]` is its own macro (it emits the `__ulo_ws_on_connect` bridge fn), so a connection
 // hook stands alone — this gateway has no `#[subscriptions]` impl and routes no messages.
 #[websocket_gateway("/hook-only")]
 pub struct HookOnlyGateway {}
@@ -307,9 +307,9 @@ pub struct TriggerController {
 #[routes]
 impl TriggerController {
     #[post("/")]
-    async fn trigger(&self) -> ToniBody {
+    async fn trigger(&self) -> UloBody {
         self.gateway.push("server_push").await;
-        ToniBody::text("ok".to_string())
+        UloBody::text("ok".to_string())
     }
 }
 
@@ -379,7 +379,7 @@ async fn websocket_separate_port_end_to_end() {
 
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(PingModule).await.unwrap();
+        let mut app = UloFactory::create(PingModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
         app.use_websocket_adapter(TungsteniteAdapter::new())
@@ -423,11 +423,11 @@ async fn websocket_separate_port_end_to_end() {
 async fn separate_port_close_stops_ws_server() {
     let (addr_tx, addr_rx) =
         tokio::sync::oneshot::channel::<(std::net::SocketAddr, std::net::SocketAddr)>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
 
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(PingModule).await.unwrap();
+        let mut app = UloFactory::create(PingModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
         app.use_websocket_adapter(TungsteniteAdapter::new())
@@ -512,7 +512,7 @@ async fn gateway_port_zero_binds_separately_from_http_port_zero() {
 
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(ZeroPortModule).await.unwrap();
+        let mut app = UloFactory::create(ZeroPortModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
         app.use_websocket_adapter(TungsteniteAdapter::new())

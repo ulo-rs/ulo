@@ -7,15 +7,15 @@
 
 use std::net::TcpListener;
 
-use toni::context::RpcContext;
-use toni::rpc::{RpcData, RpcError};
-use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
-use toni::{StartupError, ToniFactory, module};
-use toni_axum::AxumAdapter;
-use toni_macros::{
+use ulo::context::RpcContext;
+use ulo::rpc::{RpcData, RpcError};
+use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::{StartupError, UloFactory, module};
+use ulo_http_axum::AxumAdapter;
+use ulo_macros::{
     controller, message_pattern, new, patterns, subscribe_message, subscriptions, websocket_gateway,
 };
-use toni_tcp::TcpAdapter;
+use ulo_rpc_tcp::TcpAdapter;
 
 #[controller]
 pub struct EchoController {}
@@ -71,7 +71,7 @@ async fn an_rpc_adapter_that_cannot_bind_fails_the_bind() {
     let occupied = TcpListener::bind("127.0.0.1:0").unwrap();
     let taken = occupied.local_addr().unwrap().port();
 
-    let mut app = ToniFactory::create(RpcModule).await.unwrap();
+    let mut app = UloFactory::create(RpcModule).await.unwrap();
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
         .unwrap();
     app.use_rpc_adapter(TcpAdapter::new("127.0.0.1", taken))
@@ -100,11 +100,11 @@ async fn a_failed_bind_releases_the_sockets_it_already_took() {
     let occupied = TcpListener::bind("127.0.0.1:0").unwrap();
     let taken_grpc = occupied.local_addr().unwrap();
 
-    let mut app = ToniFactory::create(RpcModule).await.unwrap();
+    let mut app = UloFactory::create(RpcModule).await.unwrap();
     // RPC binds before gRPC, so its socket is live when gRPC fails.
     app.use_rpc_adapter(TcpAdapter::new("127.0.0.1", rpc_port))
         .unwrap();
-    app.use_grpc_adapter(toni_grpc::GrpcAdapter::new(taken_grpc))
+    app.use_grpc_adapter(ulo_grpc::GrpcAdapter::new(taken_grpc))
         .unwrap();
 
     let err = app
@@ -128,7 +128,7 @@ async fn a_failed_bind_releases_the_sockets_it_already_took() {
 
 #[tokio_localset_test::localset_test]
 async fn rpc_patterns_with_no_rpc_adapter_are_refused() {
-    let mut app = ToniFactory::create(RpcModule).await.unwrap();
+    let mut app = UloFactory::create(RpcModule).await.unwrap();
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
         .unwrap();
 
@@ -146,7 +146,7 @@ async fn rpc_patterns_with_no_rpc_adapter_are_refused() {
 
 #[tokio_localset_test::localset_test]
 async fn a_separate_port_gateway_with_no_websocket_adapter_is_refused() {
-    let mut app = ToniFactory::create(SeparatePortModule).await.unwrap();
+    let mut app = UloFactory::create(SeparatePortModule).await.unwrap();
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
         .unwrap();
 
@@ -166,7 +166,7 @@ async fn a_separate_port_gateway_with_no_websocket_adapter_is_refused() {
 async fn a_websocket_listener_no_gateway_declares_is_refused() {
     let orphan = TcpListener::bind("127.0.0.1:0").unwrap();
 
-    let mut app = ToniFactory::create(BareModule).await.unwrap();
+    let mut app = UloFactory::create(BareModule).await.unwrap();
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
         .unwrap();
     // 19311 is declared by no gateway, so nothing would ever accept on this socket.

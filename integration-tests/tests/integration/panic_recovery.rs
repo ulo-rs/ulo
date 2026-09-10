@@ -15,17 +15,17 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use toni::{
-    Body as ToniBody, HttpResponse, async_trait,
+use ulo::{
+    Body as UloBody, HttpResponse, async_trait,
     context::HttpContext,
     controller,
     errors::{ErrorKind, HttpError, PanicRecovered, PipelineSegment},
     get, module, routes,
-    toni_factory::ToniFactory,
     traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext},
+    ulo_factory::UloFactory,
 };
-use toni_axum::AxumAdapter;
-use toni_macros::{use_error_handlers, use_guards, use_interceptors};
+use ulo_http_axum::AxumAdapter;
+use ulo_macros::{use_error_handlers, use_guards, use_interceptors};
 
 /// Records the segment of every `PanicRecovered` the chain hands it, then
 /// declines so the default rendering still runs. A declining `#[catch]`-style
@@ -52,12 +52,12 @@ macro_rules! recording_handler {
     };
 }
 
-async fn start_app(module: impl toni::ModuleMetadata + 'static) -> std::net::SocketAddr {
+async fn start_app(module: impl ulo::ModuleMetadata + 'static) -> std::net::SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
 
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let factory = ToniFactory::new();
+        let factory = UloFactory::new();
         let mut app = factory.create_with(module).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
@@ -84,7 +84,7 @@ async fn panicking_handler_renders_500_via_panic_recovered() {
     impl PanicController {
         #[get("/boom")]
         #[use_error_handlers(HandlerSegmentRecorder {})]
-        fn boom(&self) -> Result<ToniBody, HttpError> {
+        fn boom(&self) -> Result<UloBody, HttpError> {
             panic!("kaboom");
         }
     }
@@ -143,8 +143,8 @@ async fn panicking_guard_renders_500_via_panic_recovered() {
         #[get("/guarded")]
         #[use_guards(PanickingGuard {})]
         #[use_error_handlers(GuardSegmentRecorder {})]
-        fn guarded(&self) -> Result<ToniBody, HttpError> {
-            Ok(ToniBody::text("unreachable"))
+        fn guarded(&self) -> Result<UloBody, HttpError> {
+            Ok(UloBody::text("unreachable"))
         }
     }
 
@@ -201,8 +201,8 @@ async fn panicking_interceptor_renders_500_via_panic_recovered() {
         #[get("/intercepted")]
         #[use_interceptors(PanickingInterceptor {})]
         #[use_error_handlers(InterceptorSegmentRecorder {})]
-        fn intercepted(&self) -> Result<ToniBody, HttpError> {
-            Ok(ToniBody::text("unreachable"))
+        fn intercepted(&self) -> Result<UloBody, HttpError> {
+            Ok(UloBody::text("unreachable"))
         }
     }
 
@@ -277,7 +277,7 @@ async fn panicking_error_handler_continues_chain() {
         // first and the survivor after it.
         #[get("/eh")]
         #[use_error_handlers(ChainSurvivor {}, PanickingErrorHandler {})]
-        fn eh(&self) -> Result<ToniBody, HttpError> {
+        fn eh(&self) -> Result<UloBody, HttpError> {
             panic!("handler kaboom");
         }
     }
@@ -322,7 +322,7 @@ impl std::fmt::Display for RenderBomb {
 
 impl std::error::Error for RenderBomb {}
 
-impl toni::Error for RenderBomb {
+impl ulo::Error for RenderBomb {
     fn kind(&self) -> ErrorKind {
         ErrorKind::Internal
     }
@@ -344,7 +344,7 @@ async fn panicking_renderer_falls_back_to_safe_envelope() {
     #[routes]
     impl RenderPanicController {
         #[get("/render-boom")]
-        fn render_boom(&self) -> Result<ToniBody, HttpError> {
+        fn render_boom(&self) -> Result<UloBody, HttpError> {
             Err(HttpError::from(RenderBomb))
         }
     }

@@ -11,7 +11,7 @@ so the execution ends when the method returns and nothing feeding an abandoned r
 
 Two facts decide the shape of the fix.
 
-**A gRPC reply's type is not the framework's.** HTTP wraps `toni::Body` and WebSocket wraps
+**A gRPC reply's type is not the framework's.** HTTP wraps `ulo::Body` and WebSocket wraps
 `WsHandlerOutput::Stream`, both types the framework defines and can substitute. A gRPC reply is
 typed by the tonic trait's associated stream type, which the user's impl defines. A value cannot be
 wrapped without changing its type.

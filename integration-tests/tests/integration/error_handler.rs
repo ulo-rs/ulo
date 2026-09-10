@@ -3,7 +3,7 @@
 //   1. User-handler errors render at the macro boundary via
 //      `HttpError::to_response()`. The error-handler chain does not
 //      run on them — by the time anything else could see the response,
-//      the user has already shaped it through their own `toni::Error` impl.
+//      the user has already shaped it through their own `ulo::Error` impl.
 //
 //   2. Framework-generated errors (guard rejection, missing route,
 //      middleware failure) run through the chain. The chain dispatches on
@@ -14,17 +14,17 @@
 
 use std::sync::Arc;
 
-use toni::{
-    Body as ToniBody, HttpResponse, async_trait,
+use ulo::{
+    Body as UloBody, HttpResponse, async_trait,
     context::HttpContext,
     controller,
     errors::{GuardRejection, HttpError},
     get, module, routes,
-    toni_factory::ToniFactory,
     traits_helpers::{ChainError, ErrorHandler, Guard},
+    ulo_factory::UloFactory,
 };
-use toni_axum::AxumAdapter;
-use toni_macros::use_guards;
+use ulo_http_axum::AxumAdapter;
+use ulo_macros::use_guards;
 
 // ---- Canonical-envelope responses (no chain involvement) ---------------------
 
@@ -36,7 +36,7 @@ async fn http_error_renders_via_app_error_default() {
     #[routes]
     impl HttpErrController {
         #[get("/missing")]
-        fn missing(&self) -> Result<ToniBody, HttpError> {
+        fn missing(&self) -> Result<UloBody, HttpError> {
             Err(HttpError::not_found("resource not found"))
         }
     }
@@ -56,7 +56,7 @@ async fn http_error_renders_via_app_error_default() {
     assert_eq!(body["message"], "resource not found");
 }
 
-#[derive(Debug, toni::Error)]
+#[derive(Debug, ulo::Error)]
 #[error_kind(NotFound)]
 struct InvoiceMissing(String);
 
@@ -76,7 +76,7 @@ async fn custom_app_error_renders_canonical_envelope() {
     #[routes]
     impl CustomErrController {
         #[get("/invoice")]
-        fn invoice(&self) -> Result<ToniBody, InvoiceMissing> {
+        fn invoice(&self) -> Result<UloBody, InvoiceMissing> {
             Err(InvoiceMissing("inv-42".into()))
         }
     }
@@ -109,7 +109,7 @@ async fn unmatched_chain_handler_falls_through_to_app_error_default() {
     #[routes]
     impl UserErrController {
         #[get("/bad")]
-        fn bad(&self) -> Result<ToniBody, HttpError> {
+        fn bad(&self) -> Result<UloBody, HttpError> {
             Err(HttpError::bad_request("user-error"))
         }
     }
@@ -165,7 +165,7 @@ impl ErrorHandler<HttpContext, HttpResponse> for MarkerHandler {
         error.downcast_ref::<GuardRejection>()?;
         let mut resp = HttpResponse::new();
         resp.status = 403;
-        resp.body = Some(ToniBody::text(self.marker));
+        resp.body = Some(UloBody::text(self.marker));
         Some(resp)
     }
 }
@@ -179,8 +179,8 @@ async fn chain_fires_on_guard_rejection() {
     impl GuardedController {
         #[get("/protected")]
         #[use_guards(AlwaysReject {})]
-        fn protected(&self) -> Result<ToniBody, HttpError> {
-            Ok(ToniBody::text("should not reach"))
+        fn protected(&self) -> Result<UloBody, HttpError> {
+            Ok(UloBody::text("should not reach"))
         }
     }
 
@@ -217,14 +217,14 @@ impl ErrorHandler<HttpContext, HttpResponse> for HttpErrorOverride {
         let e = error.downcast_ref::<HttpError>()?;
         let mut resp = HttpResponse::new();
         resp.status = e.status_code();
-        resp.body = Some(ToniBody::text(format!("scope-override:{}", e.message())));
+        resp.body = Some(UloBody::text(format!("scope-override:{}", e.message())));
         Some(resp)
     }
 }
 
 #[tokio_localset_test::localset_test]
 async fn scope_chain_overrides_app_error_default_on_user_error() {
-    // Stratification in action: `toni::Error` is the type-level default, the
+    // Stratification in action: `ulo::Error` is the type-level default, the
     // chain is the scope-level override. A handler registered on this scope
     // that downcasts to the user error type wins; everywhere else, the
     // type's canonical envelope is the response.
@@ -234,7 +234,7 @@ async fn scope_chain_overrides_app_error_default_on_user_error() {
     #[routes]
     impl UserErrController {
         #[get("/missing")]
-        fn missing(&self) -> Result<ToniBody, HttpError> {
+        fn missing(&self) -> Result<UloBody, HttpError> {
             Err(HttpError::not_found("user-error"))
         }
     }
@@ -257,14 +257,14 @@ async fn scope_chain_overrides_app_error_default_on_user_error() {
 // ---- Test harness -----------------------------------------------------------
 
 async fn start_app(
-    module: impl toni::ModuleMetadata + 'static,
+    module: impl ulo::ModuleMetadata + 'static,
     chain_handler: Option<Arc<dyn ErrorHandler<HttpContext, HttpResponse>>>,
 ) -> std::net::SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
 
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut factory = ToniFactory::new();
+        let mut factory = UloFactory::new();
         if let Some(handler) = chain_handler {
             factory.use_global_http_error_handler(handler);
         }

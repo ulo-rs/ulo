@@ -1,7 +1,7 @@
 use crate::common::TestServer;
 use serial_test::serial;
 use std::sync::atomic::{AtomicU32, Ordering};
-use toni::{Body as ToniBody, controller, get, injectable, module, routes};
+use ulo::{Body as UloBody, controller, get, injectable, module, routes};
 
 // ---- Test 1: Singleton controller + singleton provider ----------------------
 
@@ -22,8 +22,8 @@ pub struct OkController {
 #[routes]
 impl OkController {
     #[get("/test")]
-    fn test(&self) -> ToniBody {
-        ToniBody::text(self.provider.get_data())
+    fn test(&self) -> UloBody {
+        UloBody::text(self.provider.get_data())
     }
 }
 
@@ -52,8 +52,8 @@ pub struct ProblematicController {
 #[routes]
 impl ProblematicController {
     #[get("/test")]
-    fn test(&self) -> ToniBody {
-        ToniBody::text(format!("Request ID: {}", self.provider.get_request_id()))
+    fn test(&self) -> UloBody {
+        UloBody::text(format!("Request ID: {}", self.provider.get_request_id()))
     }
 }
 
@@ -79,8 +79,8 @@ pub struct CorrectController {
 #[routes]
 impl CorrectController {
     #[get("/test")]
-    fn test(&self) -> ToniBody {
-        ToniBody::text(self.provider.get_data())
+    fn test(&self) -> UloBody {
+        UloBody::text(self.provider.get_data())
     }
 }
 
@@ -116,8 +116,8 @@ pub struct MixedController {
 #[routes]
 impl MixedController {
     #[get("/test")]
-    fn test(&self) -> ToniBody {
-        ToniBody::text(format!(
+    fn test(&self) -> UloBody {
+        UloBody::text(format!(
             "{} + {}",
             self.cache.get_cached(),
             self.session.get_session()
@@ -147,8 +147,8 @@ pub struct ExplicitSingletonController {
 #[routes]
 impl ExplicitSingletonController {
     #[get("/test")]
-    fn test(&self) -> ToniBody {
-        ToniBody::text(self.provider.get_id())
+    fn test(&self) -> UloBody {
+        UloBody::text(self.provider.get_id())
     }
 }
 

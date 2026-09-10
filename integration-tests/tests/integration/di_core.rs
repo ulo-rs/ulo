@@ -1,8 +1,8 @@
 use crate::common::TestServer;
 use serial_test::serial;
 use std::sync::atomic::{AtomicU32, Ordering};
-use toni::{Body as ToniBody, controller, get, injectable, module, new, routes};
-use toni_config::{Config, ConfigModule, ConfigService};
+use ulo::{Body as UloBody, controller, get, injectable, module, new, routes};
+use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]
 struct TestConfig {
@@ -36,8 +36,8 @@ async fn singleton_providers_created_once_across_requests() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text(format!("{}", SINGLETON_COUNTER.load(Ordering::SeqCst)))
+        fn test(&self) -> UloBody {
+            UloBody::text(format!("{}", SINGLETON_COUNTER.load(Ordering::SeqCst)))
         }
     }
 
@@ -103,9 +103,9 @@ async fn transient_providers_create_unique_instances_per_injection() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
+        fn test(&self) -> UloBody {
             let (id1, id2) = self.service.ids();
-            ToniBody::text(format!("{}|{}", id1, id2))
+            UloBody::text(format!("{}|{}", id1, id2))
         }
     }
 
@@ -162,8 +162,8 @@ async fn field_injection_with_inject_attribute() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text(format!("{}", self.service.get_value()))
+        fn test(&self) -> UloBody {
+            UloBody::text(format!("{}", self.service.get_value()))
         }
     }
 
@@ -204,8 +204,8 @@ async fn field_injection_with_default_fallback() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text(format!("{}", self.service.get_value()))
+        fn test(&self) -> UloBody {
+            UloBody::text(format!("{}", self.service.get_value()))
         }
     }
 
@@ -246,8 +246,8 @@ async fn config_service_injection_in_providers() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text(self.service.get_value())
+        fn test(&self) -> UloBody {
+            UloBody::text(self.service.get_value())
         }
     }
 
@@ -291,8 +291,8 @@ async fn new_attribute_syntax() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text("ok".to_string())
+        fn test(&self) -> UloBody {
+            UloBody::text("ok".to_string())
         }
     }
 
@@ -323,7 +323,7 @@ async fn injectable_accepts_path_qualified_clone_derive() {
     #[module(providers: [QualifiedCloneService])]
     struct QualifiedCloneModule {}
 
-    let app = toni::toni_factory::ToniFactory::create_application_context(QualifiedCloneModule)
+    let app = ulo::ulo_factory::UloFactory::create_application_context(QualifiedCloneModule)
         .await
         .unwrap();
     let svc: QualifiedCloneService = app

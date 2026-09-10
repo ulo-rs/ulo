@@ -14,21 +14,21 @@ use std::sync::Arc;
 
 use crate::common::NotServed;
 use serial_test::serial;
-use toni::async_trait;
-use toni::context::{GrpcContext, HttpContext};
-use toni::errors::PanicRecovered;
-use toni::extractors::{Inbound, Payload};
-use toni::toni_factory::ToniFactory;
-use toni::traits_helpers::MiddlewareConsumer;
-use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use toni::traits_helpers::{Interceptor, InterceptorNext};
-use toni::{GrpcStatus, HttpResponse, catch, controller, get, injectable, module, routes};
-use toni_macros::{grpc_methods, new, use_error_handlers, use_interceptors};
+use ulo::async_trait;
+use ulo::context::{GrpcContext, HttpContext};
+use ulo::errors::PanicRecovered;
+use ulo::extractors::{Inbound, Payload};
+use ulo::traits_helpers::MiddlewareConsumer;
+use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::traits_helpers::{Interceptor, InterceptorNext};
+use ulo::ulo_factory::UloFactory;
+use ulo::{GrpcStatus, HttpResponse, catch, controller, get, injectable, module, routes};
+use ulo_macros::{grpc_methods, new, use_error_handlers, use_interceptors};
 
 use crate::common::TestServer;
 
 mod pipeline_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use pipeline_pb::orders_client::OrdersClient;
@@ -62,8 +62,8 @@ async fn a_panicking_middleware_is_answered_by_the_chain() {
     #[routes]
     impl MiddlewarePanicController {
         #[get("/ping")]
-        fn ping(&self) -> toni::Body {
-            toni::Body::text("unreachable")
+        fn ping(&self) -> ulo::Body {
+            ulo::Body::text("unreachable")
         }
     }
 
@@ -74,7 +74,7 @@ async fn a_panicking_middleware_is_answered_by_the_chain() {
         }
     }
 
-    let mut factory = ToniFactory::new();
+    let mut factory = UloFactory::new();
     factory.use_global_http_error_handler(Arc::new(http_panic_catcher));
 
     let server = TestServer::start_with(factory, MiddlewarePanicModule).await;
@@ -96,10 +96,10 @@ async fn a_panicking_middleware_is_answered_by_the_chain() {
 pub struct GrpcPipelineCatcher {}
 
 #[async_trait]
-impl toni::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for GrpcPipelineCatcher {
+impl ulo::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for GrpcPipelineCatcher {
     async fn handle_error(
         &self,
-        error: toni::traits_helpers::ChainError<'_>,
+        error: ulo::traits_helpers::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         let panic = error.downcast_ref::<PanicRecovered>()?;
@@ -187,11 +187,11 @@ impl GrpcInterceptorPanicModule {}
 #[tokio_localset_test::localset_test]
 async fn a_panicking_grpc_interceptor_is_answered_by_the_chain() {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::new()
+        let mut app = UloFactory::new()
             .create_with(GrpcInterceptorPanicModule)
             .await
             .unwrap();

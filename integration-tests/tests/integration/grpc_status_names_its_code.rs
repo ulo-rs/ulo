@@ -3,21 +3,21 @@
 //! `grpc_code` maps eleven `ErrorKind`s onto the canonical codes.
 //! `FailedPrecondition` and `OutOfRange` are outside it, and reaching one used
 //! to mean registering a chain handler to claim the error and answer with the
-//! status. `GrpcStatus` is a `toni::Error`, so a handler returns one directly.
+//! status. `GrpcStatus` is a `ulo::Error`, so a handler returns one directly.
 
 #![allow(dead_code)]
 
 use serial_test::serial;
-use toni::context::GrpcContext;
-use toni::extractors::{Inbound, Payload};
-use toni::toni_factory::ToniFactory;
-use toni::{ErrorKind, GrpcCode, GrpcStatus, async_trait, injectable, module};
-use toni_macros::{controller, grpc_methods, new, use_error_handlers};
+use ulo::context::GrpcContext;
+use ulo::extractors::{Inbound, Payload};
+use ulo::ulo_factory::UloFactory;
+use ulo::{ErrorKind, GrpcCode, GrpcStatus, async_trait, injectable, module};
+use ulo_macros::{controller, grpc_methods, new, use_error_handlers};
 
 use crate::common::NotServed;
 
 mod named_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use named_pb::orders_client::OrdersClient;
@@ -36,7 +36,7 @@ impl std::fmt::Display for WindowClosed {
 
 impl std::error::Error for WindowClosed {}
 
-impl toni::Error for WindowClosed {
+impl ulo::Error for WindowClosed {
     fn kind(&self) -> ErrorKind {
         ErrorKind::Conflict
     }
@@ -48,10 +48,10 @@ impl toni::Error for WindowClosed {
 pub struct ReopenHandler {}
 
 #[async_trait]
-impl toni::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for ReopenHandler {
+impl ulo::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for ReopenHandler {
     async fn handle_error(
         &self,
-        error: toni::traits_helpers::ChainError<'_>,
+        error: ulo::traits_helpers::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         error.downcast_ref::<WindowClosed>()?;
@@ -172,13 +172,13 @@ impl ClaimedNamedCodeService {
 #[module(controllers: [ClaimedNamedCodeService], providers: [ReopenHandler])]
 impl ClaimedNamedCodeModule {}
 
-async fn boot(module: impl toni::ModuleMetadata + 'static) -> u16 {
+async fn boot(module: impl ulo::ModuleMetadata + 'static) -> u16 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::new().create_with(module).await.unwrap();
+        let mut app = UloFactory::new().create_with(module).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.grpc.expect("grpc must bind").port());

@@ -12,9 +12,9 @@ use std::net::TcpListener;
 
 use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use toni::toni_factory::ToniFactory;
-use toni::{Body as ToniBody, controller, get, module, routes};
-use toni_axum::AxumAdapter;
+use ulo::ulo_factory::UloFactory;
+use ulo::{Body as UloBody, controller, get, module, routes};
+use ulo_http_axum::AxumAdapter;
 
 #[controller("/generation")]
 pub struct GenerationController {}
@@ -22,8 +22,8 @@ pub struct GenerationController {}
 #[routes]
 impl GenerationController {
     #[get("/who")]
-    fn who(&self) -> ToniBody {
-        ToniBody::text("served")
+    fn who(&self) -> UloBody {
+        UloBody::text("served")
     }
 }
 
@@ -32,13 +32,13 @@ struct HandoffModule;
 
 /// Start one generation on a descriptor for `listener`, returning its bound
 /// address and a handle that stops it.
-async fn start_generation(listener: TcpListener) -> (std::net::SocketAddr, toni::ShutdownHandle) {
+async fn start_generation(listener: TcpListener) -> (std::net::SocketAddr, ulo::ShutdownHandle) {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
 
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(HandoffModule).await.unwrap();
+        let mut app = UloFactory::create(HandoffModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), listener).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = addr_tx.send(bound.http.expect("HTTP adapter not bound"));

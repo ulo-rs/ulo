@@ -9,11 +9,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
-use toni::module;
-use toni::toni_factory::ToniFactory;
-use toni::websocket::{BroadcastModule, BroadcastService, WsClient, WsHandlerResult, WsMessage};
-use toni_axum::AxumAdapter;
-use toni_macros::{new, on_module_destroy, subscriptions, websocket_gateway};
+use ulo::module;
+use ulo::ulo_factory::UloFactory;
+use ulo::websocket::{BroadcastModule, BroadcastService, WsClient, WsHandlerResult, WsMessage};
+use ulo_http_axum::AxumAdapter;
+use ulo_macros::{new, on_module_destroy, subscriptions, websocket_gateway};
 
 static DESTROY_HOOK_RAN: AtomicBool = AtomicBool::new(false);
 
@@ -50,11 +50,11 @@ async fn app_close_disconnects_ws_clients_and_stops_http() {
     DESTROY_HOOK_RAN.store(false, Ordering::SeqCst);
 
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
 
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(CloseModule).await.unwrap();
+        let mut app = UloFactory::create(CloseModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
         let bound = app.bind().await.unwrap();

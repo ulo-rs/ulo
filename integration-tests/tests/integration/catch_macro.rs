@@ -10,23 +10,23 @@
 
 use std::sync::Arc;
 
-use toni::{
-    Body as ToniBody, Error, HttpResponse, async_trait, catch,
+use ulo::{
+    Body as UloBody, Error, HttpResponse, async_trait, catch,
     context::HttpContext,
     controller,
     errors::{GuardRejection, HttpError},
     get, module, routes,
-    toni_factory::ToniFactory,
     traits_helpers::Guard,
+    ulo_factory::UloFactory,
 };
-use toni_axum::AxumAdapter;
-use toni_macros::use_guards;
+use ulo_http_axum::AxumAdapter;
+use ulo_macros::use_guards;
 
 #[catch(GuardRejection)]
 async fn guard_catcher(err: &GuardRejection, _ctx: &HttpContext) -> HttpResponse {
     let mut resp = HttpResponse::new();
-    resp.status = toni::errors::http_status(err.kind());
-    resp.body = Some(ToniBody::text(format!("catch:{}", err.message())));
+    resp.status = ulo::errors::http_status(err.kind());
+    resp.body = Some(UloBody::text(format!("catch:{}", err.message())));
     resp
 }
 
@@ -47,7 +47,7 @@ impl std::error::Error for OtherError {}
 async fn other_catcher(_err: &OtherError, _ctx: &HttpContext) -> HttpResponse {
     let mut resp = HttpResponse::new();
     resp.status = 500;
-    resp.body = Some(ToniBody::text("OTHER-CAUGHT"));
+    resp.body = Some(UloBody::text("OTHER-CAUGHT"));
     resp
 }
 
@@ -55,7 +55,7 @@ async fn other_catcher(_err: &OtherError, _ctx: &HttpContext) -> HttpResponse {
 // rather than something that merely compiles as a value.
 #[test]
 fn catch_struct_implements_error_handler_trait() {
-    fn assert_impls<T: toni::traits_helpers::ErrorHandler<HttpContext, HttpResponse>>() {}
+    fn assert_impls<T: ulo::traits_helpers::ErrorHandler<HttpContext, HttpResponse>>() {}
     assert_impls::<guard_catcher>();
     assert_impls::<other_catcher>();
 }
@@ -71,12 +71,12 @@ impl Guard<HttpContext> for DenyGuard {
     }
 }
 
-async fn start_with_catchers(module: impl toni::ModuleMetadata + 'static) -> std::net::SocketAddr {
+async fn start_with_catchers(module: impl ulo::ModuleMetadata + 'static) -> std::net::SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
 
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut factory = ToniFactory::new();
+        let mut factory = UloFactory::new();
         // Both registered. `other_catcher` is consulted first (later
         // registration → higher priority via reverse iteration). It must
         // return None because the boxed event is `GuardRejection`, not
@@ -109,8 +109,8 @@ async fn catch_handler_intercepts_framework_error() {
     impl CatchTestController {
         #[get("/protected")]
         #[use_guards(DenyGuard {})]
-        fn protected(&self) -> Result<ToniBody, HttpError> {
-            Ok(ToniBody::text("should not reach"))
+        fn protected(&self) -> Result<UloBody, HttpError> {
+            Ok(UloBody::text("should not reach"))
         }
     }
 
@@ -146,8 +146,8 @@ async fn non_matching_catch_falls_through() {
     impl FallthroughController {
         #[get("/protected")]
         #[use_guards(DenyGuard {})]
-        fn protected(&self) -> Result<ToniBody, HttpError> {
-            Ok(ToniBody::text("should not reach"))
+        fn protected(&self) -> Result<UloBody, HttpError> {
+            Ok(UloBody::text("should not reach"))
         }
     }
 

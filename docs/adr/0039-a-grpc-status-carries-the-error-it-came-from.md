@@ -30,7 +30,7 @@ code as before and keeps the value:
 pub struct GrpcStatus {
     pub code: GrpcCode,
     pub message: String,
-    source: Option<Arc<dyn toni::Error>>,
+    source: Option<Arc<dyn ulo::Error>>,
 }
 ```
 
@@ -41,10 +41,10 @@ typed `dyn std::error::Error`, which drops the `Send + Sync` the chain needs, so
 wrapped in a concrete `GrpcFailure` that a downcast recovers the bound from.
 
 The execution's extension bag is no longer involved: `stash_failure` and `take_failure` are gone.
-A call dispatched without a toni context now keeps its error type too, which the parked form could
+A call dispatched without a ulo context now keeps its error type too, which the parked form could
 not do.
 
-**`GrpcStatus` implements `toni::Error`,** so a handler can return one and name any code:
+**`GrpcStatus` implements `ulo::Error`,** so a handler can return one and name any code:
 
 ```rust
 #[grpc_method]
@@ -63,8 +63,8 @@ names is the code on the wire. Its `kind()` is the inverse of `grpc_code` where 
 answer and `Internal` where it does not — that path is reached only when a `GrpcStatus` is rendered
 somewhere other than gRPC.
 
-**The blanket `impl<E: toni::Error> From<E> for GrpcStatus` is removed.** It cannot coexist with
-`impl toni::Error for GrpcStatus`: the two together would give `From<GrpcStatus> for GrpcStatus`,
+**The blanket `impl<E: ulo::Error> From<E> for GrpcStatus` is removed.** It cannot coexist with
+`impl ulo::Error for GrpcStatus`: the two together would give `From<GrpcStatus> for GrpcStatus`,
 which collides with the reflexive impl in the standard library. `GrpcStatus::of` is the owned
 conversion and `GrpcStatus::from_error` the borrowed one.
 
@@ -75,7 +75,7 @@ conversion and `GrpcStatus::from_error` the borrowed one.
 - A handler answering `Result<_, GrpcStatus>` gives the chain a `GrpcStatus`, so a
   `#[catch(MyError)]` handler does not match it. Carrying the domain error through
   `GrpcStatus::of(my_error)` keeps both: the code the kind maps to, and the type for the chain.
-- The error reaches the chain whether or not the call came through toni's dispatch, because it
+- The error reaches the chain whether or not the call came through ulo's dispatch, because it
   travels on the answer rather than beside it.
 - `to_status` keeps its meaning for a service registered through `GrpcAdapter::add_service`: it
   renders the error and attaches it, so a status leaving such a service carries its cause even
@@ -94,4 +94,4 @@ serialized, sent, and read by a caller that has never heard of the type. The sou
 in-process, which is the whole lifetime the chain needs.
 
 **Making `GrpcStatus::kind()` fail for a code no kind reaches.** `kind` is not fallible on any other
-implementation of `toni::Error`, and the alternative to `Internal` is a panic in a rendering path.
+implementation of `ulo::Error`, and the alternative to `Internal` is a panic in a rendering path.

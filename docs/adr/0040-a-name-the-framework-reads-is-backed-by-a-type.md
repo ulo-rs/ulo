@@ -9,7 +9,7 @@ written type. `#[grpc_methods]` classifies `Payload`, `Inbound`, `Request`, `Ext
 `&GrpcContext` that way; `#[routes]` classifies the HTTP extractors the same way to decide which
 parameter reads the body.
 
-A name is not a type. `use toni::extractors::Payload as P` gives a parameter whose segment reads
+A name is not a type. `use ulo::extractors::Payload as P` gives a parameter whose segment reads
 `P`, and a handler is free to define its own `Payload`. Either way the classification is wrong, and
 the question is what happens next.
 
@@ -24,7 +24,7 @@ Where that holds today:
 
 | Classification | What catches a lie |
 | --- | --- |
-| `Payload<T>` / `Inbound<T>` on gRPC | the parameter receives `toni::extractors::Payload` / `Inbound`, built by the generated method |
+| `Payload<T>` / `Inbound<T>` on gRPC | the parameter receives `ulo::extractors::Payload` / `Inbound`, built by the generated method |
 | a bare type on gRPC | it becomes the trait method's request type, so a wrong one fails against the proto trait's signature |
 | any parameter on RPC or WebSocket | it is extracted through `<T as FromContext<RpcContext>>` / `<T as FromContext<WsContext>>`, so a type with no impl has nothing to extract through |
 | `&GrpcContext` / `&RpcContext` / `&WsContext` | the context is passed by reference at that type |

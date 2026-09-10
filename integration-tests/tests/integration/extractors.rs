@@ -1,7 +1,7 @@
 use crate::common::TestServer;
 use serde::Deserialize;
-use toni::{
-    Body as ToniBody, controller,
+use ulo::{
+    Body as UloBody, controller,
     extractors::{Bytes as RenamedBytes, Json, Path, Query, Validated},
     get, module, post, routes,
 };
@@ -25,19 +25,19 @@ pub struct ExtractorController;
 #[routes]
 impl ExtractorController {
     #[get("/search")]
-    fn search(&self, Query(params): Query<SearchParams>) -> ToniBody {
+    fn search(&self, Query(params): Query<SearchParams>) -> UloBody {
         let limit = params.limit.unwrap_or(10);
-        ToniBody::text(format!("Searching for '{}' with limit {}", params.q, limit))
+        UloBody::text(format!("Searching for '{}' with limit {}", params.q, limit))
     }
 
     #[post("/users")]
-    fn create_user(&self, Json(dto): Json<CreateUserDto>) -> ToniBody {
-        ToniBody::text(format!("Created user: {} <{}>", dto.name, dto.email))
+    fn create_user(&self, Json(dto): Json<CreateUserDto>) -> UloBody {
+        UloBody::text(format!("Created user: {} <{}>", dto.name, dto.email))
     }
 
     #[post("/echo")]
-    fn echo_json(&self, body: Json<serde_json::Value>) -> ToniBody {
-        ToniBody::json(body.into_inner())
+    fn echo_json(&self, body: Json<serde_json::Value>) -> UloBody {
+        UloBody::json(body.into_inner())
     }
 
     /// Verifies the controller macro routes an aliased import of a body-consuming
@@ -45,13 +45,13 @@ impl ExtractorController {
     /// `Unknown` parts-only branch. Without the fix, `body.0` would always be
     /// empty here regardless of what the client sent.
     #[post("/aliased-bytes")]
-    fn aliased_bytes(&self, body: RenamedBytes) -> ToniBody {
-        ToniBody::text(format!("len={}", body.0.len()))
+    fn aliased_bytes(&self, body: RenamedBytes) -> UloBody {
+        UloBody::text(format!("len={}", body.0.len()))
     }
 
     #[get("/items/{id}")]
-    fn typed_path(&self, Path(id): Path<i32>) -> ToniBody {
-        ToniBody::text(format!("id={}", id))
+    fn typed_path(&self, Path(id): Path<i32>) -> UloBody {
+        UloBody::text(format!("id={}", id))
     }
 }
 
@@ -79,14 +79,14 @@ async fn test_query_extractor() {
 
     let resp = server
         .client()
-        .get(server.url("/api/search?q=toni"))
+        .get(server.url("/api/search?q=ulo"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
     assert_eq!(
         resp.text().await.unwrap(),
-        "Searching for 'toni' with limit 10"
+        "Searching for 'ulo' with limit 10"
     );
 
     // missing required param → 400
@@ -169,8 +169,8 @@ pub struct ValidatedController;
 #[routes]
 impl ValidatedController {
     #[post("/users")]
-    fn create_user(&self, Validated(Json(dto)): Validated<Json<ValidatedUserDto>>) -> ToniBody {
-        ToniBody::text(format!(
+    fn create_user(&self, Validated(Json(dto)): Validated<Json<ValidatedUserDto>>) -> UloBody {
+        UloBody::text(format!(
             "Created validated user: {} <{}>",
             dto.name, dto.email
         ))
@@ -274,8 +274,8 @@ impl WrappedQueryController {
         &self,
         Validated(Query(params)): Validated<Query<SearchQuery>>,
         Json(dto): Json<CreateUserDto>,
-    ) -> ToniBody {
-        ToniBody::text(format!("q={} name={}", params.q, dto.name))
+    ) -> UloBody {
+        UloBody::text(format!("q={} name={}", params.q, dto.name))
     }
 }
 

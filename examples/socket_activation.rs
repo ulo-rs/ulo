@@ -5,19 +5,19 @@
 //! arriving while the app is down wait in the kernel accept queue rather than
 //! being refused — the connection reset during a rebuild disappears.
 //!
-//! The same code covers two cases: `toni dev --listen 3000` in development, and
+//! The same code covers two cases: `ulo dev --listen 3000` in development, and
 //! systemd socket activation in production. Both announce the socket through
 //! `LISTEN_FDS`, which `listenfd` reads.
 //!
 //! Run under the dev server:
-//!   toni dev --listen 3000
+//!   ulo dev --listen 3000
 //!
 //! Run standalone — no socket passed, so it binds 127.0.0.1:3000 itself:
 //!   cargo run --example socket_activation
 
 use listenfd::ListenFd;
-use toni::*;
-use toni_macros::{controller, get, module, routes};
+use ulo::*;
+use ulo_macros::{controller, get, module, routes};
 
 #[controller("/")]
 pub struct HelloController;
@@ -53,8 +53,8 @@ fn http_target() -> anyhow::Result<BindTarget> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
-    app.use_http_adapter(toni_axum::AxumAdapter::new(), http_target()?)?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
+    app.use_http_adapter(ulo_http_axum::AxumAdapter::new(), http_target()?)?;
 
     let bound = app.bind().await?;
     if let Some(addr) = bound.http {

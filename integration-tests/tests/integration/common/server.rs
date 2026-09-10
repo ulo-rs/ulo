@@ -1,14 +1,14 @@
-use toni::ModuleMetadata;
-use toni::toni_factory::ToniFactory;
-use toni_axum::AxumAdapter;
+use ulo::ModuleMetadata;
+use ulo::ulo_factory::UloFactory;
+use ulo_http_axum::AxumAdapter;
 
-/// Install a tracing subscriber that reads `RUST_LOG` (e.g. `RUST_LOG=toni=debug`).
+/// Install a tracing subscriber that reads `RUST_LOG` (e.g. `RUST_LOG=ulo=debug`).
 /// Safe to call multiple times — only the first call takes effect.
 pub fn init_tracing() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("toni=error")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("ulo=error")),
         )
         .with_test_writer()
         .try_init();
@@ -22,20 +22,20 @@ pub struct TestServer {
 
 impl TestServer {
     pub async fn start(module: impl ModuleMetadata + 'static) -> Self {
-        Self::start_with(ToniFactory::new(), module).await
+        Self::start_with(UloFactory::new(), module).await
     }
 
     /// Boot with a pre-configured factory (global middleware, enhancers, …).
-    pub async fn start_with(factory: ToniFactory, module: impl ModuleMetadata + 'static) -> Self {
+    pub async fn start_with(factory: UloFactory, module: impl ModuleMetadata + 'static) -> Self {
         Self::start_adapter(factory, module, AxumAdapter::new()).await
     }
 
     /// Boot on a specific HTTP adapter — the parameterization point for
     /// suites that must run against every adapter (global-chain conformance).
     pub async fn start_adapter(
-        factory: ToniFactory,
+        factory: UloFactory,
         module: impl ModuleMetadata + 'static,
-        adapter: impl toni::HttpAdapter + 'static,
+        adapter: impl ulo::HttpAdapter + 'static,
     ) -> Self {
         Self::start_target(factory, module, adapter, ("127.0.0.1", 0)).await
     }
@@ -43,10 +43,10 @@ impl TestServer {
     /// Boot on an explicit [`BindTarget`] — the parameterization point for
     /// suites that hand the application a socket they bound themselves.
     pub async fn start_target(
-        factory: ToniFactory,
+        factory: UloFactory,
         module: impl ModuleMetadata + 'static,
-        adapter: impl toni::HttpAdapter + 'static,
-        target: impl Into<toni::BindTarget>,
+        adapter: impl ulo::HttpAdapter + 'static,
+        target: impl Into<ulo::BindTarget>,
     ) -> Self {
         init_tracing();
 

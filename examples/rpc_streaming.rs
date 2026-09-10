@@ -16,10 +16,10 @@
 use std::time::Duration;
 
 use futures::StreamExt;
-use toni::context::{HandlerContext, RpcContext};
-use toni::rpc::{RpcHandlerOutput, RpcHandlerResult};
-use toni::{RpcClient, RpcData, RpcError, ToniFactory};
-use toni_macros::{controller, module, new, patterns};
+use ulo::context::{HandlerContext, RpcContext};
+use ulo::rpc::{RpcHandlerOutput, RpcHandlerResult};
+use ulo::{RpcClient, RpcData, RpcError, UloFactory};
+use ulo_macros::{controller, module, new, patterns};
 
 #[controller]
 pub struct FeedController {}
@@ -80,15 +80,15 @@ fn main() -> anyhow::Result<()> {
         // Server on an OS-assigned port; the bound address comes back from bind().
         let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
         tokio::task::spawn_local(async move {
-            let mut app = ToniFactory::new().create_with(FeedModule).await.unwrap();
-            app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", 0))
+            let mut app = UloFactory::new().create_with(FeedModule).await.unwrap();
+            app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
                 .unwrap();
             let bound = app.bind().await.unwrap();
             let _ = port_tx.send(bound.rpc.unwrap().port());
             app.run().await;
         });
         let port = port_rx.await?;
-        let client = RpcClient::new(toni_tcp::TcpClientTransport::new("127.0.0.1", port));
+        let client = RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
 
         // A bounded stream ends on its own.
         let items: Vec<i64> = client

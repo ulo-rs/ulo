@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use toni::*;
+use ulo::*;
 
 // Global modules keep the import graph acyclic — both get ordered and reach the injector's
 // Phase-1 stall — while the providers still form a `ServiceA` <-> `ServiceB` cycle. `#[new]`
@@ -43,7 +43,7 @@ impl AppModule {}
 /// the cycle, not just the modules involved.
 #[tokio::test]
 async fn cross_module_provider_cycle_names_the_exact_providers() {
-    let message = ToniFactory::create_application_context(AppModule)
+    let message = UloFactory::create_application_context(AppModule)
         .await
         .err()
         .expect("a cross-module provider cycle must fail initialization")

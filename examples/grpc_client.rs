@@ -1,4 +1,4 @@
-//! Calling a gRPC service from inside a toni application.
+//! Calling a gRPC service from inside a ulo application.
 //!
 //! The client is a provider like any other: registered under its own type, so a
 //! controller asks for it with `#[inject]` and never builds one itself. The
@@ -23,12 +23,12 @@
 
 use std::net::SocketAddr;
 
-use toni::{Body, ToniFactory, module, provider_factory};
-use toni_axum::AxumAdapter;
-use toni_macros::{controller, get, grpc_methods, new, routes};
+use ulo::{Body, UloFactory, module, provider_factory};
+use ulo_http_axum::AxumAdapter;
+use ulo_macros::{controller, get, grpc_methods, new, routes};
 
 mod orders_pb {
-    tonic::include_proto!("toni_examples.orders");
+    tonic::include_proto!("ulo_examples.orders");
 }
 
 use orders_pb::orders_client::OrdersClient;
@@ -94,7 +94,7 @@ impl OrdersService {
     #[grpc_method]
     async fn create(
         &self,
-        toni::extractors::Payload(req): toni::extractors::Payload<orders_pb::CreateOrderRequest>,
+        ulo::extractors::Payload(req): ulo::extractors::Payload<orders_pb::CreateOrderRequest>,
     ) -> orders_pb::CreateOrderResponse {
         orders_pb::CreateOrderResponse {
             id: 1,
@@ -122,10 +122,10 @@ async fn main() {
     local
         .run_until(async move {
             let grpc_addr: SocketAddr = GRPC_ADDR.parse().unwrap();
-            let mut app = ToniFactory::create(AppModule).await.unwrap();
+            let mut app = UloFactory::create(AppModule).await.unwrap();
             app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
                 .unwrap();
-            app.use_grpc_adapter(toni_grpc::GrpcAdapter::new(grpc_addr))
+            app.use_grpc_adapter(ulo_grpc::GrpcAdapter::new(grpc_addr))
                 .unwrap();
 
             println!("HTTP on http://127.0.0.1:3000, gRPC on {GRPC_ADDR}");

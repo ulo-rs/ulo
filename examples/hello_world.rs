@@ -1,15 +1,15 @@
-//! The minimal toni HTTP application
+//! The minimal ulo HTTP application
 //!
 //! Starting point for anyone new to the framework. Shows the three things
-//! every toni app needs: a controller, a module, and an adapter.
+//! every ulo app needs: a controller, a module, and an adapter.
 //!
 //! Run with:  cargo run --example hello_world
 //! Test:      curl http://127.0.0.1:3000/hello
 //!            curl http://127.0.0.1:3000/hello/json
 
 use serde_json::json;
-use toni::*;
-use toni_axum::AxumAdapter;
+use ulo::*;
+use ulo_http_axum::AxumAdapter;
 
 #[controller("/hello")]
 pub struct HelloController;
@@ -25,7 +25,7 @@ impl HelloController {
     fn hello_json(&self) -> Body {
         Body::json(json!({
             "message": "Hello, World!",
-            "framework": "toni"
+            "framework": "ulo"
         }))
     }
 }
@@ -35,12 +35,12 @@ impl AppModule {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("🚀 toni hello world\n");
+    println!("🚀 ulo hello world\n");
     println!("  GET http://127.0.0.1:3000/hello");
     println!("  GET http://127.0.0.1:3000/hello/json");
     println!();
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
         .unwrap();

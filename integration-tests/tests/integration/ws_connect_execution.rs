@@ -9,11 +9,11 @@ use std::sync::{Mutex, OnceLock};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
-use toni::async_trait;
-use toni::context::{Extensions, HandlerContext, WsContext};
-use toni::traits_helpers::Guard;
-use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
-use toni::{
+use ulo::async_trait;
+use ulo::context::{Extensions, HandlerContext, WsContext};
+use ulo::traits_helpers::Guard;
+use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::{
     injectable, module, new, on_connect, subscribe_message, subscriptions, use_guards,
     websocket_gateway,
 };
@@ -58,7 +58,7 @@ impl ConnectExecutionGateway {
 
     /// Reads the bag the connect guard wrote to, through the connect's own context.
     #[on_connect]
-    async fn greet(&self, _client: &WsClient, ctx: &WsContext) -> Result<(), toni::WsError> {
+    async fn greet(&self, _client: &WsClient, ctx: &WsContext) -> Result<(), ulo::WsError> {
         *seen().lock().unwrap() = ctx.extensions().get::<Principal>();
         Ok(())
     }

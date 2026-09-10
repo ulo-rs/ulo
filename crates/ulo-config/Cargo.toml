@@ -1,0 +1,19 @@
+[package]
+name = "ulo-config"
+version = "0.1.0"
+edition.workspace = true
+description = "Configuration management for Ulo framework"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+thiserror = "2.0.17"
+tracing.workspace = true
+dotenv = "0.15.0"
+ulo-macros = { path = "../ulo-macros" }
+ulo = { path = "../ulo", default-features = false }
+
+[dev-dependencies]
+serial_test = "3.2.0"
+validator = { workspace = true, features = ["derive"] }

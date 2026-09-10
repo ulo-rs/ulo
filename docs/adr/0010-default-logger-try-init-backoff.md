@@ -22,7 +22,7 @@ OpenTelemetry), silencing it at runtime, and removing the dependency entirely.
 
 ## Decision
 
-`ToniFactory` installs a default subscriber at the top of `initialize`, the funnel shared by
+`UloFactory` installs a default subscriber at the top of `initialize`, the funnel shared by
 `create_with` and `create_application_context_with`: a `tracing-subscriber` fmt writer to stderr,
 filtered by `RUST_LOG` with an `info` fallback, installed via `try_init()`.
 
@@ -37,14 +37,14 @@ stdout is program output.
 
 There is no runtime knob. A `disable_default_logger()` builder method was considered for Nest
 parity and rejected: every identified case is covered by one of the three off-ramps, and Nest's
-`logger: false` guards a logger abstraction (`LoggerService`) that toni does not own — in the
+`logger: false` guards a logger abstraction (`LoggerService`) that ulo does not own — in the
 tracing ecosystem, install-your-own-subscriber is the idiom, and the back-off honors it. Adding a
 builder method later is non-breaking; shipping one now would be surface without a case.
 
 ## Consequences
 
-- Every library crate depending on `toni` must declare `default-features = false`. Cargo features
-  are additive across the dependency graph: one adapter pulling `toni` with default features
+- Every library crate depending on `ulo` must declare `default-features = false`. Cargo features
+  are additive across the dependency graph: one adapter pulling `ulo` with default features
   re-enables `logger` for the application and breaks its opt-out. All 25 dependent crates in the
   workspace declare it; new crates must follow. Binary and test packages (`examples`,
   `integration-tests`) keep defaults on purpose, exercising the default path.
@@ -54,5 +54,5 @@ builder method later is non-breaking; shipping one now would be surface without 
 - Examples and quick starts need no logging setup; the subscriber boilerplate the examples carried
   is deleted.
 - Test harnesses that install their own subscriber (the integration suite's `init_tracing`,
-  filtered to `toni=error`) compose with the back-off in either install order — whichever
+  filtered to `ulo=error`) compose with the back-off in either install order — whichever
   `try_init` runs first wins, and both ignore losing.

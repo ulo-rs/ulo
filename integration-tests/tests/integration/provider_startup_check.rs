@@ -9,8 +9,8 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use toni::traits_helpers::{Injectable, Provider, ProviderContext, ProviderFactory};
-use toni::{DynamicModule, FxHashMap, InitResult, StartupError, ToniFactory, async_trait};
+use ulo::traits_helpers::{Injectable, Provider, ProviderContext, ProviderFactory};
+use ulo::{DynamicModule, FxHashMap, InitResult, StartupError, UloFactory, async_trait};
 
 const TOKEN: &str = "PROBE_CONNECTION";
 
@@ -70,7 +70,7 @@ fn probe_module(reachable: bool) -> DynamicModule {
 
 #[tokio::test]
 async fn a_dynamic_module_provider_reports_a_failed_startup_check() {
-    let err = ToniFactory::create_application_context(probe_module(false))
+    let err = UloFactory::create_application_context(probe_module(false))
         .await
         .err()
         .expect("an unreachable connection must fail startup");
@@ -94,7 +94,7 @@ async fn a_dynamic_module_provider_reports_a_failed_startup_check() {
 
 #[tokio::test]
 async fn a_reachable_connection_starts_normally() {
-    ToniFactory::create_application_context(probe_module(true))
+    UloFactory::create_application_context(probe_module(true))
         .await
         .map(|_| ())
         .expect("a reachable connection must start");

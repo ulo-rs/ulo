@@ -1,7 +1,7 @@
 use crate::common::TestServer;
 use std::time::Duration;
-use toni::{
-    Body as ToniBody, controller, get, injectable, module, new, provider_alias, provider_factory,
+use ulo::{
+    Body as UloBody, controller, get, injectable, module, new, provider_alias, provider_factory,
     provider_token, provider_value, routes,
 };
 
@@ -13,8 +13,8 @@ async fn provider_value_injects_constant() {
     #[routes]
     impl TestController {
         #[get("/port")]
-        fn get_port(&self) -> ToniBody {
-            ToniBody::text("3000".to_string())
+        fn get_port(&self) -> UloBody {
+            UloBody::text("3000".to_string())
         }
     }
 
@@ -46,8 +46,8 @@ async fn provider_factory_sync_without_deps() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text("ok".to_string())
+        fn test(&self) -> UloBody {
+            UloBody::text("ok".to_string())
         }
     }
 
@@ -99,8 +99,8 @@ async fn provider_factory_sync_with_deps() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text("ok".to_string())
+        fn test(&self) -> UloBody {
+            UloBody::text("ok".to_string())
         }
     }
 
@@ -150,8 +150,8 @@ async fn provider_factory_async_with_deps() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text("ok".to_string())
+        fn test(&self) -> UloBody {
+            UloBody::text("ok".to_string())
         }
     }
 
@@ -220,8 +220,8 @@ async fn provider_alias_creates_alternate_token() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text(self.verify.report())
+        fn test(&self) -> UloBody {
+            UloBody::text(self.verify.report())
         }
     }
 
@@ -286,8 +286,8 @@ async fn provider_token_for_custom_types() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text(self.app.get_info())
+        fn test(&self) -> UloBody {
+            UloBody::text(self.app.get_info())
         }
     }
 
@@ -376,8 +376,8 @@ async fn all_provider_variants_work_together() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text(self.consumer.report())
+        fn test(&self) -> UloBody {
+            UloBody::text(self.consumer.report())
         }
     }
 
@@ -385,7 +385,7 @@ async fn all_provider_variants_work_together() {
         providers: [
             ConfigService,
             LoggerService,
-            provider_value!("APP_NAME", "ToniApp".to_string()),
+            provider_value!("APP_NAME", "UloApp".to_string()),
             provider_value!("PORT", 3000_u16),
             provider_value!("TIMEOUT", Duration::from_secs(30)),
             provider_factory!("REQUEST_ID", || {

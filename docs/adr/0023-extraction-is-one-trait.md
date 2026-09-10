@@ -80,9 +80,9 @@ a guarantee no part of the framework reads.
 ## Consequences
 
 - Breaking for every custom extractor. A metadata one changes its signature and reads
-  `ctx.request()`; a body one folds its two impls into one. `toni::FromRequestParts` and
-  `toni::FromRequest` are gone from the crate root, replaced by `toni::FromContext` and
-  `toni::take_body`.
+  `ctx.request()`; a body one folds its two impls into one. `ulo::FromRequestParts` and
+  `ulo::FromRequest` are gone from the crate root, replaced by `ulo::FromContext` and
+  `ulo::take_body`.
 - `BodyExtractionError::AlreadyRead` carries a `BodyAlreadyRead` rather than a bare name, so the
   same value serves `take_body`'s own result and the wrapped one.
 - `Request` gains an inherent infallible `from_parts`. Its provider and factory build one while

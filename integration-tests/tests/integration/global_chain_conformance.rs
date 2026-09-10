@@ -13,12 +13,12 @@
 //! `#[serial]` must precede `#[localset_test]` — the localset macro rebuilds
 //! the function and drops any attribute written after it.
 //!
-//! [`AdapterContext`]: toni::AdapterContext
+//! [`AdapterContext`]: ulo::AdapterContext
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use toni::{Body as ToniBody, ToniFactory, async_trait, controller, get, module, routes};
+use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::{Body as UloBody, UloFactory, async_trait, controller, get, module, routes};
 
 use crate::common::TestServer;
 
@@ -57,7 +57,7 @@ struct Block;
 impl Middleware for Block {
     async fn handle(&self, next: NextHandle) -> MiddlewareResult {
         if next.request().headers().contains_key("x-block") {
-            return Ok(toni::HttpResponse::forbidden().text("blocked").build());
+            return Ok(ulo::HttpResponse::forbidden().text("blocked").build());
         }
         next.run().await
     }
@@ -70,7 +70,7 @@ struct Preflight;
 impl Middleware for Preflight {
     async fn handle(&self, next: NextHandle) -> MiddlewareResult {
         if next.request().method().as_str() == "OPTIONS" {
-            return Ok(toni::HttpResponse::no_content()
+            return Ok(ulo::HttpResponse::no_content()
                 .header("access-control-allow-origin", "*")
                 .build());
         }
@@ -97,23 +97,23 @@ pub struct ConformanceController {}
 #[routes]
 impl ConformanceController {
     #[get("/probe")]
-    fn probe(&self) -> ToniBody {
+    fn probe(&self) -> UloBody {
         track("handler:probe");
-        ToniBody::text("probe")
+        UloBody::text("probe")
     }
 
     #[get("/alpha")]
-    fn alpha(&self) -> ToniBody {
+    fn alpha(&self) -> UloBody {
         track("handler:alpha");
-        ToniBody::text("alpha")
+        UloBody::text("alpha")
     }
 }
 
 #[module(controllers: [ConformanceController])]
 impl ConformanceModule {}
 
-async fn boot(adapter: impl toni::HttpAdapter + 'static) -> TestServer {
-    let mut factory = ToniFactory::new();
+async fn boot(adapter: impl ulo::HttpAdapter + 'static) -> TestServer {
+    let mut factory = UloFactory::new();
     factory
         .use_global_middleware(Arc::new(Recording))
         .use_global_middleware(Arc::new(Block))
@@ -283,8 +283,8 @@ macro_rules! conformance_suite {
     };
 }
 
-conformance_suite!(axum, toni_axum::AxumAdapter::new());
-conformance_suite!(poem, toni_poem::PoemAdapter::new());
-conformance_suite!(salvo, toni_salvo::SalvoAdapter::new());
-conformance_suite!(actix, toni_actix::ActixAdapter::new());
-conformance_suite!(rocket, toni_rocket::RocketAdapter::new());
+conformance_suite!(axum, ulo_http_axum::AxumAdapter::new());
+conformance_suite!(poem, ulo_http_poem::PoemAdapter::new());
+conformance_suite!(salvo, ulo_http_salvo::SalvoAdapter::new());
+conformance_suite!(actix, ulo_http_actix::ActixAdapter::new());
+conformance_suite!(rocket, ulo_http_rocket::RocketAdapter::new());

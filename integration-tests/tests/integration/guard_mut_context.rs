@@ -3,9 +3,9 @@
 //!
 //! `extension_bus.rs` covers the other half, where the reader is the handler.
 
-use toni::async_trait;
-use toni::context::{HandlerContext, HttpContext};
-use toni::traits_helpers::Guard;
+use ulo::async_trait;
+use ulo::context::{HandlerContext, HttpContext};
+use ulo::traits_helpers::Guard;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Principal {

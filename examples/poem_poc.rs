@@ -1,4 +1,4 @@
-//! toni-poem proof-of-concept
+//! ulo-http-poem proof-of-concept
 //!
 //! Smoke test for the poem adapter: HTTP routes, response streaming,
 //! both body extractors, same-port WebSocket on port 3001, and a
@@ -16,10 +16,10 @@ use std::time::Duration;
 use futures::StreamExt;
 use futures::stream;
 use serde_json::json;
-use toni::extractors::{BodyStream, Bytes, Path};
-use toni::*;
-use toni_macros::{module, new, subscriptions, websocket_gateway};
-use toni_poem::PoemAdapter;
+use ulo::extractors::{BodyStream, Bytes, Path};
+use ulo::*;
+use ulo_http_poem::PoemAdapter;
+use ulo_macros::{module, new, subscriptions, websocket_gateway};
 
 #[controller("/hello")]
 pub struct HelloController;
@@ -28,7 +28,7 @@ pub struct HelloController;
 impl HelloController {
     #[get("/")]
     fn hello(&self) -> Body {
-        Body::json(json!({ "message": "Hello from poem!", "framework": "toni" }))
+        Body::json(json!({ "message": "Hello from poem!", "framework": "ulo" }))
     }
 
     #[get("/{name}")]
@@ -113,13 +113,13 @@ impl AppModule {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("toni-poem PoC");
+    println!("ulo-http-poem PoC");
     println!("  HTTP   :3001 GET /hello, GET /hello/{{name}}, GET /hello/_/stream");
     println!("  HTTP   :3001 POST /hello/_/echo, POST /hello/_/count");
     println!("  WS     :3001 /chat        (same-port upgrade)");
     println!("  WS     :3002 /ping        (separate-port adapter)");
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
     app.use_http_adapter(PoemAdapter::new(), ("127.0.0.1", 3001))
         .unwrap();

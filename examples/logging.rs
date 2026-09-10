@@ -1,6 +1,6 @@
-//! Default logging in toni applications.
+//! Default logging in ulo applications.
 //!
-//! toni emits structured log events via the [`tracing`] crate and installs a
+//! ulo emits structured log events via the [`tracing`] crate and installs a
 //! default subscriber during application creation: pretty-printed output to
 //! stderr, filtered by `RUST_LOG` with an `info` fallback. An application
 //! that never mentions logging still sees bootstrap events, guard
@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! cargo run --example logging                  # info and above
-//! RUST_LOG=toni=debug cargo run --example logging
+//! RUST_LOG=ulo=debug cargo run --example logging
 //! RUST_LOG=off cargo run --example logging     # silence at runtime
 //! ```
 //!
@@ -19,14 +19,14 @@
 //!
 //! ```text
 //! tracing_subscriber::fmt().json().init();
-//! let app = ToniFactory::create(AppModule).await?;
+//! let app = UloFactory::create(AppModule).await?;
 //! ```
 //!
 //! To compile the default logger out entirely, disable the crate's default
-//! features: `toni = { version = "0.2", default-features = false }`.
+//! features: `ulo = { version = "0.2", default-features = false }`.
 
-use toni::*;
-use toni_axum::AxumAdapter;
+use ulo::*;
+use ulo_http_axum::AxumAdapter;
 
 #[controller("/hello")]
 struct HelloController;
@@ -35,7 +35,7 @@ struct HelloController;
 impl HelloController {
     #[get("/")]
     fn hello(&self) -> Body {
-        Body::text("Hello, toni!".to_string())
+        Body::text("Hello, ulo!".to_string())
     }
 }
 
@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
     println!("  GET http://127.0.0.1:3000/hello");
     println!();
 
-    let mut app = ToniFactory::create(AppModule).await?;
+    let mut app = UloFactory::create(AppModule).await?;
 
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
         .unwrap();

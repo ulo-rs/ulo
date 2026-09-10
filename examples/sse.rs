@@ -28,10 +28,10 @@ use std::time::Duration;
 use futures::Stream;
 use futures::stream;
 use tokio::sync::broadcast;
-use toni::extractors::Bytes;
-use toni::*;
-use toni_axum::AxumAdapter;
-use toni_macros::{injectable, new};
+use ulo::extractors::Bytes;
+use ulo::*;
+use ulo_http_axum::AxumAdapter;
+use ulo_macros::{injectable, new};
 
 // ── Service ──────────────────────────────────────────────────────────────────
 
@@ -155,7 +155,7 @@ impl AppModule {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("🚀 toni SSE example\n");
+    println!("🚀 ulo SSE example\n");
     println!("  GET  http://127.0.0.1:3000/sse/counter  — live counter (Ctrl-C to stop)");
     println!("  GET  http://127.0.0.1:3000/sse/events   — named event types");
     println!("  GET  http://127.0.0.1:3000/sse/push     — per-request background task (5 events)");
@@ -167,7 +167,7 @@ async fn main() -> anyhow::Result<()> {
     println!("    curl -X POST http://127.0.0.1:3000/sse/emit -d 'hello everyone'");
     println!();
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
         .unwrap();

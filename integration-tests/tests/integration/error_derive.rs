@@ -1,10 +1,10 @@
-//! `#[derive(toni::Error)]` exercises the codegen across struct, enum, and
+//! `#[derive(ulo::Error)]` exercises the codegen across struct, enum, and
 //! default-fallback shapes.
 
 use std::fmt;
-use toni::{Error, ErrorKind};
+use ulo::{Error, ErrorKind};
 
-#[derive(toni::Error)]
+#[derive(ulo::Error)]
 #[error_kind(NotFound)]
 struct StructTagged(String);
 
@@ -22,7 +22,7 @@ impl fmt::Display for StructTagged {
 
 impl std::error::Error for StructTagged {}
 
-#[derive(toni::Error)]
+#[derive(ulo::Error)]
 struct StructUntagged(String);
 
 impl fmt::Debug for StructUntagged {
@@ -39,7 +39,7 @@ impl fmt::Display for StructUntagged {
 
 impl std::error::Error for StructUntagged {}
 
-#[derive(Debug, toni::Error)]
+#[derive(Debug, ulo::Error)]
 enum BillingError {
     #[error_kind(NotFound)]
     InvoiceMissing(String),
@@ -69,7 +69,7 @@ impl fmt::Display for BillingError {
 
 impl std::error::Error for BillingError {}
 
-#[derive(Debug, toni::Error)]
+#[derive(Debug, ulo::Error)]
 #[error_kind(Forbidden)]
 enum AuthError {
     BadToken,

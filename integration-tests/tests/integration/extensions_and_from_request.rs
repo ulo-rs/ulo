@@ -5,9 +5,9 @@
 //! 2. Request-scoped providers using from_request to access that data
 //! 3. Controllers using request context without manual extraction
 
-use toni::{
-    Body as ToniBody, Request, controller, get, injectable, module, new, routes,
-    toni_factory::ToniFactory,
+use ulo::{
+    Body as UloBody, Request, controller, get, injectable, module, new, routes,
+    ulo_factory::UloFactory,
 };
 
 // ===== 1. Define types to store in extensions =====
@@ -96,25 +96,25 @@ pub struct UserController {
 #[routes]
 impl UserController {
     #[get("/me")]
-    fn get_current_user(&self) -> ToniBody {
+    fn get_current_user(&self) -> UloBody {
         // No manual extraction! Context is already populated
         let user_id = self.context.get_user_id();
         let request_id = self.context.get_request_id();
 
         let data = self.user_service.get_user_data(user_id);
 
-        ToniBody::text(format!(
+        UloBody::text(format!(
             "Request ID: {}\nUser: {}\nData: {}",
             request_id, user_id, data
         ))
     }
 
     #[get("/protected")]
-    fn protected_route(&self) -> ToniBody {
+    fn protected_route(&self) -> UloBody {
         // Easy auth check
         match self.context.require_auth() {
-            Ok(user_id) => ToniBody::text(format!("Protected data for user: {}", user_id)),
-            Err(msg) => ToniBody::text(msg.to_string()),
+            Ok(user_id) => UloBody::text(format!("Protected data for user: {}", user_id)),
+            Err(msg) => UloBody::text(msg.to_string()),
         }
     }
 }
@@ -182,7 +182,7 @@ mod tests {
     async fn test_di_resolves() {
         // Verify the module wires correctly: UserService (singleton) must resolve,
         // and its business logic must be callable without an HTTP server.
-        let app = ToniFactory::create(TestModule).await.unwrap();
+        let app = UloFactory::create(TestModule).await.unwrap();
 
         let service = app
             .get::<UserService>()

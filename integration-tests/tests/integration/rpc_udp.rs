@@ -14,21 +14,21 @@
 
 use std::time::Duration;
 
-use toni::context::RpcContext;
-use toni::module;
-use toni::rpc::{RpcData, RpcError};
-use toni_macros::{controller, new, patterns};
+use ulo::context::RpcContext;
+use ulo::module;
+use ulo::rpc::{RpcData, RpcError};
+use ulo_macros::{controller, new, patterns};
 
 /// Spawn an app with the UDP RPC adapter on an OS-assigned port and wait
 /// for `app.bind().await` to surface the listening address before returning.
 /// The caller is guaranteed the socket is live by the time it gets the port.
-async fn start_rpc_server(module: impl toni::ModuleMetadata + 'static) -> u16 {
-    use toni::toni_factory::ToniFactory;
+async fn start_rpc_server(module: impl ulo::ModuleMetadata + 'static) -> u16 {
+    use ulo::ulo_factory::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(module).await.unwrap();
-        app.use_rpc_adapter(toni_udp::UdpAdapter::new("127.0.0.1", 0))
+        let mut app = UloFactory::create(module).await.unwrap();
+        app.use_rpc_adapter(ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 0))
             .unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(
@@ -215,14 +215,14 @@ async fn udp_fire_and_forget_produces_no_reply() {
 /// socket is closed and the next datagram gets no reply.
 #[tokio_localset_test::localset_test]
 async fn udp_app_shutdown_stops_the_recv_loop() {
-    use toni::toni_factory::ToniFactory;
+    use ulo::ulo_factory::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(UdpRpcModule).await.unwrap();
-        app.use_rpc_adapter(toni_udp::UdpAdapter::new("127.0.0.1", 0))
+        let mut app = UloFactory::create(UdpRpcModule).await.unwrap();
+        app.use_rpc_adapter(ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 0))
             .unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(
@@ -303,11 +303,11 @@ async fn spawn_lossy_echo(drop_first: usize) -> u16 {
 /// is dropped; without retries the same scenario times out.
 #[tokio_localset_test::localset_test]
 async fn udp_client_retries_recover_from_packet_loss() {
-    use toni::{RpcClientTransport, RpcData};
+    use ulo::{RpcClientTransport, RpcData};
 
     // No retries → the dropped first datagram is fatal.
     let port_no_retry = spawn_lossy_echo(1).await;
-    let no_retry = toni_udp::UdpClientTransport::new("127.0.0.1", port_no_retry)
+    let no_retry = ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port_no_retry)
         .with_timeout(Duration::from_millis(80));
     let err = no_retry
         .send(
@@ -317,11 +317,11 @@ async fn udp_client_retries_recover_from_packet_loss() {
         )
         .await
         .expect_err("first datagram dropped, no retries → Timeout");
-    assert!(matches!(err, toni::RpcClientError::Timeout));
+    assert!(matches!(err, ulo::RpcClientError::Timeout));
 
     // One retry → the second datagram gets through.
     let port_retry = spawn_lossy_echo(1).await;
-    let retry = toni_udp::UdpClientTransport::new("127.0.0.1", port_retry)
+    let retry = ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port_retry)
         .with_timeout(Duration::from_millis(80))
         .with_retries(1)
         .with_retry_backoff(Duration::from_millis(20));
@@ -341,11 +341,11 @@ async fn udp_client_retries_recover_from_packet_loss() {
 
 #[tokio_localset_test::localset_test]
 async fn udp_client_transport_round_trips_and_rejects_oversized() {
-    use toni::{RpcClientTransport, RpcData};
+    use ulo::{RpcClientTransport, RpcData};
 
     let port = start_rpc_server(UdpRpcModule).await;
 
-    let transport = toni_udp::UdpClientTransport::new("127.0.0.1", port)
+    let transport = ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port)
         .with_timeout(Duration::from_millis(500));
 
     let reply = transport
@@ -368,7 +368,7 @@ async fn udp_client_transport_round_trips_and_rejects_oversized() {
         .await
         .expect_err("oversized payload should fail");
     match err {
-        toni::RpcClientError::Transport(msg) => assert!(msg.contains("exceeds")),
+        ulo::RpcClientError::Transport(msg) => assert!(msg.contains("exceeds")),
         other => panic!("expected Transport error, got {other:?}"),
     }
 }
@@ -396,14 +396,14 @@ impl SlowUdpModule {}
 /// during the drain window — its reply must arrive on the client socket.
 #[tokio_localset_test::localset_test]
 async fn udp_in_flight_request_completes_during_drain() {
-    use toni::toni_factory::ToniFactory;
+    use ulo::ulo_factory::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(SlowUdpModule).await.unwrap();
-        app.use_rpc_adapter(toni_udp::UdpAdapter::new("127.0.0.1", 0))
+        let mut app = UloFactory::create(SlowUdpModule).await.unwrap();
+        app.use_rpc_adapter(ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 0))
             .unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(
@@ -446,15 +446,15 @@ async fn udp_in_flight_request_completes_during_drain() {
 /// would otherwise have slept for 300 ms.
 #[tokio_localset_test::localset_test]
 async fn udp_drain_aborts_after_timeout() {
-    use toni::toni_factory::ToniFactory;
+    use ulo::ulo_factory::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(SlowUdpModule).await.unwrap();
-        let adapter =
-            toni_udp::UdpAdapter::new("127.0.0.1", 0).with_drain_timeout(Duration::from_millis(50));
+        let mut app = UloFactory::create(SlowUdpModule).await.unwrap();
+        let adapter = ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 0)
+            .with_drain_timeout(Duration::from_millis(50));
         app.use_rpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(
@@ -490,13 +490,13 @@ async fn udp_drain_aborts_after_timeout() {
 /// follow-up datagram succeeds.
 #[tokio_localset_test::localset_test]
 async fn udp_backpressure_rejects_excess_and_releases_after_completion() {
-    use toni::toni_factory::ToniFactory;
+    use ulo::ulo_factory::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(SlowUdpModule).await.unwrap();
-        let adapter = toni_udp::UdpAdapter::new("127.0.0.1", 0).with_max_inflight(1);
+        let mut app = UloFactory::create(SlowUdpModule).await.unwrap();
+        let adapter = ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 0).with_max_inflight(1);
         app.use_rpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(
@@ -587,11 +587,11 @@ impl UdpMetaModule {}
 #[tokio_localset_test::localset_test]
 async fn udp_client_metadata_reaches_handler() {
     use std::time::Duration;
-    use toni::RpcClient;
+    use ulo::RpcClient;
 
     let port = start_rpc_server(UdpMetaModule).await;
     let client = RpcClient::new(
-        toni_udp::UdpClientTransport::new("127.0.0.1", port)
+        ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port)
             .with_timeout(Duration::from_millis(500)),
     );
 

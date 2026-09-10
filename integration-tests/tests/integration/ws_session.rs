@@ -6,11 +6,11 @@ use std::sync::{Mutex, OnceLock};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
-use toni::async_trait;
-use toni::context::{HandlerContext, WsContext};
-use toni::traits_helpers::Guard;
-use toni::websocket::{Session, WsClient, WsHandlerResult, WsMessage};
-use toni::{
+use ulo::async_trait;
+use ulo::context::{HandlerContext, WsContext};
+use ulo::traits_helpers::Guard;
+use ulo::websocket::{Session, WsClient, WsHandlerResult, WsMessage};
+use ulo::{
     DisconnectReason, injectable, module, new, on_connect, on_disconnect, set_metadata,
     subscribe_message, subscriptions, use_guards, websocket_gateway,
 };
@@ -57,7 +57,7 @@ impl SessionGateway {
     }
 
     #[on_connect]
-    async fn greet(&self, _client: &WsClient) -> Result<(), toni::WsError> {
+    async fn greet(&self, _client: &WsClient) -> Result<(), ulo::WsError> {
         Ok(())
     }
 

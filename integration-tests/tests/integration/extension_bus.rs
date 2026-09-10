@@ -7,15 +7,15 @@
 //!
 //! `guard_mut_context.rs` covers the enhancer-to-enhancer half.
 
-use toni::async_trait;
-use toni::context::{Extensions, HandlerContext, HttpContext, WsContext};
-use toni::extractors::{Bytes as ToniBytes, Path};
-use toni::middleware::{Middleware, MiddlewareResult, NextHandle};
-use toni::traits_helpers::Guard;
-use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
-use toni::{
-    Body as ToniBody, controller, get, injectable, module, new, post, routes, set_metadata,
-    subscriptions, toni_factory::ToniFactory, websocket_gateway,
+use ulo::async_trait;
+use ulo::context::{Extensions, HandlerContext, HttpContext, WsContext};
+use ulo::extractors::{Bytes as UloBytes, Path};
+use ulo::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::traits_helpers::Guard;
+use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::{
+    Body as UloBody, controller, get, injectable, module, new, post, routes, set_metadata,
+    subscriptions, ulo_factory::UloFactory, websocket_gateway,
 };
 
 use crate::common::TestServer;
@@ -58,7 +58,7 @@ pub struct BusController {}
 #[use_guards(AuthGuard)]
 impl BusController {
     #[get("/read")]
-    fn read(&self, ext: Extensions) -> ToniBody {
+    fn read(&self, ext: Extensions) -> UloBody {
         let principal = ext
             .get::<Principal>()
             .map(|p| p.0)
@@ -67,7 +67,7 @@ impl BusController {
             .get::<TraceId>()
             .map(|t| t.0)
             .unwrap_or_else(|| "ABSENT".into());
-        ToniBody::text(format!("{principal}/{trace}"))
+        UloBody::text(format!("{principal}/{trace}"))
     }
 }
 
@@ -76,7 +76,7 @@ impl HttpBusModule {}
 
 #[tokio_localset_test::localset_test]
 async fn http_guard_and_middleware_writes_reach_the_handler() {
-    let mut factory = ToniFactory::new();
+    let mut factory = UloFactory::new();
     factory.use_global_middleware(std::sync::Arc::new(TracingMiddleware));
     let server = TestServer::start_with(factory, HttpBusModule).await;
 
@@ -195,7 +195,7 @@ impl CtxController {
     /// Takes the context itself rather than an extractor over it.
     #[get("/read")]
     #[set_metadata(Role("reader"))]
-    fn read(&self, ctx: &HttpContext) -> ToniBody {
+    fn read(&self, ctx: &HttpContext) -> UloBody {
         let principal = ctx
             .extensions()
             .get::<Principal>()
@@ -208,18 +208,18 @@ impl CtxController {
             .and_then(|m| m.get::<Role>())
             .map(|r| r.0)
             .unwrap_or("none");
-        ToniBody::text(format!("{principal}/{role}"))
+        UloBody::text(format!("{principal}/{role}"))
     }
 
     /// The context coexists with ordinary extractors.
     #[get("/with-path/{id}")]
-    fn with_path(&self, Path(id): Path<u32>, ctx: &HttpContext) -> ToniBody {
+    fn with_path(&self, Path(id): Path<u32>, ctx: &HttpContext) -> UloBody {
         let principal = ctx
             .extensions()
             .get::<Principal>()
             .map(|p| p.0)
             .unwrap_or_else(|| "ABSENT".into());
-        ToniBody::text(format!("{id}/{principal}"))
+        UloBody::text(format!("{id}/{principal}"))
     }
 }
 
@@ -293,15 +293,15 @@ pub struct BodyController {}
 impl BodyController {
     /// Reads no body itself, so it runs and can report what the guard saw.
     #[post("/seen")]
-    fn seen(&self, ext: Extensions) -> ToniBody {
+    fn seen(&self, ext: Extensions) -> UloBody {
         let seen = ext.get::<BodySeen>().expect("guard runs first");
-        ToniBody::text(format!("{}/{}", seen.first, seen.second))
+        UloBody::text(format!("{}/{}", seen.first, seen.second))
     }
 
     /// Wants the body the guard already took.
     #[post("/wants-body")]
-    fn wants_body(&self, body: ToniBytes) -> ToniBody {
-        ToniBody::text(format!("{}", body.0.len()))
+    fn wants_body(&self, body: UloBytes) -> UloBody {
+        UloBody::text(format!("{}", body.0.len()))
     }
 }
 
@@ -387,10 +387,10 @@ pub struct TailController {}
 impl TailController {
     /// Holds the context, so the `Arc` alone keeps the bag reachable.
     #[get("/captured")]
-    fn captured(&self, ctx: &HttpContext) -> ToniBody {
+    fn captured(&self, ctx: &HttpContext) -> UloBody {
         use futures_util::StreamExt;
         let held = ctx.clone();
-        ToniBody::stream(futures_util::stream::iter(0..3).map(move |i| {
+        UloBody::stream(futures_util::stream::iter(0..3).map(move |i| {
             let who = held
                 .extensions()
                 .get::<Principal>()
@@ -404,10 +404,10 @@ impl TailController {
     /// survives the drain is then a property of the framework rather than of
     /// what this handler happened to capture.
     #[get("/detached")]
-    fn detached(&self, ctx: &HttpContext) -> ToniBody {
+    fn detached(&self, ctx: &HttpContext) -> UloBody {
         use futures_util::StreamExt;
         let flag = ctx.extensions().get::<Alive>().expect("guard ran").0;
-        ToniBody::stream(futures_util::stream::iter(0..3).map(move |i| {
+        UloBody::stream(futures_util::stream::iter(0..3).map(move |i| {
             let state = if flag.load(std::sync::atomic::Ordering::SeqCst) {
                 "alive"
             } else {

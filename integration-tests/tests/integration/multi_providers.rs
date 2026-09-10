@@ -1,6 +1,6 @@
 use crate::common::TestServer;
 use std::sync::Arc;
-use toni::{Body as ToniBody, controller, get, injectable, module, provide, routes};
+use ulo::{Body as UloBody, controller, get, injectable, module, provide, routes};
 
 // Shared plugin trait used across all tests in this file
 trait Plugin: Send + Sync {
@@ -47,10 +47,10 @@ async fn multi_type_path_collects_all_contributions() {
     #[routes]
     impl TestController {
         #[get("/plugins")]
-        fn list(&self) -> ToniBody {
+        fn list(&self) -> UloBody {
             let mut names: Vec<&str> = self.registry.plugins.iter().map(|p| p.name()).collect();
             names.sort();
-            ToniBody::text(names.join(","))
+            UloBody::text(names.join(","))
         }
     }
 
@@ -110,10 +110,10 @@ async fn multi_factory_closure_collects_contributions() {
     #[routes]
     impl TestController {
         #[get("/greeters")]
-        fn list(&self) -> ToniBody {
+        fn list(&self) -> UloBody {
             let mut names: Vec<&str> = self.registry.greeters.iter().map(|p| p.name()).collect();
             names.sort();
-            ToniBody::text(names.join(","))
+            UloBody::text(names.join(","))
         }
     }
 
@@ -161,8 +161,8 @@ async fn multi_empty_when_no_contributions() {
     #[routes]
     impl TestController {
         #[get("/count")]
-        fn count(&self) -> ToniBody {
-            ToniBody::text(self.registry.plugins.len().to_string())
+        fn count(&self) -> UloBody {
+            UloBody::text(self.registry.plugins.len().to_string())
         }
     }
 
@@ -202,8 +202,8 @@ async fn multi_single_contribution_is_vec_of_one() {
     #[routes]
     impl TestController {
         #[get("/single")]
-        fn get(&self) -> ToniBody {
-            ToniBody::text(format!(
+        fn get(&self) -> UloBody {
+            UloBody::text(format!(
                 "count={},name={}",
                 self.registry.plugins.len(),
                 self.registry.plugins[0].name()
@@ -260,10 +260,10 @@ async fn multi_raw_value_contributes_to_collection() {
     #[routes]
     impl TestController {
         #[get("/named")]
-        fn list(&self) -> ToniBody {
+        fn list(&self) -> UloBody {
             let mut names: Vec<&str> = self.registry.plugins.iter().map(|p| p.name()).collect();
             names.sort();
-            ToniBody::text(names.join(","))
+            UloBody::text(names.join(","))
         }
     }
 
@@ -332,10 +332,10 @@ async fn multi_existing_reuses_registered_singleton() {
     #[routes]
     impl TestController {
         #[get("/existing")]
-        fn list(&self) -> ToniBody {
+        fn list(&self) -> UloBody {
             let mut names: Vec<&str> = self.registry.plugins.iter().map(|p| p.name()).collect();
             names.sort();
-            ToniBody::text(names.join(","))
+            UloBody::text(names.join(","))
         }
     }
 
@@ -405,10 +405,10 @@ async fn multi_existing_string_token_with_explicit_type() {
     #[routes]
     impl TestController {
         #[get("/str")]
-        fn list(&self) -> ToniBody {
+        fn list(&self) -> UloBody {
             let mut names: Vec<&str> = self.registry.plugins.iter().map(|p| p.name()).collect();
             names.sort();
-            ToniBody::text(names.join(","))
+            UloBody::text(names.join(","))
         }
     }
 
@@ -478,10 +478,10 @@ async fn multi_provider_useclass_collects_contributions() {
     #[routes]
     impl TestController {
         #[get("/uc")]
-        fn list(&self) -> ToniBody {
+        fn list(&self) -> UloBody {
             let mut names: Vec<&str> = self.registry.plugins.iter().map(|p| p.name()).collect();
             names.sort();
-            ToniBody::text(names.join(","))
+            UloBody::text(names.join(","))
         }
     }
 

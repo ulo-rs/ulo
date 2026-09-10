@@ -59,7 +59,7 @@ instead, which ADR-0016 settled.
 
 ### The `Cancelled` event stays without a producer
 
-`Drop` is synchronous. `ErrorObserver::observe` is `async`, and toni core holds no runtime handle to
+`Drop` is synchronous. `ErrorObserver::observe` is `async`, and ulo core holds no runtime handle to
 spawn one from. So the token can be fired where the signal is known and the event cannot be fanned
 from the same place.
 

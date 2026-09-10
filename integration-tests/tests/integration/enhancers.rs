@@ -1,10 +1,10 @@
 use crate::common::{ExecutionOrder, TestServer};
-use toni::async_trait;
-use toni::context::{HandlerContext, HttpContext};
-use toni::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use toni::traits_helpers::{Guard, Interceptor, InterceptorNext, MiddlewareConsumer};
-use toni::{
-    Body as ToniBody, HttpResponse, controller, get, injectable, module, post, provider_factory,
+use ulo::async_trait;
+use ulo::context::{HandlerContext, HttpContext};
+use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext, MiddlewareConsumer};
+use ulo::{
+    Body as UloBody, HttpResponse, controller, get, injectable, module, post, provider_factory,
     provider_token, provider_value, routes, use_guards, use_interceptors,
 };
 
@@ -64,7 +64,7 @@ impl Middleware for HeaderCheckMiddleware {
         {
             let mut response = HttpResponse::new();
             response.status = 400;
-            response.body = Some(ToniBody::text(format!(
+            response.body = Some(UloBody::text(format!(
                 "Missing required header: {}",
                 self.required_header
             )));
@@ -179,7 +179,7 @@ impl Interceptor<HttpContext, HttpResponse> for ValidationInterceptor {
         if is_invalid {
             let mut response = HttpResponse::new();
             response.status = 400;
-            response.body = Some(ToniBody::text("Validation failed".to_string()));
+            response.body = Some(UloBody::text("Validation failed".to_string()));
             return response;
         }
         next.run(context).await
@@ -224,16 +224,16 @@ async fn enhancers_execution_order() {
         #[use_guards(AdminGuard::new(get_tracker()))]
         #[use_interceptors(LoggingInterceptor::new("method", get_tracker()))]
         #[get("/protected")]
-        fn protected_endpoint(&self) -> ToniBody {
+        fn protected_endpoint(&self) -> UloBody {
             self.tracker.track("controller:protected");
-            ToniBody::text("Protected resource".to_string())
+            UloBody::text("Protected resource".to_string())
         }
 
         #[use_guards(AuthGuard::new(get_tracker()))]
         #[get("/auth-only")]
-        fn auth_only_endpoint(&self) -> ToniBody {
+        fn auth_only_endpoint(&self) -> UloBody {
             self.tracker.track("controller:auth_only");
-            ToniBody::text("Authenticated resource".to_string())
+            UloBody::text("Authenticated resource".to_string())
         }
 
         #[use_interceptors(
@@ -241,16 +241,16 @@ async fn enhancers_execution_order() {
             ValidationInterceptor::new(get_tracker())
         )]
         #[post("/validate")]
-        fn validate_endpoint(&self) -> ToniBody {
+        fn validate_endpoint(&self) -> UloBody {
             self.tracker.track("controller:validate");
             let result = self.service.process("data");
-            ToniBody::text(result)
+            UloBody::text(result)
         }
 
         #[get("/public")]
-        fn public_endpoint(&self) -> ToniBody {
+        fn public_endpoint(&self) -> UloBody {
             self.tracker.track("controller:public");
-            ToniBody::text("Public resource".to_string())
+            UloBody::text("Public resource".to_string())
         }
     }
 
@@ -347,9 +347,9 @@ async fn guard_authorization() {
     impl TestController {
         #[use_guards("AUTH_GUARD")]
         #[get("/auth-only")]
-        fn auth_only(&self) -> ToniBody {
+        fn auth_only(&self) -> UloBody {
             self.tracker.track("controller:auth_only");
-            ToniBody::text("Authenticated resource".to_string())
+            UloBody::text("Authenticated resource".to_string())
         }
     }
 
@@ -430,8 +430,8 @@ async fn di_in_enhancers() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text("ok".to_string())
+        fn test(&self) -> UloBody {
+            UloBody::text("ok".to_string())
         }
     }
 
@@ -454,7 +454,7 @@ async fn di_in_enhancers() {
 #[tokio_localset_test::localset_test]
 async fn app_token_global_enhancers() {
     use std::sync::OnceLock;
-    use toni::di::APP_GUARD;
+    use ulo::di::APP_GUARD;
 
     static TRACKER: OnceLock<ExecutionOrder> = OnceLock::new();
 
@@ -487,9 +487,9 @@ async fn app_token_global_enhancers() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
+        fn test(&self) -> UloBody {
             self.tracker.track("controller:test");
-            ToniBody::text("ok".to_string())
+            UloBody::text("ok".to_string())
         }
     }
 
@@ -540,13 +540,13 @@ async fn path_qualified_enhancer_attrs() {
     }
 
     #[routes]
-    #[toni::use_interceptors(LoggingInterceptor::new("qualified", get_tracker()))]
+    #[ulo::use_interceptors(LoggingInterceptor::new("qualified", get_tracker()))]
     impl TestController {
-        #[toni::use_guards(AuthGuard::new(get_tracker()))]
+        #[ulo::use_guards(AuthGuard::new(get_tracker()))]
         #[get("/guarded")]
-        fn guarded(&self) -> ToniBody {
+        fn guarded(&self) -> UloBody {
             self.tracker.track("controller:guarded");
-            ToniBody::text("ok".to_string())
+            UloBody::text("ok".to_string())
         }
     }
 
@@ -607,9 +607,9 @@ async fn stacked_enhancer_attrs_accumulate() {
         #[use_guards(AuthGuard::new(get_tracker()))]
         #[use_guards(AdminGuard::new(get_tracker()))]
         #[get("/stacked")]
-        fn stacked(&self) -> ToniBody {
+        fn stacked(&self) -> UloBody {
             self.tracker.track("controller:stacked");
-            ToniBody::text("ok".to_string())
+            UloBody::text("ok".to_string())
         }
     }
 

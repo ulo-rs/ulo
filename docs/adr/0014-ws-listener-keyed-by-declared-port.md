@@ -54,6 +54,6 @@ matters: the symptom otherwise is a port that accepts nothing and says nothing.
   is what gets reported. Two gateways declaring 0 still collapse to one listener, as before.
 - The declared port becomes a key rather than a reservation, so tests that hand over port-0 sockets
   can share one declared port and still run concurrently.
-- Every socket a toni process listens on can now be inherited: HTTP through
+- Every socket a ulo process listens on can now be inherited: HTTP through
   [0013](0013-bind-target-listener-adoption.md), RPC and gRPC through their constructors, and
   separate-port WebSocket here.

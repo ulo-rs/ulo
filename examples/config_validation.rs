@@ -9,7 +9,7 @@
 //! Trigger a failure:  APP_PORT=80 cargo run --example config_validation
 //!   (80 parses as a u16 but is below the validated minimum of 1024)
 
-use toni_config::{Config, ConfigModule};
+use ulo_config::{Config, ConfigModule};
 use validator::Validate;
 
 #[derive(Config, Validate, Clone)]

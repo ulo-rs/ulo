@@ -4,11 +4,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
-use toni::async_trait;
-use toni::context::{HandlerContext, WsContext};
-use toni::traits_helpers::Guard;
-use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
-use toni::{
+use ulo::async_trait;
+use ulo::context::{HandlerContext, WsContext};
+use ulo::traits_helpers::Guard;
+use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::{
     injectable, module, new, subscribe_message, subscriptions, use_guards, websocket_gateway,
 };
 

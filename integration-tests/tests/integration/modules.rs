@@ -1,6 +1,6 @@
 use crate::common::TestServer;
-use toni::injector::ModuleRef;
-use toni::{Body as ToniBody, controller, get, injectable, module, routes};
+use ulo::injector::ModuleRef;
+use ulo::{Body as UloBody, controller, get, injectable, module, routes};
 
 #[tokio_localset_test::localset_test]
 async fn global_modules_attribute_syntax() {
@@ -39,8 +39,8 @@ async fn global_modules_attribute_syntax() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text(self.service.get_message())
+        fn test(&self) -> UloBody {
+            UloBody::text(self.service.get_message())
         }
     }
 
@@ -81,9 +81,9 @@ async fn module_ref_runtime_provider_access() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        async fn test(&self) -> ToniBody {
+        async fn test(&self) -> UloBody {
             let service = self.module_ref.get::<RuntimeService>().await;
-            ToniBody::text(format!("{}", service.unwrap().value()))
+            UloBody::text(format!("{}", service.unwrap().value()))
         }
     }
 
@@ -147,8 +147,8 @@ async fn nested_module_imports() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text(self.feature.get_data())
+        fn test(&self) -> UloBody {
+            UloBody::text(self.feature.get_data())
         }
     }
 
@@ -209,8 +209,8 @@ async fn module_exports_selective_providers() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text(self.consumer.get_data())
+        fn test(&self) -> UloBody {
+            UloBody::text(self.consumer.get_data())
         }
     }
 
@@ -251,8 +251,8 @@ async fn module_struct_syntax() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> ToniBody {
-            ToniBody::text(self.service.message())
+        fn test(&self) -> UloBody {
+            UloBody::text(self.service.message())
         }
     }
 

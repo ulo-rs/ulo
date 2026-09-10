@@ -70,7 +70,7 @@ context the handler already holds.
 
 **A `GrpcClientModule` mirroring Nest's `ClientsModule`.** Nest's module earns its place by owning
 transport selection, a proto path, loader options and channel credentials — configuration that has
-somewhere to live. tonic's generated client already holds all of it, and toni's version would wrap one
+somewhere to live. tonic's generated client already holds all of it, and ulo's version would wrap one
 constructor call in a builder that reads it back out.
 
 **A reachability check on clients.** Coherent, and contradicts the lazy connect that keeps startup

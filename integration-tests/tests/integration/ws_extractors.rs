@@ -7,12 +7,12 @@
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio_tungstenite::tungstenite::Message;
-use toni::async_trait;
-use toni::context::{Extensions, HandlerContext, WsContext};
-use toni::extractors::Payload;
-use toni::traits_helpers::Guard;
-use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
-use toni::{
+use ulo::async_trait;
+use ulo::context::{Extensions, HandlerContext, WsContext};
+use ulo::extractors::Payload;
+use ulo::traits_helpers::Guard;
+use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::{
     injectable, module, new, subscribe_message, subscriptions, use_guards, websocket_gateway,
 };
 

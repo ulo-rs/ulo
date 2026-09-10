@@ -1,6 +1,6 @@
 //! Seam-level coverage for the gRPC RPC adapter (PR 1):
 //!
-//! - `app.use_grpc_adapter()` registers a `toni_grpc::GrpcAdapter`
+//! - `app.use_grpc_adapter()` registers a `ulo_grpc::GrpcAdapter`
 //! - `app.bind().await` surfaces the bound address via `BoundAdapters.grpc`
 //! - the adapter actually serves — we make a real gRPC call to a registered
 //!   `tonic-health` service and assert it returns `SERVING`
@@ -19,11 +19,11 @@ use tonic_health::pb::health_client::HealthClient;
 
 #[tokio_localset_test::localset_test]
 async fn grpc_adapter_seam_round_trip_and_shuts_down() {
-    use toni::toni_factory::ToniFactory;
+    use ulo::ulo_factory::UloFactory;
 
     // Empty module — this test adds its gRPC service directly on the
     // adapter. The framework still requires a module to construct an app.
-    #[toni::module()]
+    #[ulo::module()]
     struct EmptyModule;
 
     // Spin up tonic-health as our smoke-test service — anything tonic-shaped
@@ -34,14 +34,14 @@ async fn grpc_adapter_seam_round_trip_and_shuts_down() {
         .await;
 
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-    let adapter = toni_grpc::GrpcAdapter::new(addr).add_service(health_service);
+    let adapter = ulo_grpc::GrpcAdapter::new(addr).add_service(health_service);
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
 
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(EmptyModule).await.unwrap();
+        let mut app = UloFactory::create(EmptyModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let port = bound

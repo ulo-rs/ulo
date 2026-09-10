@@ -3,14 +3,14 @@
 // This example demonstrates:
 // 1. Automatic gateway discovery
 // 2. Global guards and interceptors applied to all gateways
-// 3. Full integration of WebSocket with toni's DI system
+// 3. Full integration of WebSocket with ulo's DI system
 // 4. Zero manual wiring - framework handles everything automatically
 
-use toni::context::WsContext;
-use toni::traits_helpers::{Guard, Interceptor, InterceptorNext};
-use toni::websocket::{BroadcastModule, BroadcastService};
-use toni::*;
-use toni_macros::{injectable, module, new, subscriptions, websocket_gateway};
+use ulo::context::WsContext;
+use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext};
+use ulo::websocket::{BroadcastModule, BroadcastService};
+use ulo::*;
+use ulo_macros::{injectable, module, new, subscriptions, websocket_gateway};
 
 #[injectable]
 pub struct WsAuthGuard;
@@ -63,12 +63,12 @@ impl ChatGateway {
     #[subscribe_message("message")]
     async fn handle_message(
         &self,
-        client: toni::WsClient,
-        message: toni::WsMessage,
-    ) -> toni::WsHandlerResult {
+        client: ulo::WsClient,
+        message: ulo::WsMessage,
+    ) -> ulo::WsHandlerResult {
         let text = message
             .as_text()
-            .ok_or_else(|| toni::WsError::InvalidMessage("Expected text message".into()))?;
+            .ok_or_else(|| ulo::WsError::InvalidMessage("Expected text message".into()))?;
 
         println!("[ChatGateway] Received from {}: {}", client.id, text);
 
@@ -78,16 +78,16 @@ impl ChatGateway {
             .send_event("message", &response)
             .await?;
 
-        Ok(toni::WsHandlerOutput::Empty)
+        Ok(ulo::WsHandlerOutput::Empty)
     }
 
     #[subscribe_message("ping")]
     async fn handle_ping(
         &self,
-        _client: toni::WsClient,
-        _message: toni::WsMessage,
-    ) -> toni::WsHandlerResult {
-        Ok(toni::WsMessage::text("pong").into())
+        _client: ulo::WsClient,
+        _message: ulo::WsMessage,
+    ) -> ulo::WsHandlerResult {
+        Ok(ulo::WsMessage::text("pong").into())
     }
 }
 
@@ -124,10 +124,10 @@ async fn main() -> anyhow::Result<()> {
     println!(r#"  websocat --header='X-Auth-Token: secret123' ws://127.0.0.1:8080/chat"#);
     println!();
 
-    let factory = ToniFactory::new();
+    let factory = UloFactory::new();
     let mut app = factory.create_with(ChatModule).await?;
 
-    app.use_http_adapter(toni_axum::AxumAdapter::new(), ("127.0.0.1", 8080))
+    app.use_http_adapter(ulo_http_axum::AxumAdapter::new(), ("127.0.0.1", 8080))
         .unwrap();
 
     println!("✅ Server ready - guards and interceptors active!\n");

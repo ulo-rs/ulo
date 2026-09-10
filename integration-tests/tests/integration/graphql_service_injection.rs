@@ -2,10 +2,10 @@
 //! inject the service. Export-instance resolution keys on the provider's own
 //! token, so the declared export and the built instance meet.
 
-use toni::toni_factory::ToniFactory;
-use toni::{ProviderContext, injectable, module};
-use toni_async_graphql::async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
-use toni_async_graphql::{DefaultContextBuilder, GraphQLModule, GraphQLService};
+use ulo::ulo_factory::UloFactory;
+use ulo::{ProviderContext, injectable, module};
+use ulo_graphql_async_graphql::async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
+use ulo_graphql_async_graphql::{DefaultContextBuilder, GraphQLModule, GraphQLService};
 
 #[derive(Clone)]
 struct Query;
@@ -38,7 +38,7 @@ impl TestModule {}
 
 #[tokio::test]
 async fn an_importing_module_injects_the_exported_service() {
-    let app = ToniFactory::create(TestModule)
+    let app = UloFactory::create(TestModule)
         .await
         .expect("the exported service resolves across the module boundary");
 

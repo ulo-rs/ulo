@@ -1,7 +1,7 @@
 use crate::common::TestServer;
 use serial_test::serial;
-use toni::{Body as ToniBody, controller, get, injectable, module, routes};
-use toni_config::{Config, ConfigModule, ConfigService};
+use ulo::{Body as UloBody, controller, get, injectable, module, routes};
+use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]
 struct AppConfig {
@@ -55,17 +55,17 @@ pub struct AppController {
 #[routes]
 impl AppController {
     #[get("/info")]
-    fn get_info(&self) -> ToniBody {
-        ToniBody::text(self.service.get_app_info())
+    fn get_info(&self) -> UloBody {
+        UloBody::text(self.service.get_app_info())
     }
 
     #[get("/database")]
-    fn get_database(&self) -> ToniBody {
-        ToniBody::text(self.service.get_database_info())
+    fn get_database(&self) -> UloBody {
+        UloBody::text(self.service.get_database_info())
     }
 
     #[get("/config")]
-    fn get_config(&self) -> ToniBody {
+    fn get_config(&self) -> UloBody {
         let config = self.service.get_full_config();
         let json = serde_json::json!({
             "app_name": config.app_name,
@@ -73,7 +73,7 @@ impl AppController {
             "database_url": config.database_url,
             "max_connections": config.max_connections,
         });
-        ToniBody::json(json)
+        UloBody::json(json)
     }
 }
 
@@ -181,7 +181,7 @@ async fn config_falls_back_to_defaults() {
 /// A field with an `#[env]` source and no default that the environment does not supply.
 #[derive(Config, Clone)]
 struct RequiredConfig {
-    #[env("TONI_TEST_REQUIRED_UNSET")]
+    #[env("ULO_TEST_REQUIRED_UNSET")]
     pub required: String,
 }
 

@@ -10,8 +10,8 @@ wraps both failures into the same `HookFailed` variant, carrying the module and 
 
 | Hook | Where it runs | What happened |
 | --- | --- | --- |
-| `on_module_init` | `ToniFactory::create` | panic, discarding the variant |
-| `on_application_bootstrap` | `ToniApplication::bind` | returned as `Err` |
+| `on_module_init` | `UloFactory::create` | panic, discarding the variant |
+| `on_application_bootstrap` | `UloApplication::bind` | returned as `Err` |
 | `on_application_bootstrap` | `create_application_context` | logged and swallowed |
 
 The third is the failure ADR-0024 refused for adapters, in a different function: a CLI tool or

@@ -12,14 +12,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_prost_build::configure()
         .file_descriptor_set_path(&descriptor)
         .compile_protos(&["proto/orders.proto"], &["proto"])?;
-    toni_build::shapes("toni_test.orders")?;
+    ulo_build::shapes("ulo_test.orders")?;
 
     // A service whose Rust method name and route name diverge, which the proto
     // path cannot produce: prost derives one from the other. `grpc_manual_trait_form`
     // serves it, and it is the shape `#[grpc_stream(...)]` exists for.
     let watcher = tonic_build::manual::Service::builder()
         .name("Watcher")
-        .package("toni_test.watch")
+        .package("ulo_test.watch")
         .method(
             tonic_build::manual::Method::builder()
                 .name("watch")
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .build();
     tonic_build::manual::Builder::new().compile(&[watcher]);
-    toni_build::shapes("toni_test.watch.Watcher")?;
+    ulo_build::shapes("ulo_test.watch.Watcher")?;
 
     Ok(())
 }

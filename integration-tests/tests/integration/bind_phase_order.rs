@@ -9,14 +9,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, anyhow};
-use toni::context::RpcContext;
-use toni::rpc::{RpcData, RpcError};
-use toni::websocket::{WsClient, WsHandlerResult, WsMessage};
-use toni::{
-    RpcAdapter, RpcLifecycleHandle, RpcMessageCallbacks, StartupError, ToniFactory, async_trait,
+use ulo::context::RpcContext;
+use ulo::rpc::{RpcData, RpcError};
+use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::{
+    RpcAdapter, RpcLifecycleHandle, RpcMessageCallbacks, StartupError, UloFactory, async_trait,
     module,
 };
-use toni_macros::{
+use ulo_macros::{
     controller, message_pattern, new, patterns, subscribe_message, subscriptions, websocket_gateway,
 };
 
@@ -85,10 +85,10 @@ impl RpcAdapter for RefusingRpcAdapter {
 async fn a_refused_registration_fails_before_any_socket_is_taken() {
     let seen = Arc::new(AtomicBool::new(false));
 
-    let mut app = ToniFactory::create(BothTransportsModule)
+    let mut app = UloFactory::create(BothTransportsModule)
         .await
         .expect("the module graph is sound");
-    app.use_websocket_adapter(toni_tungstenite::TungsteniteAdapter::new())
+    app.use_websocket_adapter(ulo_ws_tungstenite::TungsteniteAdapter::new())
         .unwrap();
     app.use_rpc_adapter(RefusingRpcAdapter {
         gateway_socket_was_taken: seen.clone(),

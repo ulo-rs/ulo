@@ -1,10 +1,10 @@
 //! The error a gRPC test's unserved methods answer with.
 //!
-//! A handler's error type implements `toni::Error`, so a proto method a test
+//! A handler's error type implements `ulo::Error`, so a proto method a test
 //! does not exercise cannot answer `Status::unimplemented` directly. This is
 //! that answer, once, rather than in every fixture.
 
-use toni::{Error, ErrorKind};
+use ulo::{Error, ErrorKind};
 
 #[derive(Debug)]
 pub struct NotServed;

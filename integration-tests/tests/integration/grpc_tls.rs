@@ -19,13 +19,13 @@ use std::time::Duration;
 use crate::common::NotServed;
 use futures_util::Stream;
 use serial_test::serial;
-use toni::ToniFactory;
-use toni::extractors::{Inbound, Payload};
-use toni_macros::{controller, grpc_methods, module, new};
 use tonic::transport::{Certificate, ClientTlsConfig, Identity, ServerTlsConfig};
+use ulo::UloFactory;
+use ulo::extractors::{Inbound, Payload};
+use ulo_macros::{controller, grpc_methods, module, new};
 
 mod tls_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 use tls_pb::orders_client::OrdersClient;
@@ -113,13 +113,13 @@ async fn a_client_that_trusts_the_certificate_is_served() {
 
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let adapter =
-        toni_grpc::GrpcAdapter::new(addr).with_tls(ServerTlsConfig::new().identity(identity));
+        ulo_grpc::GrpcAdapter::new(addr).with_tls(ServerTlsConfig::new().identity(identity));
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<toni::ShutdownHandle>();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut app = ToniFactory::create(TlsModule).await.unwrap();
+        let mut app = UloFactory::create(TlsModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.grpc.expect("grpc must bind").port());
@@ -165,11 +165,11 @@ async fn a_client_that_trusts_the_certificate_is_served() {
 #[serial]
 #[tokio_localset_test::localset_test]
 async fn a_certificate_that_cannot_be_read_fails_bind() {
-    let adapter = toni_grpc::GrpcAdapter::new("127.0.0.1:0".parse().unwrap()).with_tls(
+    let adapter = ulo_grpc::GrpcAdapter::new("127.0.0.1:0".parse().unwrap()).with_tls(
         ServerTlsConfig::new().identity(Identity::from_pem("not a certificate", "not a key")),
     );
 
-    let mut app = ToniFactory::create(TlsModule).await.unwrap();
+    let mut app = UloFactory::create(TlsModule).await.unwrap();
     app.use_grpc_adapter(adapter).unwrap();
 
     let failure = app

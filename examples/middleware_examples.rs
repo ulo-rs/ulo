@@ -16,14 +16,14 @@
 //!   curl -H "Authorization: Bearer secret" http://127.0.0.1:3000/api/profile
 
 use serde_json::json;
-use toni::{
+use ulo::{
     async_trait,
     http_helpers::{Body, HttpResponse},
     middleware::{Middleware, MiddlewareResult, NextHandle},
     traits_helpers::MiddlewareConsumer,
     *,
 };
-use toni_axum::AxumAdapter;
+use ulo_http_axum::AxumAdapter;
 
 struct AuthMiddleware {
     valid_token: String,
@@ -89,12 +89,12 @@ impl AppModule {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("🔐 toni auth middleware\n");
+    println!("🔐 ulo auth middleware\n");
     println!("  GET http://127.0.0.1:3000/api/public   (no token needed)");
     println!("  GET http://127.0.0.1:3000/api/profile  (requires: Authorization: Bearer secret)");
     println!();
 
-    let mut app = ToniFactory::new().create_with(AppModule).await?;
+    let mut app = UloFactory::new().create_with(AppModule).await?;
 
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
         .unwrap();

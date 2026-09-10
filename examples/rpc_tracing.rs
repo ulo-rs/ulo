@@ -29,14 +29,14 @@
 //!     -proto examples/proto/orders.proto \
 //!     -import-path examples/proto \
 //!     -H 'x-request-id: req-3' \
-//!     127.0.0.1:5000 toni_examples.orders.Orders/Create
+//!     127.0.0.1:5000 ulo_examples.orders.Orders/Create
 //! ```
 //!
 //! The server-side log output looks like:
 //!
 //! ```text
 //! INFO rpc.request{transport="tcp" pattern=orders.create id=Some("req-1") peer=127.0.0.1:54321}: rpc_tracing: handler called item=keyboard qty=3
-//! INFO rpc.request{transport="grpc" pattern=toni_examples.orders.Orders/Create id=Some("req-3") peer=127.0.0.1:54322}: rpc_tracing: grpc handler called item=monitor qty=2
+//! INFO rpc.request{transport="grpc" pattern=ulo_examples.orders.Orders/Create id=Some("req-3") peer=127.0.0.1:54322}: rpc_tracing: grpc handler called item=monitor qty=2
 //! ```
 //!
 //! The span fields (`transport`, `pattern`, `id`, `peer`) are automatically
@@ -46,11 +46,11 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use toni::ToniFactory;
-use toni_macros::{controller, grpc_methods, injectable, module, new, patterns};
+use ulo::UloFactory;
+use ulo_macros::{controller, grpc_methods, injectable, module, new, patterns};
 
 mod orders_pb {
-    tonic::include_proto!("toni_examples.orders");
+    tonic::include_proto!("ulo_examples.orders");
 }
 
 use orders_pb::orders_server::{Orders, OrdersServer};
@@ -69,12 +69,12 @@ impl OrdersController {
     #[message_pattern("orders.create")]
     async fn create_order(
         &self,
-        data: toni::RpcData,
-        _ctx: &toni::context::RpcContext,
-    ) -> Result<toni::RpcData, toni::RpcError> {
+        data: ulo::RpcData,
+        _ctx: &ulo::context::RpcContext,
+    ) -> Result<ulo::RpcData, ulo::RpcError> {
         let payload = data
             .as_json()
-            .ok_or_else(|| toni::RpcError::Internal("expected JSON payload".into()))?;
+            .ok_or_else(|| ulo::RpcError::Internal("expected JSON payload".into()))?;
 
         let item = payload["item"].as_str().unwrap_or("unknown");
         let qty = payload["qty"].as_u64().unwrap_or(1);
@@ -83,7 +83,7 @@ impl OrdersController {
         // automatically — we never mention them here.
         tracing::info!(item, qty, "handler called");
 
-        Ok(toni::RpcData::json(serde_json::json!({
+        Ok(ulo::RpcData::json(serde_json::json!({
             "id": 1001,
             "item": item,
             "qty": qty,
@@ -138,9 +138,9 @@ impl std::fmt::Display for InvalidQty {
 
 impl std::error::Error for InvalidQty {}
 
-impl toni::Error for InvalidQty {
-    fn kind(&self) -> toni::ErrorKind {
-        toni::ErrorKind::BadRequest
+impl ulo::Error for InvalidQty {
+    fn kind(&self) -> ulo::ErrorKind {
+        ulo::ErrorKind::BadRequest
     }
 }
 
@@ -149,7 +149,7 @@ impl OrdersGrpcService {
     #[grpc_method]
     async fn create(
         &self,
-        toni::extractors::Payload(req): toni::extractors::Payload<orders_pb::CreateOrderRequest>,
+        ulo::extractors::Payload(req): ulo::extractors::Payload<orders_pb::CreateOrderRequest>,
     ) -> Result<orders_pb::CreateOrderResponse, InvalidQty> {
         if req.qty == 0 {
             return Err(InvalidQty);
@@ -200,31 +200,31 @@ async fn main() -> anyhow::Result<()> {
     println!(r#"      -proto examples/proto/orders.proto \"#);
     println!(r#"      -import-path examples/proto \"#);
     println!(r#"      -H 'x-request-id: req-3' \"#);
-    println!("      127.0.0.1:5000 toni_examples.orders.Orders/Create");
+    println!("      127.0.0.1:5000 ulo_examples.orders.Orders/Create");
     println!();
 
-    // ToniFactory is `!Send`. A `LocalSet` lets all three apps share this
+    // UloFactory is `!Send`. A `LocalSet` lets all three apps share this
     // thread; in a real deployment you'd typically pick one transport.
     let local = tokio::task::LocalSet::new();
 
     local.spawn_local(async {
-        let mut app = ToniFactory::new().create_with(PatternModule).await.unwrap();
-        app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", 4000))
+        let mut app = UloFactory::new().create_with(PatternModule).await.unwrap();
+        app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 4000))
             .unwrap();
         app.start().await.unwrap();
     });
 
     local.spawn_local(async {
-        let mut app = ToniFactory::new().create_with(PatternModule).await.unwrap();
-        app.use_rpc_adapter(toni_udp::UdpAdapter::new("127.0.0.1", 4001))
+        let mut app = UloFactory::new().create_with(PatternModule).await.unwrap();
+        app.use_rpc_adapter(ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 4001))
             .unwrap();
         app.start().await.unwrap();
     });
 
     local.spawn_local(async {
         let addr: std::net::SocketAddr = "127.0.0.1:5000".parse().unwrap();
-        let mut app = ToniFactory::new().create_with(GrpcModule).await.unwrap();
-        app.use_grpc_adapter(toni_grpc::GrpcAdapter::new(addr))
+        let mut app = UloFactory::new().create_with(GrpcModule).await.unwrap();
+        app.use_grpc_adapter(ulo_grpc::GrpcAdapter::new(addr))
             .unwrap();
         app.start().await.unwrap();
     });

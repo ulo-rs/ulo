@@ -1,6 +1,6 @@
 use crate::common::TestServer;
 use serde::Deserialize;
-use toni::{Body as ToniBody, Request, controller, extractors::Json, get, module, post, routes};
+use ulo::{Body as UloBody, Request, controller, extractors::Json, get, module, post, routes};
 
 #[derive(Debug, Deserialize)]
 struct CreateDto {
@@ -13,42 +13,42 @@ pub struct RequestExtractorController;
 #[routes]
 impl RequestExtractorController {
     #[get("/hello")]
-    fn hello(&self) -> ToniBody {
-        ToniBody::text("Hello, World!".to_string())
+    fn hello(&self) -> UloBody {
+        UloBody::text("Hello, World!".to_string())
     }
 
     #[get("/info")]
-    fn get_info(&self, req: Request) -> ToniBody {
+    fn get_info(&self, req: Request) -> UloBody {
         let method = req.method();
         let uri = req.uri();
-        ToniBody::text(format!("Method: {}, URI: {}", method, uri))
+        UloBody::text(format!("Method: {}, URI: {}", method, uri))
     }
 
     #[post("/create")]
-    fn create(&self, Json(dto): Json<CreateDto>, req: Request) -> ToniBody {
+    fn create(&self, Json(dto): Json<CreateDto>, req: Request) -> UloBody {
         let content_type = req.header("content-type").unwrap_or("unknown");
-        ToniBody::text(format!(
+        UloBody::text(format!(
             "Created {} with content-type: {}",
             dto.name, content_type
         ))
     }
 
     #[get("/protected")]
-    fn protected(&self, req: Request) -> ToniBody {
+    fn protected(&self, req: Request) -> UloBody {
         match req.header("authorization") {
-            Some(auth) => ToniBody::text(format!("Authorized: {}", auth)),
-            None => ToniBody::text("Unauthorized".to_string()),
+            Some(auth) => UloBody::text(format!("Authorized: {}", auth)),
+            None => UloBody::text("Unauthorized".to_string()),
         }
     }
 
     #[get("/search")]
-    fn search(&self, req: Request) -> ToniBody {
+    fn search(&self, req: Request) -> UloBody {
         let q = req
             .query_params()
             .get("q")
             .map(|s| s.as_str())
             .unwrap_or("");
-        ToniBody::text(format!("Searching for: {}", q))
+        UloBody::text(format!("Searching for: {}", q))
     }
 }
 

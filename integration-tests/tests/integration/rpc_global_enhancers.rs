@@ -12,13 +12,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serial_test::serial;
-use toni::async_trait;
-use toni::context::RpcContext;
-use toni::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
-use toni::toni_factory::ToniFactory;
-use toni::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
-use toni::{injectable, module};
-use toni_macros::{controller, message_pattern, new, patterns, use_guards};
+use ulo::async_trait;
+use ulo::context::RpcContext;
+use ulo::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
+use ulo::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo::ulo_factory::UloFactory;
+use ulo::{injectable, module};
+use ulo_macros::{controller, message_pattern, new, patterns, use_guards};
 
 static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -118,15 +118,15 @@ impl GlobalsRpcModule {}
 
 async fn boot<F>(configure: F) -> u16
 where
-    F: FnOnce(&mut ToniFactory) + Send + 'static,
+    F: FnOnce(&mut UloFactory) + Send + 'static,
 {
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
-        let mut factory = ToniFactory::new();
+        let mut factory = UloFactory::new();
         configure(&mut factory);
         let mut app = factory.create_with(GlobalsRpcModule).await.unwrap();
-        app.use_rpc_adapter(toni_tcp::TcpAdapter::new("127.0.0.1", 0))
+        app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
             .unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.rpc.expect("rpc must bind").port());

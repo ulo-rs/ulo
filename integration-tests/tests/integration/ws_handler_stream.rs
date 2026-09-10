@@ -7,9 +7,9 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use toni::module;
-use toni::websocket::{WsClient, WsHandlerOutput, WsHandlerResult, WsMessage};
-use toni_macros::{new, subscriptions, websocket_gateway};
+use ulo::module;
+use ulo::websocket::{WsClient, WsHandlerOutput, WsHandlerResult, WsMessage};
+use ulo_macros::{new, subscriptions, websocket_gateway};
 
 use crate::common::TestServer;
 

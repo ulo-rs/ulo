@@ -4,15 +4,15 @@ use std::pin::Pin;
 
 use crate::common::NotServed;
 use futures_util::Stream;
-use toni::context::{GrpcContext, RpcContext};
-use toni::extractors::{Inbound, Payload};
-use toni::rpc::{RpcData, RpcError};
-use toni::traits_helpers::Guard;
-use toni::*;
-use toni_macros::{controller, grpc_methods, message_pattern, new, patterns, use_guards};
+use ulo::context::{GrpcContext, RpcContext};
+use ulo::extractors::{Inbound, Payload};
+use ulo::rpc::{RpcData, RpcError};
+use ulo::traits_helpers::Guard;
+use ulo::*;
+use ulo_macros::{controller, grpc_methods, message_pattern, new, patterns, use_guards};
 
 mod orders_pb {
-    tonic::include_proto!("toni_test.orders");
+    tonic::include_proto!("ulo_test.orders");
 }
 
 // `OrdersServer` reads as unused here — `#[grpc_methods]` names it in the code it emits.
@@ -69,7 +69,7 @@ impl RpcAppModule {}
 /// fails `create()` — before any adapter or socket exists.
 #[tokio::test]
 async fn a_misdeclared_rpc_enhancer_token_fails_create() {
-    let message = ToniFactory::create_application_context(RpcAppModule)
+    let message = UloFactory::create_application_context(RpcAppModule)
         .await
         .err()
         .expect("a misdeclared enhancer token must fail create")
@@ -151,7 +151,7 @@ impl GrpcAppModule {}
 /// The same phase pin on the gRPC path, which resolves through its own resolver.
 #[tokio::test]
 async fn a_misdeclared_grpc_enhancer_token_fails_create() {
-    let message = ToniFactory::create_application_context(GrpcAppModule)
+    let message = UloFactory::create_application_context(GrpcAppModule)
         .await
         .err()
         .expect("a misdeclared enhancer token must fail create")

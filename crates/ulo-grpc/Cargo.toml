@@ -1,0 +1,29 @@
+[package]
+name = "ulo-grpc"
+version = "0.1.0"
+edition.workspace = true
+description = "gRPC transport adapter for the Ulo framework"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "grpc", "tonic", "framework", "adapter"]
+categories = ["network-programming"]
+
+[features]
+# TLS mirrors tonic's own backend choice rather than picking one: `tls_config`
+# needs a crypto provider, and which one is the deployment's call.
+tls-ring = ["tonic/tls-ring"]
+tls-aws-lc = ["tonic/tls-aws-lc"]
+
+[dependencies]
+ulo = { path = "../ulo", default-features = false }
+tonic = "0.14"
+tower = { workspace = true, features = ["util", "limit"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+tokio-stream = { workspace = true, features = ["net"] }
+http.workspace = true
+futures-util.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+http-body = "1"
+async-trait.workspace = true

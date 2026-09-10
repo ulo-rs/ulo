@@ -14,10 +14,10 @@
 
 use std::sync::Arc;
 
-use toni::async_trait;
-use toni::context::HttpContext;
-use toni::traits_helpers::Guard;
-use toni::{injectable, module, toni_factory::ToniFactory};
+use ulo::async_trait;
+use ulo::context::HttpContext;
+use ulo::traits_helpers::Guard;
+use ulo::{injectable, module, ulo_factory::UloFactory};
 
 // A plain dependency — field injection, no struct-in-macro.
 #[injectable]
@@ -67,7 +67,7 @@ fn ctx_without_admin_header() -> HttpContext {
 
 #[tokio_localset_test::localset_test]
 async fn marker_free_guard_resolves_coerces_and_runs() {
-    let app = ToniFactory::create_application_context(GuardModule)
+    let app = UloFactory::create_application_context(GuardModule)
         .await
         .unwrap();
 

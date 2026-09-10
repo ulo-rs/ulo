@@ -1,5 +1,5 @@
 use crate::common::TestServer;
-use toni::{Body as ToniBody, Request, controller, get, module, routes};
+use ulo::{Body as UloBody, Request, controller, get, module, routes};
 
 #[controller("/test")]
 pub struct TestController {
@@ -10,16 +10,16 @@ pub struct TestController {
 #[routes]
 impl TestController {
     #[get("/info")]
-    fn get_info(&self) -> ToniBody {
+    fn get_info(&self) -> UloBody {
         let method = self.request.method();
         let uri = self.request.uri();
-        ToniBody::text(format!("Method: {}, URI: {}", method, uri))
+        UloBody::text(format!("Method: {}, URI: {}", method, uri))
     }
 
     #[get("/headers")]
-    fn get_headers(&self) -> ToniBody {
+    fn get_headers(&self) -> UloBody {
         let content_type = self.request.header("content-type").unwrap_or("not found");
-        ToniBody::text(format!("Content-Type: {}", content_type))
+        UloBody::text(format!("Content-Type: {}", content_type))
     }
 }
 
