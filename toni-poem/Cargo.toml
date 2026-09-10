@@ -1,9 +1,11 @@
 [package]
 name = "toni-poem"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "Poem adapter for the Toni framework"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["toni", "poem", "web", "framework", "adapter"]
 categories = ["web-programming::http-server"]
 

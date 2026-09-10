@@ -30,9 +30,11 @@
 //! }
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Set environment variables for testing
-//! std::env::set_var("DATABASE_URL", "postgres://localhost/mydb");
-//! std::env::set_var("PORT", "8080");
+//! // SAFETY: no other thread is running in this example.
+//! unsafe {
+//!     std::env::set_var("DATABASE_URL", "postgres://localhost/mydb");
+//!     std::env::set_var("PORT", "8080");
+//! }
 //!
 //! let config = ConfigModule::<AppConfig>::from_env()?;
 //! assert_eq!(config.get().database_url, "postgres://localhost/mydb");

@@ -1,9 +1,11 @@
 [package]
 name = "toni-config"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "Configuration management for Toni framework"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 thiserror = "2.0.17"

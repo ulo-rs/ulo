@@ -1,9 +1,11 @@
 [package]
 name = "toni-rabbitmq"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "RabbitMQ (AMQP) transport adapter for the Toni RPC gateway"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["toni", "rabbitmq", "amqp", "rpc", "adapter"]
 categories = ["network-programming"]
 

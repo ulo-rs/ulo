@@ -1,9 +1,11 @@
 [package]
 name = "toni-nats"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "NATS transport adapter for the Toni RPC gateway"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["toni", "nats", "rpc", "framework", "adapter"]
 categories = ["network-programming"]
 

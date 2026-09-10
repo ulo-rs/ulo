@@ -1,11 +1,11 @@
 [package]
 name = "toni-macros"
 version = "0.2.0"
-edition = "2024"
+edition.workspace = true
 description = "Macros for Toni"
-license = "MIT"
-repository = "https://github.com/ifeanyi-ugwu/toni-rs"
-homepage = "https://github.com/ifeanyi-ugwu/toni-rs"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 categories = ["asynchronous", "network-programming", "web-programming"]
 
 [lib]

@@ -1,9 +1,11 @@
 [package]
 name = "toni-actix"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "Actix-web adapter for the Toni framework"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["toni", "actix", "actix-web", "web", "framework", "adapter"]
 categories = ["web-programming::http-server"]
 

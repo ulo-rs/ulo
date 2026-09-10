@@ -1,9 +1,11 @@
 [package]
 name = "toni-async-graphql"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "async-graphql integration for Toni framework"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["graphql", "async-graphql", "toni", "web", "framework"]
 categories = ["web-programming", "asynchronous"]
 

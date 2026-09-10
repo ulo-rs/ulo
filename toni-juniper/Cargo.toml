@@ -1,8 +1,10 @@
 [package]
 name = "toni-juniper"
 version = "0.1.0"
-edition = "2021"
-license = "MIT"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Juniper GraphQL integration for the Toni framework"
 keywords = ["graphql", "juniper", "toni", "web", "framework"]
 categories = ["web-programming", "asynchronous"]

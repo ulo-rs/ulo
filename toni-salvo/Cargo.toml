@@ -1,9 +1,11 @@
 [package]
 name = "toni-salvo"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "Salvo adapter for the Toni framework"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["toni", "salvo", "web", "framework", "adapter"]
 categories = ["web-programming::http-server"]
 

@@ -1,11 +1,11 @@
 [package]
 name = "toni-sqlx"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 description = "SQLx integration for the Toni framework"
-license = "MIT"
-repository = "https://github.com/ifeanyi-ugwu/toni-rs"
-homepage = "https://github.com/ifeanyi-ugwu/toni-rs"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [features]
 default = []

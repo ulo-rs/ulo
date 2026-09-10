@@ -1,11 +1,11 @@
 [package]
 name = "toni-cli"
 version = "0.1.2"
-edition = "2024"
+edition.workspace = true
 description = "CLI for Toni"
-license = "MIT"
-repository = "https://github.com/ifeanyi-ugwu/toni-rs"
-homepage = "https://github.com/ifeanyi-ugwu/toni-rs"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "toni"

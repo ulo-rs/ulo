@@ -1,9 +1,11 @@
 [package]
 name = "toni-kafka"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "Apache Kafka transport adapter for the Toni RPC gateway"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["toni", "kafka", "rpc", "framework", "adapter"]
 categories = ["network-programming"]
 

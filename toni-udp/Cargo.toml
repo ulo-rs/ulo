@@ -1,9 +1,11 @@
 [package]
 name = "toni-udp"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "UDP transport adapter for the Toni RPC gateway"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["toni", "udp", "rpc", "framework", "adapter"]
 categories = ["network-programming"]
 

@@ -1,9 +1,11 @@
 [package]
 name = "toni-rocket"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "Rocket adapter for the Toni framework"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["toni", "rocket", "web", "framework", "adapter"]
 categories = ["web-programming::http-server"]
 

@@ -86,15 +86,17 @@ impl SseController {
         sse(self.events.subscribe().take(2))
     }
 
+    // `use<>` because Rust 2024 has `impl Trait` capture `&self`'s lifetime by
+    // default, and the stream a route returns has to outlive the borrow.
     #[sse("/attr-basic")]
-    async fn attr_basic(&self) -> impl futures_util::Stream<Item = SseEvent> {
+    async fn attr_basic(&self) -> impl futures_util::Stream<Item = SseEvent> + use<> {
         stream::iter([SseEvent::data("hello"), SseEvent::data("world")])
     }
 
     #[sse("/attr-fallible")]
     async fn attr_fallible(
         &self,
-    ) -> impl futures_util::Stream<Item = Result<SseEvent, std::io::Error>> {
+    ) -> impl futures_util::Stream<Item = Result<SseEvent, std::io::Error>> + use<> {
         stream::iter([Ok(SseEvent::data("ok-event"))])
     }
 

@@ -1,9 +1,11 @@
 [package]
 name = "toni-grpc"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 description = "gRPC transport adapter for the Toni framework"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 keywords = ["toni", "grpc", "tonic", "framework", "adapter"]
 categories = ["network-programming"]
 
