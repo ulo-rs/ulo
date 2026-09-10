@@ -2,6 +2,7 @@
 name = "ulo-rpc-mqtt"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 description = "MQTT v5 transport adapter for the Ulo RPC gateway"
 license.workspace = true
 repository.workspace = true

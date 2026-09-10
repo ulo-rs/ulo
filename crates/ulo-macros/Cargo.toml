@@ -2,6 +2,7 @@
 name = "ulo-macros"
 version = "0.2.0"
 edition.workspace = true
+rust-version.workspace = true
 description = "Macros for Ulo"
 license.workspace = true
 repository.workspace = true

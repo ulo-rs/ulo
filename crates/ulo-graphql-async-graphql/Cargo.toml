@@ -2,6 +2,7 @@
 name = "ulo-graphql-async-graphql"
 version = "0.1.0"
 edition.workspace = true
+rust-version = "1.89"
 description = "async-graphql integration for Ulo framework"
 license.workspace = true
 repository.workspace = true

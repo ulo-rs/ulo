@@ -2,6 +2,7 @@
 name = "ulo"
 version = "0.2.0"
 edition.workspace = true
+rust-version.workspace = true
 keywords = ["http", "web", "framework"]
 categories = ["asynchronous", "network-programming", "web-programming"]
 description = "Fast and modular web framework for scalable applications"
