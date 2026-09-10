@@ -1,0 +1,264 @@
+# Pull request archive
+
+Every pull request merged into this repository, with its description as written.
+
+GitHub keeps pull requests outside git, and leaving a fork network discards them while keeping
+every commit. This archive is the copy that does not depend on GitHub. Commit messages and the
+ADRs remain the primary record; these are the descriptions that accompanied each change.
+
+Descriptions are reproduced verbatim, so those written before ADR-0044 name the framework `toni`.
+A process record describes what was written at the time and is not corrected in place.
+
+251 pull requests, #1–#251, merged 2026-01-24 to 2026-09-10.
+
+- [#251 — Point the crate links at the org](0251-point-the-crate-links-at-the-org.md) — 2026-09-10
+- [#250 — Point the crate links at the renamed repository](0250-point-the-crate-links-at-the-renamed-repository.md) — 2026-09-10
+- [#249 — Rename the framework to ulo](0249-rename-the-framework-to-ulo.md) — 2026-09-10
+- [#248 — Declare the crate metadata once, and point it at this fork](0248-declare-the-crate-metadata-once-and-point-it-at-this-fork.md) — 2026-09-10
+- [#247 — Read a gRPC method's shape off the proto](0247-read-a-grpc-method-s-shape-off-the-proto.md) — 2026-09-09
+- [#246 — Record the road not taken on gRPC's request, and accept the merged ADRs](0246-record-the-road-not-taken-on-grpc-s-request-and-accept-the-merged-adrs.md) — 2026-09-06
+- [#245 — Ask the gRPC request type what the wire carries](0245-ask-the-grpc-request-type-what-the-wire-carries.md) — 2026-09-06
+- [#244 — Take an RPC message through an extractor](0244-take-an-rpc-message-through-an-extractor.md) — 2026-09-05
+- [#243 — Read the one-body rule off the type, not the name](0243-read-the-one-body-rule-off-the-type-not-the-name.md) — 2026-09-05
+- [#242 — Carry the domain error on the gRPC status](0242-carry-the-domain-error-on-the-grpc-status.md) — 2026-09-05
+- [#241 — Write a gRPC handler in toni's shapes](0241-write-a-grpc-handler-in-toni-s-shapes.md) — 2026-09-04
+- [#240 — Serve gRPC only from the handler form](0240-serve-grpc-only-from-the-handler-form.md) — 2026-09-04
+- [#239 — Let a streaming gRPC handler name its associated type](0239-let-a-streaming-grpc-handler-name-its-associated-type.md) — 2026-09-04
+- [#238 — Widen what a gRPC handler can ask for](0238-widen-what-a-grpc-handler-can-ask-for.md) — 2026-09-04
+- [#237 — Hand a gRPC handler the caller's stream as Inbound](0237-hand-a-grpc-handler-the-caller-s-stream-as-inbound.md) — 2026-09-04
+- [#236 — Let a streaming gRPC handler yield its own item type](0236-let-a-streaming-grpc-handler-yield-its-own-item-type.md) — 2026-09-04
+- [#235 — Let a gRPC handler answer with its own reply type](0235-let-a-grpc-handler-answer-with-its-own-reply-type.md) — 2026-09-04
+- [#234 — Keep a gRPC handler's error type for the error chain](0234-keep-a-grpc-handler-s-error-type-for-the-error-chain.md) — 2026-09-02
+- [#233 — Tell a refused WebSocket connection why](0233-tell-a-refused-websocket-connection-why.md) — 2026-09-02
+- [#232 — Lift a domain error into a gRPC status](0232-lift-a-domain-error-into-a-grpc-status.md) — 2026-09-02
+- [#231 — Make panic handling uniform across the four transports](0231-make-panic-handling-uniform-across-the-four-transports.md) — 2026-09-02
+- [#230 — Correct what a gRPC handler reads of declared metadata](0230-correct-what-a-grpc-handler-reads-of-declared-metadata.md) — 2026-09-01
+- [#229 — Give the renderer fallback the canonical envelope, and name a panicking handler](0229-give-the-renderer-fallback-the-canonical-envelope-and-name-a-panicking.md) — 2026-09-01
+- [#228 — Route a panicking guard through the error chain](0228-route-a-panicking-guard-through-the-error-chain.md) — 2026-09-01
+- [#227 — Remove the error observer](0227-remove-the-error-observer.md) — 2026-09-01
+- [#226 — Pin that a reply's metadata survives the wrapper](0226-pin-that-a-reply-s-metadata-survives-the-wrapper.md) — 2026-09-01
+- [#225 — Serve gRPC over TLS](0225-serve-grpc-over-tls.md) — 2026-09-01
+- [#224 — Show gRPC reflection and health as services, not knobs](0224-show-grpc-reflection-and-health-as-services-not-knobs.md) — 2026-09-01
+- [#223 — Show a gRPC client as an injected provider](0223-show-a-grpc-client-as-an-injected-provider.md) — 2026-08-31
+- [#222 — Read the caller's deadline off grpc-timeout](0222-read-the-caller-s-deadline-off-grpc-timeout.md) — 2026-08-31
+- [#221 — Raise a typed event when nothing handles a call](0221-raise-a-typed-event-when-nothing-handles-a-call.md) — 2026-08-31
+- [#220 — Make a guard's refusal a framework event on every transport](0220-make-a-guard-s-refusal-a-framework-event-on-every-transport.md) — 2026-08-31
+- [#219 — Cover the RPC and WebSocket global enhancers](0219-cover-the-rpc-and-websocket-global-enhancers.md) — 2026-08-31
+- [#218 — Register gRPC enhancers globally](0218-register-grpc-enhancers-globally.md) — 2026-08-31
+- [#217 — Name a gRPC call by the path it arrived on](0217-name-a-grpc-call-by-the-path-it-arrived-on.md) — 2026-08-31
+- [#216 — End in-flight gRPC replies at the drain deadline](0216-end-in-flight-grpc-replies-at-the-drain-deadline.md) — 2026-08-31
+- [#215 — Let a gRPC method name the associated type its reply streams](0215-let-a-grpc-method-name-the-associated-type-its-reply-streams.md) — 2026-08-31
+- [#214 — Hold a gRPC execution across its streaming reply](0214-hold-a-grpc-execution-across-its-streaming-reply.md) — 2026-08-30
+- [#213 — docs(adr): mark ADR-0032 accepted](0213-docs-adr-mark-adr-0032-accepted.md) — 2026-08-29
+- [#212 — docs: show a streaming RPC reply and its cancellation by drop](0212-docs-show-a-streaming-rpc-reply-and-its-cancellation-by-drop.md) — 2026-08-29
+- [#211 — feat(kafka): stream replies keyed for order, cancel notices on one topic](0211-feat-kafka-stream-replies-keyed-for-order-cancel-notices-on-one-topic.md) — 2026-08-29
+- [#210 — feat(mqtt): stream replies on the response topic, cancel notices on one topic](0210-feat-mqtt-stream-replies-on-the-response-topic-cancel-notices-on-one-t.md) — 2026-08-29
+- [#209 — feat(rabbitmq): stream replies via direct reply-to, cancel notices on a fanout](0209-feat-rabbitmq-stream-replies-via-direct-reply-to-cancel-notices-on-a-f.md) — 2026-08-29
+- [#208 — feat(redis-rpc): stream replies on the reply channel, cancel notices on one channel](0208-feat-redis-rpc-stream-replies-on-the-reply-channel-cancel-notices-on-o.md) — 2026-08-29
+- [#207 — feat(nats): stream replies to the inbox, cancel notices on one subject](0207-feat-nats-stream-replies-to-the-inbox-cancel-notices-on-one-subject.md) — 2026-08-29
+- [#206 — feat(udp): stream replies, cancel datagrams, per-frame size checks](0206-feat-udp-stream-replies-cancel-datagrams-per-frame-size-checks.md) — 2026-08-29
+- [#205 — feat(tcp): stream replies, cancel notices, and per-connection aborts](0205-feat-tcp-stream-replies-cancel-notices-and-per-connection-aborts.md) — 2026-08-29
+- [#204 — feat(rpc): let the client open a streaming call](0204-feat-rpc-let-the-client-open-a-streaming-call.md) — 2026-08-29
+- [#203 — feat(rpc): make the handler result an enum that can carry a stream](0203-feat-rpc-make-the-handler-result-an-enum-that-can-carry-a-stream.md) — 2026-08-29
+- [#202 — refactor(rpc): hoist reply framing into one core wire module](0202-refactor-rpc-hoist-reply-framing-into-one-core-wire-module.md) — 2026-08-29
+- [#201 — docs(adr): propose stream-shaped RPC replies](0201-docs-adr-propose-stream-shaped-rpc-replies.md) — 2026-08-29
+- [#200 — ADRs 0030 and 0031 are accepted](0200-adrs-0030-and-0031-are-accepted.md) — 2026-08-28
+- [#199 — One attribute declares every controller](0199-one-attribute-declares-every-controller.md) — 2026-08-28
+- [#198 — ADR 0031 — one attribute declares a controller, and its handlers name the transport](0198-adr-0031-one-attribute-declares-a-controller-and-its-handlers-name-the.md) — 2026-08-28
+- [#197 — One source builds every dispatch target](0197-one-source-builds-every-dispatch-target.md) — 2026-08-28
+- [#196 — ADR 0030 — one source builds every dispatch target, and enhancer tokens resolve at create](0196-adr-0030-one-source-builds-every-dispatch-target-and-enhancer-tokens-r.md) — 2026-08-28
+- [#195 — Collapse module id and name into one identity value](0195-collapse-module-id-and-name-into-one-identity-value.md) — 2026-08-27
+- [#194 — Reach a module from the app by type, or by name](0194-reach-a-module-from-the-app-by-type-or-by-name.md) — 2026-08-27
+- [#193 — Fold context builder and config into GraphQL module identity](0193-fold-context-builder-and-config-into-graphql-module-identity.md) — 2026-08-27
+- [#192 — Infer a by-token lookup's result type from a Token const](0192-infer-a-by-token-lookup-s-result-type-from-a-token-const.md) — 2026-08-27
+- [#191 — Drop Provider::get_token_factory](0191-drop-provider-get-token-factory.md) — 2026-08-27
+- [#190 — Derive every DI token through one canonical function](0190-derive-every-di-token-through-one-canonical-function.md) — 2026-08-26
+- [#189 — Remove the Pipe enhancer; extraction is where input is checked](0189-remove-the-pipe-enhancer-extraction-is-where-input-is-checked.md) — 2026-08-26
+- [#188 — Let toni dev choose the cargo target and features](0188-let-toni-dev-choose-the-cargo-target-and-features.md) — 2026-08-24
+- [#187 — docs: name the three startup phases and what each one owns](0187-docs-name-the-three-startup-phases-and-what-each-one-owns.md) — 2026-08-24
+- [#186 — refactor(bind): register every transport before acquiring any socket](0186-refactor-bind-register-every-transport-before-acquiring-any-socket.md) — 2026-08-24
+- [#185 — test: make the startup guards able to fail](0185-test-make-the-startup-guards-able-to-fail.md) — 2026-08-24
+- [#184 — feat(db)!: verify the server answers before the application serves](0184-feat-db-verify-the-server-answers-before-the-application-serves.md) — 2026-08-24
+- [#183 — fix(db): check the registered connection instead of opening a second one](0183-fix-db-check-the-registered-connection-instead-of-opening-a-second-one.md) — 2026-08-24
+- [#182 — fix(db): report connection failures without leaking the connection string](0182-fix-db-report-connection-failures-without-leaking-the-connection-strin.md) — 2026-08-24
+- [#181 — feat(factory)!: return startup failures instead of ending the process](0181-feat-factory-return-startup-failures-instead-of-ending-the-process.md) — 2026-08-24
+- [#180 — fix!: refuse a bind that cannot start every declared transport](0180-fix-refuse-a-bind-that-cannot-start-every-declared-transport.md) — 2026-08-23
+- [#179 — fix: startup and serve-loop failures unwind instead of exiting](0179-fix-startup-and-serve-loop-failures-unwind-instead-of-exiting.md) — 2026-08-23
+- [#178 — docs: name the path syntax the framework uses](0178-docs-name-the-path-syntax-the-framework-uses.md) — 2026-08-23
+- [#177 — Error types say what can happen, doc links reach what they name, and CI holds it](0177-error-types-say-what-can-happen-doc-links-reach-what-they-name-and-ci.md) — 2026-08-23
+- [#176 — WebSocket doc comments name what exists](0176-websocket-doc-comments-name-what-exists.md) — 2026-08-23
+- [#175 — Extraction is one trait, and body-freedom is a convention](0175-extraction-is-one-trait-and-body-freedom-is-a-convention.md) — 2026-08-23
+- [#174 — A validated extractor reads only what it wraps](0174-a-validated-extractor-reads-only-what-it-wraps.md) — 2026-08-23
+- [#173 — An execution need not have a transport, and resolution takes one](0173-an-execution-need-not-have-a-transport-and-resolution-takes-one.md) — 2026-08-23
+- [#172 — An abandoned answer cancels the work feeding it](0172-an-abandoned-answer-cancels-the-work-feeding-it.md) — 2026-08-22
+- [#171 — Cancellation signals the tail, and the premise that says so](0171-cancellation-signals-the-tail-and-the-premise-that-says-so.md) — 2026-08-22
+- [#170 — Declared metadata keeps every declaration](0170-declared-metadata-keeps-every-declaration.md) — 2026-08-22
+- [#169 — An example for both metadata levels](0169-an-example-for-both-metadata-levels.md) — 2026-08-22
+- [#168 — An RPC client attaches headers](0168-an-rpc-client-attaches-headers.md) — 2026-08-22
+- [#167 — The type map's home, the spec term's findability, and why the wire rename was forced](0167-the-type-map-s-home-the-spec-term-s-findability-and-why-the-wire-renam.md) — 2026-08-22
+- [#166 — Declared metadata is metadata; wire fields are headers](0166-declared-metadata-is-metadata-wire-fields-are-headers.md) — 2026-08-21
+- [#165 — Declared metadata reaches every transport](0165-declared-metadata-reaches-every-transport.md) — 2026-08-21
+- [#164 — ADR 0020 — declared metadata reaches every transport, and wire fields are headers](0164-adr-0020-declared-metadata-reaches-every-transport-and-wire-fields-are.md) — 2026-08-21
+- [#163 — A WebSocket client owns its session](0163-a-websocket-client-owns-its-session.md) — 2026-08-21
+- [#162 — ADR 0019 — a WebSocket client owns its session; an execution owns its bag](0162-adr-0019-a-websocket-client-owns-its-session-an-execution-owns-its-bag.md) — 2026-08-21
+- [#161 — A WebSocket connection gets a session store](0161-a-websocket-connection-gets-a-session-store.md) — 2026-08-20
+- [#160 — ADR 0018 — a WebSocket connection is a session, and a session is a store](0160-adr-0018-a-websocket-connection-is-a-session-and-a-session-is-a-store.md) — 2026-08-20
+- [#159 — Pin what request scope means on a WebSocket](0159-pin-what-request-scope-means-on-a-websocket.md) — 2026-08-20
+- [#158 — A WebSocket connect is one execution](0158-a-websocket-connect-is-one-execution.md) — 2026-08-19
+- [#157 — Every dispatch target is declared in controllers:](0157-every-dispatch-target-is-declared-in-controllers.md) — 2026-08-19
+- [#156 — ADR 0017 — a controller is a dispatch target, whatever the transport](0156-adr-0017-a-controller-is-a-dispatch-target-whatever-the-transport.md) — 2026-08-19
+- [#155 — A gRPC service can be built per call](0155-a-grpc-service-can-be-built-per-call.md) — 2026-08-19
+- [#154 — An RPC controller can be built per call](0154-an-rpc-controller-can-be-built-per-call.md) — 2026-08-18
+- [#153 — The execution owns its cache, and every transport has one](0153-the-execution-owns-its-cache-and-every-transport-has-one.md) — 2026-08-18
+- [#152 — A context lives until its answer is complete](0152-a-context-lives-until-its-answer-is-complete.md) — 2026-08-17
+- [#151 — A context is a shared handle, and enhancers take it by reference](0151-a-context-is-a-shared-handle-and-enhancers-take-it-by-reference.md) — 2026-08-17
+- [#150 — Enhancers answer by returning, not by writing to the context](0150-enhancers-answer-by-returning-not-by-writing-to-the-context.md) — 2026-08-16
+- [#149 — Extract the extension bag through one impl, not three](0149-extract-the-extension-bag-through-one-impl-not-three.md) — 2026-08-15
+- [#148 — Extract RPC handler parameters through FromContext](0148-extract-rpc-handler-parameters-through-fromcontext.md) — 2026-08-15
+- [#147 — Extract gateway handler parameters through FromContext](0147-extract-gateway-handler-parameters-through-fromcontext.md) — 2026-08-15
+- [#146 — Extract handler parameters through FromContext](0146-extract-handler-parameters-through-fromcontext.md) — 2026-08-15
+- [#145 — Warn when a handler sets a response on the context](0145-warn-when-a-handler-sets-a-response-on-the-context.md) — 2026-08-15
+- [#144 — Name both readers when a handler reads the body twice](0144-name-both-readers-when-a-handler-reads-the-body-twice.md) — 2026-08-15
+- [#143 — Take the context exclusively, and say when the body is gone](0143-take-the-context-exclusively-and-say-when-the-body-is-gone.md) — 2026-08-15
+- [#142 — Let HTTP handlers take the request context](0142-let-http-handlers-take-the-request-context.md) — 2026-08-14
+- [#141 — Let gRPC handlers read what their guards attached](0141-let-grpc-handlers-read-what-their-guards-attached.md) — 2026-08-14
+- [#140 — Inject request-scoped values with Extension<T>](0140-inject-request-scoped-values-with-extension-t.md) — 2026-08-14
+- [#139 — Carry the extension bag from the enhancers to the handler](0139-carry-the-extension-bag-from-the-enhancers-to-the-handler.md) — 2026-08-14
+- [#138 — Build request-scoped providers once per request](0138-build-request-scoped-providers-once-per-request.md) — 2026-08-14
+- [#137 — Serve separate-port WebSocket gateways on a caller-bound socket](0137-serve-separate-port-websocket-gateways-on-a-caller-bound-socket.md) — 2026-08-12
+- [#136 — Serve RPC and gRPC on a caller-bound socket](0136-serve-rpc-and-grpc-on-a-caller-bound-socket.md) — 2026-08-12
+- [#135 — Hold the listening socket across dev restarts](0135-hold-the-listening-socket-across-dev-restarts.md) — 2026-08-10
+- [#134 — feat!: serve on a pre-bound listener via BindTarget](0134-feat-serve-on-a-pre-bound-listener-via-bindtarget.md) — 2026-07-30
+- [#133 — Canonical {param} route parameter syntax](0133-canonical-param-route-parameter-syntax.md) — 2026-07-29
+- [#132 — Trailing-slash-insensitive route matching](0132-trailing-slash-insensitive-route-matching.md) — 2026-07-29
+- [#131 — feat(cli): add toni dev watch/rebuild/restart command](0131-feat-cli-add-toni-dev-watch-rebuild-restart-command.md) — 2026-07-29
+- [#130 — feat(toni): install a default tracing subscriber on application create](0130-feat-toni-install-a-default-tracing-subscriber-on-application-create.md) — 2026-07-27
+- [#129 — fix(macros): match attribute names by their last path segment](0129-fix-macros-match-attribute-names-by-their-last-path-segment.md) — 2026-07-27
+- [#128 — refactor(adapter)!: name SPI registration methods for what they register](0128-refactor-adapter-name-spi-registration-methods-for-what-they-register.md) — 2026-07-26
+- [#127 — refactor(middleware): relax the chain seam to FnOnce + Send](0127-refactor-middleware-relax-the-chain-seam-to-fnonce-send.md) — 2026-07-21
+- [#126 — fix: key modules by identity and add named database connections](0126-fix-key-modules-by-identity-and-add-named-database-connections.md) — 2026-07-18
+- [#125 — feat(toni): add CorsMiddleware for the global chain](0125-feat-toni-add-corsmiddleware-for-the-global-chain.md) — 2026-07-17
+- [#124 — feat(rocket): run the global chain before route matching](0124-feat-rocket-run-the-global-chain-before-route-matching.md) — 2026-07-17
+- [#123 — feat(actix): run the global chain before route matching](0123-feat-actix-run-the-global-chain-before-route-matching.md) — 2026-07-17
+- [#122 — feat(salvo): run the global chain before route matching](0122-feat-salvo-run-the-global-chain-before-route-matching.md) — 2026-07-17
+- [#121 — feat(poem): run the global chain before route matching](0121-feat-poem-run-the-global-chain-before-route-matching.md) — 2026-07-17
+- [#120 — feat(axum): run the global chain before route matching](0120-feat-axum-run-the-global-chain-before-route-matching.md) — 2026-07-17
+- [#119 — fix(injector): stop dropping import-cycle modules from instantiation](0119-fix-injector-stop-dropping-import-cycle-modules-from-instantiation.md) — 2026-07-17
+- [#118 — feat(injector): name the exact provider cycle on cross-module resolution failure](0118-feat-injector-name-the-exact-provider-cycle-on-cross-module-resolution.md) — 2026-07-17
+- [#117 — refactor!: guards/handlers/observers take &mut context; drop the Sync bound on HandlerContext](0117-refactor-guards-handlers-observers-take-mut-context-drop-the-sync-boun.md) — 2026-07-16
+- [#116 — refactor(core)!: accept any ModuleMetadata as the root module](0116-refactor-core-accept-any-modulemetadata-as-the-root-module.md) — 2026-07-15
+- [#115 — docs(toni): stop tower-compat doctests failing under feature unification](0115-docs-toni-stop-tower-compat-doctests-failing-under-feature-unification.md) — 2026-07-15
+- [#114 — refactor(macros)!: pass modules directly, drop module_definition()](0114-refactor-macros-pass-modules-directly-drop-module-definition.md) — 2026-07-14
+- [#113 — Remove dead lifecycle-era code and update stale rustdoc](0113-remove-dead-lifecycle-era-code-and-update-stale-rustdoc.md) — 2026-07-14
+- [#112 — fix: CLI scaffolding, typed path extraction, exports, and CI coverage](0112-fix-cli-scaffolding-typed-path-extraction-exports-and-ci-coverage.md) — 2026-07-13
+- [#111 — feat(macros): add #[sse] route attribute](0111-feat-macros-add-sse-route-attribute.md) — 2026-06-21
+- [#110 — fix(config): gate config validation on the #[validate] attribute](0110-fix-config-gate-config-validation-on-the-validate-attribute.md) — 2026-06-21
+- [#109 — test(http): cover global middleware in the enhancer hierarchy test](0109-test-http-cover-global-middleware-in-the-enhancer-hierarchy-test.md) — 2026-06-20
+- [#108 — feat(rpc): declare RPC controllers like injectables](0108-feat-rpc-declare-rpc-controllers-like-injectables.md) — 2026-06-20
+- [#107 — refactor(rpc): collapse RpcControllerTrait enhancer accessors into one descriptor](0107-refactor-rpc-collapse-rpccontrollertrait-enhancer-accessors-into-one-d.md) — 2026-06-19
+- [#106 — feat(gateway): declare gateways like injectables](0106-feat-gateway-declare-gateways-like-injectables.md) — 2026-06-19
+- [#105 — chore(fmt): rustfmt the workspace + add a fmt CI check](0105-chore-fmt-rustfmt-the-workspace-add-a-fmt-ci-check.md) — 2026-06-18
+- [#104 — refactor(gateway): collapse GatewayTrait enhancer accessors](0104-refactor-gateway-collapse-gatewaytrait-enhancer-accessors.md) — 2026-06-18
+- [#103 — feat(controller): declare like #[injectable], scan routes via #[routes]](0103-feat-controller-declare-like-injectable-scan-routes-via-routes.md) — 2026-06-18
+- [#102 — refactor(core): collapse Controller to one object per struct](0102-refactor-core-collapse-controller-to-one-object-per-struct.md) — 2026-06-15
+- [#101 — feat(kafka): Apache Kafka RPC transport](0101-feat-kafka-apache-kafka-rpc-transport.md) — 2026-06-12
+- [#100 — feat(rpc): surface TCP/UDP wire metadata to handlers](0100-feat-rpc-surface-tcp-udp-wire-metadata-to-handlers.md) — 2026-06-12
+- [#99 — feat(rpc): per-call metadata via RpcClient::request() builder](0099-feat-rpc-per-call-metadata-via-rpcclient-request-builder.md) — 2026-06-11
+- [#98 — fix(redis-rpc): reconnect and resubscribe after a dropped connection](0098-fix-redis-rpc-reconnect-and-resubscribe-after-a-dropped-connection.md) — 2026-06-11
+- [#97 — fix(rabbitmq): recover connection and topology after a drop](0097-fix-rabbitmq-recover-connection-and-topology-after-a-drop.md) — 2026-06-11
+- [#96 — fix(mqtt): resubscribe on reconnect](0096-fix-mqtt-resubscribe-on-reconnect.md) — 2026-06-11
+- [#95 — feat(mqtt): MQTT v5 RPC transport](0095-feat-mqtt-mqtt-v5-rpc-transport.md) — 2026-06-10
+- [#94 — feat(rabbitmq): RabbitMQ (AMQP) RPC transport](0094-feat-rabbitmq-rabbitmq-amqp-rpc-transport.md) — 2026-06-10
+- [#93 — feat(redis-rpc): Redis Pub/Sub RPC transport](0093-feat-redis-rpc-redis-pub-sub-rpc-transport.md) — 2026-06-09
+- [#92 — docs(adr): record provider/enhancer/lifecycle DX decisions](0092-docs-adr-record-provider-enhancer-lifecycle-dx-decisions.md) — 2026-06-09
+- [#91 — feat!: one #[injectable] provider form, marker-free enhancers, unified lifecycle](0091-feat-one-injectable-provider-form-marker-free-enhancers-unified-lifecy.md) — 2026-06-07
+- [#90 — Cover non-HTTP transports across pipeline-segment panics](0090-cover-non-http-transports-across-pipeline-segment-panics.md) — 2026-05-30
+- [#89 — docs(http): explain bounded-in-flight posture on the HttpAdapter trait](0089-docs-http-explain-bounded-in-flight-posture-on-the-httpadapter-trait.md) — 2026-05-30
+- [#88 — refactor(adapter): slim public adapter traits — lifecycle methods off the trait, handles take ownership](0088-refactor-adapter-slim-public-adapter-traits-lifecycle-methods-off-the.md) — 2026-05-30
+- [#87 — feat(grpc): bound in-flight handlers via with_max_inflight + with_max_per_connection](0087-feat-grpc-bound-in-flight-handlers-via-with-max-inflight-with-max-per.md) — 2026-05-30
+- [#86 — feat(core): panic recovery for response renderers across all transports](0086-feat-core-panic-recovery-for-response-renderers-across-all-transports.md) — 2026-05-30
+- [#85 — feat(core): panic recovery for error handlers across all transports](0085-feat-core-panic-recovery-for-error-handlers-across-all-transports.md) — 2026-05-30
+- [#84 — feat(core): panic recovery for pipes across all transports](0084-feat-core-panic-recovery-for-pipes-across-all-transports.md) — 2026-05-30
+- [#83 — docs(grpc): toni-grpc README, crate doc refresh, and grpc_service example](0083-docs-grpc-toni-grpc-readme-crate-doc-refresh-and-grpc-service-example.md) — 2026-05-30
+- [#82 — feat(core): panic recovery for guards and interceptors across all transports](0082-feat-core-panic-recovery-for-guards-and-interceptors-across-all-transp.md) — 2026-05-30
+- [#81 — docs(grpc): toni-grpc README, crate doc refresh, and grpc_service example](0081-docs-grpc-toni-grpc-readme-crate-doc-refresh-and-grpc-service-example.md) — 2026-05-30
+- [#80 — gRPC enhancer parity: guards, interceptors, error handlers](0080-grpc-enhancer-parity-guards-interceptors-error-handlers.md) — 2026-05-29
+- [#79 — feat(core): error-handling layer — toni::Error, per-transport rendering, #[catch], observers](0079-feat-core-error-handling-layer-toni-error-per-transport-rendering-catc.md) — 2026-05-12
+- [#78 — feat(core): AppError-driven error pipeline + panic recovery](0078-feat-core-apperror-driven-error-pipeline-panic-recovery.md) — 2026-05-09
+- [#77 — refactor(macros): table-drive the per-transport enhancer fan-out](0077-refactor-macros-table-drive-the-per-transport-enhancer-fan-out.md) — 2026-05-06
+- [#76 — refactor(core): collapse Controller's enhancer acces](0076-refactor-core-collapse-controller-s-enhancer-acces.md) — 2026-05-06
+- [#75 — feat(nats): surface message headers via RpcCallInfo.metadata](0075-feat-nats-surface-message-headers-via-rpccallinfo-metadata.md) — 2026-05-06
+- [#74 — feat(core): replace Context with typed per-transport handler contexts](0074-feat-core-replace-context-with-typed-per-transport-handler-contexts.md) — 2026-05-06
+- [#73 — feat(grpc): full streaming coverage + drain-timeout enforcement](0073-feat-grpc-full-streaming-coverage-drain-timeout-enforcement.md) — 2026-05-02
+- [#72 — feat(grpc): per-request rpc.request span via tower::Layer](0072-feat-grpc-per-request-rpc-request-span-via-tower-layer.md) — 2026-05-02
+- [#71 — feat(grpc): #[grpc_service] + #[grpc_methods] macros with DI auto-discovery](0071-feat-grpc-grpc-service-grpc-methods-macros-with-di-auto-discovery.md) — 2026-05-02
+- [#70 — feat(rpc): GrpcAdapter trait + uniform ServerLifecycle orchestration](0070-feat-rpc-grpcadapter-trait-uniform-serverlifecycle-orchestration.md) — 2026-05-02
+- [#69 — feat(rpc): wrap each request handler in a tracing span](0069-feat-rpc-wrap-each-request-handler-in-a-tracing-span.md) — 2026-05-02
+- [#68 — feat(rpc): bound concurrent in-flight handlers via with_max_inflight](0068-feat-rpc-bound-concurrent-in-flight-handlers-via-with-max-inflight.md) — 2026-05-02
+- [#67 — test(rpc): drop retry-connect by reading the port from app.bind()](0067-test-rpc-drop-retry-connect-by-reading-the-port-from-app-bind.md) — 2026-05-02
+- [#66 — feat(udp): drain in-flight RPC tasks on shutdown with bounded timeout](0066-feat-udp-drain-in-flight-rpc-tasks-on-shutdown-with-bounded-timeout.md) — 2026-05-02
+- [#65 — feat(tcp): drain in-flight RPC tasks on shutdown with bounded timeout](0065-feat-tcp-drain-in-flight-rpc-tasks-on-shutdown-with-bounded-timeout.md) — 2026-05-02
+- [#64 — feat(rpc): surface RPC adapter local address via BoundAdapters](0064-feat-rpc-surface-rpc-adapter-local-address-via-boundadapters.md) — 2026-05-02
+- [#63 — feat(tcp): harden the TCP adapter](0063-feat-tcp-harden-the-tcp-adapter.md) — 2026-05-01
+- [#62 — feat(udp): toni-udp RPC adapter](0062-feat-udp-toni-udp-rpc-adapter.md) — 2026-05-01
+- [#61 — feat: rocket HTTP + same-port WebSocket adapter (toni-rocket)](0061-feat-rocket-http-same-port-websocket-adapter-toni-rocket.md) — 2026-05-01
+- [#60 — feat: poem HTTP + WebSocket adapter (toni-poem)](0060-feat-poem-http-websocket-adapter-toni-poem.md) — 2026-05-01
+- [#59 — feat: salvo HTTP + WebSocket adapter (toni-salvo)](0059-feat-salvo-http-websocket-adapter-toni-salvo.md) — 2026-05-01
+- [#58 — test(integration): make integration suite nextest-safe via port 0](0058-test-integration-make-integration-suite-nextest-safe-via-port-0.md) — 2026-04-28
+- [#57 — refactor(lifecycle): split bind/run phases, structured errors, async module hooks](0057-refactor-lifecycle-split-bind-run-phases-structured-errors-async-modul.md) — 2026-04-27
+- [#56 — refactor(adapter): rename create → listen/serve; expose bound address](0056-refactor-adapter-rename-create-listen-serve-expose-bound-address.md) — 2026-04-25
+- [#55 — feat(terminus): add health checks module with database indicators](0055-feat-terminus-add-health-checks-module-with-database-indicators.md) — 2026-04-24
+- [#54 — feat(sse): add SSE response type](0054-feat-sse-add-sse-response-type.md) — 2026-04-23
+- [#53 — feat: add Multipart extractor for multipart/form-data](0053-feat-add-multipart-extractor-for-multipart-form-data.md) — 2026-04-23
+- [#52 — refactor(toni): standardize on parking_lot for all sync locks](0052-refactor-toni-standardize-on-parking-lot-for-all-sync-locks.md) — 2026-04-23
+- [#51 — feat(redis-broadcast): add and_room() chaining to RedisBroadcastTarget](0051-feat-redis-broadcast-add-and-room-chaining-to-redisbroadcasttarget.md) — 2026-04-23
+- [#50 — fix(adapters): run global middleware pre-routing on every request including 404s](0050-fix-adapters-run-global-middleware-pre-routing-on-every-request-includ.md) — 2026-04-23
+- [#49 — feat(graphql): graphql-ws subscription transport for toni-async-graphql](0049-feat-graphql-graphql-ws-subscription-transport-for-toni-async-graphql.md) — 2026-04-22
+- [#48 — feat(websocket): WsHandlerOutput — unified handler return type with stream support](0048-feat-websocket-wshandleroutput-unified-handler-return-type-with-stream.md) — 2026-04-20
+- [#47 — feat: add toni-redis-broadcast — Redis-backed cross-process WebSocket broadcasting](0047-feat-add-toni-redis-broadcast-redis-backed-cross-process-websocket-bro.md) — 2026-04-20
+- [#46 — feat(guard): make can_activate async](0046-feat-guard-make-can-activate-async.md) — 2026-04-18
+- [#45 — fix(rpc): catch handler panics and return error to caller (TCP + NATS)](0045-fix-rpc-catch-handler-panics-and-return-error-to-caller-tcp-nats.md) — 2026-04-18
+- [#44 — fix(ws): recover from handler panics and restore HTTP-scoped enhancer validation](0044-fix-ws-recover-from-handler-panics-and-restore-http-scoped-enhancer-va.md) — 2026-04-18
+- [#43 — feat: method-level enhancers for WS gateways and RPC controllers](0043-feat-method-level-enhancers-for-ws-gateways-and-rpc-controllers.md) — 2026-04-18
+- [#42 — feat(ws): thread upgrade RequestPart through WS guard pipeline](0042-feat-ws-thread-upgrade-requestpart-through-ws-guard-pipeline.md) — 2026-04-18
+- [#41 — feat: request/transient-scoped providers as guards, interceptors, pipes](0041-feat-request-transient-scoped-providers-as-guards-interceptors-pipes.md) — 2026-04-18
+- [#40 — refactor: update provider dependencies to use Injectable struct](0040-refactor-update-provider-dependencies-to-use-injectable-struct.md) — 2026-04-18
+- [#39 — fix: Carry dependency roles through build for alias providers](0039-fix-carry-dependency-roles-through-build-for-alias-providers.md) — 2026-04-18
+- [#38 — refactor: remove role accessor methods from Provider trait](0038-refactor-remove-role-accessor-methods-from-provider-trait.md) — 2026-04-18
+- [#37 — feat(diesel): add toni-diesel integration crate](0037-feat-diesel-add-toni-diesel-integration-crate.md) — 2026-04-13
+- [#36 — feat(prisma): add toni-prisma integration crate](0036-feat-prisma-add-toni-prisma-integration-crate.md) — 2026-04-13
+- [#35 — feat(redis): add toni-redis integration crate](0035-feat-redis-add-toni-redis-integration-crate.md) — 2026-04-13
+- [#34 — feat(mongodb): add toni-mongodb integration crate](0034-feat-mongodb-add-toni-mongodb-integration-crate.md) — 2026-04-13
+- [#33 — feat(sqlx): add toni-sqlx integration crate](0033-feat-sqlx-add-toni-sqlx-integration-crate.md) — 2026-04-13
+- [#32 — feat: add toni-seaorm integration crate](0032-feat-add-toni-seaorm-integration-crate.md) — 2026-04-13
+- [#31 — feat(core): add DynamicModule for runtime-configured imports](0031-feat-core-add-dynamicmodule-for-runtime-configured-imports.md) — 2026-04-12
+- [#30 — fix(module-ref): make ModuleRef::get() safe from any thread](0030-fix-module-ref-make-moduleref-get-safe-from-any-thread.md) — 2026-04-12
+- [#29 — feat(di): share request-scoped instances within a request via per-request cache](0029-feat-di-share-request-scoped-instances-within-a-request-via-per-reques.md) — 2026-04-10
+- [#28 — feat(logging): migrate all library output to tracing](0028-feat-logging-migrate-all-library-output-to-tracing.md) — 2026-04-09
+- [#27 — feat(macros): make inline struct optional across all four macros](0027-feat-macros-make-inline-struct-optional-across-all-four-macros.md) — 2026-04-09
+- [#26 — feat: inject multiple providers as a Vec](0026-feat-inject-multiple-providers-as-a-vec.md) — 2026-04-01
+- [#25 — refactor(context): replace switch_to_* tuple returns with typed host structs](0025-refactor-context-replace-switch-to-tuple-returns-with-typed-host-struc.md) — 2026-03-30
+- [#24 — refactor(http_adapter)!: align with WebSocketAdapter/RpcAdapter contract](0024-refactor-http-adapter-align-with-websocketadapter-rpcadapter-contract.md) — 2026-03-29
+- [#23 —  refactor(middleware): replace (req, next) params with NextHandle](0023-refactor-middleware-replace-req-next-params-with-nexthandle.md) — 2026-03-28
+- [#22 — feat(toni): introduce ErrorResponse and multi-protocol ErrorHandler](0022-feat-toni-introduce-errorresponse-and-multi-protocol-errorhandler.md) — 2026-03-28
+- [#21 — feat(toni): pass Context to ErrorHandler instead of &RequestPart](0021-feat-toni-pass-context-to-errorhandler-instead-of-requestpart.md) — 2026-03-28
+- [#20 — feat(toni): replace Option<&HttpRequest> in Provider::execute with ProviderContext](0020-feat-toni-replace-option-httprequest-in-provider-execute-with-provider.md) — 2026-03-28
+- [#19 — feat(toni): add BodyStream extractor to avoid full upload buffering](0019-feat-toni-add-bodystream-extractor-to-avoid-full-upload-buffering.md) — 2026-03-28
+- [#18 — feat(toni): adopt http::Request<Bytes> as the core request type](0018-feat-toni-adopt-http-request-bytes-as-the-core-request-type.md) — 2026-03-27
+- [#17 — fix: preserve HttpError status when returned from middleware](0017-fix-preserve-httperror-status-when-returned-from-middleware.md) — 2026-03-27
+- [#16 — test: tower-compat integration tests](0016-test-tower-compat-integration-tests.md) — 2026-03-27
+- [#15 — feat: streaming response bodies](0015-feat-streaming-response-bodies.md) — 2026-03-26
+- [#14 — feat(toni): opt-in Tower middleware compatibility layer](0014-feat-toni-opt-in-tower-middleware-compatibility-layer.md) — 2026-03-26
+- [#13 — feat(core): replace Body enum with struct; HttpRequest body is raw Bytes](0013-feat-core-replace-body-enum-with-struct-httprequest-body-is-raw-bytes.md) — 2026-03-26
+- [#12 — docs(examples): add missing examples and fix three that didn't run](0012-docs-examples-add-missing-examples-and-fix-three-that-didn-t-run.md) — 2026-03-24
+- [#11 — Refactor and enhance test coverage](0011-refactor-and-enhance-test-coverage.md) — 2026-03-24
+- [#10 — Add RpcClientTransport for outbound TCP RPC calls](0010-add-rpcclienttransport-for-outbound-tcp-rpc-calls.md) — 2026-03-23
+- [#9 — Support NATS cluster addresses](0009-support-nats-cluster-addresses.md) — 2026-03-23
+- [#8 — Call lifecycle hooks on non-singleton provider/controller instantiation](0008-call-lifecycle-hooks-on-non-singleton-provider-controller-instantiatio.md) — 2026-03-22
+- [#7 — Refactor provide_factory! caching for improved type inference](0007-refactor-provide-factory-caching-for-improved-type-inference.md) — 2026-03-22
+- [#6 — Add RPC client transport and enhance macro attribute detection](0006-add-rpc-client-transport-and-enhance-macro-attribute-detection.md) — 2026-03-22
+- [#5 — Feat/rpc nats](0005-feat-rpc-nats.md) — 2026-03-21
+- [#4 — Feat/rpc gateway](0004-feat-rpc-gateway.md) — 2026-03-20
+- [#3 — Add WebSocket gateway infrastructure and support](0003-add-websocket-gateway-infrastructure-and-support.md) — 2026-03-07
+- [#2 — Add lifecycle hooks for providers, controllers, and modules](0002-add-lifecycle-hooks-for-providers-controllers-and-modules.md) — 2026-03-02
+- [#1 — Feat/execution-context-multi-protocol](0001-feat-execution-context-multi-protocol.md) — 2026-01-24
