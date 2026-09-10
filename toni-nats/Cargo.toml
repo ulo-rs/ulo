@@ -16,15 +16,15 @@ integration = []
 [dependencies]
 toni = { path = "../toni", default-features = false }
 async-nats = "0.46"
-tokio = { version = "1", features = ["full"] }
-serde_json = "1.0"
-anyhow = "1.0"
-tracing = "0.1"
-bytes = "1"
-futures = "0.3"
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+bytes.workspace = true
+futures = { workspace = true, features = ["async-await", "executor"] }
 
 [dev-dependencies]
-testcontainers = "0.27.3"
-testcontainers-modules = { version = "0.15.0", features = ["nats"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-tokio-stream = "0.1"
+testcontainers.workspace = true
+testcontainers-modules = { workspace = true, features = ["nats"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio-stream.workspace = true

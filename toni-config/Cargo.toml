@@ -9,11 +9,11 @@ homepage.workspace = true
 
 [dependencies]
 thiserror = "2.0.17"
-tracing = "0.1"
+tracing.workspace = true
 dotenv = "0.15.0"
 toni-macros = { path = "../toni-macros" }
 toni = { path = "../toni", default-features = false }
 
 [dev-dependencies]
 serial_test = "3.2.0"
-validator = { version = "0.20.0", features = ["derive"] }
+validator = { workspace = true, features = ["derive"] }
