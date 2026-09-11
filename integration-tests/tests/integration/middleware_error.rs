@@ -1,3 +1,8 @@
+//! An `HttpError` returned from a middleware renders with the status it names.
+//!
+//! Middleware runs before the error chain has a matched route to scope handlers
+//! against, so the failure mode is a 500 that erases the status the middleware
+//! chose. Both a custom status and a named kind are covered.
 // Verifies that HttpError returned from Middleware::handle maps to the correct
 // HTTP status code rather than collapsing to 500.
 //

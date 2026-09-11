@@ -1,3 +1,11 @@
+//! `ModuleRef` resolves providers at runtime, scoped to the module that handed
+//! it out.
+//!
+//! Strict resolution is the point: a handle that fell back to the global store
+//! would satisfy every lookup and erase the module boundary, so the refusals
+//! matter more than the successes. Request-scoped resolution through a handle
+//! is covered too — it needs an execution to resolve into, and asking without
+//! one is a refusal rather than a panic.
 use ulo::*;
 use uuid::Uuid;
 

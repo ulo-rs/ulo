@@ -1,3 +1,9 @@
+//! A provider cycle that crosses a module boundary is refused at startup, and
+//! the message names every provider on the cycle.
+//!
+//! Rust makes the cycle a hang or a stack overflow rather than a type error, so
+//! the diagnostic is the whole feature: a refusal naming only the entry point
+//! leaves the author to find the other half by hand.
 #![allow(dead_code)]
 
 use ulo::*;

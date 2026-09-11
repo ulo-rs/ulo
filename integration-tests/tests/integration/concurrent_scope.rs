@@ -1,3 +1,8 @@
+//! Request-scoped instances stay isolated when requests overlap in time.
+//!
+//! A scope bug is invisible sequentially — one request at a time gets a correct
+//! instance whether or not the cache is per-request — and surfaces only under
+//! concurrency, as one request reading another's state.
 // provider_scope.rs proves that sequential requests get isolated request-scoped
 // instances. This file proves the same holds under concurrency: if the request
 // context machinery has any shared mutable state (a stray RefCell, a map keyed

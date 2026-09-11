@@ -1,3 +1,10 @@
+//! Two modules may import each other. The cycle is in the import graph, not the
+//! dependency graph, and both modules instantiate.
+//!
+//! Nest needs `forwardRef` here; ulo does not, because module imports describe
+//! visibility rather than construction order. The distinction is only
+//! observable if a provider resolves across the cycle, which the
+//! second test does.
 use ulo::*;
 
 // Two modules that import each other. An import edge is a visibility relationship, not a

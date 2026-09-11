@@ -1,3 +1,11 @@
+//! A dispatch target whose dependency is request-scoped is itself built per
+//! request, whether or not it declared a scope.
+//!
+//! Without the elevation a singleton controller would capture the first
+//! request's instance and hand it to every later one — a correct-looking
+//! application that leaks one user's data to the next. An explicit
+//! `scope = "singleton"` does not suppress it: the declaration cannot be
+//! honoured, so the framework refuses to pretend it was.
 use crate::common::TestServer;
 use serial_test::serial;
 use std::sync::atomic::{AtomicU32, Ordering};

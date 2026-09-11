@@ -1,3 +1,10 @@
+//! `provide!` registers a provider under a string token, inferring the form
+//! from the expression and taking it from a marker when told.
+//!
+//! Auto-detection is the part that can be wrong without being loud: a value
+//! read as a factory, or the reverse, still registers a provider and still
+//! resolves. Each marker — `value()`, `factory()`, `existing()`, `provider()` —
+//! is asserted against what it produced, not merely that it produced something.
 use crate::common::TestServer;
 use std::time::Duration;
 use ulo::{Body as UloBody, controller, get, injectable, module, new, provide, routes};

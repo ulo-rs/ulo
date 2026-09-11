@@ -1,3 +1,9 @@
+//! `ConfigService<T>` injects into a handler by type, reads the environment at
+//! load, and falls back to the declared defaults.
+//!
+//! Configuration is read once during `create`, so a value that fails to load is
+//! a startup failure naming the config type rather than a `None` surfacing at
+//! the first request that needed it.
 use crate::common::TestServer;
 use serial_test::serial;
 use ulo::{Body as UloBody, controller, get, injectable, module, routes};

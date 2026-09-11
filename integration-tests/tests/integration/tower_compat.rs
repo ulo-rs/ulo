@@ -1,3 +1,11 @@
+//! A `tower::Layer` applied through `apply_tower` behaves as it would in a
+//! tower stack, and composes with ulo's own middleware.
+//!
+//! This is conformance to somebody else's interface, so the layers under test
+//! are third-party ones that know nothing about ulo: they must see a request
+//! and response shaped the way tower promises, including a body they can read
+//! and rewrite. The interleaved case pins that neither middleware kind is
+//! reordered around the other.
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};

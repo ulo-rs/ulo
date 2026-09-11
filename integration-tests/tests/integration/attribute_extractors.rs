@@ -1,3 +1,10 @@
+//! The `#[body]`, `#[param]` and `#[query]` markers, which name what a
+//! parameter is when its type does not.
+//!
+//! A marker that is dropped produces the same handler signature as one that is
+//! read, so an ignored attribute looks like a handler receiving a default.
+//! Path-qualified spellings are covered because attribute matching is by last
+//! segment: `#[ulo::body]` and `#[body]` must mean the same thing.
 use crate::common::TestServer;
 use serde::{Deserialize, Serialize};
 use ulo::{Body as UloBody, controller, extractors::Bytes, get, post, routes};

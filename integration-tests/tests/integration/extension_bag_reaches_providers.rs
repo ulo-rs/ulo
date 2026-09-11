@@ -1,9 +1,12 @@
-//! Test for Extensions and from_request pattern
+//! Data a middleware puts in the request extension bag reaches a request-scoped
+//! provider and the controller that injects it, without either extracting it by
+//! hand.
 //!
-//! This demonstrates:
-//! 1. Middleware adding typed data to request extensions
-//! 2. Request-scoped providers using from_request to access that data
-//! 3. Controllers using request context without manual extraction
+//! The bag is the seam between a middleware, which runs before DI has anything
+//! request-shaped to resolve, and a provider built per request. What the
+//! provider reads is what the middleware wrote on that same request — the
+//! claim that still passes when scope is wrong, since a singleton returns
+//! whichever request populated it first.
 
 use ulo::{
     Body as UloBody, Request, controller, get, injectable, module, new, routes,

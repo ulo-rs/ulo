@@ -1,3 +1,10 @@
+//! The container's central promises: a singleton is constructed once, a
+//! transient once per injection, and a field is populated from `#[inject]` or
+//! falls back to `#[default]`.
+//!
+//! Counting constructions is what separates these — a singleton rebuilt per
+//! request and a transient shared between two injection sites both serve
+//! requests correctly and both are wrong.
 use crate::common::TestServer;
 use serial_test::serial;
 use std::sync::atomic::{AtomicU32, Ordering};

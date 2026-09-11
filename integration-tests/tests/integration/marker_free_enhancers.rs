@@ -1,10 +1,12 @@
-//! End-to-end proof that a guard needs no marker: `#[injectable]` + `impl Guard<HttpContext>`,
-//! applied with `#[use_guards(AdminGuard)]`, blocks/admits real HTTP requests.
+//! A guard is declared by implementing `Guard<HttpContext>` and by nothing
+//! else: `#[injectable]` on the struct, `#[use_guards(AdminGuard)]` on the
+//! handler impl, and it blocks or admits real HTTP requests.
 //!
-//! The provider factory auto-detects the `Guard<HttpContext>` impl (via `ulo::__detect`) and
-//! registers the role; `#[use_guards]` and the role registry resolve it unchanged. Contrast
-//! `enhancers_di.rs`, where the equivalent guard still carries `#[injectable(struct …)]` +
-//! `#[guard(http)]`.
+//! The provider factory reads the trait impl off the concrete type where
+//! `build()` knows it (`ulo::__detect`) and registers the role from that, so
+//! the role registry resolves a guard its author never labelled. Both scopes
+//! are covered, because they detect at different points: a singleton at
+//! construction, a request-scoped guard on each request.
 
 use ulo::async_trait;
 use ulo::context::HttpContext;
@@ -26,7 +28,7 @@ impl AuthService {
     }
 }
 
-// No `#[guard(http)]`. The `impl Guard<HttpContext>` below is the only declaration.
+// The `impl Guard<HttpContext>` below is the only thing that makes this a guard.
 #[injectable]
 pub struct AdminGuard {
     #[inject]

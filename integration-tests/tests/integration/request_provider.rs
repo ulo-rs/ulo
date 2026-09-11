@@ -1,3 +1,9 @@
+//! `Request` injects into a controller without appearing in the module's
+//! `providers:` list.
+//!
+//! It is registered by the framework rather than the author, so the thing that
+//! breaks is the registration itself, and it breaks as an unresolved dependency
+//! at startup.
 use crate::common::TestServer;
 use ulo::{Body as UloBody, Request, controller, get, module, routes};
 

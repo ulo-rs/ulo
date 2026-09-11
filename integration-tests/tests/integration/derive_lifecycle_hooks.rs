@@ -1,9 +1,11 @@
-//! Lifecycle hooks on `#[injectable]` structs via the `#[on_*]` bridge.
+//! Lifecycle hooks on an `#[injectable]` struct: `#[on_module_init]` and its
+//! four siblings attach to an inherent impl, and the framework calls them.
 //!
-//! The macro can't see the impl, so it dispatches every `Provider` lifecycle method through an
-//! inherent bridge fn the `#[on_module_init]` / `#[on_application_bootstrap]` / `#[on_module_destroy]` macros emit. A provider
-//! with no hooks gets the blanket no-op; one with hooks runs them. Mirrors `lifecycle_hooks.rs`
-//! (the older attribute form), but every provider here is a plain `#[injectable]` struct.
+//! `#[injectable]` never sees that impl block, so each `#[on_*]` macro emits an
+//! inherent bridge fn the generated `Provider` dispatches through, and a
+//! provider writing no hooks resolves the blanket no-op. "The hook exists" and
+//! "the hook ran" are therefore separate claims; all five hooks assert the
+//! second.
 
 use std::sync::{Arc, Mutex, OnceLock};
 

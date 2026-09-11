@@ -1,3 +1,12 @@
+//! The wire format `#[sse]` and `sse(stream)` produce: the headers a client
+//! needs to keep the connection open, and the `data:`/`event:`/`id:` framing of
+//! each event.
+//!
+//! A browser's `EventSource` rejects a stream that frames events wrongly, and
+//! the framing is assembled from `SseEvent` fields rather than written by the
+//! handler, so the bytes on the socket are the contract. Both stream item types
+//! are covered — infallible and per-event fallible — along with multiline data,
+//! which is the case that must be re-prefixed rather than sent as one line.
 use std::pin::Pin;
 use std::time::Duration;
 

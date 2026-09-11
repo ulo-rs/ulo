@@ -1,3 +1,11 @@
+//! An enhancer named by a token no provider registers fails `create`, not the
+//! first call that would have run it.
+//!
+//! Token-named enhancers are resolved by string, so nothing checks the spelling
+//! at compile time. Resolving them while the application is still being built
+//! turns a typo into a startup refusal, not a route that serves without its
+//! guard under load. Covered on RPC and gRPC, which resolve their enhancers
+//! through separate registries.
 #![allow(dead_code)]
 
 use std::pin::Pin;
