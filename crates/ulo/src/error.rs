@@ -52,3 +52,87 @@ impl From<anyhow::Error> for StartupError {
         Self::Setup(e.into())
     }
 }
+
+/// Errors from pulling a provider or a module handle out of the container.
+///
+/// Produced by the resolution methods on [`UloApplication`], [`UloApplicationContext`] and
+/// [`ModuleRef`]. Every variant carries what a caller needs to act on it rather than only to
+/// report it: [`ProviderNotFound`] says whether one module was searched or all of them,
+/// [`AmbiguousModule`] hands back the full keys that [`get_module_by_id`] accepts, and
+/// [`RequestScopeOutsideExecution`] names the provider that needs an execution to be built in.
+///
+/// [`ProviderNotFound`]: ResolutionError::ProviderNotFound
+/// [`AmbiguousModule`]: ResolutionError::AmbiguousModule
+/// [`RequestScopeOutsideExecution`]: ResolutionError::RequestScopeOutsideExecution
+/// [`UloApplication`]: crate::UloApplication
+/// [`UloApplicationContext`]: crate::application_context::UloApplicationContext
+/// [`ModuleRef`]: crate::injector::ModuleRef
+/// [`get_module_by_id`]: crate::application_context::UloApplicationContext::get_module_by_id
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ResolutionError {
+    /// `module` is the one module searched, or `None` where every module was.
+    #[error("provider `{token}` not found {}", searched_in(.module))]
+    ProviderNotFound {
+        token: String,
+        module: Option<String>,
+    },
+
+    /// No module carries `id` as an identity key or base.
+    #[error(
+        "no module has identity `{id}`. The module is not imported, or its identity base \
+         differs — a `DynamicModule`'s base is the name its builder was given."
+    )]
+    ModuleNotFound { id: String },
+
+    /// Two or more modules share an identity base. `candidates` holds their full keys, each of
+    /// which [`get_module_by_id`](crate::application_context::UloApplicationContext::get_module_by_id)
+    /// resolves on its own.
+    #[error(
+        "module identity `{base}` is ambiguous: {} share the base. Pass one full key to \
+         `get_module_by_id`.",
+        candidate_list(.candidates)
+    )]
+    AmbiguousModule {
+        base: String,
+        candidates: Vec<String>,
+    },
+
+    /// The provider registered under `token` is not the requested type.
+    #[error("provider `{token}` is not the requested type")]
+    TypeMismatch { token: String },
+
+    /// A request-scoped provider lives in an execution's cache, and there is nowhere to put one
+    /// without an execution. Resolve it with `resolve` on the application or on a [`ModuleRef`],
+    /// passing [`ProviderContext::standalone`] where the work arrived over no transport.
+    ///
+    /// [`ModuleRef`]: crate::injector::ModuleRef
+    /// [`ProviderContext::standalone`]: crate::ProviderContext::standalone
+    #[error(
+        "provider `{token}` is request-scoped and cannot be built outside an execution. Resolve \
+         it in one with `resolve`, on the application or on a `ModuleRef`; \
+         `ProviderContext::standalone()` builds an execution where there is no transport."
+    )]
+    RequestScopeOutsideExecution { token: String },
+}
+
+fn searched_in(module: &Option<String>) -> String {
+    match module {
+        Some(module) => format!("in module `{module}`"),
+        None => "in any module".to_string(),
+    }
+}
+
+fn candidate_list(candidates: &[String]) -> String {
+    candidates
+        .iter()
+        .map(|key| format!("`{key}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+impl From<ResolutionError> for StartupError {
+    fn from(e: ResolutionError) -> Self {
+        Self::Setup(Box::new(e))
+    }
+}

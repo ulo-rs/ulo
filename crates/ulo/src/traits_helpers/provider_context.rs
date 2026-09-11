@@ -73,15 +73,13 @@ impl ProviderContext {
         &self,
         scope: crate::ProviderScope,
         token: &str,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), crate::error::ResolutionError> {
         if scope == crate::ProviderScope::Request && self.cache().is_none() {
-            return Err(anyhow::anyhow!(
-                "Provider '{}' is request-scoped and cannot be built outside an execution. \
-                 Resolve it in one with `resolve`, on the application or on a \
-                 `ModuleRef`; `ProviderContext::standalone()` builds an execution \
-                 where there is no transport.",
-                token
-            ));
+            return Err(
+                crate::error::ResolutionError::RequestScopeOutsideExecution {
+                    token: token.to_string(),
+                },
+            );
         }
 
         Ok(())

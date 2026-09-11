@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use anyhow::Result;
+use crate::error::ResolutionError;
 use rustc_hash::FxHashMap;
 
 use crate::di::token::IntoToken;
@@ -182,7 +182,7 @@ impl<'a, T: 'static> ModuleRefQuery<'a, T> {
     }
 
     /// Execute the query and return the provider instance
-    pub async fn execute(self) -> Result<T>
+    pub async fn execute(self) -> Result<T, ResolutionError>
     where
         T: Send,
     {
@@ -194,12 +194,9 @@ impl<'a, T: 'static> ModuleRefQuery<'a, T> {
                     .get(&self.module_ref.module_token)
                     .and_then(|m| m.get(&self.token))
                     .cloned()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Provider '{}' not found in module '{}' (strict mode)",
-                            self.token,
-                            self.module_ref.module_token
-                        )
+                    .ok_or_else(|| ResolutionError::ProviderNotFound {
+                        token: self.token.clone(),
+                        module: Some(self.module_ref.module_token.clone()),
                     })?
             } else {
                 // Try current module first, then any module
@@ -214,8 +211,9 @@ impl<'a, T: 'static> ModuleRefQuery<'a, T> {
                     store
                         .values()
                         .find_map(|providers| providers.get(&self.token).cloned())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("Provider '{}' not found in any module", self.token)
+                        .ok_or_else(|| ResolutionError::ProviderNotFound {
+                            token: self.token.clone(),
+                            module: None,
                         })?
                 }
             }
@@ -229,18 +227,15 @@ impl<'a, T: 'static> ModuleRefQuery<'a, T> {
             .await
             .downcast::<T>()
             .map(|boxed| *boxed)
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "Failed to downcast provider '{}' to requested type",
-                    self.token
-                )
+            .map_err(|_| ResolutionError::TypeMismatch {
+                token: self.token.clone(),
             })
     }
 }
 
-// Implement IntoFuture for ergonomic .await syntax
+/// Awaiting the query runs it, so a lookup reads as `module.get::<T>().await`.
 impl<'a, T: 'static + Send> std::future::IntoFuture for ModuleRefQuery<'a, T> {
-    type Output = Result<T>;
+    type Output = Result<T, ResolutionError>;
     type IntoFuture =
         std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send + 'a>>;
 
