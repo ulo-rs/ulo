@@ -55,18 +55,7 @@ const SUPPORT: &[(&str, &str)] = &[(
 /// Reason a crate is proved nowhere. Paired with an entry in [`LEDGER`] whose
 /// three fields are all false; `every_hole_is_still_a_hole` rejects a reason
 /// attached to a crate that has since gained coverage.
-const HOLES: &[(&str, &str)] = &[
-    (
-        "ulo-db-prisma",
-        "the only db integration with no startup check and no health indicator, \
-         so it shares neither suite with the other five",
-    ),
-    (
-        "ulo-graphql-juniper",
-        "not a dependency of integration-tests; its two examples are the only \
-         thing that compiles it against a running application",
-    ),
-];
+const HOLES: &[(&str, &str)] = &[];
 
 /// One line per crate under `crates/`. A new crate fails `the_ledger_is_complete`
 /// until it appears here, which is the point: the decision is made once, in the
@@ -78,12 +67,12 @@ const LEDGER: &[(&str, Proof)] = &[
     ("ulo-config", p(true, true, false)),
     ("ulo-db-diesel", p(false, true, true)),
     ("ulo-db-mongodb", p(false, true, true)),
-    ("ulo-db-prisma", p(false, false, false)),
+    ("ulo-db-prisma", p(false, true, false)),
     ("ulo-db-redis", p(false, true, true)),
     ("ulo-db-seaorm", p(false, true, true)),
     ("ulo-db-sqlx", p(false, true, true)),
     ("ulo-graphql-async-graphql", p(true, false, false)),
-    ("ulo-graphql-juniper", p(false, false, false)),
+    ("ulo-graphql-juniper", p(true, false, false)),
     ("ulo-grpc", p(true, false, false)),
     ("ulo-health", p(false, false, true)),
     ("ulo-http-actix", p(true, true, false)),

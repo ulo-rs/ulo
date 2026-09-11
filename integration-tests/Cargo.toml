@@ -29,10 +29,12 @@ tonic-prost = "0.14"
 tonic-reflection = "0.14"
 prost = "0.14"
 ulo-graphql-async-graphql = { path = "../crates/ulo-graphql-async-graphql" }
-# Direct dependency required by the async-graphql derive macros: they emit
-# crate-anchored ::async_graphql paths, which the ulo-graphql-async-graphql
-# re-export cannot satisfy. Matches the documented consumer setup.
+ulo-graphql-juniper = { path = "../crates/ulo-graphql-juniper" }
+# Direct dependencies required by the GraphQL derive macros: both emit
+# crate-anchored paths (::async_graphql, ::juniper) which the integration
+# crates' re-exports cannot satisfy. Matches the documented consumer setup.
 async-graphql = "7"
+juniper = "0.16"
 
 # Testing dependencies
 tokio = { workspace = true, features = ["full"] }

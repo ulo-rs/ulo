@@ -65,6 +65,9 @@ jobs:
       - run: cargo test -p ulo-db-seaorm -p ulo-db-redis -p ulo-db-mongodb --lib --test startup --locked
       - run: cargo test -p ulo-db-sqlx --features postgres --lib --test startup --locked
       - run: cargo test -p ulo-db-diesel --features postgres --lib --test startup --locked
+      # Prisma has no server to reach: `for_root` takes a closure producing the
+      # generated client, so its whole surface is registration.
+      - run: cargo test -p ulo-db-prisma --locked
       # Each crate's own hermetic suite. Named explicitly rather than with
       # `--workspace`, which would pull in every service-gated target. Before this
       # line existed the `check` job compiled these and nothing ran them, so they
