@@ -24,6 +24,7 @@ tracing.workspace = true
 futures = { workspace = true, features = ["async-await", "executor"] }
 
 [dev-dependencies]
+ulo-rpc-conformance = { path = "../ulo-rpc-conformance" }
 testcontainers.workspace = true
 testcontainers-modules = { workspace = true, features = ["rabbitmq"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
