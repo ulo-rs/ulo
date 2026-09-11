@@ -5,7 +5,7 @@
 
 use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
 
-use anyhow::Result;
+use crate::error::ResolutionError;
 
 use crate::{
     injector::{IntoToken, ModuleRef, UloContainer},
@@ -27,7 +27,10 @@ impl UloApplicationContext {
     ///
     /// The instance is cloned out so the container borrow ends here rather than
     /// spanning the `execute` that follows.
-    fn provider_in_any_module(&self, token: &str) -> Result<Arc<Box<dyn Provider>>> {
+    fn provider_in_any_module(
+        &self,
+        token: &str,
+    ) -> Result<Arc<Box<dyn Provider>>, ResolutionError> {
         let container = self.container.borrow();
         let token = token.to_string();
 
@@ -41,7 +44,10 @@ impl UloApplicationContext {
                     .flatten()
                     .cloned()
             })
-            .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found in any module", token))
+            .ok_or(ResolutionError::ProviderNotFound {
+                token,
+                module: None,
+            })
     }
 
     /// The provider registered under `token` in one named module.
@@ -49,23 +55,23 @@ impl UloApplicationContext {
         &self,
         module_token: &str,
         token: &str,
-    ) -> Result<Arc<Box<dyn Provider>>> {
+    ) -> Result<Arc<Box<dyn Provider>>, ResolutionError> {
         let container = self.container.borrow();
 
         container
-            .get_provider_instance_by_token(&module_token.to_string(), &token.to_string())?
+            .get_provider_instance_by_token(&module_token.to_string(), &token.to_string())
+            .map_err(|_| ResolutionError::ModuleNotFound {
+                id: module_token.to_string(),
+            })?
             .cloned()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Provider '{}' not found in module '{}'",
-                    token,
-                    module_token
-                )
+            .ok_or_else(|| ResolutionError::ProviderNotFound {
+                token: token.to_string(),
+                module: Some(module_token.to_string()),
             })
     }
 
     /// Returns an instance of `T` from the DI container, searching across all modules
-    pub async fn get<T: 'static>(&self) -> Result<T> {
+    pub async fn get<T: 'static>(&self) -> Result<T, ResolutionError> {
         let token = crate::di::token_of::<T>();
         let provider = self.provider_in_any_module(&token)?;
         ProviderContext::None.ensure_can_build(provider.get_scope(), &token)?;
@@ -77,7 +83,7 @@ impl UloApplicationContext {
     }
 
     /// Returns an instance of `T` from a specific module's scope in the DI container
-    pub async fn get_from<T: 'static>(&self, module_token: &str) -> Result<T> {
+    pub async fn get_from<T: 'static>(&self, module_token: &str) -> Result<T, ResolutionError> {
         let token = crate::di::token_of::<T>();
         let provider = self.provider_in_module(module_token, &token)?;
         ProviderContext::None.ensure_can_build(provider.get_scope(), &token)?;
@@ -97,7 +103,7 @@ impl UloApplicationContext {
     ///
     /// The handle resolves providers in that module's scope, the way an
     /// injected [`ModuleRef`] does from inside it.
-    pub async fn get_module<M: 'static>(&self) -> Result<ModuleRef> {
+    pub async fn get_module<M: 'static>(&self) -> Result<ModuleRef, ResolutionError> {
         let base = crate::di::token_of::<M>();
         let key = self.module_key_for_base(&base)?;
         self.module_ref_for(&key).await
@@ -109,7 +115,7 @@ impl UloApplicationContext {
     /// matches exactly. A bare base — a `DynamicModule`'s builder-given name,
     /// or a type path — matches whichever module carries it, and is ambiguous
     /// when two configs of one maker share it.
-    pub async fn get_module_by_id(&self, id: &str) -> Result<ModuleRef> {
+    pub async fn get_module_by_id(&self, id: &str) -> Result<ModuleRef, ResolutionError> {
         let exact = self
             .container
             .borrow()
@@ -124,7 +130,7 @@ impl UloApplicationContext {
     }
 
     /// The key of the one module whose identity base is `base`.
-    fn module_key_for_base(&self, base: &str) -> Result<String> {
+    fn module_key_for_base(&self, base: &str) -> Result<String, ResolutionError> {
         let container = self.container.borrow();
         let keys = container.get_modules_token();
 
@@ -134,19 +140,17 @@ impl UloApplicationContext {
             .collect();
         match matches.as_slice() {
             [key] => Ok((*key).clone()),
-            [] => Err(anyhow::anyhow!(
-                "No module has identity '{base}'. The module is not imported, \
-                 or its identity base differs — a DynamicModule's base is the \
-                 name its builder was given."
-            )),
-            many => Err(anyhow::anyhow!(
-                "Module identity '{base}' is ambiguous: {many:?} share the \
-                 base. Pass one full key to `get_module_by_id`."
-            )),
+            [] => Err(ResolutionError::ModuleNotFound {
+                id: base.to_string(),
+            }),
+            many => Err(ResolutionError::AmbiguousModule {
+                base: base.to_string(),
+                candidates: many.iter().map(|key| (*key).clone()).collect(),
+            }),
         }
     }
 
-    async fn module_ref_for(&self, module_id: &str) -> Result<ModuleRef> {
+    async fn module_ref_for(&self, module_id: &str) -> Result<ModuleRef, ResolutionError> {
         let token = crate::di::token_of::<ModuleRef>();
         let provider = self.provider_in_module(module_id, &token)?;
         downcast(
@@ -156,7 +160,10 @@ impl UloApplicationContext {
     }
 
     /// Returns an instance from the DI container by token rather than type; use when providers are registered with a custom token
-    pub async fn get_by_token<T: 'static>(&self, token: impl IntoToken<T>) -> Result<T> {
+    pub async fn get_by_token<T: 'static>(
+        &self,
+        token: impl IntoToken<T>,
+    ) -> Result<T, ResolutionError> {
         let token = token.into_token();
         let provider = self.provider_in_any_module(&token)?;
         ProviderContext::None.ensure_can_build(provider.get_scope(), &token)?;
@@ -172,7 +179,7 @@ impl UloApplicationContext {
         &self,
         module_token: &str,
         token: impl IntoToken<T>,
-    ) -> Result<T> {
+    ) -> Result<T, ResolutionError> {
         let token = token.into_token();
         let provider = self.provider_in_module(module_token, &token)?;
         ProviderContext::None.ensure_can_build(provider.get_scope(), &token)?;
@@ -204,7 +211,10 @@ impl UloApplicationContext {
     /// let execution: ProviderContext = HttpContext::from_parts(parts).into();
     /// let service = ctx.resolve::<RequestService>(&execution).await?;
     /// ```
-    pub async fn resolve<T: 'static>(&self, execution: &ProviderContext) -> Result<T> {
+    pub async fn resolve<T: 'static>(
+        &self,
+        execution: &ProviderContext,
+    ) -> Result<T, ResolutionError> {
         let token = crate::di::token_of::<T>();
         let provider = self.provider_in_any_module(&token)?;
         execution.ensure_can_build(provider.get_scope(), &token)?;
@@ -217,7 +227,7 @@ impl UloApplicationContext {
         &self,
         token: impl IntoToken<T>,
         execution: &ProviderContext,
-    ) -> Result<T> {
+    ) -> Result<T, ResolutionError> {
         let token = token.into_token();
         let provider = self.provider_in_any_module(&token)?;
         execution.ensure_can_build(provider.get_scope(), &token)?;
@@ -319,9 +329,11 @@ impl UloApplicationContext {
     }
 }
 
-fn downcast<T: 'static>(instance: Box<dyn Any + Send>, token: &str) -> Result<T> {
+fn downcast<T: 'static>(instance: Box<dyn Any + Send>, token: &str) -> Result<T, ResolutionError> {
     instance
         .downcast::<T>()
         .map(|boxed| *boxed)
-        .map_err(|_| anyhow::anyhow!("Failed to downcast provider '{}' to requested type", token))
+        .map_err(|_| ResolutionError::TypeMismatch {
+            token: token.to_string(),
+        })
 }

@@ -13,6 +13,8 @@ use std::{
 
 use crate::error::StartupError;
 use anyhow::Result;
+
+use crate::error::ResolutionError;
 use event_listener::Event;
 
 use crate::{
@@ -337,18 +339,21 @@ impl UloApplication {
     }
 
     /// Returns an instance of `T` from the DI container, searching across all modules.
-    pub async fn get<T: 'static>(&self) -> Result<T> {
+    pub async fn get<T: 'static>(&self) -> Result<T, ResolutionError> {
         self.context.get::<T>().await
     }
 
     /// Returns an instance of `T` from a specific module's scope in the DI container.
-    pub async fn get_from<T: 'static>(&self, module_token: &str) -> Result<T> {
+    pub async fn get_from<T: 'static>(&self, module_token: &str) -> Result<T, ResolutionError> {
         self.context.get_from::<T>(module_token).await
     }
 
     /// Returns an instance from the DI container by token rather than type; use when providers
     /// are registered with a custom token.
-    pub async fn get_by_token<T: 'static>(&self, token: impl IntoToken<T>) -> Result<T> {
+    pub async fn get_by_token<T: 'static>(
+        &self,
+        token: impl IntoToken<T>,
+    ) -> Result<T, ResolutionError> {
         self.context.get_by_token::<T>(token).await
     }
 
@@ -357,7 +362,7 @@ impl UloApplication {
         &self,
         module_token: &str,
         token: impl IntoToken<T>,
-    ) -> Result<T> {
+    ) -> Result<T, ResolutionError> {
         self.context
             .get_from_by_token::<T>(module_token, token)
             .await
@@ -365,13 +370,18 @@ impl UloApplication {
 
     /// The module handle for `M`, found by its identity. See
     /// [`UloApplicationContext::get_module`](crate::application_context::UloApplicationContext::get_module).
-    pub async fn get_module<M: 'static>(&self) -> Result<crate::injector::ModuleRef> {
+    pub async fn get_module<M: 'static>(
+        &self,
+    ) -> Result<crate::injector::ModuleRef, ResolutionError> {
         self.context.get_module::<M>().await
     }
 
     /// The module handle for the module whose identity key or base is `id`. See
     /// [`UloApplicationContext::get_module_by_id`](crate::application_context::UloApplicationContext::get_module_by_id).
-    pub async fn get_module_by_id(&self, id: &str) -> Result<crate::injector::ModuleRef> {
+    pub async fn get_module_by_id(
+        &self,
+        id: &str,
+    ) -> Result<crate::injector::ModuleRef, ResolutionError> {
         self.context.get_module_by_id(id).await
     }
 
@@ -384,7 +394,7 @@ impl UloApplication {
     pub async fn resolve<T: 'static>(
         &self,
         execution: &crate::traits_helpers::ProviderContext,
-    ) -> Result<T> {
+    ) -> Result<T, ResolutionError> {
         self.context.resolve::<T>(execution).await
     }
 
@@ -393,7 +403,7 @@ impl UloApplication {
         &self,
         token: impl IntoToken<T>,
         execution: &crate::traits_helpers::ProviderContext,
-    ) -> Result<T> {
+    ) -> Result<T, ResolutionError> {
         self.context.resolve_by_token::<T>(token, execution).await
     }
 
