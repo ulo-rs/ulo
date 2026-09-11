@@ -91,7 +91,7 @@ const LEDGER: &[(&str, Proof)] = &[
     ("ulo-http-poem", p(true, true, false)),
     ("ulo-http-rocket", p(true, true, false)),
     ("ulo-http-salvo", p(true, true, true)),
-    ("ulo-macros", p(true, false, true)),
+    ("ulo-macros", p(true, true, true)),
     ("ulo-rpc-kafka", p(false, true, true)),
     ("ulo-rpc-mqtt", p(false, true, true)),
     ("ulo-rpc-nats", p(false, true, false)),
