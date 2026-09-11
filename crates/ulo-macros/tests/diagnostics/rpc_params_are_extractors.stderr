@@ -6,16 +6,14 @@ error[E0277]: `std::string::String` is not an extractor for `RpcContext`
    |
    = help: the trait `FromContext<RpcContext>` is not implemented for `std::string::String`
    = note: a handler parameter is read from the context it is handed. Take one of the framework's extractors — `Payload<T>` for a message, `Json<T>` or `Query<T>` on HTTP — or implement `FromContext<RpcContext>` for `std::string::String`.
-   = help: the following other types implement trait `FromContext<C>`:
-             `BodyStream` implements `FromContext<HttpContext>`
-             `Extensions` implements `FromContext<C>`
-             `HttpRequest` implements `FromContext<HttpContext>`
-             `Inbound<T>` implements `FromContext<GrpcContext>`
-             `Multipart` implements `FromContext<HttpContext>`
-             `Option<T>` implements `FromContext<C>`
-             `Payload<T>` implements `FromContext<GrpcContext>`
-             `Payload<T>` implements `FromContext<RpcContext>`
-           and $N others
+help: the following other types implement trait `FromContext<C>`
+  --> $WORKSPACE/crates/ulo/src/rpc/extractors.rs
+   |
+   | impl FromContext<RpcContext> for RpcData {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RpcData`
+...
+   | impl<T: DeserializeOwned> FromContext<RpcContext> for Payload<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Payload<T>`
 
 error[E0277]: `std::string::String` is not an extractor for `RpcContext`
   --> tests/diagnostics/rpc_params_are_extractors.rs:11:1
@@ -25,14 +23,12 @@ error[E0277]: `std::string::String` is not an extractor for `RpcContext`
    |
    = help: the trait `FromContext<RpcContext>` is not implemented for `std::string::String`
    = note: a handler parameter is read from the context it is handed. Take one of the framework's extractors — `Payload<T>` for a message, `Json<T>` or `Query<T>` on HTTP — or implement `FromContext<RpcContext>` for `std::string::String`.
-   = help: the following other types implement trait `FromContext<C>`:
-             `BodyStream` implements `FromContext<HttpContext>`
-             `Extensions` implements `FromContext<C>`
-             `HttpRequest` implements `FromContext<HttpContext>`
-             `Inbound<T>` implements `FromContext<GrpcContext>`
-             `Multipart` implements `FromContext<HttpContext>`
-             `Option<T>` implements `FromContext<C>`
-             `Payload<T>` implements `FromContext<GrpcContext>`
-             `Payload<T>` implements `FromContext<RpcContext>`
-           and $N others
+help: the following other types implement trait `FromContext<C>`
+  --> $WORKSPACE/crates/ulo/src/rpc/extractors.rs
+   |
+   | impl FromContext<RpcContext> for RpcData {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RpcData`
+...
+   | impl<T: DeserializeOwned> FromContext<RpcContext> for Payload<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Payload<T>`
    = note: this error originates in the attribute macro `patterns` (in Nightly builds, run with -Z macro-backtrace for more info)
