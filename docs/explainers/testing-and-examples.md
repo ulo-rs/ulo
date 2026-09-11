@@ -102,15 +102,37 @@ contract, the exception is written into the suite rather than omitted from it �
 pre-bound listener, so `bind_target_conformance.rs` requires it to refuse at `bind()` rather than
 binding somewhere else.
 
-### What the alternative costs
+### When the suite needs a live service
 
-The RPC side is not built this way, and the cost is measurable in the tree today. Redis, MQTT,
-RabbitMQ and Kafka each carry a hand-maintained `round_trip.rs` with the same seven functions.
-Normalise the broker's name and only 110 of roughly 255 lines differ between two of them, nearly all
-of it container setup.
+The RPC transports are built the same way, with one difference: their cases need a broker, and the
+shared suite is hermetic. So the cases live in `ulo-rpc-conformance` as generic functions over a
+`Broker` trait, and each transport crate implements that trait against its own testcontainer and
+stamps out the tests:
 
-Seven copies of a contract diverge, and nothing notices, because divergence is only visible against a
-single source:
+```rust
+impl Broker for RedisBroker {
+    type Adapter = RedisAdapter;
+    type Transport = RedisClientTransport;
+    async fn start() -> Self { /* container, then the endpoint */ }
+    fn adapter(&self) -> Self::Adapter { /* … */ }
+    fn transport(&self) -> Self::Transport { /* … */ }
+    async fn disrupt(&self) { /* whatever severs the connection */ }
+}
+
+ulo_rpc_conformance::conformance_suite!(RedisBroker);
+```
+
+Six cases across five brokers, from one definition. What each transport supplies is what only it
+knows: how to start a broker, how to address it, and how to break the connection — `CLIENT KILL` on
+Redis, whose Pub/Sub carries no heartbeat and so never notices a frozen container; pausing the
+container everywhere else.
+
+The budgets are a transport's to raise. Kafka boots slowly and waits out a consumer-group rebalance
+before the first request is consumed, so it overrides all three.
+
+### Why it is worth the indirection
+
+Seven hand-maintained copies had drifted, and nothing reported it:
 
 | | send / emit / metadata | streams and cancels | reconnect |
 | --- | --- | --- | --- |
@@ -118,13 +140,12 @@ single source:
 | kafka | yes | yes | **no** |
 | nats | **no** | yes | **no** |
 
-NATS is missing the send/emit/metadata round trip entirely, not merely a reconnect suite. No test
-failed when it went missing, because there was no suite for it to be missing *from*.
+NATS was missing the send/emit/metadata round trip entirely, not merely a reconnect suite. No test
+failed when it went missing, because there was no suite for it to be missing *from*. Adding the
+trait implementation took it from one case to six without a case being written for it.
 
-The service-backed half of those tests still needs Docker and stays in each crate behind its
-`integration` feature — the shared suite is hermetic and must stay that way. What moves is the
-*cases*: one macro the broker crates each instantiate against their own container, so a transport
-that skips a case fails to compile.
+That is the property to weigh against the indirection: a case added to the shared crate reaches
+every transport, and a transport that cannot satisfy one fails rather than omits it.
 
 ## Examples
 
