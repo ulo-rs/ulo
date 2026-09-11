@@ -1,8 +1,13 @@
-// Tests: `tests/` needs a live Redis, started by testcontainers, and is
-// gated behind the `integration` feature. Without it the files compile to
-// nothing and `cargo test -p ulo-rpc-redis` reports a clean run of none:
+// Tests: `tests/conformance.rs` implements `ulo_rpc_conformance::Broker`
+// and stamps out the shared RPC case set — the same six cases every
+// transport answers. It needs a live Redis from testcontainers, so it
+// is gated behind the `integration` feature; without it the file compiles
+// to nothing and cargo reports a clean run of none:
 //
 //     cargo test -p ulo-rpc-redis --features integration
+//
+// A case belongs in `ulo-rpc-conformance` when every transport owes it,
+// and here only when it is specific to this one.
 
 //! Redis Pub/Sub transport for the Ulo RPC gateway.
 //!

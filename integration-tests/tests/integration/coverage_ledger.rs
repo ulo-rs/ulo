@@ -40,6 +40,18 @@ const fn p(suite: bool, own: bool, unit: bool) -> Proof {
     Proof { suite, own, unit }
 }
 
+/// Crates that exist to test other crates, and so carry no tests of their own.
+/// A support crate is proved by the suites that depend on it: break it, and
+/// every transport's conformance run fails at once.
+///
+/// Checked in both directions like [`HOLES`] — an entry here must have no tests
+/// and must be a dev-dependency of something, so a support crate that grows its
+/// own suite, or stops being used, fails this test.
+const SUPPORT: &[(&str, &str)] = &[(
+    "ulo-rpc-conformance",
+    "holds the RPC conformance cases the five broker crates instantiate",
+)];
+
 /// Reason a crate is proved nowhere. Paired with an entry in [`LEDGER`] whose
 /// three fields are all false; `every_hole_is_still_a_hole` rejects a reason
 /// attached to a crate that has since gained coverage.
@@ -84,6 +96,7 @@ const LEDGER: &[(&str, Proof)] = &[
     ("ulo-rpc-mqtt", p(false, true, true)),
     ("ulo-rpc-nats", p(false, true, false)),
     ("ulo-rpc-rabbitmq", p(false, true, true)),
+    ("ulo-rpc-conformance", p(false, false, false)),
     ("ulo-rpc-redis", p(false, true, true)),
     ("ulo-rpc-tcp", p(true, false, true)),
     ("ulo-rpc-udp", p(true, false, true)),
@@ -209,19 +222,54 @@ fn every_hole_is_still_a_hole() {
         );
     }
 
-    let holes: BTreeSet<&str> = HOLES.iter().map(|(name, _)| *name).collect();
+    let explained: BTreeSet<&str> = HOLES
+        .iter()
+        .chain(SUPPORT.iter())
+        .map(|(name, _)| *name)
+        .collect();
     let unexplained: Vec<&str> = LEDGER
         .iter()
         .filter(|(_, proof)| !proof.suite && !proof.own && !proof.unit)
         .map(|(name, _)| *name)
-        .filter(|name| !holes.contains(name))
+        .filter(|name| !explained.contains(name))
         .collect();
 
     assert!(
         unexplained.is_empty(),
-        "crates proved nowhere and not recorded in HOLES: {unexplained:?}\n\
-         Either prove them or say why they are not proved."
+        "crates proved nowhere, and in neither HOLES nor SUPPORT: {unexplained:?}\n\
+         Either prove them, say why they are not proved, or record them as test support."
     );
+}
+
+/// A support crate earns its exemption by being used. One that nothing depends
+/// on is dead weight wearing an exemption, and one that grew its own tests is
+/// no longer a support crate.
+#[test]
+fn every_support_crate_is_used_and_untested() {
+    let root = workspace_root();
+
+    for (name, reason) in SUPPORT {
+        let observed = observe(name);
+        assert!(
+            !observed.suite && !observed.own && !observed.unit,
+            "{name} is listed in SUPPORT ({reason}) but now has tests of its own: {observed:?}.\n\
+             A crate with its own suite belongs in LEDGER on its own terms."
+        );
+
+        let dependents: Vec<String> = crates_on_disk()
+            .into_iter()
+            .filter(|krate| krate != name)
+            .filter(|krate| {
+                fs::read_to_string(root.join("crates").join(krate).join("Cargo.toml"))
+                    .is_ok_and(|manifest| manifest.contains(&format!("\n{name} = {{ path =")))
+            })
+            .collect();
+
+        assert!(
+            !dependents.is_empty(),
+            "{name} is listed in SUPPORT ({reason}) but no crate depends on it."
+        );
+    }
 }
 
 /// A test file nobody declared is compiled by nothing and run by nothing; cargo
