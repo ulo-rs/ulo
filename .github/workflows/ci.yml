@@ -65,6 +65,20 @@ jobs:
       - run: cargo test -p ulo-db-seaorm -p ulo-db-redis -p ulo-db-mongodb --lib --test startup --locked
       - run: cargo test -p ulo-db-sqlx --features postgres --lib --test startup --locked
       - run: cargo test -p ulo-db-diesel --features postgres --lib --test startup --locked
+      # Each crate's own hermetic suite. Named explicitly rather than with
+      # `--workspace`, which would pull in every service-gated target. Before this
+      # line existed the `check` job compiled these and nothing ran them, so they
+      # could stop being true but never start failing. The adapter suites are the
+      # only proof that WebSocket upgrade works on poem, salvo and rocket, and
+      # that actix collects bodies rather than streaming them.
+      - run: >
+          cargo test --locked --lib --tests
+          -p ulo-config -p ulo-health -p ulo-macros -p ulo-cli
+          -p ulo-http-axum -p ulo-http-actix -p ulo-http-poem
+          -p ulo-http-salvo -p ulo-http-rocket
+          -p ulo-rpc-tcp -p ulo-rpc-udp -p ulo-rpc-nats -p ulo-rpc-redis
+          -p ulo-rpc-rabbitmq -p ulo-rpc-mqtt -p ulo-rpc-kafka
+          -p ulo-ws-tungstenite -p ulo-ws-redis -p ulo-grpc
       # Doc examples compile in no other job: `--all-targets` skips them and the
       # docs job renders without running them. Only examples not marked `ignore`
       # are covered.
