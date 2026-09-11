@@ -25,6 +25,7 @@ mod enhancers;
 mod enhancers_di;
 mod error_derive;
 mod error_handler;
+mod error_handler_precedence;
 mod extension_bag_reaches_providers;
 mod extension_bus;
 mod extension_di;

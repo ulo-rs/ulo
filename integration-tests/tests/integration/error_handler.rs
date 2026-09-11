@@ -1,11 +1,12 @@
 //! The error chain: which handler claims an error, what happens when none does,
 //! and how scope decides between two that could.
 //!
-//! Handlers run method, then controller, then global, and the first `Some`
-//! claims — so a chain that runs in the other direction still renders an error,
-//! never the specific one the author wrote. An unclaimed error falls
-//! through to the default envelope rather than disappearing, and framework
-//! events reach the chain alongside user errors.
+//! An unclaimed error falls through to the default envelope rather than
+//! disappearing, and framework events reach the chain alongside user errors.
+//!
+//! Which of several candidates claims is `error_handler_precedence.rs`: this
+//! file registers one handler at a time, so it never makes the framework
+//! choose.
 // The framework's error model has two distinct paths:
 //
 //   1. User-handler errors render at the macro boundary via
