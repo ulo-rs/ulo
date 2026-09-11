@@ -38,6 +38,10 @@ the same six cases against all five HTTP adapters, so a regression in any one of
 of actix's 256 KiB payload ceiling belongs to actix, and would be noise in a file the other four
 adapters also run.
 
+The full rule — the three homes a test can have, what earns one, when a contract gets a conformance
+suite instead of one copy per implementor, and how to find a gap rather than a redundancy — is in
+[Where a test goes, and what earns one](../docs/explainers/testing-and-examples.md).
+
 ## Registering a crate
 
 1. Add the path dependency to `Cargo.toml`.

@@ -69,6 +69,10 @@ above. `coverage_ledger.rs` in the integration-test crate fails on an example th
 either — an example `cargo run --example` cannot reach, or one no index points at, is an example
 nobody runs.
 
+An example answers one question a user would ask, which decides both what goes in it and
+whether it belongs here or in a crate of its own:
+[Where a test goes, and what earns one](../docs/explainers/testing-and-examples.md).
+
 ## Related
 
 - [Architecture decision records](../docs/adr/README.md) — why the framework is built the way it is

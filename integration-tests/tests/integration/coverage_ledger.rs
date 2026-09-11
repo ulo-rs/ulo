@@ -11,6 +11,11 @@
 //! nowhere. Each entry is checked in both directions — a crate that gains
 //! coverage fails this test as loudly as one that loses it, because a stale
 //! "unproved" line is how a hole outlives its fix.
+//!
+//! This file answers where a crate is proved, never whether what proves it is
+//! worth having. That judgment is a per-surface pass, described in
+//! `docs/explainers/testing-and-examples.md` along with the rule deciding which
+//! of the three homes a test belongs in.
 
 use std::collections::BTreeSet;
 use std::fs;
