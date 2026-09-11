@@ -1,9 +1,13 @@
 //! `ctx.deadline()` reads the caller's `grpc-timeout`.
 //!
 //! gRPC is the one transport whose wire carries how long the caller intends to
-//! wait, and until now nothing read it — `deadline()` answered `None` on every
-//! context. A guard can now refuse work it cannot finish in time, and a handler
-//! can budget against the caller's patience rather than its own guess.
+//! wait, so it is the only context where `deadline()` is ever `Some`. A guard
+//! can refuse work it cannot finish in time, and a handler can budget against
+//! the caller's patience rather than its own guess.
+//!
+//! The handler below reads it through `time_remaining()`, which is also what
+//! pins that accessor as reachable: it was defined on `impl dyn HandlerContext`
+//! and so did not resolve on the `&GrpcContext` a handler holds.
 
 #![allow(dead_code)]
 
@@ -48,10 +52,10 @@ impl DeadlineService {
         Payload(_req): Payload<deadline_pb::CreateOrderRequest>,
         ctx: &GrpcContext,
     ) -> Result<deadline_pb::CreateOrderResponse, NotServed> {
-        *REMAINING.lock().unwrap() = Some(
-            ctx.deadline()
-                .map(|d| d.saturating_duration_since(Instant::now())),
-        );
+        // `time_remaining()` rather than the hand-rolled subtraction this
+        // handler used to carry: the accessor is reachable from a concrete
+        // context, which is the position a handler is actually in.
+        *REMAINING.lock().unwrap() = Some(ctx.time_remaining());
         Ok(deadline_pb::CreateOrderResponse {
             id: 1,
             status: "ok".to_string(),
