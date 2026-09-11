@@ -1,0 +1,13 @@
+error: route path segment `:id` uses `:param` syntax; ulo's parameter syntax is `{id}`
+  --> tests/diagnostics/param_syntax.rs:10:11
+   |
+10 |     #[get("/:id")]
+   |           ^^^^^^
+
+warning: unused imports: `Body` and `get`
+ --> tests/diagnostics/param_syntax.rs:3:11
+  |
+3 | use ulo::{Body, controller, get, routes};
+  |           ^^^^              ^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

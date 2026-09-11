@@ -1,7 +1,9 @@
-// Tests: what these macros expand to is proved by `integration-tests`,
-// which compiles and runs the generated code against a real application.
-// The unit tests under `src/` cover the parsing that fails before any
-// expansion exists to run.
+// Tests: what these macros expand to is proved by `integration-tests`, which
+// compiles and runs the generated code against a real application. What they
+// refuse to expand is proved by `tests/diagnostics.rs` — a trybuild case per
+// documented error message, plus a guard asserting each case still fails for
+// the reason it was written for. The unit tests under `src/` cover the parsing
+// that fails before any expansion exists to run.
 
 extern crate proc_macro2;
 
