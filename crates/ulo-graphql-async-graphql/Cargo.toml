@@ -22,5 +22,5 @@ serde_json.workspace = true
 
 [dev-dependencies]
 ulo-http-axum = { path = "../ulo-http-axum" }
-reqwest = "0.12"
+reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["full"] }

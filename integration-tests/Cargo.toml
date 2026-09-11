@@ -37,7 +37,7 @@ async-graphql = "7"
 # Testing dependencies
 tokio = { workspace = true, features = ["full"] }
 bytes.workspace = true
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { workspace = true, features = ["json", "stream"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serial_test = "3.2.0"

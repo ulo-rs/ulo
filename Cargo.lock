@@ -3342,22 +3342,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-tls"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
-dependencies = [
- "bytes",
- "http-body-util",
- "hyper 1.10.1",
- "hyper-util",
- "native-tls",
- "tokio",
- "tokio-native-tls",
- "tower-service",
-]
-
-[[package]]
 name = "hyper-util"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3375,11 +3359,9 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "socket2 0.6.4",
- "system-configuration",
  "tokio",
  "tower-service",
  "tracing",
- "windows-registry",
 ]
 
 [[package]]
@@ -3655,7 +3637,7 @@ dependencies = [
  "protoc-bin-vendored",
  "rand 0.8.7",
  "rcgen",
- "reqwest 0.12.28",
+ "reqwest",
  "serde",
  "serde_json",
  "serial_test",
@@ -5960,53 +5942,6 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reqwest"
-version = "0.12.28"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
-dependencies = [
- "base64",
- "bytes",
- "encoding_rs",
- "futures-core",
- "futures-util",
- "h2 0.4.15",
- "http 1.4.2",
- "http-body 1.0.1",
- "http-body-util",
- "hyper 1.10.1",
- "hyper-rustls",
- "hyper-tls",
- "hyper-util",
- "js-sys",
- "log",
- "mime",
- "native-tls",
- "percent-encoding",
- "pin-project-lite",
- "quinn",
- "rustls",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sync_wrapper",
- "tokio",
- "tokio-native-tls",
- "tokio-rustls",
- "tokio-util",
- "tower",
- "tower-http",
- "tower-service",
- "url",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasm-streams 0.4.2",
- "web-sys",
- "webpki-roots 1.0.8",
-]
-
-[[package]]
-name = "reqwest"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
@@ -6044,7 +5979,7 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams 0.5.0",
+ "wasm-streams",
  "web-sys",
 ]
 
@@ -6439,7 +6374,7 @@ dependencies = [
  "hyper-util",
  "local-ip-address",
  "percent-encoding",
- "reqwest 0.13.4",
+ "reqwest",
  "salvo_core",
  "tokio",
  "tracing",
@@ -7700,16 +7635,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-native-tls"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
-dependencies = [
- "native-tls",
- "tokio",
-]
-
-[[package]]
 name = "tokio-postgres"
 version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8291,7 +8216,7 @@ dependencies = [
  "http-body-util",
  "multer",
  "parking_lot",
- "reqwest 0.12.28",
+ "reqwest",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -8357,7 +8282,7 @@ dependencies = [
  "diesel-async",
  "futures",
  "futures-timer",
- "reqwest 0.13.4",
+ "reqwest",
  "serde_json",
  "testcontainers",
  "testcontainers-modules",
@@ -8376,7 +8301,7 @@ dependencies = [
  "futures",
  "futures-timer",
  "mongodb",
- "reqwest 0.13.4",
+ "reqwest",
  "serde_json",
  "testcontainers",
  "testcontainers-modules",
@@ -8403,7 +8328,7 @@ dependencies = [
  "futures",
  "futures-timer",
  "redis",
- "reqwest 0.13.4",
+ "reqwest",
  "serde_json",
  "testcontainers",
  "testcontainers-modules",
@@ -8422,7 +8347,7 @@ dependencies = [
  "futures",
  "futures-timer",
  "parking_lot",
- "reqwest 0.13.4",
+ "reqwest",
  "sea-orm",
  "serde_json",
  "testcontainers",
@@ -8442,7 +8367,7 @@ dependencies = [
  "futures",
  "futures-timer",
  "parking_lot",
- "reqwest 0.13.4",
+ "reqwest",
  "serde_json",
  "sqlx",
  "testcontainers",
@@ -8497,7 +8422,7 @@ dependencies = [
  "async-graphql",
  "async-trait",
  "futures",
- "reqwest 0.12.28",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -8543,7 +8468,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
- "reqwest 0.12.28",
+ "reqwest",
  "serde_json",
  "sysinfo",
  "tokio",
@@ -8560,7 +8485,7 @@ dependencies = [
  "futures-util",
  "http 1.4.2",
  "http-body-util",
- "reqwest 0.12.28",
+ "reqwest",
  "serde_json",
  "tokio",
  "tracing",
@@ -8575,7 +8500,7 @@ dependencies = [
  "axum",
  "futures-util",
  "http-body-util",
- "reqwest 0.12.28",
+ "reqwest",
  "serde_json",
  "tokio",
  "tower",
@@ -8594,7 +8519,7 @@ dependencies = [
  "http 1.4.2",
  "http-body-util",
  "poem",
- "reqwest 0.13.4",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -8613,7 +8538,7 @@ dependencies = [
  "futures-util",
  "http 1.4.2",
  "http-body-util",
- "reqwest 0.13.4",
+ "reqwest",
  "rocket",
  "rocket_ws",
  "serde",
@@ -8635,7 +8560,7 @@ dependencies = [
  "futures-util",
  "http 1.4.2",
  "http-body-util",
- "reqwest 0.13.4",
+ "reqwest",
  "salvo",
  "serde",
  "serde_json",
@@ -9109,19 +9034,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "wasm-streams"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
-dependencies = [
- "futures-util",
- "js-sys",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
 ]
 
 [[package]]
