@@ -1,3 +1,9 @@
+// Tests: `tests/` needs a live RabbitMQ, started by testcontainers, and is
+// gated behind the `integration` feature. Without it the files compile to
+// nothing and `cargo test -p ulo-rpc-rabbitmq` reports a clean run of none:
+//
+//     cargo test -p ulo-rpc-rabbitmq --features integration
+
 //! RabbitMQ (AMQP 0-9-1) transport for the Ulo RPC gateway.
 //!
 //! Unlike Redis Pub/Sub, AMQP carries request-response natively: a message

@@ -1,3 +1,8 @@
+// Tests: what these macros expand to is proved by `integration-tests`,
+// which compiles and runs the generated code against a real application.
+// The unit tests under `src/` cover the parsing that fails before any
+// expansion exists to run.
+
 extern crate proc_macro2;
 
 use proc_macro::TokenStream;

@@ -27,12 +27,12 @@ each Rust one.
 | Subject | Examples |
 | --- | --- |
 | Getting started | `hello_world`, `provider_patterns`, `derive_injectable` |
-| Request lifecycle | `middleware_examples`, `error_handling`, `route_metadata` |
+| Request lifecycle | `middleware_examples`, `error_handling`, `error_telemetry`, `route_metadata` |
 | Extraction | `validation_complete_guide`, `custom_extractors`, `file_upload` |
 | Configuration | `config_module`, `config_validation` |
 | WebSocket | `websocket_chat`, `websocket_rooms`, `websocket_di`, `gateway_http_bridge` |
-| RPC | `rpc_controller`, `rpc_udp`, `rpc_nats`, `rpc_nats_client`, `rpc_tracing` |
-| gRPC | `grpc_service` |
+| RPC | `rpc_controller`, `rpc_udp`, `rpc_nats`, `rpc_nats_client`, `rpc_streaming`, `rpc_tracing` |
+| gRPC | `grpc_service`, `grpc_client` |
 | Streaming | `sse` |
 | Lifecycle and operations | `lifecycle_hooks`, `graceful_shutdown`, `health_checks`, `logging` |
 | Scoping | `request_scoped_context`, `multi_protocol_context` |
@@ -41,6 +41,33 @@ each Rust one.
 
 `middleware_examples` collects reference implementations — logging, CORS, bearer auth, timeouts,
 compression, rate limiting. They illustrate the shape rather than being production-ready.
+
+## GraphQL
+
+The GraphQL examples live in their own crates rather than here. Both `async-graphql` and `juniper`
+emit crate-anchored paths from their derive macros (`::async_graphql`, `::juniper`), which resolve
+only against a direct dependency — so an example using either has to sit where that dependency is
+declared.
+
+```bash
+cargo run -p ulo-graphql-async-graphql --example hello_world
+cargo run -p ulo-graphql-juniper --example hello_world
+```
+
+| Example | Shows |
+| --- | --- |
+| [async-graphql / hello_world](../crates/ulo-graphql-async-graphql/examples/hello_world.rs) | A schema mounted at `/graphql` with the playground |
+| [async-graphql / with_auth](../crates/ulo-graphql-async-graphql/examples/with_auth.rs) | A `ContextBuilder` reading a bearer token off the request, so every resolver sees the caller |
+| [async-graphql / subscriptions](../crates/ulo-graphql-async-graphql/examples/subscriptions.rs) | `graphql-transport-ws` over the WebSocket path |
+| [juniper / hello_world](../crates/ulo-graphql-juniper/examples/hello_world.rs) | The same mount, on juniper |
+| [juniper / with_auth](../crates/ulo-graphql-juniper/examples/with_auth.rs) | The same context, on juniper, alongside an injected service |
+
+## Adding one
+
+Write the file, add a `[[example]]` entry to [Cargo.toml](Cargo.toml), and name it in a table
+above. `coverage_ledger.rs` in the integration-test crate fails on an example that is missing
+either — an example `cargo run --example` cannot reach, or one no index points at, is an example
+nobody runs.
 
 ## Related
 

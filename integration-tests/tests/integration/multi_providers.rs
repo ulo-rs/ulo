@@ -1,3 +1,11 @@
+//! `multi(Trait)` collects every contribution under one token into the
+//! `Vec<Arc<dyn Trait>>` a consumer injects.
+//!
+//! A multi-provider's failure is quiet by construction: a contribution that
+//! never registers yields a shorter vec, and a consumer iterating it cannot
+//! tell. Each contribution form is asserted by what the collection contains,
+//! and the empty and single-element cases are covered because they are where a
+//! collection type degrades into something else.
 use crate::common::TestServer;
 use std::sync::Arc;
 use ulo::{Body as UloBody, controller, get, injectable, module, provide, routes};

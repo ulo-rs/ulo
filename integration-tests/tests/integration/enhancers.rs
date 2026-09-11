@@ -1,3 +1,12 @@
+//! Enhancer stacking and the order the pipeline runs them in: global before
+//! controller before method, and guards before interceptors before the handler.
+//!
+//! Order is the contract consumers write against — an interceptor that starts a
+//! span expects the guard's rejection inside it, and a guard reading what an
+//! earlier one wrote expects to run second. A reordering that preserves every
+//! individual enhancer's behaviour still breaks both. The attribute forms are
+//! covered alongside it, since a path-qualified or stacked attribute that is
+//! dropped looks exactly like an enhancer that chose not to act.
 use crate::common::{ExecutionOrder, TestServer};
 use ulo::async_trait;
 use ulo::context::{HandlerContext, HttpContext};

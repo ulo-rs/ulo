@@ -1,3 +1,13 @@
+//! Authenticating a GraphQL request: a `ContextBuilder` reads the bearer token
+//! off the request, and every resolver sees the caller it resolved to.
+//!
+//! The builder is where per-request state enters a schema whose resolvers take
+//! no ulo context of their own. An injected service does the verifying, so the
+//! same check is reachable from outside GraphQL.
+//!
+//!     cargo run -p ulo-graphql-async-graphql --example with_auth
+//!     # then POST with `Authorization: Bearer valid-token`
+
 use async_trait::async_trait;
 use std::sync::Arc;
 use ulo::{injectable, module, ulo_factory::UloFactory};

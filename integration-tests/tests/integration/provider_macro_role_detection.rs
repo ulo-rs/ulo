@@ -1,10 +1,12 @@
-//! `provider_factory!` and `provider_value!` register enhancer roles by detecting the trait impls
-//! on the produced value's type — no `guard`/`interceptor` argument.
+//! `provider_factory!` and `provider_value!` register a value's enhancer role
+//! by reading the trait impls on its type. Each macro is given a token and an
+//! expression, never a role.
 //!
-//! - singleton (default): the built value is probed directly in `build()`;
-//! - request-scoped: the closure's written `-> T` names the type, gating the per-request factory.
-//!
-//! Each guard below is applied with `#[use_guards("TOKEN")]` and gates a route 403/200.
+//! Detection anchors at a different point per scope: a singleton is probed on
+//! the value `build()` produced, a request-scoped provider on the `-> T` its
+//! closure writes, there being no value to probe until a request arrives. Each
+//! guard below is applied by token with `#[use_guards("TOKEN")]` and gates a
+//! route 403/200.
 
 use ulo::async_trait;
 use ulo::context::HttpContext;

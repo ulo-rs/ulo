@@ -1,3 +1,9 @@
+//! The forms a module may be declared in — attribute and impl, nested imports,
+//! selective exports — and what each makes visible.
+//!
+//! Exports decide the visibility boundary, so the claim worth pinning is
+//! negative as much as positive: a provider not exported must not resolve from
+//! an importing module, and a nested import must not flatten the tree.
 use crate::common::TestServer;
 use ulo::injector::ModuleRef;
 use ulo::{Body as UloBody, controller, get, injectable, module, routes};

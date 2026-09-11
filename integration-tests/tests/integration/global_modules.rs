@@ -1,3 +1,10 @@
+//! A module declared `global: true` exports to every module in the application
+//! without being imported.
+//!
+//! Both declaration forms are covered — the attribute and the builder — because
+//! they register through different paths, and a global that failed to register
+//! is indistinguishable from an ordinary module until some unrelated module
+//! tries to resolve from it.
 use crate::common::TestServer;
 use serial_test::serial;
 use ulo::{Body as UloBody, controller, get, injectable, module, routes};

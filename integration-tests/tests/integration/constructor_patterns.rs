@@ -1,3 +1,9 @@
+//! `#[new]` on a provider, on a controller, and taking parameters the struct
+//! never stores.
+//!
+//! A bare `new()` is not detected — construction is field injection unless an
+//! attribute says otherwise — so each shape is a distinct claim about what the
+//! macro emits. The parameter case is the one field injection cannot express.
 use crate::common::TestServer;
 use std::time::Duration;
 use ulo::{Body as UloBody, controller, get, injectable, module, new, provide, routes};

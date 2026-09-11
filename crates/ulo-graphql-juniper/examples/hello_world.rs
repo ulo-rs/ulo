@@ -1,3 +1,12 @@
+//! A juniper schema mounted at `/graphql`, with the playground served at the
+//! same path.
+//!
+//! juniper has no subscription support here and answers with
+//! `serde_json::Value`; everything else about the mount matches the
+//! async-graphql integration.
+//!
+//!     cargo run -p ulo-graphql-juniper --example hello_world
+
 use juniper::{EmptyMutation, EmptySubscription, RootNode, graphql_object};
 use ulo::{module, ulo_factory::UloFactory};
 use ulo_graphql_juniper::{DefaultContext, DefaultContextBuilder, GraphQLModule};

@@ -1,3 +1,11 @@
+//! An enhancer registered globally by string token resolves from DI with its
+//! dependencies, and runs on every request.
+//!
+//! A token-named global is the one enhancer form with no type at the
+//! registration site, so nothing connects the name to the provider until
+//! startup resolves it. The dependency is what makes that resolution
+//! observable: a global that ran without its injected tracker would still
+//! answer requests.
 use std::sync::{Arc, Mutex, OnceLock};
 use ulo::async_trait;
 use ulo::context::HttpContext;

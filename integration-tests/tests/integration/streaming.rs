@@ -1,3 +1,9 @@
+//! A request body reaches a handler as a stream, without the framework
+//! buffering it first.
+//!
+//! Buffering is invisible to an assertion on the body's content — both forms
+//! deliver the same bytes — so what is pinned is that the handler observes the
+//! stream interface and can consume it incrementally.
 use crate::common::TestServer;
 use futures_util::stream;
 use ulo::{

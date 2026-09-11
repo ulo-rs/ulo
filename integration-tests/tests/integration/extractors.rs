@@ -1,3 +1,11 @@
+//! Typed extractors on a handler: what each reads from the request, and the
+//! one-body rule that decides which may appear together.
+//!
+//! Extraction is resolved by type at the parameter, so an extractor that reads
+//! the wrong part of the request still compiles and still runs. The aliased
+//! body extractor is covered because the macro classifies by written type name;
+//! `Validated<Query<T>>` beside a body extractor is covered because it must not
+//! count against the one body.
 use crate::common::TestServer;
 use serde::Deserialize;
 use ulo::{

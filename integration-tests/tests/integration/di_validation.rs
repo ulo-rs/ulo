@@ -1,3 +1,10 @@
+//! Which scope may inject which: a singleton cannot depend on a request-scoped
+//! provider, and anything may depend on a transient one.
+//!
+//! A singleton outlives every request, so holding something request-scoped
+//! means holding one arbitrary request's state forever. That failure is
+//! invisible at runtime — the application serves correctly until two requests
+//! disagree — so it is refused when the graph is built.
 use ulo::{ProviderContext, injectable, module, ulo_factory::UloFactory};
 
 #[tokio::test]

@@ -1,3 +1,10 @@
+// Tests: conformance with the HTTP adapter SPI is proved once for all five
+// adapters in `integration-tests` — the four `*_conformance` suites, each
+// instantiated per adapter. This crate's `tests/` covers only what is
+// rocket's: the liftoff fairing that recovers an OS-assigned port, request
+// buffering, and WebSocket over `rocket_ws`. Rocket serves no separate-port
+// gateway and refuses a pre-bound listener — both proved in the suite.
+
 //! # ulo-http-rocket
 //!
 //! [Rocket](https://crates.io/crates/rocket) adapter for the ulo framework.

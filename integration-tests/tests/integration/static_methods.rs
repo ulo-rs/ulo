@@ -1,3 +1,10 @@
+//! A handler without `&self` is routed like any other, and may sit in the same
+//! impl block as handlers that take one.
+//!
+//! The macro decides per method whether to emit an instance receiver, so a
+//! mixed block is where that decision is observable. Request scope is covered
+//! because a static handler still runs inside an execution even though it holds
+//! no instance to scope.
 use crate::common::TestServer;
 use ulo::{Body as UloBody, HttpRequest, controller, get, injectable, module, routes};
 

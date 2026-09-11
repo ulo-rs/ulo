@@ -1,3 +1,10 @@
+//! A gRPC service is a dispatch target: it is reached by method and nothing may
+//! hold it. Injecting one into an ordinary provider fails resolution at init.
+//!
+//! Its token never enters the provider store, so the refusal is an unresolved
+//! dependency naming the service rather than a resolution that hands back a
+//! second, unrouted instance. Mirrors `rpc_controller_injection.rs`, which pins
+//! the same rule for RPC.
 #![allow(dead_code)]
 
 use futures_util::Stream;

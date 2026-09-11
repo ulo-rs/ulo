@@ -1,3 +1,11 @@
+//! A guard, an interceptor and a middleware are ordinary injectables: each
+//! declares dependencies and the container builds it like any other provider.
+//!
+//! The three are built at different points — a middleware before routing, a
+//! guard and an interceptor after it — so "the container can build this role"
+//! is a separate claim for each. The interceptor case also pins order, since a
+//! dependency resolved late enough would still run but observe the wrong
+//! request.
 use std::sync::{Arc, Mutex, OnceLock};
 use ulo::async_trait;
 use ulo::context::HttpContext;

@@ -1,3 +1,9 @@
+//! An RPC controller is a dispatch target: it is reached by pattern and nothing
+//! may hold it. Injecting one into an ordinary provider fails resolution at
+//! init.
+//!
+//! The test below carries the reasoning, including which half of the rule is
+//! not reachable from a test.
 #![allow(dead_code)]
 
 use ulo::context::RpcContext;

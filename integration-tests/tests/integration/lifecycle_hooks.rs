@@ -1,12 +1,11 @@
-// Startup lifecycle ordering is the contract this file exists to prove.
-//
-// The framework guarantees:
-//   module:on_module_init → provider:on_module_init
-//     → module:on_application_bootstrap → provider:on_application_bootstrap
-//
-// on_module_init fires during UloFactory::create(); on_application_bootstrap
-// fires during app.bind(). This split matters: providers that open connections
-// in init are ready by the time bootstrap runs.
+//! Startup hooks fire in one order: a module's `on_module_init` before its
+//! providers', and every `on_module_init` before any `on_application_bootstrap`.
+//!
+//! `on_module_init` runs during `UloFactory::create()` and
+//! `on_application_bootstrap` during `app.bind()`, which is the split a
+//! provider opening a connection depends on — it is ready by the time anything
+//! bootstraps against it. Shutdown is covered from both ends, since a teardown
+//! hook that runs twice is as wrong as one that never runs.
 
 use std::sync::{Arc, Mutex, OnceLock};
 

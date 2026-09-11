@@ -1,3 +1,12 @@
+//! A GraphQL schema mounted at `/graphql`, with the playground served at the
+//! same path.
+//!
+//! The schema is built and handed to `GraphQLModule::for_root` by value — it is
+//! not resolved from DI, because a schema is a value the application owns
+//! rather than a dependency it asks for.
+//!
+//!     cargo run -p ulo-graphql-async-graphql --example hello_world
+
 use ulo::{module, ulo_factory::UloFactory};
 use ulo_graphql_async_graphql::{DefaultContextBuilder, prelude::*};
 use ulo_http_axum::AxumAdapter;

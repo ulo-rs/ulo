@@ -1,3 +1,9 @@
+//! `HttpRequest` reaches a handler as a parameter, in each form a handler may
+//! ask for it.
+//!
+//! The request is taken once, so the forms are not interchangeable: one yields
+//! the parts, another the whole request including the body, and a handler that
+//! got the wrong one fails on the body it cannot read.
 use crate::common::TestServer;
 use serde::Deserialize;
 use ulo::{Body as UloBody, Request, controller, extractors::Json, get, module, post, routes};

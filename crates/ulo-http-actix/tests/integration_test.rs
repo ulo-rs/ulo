@@ -1,96 +1,169 @@
-use ulo::{
-    controller, extractors::Bytes, get, http_helpers::Body as UloBody, injectable, module, post,
-    routes,
-};
+//! What the actix↔ulo boundary does with a real socket under it, and what it
+//! does differently from every other adapter: bodies are collected in both
+//! directions before either side sees them.
+//!
+//! Route matching and the pre-routing chain are proved for every adapter at
+//! once in `integration-tests` (the four `*_conformance` suites). What is left
+//! to this file is the buffering, which no conformance case can express —
+//! passing it is what the other adapters do, and actix must fail it.
+
+use futures_util::StreamExt;
+use ulo::extractors::{BodyStream, Bytes, Path};
+use ulo::ulo_factory::UloFactory;
+use ulo::*;
 use ulo_http_actix::ActixAdapter;
+use ulo_macros::module;
 
-// Simple service for testing
-#[injectable]
-pub struct TestService;
-impl TestService {
-    pub fn get_greeting(&self) -> String {
-        "Hello from Actix!".to_string()
-    }
-
-    pub fn echo(&self, message: String) -> String {
-        format!("Echo: {}", message)
-    }
-}
-
-// Simple controller for testing
-#[controller("/test")]
-pub struct TestController {
-    #[inject]
-    test_service: TestService,
-}
+#[controller("/api")]
+pub struct ApiController;
 
 #[routes]
-impl TestController {
+impl ApiController {
     #[get("/hello")]
-    fn hello(&self, _req: ulo::HttpRequest) -> UloBody {
-        UloBody::text(self.test_service.get_greeting())
+    fn hello(&self) -> Body {
+        Body::text("hello")
+    }
+
+    #[get("/users/{id}")]
+    fn user(&self, id: Path<String>) -> Body {
+        Body::text(format!("user {}", id.0))
     }
 
     #[post("/echo")]
-    async fn echo(&self, Bytes(body): Bytes) -> UloBody {
-        let message = String::from_utf8_lossy(&body).into_owned();
-        UloBody::text(self.test_service.echo(message))
+    async fn echo(&self, body: Bytes) -> Body {
+        Body::text(format!("echo:{}", body.0.len()))
+    }
+
+    /// A `BodyStream` handler compiles and runs on actix; what reaches it is
+    /// the collected body behind a one-item stream.
+    #[post("/count")]
+    async fn count(&self, body: BodyStream) -> Body {
+        let mut total = 0u64;
+        let mut chunks = 0u32;
+        let mut s = Box::pin(body.into_stream());
+        while let Some(chunk) = s.next().await {
+            if let Ok(b) = chunk {
+                total += b.len() as u64;
+                chunks += 1;
+            }
+        }
+        Body::text(format!("count:{total} chunks:{chunks}"))
     }
 }
 
-// Test module
-#[module(
-    imports: [],
-    controllers: [TestController],
-    providers: [TestService],
-    exports: []
-)]
-impl TestModule {}
+#[module(controllers: [ApiController])]
+impl HttpOnlyModule {}
 
-#[actix_rt::test]
-async fn test_actix_e2e() {
-    use std::time::Duration;
-    use ulo::ulo_factory::UloFactory;
-
-    let port = 18081;
+/// Port 0: a fixed port makes two of these tests a race against each other and
+/// against whatever else holds the port on the machine.
+async fn start() -> std::net::SocketAddr {
+    let (tx, rx) = tokio::sync::oneshot::channel();
     let local = tokio::task::LocalSet::new();
-
-    // Spawn server in background
     local.spawn_local(async move {
-        let mut app = UloFactory::create(TestModule).await.unwrap();
-        app.use_http_adapter(ActixAdapter::new(), ("127.0.0.1", port))
+        let mut app = UloFactory::create(HttpOnlyModule).await.unwrap();
+        app.use_http_adapter(ActixAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
-        app.start().await.unwrap();
+        let bound = app.bind().await.unwrap();
+        let _ = tx.send(bound.http.expect("HTTP not bound"));
+        app.run().await;
     });
+    tokio::task::spawn_local(async move {
+        local.await;
+    });
+    rx.await.unwrap()
+}
 
-    // Run tests within the LocalSet
+#[tokio::test(flavor = "current_thread")]
+async fn http_get_path_param_route_through_actix() {
+    let local = tokio::task::LocalSet::new();
     local
-        .run_until(async move {
-            // Give the server time to start
-            tokio::time::sleep(Duration::from_millis(500)).await;
-
+        .run_until(async {
+            let addr = start().await;
+            let base = format!("http://{addr}");
             let client = reqwest::Client::new();
 
-            // Test GET request
-            let get_response = client
-                .get(format!("http://127.0.0.1:{}/test/hello", port))
+            let r = client
+                .get(format!("{base}/api/hello"))
                 .send()
                 .await
-                .expect("GET request failed");
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            assert_eq!(r.text().await.unwrap(), "hello");
 
-            assert_eq!(get_response.status(), 200);
-            assert_eq!(get_response.text().await.unwrap(), "Hello from Actix!");
-
-            // Test POST request
-            let post_response = client
-                .post(format!("http://127.0.0.1:{}/test/echo", port))
-                .body("test message")
+            let r = client
+                .get(format!("{base}/api/users/42"))
                 .send()
                 .await
-                .expect("POST request failed");
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            assert_eq!(r.text().await.unwrap(), "user 42");
+        })
+        .await;
+}
 
-            assert_eq!(post_response.status(), 200);
-            assert_eq!(post_response.text().await.unwrap(), "Echo: test message");
+/// actix-web's `PayloadConfig` default, which the adapter never raises.
+const PAYLOAD_LIMIT: usize = 262_144;
+
+/// The adapter wraps the collected payload in a single-item stream, so the body
+/// arrives whole. Asserting the byte count alone would pass on every adapter;
+/// the chunk count is what distinguishes this one.
+#[tokio::test(flavor = "current_thread")]
+async fn a_streaming_handler_receives_the_body_already_collected() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let addr = start().await;
+            let base = format!("http://{addr}");
+            let client = reqwest::Client::new();
+
+            let r = client
+                .post(format!("{base}/api/echo"))
+                .body("hello world")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            assert_eq!(r.text().await.unwrap(), "echo:11");
+
+            let payload = vec![0u8; PAYLOAD_LIMIT];
+            let r = client
+                .post(format!("{base}/api/count"))
+                .body(payload)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 200);
+            assert_eq!(
+                r.text().await.unwrap(),
+                format!("count:{PAYLOAD_LIMIT} chunks:1"),
+                "actix collects the payload before dispatch; more than one chunk \
+                 means it grew a streaming path and the adapter table is now wrong"
+            );
+        })
+        .await;
+}
+
+/// A request one byte over the limit is refused with 413 before any handler
+/// runs — the ceiling every other adapter lacks, and the reason a handler
+/// written against axum can stop working when the adapter is swapped.
+///
+/// ulo exposes no knob for it: raising the ceiling means registering an actix
+/// `PayloadConfig`, which the adapter does not surface.
+#[tokio::test(flavor = "current_thread")]
+async fn a_payload_over_the_actix_limit_is_refused() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let addr = start().await;
+            let client = reqwest::Client::new();
+
+            let r = client
+                .post(format!("http://{addr}/api/count"))
+                .body(vec![0u8; PAYLOAD_LIMIT + 1])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 413);
         })
         .await;
 }

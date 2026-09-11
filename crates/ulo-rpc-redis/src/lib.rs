@@ -1,3 +1,9 @@
+// Tests: `tests/` needs a live Redis, started by testcontainers, and is
+// gated behind the `integration` feature. Without it the files compile to
+// nothing and `cargo test -p ulo-rpc-redis` reports a clean run of none:
+//
+//     cargo test -p ulo-rpc-redis --features integration
+
 //! Redis Pub/Sub transport for the Ulo RPC gateway.
 //!
 //! Redis Pub/Sub has no native request-reply: a publisher cannot address a

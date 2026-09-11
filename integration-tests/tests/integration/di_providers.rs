@@ -1,3 +1,11 @@
+//! The `provider_value!`, `provider_factory!`, `provider_alias!` and
+//! `provider_token!` forms, each resolving to what it registered.
+//!
+//! They are four ways to reach one provider store, and a consumer picks between
+//! them by what it has to hand — a constant, a closure, an existing token, a
+//! type with no name of its own. Coverage of one says nothing about the others.
+//! The final test runs them in a single module, where a token collision between
+//! two forms would surface.
 use crate::common::TestServer;
 use std::time::Duration;
 use ulo::{

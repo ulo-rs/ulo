@@ -1,3 +1,10 @@
+//! The HTTP surface a first application uses, over a real server: async
+//! handlers, injected configuration, controller scope, extraction, and the
+//! extension bag.
+//!
+//! Each claim here is also pinned in a narrower file. What this one adds is
+//! that they hold together through one running application rather than one at a
+//! time — the arrangement a user writes on day one.
 use crate::common::TestServer;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};

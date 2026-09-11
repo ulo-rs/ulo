@@ -1,3 +1,9 @@
+//! A handler may be `async fn`, and the dispatcher awaits it before writing the
+//! response.
+//!
+//! The macro generates the same dispatch arm either way, so a sync handler
+//! passing says nothing about an async one: the failure mode is a response
+//! written from a future nobody polled.
 use crate::common::TestServer;
 use ulo::{Body as UloBody, controller, get, injectable, module, routes};
 
