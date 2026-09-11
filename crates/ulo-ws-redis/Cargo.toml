@@ -25,3 +25,8 @@ futures-util.workspace = true
 ulo-http-axum = { path = "../ulo-http-axum" }
 testcontainers.workspace = true
 testcontainers-modules = { workspace = true, features = ["redis"] }
+ulo-macros = { path = "../ulo-macros" }
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
