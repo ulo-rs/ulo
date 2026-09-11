@@ -1,37 +1,5 @@
 error: #[catch(T)] arguments must be shared references, not &mut
-  --> tests/diagnostics/catch_takes_shared_refs.rs:17:21
+  --> tests/diagnostics/catch_takes_shared_refs.rs:22:9
    |
-17 | async fn handle(_e: &mut MyError, _ctx: &HttpContext) -> HttpResponse {
-   |                     ^
-
-warning: unused import: `ulo::context::HttpContext`
- --> tests/diagnostics/catch_takes_shared_refs.rs:3:5
-  |
-3 | use ulo::context::HttpContext;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
-
-warning: unused import: `ulo::http_helpers::HttpResponse`
- --> tests/diagnostics/catch_takes_shared_refs.rs:4:5
-  |
-4 | use ulo::http_helpers::HttpResponse;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-error[E0277]: the trait bound `MyError: std::error::Error` is not satisfied
- --> tests/diagnostics/catch_takes_shared_refs.rs:8:12
-  |
-8 | pub struct MyError;
-  |            ^^^^^^^ unsatisfied trait bound
-  |
-help: the trait `std::error::Error` is not implemented for `MyError`
- --> tests/diagnostics/catch_takes_shared_refs.rs:8:1
-  |
-8 | pub struct MyError;
-  | ^^^^^^^^^^^^^^^^^^
-  = note: `MyError` implements similarly named trait `ulo::Error`, but not `std::error::Error`
-note: required by a bound in `ulo::Error`
- --> $WORKSPACE/crates/ulo/src/errors/error.rs
-  |
-  | pub trait Error: std::error::Error + Send + Sync + 'static {
-  |                  ^^^^^^^^^^^^^^^^^ required by this bound in `Error`
+22 |     _e: &mut MyError,
+   |         ^

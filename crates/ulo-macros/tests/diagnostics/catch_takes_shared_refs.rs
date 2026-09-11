@@ -1,7 +1,9 @@
 // A `#[catch(T)]` handler receives the error and the context by shared
 // reference. `&mut` is refused rather than silently accepted.
-use ulo::context::HttpContext;
-use ulo::http_helpers::HttpResponse;
+//
+// Paths are written in full and `MyError` implements `std::error::Error`, so
+// the recorded output is this diagnostic and nothing else. A fixture that also
+// trips an unrelated bound buries the message the case exists to pin.
 
 #[derive(Debug, ulo::Error)]
 #[error_kind(BadRequest)]
@@ -13,9 +15,14 @@ impl std::fmt::Display for MyError {
     }
 }
 
+impl std::error::Error for MyError {}
+
 #[ulo::catch(MyError)]
-async fn handle(_e: &mut MyError, _ctx: &HttpContext) -> HttpResponse {
-    HttpResponse::default()
+async fn handle(
+    _e: &mut MyError,
+    _ctx: &ulo::context::HttpContext,
+) -> ulo::http_helpers::HttpResponse {
+    ulo::http_helpers::HttpResponse::default()
 }
 
 fn main() {}

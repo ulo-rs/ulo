@@ -12,15 +12,23 @@
 //! produce. Regenerate after an intended change:
 //!
 //! ```text
-//! TRYBUILD=overwrite cargo test -p ulo-macros --test diagnostics
+//! rustup run 1.98.1 -- env TRYBUILD=overwrite \
+//!     cargo test -p ulo-macros --test diagnostics
 //! ```
+//!
+//! The version matters. Three of these snapshots carry rustc's own rendering
+//! below the macro's text, and rustc rewords its half every few releases, so
+//! CI runs this target on a pinned compiler rather than on `stable` — see the
+//! `diagnostics` job in `.github/workflows/ci.yml`, which holds the version
+//! and the reason. Regenerating on a different compiler produces a snapshot
+//! that only fails in CI.
 //!
 //! Writing a case is not enough on its own. trybuild accepts any stable
 //! output, so a case that stops reaching its diagnostic and starts failing
 //! earlier — a parse error, a missing import — still passes once its snapshot
-//! is regenerated. `every_case_reaches_its_diagnostic` pins the words, and it
-//! is what caught `#[websocket_gateway]`'s migration error being unreachable:
-//! the arg parser left the inline struct unconsumed, so syn reported
+//! is regenerated. `every_case_reaches_its_diagnostic` pins the words instead,
+//! and it is the check that reports a case of that kind. `#[websocket_gateway]`
+//! had one: its arg parser left the inline struct unconsumed, so syn reported
 //! "unexpected token" and the message naming the new form never ran.
 
 use std::collections::BTreeSet;

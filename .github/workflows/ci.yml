@@ -73,12 +73,16 @@ jobs:
       # that actix collects bodies rather than streaming them.
       - run: >
           cargo test --locked --lib --tests
-          -p ulo-config -p ulo-health -p ulo-macros -p ulo-cli
+          -p ulo-config -p ulo-health -p ulo-cli
           -p ulo-http-axum -p ulo-http-actix -p ulo-http-poem
           -p ulo-http-salvo -p ulo-http-rocket
           -p ulo-rpc-tcp -p ulo-rpc-udp -p ulo-rpc-nats -p ulo-rpc-redis
           -p ulo-rpc-rabbitmq -p ulo-rpc-mqtt -p ulo-rpc-kafka
           -p ulo-ws-tungstenite -p ulo-ws-redis -p ulo-grpc
+      # ulo-macros' unit tests only. Its `diagnostics` target compares rustc's
+      # rendering and runs on a pinned compiler in the job below, so that a
+      # reworded diagnostic cannot fail an unrelated pull request here.
+      - run: cargo test -p ulo-macros --lib --locked
       # Doc examples compile in no other job: `--all-targets` skips them and the
       # docs job renders without running them. Only examples not marked `ignore`
       # are covered.
@@ -125,6 +129,25 @@ jobs:
           test -n "$pkgs" || { echo "no crate declares ${{ matrix.rust }}"; exit 1; }
           echo "checking: $pkgs"
           cargo check --all-features --locked $pkgs
+
+  diagnostics:
+    name: macro diagnostics
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned on purpose, and the one pin in this file that is not read from a
+      # manifest. `tests/diagnostics/*.stderr` records rustc's rendering as well
+      # as the macros' own text, and rustc rewords its half roughly once every
+      # three minor versions: on `stable` that arrives as a red build on a pull
+      # request that changed nothing related. Bumping this version is its own
+      # change, where the snapshot diff is the thing being reviewed — which is
+      # when a diagnostic that got worse is actually noticed.
+      #
+      # Regenerate after an intended change, on this same version:
+      #     TRYBUILD=overwrite cargo test -p ulo-macros --test diagnostics
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p ulo-macros --test diagnostics --locked
 
   scaffold:
     name: cli scaffold
