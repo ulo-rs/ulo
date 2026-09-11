@@ -2,6 +2,7 @@
 //! is not a type. The handle is the same `ModuleRef` an injected field gets:
 //! it resolves providers in that module's scope.
 
+use ulo::ResolutionError;
 use ulo::ulo_factory::UloFactory;
 use ulo::{DynamicModule, injectable, module, provider_value};
 use ulo_config::{Config, ConfigModule, ConfigService};
@@ -75,10 +76,14 @@ async fn a_static_module_is_found_by_type() {
     let service: FeatureService = feature.get().await.unwrap();
     assert_eq!(service.label, "feature");
 
-    assert!(
-        feature.get::<RootService>().await.is_err(),
-        "strict mode stays inside the module's scope"
-    );
+    match feature.get::<RootService>().await.err() {
+        Some(ResolutionError::ProviderNotFound { module, .. }) => assert_eq!(
+            module.as_deref().map(|m| m.contains("FeatureModule")),
+            Some(true),
+            "strict mode reports the one module it searched"
+        ),
+        other => panic!("strict mode stays inside the module's scope, got: {other:?}"),
+    }
 }
 
 /// A generic library module is found by its written type.
@@ -108,7 +113,8 @@ async fn a_fingerprinted_module_is_found_by_type() {
 #[module(imports: [gql("/gql-one"), gql("/gql-two")])]
 impl TwoGqlModule {}
 
-/// Two fingerprinted modules of one type are ambiguous, and the error says so.
+/// Two fingerprinted modules of one type are ambiguous, and the error carries
+/// both keys.
 #[tokio::test]
 async fn two_fingerprinted_modules_of_one_type_are_ambiguous() {
     let app = UloFactory::create(TwoGqlModule).await.unwrap();
@@ -117,10 +123,44 @@ async fn two_fingerprinted_modules_of_one_type_are_ambiguous() {
         .get_module::<GraphQLModule<Query, EmptyMutation, EmptySubscription, DefaultContextBuilder>>()
         .await
         .expect_err("two modules share the type");
-    assert!(
-        err.to_string().contains("ambiguous"),
-        "the error must say the type is ambiguous, got: {err}"
+
+    match err {
+        ResolutionError::AmbiguousModule { candidates, .. } => {
+            assert_eq!(
+                candidates.len(),
+                2,
+                "both modules are named: {candidates:?}"
+            )
+        }
+        other => panic!("two modules share the type, got: {other:?}"),
+    }
+}
+
+/// The keys an ambiguity carries are addresses: a caller reads them off the
+/// error and resolves each module without parsing a message.
+#[tokio::test]
+async fn an_ambiguity_hands_back_keys_that_resolve() {
+    let app = UloFactory::create(TwoGqlModule).await.unwrap();
+
+    let err = app
+        .get_module::<GraphQLModule<Query, EmptyMutation, EmptySubscription, DefaultContextBuilder>>()
+        .await
+        .expect_err("two modules share the type");
+
+    let ResolutionError::AmbiguousModule { candidates, .. } = err else {
+        panic!("two modules share the type");
+    };
+
+    assert_eq!(
+        candidates.len(),
+        2,
+        "the recovery needs both keys to be there: {candidates:?}"
     );
+    for key in &candidates {
+        app.get_module_by_id(key)
+            .await
+            .unwrap_or_else(|e| panic!("key `{key}` from the error must resolve, got: {e}"));
+    }
 }
 
 /// A `DynamicModule`'s identity base is its builder-given name; the base
@@ -160,10 +200,13 @@ async fn an_unimported_type_is_a_named_error() {
         .get_module::<NeverImported>()
         .await
         .expect_err("nothing imported this type");
-    assert!(
-        err.to_string().contains("NeverImported"),
-        "the error must name the missing identity, got: {err}"
-    );
+    match err {
+        ResolutionError::ModuleNotFound { id } => assert!(
+            id.contains("NeverImported"),
+            "the error must name the missing identity, got: {id}"
+        ),
+        other => panic!("an unimported type is a module-not-found, got: {other:?}"),
+    }
 
     app.get_module_by_id("NoSuchBase")
         .await

@@ -110,11 +110,13 @@ async fn without_an_execution_there_is_nothing_to_resolve_in() {
     let error = app
         .resolve::<Stamp>(&ProviderContext::None)
         .await
-        .expect_err("`None` is the absence of an execution, not one to build in")
-        .to_string();
+        .expect_err("`None` is the absence of an execution, not one to build in");
 
-    assert!(
-        error.contains("Stamp") && error.contains("request-scoped"),
-        "the refusal should name the provider and its scope, got: {error}"
-    );
+    match error {
+        ulo::ResolutionError::RequestScopeOutsideExecution { token } => assert!(
+            token.contains("Stamp"),
+            "the refusal names the provider, got: {token}"
+        ),
+        other => panic!("the refusal is a scope refusal, got: {other:?}"),
+    }
 }
