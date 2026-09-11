@@ -60,3 +60,4 @@ the history is part of the value.
 - [0042 — A gRPC handler asks the type what the wire carries](0042-a-grpc-handler-asks-the-type-what-the-wire-carries.md)
 - [0043 — A gRPC method's shape comes from the proto](0043-a-grpc-method-s-shape-comes-from-the-proto.md)
 - [0044 — The framework is named ulo](0044-the-framework-is-named-ulo.md)
+- [0045 — A public error names what a caller can act on](0045-a-public-error-names-what-a-caller-can-act-on.md)
