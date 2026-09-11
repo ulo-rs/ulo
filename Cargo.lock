@@ -95,7 +95,6 @@ version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92589714878ca59a7626ea19734f0e07a6a875197eec751bb5d3f99e64998c63"
 dependencies = [
- "actix-macros",
  "futures-core",
  "tokio",
 ]
@@ -8479,7 +8478,6 @@ dependencies = [
 name = "ulo-http-actix"
 version = "0.1.0"
 dependencies = [
- "actix-rt",
  "actix-web",
  "anyhow",
  "futures-util",
@@ -8490,6 +8488,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ulo",
+ "ulo-macros",
 ]
 
 [[package]]
@@ -8501,11 +8500,14 @@ dependencies = [
  "futures-util",
  "http-body-util",
  "reqwest",
+ "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite 0.28.0",
  "tower",
  "tracing",
  "ulo",
+ "ulo-macros",
  "uuid",
 ]
 
