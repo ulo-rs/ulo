@@ -3632,6 +3632,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 1.4.2",
+ "juniper",
  "prost",
  "protoc-bin-vendored",
  "rand 0.8.7",
@@ -3657,6 +3658,7 @@ dependencies = [
  "ulo-build",
  "ulo-config",
  "ulo-graphql-async-graphql",
+ "ulo-graphql-juniper",
  "ulo-grpc",
  "ulo-http-actix",
  "ulo-http-axum",
@@ -8376,6 +8378,7 @@ name = "ulo-db-prisma"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "tokio",
  "ulo",
 ]
 
