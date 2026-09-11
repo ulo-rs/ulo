@@ -1,3 +1,9 @@
+// Tests: `tests/startup.rs` is hermetic — startup-failure reporting and
+// connection-string redaction, contacting no server — and runs by default.
+// `tests/health.rs` needs a live Postgres and is gated:
+//
+//     cargo test -p ulo-db-sqlx --features integration
+
 mod redact;
 
 #[cfg(feature = "health")]

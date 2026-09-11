@@ -1,3 +1,9 @@
+// Tests: conformance with the HTTP adapter SPI is proved once for all five
+// adapters in `integration-tests` — the four `*_conformance` suites, each
+// instantiated per adapter. This crate's `tests/` covers only what is
+// actix's: collecting bodies in both directions, and the 256 KiB payload
+// ceiling that follows from it. actix serves no WebSocket at all.
+
 //! # ulo-http-actix
 //!
 //! Actix-web adapter for the Ulo framework.

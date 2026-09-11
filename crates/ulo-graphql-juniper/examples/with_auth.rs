@@ -1,3 +1,12 @@
+//! Authenticating a juniper request: a `ContextBuilder` reads the bearer token
+//! off the request and builds the context each resolver is given.
+//!
+//! Both services the context needs are injected, so the context is assembled
+//! from DI rather than constructed inside the resolver that happens to need it.
+//!
+//!     cargo run -p ulo-graphql-juniper --example with_auth
+//!     # then POST with `Authorization: Bearer valid-token`
+
 use async_trait::async_trait;
 use juniper::{EmptySubscription, FieldResult, RootNode, graphql_object};
 use std::sync::Arc;

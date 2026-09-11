@@ -1,3 +1,13 @@
+//! A GraphQL subscription over WebSocket, at a path of its own.
+//!
+//! `with_subscription_path` mounts the `graphql-transport-ws` endpoint beside
+//! the query path; the subprotocol is enforced, so a client connecting without
+//! it is refused rather than left waiting.
+//!
+//!     cargo run -p ulo-graphql-async-graphql --example subscriptions
+//!     # queries at http://localhost:3000/graphql
+//!     # subscriptions at ws://localhost:3000/graphql/ws
+
 use futures::stream::{self, Stream};
 use ulo::{module, ulo_factory::UloFactory};
 use ulo_graphql_async_graphql::prelude::*;

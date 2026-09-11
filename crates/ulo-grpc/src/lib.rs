@@ -1,3 +1,8 @@
+// Tests: this crate has no `tests/` of its own. Nothing it does is
+// observable without an application dispatching through it, so its
+// behaviour is proved in `integration-tests`:
+// the fourteen `grpc_*` files, plus `rpc_grpc*` for the macro forms.
+
 //! gRPC transport adapter for the [Ulo](https://github.com/ulo-rs/ulo) framework.
 //!
 //! Drives a [`tonic`](https://docs.rs/tonic) server through Ulo's bind /

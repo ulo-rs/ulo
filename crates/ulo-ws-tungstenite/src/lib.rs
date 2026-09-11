@@ -1,3 +1,8 @@
+// Tests: this crate has no `tests/` of its own. Nothing it does is
+// observable without an application dispatching through it, so its
+// behaviour is proved in `integration-tests`:
+// `ws_listener_adoption.rs`, and the separate-port half of the `ws_*` files.
+
 //! tokio-tungstenite adapter for standalone WebSocket deployment with the Ulo framework.
 //!
 //! Provides `TungsteniteAdapter`, which implements `WebSocketAdapter` for separate-port

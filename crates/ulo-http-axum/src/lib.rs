@@ -1,3 +1,8 @@
+// Tests: conformance with the HTTP adapter SPI is proved once for all five
+// adapters in `integration-tests` — the four `*_conformance` suites, each
+// instantiated per adapter. This crate's `tests/` covers only what is
+// axum's: body streaming, and WebSocket upgrade on both port modes.
+
 //! # ulo-http-axum
 //!
 //! Axum adapter for the Ulo framework.

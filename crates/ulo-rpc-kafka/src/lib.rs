@@ -1,3 +1,11 @@
+// Tests: `tests/` needs a live Kafka, started by testcontainers, and is
+// gated behind the `integration` feature. Without it the files compile to
+// nothing and `cargo test -p ulo-rpc-kafka` reports a clean run of none:
+//
+//     cargo test -p ulo-rpc-kafka --features integration
+//
+// There is no reconnect suite here; redis, mqtt and rabbitmq each have one.
+
 //! Apache Kafka transport for the Ulo RPC gateway.
 //!
 //! Kafka is an event log, not a request-response bus, but it carries message

@@ -171,14 +171,19 @@ All four return a `RedisBroadcastTarget`.
 
 ## Running the tests
 
-The integration tests require Docker:
+The tests start a Redis container through testcontainers, so they need Docker and are gated behind
+the `integration` feature:
 
 ```bash
-cargo test -p ulo-ws-redis -- --ignored
+cargo test -p ulo-ws-redis --features integration
 ```
 
-On Rancher Desktop the Docker socket is not at the default path, so you need to point testcontainers at it:
+Without the feature the file compiles to nothing and cargo reports `0 passed; ok` — a clean run
+that proved nothing.
+
+On Rancher Desktop the Docker socket is not at the default path, so testcontainers has to be told
+where it is:
 
 ```bash
-DOCKER_HOST="unix://${HOME}/.rd/docker.sock" cargo test -p ulo-ws-redis -- --ignored
+DOCKER_HOST="unix://${HOME}/.rd/docker.sock" cargo test -p ulo-ws-redis --features integration
 ```

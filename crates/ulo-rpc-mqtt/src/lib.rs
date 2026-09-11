@@ -1,3 +1,9 @@
+// Tests: `tests/` needs a live MQTT broker, started by testcontainers, and
+// is gated behind the `integration` feature. Without it the files compile
+// to nothing and `cargo test -p ulo-rpc-mqtt` reports a clean run of none:
+//
+//     cargo test -p ulo-rpc-mqtt --features integration
+
 //! MQTT v5 transport for the Ulo RPC gateway.
 //!
 //! MQTT v5 carries request-response natively: a PUBLISH can name a

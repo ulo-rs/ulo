@@ -1,3 +1,7 @@
+// Tests: none. The crate is not a dependency of `integration-tests`, so its
+// two examples are the only thing that compiles it against a running
+// application. Tracked in `coverage_ledger.rs`.
+
 /*!
 # ulo-graphql-juniper
 

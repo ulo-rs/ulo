@@ -1,3 +1,9 @@
+// Tests: `tests/` needs a live NATS, started by testcontainers, and is
+// gated behind the `integration` feature. Without it the files compile to
+// nothing and `cargo test -p ulo-rpc-nats` reports a clean run of none:
+//
+//     cargo test -p ulo-rpc-nats --features integration
+
 mod nats_adapter;
 mod nats_client_transport;
 mod servers;
