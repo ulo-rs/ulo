@@ -140,3 +140,115 @@ async fn a_panicking_connect_guard_closes_as_a_server_fault() {
     );
     assert_eq!(code, 1011);
 }
+
+// ── what a connect does not run ────────────────────────────────────────────
+
+/// Records every enhancer that ran, so the absence of one is observable rather
+/// than merely unasserted.
+static CONNECT_RAN: std::sync::OnceLock<std::sync::Mutex<Vec<&'static str>>> =
+    std::sync::OnceLock::new();
+
+fn connect_ran() -> &'static std::sync::Mutex<Vec<&'static str>> {
+    CONNECT_RAN.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+#[ulo::injectable]
+pub struct RecordingGuard {}
+
+#[ulo::async_trait]
+impl ulo::traits_helpers::Guard<ulo::context::WsContext> for RecordingGuard {
+    async fn can_activate(&self, ctx: &ulo::context::WsContext) -> bool {
+        connect_ran()
+            .lock()
+            .unwrap()
+            .push(if ctx.event() == "connect" {
+                "guard:connect"
+            } else {
+                "guard:message"
+            });
+        true
+    }
+}
+
+#[ulo::injectable]
+pub struct RecordingInterceptor {}
+
+#[ulo::async_trait]
+impl ulo::traits_helpers::Interceptor<ulo::context::WsContext, WsHandlerResult>
+    for RecordingInterceptor
+{
+    async fn intercept(
+        &self,
+        ctx: &ulo::context::WsContext,
+        next: Box<
+            dyn ulo::traits_helpers::InterceptorNext<ulo::context::WsContext, WsHandlerResult>,
+        >,
+    ) -> WsHandlerResult {
+        connect_ran()
+            .lock()
+            .unwrap()
+            .push(if ctx.event() == "connect" {
+                "interceptor:connect"
+            } else {
+                "interceptor:message"
+            });
+        next.run(ctx).await
+    }
+}
+
+#[websocket_gateway("/ws-skips")]
+pub struct SkipGateway {}
+
+#[subscriptions]
+#[use_guards(RecordingGuard)]
+#[use_interceptors(RecordingInterceptor)]
+impl SkipGateway {
+    #[new]
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    #[subscribe_message("ping")]
+    async fn ping(&self) -> WsHandlerResult {
+        Ok(WsMessage::text("pong").into())
+    }
+}
+
+#[module(providers: [SkipGateway, RecordingGuard, RecordingInterceptor])]
+struct SkipModule;
+
+/// A connect runs its guards and nothing else. An interceptor wraps a call and
+/// its answer; a connection has neither, and refusing one is answered by not
+/// opening it. The same enhancers do run on the message that follows, which is
+/// what makes the absence a decision rather than a registration that failed.
+#[serial]
+#[tokio_localset_test::localset_test]
+async fn a_connect_runs_guards_and_not_interceptors() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    connect_ran().lock().unwrap().clear();
+
+    let server = TestServer::start(SkipModule).await;
+    let url = format!("ws://127.0.0.1:{}/ws-skips", server.port);
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+
+    assert_eq!(
+        *connect_ran().lock().unwrap(),
+        vec!["guard:connect"],
+        "a connect consults its guards and no interceptor"
+    );
+
+    ws.send(Message::Text(r#"{"event":"ping"}"#.to_string().into()))
+        .await
+        .unwrap();
+    let reply = ws.next().await.unwrap().unwrap();
+    assert_eq!(reply.to_text().unwrap(), "pong");
+
+    assert_eq!(
+        *connect_ran().lock().unwrap(),
+        vec!["guard:connect", "guard:message", "interceptor:message"],
+        "the same interceptor does run for a message, so its absence above is \
+         the connect path's decision rather than a registration that failed"
+    );
+}
