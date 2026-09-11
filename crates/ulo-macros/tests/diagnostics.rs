@@ -66,6 +66,10 @@ const DOCUMENTED: &[(&str, &str)] = &[
         "both read the request body, and it can only be read once",
     ),
     (
+        "option_forwards_consumes",
+        "both read the request body, and it can only be read once",
+    ),
+    (
         "rpc_params_are_extractors",
         "is not an extractor for `RpcContext`",
     ),

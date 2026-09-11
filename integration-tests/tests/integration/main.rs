@@ -1,3 +1,4 @@
+mod body_already_read;
 mod cancellation;
 mod common;
 
@@ -29,6 +30,7 @@ mod error_handler_precedence;
 mod extension_bag_reaches_providers;
 mod extension_bus;
 mod extension_di;
+mod extraction_failure_shape;
 mod extractors;
 mod global_chain_conformance;
 mod global_enhancers;
