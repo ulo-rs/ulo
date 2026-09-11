@@ -142,4 +142,15 @@ mod tests {
 
         assert_eq!(ctx.extensions().get::<Principal>(), Some(Principal("bob")));
     }
+
+    /// The wire carries no deadline on this transport, so the trait's default
+    /// stands. gRPC is the one context that overrides it, and a transport that
+    /// started answering `Some` here would be inventing a budget no caller set.
+    #[test]
+    fn a_context_with_nothing_to_read_has_no_deadline() {
+        let parts = http::Request::builder().body(()).unwrap().into_parts().0;
+        let ctx = HttpContext::from_parts(parts);
+        assert!(ctx.deadline().is_none());
+        assert!(ctx.time_remaining().is_none());
+    }
 }

@@ -26,16 +26,34 @@ use ulo_macros::{
     controller, message_pattern, new, patterns, subscribe_message, subscriptions, websocket_gateway,
 };
 
+use ulo::context::HandlerContext;
+
 use crate::common::TestServer;
 
+/// An RPC pattern no controller claims reached nothing that could have
+/// declared metadata, so `metadata()` is `None`. Contrast the WebSocket
+/// handler below, where the event did reach a gateway.
 #[catch(Unrouted)]
-async fn rpc_unrouted(err: &Unrouted, _ctx: &RpcContext) -> RpcData {
-    RpcData::from_serialize(&serde_json::json!({ "missing": err.target })).unwrap()
+async fn rpc_unrouted(err: &Unrouted, ctx: &RpcContext) -> RpcData {
+    RpcData::from_serialize(&serde_json::json!({
+        "missing": err.target,
+        "metadata_is_none": ctx.metadata().is_none(),
+    }))
+    .unwrap()
 }
 
+/// A WebSocket event nothing subscribes to still arrived at a gateway, so the
+/// gateway's impl-block declaration is the answer and `metadata()` is `Some` —
+/// empty here because this gateway declares nothing, and the gateway's entries
+/// where it does. `None` would mean nothing was reached at all, which is the
+/// RPC case above and not this one.
 #[catch(Unrouted)]
-async fn ws_unrouted(err: &Unrouted, _ctx: &WsContext) -> WsMessage {
-    WsMessage::text(format!("missing:{}", err.target))
+async fn ws_unrouted(err: &Unrouted, ctx: &WsContext) -> WsMessage {
+    WsMessage::text(format!(
+        "missing:{}:metadata_none={}",
+        err.target,
+        ctx.metadata().is_none()
+    ))
 }
 
 // ── RPC ────────────────────────────────────────────────────────────────────
@@ -113,6 +131,11 @@ async fn an_unrouted_rpc_pattern_is_claimable() {
         reply["response"]["missing"], "nobody.claims.this",
         "reply: {reply}"
     );
+    assert_eq!(
+        reply["response"]["metadata_is_none"], true,
+        "a call no handler claimed declares nothing, so metadata() is None \
+         rather than an empty Metadata: {reply}"
+    );
 }
 
 /// Unclaimed, the caller sees the frame it always saw.
@@ -173,7 +196,9 @@ async fn an_unrouted_ws_event_is_claimable() {
 
     assert_eq!(
         ask_ws(factory, "nobody-claims-this").await,
-        "missing:nobody-claims-this"
+        "missing:nobody-claims-this:metadata_none=false",
+        "an unrouted WS event still reached a gateway, so it inherits that \
+         gateway's declaration rather than answering None"
     );
 }
 

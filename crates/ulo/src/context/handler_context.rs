@@ -21,8 +21,14 @@ pub trait HandlerContext: Send + Sync {
     /// the handler, with the handler winning where both name one type.
     ///
     /// Distinct from the wire fields a call arrived with, which are `headers()` on the transports
-    /// that have them. `None` for global handlers (404, error filters) that never bind to one
-    /// handler; a type nothing declared reads back as absent rather than as an error.
+    /// that have them. A type nothing declared reads back as absent rather than as an error.
+    ///
+    /// `None` when nothing was reached that could have declared anything — an RPC pattern no
+    /// controller claims, an HTTP path no route matches. It is **not** `None` merely because no
+    /// handler ran: a WebSocket event nothing subscribes to still arrived at a gateway, and that
+    /// gateway's impl-block declaration is the answer, the same entries a routed event would
+    /// inherit. The rule is the overlay's, one level up: the most specific declaration that exists,
+    /// and `None` only when none does.
     fn metadata(&self) -> Option<&Metadata>;
 
     /// Per-message typed key-value bag: the channel from one pipeline stage to
@@ -55,12 +61,16 @@ pub trait HandlerContext: Send + Sync {
     fn deadline(&self) -> Option<Instant> {
         None
     }
-}
 
-impl dyn HandlerContext + '_ {
     /// Time remaining until [`deadline`](HandlerContext::deadline), if one is
-    /// set. Returns `Duration::ZERO` if the deadline has already passed.
-    pub fn time_remaining(&self) -> Option<Duration> {
+    /// set. `Duration::ZERO` once the deadline has passed, rather than a
+    /// negative span or a panic.
+    ///
+    /// A provided method rather than an inherent one on `dyn HandlerContext`:
+    /// the only transport with a deadline to read is gRPC, and a gRPC handler
+    /// is handed `&GrpcContext` (ADR-0038), which an inherent `dyn` impl does
+    /// not reach.
+    fn time_remaining(&self) -> Option<Duration> {
         self.deadline()
             .map(|d| d.saturating_duration_since(Instant::now()))
     }
