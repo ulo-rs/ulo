@@ -107,3 +107,4 @@ mod ws_listener_adoption;
 mod ws_panic_recovery;
 mod ws_request_scope;
 mod ws_session;
+mod ws_tail;
