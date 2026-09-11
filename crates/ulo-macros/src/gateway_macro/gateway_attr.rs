@@ -39,6 +39,11 @@ impl syn::parse::Parse for GatewayArgs {
         while !input.is_empty() {
             if input.peek(syn::Token![pub]) || input.peek(syn::Token![struct]) {
                 saw_inline_struct = true;
+                // Drain the struct. `parse2` requires the whole stream
+                // consumed, and leaving it would fail with syn's own
+                // "unexpected token" before the migration error below is
+                // reached — which is what a reader of the old form got.
+                input.parse::<proc_macro2::TokenStream>()?;
                 break;
             }
 
