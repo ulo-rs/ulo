@@ -8338,6 +8338,7 @@ dependencies = [
 name = "ulo-db-diesel"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "diesel",
  "diesel-async",
@@ -8358,11 +8359,13 @@ dependencies = [
 name = "ulo-db-mongodb"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures",
  "futures-timer",
  "mongodb",
  "reqwest",
+ "serde",
  "serde_json",
  "testcontainers",
  "testcontainers-modules",
@@ -8377,15 +8380,19 @@ dependencies = [
 name = "ulo-db-prisma"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
+ "serde_json",
  "tokio",
  "ulo",
+ "ulo-http-axum",
 ]
 
 [[package]]
 name = "ulo-db-redis"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures",
  "futures-timer",
@@ -8405,6 +8412,7 @@ dependencies = [
 name = "ulo-db-seaorm"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures",
  "futures-timer",
@@ -8425,6 +8433,7 @@ dependencies = [
 name = "ulo-db-sqlx"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures",
  "futures-timer",
@@ -8465,6 +8474,7 @@ dependencies = [
  "ulo-config",
  "ulo-grpc",
  "ulo-health",
+ "ulo-http-actix",
  "ulo-http-axum",
  "ulo-http-poem",
  "ulo-http-rocket",
@@ -8669,6 +8679,7 @@ dependencies = [
  "anyhow",
  "futures",
  "rdkafka",
+ "serde",
  "serde_json",
  "testcontainers",
  "testcontainers-modules",
@@ -8676,6 +8687,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "ulo",
+ "ulo-macros",
  "ulo-rpc-conformance",
 ]
 
@@ -8686,6 +8698,7 @@ dependencies = [
  "anyhow",
  "futures",
  "rumqttc",
+ "serde",
  "serde_json",
  "testcontainers",
  "testcontainers-modules",
@@ -8693,6 +8706,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "ulo",
+ "ulo-macros",
  "ulo-rpc-conformance",
 ]
 
@@ -8746,6 +8760,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "ulo",
+ "ulo-macros",
  "ulo-rpc-conformance",
 ]
 
@@ -8777,6 +8792,7 @@ dependencies = [
 name = "ulo-ws-redis"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures-util",
  "redis",
@@ -8788,6 +8804,7 @@ dependencies = [
  "tracing",
  "ulo",
  "ulo-http-axum",
+ "ulo-macros",
 ]
 
 [[package]]
@@ -8797,10 +8814,13 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures-util",
+ "serde",
+ "serde_json",
  "tokio",
  "tokio-tungstenite 0.28.0",
  "tracing",
  "ulo",
+ "ulo-macros",
 ]
 
 [[package]]

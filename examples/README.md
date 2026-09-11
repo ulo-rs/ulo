@@ -28,7 +28,7 @@ each Rust one.
 | --- | --- |
 | Getting started | `hello_world`, `provider_patterns`, `derive_injectable` |
 | Request lifecycle | `middleware_examples`, `error_handling`, `error_telemetry`, `route_metadata` |
-| Extraction | `validation_complete_guide`, `custom_extractors`, `file_upload` |
+| Extraction | `validation_complete_guide`, `custom_extractors`, `extractors_for_request_metadata`, `extractors_that_compose`, `file_upload` |
 | Configuration | `config_module`, `config_validation` |
 | WebSocket | `websocket_chat`, `websocket_rooms`, `websocket_di`, `gateway_http_bridge` |
 | RPC | `rpc_controller`, `rpc_udp`, `rpc_nats`, `rpc_nats_client`, `rpc_streaming`, `rpc_tracing` |
@@ -36,18 +36,61 @@ each Rust one.
 | Streaming | `sse` |
 | Lifecycle and operations | `lifecycle_hooks`, `graceful_shutdown`, `health_checks`, `logging` |
 | Scoping | `request_scoped_context`, `multi_protocol_context` |
-| Adapters | `salvo_poc`, `poem_poc`, `rocket_poc` |
+| Adapters | `salvo_poc`, `poem_poc`, `rocket_poc`, `actix_poc` |
 | Deployment | `socket_activation` |
 
 `middleware_examples` collects reference implementations — logging, CORS, bearer auth, timeouts,
 compression, rate limiting. They illustrate the shape rather than being production-ready.
 
-## GraphQL
+## Integrations, in their own crates
 
-The GraphQL examples live in their own crates rather than here. Both `async-graphql` and `juniper`
-emit crate-anchored paths from their derive macros (`::async_graphql`, `::juniper`), which resolve
-only against a direct dependency — so an example using either has to sit where that dependency is
-declared.
+An integration's example lives with the integration. Two reasons: the
+dependency is already declared there, and adding six database drivers and three
+brokers to this crate would make every `cargo check` of it build all of them.
+The GraphQL pair have a third — both sets of derive macros emit crate-anchored
+paths (`::async_graphql`, `::juniper`) that resolve only against a direct
+dependency.
+
+Each needs the service it talks to; the file's header carries the command,
+including the container to start.
+
+### Databases
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@localhost/postgres \
+    cargo run -p ulo-db-seaorm --example quick_start
+```
+
+| Example | Shows |
+| --- | --- |
+| [seaorm / quick_start](../crates/ulo-db-seaorm/examples/quick_start.rs) | `DatabaseConnection` injected by type, behind a startup check |
+| [sqlx / quick_start](../crates/ulo-db-sqlx/examples/quick_start.rs) | A pool by type, and a second pool by name |
+| [diesel / quick_start](../crates/ulo-db-diesel/examples/quick_start.rs) | A deadpool pool, with a connection checked out per query |
+| [mongodb / quick_start](../crates/ulo-db-mongodb/examples/quick_start.rs) | A `Database` handle, collections typed at the call site |
+| [redis / quick_start](../crates/ulo-db-redis/examples/quick_start.rs) | `ConnectionManager`, which reconnects on its own |
+| [prisma / quick_start](../crates/ulo-db-prisma/examples/quick_start.rs) | A generated client registered by a closure, and why it has no startup check |
+
+Both `sqlx` and `diesel` need their driver feature: `--features postgres`.
+
+### Brokers
+
+| Example | Shows |
+| --- | --- |
+| [rpc-redis / orders](../crates/ulo-rpc-redis/examples/orders.rs) | Request-response emulated over Pub/Sub with a reply channel |
+| [rpc-mqtt / orders](../crates/ulo-rpc-mqtt/examples/orders.rs) | MQTT v5's native `response_topic` and `correlation_data` |
+| [rpc-kafka / orders](../crates/ulo-rpc-kafka/examples/orders.rs) | A private reply topic named in the `ulo-reply-to` header |
+
+The handler side is identical in all three, and identical to `rpc_controller`
+and `rpc_nats` here — what changes between transports is the adapter.
+
+### WebSocket
+
+| Example | Shows |
+| --- | --- |
+| [ws-redis / broadcast_across_processes](../crates/ulo-ws-redis/examples/broadcast_across_processes.rs) | Reaching clients held by another process, and why `send()` returns `Ok(0)` |
+| [ws-tungstenite / standalone_gateway](../crates/ulo-ws-tungstenite/examples/standalone_gateway.rs) | WebSocket with no HTTP server beside it |
+
+### GraphQL
 
 ```bash
 cargo run -p ulo-graphql-async-graphql --example hello_world

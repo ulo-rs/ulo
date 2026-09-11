@@ -13,4 +13,7 @@ ulo = { path = "../ulo", default-features = false }
 async-trait.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+anyhow.workspace = true
+serde_json.workspace = true
+ulo-http-axum = { path = "../ulo-http-axum" }

@@ -15,6 +15,7 @@ ulo-http-axum = { path = "../crates/ulo-http-axum" }
 ulo-http-salvo = { path = "../crates/ulo-http-salvo" }
 ulo-http-poem = { path = "../crates/ulo-http-poem" }
 ulo-http-rocket = { path = "../crates/ulo-http-rocket" }
+ulo-http-actix = { path = "../crates/ulo-http-actix" }
 ulo-config = { path = "../crates/ulo-config" }
 ulo-rpc-tcp = { path = "../crates/ulo-rpc-tcp" }
 ulo-rpc-udp = { path = "../crates/ulo-rpc-udp" }
@@ -177,3 +178,15 @@ path = "rpc_streaming.rs"
 [[example]]
 name = "error_telemetry"
 path = "error_telemetry.rs"
+
+[[example]]
+name = "extractors_for_request_metadata"
+path = "extractors_for_request_metadata.rs"
+
+[[example]]
+name = "extractors_that_compose"
+path = "extractors_that_compose.rs"
+
+[[example]]
+name = "actix_poc"
+path = "actix_poc.rs"

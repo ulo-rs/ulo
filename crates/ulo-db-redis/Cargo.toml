@@ -31,3 +31,4 @@ testcontainers-modules = { workspace = true, features = ["redis"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 ulo-http-axum = { path = "../ulo-http-axum" }
 reqwest = { workspace = true, features = ["json"] }
+anyhow.workspace = true
