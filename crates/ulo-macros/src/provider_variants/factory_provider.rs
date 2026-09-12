@@ -146,7 +146,7 @@ fn generate_caching_provider(
     };
 
     let execute_body = if lifecycle {
-        quote! { self.instance.execute(_params, _ctx).await }
+        quote! { self.instance.resolve(_ctx).await }
     } else {
         quote! { Box::new((*self.instance).clone()) }
     };
@@ -187,9 +187,8 @@ fn generate_caching_provider(
             fn get_token(&self) -> String { #token_expr }
             fn get_scope(&self) -> ulo::ProviderScope { #scope_expr }
 
-            async fn execute(
+            async fn resolve(
                 &self,
-                _params: Vec<Box<dyn std::any::Any + Send>>,
                 _ctx: ulo::ProviderContext,
             ) -> Box<dyn std::any::Any + Send> {
                 #execute_body
@@ -280,7 +279,7 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
                     let provider = _dependencies
                         .get(&#type_token)
                         .expect(&format!("Dependency not found: {}", #type_token));
-                    let instance = provider.execute(vec![], ulo::ProviderContext::None).await;
+                    let instance = provider.resolve(ulo::ProviderContext::None).await;
                     *instance
                         .downcast::<#param_type>()
                         .expect(&format!("Failed to downcast {}", #type_token))
@@ -362,9 +361,8 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
                     fn get_token(&self) -> String { #token_expr }
                     fn get_scope(&self) -> ulo::ProviderScope { #scope_expr }
 
-                    async fn execute(
+                    async fn resolve(
                         &self,
-                        _params: Vec<Box<dyn std::any::Any + Send>>,
                         _ctx: ulo::ProviderContext,
                     ) -> Box<dyn std::any::Any + Send> {
                         let _dependencies = &self.deps;
@@ -397,9 +395,8 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
                     fn get_token(&self) -> String { #token_expr }
                     fn get_scope(&self) -> ulo::ProviderScope { #scope_expr }
 
-                    async fn execute(
+                    async fn resolve(
                         &self,
-                        _params: Vec<Box<dyn std::any::Any + Send>>,
                         _ctx: ulo::ProviderContext,
                     ) -> Box<dyn std::any::Any + Send> {
                         let _dependencies = &self.deps;

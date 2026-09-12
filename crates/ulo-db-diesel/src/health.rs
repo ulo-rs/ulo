@@ -91,14 +91,13 @@ macro_rules! impl_diesel_health {
             }
 
 
-            async fn execute(
+            async fn resolve(
                 &self,
-                _params: Vec<Box<dyn Any + Send>>,
                 _ctx: ProviderContext,
             ) -> Box<dyn Any + Send> {
                 let resolved = self
                     .connection
-                    .execute(Vec::new(), ProviderContext::None)
+                    .resolve(ProviderContext::None)
                     .await;
                 let pool = *resolved
                     .downcast::<$pool>()

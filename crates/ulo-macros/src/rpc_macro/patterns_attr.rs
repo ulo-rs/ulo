@@ -252,12 +252,12 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
                     .collect()
             }
 
-            async fn instance(
+            async fn resolve(
                 &self,
                 ctx: &::ulo::context::RpcContext,
             ) -> ::std::sync::Arc<dyn ::ulo::rpc::RpcController> {
                 self.0
-                    .instance(::ulo::ProviderContext::Rpc(ctx.clone()))
+                    .resolve(::ulo::ProviderContext::Rpc(ctx.clone()))
                     .await
             }
         }

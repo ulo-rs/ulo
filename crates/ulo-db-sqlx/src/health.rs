@@ -124,15 +124,8 @@ where
         ulo::di::token_of::<SqlxHealthIndicator<DB>>()
     }
 
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        _ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
-        let resolved = self
-            .connection
-            .execute(Vec::new(), ProviderContext::None)
-            .await;
+    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+        let resolved = self.connection.resolve(ProviderContext::None).await;
         let pool = *resolved
             .downcast::<Pool<DB>>()
             .expect("the registered pool provider yields a Pool");

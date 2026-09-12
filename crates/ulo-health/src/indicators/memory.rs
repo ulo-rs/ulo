@@ -133,11 +133,7 @@ impl Provider for MemoryHealthIndicatorProvider {
         ulo::di::token_of::<MemoryHealthIndicator>()
     }
 
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        _ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
         Box::new(MemoryHealthIndicator)
     }
 }

@@ -81,11 +81,7 @@ macro_rules! impl_diesel_pool {
                 self.token.clone()
             }
 
-            async fn execute(
-                &self,
-                _params: Vec<Box<dyn Any + Send>>,
-                _ctx: ProviderContext,
-            ) -> Box<dyn Any + Send> {
+            async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
                 Box::new(self.pool.clone().expect("database pool unavailable"))
             }
 

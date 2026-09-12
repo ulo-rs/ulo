@@ -77,15 +77,8 @@ impl Provider for MongoHealthProvider {
         ulo::di::token_of::<MongoHealthIndicator>()
     }
 
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        _ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
-        let resolved = self
-            .connection
-            .execute(Vec::new(), ProviderContext::None)
-            .await;
+    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+        let resolved = self.connection.resolve(ProviderContext::None).await;
         let db = *resolved
             .downcast::<Database>()
             .expect("the registered connection provider yields a Database");

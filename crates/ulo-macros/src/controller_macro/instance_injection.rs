@@ -357,7 +357,7 @@ fn generate_route_wrapper(
             // may move the request out of it.
             quote! {
                 let controller = self.source
-                    .instance(::ulo::ProviderContext::Http(__ctx.clone()))
+                    .resolve(::ulo::ProviderContext::Http(__ctx.clone()))
                     .await;
             },
         )

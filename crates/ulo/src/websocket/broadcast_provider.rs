@@ -19,11 +19,7 @@ impl Provider for BroadcastServiceProvider {
         crate::di::token_of::<BroadcastService>()
     }
 
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        _ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
         Box::new(self.instance.clone())
     }
 

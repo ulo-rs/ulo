@@ -74,11 +74,7 @@ impl<T: Config + Clone + 'static> ConfigService<T> {
 /// Implement Provider so ConfigService can be injected as a dependency
 #[async_trait]
 impl<T: Config> Provider for ConfigService<T> {
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        _ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
         // Return a clone of self for injection
         Box::new(self.clone())
     }

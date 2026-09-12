@@ -119,12 +119,11 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
                         ulo::ProviderScope::Singleton
                     }
 
-                    async fn execute(
+                    async fn resolve(
                         &self,
-                        _params: Vec<Box<dyn std::any::Any + Send>>,
                         _ctx: ulo::ProviderContext,
                     ) -> Box<dyn std::any::Any + Send> {
-                        self.instance.execute(_params, _ctx).await
+                        self.instance.resolve(_ctx).await
                     }
 
                     async fn on_module_init(&self) {
@@ -194,9 +193,8 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
                     fn get_token(&self) -> String { #token_expr }
                     fn get_scope(&self) -> ulo::ProviderScope { ulo::ProviderScope::Singleton }
 
-                    async fn execute(
+                    async fn resolve(
                         &self,
-                        _params: Vec<Box<dyn std::any::Any + Send>>,
                         _ctx: ulo::ProviderContext,
                     ) -> Box<dyn std::any::Any + Send> {
                         Box::new((*self.instance).clone())
@@ -253,9 +251,8 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
                             fn get_token(&self) -> String { #token_expr }
                             fn get_scope(&self) -> ulo::ProviderScope { ulo::ProviderScope::Singleton }
 
-                            async fn execute(
+                            async fn resolve(
                                 &self,
-                                _params: Vec<Box<dyn std::any::Any + Send>>,
                                 _ctx: ulo::ProviderContext,
                             ) -> Box<dyn std::any::Any + Send> {
                                 (self.get_value)()

@@ -160,9 +160,8 @@ fn contrib_provider_tokens(
             > {
                 ::std::option::Option::Some(self.item.clone())
             }
-            async fn execute(
+            async fn resolve(
                 &self,
-                _params: ::std::vec::Vec<::std::boxed::Box<dyn ::std::any::Any + Send>>,
                 _ctx: ::ulo::ProviderContext,
             ) -> ::std::boxed::Box<dyn ::std::any::Any + Send> {
                 ::std::boxed::Box::new(self.item.clone())
@@ -220,7 +219,7 @@ fn generate_type_multi(
                 ) -> ::ulo::traits_helpers::Injectable {
                     let ::ulo::traits_helpers::Injectable { instance: inner_provider, .. } = #factory_ident.build(deps).await;
                     let any_box = inner_provider
-                        .execute(vec![], ::ulo::ProviderContext::None)
+                        .resolve(::ulo::ProviderContext::None)
                         .await;
                     let concrete = *any_box
                         .downcast::<#concrete_type>()
@@ -430,7 +429,7 @@ fn generate_alias_multi(
                             #existing_token_expr
                         ));
                     let any_box = existing_provider
-                        .execute(vec![], ::ulo::ProviderContext::None)
+                        .resolve(::ulo::ProviderContext::None)
                         .await;
                     let concrete = *any_box
                         .downcast::<#concrete_type>()
@@ -505,7 +504,7 @@ fn generate_token_provider_multi(
                 ) -> ::ulo::traits_helpers::Injectable {
                     let ::ulo::traits_helpers::Injectable { instance: inner_provider, .. } = #concrete_type::__ulo_provider_factory().build(deps).await;
                     let any_box = inner_provider
-                        .execute(vec![], ::ulo::ProviderContext::None)
+                        .resolve(::ulo::ProviderContext::None)
                         .await;
                     let concrete = *any_box
                         .downcast::<#concrete_type>()

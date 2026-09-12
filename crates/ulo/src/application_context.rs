@@ -26,7 +26,7 @@ impl UloApplicationContext {
     /// The provider registered under `token`, from whichever module holds it.
     ///
     /// The instance is cloned out so the container borrow ends here rather than
-    /// spanning the `execute` that follows.
+    /// spanning the `resolve` that follows.
     fn provider_in_any_module(
         &self,
         token: &str,
@@ -76,10 +76,7 @@ impl UloApplicationContext {
         let provider = self.provider_in_any_module(&token)?;
         ProviderContext::None.ensure_can_build(provider.get_scope(), &token)?;
 
-        downcast(
-            provider.execute(vec![], ProviderContext::None).await,
-            &token,
-        )
+        downcast(provider.resolve(ProviderContext::None).await, &token)
     }
 
     /// Returns an instance of `T` from a specific module's scope in the DI container
@@ -88,10 +85,7 @@ impl UloApplicationContext {
         let provider = self.provider_in_module(module_token, &token)?;
         ProviderContext::None.ensure_can_build(provider.get_scope(), &token)?;
 
-        downcast(
-            provider.execute(vec![], ProviderContext::None).await,
-            &token,
-        )
+        downcast(provider.resolve(ProviderContext::None).await, &token)
     }
 
     /// The module handle for `M`, found by its identity.
@@ -153,10 +147,7 @@ impl UloApplicationContext {
     async fn module_ref_for(&self, module_id: &str) -> Result<ModuleRef, ResolutionError> {
         let token = crate::di::token_of::<ModuleRef>();
         let provider = self.provider_in_module(module_id, &token)?;
-        downcast(
-            provider.execute(vec![], ProviderContext::None).await,
-            &token,
-        )
+        downcast(provider.resolve(ProviderContext::None).await, &token)
     }
 
     /// Returns an instance from the DI container by token rather than type; use when providers are registered with a custom token
@@ -168,10 +159,7 @@ impl UloApplicationContext {
         let provider = self.provider_in_any_module(&token)?;
         ProviderContext::None.ensure_can_build(provider.get_scope(), &token)?;
 
-        downcast(
-            provider.execute(vec![], ProviderContext::None).await,
-            &token,
-        )
+        downcast(provider.resolve(ProviderContext::None).await, &token)
     }
 
     /// Returns an instance by token from a specific module's scope in the DI container
@@ -184,10 +172,7 @@ impl UloApplicationContext {
         let provider = self.provider_in_module(module_token, &token)?;
         ProviderContext::None.ensure_can_build(provider.get_scope(), &token)?;
 
-        downcast(
-            provider.execute(vec![], ProviderContext::None).await,
-            &token,
-        )
+        downcast(provider.resolve(ProviderContext::None).await, &token)
     }
 
     /// Resolves a provider `T` in an execution.
@@ -219,7 +204,7 @@ impl UloApplicationContext {
         let provider = self.provider_in_any_module(&token)?;
         execution.ensure_can_build(provider.get_scope(), &token)?;
 
-        downcast(provider.execute(vec![], execution.clone()).await, &token)
+        downcast(provider.resolve(execution.clone()).await, &token)
     }
 
     /// Resolves a provider by token in an execution.
@@ -232,7 +217,7 @@ impl UloApplicationContext {
         let provider = self.provider_in_any_module(&token)?;
         execution.ensure_can_build(provider.get_scope(), &token)?;
 
-        downcast(provider.execute(vec![], execution.clone()).await, &token)
+        downcast(provider.resolve(execution.clone()).await, &token)
     }
 
     pub async fn close(&mut self) {

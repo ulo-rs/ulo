@@ -2,7 +2,7 @@ use crate::context::{GrpcContext, HttpContext, RpcContext, StandaloneContext, Ws
 
 /// The execution a provider is being built for.
 ///
-/// Passed to [`Provider::execute`](crate::traits_helpers::Provider::execute) so a
+/// Passed to [`Provider::resolve`](crate::traits_helpers::Provider::resolve) so a
 /// request-scoped provider can reach the execution it belongs to — its cache,
 /// its extension bag, and whatever the transport carries.
 ///

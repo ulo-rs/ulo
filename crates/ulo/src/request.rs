@@ -55,11 +55,7 @@ impl Provider for Request {
         crate::di::token_of::<Request>()
     }
 
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
+    async fn resolve(&self, ctx: ProviderContext) -> Box<dyn Any + Send> {
         let ProviderContext::Http(http_ctx) = &ctx else {
             panic!("Request provider requires an HTTP execution context");
         };

@@ -223,7 +223,7 @@ impl<'a, T: 'static> ModuleRefQuery<'a, T> {
             .ensure_can_build(provider_instance.get_scope(), &self.token)?;
 
         provider_instance
-            .execute(vec![], self.execution.clone())
+            .resolve(self.execution.clone())
             .await
             .downcast::<T>()
             .map(|boxed| *boxed)

@@ -369,11 +369,10 @@ impl RpcControllerWrapper {
         // interceptor that answers never builds a controller. Construction
         // sits inside the same `catch_unwind` as the handler body, so a panicking `#[new]` renders
         // an envelope instead of tearing down the dispatcher.
-        let exec_result = AssertUnwindSafe(async {
-            source.instance(context).await.handle_message(context).await
-        })
-        .catch_unwind()
-        .await;
+        let exec_result =
+            AssertUnwindSafe(async { source.resolve(context).await.handle_message(context).await })
+                .catch_unwind()
+                .await;
         let exec_result = match exec_result {
             Ok(result) => result,
             Err(payload) => {

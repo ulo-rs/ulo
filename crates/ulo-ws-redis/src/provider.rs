@@ -48,11 +48,7 @@ impl Provider for SharedBroadcastServiceProvider {
         ulo::di::token_of::<BroadcastService>()
     }
 
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        _ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
         Box::new(self.instance.clone())
     }
 }
@@ -161,11 +157,7 @@ impl Provider for RedisBroadcastServiceProvider {
         ulo::di::token_of::<RedisBroadcastService>()
     }
 
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        _ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
         Box::new(self.instance.clone())
     }
 }

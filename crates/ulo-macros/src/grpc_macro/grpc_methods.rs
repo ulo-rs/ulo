@@ -1197,7 +1197,7 @@ fn build_wrapper_method(
                     // the connection.
                     let __caught = ::ulo::grpc_runtime::catch_handler_panic(async move {
                         let __inner = __source
-                            .instance(::ulo::ProviderContext::Grpc(__build_ctx))
+                            .resolve(::ulo::ProviderContext::Grpc(__build_ctx))
                             .await;
                         <#self_ident as #trait_path>::#method_ident(
                             &__inner, #(#forward_args),*

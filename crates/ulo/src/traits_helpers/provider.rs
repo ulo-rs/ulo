@@ -18,11 +18,14 @@ use std::marker::PhantomData;
 #[async_trait]
 pub trait Provider: Send + Sync {
     fn get_token(&self) -> String;
-    async fn execute(
-        &self,
-        params: Vec<Box<dyn Any + Send>>,
-        ctx: ProviderContext,
-    ) -> Box<dyn Any + Send>;
+
+    /// The value this provider supplies to the execution `ctx` opens.
+    ///
+    /// A singleton answers with the value built at startup. A request-scoped provider builds
+    /// one per execution and caches it on `ctx`, so everything in the same call that asks for
+    /// this token shares it; a transient one builds on every call. The answer is erased —
+    /// callers downcast to the concrete type the token stands for.
+    async fn resolve(&self, ctx: ProviderContext) -> Box<dyn Any + Send>;
     fn get_scope(&self) -> ProviderScope {
         ProviderScope::Singleton
     }
