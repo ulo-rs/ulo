@@ -10,7 +10,8 @@ use crate::traits::ExecutionResult;
 
 use crate::http::HttpContext;
 
-use super::{Guard, HttpErrorHandlerArc, Interceptor, provider::Provider};
+use super::{HttpErrorHandlerArc, provider::Provider};
+use crate::enhancer::{Guard, Interceptor};
 
 /// Per-route enhancer manifest — both DI-resolved tokens and direct-instantiation arcs.
 ///

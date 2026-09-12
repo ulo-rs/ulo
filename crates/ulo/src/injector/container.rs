@@ -4,7 +4,7 @@ use crate::error::SetupResult;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    enhancer::EnhancerMetadata,
+    enhancer::metadata::EnhancerMetadata,
     http::middleware::MiddlewareManager,
     traits::{
         Controller, ControllerFactory, GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry,

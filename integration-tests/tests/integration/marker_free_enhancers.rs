@@ -9,8 +9,8 @@
 //! construction, a request-scoped guard on each request.
 
 use ulo::async_trait;
+use ulo::enhancer::Guard;
 use ulo::http::HttpContext;
-use ulo::traits::Guard;
 use ulo::{Body, RequestPart, controller, get, injectable, module, routes, use_guards};
 
 use crate::common::TestServer;

@@ -19,13 +19,13 @@ use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
 use ulo::UloFactory;
 use ulo::async_trait;
+use ulo::enhancer::Guard;
 use ulo::errors::GuardRejection;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
 use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
-use ulo::traits::Guard;
 use ulo::ws::WsContext;
 use ulo::ws::{WsHandlerResult, WsMessage};
 use ulo::{Error, GrpcStatus, catch, injectable, module};
@@ -59,10 +59,10 @@ async fn rpc_catcher(err: &GuardRejection, _ctx: &RpcContext) -> RpcData {
 pub struct GrpcCatcher {}
 
 #[async_trait]
-impl ulo::traits::ErrorHandler<GrpcContext, GrpcStatus> for GrpcCatcher {
+impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcStatus> for GrpcCatcher {
     async fn handle_error(
         &self,
-        error: ulo::traits::ChainError<'_>,
+        error: ulo::enhancer::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         let rejection = error.downcast_ref::<GuardRejection>()?;

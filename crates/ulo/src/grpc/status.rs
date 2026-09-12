@@ -223,7 +223,7 @@ impl GrpcStatus {
 
 /// What a gRPC call answers with. `Ok(())` means the delegate ran and its typed
 /// response is in the macro's side-channel; `Err` short-circuits the chain. The
-/// `R` of [`Interceptor`](crate::traits::Interceptor) on this transport.
+/// `R` of [`Interceptor`](crate::enhancer::Interceptor) on this transport.
 pub type GrpcHandlerResult = Result<(), GrpcStatus>;
 
 #[cfg(test)]

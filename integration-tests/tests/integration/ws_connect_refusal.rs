@@ -13,7 +13,7 @@
 use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
 use ulo::async_trait;
-use ulo::traits::Guard;
+use ulo::enhancer::Guard;
 use ulo::ws::WsContext;
 use ulo::ws::{WsHandlerResult, WsMessage};
 use ulo::{injectable, module};
@@ -156,7 +156,7 @@ fn connect_ran() -> &'static std::sync::Mutex<Vec<&'static str>> {
 pub struct RecordingGuard {}
 
 #[ulo::async_trait]
-impl ulo::traits::Guard<ulo::ws::WsContext> for RecordingGuard {
+impl ulo::enhancer::Guard<ulo::ws::WsContext> for RecordingGuard {
     async fn can_activate(&self, ctx: &ulo::ws::WsContext) -> bool {
         connect_ran()
             .lock()
@@ -174,11 +174,11 @@ impl ulo::traits::Guard<ulo::ws::WsContext> for RecordingGuard {
 pub struct RecordingInterceptor {}
 
 #[ulo::async_trait]
-impl ulo::traits::Interceptor<ulo::ws::WsContext, WsHandlerResult> for RecordingInterceptor {
+impl ulo::enhancer::Interceptor<ulo::ws::WsContext, WsHandlerResult> for RecordingInterceptor {
     async fn intercept(
         &self,
         ctx: &ulo::ws::WsContext,
-        next: Box<dyn ulo::traits::InterceptorNext<ulo::ws::WsContext, WsHandlerResult>>,
+        next: Box<dyn ulo::enhancer::InterceptorNext<ulo::ws::WsContext, WsHandlerResult>>,
     ) -> WsHandlerResult {
         connect_ran()
             .lock()

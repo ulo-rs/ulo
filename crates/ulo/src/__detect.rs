@@ -19,6 +19,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::grpc::GrpcContext;
 use crate::grpc::GrpcStatus;
 use crate::http::HttpContext;
@@ -26,7 +27,6 @@ use crate::http::HttpResponse;
 use crate::http::middleware::Middleware;
 use crate::rpc::RpcContext;
 use crate::rpc::RpcData;
-use crate::traits::{ErrorHandler, Guard, Interceptor};
 use crate::ws::WsContext;
 use crate::ws::WsMessage;
 

@@ -56,10 +56,10 @@ impl ulo::Error for NoName {
 pub struct NoNameHandler {}
 
 #[async_trait]
-impl ulo::traits::ErrorHandler<GrpcContext, GrpcStatus> for NoNameHandler {
+impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcStatus> for NoNameHandler {
     async fn handle_error(
         &self,
-        error: ulo::traits::ChainError<'_>,
+        error: ulo::enhancer::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         error.downcast_ref::<NoName>()?;
@@ -76,7 +76,7 @@ impl ulo::traits::ErrorHandler<GrpcContext, GrpcStatus> for NoNameHandler {
 pub struct MarkGuard {}
 
 #[async_trait]
-impl ulo::traits::Guard<GrpcContext> for MarkGuard {
+impl ulo::enhancer::Guard<GrpcContext> for MarkGuard {
     async fn can_activate(&self, ctx: &GrpcContext) -> bool {
         ctx.extensions().insert(Seen("from-guard".to_string()));
         true

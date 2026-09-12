@@ -15,9 +15,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use ulo::HttpResponse;
 use ulo::async_trait;
+use ulo::enhancer::{ChainError, ErrorHandler, Guard};
 use ulo::errors::GuardRejection;
 use ulo::http::HttpContext;
-use ulo::traits::{ChainError, ErrorHandler, Guard};
 use ulo::{
     Body, UloFactory, controller, get, injectable, module, routes, use_error_handlers, use_guards,
 };

@@ -2,7 +2,7 @@
 //!
 //! Carries either the rendered response (success path) or the transport's
 //! handler error type (error path). The dispatcher runs the
-//! [`ErrorHandler`](crate::traits::ErrorHandler) chain on the typed
+//! [`ErrorHandler`](crate::enhancer::ErrorHandler) chain on the typed
 //! error; if no chain handler claims, the error renders itself via the
 //! transport's
 //! inherent rendering method (`HttpError::to_response`,

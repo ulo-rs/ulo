@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use ulo::FxHashMap;
 use ulo::traits::{Injectable, Provider, ProviderFactory};
-
 /// `ProviderFactory` for `GraphQLService` — registered during module scanning.
 pub struct GraphQLServiceFactory<Query, Mutation, Subscription, Ctx>
 where

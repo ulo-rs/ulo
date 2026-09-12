@@ -1,5 +1,4 @@
 use crate::traits::{HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry};
-
 /// Resolved HTTP enhancer pipeline for a single route.
 ///
 /// Entries are typed for `HttpContext` — the dispatcher walks them directly

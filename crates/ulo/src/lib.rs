@@ -28,7 +28,7 @@ pub mod __rpc;
 pub mod __ws;
 mod application;
 pub mod di;
-mod enhancer;
+pub mod enhancer;
 pub mod errors;
 mod extension;
 pub mod extract;

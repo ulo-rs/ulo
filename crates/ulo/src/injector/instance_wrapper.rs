@@ -4,14 +4,12 @@ use crate::{
     async_trait,
     context::HandlerContext,
     context::Metadata,
-    enhancer::EnhancerMetadata,
+    enhancer::metadata::EnhancerMetadata,
+    enhancer::{Guard, Interceptor, InterceptorNext},
     errors::{Error, GuardRejection, MiddlewareFailure, PanicRecovered, PipelineSegment},
     http::middleware::{Middleware, MiddlewareChain},
     http::{HttpContext, HttpError, HttpMethod, HttpRequest, HttpResponse},
-    traits::{
-        ExecutionResult, Guard, HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry,
-        Interceptor, InterceptorNext, Route,
-    },
+    traits::{ExecutionResult, HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry, Route},
 };
 use futures::FutureExt;
 use std::panic::AssertUnwindSafe;

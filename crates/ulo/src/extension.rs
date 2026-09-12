@@ -45,7 +45,6 @@ use crate::async_trait;
 use crate::context::Extensions;
 use crate::provider_scope::ProviderScope;
 use crate::traits::{Injectable, Provider, ProviderContext, ProviderFactory};
-
 /// An injectable view of one type in the request's extension bag.
 ///
 /// Holds the bag itself, not a copy of the value, so a `set` from a guard is

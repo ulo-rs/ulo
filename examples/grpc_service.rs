@@ -119,7 +119,7 @@ pub struct AuthGuard {}
 impl AuthGuard {}
 
 #[ulo::async_trait]
-impl ulo::traits::Guard<ulo::GrpcContext> for AuthGuard {
+impl ulo::enhancer::Guard<ulo::GrpcContext> for AuthGuard {
     async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
         matches!(ctx.header("authorization"), Some("Bearer secret-token"))
     }
@@ -137,11 +137,11 @@ pub struct LoggingInterceptor {}
 impl LoggingInterceptor {}
 
 #[ulo::async_trait]
-impl ulo::traits::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult> for LoggingInterceptor {
+impl ulo::enhancer::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult> for LoggingInterceptor {
     async fn intercept(
         &self,
         ctx: &ulo::GrpcContext,
-        next: Box<dyn ulo::traits::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
+        next: Box<dyn ulo::enhancer::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
     ) -> ulo::GrpcHandlerResult {
         let method = ctx.method().to_string();
         tracing::info!(target: "grpc_service", method = %method, "before handler");
@@ -164,10 +164,10 @@ pub struct QtyErrorHandler {}
 impl QtyErrorHandler {}
 
 #[ulo::async_trait]
-impl ulo::traits::ErrorHandler<ulo::GrpcContext, ulo::GrpcStatus> for QtyErrorHandler {
+impl ulo::enhancer::ErrorHandler<ulo::GrpcContext, ulo::GrpcStatus> for QtyErrorHandler {
     async fn handle_error(
         &self,
-        error: ulo::traits::ChainError<'_>,
+        error: ulo::enhancer::ChainError<'_>,
         _ctx: &ulo::GrpcContext,
     ) -> Option<ulo::GrpcStatus> {
         // The chain is handed the handler's own error, so this matches a

@@ -10,8 +10,8 @@
 //!            curl http://127.0.0.1:3000/orders
 
 use ulo::async_trait;
+use ulo::enhancer::Guard;
 use ulo::http::HttpContext;
-use ulo::traits::Guard;
 use ulo::*;
 use ulo_http_axum::AxumAdapter;
 

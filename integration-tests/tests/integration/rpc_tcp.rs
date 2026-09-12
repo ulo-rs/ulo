@@ -18,13 +18,13 @@ use ulo::rpc::{RpcHandlerOutput, RpcHandlerResult};
 use serde::{Deserialize, Serialize};
 use ulo::async_trait;
 use ulo::context::{Extensions, HandlerContext};
+use ulo::enhancer::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::errors::{ErrorKind, PanicRecovered, PipelineSegment};
 use ulo::extract::Payload;
 use ulo::injectable;
 use ulo::module;
 use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
-use ulo::traits::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo_macros::{controller, new, patterns, set_metadata};
 
 /// Spawn an app with the TCP RPC adapter on an OS-assigned port and wait

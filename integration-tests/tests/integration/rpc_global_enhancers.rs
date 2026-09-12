@@ -14,9 +14,9 @@ use std::time::Duration;
 use serial_test::serial;
 use ulo::UloFactory;
 use ulo::async_trait;
+use ulo::enhancer::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
-use ulo::traits::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::{injectable, module};
 use ulo_macros::{controller, message_pattern, new, patterns, use_guards};
 

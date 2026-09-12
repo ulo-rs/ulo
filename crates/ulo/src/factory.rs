@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::application::UloApplication;
 use crate::application_context::UloApplicationContext;
+use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::error::StartupError;
 use crate::grpc::GrpcContext;
 use crate::http::HttpContext;
@@ -14,10 +15,9 @@ use crate::rpc::RpcContext;
 use crate::rpc::RpcData;
 use crate::scanner::DependencyScanner;
 use crate::traits::{
-    ErrorHandler, GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, Guard,
-    HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry, Interceptor, ModuleMetadata,
-    RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry, WsErrorHandlerArc, WsGuardEntry,
-    WsInterceptorEntry,
+    GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc, HttpGuardEntry,
+    HttpInterceptorEntry, ModuleMetadata, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
+    WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
 };
 use crate::ws::WsContext;
 use crate::ws::WsMessage;

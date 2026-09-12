@@ -11,8 +11,8 @@
 use std::sync::Arc;
 
 use ulo::{
-    Body, Error, HttpResponse, UloFactory, async_trait, catch, controller, errors::GuardRejection,
-    get, http::HttpContext, http::HttpError, module, routes, traits::Guard,
+    Body, Error, HttpResponse, UloFactory, async_trait, catch, controller, enhancer::Guard,
+    errors::GuardRejection, get, http::HttpContext, http::HttpError, module, routes,
 };
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::use_guards;
@@ -50,7 +50,7 @@ async fn other_catcher(_err: &OtherError, _ctx: &HttpContext) -> HttpResponse {
 // rather than something that merely compiles as a value.
 #[test]
 fn catch_struct_implements_error_handler_trait() {
-    fn assert_impls<T: ulo::traits::ErrorHandler<HttpContext, HttpResponse>>() {}
+    fn assert_impls<T: ulo::enhancer::ErrorHandler<HttpContext, HttpResponse>>() {}
     assert_impls::<guard_catcher>();
     assert_impls::<other_catcher>();
 }

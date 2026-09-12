@@ -209,7 +209,7 @@ pub struct AuthGuard {}
 impl AuthGuard {}
 
 #[ulo::async_trait]
-impl ulo::traits::Guard<ulo::GrpcContext> for AuthGuard {
+impl ulo::enhancer::Guard<ulo::GrpcContext> for AuthGuard {
     async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
         ctx.header("authorization").is_some()
     }
@@ -220,7 +220,7 @@ pub struct AdminGuard {}
 impl AdminGuard {}
 
 #[ulo::async_trait]
-impl ulo::traits::Guard<ulo::GrpcContext> for AdminGuard {
+impl ulo::enhancer::Guard<ulo::GrpcContext> for AdminGuard {
     async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
         ctx.header("x-role") == Some("admin")
     }
@@ -356,11 +356,11 @@ pub struct ServiceInterceptor {}
 impl ServiceInterceptor {}
 
 #[ulo::async_trait]
-impl ulo::traits::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult> for ServiceInterceptor {
+impl ulo::enhancer::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult> for ServiceInterceptor {
     async fn intercept(
         &self,
         ctx: &ulo::GrpcContext,
-        next: Box<dyn ulo::traits::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
+        next: Box<dyn ulo::enhancer::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
     ) -> ulo::GrpcHandlerResult {
         log_interceptor("service:before");
         let answer = next.run(ctx).await;
@@ -374,11 +374,11 @@ pub struct MethodInterceptor {}
 impl MethodInterceptor {}
 
 #[ulo::async_trait]
-impl ulo::traits::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult> for MethodInterceptor {
+impl ulo::enhancer::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult> for MethodInterceptor {
     async fn intercept(
         &self,
         ctx: &ulo::GrpcContext,
-        next: Box<dyn ulo::traits::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
+        next: Box<dyn ulo::enhancer::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
     ) -> ulo::GrpcHandlerResult {
         log_interceptor("method:before");
         let answer = next.run(ctx).await;
@@ -392,11 +392,11 @@ pub struct DenyInterceptor {}
 impl DenyInterceptor {}
 
 #[ulo::async_trait]
-impl ulo::traits::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult> for DenyInterceptor {
+impl ulo::enhancer::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult> for DenyInterceptor {
     async fn intercept(
         &self,
         _ctx: &ulo::GrpcContext,
-        _next: Box<dyn ulo::traits::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
+        _next: Box<dyn ulo::enhancer::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
     ) -> ulo::GrpcHandlerResult {
         log_interceptor("deny:short-circuit");
         Err(ulo::GrpcStatus::permission_denied("blocked by interceptor"))
@@ -941,10 +941,10 @@ pub struct ConditionalErrorHandler {}
 impl ConditionalErrorHandler {}
 
 #[ulo::async_trait]
-impl ulo::traits::ErrorHandler<ulo::GrpcContext, ulo::GrpcStatus> for ConditionalErrorHandler {
+impl ulo::enhancer::ErrorHandler<ulo::GrpcContext, ulo::GrpcStatus> for ConditionalErrorHandler {
     async fn handle_error(
         &self,
-        error: ulo::traits::ChainError<'_>,
+        error: ulo::enhancer::ChainError<'_>,
         _ctx: &ulo::GrpcContext,
     ) -> ::std::option::Option<ulo::GrpcStatus> {
         let msg = error.to_string();
@@ -1336,7 +1336,7 @@ pub struct PanickingGrpcGuard {}
 impl PanickingGrpcGuard {}
 
 #[ulo::async_trait]
-impl ulo::traits::Guard<ulo::GrpcContext> for PanickingGrpcGuard {
+impl ulo::enhancer::Guard<ulo::GrpcContext> for PanickingGrpcGuard {
     async fn can_activate(&self, _ctx: &ulo::GrpcContext) -> bool {
         panic!("guard kaboom");
     }
@@ -1410,13 +1410,13 @@ pub struct PanickingGrpcInterceptor {}
 impl PanickingGrpcInterceptor {}
 
 #[ulo::async_trait]
-impl ulo::traits::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult>
+impl ulo::enhancer::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult>
     for PanickingGrpcInterceptor
 {
     async fn intercept(
         &self,
         _ctx: &ulo::GrpcContext,
-        _next: Box<dyn ulo::traits::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
+        _next: Box<dyn ulo::enhancer::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
     ) -> ulo::GrpcHandlerResult {
         panic!("interceptor kaboom");
     }
@@ -1604,10 +1604,10 @@ pub struct PanickingGrpcErrorHandler {}
 impl PanickingGrpcErrorHandler {}
 
 #[ulo::async_trait]
-impl ulo::traits::ErrorHandler<ulo::GrpcContext, ulo::GrpcStatus> for PanickingGrpcErrorHandler {
+impl ulo::enhancer::ErrorHandler<ulo::GrpcContext, ulo::GrpcStatus> for PanickingGrpcErrorHandler {
     async fn handle_error(
         &self,
-        _error: ulo::traits::ChainError<'_>,
+        _error: ulo::enhancer::ChainError<'_>,
         _ctx: &ulo::GrpcContext,
     ) -> Option<ulo::GrpcStatus> {
         panic!("error-handler kaboom");
@@ -1896,7 +1896,7 @@ pub struct BusGuard {}
 impl BusGuard {}
 
 #[ulo::async_trait]
-impl ulo::traits::Guard<ulo::GrpcContext> for BusGuard {
+impl ulo::enhancer::Guard<ulo::GrpcContext> for BusGuard {
     async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
         use ulo::context::HandlerContext;
         ctx.extensions().insert(BusPrincipal("carol".into()));
@@ -2043,7 +2043,7 @@ pub struct GrpcCallScopedGuard {
 }
 
 #[ulo::async_trait]
-impl ulo::traits::Guard<ulo::GrpcContext> for GrpcCallScopedGuard {
+impl ulo::enhancer::Guard<ulo::GrpcContext> for GrpcCallScopedGuard {
     async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
         use ulo::context::HandlerContext;
         ctx.extensions().insert(GrpcGuardSaw(self.scoped.id()));
@@ -2324,7 +2324,7 @@ static DECLARED_SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec:
 pub struct RecordDeclared {}
 
 #[ulo::async_trait]
-impl ulo::traits::Guard<ulo::GrpcContext> for RecordDeclared {
+impl ulo::enhancer::Guard<ulo::GrpcContext> for RecordDeclared {
     async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
         use ulo::context::HandlerContext as _;
         let m = ctx.metadata();

@@ -17,10 +17,10 @@ use std::time::Duration;
 use crate::common::NotServed;
 use serial_test::serial;
 use ulo::UloFactory;
+use ulo::enhancer::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
-use ulo::traits::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::{GrpcHandlerResult, GrpcStatus};
 use ulo_macros::{controller, grpc_methods, injectable, module, new, use_guards, use_interceptors};
 

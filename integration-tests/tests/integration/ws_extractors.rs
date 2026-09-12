@@ -9,8 +9,8 @@ use serde::Deserialize;
 use tokio_tungstenite::tungstenite::Message;
 use ulo::async_trait;
 use ulo::context::{Extensions, HandlerContext};
+use ulo::enhancer::Guard;
 use ulo::extract::Payload;
-use ulo::traits::Guard;
 use ulo::ws::WsContext;
 use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{

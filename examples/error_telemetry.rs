@@ -38,11 +38,11 @@ use serde_json::json;
 use ulo::extract::Payload;
 use ulo::{
     Body, Error, ErrorKind, HttpResponse, RpcClient, RpcError, UloFactory, async_trait, controller,
+    enhancer::{ChainError, ErrorHandler},
     get,
     http::HttpContext,
     http::extract::Path,
     module, routes,
-    traits::{ChainError, ErrorHandler},
 };
 use ulo_macros::{event_pattern, new, patterns};
 

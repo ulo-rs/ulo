@@ -10,7 +10,6 @@ use crate::provider_scope::ProviderScope;
 use crate::rpc::RpcClientTransport;
 use crate::rpc::{RpcClientError, RpcData, RpcReplyStream};
 use crate::traits::{Provider, ProviderContext};
-
 /// Map a reply stream's items through `RpcData::parse`, keeping errors in
 /// place.
 fn parse_items<R>(stream: RpcReplyStream) -> BoxStream<'static, Result<R, RpcClientError>>

@@ -19,7 +19,7 @@ use crate::context::{CancellationToken, Extensions, HandlerContext, Metadata};
 ///
 /// Answering is not done here. A handler returns its response, and an enhancer
 /// that wants to answer without reaching the handler returns one too — see
-/// [`Interceptor`](crate::traits::Interceptor).
+/// [`Interceptor`](crate::enhancer::Interceptor).
 #[derive(Clone)]
 pub struct HttpContext {
     inner: Arc<HttpInner>,

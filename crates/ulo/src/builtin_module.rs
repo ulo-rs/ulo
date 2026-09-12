@@ -6,7 +6,6 @@
 use crate::RequestFactory;
 use crate::extension::ExtensionsFactory;
 use crate::traits::{ControllerFactory, ModuleMetadata, ProviderFactory};
-
 /// Built-in global module that provides core framework functionality
 ///
 /// Currently provides:
