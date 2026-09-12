@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use redis::aio::{ConnectionManager, ConnectionManagerConfig};
 use ulo::{
     FxHashMap, StartupCheck,
-    traits::{Provider, ProviderContext, ProviderFactory},
+    di::ProviderContext,
+    spi::{Provider, ProviderFactory},
 };
 
 pub(crate) struct RedisConnectionFactory {
@@ -25,10 +26,7 @@ impl ProviderFactory for RedisConnectionFactory {
         Some(self.url.clone())
     }
 
-    async fn build(
-        &self,
-        _deps: FxHashMap<String, ulo::traits::Injectable>,
-    ) -> ulo::traits::Injectable {
+    async fn build(&self, _deps: FxHashMap<String, ulo::spi::Injectable>) -> ulo::spi::Injectable {
         // Configured lazily, with the check's deadline handed to the driver: its own connection
         // timeout is what bounds the probe, so nothing here needs a timer.
         // The driver's own retry is switched off and each attempt bounded, so the check's
@@ -61,7 +59,7 @@ impl ProviderFactory for RedisConnectionFactory {
             },
         };
 
-        ulo::traits::Injectable::new(
+        ulo::spi::Injectable::new(
             Arc::new(Box::new(RedisConnectionProvider {
                 manager,
                 init_error,

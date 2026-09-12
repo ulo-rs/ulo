@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::context::Metadata;
-use crate::traits::ExecutionResult;
+use crate::spi::ExecutionResult;
 use crate::ws::WsContext;
 
 use super::{DisconnectReason, WsClient, WsError, WsHandlerOutput};

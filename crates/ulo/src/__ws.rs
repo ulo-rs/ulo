@@ -11,7 +11,7 @@
 
 use async_trait::async_trait;
 
-use crate::traits::ExecutionResult;
+use crate::spi::ExecutionResult;
 use crate::ws::WsContext;
 use crate::ws::{DisconnectReason, GatewayEnhancers, WsClient, WsError, WsHandlerOutput};
 

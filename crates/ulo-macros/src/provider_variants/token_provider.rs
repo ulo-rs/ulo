@@ -68,7 +68,7 @@ pub fn handle_provider_token(input: TokenStream) -> Result<TokenStream> {
             struct #wrapper_factory_name;
 
             #[ulo::async_trait]
-            impl ulo::traits::ProviderFactory for #wrapper_factory_name {
+            impl ulo::spi::ProviderFactory for #wrapper_factory_name {
                 fn token(&self) -> String {
                     #token_expr
                 }
@@ -79,20 +79,20 @@ pub fn handle_provider_token(input: TokenStream) -> Result<TokenStream> {
 
                 async fn build(
                     &self,
-                    deps: ulo::FxHashMap<String, ulo::traits::Injectable>,
-                ) -> ulo::traits::Injectable {
+                    deps: ulo::FxHashMap<String, ulo::spi::Injectable>,
+                ) -> ulo::spi::Injectable {
                     // Build inner and receive its roles — no downcast needed.
-                    let ulo::traits::Injectable { instance: inner_provider, roles } = #type_path::__ulo_provider_factory().build(deps).await;
+                    let ulo::spi::Injectable { instance: inner_provider, roles } = #type_path::__ulo_provider_factory().build(deps).await;
 
                     // Wrap under the custom token; forward roles unchanged.
                     #[derive(Clone)]
                     struct CustomTokenProvider {
                         custom_token: String,
-                        inner_provider: std::sync::Arc<Box<dyn ulo::traits::Provider>>,
+                        inner_provider: std::sync::Arc<Box<dyn ulo::spi::Provider>>,
                     }
 
                     #[ulo::async_trait]
-                    impl ulo::traits::Provider for CustomTokenProvider {
+                    impl ulo::spi::Provider for CustomTokenProvider {
                         fn token(&self) -> String {
                             self.custom_token.clone()
                         }
@@ -113,9 +113,9 @@ pub fn handle_provider_token(input: TokenStream) -> Result<TokenStream> {
                     let provider = std::sync::Arc::new(Box::new(CustomTokenProvider {
                         custom_token: #token_expr,
                         inner_provider,
-                    }) as Box<dyn ulo::traits::Provider>);
+                    }) as Box<dyn ulo::spi::Provider>);
 
-                    ulo::traits::Injectable::new(provider, roles)
+                    ulo::spi::Injectable::new(provider, roles)
                 }
             }
 

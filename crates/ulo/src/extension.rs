@@ -43,8 +43,9 @@ use std::sync::Arc;
 use crate::FxHashMap;
 use crate::async_trait;
 use crate::context::Extensions;
+use crate::di::ProviderContext;
 use crate::provider_scope::ProviderScope;
-use crate::traits::{Injectable, Provider, ProviderContext, ProviderFactory};
+use crate::spi::{Injectable, Provider, ProviderFactory};
 /// An injectable view of one type in the request's extension bag.
 ///
 /// Holds the bag itself, not a copy of the value, so a `set` from a guard is

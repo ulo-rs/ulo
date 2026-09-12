@@ -12,11 +12,10 @@ use async_trait::async_trait;
 
 use crate::DynamicModule;
 use crate::FxHashMap;
+use crate::di::{ModuleMetadata, ProviderContext};
 use crate::injector::{Container, InstanceLoader};
 use crate::scanner::DependencyScanner;
-use crate::traits::{
-    ControllerFactory, Injectable, ModuleMetadata, Provider, ProviderContext, ProviderFactory,
-};
+use crate::spi::{ControllerFactory, Injectable, Provider, ProviderFactory};
 /// A provider that builds a trivial value. `token` is its injection token; `hint` is the
 /// configuration fingerprint folded into the owning module's identity.
 struct FakeFactory {

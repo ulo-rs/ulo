@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use futures::future::{BoxFuture, join_all};
 use ulo::{
     FxHashMap,
-    traits::{Injectable, Provider, ProviderContext, ProviderFactory},
+    di::ProviderContext,
+    spi::{Injectable, Provider, ProviderFactory},
 };
 
 use crate::health_check_result::{HealthCheckResult, HealthIndicatorResult};

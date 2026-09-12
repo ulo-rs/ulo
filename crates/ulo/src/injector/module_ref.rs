@@ -5,8 +5,9 @@ use parking_lot::RwLock;
 use crate::error::ResolutionError;
 use rustc_hash::FxHashMap;
 
+use crate::di::ProviderContext;
 use crate::di::token::IntoToken;
-use crate::traits::{Provider, ProviderContext};
+use crate::spi::Provider;
 pub(crate) type ProviderStore = FxHashMap<String, FxHashMap<String, Arc<Box<dyn Provider>>>>;
 
 /// Provides runtime dependency resolution within a module context

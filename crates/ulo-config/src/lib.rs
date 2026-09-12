@@ -237,20 +237,20 @@ impl<T: Config> ConfigModule<T> {
 }
 
 // Implement ModuleMetadata for DI system integration
-impl<T: Config> ulo::traits::ModuleMetadata for ConfigModule<T> {
+impl<T: Config> ulo::di::ModuleMetadata for ConfigModule<T> {
     fn identity(&self) -> ulo::ModuleIdentity {
         ulo::ModuleIdentity::of_type::<Self>()
     }
 
-    fn imports(&self) -> Option<Vec<Box<dyn ulo::traits::ModuleMetadata>>> {
+    fn imports(&self) -> Option<Vec<Box<dyn ulo::di::ModuleMetadata>>> {
         None
     }
 
-    fn controllers(&self) -> Option<Vec<Box<dyn ulo::traits::ControllerFactory>>> {
+    fn controllers(&self) -> Option<Vec<Box<dyn ulo::spi::ControllerFactory>>> {
         None
     }
 
-    fn providers(&self) -> Option<Vec<Box<dyn ulo::traits::ProviderFactory>>> {
+    fn providers(&self) -> Option<Vec<Box<dyn ulo::spi::ProviderFactory>>> {
         Some(vec![Box::new(ConfigServiceFactory::<T>::with_config(
             self.config.clone(),
         ))])

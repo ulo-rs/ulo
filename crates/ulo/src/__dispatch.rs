@@ -12,7 +12,7 @@
 
 #![doc(hidden)]
 
-use crate::traits::{Dispatch, DispatchSource};
+use crate::spi::{Dispatch, DispatchSource};
 /// Blanket "no dispatch" default, implemented for every type: an empty HTTP route list, which
 /// registers nothing. A handler-impl macro shadows this with an inherent `__ulo_dispatch` of the
 /// same name, which wins at the call site.

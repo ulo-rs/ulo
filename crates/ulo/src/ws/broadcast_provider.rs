@@ -4,9 +4,9 @@ use std::sync::Arc;
 use super::BroadcastService;
 use crate::FxHashMap;
 use crate::async_trait;
+use crate::di::ProviderContext;
 use crate::provider_scope::ProviderScope;
-use crate::traits::{Provider, ProviderContext, ProviderFactory};
-
+use crate::spi::{Provider, ProviderFactory};
 /// Singleton provider that hands out clones of the pre-built `BroadcastService`.
 pub(crate) struct BroadcastServiceProvider {
     instance: BroadcastService,
@@ -45,9 +45,9 @@ impl ProviderFactory for BroadcastServiceManager {
 
     async fn build(
         &self,
-        _deps: FxHashMap<String, crate::traits::Injectable>,
-    ) -> crate::traits::Injectable {
-        crate::traits::Injectable::new(
+        _deps: FxHashMap<String, crate::spi::Injectable>,
+    ) -> crate::spi::Injectable {
+        crate::spi::Injectable::new(
             Arc::new(Box::new(BroadcastServiceProvider {
                 instance: BroadcastService::new(),
             }) as Box<dyn Provider>),

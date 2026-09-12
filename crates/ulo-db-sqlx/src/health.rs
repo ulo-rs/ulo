@@ -5,7 +5,8 @@ use futures::future::BoxFuture;
 use sqlx::{Database, Pool};
 use ulo::{
     FxHashMap,
-    traits::{Injectable, Provider, ProviderContext, ProviderFactory},
+    di::ProviderContext,
+    spi::{Injectable, Provider, ProviderFactory},
 };
 use ulo_health::{HealthEntry, HealthIndicator, HealthIndicatorResult};
 

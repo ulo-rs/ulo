@@ -5,8 +5,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::InstanceWrapper;
 
 use crate::{
+    di::ModuleMetadata,
     enhancer::metadata::EnhancerMetadata,
-    traits::{Controller, ControllerFactory, ModuleMetadata, Provider, ProviderFactory, Route},
+    http::Route,
+    spi::{Controller, ControllerFactory, Provider, ProviderFactory},
 };
 pub struct Module {
     controllers: FxHashMap<String, Box<dyn ControllerFactory>>,

@@ -6,7 +6,8 @@ use juniper::{
     ScalarValue,
 };
 use std::sync::Arc;
-use ulo::traits::{ControllerFactory, ModuleMetadata, ProviderFactory};
+use ulo::di::ModuleMetadata;
+use ulo::spi::{ControllerFactory, ProviderFactory};
 /// GraphQL module for Ulo.
 ///
 /// This module registers:

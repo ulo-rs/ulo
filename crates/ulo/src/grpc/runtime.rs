@@ -19,7 +19,7 @@ use crate::grpc::GrpcHandlerResult;
 use crate::grpc::GrpcStatus;
 use crate::grpc::ResolvedGrpcEnhancers;
 use crate::panic_recovery::catch_async;
-use crate::traits::{GrpcGuardEntry, GrpcInterceptorEntry};
+use crate::spi::{GrpcGuardEntry, GrpcInterceptorEntry};
 /// Run guards then wrap the user delegation in the interceptor chain.
 ///
 /// `delegate` is the user's `<UserType as ProtoTrait>::method(&self.inner, req)`

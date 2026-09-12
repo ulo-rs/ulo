@@ -9,7 +9,9 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use ulo::traits::{Injectable, Provider, ProviderContext, ProviderFactory};
+use ulo::di::ProviderContext;
+
+use ulo::spi::{Injectable, Provider, ProviderFactory};
 use ulo::{DynamicModule, FxHashMap, InitResult, StartupError, UloFactory, async_trait};
 
 const TOKEN: &str = "PROBE_CONNECTION";

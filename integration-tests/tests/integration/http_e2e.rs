@@ -260,8 +260,8 @@ async fn json_body_and_request_extraction() {
 #[tokio_localset_test::localset_test]
 async fn request_extensions_pattern() {
     use ulo::async_trait;
+    use ulo::di::MiddlewareConsumer;
     use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
-    use ulo::traits::MiddlewareConsumer;
 
     #[derive(Clone)]
     struct UserId(String);

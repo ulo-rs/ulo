@@ -45,7 +45,7 @@ mod provider_scope;
 mod router;
 pub mod rpc;
 mod scanner;
-pub mod traits;
+pub mod spi;
 mod type_map;
 pub mod ws;
 
@@ -99,7 +99,7 @@ pub use rustc_hash::FxHashMap;
 // Re-export provider scope
 pub use provider_scope::ProviderScope;
 
-pub use traits::{ExecutionCache, ModuleMetadata, ProviderContext};
+pub use di::{ExecutionCache, ModuleMetadata, ProviderContext};
 
 pub use error::{AdapterResult, InitResult, ResolutionError, SetupResult, StartupError};
 pub use errors::{

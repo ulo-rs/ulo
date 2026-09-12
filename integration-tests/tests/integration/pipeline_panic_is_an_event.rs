@@ -16,6 +16,7 @@ use crate::common::NotServed;
 use serial_test::serial;
 use ulo::UloFactory;
 use ulo::async_trait;
+use ulo::di::MiddlewareConsumer;
 use ulo::enhancer::{Interceptor, InterceptorNext};
 use ulo::errors::PanicRecovered;
 use ulo::extract::Payload;
@@ -23,7 +24,6 @@ use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
 use ulo::http::HttpContext;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::traits::MiddlewareConsumer;
 use ulo::{GrpcStatus, HttpResponse, catch, controller, get, injectable, module, routes};
 use ulo_macros::{grpc_methods, new, use_error_handlers, use_interceptors};
 

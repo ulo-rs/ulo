@@ -6,7 +6,7 @@ use crate::ws::WsContext;
 
 /// The execution a provider is being built for.
 ///
-/// Passed to [`Provider::resolve`](crate::traits::Provider::resolve) so a
+/// Passed to [`Provider::resolve`](crate::spi::Provider::resolve) so a
 /// request-scoped provider can reach the execution it belongs to — its cache,
 /// its extension bag, and whatever the transport carries.
 ///
@@ -42,7 +42,7 @@ impl ProviderContext {
     ///
     /// This is what a request-scoped provider needs and the only thing it needs
     /// from every transport, which is why it is reachable without matching.
-    pub fn cache(&self) -> Option<&crate::traits::ExecutionCache> {
+    pub fn cache(&self) -> Option<&crate::di::ExecutionCache> {
         use crate::context::HandlerContext;
         match self {
             Self::Http(c) => Some(c.cache()),

@@ -6,7 +6,8 @@ use async_trait::async_trait;
 #[cfg(any(feature = "postgres", feature = "mysql"))]
 use ulo::{
     FxHashMap, StartupCheck,
-    traits::{Injectable, Provider, ProviderContext, ProviderFactory},
+    di::ProviderContext,
+    spi::{Injectable, Provider, ProviderFactory},
 };
 
 #[cfg(any(feature = "postgres", feature = "mysql"))]

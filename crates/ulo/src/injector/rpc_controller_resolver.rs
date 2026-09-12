@@ -6,8 +6,7 @@ use crate::error::SetupResult;
 
 use super::Container;
 use crate::rpc::{RpcControllerSource, RpcControllerWrapper};
-use crate::traits::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};
-
+use crate::spi::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};
 /// Resolves one RPC controller's enhancer tokens into a ready-to-serve
 /// `RpcControllerWrapper`. Called by the instance loader while controllers are stored, so a
 /// misdeclared token fails `create()`; bind hands the stored wrapper to the adapter.

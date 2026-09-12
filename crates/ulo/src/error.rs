@@ -48,7 +48,7 @@ pub type SetupResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>
 /// [`Setup`]: StartupError::Setup
 /// [`UloFactory::create`]: crate::UloFactory::create
 /// [`UloApplication::bind`]: crate::UloApplication::bind
-/// [`ProviderFactory::build`]: crate::traits::ProviderFactory::build
+/// [`ProviderFactory::build`]: crate::spi::ProviderFactory::build
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum StartupError {

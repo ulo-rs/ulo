@@ -8,7 +8,8 @@ use futures::future::BoxFuture;
 #[cfg(any(feature = "postgres", feature = "mysql"))]
 use ulo::{
     FxHashMap,
-    traits::{Injectable, Provider, ProviderContext, ProviderFactory},
+    di::ProviderContext,
+    spi::{Injectable, Provider, ProviderFactory},
 };
 #[cfg(any(feature = "postgres", feature = "mysql"))]
 use ulo_health::{HealthEntry, HealthIndicator, HealthIndicatorResult};

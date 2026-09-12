@@ -2,10 +2,7 @@ use std::{any::Any, sync::Arc};
 
 use async_trait::async_trait;
 
-use crate::{
-    ProviderScope,
-    traits::{Provider, ProviderContext},
-};
+use crate::{ProviderScope, di::ProviderContext, spi::Provider};
 
 /// Holds all contributions for a given multi-provider base token.
 ///

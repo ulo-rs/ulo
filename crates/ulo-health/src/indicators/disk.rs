@@ -6,7 +6,8 @@ use serde_json::json;
 use sysinfo::Disks;
 use ulo::{
     FxHashMap,
-    traits::{Injectable, Provider, ProviderContext, ProviderFactory},
+    di::ProviderContext,
+    spi::{Injectable, Provider, ProviderFactory},
 };
 
 use crate::health_check_result::{HealthEntry, HealthIndicatorResult};

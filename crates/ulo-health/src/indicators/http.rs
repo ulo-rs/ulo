@@ -6,7 +6,8 @@ use reqwest::{Client, Response};
 use serde_json::json;
 use ulo::{
     FxHashMap,
-    traits::{Injectable, Provider, ProviderContext, ProviderFactory},
+    di::ProviderContext,
+    spi::{Injectable, Provider, ProviderFactory},
 };
 
 use crate::health_check_result::{HealthEntry, HealthIndicatorResult};

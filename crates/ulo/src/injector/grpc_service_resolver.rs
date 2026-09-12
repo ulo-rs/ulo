@@ -6,8 +6,7 @@ use crate::error::SetupResult;
 
 use super::Container;
 use crate::grpc::{GrpcServiceSource, ResolvedGrpcEnhancers};
-use crate::traits::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
-
+use crate::spi::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
 /// Resolves one gRPC service's enhancer bundle from the role registry by token.
 /// Mirrors [`RpcControllerResolver`](super::RpcControllerResolver) — called by the instance
 /// loader while services are stored, so a misdeclared token fails `create()`. Bind hands the

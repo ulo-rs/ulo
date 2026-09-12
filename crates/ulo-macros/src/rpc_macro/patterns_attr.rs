@@ -54,8 +54,8 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
                     #pattern => {
                         #(#extractions)*
                         match self.#method_name(#(#call_args),*).await {
-                            Ok(__output) => ::ulo::traits::ExecutionResult::Ok(__output),
-                            Err(__err) => ::ulo::traits::ExecutionResult::Err(
+                            Ok(__output) => ::ulo::spi::ExecutionResult::Ok(__output),
+                            Err(__err) => ::ulo::spi::ExecutionResult::Err(
                                 ::std::convert::Into::<::ulo::rpc::RpcError>::into(__err),
                             ),
                         }
@@ -66,10 +66,10 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
                     #pattern => {
                         #(#extractions)*
                         match self.#method_name(#(#call_args),*).await {
-                            Ok(__data) => ::ulo::traits::ExecutionResult::Ok(
+                            Ok(__data) => ::ulo::spi::ExecutionResult::Ok(
                                 ::ulo::rpc::RpcHandlerOutput::Single(__data),
                             ),
-                            Err(__err) => ::ulo::traits::ExecutionResult::Err(
+                            Err(__err) => ::ulo::spi::ExecutionResult::Err(
                                 ::std::convert::Into::<::ulo::rpc::RpcError>::into(__err),
                             ),
                         }
@@ -81,14 +81,14 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
                         #(#extractions)*
                         match self.#method_name(#(#call_args),*).await {
                             Ok(__result) => match ::ulo::rpc::RpcData::from_serialize(&__result) {
-                                Ok(__data) => ::ulo::traits::ExecutionResult::Ok(
+                                Ok(__data) => ::ulo::spi::ExecutionResult::Ok(
                                     ::ulo::rpc::RpcHandlerOutput::Single(__data),
                                 ),
-                                Err(__e) => ::ulo::traits::ExecutionResult::Err(
+                                Err(__e) => ::ulo::spi::ExecutionResult::Err(
                                     ::ulo::rpc::RpcError::Internal(__e.to_string()),
                                 ),
                             },
-                            Err(__err) => ::ulo::traits::ExecutionResult::Err(
+                            Err(__err) => ::ulo::spi::ExecutionResult::Err(
                                 ::std::convert::Into::<::ulo::rpc::RpcError>::into(__err),
                             ),
                         }
@@ -107,10 +107,10 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
                 #pattern => {
                     #(#extractions)*
                     match self.#method_name(#(#call_args),*).await {
-                        Ok(()) => ::ulo::traits::ExecutionResult::Ok(
+                        Ok(()) => ::ulo::spi::ExecutionResult::Ok(
                             ::ulo::rpc::RpcHandlerOutput::Empty,
                         ),
-                        Err(__err) => ::ulo::traits::ExecutionResult::Err(
+                        Err(__err) => ::ulo::spi::ExecutionResult::Err(
                             ::std::convert::Into::<::ulo::rpc::RpcError>::into(__err),
                         ),
                     }
@@ -159,7 +159,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
             #[allow(non_snake_case, clippy::all)]
             pub fn __ulo_dispatch(
                 source: &::ulo::__enhancer::DispatchSource<#struct_name>,
-            ) -> ::ulo::traits::Dispatch {
+            ) -> ::ulo::spi::Dispatch {
                 // The route prefix is HTTP's argument; patterns cannot use one.
                 if !<#struct_name>::__ulo_prefix().is_empty() {
                     ::ulo::tracing::warn!(
@@ -168,7 +168,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
                         "controller dispatches RPC patterns; the route prefix is unused"
                     );
                 }
-                ::ulo::traits::Dispatch::Rpc(
+                ::ulo::spi::Dispatch::Rpc(
                     ::std::sync::Arc::new(#source_name(source.clone())),
                 )
             }
@@ -180,7 +180,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
             async fn __ulo_rpc_handle_message(
                 &self,
                 ctx: &::ulo::rpc::RpcContext,
-            ) -> ::ulo::traits::ExecutionResult<
+            ) -> ::ulo::spi::ExecutionResult<
                 ::ulo::rpc::RpcHandlerOutput,
                 ::ulo::rpc::RpcError,
             > {
@@ -193,7 +193,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
                     // it. This arm answers a pattern the controller was
                     // registered for but has no method behind; the dispatcher
                     // raises the same event for a pattern no controller claims.
-                    _ => ::ulo::traits::ExecutionResult::Err(
+                    _ => ::ulo::spi::ExecutionResult::Err(
                         ::ulo::rpc::RpcError::AppError(::std::sync::Arc::new(
                             ::ulo::errors::Unrouted::new(ctx.pattern()),
                         )),
@@ -209,7 +209,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
             async fn handle_message(
                 &self,
                 ctx: &::ulo::rpc::RpcContext,
-            ) -> ::ulo::traits::ExecutionResult<
+            ) -> ::ulo::spi::ExecutionResult<
                 ::ulo::rpc::RpcHandlerOutput,
                 ::ulo::rpc::RpcError,
             > {
@@ -430,7 +430,7 @@ fn handler_params(method: &syn::ImplItemFn) -> (Vec<TokenStream>, Vec<TokenStrea
             >>::extract(ctx).await {
                 ::std::result::Result::Ok(__value) => __value,
                 ::std::result::Result::Err(__e) => {
-                    return ::ulo::traits::ExecutionResult::Err(
+                    return ::ulo::spi::ExecutionResult::Err(
                         ::ulo::rpc::RpcError::Internal(__e.to_string()),
                     );
                 }

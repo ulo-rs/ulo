@@ -20,8 +20,8 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use ulo::async_trait;
+use ulo::di::MiddlewareConsumer;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::traits::MiddlewareConsumer;
 use ulo::{Body, TowerLayer, controller, get, module, post, routes};
 
 // ── Test 1: basic header injection ───────────────────────────────────────────
