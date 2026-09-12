@@ -15,7 +15,6 @@ mod metadata;
 mod rpc;
 pub(crate) mod shared;
 mod standalone;
-mod ws;
 
 pub use self::cancellation::CancellationToken;
 pub use self::extensions::Extensions;
@@ -25,11 +24,11 @@ pub use self::http::HttpContext;
 pub use self::metadata::Metadata;
 pub use self::rpc::RpcContext;
 pub use self::standalone::StandaloneContext;
-pub use self::ws::WsContext;
 
 #[cfg(test)]
 mod handle_bounds_tests {
     use super::*;
+    use crate::ws::WsContext;
 
     fn assert_handle<T: Send + Sync + Clone + 'static>() {}
 

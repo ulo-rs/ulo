@@ -3,7 +3,7 @@
 //! A type implementing `Error` declares its semantic [`kind`](Error::kind);
 //! the transport's handler error type ([`HttpError`](crate::errors::HttpError),
 //! [`RpcError`](crate::rpc::RpcError),
-//! [`WsError`](crate::websocket::WsError)) carries the wire shape and provides
+//! [`WsError`](crate::ws::WsError)) carries the wire shape and provides
 //! a `From<E: Error>` blanket so a `ulo::Error` returned by a handler flows
 //! into the right transport via `?`.
 //!
@@ -99,7 +99,7 @@ impl ErrorKind {
 /// the per-transport `From<E: Error>` blankets — it `?`-flows into
 /// [`HttpError`](crate::errors::HttpError),
 /// [`RpcError`](crate::rpc::RpcError), and
-/// [`WsError`](crate::websocket::WsError) automatically. The transport's
+/// [`WsError`](crate::ws::WsError) automatically. The transport's
 /// handler error type owns the rendering; this trait owns the semantic
 /// vocabulary.
 ///

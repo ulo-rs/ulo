@@ -16,7 +16,7 @@
 //!     {"event":"ping","data":{}}
 
 use ulo::extractors::Payload;
-use ulo::websocket::{WsHandlerResult, WsMessage};
+use ulo::ws::{WsHandlerResult, WsMessage};
 use ulo::*;
 use ulo_macros::{module, new, subscriptions, websocket_gateway};
 use ulo_ws_tungstenite::TungsteniteAdapter;

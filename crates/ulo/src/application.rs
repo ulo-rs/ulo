@@ -16,17 +16,17 @@ use event_listener::Event;
 
 use crate::{
     adapter::{
-        AdapterContext, BindTarget, GrpcAdapter, HttpAdapter, MessageCallbackResult, RpcAdapter,
-        RpcMessageCallbacks, WebSocketAdapter, WsConnectionCallbacks,
+        AdapterContext, BindTarget, GrpcAdapter, HttpAdapter, RpcAdapter, RpcMessageCallbacks,
         server_lifecycle::ServerLifecycle,
     },
     application_context::UloApplicationContext,
     injector::{Container, GatewayResolver, IntoToken},
     router::RoutesResolver,
     rpc::{RpcCallInfo, RpcControllerWrapper, RpcData, RpcError},
-    websocket::{
-        BroadcastService, DisconnectReason, GatewayWrapper, WsClientMap, WsError, WsHandlerOutput,
-        WsMessage, helpers::create_client_from_parts,
+    ws::{
+        BroadcastService, DisconnectReason, GatewayWrapper, MessageCallbackResult,
+        WebSocketAdapter, WsClientMap, WsConnectionCallbacks, WsError, WsHandlerOutput, WsMessage,
+        helpers::create_client_from_parts,
     },
 };
 

@@ -11,7 +11,7 @@
 //! Connect with: wscat -c ws://localhost:3000/ws
 //! Press Ctrl+C or send SIGTERM to trigger graceful shutdown
 
-use ulo::websocket::{BroadcastModule, BroadcastService, WsClient, WsError, WsMessage};
+use ulo::ws::{BroadcastModule, BroadcastService, WsClient, WsError, WsMessage};
 use ulo::*;
 use ulo_macros::{module, new, subscriptions, websocket_gateway};
 

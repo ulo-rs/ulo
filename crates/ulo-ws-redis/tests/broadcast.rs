@@ -6,7 +6,7 @@ use testcontainers_modules::redis::{REDIS_PORT, Redis};
 use tokio::sync::mpsc;
 use ulo::{
     UloFactory,
-    websocket::{WsMessage, WsSink},
+    ws::{WsMessage, WsSink},
 };
 use ulo_http_axum::TokioSender;
 use ulo_ws_redis::{RedisBroadcastModule, RedisBroadcastService};

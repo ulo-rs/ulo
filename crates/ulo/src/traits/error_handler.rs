@@ -1,9 +1,10 @@
 use crate::async_trait;
-use crate::context::{HandlerContext, HttpContext, RpcContext, WsContext};
+use crate::context::{HandlerContext, HttpContext, RpcContext};
 use crate::errors::HttpError;
 use crate::http_types::{Body, HttpResponse};
 use crate::rpc::RpcData;
-use crate::websocket::WsMessage;
+use crate::ws::WsContext;
+use crate::ws::WsMessage;
 use serde_json::json;
 use std::error::Error;
 

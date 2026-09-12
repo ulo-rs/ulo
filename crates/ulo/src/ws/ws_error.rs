@@ -16,7 +16,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use crate::errors::{Error, ErrorKind};
-use crate::websocket::WsMessage;
+use crate::ws::WsMessage;
 
 /// WebSocket error variants — framework-emitted kinds plus a wrapper for
 /// user-domain [`ulo::Error`](crate::errors::Error) values.
@@ -166,8 +166,8 @@ impl std::error::Error for WsError {
     }
 }
 
-impl From<crate::websocket::BroadcastError> for WsError {
-    fn from(err: crate::websocket::BroadcastError) -> Self {
+impl From<crate::ws::BroadcastError> for WsError {
+    fn from(err: crate::ws::BroadcastError) -> Self {
         WsError::BroadcastError(err.to_string())
     }
 }

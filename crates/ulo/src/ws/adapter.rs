@@ -8,7 +8,7 @@ use futures::stream::BoxStream;
 
 use crate::adapter::BindTarget;
 use crate::http_types::RequestPart;
-use crate::websocket::{WsError, WsMessage, WsSink};
+use crate::ws::{WsError, WsMessage, WsSink};
 
 /// Result of the message callback — tells the adapter what to do next.
 pub enum MessageCallbackResult {
@@ -99,7 +99,7 @@ impl WsConnectionCallbacks {
 /// register callbacks, then calls
 /// [`into_lifecycle_handles`](Self::into_lifecycle_handles) once with
 /// every unique port — the adapter consumes itself and returns one
-/// [`WsLifecycleHandle`](crate::adapter::WsLifecycleHandle) per port,
+/// [`WsLifecycleHandle`](crate::ws::WsLifecycleHandle) per port,
 /// each owning its concrete state. The trait carries no lifecycle
 /// method past that consuming call, and the framework's
 /// `*LifecycleHandle` types don't call back into the adapter to shut
@@ -124,7 +124,7 @@ pub trait WebSocketAdapter: Send + Sync + 'static {
     }
 
     /// Consume the adapter, acquire a socket for every requested port, and
-    /// return one [`WsLifecycleHandle`](crate::adapter::WsLifecycleHandle)
+    /// return one [`WsLifecycleHandle`](crate::ws::WsLifecycleHandle)
     /// per port. The handles share whatever
     /// shutdown signal the adapter uses internally (a single
     /// `send(true)` on a watch channel typically); calling `shutdown` on
@@ -144,7 +144,7 @@ pub trait WebSocketAdapter: Send + Sync + 'static {
     async fn into_lifecycle_handles(
         self: Box<Self>,
         targets: Vec<(u16, BindTarget)>,
-    ) -> AdapterResult<Vec<crate::adapter::lifecycle_handles::WsLifecycleHandle>> {
+    ) -> AdapterResult<Vec<crate::ws::WsLifecycleHandle>> {
         let _ = targets;
         Err("This WebSocket adapter does not support separate-port servers".into())
     }

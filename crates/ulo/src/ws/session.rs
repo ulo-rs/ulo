@@ -1,5 +1,6 @@
-use crate::context::{Extensions, WsContext};
+use crate::context::Extensions;
 use crate::extractors::FromContext;
+use crate::ws::WsContext;
 
 /// State that outlives the executions on one connection.
 ///

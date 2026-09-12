@@ -1,6 +1,6 @@
 use crate::traits::{ControllerFactory, ModuleMetadata, ProviderFactory};
-use crate::websocket::BroadcastService;
-use crate::websocket::broadcast_provider::BroadcastServiceManager;
+use crate::ws::BroadcastService;
+use crate::ws::broadcast_provider::BroadcastServiceManager;
 
 /// Opt-in module that provides `BroadcastService` for WebSocket broadcasting.
 ///

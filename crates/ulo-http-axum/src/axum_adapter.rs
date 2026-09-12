@@ -17,7 +17,7 @@ use futures_util::{FutureExt, SinkExt, StreamExt};
 use std::str::FromStr;
 use tower::ServiceExt as TowerServiceExt;
 
-use ulo::websocket::{WsMessage, WsSink};
+use ulo::ws::{WsMessage, WsSink};
 use ulo::{
     AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
     HttpRequest, HttpResponse, MessageCallbackResult, PathParams, RequestBody, RequestHandler,
@@ -124,7 +124,7 @@ async fn run_ws_connection(
             // The handshake is already done, so a refusal is answered the only
             // way the protocol leaves: the canonical envelope, then a close
             // carrying the code for it.
-            for frame in ulo::websocket::refusal_frames(&e) {
+            for frame in ulo::ws::refusal_frames(&e) {
                 let _ = sender.send(frame).await;
             }
             return;

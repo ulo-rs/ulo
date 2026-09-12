@@ -2,7 +2,7 @@
 
 use tokio::sync::mpsc;
 use ulo::async_trait;
-use ulo::websocket::{SendError, TrySendError, WsMessage, WsSink};
+use ulo::ws::{SendError, TrySendError, WsMessage, WsSink};
 
 /// Tokio mpsc channel sender wrapper
 ///

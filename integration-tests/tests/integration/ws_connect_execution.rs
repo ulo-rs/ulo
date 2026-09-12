@@ -10,9 +10,10 @@ use std::sync::{Mutex, OnceLock};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 use ulo::async_trait;
-use ulo::context::{Extensions, HandlerContext, WsContext};
+use ulo::context::{Extensions, HandlerContext};
 use ulo::traits::Guard;
-use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::ws::WsContext;
+use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
     injectable, module, new, on_connect, subscribe_message, subscriptions, use_guards,
     websocket_gateway,

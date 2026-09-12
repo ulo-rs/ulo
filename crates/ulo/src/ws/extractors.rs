@@ -18,9 +18,9 @@ use std::fmt;
 
 use serde::de::DeserializeOwned;
 
-use crate::context::WsContext;
 use crate::extractors::{FromContext, Payload};
-use crate::websocket::{WsClient, WsMessage};
+use crate::ws::WsContext;
+use crate::ws::{WsClient, WsMessage};
 
 /// The client that sent the message.
 ///

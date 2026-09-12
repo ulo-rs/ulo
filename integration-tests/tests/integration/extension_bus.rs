@@ -8,11 +8,12 @@
 //! `guard_mut_context.rs` covers the enhancer-to-enhancer half.
 
 use ulo::async_trait;
-use ulo::context::{Extensions, HandlerContext, HttpContext, WsContext};
+use ulo::context::{Extensions, HandlerContext, HttpContext};
 use ulo::extractors::{Bytes as UloBytes, Path};
 use ulo::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::traits::Guard;
-use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::ws::WsContext;
+use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
     Body, UloFactory, controller, get, injectable, module, new, post, routes, set_metadata,
     subscriptions, websocket_gateway,

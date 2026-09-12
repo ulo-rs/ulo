@@ -81,7 +81,7 @@ pub fn handle_subscriptions(item: TokenStream) -> Result<TokenStream> {
             #[allow(non_snake_case, clippy::all)]
             async fn __ulo_ws_handle_event(
                 &self,
-                __ctx: &::ulo::context::WsContext,
+                __ctx: &::ulo::ws::WsContext,
             ) -> ::ulo::traits::ExecutionResult<::ulo::WsHandlerOutput, ::ulo::WsError> {
                 let __event = ::std::string::String::from(__ctx.event());
                 match __event.as_str() {
@@ -168,7 +168,7 @@ fn handler_params(method: &syn::ImplItemFn) -> (Vec<TokenStream>, Vec<TokenStrea
 
         extractions.push(quote! {
             let #name = match <#ty as ::ulo::extractors::FromContext<
-                ::ulo::context::WsContext,
+                ::ulo::ws::WsContext,
             >>::extract(__ctx).await {
                 ::std::result::Result::Ok(__value) => __value,
                 ::std::result::Result::Err(__e) => {

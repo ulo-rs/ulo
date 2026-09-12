@@ -5,9 +5,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 use ulo::async_trait;
-use ulo::context::{HandlerContext, WsContext};
+use ulo::context::HandlerContext;
 use ulo::traits::Guard;
-use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::ws::WsContext;
+use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
     injectable, module, new, subscribe_message, subscriptions, use_guards, websocket_gateway,
 };

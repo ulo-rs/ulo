@@ -6,9 +6,9 @@
 // 3. Full integration of WebSocket with ulo's DI system
 // 4. Zero manual wiring - framework handles everything automatically
 
-use ulo::context::WsContext;
 use ulo::traits::{Guard, Interceptor, InterceptorNext};
-use ulo::websocket::{BroadcastModule, BroadcastService};
+use ulo::ws::WsContext;
+use ulo::ws::{BroadcastModule, BroadcastService};
 use ulo::*;
 use ulo_macros::{injectable, module, new, subscriptions, websocket_gateway};
 
