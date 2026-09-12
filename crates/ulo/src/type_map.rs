@@ -5,29 +5,14 @@
 //! enhancers write and handlers read is [`Extensions`](crate::context::Extensions) instead, which
 //! is shared by handle and mutable through it.
 //!
-//! Nothing here is transport-specific. It sits at the crate root rather than under `http_types`
-//! because its two users are a declared-metadata map read on all four transports and an RPC call
-//! descriptor, and neither is HTTP.
+//! One user: [`Metadata`](crate::context::Metadata), which is built once per declaration site and
+//! read on every call through it.
 //!
 //! # Implementation Note
 //!
 //! This implementation is based on the `http` crate's Extensions type
 //! (<https://docs.rs/http/1.3.1/http/struct.Extensions.html>).
 //!
-//! # Examples
-//!
-//! ```
-//! use ulo::type_map::TypeMap;
-//!
-//! #[derive(Clone)]
-//! struct UserId(String);
-//!
-//! let mut ext = TypeMap::new();
-//! ext.insert(UserId("alice".to_string()));
-//!
-//! let user_id = ext.get::<UserId>().unwrap();
-//! assert_eq!(user_id.0, "alice");
-//! ```
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -79,21 +64,6 @@ impl TypeMap {
     ///
     /// If a value of this type already existed, it will be returned.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ulo::type_map::TypeMap;
-    ///
-    /// #[derive(Clone)]
-    /// struct UserId(String);
-    ///
-    /// let mut ext = TypeMap::new();
-    /// assert!(ext.insert(UserId("alice".to_string())).is_none());
-    /// assert_eq!(
-    ///     ext.insert(UserId("bob".to_string())).unwrap().0,
-    ///     "alice"
-    /// );
-    /// ```
     pub fn insert<T: Clone + Send + Sync + 'static>(&mut self, val: T) -> Option<T> {
         self.map
             .insert(TypeId::of::<T>(), Box::new(val))
@@ -102,20 +72,6 @@ impl TypeMap {
 
     /// Get a reference to a value previously inserted.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ulo::type_map::TypeMap;
-    ///
-    /// #[derive(Clone)]
-    /// struct UserId(String);
-    ///
-    /// let mut ext = TypeMap::new();
-    /// assert!(ext.get::<UserId>().is_none());
-    ///
-    /// ext.insert(UserId("alice".to_string()));
-    /// assert_eq!(ext.get::<UserId>().unwrap().0, "alice");
-    /// ```
     pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
         self.map
             .get(&TypeId::of::<T>())
@@ -124,20 +80,6 @@ impl TypeMap {
 
     /// Get a mutable reference to a value previously inserted.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ulo::type_map::TypeMap;
-    ///
-    /// #[derive(Clone)]
-    /// struct Counter(i32);
-    ///
-    /// let mut ext = TypeMap::new();
-    /// ext.insert(Counter(5));
-    ///
-    /// ext.get_mut::<Counter>().unwrap().0 += 10;
-    /// assert_eq!(ext.get::<Counter>().unwrap().0, 15);
-    /// ```
     pub fn get_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T> {
         self.map
             .get_mut(&TypeId::of::<T>())
@@ -148,20 +90,6 @@ impl TypeMap {
     ///
     /// If a value of this type existed, it will be returned.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ulo::type_map::TypeMap;
-    ///
-    /// #[derive(Clone)]
-    /// struct UserId(String);
-    ///
-    /// let mut ext = TypeMap::new();
-    /// ext.insert(UserId("alice".to_string()));
-    ///
-    /// assert_eq!(ext.remove::<UserId>().unwrap().0, "alice");
-    /// assert!(ext.get::<UserId>().is_none());
-    /// ```
     pub fn remove<T: Send + Sync + 'static>(&mut self) -> Option<T> {
         self.map
             .remove(&TypeId::of::<T>())
@@ -170,20 +98,6 @@ impl TypeMap {
 
     /// Clear all values from the map.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ulo::type_map::TypeMap;
-    ///
-    /// #[derive(Clone)]
-    /// struct UserId(String);
-    ///
-    /// let mut ext = TypeMap::new();
-    /// ext.insert(UserId("alice".to_string()));
-    /// ext.clear();
-    ///
-    /// assert!(ext.get::<UserId>().is_none());
-    /// ```
     #[inline]
     pub fn clear(&mut self) {
         self.map.clear();
@@ -191,20 +105,6 @@ impl TypeMap {
 
     /// Check if the map is empty.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ulo::type_map::TypeMap;
-    ///
-    /// #[derive(Clone)]
-    /// struct UserId(String);
-    ///
-    /// let mut ext = TypeMap::new();
-    /// assert!(ext.is_empty());
-    ///
-    /// ext.insert(UserId("alice".to_string()));
-    /// assert!(!ext.is_empty());
-    /// ```
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
@@ -212,20 +112,6 @@ impl TypeMap {
 
     /// Get the number of values in the map.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use ulo::type_map::TypeMap;
-    ///
-    /// #[derive(Clone)]
-    /// struct UserId(String);
-    ///
-    /// let mut ext = TypeMap::new();
-    /// assert_eq!(ext.len(), 0);
-    ///
-    /// ext.insert(UserId("alice".to_string()));
-    /// assert_eq!(ext.len(), 1);
-    /// ```
     #[inline]
     pub fn len(&self) -> usize {
         self.map.len()
@@ -299,6 +185,22 @@ mod tests {
 
         assert_eq!(extensions.get::<bool>(), None);
         assert_eq!(extensions.get(), Some(&MyType(10)));
+    }
+
+    #[test]
+    fn insert_answers_the_value_it_replaced() {
+        let mut ext = TypeMap::new();
+        assert!(ext.insert(MyType(1)).is_none());
+        assert_eq!(ext.insert(MyType(2)), Some(MyType(1)));
+        assert_eq!(ext.get(), Some(&MyType(2)));
+    }
+
+    #[test]
+    fn get_mut_writes_through_to_the_stored_value() {
+        let mut ext = TypeMap::new();
+        ext.insert(MyType(5));
+        ext.get_mut::<MyType>().unwrap().0 += 10;
+        assert_eq!(ext.get(), Some(&MyType(15)));
     }
 
     #[test]

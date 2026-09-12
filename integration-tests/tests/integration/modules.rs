@@ -5,7 +5,7 @@
 //! negative as much as positive: a provider not exported must not resolve from
 //! an importing module, and a nested import must not flatten the tree.
 use crate::common::TestServer;
-use ulo::injector::ModuleRef;
+use ulo::ModuleRef;
 use ulo::{Body, controller, get, injectable, module, routes};
 
 #[tokio_localset_test::localset_test]

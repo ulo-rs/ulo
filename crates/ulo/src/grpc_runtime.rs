@@ -362,7 +362,7 @@ impl std::error::Error for GrpcFailure {}
 /// `HandlerBody` segment. Used by the macro around the user delegation
 /// inside a `#[grpc_methods]` proto method.
 ///
-/// Thin wrapper around [`crate::panic_recovery::catch_async`] so the
+/// Thin wrapper around the shared `catch_async` helper so the
 /// macro can keep a stable, transport-specific entry point even as the
 /// shared helper evolves.
 pub async fn catch_handler_panic<Fut, T>(fut: Fut) -> Result<T, crate::errors::PanicRecovered>

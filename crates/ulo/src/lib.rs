@@ -1,6 +1,6 @@
 pub mod adapter;
 mod application_context;
-pub mod builtin_module;
+mod builtin_module;
 pub mod context;
 mod error;
 mod startup_check;
@@ -31,17 +31,17 @@ mod extension;
 mod factory;
 pub mod grpc_runtime;
 mod http_types;
-pub mod injector;
+mod injector;
 pub mod middleware;
 mod modules;
-pub mod panic_recovery;
-pub mod provider_scope;
+mod panic_recovery;
+mod provider_scope;
 mod request;
 mod router;
 pub mod rpc;
 mod scanner;
 pub mod traits;
-pub mod type_map;
+mod type_map;
 pub mod websocket;
 
 // Re-exported for use in macro-generated code — not part of the public API.
@@ -63,7 +63,6 @@ pub use http_types::{
     Body, BoxBody, HttpMethod, HttpRequest, HttpResponse, HttpResponseBuilder, IntoResponse,
     PathParams, RequestBody, RequestBoxBody, RequestPart, Sse, SseEvent, join_route, sse,
 };
-pub use injector::InstanceWrapper;
 pub use rpc::{
     RpcCallInfo, RpcClient, RpcClientError, RpcController, RpcControllerSource, RpcData,
     RpcEnhancers, RpcError, RpcHandlerEnhancers, RpcHandlerOutput, RpcHandlerResult,
@@ -81,7 +80,8 @@ pub use extension::{Extension, ExtensionFactory};
 pub use request::{Request, RequestFactory};
 
 // Re-export ModuleRef for dynamic DI resolution
-pub use injector::{IntoToken, ModuleRef};
+pub use di::IntoToken;
+pub use injector::ModuleRef;
 
 pub use application_context::UloApplicationContext;
 
