@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::{Result, anyhow};
+use ulo::AdapterResult;
 use ulo::context::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
 use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
@@ -69,14 +69,14 @@ impl RpcAdapter for RefusingRpcAdapter {
         &mut self,
         _patterns: &[String],
         _callbacks: Arc<RpcMessageCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         // Binding the gateway's port succeeds only while nothing else holds it.
         let taken = std::net::TcpListener::bind(("0.0.0.0", GATEWAY_PORT)).is_err();
         self.gateway_socket_was_taken.store(taken, Ordering::SeqCst);
-        Err(anyhow!("this adapter refuses to take patterns"))
+        Err("this adapter refuses to take patterns".into())
     }
 
-    async fn into_lifecycle(self: Box<Self>) -> Result<RpcLifecycleHandle> {
+    async fn into_lifecycle(self: Box<Self>) -> AdapterResult<RpcLifecycleHandle> {
         unreachable!("registration refused, so the socket is never asked for")
     }
 }
