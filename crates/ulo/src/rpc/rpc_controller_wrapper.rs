@@ -124,8 +124,8 @@ impl RpcControllerWrapper {
         }
     }
 
-    pub fn get_patterns(&self) -> Vec<String> {
-        self.source.get_patterns()
+    pub fn patterns(&self) -> Vec<String> {
+        self.source.patterns()
     }
 
     pub async fn handle_message(&self, data: RpcData, info: RpcCallInfo) -> RpcHandlerResult {

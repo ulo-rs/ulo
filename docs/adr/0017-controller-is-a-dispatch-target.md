@@ -47,7 +47,7 @@ declared enhancer tokens against the role registry, and stores the object for li
 for dispatch. `RpcControllerResolver` and `GrpcServiceResolver` are that shape written twice more.
 
 Request-scope elevation is already there too: `ControllerFactory::build` inspects each resolved
-dependency's `get_scope()` and elevates the controller when one is request-scoped. The RPC and gRPC
+dependency's `scope()` and elevates the controller when one is request-scoped. The RPC and gRPC
 factories carry a copy of that scan.
 
 What the controller path lacks is a channel. `ControllerFactory::build` returns `Arc<dyn Controller>`,
@@ -75,7 +75,7 @@ stays there *because* of the criterion rather than by inheritance from Nest.
 
 ```rust
 pub trait Controller: Send + Sync {
-    fn get_token(&self) -> String;
+    fn token(&self) -> String;
     fn dispatch(&self) -> Dispatch;
     // lifecycle hooks unchanged
 }
@@ -152,8 +152,8 @@ the fork on every transport, and only the call sites remain per transport.
 
 ## Roads not taken
 
-**Generalising `Route` across transports.** `Route` would have to lose `get_path` and
-`get_method`, or gain transport variants of both. HTTP's dispatch unit is path-and-method
+**Generalising `Route` across transports.** `Route` would have to lose `path` and
+`method`, or gain transport variants of both. HTTP's dispatch unit is path-and-method
 keyed; the other transports' units are not, and flattening them into one type describes none of them
 well.
 

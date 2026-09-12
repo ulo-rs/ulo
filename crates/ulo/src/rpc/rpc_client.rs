@@ -322,7 +322,7 @@ impl RpcRequest<'_> {
 
 #[async_trait]
 impl Provider for RpcClient {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         crate::di::token_of::<Self>()
     }
 
@@ -330,7 +330,7 @@ impl Provider for RpcClient {
         Box::new(self.clone())
     }
 
-    fn get_scope(&self) -> ProviderScope {
+    fn scope(&self) -> ProviderScope {
         ProviderScope::Singleton
     }
 

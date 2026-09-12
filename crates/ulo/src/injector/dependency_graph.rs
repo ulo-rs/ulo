@@ -28,7 +28,7 @@ impl DependencyGraph {
             let providers_map = container.get_providers_factory(&self.module_token)?;
             let providers = providers_map
                 .iter()
-                .map(|(token, provider)| (token.clone(), provider.get_dependencies()))
+                .map(|(token, provider)| (token.clone(), provider.dependency_tokens()))
                 .collect::<Vec<(String, Vec<String>)>>();
             // Map from multi-collection base token (e.g. "PLUGINS") to the contributing
             // provider tokens within this module so the topological sort can treat all

@@ -26,7 +26,7 @@ where
     F: Fn() -> Fut + Send + Sync + 'static,
     Fut: Future<Output = C> + Send + 'static,
 {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 
@@ -52,7 +52,7 @@ struct PrismaClientProvider<C> {
 
 #[async_trait]
 impl<C: Send + Sync + Clone + 'static> Provider for PrismaClientProvider<C> {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 

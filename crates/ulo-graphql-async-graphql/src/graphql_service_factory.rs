@@ -45,7 +45,7 @@ where
     Subscription: SubscriptionType + 'static,
     Ctx: ContextBuilder,
 {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         "GraphQLService".to_string()
     }
 

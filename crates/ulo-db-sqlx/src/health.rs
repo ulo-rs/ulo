@@ -76,11 +76,11 @@ where
     for<'q> <DB as Database>::Arguments<'q>: sqlx::IntoArguments<'q, DB>,
     Pool<DB>: Send + Sync + Clone + 'static,
 {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<SqlxHealthIndicator<DB>>()
     }
 
-    fn get_dependencies(&self) -> Vec<String> {
+    fn dependency_tokens(&self) -> Vec<String> {
         vec![ulo::di::token_of::<Pool<DB>>()]
     }
 
@@ -120,7 +120,7 @@ where
     for<'q> <DB as Database>::Arguments<'q>: sqlx::IntoArguments<'q, DB>,
     Pool<DB>: Send + Sync + Clone + 'static,
 {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<SqlxHealthIndicator<DB>>()
     }
 

@@ -128,7 +128,7 @@ fn resolve_param(name: &Ident, ty: &Type, token: &TokenStream) -> TokenStream {
                     "Missing dependency '{}' for #[new] parameter '{}'",
                     __lookup_token, #name_str
                 ));
-            let __ctx = if matches!(__provider.get_scope(), ::ulo::ProviderScope::Request) {
+            let __ctx = if matches!(__provider.scope(), ::ulo::ProviderScope::Request) {
                 __exec_ctx.clone()
             } else {
                 ::ulo::ProviderContext::None

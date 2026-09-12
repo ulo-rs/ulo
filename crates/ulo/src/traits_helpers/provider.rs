@@ -17,7 +17,7 @@ use std::marker::PhantomData;
 
 #[async_trait]
 pub trait Provider: Send + Sync {
-    fn get_token(&self) -> String;
+    fn token(&self) -> String;
 
     /// The value this provider supplies to the execution `ctx` opens.
     ///
@@ -26,11 +26,11 @@ pub trait Provider: Send + Sync {
     /// this token shares it; a transient one builds on every call. The answer is erased —
     /// callers downcast to the concrete type the token stands for.
     async fn resolve(&self, ctx: ProviderContext) -> Box<dyn Any + Send>;
-    fn get_scope(&self) -> ProviderScope {
+    fn scope(&self) -> ProviderScope {
         ProviderScope::Singleton
     }
 
-    fn get_multi_base_token(&self) -> Option<String> {
+    fn multi_base_token(&self) -> Option<String> {
         None
     }
     fn as_multi_item(&self) -> Option<Arc<dyn Any + Send + Sync>> {
@@ -179,11 +179,11 @@ impl Injectable {
 
 #[async_trait]
 pub trait ProviderFactory {
-    fn get_token(&self) -> String;
-    fn get_dependencies(&self) -> Vec<String> {
+    fn token(&self) -> String;
+    fn dependency_tokens(&self) -> Vec<String> {
         vec![]
     }
-    fn get_multi_base_token(&self) -> Option<String> {
+    fn multi_base_token(&self) -> Option<String> {
         None
     }
 

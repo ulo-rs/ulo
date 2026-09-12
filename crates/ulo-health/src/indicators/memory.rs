@@ -116,7 +116,7 @@ pub(crate) struct MemoryHealthIndicatorFactory;
 
 #[async_trait]
 impl ProviderFactory for MemoryHealthIndicatorFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<MemoryHealthIndicator>()
     }
 
@@ -129,7 +129,7 @@ struct MemoryHealthIndicatorProvider;
 
 #[async_trait]
 impl Provider for MemoryHealthIndicatorProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<MemoryHealthIndicator>()
     }
 

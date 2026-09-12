@@ -41,11 +41,11 @@ impl Module {
 }
 impl Module {
     pub fn add_controller(&mut self, controller: Box<dyn ControllerFactory>) {
-        self.controllers.insert(controller.get_token(), controller);
+        self.controllers.insert(controller.token(), controller);
     }
 
     pub fn add_provider(&mut self, provider: Box<dyn ProviderFactory>) {
-        self.providers.insert(provider.get_token(), provider);
+        self.providers.insert(provider.token(), provider);
     }
 
     pub fn add_import(&mut self, module_token: String) {
@@ -73,8 +73,8 @@ impl Module {
         let key = format!(
             "{}::{} {}",
             controller_token,
-            route.get_method().as_str(),
-            route.get_path()
+            route.method().as_str(),
+            route.path()
         );
         let instance_wrapper = InstanceWrapper::new(route, enhancer_metadata, global_enhancers);
         self.controllers_instances
@@ -82,8 +82,7 @@ impl Module {
     }
 
     pub fn add_provider_instance(&mut self, provider: Arc<Box<dyn Provider>>) {
-        self.providers_instances
-            .insert(provider.get_token(), provider);
+        self.providers_instances.insert(provider.token(), provider);
     }
     pub fn add_export_instance(&mut self, provider_token: String) {
         self.exports_instances.insert(provider_token);

@@ -100,7 +100,7 @@ where
     Mutation::TypeInfo: Send + Sync,
     Subscription::TypeInfo: Send + Sync,
 {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         "GraphQLService".to_string()
     }
 

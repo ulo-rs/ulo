@@ -32,11 +32,11 @@ impl Provider for ModuleRefProvider {
         ))
     }
 
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         crate::di::token_of::<ModuleRef>()
     }
 
-    fn get_scope(&self) -> ProviderScope {
+    fn scope(&self) -> ProviderScope {
         ProviderScope::Singleton
     }
 }

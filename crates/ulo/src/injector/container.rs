@@ -246,7 +246,7 @@ impl UloContainer {
         provider_instance: Arc<Box<dyn Provider>>,
         roles: Vec<ProviderRole>,
     ) -> SetupResult {
-        let token = provider_instance.get_token();
+        let token = provider_instance.token();
 
         for role in roles {
             match role {
@@ -302,7 +302,7 @@ impl UloContainer {
                     self.role_registry.middleware.insert(token.clone(), m);
                 }
                 ProviderRole::Gateway(gw) => {
-                    let path = gw.get_path();
+                    let path = gw.path();
                     self.role_registry.gateways.insert(path, gw);
                 }
             }

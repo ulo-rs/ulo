@@ -17,7 +17,7 @@ pub(crate) struct RedisConnectionFactory {
 
 #[async_trait]
 impl ProviderFactory for RedisConnectionFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 
@@ -87,7 +87,7 @@ struct RedisConnectionProvider {
 
 #[async_trait]
 impl Provider for RedisConnectionProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 

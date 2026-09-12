@@ -42,11 +42,11 @@ pub(crate) struct MongoHealthIndicatorFactory;
 
 #[async_trait]
 impl ProviderFactory for MongoHealthIndicatorFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<MongoHealthIndicator>()
     }
 
-    fn get_dependencies(&self) -> Vec<String> {
+    fn dependency_tokens(&self) -> Vec<String> {
         vec![ulo::di::token_of::<Database>()]
     }
 
@@ -73,7 +73,7 @@ struct MongoHealthProvider {
 
 #[async_trait]
 impl Provider for MongoHealthProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<MongoHealthIndicator>()
     }
 

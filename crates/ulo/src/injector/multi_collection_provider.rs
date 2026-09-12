@@ -20,11 +20,11 @@ pub(super) struct MultiCollectionProvider {
 
 #[async_trait]
 impl Provider for MultiCollectionProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 
-    fn get_scope(&self) -> ProviderScope {
+    fn scope(&self) -> ProviderScope {
         ProviderScope::Singleton
     }
 

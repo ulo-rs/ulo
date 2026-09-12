@@ -21,7 +21,7 @@ async fn provider_value_injects_constant() {
     #[routes]
     impl TestController {
         #[get("/port")]
-        fn get_port(&self) -> UloBody {
+        fn port(&self) -> UloBody {
             UloBody::text("3000".to_string())
         }
     }

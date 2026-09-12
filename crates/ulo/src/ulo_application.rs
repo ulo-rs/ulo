@@ -496,7 +496,7 @@ impl UloApplication {
             .iter()
             .map(|(p, gw)| (p.clone(), gw.clone()))
             .partition(|(_, gw)| {
-                let p = gw.get_port();
+                let p = gw.port();
                 p.is_none() || http_port.map_or(false, |hp| hp != 0 && p == Some(hp))
             });
 
@@ -548,7 +548,7 @@ impl UloApplication {
                 let Some(ws) = self.ws_adapter.as_mut() else {
                     let declared: Vec<String> = separate_port
                         .iter()
-                        .map(|(path, gw)| format!("{path} (port {})", gw.get_port().unwrap_or(0)))
+                        .map(|(path, gw)| format!("{path} (port {})", gw.port().unwrap_or(0)))
                         .collect();
                     return Err(StartupError::Setup(format!(
                     "WebSocket gateways {} declare their own port, but no WebSocket adapter is \
@@ -559,7 +559,7 @@ impl UloApplication {
                 };
 
                 for (path, gateway) in &separate_port {
-                    if let Some(ws_port) = gateway.get_port() {
+                    if let Some(ws_port) = gateway.port() {
                         let client_map = broadcast_service
                             .as_ref()
                             .map(|bs| bs.ws_client_map())
@@ -586,7 +586,7 @@ impl UloApplication {
                 let mut seen: HashSet<u16> = HashSet::new();
                 let mut targets: Vec<(u16, BindTarget)> = vec![];
                 for (_, gw) in &separate_port {
-                    if let Some(ws_port) = gw.get_port() {
+                    if let Some(ws_port) = gw.port() {
                         if seen.insert(ws_port) {
                             let target =
                                 self.ws_targets
@@ -637,7 +637,7 @@ impl UloApplication {
                 let all_patterns: Vec<String> = self
                     .rpc_controllers
                     .iter()
-                    .flat_map(|w| w.get_patterns())
+                    .flat_map(|w| w.patterns())
                     .collect();
 
                 for pattern in &all_patterns {
@@ -945,7 +945,7 @@ fn make_ws_callbacks(
                 // the context carries — so what a guard wrote is still there for the hook.
                 let context = gateway.begin_connect(client).await?;
                 if let Some(bs) = &bs {
-                    bs.connect(client_id.clone(), sink, gateway.get_namespace());
+                    bs.connect(client_id.clone(), sink, gateway.namespace());
                 } else {
                     map.register(client_id.clone(), sink);
                 }
@@ -1013,7 +1013,7 @@ fn make_rpc_callbacks(
 ) -> RpcMessageCallbacks {
     let mut pattern_map: HashMap<String, Arc<RpcControllerWrapper>> = HashMap::new();
     for wrapper in &wrappers {
-        for pattern in wrapper.get_patterns() {
+        for pattern in wrapper.patterns() {
             pattern_map.insert(pattern, wrapper.clone());
         }
     }

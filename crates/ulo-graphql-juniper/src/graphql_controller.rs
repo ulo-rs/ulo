@@ -112,11 +112,11 @@ where
     Mutation::TypeInfo: Send + Sync,
     Subscription::TypeInfo: Send + Sync,
 {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         format!("GraphQLController_{}", self.path)
     }
 
-    fn get_dependencies(&self) -> Vec<String> {
+    fn dependency_tokens(&self) -> Vec<String> {
         vec!["GraphQLService".to_string()]
     }
 
@@ -166,7 +166,7 @@ struct GraphQLController {
 
 #[async_trait]
 impl Controller for GraphQLController {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 
@@ -247,11 +247,11 @@ where
         self.execute_inner(req, ctx).await.into()
     }
 
-    fn get_path(&self) -> String {
+    fn path(&self) -> String {
         self.path.clone()
     }
 
-    fn get_method(&self) -> HttpMethod {
+    fn method(&self) -> HttpMethod {
         HttpMethod::POST
     }
 }
@@ -360,11 +360,11 @@ impl Route for GraphQLPlaygroundController {
         .into()
     }
 
-    fn get_path(&self) -> String {
+    fn path(&self) -> String {
         self.path.clone()
     }
 
-    fn get_method(&self) -> HttpMethod {
+    fn method(&self) -> HttpMethod {
         HttpMethod::GET
     }
 }

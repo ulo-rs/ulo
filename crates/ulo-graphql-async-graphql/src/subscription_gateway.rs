@@ -111,11 +111,11 @@ where
     M: ObjectType + 'static,
     S: SubscriptionType + 'static,
 {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         format!("GraphQLSubscriptionGateway_{}", self.path)
     }
 
-    fn get_path(&self) -> String {
+    fn path(&self) -> String {
         self.path.clone()
     }
 
@@ -323,11 +323,11 @@ where
         Box::new(self.clone())
     }
 
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         format!("GraphQLSubscriptionGateway_{}", self.path)
     }
 
-    fn get_scope(&self) -> ProviderScope {
+    fn scope(&self) -> ProviderScope {
         ProviderScope::Singleton
     }
 }

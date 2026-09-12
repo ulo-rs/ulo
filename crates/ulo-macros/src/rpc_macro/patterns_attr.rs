@@ -223,11 +223,11 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
 
         #[::ulo::async_trait]
         impl ::ulo::rpc::RpcControllerSource for #source_name {
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 #struct_token.to_string()
             }
 
-            fn get_patterns(&self) -> Vec<String> {
+            fn patterns(&self) -> Vec<String> {
                 use ::ulo::__rpc::RpcHandlersBridge as _;
                 <#struct_name>::__ulo_rpc_patterns()
             }

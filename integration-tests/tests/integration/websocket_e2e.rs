@@ -18,7 +18,7 @@
 //!    `complete_connect()` and is registered in `ConnectionManager`.
 //!
 //! 3. **Separate-port** — gateway declares `port = 19001` in the macro. Verifies the
-//!    full separate-port path: `get_port()` routes the gateway to `TungsteniteAdapter`
+//!    full separate-port path: `port()` routes the gateway to `TungsteniteAdapter`
 //!    rather than the HTTP adapter, and a client connecting to port 19001 gets its
 //!    message handled correctly.
 //!

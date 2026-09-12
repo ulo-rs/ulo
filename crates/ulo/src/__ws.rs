@@ -1,6 +1,6 @@
 //! Bridge between a `#[websocket_gateway]` struct and its optional `#[subscriptions]` impl.
 //!
-//! `#[websocket_gateway]` emits `impl Gateway for Struct` with `get_path`/`namespace`/`port`
+//! `#[websocket_gateway]` emits `impl Gateway for Struct` with `path`/`namespace`/`port`
 //! baked from the attribute, and the behavior methods delegating to `Self::__ulo_ws_*` at the
 //! concrete type. `#[subscriptions]` shadows `__ulo_ws_handle_event` / `__ulo_ws_enhancers`; the
 //! single-slot connection-hook macros (`#[on_connect]` / `#[on_disconnect]` / `#[after_init]`) each

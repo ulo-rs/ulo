@@ -42,11 +42,11 @@ pub(crate) struct SeaOrmHealthIndicatorFactory;
 
 #[async_trait]
 impl ProviderFactory for SeaOrmHealthIndicatorFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<SeaOrmHealthIndicator>()
     }
 
-    fn get_dependencies(&self) -> Vec<String> {
+    fn dependency_tokens(&self) -> Vec<String> {
         vec![ulo::di::token_of::<DatabaseConnection>()]
     }
 
@@ -73,7 +73,7 @@ struct SeaOrmHealthProvider {
 
 #[async_trait]
 impl Provider for SeaOrmHealthProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<SeaOrmHealthIndicator>()
     }
 

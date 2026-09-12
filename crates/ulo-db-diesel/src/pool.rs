@@ -22,7 +22,7 @@ macro_rules! impl_diesel_pool {
 
         #[async_trait]
         impl ProviderFactory for $factory {
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 self.token.clone()
             }
 
@@ -77,7 +77,7 @@ macro_rules! impl_diesel_pool {
 
         #[async_trait]
         impl Provider for $provider {
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 self.token.clone()
             }
 

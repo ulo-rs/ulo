@@ -45,7 +45,7 @@ where
     M: ObjectType + 'static,
     S: SubscriptionType + 'static,
 {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         format!("GraphQLSubscriptionGateway_{}", self.path)
     }
 

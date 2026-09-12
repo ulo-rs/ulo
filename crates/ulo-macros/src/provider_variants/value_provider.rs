@@ -110,12 +110,12 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
 
                 #[ulo::async_trait]
                 impl ulo::traits_helpers::Provider for #provider_name {
-                    fn get_token(&self) -> String {
+                    fn token(&self) -> String {
                         #token_expr
                     }
 
 
-                    fn get_scope(&self) -> ulo::ProviderScope {
+                    fn scope(&self) -> ulo::ProviderScope {
                         ulo::ProviderScope::Singleton
                     }
 
@@ -149,7 +149,7 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
 
                 #[ulo::async_trait]
                 impl ulo::traits_helpers::ProviderFactory for #factory_name {
-                    fn get_token(&self) -> String {
+                    fn token(&self) -> String {
                         #token_expr
                     }
 
@@ -190,8 +190,8 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
 
                 #[ulo::async_trait]
                 impl ulo::traits_helpers::Provider for #provider_name {
-                    fn get_token(&self) -> String { #token_expr }
-                    fn get_scope(&self) -> ulo::ProviderScope { ulo::ProviderScope::Singleton }
+                    fn token(&self) -> String { #token_expr }
+                    fn scope(&self) -> ulo::ProviderScope { ulo::ProviderScope::Singleton }
 
                     async fn resolve(
                         &self,
@@ -203,7 +203,7 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
 
                 #[ulo::async_trait]
                 impl ulo::traits_helpers::ProviderFactory for #factory_name {
-                    fn get_token(&self) -> String { #token_expr }
+                    fn token(&self) -> String { #token_expr }
 
                     async fn build(
                         &self,
@@ -248,8 +248,8 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
 
                         #[ulo::async_trait]
                         impl ulo::traits_helpers::Provider for #provider_name {
-                            fn get_token(&self) -> String { #token_expr }
-                            fn get_scope(&self) -> ulo::ProviderScope { ulo::ProviderScope::Singleton }
+                            fn token(&self) -> String { #token_expr }
+                            fn scope(&self) -> ulo::ProviderScope { ulo::ProviderScope::Singleton }
 
                             async fn resolve(
                                 &self,
@@ -261,7 +261,7 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
 
                         #[ulo::async_trait]
                         impl ulo::traits_helpers::ProviderFactory for #factory_name {
-                            fn get_token(&self) -> String { #token_expr }
+                            fn token(&self) -> String { #token_expr }
 
                             async fn build(
                                 &self,

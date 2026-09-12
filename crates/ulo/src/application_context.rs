@@ -74,7 +74,7 @@ impl UloApplicationContext {
     pub async fn get<T: 'static>(&self) -> Result<T, ResolutionError> {
         let token = crate::di::token_of::<T>();
         let provider = self.provider_in_any_module(&token)?;
-        ProviderContext::None.ensure_can_build(provider.get_scope(), &token)?;
+        ProviderContext::None.ensure_can_build(provider.scope(), &token)?;
 
         downcast(provider.resolve(ProviderContext::None).await, &token)
     }
@@ -83,7 +83,7 @@ impl UloApplicationContext {
     pub async fn get_from<T: 'static>(&self, module_token: &str) -> Result<T, ResolutionError> {
         let token = crate::di::token_of::<T>();
         let provider = self.provider_in_module(module_token, &token)?;
-        ProviderContext::None.ensure_can_build(provider.get_scope(), &token)?;
+        ProviderContext::None.ensure_can_build(provider.scope(), &token)?;
 
         downcast(provider.resolve(ProviderContext::None).await, &token)
     }
@@ -157,7 +157,7 @@ impl UloApplicationContext {
     ) -> Result<T, ResolutionError> {
         let token = token.into_token();
         let provider = self.provider_in_any_module(&token)?;
-        ProviderContext::None.ensure_can_build(provider.get_scope(), &token)?;
+        ProviderContext::None.ensure_can_build(provider.scope(), &token)?;
 
         downcast(provider.resolve(ProviderContext::None).await, &token)
     }
@@ -170,7 +170,7 @@ impl UloApplicationContext {
     ) -> Result<T, ResolutionError> {
         let token = token.into_token();
         let provider = self.provider_in_module(module_token, &token)?;
-        ProviderContext::None.ensure_can_build(provider.get_scope(), &token)?;
+        ProviderContext::None.ensure_can_build(provider.scope(), &token)?;
 
         downcast(provider.resolve(ProviderContext::None).await, &token)
     }
@@ -202,7 +202,7 @@ impl UloApplicationContext {
     ) -> Result<T, ResolutionError> {
         let token = crate::di::token_of::<T>();
         let provider = self.provider_in_any_module(&token)?;
-        execution.ensure_can_build(provider.get_scope(), &token)?;
+        execution.ensure_can_build(provider.scope(), &token)?;
 
         downcast(provider.resolve(execution.clone()).await, &token)
     }
@@ -215,7 +215,7 @@ impl UloApplicationContext {
     ) -> Result<T, ResolutionError> {
         let token = token.into_token();
         let provider = self.provider_in_any_module(&token)?;
-        execution.ensure_can_build(provider.get_scope(), &token)?;
+        execution.ensure_can_build(provider.scope(), &token)?;
 
         downcast(provider.resolve(execution.clone()).await, &token)
     }
@@ -242,7 +242,7 @@ impl UloApplicationContext {
         for module_token in modules {
             if let Ok(providers) = container.get_lifecycle_instances(&module_token) {
                 for provider in providers {
-                    if provider.get_scope() == crate::ProviderScope::Request {
+                    if provider.scope() == crate::ProviderScope::Request {
                         continue;
                     }
                     provider.before_application_shutdown(signal.clone()).await;
@@ -269,7 +269,7 @@ impl UloApplicationContext {
         for module_token in modules {
             if let Ok(providers) = container.get_lifecycle_instances(&module_token) {
                 for provider in providers {
-                    if provider.get_scope() == crate::ProviderScope::Request {
+                    if provider.scope() == crate::ProviderScope::Request {
                         continue;
                     }
                     provider.on_module_destroy().await;
@@ -299,7 +299,7 @@ impl UloApplicationContext {
         for module_token in modules {
             if let Ok(providers) = container.get_lifecycle_instances(&module_token) {
                 for provider in providers {
-                    if provider.get_scope() == crate::ProviderScope::Request {
+                    if provider.scope() == crate::ProviderScope::Request {
                         continue;
                     }
                     provider.on_application_shutdown(signal.clone()).await;

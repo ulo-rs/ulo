@@ -124,7 +124,7 @@ impl<T: Clone + Send + Sync + 'static> Extension<T> {
 
 #[async_trait]
 impl<T: Send + Sync + 'static> Provider for Extension<T> {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         crate::di::token_of::<Extension<T>>()
     }
 
@@ -138,7 +138,7 @@ impl<T: Send + Sync + 'static> Provider for Extension<T> {
         Box::new(Extension::<T>::over(bag))
     }
 
-    fn get_scope(&self) -> ProviderScope {
+    fn scope(&self) -> ProviderScope {
         ProviderScope::Request
     }
 }
@@ -149,7 +149,7 @@ impl<T: Send + Sync + 'static> Provider for Extension<T> {
 /// it globally.
 #[async_trait]
 impl Provider for Extensions {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         crate::di::token_of::<Extensions>()
     }
 
@@ -160,7 +160,7 @@ impl Provider for Extensions {
         Box::new(bag)
     }
 
-    fn get_scope(&self) -> ProviderScope {
+    fn scope(&self) -> ProviderScope {
         ProviderScope::Request
     }
 }
@@ -169,7 +169,7 @@ pub struct ExtensionsFactory;
 
 #[async_trait]
 impl ProviderFactory for ExtensionsFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         crate::di::token_of::<Extensions>()
     }
 
@@ -206,7 +206,7 @@ impl<T> Default for ExtensionFactory<T> {
 
 #[async_trait]
 impl<T: Send + Sync + 'static> ProviderFactory for ExtensionFactory<T> {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         crate::di::token_of::<Extension<T>>()
     }
 
@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn the_registration_token_names_the_payload_type() {
         let factory = Extension::<User>::__ulo_provider_factory();
-        assert!(factory.get_token().contains("Extension"));
-        assert!(factory.get_token().contains("User"));
+        assert!(factory.token().contains("Extension"));
+        assert!(factory.token().contains("User"));
     }
 }

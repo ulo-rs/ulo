@@ -51,7 +51,7 @@ pub struct Request {
 
 #[async_trait]
 impl Provider for Request {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         crate::di::token_of::<Request>()
     }
 
@@ -68,7 +68,7 @@ impl Provider for Request {
         Box::new(instance)
     }
 
-    fn get_scope(&self) -> ProviderScope {
+    fn scope(&self) -> ProviderScope {
         ProviderScope::Request
     }
 }
@@ -142,7 +142,7 @@ pub struct RequestFactory;
 
 #[async_trait]
 impl ProviderFactory for RequestFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         crate::di::token_of::<Request>()
     }
 

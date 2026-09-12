@@ -18,7 +18,7 @@ pub(crate) struct SeaOrmConnectionFactory {
 
 #[async_trait]
 impl ProviderFactory for SeaOrmConnectionFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 
@@ -82,7 +82,7 @@ struct SeaOrmConnectionProvider {
 
 #[async_trait]
 impl Provider for SeaOrmConnectionProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 

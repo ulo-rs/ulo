@@ -146,7 +146,7 @@ fn generate_gateway_impl(
 
     let namespace_impl = namespace.map(|ns| {
         quote! {
-            fn get_namespace(&self) -> Option<String> {
+            fn namespace(&self) -> Option<String> {
                 Some(#ns.to_string())
             }
         }
@@ -154,7 +154,7 @@ fn generate_gateway_impl(
 
     let port_impl = port.map(|p| {
         quote! {
-            fn get_port(&self) -> Option<u16> {
+            fn port(&self) -> Option<u16> {
                 Some(#p)
             }
         }
@@ -163,11 +163,11 @@ fn generate_gateway_impl(
     quote! {
         #[::ulo::async_trait]
         impl ::ulo::Gateway for #struct_name {
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 #struct_token.to_string()
             }
 
-            fn get_path(&self) -> String {
+            fn path(&self) -> String {
                 #path.to_string()
             }
 

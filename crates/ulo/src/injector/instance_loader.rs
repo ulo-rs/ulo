@@ -297,13 +297,13 @@ impl UloInstanceLoader {
                     .get_provider_by_token(&module_token, &provider_token)?
                     .ok_or_else(|| format!("Provider not found: {}", provider_token))?;
 
-                let dependencies = provider_factory.get_dependencies();
+                let dependencies = provider_factory.dependency_tokens();
                 let resolved_dependencies =
                     self.resolve_dependencies(&module_token, dependencies, Some(&instances))?;
 
                 let injectable = provider_factory.build(resolved_dependencies).await;
-                tracing::debug!(module = %module_token, provider = %injectable.instance.get_token(), "provider instantiated");
-                let token = injectable.instance.get_token();
+                tracing::debug!(module = %module_token, provider = %injectable.instance.token(), "provider instantiated");
+                let token = injectable.instance.token();
                 instances.insert(token, injectable);
             }
             instances
@@ -335,7 +335,7 @@ impl UloInstanceLoader {
                     .entry(token.clone())
                     .or_insert_with(|| module_token.clone());
                 let mut deps: Vec<String> = Vec::new();
-                for dep in factory.get_dependencies() {
+                for dep in factory.dependency_tokens() {
                     match multi.get(&dep) {
                         // A multi-collection base token resolves to its contributors.
                         Some(contribs) => deps.extend(contribs.iter().map(|(_m, t)| t.clone())),
@@ -398,7 +398,7 @@ impl UloInstanceLoader {
         let mut container = self.container.borrow_mut();
         let mut providers_tokens = Vec::new();
         for (provider_instance_token, injectable) in providers_instances {
-            let token = injectable.instance.get_token().clone();
+            let token = injectable.instance.token().clone();
             container.add_provider_instance(module_token, injectable.instance, injectable.roles)?;
             providers_tokens.push((token, provider_instance_token));
         }
@@ -440,7 +440,7 @@ impl UloInstanceLoader {
             let controllers_factory = container.get_controllers_factory(&module_token)?;
 
             for controller_factory in controllers_factory.values() {
-                let dependencies = controller_factory.get_dependencies();
+                let dependencies = controller_factory.dependency_tokens();
                 let resolved_dependencies = self
                     .resolve_dependencies(&module_token, dependencies, None)?
                     .into_iter()
@@ -495,7 +495,7 @@ impl UloInstanceLoader {
         // borrow.
         let mut container_mut = self.container.borrow_mut();
         for (controller, dispatch) in resolved {
-            let token = controller.get_token();
+            let token = controller.token();
             container_mut.add_controller_object(&module_token, controller)?;
             match dispatch {
                 ResolvedDispatch::Http(routes) => {

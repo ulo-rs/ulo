@@ -77,12 +77,12 @@ impl InstanceWrapper {
         }
     }
 
-    pub fn get_path(&self) -> String {
-        self.instance.get_path()
+    pub fn path(&self) -> String {
+        self.instance.path()
     }
 
-    pub fn get_method(&self) -> HttpMethod {
-        self.instance.get_method()
+    pub fn method(&self) -> HttpMethod {
+        self.instance.method()
     }
 
     pub fn add_middleware(&mut self, middleware: Arc<dyn Middleware>) {
@@ -96,8 +96,8 @@ impl InstanceWrapper {
     }
 
     pub async fn handle_request(&self, req: HttpRequest) -> HttpResponse {
-        let method = self.get_method();
-        let path = self.get_path();
+        let method = self.method();
+        let path = self.path();
         tracing::debug!(method = %method.as_str(), path = %path, "incoming request");
 
         let instance = self.instance.clone();

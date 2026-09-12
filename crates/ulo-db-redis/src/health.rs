@@ -42,11 +42,11 @@ pub(crate) struct RedisHealthIndicatorFactory;
 
 #[async_trait]
 impl ProviderFactory for RedisHealthIndicatorFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<RedisHealthIndicator>()
     }
 
-    fn get_dependencies(&self) -> Vec<String> {
+    fn dependency_tokens(&self) -> Vec<String> {
         vec![ulo::di::token_of::<ConnectionManager>()]
     }
 
@@ -73,7 +73,7 @@ struct RedisHealthProvider {
 
 #[async_trait]
 impl Provider for RedisHealthProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<RedisHealthIndicator>()
     }
 

@@ -15,7 +15,7 @@ pub(crate) struct BroadcastServiceProvider {
 
 #[async_trait]
 impl Provider for BroadcastServiceProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         crate::di::token_of::<BroadcastService>()
     }
 
@@ -23,7 +23,7 @@ impl Provider for BroadcastServiceProvider {
         Box::new(self.instance.clone())
     }
 
-    fn get_scope(&self) -> ProviderScope {
+    fn scope(&self) -> ProviderScope {
         ProviderScope::Singleton
     }
 }
@@ -40,7 +40,7 @@ pub(crate) struct BroadcastServiceManager;
 
 #[async_trait]
 impl ProviderFactory for BroadcastServiceManager {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         crate::di::token_of::<BroadcastService>()
     }
 
