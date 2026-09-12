@@ -103,7 +103,9 @@ impl RoutesResolver {
             }
 
             let handler: Arc<dyn RequestHandler> = Arc::new(InstanceHandler(wrapper));
-            http_adapter.register_route(route_method, &route_path, handler)?;
+            http_adapter
+                .register_route(route_method, &route_path, handler)
+                .map_err(anyhow::Error::from_boxed)?;
         }
 
         Ok(())

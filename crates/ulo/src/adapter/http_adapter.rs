@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use crate::error::AdapterResult;
 use async_trait::async_trait;
 
 use crate::adapter::WsConnectionCallbacks;
@@ -59,7 +59,7 @@ pub trait HttpAdapter: Send + Sync + 'static {
         method: HttpMethod,
         path: &str,
         handler: Arc<dyn RequestHandler>,
-    ) -> Result<()>;
+    ) -> AdapterResult;
 
     /// Register a WebSocket upgrade path on the same port as HTTP.
     ///
@@ -69,11 +69,9 @@ pub trait HttpAdapter: Send + Sync + 'static {
         &mut self,
         path: &str,
         callbacks: Arc<WsConnectionCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         let _ = (path, callbacks);
-        Err(anyhow::anyhow!(
-            "This HTTP adapter does not support WebSocket upgrades"
-        ))
+        Err("This HTTP adapter does not support WebSocket upgrades".into())
     }
 
     /// Consume the adapter, acquire the listening socket, and return a fully
@@ -106,5 +104,5 @@ pub trait HttpAdapter: Send + Sync + 'static {
         self: Box<Self>,
         target: BindTarget,
         ctx: AdapterContext,
-    ) -> Result<HttpLifecycleHandle>;
+    ) -> AdapterResult<HttpLifecycleHandle>;
 }

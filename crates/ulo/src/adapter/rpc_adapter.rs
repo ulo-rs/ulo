@@ -2,7 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use anyhow::Result;
+use crate::error::AdapterResult;
 use async_trait::async_trait;
 
 use crate::rpc::{RpcCallInfo, RpcData, RpcHandlerResult};
@@ -68,7 +68,7 @@ pub trait RpcAdapter: Send + Sync + 'static {
         &mut self,
         patterns: &[String],
         callbacks: Arc<RpcMessageCallbacks>,
-    ) -> Result<()>;
+    ) -> AdapterResult;
 
     /// Consume the adapter and return a self-contained lifecycle handle.
     ///
@@ -78,5 +78,5 @@ pub trait RpcAdapter: Send + Sync + 'static {
     /// joins the serve future alongside every other adapter's serve.
     async fn into_lifecycle(
         self: Box<Self>,
-    ) -> Result<crate::adapter::lifecycle_handles::RpcLifecycleHandle>;
+    ) -> AdapterResult<crate::adapter::lifecycle_handles::RpcLifecycleHandle>;
 }

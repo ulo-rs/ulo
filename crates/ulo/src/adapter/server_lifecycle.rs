@@ -2,7 +2,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 
-use anyhow::Result;
+use crate::error::AdapterResult;
 use async_trait::async_trait;
 
 /// Uniform lifecycle protocol for every adapter kind the framework hosts
@@ -37,5 +37,5 @@ pub(crate) trait ServerLifecycle: Send + 'static {
     /// will resolve shortly after — exactly when depends on the transport's
     /// drain semantics (configured per-adapter, not at the lifecycle layer).
     /// Idempotent; safe to call multiple times.
-    async fn shutdown(&mut self) -> Result<()>;
+    async fn shutdown(&mut self) -> AdapterResult;
 }

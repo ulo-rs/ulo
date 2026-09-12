@@ -2,7 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use anyhow::Result;
+use crate::error::AdapterResult;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 
@@ -118,11 +118,9 @@ pub trait WebSocketAdapter: Send + Sync + 'static {
         port: u16,
         path: &str,
         callbacks: Arc<WsConnectionCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         let _ = (port, path, callbacks);
-        Err(anyhow::anyhow!(
-            "This WebSocket adapter does not support separate-port servers"
-        ))
+        Err("This WebSocket adapter does not support separate-port servers".into())
     }
 
     /// Consume the adapter, acquire a socket for every requested port, and
@@ -146,10 +144,8 @@ pub trait WebSocketAdapter: Send + Sync + 'static {
     async fn into_lifecycle_handles(
         self: Box<Self>,
         targets: Vec<(u16, BindTarget)>,
-    ) -> Result<Vec<crate::adapter::lifecycle_handles::WsLifecycleHandle>> {
+    ) -> AdapterResult<Vec<crate::adapter::lifecycle_handles::WsLifecycleHandle>> {
         let _ = targets;
-        Err(anyhow::anyhow!(
-            "This WebSocket adapter does not support separate-port servers"
-        ))
+        Err("This WebSocket adapter does not support separate-port servers".into())
     }
 }
