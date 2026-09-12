@@ -20,8 +20,8 @@ use std::fmt;
 
 use serde::de::DeserializeOwned;
 
-use crate::context::RpcContext;
 use crate::extractors::{FromContext, Payload};
+use crate::rpc::RpcContext;
 use crate::rpc::RpcData;
 
 /// The call's payload, untouched.

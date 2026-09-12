@@ -179,7 +179,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
             #[allow(non_snake_case, clippy::all)]
             async fn __ulo_rpc_handle_message(
                 &self,
-                ctx: &::ulo::context::RpcContext,
+                ctx: &::ulo::rpc::RpcContext,
             ) -> ::ulo::traits::ExecutionResult<
                 ::ulo::rpc::RpcHandlerOutput,
                 ::ulo::rpc::RpcError,
@@ -208,7 +208,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
         impl ::ulo::rpc::RpcController for #struct_name {
             async fn handle_message(
                 &self,
-                ctx: &::ulo::context::RpcContext,
+                ctx: &::ulo::rpc::RpcContext,
             ) -> ::ulo::traits::ExecutionResult<
                 ::ulo::rpc::RpcHandlerOutput,
                 ::ulo::rpc::RpcError,
@@ -254,7 +254,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
 
             async fn resolve(
                 &self,
-                ctx: &::ulo::context::RpcContext,
+                ctx: &::ulo::rpc::RpcContext,
             ) -> ::std::sync::Arc<dyn ::ulo::rpc::RpcController> {
                 self.0
                     .resolve(::ulo::ProviderContext::Rpc(ctx.clone()))
@@ -426,7 +426,7 @@ fn handler_params(method: &syn::ImplItemFn) -> (Vec<TokenStream>, Vec<TokenStrea
 
         let extraction = quote! {
             let #name = match <#ty as ::ulo::extractors::FromContext<
-                ::ulo::context::RpcContext,
+                ::ulo::rpc::RpcContext,
             >>::extract(ctx).await {
                 ::std::result::Result::Ok(__value) => __value,
                 ::std::result::Result::Err(__e) => {

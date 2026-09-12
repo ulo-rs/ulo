@@ -12,10 +12,10 @@ use std::pin::Pin;
 
 use crate::common::NotServed;
 use futures_util::Stream;
-use ulo::context::RpcContext;
 use ulo::extractors::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
+use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
 use ulo::traits::Guard;
 use ulo::*;

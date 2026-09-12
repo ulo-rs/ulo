@@ -67,7 +67,7 @@ impl OrdersController {
     async fn create_order(
         &self,
         data: ulo::RpcData,
-        _ctx: &ulo::context::RpcContext,
+        _ctx: &ulo::rpc::RpcContext,
     ) -> Result<ulo::RpcData, ulo::RpcError> {
         let payload = data
             .as_json()
@@ -88,7 +88,7 @@ impl OrdersController {
     async fn on_order_shipped(
         &self,
         data: ulo::RpcData,
-        _ctx: &ulo::context::RpcContext,
+        _ctx: &ulo::rpc::RpcContext,
     ) -> Result<(), ulo::RpcError> {
         let payload = data
             .as_json()

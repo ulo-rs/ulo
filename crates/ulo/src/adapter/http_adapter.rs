@@ -24,7 +24,7 @@ use crate::ws::WsConnectionCallbacks;
 ///
 /// # Bounded in-flight on HTTP
 ///
-/// Notable absence vs. [`RpcAdapter`](crate::adapter::RpcAdapter) and
+/// Notable absence vs. [`RpcAdapter`](crate::rpc::RpcAdapter) and
 /// [`GrpcAdapter`](crate::grpc::GrpcAdapter): no `with_max_inflight`.
 /// HTTP adapters wrap five different framework crates (axum, actix, poem,
 /// rocket, salvo) each with their own middleware model, and the framework

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::context::RpcContext;
+use crate::rpc::RpcContext;
 use crate::traits::ExecutionResult;
 
 use super::RpcHandlerOutput;

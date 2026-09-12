@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use crate::application::UloApplication;
 use crate::application_context::UloApplicationContext;
-use crate::context::{HttpContext, RpcContext};
+use crate::context::HttpContext;
 use crate::error::StartupError;
 use crate::grpc::GrpcContext;
 use crate::http_types::HttpResponse;
 use crate::injector::{Container, InstanceLoader};
 use crate::middleware::Middleware;
+use crate::rpc::RpcContext;
 use crate::rpc::RpcData;
 use crate::scanner::DependencyScanner;
 use crate::traits::{

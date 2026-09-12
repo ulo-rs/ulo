@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::context::Metadata;
-use crate::context::RpcContext;
+use crate::rpc::RpcContext;
 
 use super::RpcController;
 

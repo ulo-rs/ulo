@@ -6,7 +6,7 @@ use std::collections::HashMap;
 /// Carries the pattern (subject / topic / channel / method name), per-call
 /// metadata (NATS headers, TCP envelope fields), and the extension bag the
 /// execution's context adopts. Distinct from
-/// [`crate::context::RpcContext`], which is the framework-built handler
+/// [`crate::rpc::RpcContext`], which is the framework-built handler
 /// context carrying declared metadata, the cancellation token, and the
 /// execution cache alongside these fields.
 #[derive(Debug, Clone)]

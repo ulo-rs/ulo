@@ -7,7 +7,7 @@ use crate::grpc::service_source::{GrpcServiceSource, ResolvedGrpcEnhancers};
 
 /// Interface for gRPC transport adapters.
 ///
-/// Distinct from [`RpcAdapter`](crate::adapter::RpcAdapter) by design: gRPC is
+/// Distinct from [`RpcAdapter`](crate::rpc::RpcAdapter) by design: gRPC is
 /// contract-first (services and methods are declared in `.proto` files and
 /// known at compile time via `tonic`-generated traits), supports four call
 /// shapes (unary + three streaming modes), and dispatches via typed protobuf

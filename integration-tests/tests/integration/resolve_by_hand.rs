@@ -8,7 +8,8 @@ use std::collections::HashMap;
 
 use ulo::RequestPart;
 use ulo::UloFactory;
-use ulo::context::{HttpContext, RpcContext};
+use ulo::context::HttpContext;
+use ulo::rpc::RpcContext;
 use ulo::{ProviderContext, RpcData, injectable, module, new};
 use uuid::Uuid;
 

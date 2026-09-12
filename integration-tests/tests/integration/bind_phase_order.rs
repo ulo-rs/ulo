@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ulo::AdapterResult;
-use ulo::context::RpcContext;
+use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
 use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{

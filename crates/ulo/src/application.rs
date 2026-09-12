@@ -15,15 +15,12 @@ use crate::error::{ResolutionError, StartupError};
 use event_listener::Event;
 
 use crate::{
-    adapter::{
-        AdapterContext, BindTarget, HttpAdapter, RpcAdapter, RpcMessageCallbacks,
-        server_lifecycle::ServerLifecycle,
-    },
+    adapter::{AdapterContext, BindTarget, HttpAdapter, server_lifecycle::ServerLifecycle},
     application_context::UloApplicationContext,
     grpc::GrpcAdapter,
     injector::{Container, GatewayResolver, IntoToken},
     router::RoutesResolver,
-    rpc::{RpcCallInfo, RpcControllerWrapper, RpcData, RpcError},
+    rpc::{RpcAdapter, RpcCallInfo, RpcControllerWrapper, RpcData, RpcError, RpcMessageCallbacks},
     ws::{
         BroadcastService, DisconnectReason, GatewayWrapper, MessageCallbackResult,
         WebSocketAdapter, WsClientMap, WsConnectionCallbacks, WsError, WsHandlerOutput, WsMessage,
@@ -1020,7 +1017,7 @@ fn make_rpc_callbacks(
     }
     let pattern_map = Arc::new(pattern_map);
 
-    use crate::context::RpcContext;
+    use crate::rpc::RpcContext;
     use crate::rpc::RpcHandlerOutput;
 
     let global_error_handlers = Arc::new(global_error_handlers);

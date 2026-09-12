@@ -98,7 +98,7 @@ impl OrdersRpcController {
     async fn create_order(
         &self,
         Payload(payload): Payload<CreateOrderDto>,
-        _ctx: &ulo::context::RpcContext,
+        _ctx: &ulo::rpc::RpcContext,
     ) -> Result<OrderDto, ulo::RpcError> {
         if payload.qty == 0 {
             return Err(ulo::RpcError::Internal("qty must be positive".into()));
@@ -110,7 +110,7 @@ impl OrdersRpcController {
     async fn on_order_shipped(
         &self,
         Payload(payload): Payload<ShipOrderDto>,
-        _ctx: &ulo::context::RpcContext,
+        _ctx: &ulo::rpc::RpcContext,
     ) -> Result<(), ulo::RpcError> {
         self.service.handle_shipment(payload.order_id);
         Ok(())

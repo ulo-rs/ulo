@@ -8,7 +8,7 @@
 use std::error::Error;
 use std::sync::Arc;
 
-use ulo::context::RpcContext;
+use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
 use ulo::{
     AdapterResult, RpcAdapter, RpcLifecycleHandle, RpcMessageCallbacks, StartupError, UloFactory,

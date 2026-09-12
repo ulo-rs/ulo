@@ -4,7 +4,8 @@ use std::sync::Arc;
 use crate::context::Metadata;
 use crate::rpc::RpcData;
 
-use super::{CancellationToken, Extensions, HandlerContext, shared::SharedState};
+use crate::context::shared::SharedState;
+use crate::context::{CancellationToken, Extensions, HandlerContext};
 
 /// Per-request context for RPC handlers.
 ///

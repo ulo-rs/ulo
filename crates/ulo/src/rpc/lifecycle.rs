@@ -1,14 +1,10 @@
-//! The lifecycle handle for the WebSocket adapter.
+//! The lifecycle handle for the RPC adapter.
 //!
-//! One handle per unique separate-port listener. A single adapter produces N handles inside
-//! `WebSocketAdapter::into_lifecycle_handles`; each handle gets a clone of the adapter's shutdown
-//! signal in its callback, so calling `shutdown` on any handle flips the watch and every port wakes
-//! up to drain. Idempotent by construction — `watch::Sender::send(true)` after the value is already
-//! `true` is a no-op.
-//!
-//! The handle owns the concrete adapter and exposes only [`ServerLifecycle`] to the orchestrator,
-//! which cannot tell one transport from another once the handle is boxed.
+//! Owns the concrete adapter and exposes only [`ServerLifecycle`] to the orchestrator, which
+//! cannot tell one transport from another once the handle is boxed. A subject-based transport
+//! has no address to report, which is why `local_addr` is optional here and not on the others.
 
+use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 
@@ -18,15 +14,15 @@ use crate::adapter::lifecycle_handles::ShutdownCallback;
 use crate::adapter::server_lifecycle::ServerLifecycle;
 use crate::error::AdapterResult;
 
-pub struct WsLifecycleHandle {
-    local_addr: SocketAddr,
+pub struct RpcLifecycleHandle {
+    local_addr: Option<SocketAddr>,
     serve: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     shutdown: Option<ShutdownCallback>,
 }
 
-impl WsLifecycleHandle {
+impl RpcLifecycleHandle {
     pub fn new<F, Fut>(
-        local_addr: SocketAddr,
+        local_addr: Option<SocketAddr>,
         serve: Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
         shutdown: F,
     ) -> Self
@@ -40,20 +36,16 @@ impl WsLifecycleHandle {
             shutdown: Some(Box::new(move || Box::pin(shutdown()))),
         }
     }
-
-    pub fn local_addr(&self) -> SocketAddr {
-        self.local_addr
-    }
 }
 
 #[async_trait]
-impl ServerLifecycle for WsLifecycleHandle {
+impl ServerLifecycle for RpcLifecycleHandle {
     fn name(&self) -> &'static str {
-        "websocket"
+        "rpc"
     }
 
     fn local_addr(&self) -> Option<SocketAddr> {
-        Some(self.local_addr)
+        self.local_addr
     }
 
     fn take_serve(&mut self) -> Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>> {
@@ -68,5 +60,3 @@ impl ServerLifecycle for WsLifecycleHandle {
         }
     }
 }
-
-// ─── RPC ─────────────────────────────────────────────────────────────────────
