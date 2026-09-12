@@ -19,7 +19,7 @@ use serial_test::serial;
 use ulo::UloFactory;
 use ulo::context::GrpcContext;
 use ulo::extractors::{Inbound, Payload};
-use ulo::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo::traits::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::{GrpcHandlerResult, GrpcStatus};
 use ulo_macros::{controller, grpc_methods, injectable, module, new, use_guards, use_interceptors};
 

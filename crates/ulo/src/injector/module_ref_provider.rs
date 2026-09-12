@@ -4,7 +4,7 @@ use parking_lot::RwLock;
 
 use crate::{
     ProviderScope, async_trait,
-    traits_helpers::{Provider, ProviderContext},
+    traits::{Provider, ProviderContext},
 };
 
 use super::{ModuleRef, module_ref::ProviderStore};

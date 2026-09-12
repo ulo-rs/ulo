@@ -79,10 +79,10 @@ fn expand(target_ty: Type, func: ItemFn) -> syn::Result<TokenStream2> {
         }
 
         #[::ulo::async_trait]
-        impl ::ulo::traits_helpers::ErrorHandler<#ctx_ty, #response_ty> for #name {
+        impl ::ulo::traits::ErrorHandler<#ctx_ty, #response_ty> for #name {
             async fn handle_error(
                 &self,
-                error: ::ulo::traits_helpers::ChainError<'_>,
+                error: ::ulo::traits::ChainError<'_>,
                 ctx: &#ctx_ty,
             ) -> ::std::option::Option<#response_ty> {
                 let target: &#target_ref = error.downcast_ref::<#target_ref>()?;

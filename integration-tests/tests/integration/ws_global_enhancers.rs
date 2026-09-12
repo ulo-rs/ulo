@@ -19,7 +19,7 @@ use tokio_tungstenite::tungstenite::Message;
 use ulo::UloFactory;
 use ulo::async_trait;
 use ulo::context::WsContext;
-use ulo::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo::traits::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::websocket::{WsError, WsHandlerResult, WsMessage};
 use ulo::{injectable, module};
 use ulo_macros::{new, subscribe_message, subscriptions, use_guards, websocket_gateway};

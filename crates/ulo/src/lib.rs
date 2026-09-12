@@ -26,21 +26,21 @@ pub mod extractors;
 pub mod grpc_status;
 pub use grpc_status::{GrpcCode, GrpcHandlerResult, GrpcStatus};
 mod application;
+mod enhancer;
 mod extension;
 mod factory;
 pub mod grpc_runtime;
-pub mod http_helpers;
+mod http_types;
 pub mod injector;
 pub mod middleware;
-pub mod module_helpers;
+mod modules;
 pub mod panic_recovery;
 pub mod provider_scope;
 mod request;
 mod router;
 pub mod rpc;
 mod scanner;
-mod structs_helpers;
-pub mod traits_helpers;
+pub mod traits;
 pub mod type_map;
 pub mod websocket;
 
@@ -59,9 +59,9 @@ pub use adapter::{
     MessageCallbackResult, RequestHandler, RpcAdapter, RpcClientTransport, RpcLifecycleHandle,
     RpcMessageCallbacks, WebSocketAdapter, WsConnectionCallbacks, WsLifecycleHandle,
 };
-pub use http_helpers::{
+pub use http_types::{
     Body, BoxBody, HttpMethod, HttpRequest, HttpResponse, HttpResponseBuilder, IntoResponse,
-    RequestBody, RequestBoxBody, RequestPart, Sse, SseEvent, sse,
+    PathParams, RequestBody, RequestBoxBody, RequestPart, Sse, SseEvent, join_route, sse,
 };
 pub use injector::InstanceWrapper;
 pub use rpc::{
@@ -97,7 +97,7 @@ pub use rustc_hash::FxHashMap;
 // Re-export provider scope
 pub use provider_scope::ProviderScope;
 
-pub use traits_helpers::{ExecutionCache, ModuleMetadata, ProviderContext};
+pub use traits::{ExecutionCache, ModuleMetadata, ProviderContext};
 
 pub use error::{AdapterResult, InitResult, ResolutionError, SetupResult, StartupError};
 pub use errors::{
@@ -113,7 +113,7 @@ pub use ulo_macros::*;
 
 pub use application::{BoundAdapters, ShutdownHandle, UloApplication};
 pub use factory::UloFactory;
-pub use module_helpers::{CheckedModule, DynamicModule, ModuleIdentity};
+pub use modules::{CheckedModule, DynamicModule, ModuleIdentity};
 
 #[cfg(feature = "tower-compat")]
 pub mod tower_compat;

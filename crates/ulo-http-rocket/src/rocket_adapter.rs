@@ -20,8 +20,8 @@ use rocket_ws::WebSocket as RocketWs;
 use ulo::websocket::{WsMessage, WsSink};
 use ulo::{
     AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
-    HttpRequest, HttpResponse, MessageCallbackResult, RequestHandler, WsConnectionCallbacks,
-    http_helpers::{PathParams, RequestBody, RequestPart},
+    HttpRequest, HttpResponse, MessageCallbackResult, PathParams, RequestBody, RequestHandler,
+    RequestPart, WsConnectionCallbacks,
 };
 
 use crate::rocket_websocket_adapter::{rocket_to_ws_message, ws_message_to_rocket};

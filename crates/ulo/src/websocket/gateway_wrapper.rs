@@ -7,8 +7,8 @@ use parking_lot::RwLock;
 use crate::context::Metadata;
 use crate::context::WsContext;
 use crate::errors::{PanicRecovered, PipelineSegment};
-use crate::http_helpers::ExecutionResult;
-use crate::traits_helpers::{
+use crate::traits::ExecutionResult;
+use crate::traits::{
     Guard, Interceptor, InterceptorNext, WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
 };
 

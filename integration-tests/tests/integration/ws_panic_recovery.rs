@@ -12,7 +12,7 @@ use ulo::context::WsContext;
 use ulo::errors::{ErrorKind, PanicRecovered, PipelineSegment};
 use ulo::injectable;
 use ulo::module;
-use ulo::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo::traits::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::websocket::{WsClient, WsError, WsHandlerResult, WsMessage};
 use ulo_macros::{new, subscriptions, websocket_gateway};
 

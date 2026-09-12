@@ -53,8 +53,8 @@ use super::{
     multi_collection_provider::MultiCollectionProvider,
 };
 use crate::{
-    structs_helpers::EnhancerMetadata,
-    traits_helpers::{
+    enhancer::EnhancerMetadata,
+    traits::{
         Controller, Dispatch, HttpGuardEntry, HttpInterceptorEntry, Injectable, Provider, Route,
     },
 };

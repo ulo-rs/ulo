@@ -5,7 +5,7 @@ use futures::future::BoxFuture;
 use redis::aio::ConnectionManager;
 use ulo::{
     FxHashMap,
-    traits_helpers::{Injectable, Provider, ProviderContext, ProviderFactory},
+    traits::{Injectable, Provider, ProviderContext, ProviderFactory},
 };
 use ulo_health::{HealthEntry, HealthIndicator, HealthIndicatorResult};
 

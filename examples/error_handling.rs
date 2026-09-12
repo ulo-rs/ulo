@@ -21,9 +21,8 @@
 use serde::Serialize;
 use serde_json::json;
 use ulo::{
-    Error, HttpRequest, HttpResponse, UloFactory, async_trait, catch, context::HttpContext,
-    controller, errors::HttpError, get, http_helpers::Body, injectable, module, post, routes,
-    traits_helpers::Guard,
+    Body, Error, HttpRequest, HttpResponse, UloFactory, async_trait, catch, context::HttpContext,
+    controller, errors::HttpError, get, injectable, module, post, routes, traits::Guard,
 };
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::use_guards;
@@ -187,7 +186,7 @@ impl UserController {
     fn get_user(&self, req: HttpRequest) -> Result<Body, UserError> {
         let id = req
             .extensions()
-            .get::<ulo::http_helpers::PathParams>()
+            .get::<ulo::PathParams>()
             .and_then(|p| p.0.get("id").map(|s| s.as_str()))
             .ok_or_else(|| UserError::InvalidId("(missing)".into()))?;
 

@@ -8,7 +8,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 use ulo::async_trait;
 use ulo::context::{HandlerContext, WsContext};
-use ulo::traits_helpers::Guard;
+use ulo::traits::Guard;
 use ulo::websocket::{Session, WsClient, WsHandlerResult, WsMessage};
 use ulo::{
     DisconnectReason, injectable, module, new, on_connect, on_disconnect, set_metadata,

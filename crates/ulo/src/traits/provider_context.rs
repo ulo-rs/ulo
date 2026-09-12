@@ -2,7 +2,7 @@ use crate::context::{GrpcContext, HttpContext, RpcContext, StandaloneContext, Ws
 
 /// The execution a provider is being built for.
 ///
-/// Passed to [`Provider::resolve`](crate::traits_helpers::Provider::resolve) so a
+/// Passed to [`Provider::resolve`](crate::traits::Provider::resolve) so a
 /// request-scoped provider can reach the execution it belongs to — its cache,
 /// its extension bag, and whatever the transport carries.
 ///
@@ -38,7 +38,7 @@ impl ProviderContext {
     ///
     /// This is what a request-scoped provider needs and the only thing it needs
     /// from every transport, which is why it is reachable without matching.
-    pub fn cache(&self) -> Option<&crate::traits_helpers::ExecutionCache> {
+    pub fn cache(&self) -> Option<&crate::traits::ExecutionCache> {
         use crate::context::HandlerContext;
         match self {
             Self::Http(c) => Some(c.cache()),
@@ -86,7 +86,7 @@ impl ProviderContext {
     }
 
     /// The HTTP request parts, when this execution is an HTTP one.
-    pub fn request_parts(&self) -> Option<&crate::http_helpers::RequestPart> {
+    pub fn request_parts(&self) -> Option<&crate::http_types::RequestPart> {
         match self {
             Self::Http(c) => Some(c.request()),
             _ => None,

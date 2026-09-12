@@ -7,12 +7,12 @@ use crate::application_context::UloApplicationContext;
 use crate::context::Metadata;
 use crate::context::{GrpcContext, HttpContext, RpcContext, WsContext};
 use crate::error::StartupError;
-use crate::http_helpers::HttpResponse;
+use crate::http_types::HttpResponse;
 use crate::injector::{Container, InstanceLoader};
 use crate::middleware::Middleware;
 use crate::rpc::RpcData;
 use crate::scanner::DependencyScanner;
-use crate::traits_helpers::{
+use crate::traits::{
     ErrorHandler, GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, Guard,
     HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry, Interceptor, ModuleMetadata,
     RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry, WsErrorHandlerArc, WsGuardEntry,
@@ -70,7 +70,7 @@ impl UloFactory {
     /// Register a global interceptor that wraps every HTTP route handler.
     pub fn use_global_http_interceptors(
         &mut self,
-        interceptor: Arc<dyn Interceptor<HttpContext, crate::http_helpers::HttpResponse>>,
+        interceptor: Arc<dyn Interceptor<HttpContext, crate::http_types::HttpResponse>>,
     ) -> &mut Self {
         self.global_http_interceptors
             .push(HttpInterceptorEntry::Ready(interceptor));

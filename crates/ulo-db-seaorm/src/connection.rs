@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use ulo::{
     FxHashMap, StartupCheck,
-    traits_helpers::{Provider, ProviderContext, ProviderFactory},
+    traits::{Provider, ProviderContext, ProviderFactory},
 };
 
 pub(crate) struct SeaOrmConnectionFactory {
@@ -28,8 +28,8 @@ impl ProviderFactory for SeaOrmConnectionFactory {
 
     async fn build(
         &self,
-        _deps: FxHashMap<String, ulo::traits_helpers::Injectable>,
-    ) -> ulo::traits_helpers::Injectable {
+        _deps: FxHashMap<String, ulo::traits::Injectable>,
+    ) -> ulo::traits::Injectable {
         // Configured lazily, with the check's deadline handed to the driver: sea-orm's own
         // connect and acquire timeouts are what bound the probe, so nothing here needs a timer.
         // What is left at build time is URL parsing, which needs no network.
@@ -55,7 +55,7 @@ impl ProviderFactory for SeaOrmConnectionFactory {
             ),
         };
 
-        ulo::traits_helpers::Injectable::new(
+        ulo::traits::Injectable::new(
             Arc::new(Box::new(SeaOrmConnectionProvider {
                 db: Mutex::new(db),
                 init_error,

@@ -1,4 +1,4 @@
-use crate::traits_helpers::{ControllerFactory, ModuleMetadata, ProviderFactory};
+use crate::traits::{ControllerFactory, ModuleMetadata, ProviderFactory};
 use crate::websocket::BroadcastService;
 use crate::websocket::broadcast_provider::BroadcastServiceManager;
 

@@ -4,7 +4,7 @@ use std::{cell::RefCell, pin::Pin, rc::Rc, sync::Arc};
 use crate::{
     adapter::HttpAdapter,
     adapter::request_handler::RequestHandler,
-    http_helpers::{HttpRequest, HttpResponse},
+    http_types::{HttpRequest, HttpResponse},
     injector::{Container, InstanceWrapper},
     middleware::MiddlewareChain,
 };

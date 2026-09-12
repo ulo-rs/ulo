@@ -20,9 +20,8 @@ use tower::ServiceExt as TowerServiceExt;
 use ulo::websocket::{WsMessage, WsSink};
 use ulo::{
     AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
-    HttpRequest, HttpResponse, MessageCallbackResult, RequestHandler, WebSocketAdapter,
-    WsConnectionCallbacks, async_trait,
-    http_helpers::{PathParams, RequestBody, RequestPart},
+    HttpRequest, HttpResponse, MessageCallbackResult, PathParams, RequestBody, RequestHandler,
+    RequestPart, WebSocketAdapter, WsConnectionCallbacks, async_trait,
 };
 
 use crate::axum_websocket_adapter::{axum_to_ws_message, ws_message_to_axum};

@@ -392,7 +392,7 @@ impl UloApplication {
     /// work arrived over no transport.
     pub async fn resolve<T: 'static>(
         &self,
-        execution: &crate::traits_helpers::ProviderContext,
+        execution: &crate::traits::ProviderContext,
     ) -> Result<T, ResolutionError> {
         self.context.resolve::<T>(execution).await
     }
@@ -401,7 +401,7 @@ impl UloApplication {
     pub async fn resolve_by_token<T: 'static>(
         &self,
         token: impl IntoToken<T>,
-        execution: &crate::traits_helpers::ProviderContext,
+        execution: &crate::traits::ProviderContext,
     ) -> Result<T, ResolutionError> {
         self.context.resolve_by_token::<T>(token, execution).await
     }
@@ -527,7 +527,7 @@ impl UloApplication {
                 ));
                 // Upgrade requests arrive with trailing slashes already
                 // trimmed (AdapterContext), so register the trimmed form.
-                let trimmed = crate::http_helpers::trim_trailing_slashes(path);
+                let trimmed = crate::http_types::trim_trailing_slashes(path);
                 http.register_ws_route(trimmed, callbacks)
                     .map_err(|source| StartupError::Adapter {
                         transport: "websocket",
@@ -1009,7 +1009,7 @@ fn make_ws_callbacks(
 /// would otherwise never see the one call an operator most wants to hear about.
 fn make_rpc_callbacks(
     wrappers: Vec<Arc<RpcControllerWrapper>>,
-    global_error_handlers: Vec<crate::traits_helpers::RpcErrorHandlerArc>,
+    global_error_handlers: Vec<crate::traits::RpcErrorHandlerArc>,
 ) -> RpcMessageCallbacks {
     let mut pattern_map: HashMap<String, Arc<RpcControllerWrapper>> = HashMap::new();
     for wrapper in &wrappers {

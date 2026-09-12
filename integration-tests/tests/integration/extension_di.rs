@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ulo::async_trait;
 use ulo::context::{Extensions, HttpContext};
-use ulo::traits_helpers::Guard;
+use ulo::traits::Guard;
 use ulo::{Body, Extension, controller, get, injectable, module, routes};
 
 use crate::common::TestServer;

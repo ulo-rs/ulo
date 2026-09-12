@@ -65,7 +65,7 @@ pub async fn create(module: impl ModuleMetadata + 'static) -> UloApplication
 
 The enum, the macro-generated `From`, and the hand-written `From` impls are deleted. The scanner
 walks `Box<dyn ModuleMetadata>`. `ModuleMetadata` is re-exported at the crate root so the bound is
-nameable without the `traits_helpers` path.
+nameable without the `traits` path.
 
 ## Consequences
 
@@ -77,7 +77,7 @@ integration test is gone.
 **Less macro output.** `#[module]` no longer emits a `From` impl per module.
 
 **Breaking, narrowly.** Code naming `ModuleDefinition` (the type was public at
-`ulo::module_helpers::module_enum`) must pass the module value directly instead. Ordinary call
+`ulo::modules::module_enum`) must pass the module value directly instead. Ordinary call
 sites — `UloFactory::create(AppModule)` — compile unchanged.
 
 **Boundary for the future.** New kinds of module belong behind `impl ModuleMetadata`, not behind a

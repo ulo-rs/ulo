@@ -35,9 +35,9 @@ use crate::async_trait;
 use crate::context::HandlerContext;
 use crate::context::HttpContext;
 use crate::extractors::FromContext;
-use crate::http_helpers::{PathParams, RequestPart};
+use crate::http_types::{PathParams, RequestPart};
 use crate::provider_scope::ProviderScope;
-use crate::traits_helpers::{Provider, ProviderContext, ProviderFactory};
+use crate::traits::{Provider, ProviderContext, ProviderFactory};
 
 /// Built-in request-scoped provider for accessing HTTP request metadata.
 ///
@@ -150,13 +150,10 @@ impl ProviderFactory for RequestFactory {
 
     async fn build(
         &self,
-        _deps: FxHashMap<String, crate::traits_helpers::Injectable>,
-    ) -> crate::traits_helpers::Injectable {
+        _deps: FxHashMap<String, crate::traits::Injectable>,
+    ) -> crate::traits::Injectable {
         let (parts, ()) = http::Request::builder().body(()).unwrap().into_parts();
         let provider = Request::from_parts(&parts);
-        crate::traits_helpers::Injectable::new(
-            Arc::new(Box::new(provider) as Box<dyn Provider>),
-            vec![],
-        )
+        crate::traits::Injectable::new(Arc::new(Box::new(provider) as Box<dyn Provider>), vec![])
     }
 }

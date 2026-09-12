@@ -48,10 +48,10 @@ impl ulo::Error for WindowClosed {
 pub struct ReopenHandler {}
 
 #[async_trait]
-impl ulo::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for ReopenHandler {
+impl ulo::traits::ErrorHandler<GrpcContext, GrpcStatus> for ReopenHandler {
     async fn handle_error(
         &self,
-        error: ulo::traits_helpers::ChainError<'_>,
+        error: ulo::traits::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         error.downcast_ref::<WindowClosed>()?;

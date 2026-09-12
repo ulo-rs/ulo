@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::http_helpers::{HttpRequest, RequestBody, RequestPart};
+use crate::http_types::{HttpRequest, RequestBody, RequestPart};
 
 use super::{CancellationToken, Extensions, HandlerContext, Metadata, shared::SharedState};
 
@@ -18,7 +18,7 @@ use super::{CancellationToken, Extensions, HandlerContext, Metadata, shared::Sha
 ///
 /// Answering is not done here. A handler returns its response, and an enhancer
 /// that wants to answer without reaching the handler returns one too — see
-/// [`Interceptor`](crate::traits_helpers::Interceptor).
+/// [`Interceptor`](crate::traits::Interceptor).
 #[derive(Clone)]
 pub struct HttpContext {
     inner: Arc<HttpInner>,
@@ -99,7 +99,7 @@ impl HandlerContext for HttpContext {
         &self.inner.shared.extensions
     }
 
-    fn cache(&self) -> &crate::traits_helpers::ExecutionCache {
+    fn cache(&self) -> &crate::traits::ExecutionCache {
         &self.inner.shared.cache
     }
 

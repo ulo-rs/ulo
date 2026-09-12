@@ -9,8 +9,8 @@ use crate::error::ResolutionError;
 
 use crate::{
     injector::{Container, IntoToken, ModuleRef},
-    module_helpers::ModuleIdentity,
-    traits_helpers::{Provider, ProviderContext},
+    modules::ModuleIdentity,
+    traits::{Provider, ProviderContext},
 };
 
 /// Full DI container without an HTTP server

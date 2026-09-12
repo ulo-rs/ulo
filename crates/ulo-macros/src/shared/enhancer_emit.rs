@@ -34,13 +34,13 @@ pub enum ErrorHandlerKind {
 }
 
 pub struct EnhancerSpec {
-    /// `::ulo::traits_helpers::ProviderRole::HttpGuard` etc.
+    /// `::ulo::traits::ProviderRole::HttpGuard` etc.
     pub role_variant: TokenStream,
-    /// `::ulo::traits_helpers::HttpGuardEntry` etc.
+    /// `::ulo::traits::HttpGuardEntry` etc.
     pub entry_path: TokenStream,
-    /// `::ulo::traits_helpers::Guard<::ulo::context::HttpContext>` etc.
+    /// `::ulo::traits::Guard<::ulo::context::HttpContext>` etc.
     pub trait_path: TokenStream,
-    /// `::ulo::traits_helpers::DynHttpGuardFactory` etc.
+    /// `::ulo::traits::DynHttpGuardFactory` etc.
     pub dyn_factory_trait: TokenStream,
     /// Camel-case suffix used to derive a unique factory struct name per kind.
     pub factory_suffix: &'static str,
@@ -52,7 +52,7 @@ pub struct EnhancerSpec {
 }
 
 pub struct ErrorHandlerSpec {
-    /// `::ulo::traits_helpers::ProviderRole::HttpErrorHandler` etc.
+    /// `::ulo::traits::ProviderRole::HttpErrorHandler` etc.
     pub role_variant: TokenStream,
 }
 
@@ -74,73 +74,73 @@ impl EnhancerKind {
     pub fn spec(self) -> EnhancerSpec {
         match self {
             EnhancerKind::HttpGuard => EnhancerSpec {
-                role_variant: quote! { ::ulo::traits_helpers::ProviderRole::HttpGuard },
-                entry_path: quote! { ::ulo::traits_helpers::HttpGuardEntry },
-                trait_path: quote! { ::ulo::traits_helpers::Guard<::ulo::context::HttpContext> },
-                dyn_factory_trait: quote! { ::ulo::traits_helpers::DynHttpGuardFactory },
+                role_variant: quote! { ::ulo::traits::ProviderRole::HttpGuard },
+                entry_path: quote! { ::ulo::traits::HttpGuardEntry },
+                trait_path: quote! { ::ulo::traits::Guard<::ulo::context::HttpContext> },
+                dyn_factory_trait: quote! { ::ulo::traits::DynHttpGuardFactory },
                 factory_suffix: "HttpGuard",
                 context_path: quote! { ::ulo::context::HttpContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::Http },
             },
             EnhancerKind::HttpInterceptor => EnhancerSpec {
-                role_variant: quote! { ::ulo::traits_helpers::ProviderRole::HttpInterceptor },
-                entry_path: quote! { ::ulo::traits_helpers::HttpInterceptorEntry },
-                trait_path: quote! { ::ulo::traits_helpers::Interceptor<::ulo::context::HttpContext, ::ulo::http_helpers::HttpResponse> },
-                dyn_factory_trait: quote! { ::ulo::traits_helpers::DynHttpInterceptorFactory },
+                role_variant: quote! { ::ulo::traits::ProviderRole::HttpInterceptor },
+                entry_path: quote! { ::ulo::traits::HttpInterceptorEntry },
+                trait_path: quote! { ::ulo::traits::Interceptor<::ulo::context::HttpContext, ::ulo::HttpResponse> },
+                dyn_factory_trait: quote! { ::ulo::traits::DynHttpInterceptorFactory },
                 factory_suffix: "HttpInterceptor",
                 context_path: quote! { ::ulo::context::HttpContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::Http },
             },
             EnhancerKind::RpcGuard => EnhancerSpec {
-                role_variant: quote! { ::ulo::traits_helpers::ProviderRole::RpcGuard },
-                entry_path: quote! { ::ulo::traits_helpers::RpcGuardEntry },
-                trait_path: quote! { ::ulo::traits_helpers::Guard<::ulo::context::RpcContext> },
-                dyn_factory_trait: quote! { ::ulo::traits_helpers::DynRpcGuardFactory },
+                role_variant: quote! { ::ulo::traits::ProviderRole::RpcGuard },
+                entry_path: quote! { ::ulo::traits::RpcGuardEntry },
+                trait_path: quote! { ::ulo::traits::Guard<::ulo::context::RpcContext> },
+                dyn_factory_trait: quote! { ::ulo::traits::DynRpcGuardFactory },
                 factory_suffix: "RpcGuard",
                 context_path: quote! { ::ulo::context::RpcContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::Rpc },
             },
             EnhancerKind::RpcInterceptor => EnhancerSpec {
-                role_variant: quote! { ::ulo::traits_helpers::ProviderRole::RpcInterceptor },
-                entry_path: quote! { ::ulo::traits_helpers::RpcInterceptorEntry },
-                trait_path: quote! { ::ulo::traits_helpers::Interceptor<::ulo::context::RpcContext, ::ulo::rpc::RpcHandlerResult> },
-                dyn_factory_trait: quote! { ::ulo::traits_helpers::DynRpcInterceptorFactory },
+                role_variant: quote! { ::ulo::traits::ProviderRole::RpcInterceptor },
+                entry_path: quote! { ::ulo::traits::RpcInterceptorEntry },
+                trait_path: quote! { ::ulo::traits::Interceptor<::ulo::context::RpcContext, ::ulo::rpc::RpcHandlerResult> },
+                dyn_factory_trait: quote! { ::ulo::traits::DynRpcInterceptorFactory },
                 factory_suffix: "RpcInterceptor",
                 context_path: quote! { ::ulo::context::RpcContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::Rpc },
             },
             EnhancerKind::WsGuard => EnhancerSpec {
-                role_variant: quote! { ::ulo::traits_helpers::ProviderRole::WsGuard },
-                entry_path: quote! { ::ulo::traits_helpers::WsGuardEntry },
-                trait_path: quote! { ::ulo::traits_helpers::Guard<::ulo::context::WsContext> },
-                dyn_factory_trait: quote! { ::ulo::traits_helpers::DynWsGuardFactory },
+                role_variant: quote! { ::ulo::traits::ProviderRole::WsGuard },
+                entry_path: quote! { ::ulo::traits::WsGuardEntry },
+                trait_path: quote! { ::ulo::traits::Guard<::ulo::context::WsContext> },
+                dyn_factory_trait: quote! { ::ulo::traits::DynWsGuardFactory },
                 factory_suffix: "WsGuard",
                 context_path: quote! { ::ulo::context::WsContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::WebSocket },
             },
             EnhancerKind::WsInterceptor => EnhancerSpec {
-                role_variant: quote! { ::ulo::traits_helpers::ProviderRole::WsInterceptor },
-                entry_path: quote! { ::ulo::traits_helpers::WsInterceptorEntry },
-                trait_path: quote! { ::ulo::traits_helpers::Interceptor<::ulo::context::WsContext, ::ulo::websocket::WsHandlerResult> },
-                dyn_factory_trait: quote! { ::ulo::traits_helpers::DynWsInterceptorFactory },
+                role_variant: quote! { ::ulo::traits::ProviderRole::WsInterceptor },
+                entry_path: quote! { ::ulo::traits::WsInterceptorEntry },
+                trait_path: quote! { ::ulo::traits::Interceptor<::ulo::context::WsContext, ::ulo::websocket::WsHandlerResult> },
+                dyn_factory_trait: quote! { ::ulo::traits::DynWsInterceptorFactory },
                 factory_suffix: "WsInterceptor",
                 context_path: quote! { ::ulo::context::WsContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::WebSocket },
             },
             EnhancerKind::GrpcGuard => EnhancerSpec {
-                role_variant: quote! { ::ulo::traits_helpers::ProviderRole::GrpcGuard },
-                entry_path: quote! { ::ulo::traits_helpers::GrpcGuardEntry },
-                trait_path: quote! { ::ulo::traits_helpers::Guard<::ulo::context::GrpcContext> },
-                dyn_factory_trait: quote! { ::ulo::traits_helpers::DynGrpcGuardFactory },
+                role_variant: quote! { ::ulo::traits::ProviderRole::GrpcGuard },
+                entry_path: quote! { ::ulo::traits::GrpcGuardEntry },
+                trait_path: quote! { ::ulo::traits::Guard<::ulo::context::GrpcContext> },
+                dyn_factory_trait: quote! { ::ulo::traits::DynGrpcGuardFactory },
                 factory_suffix: "GrpcGuard",
                 context_path: quote! { ::ulo::context::GrpcContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::Grpc },
             },
             EnhancerKind::GrpcInterceptor => EnhancerSpec {
-                role_variant: quote! { ::ulo::traits_helpers::ProviderRole::GrpcInterceptor },
-                entry_path: quote! { ::ulo::traits_helpers::GrpcInterceptorEntry },
-                trait_path: quote! { ::ulo::traits_helpers::Interceptor<::ulo::context::GrpcContext, ::ulo::GrpcHandlerResult> },
-                dyn_factory_trait: quote! { ::ulo::traits_helpers::DynGrpcInterceptorFactory },
+                role_variant: quote! { ::ulo::traits::ProviderRole::GrpcInterceptor },
+                entry_path: quote! { ::ulo::traits::GrpcInterceptorEntry },
+                trait_path: quote! { ::ulo::traits::Interceptor<::ulo::context::GrpcContext, ::ulo::GrpcHandlerResult> },
+                dyn_factory_trait: quote! { ::ulo::traits::DynGrpcInterceptorFactory },
                 factory_suffix: "GrpcInterceptor",
                 context_path: quote! { ::ulo::context::GrpcContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::Grpc },
@@ -162,16 +162,16 @@ impl ErrorHandlerKind {
     pub fn spec(self) -> ErrorHandlerSpec {
         match self {
             ErrorHandlerKind::Http => ErrorHandlerSpec {
-                role_variant: quote! { ::ulo::traits_helpers::ProviderRole::HttpErrorHandler },
+                role_variant: quote! { ::ulo::traits::ProviderRole::HttpErrorHandler },
             },
             ErrorHandlerKind::Rpc => ErrorHandlerSpec {
-                role_variant: quote! { ::ulo::traits_helpers::ProviderRole::RpcErrorHandler },
+                role_variant: quote! { ::ulo::traits::ProviderRole::RpcErrorHandler },
             },
             ErrorHandlerKind::Ws => ErrorHandlerSpec {
-                role_variant: quote! { ::ulo::traits_helpers::ProviderRole::WsErrorHandler },
+                role_variant: quote! { ::ulo::traits::ProviderRole::WsErrorHandler },
             },
             ErrorHandlerKind::Grpc => ErrorHandlerSpec {
-                role_variant: quote! { ::ulo::traits_helpers::ProviderRole::GrpcErrorHandler },
+                role_variant: quote! { ::ulo::traits::ProviderRole::GrpcErrorHandler },
             },
         }
     }
@@ -189,7 +189,7 @@ impl ErrorHandlerKind {
 pub fn value_probe_detection() -> TokenStream {
     let mut detects = vec![quote! {
         if let Some(__r) = ::ulo::__detect::MiddlewareProbe(instance.clone()).detect() {
-            __roles.push(::ulo::traits_helpers::ProviderRole::Middleware(__r));
+            __roles.push(::ulo::traits::ProviderRole::Middleware(__r));
         }
     }];
 

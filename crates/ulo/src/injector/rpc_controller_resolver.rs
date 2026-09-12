@@ -5,7 +5,7 @@ use std::rc::Rc;
 use crate::error::SetupResult;
 
 use crate::rpc::{RpcControllerSource, RpcControllerWrapper};
-use crate::traits_helpers::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};
+use crate::traits::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};
 
 use super::Container;
 

@@ -7,7 +7,7 @@ use super::{ErrorHandler, Guard, Interceptor, ProviderContext, middleware::Middl
 use crate::{
     ProviderScope,
     context::{GrpcContext, HttpContext, RpcContext, WsContext},
-    http_helpers::HttpResponse,
+    http_types::HttpResponse,
     rpc::RpcData,
     websocket::WsMessage,
 };

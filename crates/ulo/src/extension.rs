@@ -44,7 +44,7 @@ use crate::FxHashMap;
 use crate::async_trait;
 use crate::context::Extensions;
 use crate::provider_scope::ProviderScope;
-use crate::traits_helpers::{Injectable, Provider, ProviderContext, ProviderFactory};
+use crate::traits::{Injectable, Provider, ProviderContext, ProviderFactory};
 
 /// An injectable view of one type in the request's extension bag.
 ///

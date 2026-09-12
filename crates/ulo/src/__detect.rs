@@ -21,10 +21,10 @@ use std::sync::Arc;
 
 use crate::context::{GrpcContext, HttpContext, RpcContext, WsContext};
 use crate::grpc_status::GrpcStatus;
-use crate::http_helpers::HttpResponse;
+use crate::http_types::HttpResponse;
 use crate::rpc::RpcData;
-use crate::traits_helpers::middleware::Middleware;
-use crate::traits_helpers::{ErrorHandler, Guard, Interceptor};
+use crate::traits::middleware::Middleware;
+use crate::traits::{ErrorHandler, Guard, Interceptor};
 use crate::websocket::WsMessage;
 
 /// Define a probe: an inherent `detect` (gated on `$bound`) that coerces to `Arc<$out>`, shadowing

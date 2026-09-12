@@ -4,15 +4,15 @@ use crate::{
     async_trait,
     context::Metadata,
     context::{HandlerContext, HttpContext},
+    enhancer::EnhancerMetadata,
     errors::{
         Error, GuardRejection, HttpError, MiddlewareFailure, PanicRecovered, PipelineSegment,
     },
-    http_helpers::{ExecutionResult, HttpMethod, HttpRequest, HttpResponse},
+    http_types::{HttpMethod, HttpRequest, HttpResponse},
     middleware::{Middleware, MiddlewareChain},
-    structs_helpers::EnhancerMetadata,
-    traits_helpers::{
-        Guard, HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry, Interceptor,
-        InterceptorNext, Route,
+    traits::{
+        ExecutionResult, Guard, HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry,
+        Interceptor, InterceptorNext, Route,
     },
 };
 use futures::FutureExt;
@@ -344,7 +344,7 @@ impl InstanceWrapper {
     fn fallback_500_response() -> HttpResponse {
         HttpResponse {
             body: Some(
-                crate::http_helpers::Body::text(
+                crate::http_types::Body::text(
                     r#"{"statusCode":500,"message":"Internal Server Error","error":"Internal Server Error"}"#,
                 )
                 .with_content_type("application/json"),

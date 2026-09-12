@@ -4,9 +4,9 @@ use crate::error::SetupResult;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
+    enhancer::EnhancerMetadata,
     middleware::MiddlewareManager,
-    structs_helpers::EnhancerMetadata,
-    traits_helpers::{
+    traits::{
         Controller, ControllerFactory, GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry,
         HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry, ModuleMetadata, Provider,
         ProviderFactory, ProviderRole, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
@@ -355,7 +355,7 @@ impl Container {
         &self.role_registry
     }
 
-    pub(crate) fn provider_roles(&self, token: &str) -> Vec<crate::traits_helpers::ProviderRole> {
+    pub(crate) fn provider_roles(&self, token: &str) -> Vec<crate::traits::ProviderRole> {
         self.role_registry.get_roles_for_token(token)
     }
 
@@ -407,7 +407,7 @@ impl Container {
         &mut self,
         module_ref_token: &String,
         controller_token: &str,
-        route: Arc<dyn crate::traits_helpers::Route>,
+        route: Arc<dyn crate::traits::Route>,
         enhancer_metadata: EnhancerMetadata,
     ) -> SetupResult {
         let global_enhancers = self.global_enhancers();

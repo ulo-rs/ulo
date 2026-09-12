@@ -8,7 +8,7 @@ use crate::adapter::adapter_context::AdapterContext;
 use crate::adapter::bind_target::BindTarget;
 use crate::adapter::lifecycle_handles::HttpLifecycleHandle;
 use crate::adapter::request_handler::RequestHandler;
-use crate::http_helpers::HttpMethod;
+use crate::http_types::HttpMethod;
 
 /// Implemented by every HTTP transport adapter (axum, actix, poem, rocket,
 /// salvo). The framework calls [`register_route`](Self::register_route) and

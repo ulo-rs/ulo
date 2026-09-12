@@ -16,9 +16,8 @@ use salvo::{Depot, FlowCtrl, Handler, Server, async_trait as salvo_async_trait};
 use ulo::websocket::{WsMessage, WsSink};
 use ulo::{
     AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
-    HttpRequest, HttpResponse, MessageCallbackResult, RequestHandler, WebSocketAdapter,
-    WsConnectionCallbacks, async_trait,
-    http_helpers::{PathParams, RequestBody, RequestPart},
+    HttpRequest, HttpResponse, MessageCallbackResult, PathParams, RequestBody, RequestHandler,
+    RequestPart, WebSocketAdapter, WsConnectionCallbacks, async_trait,
 };
 
 use crate::salvo_websocket_adapter::{salvo_to_ws_message, ws_message_to_salvo};

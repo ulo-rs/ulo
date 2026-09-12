@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_graphql::{ObjectType, Schema, SubscriptionType};
 use async_trait::async_trait;
-use ulo::traits_helpers::{Injectable, ProviderFactory, ProviderRole};
+use ulo::traits::{Injectable, ProviderFactory, ProviderRole};
 use ulo::{FxHashMap, Gateway};
 
 use crate::subscription_context_builder::SubscriptionContextBuilder;
@@ -63,7 +63,7 @@ where
         };
 
         let role = ProviderRole::Gateway(Arc::new(Box::new(gateway.clone()) as Box<dyn Gateway>));
-        let instance = Arc::new(Box::new(gateway) as Box<dyn ulo::traits_helpers::Provider>);
+        let instance = Arc::new(Box::new(gateway) as Box<dyn ulo::traits::Provider>);
 
         Injectable::new(instance, vec![role])
     }

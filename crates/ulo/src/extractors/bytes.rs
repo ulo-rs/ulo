@@ -1,6 +1,6 @@
 use super::{BodyExtractionError, FromContext, take_body};
 use crate::context::HttpContext;
-use crate::http_helpers::HttpRequest;
+use crate::http_types::HttpRequest;
 
 /// Extracts the raw request body as bytes.
 ///

@@ -16,7 +16,7 @@ use ulo::UloFactory;
 use ulo::async_trait;
 use ulo::context::RpcContext;
 use ulo::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
-use ulo::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo::traits::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::{injectable, module};
 use ulo_macros::{controller, message_pattern, new, patterns, use_guards};
 

@@ -23,7 +23,7 @@ use ulo::context::{GrpcContext, RpcContext, WsContext};
 use ulo::errors::GuardRejection;
 use ulo::extractors::{Inbound, Payload};
 use ulo::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
-use ulo::traits_helpers::Guard;
+use ulo::traits::Guard;
 use ulo::websocket::{WsHandlerResult, WsMessage};
 use ulo::{Error, GrpcStatus, catch, injectable, module};
 use ulo_macros::{
@@ -56,10 +56,10 @@ async fn rpc_catcher(err: &GuardRejection, _ctx: &RpcContext) -> RpcData {
 pub struct GrpcCatcher {}
 
 #[async_trait]
-impl ulo::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for GrpcCatcher {
+impl ulo::traits::ErrorHandler<GrpcContext, GrpcStatus> for GrpcCatcher {
     async fn handle_error(
         &self,
-        error: ulo::traits_helpers::ChainError<'_>,
+        error: ulo::traits::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         let rejection = error.downcast_ref::<GuardRejection>()?;

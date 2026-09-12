@@ -10,7 +10,7 @@
 
 use ulo::async_trait;
 use ulo::context::HttpContext;
-use ulo::traits_helpers::Guard;
+use ulo::traits::Guard;
 use ulo::{Body, RequestPart, controller, get, injectable, module, routes, use_guards};
 
 use crate::common::TestServer;

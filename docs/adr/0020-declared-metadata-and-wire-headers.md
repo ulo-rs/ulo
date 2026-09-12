@@ -52,10 +52,10 @@ by access path.
 
 ### The carrier is misfiled, and so is its storage
 
-`RouteMetadata` lives in `http_helpers` while being read on all four transports — the same mistake as
+`RouteMetadata` lives in `http_types` while being read on all four transports — the same mistake as
 the execution cache riding on `http::request::Parts`, which ADR-0016 removed.
 
-Underneath it is `http_helpers::Extensions`, a second public type of that name distinct from
+Underneath it is `http_types::Extensions`, a second public type of that name distinct from
 `context::Extensions`, whose module doc still describes it as "request-scoped data" that "middleware
 uses to pass typed data to controllers". That is the other type's job. This one is a synchronous
 type-keyed map used as storage here and by `RpcCallInfo`.
@@ -113,10 +113,10 @@ index under the spec term, so the word still finds them.
 
 ### The storage primitive is named for what it is, and filed where it belongs
 
-`http_helpers::Extensions` becomes `TypeMap`, keeping its synchronous shape, and its module doc stops
+`http_types::Extensions` becomes `TypeMap`, keeping its synchronous shape, and its module doc stops
 describing the request bag. `context::Extensions` is then the only `Extensions` in the crate.
 
-It moves to `ulo::type_map` rather than staying under `http_helpers`, its two users being a declared
+It moves to `ulo::type_map` rather than staying under `http_types`, its two users being a declared
 map read on four transports and an RPC call descriptor. Leaving it there would repeat one level down
 the misfiling this ADR corrects one level up.
 

@@ -1,7 +1,7 @@
 use super::{ControllerFactory, ProviderFactory};
 use crate::middleware::{IntoRoutePattern, RoutePattern};
-use crate::module_helpers::ModuleIdentity;
-use crate::traits_helpers::middleware::{Middleware, MiddlewareConfiguration};
+use crate::modules::ModuleIdentity;
+use crate::traits::middleware::{Middleware, MiddlewareConfiguration};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -257,15 +257,15 @@ impl MiddlewareConsumer {
     where
         L: tower::Layer<crate::tower_compat::UloNextService> + Send + Sync + 'static,
         L::Service: tower::Service<
-                http::Request<crate::http_helpers::RequestBoxBody>,
+                http::Request<crate::http_types::RequestBoxBody>,
                 Response = http::Response<B>,
             > + Send
             + 'static,
         B: http_body::Body<Data = bytes::Bytes> + Send + Sync + 'static,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-        <L::Service as tower::Service<http::Request<crate::http_helpers::RequestBoxBody>>>::Error:
+        <L::Service as tower::Service<http::Request<crate::http_types::RequestBoxBody>>>::Error:
             Into<Box<dyn std::error::Error + Send + Sync>>,
-        <L::Service as tower::Service<http::Request<crate::http_helpers::RequestBoxBody>>>::Future:
+        <L::Service as tower::Service<http::Request<crate::http_types::RequestBoxBody>>>::Future:
             Send + 'static,
     {
         self.apply(crate::tower_compat::TowerLayer::new(layer))
@@ -360,15 +360,15 @@ impl<'a> MiddlewareConfigProxy<'a> {
     where
         L: tower::Layer<crate::tower_compat::UloNextService> + Send + Sync + 'static,
         L::Service: tower::Service<
-                http::Request<crate::http_helpers::RequestBoxBody>,
+                http::Request<crate::http_types::RequestBoxBody>,
                 Response = http::Response<B>,
             > + Send
             + 'static,
         B: http_body::Body<Data = bytes::Bytes> + Send + Sync + 'static,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-        <L::Service as tower::Service<http::Request<crate::http_helpers::RequestBoxBody>>>::Error:
+        <L::Service as tower::Service<http::Request<crate::http_types::RequestBoxBody>>>::Error:
             Into<Box<dyn std::error::Error + Send + Sync>>,
-        <L::Service as tower::Service<http::Request<crate::http_helpers::RequestBoxBody>>>::Future:
+        <L::Service as tower::Service<http::Request<crate::http_types::RequestBoxBody>>>::Future:
             Send + 'static,
     {
         self.apply_also(crate::tower_compat::TowerLayer::new(layer))

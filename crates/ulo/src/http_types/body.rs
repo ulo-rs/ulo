@@ -26,7 +26,7 @@ struct ScopedBody {
     inner: BoxBody,
     _keep_alive: Box<dyn std::any::Any + Send>,
     /// Run when this is dropped with frames still to come. Held as a callback rather than a
-    /// cancellation token because a body knows nothing about executions, and `http_helpers`
+    /// cancellation token because a body knows nothing about executions, and `http_types`
     /// depending on `context` would point an edge back the way it already runs.
     on_abandoned: Option<Box<dyn FnOnce() + Send>>,
     /// Set once the inner body answers `None` or an error, either being the end of it.

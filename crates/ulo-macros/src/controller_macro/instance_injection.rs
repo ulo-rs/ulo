@@ -80,7 +80,7 @@ pub fn generate_routes_system(impl_block: &ItemImpl) -> Result<TokenStream> {
 /// Emit the controller's inherent `__ulo_dispatch`, which shadows the `DispatchBridge` default
 /// and names HTTP: one route wrapper per handler, each holding a clone of the controller's source.
 fn generate_ulo_dispatch(struct_name: &Ident, metadata: &[MetadataInfo]) -> TokenStream {
-    let route_ty = quote! { ::std::sync::Arc<dyn ::ulo::traits_helpers::Route> };
+    let route_ty = quote! { ::std::sync::Arc<dyn ::ulo::traits::Route> };
 
     let creations: Vec<_> = metadata
         .iter()
@@ -99,10 +99,10 @@ fn generate_ulo_dispatch(struct_name: &Ident, metadata: &[MetadataInfo]) -> Toke
             #[doc(hidden)]
             #[allow(non_snake_case, clippy::all)]
             pub fn __ulo_dispatch(
-                source: &::ulo::traits_helpers::DispatchSource<#struct_name>,
-            ) -> ::ulo::traits_helpers::Dispatch {
+                source: &::ulo::traits::DispatchSource<#struct_name>,
+            ) -> ::ulo::traits::Dispatch {
                 let _ = source;
-                ::ulo::traits_helpers::Dispatch::Http(vec![#(#creations),*])
+                ::ulo::traits::Dispatch::Http(vec![#(#creations),*])
             }
         }
     }
@@ -350,7 +350,7 @@ fn generate_route_wrapper(
     } else {
         (
             quote! {
-                source: ::ulo::traits_helpers::DispatchSource<#struct_name>,
+                source: ::ulo::traits::DispatchSource<#struct_name>,
             },
             // Resolve the instance before the extractors run: a per-call build reads
             // request-scoped dependencies through the context, while a body extractor
@@ -378,12 +378,12 @@ fn generate_route_wrapper(
         }
 
         #[::ulo::async_trait]
-        impl ::ulo::traits_helpers::Route for #controller_name {
+        impl ::ulo::traits::Route for #controller_name {
             async fn execute(
                 &self,
                 __ctx: &::ulo::context::HttpContext,
-            ) -> ::ulo::http_helpers::ExecutionResult<
-                ::ulo::http_helpers::HttpResponse,
+            ) -> ::ulo::traits::ExecutionResult<
+                ::ulo::HttpResponse,
                 ::ulo::errors::HttpError,
             > {
                 // Cloned, not borrowed: building a request-scoped dependency holds
@@ -395,7 +395,7 @@ fn generate_route_wrapper(
 
                 #(#marker_params_extraction)*
 
-                use ::ulo::http_helpers::IntoResponse;
+                use ::ulo::IntoResponse;
                 #exec_body
             }
 
@@ -436,8 +436,8 @@ fn enhancers_method(enhancer_infos: &HashMap<String, Vec<EnhancerInfo>>) -> Toke
         enhancer_vecs(enhancer_infos, "error_handlers");
 
     quote! {
-        fn enhancers(&self) -> ::ulo::traits_helpers::ControllerEnhancers {
-            ::ulo::traits_helpers::ControllerEnhancers {
+        fn enhancers(&self) -> ::ulo::traits::ControllerEnhancers {
+            ::ulo::traits::ControllerEnhancers {
                 guard_tokens: vec![#(#guard_tokens),*],
                 interceptor_tokens: vec![#(#interceptor_tokens),*],
                 error_handler_tokens: vec![#(#error_handler_tokens),*],
@@ -453,7 +453,7 @@ fn enhancers_method(enhancer_infos: &HashMap<String, Vec<EnhancerInfo>>) -> Toke
 fn get_path_method(struct_name: &Ident, route_path: &str) -> TokenStream {
     quote! {
         fn path(&self) -> String {
-            ::ulo::http_helpers::join_route(#struct_name::__ulo_prefix(), #route_path)
+            ::ulo::join_route(#struct_name::__ulo_prefix(), #route_path)
         }
     }
 }
@@ -468,8 +468,8 @@ fn route_common_methods(
     let enhancers = enhancers_method(enhancer_infos);
     let path = get_path_method(struct_name, route_path);
     quote! {
-        fn method(&self) -> ::ulo::http_helpers::HttpMethod {
-            ::ulo::http_helpers::HttpMethod::from_string(#http_method).unwrap()
+        fn method(&self) -> ::ulo::HttpMethod {
+            ::ulo::HttpMethod::from_string(#http_method).unwrap()
         }
 
         #path
@@ -489,18 +489,18 @@ fn exec_body_for(method_call: &TokenStream, returns_result: bool) -> TokenStream
     if returns_result {
         quote! {
             match #method_call {
-                ::std::result::Result::Ok(__t) => ::ulo::http_helpers::ExecutionResult::Ok(
-                    ::ulo::http_helpers::IntoResponse::into_response(__t),
+                ::std::result::Result::Ok(__t) => ::ulo::traits::ExecutionResult::Ok(
+                    ::ulo::IntoResponse::into_response(__t),
                 ),
-                ::std::result::Result::Err(__e) => ::ulo::http_helpers::ExecutionResult::Err(
+                ::std::result::Result::Err(__e) => ::ulo::traits::ExecutionResult::Err(
                     ::std::convert::Into::<::ulo::errors::HttpError>::into(__e),
                 ),
             }
         }
     } else {
         quote! {
-            ::ulo::http_helpers::ExecutionResult::Ok(
-                ::ulo::http_helpers::IntoResponse::into_response(#method_call),
+            ::ulo::traits::ExecutionResult::Ok(
+                ::ulo::IntoResponse::into_response(#method_call),
             )
         }
     }

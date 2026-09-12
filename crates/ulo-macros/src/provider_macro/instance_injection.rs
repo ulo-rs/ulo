@@ -186,7 +186,7 @@ fn generate_provider_factory_accessor(struct_name: &Ident) -> TokenStream {
     quote! {
         impl #struct_name {
             #[doc(hidden)]
-            pub fn __ulo_provider_factory() -> impl ::ulo::traits_helpers::ProviderFactory {
+            pub fn __ulo_provider_factory() -> impl ::ulo::traits::ProviderFactory {
                 #factory_name
             }
         }
@@ -248,7 +248,7 @@ fn generate_role_pushes(traits: &EnhancerTraits) -> TokenStream {
 
     if traits.is_gateway {
         pushes.push(quote! {
-            __roles.push(::ulo::traits_helpers::ProviderRole::Gateway(
+            __roles.push(::ulo::traits::ProviderRole::Gateway(
                 ::std::sync::Arc::new(
                     Box::new((*instance).clone()) as Box<dyn ::ulo::websocket::Gateway>
                 )
@@ -358,7 +358,7 @@ fn generate_singleton_provider(
         }
 
         #[::ulo::async_trait]
-        impl ::ulo::traits_helpers::Provider for #provider_name {
+        impl ::ulo::traits::Provider for #provider_name {
             async fn resolve(
                 &self,
                 _ctx: ::ulo::ProviderContext,
@@ -501,12 +501,12 @@ fn generate_request_provider(
         struct #provider_name {
             dependencies: ::ulo::FxHashMap<
                 String,
-                ::std::sync::Arc<Box<dyn ::ulo::traits_helpers::Provider>>
+                ::std::sync::Arc<Box<dyn ::ulo::traits::Provider>>
             >,
         }
 
         #[::ulo::async_trait]
-        impl ::ulo::traits_helpers::Provider for #provider_name {
+        impl ::ulo::traits::Provider for #provider_name {
             async fn resolve(
                 &self,
                 _ctx: ::ulo::ProviderContext,
@@ -550,7 +550,7 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
     // instance; its provider fires init/bootstrap on each one it builds.
     let on_singleton = |call: TokenStream| {
         quote! {
-            if let ::ulo::traits_helpers::DispatchSource::Singleton(__inst) = &self.source {
+            if let ::ulo::traits::DispatchSource::Singleton(__inst) = &self.source {
                 use ::ulo::__lifecycle::LifecycleBridge as _;
                 #call
             }
@@ -569,16 +569,16 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
         #provider
 
         pub struct #object_name {
-            source: ::ulo::traits_helpers::DispatchSource<#struct_name>,
+            source: ::ulo::traits::DispatchSource<#struct_name>,
         }
 
         #[::ulo::async_trait]
-        impl ::ulo::traits_helpers::Controller for #object_name {
+        impl ::ulo::traits::Controller for #object_name {
             fn token(&self) -> String {
                 #struct_token.to_string()
             }
 
-            fn dispatch(&self) -> ::ulo::traits_helpers::Dispatch {
+            fn dispatch(&self) -> ::ulo::traits::Dispatch {
                 use ::ulo::__dispatch::DispatchBridge as _;
                 <#struct_name>::__ulo_dispatch(&self.source)
             }
@@ -605,7 +605,7 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
         pub struct #factory_name;
 
         #[::ulo::async_trait]
-        impl ::ulo::traits_helpers::ControllerFactory for #factory_name {
+        impl ::ulo::traits::ControllerFactory for #factory_name {
             fn token(&self) -> String {
                 #struct_token.to_string()
             }
@@ -618,13 +618,13 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
                 &self,
                 dependencies: ::ulo::FxHashMap<
                     String,
-                    ::std::sync::Arc<Box<dyn ::ulo::traits_helpers::Provider>>,
+                    ::std::sync::Arc<Box<dyn ::ulo::traits::Provider>>,
                 >,
-            ) -> ::std::sync::Arc<dyn ::ulo::traits_helpers::Controller> {
+            ) -> ::std::sync::Arc<dyn ::ulo::traits::Controller> {
                 let __force_request: bool = <#struct_name>::__ulo_is_request_scoped();
                 let __declared =
-                    <Self as ::ulo::traits_helpers::ControllerFactory>::dependency_tokens(self);
-                let __request_deps = ::ulo::traits_helpers::request_scoped_dependencies(
+                    <Self as ::ulo::traits::ControllerFactory>::dependency_tokens(self);
+                let __request_deps = ::ulo::traits::request_scoped_dependencies(
                     &__declared,
                     &dependencies,
                 );
@@ -639,13 +639,13 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
                 }
 
                 let __source = if __force_request || !__request_deps.is_empty() {
-                    ::ulo::traits_helpers::DispatchSource::PerCall(
+                    ::ulo::traits::DispatchSource::PerCall(
                         ::std::sync::Arc::new(Box::new(#per_call_provider { dependencies })
-                            as Box<dyn ::ulo::traits_helpers::Provider>),
+                            as Box<dyn ::ulo::traits::Provider>),
                     )
                 } else {
                     // Built at startup, outside any execution, and shared by every call.
-                    ::ulo::traits_helpers::DispatchSource::Singleton(::std::sync::Arc::new(
+                    ::ulo::traits::DispatchSource::Singleton(::std::sync::Arc::new(
                         <#struct_name>::__ulo_build_from_deps(
                             &dependencies,
                             ::ulo::ProviderContext::None,
@@ -660,7 +660,7 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
 
         impl #struct_name {
             #[doc(hidden)]
-            pub fn __ulo_controller_factory() -> impl ::ulo::traits_helpers::ControllerFactory {
+            pub fn __ulo_controller_factory() -> impl ::ulo::traits::ControllerFactory {
                 #factory_name
             }
         }
@@ -679,12 +679,12 @@ pub(crate) fn generate_dispatch_provider(
         struct #provider_name {
             dependencies: ::ulo::FxHashMap<
                 String,
-                ::std::sync::Arc<Box<dyn ::ulo::traits_helpers::Provider>>
+                ::std::sync::Arc<Box<dyn ::ulo::traits::Provider>>
             >,
         }
 
         #[::ulo::async_trait]
-        impl ::ulo::traits_helpers::Provider for #provider_name {
+        impl ::ulo::traits::Provider for #provider_name {
             async fn resolve(
                 &self,
                 _ctx: ::ulo::ProviderContext,
@@ -791,12 +791,12 @@ fn generate_transient_provider(
         struct #provider_name {
             dependencies: ::ulo::FxHashMap<
                 String,
-                ::std::sync::Arc<Box<dyn ::ulo::traits_helpers::Provider>>
+                ::std::sync::Arc<Box<dyn ::ulo::traits::Provider>>
             >,
         }
 
         #[::ulo::async_trait]
-        impl ::ulo::traits_helpers::Provider for #provider_name {
+        impl ::ulo::traits::Provider for #provider_name {
             async fn resolve(
                 &self,
                 _ctx: ::ulo::ProviderContext,
@@ -1321,7 +1321,7 @@ fn generate_singleton_factory(
         pub struct #factory_name;
 
         #[::ulo::async_trait]
-        impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
+        impl ::ulo::traits::ProviderFactory for #factory_name {
             fn token(&self) -> String {
                 ::ulo::di::token_of::<#struct_name>()
             }
@@ -1335,10 +1335,10 @@ fn generate_singleton_factory(
 
             async fn build(
                 &self,
-                __deps: ::ulo::FxHashMap<String, ::ulo::traits_helpers::Injectable>,
-            ) -> ::ulo::traits_helpers::Injectable {
+                __deps: ::ulo::FxHashMap<String, ::ulo::traits::Injectable>,
+            ) -> ::ulo::traits::Injectable {
                 use ::ulo::__construct::CtorBridge as _;
-                let dependencies: ::ulo::FxHashMap<String, ::std::sync::Arc<Box<dyn ::ulo::traits_helpers::Provider>>> =
+                let dependencies: ::ulo::FxHashMap<String, ::std::sync::Arc<Box<dyn ::ulo::traits::Provider>>> =
                     __deps.into_iter().map(|(k, inj)| (k, inj.instance)).collect();
 
                 #scope_validation
@@ -1357,8 +1357,8 @@ fn generate_singleton_factory(
                 let mut __roles = ::std::vec::Vec::new();
                 #role_pushes
 
-                let provider = ::std::sync::Arc::new(Box::new(#provider_name { instance }) as Box<dyn ::ulo::traits_helpers::Provider>);
-                ::ulo::traits_helpers::Injectable::new(provider, __roles)
+                let provider = ::std::sync::Arc::new(Box::new(#provider_name { instance }) as Box<dyn ::ulo::traits::Provider>);
+                ::ulo::traits::Injectable::new(provider, __roles)
             }
         }
     }
@@ -1407,13 +1407,13 @@ fn generate_request_factory(
 
     let build_body = quote! {
         #enhancer_preamble
-        let dependencies: ::ulo::FxHashMap<String, ::std::sync::Arc<Box<dyn ::ulo::traits_helpers::Provider>>> =
+        let dependencies: ::ulo::FxHashMap<String, ::std::sync::Arc<Box<dyn ::ulo::traits::Provider>>> =
             __deps.into_iter().map(|(k, inj)| (k, inj.instance)).collect();
-        let __provider: ::std::sync::Arc<Box<dyn ::ulo::traits_helpers::Provider>> =
-            ::std::sync::Arc::new(Box::new(#provider_name { dependencies }) as Box<dyn ::ulo::traits_helpers::Provider>);
+        let __provider: ::std::sync::Arc<Box<dyn ::ulo::traits::Provider>> =
+            ::std::sync::Arc::new(Box::new(#provider_name { dependencies }) as Box<dyn ::ulo::traits::Provider>);
         let mut __roles = ::std::vec::Vec::new();
         #factory_role_pushes
-        ::ulo::traits_helpers::Injectable::new(__provider, __roles)
+        ::ulo::traits::Injectable::new(__provider, __roles)
     };
 
     quote! {
@@ -1422,7 +1422,7 @@ fn generate_request_factory(
         pub struct #factory_name;
 
         #[::ulo::async_trait]
-        impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
+        impl ::ulo::traits::ProviderFactory for #factory_name {
             fn token(&self) -> String {
                 ::ulo::di::token_of::<#struct_name>()
             }
@@ -1436,8 +1436,8 @@ fn generate_request_factory(
 
             async fn build(
                 &self,
-                __deps: ::ulo::FxHashMap<String, ::ulo::traits_helpers::Injectable>,
-            ) -> ::ulo::traits_helpers::Injectable {
+                __deps: ::ulo::FxHashMap<String, ::ulo::traits::Injectable>,
+            ) -> ::ulo::traits::Injectable {
                 #build_body
             }
         }
@@ -1482,21 +1482,21 @@ fn generate_transient_factory(
                     .map(|(k, inj)| (k.clone(), inj.instance.clone()))
                     .collect::<::ulo::FxHashMap<_, _>>()
             );
-            let dependencies: ::ulo::FxHashMap<String, ::std::sync::Arc<Box<dyn ::ulo::traits_helpers::Provider>>> =
+            let dependencies: ::ulo::FxHashMap<String, ::std::sync::Arc<Box<dyn ::ulo::traits::Provider>>> =
                 __deps.into_iter().map(|(k, inj)| (k, inj.instance)).collect();
             let mut __roles = ::std::vec::Vec::new();
             #factory_role_pushes
-            ::ulo::traits_helpers::Injectable::new(
-                ::std::sync::Arc::new(Box::new(#provider_name { dependencies }) as Box<dyn ::ulo::traits_helpers::Provider>),
+            ::ulo::traits::Injectable::new(
+                ::std::sync::Arc::new(Box::new(#provider_name { dependencies }) as Box<dyn ::ulo::traits::Provider>),
                 __roles,
             )
         }
     } else {
         quote! {
-            let dependencies: ::ulo::FxHashMap<String, ::std::sync::Arc<Box<dyn ::ulo::traits_helpers::Provider>>> =
+            let dependencies: ::ulo::FxHashMap<String, ::std::sync::Arc<Box<dyn ::ulo::traits::Provider>>> =
                 __deps.into_iter().map(|(k, inj)| (k, inj.instance)).collect();
-            ::ulo::traits_helpers::Injectable::new(
-                ::std::sync::Arc::new(Box::new(#provider_name { dependencies }) as Box<dyn ::ulo::traits_helpers::Provider>),
+            ::ulo::traits::Injectable::new(
+                ::std::sync::Arc::new(Box::new(#provider_name { dependencies }) as Box<dyn ::ulo::traits::Provider>),
                 ::std::vec::Vec::new(),
             )
         }
@@ -1508,7 +1508,7 @@ fn generate_transient_factory(
         pub struct #factory_name;
 
         #[::ulo::async_trait]
-        impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
+        impl ::ulo::traits::ProviderFactory for #factory_name {
             fn token(&self) -> String {
                 ::ulo::di::token_of::<#struct_name>()
             }
@@ -1522,8 +1522,8 @@ fn generate_transient_factory(
 
             async fn build(
                 &self,
-                __deps: ::ulo::FxHashMap<String, ::ulo::traits_helpers::Injectable>,
-            ) -> ::ulo::traits_helpers::Injectable {
+                __deps: ::ulo::FxHashMap<String, ::ulo::traits::Injectable>,
+            ) -> ::ulo::traits::Injectable {
                 #build_body
             }
         }
@@ -1687,7 +1687,7 @@ fn generate_dyn_factories(
     let deps_arc_ty = quote! {
         ::std::sync::Arc<::ulo::FxHashMap<
             String,
-            ::std::sync::Arc<Box<dyn ::ulo::traits_helpers::Provider>>
+            ::std::sync::Arc<Box<dyn ::ulo::traits::Provider>>
         >>
     };
 

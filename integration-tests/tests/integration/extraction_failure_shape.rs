@@ -13,11 +13,11 @@
 use std::sync::Arc;
 
 use serde::Deserialize;
+use ulo::HttpResponse;
 use ulo::async_trait;
 use ulo::context::HttpContext;
 use ulo::extractors::{Json, Query};
-use ulo::http_helpers::HttpResponse;
-use ulo::traits_helpers::{ChainError, ErrorHandler};
+use ulo::traits::{ChainError, ErrorHandler};
 use ulo::{Body, UloFactory, controller, get, module, post, routes};
 
 use crate::common::TestServer;

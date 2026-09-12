@@ -22,7 +22,7 @@ use ulo::context::{GrpcContext, RpcContext};
 use ulo::errors::PanicRecovered;
 use ulo::extractors::{Inbound, Payload};
 use ulo::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
-use ulo::traits_helpers::Guard;
+use ulo::traits::Guard;
 use ulo::{GrpcStatus, catch, injectable, module};
 use ulo_macros::{
     controller, grpc_methods, message_pattern, new, patterns, use_error_handlers, use_guards,
@@ -46,10 +46,10 @@ async fn rpc_panic_catcher(err: &PanicRecovered, _ctx: &RpcContext) -> RpcData {
 pub struct GrpcPanicCatcher {}
 
 #[async_trait]
-impl ulo::traits_helpers::ErrorHandler<GrpcContext, GrpcStatus> for GrpcPanicCatcher {
+impl ulo::traits::ErrorHandler<GrpcContext, GrpcStatus> for GrpcPanicCatcher {
     async fn handle_error(
         &self,
-        error: ulo::traits_helpers::ChainError<'_>,
+        error: ulo::traits::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         let panic = error.downcast_ref::<PanicRecovered>()?;

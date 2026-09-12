@@ -10,7 +10,7 @@ use tokio_tungstenite::tungstenite::Message;
 use ulo::async_trait;
 use ulo::context::{Extensions, HandlerContext, WsContext};
 use ulo::extractors::Payload;
-use ulo::traits_helpers::Guard;
+use ulo::traits::Guard;
 use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
     injectable, module, new, subscribe_message, subscriptions, use_guards, websocket_gateway,

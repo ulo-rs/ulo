@@ -5,7 +5,7 @@
 
 use ulo::async_trait;
 use ulo::context::{HandlerContext, HttpContext};
-use ulo::traits_helpers::Guard;
+use ulo::traits::Guard;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Principal {

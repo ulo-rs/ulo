@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::fmt;
 use std::sync::Arc;
 use ulo::RequestPart;
-use ulo::traits_helpers::{Provider, ProviderContext};
+use ulo::traits::{Provider, ProviderContext};
 
 /// Injectable GraphQL service.
 ///

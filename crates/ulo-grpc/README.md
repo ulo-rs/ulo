@@ -151,7 +151,7 @@ A guard is a provider that implements `Guard<GrpcContext>`. The framework runs t
 pub struct AuthGuard {}
 
 #[ulo::async_trait]
-impl ulo::traits_helpers::Guard<ulo::GrpcContext> for AuthGuard {
+impl ulo::traits::Guard<ulo::GrpcContext> for AuthGuard {
     async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
         ctx.header("authorization") == Some("Bearer secret-token")
     }
@@ -167,12 +167,12 @@ An interceptor is a provider that implements `Interceptor<GrpcContext, GrpcHandl
 pub struct LoggingInterceptor {}
 
 #[ulo::async_trait]
-impl ulo::traits_helpers::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult>
+impl ulo::traits::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult>
     for LoggingInterceptor {
     async fn intercept(
         &self,
         ctx: &ulo::GrpcContext,
-        next: Box<dyn ulo::traits_helpers::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
+        next: Box<dyn ulo::traits::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
     ) -> ulo::GrpcHandlerResult {
         tracing::info!(method = %ctx.method(), "before");
         let answer = next.run(ctx).await;
@@ -191,10 +191,10 @@ An error handler is a provider that implements `ErrorHandler<GrpcContext, GrpcSt
 pub struct QtyErrorHandler {}
 
 #[ulo::async_trait]
-impl ulo::traits_helpers::ErrorHandler<ulo::GrpcContext, ulo::GrpcStatus> for QtyErrorHandler {
+impl ulo::traits::ErrorHandler<ulo::GrpcContext, ulo::GrpcStatus> for QtyErrorHandler {
     async fn handle_error(
         &self,
-        error: ulo::traits_helpers::ChainError<'_>,
+        error: ulo::traits::ChainError<'_>,
         _ctx: &ulo::GrpcContext,
     ) -> Option<ulo::GrpcStatus> {
         let OrderError::InvalidQty { qty } = error.downcast_ref::<OrderError>()? else {

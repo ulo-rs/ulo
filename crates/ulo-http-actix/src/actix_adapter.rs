@@ -14,8 +14,7 @@ use actix_web::{
 use futures_util::future::LocalBoxFuture;
 use ulo::{
     AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
-    HttpRequest, HttpResponse, RequestHandler,
-    http_helpers::{PathParams, RequestBody},
+    HttpRequest, HttpResponse, PathParams, RequestBody, RequestHandler,
 };
 
 pub struct ActixAdapter {

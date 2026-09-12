@@ -69,7 +69,7 @@ impl HandlerContext for WsContext {
         &self.inner.shared.extensions
     }
 
-    fn cache(&self) -> &crate::traits_helpers::ExecutionCache {
+    fn cache(&self) -> &crate::traits::ExecutionCache {
         &self.inner.shared.cache
     }
 

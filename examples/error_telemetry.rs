@@ -42,7 +42,7 @@ use ulo::{
     controller,
     extractors::Path,
     get, module, routes,
-    traits_helpers::{ChainError, ErrorHandler},
+    traits::{ChainError, ErrorHandler},
 };
 use ulo_macros::{event_pattern, new, patterns};
 

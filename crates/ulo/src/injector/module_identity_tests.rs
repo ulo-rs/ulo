@@ -14,7 +14,7 @@ use crate::DynamicModule;
 use crate::FxHashMap;
 use crate::injector::{Container, InstanceLoader};
 use crate::scanner::DependencyScanner;
-use crate::traits_helpers::{
+use crate::traits::{
     ControllerFactory, Injectable, ModuleMetadata, Provider, ProviderContext, ProviderFactory,
 };
 

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use tokio::sync::oneshot;
 use ulo::AdapterResult;
-use ulo::http_helpers::HttpMethod;
+use ulo::HttpMethod;
 use ulo::{
     AdapterContext, BindTarget, Body, HttpAdapter, HttpLifecycleHandle, RequestHandler, UloFactory,
     async_trait, controller, get, module, routes,

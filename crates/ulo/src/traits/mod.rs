@@ -1,4 +1,7 @@
 pub mod middleware;
+
+mod execution_result;
+pub use self::execution_result::ExecutionResult;
 mod module_metadata;
 pub use self::module_metadata::{MiddlewareConsumer, ModuleMetadata};
 
