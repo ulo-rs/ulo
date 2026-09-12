@@ -39,7 +39,7 @@ impl RpcCallInfo {
         self
     }
 
-    #[doc(alias = "get_metadata")]
+    #[doc(alias = "metadata")]
     pub fn header(&self, key: &str) -> Option<&str> {
         self.headers.get(key).map(|s| s.as_str())
     }

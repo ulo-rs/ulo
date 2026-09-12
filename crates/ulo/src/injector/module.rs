@@ -88,11 +88,11 @@ impl Module {
         self.exports_instances.insert(provider_token);
     }
 
-    pub fn get_providers_factory(&self) -> &FxHashMap<String, Box<dyn ProviderFactory>> {
+    pub fn provider_factories(&self) -> &FxHashMap<String, Box<dyn ProviderFactory>> {
         &self.providers
     }
 
-    pub fn get_providers_instances(&self) -> &FxHashMap<String, Arc<Box<dyn Provider>>> {
+    pub fn provider_instances(&self) -> &FxHashMap<String, Arc<Box<dyn Provider>>> {
         &self.providers_instances
     }
 
@@ -109,7 +109,7 @@ impl Module {
         self.providers_instances.get(provider_token)
     }
 
-    pub fn get_controllers_factory(&self) -> &FxHashMap<String, Box<dyn ControllerFactory>> {
+    pub fn controller_factories(&self) -> &FxHashMap<String, Box<dyn ControllerFactory>> {
         &self.controllers
     }
 
@@ -117,19 +117,19 @@ impl Module {
         self.controllers_instances.drain()
     }
 
-    pub fn get_imported_modules(&self) -> &FxHashSet<String> {
+    pub fn imported_modules(&self) -> &FxHashSet<String> {
         &self.imports
     }
 
-    pub fn get_exports_instances_tokens(&self) -> &FxHashSet<String> {
+    pub fn exported_instance_tokens(&self) -> &FxHashSet<String> {
         &self.exports_instances
     }
 
-    pub fn get_exports_tokens(&self) -> &FxHashSet<String> {
+    pub fn exported_tokens(&self) -> &FxHashSet<String> {
         &self.exports
     }
 
-    pub fn get_metadata(&self) -> &dyn ModuleMetadata {
+    pub fn metadata(&self) -> &dyn ModuleMetadata {
         &*self.metadata
     }
 
@@ -151,7 +151,7 @@ impl Module {
     }
 
     /// The controller instances, one per struct, for lifecycle-hook dispatch.
-    pub fn get_controller_objects(&self) -> &[Arc<dyn Controller>] {
+    pub fn controller_objects(&self) -> &[Arc<dyn Controller>] {
         &self.controller_objects
     }
 }

@@ -67,7 +67,7 @@ impl RpcControllerResolver {
     }
 
     fn resolve_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<RpcGuardEntry>> {
-        let mut guards = self.container.borrow().get_global_rpc_guards();
+        let mut guards = self.container.borrow().global_rpc_guards();
         for token in tokens {
             let entry = self.resolve_guard_by_token(&token)?;
             guards.push(entry);
@@ -76,7 +76,7 @@ impl RpcControllerResolver {
     }
 
     fn resolve_interceptors(&self, tokens: Vec<String>) -> SetupResult<Vec<RpcInterceptorEntry>> {
-        let mut interceptors = self.container.borrow().get_global_rpc_interceptors();
+        let mut interceptors = self.container.borrow().global_rpc_interceptors();
         for token in tokens {
             let entry = self.resolve_interceptor_by_token(&token)?;
             interceptors.push(entry);
@@ -85,7 +85,7 @@ impl RpcControllerResolver {
     }
 
     fn resolve_error_handlers(&self, tokens: Vec<String>) -> SetupResult<Vec<RpcErrorHandlerArc>> {
-        let mut error_handlers = self.container.borrow().get_global_rpc_error_handlers();
+        let mut error_handlers = self.container.borrow().global_rpc_error_handlers();
         for token in tokens {
             error_handlers.push(self.resolve_error_handler_by_token(&token)?);
         }
@@ -95,7 +95,7 @@ impl RpcControllerResolver {
     fn resolve_guard_by_token(&self, token: &str) -> SetupResult<RpcGuardEntry> {
         self.container
             .borrow()
-            .get_role_registry()
+            .role_registry()
             .rpc_guards
             .get(token)
             .cloned()
@@ -115,7 +115,7 @@ impl RpcControllerResolver {
     fn resolve_interceptor_by_token(&self, token: &str) -> SetupResult<RpcInterceptorEntry> {
         self.container
             .borrow()
-            .get_role_registry()
+            .role_registry()
             .rpc_interceptors
             .get(token)
             .cloned()
@@ -135,7 +135,7 @@ impl RpcControllerResolver {
     fn resolve_error_handler_by_token(&self, token: &str) -> SetupResult<RpcErrorHandlerArc> {
         self.container
             .borrow()
-            .get_role_registry()
+            .role_registry()
             .rpc_error_handlers
             .get(token)
             .cloned()

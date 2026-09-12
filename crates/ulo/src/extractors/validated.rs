@@ -87,14 +87,14 @@ impl std::error::Error for ValidationError {}
 pub trait ValidatableExtractor {
     type Inner: Validate;
 
-    fn get_inner(&self) -> &Self::Inner;
+    fn inner(&self) -> &Self::Inner;
 }
 
 // Implement for Json<T> where T: Validate
 impl<T: Validate> ValidatableExtractor for super::Json<T> {
     type Inner = T;
 
-    fn get_inner(&self) -> &Self::Inner {
+    fn inner(&self) -> &Self::Inner {
         &self.0
     }
 }
@@ -103,7 +103,7 @@ impl<T: Validate> ValidatableExtractor for super::Json<T> {
 impl<T: Validate> ValidatableExtractor for super::Path<T> {
     type Inner = T;
 
-    fn get_inner(&self) -> &Self::Inner {
+    fn inner(&self) -> &Self::Inner {
         &self.0
     }
 }
@@ -112,7 +112,7 @@ impl<T: Validate> ValidatableExtractor for super::Path<T> {
 impl<T: Validate> ValidatableExtractor for super::Query<T> {
     type Inner = T;
 
-    fn get_inner(&self) -> &Self::Inner {
+    fn inner(&self) -> &Self::Inner {
         &self.0
     }
 }
@@ -121,7 +121,7 @@ impl<T: Validate> ValidatableExtractor for super::Query<T> {
 impl<T: Validate> ValidatableExtractor for super::body::Body<T> {
     type Inner = T;
 
-    fn get_inner(&self) -> &Self::Inner {
+    fn inner(&self) -> &Self::Inner {
         &self.0
     }
 }
@@ -130,7 +130,7 @@ impl<T: Validate> ValidatableExtractor for super::body::Body<T> {
 impl<T: Validate> ValidatableExtractor for super::Payload<T> {
     type Inner = T;
 
-    fn get_inner(&self) -> &Self::Inner {
+    fn inner(&self) -> &Self::Inner {
         &self.0
     }
 }
@@ -151,7 +151,7 @@ where
             .map_err(|e| ValidationError::ExtractionError(e.to_string()))?;
 
         extracted
-            .get_inner()
+            .inner()
             .validate()
             .map_err(ValidationError::ValidationFailed)?;
 

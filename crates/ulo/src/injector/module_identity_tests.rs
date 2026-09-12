@@ -143,7 +143,7 @@ fn add_module_dedups_identical_dynamic_modules() {
     container
         .add_module(Box::new(conn_module("Conn", "conn", "postgres://a")))
         .unwrap();
-    assert_eq!(container.get_modules_token().len(), 1);
+    assert_eq!(container.module_tokens().len(), 1);
 }
 
 // ── Mechanism 3 + the knob: end-to-end through scanner + loader ───────────────────────────────

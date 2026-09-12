@@ -20,7 +20,7 @@ impl GatewayResolver {
     }
 
     pub fn resolve(&self) -> SetupResult<HashMap<String, Arc<GatewayWrapper>>> {
-        let raw = self.container.borrow().get_gateways().clone();
+        let raw = self.container.borrow().gateways().clone();
         raw.into_iter()
             .map(|(path, gateway)| {
                 let wrapper = self.wrap_gateway(gateway)?;
@@ -72,7 +72,7 @@ impl GatewayResolver {
     }
 
     fn resolve_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<WsGuardEntry>> {
-        let mut guards = self.container.borrow().get_global_ws_guards();
+        let mut guards = self.container.borrow().global_ws_guards();
         for token in tokens {
             let entry = self.resolve_guard_by_token(&token)?;
             guards.push(entry);
@@ -81,7 +81,7 @@ impl GatewayResolver {
     }
 
     fn resolve_interceptors(&self, tokens: Vec<String>) -> SetupResult<Vec<WsInterceptorEntry>> {
-        let mut interceptors = self.container.borrow().get_global_ws_interceptors();
+        let mut interceptors = self.container.borrow().global_ws_interceptors();
         for token in tokens {
             let entry = self.resolve_interceptor_by_token(&token)?;
             interceptors.push(entry);
@@ -90,7 +90,7 @@ impl GatewayResolver {
     }
 
     fn resolve_error_handlers(&self, tokens: Vec<String>) -> SetupResult<Vec<WsErrorHandlerArc>> {
-        let mut error_handlers = self.container.borrow().get_global_ws_error_handlers();
+        let mut error_handlers = self.container.borrow().global_ws_error_handlers();
         for token in tokens {
             error_handlers.push(self.resolve_error_handler_by_token(&token)?);
         }
@@ -133,7 +133,7 @@ impl GatewayResolver {
     fn resolve_guard_by_token(&self, token: &str) -> SetupResult<WsGuardEntry> {
         self.container
             .borrow()
-            .get_role_registry()
+            .role_registry()
             .ws_guards
             .get(token)
             .cloned()
@@ -153,7 +153,7 @@ impl GatewayResolver {
     fn resolve_interceptor_by_token(&self, token: &str) -> SetupResult<WsInterceptorEntry> {
         self.container
             .borrow()
-            .get_role_registry()
+            .role_registry()
             .ws_interceptors
             .get(token)
             .cloned()
@@ -173,7 +173,7 @@ impl GatewayResolver {
     fn resolve_error_handler_by_token(&self, token: &str) -> SetupResult<WsErrorHandlerArc> {
         self.container
             .borrow()
-            .get_role_registry()
+            .role_registry()
             .ws_error_handlers
             .get(token)
             .cloned()

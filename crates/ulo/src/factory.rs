@@ -254,7 +254,7 @@ impl UloFactory {
         // Register global middleware
         {
             let mut container_mut = container.borrow_mut();
-            if let Some(middleware_manager) = container_mut.get_middleware_manager_mut() {
+            if let Some(middleware_manager) = container_mut.middleware_manager_mut() {
                 for middleware in &self.global_middleware {
                     middleware_manager.add_global(middleware.clone());
                 }

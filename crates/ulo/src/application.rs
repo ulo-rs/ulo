@@ -324,7 +324,7 @@ impl UloApplication {
             .routes_resolver
             .container
             .borrow()
-            .get_rpc_controllers()
+            .rpc_controllers()
             .values()
             .cloned()
             .collect();
@@ -648,7 +648,7 @@ impl UloApplication {
                     .routes_resolver
                     .container
                     .borrow()
-                    .get_global_rpc_error_handlers();
+                    .global_rpc_error_handlers();
                 let callbacks = Arc::new(make_rpc_callbacks(
                     self.rpc_controllers.clone(),
                     rpc_global_handlers,
@@ -673,7 +673,7 @@ impl UloApplication {
                 .routes_resolver
                 .container
                 .borrow()
-                .get_grpc_services()
+                .grpc_services()
                 .values()
                 .cloned()
                 .collect();

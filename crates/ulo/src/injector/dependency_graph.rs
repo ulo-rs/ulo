@@ -22,10 +22,10 @@ impl DependencyGraph {
         }
     }
 
-    pub fn get_ordered_providers_token(mut self) -> SetupResult<Vec<String>> {
+    pub fn ordered_provider_tokens(mut self) -> SetupResult<Vec<String>> {
         let (providers, multi_providers) = {
             let container = self.container.borrow();
-            let providers_map = container.get_providers_factory(&self.module_token)?;
+            let providers_map = container.provider_factories(&self.module_token)?;
             let providers = providers_map
                 .iter()
                 .map(|(token, provider)| (token.clone(), provider.dependency_tokens()))
@@ -34,7 +34,7 @@ impl DependencyGraph {
             // provider tokens within this module so the topological sort can treat all
             // contributors as implicit dependencies of any provider that injects the base token.
             let multi_providers: FxHashMap<String, Vec<String>> = container
-                .get_multi_providers()
+                .multi_providers()
                 .iter()
                 .map(|(base, contribs)| {
                     let local: Vec<String> = contribs
