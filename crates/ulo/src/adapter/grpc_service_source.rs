@@ -26,22 +26,22 @@ use crate::traits::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
 #[derive(Default, Clone)]
 pub struct ResolvedGrpcEnhancers {
     /// Service-level guards; run on every method.
-    pub guards: Vec<GrpcGuardEntry>,
+    pub(crate) guards: Vec<GrpcGuardEntry>,
     /// Method-level guards keyed by the handler's Rust method name, which is what
     /// [`GrpcHandlerEnhancers::method`] carries and what the generated wrapper looks up with.
-    pub handler_guards: std::collections::HashMap<String, Vec<GrpcGuardEntry>>,
+    pub(crate) handler_guards: std::collections::HashMap<String, Vec<GrpcGuardEntry>>,
     /// Service-level interceptors; wrap every method's user delegation.
-    pub interceptors: Vec<GrpcInterceptorEntry>,
+    pub(crate) interceptors: Vec<GrpcInterceptorEntry>,
     /// Method-level interceptors. Stack on top of service-level (controller-
     /// level entries run first, method-level entries run inside).
-    pub handler_interceptors: std::collections::HashMap<String, Vec<GrpcInterceptorEntry>>,
+    pub(crate) handler_interceptors: std::collections::HashMap<String, Vec<GrpcInterceptorEntry>>,
     /// Service-level error handlers; fire on user-returned `Err` or caught
     /// handler panic. First handler to claim wins (chain runs in reverse
     /// registration order, matching the RPC/HTTP convention).
-    pub error_handlers: Vec<GrpcErrorHandlerArc>,
+    pub(crate) error_handlers: Vec<GrpcErrorHandlerArc>,
     /// Method-level error handlers. Composed with service-level into one
     /// reverse-order chain per call.
-    pub handler_error_handlers: std::collections::HashMap<String, Vec<GrpcErrorHandlerArc>>,
+    pub(crate) handler_error_handlers: std::collections::HashMap<String, Vec<GrpcErrorHandlerArc>>,
 }
 
 /// The enhancer tokens a gRPC service declares, resolved once at create. Service-level tokens

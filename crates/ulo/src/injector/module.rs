@@ -111,7 +111,9 @@ impl Module {
         &self.controllers
     }
 
-    pub fn drain_controllers_instances(&mut self) -> Drain<'_, String, Arc<InstanceWrapper>> {
+    pub(crate) fn drain_controllers_instances(
+        &mut self,
+    ) -> Drain<'_, String, Arc<InstanceWrapper>> {
         self.controllers_instances.drain()
     }
 
@@ -138,14 +140,6 @@ impl Module {
         self.controllers
             .get(controller_token)
             .map(|controller| controller.as_ref())
-    }
-
-    pub fn _get_controllers_instances(&self) -> &FxHashMap<String, Arc<InstanceWrapper>> {
-        &self.controllers_instances
-    }
-
-    pub fn _take_controllers_instances(&mut self) -> FxHashMap<String, Arc<InstanceWrapper>> {
-        std::mem::take(&mut self.controllers_instances)
     }
 
     /// The controller instances, one per struct, for lifecycle-hook dispatch.

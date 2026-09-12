@@ -20,6 +20,8 @@ pub mod __detect;
 #[doc(hidden)]
 pub mod __dispatch;
 #[doc(hidden)]
+pub mod __enhancer;
+#[doc(hidden)]
 pub mod __lifecycle;
 #[doc(hidden)]
 pub mod __rpc;
@@ -75,9 +77,8 @@ pub use rpc::{
 };
 pub use websocket::{
     BroadcastError, BroadcastModule, BroadcastService, BroadcastTarget, ClientId, DisconnectReason,
-    Gateway, GatewayEnhancers, GatewayHandlerEnhancers, GatewayWrapper, RoomId, SendError, Session,
-    TrySendError, WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsHandshake, WsMessage,
-    WsSink,
+    Gateway, GatewayEnhancers, GatewayHandlerEnhancers, RoomId, SendError, Session, TrySendError,
+    WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsHandshake, WsMessage, WsSink,
 };
 
 // Re-export built-in providers

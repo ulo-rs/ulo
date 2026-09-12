@@ -99,7 +99,7 @@ fn generate_ulo_dispatch(struct_name: &Ident, metadata: &[MetadataInfo]) -> Toke
             #[doc(hidden)]
             #[allow(non_snake_case, clippy::all)]
             pub fn __ulo_dispatch(
-                source: &::ulo::traits::DispatchSource<#struct_name>,
+                source: &::ulo::__enhancer::DispatchSource<#struct_name>,
             ) -> ::ulo::traits::Dispatch {
                 let _ = source;
                 ::ulo::traits::Dispatch::Http(vec![#(#creations),*])
@@ -350,7 +350,7 @@ fn generate_route_wrapper(
     } else {
         (
             quote! {
-                source: ::ulo::traits::DispatchSource<#struct_name>,
+                source: ::ulo::__enhancer::DispatchSource<#struct_name>,
             },
             // Resolve the instance before the extractors run: a per-call build reads
             // request-scoped dependencies through the context, while a body extractor

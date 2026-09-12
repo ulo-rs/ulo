@@ -24,7 +24,7 @@ pub use broadcast::{
 pub use broadcast_module::BroadcastModule;
 pub use extractors::PayloadError;
 pub use gateway::{Gateway, GatewayEnhancers, GatewayHandlerEnhancers};
-pub use gateway_wrapper::GatewayWrapper;
+pub(crate) use gateway_wrapper::GatewayWrapper;
 pub use session::Session;
 pub use ws_client::{WsClient, WsHandshake};
 pub(crate) use ws_client_map::WsClientMap;

@@ -158,7 +158,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
             #[doc(hidden)]
             #[allow(non_snake_case, clippy::all)]
             pub fn __ulo_dispatch(
-                source: &::ulo::traits::DispatchSource<#struct_name>,
+                source: &::ulo::__enhancer::DispatchSource<#struct_name>,
             ) -> ::ulo::traits::Dispatch {
                 // The route prefix is HTTP's argument; patterns cannot use one.
                 if !<#struct_name>::__ulo_prefix().is_empty() {
@@ -219,7 +219,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
         }
 
         #[doc(hidden)]
-        pub struct #source_name(::ulo::traits::DispatchSource<#struct_name>);
+        pub struct #source_name(::ulo::__enhancer::DispatchSource<#struct_name>);
 
         #[::ulo::async_trait]
         impl ::ulo::rpc::RpcControllerSource for #source_name {
