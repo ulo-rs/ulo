@@ -116,7 +116,7 @@ impl HandlerContext for RpcContext {
         &self.inner.shared.extensions
     }
 
-    fn cache(&self) -> &crate::traits::ExecutionCache {
+    fn cache(&self) -> &crate::di::ExecutionCache {
         &self.inner.shared.cache
     }
 

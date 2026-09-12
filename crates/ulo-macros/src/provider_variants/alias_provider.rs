@@ -54,14 +54,14 @@ pub fn handle_provider_alias(input: TokenStream) -> Result<TokenStream> {
             // Alias provider struct that references another provider
             #[derive(Clone)]
             struct #provider_name {
-                target_provider: std::sync::Arc<Box<dyn ulo::traits::Provider>>,
+                target_provider: std::sync::Arc<Box<dyn ulo::spi::Provider>>,
             }
 
             struct #factory_name;
 
             // Implement Provider for the alias provider wrapper
             #[ulo::async_trait]
-            impl ulo::traits::Provider for #provider_name {
+            impl ulo::spi::Provider for #provider_name {
                 fn token(&self) -> String {
                     #alias_token_expr
                 }
@@ -81,7 +81,7 @@ pub fn handle_provider_alias(input: TokenStream) -> Result<TokenStream> {
             }
 
             #[ulo::async_trait]
-            impl ulo::traits::ProviderFactory for #factory_name {
+            impl ulo::spi::ProviderFactory for #factory_name {
                 fn token(&self) -> String {
                     #alias_token_expr
                 }
@@ -92,10 +92,10 @@ pub fn handle_provider_alias(input: TokenStream) -> Result<TokenStream> {
 
                 async fn build(
                     &self,
-                    deps: ulo::FxHashMap<String, ulo::traits::Injectable>,
-                ) -> ulo::traits::Injectable {
+                    deps: ulo::FxHashMap<String, ulo::spi::Injectable>,
+                ) -> ulo::spi::Injectable {
                     let existing_token = #existing_token_expr;
-                    let ulo::traits::Injectable { instance: target_provider, roles } = deps
+                    let ulo::spi::Injectable { instance: target_provider, roles } = deps
                         .get(&existing_token)
                         .cloned()
                         .unwrap_or_else(|| panic!(
@@ -103,9 +103,9 @@ pub fn handle_provider_alias(input: TokenStream) -> Result<TokenStream> {
                             existing_token
                         ));
 
-                    ulo::traits::Injectable::new(
+                    ulo::spi::Injectable::new(
                         std::sync::Arc::new(
-                            Box::new(#provider_name { target_provider }) as Box<dyn ulo::traits::Provider>
+                            Box::new(#provider_name { target_provider }) as Box<dyn ulo::spi::Provider>
                         ),
                         roles,
                     )

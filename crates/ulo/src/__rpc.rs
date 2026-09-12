@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use crate::context::Metadata;
 use crate::rpc::RpcContext;
 use crate::rpc::{RpcEnhancers, RpcError, RpcHandlerOutput};
-use crate::traits::ExecutionResult;
+use crate::spi::ExecutionResult;
 
 /// Blanket "no patterns" defaults, implemented for every type. `#[patterns]` shadows these with
 /// inherent fns of the same name, which win at the concrete-type call site in the generated

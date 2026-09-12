@@ -391,7 +391,7 @@ impl UloApplication {
     /// work arrived over no transport.
     pub async fn resolve<T: 'static>(
         &self,
-        execution: &crate::traits::ProviderContext,
+        execution: &crate::di::ProviderContext,
     ) -> Result<T, ResolutionError> {
         self.context.resolve::<T>(execution).await
     }
@@ -400,7 +400,7 @@ impl UloApplication {
     pub async fn resolve_by_token<T: 'static>(
         &self,
         token: impl IntoToken<T>,
-        execution: &crate::traits::ProviderContext,
+        execution: &crate::di::ProviderContext,
     ) -> Result<T, ResolutionError> {
         self.context.resolve_by_token::<T>(token, execution).await
     }
@@ -1008,7 +1008,7 @@ fn make_ws_callbacks(
 /// would otherwise never see the one call an operator most wants to hear about.
 fn make_rpc_callbacks(
     wrappers: Vec<Arc<RpcControllerWrapper>>,
-    global_error_handlers: Vec<crate::traits::RpcErrorHandlerArc>,
+    global_error_handlers: Vec<crate::spi::RpcErrorHandlerArc>,
 ) -> RpcMessageCallbacks {
     let mut pattern_map: HashMap<String, Arc<RpcControllerWrapper>> = HashMap::new();
     for wrapper in &wrappers {

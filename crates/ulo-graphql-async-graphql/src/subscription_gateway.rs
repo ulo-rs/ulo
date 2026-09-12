@@ -9,7 +9,8 @@ use async_graphql::{ObjectType, Schema, SubscriptionType};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ulo::traits::{Provider, ProviderContext};
+use ulo::di::ProviderContext;
+use ulo::spi::Provider;
 use ulo::{
     DisconnectReason, Gateway, ProviderScope, WsClient, WsError, WsHandlerOutput, WsMessage,
     ws::WsContext,
@@ -148,7 +149,7 @@ where
     async fn handle_event(
         &self,
         ctx: &ulo::ws::WsContext,
-    ) -> ulo::traits::ExecutionResult<WsHandlerOutput, ulo::WsError> {
+    ) -> ulo::spi::ExecutionResult<WsHandlerOutput, ulo::WsError> {
         let client = ctx.client().clone();
         let message = ctx.message().clone();
         let event = ctx.event().to_string();

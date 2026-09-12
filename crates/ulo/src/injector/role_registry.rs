@@ -6,7 +6,7 @@ use crate::{
     grpc::{GrpcServiceSource, ResolvedGrpcEnhancers},
     http::middleware::Middleware,
     rpc::RpcControllerWrapper,
-    traits::{
+    spi::{
         GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc,
         HttpGuardEntry, HttpInterceptorEntry, ProviderRole, RpcErrorHandlerArc, RpcGuardEntry,
         RpcInterceptorEntry, WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,

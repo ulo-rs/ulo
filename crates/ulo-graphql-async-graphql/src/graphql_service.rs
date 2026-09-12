@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::any::Any;
 use std::sync::Arc;
-use ulo::traits::{Provider, ProviderContext};
+use ulo::di::ProviderContext;
+use ulo::spi::Provider;
 use ulo::{ProviderScope, RequestPart};
 
 /// Injectable GraphQL service that executes GraphQL queries.

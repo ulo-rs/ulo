@@ -4,13 +4,14 @@ use crate::error::SetupResult;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
+    di::ModuleMetadata,
     enhancer::metadata::EnhancerMetadata,
     http::middleware::MiddlewareManager,
-    traits::{
+    spi::{
         Controller, ControllerFactory, GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry,
-        HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry, ModuleMetadata, Provider,
-        ProviderFactory, ProviderRole, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
-        WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
+        HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry, Provider, ProviderFactory,
+        ProviderRole, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry, WsErrorHandlerArc,
+        WsGuardEntry, WsInterceptorEntry,
     },
     ws::Gateway,
 };
@@ -355,7 +356,7 @@ impl Container {
         &self.role_registry
     }
 
-    pub(crate) fn provider_roles(&self, token: &str) -> Vec<crate::traits::ProviderRole> {
+    pub(crate) fn provider_roles(&self, token: &str) -> Vec<crate::spi::ProviderRole> {
         self.role_registry.get_roles_for_token(token)
     }
 
@@ -409,7 +410,7 @@ impl Container {
         &mut self,
         module_ref_token: &String,
         controller_token: &str,
-        route: Arc<dyn crate::traits::Route>,
+        route: Arc<dyn crate::http::Route>,
         enhancer_metadata: EnhancerMetadata,
     ) -> SetupResult {
         let global_enhancers = self.global_enhancers();

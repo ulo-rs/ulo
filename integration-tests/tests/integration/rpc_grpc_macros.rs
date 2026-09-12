@@ -2195,7 +2195,7 @@ struct SingletonGrpcModule;
 
 async fn boot_module<M>(module: M) -> (u16, ulo::ShutdownHandle)
 where
-    M: ulo::traits::ModuleMetadata + 'static,
+    M: ulo::di::ModuleMetadata + 'static,
 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let adapter = ulo_grpc::GrpcAdapter::new(addr);

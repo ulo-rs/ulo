@@ -80,7 +80,7 @@ pub fn generate_routes_system(impl_block: &ItemImpl) -> Result<TokenStream> {
 /// Emit the controller's inherent `__ulo_dispatch`, which shadows the `DispatchBridge` default
 /// and names HTTP: one route wrapper per handler, each holding a clone of the controller's source.
 fn generate_ulo_dispatch(struct_name: &Ident, metadata: &[MetadataInfo]) -> TokenStream {
-    let route_ty = quote! { ::std::sync::Arc<dyn ::ulo::traits::Route> };
+    let route_ty = quote! { ::std::sync::Arc<dyn ::ulo::http::Route> };
 
     let creations: Vec<_> = metadata
         .iter()
@@ -100,9 +100,9 @@ fn generate_ulo_dispatch(struct_name: &Ident, metadata: &[MetadataInfo]) -> Toke
             #[allow(non_snake_case, clippy::all)]
             pub fn __ulo_dispatch(
                 source: &::ulo::__enhancer::DispatchSource<#struct_name>,
-            ) -> ::ulo::traits::Dispatch {
+            ) -> ::ulo::spi::Dispatch {
                 let _ = source;
-                ::ulo::traits::Dispatch::Http(vec![#(#creations),*])
+                ::ulo::spi::Dispatch::Http(vec![#(#creations),*])
             }
         }
     }
@@ -378,11 +378,11 @@ fn generate_route_wrapper(
         }
 
         #[::ulo::async_trait]
-        impl ::ulo::traits::Route for #controller_name {
+        impl ::ulo::http::Route for #controller_name {
             async fn execute(
                 &self,
                 __ctx: &::ulo::http::HttpContext,
-            ) -> ::ulo::traits::ExecutionResult<
+            ) -> ::ulo::spi::ExecutionResult<
                 ::ulo::HttpResponse,
                 ::ulo::http::HttpError,
             > {
@@ -436,8 +436,8 @@ fn enhancers_method(enhancer_infos: &HashMap<String, Vec<EnhancerInfo>>) -> Toke
         enhancer_vecs(enhancer_infos, "error_handlers");
 
     quote! {
-        fn enhancers(&self) -> ::ulo::traits::ControllerEnhancers {
-            ::ulo::traits::ControllerEnhancers {
+        fn enhancers(&self) -> ::ulo::http::ControllerEnhancers {
+            ::ulo::http::ControllerEnhancers {
                 guard_tokens: vec![#(#guard_tokens),*],
                 interceptor_tokens: vec![#(#interceptor_tokens),*],
                 error_handler_tokens: vec![#(#error_handler_tokens),*],
@@ -489,17 +489,17 @@ fn exec_body_for(method_call: &TokenStream, returns_result: bool) -> TokenStream
     if returns_result {
         quote! {
             match #method_call {
-                ::std::result::Result::Ok(__t) => ::ulo::traits::ExecutionResult::Ok(
+                ::std::result::Result::Ok(__t) => ::ulo::spi::ExecutionResult::Ok(
                     ::ulo::IntoResponse::into_response(__t),
                 ),
-                ::std::result::Result::Err(__e) => ::ulo::traits::ExecutionResult::Err(
+                ::std::result::Result::Err(__e) => ::ulo::spi::ExecutionResult::Err(
                     ::std::convert::Into::<::ulo::http::HttpError>::into(__e),
                 ),
             }
         }
     } else {
         quote! {
-            ::ulo::traits::ExecutionResult::Ok(
+            ::ulo::spi::ExecutionResult::Ok(
                 ::ulo::IntoResponse::into_response(#method_call),
             )
         }

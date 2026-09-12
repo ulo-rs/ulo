@@ -1,8 +1,8 @@
 use parking_lot::Mutex;
 
 use super::ModuleIdentity;
-use crate::traits::{ControllerFactory, ModuleMetadata, ProviderFactory};
-
+use crate::di::ModuleMetadata;
+use crate::spi::{ControllerFactory, ProviderFactory};
 /// A module whose providers and exports are determined at runtime rather than compile time.
 ///
 /// Integration crates (e.g. `ulo-db-seaorm`) use this to implement `forRoot`/`forFeature`-style

@@ -13,6 +13,7 @@ mod lifecycle;
 pub mod middleware;
 mod provider;
 mod request_handler;
+mod route;
 #[cfg(feature = "tower-compat")]
 pub mod tower;
 pub use self::adapter::HttpAdapter;
@@ -23,6 +24,7 @@ pub use self::error::{HttpError, http_reason, http_status};
 pub use self::lifecycle::HttpLifecycleHandle;
 pub use self::provider::{Request, RequestFactory};
 pub use self::request_handler::RequestHandler;
+pub use self::route::{ControllerEnhancers, Route};
 
 mod http_response;
 pub use self::http_response::{HttpResponse, HttpResponseBuilder};

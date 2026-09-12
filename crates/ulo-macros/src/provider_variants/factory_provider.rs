@@ -118,7 +118,7 @@ fn generate_caching_provider(
     let has_deps = !dep_resolutions.is_empty();
 
     let type_bounds = if lifecycle {
-        quote! { ulo::traits::Provider + 'static }
+        quote! { ulo::spi::Provider + 'static }
     } else {
         quote! { Clone + Send + Sync + 'static }
     };
@@ -177,13 +177,13 @@ fn generate_caching_provider(
         struct #provider_name<__T> {
             deps: std::sync::Arc<ulo::FxHashMap<
                 String,
-                std::sync::Arc<Box<dyn ulo::traits::Provider>>,
+                std::sync::Arc<Box<dyn ulo::spi::Provider>>,
             >>,
             instance: std::sync::Arc<__T>,
         }
 
         #[ulo::async_trait]
-        impl<__T: #type_bounds> ulo::traits::Provider for #provider_name<__T> {
+        impl<__T: #type_bounds> ulo::spi::Provider for #provider_name<__T> {
             fn token(&self) -> String { #token_expr }
             fn scope(&self) -> ulo::ProviderScope { #scope_expr }
 
@@ -212,8 +212,8 @@ fn generate_caching_provider(
         let __provider = std::sync::Arc::new(Box::new(#provider_name {
             deps: std::sync::Arc::new(_dependencies),
             instance,
-        }) as Box<dyn ulo::traits::Provider>);
-        ulo::traits::Injectable::new(__provider, __roles)
+        }) as Box<dyn ulo::spi::Provider>);
+        ulo::spi::Injectable::new(__provider, __roles)
     };
 
     (struct_def, build_body)
@@ -352,12 +352,12 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
                 struct FactoryProviderWithDeps {
                     deps: std::sync::Arc<ulo::FxHashMap<
                         String,
-                        std::sync::Arc<Box<dyn ulo::traits::Provider>>,
+                        std::sync::Arc<Box<dyn ulo::spi::Provider>>,
                     >>,
                 }
 
                 #[ulo::async_trait]
-                impl ulo::traits::Provider for FactoryProviderWithDeps {
+                impl ulo::spi::Provider for FactoryProviderWithDeps {
                     fn token(&self) -> String { #token_expr }
                     fn scope(&self) -> ulo::ProviderScope { #scope_expr }
 
@@ -374,10 +374,10 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
                 let __all_deps = std::sync::Arc::new(_dependencies);
                 let mut __roles = std::vec::Vec::new();
                 #factory_role_pushes
-                ulo::traits::Injectable::new(
+                ulo::spi::Injectable::new(
                     std::sync::Arc::new(Box::new(FactoryProviderWithDeps {
                         deps: __all_deps,
-                    }) as Box<dyn ulo::traits::Provider>),
+                    }) as Box<dyn ulo::spi::Provider>),
                     __roles,
                 )
             }
@@ -386,12 +386,12 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
                 struct FactoryProviderWithDeps {
                     deps: std::sync::Arc<ulo::FxHashMap<
                         String,
-                        std::sync::Arc<Box<dyn ulo::traits::Provider>>,
+                        std::sync::Arc<Box<dyn ulo::spi::Provider>>,
                     >>,
                 }
 
                 #[ulo::async_trait]
-                impl ulo::traits::Provider for FactoryProviderWithDeps {
+                impl ulo::spi::Provider for FactoryProviderWithDeps {
                     fn token(&self) -> String { #token_expr }
                     fn scope(&self) -> ulo::ProviderScope { #scope_expr }
 
@@ -405,10 +405,10 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
                     }
                 }
 
-                ulo::traits::Injectable::new(
+                ulo::spi::Injectable::new(
                     std::sync::Arc::new(Box::new(FactoryProviderWithDeps {
                         deps: std::sync::Arc::new(_dependencies),
-                    }) as Box<dyn ulo::traits::Provider>),
+                    }) as Box<dyn ulo::spi::Provider>),
                     std::vec::Vec::new(),
                 )
             }
@@ -433,7 +433,7 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
             struct #factory_name;
 
             #[ulo::async_trait]
-            impl ulo::traits::ProviderFactory for #factory_name {
+            impl ulo::spi::ProviderFactory for #factory_name {
                 fn token(&self) -> String {
                     #token_expr
                 }
@@ -444,9 +444,9 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
 
                 async fn build(
                     &self,
-                    __deps: ulo::FxHashMap<String, ulo::traits::Injectable>,
-                ) -> ulo::traits::Injectable {
-                    let _dependencies: ulo::FxHashMap<String, std::sync::Arc<Box<dyn ulo::traits::Provider>>> =
+                    __deps: ulo::FxHashMap<String, ulo::spi::Injectable>,
+                ) -> ulo::spi::Injectable {
+                    let _dependencies: ulo::FxHashMap<String, std::sync::Arc<Box<dyn ulo::spi::Provider>>> =
                         __deps.into_iter().map(|(k, inj)| (k, inj.instance)).collect();
                     #build_body
                 }
@@ -485,7 +485,7 @@ fn generate_noncaching_factory_structs(
     let deps_arc_ty = quote! {
         std::sync::Arc<ulo::FxHashMap<
             String,
-            std::sync::Arc<Box<dyn ulo::traits::Provider>>
+            std::sync::Arc<Box<dyn ulo::spi::Provider>>
         >>
     };
 

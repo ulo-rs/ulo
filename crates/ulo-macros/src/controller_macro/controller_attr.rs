@@ -117,7 +117,7 @@ fn generate_bridges(
             pub async fn __ulo_build_from_deps(
                 dependencies: &::ulo::FxHashMap<
                     String,
-                    ::std::sync::Arc<Box<dyn ::ulo::traits::Provider>>,
+                    ::std::sync::Arc<Box<dyn ::ulo::spi::Provider>>,
                 >,
                 __exec_ctx: ::ulo::ProviderContext,
             ) -> Self {

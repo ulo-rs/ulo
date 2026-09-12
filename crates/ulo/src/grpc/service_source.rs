@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use crate::traits::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
+use crate::spi::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
 /// Per-service bundle of resolved enhancer instances. Built by the framework
 /// at create from [`GrpcServiceSource::enhancers`] and handed to
 /// [`GrpcServiceSource::register_with`] so the macro-generated wrapper can

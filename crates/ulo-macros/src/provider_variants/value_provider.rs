@@ -103,13 +103,13 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
         let expanded = quote! {
             {
                 struct #provider_name {
-                    instance: std::sync::Arc<Box<dyn ulo::traits::Provider>>,
+                    instance: std::sync::Arc<Box<dyn ulo::spi::Provider>>,
                 }
 
                 struct #factory_name;
 
                 #[ulo::async_trait]
-                impl ulo::traits::Provider for #provider_name {
+                impl ulo::spi::Provider for #provider_name {
                     fn token(&self) -> String {
                         #token_expr
                     }
@@ -148,21 +148,21 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
                 }
 
                 #[ulo::async_trait]
-                impl ulo::traits::ProviderFactory for #factory_name {
+                impl ulo::spi::ProviderFactory for #factory_name {
                     fn token(&self) -> String {
                         #token_expr
                     }
 
                     async fn build(
                         &self,
-                        _deps: ulo::FxHashMap<String, ulo::traits::Injectable>,
-                    ) -> ulo::traits::Injectable {
+                        _deps: ulo::FxHashMap<String, ulo::spi::Injectable>,
+                    ) -> ulo::spi::Injectable {
                         let instance = std::sync::Arc::new(
-                            Box::new(#value_expr) as Box<dyn ulo::traits::Provider>
+                            Box::new(#value_expr) as Box<dyn ulo::spi::Provider>
                         );
-                        ulo::traits::Injectable::new(
+                        ulo::spi::Injectable::new(
                             std::sync::Arc::new(
-                                Box::new(#provider_name { instance }) as Box<dyn ulo::traits::Provider>
+                                Box::new(#provider_name { instance }) as Box<dyn ulo::spi::Provider>
                             ),
                             std::vec::Vec::new(),
                         )
@@ -189,7 +189,7 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
                 struct #factory_name;
 
                 #[ulo::async_trait]
-                impl ulo::traits::Provider for #provider_name {
+                impl ulo::spi::Provider for #provider_name {
                     fn token(&self) -> String { #token_expr }
                     fn scope(&self) -> ulo::ProviderScope { ulo::ProviderScope::Singleton }
 
@@ -202,19 +202,19 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
                 }
 
                 #[ulo::async_trait]
-                impl ulo::traits::ProviderFactory for #factory_name {
+                impl ulo::spi::ProviderFactory for #factory_name {
                     fn token(&self) -> String { #token_expr }
 
                     async fn build(
                         &self,
-                        _deps: ulo::FxHashMap<String, ulo::traits::Injectable>,
-                    ) -> ulo::traits::Injectable {
+                        _deps: ulo::FxHashMap<String, ulo::spi::Injectable>,
+                    ) -> ulo::spi::Injectable {
                         let instance = std::sync::Arc::new(#value_expr);
                         let mut __roles = std::vec::Vec::new();
                         #role_pushes
-                        ulo::traits::Injectable::new(
+                        ulo::spi::Injectable::new(
                             std::sync::Arc::new(
-                                Box::new(#provider_name { instance }) as Box<dyn ulo::traits::Provider>
+                                Box::new(#provider_name { instance }) as Box<dyn ulo::spi::Provider>
                             ),
                             __roles,
                         )
@@ -247,7 +247,7 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
                         struct #factory_name;
 
                         #[ulo::async_trait]
-                        impl ulo::traits::Provider for #provider_name {
+                        impl ulo::spi::Provider for #provider_name {
                             fn token(&self) -> String { #token_expr }
                             fn scope(&self) -> ulo::ProviderScope { ulo::ProviderScope::Singleton }
 
@@ -260,20 +260,20 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
                         }
 
                         #[ulo::async_trait]
-                        impl ulo::traits::ProviderFactory for #factory_name {
+                        impl ulo::spi::ProviderFactory for #factory_name {
                             fn token(&self) -> String { #token_expr }
 
                             async fn build(
                                 &self,
-                                _deps: ulo::FxHashMap<String, ulo::traits::Injectable>,
-                            ) -> ulo::traits::Injectable {
+                                _deps: ulo::FxHashMap<String, ulo::spi::Injectable>,
+                            ) -> ulo::spi::Injectable {
                                 let value = std::sync::Arc::new(#value_expr);
                                 let get_value = std::sync::Arc::new(move || {
                                     Box::new((*value).clone()) as Box<dyn std::any::Any + Send>
                                 });
-                                ulo::traits::Injectable::new(
+                                ulo::spi::Injectable::new(
                                     std::sync::Arc::new(
-                                        Box::new(#provider_name { get_value }) as Box<dyn ulo::traits::Provider>
+                                        Box::new(#provider_name { get_value }) as Box<dyn ulo::spi::Provider>
                                     ),
                                     std::vec::Vec::new(),
                                 )

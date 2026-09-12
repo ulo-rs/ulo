@@ -415,7 +415,7 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
             #[allow(non_snake_case, clippy::all)]
             pub fn __ulo_dispatch(
                 source: &::ulo::__enhancer::DispatchSource<#self_ident>,
-            ) -> ::ulo::traits::Dispatch {
+            ) -> ::ulo::spi::Dispatch {
                 // The route prefix is HTTP's argument; a gRPC service cannot use one.
                 if !<#self_ident>::__ulo_prefix().is_empty() {
                     ::ulo::tracing::warn!(
@@ -424,7 +424,7 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
                         "controller dispatches gRPC; the route prefix is unused"
                     );
                 }
-                ::ulo::traits::Dispatch::Grpc(
+                ::ulo::spi::Dispatch::Grpc(
                     ::std::sync::Arc::new(#source_ident(source.clone())),
                 )
             }

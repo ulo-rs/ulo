@@ -9,8 +9,8 @@
 //! They are `pub` because the expansion lands outside this crate, and hidden because naming one by
 //! hand means writing what a macro writes.
 
-pub use crate::traits::dispatch_source::{DispatchSource, request_scoped_dependencies};
-pub use crate::traits::provider::{
+pub use crate::spi::dispatch_source::{DispatchSource, request_scoped_dependencies};
+pub use crate::spi::provider::{
     DynGrpcGuardFactory, DynGrpcInterceptorFactory, DynHttpGuardFactory, DynHttpInterceptorFactory,
     DynRpcGuardFactory, DynRpcInterceptorFactory, DynWsGuardFactory, DynWsInterceptorFactory,
     GrpcGuardEntry, GrpcInterceptorEntry, HttpGuardEntry, HttpInterceptorEntry, RpcGuardEntry,

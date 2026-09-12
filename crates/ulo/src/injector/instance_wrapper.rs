@@ -7,9 +7,10 @@ use crate::{
     enhancer::metadata::EnhancerMetadata,
     enhancer::{Guard, Interceptor, InterceptorNext},
     errors::{Error, GuardRejection, MiddlewareFailure, PanicRecovered, PipelineSegment},
+    http::Route,
     http::middleware::{Middleware, MiddlewareChain},
     http::{HttpContext, HttpError, HttpMethod, HttpRequest, HttpResponse},
-    traits::{ExecutionResult, HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry, Route},
+    spi::{ExecutionResult, HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry},
 };
 use futures::FutureExt;
 use std::panic::AssertUnwindSafe;

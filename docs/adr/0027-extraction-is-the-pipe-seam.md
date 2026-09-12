@@ -104,7 +104,7 @@ permanent `None` are removed. What it modelled is `Validated<E>`.
   no upgrade path to keep and none is provided.
 - `PipelineSegment` loses a variant. It is `#[non_exhaustive]`, so a downstream `match` already needed
   a wildcard arm.
-- `ulo::traits::validate::Validatable` is gone from the public API, and `Route` loses
+- `ulo::spi::validate::Validatable` is gone from the public API, and `Route` loses
   `get_body_dto` — a breaking change for a hand-written `Route`, of which the two GraphQL controllers
   were the only ones.
 - Enhancer registration is now three roles per transport instead of four, everywhere: the detection

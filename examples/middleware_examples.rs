@@ -18,8 +18,8 @@
 use serde_json::json;
 use ulo::{
     Body, HttpResponse, async_trait,
+    di::MiddlewareConsumer,
     http::middleware::{Middleware, MiddlewareResult, NextHandle},
-    traits::MiddlewareConsumer,
     *,
 };
 use ulo_http_axum::AxumAdapter;

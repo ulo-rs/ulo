@@ -3,7 +3,7 @@ use std::{any::Any, future::Future, pin::Pin, sync::Arc};
 use async_trait::async_trait;
 use rustc_hash::FxHashMap;
 
-use super::ProviderContext;
+use crate::di::ProviderContext;
 use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::http::middleware::Middleware;
 use crate::{

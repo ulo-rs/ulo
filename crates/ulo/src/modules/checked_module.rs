@@ -1,7 +1,7 @@
 use super::DynamicModule;
+use crate::di::ModuleMetadata;
+use crate::spi::{ControllerFactory, ProviderFactory};
 use crate::startup_check::StartupCheck;
-use crate::traits::{ControllerFactory, ModuleMetadata, ProviderFactory};
-
 /// A [`DynamicModule`] carrying the [`StartupCheck`] its providers run, reconfigurable up to the
 /// point it is imported.
 ///

@@ -33,11 +33,12 @@ use std::sync::Arc;
 use crate::FxHashMap;
 use crate::async_trait;
 use crate::context::HandlerContext;
+use crate::di::ProviderContext;
 use crate::extract::FromContext;
 use crate::http::HttpContext;
 use crate::http::{PathParams, RequestPart};
 use crate::provider_scope::ProviderScope;
-use crate::traits::{Provider, ProviderContext, ProviderFactory};
+use crate::spi::{Provider, ProviderFactory};
 /// Built-in request-scoped provider for accessing HTTP request metadata.
 ///
 /// # Scope
@@ -149,10 +150,10 @@ impl ProviderFactory for RequestFactory {
 
     async fn build(
         &self,
-        _deps: FxHashMap<String, crate::traits::Injectable>,
-    ) -> crate::traits::Injectable {
+        _deps: FxHashMap<String, crate::spi::Injectable>,
+    ) -> crate::spi::Injectable {
         let (parts, ()) = http::Request::builder().body(()).unwrap().into_parts();
         let provider = Request::from_parts(&parts);
-        crate::traits::Injectable::new(Arc::new(Box::new(provider) as Box<dyn Provider>), vec![])
+        crate::spi::Injectable::new(Arc::new(Box::new(provider) as Box<dyn Provider>), vec![])
     }
 }

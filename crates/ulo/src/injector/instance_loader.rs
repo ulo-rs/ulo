@@ -54,9 +54,8 @@ use super::{
 };
 use crate::{
     enhancer::metadata::EnhancerMetadata,
-    traits::{
-        Controller, Dispatch, HttpGuardEntry, HttpInterceptorEntry, Injectable, Provider, Route,
-    },
+    http::Route,
+    spi::{Controller, Dispatch, HttpGuardEntry, HttpInterceptorEntry, Injectable, Provider},
 };
 
 pub(crate) struct InstanceLoader {

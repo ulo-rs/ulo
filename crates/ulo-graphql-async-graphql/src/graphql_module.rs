@@ -7,7 +7,8 @@ use crate::subscription_context_builder::{
 use crate::subscription_gateway_factory::GraphQLSubscriptionGatewayFactory;
 use async_graphql::{ObjectType, Schema, SubscriptionType};
 use std::sync::Arc;
-use ulo::traits::{ControllerFactory, ModuleMetadata, ProviderFactory};
+use ulo::di::ModuleMetadata;
+use ulo::spi::{ControllerFactory, ProviderFactory};
 /// GraphQL module for integrating async-graphql with Ulo.
 ///
 /// This module provides GraphQL functionality to your Ulo application.

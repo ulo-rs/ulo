@@ -3,7 +3,8 @@ use std::{any::Any, future::Future, marker::PhantomData, sync::Arc};
 use async_trait::async_trait;
 use ulo::{
     FxHashMap,
-    traits::{Provider, ProviderContext, ProviderFactory},
+    di::ProviderContext,
+    spi::{Provider, ProviderFactory},
 };
 
 pub(crate) struct PrismaClientFactory<C, F, Fut>
@@ -30,12 +31,9 @@ where
         self.token.clone()
     }
 
-    async fn build(
-        &self,
-        _deps: FxHashMap<String, ulo::traits::Injectable>,
-    ) -> ulo::traits::Injectable {
+    async fn build(&self, _deps: FxHashMap<String, ulo::spi::Injectable>) -> ulo::spi::Injectable {
         let client = (self.connect)().await;
-        ulo::traits::Injectable::new(
+        ulo::spi::Injectable::new(
             Arc::new(Box::new(PrismaClientProvider {
                 client,
                 token: self.token.clone(),

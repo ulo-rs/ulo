@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::error::SetupResult;
 
-use crate::traits::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
+use crate::spi::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
 use crate::ws::{Gateway, GatewayWrapper};
 
 use super::Container;

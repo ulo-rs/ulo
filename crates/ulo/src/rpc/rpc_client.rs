@@ -6,10 +6,11 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 
 use crate::async_trait;
+use crate::di::ProviderContext;
 use crate::provider_scope::ProviderScope;
 use crate::rpc::RpcClientTransport;
 use crate::rpc::{RpcClientError, RpcData, RpcReplyStream};
-use crate::traits::{Provider, ProviderContext};
+use crate::spi::Provider;
 /// Map a reply stream's items through `RpcData::parse`, keeping errors in
 /// place.
 fn parse_items<R>(stream: RpcReplyStream) -> BoxStream<'static, Result<R, RpcClientError>>

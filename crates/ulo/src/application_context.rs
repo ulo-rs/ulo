@@ -8,9 +8,10 @@ use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
 use crate::error::ResolutionError;
 
 use crate::{
+    di::ProviderContext,
     injector::{Container, IntoToken, ModuleRef},
     modules::ModuleIdentity,
-    traits::{Provider, ProviderContext},
+    spi::Provider,
 };
 
 /// Full DI container without an HTTP server
