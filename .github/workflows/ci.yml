@@ -42,8 +42,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # --all-features because a doc comment behind a feature gate is only
       # linted when that feature is on, and --no-deps because upstream crates'
-      # doc warnings are not ours to fix.
-      - run: cargo doc --workspace --all-features --no-deps --locked
+      # doc warnings are not ours to fix. --lib because ulo-cli's binary target
+      # is named `ulo`, so documenting it writes into target/doc/ulo/ alongside
+      # the library of that name and the two rustdoc invocations race for the
+      # directory; selecting library targets documents every crate that has one
+      # and no binaries, which is the whole of what this gate is for.
+      - run: cargo doc --workspace --all-features --no-deps --lib --locked
 
   test:
     name: test
