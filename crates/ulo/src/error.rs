@@ -21,6 +21,19 @@ pub type InitResult = Result<(), Box<dyn Error + Send + Sync + 'static>>;
 /// [`GrpcAdapter`]: crate::adapter::GrpcAdapter
 pub type AdapterResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>;
 
+/// Return type for the DI setup surface — [`UloContainer`], [`UloInstanceLoader`],
+/// [`DependencyGraph`] and the dispatch-target resolvers.
+///
+/// These build the module graph, and what they report is the graph being unbuildable: a provider
+/// nothing exports, a module that is not imported, a cycle. A caller has no recovery to choose
+/// between, which is why the type names no cases and [`StartupError::Setup`] is where every one of
+/// them arrives.
+///
+/// [`UloContainer`]: crate::injector::UloContainer
+/// [`UloInstanceLoader`]: crate::injector::UloInstanceLoader
+/// [`DependencyGraph`]: crate::injector::DependencyGraph
+pub type SetupResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>;
+
 /// Errors from the startup phases: building the application
 /// ([`UloFactory::create`]) and acquiring its sockets ([`UloApplication::bind`]).
 ///
@@ -61,9 +74,9 @@ pub enum StartupError {
     Setup(Box<dyn Error + Send + Sync + 'static>),
 }
 
-impl From<anyhow::Error> for StartupError {
-    fn from(e: anyhow::Error) -> Self {
-        Self::Setup(e.into())
+impl From<Box<dyn Error + Send + Sync + 'static>> for StartupError {
+    fn from(source: Box<dyn Error + Send + Sync + 'static>) -> Self {
+        Self::Setup(source)
     }
 }
 

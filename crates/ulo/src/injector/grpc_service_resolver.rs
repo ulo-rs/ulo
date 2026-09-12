@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use anyhow::{Result, anyhow};
+use crate::error::SetupResult;
 
 use crate::adapter::{GrpcServiceSource, ResolvedGrpcEnhancers};
 use crate::traits_helpers::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
@@ -23,7 +23,10 @@ impl GrpcServiceResolver {
         Self { container }
     }
 
-    pub(crate) fn resolve_for(&self, svc: &dyn GrpcServiceSource) -> Result<ResolvedGrpcEnhancers> {
+    pub(crate) fn resolve_for(
+        &self,
+        svc: &dyn GrpcServiceSource,
+    ) -> SetupResult<ResolvedGrpcEnhancers> {
         let guards = self.resolve_guards(svc.get_guard_tokens())?;
         let interceptors = self.resolve_interceptors(svc.get_interceptor_tokens())?;
         let error_handlers = self.resolve_error_handlers(svc.get_error_handler_tokens())?;
@@ -56,7 +59,7 @@ impl GrpcServiceResolver {
         })
     }
 
-    fn resolve_guards(&self, tokens: Vec<String>) -> Result<Vec<GrpcGuardEntry>> {
+    fn resolve_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<GrpcGuardEntry>> {
         let mut guards = self.container.borrow().get_global_grpc_guards();
         for token in tokens {
             let entry = self.resolve_guard_by_token(&token)?;
@@ -65,7 +68,7 @@ impl GrpcServiceResolver {
         Ok(guards)
     }
 
-    fn resolve_guard_by_token(&self, token: &str) -> Result<GrpcGuardEntry> {
+    fn resolve_guard_by_token(&self, token: &str) -> SetupResult<GrpcGuardEntry> {
         self.container
             .borrow()
             .get_role_registry()
@@ -73,7 +76,7 @@ impl GrpcServiceResolver {
             .get(token)
             .cloned()
             .ok_or_else(|| {
-                anyhow!(
+                format!(
                     "gRPC Guard '{}' not found in registry. A guard registers automatically by \
                      implementing Guard<GrpcContext>; make sure the provider is in the module's \
                      `providers` list. For `provider_factory!` under a string/const token, name \
@@ -81,10 +84,11 @@ impl GrpcServiceResolver {
                      (`|| -> MyGuard`) or pass a type hint.",
                     token
                 )
+                .into()
             })
     }
 
-    fn resolve_interceptors(&self, tokens: Vec<String>) -> Result<Vec<GrpcInterceptorEntry>> {
+    fn resolve_interceptors(&self, tokens: Vec<String>) -> SetupResult<Vec<GrpcInterceptorEntry>> {
         let mut interceptors = self.container.borrow().get_global_grpc_interceptors();
         for token in tokens {
             let entry = self.resolve_interceptor_by_token(&token)?;
@@ -93,7 +97,7 @@ impl GrpcServiceResolver {
         Ok(interceptors)
     }
 
-    fn resolve_interceptor_by_token(&self, token: &str) -> Result<GrpcInterceptorEntry> {
+    fn resolve_interceptor_by_token(&self, token: &str) -> SetupResult<GrpcInterceptorEntry> {
         self.container
             .borrow()
             .get_role_registry()
@@ -101,7 +105,7 @@ impl GrpcServiceResolver {
             .get(token)
             .cloned()
             .ok_or_else(|| {
-                anyhow!(
+                format!(
                     "gRPC Interceptor '{}' not found in registry. An interceptor registers \
                      automatically by implementing Interceptor<GrpcContext>; make sure the \
                      provider is in the module's `providers` list. For `provider_factory!` under a \
@@ -109,10 +113,11 @@ impl GrpcServiceResolver {
                      the closure's return type (`|| -> MyInterceptor`) or pass a type hint.",
                     token
                 )
+                .into()
             })
     }
 
-    fn resolve_error_handlers(&self, tokens: Vec<String>) -> Result<Vec<GrpcErrorHandlerArc>> {
+    fn resolve_error_handlers(&self, tokens: Vec<String>) -> SetupResult<Vec<GrpcErrorHandlerArc>> {
         let mut handlers = self.container.borrow().get_global_grpc_error_handlers();
         for token in tokens {
             handlers.push(self.resolve_error_handler_by_token(&token)?);
@@ -120,7 +125,7 @@ impl GrpcServiceResolver {
         Ok(handlers)
     }
 
-    fn resolve_error_handler_by_token(&self, token: &str) -> Result<GrpcErrorHandlerArc> {
+    fn resolve_error_handler_by_token(&self, token: &str) -> SetupResult<GrpcErrorHandlerArc> {
         self.container
             .borrow()
             .get_role_registry()
@@ -128,14 +133,14 @@ impl GrpcServiceResolver {
             .get(token)
             .cloned()
             .ok_or_else(|| {
-                anyhow!(
+                format!(
                     "gRPC ErrorHandler '{}' not found in registry. An error handler registers \
                      automatically by implementing ErrorHandler<GrpcContext, GrpcStatus>; make \
                      sure the provider is in the module's `providers` list. For `provider_factory!` \
                      under a string/const token, name the produced type so it can be detected — \
                      annotate the closure's return type or pass a type hint.",
                     token
-                )
+                ).into()
             })
     }
 }

@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use crate::error::SetupResult;
 use rustc_hash::FxHashMap;
 use std::{
     any::Any,
@@ -25,17 +25,23 @@ enum LoadError {
     Failed(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
-impl From<anyhow::Error> for LoadError {
-    fn from(e: anyhow::Error) -> Self {
-        Self::Failed(e.into())
+impl From<String> for LoadError {
+    fn from(message: String) -> Self {
+        Self::Failed(message.into())
     }
 }
 
-impl From<LoadError> for anyhow::Error {
+impl From<Box<dyn std::error::Error + Send + Sync + 'static>> for LoadError {
+    fn from(source: Box<dyn std::error::Error + Send + Sync + 'static>) -> Self {
+        Self::Failed(source)
+    }
+}
+
+impl From<LoadError> for Box<dyn std::error::Error + Send + Sync + 'static> {
     fn from(e: LoadError) -> Self {
         match e {
-            LoadError::Deferred(reason) => anyhow!(reason),
-            LoadError::Failed(source) => anyhow::Error::from_boxed(source),
+            LoadError::Deferred(reason) => reason.into(),
+            LoadError::Failed(source) => source,
         }
     }
 }
@@ -62,7 +68,7 @@ impl UloInstanceLoader {
         Self { container }
     }
 
-    pub async fn create_instances_of_dependencies(&self) -> Result<()> {
+    pub async fn create_instances_of_dependencies(&self) -> SetupResult {
         let modules_order = self.container.borrow().get_ordered_modules_token();
 
         // PRE-PHASE 1: Register one ModuleRefProvider per module, all sharing the same
@@ -116,7 +122,7 @@ impl UloInstanceLoader {
                         continue;
                     }
                     Err(LoadError::Failed(source)) => {
-                        return Err(anyhow::Error::from_boxed(source));
+                        return Err(source);
                     }
                 }
             }
@@ -126,7 +132,7 @@ impl UloInstanceLoader {
                 // that spans modules, or wait on a provider that is never produced.
                 let diagnostic =
                     self.diagnose_unresolved_modules(&pending_modules, &deferred_reasons);
-                return Err(anyhow!(diagnostic));
+                return Err(diagnostic.into());
             }
 
             // Update pending list to only deferred modules
@@ -134,10 +140,11 @@ impl UloInstanceLoader {
         }
 
         if !pending_modules.is_empty() {
-            return Err(anyhow!(
+            return Err(format!(
                 "Module instantiation timed out. Remaining modules: {:?}",
                 pending_modules
-            ));
+            )
+            .into());
         }
 
         // PHASE 1.5: Collect multi-provider contributions into Vec collections per base token.
@@ -183,7 +190,7 @@ impl UloInstanceLoader {
     /// Iterates all registered multi-provider groups (base_token -> contributions), calls
     /// as_multi_item() on each built contribution, and stores the resulting collection
     /// in the container so it can be resolved like any other provider dependency.
-    fn collect_multi_providers(&self) -> Result<()> {
+    fn collect_multi_providers(&self) -> SetupResult {
         let multi_map = self.container.borrow().get_multi_providers().clone();
 
         for (base_token, contributions) in multi_map {
@@ -194,16 +201,15 @@ impl UloInstanceLoader {
                 let provider = container
                     .get_provider_instance_by_token(module_token, provider_token)?
                     .ok_or_else(|| {
-                        anyhow!(
+                        format!(
                             "Multi-provider contribution '{}' not found in module '{}'",
-                            provider_token,
-                            module_token
+                            provider_token, module_token
                         )
                     })?
                     .clone();
 
                 let item = provider.as_multi_item().ok_or_else(|| {
-                    anyhow!(
+                    format!(
                         "Provider '{}' is registered as multi but does not implement as_multi_item()",
                         provider_token
                     )
@@ -224,7 +230,7 @@ impl UloInstanceLoader {
     }
 
     /// Resolve APP_* token providers to global enhancers
-    fn resolve_app_token_enhancers(&self) -> Result<()> {
+    fn resolve_app_token_enhancers(&self) -> SetupResult {
         let container = self.container.borrow();
         let app_guard_providers = container.get_app_guard_providers().to_vec();
         let app_interceptor_providers = container.get_app_interceptor_providers().to_vec();
@@ -239,7 +245,7 @@ impl UloInstanceLoader {
                 .get(&provider_token)
                 .cloned()
                 .ok_or_else(|| {
-                    anyhow!(
+                    format!(
                         "Provider '{}' with APP_GUARD token does not implement Guard<HttpContext>",
                         provider_token
                     )
@@ -256,7 +262,7 @@ impl UloInstanceLoader {
                 .get(&provider_token)
                 .cloned()
                 .ok_or_else(|| {
-                    anyhow!(
+                    format!(
                         "Provider '{}' with APP_INTERCEPTOR token does not implement Interceptor<HttpContext>",
                         provider_token
                     )
@@ -270,7 +276,7 @@ impl UloInstanceLoader {
     }
 
     /// Resolve middleware tokens from the role registry
-    fn resolve_middleware_tokens(&self, modules_order: &[String]) -> Result<()> {
+    fn resolve_middleware_tokens(&self, modules_order: &[String]) -> SetupResult {
         for module_token in modules_order {
             self.container
                 .borrow_mut()
@@ -289,7 +295,7 @@ impl UloInstanceLoader {
             for provider_token in ordered_providers_token {
                 let provider_factory = container
                     .get_provider_by_token(&module_token, &provider_token)?
-                    .ok_or_else(|| anyhow!("Provider not found: {}", provider_token))?;
+                    .ok_or_else(|| format!("Provider not found: {}", provider_token))?;
 
                 let dependencies = provider_factory.get_dependencies();
                 let resolved_dependencies =
@@ -388,7 +394,7 @@ impl UloInstanceLoader {
         &self,
         module_token: &String,
         providers_instances: FxHashMap<String, Injectable>,
-    ) -> Result<()> {
+    ) -> SetupResult {
         let mut container = self.container.borrow_mut();
         let mut providers_tokens = Vec::new();
         for (provider_instance_token, injectable) in providers_instances {
@@ -406,7 +412,7 @@ impl UloInstanceLoader {
         module_token: &String,
         providers_tokens: Vec<(String, String)>,
         container: RefMut<'_, UloContainer>,
-    ) -> Result<()> {
+    ) -> SetupResult {
         let exports = container.get_exports_tokens_vec(module_token)?;
         self.add_export_instances_tokens(module_token, providers_tokens, exports, container)?;
         Ok(())
@@ -418,7 +424,7 @@ impl UloInstanceLoader {
         providers_tokens: Vec<(String, String)>,
         exports: Vec<String>,
         mut container: RefMut<'_, UloContainer>,
-    ) -> Result<()> {
+    ) -> SetupResult {
         for (provider_factory_token, provider_instance_token) in providers_tokens {
             if exports.contains(&provider_factory_token) {
                 container.add_export_instance(module_token, provider_instance_token)?;
@@ -427,7 +433,7 @@ impl UloInstanceLoader {
         Ok(())
     }
 
-    async fn create_instances_of_controllers(&self, module_token: String) -> Result<()> {
+    async fn create_instances_of_controllers(&self, module_token: String) -> SetupResult {
         let controllers_instances = {
             let container = self.container.borrow();
             let mut instances = Vec::new();
@@ -453,7 +459,7 @@ impl UloInstanceLoader {
         &self,
         module_token: String,
         controllers: Vec<Arc<dyn Controller>>,
-    ) -> Result<()> {
+    ) -> SetupResult {
         // Phase A: expand each controller into its dispatch under an immutable borrow, resolving
         // every transport's enhancer tokens against the role registry — a misdeclared token fails
         // create(), whatever the transport.
@@ -471,7 +477,7 @@ impl UloInstanceLoader {
                                 let meta = self.resolve_enhancers_from_tokens(&route)?;
                                 Ok((route, meta))
                             })
-                            .collect::<Result<Vec<_>>>()?,
+                            .collect::<SetupResult<Vec<_>>>()?,
                     ),
                     Dispatch::Rpc(source) => {
                         ResolvedDispatch::Rpc(Arc::new(rpc_resolver.wrap_controller(source)?))
@@ -483,7 +489,7 @@ impl UloInstanceLoader {
                 };
                 Ok((controller, dispatch))
             })
-            .collect::<Result<_>>()?;
+            .collect::<SetupResult<_>>()?;
 
         // Phase B: store the controller (for lifecycle) and its dispatch units under a mutable
         // borrow.
@@ -529,7 +535,10 @@ impl UloInstanceLoader {
     /// Both types are collected and combined in order:
     /// - First: DI-resolved enhancers (from tokens)
     /// - Then: Directly instantiated enhancers (from instances)
-    fn resolve_enhancers_from_tokens(&self, route: &Arc<dyn Route>) -> Result<EnhancerMetadata> {
+    fn resolve_enhancers_from_tokens(
+        &self,
+        route: &Arc<dyn Route>,
+    ) -> SetupResult<EnhancerMetadata> {
         let registry = self.container.borrow();
         let registry = registry.get_role_registry();
         let declared = route.enhancers();
@@ -537,7 +546,7 @@ impl UloInstanceLoader {
         let mut guards: Vec<HttpGuardEntry> = Vec::new();
         for token in declared.guard_tokens {
             let guard = registry.http_guards.get(&token).cloned().ok_or_else(|| {
-                anyhow!(
+                format!(
                     "HTTP Guard '{}' not found in registry. A guard registers automatically by \
                      implementing Guard<HttpContext> (or a universal blanket impl); make sure the \
                      provider is in the module's `providers` list. For `provider_factory!` under a \
@@ -557,7 +566,7 @@ impl UloInstanceLoader {
                 .get(&token)
                 .cloned()
                 .ok_or_else(|| {
-                    anyhow!(
+                    format!(
                         "HTTP Interceptor '{}' not found in registry. An interceptor registers \
                          automatically by implementing Interceptor<HttpContext>; make sure the \
                          provider is in the module's `providers` list. For `provider_factory!` \
@@ -583,7 +592,7 @@ impl UloInstanceLoader {
                 .get(&token)
                 .cloned()
                 .ok_or_else(|| {
-                    anyhow!(
+                    format!(
                         "HTTP ErrorHandler '{}' not found in registry. An error handler registers \
                          automatically by implementing ErrorHandler<HttpContext, HttpResponse>; \
                          make sure the provider is in the module's `providers` list. For \

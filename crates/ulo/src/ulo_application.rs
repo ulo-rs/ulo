@@ -11,10 +11,7 @@ use std::{
     },
 };
 
-use crate::error::StartupError;
-use anyhow::Result;
-
-use crate::error::ResolutionError;
+use crate::error::{ResolutionError, StartupError};
 use event_listener::Event;
 
 use crate::{
@@ -206,13 +203,15 @@ impl UloApplication {
         }
     }
 
-    fn require_state(&self, expected: AppState, op: &str) -> Result<()> {
+    fn require_state(&self, expected: AppState, op: &str) -> Result<(), StartupError> {
         if self.state != expected {
-            anyhow::bail!(
-                "{op}() cannot be called in state {:?}; expected {:?}",
-                self.state,
-                expected
-            );
+            return Err(StartupError::Setup(
+                format!(
+                    "{op}() cannot be called in state {:?}; expected {:?}",
+                    self.state, expected
+                )
+                .into(),
+            ));
         }
         Ok(())
     }
@@ -224,7 +223,7 @@ impl UloApplication {
         &mut self,
         adapter: A,
         target: impl Into<BindTarget>,
-    ) -> Result<&mut Self> {
+    ) -> Result<&mut Self, StartupError> {
         self.require_state(AppState::Configuring, "use_http_adapter")?;
         let mut boxed = Box::new(adapter) as Box<dyn HttpAdapter>;
         self.routes_resolver.resolve(boxed.as_mut())?;
@@ -235,7 +234,7 @@ impl UloApplication {
     }
 
     /// Gateway discovery is deferred to `bind()` to allow adapter configuration beforehand.
-    pub fn use_websocket_adapter<A>(&mut self, adapter: A) -> Result<&mut Self>
+    pub fn use_websocket_adapter<A>(&mut self, adapter: A) -> Result<&mut Self, StartupError>
     where
         A: WebSocketAdapter,
     {
@@ -264,14 +263,14 @@ impl UloApplication {
         &mut self,
         declared_port: u16,
         listener: std::net::TcpListener,
-    ) -> Result<&mut Self> {
+    ) -> Result<&mut Self, StartupError> {
         self.require_state(AppState::Configuring, "use_websocket_listener")?;
         self.ws_targets
             .insert(declared_port, BindTarget::Listener(listener));
         Ok(self)
     }
 
-    pub fn use_rpc_adapter<A>(&mut self, adapter: A) -> Result<&mut Self>
+    pub fn use_rpc_adapter<A>(&mut self, adapter: A) -> Result<&mut Self, StartupError>
     where
         A: RpcAdapter,
     {
@@ -286,7 +285,7 @@ impl UloApplication {
     /// (services are declared in `.proto` files and known at compile time)
     /// and supports streaming — neither fits the pattern-string + JSON-data
     /// model that `RpcAdapter` encodes for TCP/UDP/NATS.
-    pub fn use_grpc_adapter<A>(&mut self, adapter: A) -> Result<&mut Self>
+    pub fn use_grpc_adapter<A>(&mut self, adapter: A) -> Result<&mut Self, StartupError>
     where
         A: GrpcAdapter,
     {
@@ -305,7 +304,7 @@ impl UloApplication {
         self.shutdown.clone()
     }
 
-    fn discover_gateways(&mut self) -> Result<()> {
+    fn discover_gateways(&mut self) -> Result<(), StartupError> {
         let resolver = GatewayResolver::new(self.routes_resolver.container.clone());
         self.ws_gateways = resolver.resolve()?;
 
@@ -505,10 +504,13 @@ impl UloApplication {
         if !same_port.is_empty() {
             let Some(http) = self.http_adapter.as_mut() else {
                 let paths: Vec<&str> = same_port.iter().map(|(p, _)| p.as_str()).collect();
-                return Err(anyhow::anyhow!(
-                    "WebSocket gateways at {} share the HTTP listener, but no HTTP adapter is \
+                return Err(StartupError::Setup(
+                    format!(
+                        "WebSocket gateways at {} share the HTTP listener, but no HTTP adapter is \
                      registered; call use_http_adapter() to add one",
-                    paths.join(", ")
+                        paths.join(", ")
+                    )
+                    .into(),
                 )
                 .into());
             };
@@ -539,65 +541,66 @@ impl UloApplication {
         // Wire separate-port gateways into the standalone WS adapter, and work out
         // which socket each declared port gets. The adapter is consumed further
         // down; here it only takes its gateways.
-        let ws_targets: Option<Vec<(u16, BindTarget)>> = if separate_port.is_empty() {
-            None
-        } else {
-            let Some(ws) = self.ws_adapter.as_mut() else {
-                let declared: Vec<String> = separate_port
-                    .iter()
-                    .map(|(path, gw)| format!("{path} (port {})", gw.get_port().unwrap_or(0)))
-                    .collect();
-                return Err(anyhow::anyhow!(
+        let ws_targets: Option<Vec<(u16, BindTarget)>> =
+            if separate_port.is_empty() {
+                None
+            } else {
+                let Some(ws) = self.ws_adapter.as_mut() else {
+                    let declared: Vec<String> = separate_port
+                        .iter()
+                        .map(|(path, gw)| format!("{path} (port {})", gw.get_port().unwrap_or(0)))
+                        .collect();
+                    return Err(StartupError::Setup(format!(
                     "WebSocket gateways {} declare their own port, but no WebSocket adapter is \
                      registered; call use_websocket_adapter() to add one",
                     declared.join(", ")
-                )
+                ).into())
                 .into());
-            };
+                };
 
-            for (path, gateway) in &separate_port {
-                if let Some(ws_port) = gateway.get_port() {
-                    let client_map = broadcast_service
-                        .as_ref()
-                        .map(|bs| bs.ws_client_map())
-                        .unwrap_or_else(|| Arc::new(WsClientMap::new()));
-                    let callbacks = Arc::new(make_ws_callbacks(
-                        gateway.clone(),
-                        client_map,
-                        broadcast_service.clone(),
-                    ));
-                    ws.register_gateway(ws_port, path, callbacks)
-                        .map_err(|source| StartupError::Adapter {
-                            transport: "websocket",
-                            source: source.into(),
-                        })?;
-                    tracing::debug!(port = ws_port, path, "WebSocket gateway registered");
-                    gateway.call_after_init().await;
-                }
-            }
-
-            // Collect every unique port that has at least one gateway. A gateway
-            // keeps its declared port as its key even when the caller supplied a
-            // socket listening elsewhere — the key selects the gateway, the target
-            // says where to listen.
-            let mut seen: HashSet<u16> = HashSet::new();
-            let mut targets: Vec<(u16, BindTarget)> = vec![];
-            for (_, gw) in &separate_port {
-                if let Some(ws_port) = gw.get_port() {
-                    if seen.insert(ws_port) {
-                        let target = self
-                            .ws_targets
-                            .remove(&ws_port)
-                            .unwrap_or(BindTarget::Addr {
-                                hostname: hostname.clone(),
-                                port: ws_port,
-                            });
-                        targets.push((ws_port, target));
+                for (path, gateway) in &separate_port {
+                    if let Some(ws_port) = gateway.get_port() {
+                        let client_map = broadcast_service
+                            .as_ref()
+                            .map(|bs| bs.ws_client_map())
+                            .unwrap_or_else(|| Arc::new(WsClientMap::new()));
+                        let callbacks = Arc::new(make_ws_callbacks(
+                            gateway.clone(),
+                            client_map,
+                            broadcast_service.clone(),
+                        ));
+                        ws.register_gateway(ws_port, path, callbacks)
+                            .map_err(|source| StartupError::Adapter {
+                                transport: "websocket",
+                                source: source.into(),
+                            })?;
+                        tracing::debug!(port = ws_port, path, "WebSocket gateway registered");
+                        gateway.call_after_init().await;
                     }
                 }
-            }
-            Some(targets)
-        };
+
+                // Collect every unique port that has at least one gateway. A gateway
+                // keeps its declared port as its key even when the caller supplied a
+                // socket listening elsewhere — the key selects the gateway, the target
+                // says where to listen.
+                let mut seen: HashSet<u16> = HashSet::new();
+                let mut targets: Vec<(u16, BindTarget)> = vec![];
+                for (_, gw) in &separate_port {
+                    if let Some(ws_port) = gw.get_port() {
+                        if seen.insert(ws_port) {
+                            let target =
+                                self.ws_targets
+                                    .remove(&ws_port)
+                                    .unwrap_or(BindTarget::Addr {
+                                        hostname: hostname.clone(),
+                                        port: ws_port,
+                                    });
+                            targets.push((ws_port, target));
+                        }
+                    }
+                }
+                Some(targets)
+            };
 
         // A socket left here matches no gateway, so nothing will ever accept
         // on it.
@@ -607,54 +610,58 @@ impl UloApplication {
                 .drain()
                 .map(|(declared_port, target)| format!("{target} for port {declared_port}"))
                 .collect();
-            return Err(anyhow::anyhow!(
-                "WebSocket listeners supplied for ports no gateway declares: {}",
-                orphans.join(", ")
+            return Err(StartupError::Setup(
+                format!(
+                    "WebSocket listeners supplied for ports no gateway declares: {}",
+                    orphans.join(", ")
+                )
+                .into(),
             )
             .into());
         }
 
         // Hand the RPC adapter its patterns. It is consumed further down.
-        let rpc_adapter = if self.rpc_controllers.is_empty() {
-            None
-        } else {
-            if self.rpc_adapter.is_none() {
-                return Err(anyhow::anyhow!(
+        let rpc_adapter =
+            if self.rpc_controllers.is_empty() {
+                None
+            } else {
+                if self.rpc_adapter.is_none() {
+                    return Err(StartupError::Setup(format!(
                     "{} RPC controller(s) declare patterns, but no RPC adapter is registered; \
                      call use_rpc_adapter() to add one",
                     self.rpc_controllers.len()
-                )
+                ).into())
                 .into());
-            }
+                }
 
-            let all_patterns: Vec<String> = self
-                .rpc_controllers
-                .iter()
-                .flat_map(|w| w.get_patterns())
-                .collect();
+                let all_patterns: Vec<String> = self
+                    .rpc_controllers
+                    .iter()
+                    .flat_map(|w| w.get_patterns())
+                    .collect();
 
-            for pattern in &all_patterns {
-                tracing::debug!(pattern = %pattern, "RPC pattern registered");
-            }
+                for pattern in &all_patterns {
+                    tracing::debug!(pattern = %pattern, "RPC pattern registered");
+                }
 
-            let rpc_global_handlers = self
-                .routes_resolver
-                .container
-                .borrow()
-                .get_global_rpc_error_handlers();
-            let callbacks = Arc::new(make_rpc_callbacks(
-                self.rpc_controllers.clone(),
-                rpc_global_handlers,
-            ));
-            let mut adapter = self.rpc_adapter.take().unwrap();
-            adapter
-                .register_handlers(&all_patterns, callbacks)
-                .map_err(|source| StartupError::Adapter {
-                    transport: "rpc",
-                    source: source.into(),
-                })?;
-            Some(adapter)
-        };
+                let rpc_global_handlers = self
+                    .routes_resolver
+                    .container
+                    .borrow()
+                    .get_global_rpc_error_handlers();
+                let callbacks = Arc::new(make_rpc_callbacks(
+                    self.rpc_controllers.clone(),
+                    rpc_global_handlers,
+                ));
+                let mut adapter = self.rpc_adapter.take().unwrap();
+                adapter
+                    .register_handlers(&all_patterns, callbacks)
+                    .map_err(|source| StartupError::Adapter {
+                        transport: "rpc",
+                        source: source.into(),
+                    })?;
+                Some(adapter)
+            };
 
         // Hand the gRPC adapter its services. Services declared with
         // `#[controller]` + `#[grpc_methods]` are picked up from the DI
@@ -735,37 +742,38 @@ impl UloApplication {
             self.servers.push(Box::new(handle));
         }
 
-        let http_addr = if let Some(http_adapter) = self.http_adapter.take() {
-            let target = self.http_target.take().unwrap();
-            let has_same_port_ws = !same_port.is_empty();
-            let server_type = if has_same_port_ws {
-                "HTTP + WebSocket"
-            } else {
-                "HTTP"
-            };
+        let http_addr =
+            if let Some(http_adapter) = self.http_adapter.take() {
+                let target = self.http_target.take().unwrap();
+                let has_same_port_ws = !same_port.is_empty();
+                let server_type = if has_same_port_ws {
+                    "HTTP + WebSocket"
+                } else {
+                    "HTTP"
+                };
 
-            let ctx = AdapterContext::new(self.routes_resolver.take_global_chain());
-            let handle = http_adapter
-                .into_lifecycle(target, ctx)
-                .await
-                .map_err(|source| StartupError::Adapter {
-                    transport: "http",
-                    source: source.into(),
-                })?;
-            let addr = handle
-                .local_addr()
-                .expect("HTTP handle always has a bound address");
-            tracing::info!(addr = %addr, server_type, "HTTP listening");
-            self.servers.push(Box::new(handle));
-            Some(addr)
-        } else if self.servers.is_empty() {
-            return Err(anyhow::anyhow!(
+                let ctx = AdapterContext::new(self.routes_resolver.take_global_chain());
+                let handle = http_adapter
+                    .into_lifecycle(target, ctx)
+                    .await
+                    .map_err(|source| StartupError::Adapter {
+                        transport: "http",
+                        source: source.into(),
+                    })?;
+                let addr = handle
+                    .local_addr()
+                    .expect("HTTP handle always has a bound address");
+                tracing::info!(addr = %addr, server_type, "HTTP listening");
+                self.servers.push(Box::new(handle));
+                Some(addr)
+            } else if self.servers.is_empty() {
+                return Err(StartupError::Setup(format!(
                 "No adapters configured; register at least one adapter before calling bind()"
-            )
+            ).into())
             .into());
-        } else {
-            None
-        };
+            } else {
+                None
+            };
 
         // Drain serve futures out of every handle now so `run()` can join them
         // all. After this point, handles still in `self.servers` are used only
@@ -792,7 +800,7 @@ impl UloApplication {
     /// [`run`](UloApplication::run). Use this when you don't need the bound
     /// address; use `bind()` + `run()` explicitly when you do (dynamic ports,
     /// tests, readiness probes).
-    pub async fn start(mut self) -> Result<()> {
+    pub async fn start(mut self) -> Result<(), StartupError> {
         self.bind().await?;
         self.run().await;
         Ok(())

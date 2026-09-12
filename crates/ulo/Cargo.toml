@@ -20,7 +20,6 @@ tower-compat = ["dep:tower"]
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 rustc-hash = "2.1"
-anyhow.workspace = true
 async-trait.workspace = true
 validator.workspace = true
 serde_urlencoded = "0.7"
