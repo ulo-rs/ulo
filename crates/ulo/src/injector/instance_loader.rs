@@ -49,7 +49,7 @@ impl From<LoadError> for Box<dyn std::error::Error + Send + Sync + 'static> {
 type LoadResult<T> = std::result::Result<T, LoadError>;
 
 use super::{
-    DependencyGraph, UloContainer, find_dependency_cycle,
+    Container, DependencyGraph, find_dependency_cycle,
     multi_collection_provider::MultiCollectionProvider,
 };
 use crate::{
@@ -59,12 +59,12 @@ use crate::{
     },
 };
 
-pub struct UloInstanceLoader {
-    container: Rc<RefCell<UloContainer>>,
+pub struct InstanceLoader {
+    container: Rc<RefCell<Container>>,
 }
 
-impl UloInstanceLoader {
-    pub fn new(container: Rc<RefCell<UloContainer>>) -> Self {
+impl InstanceLoader {
+    pub fn new(container: Rc<RefCell<Container>>) -> Self {
         Self { container }
     }
 
@@ -411,7 +411,7 @@ impl UloInstanceLoader {
         &self,
         module_token: &String,
         providers_tokens: Vec<(String, String)>,
-        container: RefMut<'_, UloContainer>,
+        container: RefMut<'_, Container>,
     ) -> SetupResult {
         let exports = container.get_exports_tokens_vec(module_token)?;
         self.add_export_instances_tokens(module_token, providers_tokens, exports, container)?;
@@ -423,7 +423,7 @@ impl UloInstanceLoader {
         module_token: &String,
         providers_tokens: Vec<(String, String)>,
         exports: Vec<String>,
-        mut container: RefMut<'_, UloContainer>,
+        mut container: RefMut<'_, Container>,
     ) -> SetupResult {
         for (provider_factory_token, provider_instance_token) in providers_tokens {
             if exports.contains(&provider_factory_token) {

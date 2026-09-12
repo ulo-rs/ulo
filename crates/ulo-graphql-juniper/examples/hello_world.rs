@@ -8,7 +8,7 @@
 //!     cargo run -p ulo-graphql-juniper --example hello_world
 
 use juniper::{EmptyMutation, EmptySubscription, RootNode, graphql_object};
-use ulo::{module, ulo_factory::UloFactory};
+use ulo::{UloFactory, module};
 use ulo_graphql_juniper::{DefaultContext, DefaultContextBuilder, GraphQLModule};
 use ulo_http_axum::AxumAdapter;
 

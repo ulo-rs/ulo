@@ -8,8 +8,8 @@
 
 use crate::common::NotServed;
 use serial_test::serial;
+use ulo::UloFactory;
 use ulo::extractors::{Inbound, Payload};
-use ulo::ulo_factory::UloFactory;
 use ulo::{ErrorKind, module};
 use ulo_macros::{controller, grpc_methods, new};
 

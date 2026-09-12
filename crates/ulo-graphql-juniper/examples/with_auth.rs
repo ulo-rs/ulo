@@ -10,7 +10,7 @@
 use async_trait::async_trait;
 use juniper::{EmptySubscription, FieldResult, RootNode, graphql_object};
 use std::sync::Arc;
-use ulo::{injectable, module, ulo_factory::UloFactory};
+use ulo::{UloFactory, injectable, module};
 use ulo_graphql_juniper::{ContextBuilder, GraphQLModule};
 use ulo_http_axum::AxumAdapter;
 

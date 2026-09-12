@@ -14,8 +14,8 @@ use ulo::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::traits_helpers::Guard;
 use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
-    Body as UloBody, controller, get, injectable, module, new, post, routes, set_metadata,
-    subscriptions, ulo_factory::UloFactory, websocket_gateway,
+    Body as UloBody, UloFactory, controller, get, injectable, module, new, post, routes,
+    set_metadata, subscriptions, websocket_gateway,
 };
 
 use crate::common::TestServer;

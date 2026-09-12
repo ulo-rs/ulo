@@ -7,7 +7,7 @@ use crate::error::SetupResult;
 use crate::adapter::{GrpcServiceSource, ResolvedGrpcEnhancers};
 use crate::traits_helpers::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
 
-use super::UloContainer;
+use super::Container;
 
 /// Resolves one gRPC service's enhancer bundle from the role registry by token.
 /// Mirrors [`RpcControllerResolver`](super::RpcControllerResolver) — called by the instance
@@ -15,11 +15,11 @@ use super::UloContainer;
 /// stored `(service, enhancers)` pair to the adapter, which forwards `enhancers` into
 /// [`GrpcServiceSource::register_with`].
 pub struct GrpcServiceResolver {
-    container: Rc<RefCell<UloContainer>>,
+    container: Rc<RefCell<Container>>,
 }
 
 impl GrpcServiceResolver {
-    pub fn new(container: Rc<RefCell<UloContainer>>) -> Self {
+    pub fn new(container: Rc<RefCell<Container>>) -> Self {
         Self { container }
     }
 

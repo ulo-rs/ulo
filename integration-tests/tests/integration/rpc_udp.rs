@@ -23,7 +23,7 @@ use ulo_macros::{controller, new, patterns};
 /// for `app.bind().await` to surface the listening address before returning.
 /// The caller is guaranteed the socket is live by the time it gets the port.
 async fn start_rpc_server(module: impl ulo::ModuleMetadata + 'static) -> u16 {
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
@@ -215,7 +215,7 @@ async fn udp_fire_and_forget_produces_no_reply() {
 /// socket is closed and the next datagram gets no reply.
 #[tokio_localset_test::localset_test]
 async fn udp_app_shutdown_stops_the_recv_loop() {
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
@@ -396,7 +396,7 @@ impl SlowUdpModule {}
 /// during the drain window — its reply must arrive on the client socket.
 #[tokio_localset_test::localset_test]
 async fn udp_in_flight_request_completes_during_drain() {
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
@@ -446,7 +446,7 @@ async fn udp_in_flight_request_completes_during_drain() {
 /// would otherwise have slept for 300 ms.
 #[tokio_localset_test::localset_test]
 async fn udp_drain_aborts_after_timeout() {
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
@@ -490,7 +490,7 @@ async fn udp_drain_aborts_after_timeout() {
 /// follow-up datagram succeeds.
 #[tokio_localset_test::localset_test]
 async fn udp_backpressure_rejects_excess_and_releases_after_completion() {
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();

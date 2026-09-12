@@ -12,7 +12,7 @@
 //!   curl http://127.0.0.1:3000/config
 
 use serde_json::json;
-use ulo::ulo_factory::UloFactory;
+use ulo::UloFactory;
 use ulo::{Body, controller, get, injectable, module, routes};
 use ulo_config::{Config, ConfigModule, ConfigService};
 use ulo_http_axum::AxumAdapter;

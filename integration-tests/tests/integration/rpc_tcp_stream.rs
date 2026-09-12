@@ -18,7 +18,7 @@ use ulo::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
 use ulo_macros::{controller, module, new, patterns};
 
 async fn start_rpc_server(module: impl ulo::ModuleMetadata + 'static) -> u16 {
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {

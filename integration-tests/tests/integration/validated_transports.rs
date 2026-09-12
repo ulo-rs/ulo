@@ -86,7 +86,7 @@ async fn pick_free_port() -> u16 {
 }
 
 async fn start_rpc_server(module: impl ulo::ModuleMetadata + 'static) -> u16 {
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
     let port = pick_free_port().await;
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {

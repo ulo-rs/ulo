@@ -8,9 +8,9 @@
 #![allow(dead_code)]
 
 use serial_test::serial;
+use ulo::UloFactory;
 use ulo::context::GrpcContext;
 use ulo::extractors::{Inbound, Payload};
-use ulo::ulo_factory::UloFactory;
 use ulo::{ErrorKind, GrpcCode, GrpcStatus, async_trait, injectable, module};
 use ulo_macros::{controller, grpc_methods, new, use_error_handlers};
 

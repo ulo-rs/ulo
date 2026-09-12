@@ -13,10 +13,10 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use ulo::UloFactory;
 use ulo::context::RpcContext;
 use ulo::module;
 use ulo::rpc::{RpcData, RpcError};
-use ulo::ulo_factory::UloFactory;
 use ulo_macros::{controller, message_pattern, new, patterns};
 
 #[controller]

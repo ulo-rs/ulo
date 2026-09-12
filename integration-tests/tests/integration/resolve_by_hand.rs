@@ -6,9 +6,9 @@
 
 use std::collections::HashMap;
 
+use ulo::UloFactory;
 use ulo::context::{HttpContext, RpcContext};
 use ulo::http_helpers::RequestPart;
-use ulo::ulo_factory::UloFactory;
 use ulo::{ProviderContext, RpcData, injectable, module, new};
 use uuid::Uuid;
 

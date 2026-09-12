@@ -5,7 +5,7 @@ use testcontainers::{ContainerAsync, runners::AsyncRunner};
 use testcontainers_modules::redis::{REDIS_PORT, Redis};
 use tokio::sync::mpsc;
 use ulo::{
-    ulo_factory::UloFactory,
+    UloFactory,
     websocket::{WsMessage, WsSink},
 };
 use ulo_http_axum::TokioSender;

@@ -24,7 +24,7 @@ async fn start_ws_server_with_handlers(
     module: impl ulo::ModuleMetadata + 'static,
     handlers: Vec<Arc<dyn ErrorHandler<WsContext, WsMessage>>>,
 ) -> u16 {
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
     use ulo_http_axum::AxumAdapter;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();

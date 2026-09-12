@@ -16,13 +16,12 @@ use std::sync::{
 };
 
 use ulo::{
-    Body as UloBody, HttpResponse, async_trait,
+    Body as UloBody, HttpResponse, UloFactory, async_trait,
     context::HttpContext,
     controller,
     errors::{ErrorKind, HttpError, PanicRecovered, PipelineSegment},
     get, module, routes,
     traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext},
-    ulo_factory::UloFactory,
 };
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{use_error_handlers, use_guards, use_interceptors};

@@ -1,8 +1,8 @@
 mod container;
-pub use self::container::UloContainer;
+pub use self::container::Container;
 
 mod instance_loader;
-pub use self::instance_loader::UloInstanceLoader;
+pub use self::instance_loader::InstanceLoader;
 mod module;
 mod multi_collection_provider;
 

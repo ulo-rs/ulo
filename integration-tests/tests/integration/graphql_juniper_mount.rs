@@ -11,7 +11,7 @@
 //! `graphql_subscriptions.rs`.
 
 use juniper::{EmptyMutation, EmptySubscription, RootNode, graphql_object};
-use ulo::ulo_factory::UloFactory;
+use ulo::UloFactory;
 use ulo::{ProviderContext, injectable, module};
 use ulo_graphql_juniper::{DefaultContext, DefaultContextBuilder, GraphQLModule, GraphQLService};
 

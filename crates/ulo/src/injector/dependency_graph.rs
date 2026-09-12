@@ -1,10 +1,10 @@
-use super::UloContainer;
+use super::Container;
 use crate::error::SetupResult;
 use rustc_hash::FxHashMap;
 use std::{cell::RefCell, rc::Rc};
 
 pub struct DependencyGraph {
-    container: Rc<RefCell<UloContainer>>,
+    container: Rc<RefCell<Container>>,
     module_token: String,
     visited: FxHashMap<String, bool>,
     temp_mark: FxHashMap<String, bool>,
@@ -12,7 +12,7 @@ pub struct DependencyGraph {
 }
 
 impl DependencyGraph {
-    pub fn new(container: Rc<RefCell<UloContainer>>, module_token: String) -> Self {
+    pub fn new(container: Rc<RefCell<Container>>, module_token: String) -> Self {
         Self {
             container,
             module_token,

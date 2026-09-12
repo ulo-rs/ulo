@@ -5,7 +5,7 @@ use crate::{
     adapter::HttpAdapter,
     adapter::request_handler::RequestHandler,
     http_helpers::{HttpRequest, HttpResponse},
-    injector::{InstanceWrapper, UloContainer},
+    injector::{Container, InstanceWrapper},
     middleware::MiddlewareChain,
 };
 
@@ -26,12 +26,12 @@ impl RequestHandler for InstanceHandler {
 }
 
 pub struct RoutesResolver {
-    pub(crate) container: Rc<RefCell<UloContainer>>,
+    pub(crate) container: Rc<RefCell<Container>>,
     global_chain: Option<MiddlewareChain>,
 }
 
 impl RoutesResolver {
-    pub fn new(container: Rc<RefCell<UloContainer>>) -> Self {
+    pub fn new(container: Rc<RefCell<Container>>) -> Self {
         Self {
             container,
             global_chain: None,

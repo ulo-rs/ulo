@@ -8,14 +8,14 @@ use crate::error::SetupResult;
 use crate::traits_helpers::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
 use crate::websocket::{Gateway, GatewayWrapper};
 
-use super::UloContainer;
+use super::Container;
 
 pub struct GatewayResolver {
-    container: Rc<RefCell<UloContainer>>,
+    container: Rc<RefCell<Container>>,
 }
 
 impl GatewayResolver {
-    pub fn new(container: Rc<RefCell<UloContainer>>) -> Self {
+    pub fn new(container: Rc<RefCell<Container>>) -> Self {
         Self { container }
     }
 

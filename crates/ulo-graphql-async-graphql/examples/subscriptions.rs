@@ -9,7 +9,7 @@
 //!     # subscriptions at ws://localhost:3000/graphql/ws
 
 use futures::stream::{self, Stream};
-use ulo::{module, ulo_factory::UloFactory};
+use ulo::{UloFactory, module};
 use ulo_graphql_async_graphql::prelude::*;
 use ulo_http_axum::AxumAdapter;
 

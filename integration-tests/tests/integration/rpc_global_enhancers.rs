@@ -12,11 +12,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serial_test::serial;
+use ulo::UloFactory;
 use ulo::async_trait;
 use ulo::context::RpcContext;
 use ulo::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
 use ulo::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
-use ulo::ulo_factory::UloFactory;
 use ulo::{injectable, module};
 use ulo_macros::{controller, message_pattern, new, patterns, use_guards};
 

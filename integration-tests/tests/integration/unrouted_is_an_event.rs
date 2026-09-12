@@ -16,10 +16,10 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
+use ulo::UloFactory;
 use ulo::context::{RpcContext, WsContext};
 use ulo::errors::Unrouted;
 use ulo::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
-use ulo::ulo_factory::UloFactory;
 use ulo::websocket::{WsHandlerResult, WsMessage};
 use ulo::{Error, catch, module};
 use ulo_macros::{

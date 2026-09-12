@@ -7,7 +7,7 @@
 //!
 //! Run with:  cargo run --example derive_injectable
 
-use ulo::{injectable, module, new, ulo_factory::UloFactory};
+use ulo::{UloFactory, injectable, module, new};
 
 #[injectable]
 pub struct Config {

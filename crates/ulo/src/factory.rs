@@ -2,22 +2,22 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::application::UloApplication;
 use crate::application_context::UloApplicationContext;
 use crate::context::Metadata;
 use crate::context::{GrpcContext, HttpContext, RpcContext, WsContext};
 use crate::error::StartupError;
 use crate::http_helpers::HttpResponse;
-use crate::injector::{UloContainer, UloInstanceLoader};
+use crate::injector::{Container, InstanceLoader};
 use crate::middleware::Middleware;
 use crate::rpc::RpcData;
-use crate::scanner::UloDependenciesScanner;
+use crate::scanner::DependencyScanner;
 use crate::traits_helpers::{
     ErrorHandler, GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, Guard,
     HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry, Interceptor, ModuleMetadata,
     RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry, WsErrorHandlerArc, WsGuardEntry,
     WsInterceptorEntry,
 };
-use crate::ulo_application::UloApplication;
 use crate::websocket::WsMessage;
 
 /// Entry point for building a ulo application: registers global middleware
@@ -191,7 +191,7 @@ impl UloFactory {
         &self,
         module: impl ModuleMetadata + 'static,
     ) -> Result<UloApplication, StartupError> {
-        let container = Rc::new(RefCell::new(UloContainer::new()));
+        let container = Rc::new(RefCell::new(Container::new()));
 
         self.initialize(Box::new(module), container.clone()).await?;
 
@@ -220,13 +220,13 @@ impl UloFactory {
         &self,
         module: impl ModuleMetadata + 'static,
     ) -> Result<UloApplicationContext, StartupError> {
-        let container = Rc::new(RefCell::new(UloContainer::new()));
+        let container = Rc::new(RefCell::new(Container::new()));
 
         self.initialize(Box::new(module), container.clone()).await?;
 
         // HTTP adapters trigger bootstrap through their own init; standalone needs it explicitly
         {
-            let mut scanner = crate::scanner::UloDependenciesScanner::new(container.clone());
+            let mut scanner = crate::scanner::DependencyScanner::new(container.clone());
             scanner.call_bootstrap_hooks().await?;
         }
 
@@ -238,12 +238,12 @@ impl UloFactory {
     async fn initialize(
         &self,
         module: Box<dyn ModuleMetadata>,
-        container: Rc<RefCell<UloContainer>>,
+        container: Rc<RefCell<Container>>,
     ) -> Result<(), StartupError> {
         init_default_logger();
 
         tracing::debug!("Scanning module graph");
-        let mut scanner = UloDependenciesScanner::new(container.clone());
+        let mut scanner = DependencyScanner::new(container.clone());
 
         // Register built-in global module
         scanner.scan(Box::new(crate::builtin_module::BuiltinModule))?;
@@ -306,7 +306,7 @@ impl UloFactory {
 
         tracing::debug!("Instantiating dependencies");
         // Create instances of all dependencies (providers, controllers)
-        UloInstanceLoader::new(container.clone())
+        InstanceLoader::new(container.clone())
             .create_instances_of_dependencies()
             .await?;
 

@@ -4,7 +4,7 @@
 //! only an identical import dedups as a diamond.
 
 use serial_test::serial;
-use ulo::ulo_factory::UloFactory;
+use ulo::UloFactory;
 use ulo::{RequestPart, async_trait, module};
 use ulo_graphql_async_graphql::async_graphql::{
     Data, EmptyMutation, EmptySubscription, Object, Schema,

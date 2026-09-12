@@ -16,7 +16,7 @@ use crate::{
 // SharedBroadcastServiceProvider
 // =============================================================================
 // Registers the pre-built BroadcastService under its own DI token so that
-// ulo_application.rs can find it and wire ws_client_map into the WS callbacks.
+// application.rs can find it and wire ws_client_map into the WS callbacks.
 
 pub(crate) struct SharedBroadcastServiceProviderFactory {
     pub instance: BroadcastService,

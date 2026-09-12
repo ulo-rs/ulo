@@ -8,8 +8,8 @@
 //! passing it is what the other adapters do, and actix must fail it.
 
 use futures_util::StreamExt;
+use ulo::UloFactory;
 use ulo::extractors::{BodyStream, Bytes, Path};
-use ulo::ulo_factory::UloFactory;
 use ulo::*;
 use ulo_http_actix::ActixAdapter;
 use ulo_macros::module;
