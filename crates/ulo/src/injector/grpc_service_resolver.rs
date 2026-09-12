@@ -37,14 +37,17 @@ impl GrpcServiceResolver {
         let mut handler_error_handlers: HashMap<String, Vec<GrpcErrorHandlerArc>> = HashMap::new();
         for handler in enhancers.handlers {
             let method = handler.method;
-            handler_guards.insert(method.clone(), self.resolve_guards(handler.guard_tokens)?);
+            handler_guards.insert(
+                method.clone(),
+                self.resolve_handler_guards(handler.guard_tokens)?,
+            );
             handler_interceptors.insert(
                 method.clone(),
-                self.resolve_interceptors(handler.interceptor_tokens)?,
+                self.resolve_handler_interceptors(handler.interceptor_tokens)?,
             );
             handler_error_handlers.insert(
                 method,
-                self.resolve_error_handlers(handler.error_handler_tokens)?,
+                self.resolve_handler_error_handlers(handler.error_handler_tokens)?,
             );
         }
 
@@ -58,6 +61,10 @@ impl GrpcServiceResolver {
         })
     }
 
+    /// Service-level entries, with the transport's globals ahead of them.
+    ///
+    /// The globals belong to this level alone. A method's own entries stack on top of what is
+    /// resolved here, so resolving them with the globals too would run each global twice.
     fn resolve_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<GrpcGuardEntry>> {
         let mut guards = self.container.borrow().get_global_grpc_guards();
         for token in tokens {
@@ -141,5 +148,34 @@ impl GrpcServiceResolver {
                     token
                 ).into()
             })
+    }
+
+    /// Method-level entries on their own: the globals are already in the service-level vector
+    /// these stack on top of.
+    fn resolve_handler_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<GrpcGuardEntry>> {
+        tokens
+            .into_iter()
+            .map(|token| self.resolve_guard_by_token(&token))
+            .collect()
+    }
+
+    fn resolve_handler_interceptors(
+        &self,
+        tokens: Vec<String>,
+    ) -> SetupResult<Vec<GrpcInterceptorEntry>> {
+        tokens
+            .into_iter()
+            .map(|token| self.resolve_interceptor_by_token(&token))
+            .collect()
+    }
+
+    fn resolve_handler_error_handlers(
+        &self,
+        tokens: Vec<String>,
+    ) -> SetupResult<Vec<GrpcErrorHandlerArc>> {
+        tokens
+            .into_iter()
+            .map(|token| self.resolve_error_handler_by_token(&token))
+            .collect()
     }
 }
