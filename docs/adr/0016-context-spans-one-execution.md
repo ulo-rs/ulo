@@ -76,7 +76,7 @@ are consulted before the guard's response is.
 
 ### What follows from the definition on each transport
 
-An RPC controller is resolved once at startup and held as `Arc<dyn RpcControllerTrait>`, so nothing on
+An RPC controller is resolved once at startup and held as `Arc<dyn RpcController>`, so nothing on
 that transport is built per execution. `ProviderContext::WebSocket` and `ProviderContext::Rpc` are unit
 variants that no code constructs. On WebSocket, `WsContext::new` repoints its client clone at a fresh
 bag, and `begin_connect` stores the client it was passed rather than the one the context holds — three

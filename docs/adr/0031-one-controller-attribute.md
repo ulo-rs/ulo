@@ -49,7 +49,7 @@ macro shadows it with an inherent fn:
 
 - `#[routes]` answers `Dispatch::Http`, one route wrapper per handler.
 - `#[patterns]` answers `Dispatch::Rpc` with the controller's source companion. The companion and
-  the `RpcControllerTrait` impl move here from the struct attribute — declared where the transport
+  the `RpcController` impl move here from the struct attribute — declared where the transport
   is.
 - `#[grpc_methods]` answers `Dispatch::Grpc` with the service's source companion, which it already
   emits.

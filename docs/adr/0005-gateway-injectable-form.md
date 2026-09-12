@@ -14,7 +14,7 @@ contract — so it should declare like one. The same structural obstacle as cont
 `#[subscribe_message]` handlers are a **variable** set of methods on the impl, which a struct attribute
 cannot see and the one-slot `#[new]` bridge cannot aggregate.
 
-Gateways carry an extra weight controllers do not: `GatewayTrait` is a **rich** trait. Beyond message
+Gateways carry an extra weight controllers do not: `Gateway` is a **rich** trait. Beyond message
 routing it has connection hooks, namespace/port, and — before this work — a dozen enhancer-token
 accessor methods. Delegating all of that to a per-method bridge would mean a bridge with ~14 methods.
 So the enhancer surface was collapsed first: the accessors became a single `enhancers() ->
@@ -41,7 +41,7 @@ impl ChatGateway {
 
 - `#[websocket_gateway("/p", namespace = …, port = …)]` is a **struct** attribute and produces a
   *complete* gateway on its own. It re-emits the struct with `Clone`/`InjectFields`, emits the provider
-  wiring carrying the gateway **role** (so the resolver discovers it), and emits `impl GatewayTrait` with
+  wiring carrying the gateway **role** (so the resolver discovers it), and emits `impl Gateway` with
   identity/path/namespace/port baked from the attribute. Each behavior method (`after_init`,
   `on_connect`, `on_disconnect`, `handle_event`, `enhancers`) delegates to `Self::__ulo_ws_*` at the
   concrete type, resolving to the `__ws::WsHandlersBridge` default unless a `#[subscriptions]` impl

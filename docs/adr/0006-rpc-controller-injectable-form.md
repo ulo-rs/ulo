@@ -39,7 +39,7 @@ impl OrdersController {
 
 - `#[rpc_controller]` is a **struct** attribute and produces a *complete* controller on its own: it
   re-emits the struct with `Clone`/`InjectFields`, emits the provider wiring carrying the
-  rpc-controller **role**, and emits `impl RpcControllerTrait` with `get_token` baked from the struct
+  rpc-controller **role**, and emits `impl RpcController` with `get_token` baked from the struct
   name. `get_patterns`, `handle_message`, and `enhancers` delegate to `Self::__ulo_rpc_*`, resolving
   to the `__rpc::RpcHandlersBridge` default when no `#[patterns]` impl shadows them. Construction and
   lifecycle reuse the provider bridges, so `#[inject]`, `#[new]`, and `#[on_*]` behave as on any

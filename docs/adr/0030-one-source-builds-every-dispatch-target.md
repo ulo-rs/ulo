@@ -19,7 +19,7 @@ fork in its own type:
   The fork is expanded at startup: `__ulo_routes` matches the state and instantiates one of two
   generated wrapper sets per handler — a singleton set that downcasts `Arc<dyn Any>` on every
   request, and a per-call set that rebuilds through a direct bridge call.
-- **RPC** — a macro-emitted `{Singleton(Arc<Box<dyn RpcControllerTrait>>), PerCall(provider)}`
+- **RPC** — a macro-emitted `{Singleton(Arc<Box<dyn RpcController>>), PerCall(provider)}`
   whose `instance()` matches at call time and resolves through the provider.
 - **gRPC** — a macro-emitted `{Singleton(Arc<Service>), PerCall(provider)}`, with `instance()`
   inherent because the tonic wrapper delegates through UFCS at the concrete type.
@@ -36,7 +36,7 @@ The singleton payloads differ, and each difference costs something the transport
 
 - `Arc<dyn Any>` (HTTP) costs a downcast on every request, and the controller object reaches its
   own instance for lifecycle hooks through another one.
-- `Arc<Box<dyn RpcControllerTrait>>` (RPC) cannot be reached for lifecycle hooks at all, so the
+- `Arc<Box<dyn RpcController>>` (RPC) cannot be reached for lifecycle hooks at all, so the
   object carries a second, concrete `singleton` field beside the source — and building the boxed
   copy puts a `Clone` bound on the controller struct.
 - `Arc<Service>` (gRPC) is the payload the other two approximate: concrete, hook-reachable by a
@@ -82,7 +82,7 @@ variant; nothing else in the resolution is per transport.
 The payload is gRPC's: `Arc<T>`, concrete. Lifecycle hooks reach the instance the same way on every
 transport, the per-request downcast goes, and RPC's side-carried `singleton` field goes with its
 `Clone` bound. Where a consumer needs erasure it coerces at its own boundary —
-`RpcControllerSource::instance` answers with `Arc<dyn RpcControllerTrait>` — and the tonic wrapper,
+`RpcControllerSource::instance` answers with `Arc<dyn RpcController>` — and the tonic wrapper,
 which needs the service itself, holds the source at the concrete type and is handed `Arc<T>`
 directly.
 

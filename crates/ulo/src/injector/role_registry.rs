@@ -11,7 +11,7 @@ use crate::{
         RpcInterceptorEntry, WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
         middleware::Middleware,
     },
-    websocket::GatewayTrait,
+    websocket::Gateway,
 };
 
 pub(crate) struct RoleRegistry {
@@ -33,7 +33,7 @@ pub(crate) struct RoleRegistry {
 
     pub middleware: FxHashMap<String, Arc<dyn Middleware>>,
     /// Keyed by WS path (e.g. "/chat"), not by provider token.
-    pub gateways: FxHashMap<String, Arc<Box<dyn GatewayTrait>>>,
+    pub gateways: FxHashMap<String, Arc<Box<dyn Gateway>>>,
     /// Keyed by the RPC controller's own token. Enhancer tokens are already resolved — the
     /// wrapper is stored ready to serve, and bind only hands it to the adapter.
     pub rpc_controllers: FxHashMap<String, Arc<RpcControllerWrapper>>,

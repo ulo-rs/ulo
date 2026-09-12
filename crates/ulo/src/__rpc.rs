@@ -25,7 +25,7 @@ use crate::rpc::{RpcEnhancers, RpcError, RpcHandlerOutput};
 
 /// Blanket "no patterns" defaults, implemented for every type. `#[patterns]` shadows these with
 /// inherent fns of the same name, which win at the concrete-type call site in the generated
-/// `RpcControllerTrait` impl.
+/// `RpcController` impl.
 #[async_trait]
 pub trait RpcHandlersBridge {
     fn __ulo_rpc_patterns() -> Vec<String>

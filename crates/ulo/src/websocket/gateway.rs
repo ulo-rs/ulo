@@ -28,13 +28,15 @@ pub struct GatewayHandlerEnhancers {
     pub error_handler_tokens: Vec<String>,
 }
 
-/// Core gateway trait for WebSocket handlers
+/// A WebSocket gateway: it answers a connection's lifecycle and every message on it.
 ///
-/// Gateways handle WebSocket connections and route messages to appropriate handlers.
-/// They integrate with Ulo's DI system and execution context for guards, interceptors,
-/// and error handling.
+/// A gateway is a singleton in `providers:`, not a dispatch target in `controllers:`, so path,
+/// namespace and port are read straight off the instance. Declare one with
+/// `#[websocket_gateway]` on the struct and `#[subscriptions]` on the handler impl. Implement
+/// this trait by hand to override [`event_field`](Gateway::event_field) or to read a
+/// disconnect's [`DisconnectReason`] — the macros forward neither.
 #[async_trait]
-pub trait GatewayTrait: Send + Sync {
+pub trait Gateway: Send + Sync {
     /// Get unique token for DI registration
     fn get_token(&self) -> String;
 

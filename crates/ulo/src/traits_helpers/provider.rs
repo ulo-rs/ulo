@@ -154,7 +154,7 @@ pub enum ProviderRole {
     GrpcErrorHandler(GrpcErrorHandlerArc),
 
     Middleware(Arc<dyn Middleware>),
-    Gateway(Arc<Box<dyn crate::websocket::GatewayTrait>>),
+    Gateway(Arc<Box<dyn crate::websocket::Gateway>>),
 }
 
 /// A fully-built, ready-to-inject provider with its role registrations.
