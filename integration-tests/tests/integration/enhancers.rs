@@ -13,7 +13,7 @@ use ulo::context::{HandlerContext, HttpContext};
 use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext, MiddlewareConsumer};
 use ulo::{
-    Body as UloBody, HttpResponse, controller, get, injectable, module, post, provider_factory,
+    Body, HttpResponse, controller, get, injectable, module, post, provider_factory,
     provider_token, provider_value, routes, use_guards, use_interceptors,
 };
 
@@ -73,7 +73,7 @@ impl Middleware for HeaderCheckMiddleware {
         {
             let mut response = HttpResponse::new();
             response.status = 400;
-            response.body = Some(UloBody::text(format!(
+            response.body = Some(Body::text(format!(
                 "Missing required header: {}",
                 self.required_header
             )));
@@ -188,7 +188,7 @@ impl Interceptor<HttpContext, HttpResponse> for ValidationInterceptor {
         if is_invalid {
             let mut response = HttpResponse::new();
             response.status = 400;
-            response.body = Some(UloBody::text("Validation failed".to_string()));
+            response.body = Some(Body::text("Validation failed".to_string()));
             return response;
         }
         next.run(context).await
@@ -233,16 +233,16 @@ async fn enhancers_execution_order() {
         #[use_guards(AdminGuard::new(get_tracker()))]
         #[use_interceptors(LoggingInterceptor::new("method", get_tracker()))]
         #[get("/protected")]
-        fn protected_endpoint(&self) -> UloBody {
+        fn protected_endpoint(&self) -> Body {
             self.tracker.track("controller:protected");
-            UloBody::text("Protected resource".to_string())
+            Body::text("Protected resource".to_string())
         }
 
         #[use_guards(AuthGuard::new(get_tracker()))]
         #[get("/auth-only")]
-        fn auth_only_endpoint(&self) -> UloBody {
+        fn auth_only_endpoint(&self) -> Body {
             self.tracker.track("controller:auth_only");
-            UloBody::text("Authenticated resource".to_string())
+            Body::text("Authenticated resource".to_string())
         }
 
         #[use_interceptors(
@@ -250,16 +250,16 @@ async fn enhancers_execution_order() {
             ValidationInterceptor::new(get_tracker())
         )]
         #[post("/validate")]
-        fn validate_endpoint(&self) -> UloBody {
+        fn validate_endpoint(&self) -> Body {
             self.tracker.track("controller:validate");
             let result = self.service.process("data");
-            UloBody::text(result)
+            Body::text(result)
         }
 
         #[get("/public")]
-        fn public_endpoint(&self) -> UloBody {
+        fn public_endpoint(&self) -> Body {
             self.tracker.track("controller:public");
-            UloBody::text("Public resource".to_string())
+            Body::text("Public resource".to_string())
         }
     }
 
@@ -356,9 +356,9 @@ async fn guard_authorization() {
     impl TestController {
         #[use_guards("AUTH_GUARD")]
         #[get("/auth-only")]
-        fn auth_only(&self) -> UloBody {
+        fn auth_only(&self) -> Body {
             self.tracker.track("controller:auth_only");
-            UloBody::text("Authenticated resource".to_string())
+            Body::text("Authenticated resource".to_string())
         }
     }
 
@@ -439,8 +439,8 @@ async fn di_in_enhancers() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text("ok".to_string())
+        fn test(&self) -> Body {
+            Body::text("ok".to_string())
         }
     }
 
@@ -496,9 +496,9 @@ async fn app_token_global_enhancers() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
+        fn test(&self) -> Body {
             self.tracker.track("controller:test");
-            UloBody::text("ok".to_string())
+            Body::text("ok".to_string())
         }
     }
 
@@ -553,9 +553,9 @@ async fn path_qualified_enhancer_attrs() {
     impl TestController {
         #[ulo::use_guards(AuthGuard::new(get_tracker()))]
         #[get("/guarded")]
-        fn guarded(&self) -> UloBody {
+        fn guarded(&self) -> Body {
             self.tracker.track("controller:guarded");
-            UloBody::text("ok".to_string())
+            Body::text("ok".to_string())
         }
     }
 
@@ -616,9 +616,9 @@ async fn stacked_enhancer_attrs_accumulate() {
         #[use_guards(AuthGuard::new(get_tracker()))]
         #[use_guards(AdminGuard::new(get_tracker()))]
         #[get("/stacked")]
-        fn stacked(&self) -> UloBody {
+        fn stacked(&self) -> Body {
             self.tracker.track("controller:stacked");
-            UloBody::text("ok".to_string())
+            Body::text("ok".to_string())
         }
     }
 

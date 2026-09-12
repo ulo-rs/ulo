@@ -7,7 +7,7 @@
 //! segment: `#[ulo::body]` and `#[body]` must mean the same thing.
 use crate::common::TestServer;
 use serde::{Deserialize, Serialize};
-use ulo::{Body as UloBody, controller, extractors::Bytes, get, post, routes};
+use ulo::{Body, controller, extractors::Bytes, get, post, routes};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CreateUserDto {
@@ -36,32 +36,28 @@ pub struct AttributeController {}
 impl AttributeController {
     /// Extract JSON body using #[body] attribute
     #[post("/users")]
-    fn create_user(&self, #[body] dto: CreateUserDto) -> UloBody {
-        UloBody::text(format!("Created user: {} <{}>", dto.name, dto.email))
+    fn create_user(&self, #[body] dto: CreateUserDto) -> Body {
+        Body::text(format!("Created user: {} <{}>", dto.name, dto.email))
     }
 
     /// Extract individual query parameters using #[query] attributes
     #[get("/search")]
-    fn search(
-        &self,
-        #[query("q")] query: String,
-        #[query("limit")] limit: Option<usize>,
-    ) -> UloBody {
+    fn search(&self, #[query("q")] query: String, #[query("limit")] limit: Option<usize>) -> Body {
         let limit = limit.unwrap_or(10);
-        UloBody::text(format!("Searching for '{}' with limit {}", query, limit))
+        Body::text(format!("Searching for '{}' with limit {}", query, limit))
     }
 
     /// Extract path parameter using #[param] attribute
     #[get("/users/{id}")]
-    fn get_user(&self, #[param("id")] user_id: i32) -> UloBody {
-        UloBody::text(format!("User ID: {}", user_id))
+    fn get_user(&self, #[param("id")] user_id: i32) -> Body {
+        Body::text(format!("User ID: {}", user_id))
     }
 
     /// Extract ALL query params as struct using #[query] without argument
     #[get("/advanced-search")]
-    fn advanced_search(&self, #[query] params: SearchParams) -> UloBody {
+    fn advanced_search(&self, #[query] params: SearchParams) -> Body {
         let limit = params.limit.unwrap_or(10);
-        UloBody::text(format!(
+        Body::text(format!(
             "Advanced search: '{}' (limit: {})",
             params.q, limit
         ))
@@ -73,14 +69,14 @@ impl AttributeController {
         &self,
         #[query("page", default = "1")] page: usize,
         #[query("pageSize", default = "20")] page_size: usize,
-    ) -> UloBody {
-        UloBody::text(format!("Products page {} (size: {})", page, page_size))
+    ) -> Body {
+        Body::text(format!("Products page {} (size: {})", page, page_size))
     }
 
     /// Mix multiple attribute extractors: #[param] + #[body]
     #[post("/users/{id}")]
-    fn update_user(&self, #[param("id")] user_id: i32, #[body] dto: CreateUserDto) -> UloBody {
-        UloBody::text(format!(
+    fn update_user(&self, #[param("id")] user_id: i32, #[body] dto: CreateUserDto) -> Body {
+        Body::text(format!(
             "Updated user {}: {} <{}>",
             user_id, dto.name, dto.email
         ))
@@ -88,8 +84,8 @@ impl AttributeController {
 
     /// Extract binary data using Bytes extractor
     #[post("/upload")]
-    fn upload_file(&self, data: Bytes) -> UloBody {
-        UloBody::text(format!("Uploaded {} bytes", data.len()))
+    fn upload_file(&self, data: Bytes) -> Body {
+        Body::text(format!("Uploaded {} bytes", data.len()))
     }
 
     /// Path-qualified marker spellings work the same as the bare ones
@@ -98,8 +94,8 @@ impl AttributeController {
         &self,
         #[ulo::query("tag")] tag: String,
         #[ulo::body] dto: CreateUserDto,
-    ) -> UloBody {
-        UloBody::text(format!("Created {} user: {}", tag, dto.name))
+    ) -> Body {
+        Body::text(format!("Created {} user: {}", tag, dto.name))
     }
 }
 

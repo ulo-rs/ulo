@@ -37,7 +37,7 @@ use std::sync::Arc;
 use serde_json::json;
 use ulo::extractors::Payload;
 use ulo::{
-    Body as UloBody, Error, ErrorKind, HttpResponse, RpcClient, RpcError, UloFactory, async_trait,
+    Body, Error, ErrorKind, HttpResponse, RpcClient, RpcError, UloFactory, async_trait,
     context::HttpContext,
     controller,
     extractors::Path,
@@ -153,11 +153,11 @@ impl CheckoutController {
     /// A handler error, not a framework event: the chain sees both, so the
     /// reporter above needs no second registration to catch domain failures.
     #[get("/{sku}")]
-    async fn checkout(&self, Path(sku): Path<u32>) -> Result<UloBody, OutOfStock> {
+    async fn checkout(&self, Path(sku): Path<u32>) -> Result<Body, OutOfStock> {
         if sku == 0 {
             return Err(OutOfStock { sku });
         }
-        Ok(UloBody::json(json!({ "sku": sku, "status": "confirmed" })))
+        Ok(Body::json(json!({ "sku": sku, "status": "confirmed" })))
     }
 }
 

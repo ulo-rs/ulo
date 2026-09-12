@@ -10,7 +10,7 @@
 
 use serde::Deserialize;
 use ulo::extractors::{Path, Query};
-use ulo::{Body as UloBody, UloFactory, controller, get, module, routes};
+use ulo::{Body, UloFactory, controller, get, module, routes};
 
 use crate::common::TestServer;
 
@@ -25,23 +25,23 @@ pub struct AppController {}
 #[routes]
 impl AppController {
     #[get("/")]
-    fn root(&self) -> UloBody {
-        UloBody::text("root")
+    fn root(&self) -> Body {
+        Body::text("root")
     }
 
     #[get("/user/{id}")]
-    fn user(&self, Path(id): Path<u32>) -> UloBody {
-        UloBody::text(format!("user:{id}"))
+    fn user(&self, Path(id): Path<u32>) -> Body {
+        Body::text(format!("user:{id}"))
     }
 
     #[get("/echo")]
-    fn echo(&self, Query(params): Query<EchoParams>) -> UloBody {
-        UloBody::text(params.name)
+    fn echo(&self, Query(params): Query<EchoParams>) -> Body {
+        Body::text(params.name)
     }
 
     #[get("/slashed/")]
-    fn slashed(&self) -> UloBody {
-        UloBody::text("slashed")
+    fn slashed(&self) -> Body {
+        Body::text("slashed")
     }
 }
 
@@ -51,8 +51,8 @@ pub struct RootController {}
 #[routes]
 impl RootController {
     #[get("/")]
-    fn index(&self) -> UloBody {
-        UloBody::text("index")
+    fn index(&self) -> Body {
+        Body::text("index")
     }
 }
 

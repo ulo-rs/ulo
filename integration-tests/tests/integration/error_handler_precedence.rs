@@ -19,8 +19,7 @@ use ulo::errors::GuardRejection;
 use ulo::http_helpers::HttpResponse;
 use ulo::traits_helpers::{ChainError, ErrorHandler, Guard};
 use ulo::{
-    Body as UloBody, UloFactory, controller, get, injectable, module, routes, use_error_handlers,
-    use_guards,
+    Body, UloFactory, controller, get, injectable, module, routes, use_error_handlers, use_guards,
 };
 
 use serial_test::serial;
@@ -50,7 +49,7 @@ fn claim(scope: &'static str) -> Option<HttpResponse> {
     ran().lock().unwrap().push(scope);
     let mut resp = HttpResponse::new();
     resp.status = 403;
-    resp.body = Some(UloBody::text(scope));
+    resp.body = Some(Body::text(scope));
     Some(resp)
 }
 
@@ -127,8 +126,8 @@ impl AllScopes {
     #[get("/x")]
     #[use_guards(Reject)]
     #[use_error_handlers(MethodHandler)]
-    fn x(&self) -> UloBody {
-        UloBody::text("unreachable")
+    fn x(&self) -> Body {
+        Body::text("unreachable")
     }
 }
 
@@ -175,8 +174,8 @@ impl MethodDeclines {
     #[get("/x")]
     #[use_guards(Reject)]
     #[use_error_handlers(ObservingHandler)]
-    fn x(&self) -> UloBody {
-        UloBody::text("unreachable")
+    fn x(&self) -> Body {
+        Body::text("unreachable")
     }
 }
 

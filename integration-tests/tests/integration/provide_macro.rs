@@ -7,7 +7,7 @@
 //! is asserted against what it produced, not merely that it produced something.
 use crate::common::TestServer;
 use std::time::Duration;
-use ulo::{Body as UloBody, controller, get, injectable, module, new, provide, routes};
+use ulo::{Body, controller, get, injectable, module, new, provide, routes};
 
 #[injectable]
 pub struct ConfigService {
@@ -105,8 +105,8 @@ async fn provide_macro_patterns() {
     #[routes]
     impl AppController {
         #[get("/info")]
-        fn info(&self) -> UloBody {
-            UloBody::text(self.app.get_info())
+        fn info(&self) -> Body {
+            Body::text(self.app.get_info())
         }
     }
 

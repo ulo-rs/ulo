@@ -14,8 +14,8 @@ use ulo::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::traits_helpers::Guard;
 use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
-    Body as UloBody, UloFactory, controller, get, injectable, module, new, post, routes,
-    set_metadata, subscriptions, websocket_gateway,
+    Body, UloFactory, controller, get, injectable, module, new, post, routes, set_metadata,
+    subscriptions, websocket_gateway,
 };
 
 use crate::common::TestServer;
@@ -58,7 +58,7 @@ pub struct BusController {}
 #[use_guards(AuthGuard)]
 impl BusController {
     #[get("/read")]
-    fn read(&self, ext: Extensions) -> UloBody {
+    fn read(&self, ext: Extensions) -> Body {
         let principal = ext
             .get::<Principal>()
             .map(|p| p.0)
@@ -67,7 +67,7 @@ impl BusController {
             .get::<TraceId>()
             .map(|t| t.0)
             .unwrap_or_else(|| "ABSENT".into());
-        UloBody::text(format!("{principal}/{trace}"))
+        Body::text(format!("{principal}/{trace}"))
     }
 }
 
@@ -195,7 +195,7 @@ impl CtxController {
     /// Takes the context itself rather than an extractor over it.
     #[get("/read")]
     #[set_metadata(Role("reader"))]
-    fn read(&self, ctx: &HttpContext) -> UloBody {
+    fn read(&self, ctx: &HttpContext) -> Body {
         let principal = ctx
             .extensions()
             .get::<Principal>()
@@ -208,18 +208,18 @@ impl CtxController {
             .and_then(|m| m.get::<Role>())
             .map(|r| r.0)
             .unwrap_or("none");
-        UloBody::text(format!("{principal}/{role}"))
+        Body::text(format!("{principal}/{role}"))
     }
 
     /// The context coexists with ordinary extractors.
     #[get("/with-path/{id}")]
-    fn with_path(&self, Path(id): Path<u32>, ctx: &HttpContext) -> UloBody {
+    fn with_path(&self, Path(id): Path<u32>, ctx: &HttpContext) -> Body {
         let principal = ctx
             .extensions()
             .get::<Principal>()
             .map(|p| p.0)
             .unwrap_or_else(|| "ABSENT".into());
-        UloBody::text(format!("{id}/{principal}"))
+        Body::text(format!("{id}/{principal}"))
     }
 }
 
@@ -293,15 +293,15 @@ pub struct BodyController {}
 impl BodyController {
     /// Reads no body itself, so it runs and can report what the guard saw.
     #[post("/seen")]
-    fn seen(&self, ext: Extensions) -> UloBody {
+    fn seen(&self, ext: Extensions) -> Body {
         let seen = ext.get::<BodySeen>().expect("guard runs first");
-        UloBody::text(format!("{}/{}", seen.first, seen.second))
+        Body::text(format!("{}/{}", seen.first, seen.second))
     }
 
     /// Wants the body the guard already took.
     #[post("/wants-body")]
-    fn wants_body(&self, body: UloBytes) -> UloBody {
-        UloBody::text(format!("{}", body.0.len()))
+    fn wants_body(&self, body: UloBytes) -> Body {
+        Body::text(format!("{}", body.0.len()))
     }
 }
 
@@ -387,10 +387,10 @@ pub struct TailController {}
 impl TailController {
     /// Holds the context, so the `Arc` alone keeps the bag reachable.
     #[get("/captured")]
-    fn captured(&self, ctx: &HttpContext) -> UloBody {
+    fn captured(&self, ctx: &HttpContext) -> Body {
         use futures_util::StreamExt;
         let held = ctx.clone();
-        UloBody::stream(futures_util::stream::iter(0..3).map(move |i| {
+        Body::stream(futures_util::stream::iter(0..3).map(move |i| {
             let who = held
                 .extensions()
                 .get::<Principal>()
@@ -404,10 +404,10 @@ impl TailController {
     /// survives the drain is then a property of the framework rather than of
     /// what this handler happened to capture.
     #[get("/detached")]
-    fn detached(&self, ctx: &HttpContext) -> UloBody {
+    fn detached(&self, ctx: &HttpContext) -> Body {
         use futures_util::StreamExt;
         let flag = ctx.extensions().get::<Alive>().expect("guard ran").0;
-        UloBody::stream(futures_util::stream::iter(0..3).map(move |i| {
+        Body::stream(futures_util::stream::iter(0..3).map(move |i| {
             let state = if flag.load(std::sync::atomic::Ordering::SeqCst) {
                 "alive"
             } else {

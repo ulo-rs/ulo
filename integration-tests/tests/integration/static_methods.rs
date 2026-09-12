@@ -6,7 +6,7 @@
 //! because a static handler still runs inside an execution even though it holds
 //! no instance to scope.
 use crate::common::TestServer;
-use ulo::{Body as UloBody, HttpRequest, controller, get, injectable, module, routes};
+use ulo::{Body, HttpRequest, controller, get, injectable, module, routes};
 
 #[controller("/static")]
 pub struct StaticController {}
@@ -14,13 +14,13 @@ pub struct StaticController {}
 #[routes]
 impl StaticController {
     #[get("/hello")]
-    fn hello(_req: HttpRequest) -> UloBody {
-        UloBody::text("Hello from static method".to_string())
+    fn hello(_req: HttpRequest) -> Body {
+        Body::text("Hello from static method".to_string())
     }
 
     #[get("/world")]
-    fn world(_req: HttpRequest) -> UloBody {
-        UloBody::text("World from static method".to_string())
+    fn world(_req: HttpRequest) -> Body {
+        Body::text("World from static method".to_string())
     }
 }
 
@@ -67,13 +67,13 @@ pub struct MixedController {
 #[routes]
 impl MixedController {
     #[get("/instance")]
-    fn instance_method(&self) -> UloBody {
-        UloBody::text(self.service.get_instance_message())
+    fn instance_method(&self) -> Body {
+        Body::text(self.service.get_instance_message())
     }
 
     #[get("/static")]
-    fn static_method(_req: HttpRequest) -> UloBody {
-        UloBody::text("From static method".to_string())
+    fn static_method(_req: HttpRequest) -> Body {
+        Body::text("From static method".to_string())
     }
 }
 
@@ -109,8 +109,8 @@ pub struct RequestScopedStaticController {}
 #[routes]
 impl RequestScopedStaticController {
     #[get("/test")]
-    fn test(_req: HttpRequest) -> UloBody {
-        UloBody::text("Static method in request-scoped controller".to_string())
+    fn test(_req: HttpRequest) -> Body {
+        Body::text("Static method in request-scoped controller".to_string())
     }
 }
 
@@ -140,9 +140,9 @@ pub struct AsyncStaticController {}
 #[routes]
 impl AsyncStaticController {
     #[get("/test")]
-    async fn test(_req: HttpRequest) -> UloBody {
+    async fn test(_req: HttpRequest) -> Body {
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-        UloBody::text("Async static method".to_string())
+        Body::text("Async static method".to_string())
     }
 }
 

@@ -13,7 +13,7 @@ use ulo::http_helpers::HttpResponse;
 use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext, MiddlewareConsumer};
 use ulo::{
-    Body as UloBody, RequestPart, controller, get, injectable, module, new, provider_value, routes,
+    Body, RequestPart, controller, get, injectable, module, new, provider_value, routes,
     use_guards, use_interceptors,
 };
 
@@ -123,7 +123,7 @@ impl Middleware for HeaderValidationMiddleware {
         if !next.request().headers().contains_key("x-request-id") {
             let mut response = ulo::HttpResponse::new();
             response.status = 400;
-            response.body = Some(UloBody::text("Missing X-Request-ID header".to_string()));
+            response.body = Some(Body::text("Missing X-Request-ID header".to_string()));
             return Ok(response);
         }
         next.run().await
@@ -239,23 +239,23 @@ impl EnhancerTestController {
     #[get("/admin")]
     #[use_guards(AdminGuard)]
     #[use_interceptors(LoggingInterceptor)]
-    fn admin_endpoint(&self) -> UloBody {
+    fn admin_endpoint(&self) -> Body {
         self.tracker.track("controller:admin");
-        UloBody::text("Admin access granted".to_string())
+        Body::text("Admin access granted".to_string())
     }
 
     #[get("/user")]
     #[use_guards(UserGuard)]
     #[use_interceptors(TimingInterceptor, LoggingInterceptor)]
-    fn user_endpoint(&self) -> UloBody {
+    fn user_endpoint(&self) -> Body {
         self.tracker.track("controller:user");
-        UloBody::text("User access granted".to_string())
+        Body::text("User access granted".to_string())
     }
 
     #[get("/public")]
-    fn public_endpoint(&self) -> UloBody {
+    fn public_endpoint(&self) -> Body {
         self.tracker.track("controller:public");
-        UloBody::text("Public access".to_string())
+        Body::text("Public access".to_string())
     }
 }
 

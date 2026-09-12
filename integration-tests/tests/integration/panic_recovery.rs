@@ -16,7 +16,7 @@ use std::sync::{
 };
 
 use ulo::{
-    Body as UloBody, HttpResponse, UloFactory, async_trait,
+    Body, HttpResponse, UloFactory, async_trait,
     context::HttpContext,
     controller,
     errors::{ErrorKind, HttpError, PanicRecovered, PipelineSegment},
@@ -83,7 +83,7 @@ async fn panicking_handler_renders_500_via_panic_recovered() {
     impl PanicController {
         #[get("/boom")]
         #[use_error_handlers(HandlerSegmentRecorder {})]
-        fn boom(&self) -> Result<UloBody, HttpError> {
+        fn boom(&self) -> Result<Body, HttpError> {
             panic!("kaboom");
         }
     }
@@ -142,8 +142,8 @@ async fn panicking_guard_renders_500_via_panic_recovered() {
         #[get("/guarded")]
         #[use_guards(PanickingGuard {})]
         #[use_error_handlers(GuardSegmentRecorder {})]
-        fn guarded(&self) -> Result<UloBody, HttpError> {
-            Ok(UloBody::text("unreachable"))
+        fn guarded(&self) -> Result<Body, HttpError> {
+            Ok(Body::text("unreachable"))
         }
     }
 
@@ -200,8 +200,8 @@ async fn panicking_interceptor_renders_500_via_panic_recovered() {
         #[get("/intercepted")]
         #[use_interceptors(PanickingInterceptor {})]
         #[use_error_handlers(InterceptorSegmentRecorder {})]
-        fn intercepted(&self) -> Result<UloBody, HttpError> {
-            Ok(UloBody::text("unreachable"))
+        fn intercepted(&self) -> Result<Body, HttpError> {
+            Ok(Body::text("unreachable"))
         }
     }
 
@@ -276,7 +276,7 @@ async fn panicking_error_handler_continues_chain() {
         // first and the survivor after it.
         #[get("/eh")]
         #[use_error_handlers(ChainSurvivor {}, PanickingErrorHandler {})]
-        fn eh(&self) -> Result<UloBody, HttpError> {
+        fn eh(&self) -> Result<Body, HttpError> {
             panic!("handler kaboom");
         }
     }
@@ -343,7 +343,7 @@ async fn panicking_renderer_falls_back_to_safe_envelope() {
     #[routes]
     impl RenderPanicController {
         #[get("/render-boom")]
-        fn render_boom(&self) -> Result<UloBody, HttpError> {
+        fn render_boom(&self) -> Result<Body, HttpError> {
             Err(HttpError::from(RenderBomb))
         }
     }

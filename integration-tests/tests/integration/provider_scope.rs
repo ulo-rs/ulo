@@ -5,7 +5,7 @@
 //! - Request: Same instance within one execution, fresh instance for the next
 //! - Transient: Fresh instance per injection point at construction time
 
-use ulo::{Body as UloBody, controller, get, module, provider_factory, routes};
+use ulo::{Body, controller, get, module, provider_factory, routes};
 use uuid::Uuid;
 
 use crate::common::TestServer;
@@ -56,8 +56,8 @@ async fn scope_behavior() {
     #[routes]
     impl RequestController {
         #[get("/get")]
-        fn get_value(&self) -> UloBody {
-            UloBody::text(format!(
+        fn get_value(&self) -> Body {
+            Body::text(format!(
                 "s:{}|{};r:{}|{};t:{}|{}",
                 self.singleton1.id,
                 self.singleton2.id,
@@ -80,8 +80,8 @@ async fn scope_behavior() {
     #[routes]
     impl SingletonController {
         #[get("/get")]
-        fn get_value(&self) -> UloBody {
-            UloBody::text(format!("t:{}|{}", self.transient1.id, self.transient2.id))
+        fn get_value(&self) -> Body {
+            Body::text(format!("t:{}|{}", self.transient1.id, self.transient2.id))
         }
     }
 

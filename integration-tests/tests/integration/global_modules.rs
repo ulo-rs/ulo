@@ -7,7 +7,7 @@
 //! tries to resolve from it.
 use crate::common::TestServer;
 use serial_test::serial;
-use ulo::{Body as UloBody, controller, get, injectable, module, routes};
+use ulo::{Body, controller, get, injectable, module, routes};
 use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]
@@ -88,13 +88,13 @@ pub struct UserController {
 #[routes]
 impl UserController {
     #[get("/{id}")]
-    fn get_user(&self) -> UloBody {
-        UloBody::text(self.user_service.get_user(123))
+    fn get_user(&self) -> Body {
+        Body::text(self.user_service.get_user(123))
     }
 
     #[get("/count")]
-    fn get_count(&self) -> UloBody {
-        UloBody::text(self.user_service.get_logger_count().to_string())
+    fn get_count(&self) -> Body {
+        Body::text(self.user_service.get_logger_count().to_string())
     }
 }
 
@@ -136,8 +136,8 @@ pub struct OrderController {
 #[routes]
 impl OrderController {
     #[get("/create")]
-    fn create_order(&self) -> UloBody {
-        UloBody::text(self.order_service.create_order(456, "laptop"))
+    fn create_order(&self) -> Body {
+        Body::text(self.order_service.create_order(456, "laptop"))
     }
 }
 
@@ -255,8 +255,8 @@ pub struct ProductController {
 #[routes]
 impl ProductController {
     #[get("/{id}")]
-    fn get_product(&self) -> UloBody {
-        UloBody::text(self.product_service.get_product(789))
+    fn get_product(&self) -> Body {
+        Body::text(self.product_service.get_product(789))
     }
 }
 

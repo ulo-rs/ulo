@@ -29,7 +29,7 @@ use ulo::{
     async_trait,
     context::{HandlerContext, HttpContext},
     controller, get,
-    http_helpers::Body as UloBody,
+    http_helpers::Body,
     module, routes, set_metadata,
     traits_helpers::Guard,
     use_guards,
@@ -158,28 +158,28 @@ impl ApiController {
     /// `Public` is declared here and nowhere above, so it applies to this handler alone.
     #[set_metadata(Public)]
     #[get("/health")]
-    fn health(&self) -> UloBody {
-        UloBody::json(serde_json::json!({ "status": "ok" }))
+    fn health(&self) -> Body {
+        Body::json(serde_json::json!({ "status": "ok" }))
     }
 
     /// Inherits both of the block's entries and declares nothing itself.
     #[get("/profile")]
-    fn profile(&self) -> UloBody {
-        UloBody::json(serde_json::json!({ "user": "current_user" }))
+    fn profile(&self) -> Body {
+        Body::json(serde_json::json!({ "user": "current_user" }))
     }
 
     /// Overrides `Roles` and keeps the block's `RateLimit`.
     #[set_metadata(Roles(&["admin"]))]
     #[get("/admin/stats")]
-    fn admin_stats(&self) -> UloBody {
-        UloBody::json(serde_json::json!({ "total_users": 1000 }))
+    fn admin_stats(&self) -> Body {
+        Body::json(serde_json::json!({ "total_users": 1000 }))
     }
 
     /// Overrides `Roles` with a wider set; the rate limit is still the block's.
     #[set_metadata(Roles(&["admin", "moderator"]))]
     #[get("/moderate")]
-    fn moderate(&self) -> UloBody {
-        UloBody::json(serde_json::json!({ "queue": [] }))
+    fn moderate(&self) -> Body {
+        Body::json(serde_json::json!({ "queue": [] }))
     }
 }
 

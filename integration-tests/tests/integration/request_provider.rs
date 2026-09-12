@@ -5,7 +5,7 @@
 //! breaks is the registration itself, and it breaks as an unresolved dependency
 //! at startup.
 use crate::common::TestServer;
-use ulo::{Body as UloBody, Request, controller, get, module, routes};
+use ulo::{Body, Request, controller, get, module, routes};
 
 #[controller("/test")]
 pub struct TestController {
@@ -16,16 +16,16 @@ pub struct TestController {
 #[routes]
 impl TestController {
     #[get("/info")]
-    fn get_info(&self) -> UloBody {
+    fn get_info(&self) -> Body {
         let method = self.request.method();
         let uri = self.request.uri();
-        UloBody::text(format!("Method: {}, URI: {}", method, uri))
+        Body::text(format!("Method: {}, URI: {}", method, uri))
     }
 
     #[get("/headers")]
-    fn get_headers(&self) -> UloBody {
+    fn get_headers(&self) -> Body {
         let content_type = self.request.header("content-type").unwrap_or("not found");
-        UloBody::text(format!("Content-Type: {}", content_type))
+        Body::text(format!("Content-Type: {}", content_type))
     }
 }
 

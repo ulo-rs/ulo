@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use ulo::{
-    Body as UloBody, Error, HttpResponse, UloFactory, async_trait, catch,
+    Body, Error, HttpResponse, UloFactory, async_trait, catch,
     context::HttpContext,
     controller,
     errors::{GuardRejection, HttpError},
@@ -25,7 +25,7 @@ use ulo_macros::use_guards;
 async fn guard_catcher(err: &GuardRejection, _ctx: &HttpContext) -> HttpResponse {
     let mut resp = HttpResponse::new();
     resp.status = ulo::errors::http_status(err.kind());
-    resp.body = Some(UloBody::text(format!("catch:{}", err.message())));
+    resp.body = Some(Body::text(format!("catch:{}", err.message())));
     resp
 }
 
@@ -46,7 +46,7 @@ impl std::error::Error for OtherError {}
 async fn other_catcher(_err: &OtherError, _ctx: &HttpContext) -> HttpResponse {
     let mut resp = HttpResponse::new();
     resp.status = 500;
-    resp.body = Some(UloBody::text("OTHER-CAUGHT"));
+    resp.body = Some(Body::text("OTHER-CAUGHT"));
     resp
 }
 
@@ -108,8 +108,8 @@ async fn catch_handler_intercepts_framework_error() {
     impl CatchTestController {
         #[get("/protected")]
         #[use_guards(DenyGuard {})]
-        fn protected(&self) -> Result<UloBody, HttpError> {
-            Ok(UloBody::text("should not reach"))
+        fn protected(&self) -> Result<Body, HttpError> {
+            Ok(Body::text("should not reach"))
         }
     }
 
@@ -145,8 +145,8 @@ async fn non_matching_catch_falls_through() {
     impl FallthroughController {
         #[get("/protected")]
         #[use_guards(DenyGuard {})]
-        fn protected(&self) -> Result<UloBody, HttpError> {
-            Ok(UloBody::text("should not reach"))
+        fn protected(&self) -> Result<Body, HttpError> {
+            Ok(Body::text("should not reach"))
         }
     }
 

@@ -14,7 +14,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use ulo::context::HttpContext;
-use ulo::http_helpers::Body as UloBody;
+use ulo::http_helpers::Body;
 use ulo::{FromContext, controller, get, module, routes};
 
 /// ## 1. CurrentUser Extractor
@@ -196,8 +196,8 @@ pub struct AuthController {}
 impl AuthController {
     /// Example 1: Extract authenticated user
     #[get("/profile")]
-    fn get_profile(&self, CurrentUser(user): CurrentUser) -> UloBody {
-        UloBody::json(serde_json::json!({
+    fn get_profile(&self, CurrentUser(user): CurrentUser) -> Body {
+        Body::json(serde_json::json!({
             "id": user.id,
             "email": user.email,
             "name": user.name,
@@ -207,8 +207,8 @@ impl AuthController {
 
     /// Example 2: Extract bearer token
     #[get("/token")]
-    fn get_token(&self, BearerToken(token): BearerToken) -> UloBody {
-        UloBody::json(serde_json::json!({
+    fn get_token(&self, BearerToken(token): BearerToken) -> Body {
+        Body::json(serde_json::json!({
             "token": token,
             "length": token.len()
         }))
@@ -222,8 +222,8 @@ pub struct ApiController {}
 impl ApiController {
     /// Example 3: Extract and validate API key
     #[get("/data")]
-    fn get_data(&self, ApiKey(key): ApiKey) -> UloBody {
-        UloBody::json(serde_json::json!({
+    fn get_data(&self, ApiKey(key): ApiKey) -> Body {
+        Body::json(serde_json::json!({
             "message": "Authenticated with API key",
             "key_prefix": &key[..8]
         }))
@@ -237,15 +237,15 @@ pub struct OptionalController {}
 impl OptionalController {
     /// Optional authentication - returns None when extraction fails instead of 400 error
     #[get("/feed")]
-    fn get_feed(&self, user: Option<CurrentUser>) -> UloBody {
+    fn get_feed(&self, user: Option<CurrentUser>) -> Body {
         if let Some(CurrentUser(user)) = user {
-            UloBody::json(serde_json::json!({
+            Body::json(serde_json::json!({
                 "type": "personalized",
                 "message": format!("Welcome back, {}!", user.name),
                 "items": ["Based on your interests", "Recommended for you"]
             }))
         } else {
-            UloBody::json(serde_json::json!({
+            Body::json(serde_json::json!({
                 "type": "public",
                 "message": "Sign in for personalized content",
                 "items": ["Popular posts", "Trending articles"]
@@ -255,22 +255,22 @@ impl OptionalController {
 
     /// Multiple optional extractors - supports JWT, API key, or public access
     #[get("/data")]
-    fn get_data(&self, user: Option<CurrentUser>, api_key: Option<ApiKey>) -> UloBody {
+    fn get_data(&self, user: Option<CurrentUser>, api_key: Option<ApiKey>) -> Body {
         if let Some(CurrentUser(user)) = user {
-            return UloBody::json(serde_json::json!({
+            return Body::json(serde_json::json!({
                 "auth": "jwt",
                 "userId": user.id
             }));
         }
 
         if let Some(ApiKey(key)) = api_key {
-            return UloBody::json(serde_json::json!({
+            return Body::json(serde_json::json!({
                 "auth": "apiKey",
                 "keyPrefix": &key[..8]
             }));
         }
 
-        UloBody::json(serde_json::json!({
+        Body::json(serde_json::json!({
             "auth": "none",
             "message": "Public access (limited)"
         }))

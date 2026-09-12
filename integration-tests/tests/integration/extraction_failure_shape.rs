@@ -18,7 +18,7 @@ use ulo::context::HttpContext;
 use ulo::extractors::{Json, Query};
 use ulo::http_helpers::HttpResponse;
 use ulo::traits_helpers::{ChainError, ErrorHandler};
-use ulo::{Body as UloBody, UloFactory, controller, get, module, post, routes};
+use ulo::{Body, UloFactory, controller, get, module, post, routes};
 
 use crate::common::TestServer;
 
@@ -34,13 +34,13 @@ pub struct XController {}
 #[routes]
 impl XController {
     #[get("/q")]
-    fn q(&self, _q: Query<NeedsName>) -> UloBody {
-        UloBody::text("unreachable")
+    fn q(&self, _q: Query<NeedsName>) -> Body {
+        Body::text("unreachable")
     }
 
     #[post("/j")]
-    async fn j(&self, _j: Json<NeedsName>) -> UloBody {
-        UloBody::text("unreachable")
+    async fn j(&self, _j: Json<NeedsName>) -> Body {
+        Body::text("unreachable")
     }
 }
 
@@ -94,7 +94,7 @@ impl ErrorHandler<HttpContext, HttpResponse> for ClaimEverything {
     async fn handle_error(&self, _e: ChainError<'_>, _ctx: &HttpContext) -> Option<HttpResponse> {
         let mut resp = HttpResponse::new();
         resp.status = 599;
-        resp.body = Some(UloBody::text("claimed-by-chain"));
+        resp.body = Some(Body::text("claimed-by-chain"));
         Some(resp)
     }
 }

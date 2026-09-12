@@ -16,7 +16,7 @@ use std::fmt;
 use serde::Deserialize;
 use ulo::context::HttpContext;
 use ulo::extractors::Json;
-use ulo::http_helpers::Body as UloBody;
+use ulo::http_helpers::Body;
 use ulo::{FromContext, controller, get, module, post, routes};
 
 /// ## 7. Cookies Extractor
@@ -174,14 +174,14 @@ pub struct SessionController {}
 impl SessionController {
     /// Example 7: Extract all cookies
     #[get("/cookies")]
-    fn get_cookies(&self, Cookies(cookies): Cookies) -> UloBody {
-        UloBody::json(serde_json::json!(cookies))
+    fn get_cookies(&self, Cookies(cookies): Cookies) -> Body {
+        Body::json(serde_json::json!(cookies))
     }
 
     /// Example 8: Extract specific cookie
     #[get("/session")]
-    fn get_session(&self, SessionCookie(session_id): SessionCookie) -> UloBody {
-        UloBody::json(serde_json::json!({
+    fn get_session(&self, SessionCookie(session_id): SessionCookie) -> Body {
+        Body::json(serde_json::json!({
             "sessionId": session_id
         }))
     }
@@ -195,8 +195,8 @@ impl AdvancedController {
     /// Several extractors in one signature: each runs independently, and the
     /// first failure answers before the handler is called.
     #[post("/audit")]
-    fn audit(&self, SessionCookie(session): SessionCookie, Json(data): Json<AuditData>) -> UloBody {
-        UloBody::json(serde_json::json!({
+    fn audit(&self, SessionCookie(session): SessionCookie, Json(data): Json<AuditData>) -> Body {
+        Body::json(serde_json::json!({
             "session": session,
             "action": data.action,
             "timestamp": data.timestamp
@@ -205,8 +205,8 @@ impl AdvancedController {
 
     /// The composed one, doing the same work behind a single parameter.
     #[get("/context")]
-    fn get_context(&self, context: RequestContext) -> UloBody {
-        UloBody::json(serde_json::json!({
+    fn get_context(&self, context: RequestContext) -> Body {
+        Body::json(serde_json::json!({
             "session": context.session,
             "cookieCount": context.cookie_count,
             "userAgent": context.user_agent

@@ -8,7 +8,7 @@
 use crate::common::TestServer;
 use serial_test::serial;
 use std::sync::atomic::{AtomicU32, Ordering};
-use ulo::{Body as UloBody, controller, get, injectable, module, new, routes};
+use ulo::{Body, controller, get, injectable, module, new, routes};
 use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]
@@ -43,8 +43,8 @@ async fn singleton_providers_created_once_across_requests() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(format!("{}", SINGLETON_COUNTER.load(Ordering::SeqCst)))
+        fn test(&self) -> Body {
+            Body::text(format!("{}", SINGLETON_COUNTER.load(Ordering::SeqCst)))
         }
     }
 
@@ -110,9 +110,9 @@ async fn transient_providers_create_unique_instances_per_injection() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
+        fn test(&self) -> Body {
             let (id1, id2) = self.service.ids();
-            UloBody::text(format!("{}|{}", id1, id2))
+            Body::text(format!("{}|{}", id1, id2))
         }
     }
 
@@ -169,8 +169,8 @@ async fn field_injection_with_inject_attribute() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(format!("{}", self.service.get_value()))
+        fn test(&self) -> Body {
+            Body::text(format!("{}", self.service.get_value()))
         }
     }
 
@@ -211,8 +211,8 @@ async fn field_injection_with_default_fallback() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(format!("{}", self.service.get_value()))
+        fn test(&self) -> Body {
+            Body::text(format!("{}", self.service.get_value()))
         }
     }
 
@@ -253,8 +253,8 @@ async fn config_service_injection_in_providers() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(self.service.get_value())
+        fn test(&self) -> Body {
+            Body::text(self.service.get_value())
         }
     }
 
@@ -298,8 +298,8 @@ async fn new_attribute_syntax() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text("ok".to_string())
+        fn test(&self) -> Body {
+            Body::text("ok".to_string())
         }
     }
 

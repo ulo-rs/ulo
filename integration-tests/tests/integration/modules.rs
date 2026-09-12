@@ -6,7 +6,7 @@
 //! an importing module, and a nested import must not flatten the tree.
 use crate::common::TestServer;
 use ulo::injector::ModuleRef;
-use ulo::{Body as UloBody, controller, get, injectable, module, routes};
+use ulo::{Body, controller, get, injectable, module, routes};
 
 #[tokio_localset_test::localset_test]
 async fn global_modules_attribute_syntax() {
@@ -45,8 +45,8 @@ async fn global_modules_attribute_syntax() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(self.service.get_message())
+        fn test(&self) -> Body {
+            Body::text(self.service.get_message())
         }
     }
 
@@ -87,9 +87,9 @@ async fn module_ref_runtime_provider_access() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        async fn test(&self) -> UloBody {
+        async fn test(&self) -> Body {
             let service = self.module_ref.get::<RuntimeService>().await;
-            UloBody::text(format!("{}", service.unwrap().value()))
+            Body::text(format!("{}", service.unwrap().value()))
         }
     }
 
@@ -153,8 +153,8 @@ async fn nested_module_imports() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(self.feature.get_data())
+        fn test(&self) -> Body {
+            Body::text(self.feature.get_data())
         }
     }
 
@@ -215,8 +215,8 @@ async fn module_exports_selective_providers() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(self.consumer.get_data())
+        fn test(&self) -> Body {
+            Body::text(self.consumer.get_data())
         }
     }
 
@@ -257,8 +257,8 @@ async fn module_struct_syntax() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(self.service.message())
+        fn test(&self) -> Body {
+            Body::text(self.service.message())
         }
     }
 

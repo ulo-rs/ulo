@@ -12,9 +12,7 @@ use serial_test::serial;
 use std::sync::{Arc, Mutex};
 use ulo::async_trait;
 use ulo::http_helpers::HttpResponse;
-use ulo::{
-    Body as UloBody, UloFactory, controller, get, module, routes, use_guards, use_interceptors,
-};
+use ulo::{Body, UloFactory, controller, get, module, routes, use_guards, use_interceptors};
 use ulo_http_axum::AxumAdapter;
 
 use ulo::context::HttpContext;
@@ -220,24 +218,24 @@ impl TestController {
     #[use_guards(MethodGuard{})]
     #[use_interceptors(MethodInterceptor{})]
     #[get("/three-level")]
-    fn three_level_endpoint(&self) -> UloBody {
+    fn three_level_endpoint(&self) -> Body {
         get_tracker().track("controller:three_level");
-        UloBody::text("Three-level test".to_string())
+        Body::text("Three-level test".to_string())
     }
 
     /// Endpoint with only global + controller levels (no method-level)
     #[get("/two-level")]
-    fn two_level_endpoint(&self) -> UloBody {
+    fn two_level_endpoint(&self) -> Body {
         get_tracker().track("controller:two_level");
-        UloBody::text("Two-level test".to_string())
+        Body::text("Two-level test".to_string())
     }
 
     /// Endpoint with duplicated guard at all three levels
     #[use_guards(GlobalGuard{})]
     #[get("/duplicate")]
-    fn duplicate_endpoint(&self) -> UloBody {
+    fn duplicate_endpoint(&self) -> Body {
         get_tracker().track("controller:duplicate");
-        UloBody::text("Duplicate test".to_string())
+        Body::text("Duplicate test".to_string())
     }
 }
 

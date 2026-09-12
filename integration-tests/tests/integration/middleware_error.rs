@@ -14,7 +14,7 @@ use ulo::async_trait;
 use ulo::errors::HttpError;
 use ulo::traits_helpers::MiddlewareConsumer;
 use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::{Body as UloBody, controller, get, module, routes};
+use ulo::{Body, controller, get, module, routes};
 
 // ── Test 1: custom status code ────────────────────────────────────────────────
 
@@ -35,8 +35,8 @@ async fn middleware_http_error_preserves_status() {
     #[routes]
     impl PingController {
         #[get("/ping")]
-        fn ping(&self) -> UloBody {
-            UloBody::text("pong")
+        fn ping(&self) -> Body {
+            Body::text("pong")
         }
     }
 
@@ -77,8 +77,8 @@ async fn middleware_http_error_unauthorized() {
     #[routes]
     impl AuthController {
         #[get("/secret")]
-        fn secret(&self) -> UloBody {
-            UloBody::text("secret")
+        fn secret(&self) -> Body {
+            Body::text("secret")
         }
     }
 

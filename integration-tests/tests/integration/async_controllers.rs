@@ -5,7 +5,7 @@
 //! passing says nothing about an async one: the failure mode is a response
 //! written from a future nobody polled.
 use crate::common::TestServer;
-use ulo::{Body as UloBody, controller, get, injectable, module, routes};
+use ulo::{Body, controller, get, injectable, module, routes};
 
 #[injectable]
 pub struct AsyncService;
@@ -30,25 +30,25 @@ pub struct AsyncController {
 #[routes]
 impl AsyncController {
     #[get("/data")]
-    async fn get_data(&self) -> UloBody {
-        UloBody::text(self.service.fetch_data().await)
+    async fn get_data(&self) -> Body {
+        Body::text(self.service.fetch_data().await)
     }
 
     #[get("/compute")]
-    async fn compute(&self) -> UloBody {
-        UloBody::text(format!("Result: {}", self.service.compute(42).await))
+    async fn compute(&self) -> Body {
+        Body::text(format!("Result: {}", self.service.compute(42).await))
     }
 
     #[get("/sync")]
-    fn sync_method(&self) -> UloBody {
-        UloBody::text("sync response".to_string())
+    fn sync_method(&self) -> Body {
+        Body::text("sync response".to_string())
     }
 
     #[get("/multi")]
-    async fn multi_await(&self) -> UloBody {
+    async fn multi_await(&self) -> Body {
         let data = self.service.fetch_data().await;
         let result = self.service.compute(10).await;
-        UloBody::text(format!("{} - {}", data, result))
+        Body::text(format!("{} - {}", data, result))
     }
 }
 

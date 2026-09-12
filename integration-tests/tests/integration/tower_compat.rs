@@ -22,7 +22,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use ulo::async_trait;
 use ulo::traits_helpers::MiddlewareConsumer;
 use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::{Body as UloBody, TowerLayer, controller, get, module, post, routes};
+use ulo::{Body, TowerLayer, controller, get, module, post, routes};
 
 // ── Test 1: basic header injection ───────────────────────────────────────────
 //
@@ -37,8 +37,8 @@ async fn tower_layer_adds_response_header() {
     #[routes]
     impl PingController {
         #[get("/ping")]
-        fn ping(&self) -> UloBody {
-            UloBody::text("pong")
+        fn ping(&self) -> Body {
+            Body::text("pong")
         }
     }
 
@@ -85,8 +85,8 @@ async fn tower_layer_cors_permissive() {
     #[routes]
     impl ApiController {
         #[get("/data")]
-        fn get_data(&self) -> UloBody {
-            UloBody::text("ok")
+        fn get_data(&self) -> Body {
+            Body::text("ok")
         }
     }
 
@@ -133,8 +133,8 @@ async fn tower_layer_request_body_round_trip() {
         async fn echo_json(
             &self,
             ulo::extractors::Json(val): ulo::extractors::Json<serde_json::Value>,
-        ) -> UloBody {
-            UloBody::json(val)
+        ) -> Body {
+            Body::json(val)
         }
     }
 
@@ -259,8 +259,8 @@ async fn tower_layer_reads_ulo_extensions() {
     #[routes]
     impl ExtController {
         #[get("/ext")]
-        fn ext(&self) -> UloBody {
-            UloBody::text("ok")
+        fn ext(&self) -> Body {
+            Body::text("ok")
         }
     }
 
@@ -307,8 +307,8 @@ async fn tower_service_builder_composition() {
     #[routes]
     impl ComposedController {
         #[get("/composed")]
-        fn composed(&self) -> UloBody {
-            UloBody::text("composed")
+        fn composed(&self) -> Body {
+            Body::text("composed")
         }
     }
 
@@ -371,8 +371,8 @@ async fn tower_and_ulo_middleware_interleaved() {
     #[routes]
     impl InterleavedController {
         #[get("/interleaved")]
-        fn interleaved(&self) -> UloBody {
-            UloBody::text("ok")
+        fn interleaved(&self) -> Body {
+            Body::text("ok")
         }
     }
 
@@ -425,8 +425,8 @@ async fn tower_compression_layer_transforms_body() {
     #[routes]
     impl CompressController {
         #[get("/data")]
-        fn data(&self) -> UloBody {
-            UloBody::text("ulo ".repeat(500))
+        fn data(&self) -> Body {
+            Body::text("ulo ".repeat(500))
         }
     }
 

@@ -6,7 +6,7 @@
 //! when deciding 405 vs 404.
 
 use ulo::extractors::Path;
-use ulo::{Body as UloBody, UloFactory, controller, get, module, routes};
+use ulo::{Body, UloFactory, controller, get, module, routes};
 
 use crate::common::TestServer;
 
@@ -16,8 +16,8 @@ pub struct UsersController {}
 #[routes]
 impl UsersController {
     #[get("/{id}")]
-    fn get_user(&self, Path(id): Path<u32>) -> UloBody {
-        UloBody::text(format!("user:{id}"))
+    fn get_user(&self, Path(id): Path<u32>) -> Body {
+        Body::text(format!("user:{id}"))
     }
 }
 

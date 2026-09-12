@@ -12,7 +12,7 @@
 
 use std::net::TcpListener;
 
-use ulo::{Body as UloBody, UloFactory, controller, get, module, routes};
+use ulo::{Body, UloFactory, controller, get, module, routes};
 
 use crate::common::TestServer;
 
@@ -22,8 +22,8 @@ pub struct InheritedController {}
 #[routes]
 impl InheritedController {
     #[get("/ping")]
-    fn ping(&self) -> UloBody {
-        UloBody::text("pong")
+    fn ping(&self) -> Body {
+        Body::text("pong")
     }
 }
 

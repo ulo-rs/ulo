@@ -24,7 +24,7 @@
 use std::sync::Arc;
 
 use ulo::{
-    Body as UloBody, HttpResponse, UloFactory, async_trait,
+    Body, HttpResponse, UloFactory, async_trait,
     context::HttpContext,
     controller,
     errors::{GuardRejection, HttpError},
@@ -44,7 +44,7 @@ async fn http_error_renders_via_app_error_default() {
     #[routes]
     impl HttpErrController {
         #[get("/missing")]
-        fn missing(&self) -> Result<UloBody, HttpError> {
+        fn missing(&self) -> Result<Body, HttpError> {
             Err(HttpError::not_found("resource not found"))
         }
     }
@@ -84,7 +84,7 @@ async fn custom_app_error_renders_canonical_envelope() {
     #[routes]
     impl CustomErrController {
         #[get("/invoice")]
-        fn invoice(&self) -> Result<UloBody, InvoiceMissing> {
+        fn invoice(&self) -> Result<Body, InvoiceMissing> {
             Err(InvoiceMissing("inv-42".into()))
         }
     }
@@ -117,7 +117,7 @@ async fn unmatched_chain_handler_falls_through_to_app_error_default() {
     #[routes]
     impl UserErrController {
         #[get("/bad")]
-        fn bad(&self) -> Result<UloBody, HttpError> {
+        fn bad(&self) -> Result<Body, HttpError> {
             Err(HttpError::bad_request("user-error"))
         }
     }
@@ -173,7 +173,7 @@ impl ErrorHandler<HttpContext, HttpResponse> for MarkerHandler {
         error.downcast_ref::<GuardRejection>()?;
         let mut resp = HttpResponse::new();
         resp.status = 403;
-        resp.body = Some(UloBody::text(self.marker));
+        resp.body = Some(Body::text(self.marker));
         Some(resp)
     }
 }
@@ -187,8 +187,8 @@ async fn chain_fires_on_guard_rejection() {
     impl GuardedController {
         #[get("/protected")]
         #[use_guards(AlwaysReject {})]
-        fn protected(&self) -> Result<UloBody, HttpError> {
-            Ok(UloBody::text("should not reach"))
+        fn protected(&self) -> Result<Body, HttpError> {
+            Ok(Body::text("should not reach"))
         }
     }
 
@@ -225,7 +225,7 @@ impl ErrorHandler<HttpContext, HttpResponse> for HttpErrorOverride {
         let e = error.downcast_ref::<HttpError>()?;
         let mut resp = HttpResponse::new();
         resp.status = e.status_code();
-        resp.body = Some(UloBody::text(format!("scope-override:{}", e.message())));
+        resp.body = Some(Body::text(format!("scope-override:{}", e.message())));
         Some(resp)
     }
 }
@@ -242,7 +242,7 @@ async fn scope_chain_overrides_app_error_default_on_user_error() {
     #[routes]
     impl UserErrController {
         #[get("/missing")]
-        fn missing(&self) -> Result<UloBody, HttpError> {
+        fn missing(&self) -> Result<Body, HttpError> {
             Err(HttpError::not_found("user-error"))
         }
     }

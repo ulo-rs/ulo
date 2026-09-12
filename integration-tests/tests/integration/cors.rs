@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use ulo::middleware::{AllowedOrigins, CorsMiddleware, CorsOptions};
-use ulo::{Body as UloBody, UloFactory, controller, get, module, routes};
+use ulo::{Body, UloFactory, controller, get, module, routes};
 
 use crate::common::TestServer;
 
@@ -17,8 +17,8 @@ pub struct DataController {}
 #[routes]
 impl DataController {
     #[get("/data")]
-    fn data(&self) -> UloBody {
-        UloBody::text("payload")
+    fn data(&self) -> Body {
+        Body::text("payload")
     }
 }
 

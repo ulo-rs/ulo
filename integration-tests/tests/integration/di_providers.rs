@@ -9,7 +9,7 @@
 use crate::common::TestServer;
 use std::time::Duration;
 use ulo::{
-    Body as UloBody, controller, get, injectable, module, new, provider_alias, provider_factory,
+    Body, controller, get, injectable, module, new, provider_alias, provider_factory,
     provider_token, provider_value, routes,
 };
 
@@ -21,8 +21,8 @@ async fn provider_value_injects_constant() {
     #[routes]
     impl TestController {
         #[get("/port")]
-        fn port(&self) -> UloBody {
-            UloBody::text("3000".to_string())
+        fn port(&self) -> Body {
+            Body::text("3000".to_string())
         }
     }
 
@@ -54,8 +54,8 @@ async fn provider_factory_sync_without_deps() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text("ok".to_string())
+        fn test(&self) -> Body {
+            Body::text("ok".to_string())
         }
     }
 
@@ -107,8 +107,8 @@ async fn provider_factory_sync_with_deps() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text("ok".to_string())
+        fn test(&self) -> Body {
+            Body::text("ok".to_string())
         }
     }
 
@@ -158,8 +158,8 @@ async fn provider_factory_async_with_deps() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text("ok".to_string())
+        fn test(&self) -> Body {
+            Body::text("ok".to_string())
         }
     }
 
@@ -228,8 +228,8 @@ async fn provider_alias_creates_alternate_token() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(self.verify.report())
+        fn test(&self) -> Body {
+            Body::text(self.verify.report())
         }
     }
 
@@ -294,8 +294,8 @@ async fn provider_token_for_custom_types() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(self.app.get_info())
+        fn test(&self) -> Body {
+            Body::text(self.app.get_info())
         }
     }
 
@@ -384,8 +384,8 @@ async fn all_provider_variants_work_together() {
     #[routes]
     impl TestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(self.consumer.report())
+        fn test(&self) -> Body {
+            Body::text(self.consumer.report())
         }
     }
 

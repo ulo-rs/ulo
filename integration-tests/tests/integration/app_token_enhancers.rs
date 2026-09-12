@@ -12,10 +12,7 @@ use ulo::context::HttpContext;
 use ulo::di::{APP_GUARD, APP_INTERCEPTOR};
 use ulo::http_helpers::HttpResponse;
 use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext};
-use ulo::{
-    Body as UloBody, controller, get, injectable, module, new, provider_token, provider_value,
-    routes,
-};
+use ulo::{Body, controller, get, injectable, module, new, provider_token, provider_value, routes};
 
 use crate::common::TestServer;
 use serial_test::serial;
@@ -134,9 +131,9 @@ impl TestController {
     }
 
     #[get("/test")]
-    fn test_endpoint(&self) -> UloBody {
+    fn test_endpoint(&self) -> Body {
         self.tracker.track("controller:handler");
-        UloBody::text("OK".to_string())
+        Body::text("OK".to_string())
     }
 }
 
