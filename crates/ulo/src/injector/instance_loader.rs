@@ -9,6 +9,39 @@ use std::{
 
 use parking_lot::RwLock;
 
+/// Why one module's providers could not all be built on a given pass.
+///
+/// Instantiation runs in passes because a provider can depend on a global one that a
+/// later module in the order contributes. [`Deferred`] is that wait, and it is the
+/// expected answer on an early pass rather than a failure: the loader puts the module
+/// back on the pending list and tries again once another module has made progress. A
+/// pass where nothing succeeds turns the collected reasons into the stall diagnostic.
+///
+/// [`Deferred`]: LoadError::Deferred
+enum LoadError {
+    /// A dependency is declared and not yet built. Carries what was waited on.
+    Deferred(String),
+    /// The module cannot be built on this pass or any later one.
+    Failed(Box<dyn std::error::Error + Send + Sync + 'static>),
+}
+
+impl From<anyhow::Error> for LoadError {
+    fn from(e: anyhow::Error) -> Self {
+        Self::Failed(e.into())
+    }
+}
+
+impl From<LoadError> for anyhow::Error {
+    fn from(e: LoadError) -> Self {
+        match e {
+            LoadError::Deferred(reason) => anyhow!(reason),
+            LoadError::Failed(source) => anyhow::Error::from_boxed(source),
+        }
+    }
+}
+
+type LoadResult<T> = std::result::Result<T, LoadError>;
+
 use super::{
     DependencyGraph, UloContainer, find_dependency_cycle,
     multi_collection_provider::MultiCollectionProvider,
@@ -77,15 +110,13 @@ impl UloInstanceLoader {
                             .register_global_providers(module_token)?;
                         successfully_created.push(module_token.clone());
                     }
-                    Err(e) if e.to_string().contains("DEFERRED:") => {
-                        // Dependency not ready - defer to next iteration
-                        deferred_reasons.insert(module_token.clone(), e.to_string());
+                    Err(LoadError::Deferred(reason)) => {
+                        deferred_reasons.insert(module_token.clone(), reason);
                         deferred_modules.push(module_token.clone());
                         continue;
                     }
-                    Err(e) => {
-                        // Real error - propagate
-                        return Err(e);
+                    Err(LoadError::Failed(source)) => {
+                        return Err(anyhow::Error::from_boxed(source));
                     }
                 }
             }
@@ -248,7 +279,7 @@ impl UloInstanceLoader {
         Ok(())
     }
 
-    async fn create_instances_of_providers(&self, module_token: String) -> Result<()> {
+    async fn create_instances_of_providers(&self, module_token: String) -> LoadResult<()> {
         let dependency_graph = DependencyGraph::new(self.container.clone(), module_token.clone());
         let ordered_providers_token = dependency_graph.get_ordered_providers_token()?;
         let provider_instances = {
@@ -577,7 +608,7 @@ impl UloInstanceLoader {
         module_token: &String,
         dependencies: Vec<String>,
         providers_instances: Option<&FxHashMap<String, Injectable>>,
-    ) -> Result<FxHashMap<String, Injectable>> {
+    ) -> LoadResult<FxHashMap<String, Injectable>> {
         let container = self.container.borrow();
         let mut resolved_dependencies = FxHashMap::default();
 
@@ -616,11 +647,9 @@ impl UloInstanceLoader {
                     resolved_dependencies
                         .insert(dependency, Injectable::new(global_instance.clone(), roles));
                 } else {
-                    return Err(anyhow!(
-                        "DEFERRED: Global provider '{}' not yet instantiated for module '{}'",
-                        dependency,
-                        module_token
-                    ));
+                    return Err(LoadError::Deferred(format!(
+                        "global provider '{dependency}' is not instantiated yet"
+                    )));
                 }
             }
             // Step 3.5: Check cached multi-collection providers (assembled in Phase 1.5)
@@ -659,10 +688,8 @@ impl UloInstanceLoader {
             }
             // Step 4: Not found anywhere
             else {
-                return Err(anyhow!(
-                    "Dependency not found: {} in module {}",
-                    dependency,
-                    module_token
+                return Err(LoadError::Failed(
+                    format!("Dependency not found: {dependency} in module {module_token}").into(),
                 ));
             }
         }
@@ -674,7 +701,7 @@ impl UloInstanceLoader {
         &self,
         module_token: &String,
         dependency: &String,
-    ) -> Result<Option<Arc<Box<dyn Provider>>>> {
+    ) -> LoadResult<Option<Arc<Box<dyn Provider>>>> {
         let container = self.container.borrow();
         let imported_modules = container.get_imported_modules(module_token)?;
 
@@ -696,12 +723,10 @@ impl UloInstanceLoader {
                     }
                 } else {
                     // Module exports this dependency but instance not created yet - DEFER
-                    return Err(anyhow!(
-                        "DEFERRED: Imported module '{}' exports '{}' but instance not yet created for module '{}'",
-                        imported_module,
-                        dependency,
-                        module_token
-                    ));
+                    return Err(LoadError::Deferred(format!(
+                        "imported module '{imported_module}' exports '{dependency}', \
+                         whose instance is not created yet"
+                    )));
                 }
             }
         }
