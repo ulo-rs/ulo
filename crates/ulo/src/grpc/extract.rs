@@ -6,10 +6,10 @@ use std::task::{Context, Poll};
 
 use futures::Stream;
 
-use crate::context::GrpcContext;
 use crate::extractors::FromContext;
-use crate::grpc_runtime::RequestError;
-use crate::grpc_status::GrpcStatus;
+use crate::grpc::GrpcContext;
+use crate::grpc::GrpcStatus;
+use crate::grpc::runtime::RequestError;
 
 /// A stream of messages the caller is sending, for a handler serving a
 /// client-streaming or bidirectional rpc.

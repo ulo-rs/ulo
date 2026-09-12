@@ -12,9 +12,11 @@ use std::time::Duration;
 
 use serial_test::serial;
 use ulo::UloFactory;
-use ulo::context::{Extensions, GrpcContext, HandlerContext};
+use ulo::context::{Extensions, HandlerContext};
 use ulo::extractors::Payload as Aliased;
-use ulo::extractors::{Inbound, Payload};
+use ulo::extractors::Payload;
+use ulo::grpc::GrpcContext;
+use ulo::grpc::extract::Inbound;
 use ulo::{ErrorKind, GrpcCode, GrpcStatus, async_trait, injectable, module};
 use ulo_grpc::GrpcRequest;
 use ulo_macros::{controller, grpc_methods, new, use_error_handlers, use_guards};

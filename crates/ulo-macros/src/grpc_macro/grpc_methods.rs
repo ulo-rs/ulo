@@ -298,7 +298,7 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
         .iter()
         .map(|(name, guards, interceptors, error_handlers)| {
             quote! {
-                ::ulo::adapter::GrpcHandlerEnhancers {
+                ::ulo::grpc::GrpcHandlerEnhancers {
                     method: #name.to_string(),
                     guard_tokens: vec![#(#guards),*],
                     interceptor_tokens: vec![#(#interceptors),*],
@@ -316,8 +316,8 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
         quote! {}
     } else {
         quote! {
-            fn enhancers(&self) -> ::ulo::adapter::GrpcEnhancers {
-                ::ulo::adapter::GrpcEnhancers {
+            fn enhancers(&self) -> ::ulo::grpc::GrpcEnhancers {
+                ::ulo::grpc::GrpcEnhancers {
                     guard_tokens: vec![#(#ctrl_guard_tokens),*],
                     interceptor_tokens: vec![#(#ctrl_interceptor_tokens),*],
                     error_handler_tokens: vec![#(#ctrl_error_handler_tokens),*],
@@ -373,7 +373,7 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
             let generics = &at.generics;
             if streaming_assocs.contains(&ident.to_string()) {
                 quote! {
-                    type #ident #generics = ::ulo::grpc_runtime::ScopedGrpcStream<
+                    type #ident #generics = ::ulo::__grpc::ScopedGrpcStream<
                         <#self_ident as #trait_path>::#ident
                     >;
                 }
@@ -393,7 +393,7 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
         #[derive(::std::clone::Clone)]
         pub struct #wrapper_ident {
             source: ::ulo::__enhancer::DispatchSource<#self_ident>,
-            enhancers: ::std::sync::Arc<::ulo::adapter::ResolvedGrpcEnhancers>,
+            enhancers: ::std::sync::Arc<::ulo::grpc::ResolvedGrpcEnhancers>,
         }
 
         #(#trait_attrs)*
@@ -430,7 +430,7 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
             }
         }
 
-        impl ::ulo::adapter::GrpcServiceSource for #source_ident {
+        impl ::ulo::grpc::GrpcServiceSource for #source_ident {
             fn token(&self) -> ::std::string::String {
                 #token.to_string()
             }
@@ -440,7 +440,7 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
             fn register_with(
                 &self,
                 registrar: &mut dyn ::std::any::Any,
-                enhancers: ::std::sync::Arc<::ulo::adapter::ResolvedGrpcEnhancers>,
+                enhancers: ::std::sync::Arc<::ulo::grpc::ResolvedGrpcEnhancers>,
             ) {
                 if let ::std::option::Option::Some(builder) = registrar.downcast_mut::<
                     ::tonic::service::RoutesBuilder,
@@ -615,10 +615,10 @@ fn one_taker_assertion(params: &[(syn::Ident, syn::Type)]) -> TokenStream {
                 const _: () = {
                     assert!(
                         !(<#first_ty as ::ulo::extractors::FromContext<
-                            ::ulo::context::GrpcContext,
+                            ::ulo::grpc::GrpcContext,
                         >>::CONSUMES
                             && <#second_ty as ::ulo::extractors::FromContext<
-                                ::ulo::context::GrpcContext,
+                                ::ulo::grpc::GrpcContext,
                             >>::CONSUMES),
                         #message
                     );
@@ -684,7 +684,7 @@ fn lower_handler(
             })?;
         extractions.push(quote! {
             let #name = match <#ty as ::ulo::extractors::FromContext<
-                ::ulo::context::GrpcContext,
+                ::ulo::grpc::GrpcContext,
             >>::extract(&__ctx).await {
                 ::std::result::Result::Ok(__value) => __value,
                 ::std::result::Result::Err(__e) => {
@@ -700,7 +700,7 @@ fn lower_handler(
     let request_arg_ty = quote! { <#shape as ::ulo_grpc::MethodShape>::Arg };
     let bind_request = quote! {
         #one_taker
-        let __ctx = match ::ulo::context::GrpcContext::of(request.extensions()) {
+        let __ctx = match ::ulo::grpc::GrpcContext::of(request.extensions()) {
             ::std::option::Option::Some(__ctx) => __ctx,
             ::std::option::Option::None => {
                 return ::std::result::Result::Err(::tonic::Status::internal(
@@ -739,7 +739,7 @@ fn lower_handler(
         // chain see its type rather than the status it flattened into.
         if let ::std::option::Option::Some(__source) = __status.into_source() {
             __answer.set_source(::std::sync::Arc::new(
-                ::ulo::grpc_runtime::GrpcFailure::new(__source),
+                ::ulo::grpc::GrpcFailure::new(__source),
             ));
         }
         ::std::result::Result::Err(__answer)
@@ -825,7 +825,7 @@ fn lower_handler(
                 &self,
                 request: ::tonic::Request<#request_arg_ty>,
             ) -> ::std::result::Result<::tonic::Response<Self::#assoc>, ::tonic::Status> {
-                let __ctx = ::ulo::context::GrpcContext::of(request.extensions());
+                let __ctx = ::ulo::grpc::GrpcContext::of(request.extensions());
                 #bind_request
                 // Each item carries the caller's own error type, which reaches
                 // the wire as the code its kind means. Only the reply that opens
@@ -850,7 +850,7 @@ fn lower_handler(
                 &self,
                 request: ::tonic::Request<#request_arg_ty>,
             ) -> ::std::result::Result<::tonic::Response<#answer_ty>, ::tonic::Status> {
-                let __ctx = ::ulo::context::GrpcContext::of(request.extensions());
+                let __ctx = ::ulo::grpc::GrpcContext::of(request.extensions());
                 #bind_request
                 #call_unary
             }
@@ -1069,10 +1069,10 @@ fn build_wrapper_method(
             // this macro can see.
             let __method: ::std::string::String = #req_ident
                 .extensions()
-                .get::<::ulo::adapter::GrpcMethodPath>()
+                .get::<::ulo::grpc::GrpcMethodPath>()
                 .map(|__p| __p.as_str().to_string())
                 .unwrap_or_else(|| #method_path_lit.to_string());
-            let __ctx = ::ulo::context::GrpcContext::new(
+            let __ctx = ::ulo::grpc::GrpcContext::new(
                 __method,
                 __metadata,
                 #req_ident.remote_addr(),
@@ -1107,7 +1107,7 @@ fn build_wrapper_method(
             let __source = self.source.clone();
             let __build_ctx = __ctx.clone();
 
-            let __pipeline = ::ulo::grpc_runtime::run_grpc_pipeline(
+            let __pipeline = ::ulo::__grpc::run_grpc_pipeline(
                 &__ctx,
                 &self.enhancers,
                 #method_name_lit,
@@ -1116,7 +1116,7 @@ fn build_wrapper_method(
                     // builds one. Construction sits inside the same panic recovery as the handler
                     // body, so a panicking constructor renders a status rather than tearing down
                     // the connection.
-                    let __caught = ::ulo::grpc_runtime::catch_handler_panic(async move {
+                    let __caught = ::ulo::__grpc::catch_handler_panic(async move {
                         let __inner = __source
                             .resolve(::ulo::ProviderContext::Grpc(__build_ctx))
                             .await;
@@ -1152,7 +1152,7 @@ fn build_wrapper_method(
                 .expect("grpc pipeline panic mutex poisoned")
                 .take();
             if let ::std::option::Option::Some(__panic_event) = __taken_panic {
-                let __mapped = ::ulo::grpc_runtime::run_grpc_error_chain(
+                let __mapped = ::ulo::__grpc::run_grpc_error_chain(
                     &__ctx, &self.enhancers, #method_name_lit, &__panic_event,
                 ).await;
                 return ::std::result::Result::Err(match __mapped {
@@ -1178,7 +1178,7 @@ fn build_wrapper_method(
                     let (__meta, __body, __ext) = __reply.into_parts();
                     ::std::result::Result::Ok(::tonic::Response::from_parts(
                         __meta,
-                        ::ulo::grpc_runtime::IntoScoped::into_scoped(__body, __ctx.clone()),
+                        ::ulo::__grpc::IntoScoped::into_scoped(__body, __ctx.clone()),
                         __ext,
                     ))
                 }
@@ -1193,7 +1193,7 @@ fn build_wrapper_method(
                     // the status it flattened into — which is what lets
                     // `#[catch(MyError)]` match here as it does on the other
                     // transports.
-                    let __stashed = ::ulo::grpc_runtime::GrpcFailure::recover(
+                    let __stashed = ::ulo::grpc::GrpcFailure::recover(
                         ::std::error::Error::source(&__status),
                     );
                     let __wrapped = ::ulo::GrpcStatus::new(
@@ -1202,12 +1202,12 @@ fn build_wrapper_method(
                     );
                     let __mapped = match &__stashed {
                         ::std::option::Option::Some(__domain) => {
-                            ::ulo::grpc_runtime::run_grpc_error_chain(
+                            ::ulo::__grpc::run_grpc_error_chain(
                                 &__ctx, &self.enhancers, #method_name_lit, __domain.as_ref(),
                             ).await
                         }
                         ::std::option::Option::None => {
-                            ::ulo::grpc_runtime::run_grpc_error_chain(
+                            ::ulo::__grpc::run_grpc_error_chain(
                                 &__ctx, &self.enhancers, #method_name_lit, &__wrapped,
                             ).await
                         }

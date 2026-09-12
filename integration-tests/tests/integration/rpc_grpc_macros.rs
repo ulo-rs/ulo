@@ -20,7 +20,8 @@ use std::time::Duration;
 use crate::common::NotServed;
 use futures_util::{Stream, StreamExt};
 use ulo::UloFactory;
-use ulo::extractors::{Inbound, Payload};
+use ulo::extractors::Payload;
+use ulo::grpc::extract::Inbound;
 use ulo_macros::{controller, grpc_methods, injectable, module, new, set_metadata};
 
 mod orders_pb {

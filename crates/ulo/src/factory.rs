@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use crate::application::UloApplication;
 use crate::application_context::UloApplicationContext;
-use crate::context::{GrpcContext, HttpContext, RpcContext};
+use crate::context::{HttpContext, RpcContext};
 use crate::error::StartupError;
+use crate::grpc::GrpcContext;
 use crate::http_types::HttpResponse;
 use crate::injector::{Container, InstanceLoader};
 use crate::middleware::Middleware;
@@ -141,7 +142,7 @@ impl UloFactory {
     /// Register a global interceptor that wraps every gRPC method.
     pub fn use_global_grpc_interceptors(
         &mut self,
-        interceptor: Arc<dyn Interceptor<GrpcContext, crate::grpc_status::GrpcHandlerResult>>,
+        interceptor: Arc<dyn Interceptor<GrpcContext, crate::grpc::GrpcHandlerResult>>,
     ) -> &mut Self {
         self.global_grpc_interceptors
             .push(GrpcInterceptorEntry::Ready(interceptor));
@@ -152,7 +153,7 @@ impl UloFactory {
     /// method-level handlers — the most specific is consulted first.
     pub fn use_global_grpc_error_handler(
         &mut self,
-        handler: Arc<dyn ErrorHandler<GrpcContext, crate::grpc_status::GrpcStatus>>,
+        handler: Arc<dyn ErrorHandler<GrpcContext, crate::grpc::GrpcStatus>>,
     ) -> &mut Self {
         self.global_grpc_error_handlers.push(handler);
         self

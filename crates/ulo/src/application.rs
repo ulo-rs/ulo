@@ -16,10 +16,11 @@ use event_listener::Event;
 
 use crate::{
     adapter::{
-        AdapterContext, BindTarget, GrpcAdapter, HttpAdapter, RpcAdapter, RpcMessageCallbacks,
+        AdapterContext, BindTarget, HttpAdapter, RpcAdapter, RpcMessageCallbacks,
         server_lifecycle::ServerLifecycle,
     },
     application_context::UloApplicationContext,
+    grpc::GrpcAdapter,
     injector::{Container, GatewayResolver, IntoToken},
     router::RoutesResolver,
     rpc::{RpcCallInfo, RpcControllerWrapper, RpcData, RpcError},

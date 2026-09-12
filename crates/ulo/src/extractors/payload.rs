@@ -1,8 +1,8 @@
 use std::any::type_name;
 
-use crate::context::GrpcContext;
 use crate::extractors::FromContext;
-use crate::grpc_runtime::RequestError;
+use crate::grpc::GrpcContext;
+use crate::grpc::runtime::RequestError;
 
 /// The message payload, deserialised.
 ///

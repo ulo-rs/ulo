@@ -21,8 +21,10 @@ use std::time::Duration;
 use futures_util::{Stream, StreamExt};
 use serial_test::serial;
 use ulo::UloFactory;
-use ulo::context::{CancellationToken, GrpcContext, HandlerContext};
-use ulo::extractors::{Inbound, Payload};
+use ulo::context::{CancellationToken, HandlerContext};
+use ulo::extractors::Payload;
+use ulo::grpc::GrpcContext;
+use ulo::grpc::extract::Inbound;
 use ulo_macros::{controller, grpc_methods, module, new};
 
 use crate::common::NotServed;

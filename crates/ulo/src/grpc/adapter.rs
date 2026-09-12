@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::error::AdapterResult;
 use async_trait::async_trait;
 
-use crate::adapter::grpc_service_source::{GrpcServiceSource, ResolvedGrpcEnhancers};
+use crate::grpc::service_source::{GrpcServiceSource, ResolvedGrpcEnhancers};
 
 /// Interface for gRPC transport adapters.
 ///
@@ -49,9 +49,7 @@ pub trait GrpcAdapter: Send + Sync + 'static {
     /// address for the lifecycle handle. The shutdown signal goes into
     /// the handle's closure so the framework's `close()` flow flips it
     /// without holding a reference back to the adapter.
-    async fn into_lifecycle(
-        self: Box<Self>,
-    ) -> AdapterResult<crate::adapter::lifecycle_handles::GrpcLifecycleHandle>;
+    async fn into_lifecycle(self: Box<Self>) -> AdapterResult<crate::grpc::GrpcLifecycleHandle>;
 }
 
 /// The method path a gRPC call arrived on, put on the request by the adapter.
@@ -62,7 +60,7 @@ pub trait GrpcAdapter: Send + Sync + 'static {
 /// route's casing only by convention; `tonic_build::manual` sets the route name
 /// independently of the Rust one.
 ///
-/// `#[grpc_methods]` reads this into [`GrpcContext::method`](crate::context::GrpcContext::method),
+/// `#[grpc_methods]` reads this into [`GrpcContext::method`](crate::grpc::GrpcContext::method),
 /// so a guard matching on the method path matches what the caller dialled. A
 /// request that reached the pipeline without one — a test driving it directly —
 /// falls back to the name the macro could see.

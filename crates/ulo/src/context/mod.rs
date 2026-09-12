@@ -8,7 +8,6 @@
 
 mod cancellation;
 mod extensions;
-mod grpc;
 mod handler_context;
 mod http;
 mod metadata;
@@ -18,7 +17,6 @@ mod standalone;
 
 pub use self::cancellation::CancellationToken;
 pub use self::extensions::Extensions;
-pub use self::grpc::GrpcContext;
 pub use self::handler_context::HandlerContext;
 pub use self::http::HttpContext;
 pub use self::metadata::Metadata;
@@ -28,6 +26,7 @@ pub use self::standalone::StandaloneContext;
 #[cfg(test)]
 mod handle_bounds_tests {
     use super::*;
+    use crate::grpc::GrpcContext;
     use crate::ws::WsContext;
 
     fn assert_handle<T: Send + Sync + Clone + 'static>() {}

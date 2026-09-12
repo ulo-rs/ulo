@@ -12,8 +12,8 @@ use tonic::transport::Server;
 use tower::Service;
 use ulo::AdapterResult;
 
-use ulo::adapter::{GrpcServiceSource, ResolvedGrpcEnhancers};
 use ulo::async_trait;
+use ulo::grpc::{GrpcServiceSource, ResolvedGrpcEnhancers};
 
 use crate::drain_layer::DrainLayer;
 use crate::method_path_layer::MethodPathLayer;

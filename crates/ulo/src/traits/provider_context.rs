@@ -1,4 +1,5 @@
-use crate::context::{GrpcContext, HttpContext, RpcContext, StandaloneContext};
+use crate::context::{HttpContext, RpcContext, StandaloneContext};
+use crate::grpc::GrpcContext;
 use crate::ws::WsContext;
 
 /// The execution a provider is being built for.

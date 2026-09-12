@@ -6,7 +6,8 @@ use rustc_hash::FxHashMap;
 use super::{ErrorHandler, Guard, Interceptor, ProviderContext, middleware::Middleware};
 use crate::{
     ProviderScope,
-    context::{GrpcContext, HttpContext, RpcContext},
+    context::{HttpContext, RpcContext},
+    grpc::GrpcContext,
     http_types::HttpResponse,
     rpc::RpcData,
     ws::WsContext,
@@ -122,7 +123,7 @@ transport_factory_types!(
 
 transport_factory_types!(
     GrpcContext,
-    crate::grpc_status::GrpcHandlerResult,
+    crate::grpc::GrpcHandlerResult,
     DynGrpcGuardFactory,
     GrpcGuardEntry,
     DynGrpcInterceptorFactory,
@@ -132,8 +133,7 @@ transport_factory_types!(
 pub(crate) type HttpErrorHandlerArc = Arc<dyn ErrorHandler<HttpContext, HttpResponse>>;
 pub(crate) type RpcErrorHandlerArc = Arc<dyn ErrorHandler<RpcContext, RpcData>>;
 pub(crate) type WsErrorHandlerArc = Arc<dyn ErrorHandler<WsContext, WsMessage>>;
-pub(crate) type GrpcErrorHandlerArc =
-    Arc<dyn ErrorHandler<GrpcContext, crate::grpc_status::GrpcStatus>>;
+pub(crate) type GrpcErrorHandlerArc = Arc<dyn ErrorHandler<GrpcContext, crate::grpc::GrpcStatus>>;
 
 /// Role trait-objects a provider may contribute to the registry.
 ///

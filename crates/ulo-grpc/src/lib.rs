@@ -202,9 +202,7 @@ fn to_tonic(status: ulo::GrpcStatus) -> tonic::Status {
         status.message.clone(),
     );
     if let Some(source) = status.into_source() {
-        answer.set_source(std::sync::Arc::new(ulo::grpc_runtime::GrpcFailure::new(
-            source,
-        )));
+        answer.set_source(std::sync::Arc::new(ulo::grpc::GrpcFailure::new(source)));
     }
     answer
 }

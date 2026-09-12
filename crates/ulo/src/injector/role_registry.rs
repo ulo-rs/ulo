@@ -3,7 +3,7 @@ use std::sync::Arc;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    adapter::{GrpcServiceSource, ResolvedGrpcEnhancers},
+    grpc::{GrpcServiceSource, ResolvedGrpcEnhancers},
     rpc::RpcControllerWrapper,
     traits::{
         GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc,

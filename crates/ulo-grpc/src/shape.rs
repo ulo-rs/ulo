@@ -16,9 +16,10 @@
 use std::any::{Any, type_name};
 use std::ops::{Deref, DerefMut};
 
-use ulo::context::GrpcContext;
-use ulo::extractors::{FromContext, Inbound};
-use ulo::grpc_runtime::{RequestCarrier, RequestError};
+use ulo::extractors::FromContext;
+use ulo::grpc::GrpcContext;
+use ulo::grpc::extract::Inbound;
+use ulo::grpc::{RequestCarrier, RequestError};
 use ulo::{GrpcCode, GrpcStatus};
 
 /// One proto method's request, as its trait declares it.
