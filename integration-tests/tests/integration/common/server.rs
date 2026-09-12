@@ -1,5 +1,5 @@
 use ulo::ModuleMetadata;
-use ulo::ulo_factory::UloFactory;
+use ulo::UloFactory;
 use ulo_http_axum::AxumAdapter;
 
 /// Install a tracing subscriber that reads `RUST_LOG` (e.g. `RUST_LOG=ulo=debug`).

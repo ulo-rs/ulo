@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
+use ulo::UloFactory;
 use ulo::module;
-use ulo::ulo_factory::UloFactory;
 use ulo::websocket::{BroadcastModule, BroadcastService, WsClient, WsHandlerResult, WsMessage};
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{new, on_module_destroy, subscriptions, websocket_gateway};

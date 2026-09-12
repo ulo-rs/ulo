@@ -142,8 +142,8 @@ async fn leave_room_stops_room_messages() {
 
 mod di_tests {
     use std::sync::Arc;
+    use ulo::UloFactory;
     use ulo::module;
-    use ulo::ulo_factory::UloFactory;
     use ulo::websocket::{BroadcastModule, BroadcastService, WsMessage, WsSink};
     use ulo_http_axum::TokioSender;
 

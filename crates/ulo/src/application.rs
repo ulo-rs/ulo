@@ -21,7 +21,7 @@ use crate::{
         server_lifecycle::ServerLifecycle,
     },
     application_context::UloApplicationContext,
-    injector::{GatewayResolver, IntoToken, UloContainer},
+    injector::{Container, GatewayResolver, IntoToken},
     router::RoutesResolver,
     rpc::{RpcCallInfo, RpcControllerWrapper, RpcData, RpcError},
     websocket::{
@@ -184,7 +184,7 @@ pub struct UloApplication {
 }
 
 impl UloApplication {
-    pub fn new(container: Rc<RefCell<UloContainer>>) -> Self {
+    pub fn new(container: Rc<RefCell<Container>>) -> Self {
         Self {
             http_adapter: None,
             http_target: None,
@@ -461,7 +461,7 @@ impl UloApplication {
     async fn bind_adapters(&mut self) -> Result<BoundAdapters, StartupError> {
         {
             let mut scanner =
-                crate::scanner::UloDependenciesScanner::new(self.routes_resolver.container.clone());
+                crate::scanner::DependencyScanner::new(self.routes_resolver.container.clone());
             scanner.call_bootstrap_hooks().await?;
         }
 

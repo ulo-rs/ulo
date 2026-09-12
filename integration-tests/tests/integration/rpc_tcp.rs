@@ -39,7 +39,7 @@ async fn start_rpc_server_with_handlers(
     module: impl ulo::ModuleMetadata + 'static,
     handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcData>>>,
 ) -> u16 {
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {
@@ -191,7 +191,7 @@ impl ShutdownTcpModule {}
 #[tokio_localset_test::localset_test]
 async fn tcp_app_shutdown_stops_the_accept_loop() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
@@ -271,7 +271,7 @@ impl SlowTcpModule {}
 #[tokio_localset_test::localset_test]
 async fn tcp_in_flight_request_completes_during_drain() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
@@ -327,7 +327,7 @@ async fn tcp_in_flight_request_completes_during_drain() {
 #[tokio_localset_test::localset_test]
 async fn tcp_drain_aborts_after_timeout() {
     use tokio::io::AsyncWriteExt;
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
@@ -376,7 +376,7 @@ async fn tcp_drain_aborts_after_timeout() {
 #[tokio_localset_test::localset_test]
 async fn tcp_backpressure_rejects_excess_and_releases_after_completion() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();

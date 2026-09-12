@@ -2,7 +2,7 @@
 //! inject the service. Export-instance resolution keys on the provider's own
 //! token, so the declared export and the built instance meet.
 
-use ulo::ulo_factory::UloFactory;
+use ulo::UloFactory;
 use ulo::{ProviderContext, injectable, module};
 use ulo_graphql_async_graphql::async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
 use ulo_graphql_async_graphql::{DefaultContextBuilder, GraphQLModule, GraphQLService};

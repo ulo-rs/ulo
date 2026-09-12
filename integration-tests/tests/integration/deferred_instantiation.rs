@@ -7,7 +7,7 @@
 //! stopped happening would surface as an application that refuses to start, naming a provider the
 //! reader can see is declared.
 
-use ulo::ulo_factory::UloFactory;
+use ulo::UloFactory;
 use ulo::{injectable, module};
 
 #[injectable]

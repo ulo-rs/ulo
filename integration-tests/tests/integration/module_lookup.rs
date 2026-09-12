@@ -3,7 +3,7 @@
 //! it resolves providers in that module's scope.
 
 use ulo::ResolutionError;
-use ulo::ulo_factory::UloFactory;
+use ulo::UloFactory;
 use ulo::{DynamicModule, injectable, module, provider_value};
 use ulo_config::{Config, ConfigModule, ConfigService};
 use ulo_graphql_async_graphql::async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};

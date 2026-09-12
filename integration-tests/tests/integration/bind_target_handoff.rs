@@ -12,7 +12,7 @@ use std::net::TcpListener;
 
 use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use ulo::ulo_factory::UloFactory;
+use ulo::UloFactory;
 use ulo::{Body as UloBody, controller, get, module, routes};
 use ulo_http_axum::AxumAdapter;
 

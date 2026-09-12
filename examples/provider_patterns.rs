@@ -8,8 +8,8 @@
 
 use std::time::Duration;
 use ulo::{
-    injectable, module, new, provider_alias, provider_factory, provider_token, provider_value,
-    ulo_factory::UloFactory,
+    UloFactory, injectable, module, new, provider_alias, provider_factory, provider_token,
+    provider_value,
 };
 
 // ---- providers ---------------------------------------------------------------

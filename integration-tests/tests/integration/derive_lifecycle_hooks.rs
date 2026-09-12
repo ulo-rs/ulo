@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serial_test::serial;
 use ulo::{
-    before_application_shutdown, injectable, module, on_application_bootstrap,
-    on_application_shutdown, on_module_destroy, on_module_init, ulo_factory::UloFactory,
+    UloFactory, before_application_shutdown, injectable, module, on_application_bootstrap,
+    on_application_shutdown, on_module_destroy, on_module_init,
 };
 use ulo_http_axum::AxumAdapter;
 

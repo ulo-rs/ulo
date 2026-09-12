@@ -17,7 +17,7 @@ use crate::{
 
 use super::{InstanceWrapper, RoleRegistry, module::Module};
 
-pub struct UloContainer {
+pub struct Container {
     modules: FxHashMap<String, Module>,
     middleware_manager: Option<MiddlewareManager>,
     /// Global provider registry - providers from modules marked as global
@@ -60,13 +60,13 @@ pub struct UloContainer {
     role_registry: RoleRegistry,
 }
 
-impl Default for UloContainer {
+impl Default for Container {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl UloContainer {
+impl Container {
     pub fn new() -> Self {
         Self {
             modules: FxHashMap::default(),

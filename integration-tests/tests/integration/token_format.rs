@@ -6,7 +6,7 @@
 //! `resolve::<T>()` on the app. Generic written types are where the paths can
 //! disagree — each test pins one pair.
 
-use ulo::ulo_factory::UloFactory;
+use ulo::UloFactory;
 use ulo::{ProviderContext, injectable, module, provider_factory, provider_value};
 use ulo_config::{Config, ConfigModule, ConfigService};
 

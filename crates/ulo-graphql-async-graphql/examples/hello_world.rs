@@ -7,7 +7,7 @@
 //!
 //!     cargo run -p ulo-graphql-async-graphql --example hello_world
 
-use ulo::{module, ulo_factory::UloFactory};
+use ulo::{UloFactory, module};
 use ulo_graphql_async_graphql::{DefaultContextBuilder, prelude::*};
 use ulo_http_axum::AxumAdapter;
 

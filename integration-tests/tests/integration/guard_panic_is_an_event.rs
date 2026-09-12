@@ -16,13 +16,13 @@ use std::time::Duration;
 
 use crate::common::NotServed;
 use serial_test::serial;
+use ulo::UloFactory;
 use ulo::async_trait;
 use ulo::context::{GrpcContext, RpcContext};
 use ulo::errors::PanicRecovered;
 use ulo::extractors::{Inbound, Payload};
 use ulo::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
 use ulo::traits_helpers::Guard;
-use ulo::ulo_factory::UloFactory;
 use ulo::{GrpcStatus, catch, injectable, module};
 use ulo_macros::{
     controller, grpc_methods, message_pattern, new, patterns, use_error_handlers, use_guards,

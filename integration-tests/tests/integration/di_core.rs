@@ -330,7 +330,7 @@ async fn injectable_accepts_path_qualified_clone_derive() {
     #[module(providers: [QualifiedCloneService])]
     struct QualifiedCloneModule {}
 
-    let app = ulo::ulo_factory::UloFactory::create_application_context(QualifiedCloneModule)
+    let app = ulo::UloFactory::create_application_context(QualifiedCloneModule)
         .await
         .unwrap();
     let svc: QualifiedCloneService = app

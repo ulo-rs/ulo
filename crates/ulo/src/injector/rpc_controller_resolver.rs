@@ -7,17 +7,17 @@ use crate::error::SetupResult;
 use crate::rpc::{RpcControllerSource, RpcControllerWrapper};
 use crate::traits_helpers::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};
 
-use super::UloContainer;
+use super::Container;
 
 /// Resolves one RPC controller's enhancer tokens into a ready-to-serve
 /// `RpcControllerWrapper`. Called by the instance loader while controllers are stored, so a
 /// misdeclared token fails `create()`; bind hands the stored wrapper to the adapter.
 pub struct RpcControllerResolver {
-    container: Rc<RefCell<UloContainer>>,
+    container: Rc<RefCell<Container>>,
 }
 
 impl RpcControllerResolver {
-    pub fn new(container: Rc<RefCell<UloContainer>>) -> Self {
+    pub fn new(container: Rc<RefCell<Container>>) -> Self {
         Self { container }
     }
 

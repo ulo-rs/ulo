@@ -21,7 +21,7 @@ pub type InitResult = Result<(), Box<dyn Error + Send + Sync + 'static>>;
 /// [`GrpcAdapter`]: crate::adapter::GrpcAdapter
 pub type AdapterResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>;
 
-/// Return type for the DI setup surface — [`UloContainer`], [`UloInstanceLoader`],
+/// Return type for the DI setup surface — [`Container`], [`InstanceLoader`],
 /// [`DependencyGraph`] and the dispatch-target resolvers.
 ///
 /// These build the module graph, and what they report is the graph being unbuildable: a provider
@@ -29,8 +29,8 @@ pub type AdapterResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static
 /// between, which is why the type names no cases and [`StartupError::Setup`] is where every one of
 /// them arrives.
 ///
-/// [`UloContainer`]: crate::injector::UloContainer
-/// [`UloInstanceLoader`]: crate::injector::UloInstanceLoader
+/// [`Container`]: crate::injector::Container
+/// [`InstanceLoader`]: crate::injector::InstanceLoader
 /// [`DependencyGraph`]: crate::injector::DependencyGraph
 pub type SetupResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>;
 

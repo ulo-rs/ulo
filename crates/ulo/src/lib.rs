@@ -1,4 +1,3 @@
-#[path = "adapter/mod.rs"]
 pub mod adapter;
 mod application_context;
 pub mod builtin_module;
@@ -26,7 +25,9 @@ pub mod errors;
 pub mod extractors;
 pub mod grpc_status;
 pub use grpc_status::{GrpcCode, GrpcHandlerResult, GrpcStatus};
+mod application;
 mod extension;
+mod factory;
 pub mod grpc_runtime;
 pub mod http_helpers;
 pub mod injector;
@@ -41,8 +42,6 @@ mod scanner;
 mod structs_helpers;
 pub mod traits_helpers;
 pub mod type_map;
-pub mod ulo_application;
-pub mod ulo_factory;
 pub mod websocket;
 
 // Re-exported for use in macro-generated code — not part of the public API.
@@ -112,9 +111,9 @@ pub use extractors::{BodyStream, FromContext, take_body};
 // Re-export macros
 pub use ulo_macros::*;
 
+pub use application::{BoundAdapters, ShutdownHandle, UloApplication};
+pub use factory::UloFactory;
 pub use module_helpers::{CheckedModule, DynamicModule, ModuleIdentity};
-pub use ulo_application::{BoundAdapters, ShutdownHandle, UloApplication};
-pub use ulo_factory::UloFactory;
 
 #[cfg(feature = "tower-compat")]
 pub mod tower_compat;

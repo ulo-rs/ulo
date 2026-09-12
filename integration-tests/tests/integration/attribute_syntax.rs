@@ -88,7 +88,7 @@ impl TestModule {}
 
 #[tokio::test]
 async fn test_attribute_syntax_runtime() {
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
 
     let app = UloFactory::create(TestModule).await.unwrap();
 

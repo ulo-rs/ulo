@@ -12,8 +12,8 @@ use async_trait::async_trait;
 
 use crate::DynamicModule;
 use crate::FxHashMap;
-use crate::injector::{UloContainer, UloInstanceLoader};
-use crate::scanner::UloDependenciesScanner;
+use crate::injector::{Container, InstanceLoader};
+use crate::scanner::DependencyScanner;
 use crate::traits_helpers::{
     ControllerFactory, Injectable, ModuleMetadata, Provider, ProviderContext, ProviderFactory,
 };
@@ -136,7 +136,7 @@ fn same_config_shares_identity_but_different_config_splits_it() {
 
 #[test]
 fn add_module_dedups_identical_dynamic_modules() {
-    let mut container = UloContainer::new();
+    let mut container = Container::new();
     container
         .add_module(Box::new(conn_module("Conn", "conn", "postgres://a")))
         .unwrap();
@@ -148,13 +148,13 @@ fn add_module_dedups_identical_dynamic_modules() {
 
 // ── Mechanism 3 + the knob: end-to-end through scanner + loader ───────────────────────────────
 
-async fn load(root: Root) -> crate::error::SetupResult<Rc<RefCell<UloContainer>>> {
-    let container = Rc::new(RefCell::new(UloContainer::new()));
-    let mut scanner = UloDependenciesScanner::new(container.clone());
+async fn load(root: Root) -> crate::error::SetupResult<Rc<RefCell<Container>>> {
+    let container = Rc::new(RefCell::new(Container::new()));
+    let mut scanner = DependencyScanner::new(container.clone());
     scanner.scan(Box::new(crate::builtin_module::BuiltinModule))?;
     scanner.scan(Box::new(root))?;
     scanner.scan_middleware()?;
-    UloInstanceLoader::new(container.clone())
+    InstanceLoader::new(container.clone())
         .create_instances_of_dependencies()
         .await?;
     Ok(container)

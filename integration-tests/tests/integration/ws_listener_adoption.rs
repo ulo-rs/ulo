@@ -13,8 +13,8 @@
 use std::net::SocketAddr;
 
 use futures_util::{SinkExt, StreamExt};
+use ulo::UloFactory;
 use ulo::module;
-use ulo::ulo_factory::UloFactory;
 use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
 use ulo_macros::{new, subscribe_message, subscriptions, websocket_gateway};
 

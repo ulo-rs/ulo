@@ -19,7 +19,7 @@ use tonic_health::pb::health_client::HealthClient;
 
 #[tokio_localset_test::localset_test]
 async fn grpc_adapter_seam_round_trip_and_shuts_down() {
-    use ulo::ulo_factory::UloFactory;
+    use ulo::UloFactory;
 
     // Empty module — this test adds its gRPC service directly on the
     // adapter. The framework still requires a module to construct an app.

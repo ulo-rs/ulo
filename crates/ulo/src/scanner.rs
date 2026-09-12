@@ -4,16 +4,16 @@ use crate::error::SetupResult;
 use crate::error::StartupError;
 
 use crate::{
-    injector::UloContainer,
+    injector::Container,
     traits_helpers::{MiddlewareConsumer, ModuleMetadata},
 };
 
-pub struct UloDependenciesScanner {
-    container: Rc<RefCell<UloContainer>>,
+pub struct DependencyScanner {
+    container: Rc<RefCell<Container>>,
 }
 
-impl UloDependenciesScanner {
-    pub fn new(container: Rc<RefCell<UloContainer>>) -> Self {
+impl DependencyScanner {
+    pub fn new(container: Rc<RefCell<Container>>) -> Self {
         Self { container }
     }
     pub fn scan(&mut self, module: Box<dyn ModuleMetadata>) -> SetupResult {

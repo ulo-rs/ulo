@@ -8,18 +8,18 @@ use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
 use crate::error::ResolutionError;
 
 use crate::{
-    injector::{IntoToken, ModuleRef, UloContainer},
+    injector::{Container, IntoToken, ModuleRef},
     module_helpers::ModuleIdentity,
     traits_helpers::{Provider, ProviderContext},
 };
 
 /// Full DI container without an HTTP server
 pub struct UloApplicationContext {
-    container: Rc<RefCell<UloContainer>>,
+    container: Rc<RefCell<Container>>,
 }
 
 impl UloApplicationContext {
-    pub(crate) fn new(container: Rc<RefCell<UloContainer>>) -> Self {
+    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
         Self { container }
     }
 
