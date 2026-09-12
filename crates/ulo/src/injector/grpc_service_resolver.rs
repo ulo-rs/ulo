@@ -66,7 +66,7 @@ impl GrpcServiceResolver {
     /// The globals belong to this level alone. A method's own entries stack on top of what is
     /// resolved here, so resolving them with the globals too would run each global twice.
     fn resolve_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<GrpcGuardEntry>> {
-        let mut guards = self.container.borrow().get_global_grpc_guards();
+        let mut guards = self.container.borrow().global_grpc_guards();
         for token in tokens {
             let entry = self.resolve_guard_by_token(&token)?;
             guards.push(entry);
@@ -77,7 +77,7 @@ impl GrpcServiceResolver {
     fn resolve_guard_by_token(&self, token: &str) -> SetupResult<GrpcGuardEntry> {
         self.container
             .borrow()
-            .get_role_registry()
+            .role_registry()
             .grpc_guards
             .get(token)
             .cloned()
@@ -95,7 +95,7 @@ impl GrpcServiceResolver {
     }
 
     fn resolve_interceptors(&self, tokens: Vec<String>) -> SetupResult<Vec<GrpcInterceptorEntry>> {
-        let mut interceptors = self.container.borrow().get_global_grpc_interceptors();
+        let mut interceptors = self.container.borrow().global_grpc_interceptors();
         for token in tokens {
             let entry = self.resolve_interceptor_by_token(&token)?;
             interceptors.push(entry);
@@ -106,7 +106,7 @@ impl GrpcServiceResolver {
     fn resolve_interceptor_by_token(&self, token: &str) -> SetupResult<GrpcInterceptorEntry> {
         self.container
             .borrow()
-            .get_role_registry()
+            .role_registry()
             .grpc_interceptors
             .get(token)
             .cloned()
@@ -124,7 +124,7 @@ impl GrpcServiceResolver {
     }
 
     fn resolve_error_handlers(&self, tokens: Vec<String>) -> SetupResult<Vec<GrpcErrorHandlerArc>> {
-        let mut handlers = self.container.borrow().get_global_grpc_error_handlers();
+        let mut handlers = self.container.borrow().global_grpc_error_handlers();
         for token in tokens {
             handlers.push(self.resolve_error_handler_by_token(&token)?);
         }
@@ -134,7 +134,7 @@ impl GrpcServiceResolver {
     fn resolve_error_handler_by_token(&self, token: &str) -> SetupResult<GrpcErrorHandlerArc> {
         self.container
             .borrow()
-            .get_role_registry()
+            .role_registry()
             .grpc_error_handlers
             .get(token)
             .cloned()

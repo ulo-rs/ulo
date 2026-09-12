@@ -551,7 +551,7 @@ impl GatewayWrapper {
         }
     }
 
-    pub async fn get_clients(&self) -> Vec<WsClient> {
+    pub async fn clients(&self) -> Vec<WsClient> {
         self.clients.read().values().cloned().collect()
     }
 

@@ -56,7 +56,7 @@ impl DependencyScanner {
     }
 
     pub fn scan_modules_for_dependencies(&mut self) -> SetupResult {
-        let modules_token = self.container.borrow().get_modules_token();
+        let modules_token = self.container.borrow().module_tokens();
         for module_token in modules_token {
             self.insert_providers(module_token.clone())?;
             self.insert_controllers(module_token.clone())?;
@@ -89,7 +89,7 @@ impl DependencyScanner {
             None => return Err("Module not found".to_string().into()),
         };
 
-        let controllers = resolved_module_ref.get_metadata().controllers();
+        let controllers = resolved_module_ref.metadata().controllers();
 
         if let Some(controllers) = controllers {
             let count = controllers.len();
@@ -110,7 +110,7 @@ impl DependencyScanner {
             None => return Err("Module not found".to_string().into()),
         };
 
-        let providers = resolved_module_ref.get_metadata().providers();
+        let providers = resolved_module_ref.metadata().providers();
 
         if let Some(providers) = providers {
             let count = providers.len();
@@ -171,8 +171,8 @@ impl DependencyScanner {
             None => return Err("Module not found".to_string().into()),
         };
 
-        let is_global = resolved_module_ref.get_metadata().is_global();
-        let exports = resolved_module_ref.get_metadata().exports();
+        let is_global = resolved_module_ref.metadata().is_global();
+        let exports = resolved_module_ref.metadata().exports();
 
         if let Some(exports) = exports {
             let count = exports.len();
@@ -191,7 +191,7 @@ impl DependencyScanner {
     }
 
     pub fn scan_middleware(&mut self) -> SetupResult {
-        let modules_token = self.container.borrow().get_modules_token();
+        let modules_token = self.container.borrow().module_tokens();
         for module_token in modules_token {
             self.register_module_middleware(&module_token)?;
         }
@@ -206,7 +206,7 @@ impl DependencyScanner {
                 .get_module_by_token(&module_token.to_string())
                 .ok_or_else(|| format!("Module not found: {}", module_token))?;
 
-            let metadata = module_ref.get_metadata();
+            let metadata = module_ref.metadata();
 
             let mut consumer = MiddlewareConsumer::new();
             metadata.configure_middleware(&mut consumer);
@@ -216,7 +216,7 @@ impl DependencyScanner {
         let mut container_mut = self.container.borrow_mut();
 
         let middleware_manager = container_mut
-            .get_middleware_manager_mut()
+            .middleware_manager_mut()
             .ok_or_else(|| "Middleware manager not initialized".to_string())?;
 
         for config in middleware_configs {
@@ -227,7 +227,7 @@ impl DependencyScanner {
     }
 
     pub async fn call_lifecycle_hooks(&mut self) -> Result<(), StartupError> {
-        let modules_token = self.container.borrow().get_modules_token();
+        let modules_token = self.container.borrow().module_tokens();
 
         for module_token in &modules_token {
             self.call_module_init_hook(module_token).await?;
@@ -240,7 +240,7 @@ impl DependencyScanner {
 
     /// Runs after `call_lifecycle_hooks` (OnModuleInit) but before the application starts listening.
     pub async fn call_bootstrap_hooks(&mut self) -> Result<(), StartupError> {
-        let modules_token = self.container.borrow().get_modules_token();
+        let modules_token = self.container.borrow().module_tokens();
 
         for module_token in &modules_token {
             self.call_module_bootstrap_hook(module_token).await?;
@@ -262,7 +262,7 @@ impl DependencyScanner {
 
             tracing::debug!(module = %module_token, hook = "on_application_bootstrap", "lifecycle hook");
             module_ref
-                .get_metadata()
+                .metadata()
                 .on_application_bootstrap()
                 .await
                 .map_err(|source| StartupError::HookFailed {
@@ -282,7 +282,7 @@ impl DependencyScanner {
         for module_token in modules_token {
             {
                 let container = self.container.borrow();
-                if let Ok(providers) = container.get_lifecycle_instances(module_token) {
+                if let Ok(providers) = container.lifecycle_instances(module_token) {
                     for provider in providers {
                         // Skip request-scoped providers — they are built into an
                         // execution, and bootstrap is not one.
@@ -306,7 +306,7 @@ impl DependencyScanner {
             {
                 let container = self.container.borrow();
                 if let Some(module) = container.get_module_by_token(module_token) {
-                    for controller in module.get_controller_objects() {
+                    for controller in module.controller_objects() {
                         controller
                             .on_application_bootstrap()
                             .await
@@ -333,7 +333,7 @@ impl DependencyScanner {
 
             tracing::debug!(module = %module_token, hook = "on_module_init", "lifecycle hook");
             module_ref
-                .get_metadata()
+                .metadata()
                 .on_module_init()
                 .await
                 .map_err(|source| StartupError::HookFailed {
@@ -350,7 +350,7 @@ impl DependencyScanner {
         for module_token in modules_token {
             {
                 let container = self.container.borrow();
-                if let Ok(providers) = container.get_lifecycle_instances(module_token) {
+                if let Ok(providers) = container.lifecycle_instances(module_token) {
                     for provider in providers {
                         // Skip request-scoped providers — they are built into an
                         // execution, and module initialisation is not one.
@@ -373,7 +373,7 @@ impl DependencyScanner {
             {
                 let container = self.container.borrow();
                 if let Some(module) = container.get_module_by_token(module_token) {
-                    for controller in module.get_controller_objects() {
+                    for controller in module.controller_objects() {
                         controller.on_module_init().await.map_err(|source| {
                             StartupError::HookFailed {
                                 module: module_token.clone(),

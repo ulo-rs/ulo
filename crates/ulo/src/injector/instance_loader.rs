@@ -69,7 +69,7 @@ impl InstanceLoader {
     }
 
     pub async fn create_instances_of_dependencies(&self) -> SetupResult {
-        let modules_order = self.container.borrow().get_ordered_modules_token();
+        let modules_order = self.container.borrow().ordered_module_tokens();
 
         // PRE-PHASE 1: Register one ModuleRefProvider per module, all sharing the same
         // store Arc. The store is empty now; it gets written after Phase 1 completes.
@@ -158,7 +158,7 @@ impl InstanceLoader {
             let container = self.container.borrow();
             let mut store = store_arc.write();
             for module_token in &modules_order {
-                if let Ok(instances) = container.get_providers_instance(module_token) {
+                if let Ok(instances) = container.get_provider_instances(module_token) {
                     store.insert(module_token.clone(), instances.clone());
                 }
             }
@@ -191,7 +191,7 @@ impl InstanceLoader {
     /// as_multi_item() on each built contribution, and stores the resulting collection
     /// in the container so it can be resolved like any other provider dependency.
     fn collect_multi_providers(&self) -> SetupResult {
-        let multi_map = self.container.borrow().get_multi_providers().clone();
+        let multi_map = self.container.borrow().multi_providers().clone();
 
         for (base_token, contributions) in multi_map {
             let mut items: Vec<Arc<dyn Any + Send + Sync>> = Vec::new();
@@ -232,15 +232,15 @@ impl InstanceLoader {
     /// Resolve APP_* token providers to global enhancers
     fn resolve_app_token_enhancers(&self) -> SetupResult {
         let container = self.container.borrow();
-        let app_guard_providers = container.get_app_guard_providers().to_vec();
-        let app_interceptor_providers = container.get_app_interceptor_providers().to_vec();
+        let app_guard_providers = container.app_guard_providers().to_vec();
+        let app_interceptor_providers = container.app_interceptor_providers().to_vec();
         drop(container);
 
         for (_, provider_token) in app_guard_providers {
             let guard = self
                 .container
                 .borrow()
-                .get_role_registry()
+                .role_registry()
                 .http_guards
                 .get(&provider_token)
                 .cloned()
@@ -257,7 +257,7 @@ impl InstanceLoader {
             let interceptor = self
                 .container
                 .borrow()
-                .get_role_registry()
+                .role_registry()
                 .http_interceptors
                 .get(&provider_token)
                 .cloned()
@@ -287,7 +287,7 @@ impl InstanceLoader {
 
     async fn create_instances_of_providers(&self, module_token: String) -> LoadResult<()> {
         let dependency_graph = DependencyGraph::new(self.container.clone(), module_token.clone());
-        let ordered_providers_token = dependency_graph.get_ordered_providers_token()?;
+        let ordered_providers_token = dependency_graph.ordered_provider_tokens()?;
         let provider_instances = {
             let container = self.container.borrow();
             let mut instances: FxHashMap<String, Injectable> = FxHashMap::default();
@@ -322,12 +322,12 @@ impl InstanceLoader {
         &self,
     ) -> (FxHashMap<String, Vec<String>>, FxHashMap<String, String>) {
         let container = self.container.borrow();
-        let multi = container.get_multi_providers();
+        let multi = container.multi_providers();
         let mut adjacency: FxHashMap<String, Vec<String>> = FxHashMap::default();
         let mut token_module: FxHashMap<String, String> = FxHashMap::default();
 
-        for module_token in container.get_modules_token() {
-            let Ok(providers) = container.get_providers_factory(&module_token) else {
+        for module_token in container.module_tokens() {
+            let Ok(providers) = container.provider_factories(&module_token) else {
                 continue;
             };
             for (token, factory) in providers.iter() {
@@ -413,7 +413,7 @@ impl InstanceLoader {
         providers_tokens: Vec<(String, String)>,
         container: RefMut<'_, Container>,
     ) -> SetupResult {
-        let exports = container.get_exports_tokens_vec(module_token)?;
+        let exports = container.exported_tokens_of(module_token)?;
         self.add_export_instances_tokens(module_token, providers_tokens, exports, container)?;
         Ok(())
     }
@@ -437,7 +437,7 @@ impl InstanceLoader {
         let controllers_instances = {
             let container = self.container.borrow();
             let mut instances = Vec::new();
-            let controllers_factory = container.get_controllers_factory(&module_token)?;
+            let controllers_factory = container.controller_factories(&module_token)?;
 
             for controller_factory in controllers_factory.values() {
                 let dependencies = controller_factory.dependency_tokens();
@@ -540,7 +540,7 @@ impl InstanceLoader {
         route: &Arc<dyn Route>,
     ) -> SetupResult<EnhancerMetadata> {
         let registry = self.container.borrow();
-        let registry = registry.get_role_registry();
+        let registry = registry.role_registry();
         let declared = route.enhancers();
 
         let mut guards: Vec<HttpGuardEntry> = Vec::new();
@@ -634,7 +634,7 @@ impl InstanceLoader {
             else if let Ok(Some(instance)) =
                 container.get_provider_instance_by_token(module_token, &dependency)
             {
-                let roles = container.get_provider_roles(&dependency);
+                let roles = container.provider_roles(&dependency);
                 resolved_dependencies.insert(dependency, Injectable::new(instance.clone(), roles));
             }
             // Step 2: Check imported modules
@@ -642,7 +642,7 @@ impl InstanceLoader {
                 self.resolve_from_imported_modules(module_token, &dependency)?
             {
                 tracing::debug!(module = %module_token, dependency = %dependency, source = "imported_module", "dependency resolved");
-                let roles = container.get_provider_roles(&dependency);
+                let roles = container.provider_roles(&dependency);
                 resolved_dependencies.insert(
                     dependency,
                     Injectable::new(exported_instance.clone(), roles),
@@ -652,7 +652,7 @@ impl InstanceLoader {
             else if container.is_global_provider_token(&dependency) {
                 if let Some(global_instance) = container.get_global_provider(&dependency) {
                     tracing::debug!(module = %module_token, dependency = %dependency, source = "global", "dependency resolved");
-                    let roles = container.get_provider_roles(&dependency);
+                    let roles = container.provider_roles(&dependency);
                     resolved_dependencies
                         .insert(dependency, Injectable::new(global_instance.clone(), roles));
                 } else {
@@ -670,8 +670,7 @@ impl InstanceLoader {
             // Step 3.6: Assemble multi-collection on-demand when contributor and consumer
             // share the same module — contributors are in the in-progress instances map
             // before Phase 1.5 has had a chance to cache the collection.
-            else if let Some(contribs) = container.get_multi_providers().get(&dependency).cloned()
-            {
+            else if let Some(contribs) = container.multi_providers().get(&dependency).cloned() {
                 let mut items: Vec<std::sync::Arc<dyn std::any::Any + Send + Sync>> = Vec::new();
                 for (contrib_module_token, provider_token) in &contribs {
                     let item = providers_instances
@@ -679,7 +678,7 @@ impl InstanceLoader {
                         .and_then(|inj| inj.instance.as_multi_item());
                     if let Some(item) = item {
                         items.push(item);
-                    } else if let Ok(saved) = container.get_providers_instance(contrib_module_token)
+                    } else if let Ok(saved) = container.get_provider_instances(contrib_module_token)
                     {
                         if let Some(item) =
                             saved.get(provider_token).and_then(|p| p.as_multi_item())
@@ -712,16 +711,16 @@ impl InstanceLoader {
         dependency: &String,
     ) -> LoadResult<Option<Arc<Box<dyn Provider>>>> {
         let container = self.container.borrow();
-        let imported_modules = container.get_imported_modules(module_token)?;
+        let imported_modules = container.imported_modules(module_token)?;
 
         for imported_module in imported_modules {
             // Check if the imported module exports this dependency (from scan phase)
-            let exports_tokens = container.get_exports_tokens_vec(imported_module)?;
+            let exports_tokens = container.exported_tokens_of(imported_module)?;
 
             if exports_tokens.contains(dependency) {
                 // Dependency is exported by this module - try to get the instance
                 let exported_instances_tokens =
-                    container.get_exports_instances_tokens(imported_module)?;
+                    container.exported_instance_tokens(imported_module)?;
 
                 if exported_instances_tokens.contains(dependency) {
                     // Instance exists - return it

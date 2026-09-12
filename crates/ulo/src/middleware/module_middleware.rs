@@ -73,12 +73,12 @@ impl MiddlewareManager {
     }
 
     /// Get reference to global middleware
-    pub fn get_global_middleware(&self) -> &[Arc<dyn Middleware>] {
+    pub fn global_middleware(&self) -> &[Arc<dyn Middleware>] {
         &self.global_middleware
     }
 
     /// Get reference to module middleware map
-    pub fn get_module_middleware(&self) -> &FxHashMap<String, Vec<MiddlewareConfiguration>> {
+    pub fn module_middleware(&self) -> &FxHashMap<String, Vec<MiddlewareConfiguration>> {
         &self.module_middleware
     }
 
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn test_middleware_manager_creation() {
         let manager = MiddlewareManager::new();
-        assert_eq!(manager.get_global_middleware().len(), 0);
+        assert_eq!(manager.global_middleware().len(), 0);
     }
 
     #[test]
@@ -155,7 +155,7 @@ mod tests {
         let mut manager = MiddlewareManager::new();
         manager.add_global(Arc::new(DummyMiddleware::new("global")));
 
-        assert_eq!(manager.get_global_middleware().len(), 1);
+        assert_eq!(manager.global_middleware().len(), 1);
     }
 
     #[test]

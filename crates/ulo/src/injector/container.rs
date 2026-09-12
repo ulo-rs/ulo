@@ -118,15 +118,15 @@ impl Container {
         self.global_rpc_error_handlers.push(handler);
     }
 
-    pub fn get_global_rpc_guards(&self) -> Vec<RpcGuardEntry> {
+    pub fn global_rpc_guards(&self) -> Vec<RpcGuardEntry> {
         self.global_rpc_guards.clone()
     }
 
-    pub fn get_global_rpc_interceptors(&self) -> Vec<RpcInterceptorEntry> {
+    pub fn global_rpc_interceptors(&self) -> Vec<RpcInterceptorEntry> {
         self.global_rpc_interceptors.clone()
     }
 
-    pub fn get_global_rpc_error_handlers(&self) -> Vec<RpcErrorHandlerArc> {
+    pub fn global_rpc_error_handlers(&self) -> Vec<RpcErrorHandlerArc> {
         self.global_rpc_error_handlers.clone()
     }
 
@@ -142,15 +142,15 @@ impl Container {
         self.global_ws_error_handlers.push(handler);
     }
 
-    pub fn get_global_ws_guards(&self) -> Vec<WsGuardEntry> {
+    pub fn global_ws_guards(&self) -> Vec<WsGuardEntry> {
         self.global_ws_guards.clone()
     }
 
-    pub fn get_global_ws_interceptors(&self) -> Vec<WsInterceptorEntry> {
+    pub fn global_ws_interceptors(&self) -> Vec<WsInterceptorEntry> {
         self.global_ws_interceptors.clone()
     }
 
-    pub fn get_global_ws_error_handlers(&self) -> Vec<WsErrorHandlerArc> {
+    pub fn global_ws_error_handlers(&self) -> Vec<WsErrorHandlerArc> {
         self.global_ws_error_handlers.clone()
     }
 
@@ -158,7 +158,7 @@ impl Container {
         self.global_grpc_guards.push(guard);
     }
 
-    pub fn get_global_grpc_guards(&self) -> Vec<GrpcGuardEntry> {
+    pub fn global_grpc_guards(&self) -> Vec<GrpcGuardEntry> {
         self.global_grpc_guards.clone()
     }
 
@@ -166,7 +166,7 @@ impl Container {
         self.global_grpc_interceptors.push(interceptor);
     }
 
-    pub fn get_global_grpc_interceptors(&self) -> Vec<GrpcInterceptorEntry> {
+    pub fn global_grpc_interceptors(&self) -> Vec<GrpcInterceptorEntry> {
         self.global_grpc_interceptors.clone()
     }
 
@@ -174,11 +174,11 @@ impl Container {
         self.global_grpc_error_handlers.push(handler);
     }
 
-    pub fn get_global_grpc_error_handlers(&self) -> Vec<GrpcErrorHandlerArc> {
+    pub fn global_grpc_error_handlers(&self) -> Vec<GrpcErrorHandlerArc> {
         self.global_grpc_error_handlers.clone()
     }
 
-    pub fn get_global_enhancers(&self) -> EnhancerMetadata {
+    pub fn global_enhancers(&self) -> EnhancerMetadata {
         EnhancerMetadata {
             guards: self.global_http_guards.clone(),
             interceptors: self.global_http_interceptors.clone(),
@@ -318,7 +318,7 @@ impl Container {
 
     /// Every provider instance a module's lifecycle hooks must reach. Controllers are held
     /// separately and iterated beside these.
-    pub fn get_lifecycle_instances(
+    pub fn lifecycle_instances(
         &self,
         module_ref_token: &String,
     ) -> SetupResult<Vec<&Arc<Box<dyn Provider>>>> {
@@ -326,7 +326,7 @@ impl Container {
             .modules
             .get(module_ref_token)
             .ok_or_else(|| "Module not found".to_string())?;
-        Ok(module_ref.get_providers_instances().values().collect())
+        Ok(module_ref.provider_instances().values().collect())
     }
 
     /// Register an RPC controller's resolved wrapper under its token. Called from the controller
@@ -351,26 +351,23 @@ impl Container {
         self.role_registry.grpc_services.insert(token, service);
     }
 
-    pub(crate) fn get_role_registry(&self) -> &RoleRegistry {
+    pub(crate) fn role_registry(&self) -> &RoleRegistry {
         &self.role_registry
     }
 
-    pub(crate) fn get_provider_roles(
-        &self,
-        token: &str,
-    ) -> Vec<crate::traits_helpers::ProviderRole> {
+    pub(crate) fn provider_roles(&self, token: &str) -> Vec<crate::traits_helpers::ProviderRole> {
         self.role_registry.get_roles_for_token(token)
     }
 
-    pub fn get_gateways(&self) -> &FxHashMap<String, Arc<Box<dyn Gateway>>> {
+    pub fn gateways(&self) -> &FxHashMap<String, Arc<Box<dyn Gateway>>> {
         &self.role_registry.gateways
     }
 
-    pub fn get_rpc_controllers(&self) -> &FxHashMap<String, Arc<crate::rpc::RpcControllerWrapper>> {
+    pub fn rpc_controllers(&self) -> &FxHashMap<String, Arc<crate::rpc::RpcControllerWrapper>> {
         &self.role_registry.rpc_controllers
     }
 
-    pub fn get_grpc_services(
+    pub fn grpc_services(
         &self,
     ) -> &FxHashMap<
         String,
@@ -413,7 +410,7 @@ impl Container {
         route: Arc<dyn crate::traits_helpers::Route>,
         enhancer_metadata: EnhancerMetadata,
     ) -> SetupResult {
-        let global_enhancers = self.get_global_enhancers();
+        let global_enhancers = self.global_enhancers();
         let module_ref = self
             .modules
             .get_mut(module_ref_token)
@@ -444,7 +441,7 @@ impl Container {
         Ok(())
     }
 
-    pub fn get_providers_factory(
+    pub fn provider_factories(
         &self,
         module_ref_token: &String,
     ) -> SetupResult<&FxHashMap<String, Box<dyn ProviderFactory>>> {
@@ -452,10 +449,10 @@ impl Container {
             .modules
             .get(module_ref_token)
             .ok_or_else(|| "Module not found".to_string())?;
-        Ok(module_ref.get_providers_factory())
+        Ok(module_ref.provider_factories())
     }
 
-    pub fn get_controllers_factory(
+    pub fn controller_factories(
         &self,
         module_ref_token: &String,
     ) -> SetupResult<&FxHashMap<String, Box<dyn ControllerFactory>>> {
@@ -463,10 +460,10 @@ impl Container {
             .modules
             .get(module_ref_token)
             .ok_or_else(|| "Module not found".to_string())?;
-        Ok(module_ref.get_controllers_factory())
+        Ok(module_ref.controller_factories())
     }
 
-    pub fn get_providers_instance(
+    pub fn get_provider_instances(
         &self,
         module_ref_token: &String,
     ) -> SetupResult<&FxHashMap<String, Arc<Box<dyn Provider>>>> {
@@ -474,7 +471,7 @@ impl Container {
             .modules
             .get(module_ref_token)
             .ok_or_else(|| "Module not found".to_string())?;
-        Ok(module_ref.get_providers_instances())
+        Ok(module_ref.provider_instances())
     }
 
     pub fn get_provider_instance_by_token(
@@ -501,7 +498,7 @@ impl Container {
         Ok(module_ref.get_provider_by_token(provider_token))
     }
 
-    pub fn get_controllers_instance(
+    pub fn get_controller_instances(
         &mut self,
         module_ref_token: &String,
     ) -> SetupResult<Drain<'_, String, Arc<InstanceWrapper>>> {
@@ -512,18 +509,15 @@ impl Container {
         Ok(module_ref.drain_controllers_instances())
     }
 
-    pub fn get_imported_modules(
-        &self,
-        module_ref_token: &String,
-    ) -> SetupResult<&FxHashSet<String>> {
+    pub fn imported_modules(&self, module_ref_token: &String) -> SetupResult<&FxHashSet<String>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
             .ok_or_else(|| "Module not found".to_string())?;
-        Ok(module_ref.get_imported_modules())
+        Ok(module_ref.imported_modules())
     }
 
-    pub fn get_exports_instances_tokens(
+    pub fn exported_instance_tokens(
         &self,
         module_ref_token: &String,
     ) -> SetupResult<&FxHashSet<String>> {
@@ -531,22 +525,22 @@ impl Container {
             .modules
             .get(module_ref_token)
             .ok_or_else(|| format!("Module not found: {:?}", module_ref_token))?;
-        Ok(module_ref.get_exports_instances_tokens())
+        Ok(module_ref.exported_instance_tokens())
     }
 
-    pub fn get_exports_tokens_vec(&self, module_ref_token: &String) -> SetupResult<Vec<String>> {
+    pub fn exported_tokens_of(&self, module_ref_token: &String) -> SetupResult<Vec<String>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
             .ok_or_else(|| format!("Module not found: {:?}", module_ref_token))?;
-        Ok(module_ref.get_exports_tokens().iter().cloned().collect())
+        Ok(module_ref.exported_tokens().iter().cloned().collect())
     }
 
-    pub fn get_modules_token(&self) -> Vec<String> {
+    pub fn module_tokens(&self) -> Vec<String> {
         self.modules.keys().cloned().collect::<Vec<String>>()
     }
 
-    pub fn get_ordered_modules_token(&self) -> Vec<String> {
+    pub fn ordered_module_tokens(&self) -> Vec<String> {
         let mut ordered_modules: Vec<String> = Vec::new();
         let mut visited: FxHashMap<String, bool> = FxHashMap::default();
 
@@ -559,7 +553,7 @@ impl Container {
                     continue;
                 }
 
-                let imported_modules = module.get_imported_modules();
+                let imported_modules = module.imported_modules();
                 let all_imports_processed = imported_modules
                     .iter()
                     .all(|import_token| visited.contains_key(import_token));
@@ -611,9 +605,9 @@ impl Container {
                 .get(module_token)
                 .ok_or_else(|| format!("Module not found: {}", module_token))?;
             (
-                module.get_metadata().is_global(),
-                module.get_metadata().identity().key(),
-                module.get_exports_instances_tokens().clone(),
+                module.metadata().is_global(),
+                module.metadata().identity().key(),
+                module.exported_instance_tokens().clone(),
             )
         };
 
@@ -685,11 +679,11 @@ impl Container {
     //     Ok(())
     // }
 
-    pub fn get_middleware_manager(&self) -> Option<&MiddlewareManager> {
+    pub fn middleware_manager(&self) -> Option<&MiddlewareManager> {
         self.middleware_manager.as_ref()
     }
 
-    pub fn get_middleware_manager_mut(&mut self) -> Option<&mut MiddlewareManager> {
+    pub fn middleware_manager_mut(&mut self) -> Option<&mut MiddlewareManager> {
         self.middleware_manager.as_mut()
     }
 
@@ -710,12 +704,12 @@ impl Container {
     }
 
     /// Get all APP_GUARD providers (after instances are created)
-    pub fn get_app_guard_providers(&self) -> &[(String, String)] {
+    pub fn app_guard_providers(&self) -> &[(String, String)] {
         &self.app_guard_providers
     }
 
     /// Get all APP_INTERCEPTOR providers (after instances are created)
-    pub fn get_app_interceptor_providers(&self) -> &[(String, String)] {
+    pub fn app_interceptor_providers(&self) -> &[(String, String)] {
         &self.app_interceptor_providers
     }
 
@@ -732,7 +726,7 @@ impl Container {
             .push((module_token, provider_token));
     }
 
-    pub fn get_multi_providers(&self) -> &FxHashMap<String, Vec<(String, String)>> {
+    pub fn multi_providers(&self) -> &FxHashMap<String, Vec<(String, String)>> {
         &self.multi_providers
     }
 

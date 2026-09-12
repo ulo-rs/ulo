@@ -35,7 +35,7 @@ impl UloApplicationContext {
         let token = token.to_string();
 
         container
-            .get_modules_token()
+            .module_tokens()
             .iter()
             .find_map(|module_token| {
                 container
@@ -113,7 +113,7 @@ impl UloApplicationContext {
         let exact = self
             .container
             .borrow()
-            .get_modules_token()
+            .module_tokens()
             .into_iter()
             .find(|key| key == id);
         let key = match exact {
@@ -126,7 +126,7 @@ impl UloApplicationContext {
     /// The key of the one module whose identity base is `base`.
     fn module_key_for_base(&self, base: &str) -> Result<String, ResolutionError> {
         let container = self.container.borrow();
-        let keys = container.get_modules_token();
+        let keys = container.module_tokens();
 
         let matches: Vec<&String> = keys
             .iter()
@@ -228,19 +228,19 @@ impl UloApplicationContext {
 
     pub(crate) async fn call_before_shutdown_hooks(&self, signal: Option<String>) {
         let container = self.container.borrow();
-        let modules = container.get_modules_token();
+        let modules = container.module_tokens();
 
         for module_token in modules.clone() {
             if let Some(module_ref) = container.get_module_by_token(&module_token) {
                 module_ref
-                    .get_metadata()
+                    .metadata()
                     .before_application_shutdown(signal.clone())
                     .await;
             }
         }
 
         for module_token in modules {
-            if let Ok(providers) = container.get_lifecycle_instances(&module_token) {
+            if let Ok(providers) = container.lifecycle_instances(&module_token) {
                 for provider in providers {
                     if provider.scope() == crate::ProviderScope::Request {
                         continue;
@@ -249,7 +249,7 @@ impl UloApplicationContext {
                 }
             }
             if let Some(module) = container.get_module_by_token(&module_token) {
-                for controller in module.get_controller_objects() {
+                for controller in module.controller_objects() {
                     controller.before_application_shutdown(signal.clone()).await;
                 }
             }
@@ -258,16 +258,16 @@ impl UloApplicationContext {
 
     pub(crate) async fn call_module_destroy_hooks(&self) {
         let container = self.container.borrow();
-        let modules = container.get_modules_token();
+        let modules = container.module_tokens();
 
         for module_token in modules.clone() {
             if let Some(module_ref) = container.get_module_by_token(&module_token) {
-                module_ref.get_metadata().on_module_destroy().await;
+                module_ref.metadata().on_module_destroy().await;
             }
         }
 
         for module_token in modules {
-            if let Ok(providers) = container.get_lifecycle_instances(&module_token) {
+            if let Ok(providers) = container.lifecycle_instances(&module_token) {
                 for provider in providers {
                     if provider.scope() == crate::ProviderScope::Request {
                         continue;
@@ -276,7 +276,7 @@ impl UloApplicationContext {
                 }
             }
             if let Some(module) = container.get_module_by_token(&module_token) {
-                for controller in module.get_controller_objects() {
+                for controller in module.controller_objects() {
                     controller.on_module_destroy().await;
                 }
             }
@@ -285,19 +285,19 @@ impl UloApplicationContext {
 
     pub(crate) async fn call_shutdown_hooks(&self, signal: Option<String>) {
         let container = self.container.borrow();
-        let modules = container.get_modules_token();
+        let modules = container.module_tokens();
 
         for module_token in modules.clone() {
             if let Some(module_ref) = container.get_module_by_token(&module_token) {
                 module_ref
-                    .get_metadata()
+                    .metadata()
                     .on_application_shutdown(signal.clone())
                     .await;
             }
         }
 
         for module_token in modules {
-            if let Ok(providers) = container.get_lifecycle_instances(&module_token) {
+            if let Ok(providers) = container.lifecycle_instances(&module_token) {
                 for provider in providers {
                     if provider.scope() == crate::ProviderScope::Request {
                         continue;
@@ -306,7 +306,7 @@ impl UloApplicationContext {
                 }
             }
             if let Some(module) = container.get_module_by_token(&module_token) {
-                for controller in module.get_controller_objects() {
+                for controller in module.controller_objects() {
                     controller.on_application_shutdown(signal.clone()).await;
                 }
             }

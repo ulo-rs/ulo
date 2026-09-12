@@ -205,7 +205,7 @@ impl ConnectionManager {
             .unwrap_or_default()
     }
 
-    pub fn get_all_clients(&self) -> Vec<ClientId> {
+    pub fn all_clients(&self) -> Vec<ClientId> {
         self.clients.read().keys().cloned().collect()
     }
 
@@ -461,11 +461,11 @@ impl BroadcastTarget {
 
     fn resolve_targets(&self) -> Vec<String> {
         let mut targets = match &self.target_type {
-            TargetType::All => self.manager.get_all_clients(),
+            TargetType::All => self.manager.all_clients(),
             TargetType::Room(room) => self.manager.get_room_clients(room),
             TargetType::Client(id) => vec![id.clone()],
             TargetType::Except(exclude_id) => {
-                let mut all = self.manager.get_all_clients();
+                let mut all = self.manager.all_clients();
                 all.retain(|id| id != exclude_id);
                 all
             }
@@ -508,7 +508,7 @@ mod tests {
             }
         }
 
-        fn get_sent(&self) -> Vec<WsMessage> {
+        fn sent(&self) -> Vec<WsMessage> {
             self.sent.read().clone()
         }
     }
@@ -541,9 +541,9 @@ mod tests {
         let bs = BroadcastService::new();
         let cm = bs.connection_manager();
         register_client(&bs, "client1", None);
-        assert_eq!(cm.get_all_clients().len(), 1);
+        assert_eq!(cm.all_clients().len(), 1);
         bs.disconnect("client1");
-        assert_eq!(cm.get_all_clients().len(), 0);
+        assert_eq!(cm.all_clients().len(), 0);
     }
 
     #[test]
@@ -588,9 +588,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(sent, 2);
-        assert_eq!(s1.get_sent().len(), 1);
-        assert_eq!(s2.get_sent().len(), 1);
-        assert_eq!(s3.get_sent().len(), 0);
+        assert_eq!(s1.sent().len(), 1);
+        assert_eq!(s2.sent().len(), 1);
+        assert_eq!(s3.sent().len(), 0);
     }
 
     #[tokio::test]
@@ -603,8 +603,8 @@ mod tests {
             .send(WsMessage::text("hello"))
             .await
             .unwrap();
-        assert_eq!(s1.get_sent().len(), 0);
-        assert_eq!(s2.get_sent().len(), 1);
+        assert_eq!(s1.sent().len(), 0);
+        assert_eq!(s2.sent().len(), 1);
     }
 
     #[tokio::test]
@@ -617,8 +617,8 @@ mod tests {
             .send(WsMessage::text("private"))
             .await
             .unwrap();
-        assert_eq!(s1.get_sent().len(), 1);
-        assert_eq!(s2.get_sent().len(), 0);
+        assert_eq!(s1.sent().len(), 1);
+        assert_eq!(s2.sent().len(), 0);
     }
 
     #[tokio::test]
@@ -638,8 +638,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(sent, 2);
-        assert_eq!(s1.get_sent().len(), 1);
-        assert_eq!(s2.get_sent().len(), 1);
-        assert_eq!(s3.get_sent().len(), 0);
+        assert_eq!(s1.sent().len(), 1);
+        assert_eq!(s2.sent().len(), 1);
+        assert_eq!(s3.sent().len(), 0);
     }
 }
