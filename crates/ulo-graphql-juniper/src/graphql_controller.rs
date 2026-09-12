@@ -316,7 +316,7 @@ where
 
         let service_any = self
             .graphql_service
-            .execute(vec![], ulo::ProviderContext::Http(ctx.clone()))
+            .resolve(ulo::ProviderContext::Http(ctx.clone()))
             .await;
 
         let service = service_any

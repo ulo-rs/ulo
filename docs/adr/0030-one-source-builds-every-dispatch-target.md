@@ -82,7 +82,7 @@ variant; nothing else in the resolution is per transport.
 The payload is gRPC's: `Arc<T>`, concrete. Lifecycle hooks reach the instance the same way on every
 transport, the per-request downcast goes, and RPC's side-carried `singleton` field goes with its
 `Clone` bound. Where a consumer needs erasure it coerces at its own boundary —
-`RpcControllerSource::instance` answers with `Arc<dyn RpcController>` — and the tonic wrapper,
+`RpcControllerSource::resolve` answers with `Arc<dyn RpcController>` — and the tonic wrapper,
 which needs the service itself, holds the source at the concrete type and is handed `Arc<T>`
 directly.
 

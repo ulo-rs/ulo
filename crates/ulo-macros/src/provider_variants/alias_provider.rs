@@ -72,12 +72,11 @@ pub fn handle_provider_alias(input: TokenStream) -> Result<TokenStream> {
                     self.target_provider.get_scope()
                 }
 
-                async fn execute(
+                async fn resolve(
                     &self,
-                    params: Vec<Box<dyn std::any::Any + Send>>,
                     ctx: ulo::ProviderContext,
                 ) -> Box<dyn std::any::Any + Send> {
-                    self.target_provider.execute(params, ctx).await
+                    self.target_provider.resolve(ctx).await
                 }
             }
 

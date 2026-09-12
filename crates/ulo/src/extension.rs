@@ -128,11 +128,7 @@ impl<T: Send + Sync + 'static> Provider for Extension<T> {
         crate::di::token_of::<Extension<T>>()
     }
 
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
+    async fn resolve(&self, ctx: ProviderContext) -> Box<dyn Any + Send> {
         let Some(bag) = ctx.extensions() else {
             panic!(
                 "Extension<{}> is request-scoped and cannot be resolved outside an execution",
@@ -157,11 +153,7 @@ impl Provider for Extensions {
         crate::di::token_of::<Extensions>()
     }
 
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
+    async fn resolve(&self, ctx: ProviderContext) -> Box<dyn Any + Send> {
         let Some(bag) = ctx.extensions() else {
             panic!("Extensions is request-scoped and cannot be resolved outside an execution");
         };

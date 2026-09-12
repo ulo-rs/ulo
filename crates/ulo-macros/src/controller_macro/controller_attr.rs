@@ -199,7 +199,7 @@ fn resolve_fields(dependencies: &DependencyInfo) -> (Vec<TokenStream>, Vec<Ident
                     #(
                         #idents = {
                             let __ctx = #ctx;
-                            let __any = __provider.execute(::std::vec::Vec::new(), __ctx).await;
+                            let __any = __provider.resolve(__ctx).await;
                             *__any.downcast::<#ty>().unwrap_or_else(|_| panic!(
                                 "Failed to downcast '{}' to {}", __lookup_token, stringify!(#ty)
                             ))
@@ -208,7 +208,7 @@ fn resolve_fields(dependencies: &DependencyInfo) -> (Vec<TokenStream>, Vec<Ident
                 } else {
                     let __shared: #ty = {
                         let __ctx = #ctx;
-                        let __any = __provider.execute(::std::vec::Vec::new(), __ctx).await;
+                        let __any = __provider.resolve(__ctx).await;
                         *__any.downcast::<#ty>().unwrap_or_else(|_| panic!(
                             "Failed to downcast '{}' to {}", __lookup_token, stringify!(#ty)
                         ))
@@ -237,7 +237,7 @@ fn resolve_one(name: &Ident, ty: &Type, token: &TokenStream) -> TokenStream {
                 "Missing dependency '{}' for field '{}'", __lookup_token, #name_str
             ));
             let __ctx = #ctx;
-            let __any = __provider.execute(::std::vec::Vec::new(), __ctx).await;
+            let __any = __provider.resolve(__ctx).await;
             *__any.downcast::<#ty>().unwrap_or_else(|_| panic!(
                 "Failed to downcast '{}' to {} for field '{}'",
                 __lookup_token, stringify!(#ty), #name_str

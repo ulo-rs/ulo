@@ -101,11 +101,7 @@ where
     Subscription: SubscriptionType + 'static,
     Ctx: ContextBuilder,
 {
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        _ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
         //Box::new(self.clone())
 
         let service: GraphQLService<Query, Mutation, Subscription, Ctx> = GraphQLService {

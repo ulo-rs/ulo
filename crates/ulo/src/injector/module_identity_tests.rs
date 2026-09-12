@@ -54,11 +54,7 @@ impl Provider for FakeProvider {
     fn get_token(&self) -> String {
         self.token.clone()
     }
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        _ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
         Box::new(0i32)
     }
 }

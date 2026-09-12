@@ -10,7 +10,7 @@ use super::provider_context::ProviderContext;
 /// call, or resolved per call from the target's own provider.
 ///
 /// One value of this type sits behind every dispatch target — HTTP controller, RPC
-/// controller, gRPC service — and [`instance`](DispatchSource::instance) is the one
+/// controller, gRPC service — and [`resolve`](DispatchSource::resolve) is the one
 /// resolution path. The transports differ only in where they call it and which
 /// [`ProviderContext`] variant they pass.
 pub enum DispatchSource<T> {
@@ -36,12 +36,12 @@ impl<T> Clone for DispatchSource<T> {
 }
 
 impl<T: Any + Send + Sync> DispatchSource<T> {
-    /// The instance serving the execution `ctx` belongs to.
-    pub async fn instance(&self, ctx: ProviderContext) -> Arc<T> {
+    /// Resolve the instance serving the execution `ctx` belongs to.
+    pub async fn resolve(&self, ctx: ProviderContext) -> Arc<T> {
         match self {
             Self::Singleton(instance) => instance.clone(),
             Self::PerCall(provider) => {
-                let any = provider.execute(vec![], ctx).await;
+                let any = provider.resolve(ctx).await;
                 *any.downcast::<Arc<T>>().unwrap_or_else(|_| {
                     panic!(
                         "dispatch target '{}' resolved to a different type",

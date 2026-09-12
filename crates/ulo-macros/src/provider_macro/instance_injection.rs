@@ -359,9 +359,8 @@ fn generate_singleton_provider(
 
         #[::ulo::async_trait]
         impl ::ulo::traits_helpers::Provider for #provider_name {
-            async fn execute(
+            async fn resolve(
                 &self,
-                _params: Vec<Box<dyn ::std::any::Any + Send>>,
                 _ctx: ::ulo::ProviderContext,
             ) -> Box<dyn ::std::any::Any + Send> {
                 Box::new((*self.instance).clone())
@@ -508,9 +507,8 @@ fn generate_request_provider(
 
         #[::ulo::async_trait]
         impl ::ulo::traits_helpers::Provider for #provider_name {
-            async fn execute(
+            async fn resolve(
                 &self,
-                _params: Vec<Box<dyn ::std::any::Any + Send>>,
                 _ctx: ::ulo::ProviderContext,
             ) -> Box<dyn ::std::any::Any + Send> {
                 #execute_body
@@ -687,9 +685,8 @@ pub(crate) fn generate_dispatch_provider(
 
         #[::ulo::async_trait]
         impl ::ulo::traits_helpers::Provider for #provider_name {
-            async fn execute(
+            async fn resolve(
                 &self,
-                _params: Vec<Box<dyn ::std::any::Any + Send>>,
                 _ctx: ::ulo::ProviderContext,
             ) -> Box<dyn ::std::any::Any + Send> {
                 let __exec_ctx = _ctx;
@@ -800,9 +797,8 @@ fn generate_transient_provider(
 
         #[::ulo::async_trait]
         impl ::ulo::traits_helpers::Provider for #provider_name {
-            async fn execute(
+            async fn resolve(
                 &self,
-                _params: Vec<Box<dyn ::std::any::Any + Send>>,
                 _ctx: ::ulo::ProviderContext,
             ) -> Box<dyn ::std::any::Any + Send> {
                 // Build via the `#[new]` constructor when one exists, else by field injection.
@@ -866,7 +862,7 @@ fn generate_field_resolutions(dependencies: &DependencyInfo) -> (Vec<TokenStream
                         "Missing multi-provider '{}' for field '{}'",
                         __lookup_token, #field_name_str
                     ));
-                let any_box = provider.execute(vec![], __exec_ctx.clone()).await;
+                let any_box = provider.resolve(__exec_ctx.clone()).await;
                 let erased_items = *any_box
                     .downcast::<Vec<::std::sync::Arc<dyn ::std::any::Any + Send + Sync>>>()
                     .unwrap_or_else(|_| panic!(
@@ -919,7 +915,7 @@ fn generate_field_resolutions(dependencies: &DependencyInfo) -> (Vec<TokenStream
                             __lookup_token, #field_name_str
                         ));
 
-                    let any_box = provider.execute(vec![], __exec_ctx.clone()).await;
+                    let any_box = provider.resolve(__exec_ctx.clone()).await;
 
                     *any_box.downcast::<#full_type>()
                         .unwrap_or_else(|_| panic!(
@@ -962,7 +958,7 @@ fn generate_field_resolutions(dependencies: &DependencyInfo) -> (Vec<TokenStream
                 if matches!(provider.get_scope(), ::ulo::ProviderScope::Transient) {
                     #(
                         #field_idents = {
-                            let any_box = provider.execute(vec![], __exec_ctx.clone()).await;
+                            let any_box = provider.resolve(__exec_ctx.clone()).await;
                             *any_box.downcast::<#full_type>()
                                 .unwrap_or_else(|_| panic!(
                                     "Failed to downcast '{}' to {}",
@@ -973,7 +969,7 @@ fn generate_field_resolutions(dependencies: &DependencyInfo) -> (Vec<TokenStream
                     )*
                 } else {
                     let #temp_var: #full_type = {
-                        let any_box = provider.execute(vec![], __exec_ctx.clone()).await;
+                        let any_box = provider.resolve(__exec_ctx.clone()).await;
                         *any_box.downcast::<#full_type>()
                             .unwrap_or_else(|_| panic!(
                                 "Failed to downcast '{}' to {}",
@@ -1031,7 +1027,7 @@ fn generate_factory_field_resolutions(
                         "Missing multi-provider '{}' for field '{}'",
                         __lookup_token, #field_name_str
                     ));
-                let any_box = provider.execute(vec![], ::ulo::ProviderContext::None).await;
+                let any_box = provider.resolve(::ulo::ProviderContext::None).await;
                 let erased_items = *any_box
                     .downcast::<Vec<::std::sync::Arc<dyn ::std::any::Any + Send + Sync>>>()
                     .unwrap_or_else(|_| panic!(
@@ -1084,7 +1080,7 @@ fn generate_factory_field_resolutions(
                             __lookup_token, #field_name_str
                         ));
 
-                    let any_box = provider.execute(vec![], ::ulo::ProviderContext::None).await;
+                    let any_box = provider.resolve(::ulo::ProviderContext::None).await;
 
                     *any_box.downcast::<#full_type>()
                         .unwrap_or_else(|_| panic!(
@@ -1127,7 +1123,7 @@ fn generate_factory_field_resolutions(
                 if matches!(provider.get_scope(), ::ulo::ProviderScope::Transient) {
                     #(
                         #field_idents = {
-                            let any_box = provider.execute(vec![], ::ulo::ProviderContext::None).await;
+                            let any_box = provider.resolve(::ulo::ProviderContext::None).await;
                             *any_box.downcast::<#full_type>()
                                 .unwrap_or_else(|_| panic!(
                                     "Failed to downcast '{}' to {}",
@@ -1138,7 +1134,7 @@ fn generate_factory_field_resolutions(
                     )*
                 } else {
                     let #temp_var: #full_type = {
-                        let any_box = provider.execute(vec![], ::ulo::ProviderContext::None).await;
+                        let any_box = provider.resolve(::ulo::ProviderContext::None).await;
                         *any_box.downcast::<#full_type>()
                             .unwrap_or_else(|_| panic!(
                                 "Failed to downcast '{}' to {}",
@@ -1572,7 +1568,7 @@ fn generate_create_field_resolutions(
                 } else {
                     ::ulo::ProviderContext::None
                 };
-                let __any_box = __provider.execute(::std::vec::Vec::new(), __ctx).await;
+                let __any_box = __provider.resolve(__ctx).await;
                 let erased_items = *__any_box
                     .downcast::<Vec<::std::sync::Arc<dyn ::std::any::Any + Send + Sync>>>()
                     .unwrap_or_else(|_| panic!(
@@ -1611,7 +1607,7 @@ fn generate_create_field_resolutions(
                 } else {
                     ::ulo::ProviderContext::None
                 };
-                let __any_box = __provider.execute(::std::vec::Vec::new(), __ctx).await;
+                let __any_box = __provider.resolve(__ctx).await;
                 *__any_box.downcast::<#full_type>()
                     .unwrap_or_else(|_| panic!(
                         "Failed to downcast '{}' to {}",

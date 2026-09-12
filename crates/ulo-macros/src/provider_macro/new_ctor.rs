@@ -134,7 +134,7 @@ fn resolve_param(name: &Ident, ty: &Type, token: &TokenStream) -> TokenStream {
                 ::ulo::ProviderContext::None
             };
             let __any = __provider
-                .execute(::std::vec::Vec::new(), __ctx)
+                .resolve(__ctx)
                 .await;
             *__any.downcast::<#ty>().unwrap_or_else(|_| panic!(
                 "Failed to downcast '{}' to {} for #[new] parameter '{}'",

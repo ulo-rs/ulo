@@ -86,11 +86,7 @@ impl Provider for SeaOrmConnectionProvider {
         self.token.clone()
     }
 
-    async fn execute(
-        &self,
-        _params: Vec<Box<dyn Any + Send>>,
-        _ctx: ProviderContext,
-    ) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
         // DatabaseConnection is Clone — it wraps a connection pool internally.
         let db = self
             .db
