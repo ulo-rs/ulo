@@ -15,18 +15,25 @@ use crate::http_helpers::{HttpRequest, RequestBody, RequestBoxBody};
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use ulo::BodyStream;
-/// use futures::StreamExt;
+/// ```rust
+/// use ulo::futures::{StreamExt, pin_mut};
+/// use ulo::{Body, BodyStream, controller, post, routes};
 ///
-/// #[post("/upload")]
-/// async fn upload(&self, stream: BodyStream) -> UloBody {
-///     let mut total = 0usize;
-///     let mut s = stream.into_stream();
-///     while let Some(chunk) = s.next().await {
-///         total += chunk.unwrap().len();
+/// #[controller("/files")]
+/// pub struct Uploads {}
+///
+/// #[routes]
+/// impl Uploads {
+///     #[post("/upload")]
+///     async fn upload(&self, stream: BodyStream) -> Body {
+///         let mut total = 0usize;
+///         let s = stream.into_stream();
+///         pin_mut!(s);
+///         while let Some(chunk) = s.next().await {
+///             total += chunk.unwrap().len();
+///         }
+///         Body::text(format!("received {} bytes", total))
 ///     }
-///     UloBody::text(format!("received {} bytes", total))
 /// }
 /// ```
 pub struct BodyStream(pub(crate) RequestBoxBody);

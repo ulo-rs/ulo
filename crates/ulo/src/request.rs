@@ -6,7 +6,9 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
+//! use ulo::{Body, Request, controller, get, routes};
+//!
 //! #[controller("/users")]
 //! pub struct UserController {
 //!     #[inject]
@@ -16,10 +18,10 @@
 //! #[routes]
 //! impl UserController {
 //!     #[get("/me")]
-//!     fn get_current_user(&self) -> UloBody {
+//!     fn get_current_user(&self) -> Body {
 //!         let method = self.request.method();
 //!         let uri = self.request.uri();
-//!         UloBody::text(format!("Method: {}, URI: {}", method, uri))
+//!         Body::text(format!("Method: {}, URI: {}", method, uri))
 //!     }
 //! }
 //! ```

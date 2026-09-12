@@ -11,7 +11,7 @@
 use ulo::async_trait;
 use ulo::context::HttpContext;
 use ulo::traits_helpers::Guard;
-use ulo::{Body as UloBody, RequestPart, controller, get, injectable, module, routes, use_guards};
+use ulo::{Body, RequestPart, controller, get, injectable, module, routes, use_guards};
 
 use crate::common::TestServer;
 use serial_test::serial;
@@ -65,14 +65,14 @@ pub struct ApiController;
 impl ApiController {
     #[get("/admin")]
     #[use_guards(AdminGuard)]
-    fn admin(&self) -> UloBody {
-        UloBody::text("admin ok".to_string())
+    fn admin(&self) -> Body {
+        Body::text("admin ok".to_string())
     }
 
     #[get("/scoped")]
     #[use_guards(RequestScopedGuard)]
-    fn scoped(&self) -> UloBody {
-        UloBody::text("scoped ok".to_string())
+    fn scoped(&self) -> Body {
+        Body::text("scoped ok".to_string())
     }
 }
 

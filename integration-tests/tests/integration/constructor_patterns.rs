@@ -6,7 +6,7 @@
 //! macro emits. The parameter case is the one field injection cannot express.
 use crate::common::TestServer;
 use std::time::Duration;
-use ulo::{Body as UloBody, controller, get, injectable, module, new, provide, routes};
+use ulo::{Body, controller, get, injectable, module, new, provide, routes};
 
 #[tokio_localset_test::localset_test]
 async fn provider_constructor_patterns() {
@@ -115,8 +115,8 @@ async fn provider_constructor_patterns() {
     #[routes]
     impl ProviderTestController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(format!(
+        fn test(&self) -> Body {
+            Body::text(format!(
                 "{}|{}|{}|{}|{}",
                 self.base.get_value(),
                 self.auto.get_value(),
@@ -184,8 +184,8 @@ async fn controller_constructor_patterns() {
         }
 
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(format!("auto: {}", self.data_value))
+        fn test(&self) -> Body {
+            Body::text(format!("auto: {}", self.data_value))
         }
     }
 
@@ -204,8 +204,8 @@ async fn controller_constructor_patterns() {
         }
 
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(self.combined.clone())
+        fn test(&self) -> Body {
+            Body::text(self.combined.clone())
         }
     }
 
@@ -218,8 +218,8 @@ async fn controller_constructor_patterns() {
     #[routes]
     impl DefaultFallbackController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(format!("name='{}', count={}", self.name, self.count))
+        fn test(&self) -> Body {
+            Body::text(format!("name='{}', count={}", self.name, self.count))
         }
     }
 
@@ -338,8 +338,8 @@ async fn constructor_param_injection_patterns() {
     #[routes]
     impl BasicParamController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(self.service.get_data(&self.db))
+        fn test(&self) -> Body {
+            Body::text(self.service.get_data(&self.db))
         }
     }
 
@@ -354,8 +354,8 @@ async fn constructor_param_injection_patterns() {
     #[routes]
     impl TokenParamController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(self.service.get_data(&self.db))
+        fn test(&self) -> Body {
+            Body::text(self.service.get_data(&self.db))
         }
     }
 
@@ -372,8 +372,8 @@ async fn constructor_param_injection_patterns() {
     #[routes]
     impl MixedParamController {
         #[get("/test")]
-        fn test(&self) -> UloBody {
-            UloBody::text(self.service.get_info(&self.config, &self.cache))
+        fn test(&self) -> Body {
+            Body::text(self.service.get_info(&self.config, &self.cache))
         }
     }
 

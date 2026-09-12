@@ -35,7 +35,7 @@ use ulo::websocket::{
     WsMessage,
 };
 
-use ulo::{Body as UloBody, controller, module, post, routes};
+use ulo::{Body, controller, module, post, routes};
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{new, on_connect, subscriptions, websocket_gateway};
 use ulo_ws_tungstenite::TungsteniteAdapter;
@@ -307,9 +307,9 @@ pub struct TriggerController {
 #[routes]
 impl TriggerController {
     #[post("/")]
-    async fn trigger(&self) -> UloBody {
+    async fn trigger(&self) -> Body {
         self.gateway.push("server_push").await;
-        UloBody::text("ok".to_string())
+        Body::text("ok".to_string())
     }
 }
 

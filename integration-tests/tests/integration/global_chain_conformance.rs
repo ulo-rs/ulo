@@ -18,7 +18,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::{Body as UloBody, UloFactory, async_trait, controller, get, module, routes};
+use ulo::{Body, UloFactory, async_trait, controller, get, module, routes};
 
 use crate::common::TestServer;
 
@@ -97,15 +97,15 @@ pub struct ConformanceController {}
 #[routes]
 impl ConformanceController {
     #[get("/probe")]
-    fn probe(&self) -> UloBody {
+    fn probe(&self) -> Body {
         track("handler:probe");
-        UloBody::text("probe")
+        Body::text("probe")
     }
 
     #[get("/alpha")]
-    fn alpha(&self) -> UloBody {
+    fn alpha(&self) -> Body {
         track("handler:alpha");
-        UloBody::text("alpha")
+        Body::text("alpha")
     }
 }
 

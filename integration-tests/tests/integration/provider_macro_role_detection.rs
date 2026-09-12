@@ -11,9 +11,7 @@
 use ulo::async_trait;
 use ulo::context::HttpContext;
 use ulo::traits_helpers::Guard;
-use ulo::{
-    Body as UloBody, controller, get, module, provider_factory, provider_value, routes, use_guards,
-};
+use ulo::{Body, controller, get, module, provider_factory, provider_value, routes, use_guards};
 
 use crate::common::TestServer;
 use serial_test::serial;
@@ -48,14 +46,14 @@ pub struct GuardedController;
 impl GuardedController {
     #[get("/value")]
     #[use_guards("VALUE_GUARD")]
-    fn value_route(&self) -> UloBody {
-        UloBody::text("value ok".to_string())
+    fn value_route(&self) -> Body {
+        Body::text("value ok".to_string())
     }
 
     #[get("/factory")]
     #[use_guards("FACTORY_GUARD")]
-    fn factory_route(&self) -> UloBody {
-        UloBody::text("factory ok".to_string())
+    fn factory_route(&self) -> Body {
+        Body::text("factory ok".to_string())
     }
 }
 

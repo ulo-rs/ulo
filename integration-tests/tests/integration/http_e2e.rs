@@ -9,8 +9,7 @@ use crate::common::TestServer;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use ulo::{
-    Body as UloBody, Request, controller, extractors::Json, get, injectable, module, new, post,
-    routes,
+    Body, Request, controller, extractors::Json, get, injectable, module, new, post, routes,
 };
 use ulo_config::{Config, ConfigModule, ConfigService};
 
@@ -41,9 +40,9 @@ async fn async_controller_methods_with_http_server() {
     #[routes]
     impl TestController {
         #[get("/async")]
-        async fn async_endpoint(&self) -> UloBody {
+        async fn async_endpoint(&self) -> Body {
             let result = self.service.process().await;
-            UloBody::text(result)
+            Body::text(result)
         }
     }
 
@@ -75,8 +74,8 @@ async fn config_service_injection_in_controllers() {
     #[routes]
     impl TestController {
         #[get("/env")]
-        fn get_env(&self) -> UloBody {
-            UloBody::text(self.config.get_ref().env.clone())
+        fn get_env(&self) -> Body {
+            Body::text(self.config.get_ref().env.clone())
         }
     }
 
@@ -115,8 +114,8 @@ async fn singleton_controllers_share_state() {
         }
 
         #[get("/id")]
-        fn get_id(&self) -> UloBody {
-            UloBody::text(format!("{}", self.instance_id))
+        fn get_id(&self) -> Body {
+            Body::text(format!("{}", self.instance_id))
         }
     }
 
@@ -156,8 +155,8 @@ async fn request_scoped_controllers_create_per_request() {
         }
 
         #[get("/id")]
-        fn get_id(&self) -> UloBody {
-            UloBody::text(format!("{}", self.request_id))
+        fn get_id(&self) -> Body {
+            Body::text(format!("{}", self.request_id))
         }
     }
 
@@ -194,9 +193,9 @@ async fn optional_request_extractor() {
     #[routes]
     impl TestController {
         #[get("/headers")]
-        fn get_headers(&self, req: Request) -> UloBody {
+        fn get_headers(&self, req: Request) -> Body {
             let has_header = req.header("X-Test-Header").is_some();
-            UloBody::text(format!("{}", has_header))
+            Body::text(format!("{}", has_header))
         }
     }
 
@@ -229,9 +228,9 @@ async fn json_body_and_request_extraction() {
     #[routes]
     impl TestController {
         #[post("/users")]
-        fn create_user(&self, Json(user): Json<CreateUser>, req: Request) -> UloBody {
+        fn create_user(&self, Json(user): Json<CreateUser>, req: Request) -> Body {
             let content_type = req.header("content-type").unwrap_or("unknown");
-            UloBody::text(format!("created {} ({})", user.name, content_type))
+            Body::text(format!("created {} ({})", user.name, content_type))
         }
     }
 
@@ -285,11 +284,11 @@ async fn request_extensions_pattern() {
     #[routes]
     impl TestController {
         #[get("/user")]
-        fn get_user(&self, req: Request) -> UloBody {
+        fn get_user(&self, req: Request) -> Body {
             let user_id = req.extensions().get::<UserId>();
             match user_id {
-                Some(id) => UloBody::text(id.0.clone()),
-                None => UloBody::text("no_user".to_string()),
+                Some(id) => Body::text(id.0.clone()),
+                None => Body::text("no_user".to_string()),
             }
         }
     }

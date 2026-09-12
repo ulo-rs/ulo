@@ -353,7 +353,7 @@ pub fn use_error_handlers(_attr: TokenStream, item: TokenStream) -> TokenStream 
 /// // Attach to route
 /// #[set_metadata(Roles(vec!["admin", "moderator"]))]
 /// #[get("/admin")]
-/// fn admin_panel(&self) -> UloBody { ... }
+/// fn admin_panel(&self) -> Body { ... }
 ///
 /// // Read in guard
 /// #[async_trait]
@@ -375,7 +375,7 @@ pub fn use_error_handlers(_attr: TokenStream, item: TokenStream) -> TokenStream 
 /// #[set_metadata(Roles(vec!["user"]))]
 /// #[set_metadata(RateLimit { max: 100, window: 60 })]
 /// #[get("/api/data")]
-/// fn get_data(&self) -> UloBody { ... }
+/// fn get_data(&self) -> Body { ... }
 /// ```
 ///
 /// # Two levels
@@ -390,12 +390,12 @@ pub fn use_error_handlers(_attr: TokenStream, item: TokenStream) -> TokenStream 
 /// impl Reports {
 ///     // reads Tier("standard") and Audience("internal")
 ///     #[get("/summary")]
-///     fn summary(&self) -> UloBody { ... }
+///     fn summary(&self) -> Body { ... }
 ///
 ///     // reads Tier("premium") and Audience("internal")
 ///     #[get("/full")]
 ///     #[set_metadata(Tier("premium"))]
-///     fn full(&self) -> UloBody { ... }
+///     fn full(&self) -> Body { ... }
 /// }
 /// ```
 ///

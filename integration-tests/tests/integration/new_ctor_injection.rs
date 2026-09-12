@@ -9,9 +9,7 @@ use std::sync::Arc;
 use ulo::async_trait;
 use ulo::context::HttpContext;
 use ulo::traits_helpers::Guard;
-use ulo::{
-    Body as UloBody, UloFactory, controller, get, injectable, module, new, routes, use_guards,
-};
+use ulo::{Body, UloFactory, controller, get, injectable, module, new, routes, use_guards};
 
 use crate::common::TestServer;
 use serial_test::serial;
@@ -186,8 +184,8 @@ pub struct ApiController;
 impl ApiController {
     #[get("/guarded")]
     #[use_guards(PortGuard)]
-    fn guarded(&self) -> UloBody {
-        UloBody::text("ok".to_string())
+    fn guarded(&self) -> Body {
+        Body::text("ok".to_string())
     }
 }
 
@@ -204,15 +202,15 @@ pub struct ReqController {
 #[routes]
 impl ReqController {
     #[get("/port")]
-    fn port(&self) -> UloBody {
-        UloBody::text(self.server.port().to_string())
+    fn port(&self) -> Body {
+        Body::text(self.server.port().to_string())
     }
 
     // ReqFacade was built via #[new] injecting the request-scoped ReqServer — exercises the
     // request-context threading through the constructor bridge.
     #[get("/facade-port")]
-    fn facade_port(&self) -> UloBody {
-        UloBody::text(self.facade.port().to_string())
+    fn facade_port(&self) -> Body {
+        Body::text(self.facade.port().to_string())
     }
 }
 

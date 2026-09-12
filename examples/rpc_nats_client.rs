@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use ulo::extractors::Payload;
 use ulo::{
-    Body as UloBody, RpcClient, UloFactory, controller,
+    Body, RpcClient, UloFactory, controller,
     extractors::{Json, Query},
     get, injectable, module, post, routes,
 };
@@ -131,7 +131,7 @@ pub struct OrdersHttpController {
 #[routes]
 impl OrdersHttpController {
     #[get("/create")]
-    async fn create_order(&self, Query(params): Query<CreateOrderDto>) -> UloBody {
+    async fn create_order(&self, Query(params): Query<CreateOrderDto>) -> Body {
         println!(
             "[HTTP] GET /order/create → calling order.create via RpcClient (item={}, qty={})",
             params.item, params.qty
@@ -143,13 +143,13 @@ impl OrdersHttpController {
             .send_json::<_, serde_json::Value>("order.create", &req_dto)
             .await
         {
-            Ok(order) => UloBody::json(order),
-            Err(e) => UloBody::json(json!({ "error": e.to_string() })),
+            Ok(order) => Body::json(order),
+            Err(e) => Body::json(json!({ "error": e.to_string() })),
         }
     }
 
     #[post("/ship")]
-    async fn ship_order(&self, Json(payload): Json<serde_json::Value>) -> UloBody {
+    async fn ship_order(&self, Json(payload): Json<serde_json::Value>) -> Body {
         let order_id = payload["order_id"].as_u64().unwrap_or(0);
         println!(
             "[HTTP] POST /order/ship → emitting order.shipped for order_id={} via RpcClient",
@@ -157,8 +157,8 @@ impl OrdersHttpController {
         );
 
         match self.client.emit_json("order.shipped", &payload).await {
-            Ok(()) => UloBody::json(json!({ "status": "accepted" })),
-            Err(e) => UloBody::json(json!({ "error": e.to_string() })),
+            Ok(()) => Body::json(json!({ "status": "accepted" })),
+            Err(e) => Body::json(json!({ "error": e.to_string() })),
         }
     }
 }

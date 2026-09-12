@@ -6,7 +6,7 @@
 //! got the wrong one fails on the body it cannot read.
 use crate::common::TestServer;
 use serde::Deserialize;
-use ulo::{Body as UloBody, Request, controller, extractors::Json, get, module, post, routes};
+use ulo::{Body, Request, controller, extractors::Json, get, module, post, routes};
 
 #[derive(Debug, Deserialize)]
 struct CreateDto {
@@ -19,42 +19,42 @@ pub struct RequestExtractorController;
 #[routes]
 impl RequestExtractorController {
     #[get("/hello")]
-    fn hello(&self) -> UloBody {
-        UloBody::text("Hello, World!".to_string())
+    fn hello(&self) -> Body {
+        Body::text("Hello, World!".to_string())
     }
 
     #[get("/info")]
-    fn get_info(&self, req: Request) -> UloBody {
+    fn get_info(&self, req: Request) -> Body {
         let method = req.method();
         let uri = req.uri();
-        UloBody::text(format!("Method: {}, URI: {}", method, uri))
+        Body::text(format!("Method: {}, URI: {}", method, uri))
     }
 
     #[post("/create")]
-    fn create(&self, Json(dto): Json<CreateDto>, req: Request) -> UloBody {
+    fn create(&self, Json(dto): Json<CreateDto>, req: Request) -> Body {
         let content_type = req.header("content-type").unwrap_or("unknown");
-        UloBody::text(format!(
+        Body::text(format!(
             "Created {} with content-type: {}",
             dto.name, content_type
         ))
     }
 
     #[get("/protected")]
-    fn protected(&self, req: Request) -> UloBody {
+    fn protected(&self, req: Request) -> Body {
         match req.header("authorization") {
-            Some(auth) => UloBody::text(format!("Authorized: {}", auth)),
-            None => UloBody::text("Unauthorized".to_string()),
+            Some(auth) => Body::text(format!("Authorized: {}", auth)),
+            None => Body::text("Unauthorized".to_string()),
         }
     }
 
     #[get("/search")]
-    fn search(&self, req: Request) -> UloBody {
+    fn search(&self, req: Request) -> Body {
         let q = req
             .query_params()
             .get("q")
             .map(|s| s.as_str())
             .unwrap_or("");
-        UloBody::text(format!("Searching for: {}", q))
+        Body::text(format!("Searching for: {}", q))
     }
 }
 

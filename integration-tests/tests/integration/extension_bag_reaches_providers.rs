@@ -8,7 +8,7 @@
 //! claim that still passes when scope is wrong, since a singleton returns
 //! whichever request populated it first.
 
-use ulo::{Body as UloBody, Request, UloFactory, controller, get, injectable, module, new, routes};
+use ulo::{Body, Request, UloFactory, controller, get, injectable, module, new, routes};
 
 // ===== 1. Define types to store in extensions =====
 
@@ -96,25 +96,25 @@ pub struct UserController {
 #[routes]
 impl UserController {
     #[get("/me")]
-    fn get_current_user(&self) -> UloBody {
+    fn get_current_user(&self) -> Body {
         // No manual extraction! Context is already populated
         let user_id = self.context.get_user_id();
         let request_id = self.context.get_request_id();
 
         let data = self.user_service.get_user_data(user_id);
 
-        UloBody::text(format!(
+        Body::text(format!(
             "Request ID: {}\nUser: {}\nData: {}",
             request_id, user_id, data
         ))
     }
 
     #[get("/protected")]
-    fn protected_route(&self) -> UloBody {
+    fn protected_route(&self) -> Body {
         // Easy auth check
         match self.context.require_auth() {
-            Ok(user_id) => UloBody::text(format!("Protected data for user: {}", user_id)),
-            Err(msg) => UloBody::text(msg.to_string()),
+            Ok(user_id) => Body::text(format!("Protected data for user: {}", user_id)),
+            Err(msg) => Body::text(msg.to_string()),
         }
     }
 }

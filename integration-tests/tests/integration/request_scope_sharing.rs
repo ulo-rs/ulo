@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ulo::async_trait;
 use ulo::context::HttpContext;
 use ulo::traits_helpers::Guard;
-use ulo::{Body as UloBody, controller, get, injectable, module, new, routes};
+use ulo::{Body, controller, get, injectable, module, new, routes};
 
 use crate::common::TestServer;
 
@@ -57,8 +57,8 @@ pub struct ScopeController {
 #[use_guards(RecordingGuard)]
 impl ScopeController {
     #[get("/id")]
-    fn id(&self) -> UloBody {
-        UloBody::text(self.request_id.id.to_string())
+    fn id(&self) -> Body {
+        Body::text(self.request_id.id.to_string())
     }
 }
 

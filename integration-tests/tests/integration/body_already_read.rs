@@ -13,7 +13,7 @@
 
 use ulo::context::HttpContext;
 use ulo::extractors::{FromContext, take_body};
-use ulo::{Body as UloBody, controller, module, post, routes};
+use ulo::{Body, controller, module, post, routes};
 
 use crate::common::TestServer;
 
@@ -41,13 +41,13 @@ pub struct QuietController {}
 impl QuietController {
     /// Two uncounted body readers. This compiles, which is the point.
     #[post("/twice")]
-    async fn twice(&self, first: QuietBodyReader, second: QuietBodyReader) -> UloBody {
-        UloBody::text(format!("{}/{}", first.0, second.0))
+    async fn twice(&self, first: QuietBodyReader, second: QuietBodyReader) -> Body {
+        Body::text(format!("{}/{}", first.0, second.0))
     }
 
     #[post("/once")]
-    async fn once(&self, only: QuietBodyReader) -> UloBody {
-        UloBody::text(only.0.to_string())
+    async fn once(&self, only: QuietBodyReader) -> Body {
+        Body::text(only.0.to_string())
     }
 }
 

@@ -10,7 +10,7 @@
 
 use std::fmt;
 use ulo::context::HttpContext;
-use ulo::http_helpers::Body as UloBody;
+use ulo::http_helpers::Body;
 use ulo::{FromContext, controller, get, module, routes};
 
 /// ## 4. ClientIp Extractor
@@ -145,22 +145,22 @@ pub struct MetadataController {}
 impl MetadataController {
     /// Example 4: Extract client IP
     #[get("/ip")]
-    fn get_ip(&self, ClientIp(ip): ClientIp) -> UloBody {
-        UloBody::text(format!("Your IP: {}", ip))
+    fn get_ip(&self, ClientIp(ip): ClientIp) -> Body {
+        Body::text(format!("Your IP: {}", ip))
     }
 
     /// Example 5: Extract user agent
     #[get("/user-agent")]
-    fn get_user_agent(&self, UserAgent(ua): UserAgent) -> UloBody {
-        UloBody::json(serde_json::json!({
+    fn get_user_agent(&self, UserAgent(ua): UserAgent) -> Body {
+        Body::json(serde_json::json!({
             "userAgent": ua
         }))
     }
 
     /// Example 6: Extract request ID for tracing
     #[get("/trace")]
-    fn trace(&self, RequestId(id): RequestId) -> UloBody {
-        UloBody::json(serde_json::json!({
+    fn trace(&self, RequestId(id): RequestId) -> Body {
+        Body::json(serde_json::json!({
             "requestId": id,
             "message": "Use this ID for request tracing"
         }))

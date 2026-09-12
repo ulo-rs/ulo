@@ -9,8 +9,7 @@ use ulo::http_helpers::HttpResponse;
 use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext};
 use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
-    Body as UloBody, Request, controller, get, injectable, module, routes, use_guards,
-    use_interceptors,
+    Body, Request, controller, get, injectable, module, routes, use_guards, use_interceptors,
 };
 use ulo_macros::{new, subscriptions, websocket_gateway};
 
@@ -77,8 +76,8 @@ pub struct GateController {}
 #[use_guards(RequestGuard)]
 impl GateController {
     #[get("/check")]
-    fn check(&self) -> UloBody {
-        UloBody::text("passed".to_string())
+    fn check(&self) -> Body {
+        Body::text("passed".to_string())
     }
 }
 
@@ -89,8 +88,8 @@ pub struct SecretController {}
 #[use_guards(HeaderGuard)]
 impl SecretController {
     #[get("/unlock")]
-    fn unlock(&self) -> UloBody {
-        UloBody::text("unlocked".to_string())
+    fn unlock(&self) -> Body {
+        Body::text("unlocked".to_string())
     }
 }
 
@@ -101,8 +100,8 @@ pub struct TransientController {}
 #[use_interceptors(TransientInterceptor)]
 impl TransientController {
     #[get("/ping")]
-    fn ping(&self) -> UloBody {
-        UloBody::text("pong".to_string())
+    fn ping(&self) -> Body {
+        Body::text("pong".to_string())
     }
 }
 

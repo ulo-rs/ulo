@@ -9,7 +9,7 @@
 use crate::common::TestServer;
 use serde::Deserialize;
 use ulo::{
-    Body as UloBody, controller,
+    Body, controller,
     extractors::{Bytes as RenamedBytes, Json, Path, Query, Validated},
     get, module, post, routes,
 };
@@ -33,19 +33,19 @@ pub struct ExtractorController;
 #[routes]
 impl ExtractorController {
     #[get("/search")]
-    fn search(&self, Query(params): Query<SearchParams>) -> UloBody {
+    fn search(&self, Query(params): Query<SearchParams>) -> Body {
         let limit = params.limit.unwrap_or(10);
-        UloBody::text(format!("Searching for '{}' with limit {}", params.q, limit))
+        Body::text(format!("Searching for '{}' with limit {}", params.q, limit))
     }
 
     #[post("/users")]
-    fn create_user(&self, Json(dto): Json<CreateUserDto>) -> UloBody {
-        UloBody::text(format!("Created user: {} <{}>", dto.name, dto.email))
+    fn create_user(&self, Json(dto): Json<CreateUserDto>) -> Body {
+        Body::text(format!("Created user: {} <{}>", dto.name, dto.email))
     }
 
     #[post("/echo")]
-    fn echo_json(&self, body: Json<serde_json::Value>) -> UloBody {
-        UloBody::json(body.into_inner())
+    fn echo_json(&self, body: Json<serde_json::Value>) -> Body {
+        Body::json(body.into_inner())
     }
 
     /// Verifies the controller macro routes an aliased import of a body-consuming
@@ -53,13 +53,13 @@ impl ExtractorController {
     /// `Unknown` parts-only branch. Without the fix, `body.0` would always be
     /// empty here regardless of what the client sent.
     #[post("/aliased-bytes")]
-    fn aliased_bytes(&self, body: RenamedBytes) -> UloBody {
-        UloBody::text(format!("len={}", body.0.len()))
+    fn aliased_bytes(&self, body: RenamedBytes) -> Body {
+        Body::text(format!("len={}", body.0.len()))
     }
 
     #[get("/items/{id}")]
-    fn typed_path(&self, Path(id): Path<i32>) -> UloBody {
-        UloBody::text(format!("id={}", id))
+    fn typed_path(&self, Path(id): Path<i32>) -> Body {
+        Body::text(format!("id={}", id))
     }
 }
 
@@ -177,8 +177,8 @@ pub struct ValidatedController;
 #[routes]
 impl ValidatedController {
     #[post("/users")]
-    fn create_user(&self, Validated(Json(dto)): Validated<Json<ValidatedUserDto>>) -> UloBody {
-        UloBody::text(format!(
+    fn create_user(&self, Validated(Json(dto)): Validated<Json<ValidatedUserDto>>) -> Body {
+        Body::text(format!(
             "Created validated user: {} <{}>",
             dto.name, dto.email
         ))
@@ -282,8 +282,8 @@ impl WrappedQueryController {
         &self,
         Validated(Query(params)): Validated<Query<SearchQuery>>,
         Json(dto): Json<CreateUserDto>,
-    ) -> UloBody {
-        UloBody::text(format!("q={} name={}", params.q, dto.name))
+    ) -> Body {
+        Body::text(format!("q={} name={}", params.q, dto.name))
     }
 }
 

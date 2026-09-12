@@ -10,8 +10,8 @@ use tokio::sync::oneshot;
 use ulo::AdapterResult;
 use ulo::http_helpers::HttpMethod;
 use ulo::{
-    AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, RequestHandler,
-    UloFactory, async_trait, controller, get, module, routes,
+    AdapterContext, BindTarget, Body, HttpAdapter, HttpLifecycleHandle, RequestHandler, UloFactory,
+    async_trait, controller, get, module, routes,
 };
 
 #[controller("/probe")]
@@ -20,8 +20,8 @@ pub struct ProbeController {}
 #[routes]
 impl ProbeController {
     #[get("/ping")]
-    fn ping(&self) -> UloBody {
-        UloBody::text("pong")
+    fn ping(&self) -> Body {
+        Body::text("pong")
     }
 }
 

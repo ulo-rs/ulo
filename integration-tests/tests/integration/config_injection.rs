@@ -6,7 +6,7 @@
 //! the first request that needed it.
 use crate::common::TestServer;
 use serial_test::serial;
-use ulo::{Body as UloBody, controller, get, injectable, module, routes};
+use ulo::{Body, controller, get, injectable, module, routes};
 use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]
@@ -61,17 +61,17 @@ pub struct AppController {
 #[routes]
 impl AppController {
     #[get("/info")]
-    fn get_info(&self) -> UloBody {
-        UloBody::text(self.service.get_app_info())
+    fn get_info(&self) -> Body {
+        Body::text(self.service.get_app_info())
     }
 
     #[get("/database")]
-    fn get_database(&self) -> UloBody {
-        UloBody::text(self.service.get_database_info())
+    fn get_database(&self) -> Body {
+        Body::text(self.service.get_database_info())
     }
 
     #[get("/config")]
-    fn get_config(&self) -> UloBody {
+    fn get_config(&self) -> Body {
         let config = self.service.get_full_config();
         let json = serde_json::json!({
             "app_name": config.app_name,
@@ -79,7 +79,7 @@ impl AppController {
             "database_url": config.database_url,
             "max_connections": config.max_connections,
         });
-        UloBody::json(json)
+        Body::json(json)
     }
 }
 

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serial_test::serial;
 use ulo::context::{HandlerContext, HttpContext};
-use ulo::{Body as UloBody, controller, get, module, routes};
+use ulo::{Body, controller, get, module, routes};
 
 use crate::common::TestServer;
 
@@ -31,10 +31,10 @@ pub struct ProbeController {}
 impl ProbeController {
     /// Holds a sentinel across an await long enough for the client to give up.
     #[get("/slow")]
-    async fn slow(&self) -> UloBody {
+    async fn slow(&self) -> Body {
         let _sentinel = Sentinel;
         tokio::time::sleep(Duration::from_secs(5)).await;
-        UloBody::text("never reached")
+        Body::text("never reached")
     }
 }
 
@@ -110,7 +110,7 @@ impl TailController {
     /// Returns a stream fed by a spawned task, which is the shape the token exists for: the handler
     /// future is finished the moment this returns, so nothing drops the producer.
     #[get("/stream")]
-    async fn stream(&self, ctx: &HttpContext) -> UloBody {
+    async fn stream(&self, ctx: &HttpContext) -> Body {
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(1);
         let cancelled = ctx.cancellation().clone();
 
@@ -134,7 +134,7 @@ impl TailController {
             }
         });
 
-        UloBody::stream(tokio_stream::wrappers::ReceiverStream::new(rx))
+        Body::stream(tokio_stream::wrappers::ReceiverStream::new(rx))
     }
 }
 
