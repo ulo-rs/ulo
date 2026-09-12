@@ -25,13 +25,13 @@ impl RequestHandler for InstanceHandler {
     }
 }
 
-pub struct RoutesResolver {
+pub(crate) struct RoutesResolver {
     pub(crate) container: Rc<RefCell<Container>>,
     global_chain: Option<MiddlewareChain>,
 }
 
 impl RoutesResolver {
-    pub fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
         Self {
             container,
             global_chain: None,
@@ -40,7 +40,7 @@ impl RoutesResolver {
 
     /// Register all routes with the adapter and store the global chain for
     /// `take_global_chain` to hand to `start()` later.
-    pub fn resolve(&mut self, http_adapter: &mut dyn HttpAdapter) -> SetupResult {
+    pub(crate) fn resolve(&mut self, http_adapter: &mut dyn HttpAdapter) -> SetupResult {
         let modules_token = self.container.borrow().module_tokens();
 
         for module_token in modules_token {
@@ -63,7 +63,7 @@ impl RoutesResolver {
 
     /// Hand the global chain to `UloApplication::start` so it can wrap the
     /// adapter's routing handler with it.
-    pub fn take_global_chain(&mut self) -> MiddlewareChain {
+    pub(crate) fn take_global_chain(&mut self) -> MiddlewareChain {
         self.global_chain.take().unwrap_or_default()
     }
 

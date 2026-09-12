@@ -128,7 +128,7 @@ pub fn refusal_frames(err: &WsError) -> Vec<WsMessage> {
 
 /// Render an arbitrary [`ulo::Error`] as the canonical WebSocket text-frame
 /// envelope. Merges `details()` into the payload when present.
-pub fn render_error(err: &dyn Error) -> WsMessage {
+pub(crate) fn render_error(err: &dyn Error) -> WsMessage {
     let mut payload = json!({
         "status": "error",
         "kind": err.kind().name(),

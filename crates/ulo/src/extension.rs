@@ -165,7 +165,7 @@ impl Provider for Extensions {
     }
 }
 
-pub struct ExtensionsFactory;
+pub(crate) struct ExtensionsFactory;
 
 #[async_trait]
 impl ProviderFactory for ExtensionsFactory {

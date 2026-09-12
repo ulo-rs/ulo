@@ -50,21 +50,16 @@ impl Hasher for IdHasher {
 ///
 /// Values stored in `Extensions` must implement `Clone + Send + Sync + 'static`.
 #[derive(Clone, Default)]
-pub struct TypeMap {
+pub(crate) struct TypeMap {
     map: AnyMap,
 }
 
 impl TypeMap {
-    /// Create an empty `Extensions` map.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Insert a value into the map.
     ///
     /// If a value of this type already existed, it will be returned.
     ///
-    pub fn insert<T: Clone + Send + Sync + 'static>(&mut self, val: T) -> Option<T> {
+    pub(crate) fn insert<T: Clone + Send + Sync + 'static>(&mut self, val: T) -> Option<T> {
         self.map
             .insert(TypeId::of::<T>(), Box::new(val))
             .and_then(|boxed| boxed.into_any().downcast().ok().map(|boxed| *boxed))
@@ -72,7 +67,7 @@ impl TypeMap {
 
     /// Get a reference to a value previously inserted.
     ///
-    pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
+    pub(crate) fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
         self.map
             .get(&TypeId::of::<T>())
             .and_then(|boxed| (**boxed).as_any().downcast_ref())
@@ -80,41 +75,17 @@ impl TypeMap {
 
     /// Get a mutable reference to a value previously inserted.
     ///
-    pub fn get_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T> {
+    pub(crate) fn get_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T> {
         self.map
             .get_mut(&TypeId::of::<T>())
             .and_then(|boxed| (**boxed).as_any_mut().downcast_mut())
     }
 
-    /// Remove a value from the map.
-    ///
-    /// If a value of this type existed, it will be returned.
-    ///
-    pub fn remove<T: Send + Sync + 'static>(&mut self) -> Option<T> {
-        self.map
-            .remove(&TypeId::of::<T>())
-            .and_then(|boxed| boxed.into_any().downcast().ok().map(|boxed| *boxed))
-    }
-
-    /// Clear all values from the map.
-    ///
-    #[inline]
-    pub fn clear(&mut self) {
-        self.map.clear();
-    }
-
     /// Check if the map is empty.
     ///
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.map.is_empty()
-    }
-
-    /// Get the number of values in the map.
-    ///
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.map.len()
     }
 }
 
@@ -165,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_extensions() {
-        let mut extensions = TypeMap::new();
+        let mut extensions = TypeMap::default();
 
         extensions.insert(5i32);
         extensions.insert(MyType(10));
@@ -173,23 +144,18 @@ mod tests {
         assert_eq!(extensions.get(), Some(&5i32));
         assert_eq!(extensions.get_mut(), Some(&mut 5i32));
 
-        // Clone now properly preserves data!
+        // A clone carries the values, rather than starting empty.
         let ext2 = extensions.clone();
-
-        assert_eq!(extensions.remove::<i32>(), Some(5i32));
-        assert!(extensions.get::<i32>().is_none());
-
-        // Clone still has it
         assert_eq!(ext2.get(), Some(&5i32));
         assert_eq!(ext2.get(), Some(&MyType(10)));
 
         assert_eq!(extensions.get::<bool>(), None);
-        assert_eq!(extensions.get(), Some(&MyType(10)));
+        assert!(!extensions.is_empty());
     }
 
     #[test]
     fn insert_answers_the_value_it_replaced() {
-        let mut ext = TypeMap::new();
+        let mut ext = TypeMap::default();
         assert!(ext.insert(MyType(1)).is_none());
         assert_eq!(ext.insert(MyType(2)), Some(MyType(1)));
         assert_eq!(ext.get(), Some(&MyType(2)));
@@ -197,30 +163,14 @@ mod tests {
 
     #[test]
     fn get_mut_writes_through_to_the_stored_value() {
-        let mut ext = TypeMap::new();
+        let mut ext = TypeMap::default();
         ext.insert(MyType(5));
         ext.get_mut::<MyType>().unwrap().0 += 10;
         assert_eq!(ext.get(), Some(&MyType(15)));
     }
 
     #[test]
-    fn test_clear() {
-        let mut ext = TypeMap::new();
-        ext.insert(5i32);
-        ext.insert("hello");
-
-        assert_eq!(ext.len(), 2);
-        ext.clear();
-        assert_eq!(ext.len(), 0);
-        assert!(ext.is_empty());
-    }
-
-    #[test]
-    fn test_remove() {
-        let mut ext = TypeMap::new();
-        ext.insert(5i32);
-
-        assert_eq!(ext.remove::<i32>(), Some(5));
-        assert_eq!(ext.remove::<i32>(), None);
+    fn a_fresh_map_is_empty() {
+        assert!(TypeMap::default().is_empty());
     }
 }

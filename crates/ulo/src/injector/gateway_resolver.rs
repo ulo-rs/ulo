@@ -10,16 +10,16 @@ use crate::websocket::{Gateway, GatewayWrapper};
 
 use super::Container;
 
-pub struct GatewayResolver {
+pub(crate) struct GatewayResolver {
     container: Rc<RefCell<Container>>,
 }
 
 impl GatewayResolver {
-    pub fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
         Self { container }
     }
 
-    pub fn resolve(&self) -> SetupResult<HashMap<String, Arc<GatewayWrapper>>> {
+    pub(crate) fn resolve(&self) -> SetupResult<HashMap<String, Arc<GatewayWrapper>>> {
         let raw = self.container.borrow().gateways().clone();
         raw.into_iter()
             .map(|(path, gateway)| {

@@ -73,7 +73,7 @@ impl RpcError {
 
 /// Render an arbitrary [`ulo::Error`] as the canonical RPC envelope.
 /// Merges `details()` into the payload when present.
-pub fn render_error(err: &dyn Error) -> RpcData {
+pub(crate) fn render_error(err: &dyn Error) -> RpcData {
     let mut payload = json!({
         "status": "error",
         "kind": err.kind().name(),

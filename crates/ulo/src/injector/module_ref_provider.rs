@@ -9,13 +9,13 @@ use crate::{
 
 use super::{ModuleRef, module_ref::ProviderStore};
 
-pub struct ModuleRefProvider {
+pub(crate) struct ModuleRefProvider {
     module_token: String,
     store: Arc<RwLock<ProviderStore>>,
 }
 
 impl ModuleRefProvider {
-    pub fn new(module_token: String, store: Arc<RwLock<ProviderStore>>) -> Self {
+    pub(crate) fn new(module_token: String, store: Arc<RwLock<ProviderStore>>) -> Self {
         Self {
             module_token,
             store,

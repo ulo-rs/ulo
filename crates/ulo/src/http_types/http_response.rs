@@ -3,12 +3,6 @@ use serde_json::Value;
 use super::Body;
 
 #[derive(Debug)]
-pub struct HttpResponseDefault {
-    pub body: Option<Body>,
-    pub status: Option<u16>,
-}
-
-#[derive(Debug)]
 pub struct HttpResponse {
     pub body: Option<Body>,
     pub status: u16,

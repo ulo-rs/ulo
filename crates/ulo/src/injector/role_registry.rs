@@ -42,7 +42,7 @@ pub(crate) struct RoleRegistry {
 }
 
 impl RoleRegistry {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             http_guards: FxHashMap::default(),
             http_interceptors: FxHashMap::default(),
@@ -67,7 +67,7 @@ impl RoleRegistry {
     ///
     /// Used when building the deps map for a factory that needs to forward the
     /// roles of an already-built provider (e.g. alias targets from imported modules).
-    pub fn get_roles_for_token(&self, token: &str) -> Vec<ProviderRole> {
+    pub(crate) fn get_roles_for_token(&self, token: &str) -> Vec<ProviderRole> {
         let mut roles = Vec::new();
 
         if let Some(g) = self.http_guards.get(token) {

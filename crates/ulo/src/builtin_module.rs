@@ -12,7 +12,7 @@ use crate::traits::{ControllerFactory, ModuleMetadata, ProviderFactory};
 /// Currently provides:
 /// - Request: HTTP request data access for handlers
 /// - Extensions: the request's extension bag, for code below the handler
-pub struct BuiltinModule;
+pub(crate) struct BuiltinModule;
 
 impl ModuleMetadata for BuiltinModule {
     fn identity(&self) -> crate::ModuleIdentity {

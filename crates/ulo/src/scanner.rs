@@ -8,15 +8,15 @@ use crate::{
     traits::{MiddlewareConsumer, ModuleMetadata},
 };
 
-pub struct DependencyScanner {
+pub(crate) struct DependencyScanner {
     container: Rc<RefCell<Container>>,
 }
 
 impl DependencyScanner {
-    pub fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
         Self { container }
     }
-    pub fn scan(&mut self, module: Box<dyn ModuleMetadata>) -> SetupResult {
+    pub(crate) fn scan(&mut self, module: Box<dyn ModuleMetadata>) -> SetupResult {
         self.scan_for_modules_with_imports(module)?;
         self.scan_modules_for_dependencies()?;
         Ok(())
@@ -55,7 +55,7 @@ impl DependencyScanner {
         Ok(())
     }
 
-    pub fn scan_modules_for_dependencies(&mut self) -> SetupResult {
+    pub(crate) fn scan_modules_for_dependencies(&mut self) -> SetupResult {
         let modules_token = self.container.borrow().module_tokens();
         for module_token in modules_token {
             self.insert_providers(module_token.clone())?;
@@ -71,7 +71,11 @@ impl DependencyScanner {
         container.add_module(module)
     }
 
-    pub fn insert_imports(&mut self, module_token: String, imports: Vec<String>) -> SetupResult {
+    pub(crate) fn insert_imports(
+        &mut self,
+        module_token: String,
+        imports: Vec<String>,
+    ) -> SetupResult {
         let mut container = self.container.borrow_mut();
 
         for import in imports {
@@ -81,7 +85,7 @@ impl DependencyScanner {
         Ok(())
     }
 
-    pub fn insert_controllers(&mut self, module_token: String) -> SetupResult {
+    pub(crate) fn insert_controllers(&mut self, module_token: String) -> SetupResult {
         let mut container = self.container.borrow_mut();
         let module_ref = container.get_module_by_token(&module_token);
         let resolved_module_ref = match module_ref {
@@ -102,7 +106,7 @@ impl DependencyScanner {
         Ok(())
     }
 
-    pub fn insert_providers(&mut self, module_token: String) -> SetupResult {
+    pub(crate) fn insert_providers(&mut self, module_token: String) -> SetupResult {
         let mut container = self.container.borrow_mut();
         let module_ref = container.get_module_by_token(&module_token);
         let resolved_module_ref = match module_ref {
@@ -163,7 +167,7 @@ impl DependencyScanner {
         Ok(())
     }
 
-    pub fn insert_exports(&mut self, module_token: String) -> SetupResult {
+    pub(crate) fn insert_exports(&mut self, module_token: String) -> SetupResult {
         let mut container = self.container.borrow_mut();
         let module_ref = container.get_module_by_token(&module_token);
         let resolved_module_ref = match module_ref {
@@ -190,7 +194,7 @@ impl DependencyScanner {
         Ok(())
     }
 
-    pub fn scan_middleware(&mut self) -> SetupResult {
+    pub(crate) fn scan_middleware(&mut self) -> SetupResult {
         let modules_token = self.container.borrow().module_tokens();
         for module_token in modules_token {
             self.register_module_middleware(&module_token)?;
@@ -226,7 +230,7 @@ impl DependencyScanner {
         Ok(())
     }
 
-    pub async fn call_lifecycle_hooks(&mut self) -> Result<(), StartupError> {
+    pub(crate) async fn call_lifecycle_hooks(&mut self) -> Result<(), StartupError> {
         let modules_token = self.container.borrow().module_tokens();
 
         for module_token in &modules_token {
@@ -239,7 +243,7 @@ impl DependencyScanner {
     }
 
     /// Runs after `call_lifecycle_hooks` (OnModuleInit) but before the application starts listening.
-    pub async fn call_bootstrap_hooks(&mut self) -> Result<(), StartupError> {
+    pub(crate) async fn call_bootstrap_hooks(&mut self) -> Result<(), StartupError> {
         let modules_token = self.container.borrow().module_tokens();
 
         for module_token in &modules_token {
