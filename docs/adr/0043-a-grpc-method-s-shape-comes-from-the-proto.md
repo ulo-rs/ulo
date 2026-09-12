@@ -1,6 +1,6 @@
 # 0043 — A gRPC method's shape comes from the proto
 
-Status: proposed. Supersedes the decision of
+Status: accepted. Supersedes the decision of
 [ADR-0042](0042-a-grpc-handler-asks-the-type-what-the-wire-carries.md).
 
 ## Context

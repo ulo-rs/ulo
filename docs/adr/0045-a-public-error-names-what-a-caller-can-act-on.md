@@ -1,6 +1,6 @@
 # 0045 — A public error names what a caller can act on
 
-Status: proposed.
+Status: accepted.
 
 ## Context
 
