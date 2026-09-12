@@ -344,8 +344,8 @@ impl Container {
         &mut self,
         token: String,
         service: (
-            Arc<dyn crate::adapter::GrpcServiceSource>,
-            Arc<crate::adapter::ResolvedGrpcEnhancers>,
+            Arc<dyn crate::grpc::GrpcServiceSource>,
+            Arc<crate::grpc::ResolvedGrpcEnhancers>,
         ),
     ) {
         self.role_registry.grpc_services.insert(token, service);
@@ -374,8 +374,8 @@ impl Container {
     ) -> &FxHashMap<
         String,
         (
-            Arc<dyn crate::adapter::GrpcServiceSource>,
-            Arc<crate::adapter::ResolvedGrpcEnhancers>,
+            Arc<dyn crate::grpc::GrpcServiceSource>,
+            Arc<crate::grpc::ResolvedGrpcEnhancers>,
         ),
     > {
         &self.role_registry.grpc_services

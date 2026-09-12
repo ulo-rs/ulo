@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use crate::common::NotServed;
 use futures_util::Stream;
-use ulo::extractors::{Inbound, Payload};
+use ulo::extractors::Payload;
+use ulo::grpc::extract::Inbound;
 use ulo::{UloFactory, module, provider_factory};
 use ulo_macros::{controller, get, grpc_methods, new, routes};
 

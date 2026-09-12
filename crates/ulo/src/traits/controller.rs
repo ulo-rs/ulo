@@ -37,7 +37,7 @@ pub struct ControllerEnhancers {
 pub enum Dispatch {
     Http(Vec<Arc<dyn Route>>),
     Rpc(Arc<dyn crate::rpc::RpcControllerSource>),
-    Grpc(Arc<dyn crate::adapter::GrpcServiceSource>),
+    Grpc(Arc<dyn crate::grpc::GrpcServiceSource>),
 }
 
 /// One dispatchable route: the handler plus the routing facts and enhancers the

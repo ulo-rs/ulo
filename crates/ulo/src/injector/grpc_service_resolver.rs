@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use crate::error::SetupResult;
 
-use crate::adapter::{GrpcServiceSource, ResolvedGrpcEnhancers};
+use crate::grpc::{GrpcServiceSource, ResolvedGrpcEnhancers};
 use crate::traits::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
 
 use super::Container;

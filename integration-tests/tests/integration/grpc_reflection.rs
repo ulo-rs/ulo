@@ -23,7 +23,8 @@ use tonic_reflection::pb::v1::server_reflection_client::ServerReflectionClient;
 use tonic_reflection::pb::v1::server_reflection_request::MessageRequest;
 use tonic_reflection::pb::v1::server_reflection_response::MessageResponse;
 use ulo::UloFactory;
-use ulo::extractors::{Inbound, Payload};
+use ulo::extractors::Payload;
+use ulo::grpc::extract::Inbound;
 use ulo_macros::{controller, grpc_methods, module, new};
 
 mod reflect_pb {

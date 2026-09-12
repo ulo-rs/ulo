@@ -4,9 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::context::Metadata;
-use crate::grpc_runtime::{RequestCarrier, RequestError};
+use crate::grpc::runtime::{RequestCarrier, RequestError};
 
-use super::{CancellationToken, Extensions, HandlerContext, shared::SharedState};
+use crate::context::shared::SharedState;
+use crate::context::{CancellationToken, Extensions, HandlerContext};
 
 /// Per-request context for gRPC handlers.
 ///

@@ -116,7 +116,7 @@ fn companion_for(service: &ItemTrait) -> Result<TokenStream, Error> {
                 type Arg = #arg;
                 fn install(
                     request: ::tonic::Request<Self::Arg>,
-                    ctx: &::ulo::context::GrpcContext,
+                    ctx: &::ulo::grpc::GrpcContext,
                 ) {
                     #install
                 }

@@ -31,7 +31,7 @@ pub mod greeter_ulo {
     pub struct GreetAll;
     impl ::ulo_grpc::MethodShape for GreetAll {
         type Arg = ::tonic::Streaming<super::GreetRequest>;
-        fn install(request: ::tonic::Request<Self::Arg>, ctx: &::ulo::context::GrpcContext) {
+        fn install(request: ::tonic::Request<Self::Arg>, ctx: &::ulo::grpc::GrpcContext) {
             ::ulo_grpc::shape::stream(request, ctx)
         }
     }

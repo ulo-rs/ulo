@@ -9,9 +9,7 @@ mod builtin_module;
 pub mod context;
 mod error;
 mod startup_check;
-pub use context::{
-    CancellationToken, GrpcContext, HandlerContext, HttpContext, RpcContext, StandaloneContext,
-};
+pub use context::{CancellationToken, HandlerContext, HttpContext, RpcContext, StandaloneContext};
 #[doc(hidden)]
 pub mod __construct;
 #[doc(hidden)]
@@ -21,21 +19,24 @@ pub mod __dispatch;
 #[doc(hidden)]
 pub mod __enhancer;
 #[doc(hidden)]
+pub mod __grpc;
+#[doc(hidden)]
 pub mod __lifecycle;
 #[doc(hidden)]
 pub mod __rpc;
 #[doc(hidden)]
 pub mod __ws;
-pub mod di;
-pub mod errors;
-pub mod extractors;
-pub mod grpc_status;
-pub use grpc_status::{GrpcCode, GrpcHandlerResult, GrpcStatus};
 mod application;
+pub mod di;
 mod enhancer;
+pub mod errors;
 mod extension;
+pub mod extractors;
 mod factory;
-pub mod grpc_runtime;
+pub mod grpc;
+pub use grpc::{
+    GrpcAdapter, GrpcCode, GrpcContext, GrpcHandlerResult, GrpcLifecycleHandle, GrpcStatus,
+};
 mod http_types;
 mod injector;
 pub mod middleware;
@@ -61,8 +62,8 @@ pub use serde_json;
 
 // Re-exports for adapter crates
 pub use adapter::{
-    AdapterContext, BindTarget, GrpcAdapter, GrpcLifecycleHandle, HttpAdapter, HttpLifecycleHandle,
-    RequestHandler, RpcAdapter, RpcClientTransport, RpcLifecycleHandle, RpcMessageCallbacks,
+    AdapterContext, BindTarget, HttpAdapter, HttpLifecycleHandle, RequestHandler, RpcAdapter,
+    RpcClientTransport, RpcLifecycleHandle, RpcMessageCallbacks,
 };
 pub use http_types::{
     Body, BoxBody, HttpMethod, HttpRequest, HttpResponse, HttpResponseBuilder, IntoResponse,

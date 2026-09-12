@@ -130,19 +130,19 @@ impl EnhancerKind {
             EnhancerKind::GrpcGuard => EnhancerSpec {
                 role_variant: quote! { ::ulo::traits::ProviderRole::GrpcGuard },
                 entry_path: quote! { ::ulo::__enhancer::GrpcGuardEntry },
-                trait_path: quote! { ::ulo::traits::Guard<::ulo::context::GrpcContext> },
+                trait_path: quote! { ::ulo::traits::Guard<::ulo::grpc::GrpcContext> },
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynGrpcGuardFactory },
                 factory_suffix: "GrpcGuard",
-                context_path: quote! { ::ulo::context::GrpcContext },
+                context_path: quote! { ::ulo::grpc::GrpcContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::Grpc },
             },
             EnhancerKind::GrpcInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::traits::ProviderRole::GrpcInterceptor },
                 entry_path: quote! { ::ulo::__enhancer::GrpcInterceptorEntry },
-                trait_path: quote! { ::ulo::traits::Interceptor<::ulo::context::GrpcContext, ::ulo::GrpcHandlerResult> },
+                trait_path: quote! { ::ulo::traits::Interceptor<::ulo::grpc::GrpcContext, ::ulo::GrpcHandlerResult> },
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynGrpcInterceptorFactory },
                 factory_suffix: "GrpcInterceptor",
-                context_path: quote! { ::ulo::context::GrpcContext },
+                context_path: quote! { ::ulo::grpc::GrpcContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::Grpc },
             },
         }

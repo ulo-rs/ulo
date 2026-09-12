@@ -18,7 +18,7 @@ pub type InitResult = Result<(), Box<dyn Error + Send + Sync + 'static>>;
 /// [`HttpAdapter`]: crate::adapter::HttpAdapter
 /// [`WebSocketAdapter`]: crate::ws::WebSocketAdapter
 /// [`RpcAdapter`]: crate::adapter::RpcAdapter
-/// [`GrpcAdapter`]: crate::adapter::GrpcAdapter
+/// [`GrpcAdapter`]: crate::grpc::GrpcAdapter
 pub type AdapterResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>;
 
 /// Return type for the DI setup surface — the container, the instance loader, the dependency

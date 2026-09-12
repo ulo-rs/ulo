@@ -8,7 +8,8 @@
 #![allow(dead_code)]
 
 use futures_util::Stream;
-use ulo::extractors::{Inbound, Payload};
+use ulo::extractors::Payload;
+use ulo::grpc::extract::Inbound;
 use ulo::*;
 use ulo_macros::{controller, grpc_methods, new};
 

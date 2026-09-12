@@ -748,7 +748,7 @@ enum ResolvedDispatch {
     Http(Vec<(Arc<dyn Route>, EnhancerMetadata)>),
     Rpc(Arc<crate::rpc::RpcControllerWrapper>),
     Grpc(
-        Arc<dyn crate::adapter::GrpcServiceSource>,
-        Arc<crate::adapter::ResolvedGrpcEnhancers>,
+        Arc<dyn crate::grpc::GrpcServiceSource>,
+        Arc<crate::grpc::ResolvedGrpcEnhancers>,
     ),
 }

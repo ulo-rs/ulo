@@ -14,7 +14,7 @@ use std::task::{Context, Poll};
 use http::Request;
 use tonic::body::Body as TonicBody;
 use tower::{Layer, Service};
-use ulo::adapter::GrpcMethodPath;
+use ulo::grpc::GrpcMethodPath;
 
 #[derive(Clone, Default)]
 pub struct MethodPathLayer;

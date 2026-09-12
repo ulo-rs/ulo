@@ -12,11 +12,11 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::adapter::ResolvedGrpcEnhancers;
-use crate::context::GrpcContext;
 use crate::errors::{GuardRejection, PipelineSegment};
-use crate::grpc_status::GrpcHandlerResult;
-use crate::grpc_status::GrpcStatus;
+use crate::grpc::GrpcContext;
+use crate::grpc::GrpcHandlerResult;
+use crate::grpc::GrpcStatus;
+use crate::grpc::ResolvedGrpcEnhancers;
 use crate::panic_recovery::catch_async;
 use crate::traits::{GrpcGuardEntry, GrpcInterceptorEntry, Guard, Interceptor, InterceptorNext};
 
@@ -69,7 +69,7 @@ where
             let claimed = run_grpc_error_chain(ctx, enhancers, method, &event).await;
             Err(claimed.unwrap_or_else(|| {
                 GrpcStatus::new(
-                    crate::grpc_status::GrpcCode::Internal,
+                    crate::grpc::GrpcCode::Internal,
                     format!("interceptor panicked: {}", event.message),
                 )
             }))
@@ -85,7 +85,7 @@ type PanicSlot = Arc<Mutex<Option<crate::errors::PanicRecovered>>>;
 /// Guards-only entry point — same shape as PR #1 shipped, retained for
 /// services that declare no interceptors so the macro can skip the
 /// closure-boxing cost.
-pub async fn run_grpc_guards(
+pub(crate) async fn run_grpc_guards(
     ctx: &GrpcContext,
     enhancers: &ResolvedGrpcEnhancers,
     method: &str,
@@ -115,7 +115,7 @@ async fn run_grpc_guards_inline(
                 let claimed = run_grpc_error_chain(ctx, enhancers, method, &event).await;
                 return Err(claimed.unwrap_or_else(|| {
                     GrpcStatus::new(
-                        crate::grpc_status::GrpcCode::Internal,
+                        crate::grpc::GrpcCode::Internal,
                         format!("guard {} panicked: {}", index, event.message),
                     )
                 }));
@@ -195,7 +195,7 @@ fn record_interceptor_panic(
     event: crate::errors::PanicRecovered,
 ) -> GrpcHandlerResult {
     let status = GrpcStatus::new(
-        crate::grpc_status::GrpcCode::Internal,
+        crate::grpc::GrpcCode::Internal,
         format!("interceptor panicked: {}", event.message),
     );
     *panicked.lock().expect("interceptor panic slot poisoned") = Some(event);
@@ -297,7 +297,7 @@ pub async fn run_grpc_error_chain(
     enhancers: &ResolvedGrpcEnhancers,
     method: &str,
     err: &(dyn std::error::Error + Send + Sync + 'static),
-) -> Option<crate::grpc_status::GrpcStatus> {
+) -> Option<crate::grpc::GrpcStatus> {
     let mut all = enhancers.error_handlers.clone();
     if let Some(per_method) = enhancers.handler_error_handlers.get(method) {
         all.extend_from_slice(per_method);
