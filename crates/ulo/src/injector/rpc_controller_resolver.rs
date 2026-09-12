@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use anyhow::{Result, anyhow};
+use crate::error::SetupResult;
 
 use crate::rpc::{RpcControllerSource, RpcControllerWrapper};
 use crate::traits_helpers::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};
@@ -24,7 +24,7 @@ impl RpcControllerResolver {
     pub(crate) fn wrap_controller(
         &self,
         source: std::sync::Arc<dyn RpcControllerSource>,
-    ) -> Result<RpcControllerWrapper> {
+    ) -> SetupResult<RpcControllerWrapper> {
         let enhancers = source.enhancers();
         let guards = self.resolve_guards(enhancers.guard_tokens)?;
         let interceptors = self.resolve_interceptors(enhancers.interceptor_tokens)?;
@@ -66,7 +66,7 @@ impl RpcControllerResolver {
         ))
     }
 
-    fn resolve_guards(&self, tokens: Vec<String>) -> Result<Vec<RpcGuardEntry>> {
+    fn resolve_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<RpcGuardEntry>> {
         let mut guards = self.container.borrow().get_global_rpc_guards();
         for token in tokens {
             let entry = self.resolve_guard_by_token(&token)?;
@@ -75,7 +75,7 @@ impl RpcControllerResolver {
         Ok(guards)
     }
 
-    fn resolve_interceptors(&self, tokens: Vec<String>) -> Result<Vec<RpcInterceptorEntry>> {
+    fn resolve_interceptors(&self, tokens: Vec<String>) -> SetupResult<Vec<RpcInterceptorEntry>> {
         let mut interceptors = self.container.borrow().get_global_rpc_interceptors();
         for token in tokens {
             let entry = self.resolve_interceptor_by_token(&token)?;
@@ -84,7 +84,7 @@ impl RpcControllerResolver {
         Ok(interceptors)
     }
 
-    fn resolve_error_handlers(&self, tokens: Vec<String>) -> Result<Vec<RpcErrorHandlerArc>> {
+    fn resolve_error_handlers(&self, tokens: Vec<String>) -> SetupResult<Vec<RpcErrorHandlerArc>> {
         let mut error_handlers = self.container.borrow().get_global_rpc_error_handlers();
         for token in tokens {
             error_handlers.push(self.resolve_error_handler_by_token(&token)?);
@@ -92,7 +92,7 @@ impl RpcControllerResolver {
         Ok(error_handlers)
     }
 
-    fn resolve_guard_by_token(&self, token: &str) -> Result<RpcGuardEntry> {
+    fn resolve_guard_by_token(&self, token: &str) -> SetupResult<RpcGuardEntry> {
         self.container
             .borrow()
             .get_role_registry()
@@ -100,7 +100,7 @@ impl RpcControllerResolver {
             .get(token)
             .cloned()
             .ok_or_else(|| {
-                anyhow!(
+                format!(
                     "RPC Guard '{}' not found in registry. A guard registers automatically by \
                      implementing Guard<RpcContext>; make sure the provider is in the module's \
                      `providers` list. For `provider_factory!` under a string/const token, name \
@@ -108,10 +108,11 @@ impl RpcControllerResolver {
                      (`|| -> MyGuard`) or pass a type hint.",
                     token
                 )
+                .into()
             })
     }
 
-    fn resolve_interceptor_by_token(&self, token: &str) -> Result<RpcInterceptorEntry> {
+    fn resolve_interceptor_by_token(&self, token: &str) -> SetupResult<RpcInterceptorEntry> {
         self.container
             .borrow()
             .get_role_registry()
@@ -119,7 +120,7 @@ impl RpcControllerResolver {
             .get(token)
             .cloned()
             .ok_or_else(|| {
-                anyhow!(
+                format!(
                     "RPC Interceptor '{}' not found in registry. An interceptor registers \
                      automatically by implementing Interceptor<RpcContext>; make sure the provider \
                      is in the module's `providers` list. For `provider_factory!` under a \
@@ -127,10 +128,11 @@ impl RpcControllerResolver {
                      the closure's return type (`|| -> MyInterceptor`) or pass a type hint.",
                     token
                 )
+                .into()
             })
     }
 
-    fn resolve_error_handler_by_token(&self, token: &str) -> Result<RpcErrorHandlerArc> {
+    fn resolve_error_handler_by_token(&self, token: &str) -> SetupResult<RpcErrorHandlerArc> {
         self.container
             .borrow()
             .get_role_registry()
@@ -138,7 +140,7 @@ impl RpcControllerResolver {
             .get(token)
             .cloned()
             .ok_or_else(|| {
-                anyhow!(
+                format!(
                     "RPC ErrorHandler '{}' not found in registry. An error handler registers \
                      automatically by implementing ErrorHandler<RpcContext, RpcData>; make sure \
                      the provider is in the module's `providers` list. For `provider_factory!` \
@@ -146,10 +148,11 @@ impl RpcControllerResolver {
                      annotate the closure's return type or pass a type hint.",
                     token
                 )
+                .into()
             })
     }
 
-    fn resolve_handler_guards(&self, tokens: Vec<String>) -> Result<Vec<RpcGuardEntry>> {
+    fn resolve_handler_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<RpcGuardEntry>> {
         tokens
             .into_iter()
             .map(|token| {
@@ -162,7 +165,7 @@ impl RpcControllerResolver {
     fn resolve_handler_interceptors(
         &self,
         tokens: Vec<String>,
-    ) -> Result<Vec<RpcInterceptorEntry>> {
+    ) -> SetupResult<Vec<RpcInterceptorEntry>> {
         tokens
             .into_iter()
             .map(|token| {
@@ -175,7 +178,7 @@ impl RpcControllerResolver {
     fn resolve_handler_error_handlers(
         &self,
         tokens: Vec<String>,
-    ) -> Result<Vec<RpcErrorHandlerArc>> {
+    ) -> SetupResult<Vec<RpcErrorHandlerArc>> {
         tokens
             .into_iter()
             .map(|t| self.resolve_error_handler_by_token(&t))

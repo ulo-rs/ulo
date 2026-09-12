@@ -1,5 +1,5 @@
 use super::UloContainer;
-use anyhow::{Result, anyhow};
+use crate::error::SetupResult;
 use rustc_hash::FxHashMap;
 use std::{cell::RefCell, rc::Rc};
 
@@ -22,7 +22,7 @@ impl DependencyGraph {
         }
     }
 
-    pub fn get_ordered_providers_token(mut self) -> Result<Vec<String>> {
+    pub fn get_ordered_providers_token(mut self) -> SetupResult<Vec<String>> {
         let (providers, multi_providers) = {
             let container = self.container.borrow();
             let providers_map = container.get_providers_factory(&self.module_token)?;
@@ -62,12 +62,9 @@ impl DependencyGraph {
         dependencies: Vec<String>,
         providers: &Vec<(String, Vec<String>)>,
         multi_providers: &FxHashMap<String, Vec<String>>,
-    ) -> Result<()> {
+    ) -> SetupResult {
         if self.temp_mark.contains_key(&token) {
-            return Err(anyhow!(
-                "Circular dependency detected for provider: {}",
-                token
-            ));
+            return Err(format!("Circular dependency detected for provider: {}", token).into());
         }
 
         if self.visited.contains_key(&token) {

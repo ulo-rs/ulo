@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
+use crate::error::SetupResult;
 use crate::error::StartupError;
-use anyhow::{Result, anyhow};
 
 use crate::{
     injector::UloContainer,
@@ -16,12 +16,12 @@ impl UloDependenciesScanner {
     pub fn new(container: Rc<RefCell<UloContainer>>) -> Self {
         Self { container }
     }
-    pub fn scan(&mut self, module: Box<dyn ModuleMetadata>) -> Result<()> {
+    pub fn scan(&mut self, module: Box<dyn ModuleMetadata>) -> SetupResult {
         self.scan_for_modules_with_imports(module)?;
         self.scan_modules_for_dependencies()?;
         Ok(())
     }
-    fn scan_for_modules_with_imports(&mut self, module: Box<dyn ModuleMetadata>) -> Result<()> {
+    fn scan_for_modules_with_imports(&mut self, module: Box<dyn ModuleMetadata>) -> SetupResult {
         let mut ctx_registry: Vec<String> = vec![];
 
         let mut stack: Vec<Box<dyn ModuleMetadata>> = vec![module];
@@ -55,7 +55,7 @@ impl UloDependenciesScanner {
         Ok(())
     }
 
-    pub fn scan_modules_for_dependencies(&mut self) -> Result<()> {
+    pub fn scan_modules_for_dependencies(&mut self) -> SetupResult {
         let modules_token = self.container.borrow().get_modules_token();
         for module_token in modules_token {
             self.insert_providers(module_token.clone())?;
@@ -66,12 +66,12 @@ impl UloDependenciesScanner {
         Ok(())
     }
 
-    fn insert_module(&mut self, module: Box<dyn ModuleMetadata>) -> Result<()> {
+    fn insert_module(&mut self, module: Box<dyn ModuleMetadata>) -> SetupResult {
         let mut container = self.container.borrow_mut();
         container.add_module(module)
     }
 
-    pub fn insert_imports(&mut self, module_token: String, imports: Vec<String>) -> Result<()> {
+    pub fn insert_imports(&mut self, module_token: String, imports: Vec<String>) -> SetupResult {
         let mut container = self.container.borrow_mut();
 
         for import in imports {
@@ -81,12 +81,12 @@ impl UloDependenciesScanner {
         Ok(())
     }
 
-    pub fn insert_controllers(&mut self, module_token: String) -> Result<()> {
+    pub fn insert_controllers(&mut self, module_token: String) -> SetupResult {
         let mut container = self.container.borrow_mut();
         let module_ref = container.get_module_by_token(&module_token);
         let resolved_module_ref = match module_ref {
             Some(module_ref) => module_ref,
-            None => return Err(anyhow!("Module not found")),
+            None => return Err("Module not found".to_string().into()),
         };
 
         let controllers = resolved_module_ref.get_metadata().controllers();
@@ -102,12 +102,12 @@ impl UloDependenciesScanner {
         Ok(())
     }
 
-    pub fn insert_providers(&mut self, module_token: String) -> Result<()> {
+    pub fn insert_providers(&mut self, module_token: String) -> SetupResult {
         let mut container = self.container.borrow_mut();
         let module_ref = container.get_module_by_token(&module_token);
         let resolved_module_ref = match module_ref {
             Some(module_ref) => module_ref,
-            None => return Err(anyhow!("Module not found")),
+            None => return Err("Module not found".to_string().into()),
         };
 
         let providers = resolved_module_ref.get_metadata().providers();
@@ -163,12 +163,12 @@ impl UloDependenciesScanner {
         Ok(())
     }
 
-    pub fn insert_exports(&mut self, module_token: String) -> Result<()> {
+    pub fn insert_exports(&mut self, module_token: String) -> SetupResult {
         let mut container = self.container.borrow_mut();
         let module_ref = container.get_module_by_token(&module_token);
         let resolved_module_ref = match module_ref {
             Some(module_ref) => module_ref,
-            None => return Err(anyhow!("Module not found")),
+            None => return Err("Module not found".to_string().into()),
         };
 
         let is_global = resolved_module_ref.get_metadata().is_global();
@@ -190,7 +190,7 @@ impl UloDependenciesScanner {
         Ok(())
     }
 
-    pub fn scan_middleware(&mut self) -> Result<()> {
+    pub fn scan_middleware(&mut self) -> SetupResult {
         let modules_token = self.container.borrow().get_modules_token();
         for module_token in modules_token {
             self.register_module_middleware(&module_token)?;
@@ -198,13 +198,13 @@ impl UloDependenciesScanner {
         Ok(())
     }
 
-    fn register_module_middleware(&mut self, module_token: &str) -> Result<()> {
+    fn register_module_middleware(&mut self, module_token: &str) -> SetupResult {
         let middleware_configs = {
             let container = self.container.borrow();
 
             let module_ref = container
                 .get_module_by_token(&module_token.to_string())
-                .ok_or_else(|| anyhow!("Module not found: {}", module_token))?;
+                .ok_or_else(|| format!("Module not found: {}", module_token))?;
 
             let metadata = module_ref.get_metadata();
 
@@ -217,7 +217,7 @@ impl UloDependenciesScanner {
 
         let middleware_manager = container_mut
             .get_middleware_manager_mut()
-            .ok_or_else(|| anyhow!("Middleware manager not initialized"))?;
+            .ok_or_else(|| "Middleware manager not initialized".to_string())?;
 
         for config in middleware_configs {
             middleware_manager.add_for_module(module_token.to_string(), config);
@@ -257,7 +257,7 @@ impl UloDependenciesScanner {
             let module_ref = container
                 .get_module_by_token(&module_token.to_string())
                 .ok_or_else(|| {
-                    StartupError::from(anyhow::anyhow!("Module not found: {}", module_token))
+                    StartupError::Setup(format!("Module not found: {module_token}").into())
                 })?;
 
             tracing::debug!(module = %module_token, hook = "on_application_bootstrap", "lifecycle hook");
@@ -328,7 +328,7 @@ impl UloDependenciesScanner {
             let module_ref = container
                 .get_module_by_token(&module_token.to_string())
                 .ok_or_else(|| {
-                    StartupError::from(anyhow::anyhow!("Module not found: {}", module_token))
+                    StartupError::Setup(format!("Module not found: {module_token}").into())
                 })?;
 
             tracing::debug!(module = %module_token, hook = "on_module_init", "lifecycle hook");

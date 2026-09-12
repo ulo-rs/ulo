@@ -1,6 +1,6 @@
 use std::{collections::hash_map::Drain, sync::Arc};
 
-use anyhow::{Result, anyhow};
+use crate::error::SetupResult;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
@@ -186,7 +186,7 @@ impl UloContainer {
         }
     }
 
-    pub fn add_module(&mut self, module_metadata: Box<dyn ModuleMetadata>) -> Result<()> {
+    pub fn add_module(&mut self, module_metadata: Box<dyn ModuleMetadata>) -> SetupResult {
         let token: String = module_metadata.identity().key();
         // The token is the full identity key (type name for static modules, base + config
         // fingerprint for dynamic ones). A repeat is the same module reached through a second
@@ -205,11 +205,11 @@ impl UloContainer {
         &mut self,
         module_ref_token: &String,
         imported_module_token: String,
-    ) -> Result<()> {
+    ) -> SetupResult {
         let module_ref = self
             .modules
             .get_mut(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         module_ref.add_import(imported_module_token);
         Ok(())
     }
@@ -218,11 +218,11 @@ impl UloContainer {
         &mut self,
         module_ref_token: &String,
         controller: Box<dyn ControllerFactory>,
-    ) -> Result<()> {
+    ) -> SetupResult {
         let module_ref = self
             .modules
             .get_mut(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         module_ref.add_controller(controller);
         Ok(())
     }
@@ -231,11 +231,11 @@ impl UloContainer {
         &mut self,
         module_ref_token: &String,
         provider: Box<dyn ProviderFactory>,
-    ) -> Result<()> {
+    ) -> SetupResult {
         let module_ref = self
             .modules
             .get_mut(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         module_ref.add_provider(provider);
         Ok(())
     }
@@ -245,7 +245,7 @@ impl UloContainer {
         module_ref_token: &String,
         provider_instance: Arc<Box<dyn Provider>>,
         roles: Vec<ProviderRole>,
-    ) -> Result<()> {
+    ) -> SetupResult {
         let token = provider_instance.get_token();
 
         for role in roles {
@@ -311,7 +311,7 @@ impl UloContainer {
         let module_ref = self
             .modules
             .get_mut(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         module_ref.add_provider_instance(provider_instance);
         Ok(())
     }
@@ -321,11 +321,11 @@ impl UloContainer {
     pub fn get_lifecycle_instances(
         &self,
         module_ref_token: &String,
-    ) -> Result<Vec<&Arc<Box<dyn Provider>>>> {
+    ) -> SetupResult<Vec<&Arc<Box<dyn Provider>>>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         Ok(module_ref.get_providers_instances().values().collect())
     }
 
@@ -386,7 +386,7 @@ impl UloContainer {
     ///
     /// Called from the instance loader after all providers are instantiated so
     /// that the registry is fully populated before middleware is resolved.
-    pub fn resolve_module_middleware(&mut self, module_token: &str) -> Result<()> {
+    pub fn resolve_module_middleware(&mut self, module_token: &str) -> SetupResult {
         if let Some(manager) = self.middleware_manager.as_mut() {
             manager.resolve_middleware_tokens(module_token, &self.role_registry.middleware)?;
         }
@@ -397,11 +397,11 @@ impl UloContainer {
         &mut self,
         module_ref_token: &String,
         controller: Arc<dyn Controller>,
-    ) -> Result<()> {
+    ) -> SetupResult {
         let module_ref = self
             .modules
             .get_mut(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         module_ref.add_controller_object(controller);
         Ok(())
     }
@@ -412,21 +412,21 @@ impl UloContainer {
         controller_token: &str,
         route: Arc<dyn crate::traits_helpers::Route>,
         enhancer_metadata: EnhancerMetadata,
-    ) -> Result<()> {
+    ) -> SetupResult {
         let global_enhancers = self.get_global_enhancers();
         let module_ref = self
             .modules
             .get_mut(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         module_ref.add_route_instance(controller_token, route, enhancer_metadata, global_enhancers);
         Ok(())
     }
 
-    pub fn add_export(&mut self, module_ref_token: &String, provider_token: String) -> Result<()> {
+    pub fn add_export(&mut self, module_ref_token: &String, provider_token: String) -> SetupResult {
         let module_ref = self
             .modules
             .get_mut(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         module_ref.add_export(provider_token);
         Ok(())
     }
@@ -435,11 +435,11 @@ impl UloContainer {
         &mut self,
         module_ref_token: &String,
         provider_token: String,
-    ) -> Result<()> {
+    ) -> SetupResult {
         let module_ref = self
             .modules
             .get_mut(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         module_ref.add_export_instance(provider_token);
         Ok(())
     }
@@ -447,33 +447,33 @@ impl UloContainer {
     pub fn get_providers_factory(
         &self,
         module_ref_token: &String,
-    ) -> Result<&FxHashMap<String, Box<dyn ProviderFactory>>> {
+    ) -> SetupResult<&FxHashMap<String, Box<dyn ProviderFactory>>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         Ok(module_ref.get_providers_factory())
     }
 
     pub fn get_controllers_factory(
         &self,
         module_ref_token: &String,
-    ) -> Result<&FxHashMap<String, Box<dyn ControllerFactory>>> {
+    ) -> SetupResult<&FxHashMap<String, Box<dyn ControllerFactory>>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         Ok(module_ref.get_controllers_factory())
     }
 
     pub fn get_providers_instance(
         &self,
         module_ref_token: &String,
-    ) -> Result<&FxHashMap<String, Arc<Box<dyn Provider>>>> {
+    ) -> SetupResult<&FxHashMap<String, Arc<Box<dyn Provider>>>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         Ok(module_ref.get_providers_instances())
     }
 
@@ -481,11 +481,11 @@ impl UloContainer {
         &self,
         module_ref_token: &String,
         provider_token: &String,
-    ) -> Result<Option<&Arc<Box<dyn Provider>>>> {
+    ) -> SetupResult<Option<&Arc<Box<dyn Provider>>>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         Ok(module_ref.get_provider_instance_by_token(provider_token))
     }
 
@@ -493,49 +493,52 @@ impl UloContainer {
         &self,
         module_ref_token: &String,
         provider_token: &String,
-    ) -> Result<Option<&dyn ProviderFactory>> {
+    ) -> SetupResult<Option<&dyn ProviderFactory>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         Ok(module_ref.get_provider_by_token(provider_token))
     }
 
     pub fn get_controllers_instance(
         &mut self,
         module_ref_token: &String,
-    ) -> Result<Drain<'_, String, Arc<InstanceWrapper>>> {
+    ) -> SetupResult<Drain<'_, String, Arc<InstanceWrapper>>> {
         let module_ref = self
             .modules
             .get_mut(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         Ok(module_ref.drain_controllers_instances())
     }
 
-    pub fn get_imported_modules(&self, module_ref_token: &String) -> Result<&FxHashSet<String>> {
+    pub fn get_imported_modules(
+        &self,
+        module_ref_token: &String,
+    ) -> SetupResult<&FxHashSet<String>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found"))?;
+            .ok_or_else(|| "Module not found".to_string())?;
         Ok(module_ref.get_imported_modules())
     }
 
     pub fn get_exports_instances_tokens(
         &self,
         module_ref_token: &String,
-    ) -> Result<&FxHashSet<String>> {
+    ) -> SetupResult<&FxHashSet<String>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found: {:?}", module_ref_token))?;
+            .ok_or_else(|| format!("Module not found: {:?}", module_ref_token))?;
         Ok(module_ref.get_exports_instances_tokens())
     }
 
-    pub fn get_exports_tokens_vec(&self, module_ref_token: &String) -> Result<Vec<String>> {
+    pub fn get_exports_tokens_vec(&self, module_ref_token: &String) -> SetupResult<Vec<String>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
-            .ok_or_else(|| anyhow!("Module not found: {:?}", module_ref_token))?;
+            .ok_or_else(|| format!("Module not found: {:?}", module_ref_token))?;
         Ok(module_ref.get_exports_tokens().iter().cloned().collect())
     }
 
@@ -601,12 +604,12 @@ impl UloContainer {
     }
 
     /// Register all exported providers from a global module into the global registry
-    pub fn register_global_providers(&mut self, module_token: &String) -> Result<()> {
+    pub fn register_global_providers(&mut self, module_token: &String) -> SetupResult {
         let (is_global, module_name, exports_tokens) = {
             let module = self
                 .modules
                 .get(module_token)
-                .ok_or_else(|| anyhow!("Module not found: {}", module_token))?;
+                .ok_or_else(|| format!("Module not found: {}", module_token))?;
             (
                 module.get_metadata().is_global(),
                 module.get_metadata().identity().key(),
@@ -629,13 +632,13 @@ impl UloContainer {
             if let Some((owner_token, owner_name)) = self.global_provider_sources.get(export_token)
             {
                 if owner_token != module_token {
-                    return Err(anyhow!(
+                    return Err(format!(
                         "provider '{export_token}' is exported globally by two modules \
                          ('{owner_name}' and '{module_name}'). One would silently shadow the other. \
                          If these are separate instances of the same integration, register each \
                          under a distinct name — integrations expose a named constructor for this \
                          (e.g. `for_root_named`) — and inject it with `#[inject(\"<name>\")]`."
-                    ));
+                    ).into());
                 }
             }
             if let Ok(Some(instance)) =
@@ -673,11 +676,11 @@ impl UloContainer {
     //     module_ref_token: &String,
     //     controller_token: &String,
     //     controller_enhancers: &Vec<Box<dyn ControllerEnhancer>>,
-    // ) -> Result<()> {
+    // ) -> SetupResult {
     //     let module_ref = self
     //         .modules
     //         .get_mut(module_ref_token)
-    //         .ok_or_else(|| anyhow!("Module not found"))?;
+    //         .ok_or_else(|| "Module not found".to_string())?;
     //     module_ref.register_controller_enhancers(controller_enhancers);
     //     Ok(())
     // }

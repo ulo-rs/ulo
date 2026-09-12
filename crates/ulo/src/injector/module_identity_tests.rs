@@ -152,7 +152,7 @@ fn add_module_dedups_identical_dynamic_modules() {
 
 // ── Mechanism 3 + the knob: end-to-end through scanner + loader ───────────────────────────────
 
-async fn load(root: Root) -> anyhow::Result<Rc<RefCell<UloContainer>>> {
+async fn load(root: Root) -> crate::error::SetupResult<Rc<RefCell<UloContainer>>> {
     let container = Rc::new(RefCell::new(UloContainer::new()));
     let mut scanner = UloDependenciesScanner::new(container.clone());
     scanner.scan(Box::new(crate::builtin_module::BuiltinModule))?;

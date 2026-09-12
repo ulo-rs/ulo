@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use crate::error::SetupResult;
 
 use crate::traits_helpers::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
 use crate::websocket::{GatewayTrait, GatewayWrapper};
@@ -19,7 +19,7 @@ impl GatewayResolver {
         Self { container }
     }
 
-    pub fn resolve(&self) -> Result<HashMap<String, Arc<GatewayWrapper>>> {
+    pub fn resolve(&self) -> SetupResult<HashMap<String, Arc<GatewayWrapper>>> {
         let raw = self.container.borrow().get_gateways().clone();
         raw.into_iter()
             .map(|(path, gateway)| {
@@ -29,7 +29,7 @@ impl GatewayResolver {
             .collect()
     }
 
-    fn wrap_gateway(&self, gateway: Arc<Box<dyn GatewayTrait>>) -> Result<GatewayWrapper> {
+    fn wrap_gateway(&self, gateway: Arc<Box<dyn GatewayTrait>>) -> SetupResult<GatewayWrapper> {
         let enhancers = gateway.enhancers();
         let guards = self.resolve_guards(enhancers.guard_tokens)?;
         let interceptors = self.resolve_interceptors(enhancers.interceptor_tokens)?;
@@ -71,7 +71,7 @@ impl GatewayResolver {
         ))
     }
 
-    fn resolve_guards(&self, tokens: Vec<String>) -> Result<Vec<WsGuardEntry>> {
+    fn resolve_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<WsGuardEntry>> {
         let mut guards = self.container.borrow().get_global_ws_guards();
         for token in tokens {
             let entry = self.resolve_guard_by_token(&token)?;
@@ -80,7 +80,7 @@ impl GatewayResolver {
         Ok(guards)
     }
 
-    fn resolve_interceptors(&self, tokens: Vec<String>) -> Result<Vec<WsInterceptorEntry>> {
+    fn resolve_interceptors(&self, tokens: Vec<String>) -> SetupResult<Vec<WsInterceptorEntry>> {
         let mut interceptors = self.container.borrow().get_global_ws_interceptors();
         for token in tokens {
             let entry = self.resolve_interceptor_by_token(&token)?;
@@ -89,7 +89,7 @@ impl GatewayResolver {
         Ok(interceptors)
     }
 
-    fn resolve_error_handlers(&self, tokens: Vec<String>) -> Result<Vec<WsErrorHandlerArc>> {
+    fn resolve_error_handlers(&self, tokens: Vec<String>) -> SetupResult<Vec<WsErrorHandlerArc>> {
         let mut error_handlers = self.container.borrow().get_global_ws_error_handlers();
         for token in tokens {
             error_handlers.push(self.resolve_error_handler_by_token(&token)?);
@@ -97,7 +97,7 @@ impl GatewayResolver {
         Ok(error_handlers)
     }
 
-    fn resolve_tokens_only(&self, tokens: Vec<String>) -> Result<Vec<WsGuardEntry>> {
+    fn resolve_tokens_only(&self, tokens: Vec<String>) -> SetupResult<Vec<WsGuardEntry>> {
         tokens
             .into_iter()
             .map(|token| {
@@ -110,7 +110,7 @@ impl GatewayResolver {
     fn resolve_interceptor_tokens_only(
         &self,
         tokens: Vec<String>,
-    ) -> Result<Vec<WsInterceptorEntry>> {
+    ) -> SetupResult<Vec<WsInterceptorEntry>> {
         tokens
             .into_iter()
             .map(|token| {
@@ -123,14 +123,14 @@ impl GatewayResolver {
     fn resolve_error_handler_tokens_only(
         &self,
         tokens: Vec<String>,
-    ) -> Result<Vec<WsErrorHandlerArc>> {
+    ) -> SetupResult<Vec<WsErrorHandlerArc>> {
         tokens
             .into_iter()
             .map(|t| self.resolve_error_handler_by_token(&t))
             .collect()
     }
 
-    fn resolve_guard_by_token(&self, token: &str) -> Result<WsGuardEntry> {
+    fn resolve_guard_by_token(&self, token: &str) -> SetupResult<WsGuardEntry> {
         self.container
             .borrow()
             .get_role_registry()
@@ -138,7 +138,7 @@ impl GatewayResolver {
             .get(token)
             .cloned()
             .ok_or_else(|| {
-                anyhow!(
+                format!(
                     "WS Guard '{}' not found in registry. A guard registers automatically by \
                      implementing Guard<WsContext>; make sure the provider is in the module's \
                      `providers` list. For `provider_factory!` under a string/const token, name \
@@ -146,10 +146,11 @@ impl GatewayResolver {
                      (`|| -> MyGuard`) or pass a type hint.",
                     token
                 )
+                .into()
             })
     }
 
-    fn resolve_interceptor_by_token(&self, token: &str) -> Result<WsInterceptorEntry> {
+    fn resolve_interceptor_by_token(&self, token: &str) -> SetupResult<WsInterceptorEntry> {
         self.container
             .borrow()
             .get_role_registry()
@@ -157,7 +158,7 @@ impl GatewayResolver {
             .get(token)
             .cloned()
             .ok_or_else(|| {
-                anyhow!(
+                format!(
                     "WS Interceptor '{}' not found in registry. An interceptor registers \
                      automatically by implementing Interceptor<WsContext>; make sure the provider \
                      is in the module's `providers` list. For `provider_factory!` under a \
@@ -165,10 +166,11 @@ impl GatewayResolver {
                      the closure's return type (`|| -> MyInterceptor`) or pass a type hint.",
                     token
                 )
+                .into()
             })
     }
 
-    fn resolve_error_handler_by_token(&self, token: &str) -> Result<WsErrorHandlerArc> {
+    fn resolve_error_handler_by_token(&self, token: &str) -> SetupResult<WsErrorHandlerArc> {
         self.container
             .borrow()
             .get_role_registry()
@@ -176,7 +178,7 @@ impl GatewayResolver {
             .get(token)
             .cloned()
             .ok_or_else(|| {
-                anyhow!(
+                format!(
                     "WS ErrorHandler '{}' not found in registry. An error handler registers \
                      automatically by implementing ErrorHandler<WsContext, WsMessage>; make sure \
                      the provider is in the module's `providers` list. For `provider_factory!` \
@@ -184,6 +186,7 @@ impl GatewayResolver {
                      annotate the closure's return type or pass a type hint.",
                     token
                 )
+                .into()
             })
     }
 }

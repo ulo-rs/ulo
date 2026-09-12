@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use crate::error::SetupResult;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -89,13 +89,13 @@ impl MiddlewareManager {
         &mut self,
         module_token: &str,
         middleware_registry: &FxHashMap<String, Arc<dyn Middleware>>,
-    ) -> Result<()> {
+    ) -> SetupResult {
         if let Some(configs) = self.module_middleware.get_mut(module_token) {
             for config in configs {
                 for token in &config.middleware_tokens {
                     let middleware =
                         middleware_registry.get(token).cloned().ok_or_else(|| {
-                            anyhow!(
+                            format!(
                                 "Middleware '{}' not found in role registry for module '{}'. \
                                  Ensure the provider implements the Middleware trait and is registered in the module's providers.",
                                 token,

@@ -2,8 +2,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use anyhow::Result;
-
 use crate::application_context::UloApplicationContext;
 use crate::context::Metadata;
 use crate::context::{GrpcContext, HttpContext, RpcContext, WsContext};
@@ -235,10 +233,8 @@ impl UloFactory {
         Ok(UloApplicationContext::new(container))
     }
 
-    /// Returns `StartupError` rather than `anyhow::Error` so that a failing
-    /// `on_module_init` hook keeps its `HookFailed` variant — `?` into an
-    /// `anyhow::Error` would erase the module and hook names the scanner
-    /// attached.
+    /// A failing `on_module_init` hook arrives as [`StartupError::HookFailed`], carrying the
+    /// module and hook names the scanner attached where they were in scope.
     async fn initialize(
         &self,
         module: Box<dyn ModuleMetadata>,
