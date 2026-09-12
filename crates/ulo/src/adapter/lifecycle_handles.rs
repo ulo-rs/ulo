@@ -14,7 +14,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 
-use anyhow::Result;
+use crate::error::AdapterResult;
 use async_trait::async_trait;
 
 use crate::adapter::server_lifecycle::ServerLifecycle;
@@ -25,8 +25,9 @@ use crate::adapter::server_lifecycle::ServerLifecycle;
 /// Lets the lifecycle handle drive shutdown without holding a reference
 /// back to the adapter — the adapter's own state (channel sender, signal,
 /// etc.) is captured in the closure and the handle just calls it.
-pub type ShutdownCallback =
-    Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>> + Send + Sync>;
+pub type ShutdownCallback = Box<
+    dyn FnOnce() -> Pin<Box<dyn Future<Output = AdapterResult> + Send + 'static>> + Send + Sync,
+>;
 
 /// Lifecycle handle for an HTTP adapter. Constructed by each adapter
 /// crate's `into_lifecycle` implementation; owns the concrete state
@@ -48,7 +49,7 @@ impl HttpLifecycleHandle {
     ) -> Self
     where
         F: FnOnce() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = AdapterResult> + Send + 'static,
     {
         Self {
             local_addr,
@@ -72,7 +73,7 @@ impl ServerLifecycle for HttpLifecycleHandle {
         self.serve.take()
     }
 
-    async fn shutdown(&mut self) -> Result<()> {
+    async fn shutdown(&mut self) -> AdapterResult {
         if let Some(cb) = self.shutdown.take() {
             cb().await
         } else {
@@ -104,7 +105,7 @@ impl WsLifecycleHandle {
     ) -> Self
     where
         F: FnOnce() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = AdapterResult> + Send + 'static,
     {
         Self {
             local_addr,
@@ -132,7 +133,7 @@ impl ServerLifecycle for WsLifecycleHandle {
         self.serve.take()
     }
 
-    async fn shutdown(&mut self) -> Result<()> {
+    async fn shutdown(&mut self) -> AdapterResult {
         if let Some(cb) = self.shutdown.take() {
             cb().await
         } else {
@@ -157,7 +158,7 @@ impl RpcLifecycleHandle {
     ) -> Self
     where
         F: FnOnce() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = AdapterResult> + Send + 'static,
     {
         Self {
             local_addr,
@@ -181,7 +182,7 @@ impl ServerLifecycle for RpcLifecycleHandle {
         self.serve.take()
     }
 
-    async fn shutdown(&mut self) -> Result<()> {
+    async fn shutdown(&mut self) -> AdapterResult {
         if let Some(cb) = self.shutdown.take() {
             cb().await
         } else {
@@ -206,7 +207,7 @@ impl GrpcLifecycleHandle {
     ) -> Self
     where
         F: FnOnce() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<()>> + Send + 'static,
+        Fut: Future<Output = AdapterResult> + Send + 'static,
     {
         Self {
             local_addr,
@@ -230,7 +231,7 @@ impl ServerLifecycle for GrpcLifecycleHandle {
         self.serve.take()
     }
 
-    async fn shutdown(&mut self) -> Result<()> {
+    async fn shutdown(&mut self) -> AdapterResult {
         if let Some(cb) = self.shutdown.take() {
             cb().await
         } else {

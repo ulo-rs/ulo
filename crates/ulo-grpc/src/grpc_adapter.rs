@@ -2,7 +2,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio_stream::wrappers::TcpListenerStream;
@@ -11,6 +10,7 @@ use tonic::server::NamedService;
 use tonic::service::{Routes, RoutesBuilder};
 use tonic::transport::Server;
 use tower::Service;
+use ulo::AdapterResult;
 
 use ulo::adapter::{GrpcServiceSource, ResolvedGrpcEnhancers};
 use ulo::async_trait;
@@ -223,7 +223,7 @@ impl ulo::GrpcAdapter for GrpcAdapter {
     fn register_services(
         &mut self,
         services: Vec<(Arc<dyn GrpcServiceSource>, Arc<ResolvedGrpcEnhancers>)>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         // Framework-discovered services (`#[controller]` + `#[grpc_methods]`)
         // each know how to wrap themselves in their tonic `*Server` — hand
         // them the same `RoutesBuilder` already accumulating any
@@ -238,25 +238,26 @@ impl ulo::GrpcAdapter for GrpcAdapter {
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> Result<ulo::GrpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::GrpcLifecycleHandle> {
         // Bind synchronously so port-in-use surfaces as `Err` from
         // `app.bind()` instead of panicking inside the spawned serve loop.
         let target = self
             .target
             .take()
-            .context("GrpcAdapter: into_lifecycle() called more than once")?;
+            .ok_or_else(|| "GrpcAdapter: into_lifecycle() called more than once".to_string())?;
         let described = target.to_string();
         let std_listener = target
             .into_std_listener()
-            .with_context(|| format!("GrpcAdapter: failed to listen on {described}"))?;
+            .map_err(|e| format!("GrpcAdapter: failed to listen on {described}: {e}"))?;
         std_listener
             .set_nonblocking(true)
-            .context("GrpcAdapter: failed to set listener nonblocking")?;
-        let listener = TcpListener::from_std(std_listener)
-            .context("GrpcAdapter: failed to register listener with the tokio runtime")?;
+            .map_err(|e| format!("GrpcAdapter: failed to set listener nonblocking: {e}"))?;
+        let listener = TcpListener::from_std(std_listener).map_err(|e| {
+            format!("GrpcAdapter: failed to register listener with the tokio runtime: {e}")
+        })?;
         let local_addr = listener
             .local_addr()
-            .context("GrpcAdapter: failed to read local address from listener")?;
+            .map_err(|e| format!("GrpcAdapter: failed to read local address from listener: {e}"))?;
 
         let routes: Routes = std::mem::take(&mut self.routes_builder).routes();
         let drain_timeout = self.drain_timeout;
@@ -304,9 +305,9 @@ impl ulo::GrpcAdapter for GrpcAdapter {
         }
         #[cfg(any(feature = "tls-ring", feature = "tls-aws-lc"))]
         if let Some(tls) = self.tls.take() {
-            builder = builder
-                .tls_config(tls)
-                .context("GrpcAdapter: TLS configuration could not be accepted")?;
+            builder = builder.tls_config(tls).map_err(|e| {
+                format!("GrpcAdapter: TLS configuration could not be accepted: {e}")
+            })?;
         }
 
         let serve = Box::pin(async move {

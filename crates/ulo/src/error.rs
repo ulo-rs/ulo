@@ -7,6 +7,20 @@ use std::error::Error;
 /// at the scanner layer, where that information is in scope.
 pub type InitResult = Result<(), Box<dyn Error + Send + Sync + 'static>>;
 
+/// Return type for the transport adapter SPI — [`HttpAdapter`], [`WebSocketAdapter`],
+/// [`RpcAdapter`] and [`GrpcAdapter`].
+///
+/// Any error type implementing `std::error::Error + Send + Sync` can be returned with `?`, and
+/// `format!("…").into()` covers a failure that has no type of its own. The framework wraps
+/// whatever arrives into [`StartupError::Adapter`] with the transport name attached, at the layer
+/// holding it, and reads nothing else off the value.
+///
+/// [`HttpAdapter`]: crate::adapter::HttpAdapter
+/// [`WebSocketAdapter`]: crate::adapter::WebSocketAdapter
+/// [`RpcAdapter`]: crate::adapter::RpcAdapter
+/// [`GrpcAdapter`]: crate::adapter::GrpcAdapter
+pub type AdapterResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>;
+
 /// Errors from the startup phases: building the application
 /// ([`UloFactory::create`]) and acquiring its sockets ([`UloApplication::bind`]).
 ///

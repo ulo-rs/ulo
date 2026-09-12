@@ -15,7 +15,6 @@ ulo = { path = "../ulo", default-features = false }
 tokio = { workspace = true, features = ["net", "sync", "rt", "macros"] }
 tokio-tungstenite.workspace = true
 futures-util.workspace = true
-anyhow.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use crate::error::AdapterResult;
 use async_trait::async_trait;
 
 use crate::adapter::grpc_service_source::{GrpcServiceSource, ResolvedGrpcEnhancers};
@@ -36,7 +36,7 @@ pub trait GrpcAdapter: Send + Sync + 'static {
     fn register_services(
         &mut self,
         services: Vec<(Arc<dyn GrpcServiceSource>, Arc<ResolvedGrpcEnhancers>)>,
-    ) -> Result<()>;
+    ) -> AdapterResult;
 
     /// Consume the adapter and return a self-contained lifecycle handle
     /// driving the gRPC serve loop. The handle owns the serve future,
@@ -51,7 +51,7 @@ pub trait GrpcAdapter: Send + Sync + 'static {
     /// without holding a reference back to the adapter.
     async fn into_lifecycle(
         self: Box<Self>,
-    ) -> Result<crate::adapter::lifecycle_handles::GrpcLifecycleHandle>;
+    ) -> AdapterResult<crate::adapter::lifecycle_handles::GrpcLifecycleHandle>;
 }
 
 /// The method path a gRPC call arrived on, put on the request by the adapter.

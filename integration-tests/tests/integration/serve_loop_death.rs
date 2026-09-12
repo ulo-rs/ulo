@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
 use tokio::sync::oneshot;
+use ulo::AdapterResult;
 use ulo::http_helpers::HttpMethod;
 use ulo::{
     AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, RequestHandler,
@@ -41,7 +41,7 @@ impl HttpAdapter for DyingAdapter {
         _method: HttpMethod,
         _path: &str,
         _handler: Arc<dyn RequestHandler>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         Ok(())
     }
 
@@ -49,7 +49,7 @@ impl HttpAdapter for DyingAdapter {
         self: Box<Self>,
         target: BindTarget,
         _ctx: AdapterContext,
-    ) -> Result<HttpLifecycleHandle> {
+    ) -> AdapterResult<HttpLifecycleHandle> {
         let listener = target.into_std_listener()?;
         let local_addr = listener.local_addr()?;
         let die = self.die;

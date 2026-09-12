@@ -1,7 +1,7 @@
-use anyhow::{Context, Result, anyhow};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use ulo::AdapterResult;
 
 use actix_web::body::BoxBody;
 use actix_web::dev::{
@@ -65,7 +65,7 @@ fn to_actix_path(path: &str) -> String {
 }
 
 impl ActixAdapter {
-    async fn adapt_request(request: (ActixHttpRequest, Bytes)) -> Result<HttpRequest> {
+    async fn adapt_request(request: (ActixHttpRequest, Bytes)) -> AdapterResult<HttpRequest> {
         let (req, body) = request;
 
         let method = req
@@ -104,7 +104,7 @@ impl ActixAdapter {
         ))
     }
 
-    async fn adapt_response(response: HttpResponse) -> Result<ActixHttpResponse> {
+    async fn adapt_response(response: HttpResponse) -> AdapterResult<ActixHttpResponse> {
         let status = actix_web::http::StatusCode::from_u16(response.status)
             .unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
 
@@ -134,9 +134,9 @@ impl ActixAdapter {
         for (key, value) in response.headers {
             actix_response.headers_mut().insert(
                 actix_web::http::header::HeaderName::from_bytes(key.as_bytes())
-                    .map_err(|e| anyhow!("Failed to parse header name: {}", e))?,
+                    .map_err(|e| format!("Failed to parse header name: {}", e))?,
                 actix_web::http::header::HeaderValue::from_str(&value)
-                    .map_err(|e| anyhow!("Failed to parse header value: {}", e))?,
+                    .map_err(|e| format!("Failed to parse header value: {}", e))?,
             );
         }
 
@@ -372,7 +372,7 @@ impl HttpAdapter for ActixAdapter {
         method: HttpMethod,
         path: &str,
         handler: Arc<dyn RequestHandler>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.routes.push((method, path.to_owned(), handler));
         Ok(())
     }
@@ -381,13 +381,13 @@ impl HttpAdapter for ActixAdapter {
         mut self: Box<Self>,
         target: BindTarget,
         ctx: AdapterContext,
-    ) -> Result<HttpLifecycleHandle> {
+    ) -> AdapterResult<HttpLifecycleHandle> {
         let addr = target.to_string();
         // actix-server adopts a listener as-is (its `listen` docs push socket
         // configuration to the caller); mio needs it nonblocking.
         let std_listener = target
             .into_std_listener()
-            .with_context(|| format!("Failed to bind to {}", addr))?;
+            .map_err(|e| format!("Failed to bind to {}: {e}", addr))?;
         std_listener.set_nonblocking(true)?;
         let routes = std::mem::take(&mut self.routes);
         let ctx = Arc::new(ctx);
@@ -456,13 +456,13 @@ impl HttpAdapter for ActixAdapter {
             .wrap(GlobalChain { ctx: ctx.clone() })
         })
         .listen(std_listener)
-        .with_context(|| format!("Failed to listen on {}", addr))?;
+        .map_err(|e| format!("Failed to listen on {}: {e}", addr))?;
 
         let local_addr = bound
             .addrs()
             .into_iter()
             .next()
-            .ok_or_else(|| anyhow!("No bound address for {}", addr))?;
+            .ok_or_else(|| format!("No bound address for {}", addr))?;
 
         let running = bound.run();
         let handle = running.handle();

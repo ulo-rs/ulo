@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use http_body_util::BodyExt;
 use tokio::sync::watch;
+use ulo::AdapterResult;
 
 use poem::endpoint::{BoxEndpoint, Endpoint, EndpointExt};
 use poem::http::StatusCode;
@@ -472,7 +472,7 @@ impl HttpAdapter for PoemAdapter {
         method: HttpMethod,
         path: &str,
         handler: Arc<dyn RequestHandler>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.routes.push((method, path.to_owned(), handler));
         Ok(())
     }
@@ -481,7 +481,7 @@ impl HttpAdapter for PoemAdapter {
         &mut self,
         path: &str,
         callbacks: Arc<WsConnectionCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.ws_routes.push((path.to_owned(), callbacks));
         Ok(())
     }
@@ -490,7 +490,7 @@ impl HttpAdapter for PoemAdapter {
         mut self: Box<Self>,
         target: BindTarget,
         ctx: AdapterContext,
-    ) -> Result<HttpLifecycleHandle> {
+    ) -> AdapterResult<HttpLifecycleHandle> {
         let routes = std::mem::take(&mut self.routes);
         let ws_routes = std::mem::take(&mut self.ws_routes);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
@@ -513,16 +513,16 @@ impl HttpAdapter for PoemAdapter {
         let addr = target.to_string();
         let std_listener = target
             .into_std_listener()
-            .map_err(|e| anyhow!("Failed to bind HTTP {}: {}", addr, e))?;
+            .map_err(|e| format!("Failed to bind HTTP {}: {}", addr, e))?;
         std_listener.set_nonblocking(true)?;
         let acceptor = TcpAcceptor::from_std(std_listener)
-            .map_err(|e| anyhow!("Failed to adopt listener for {}: {}", addr, e))?;
+            .map_err(|e| format!("Failed to adopt listener for {}: {}", addr, e))?;
         let local_addr = acceptor
             .local_addr()
             .into_iter()
             .next()
             .and_then(|la| la.0.as_socket_addr().copied())
-            .ok_or_else(|| anyhow!("Failed to read local address from acceptor"))?;
+            .ok_or_else(|| "Failed to read local address from acceptor".to_string())?;
 
         let serve = Box::pin(async move {
             let signal = async move {
@@ -554,7 +554,7 @@ impl WebSocketAdapter for PoemAdapter {
         port: u16,
         path: &str,
         callbacks: Arc<WsConnectionCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.ws_ports
             .entry(port)
             .or_default()
@@ -565,7 +565,7 @@ impl WebSocketAdapter for PoemAdapter {
     async fn into_lifecycle_handles(
         mut self: Box<Self>,
         targets: Vec<(u16, BindTarget)>,
-    ) -> Result<Vec<ulo::WsLifecycleHandle>> {
+    ) -> AdapterResult<Vec<ulo::WsLifecycleHandle>> {
         let mut handles = Vec::with_capacity(targets.len());
         for (declared_port, target) in targets {
             let routes = match self.ws_ports.remove(&declared_port) {
@@ -585,16 +585,16 @@ impl WebSocketAdapter for PoemAdapter {
 
             let std_listener = target
                 .into_std_listener()
-                .map_err(|e| anyhow!("Failed to bind WebSocket {}: {}", addr, e))?;
+                .map_err(|e| format!("Failed to bind WebSocket {}: {}", addr, e))?;
             std_listener.set_nonblocking(true)?;
             let acceptor = TcpAcceptor::from_std(std_listener)
-                .map_err(|e| anyhow!("Failed to adopt listener for {}: {}", addr, e))?;
+                .map_err(|e| format!("Failed to adopt listener for {}: {}", addr, e))?;
             let local_addr = acceptor
                 .local_addr()
                 .into_iter()
                 .next()
                 .and_then(|la| la.0.as_socket_addr().copied())
-                .ok_or_else(|| anyhow!("Failed to read local address from acceptor"))?;
+                .ok_or_else(|| "Failed to read local address from acceptor".to_string())?;
 
             let serve = Box::pin(async move {
                 let signal = async move {

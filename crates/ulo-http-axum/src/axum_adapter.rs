@@ -1,10 +1,10 @@
-use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
+use ulo::AdapterResult;
 
 use axum::{
     Router, ServiceExt as AxumServiceExt,
@@ -315,7 +315,7 @@ impl tower::Service<Request<Body>> for GlobalChainService {
 }
 
 impl AxumAdapter {
-    async fn adapt_request(request: Request<Body>) -> Result<HttpRequest> {
+    async fn adapt_request(request: Request<Body>) -> AdapterResult<HttpRequest> {
         use http_body_util::BodyExt;
 
         let (parts, body) = request.into_parts();
@@ -328,7 +328,7 @@ impl AxumAdapter {
         ))
     }
 
-    async fn adapt_response(response: HttpResponse) -> Result<Response<Body>> {
+    async fn adapt_response(response: HttpResponse) -> AdapterResult<Response<Body>> {
         let status =
             StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
@@ -344,9 +344,9 @@ impl AxumAdapter {
         if let Some(ct) = body_content_type {
             headers.insert(
                 HeaderName::from_str("Content-Type")
-                    .map_err(|e| anyhow!("Failed to parse header name: {}", e))?,
+                    .map_err(|e| format!("Failed to parse header name: {}", e))?,
                 HeaderValue::from_str(&ct)
-                    .map_err(|e| anyhow!("Failed to parse content-type value: {}", e))?,
+                    .map_err(|e| format!("Failed to parse content-type value: {}", e))?,
             );
         }
 
@@ -361,7 +361,7 @@ impl AxumAdapter {
         let mut res = Response::builder()
             .status(status)
             .body(body)
-            .map_err(|e| anyhow!("Failed to build response: {}", e))?;
+            .map_err(|e| format!("Failed to build response: {}", e))?;
 
         res.headers_mut().extend(headers);
 
@@ -376,7 +376,7 @@ impl HttpAdapter for AxumAdapter {
         method: HttpMethod,
         path: &str,
         handler: Arc<dyn RequestHandler>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.routes.push((method, path.to_owned(), handler));
         Ok(())
     }
@@ -385,7 +385,7 @@ impl HttpAdapter for AxumAdapter {
         &mut self,
         path: &str,
         callbacks: Arc<WsConnectionCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.ws_router = self.ws_router.clone().route(path, ws_route(callbacks));
         Ok(())
     }
@@ -394,7 +394,7 @@ impl HttpAdapter for AxumAdapter {
         mut self: Box<Self>,
         target: BindTarget,
         ctx: AdapterContext,
-    ) -> Result<HttpLifecycleHandle> {
+    ) -> AdapterResult<HttpLifecycleHandle> {
         let routes = std::mem::take(&mut self.routes);
 
         // Group routes by path: Axum panics if the same path is registered twice.
@@ -462,12 +462,12 @@ impl HttpAdapter for AxumAdapter {
         let addr = target.to_string();
         let std_listener = target
             .into_std_listener()
-            .map_err(|e| anyhow!("Failed to bind HTTP {}: {}", addr, e))?;
+            .map_err(|e| format!("Failed to bind HTTP {}: {}", addr, e))?;
         std_listener.set_nonblocking(true)?;
         let listener = TcpListener::from_std(std_listener)?;
         let local_addr = listener
             .local_addr()
-            .map_err(|e| anyhow!("Failed to get local address: {}", e))?;
+            .map_err(|e| format!("Failed to get local address: {}", e))?;
 
         let serve = Box::pin(async move {
             if let Err(e) = axum::serve(listener, service.into_make_service())
@@ -498,7 +498,7 @@ impl WebSocketAdapter for AxumAdapter {
         port: u16,
         path: &str,
         callbacks: Arc<WsConnectionCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         let router = self.ws_ports.entry(port).or_insert_with(Router::new);
         *router = router.clone().route(path, ws_route(callbacks));
         Ok(())
@@ -507,7 +507,7 @@ impl WebSocketAdapter for AxumAdapter {
     async fn into_lifecycle_handles(
         mut self: Box<Self>,
         targets: Vec<(u16, BindTarget)>,
-    ) -> Result<Vec<ulo::WsLifecycleHandle>> {
+    ) -> AdapterResult<Vec<ulo::WsLifecycleHandle>> {
         let mut handles = Vec::with_capacity(targets.len());
         for (declared_port, target) in targets {
             let router = match self.ws_ports.remove(&declared_port) {
@@ -519,12 +519,12 @@ impl WebSocketAdapter for AxumAdapter {
             let shutdown_tx = self.shutdown_tx.clone();
             let std_listener = target
                 .into_std_listener()
-                .map_err(|e| anyhow!("Failed to bind WebSocket {}: {}", addr, e))?;
+                .map_err(|e| format!("Failed to bind WebSocket {}: {}", addr, e))?;
             std_listener.set_nonblocking(true)?;
             let listener = TcpListener::from_std(std_listener)?;
             let local_addr = listener
                 .local_addr()
-                .map_err(|e| anyhow!("Failed to get local address: {}", e))?;
+                .map_err(|e| format!("Failed to get local address: {}", e))?;
             let serve = Box::pin(async move {
                 axum::serve(listener, router)
                     .with_graceful_shutdown(async move {

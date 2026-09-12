@@ -2,6 +2,7 @@ mod body_already_read;
 mod cancellation;
 mod common;
 
+mod adapter_error_contract;
 mod app_token_enhancers;
 mod async_controllers;
 mod attribute_extractors;

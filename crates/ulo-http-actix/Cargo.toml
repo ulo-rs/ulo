@@ -13,7 +13,6 @@ categories = ["web-programming::http-server"]
 [dependencies]
 ulo = { path = "../ulo", default-features = false }
 actix-web = "4"
-anyhow.workspace = true
 tracing.workspace = true
 http.workspace = true
 http-body-util.workspace = true

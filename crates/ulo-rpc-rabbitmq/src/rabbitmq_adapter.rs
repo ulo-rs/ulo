@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use anyhow::Result;
 use futures::{FutureExt, StreamExt};
 use lapin::options::{
     BasicAckOptions, BasicConsumeOptions, BasicPublishOptions, QueueDeclareOptions,
 };
 use lapin::types::FieldTable;
 use lapin::{BasicProperties, Channel, Connection};
+use ulo::AdapterResult;
 use ulo::{RpcAdapter, RpcCallInfo, RpcMessageCallbacks};
 
 use crate::wire::{bytes_to_data, headers_to_metadata};
@@ -55,13 +55,13 @@ impl RpcAdapter for RabbitMqAdapter {
         &mut self,
         patterns: &[String],
         callbacks: Arc<RpcMessageCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.patterns = patterns.to_vec();
         self.callbacks = Some(callbacks);
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> Result<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
         let uri = self.uri.clone();
         let patterns = std::mem::take(&mut self.patterns);
         let callbacks = self

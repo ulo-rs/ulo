@@ -2,12 +2,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
 use futures_util::FutureExt;
 use tokio::net::UdpSocket;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 use tracing::Instrument;
+use ulo::AdapterResult;
 use ulo::rpc::wire;
 use ulo::{RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks, async_trait};
 
@@ -173,25 +173,26 @@ impl RpcAdapter for UdpAdapter {
         &mut self,
         _patterns: &[String],
         callbacks: Arc<RpcMessageCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         // Bind synchronously so `app.start().await` surfaces a port-in-use
         // failure as `Err` instead of panicking inside the spawned recv loop.
         let target = self
             .target
             .take()
-            .context("UdpAdapter: register_handlers() called more than once")?;
+            .ok_or_else(|| "UdpAdapter: register_handlers() called more than once".to_string())?;
         let described = target.to_string();
         let std_socket = target
             .into_std_socket()
-            .with_context(|| format!("UdpAdapter: failed to listen on {described}"))?;
+            .map_err(|e| format!("UdpAdapter: failed to listen on {described}: {e}"))?;
         std_socket
             .set_nonblocking(true)
-            .context("UdpAdapter: failed to set socket nonblocking")?;
-        let socket = UdpSocket::from_std(std_socket)
-            .context("UdpAdapter: failed to register socket with the tokio runtime")?;
+            .map_err(|e| format!("UdpAdapter: failed to set socket nonblocking: {e}"))?;
+        let socket = UdpSocket::from_std(std_socket).map_err(|e| {
+            format!("UdpAdapter: failed to register socket with the tokio runtime: {e}")
+        })?;
         let local_addr = socket
             .local_addr()
-            .context("UdpAdapter: failed to read local address from socket")?;
+            .map_err(|e| format!("UdpAdapter: failed to read local address from socket: {e}"))?;
 
         self.callbacks = Some(callbacks);
         self.socket = Some(Arc::new(socket));
@@ -199,7 +200,7 @@ impl RpcAdapter for UdpAdapter {
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> Result<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
         let callbacks = self
             .callbacks
             .take()

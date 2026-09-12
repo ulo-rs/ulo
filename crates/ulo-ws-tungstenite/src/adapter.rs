@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::Result;
 use futures_util::{FutureExt, SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
+use ulo::AdapterResult;
 use ulo::async_trait;
 use ulo::http_helpers::RequestPart;
 use ulo::websocket::{SendError, TrySendError, WsMessage, WsSink};
@@ -82,7 +82,7 @@ impl WebSocketAdapter for TungsteniteAdapter {
         port: u16,
         path: &str,
         callbacks: Arc<WsConnectionCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.ports
             .entry(port)
             .or_insert_with(PortEntry::new)
@@ -94,7 +94,7 @@ impl WebSocketAdapter for TungsteniteAdapter {
     async fn into_lifecycle_handles(
         mut self: Box<Self>,
         targets: Vec<(u16, BindTarget)>,
-    ) -> Result<Vec<WsLifecycleHandle>> {
+    ) -> AdapterResult<Vec<WsLifecycleHandle>> {
         let mut handles = Vec::with_capacity(targets.len());
         for (declared_port, target) in targets {
             let entry = match self.ports.remove(&declared_port) {
@@ -109,12 +109,12 @@ impl WebSocketAdapter for TungsteniteAdapter {
 
             let std_listener = target
                 .into_std_listener()
-                .map_err(|e| anyhow::anyhow!("Failed to bind WebSocket {}: {}", addr, e))?;
+                .map_err(|e| format!("Failed to bind WebSocket {}: {}", addr, e))?;
             std_listener.set_nonblocking(true)?;
             let listener = TcpListener::from_std(std_listener)?;
             let local_addr = listener
                 .local_addr()
-                .map_err(|e| anyhow::anyhow!("Failed to get local address: {}", e))?;
+                .map_err(|e| format!("Failed to get local address: {}", e))?;
 
             let serve = Box::pin(async move {
                 loop {
@@ -264,7 +264,7 @@ async fn run_ws_connection(
     callbacks.disconnect(client_id).await;
 }
 
-fn ws_message_to_tungstenite(msg: WsMessage) -> Result<Message> {
+fn ws_message_to_tungstenite(msg: WsMessage) -> AdapterResult<Message> {
     match msg {
         WsMessage::Text(t) => Ok(Message::Text(t.into())),
         WsMessage::Binary(b) => Ok(Message::Binary(b.into())),

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
 use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
 use tokio::sync::watch;
+use ulo::AdapterResult;
 
 use salvo::Router;
 use salvo::conn::tcp::TcpAcceptor;
@@ -532,7 +532,7 @@ impl HttpAdapter for SalvoAdapter {
         method: HttpMethod,
         path: &str,
         handler: Arc<dyn RequestHandler>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.routes.push((method, path.to_owned(), handler));
         Ok(())
     }
@@ -541,7 +541,7 @@ impl HttpAdapter for SalvoAdapter {
         &mut self,
         path: &str,
         callbacks: Arc<WsConnectionCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.ws_routes.push((path.to_owned(), callbacks));
         Ok(())
     }
@@ -550,7 +550,7 @@ impl HttpAdapter for SalvoAdapter {
         mut self: Box<Self>,
         target: BindTarget,
         ctx: AdapterContext,
-    ) -> Result<HttpLifecycleHandle> {
+    ) -> AdapterResult<HttpLifecycleHandle> {
         let routes = std::mem::take(&mut self.routes);
         let ws_routes = std::mem::take(&mut self.ws_routes);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
@@ -589,14 +589,14 @@ impl HttpAdapter for SalvoAdapter {
         let addr = target.to_string();
         let std_listener = target
             .into_std_listener()
-            .map_err(|e| anyhow!("Failed to bind HTTP {}: {}", addr, e))?;
+            .map_err(|e| format!("Failed to bind HTTP {}: {}", addr, e))?;
         std_listener.set_nonblocking(true)?;
         let tokio_listener = tokio::net::TcpListener::from_std(std_listener)?;
         let acceptor = TcpAcceptor::try_from(tokio_listener)
-            .map_err(|e| anyhow!("Failed to adopt listener for {}: {}", addr, e))?;
+            .map_err(|e| format!("Failed to adopt listener for {}: {}", addr, e))?;
         let local_addr = acceptor
             .local_addr()
-            .map_err(|e| anyhow!("Failed to get local address: {}", e))?;
+            .map_err(|e| format!("Failed to get local address: {}", e))?;
 
         let server = Server::new(acceptor);
         let server_handle = server.handle();
@@ -628,7 +628,7 @@ impl WebSocketAdapter for SalvoAdapter {
         port: u16,
         path: &str,
         callbacks: Arc<WsConnectionCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.ws_ports
             .entry(port)
             .or_default()
@@ -639,7 +639,7 @@ impl WebSocketAdapter for SalvoAdapter {
     async fn into_lifecycle_handles(
         mut self: Box<Self>,
         targets: Vec<(u16, BindTarget)>,
-    ) -> Result<Vec<ulo::WsLifecycleHandle>> {
+    ) -> AdapterResult<Vec<ulo::WsLifecycleHandle>> {
         let mut handles = Vec::with_capacity(targets.len());
         for (declared_port, target) in targets {
             let routes = match self.ws_ports.remove(&declared_port) {
@@ -660,14 +660,14 @@ impl WebSocketAdapter for SalvoAdapter {
 
             let std_listener = target
                 .into_std_listener()
-                .map_err(|e| anyhow!("Failed to bind WebSocket {}: {}", addr, e))?;
+                .map_err(|e| format!("Failed to bind WebSocket {}: {}", addr, e))?;
             std_listener.set_nonblocking(true)?;
             let tokio_listener = tokio::net::TcpListener::from_std(std_listener)?;
             let acceptor = TcpAcceptor::try_from(tokio_listener)
-                .map_err(|e| anyhow!("Failed to adopt listener for {}: {}", addr, e))?;
+                .map_err(|e| format!("Failed to adopt listener for {}: {}", addr, e))?;
             let local_addr = acceptor
                 .local_addr()
-                .map_err(|e| anyhow!("Failed to get local address: {}", e))?;
+                .map_err(|e| format!("Failed to get local address: {}", e))?;
 
             let server = Server::new(acceptor);
             let server_handle = server.handle();

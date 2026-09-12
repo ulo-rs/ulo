@@ -53,7 +53,7 @@ distinction strict resolution draws. `candidates` holds the keys `get_module_by_
 recovery the message used to describe is one the caller performs.
 
 **Where nothing branches, the error is `Box<dyn Error + Send + Sync>` behind an alias, as
-`InitResult` already is.** The adapter SPI is that surface: `bind` turns every adapter error into
+`InitResult` already is.** The alias is `AdapterResult<T = ()>`, on all four adapter traits. The adapter SPI is that surface: `bind` turns every adapter error into
 `StartupError::Adapter { transport, source }` at nine call sites and inspects none of them. The
 registration-before-acquisition ordering of ADR-0024 is carried by which method was called, not by
 the value it returned.
@@ -69,9 +69,10 @@ the value it returned.
 - A test asserting a resolution failure matches a variant. Three in the suite matched substrings of
   a message and now do not.
 - `StartupError` keeps `From<ResolutionError>`, so a startup path that resolves still uses `?`.
-- An enum for the adapter SPI is refused, not deferred. It would ask eleven transport crates to
-  classify roughly forty `?` sites into variants no consumer reads, and would let an adapter return
-  a `Bind` failure from `register_route`, contradicting a fact the call site already holds.
+- An enum for the adapter SPI is refused, not deferred. It would ask the fourteen crates that
+  implement one of the four traits to classify roughly forty `?` sites into variants no consumer
+  reads, and would let an adapter return a `Bind` failure from `register_route`, contradicting a
+  fact the call site already holds.
 
 ## Roads not taken
 

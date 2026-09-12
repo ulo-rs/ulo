@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use anyhow::Result;
 use bytes::Bytes;
 use futures::{FutureExt, StreamExt};
+use ulo::AdapterResult;
 use ulo::rpc::wire;
 use ulo::{RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks};
 
@@ -67,13 +67,13 @@ impl RpcAdapter for NatsAdapter {
         &mut self,
         patterns: &[String],
         callbacks: Arc<RpcMessageCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.patterns = patterns.to_vec();
         self.callbacks = Some(callbacks);
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> Result<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
         let servers = self.servers.clone();
         let patterns = std::mem::take(&mut self.patterns);
         let callbacks = self

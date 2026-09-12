@@ -19,7 +19,6 @@ ulo = { path = "../ulo", default-features = false }
 async-nats = "0.46"
 tokio = { workspace = true, features = ["full"] }
 serde_json.workspace = true
-anyhow.workspace = true
 tracing.workspace = true
 bytes.workspace = true
 futures = { workspace = true, features = ["async-await", "executor"] }
