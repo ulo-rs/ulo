@@ -27,7 +27,10 @@ use crate::errors::{PanicRecovered, PipelineSegment};
 
 /// Drive an async callback, returning [`PanicRecovered`] tagged with
 /// `segment` on caught unwind.
-pub async fn catch_async<Fut, T>(segment: PipelineSegment, fut: Fut) -> Result<T, PanicRecovered>
+pub(crate) async fn catch_async<Fut, T>(
+    segment: PipelineSegment,
+    fut: Fut,
+) -> Result<T, PanicRecovered>
 where
     Fut: Future<Output = T>,
 {
@@ -40,7 +43,7 @@ where
 /// Invoke a synchronous callback, returning [`PanicRecovered`] tagged with
 /// `segment` on caught unwind. Used for segments whose trait method is
 /// sync (e.g. rendering an error to its wire shape).
-pub fn catch_sync<F, T>(segment: PipelineSegment, f: F) -> Result<T, PanicRecovered>
+pub(crate) fn catch_sync<F, T>(segment: PipelineSegment, f: F) -> Result<T, PanicRecovered>
 where
     F: FnOnce() -> T,
 {

@@ -1,18 +1,18 @@
 mod container;
-pub use self::container::Container;
+pub(crate) use self::container::Container;
 
 mod instance_loader;
-pub use self::instance_loader::InstanceLoader;
+pub(crate) use self::instance_loader::InstanceLoader;
 mod module;
 mod multi_collection_provider;
 
 mod dependency_graph;
-pub use self::dependency_graph::{DependencyGraph, find_dependency_cycle};
+pub(crate) use self::dependency_graph::{DependencyGraph, find_dependency_cycle};
 
 mod instance_wrapper;
-pub use self::instance_wrapper::InstanceWrapper;
+pub(crate) use self::instance_wrapper::InstanceWrapper;
 
-pub use crate::di::token::IntoToken;
+pub(crate) use crate::di::token::IntoToken;
 
 mod module_ref;
 pub use self::module_ref::ModuleRef;
@@ -23,13 +23,13 @@ mod role_registry;
 pub(crate) use self::role_registry::RoleRegistry;
 
 mod gateway_resolver;
-pub use self::gateway_resolver::GatewayResolver;
+pub(crate) use self::gateway_resolver::GatewayResolver;
 
 mod rpc_controller_resolver;
-pub use self::rpc_controller_resolver::RpcControllerResolver;
+pub(crate) use self::rpc_controller_resolver::RpcControllerResolver;
 
 mod grpc_service_resolver;
-pub use self::grpc_service_resolver::GrpcServiceResolver;
+pub(crate) use self::grpc_service_resolver::GrpcServiceResolver;
 
 #[cfg(test)]
 mod module_identity_tests;

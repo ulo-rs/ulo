@@ -14,12 +14,12 @@ use super::Container;
 /// loader while services are stored, so a misdeclared token fails `create()`. Bind hands the
 /// stored `(service, enhancers)` pair to the adapter, which forwards `enhancers` into
 /// [`GrpcServiceSource::register_with`].
-pub struct GrpcServiceResolver {
+pub(crate) struct GrpcServiceResolver {
     container: Rc<RefCell<Container>>,
 }
 
 impl GrpcServiceResolver {
-    pub fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
         Self { container }
     }
 

@@ -3,7 +3,7 @@ use crate::error::SetupResult;
 use rustc_hash::FxHashMap;
 use std::{cell::RefCell, rc::Rc};
 
-pub struct DependencyGraph {
+pub(crate) struct DependencyGraph {
     container: Rc<RefCell<Container>>,
     module_token: String,
     visited: FxHashMap<String, bool>,
@@ -12,7 +12,7 @@ pub struct DependencyGraph {
 }
 
 impl DependencyGraph {
-    pub fn new(container: Rc<RefCell<Container>>, module_token: String) -> Self {
+    pub(crate) fn new(container: Rc<RefCell<Container>>, module_token: String) -> Self {
         Self {
             container,
             module_token,
@@ -22,7 +22,7 @@ impl DependencyGraph {
         }
     }
 
-    pub fn ordered_provider_tokens(mut self) -> SetupResult<Vec<String>> {
+    pub(crate) fn ordered_provider_tokens(mut self) -> SetupResult<Vec<String>> {
         let (providers, multi_providers) = {
             let container = self.container.borrow();
             let providers_map = container.provider_factories(&self.module_token)?;
@@ -120,7 +120,9 @@ impl DependencyGraph {
 /// deterministic for a given graph. Used only on the failure path, where the per-module
 /// [`DependencyGraph`] sort has already excluded within-module cycles, to name a cycle
 /// that spans modules.
-pub fn find_dependency_cycle(adjacency: &FxHashMap<String, Vec<String>>) -> Option<Vec<String>> {
+pub(crate) fn find_dependency_cycle(
+    adjacency: &FxHashMap<String, Vec<String>>,
+) -> Option<Vec<String>> {
     enum Mark {
         OnStack,
         Done,

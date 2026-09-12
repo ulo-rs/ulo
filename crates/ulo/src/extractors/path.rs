@@ -53,20 +53,6 @@ impl std::fmt::Display for PathError {
 
 impl std::error::Error for PathError {}
 
-pub fn extract_path_param<T: FromStr>(parts: &RequestPart, name: &str) -> Result<T, PathError>
-where
-    T::Err: std::fmt::Display,
-{
-    let params = parts.extensions.get::<PathParams>();
-    let value = params
-        .and_then(|p| p.0.get(name))
-        .ok_or_else(|| PathError::NotFound(name.to_string()))?;
-
-    value
-        .parse::<T>()
-        .map_err(|e| PathError::ParseError(format!("{}: {}", name, e)))
-}
-
 impl<T: DeserializeOwned> FromContext<HttpContext> for Path<T> {
     type Error = PathError;
 

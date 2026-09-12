@@ -1,3 +1,8 @@
+// An item reachable from nowhere is still public API: it holds a name, appears in the rustdoc
+// index, and cannot change without a major version. Denied rather than warned because CI's check
+// job does not pass `-D warnings`, so a warning here would accumulate unnoticed.
+#![deny(unreachable_pub)]
+
 pub mod adapter;
 mod application_context;
 mod builtin_module;

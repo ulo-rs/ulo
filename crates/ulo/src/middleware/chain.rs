@@ -7,7 +7,7 @@ use crate::{
     traits::middleware::{Middleware, MiddlewareResult, NextHandle, NextInternal},
 };
 
-pub struct FinalHandler {
+pub(crate) struct FinalHandler {
     handler: Box<
         dyn FnOnce(
                 HttpRequest,
@@ -18,7 +18,7 @@ pub struct FinalHandler {
 }
 
 impl FinalHandler {
-    pub fn new<F>(handler: F) -> Self
+    pub(crate) fn new<F>(handler: F) -> Self
     where
         F: FnOnce(
                 HttpRequest,
@@ -41,13 +41,13 @@ impl NextInternal for FinalHandler {
     }
 }
 
-pub struct ChainLink {
+pub(crate) struct ChainLink {
     middleware: Arc<dyn Middleware>,
     next: Box<dyn NextInternal>,
 }
 
 impl ChainLink {
-    pub fn new(middleware: Arc<dyn Middleware>, next: Box<dyn NextInternal>) -> Self {
+    pub(crate) fn new(middleware: Arc<dyn Middleware>, next: Box<dyn NextInternal>) -> Self {
         Self { middleware, next }
     }
 }

@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 use crate::di::token::IntoToken;
 use crate::traits::{Provider, ProviderContext};
 
-pub type ProviderStore = FxHashMap<String, FxHashMap<String, Arc<Box<dyn Provider>>>>;
+pub(crate) type ProviderStore = FxHashMap<String, FxHashMap<String, Arc<Box<dyn Provider>>>>;
 
 /// Provides runtime dependency resolution within a module context
 ///

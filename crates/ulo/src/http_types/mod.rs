@@ -1,9 +1,8 @@
 mod body;
 pub use self::body::{Body, BoxBody};
-pub use bytes::Bytes;
 
 mod http_response;
-pub use self::http_response::{HttpResponse, HttpResponseBuilder, HttpResponseDefault};
+pub use self::http_response::{HttpResponse, HttpResponseBuilder};
 
 mod path_params;
 pub use self::path_params::PathParams;
@@ -47,7 +46,7 @@ pub fn join_route(prefix: &str, sub_path: &str) -> String {
 }
 
 /// Trim trailing slashes from a path, preserving the root `/`.
-pub fn trim_trailing_slashes(path: &str) -> &str {
+pub(crate) fn trim_trailing_slashes(path: &str) -> &str {
     let trimmed = path.trim_end_matches('/');
     if trimmed.is_empty() { "/" } else { trimmed }
 }

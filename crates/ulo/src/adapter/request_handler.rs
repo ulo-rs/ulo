@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use crate::http_types::{HttpRequest, HttpResponse};
 
-pub type BoxFuture<T> = Pin<Box<dyn std::future::Future<Output = T> + Send>>;
+pub(crate) type BoxFuture<T> = Pin<Box<dyn std::future::Future<Output = T> + Send>>;
 
 /// The per-route handler the framework registers with an adapter via
 /// `register_route`.

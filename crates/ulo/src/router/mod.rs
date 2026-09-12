@@ -1,3 +1,3 @@
 mod routes_resolve;
 
-pub use routes_resolve::RoutesResolver;
+pub(crate) use routes_resolve::RoutesResolver;

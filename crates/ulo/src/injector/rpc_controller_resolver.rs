@@ -12,12 +12,12 @@ use super::Container;
 /// Resolves one RPC controller's enhancer tokens into a ready-to-serve
 /// `RpcControllerWrapper`. Called by the instance loader while controllers are stored, so a
 /// misdeclared token fails `create()`; bind hands the stored wrapper to the adapter.
-pub struct RpcControllerResolver {
+pub(crate) struct RpcControllerResolver {
     container: Rc<RefCell<Container>>,
 }
 
 impl RpcControllerResolver {
-    pub fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
         Self { container }
     }
 

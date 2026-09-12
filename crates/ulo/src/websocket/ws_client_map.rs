@@ -41,6 +41,7 @@ impl WsClientMap {
         self.clients.read().get(client_id).cloned()
     }
 
+    #[cfg(test)]
     pub(crate) fn all_sinks(&self) -> Vec<Arc<dyn WsSink>> {
         self.clients.read().values().cloned().collect()
     }

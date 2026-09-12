@@ -25,7 +25,7 @@ use crate::adapter::server_lifecycle::ServerLifecycle;
 /// Lets the lifecycle handle drive shutdown without holding a reference
 /// back to the adapter — the adapter's own state (channel sender, signal,
 /// etc.) is captured in the closure and the handle just calls it.
-pub type ShutdownCallback = Box<
+pub(crate) type ShutdownCallback = Box<
     dyn FnOnce() -> Pin<Box<dyn Future<Output = AdapterResult> + Send + 'static>> + Send + Sync,
 >;
 

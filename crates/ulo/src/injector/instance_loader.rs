@@ -59,16 +59,16 @@ use crate::{
     },
 };
 
-pub struct InstanceLoader {
+pub(crate) struct InstanceLoader {
     container: Rc<RefCell<Container>>,
 }
 
 impl InstanceLoader {
-    pub fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
         Self { container }
     }
 
-    pub async fn create_instances_of_dependencies(&self) -> SetupResult {
+    pub(crate) async fn create_instances_of_dependencies(&self) -> SetupResult {
         let modules_order = self.container.borrow().ordered_module_tokens();
 
         // PRE-PHASE 1: Register one ModuleRefProvider per module, all sharing the same

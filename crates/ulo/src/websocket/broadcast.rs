@@ -93,15 +93,14 @@ impl From<SendError> for BroadcastError {
 ///
 /// Does not store write channels — those live exclusively in [`WsClientMap`].
 /// All message delivery is delegated there, keeping topology state separate from transport.
-pub struct ConnectionManager {
+pub(crate) struct ConnectionManager {
     clients: Arc<RwLock<HashMap<ClientId, ClientState>>>,
     rooms: Arc<RwLock<HashMap<RoomId, HashSet<ClientId>>>>,
     namespaces: Arc<RwLock<HashMap<String, HashSet<ClientId>>>>,
     ws_client_map: Arc<WsClientMap>,
 }
 
-pub struct ClientState {
-    pub client: WsClient,
+pub(crate) struct ClientState {
     pub rooms: HashSet<RoomId>,
     pub namespace: Option<String>,
 }
@@ -122,7 +121,6 @@ impl ConnectionManager {
         let client_id = client.id.clone();
 
         let state = ClientState {
-            client,
             rooms: HashSet::new(),
             namespace: namespace.clone(),
         };
@@ -159,7 +157,7 @@ impl ConnectionManager {
         Some(state)
     }
 
-    pub fn join_room(&self, client_id: &str, room_id: &str) -> Result<(), BroadcastError> {
+    pub(crate) fn join_room(&self, client_id: &str, room_id: &str) -> Result<(), BroadcastError> {
         self.rooms
             .write()
             .entry(room_id.to_string())
@@ -175,7 +173,7 @@ impl ConnectionManager {
         }
     }
 
-    pub fn leave_room(&self, client_id: &str, room_id: &str) -> Result<(), BroadcastError> {
+    pub(crate) fn leave_room(&self, client_id: &str, room_id: &str) -> Result<(), BroadcastError> {
         if let Some(room_members) = self.rooms.write().get_mut(room_id) {
             room_members.remove(client_id);
         }
@@ -189,7 +187,7 @@ impl ConnectionManager {
         }
     }
 
-    pub fn get_room_clients(&self, room_id: &str) -> Vec<ClientId> {
+    pub(crate) fn get_room_clients(&self, room_id: &str) -> Vec<ClientId> {
         self.rooms
             .read()
             .get(room_id)
@@ -197,7 +195,7 @@ impl ConnectionManager {
             .unwrap_or_default()
     }
 
-    pub fn get_namespace_clients(&self, namespace: &str) -> Vec<ClientId> {
+    pub(crate) fn get_namespace_clients(&self, namespace: &str) -> Vec<ClientId> {
         self.namespaces
             .read()
             .get(namespace)
@@ -205,11 +203,11 @@ impl ConnectionManager {
             .unwrap_or_default()
     }
 
-    pub fn all_clients(&self) -> Vec<ClientId> {
+    pub(crate) fn all_clients(&self) -> Vec<ClientId> {
         self.clients.read().keys().cloned().collect()
     }
 
-    pub fn get_client_rooms(&self, client_id: &str) -> Vec<RoomId> {
+    pub(crate) fn get_client_rooms(&self, client_id: &str) -> Vec<RoomId> {
         self.clients
             .read()
             .get(client_id)
@@ -218,7 +216,7 @@ impl ConnectionManager {
     }
 
     /// Send a message to the given clients. Returns how many write channels accepted it.
-    pub async fn send_to_clients(
+    pub(crate) async fn send_to_clients(
         &self,
         client_ids: &[ClientId],
         message: WsMessage,
@@ -237,7 +235,7 @@ impl ConnectionManager {
     }
 
     /// Sends close frames to all connected clients and clears topology state.
-    pub async fn close_all(&self) {
+    pub(crate) async fn close_all(&self) {
         let client_ids: Vec<ClientId> = self.clients.read().keys().cloned().collect();
         let count = client_ids.len();
 
@@ -295,6 +293,7 @@ impl BroadcastService {
 
     /// Expose the internal `ConnectionManager` so the framework can wire
     /// `on_connect` / `on_disconnect` callbacks into it.
+    #[cfg(test)]
     pub(crate) fn connection_manager(&self) -> Arc<ConnectionManager> {
         self.manager.clone()
     }
