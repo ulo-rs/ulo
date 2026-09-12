@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use ulo::middleware::{AllowedOrigins, CorsMiddleware, CorsOptions};
+use ulo::http::middleware::{AllowedOrigins, CorsMiddleware, CorsOptions};
 use ulo::{Body, UloFactory, controller, get, module, routes};
 
 use crate::common::TestServer;

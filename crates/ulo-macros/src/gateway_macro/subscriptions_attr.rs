@@ -167,7 +167,7 @@ fn handler_params(method: &syn::ImplItemFn) -> (Vec<TokenStream>, Vec<TokenStrea
         }
 
         extractions.push(quote! {
-            let #name = match <#ty as ::ulo::extractors::FromContext<
+            let #name = match <#ty as ::ulo::extract::FromContext<
                 ::ulo::ws::WsContext,
             >>::extract(__ctx).await {
                 ::std::result::Result::Ok(__value) => __value,

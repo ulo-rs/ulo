@@ -20,7 +20,7 @@ use futures_util::Stream;
 use serial_test::serial;
 use ulo::UloFactory;
 use ulo::context::HandlerContext;
-use ulo::extractors::Payload;
+use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
 use ulo_macros::{controller, grpc_methods, module, new};

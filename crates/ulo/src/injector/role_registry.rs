@@ -4,12 +4,12 @@ use rustc_hash::FxHashMap;
 
 use crate::{
     grpc::{GrpcServiceSource, ResolvedGrpcEnhancers},
+    http::middleware::Middleware,
     rpc::RpcControllerWrapper,
     traits::{
         GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc,
         HttpGuardEntry, HttpInterceptorEntry, ProviderRole, RpcErrorHandlerArc, RpcGuardEntry,
         RpcInterceptorEntry, WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
-        middleware::Middleware,
     },
     ws::Gateway,
 };

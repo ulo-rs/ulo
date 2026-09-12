@@ -78,11 +78,11 @@ pub fn handle_middleware_struct(attr: TokenStream, item: TokenStream) -> Result<
 
         // Generate the Middleware trait implementation
         #[::ulo::async_trait]
-        impl ::ulo::traits::middleware::Middleware for #struct_name {
+        impl ::ulo::http::middleware::Middleware for #struct_name {
             async fn handle(
                 &self,
-                next: ::ulo::traits::middleware::NextHandle,
-            ) -> ::ulo::traits::middleware::MiddlewareResult {
+                next: ::ulo::http::middleware::NextHandle,
+            ) -> ::ulo::http::middleware::MiddlewareResult {
                 #handle_body
             }
         }

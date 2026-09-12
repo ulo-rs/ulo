@@ -6,7 +6,7 @@ use std::time::Duration;
 use diesel::{QueryableByName, sql_types::Text};
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
-use ulo::extractors::Bytes;
+use ulo::http::extract::Bytes;
 use ulo::*;
 use ulo_db_diesel::{AsyncPgConnection, DieselModule, PgHealthIndicator, PgPool};
 use ulo_health::{HealthCheckService, HealthIndicator, TerminusModule};

@@ -7,7 +7,7 @@ use futures::TryStreamExt;
 use mongodb::bson::{Document, doc};
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::mongo::Mongo;
-use ulo::extractors::Bytes;
+use ulo::http::extract::Bytes;
 use ulo::*;
 use ulo_db_mongodb::{Database, MongoHealthIndicator, MongoModule};
 use ulo_health::{HealthCheckService, HealthIndicator, TerminusModule};

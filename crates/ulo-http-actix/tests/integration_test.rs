@@ -9,7 +9,7 @@
 
 use futures_util::StreamExt;
 use ulo::UloFactory;
-use ulo::extractors::{BodyStream, Bytes, Path};
+use ulo::http::extract::{BodyStream, Bytes, Path};
 use ulo::*;
 use ulo_http_actix::ActixAdapter;
 use ulo_macros::module;

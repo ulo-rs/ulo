@@ -7,7 +7,7 @@
 
 use futures_util::{SinkExt, StreamExt};
 use ulo::UloFactory;
-use ulo::extractors::{BodyStream, Bytes, Path, Query};
+use ulo::http::extract::{BodyStream, Bytes, Path, Query};
 use ulo::*;
 use ulo_http_salvo::SalvoAdapter;
 use ulo_macros::{module, new, subscriptions, websocket_gateway};

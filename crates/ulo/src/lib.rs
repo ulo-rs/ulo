@@ -31,7 +31,7 @@ pub mod di;
 mod enhancer;
 pub mod errors;
 mod extension;
-pub mod extractors;
+pub mod extract;
 mod factory;
 pub mod grpc;
 pub use grpc::{
@@ -39,7 +39,6 @@ pub use grpc::{
 };
 pub mod http;
 mod injector;
-pub mod middleware;
 mod modules;
 mod panic_recovery;
 mod provider_scope;
@@ -109,7 +108,8 @@ pub use errors::{
 pub use startup_check::StartupCheck;
 
 // Re-export trait so users wont have to import manually
-pub use extractors::{BodyStream, FromContext, take_body};
+pub use extract::{FromContext, take_body};
+pub use http::extract::BodyStream;
 
 // Re-export macros
 pub use ulo_macros::*;

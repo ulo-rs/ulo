@@ -12,7 +12,7 @@ use std::pin::Pin;
 
 use crate::common::NotServed;
 use futures_util::Stream;
-use ulo::extractors::Payload;
+use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
 use ulo::rpc::RpcContext;

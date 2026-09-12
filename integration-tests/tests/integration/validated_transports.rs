@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use serde::Deserialize;
-use ulo::extractors::{Payload, Validated};
+use ulo::extract::{Payload, Validated};
 use ulo::module;
 use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};

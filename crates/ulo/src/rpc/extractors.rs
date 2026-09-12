@@ -20,7 +20,7 @@ use std::fmt;
 
 use serde::de::DeserializeOwned;
 
-use crate::extractors::{FromContext, Payload};
+use crate::extract::{FromContext, Payload};
 use crate::rpc::RpcContext;
 use crate::rpc::RpcData;
 

@@ -20,7 +20,7 @@ use serial_test::serial;
 use ulo::UloFactory;
 use ulo::async_trait;
 use ulo::errors::GuardRejection;
-use ulo::extractors::Payload;
+use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
 use ulo::rpc::RpcContext;

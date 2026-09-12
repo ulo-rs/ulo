@@ -25,11 +25,11 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use ulo::extractors::Payload;
+use ulo::extract::Payload;
 use ulo::{
-    Body, RpcClient, UloFactory, controller,
-    extractors::{Json, Query},
-    get, injectable, module, post, routes,
+    Body, RpcClient, UloFactory, controller, get,
+    http::extract::{Json, Query},
+    injectable, module, post, routes,
 };
 use ulo_macros::{new, patterns, provider_value};
 

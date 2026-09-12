@@ -6,7 +6,7 @@ use std::task::{Context, Poll};
 
 use futures::Stream;
 
-use crate::extractors::FromContext;
+use crate::extract::FromContext;
 use crate::grpc::GrpcContext;
 use crate::grpc::GrpcStatus;
 use crate::grpc::runtime::RequestError;

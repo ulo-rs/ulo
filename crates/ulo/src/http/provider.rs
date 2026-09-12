@@ -33,7 +33,7 @@ use std::sync::Arc;
 use crate::FxHashMap;
 use crate::async_trait;
 use crate::context::HandlerContext;
-use crate::extractors::FromContext;
+use crate::extract::FromContext;
 use crate::http::HttpContext;
 use crate::http::{PathParams, RequestPart};
 use crate::provider_scope::ProviderScope;

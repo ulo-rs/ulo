@@ -20,8 +20,8 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use ulo::async_trait;
+use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::traits::MiddlewareConsumer;
-use ulo::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::{Body, TowerLayer, controller, get, module, post, routes};
 
 // ── Test 1: basic header injection ───────────────────────────────────────────
@@ -132,7 +132,7 @@ async fn tower_layer_request_body_round_trip() {
         #[post("/json")]
         async fn echo_json(
             &self,
-            ulo::extractors::Json(val): ulo::extractors::Json<serde_json::Value>,
+            ulo::http::extract::Json(val): ulo::http::extract::Json<serde_json::Value>,
         ) -> Body {
             Body::json(val)
         }

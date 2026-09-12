@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
-use ulo::extractors::Bytes;
+use ulo::http::extract::Bytes;
 use ulo::*;
 use ulo_db_sqlx::{PgPool, PostgresHealthIndicator, Row, SqlxModule, query};
 use ulo_health::{HealthCheckService, HealthIndicator, TerminusModule};

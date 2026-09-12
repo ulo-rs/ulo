@@ -106,7 +106,8 @@ pub fn get_extractor_params(
                     && let Some(param_name) = extract_param_name(&pat_type.pat)
                 {
                     let inner = &*pat_type.ty;
-                    body_markers.push((param_name, parse_quote!(::ulo::extractors::Body<#inner>)));
+                    body_markers
+                        .push((param_name, parse_quote!(::ulo::http::extract::Body<#inner>)));
                 }
                 continue;
             }
@@ -166,10 +167,10 @@ pub fn one_body_assertion(
             assertions.push(quote! {
                 const _: () = {
                     assert!(
-                        !(<#first_ty as ::ulo::extractors::FromContext<
+                        !(<#first_ty as ::ulo::extract::FromContext<
                             ::ulo::http::HttpContext,
                         >>::CONSUMES
-                            && <#second_ty as ::ulo::extractors::FromContext<
+                            && <#second_ty as ::ulo::extract::FromContext<
                                 ::ulo::http::HttpContext,
                             >>::CONSUMES),
                         #message
@@ -283,7 +284,7 @@ pub fn generate_extractor_extractions(
 
             // `None` on failure instead of a 400.
             ExtractorKind::Optional { inner_type } => quote! {
-                let #param_name = <#inner_type as ::ulo::extractors::FromContext<
+                let #param_name = <#inner_type as ::ulo::extract::FromContext<
                     ::ulo::http::HttpContext,
                 >>::extract(__ctx).await.ok();
             },
@@ -291,7 +292,7 @@ pub fn generate_extractor_extractions(
             _ => {
                 let failure = extraction_failed(quote! { __e.to_string() });
                 quote! {
-                    let #param_name = match <#param_type as ::ulo::extractors::FromContext<
+                    let #param_name = match <#param_type as ::ulo::extract::FromContext<
                         ::ulo::http::HttpContext,
                     >>::extract(__ctx).await {
                         ::std::result::Result::Ok(__value) => __value,

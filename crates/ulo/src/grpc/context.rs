@@ -269,8 +269,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_message_extractor_names_both_types_when_the_call_carries_another() {
-        use crate::extractors::{FromContext, Payload};
-
+        use crate::extract::{FromContext, Payload};
         let ctx = GrpcContext::new("pkg.Svc/Method", HashMap::new(), None, None);
         ctx.install_request(Box::new(Carrying(7)));
 

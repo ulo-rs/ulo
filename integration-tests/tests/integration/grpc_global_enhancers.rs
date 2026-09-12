@@ -17,7 +17,7 @@ use std::time::Duration;
 use crate::common::NotServed;
 use serial_test::serial;
 use ulo::UloFactory;
-use ulo::extractors::Payload;
+use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
 use ulo::traits::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};

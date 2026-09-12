@@ -1,4 +1,4 @@
-use super::FromContext;
+use crate::extract::FromContext;
 use crate::http::HttpContext;
 use crate::http::PathParams;
 use serde::de::DeserializeOwned;

@@ -197,7 +197,7 @@ impl UserController {
     #[post("/")]
     async fn create_user(
         &self,
-        ulo::extractors::Json(body): ulo::extractors::Json<serde_json::Value>,
+        ulo::http::extract::Json(body): ulo::http::extract::Json<serde_json::Value>,
     ) -> Result<HttpResponse, UserError> {
         let email = body
             .get("email")

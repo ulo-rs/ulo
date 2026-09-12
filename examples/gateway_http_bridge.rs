@@ -21,7 +21,7 @@
 //! Every connected WebSocket client receives the message.
 
 use serde::Deserialize;
-use ulo::extractors::Json;
+use ulo::http::extract::Json;
 use ulo::ws::{BroadcastModule, BroadcastService, WsClient, WsMessage};
 use ulo::*;
 use ulo_http_axum::AxumAdapter;

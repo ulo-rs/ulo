@@ -9,7 +9,7 @@
 //! [`AdapterContext`]: ulo::AdapterContext
 
 use serde::Deserialize;
-use ulo::extractors::{Path, Query};
+use ulo::http::extract::{Path, Query};
 use ulo::{Body, UloFactory, controller, get, module, routes};
 
 use crate::common::TestServer;

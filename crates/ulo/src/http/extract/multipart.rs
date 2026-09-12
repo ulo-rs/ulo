@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use http_body_util::BodyExt;
 
-use super::{BodyExtractionError, FromContext, take_body};
+use crate::extract::{BodyExtractionError, FromContext, take_body};
 use crate::http::HttpContext;
 use crate::http::{HttpRequest, RequestBody, RequestBoxBody};
 
@@ -19,7 +19,7 @@ pub use multer::Field;
 /// # Example
 ///
 /// ```rust,ignore
-/// use ulo::extractors::Multipart;
+/// use ulo::http::extract::Multipart;
 ///
 /// #[post("/upload")]
 /// async fn upload(&self, mut mp: Multipart) -> String {

@@ -3,7 +3,7 @@
 // fails at request time instead, which is the whole reason the check is at
 // compile time.
 use serde::Deserialize;
-use ulo::extractors::{Bytes, Json};
+use ulo::http::extract::{Bytes, Json};
 use ulo::{Body, controller, post, routes};
 
 #[derive(Deserialize)]

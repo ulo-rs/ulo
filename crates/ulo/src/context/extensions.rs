@@ -172,7 +172,7 @@ impl Extensions {
 /// specific to HTTP — the same parameter means the same thing in a WebSocket or
 /// RPC handler. Extraction never fails: a message with nothing attached yields
 /// an empty bag.
-impl<C: HandlerContext> crate::extractors::FromContext<C> for Extensions {
+impl<C: HandlerContext> crate::extract::FromContext<C> for Extensions {
     type Error = std::convert::Infallible;
 
     async fn extract(ctx: &C) -> Result<Self, Self::Error> {
@@ -273,7 +273,7 @@ mod tests {
         struct Principal(&'static str);
 
         async fn read_from_any<C: HandlerContext>(ctx: &C) -> Extensions {
-            use crate::extractors::FromContext;
+            use crate::extract::FromContext;
             Extensions::extract(ctx).await.expect("infallible")
         }
 

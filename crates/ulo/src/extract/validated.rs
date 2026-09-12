@@ -91,7 +91,7 @@ pub trait ValidatableExtractor {
 }
 
 // Implement for Json<T> where T: Validate
-impl<T: Validate> ValidatableExtractor for super::Json<T> {
+impl<T: Validate> ValidatableExtractor for crate::http::extract::Json<T> {
     type Inner = T;
 
     fn inner(&self) -> &Self::Inner {
@@ -100,7 +100,7 @@ impl<T: Validate> ValidatableExtractor for super::Json<T> {
 }
 
 // Implement for Path<T> where T: Validate
-impl<T: Validate> ValidatableExtractor for super::Path<T> {
+impl<T: Validate> ValidatableExtractor for crate::http::extract::Path<T> {
     type Inner = T;
 
     fn inner(&self) -> &Self::Inner {
@@ -109,7 +109,7 @@ impl<T: Validate> ValidatableExtractor for super::Path<T> {
 }
 
 // Implement for Query<T> where T: Validate
-impl<T: Validate> ValidatableExtractor for super::Query<T> {
+impl<T: Validate> ValidatableExtractor for crate::http::extract::Query<T> {
     type Inner = T;
 
     fn inner(&self) -> &Self::Inner {
@@ -118,7 +118,7 @@ impl<T: Validate> ValidatableExtractor for super::Query<T> {
 }
 
 // Implement for Body<T> where T: Validate
-impl<T: Validate> ValidatableExtractor for super::body::Body<T> {
+impl<T: Validate> ValidatableExtractor for crate::http::extract::Body<T> {
     type Inner = T;
 
     fn inner(&self) -> &Self::Inner {
@@ -127,7 +127,7 @@ impl<T: Validate> ValidatableExtractor for super::body::Body<T> {
 }
 
 // Implement for Payload<T> where T: Validate — the WebSocket and RPC spelling.
-impl<T: Validate> ValidatableExtractor for super::Payload<T> {
+impl<T: Validate> ValidatableExtractor for crate::extract::Payload<T> {
     type Inner = T;
 
     fn inner(&self) -> &Self::Inner {

@@ -13,7 +13,7 @@ pub type RequestBoxBody =
 /// call [`RequestBody::collect`] to buffer on demand. [`BodyStream`] takes
 /// the stream directly without buffering.
 ///
-/// [`BodyStream`]: crate::extractors::BodyStream
+/// [`BodyStream`]: crate::http::extract::BodyStream
 pub enum RequestBody {
     Buffered(Bytes),
     Streaming(RequestBoxBody),

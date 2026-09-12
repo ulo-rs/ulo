@@ -1,5 +1,5 @@
 use super::resource_name_service::RESOURCE_NAME_SERVICE;
-use ulo::extractors::Path;
+use ulo::http::extract::Path;
 use ulo::*;
 
 #[controller("/resource_name")]

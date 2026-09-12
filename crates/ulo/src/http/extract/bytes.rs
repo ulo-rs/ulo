@@ -1,4 +1,4 @@
-use super::{BodyExtractionError, FromContext, take_body};
+use crate::extract::{BodyExtractionError, FromContext, take_body};
 use crate::http::HttpContext;
 use crate::http::HttpRequest;
 

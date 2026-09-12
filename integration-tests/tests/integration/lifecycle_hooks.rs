@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::common::NotServed;
 use serial_test::serial;
-use ulo::extractors::Payload;
+use ulo::extract::Payload;
 use ulo::grpc::extract::Inbound;
 use ulo::{UloFactory, injectable, module, on_application_bootstrap, on_module_init};
 use ulo_http_axum::AxumAdapter;

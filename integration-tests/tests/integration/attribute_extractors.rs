@@ -7,7 +7,7 @@
 //! segment: `#[ulo::body]` and `#[body]` must mean the same thing.
 use crate::common::TestServer;
 use serde::{Deserialize, Serialize};
-use ulo::{Body, controller, extractors::Bytes, get, post, routes};
+use ulo::{Body, controller, get, http::extract::Bytes, post, routes};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CreateUserDto {

@@ -5,7 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     enhancer::EnhancerMetadata,
-    middleware::MiddlewareManager,
+    http::middleware::MiddlewareManager,
     traits::{
         Controller, ControllerFactory, GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry,
         HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry, ModuleMetadata, Provider,
