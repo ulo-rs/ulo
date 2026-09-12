@@ -1,12 +1,11 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use super::BroadcastService;
 use crate::FxHashMap;
 use crate::async_trait;
 use crate::provider_scope::ProviderScope;
 use crate::traits::{Provider, ProviderContext, ProviderFactory};
-
-use super::BroadcastService;
 
 /// Singleton provider that hands out clones of the pre-built `BroadcastService`.
 pub(crate) struct BroadcastServiceProvider {

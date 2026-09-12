@@ -18,7 +18,7 @@ use serial_test::serial;
 use tokio_tungstenite::tungstenite::Message;
 use ulo::UloFactory;
 use ulo::async_trait;
-use ulo::traits::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo::enhancer::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::ws::WsContext;
 use ulo::ws::{WsError, WsHandlerResult, WsMessage};
 use ulo::{injectable, module};

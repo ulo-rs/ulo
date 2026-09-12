@@ -1,8 +1,7 @@
 use parking_lot::Mutex;
 
-use crate::traits::{ControllerFactory, ModuleMetadata, ProviderFactory};
-
 use super::ModuleIdentity;
+use crate::traits::{ControllerFactory, ModuleMetadata, ProviderFactory};
 
 /// A module whose providers and exports are determined at runtime rather than compile time.
 ///

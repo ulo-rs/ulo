@@ -25,15 +25,3 @@ mod controller;
 pub use self::controller::{Controller, ControllerEnhancers, ControllerFactory, Dispatch, Route};
 
 pub(crate) mod dispatch_source;
-
-mod interceptor;
-pub use self::interceptor::{Interceptor, InterceptorNext};
-
-mod guard;
-pub use self::guard::Guard;
-
-pub mod error_handler;
-pub use self::error_handler::{
-    ChainError, DefaultHttpErrorHandler, DefaultRpcErrorHandler, DefaultWsErrorHandler,
-    ErrorHandler,
-};

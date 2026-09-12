@@ -9,7 +9,6 @@ use std::fmt;
 use std::sync::Arc;
 use ulo::RequestPart;
 use ulo::traits::{Provider, ProviderContext};
-
 /// Injectable GraphQL service.
 ///
 /// This service holds the Juniper schema and context builder.

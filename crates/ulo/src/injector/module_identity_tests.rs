@@ -17,7 +17,6 @@ use crate::scanner::DependencyScanner;
 use crate::traits::{
     ControllerFactory, Injectable, ModuleMetadata, Provider, ProviderContext, ProviderFactory,
 };
-
 /// A provider that builds a trivial value. `token` is its injection token; `hint` is the
 /// configuration fingerprint folded into the owning module's identity.
 struct FakeFactory {

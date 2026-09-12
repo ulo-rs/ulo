@@ -9,8 +9,8 @@
 //! route 403/200.
 
 use ulo::async_trait;
+use ulo::enhancer::Guard;
 use ulo::http::HttpContext;
-use ulo::traits::Guard;
 use ulo::{Body, controller, get, module, provider_factory, provider_value, routes, use_guards};
 
 use crate::common::TestServer;

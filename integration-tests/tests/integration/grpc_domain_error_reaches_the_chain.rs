@@ -48,10 +48,10 @@ impl ulo::Error for OutOfStock {
 pub struct RestockHandler {}
 
 #[async_trait]
-impl ulo::traits::ErrorHandler<GrpcContext, GrpcStatus> for RestockHandler {
+impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcStatus> for RestockHandler {
     async fn handle_error(
         &self,
-        error: ulo::traits::ChainError<'_>,
+        error: ulo::enhancer::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         let out_of_stock = error.downcast_ref::<OutOfStock>()?;

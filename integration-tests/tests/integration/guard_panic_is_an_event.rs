@@ -18,13 +18,13 @@ use crate::common::NotServed;
 use serial_test::serial;
 use ulo::UloFactory;
 use ulo::async_trait;
+use ulo::enhancer::Guard;
 use ulo::errors::PanicRecovered;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
 use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
-use ulo::traits::Guard;
 use ulo::{GrpcStatus, catch, injectable, module};
 use ulo_macros::{
     controller, grpc_methods, message_pattern, new, patterns, use_error_handlers, use_guards,
@@ -48,10 +48,10 @@ async fn rpc_panic_catcher(err: &PanicRecovered, _ctx: &RpcContext) -> RpcData {
 pub struct GrpcPanicCatcher {}
 
 #[async_trait]
-impl ulo::traits::ErrorHandler<GrpcContext, GrpcStatus> for GrpcPanicCatcher {
+impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcStatus> for GrpcPanicCatcher {
     async fn handle_error(
         &self,
-        error: ulo::traits::ChainError<'_>,
+        error: ulo::enhancer::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         let panic = error.downcast_ref::<PanicRecovered>()?;

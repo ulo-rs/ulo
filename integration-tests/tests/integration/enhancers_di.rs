@@ -9,9 +9,10 @@
 use std::sync::{Arc, Mutex, OnceLock};
 use ulo::HttpResponse;
 use ulo::async_trait;
+use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
 use ulo::http::HttpContext;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::traits::{Guard, Interceptor, InterceptorNext, MiddlewareConsumer};
+use ulo::traits::MiddlewareConsumer;
 use ulo::{
     Body, RequestPart, controller, get, injectable, module, new, provider_value, routes,
     use_guards, use_interceptors,

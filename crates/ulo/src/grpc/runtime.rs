@@ -12,14 +12,14 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
+use crate::enhancer::{Guard, Interceptor, InterceptorNext};
 use crate::errors::{GuardRejection, PipelineSegment};
 use crate::grpc::GrpcContext;
 use crate::grpc::GrpcHandlerResult;
 use crate::grpc::GrpcStatus;
 use crate::grpc::ResolvedGrpcEnhancers;
 use crate::panic_recovery::catch_async;
-use crate::traits::{GrpcGuardEntry, GrpcInterceptorEntry, Guard, Interceptor, InterceptorNext};
-
+use crate::traits::{GrpcGuardEntry, GrpcInterceptorEntry};
 /// Run guards then wrap the user delegation in the interceptor chain.
 ///
 /// `delegate` is the user's `<UserType as ProtoTrait>::method(&self.inner, req)`

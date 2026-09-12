@@ -4,10 +4,9 @@ use std::rc::Rc;
 
 use crate::error::SetupResult;
 
+use super::Container;
 use crate::grpc::{GrpcServiceSource, ResolvedGrpcEnhancers};
 use crate::traits::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
-
-use super::Container;
 
 /// Resolves one gRPC service's enhancer bundle from the role registry by token.
 /// Mirrors [`RpcControllerResolver`](super::RpcControllerResolver) — called by the instance

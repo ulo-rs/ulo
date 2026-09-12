@@ -38,7 +38,6 @@ use crate::http::HttpContext;
 use crate::http::{PathParams, RequestPart};
 use crate::provider_scope::ProviderScope;
 use crate::traits::{Provider, ProviderContext, ProviderFactory};
-
 /// Built-in request-scoped provider for accessing HTTP request metadata.
 ///
 /// # Scope

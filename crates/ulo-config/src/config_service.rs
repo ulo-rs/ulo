@@ -6,7 +6,6 @@ use std::sync::Arc;
 use ulo::FxHashMap;
 use ulo::async_trait;
 use ulo::traits::{Provider, ProviderContext, ProviderFactory};
-
 /// Service that provides access to configuration
 ///
 /// This service is automatically registered when you import `ConfigModule<T>` in your module.

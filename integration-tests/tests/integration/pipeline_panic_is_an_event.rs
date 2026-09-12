@@ -16,6 +16,7 @@ use crate::common::NotServed;
 use serial_test::serial;
 use ulo::UloFactory;
 use ulo::async_trait;
+use ulo::enhancer::{Interceptor, InterceptorNext};
 use ulo::errors::PanicRecovered;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
@@ -23,7 +24,6 @@ use ulo::grpc::extract::Inbound;
 use ulo::http::HttpContext;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::traits::MiddlewareConsumer;
-use ulo::traits::{Interceptor, InterceptorNext};
 use ulo::{GrpcStatus, HttpResponse, catch, controller, get, injectable, module, routes};
 use ulo_macros::{grpc_methods, new, use_error_handlers, use_interceptors};
 
@@ -98,10 +98,10 @@ async fn a_panicking_middleware_is_answered_by_the_chain() {
 pub struct GrpcPipelineCatcher {}
 
 #[async_trait]
-impl ulo::traits::ErrorHandler<GrpcContext, GrpcStatus> for GrpcPipelineCatcher {
+impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcStatus> for GrpcPipelineCatcher {
     async fn handle_error(
         &self,
-        error: ulo::traits::ChainError<'_>,
+        error: ulo::enhancer::ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcStatus> {
         let panic = error.downcast_ref::<PanicRecovered>()?;

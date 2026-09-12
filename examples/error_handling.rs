@@ -21,8 +21,8 @@
 use serde::Serialize;
 use serde_json::json;
 use ulo::{
-    Body, Error, HttpRequest, HttpResponse, UloFactory, async_trait, catch, controller, get,
-    http::HttpContext, http::HttpError, injectable, module, post, routes, traits::Guard,
+    Body, Error, HttpRequest, HttpResponse, UloFactory, async_trait, catch, controller,
+    enhancer::Guard, get, http::HttpContext, http::HttpError, injectable, module, post, routes,
 };
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::use_guards;

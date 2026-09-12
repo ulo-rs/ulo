@@ -5,7 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::InstanceWrapper;
 
 use crate::{
-    enhancer::EnhancerMetadata,
+    enhancer::metadata::EnhancerMetadata,
     traits::{Controller, ControllerFactory, ModuleMetadata, Provider, ProviderFactory, Route},
 };
 pub struct Module {

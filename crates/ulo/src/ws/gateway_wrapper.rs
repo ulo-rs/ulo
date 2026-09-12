@@ -5,11 +5,10 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 
 use crate::context::Metadata;
+use crate::enhancer::{Guard, Interceptor, InterceptorNext};
 use crate::errors::{PanicRecovered, PipelineSegment};
 use crate::traits::ExecutionResult;
-use crate::traits::{
-    Guard, Interceptor, InterceptorNext, WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
-};
+use crate::traits::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
 use crate::ws::WsContext;
 
 use super::{

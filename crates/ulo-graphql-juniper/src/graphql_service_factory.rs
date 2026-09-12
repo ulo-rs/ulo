@@ -8,7 +8,6 @@ use juniper::{
 use std::sync::Arc;
 use ulo::FxHashMap;
 use ulo::traits::{Injectable, Provider, ProviderFactory};
-
 /// `ProviderFactory` for `GraphQLService` — registered during module scanning.
 pub struct GraphQLServiceFactory<Query, Mutation, Subscription, Ctx, S = DefaultScalarValue>
 where

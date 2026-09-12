@@ -7,8 +7,8 @@
 use std::sync::Arc;
 
 use ulo::async_trait;
+use ulo::enhancer::Guard;
 use ulo::http::HttpContext;
-use ulo::traits::Guard;
 use ulo::{Body, UloFactory, controller, get, injectable, module, new, routes, use_guards};
 
 use crate::common::TestServer;

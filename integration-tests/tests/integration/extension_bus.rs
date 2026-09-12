@@ -9,10 +9,10 @@
 
 use ulo::async_trait;
 use ulo::context::{Extensions, HandlerContext};
+use ulo::enhancer::Guard;
 use ulo::http::HttpContext;
 use ulo::http::extract::{Bytes as UloBytes, Path};
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::traits::Guard;
 use ulo::ws::WsContext;
 use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{

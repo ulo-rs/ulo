@@ -32,5 +32,5 @@ pub use rpc_handler_output::RpcHandlerOutput;
 pub use rpc_reply_stream::{ReplySink, RpcReplyStream};
 
 /// What an RPC call answers with — the value the pipeline returns and the `R`
-/// of [`Interceptor`](crate::traits::Interceptor) on this transport.
+/// of [`Interceptor`](crate::enhancer::Interceptor) on this transport.
 pub type RpcHandlerResult = Result<RpcHandlerOutput, RpcError>;
