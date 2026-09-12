@@ -4,11 +4,11 @@ use async_trait::async_trait;
 use rustc_hash::FxHashMap;
 
 use crate::context::Metadata;
-use crate::errors::HttpError;
-use crate::http_types::{HttpMethod, HttpResponse};
+use crate::http::HttpError;
+use crate::http::{HttpMethod, HttpResponse};
 use crate::traits::ExecutionResult;
 
-use crate::context::HttpContext;
+use crate::http::HttpContext;
 
 use super::{Guard, HttpErrorHandlerArc, Interceptor, provider::Provider};
 

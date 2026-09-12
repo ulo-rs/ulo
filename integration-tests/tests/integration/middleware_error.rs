@@ -11,7 +11,7 @@
 
 use crate::common::TestServer;
 use ulo::async_trait;
-use ulo::errors::HttpError;
+use ulo::http::HttpError;
 use ulo::traits::MiddlewareConsumer;
 use ulo::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::{Body, controller, get, module, routes};

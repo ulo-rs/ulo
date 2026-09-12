@@ -129,7 +129,7 @@ impl std::fmt::Display for GrpcStatus {
 impl std::error::Error for GrpcStatus {}
 
 /// The gRPC code for an [`ErrorKind`], the way
-/// [`http_status`](crate::errors::http_status) gives its HTTP status.
+/// [`http_status`](crate::http::http_status) gives its HTTP status.
 ///
 /// Follows the canonical HTTP-to-gRPC table, so a `NotFound` is `NOT_FOUND`
 /// on the wire and a caller's generated client sees what it expects.

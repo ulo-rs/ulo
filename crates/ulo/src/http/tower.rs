@@ -10,7 +10,7 @@ use http_body_util::{BodyExt, Full};
 use tower::{Layer, Service, ServiceExt};
 
 use crate::async_trait;
-use crate::http_types::{Body, BoxBody, HttpRequest, HttpResponse, RequestBody, RequestBoxBody};
+use crate::http::{Body, BoxBody, HttpRequest, HttpResponse, RequestBody, RequestBoxBody};
 use crate::traits::middleware::{Middleware, MiddlewareResult, NextHandle, NextInternal};
 
 fn to_ulo_response<B>(resp: http::Response<B>) -> HttpResponse
@@ -124,7 +124,7 @@ impl Service<http::Request<RequestBoxBody>> for UloNextService {
 /// # Example
 ///
 /// ```ignore
-/// use ulo::tower_compat::TowerLayer;
+/// use ulo::http::tower::TowerLayer;
 /// use tower_http::cors::CorsLayer;
 /// use tower_http::trace::TraceLayer;
 ///

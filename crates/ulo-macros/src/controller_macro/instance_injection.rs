@@ -381,10 +381,10 @@ fn generate_route_wrapper(
         impl ::ulo::traits::Route for #controller_name {
             async fn execute(
                 &self,
-                __ctx: &::ulo::context::HttpContext,
+                __ctx: &::ulo::http::HttpContext,
             ) -> ::ulo::traits::ExecutionResult<
                 ::ulo::HttpResponse,
-                ::ulo::errors::HttpError,
+                ::ulo::http::HttpError,
             > {
                 // Cloned, not borrowed: building a request-scoped dependency holds
                 // the parts across an await, and the extractions below need the
@@ -493,7 +493,7 @@ fn exec_body_for(method_call: &TokenStream, returns_result: bool) -> TokenStream
                     ::ulo::IntoResponse::into_response(__t),
                 ),
                 ::std::result::Result::Err(__e) => ::ulo::traits::ExecutionResult::Err(
-                    ::std::convert::Into::<::ulo::errors::HttpError>::into(__e),
+                    ::std::convert::Into::<::ulo::http::HttpError>::into(__e),
                 ),
             }
         }

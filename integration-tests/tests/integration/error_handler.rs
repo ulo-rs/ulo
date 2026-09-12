@@ -24,11 +24,12 @@
 use std::sync::Arc;
 
 use ulo::{
-    Body, HttpResponse, UloFactory, async_trait,
-    context::HttpContext,
-    controller,
-    errors::{GuardRejection, HttpError},
-    get, module, routes,
+    Body, HttpResponse, UloFactory, async_trait, controller,
+    errors::GuardRejection,
+    get,
+    http::HttpContext,
+    http::HttpError,
+    module, routes,
     traits::{ChainError, ErrorHandler, Guard},
 };
 use ulo_http_axum::AxumAdapter;

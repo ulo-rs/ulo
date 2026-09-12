@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::http_types::HttpResponse;
+use crate::http::HttpResponse;
 use crate::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
 
 /// Origins allowed to make cross-origin requests.

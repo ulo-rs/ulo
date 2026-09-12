@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use crate::application::UloApplication;
 use crate::application_context::UloApplicationContext;
-use crate::context::HttpContext;
 use crate::error::StartupError;
 use crate::grpc::GrpcContext;
-use crate::http_types::HttpResponse;
+use crate::http::HttpContext;
+use crate::http::HttpResponse;
 use crate::injector::{Container, InstanceLoader};
 use crate::middleware::Middleware;
 use crate::rpc::RpcContext;
@@ -72,7 +72,7 @@ impl UloFactory {
     /// Register a global interceptor that wraps every HTTP route handler.
     pub fn use_global_http_interceptors(
         &mut self,
-        interceptor: Arc<dyn Interceptor<HttpContext, crate::http_types::HttpResponse>>,
+        interceptor: Arc<dyn Interceptor<HttpContext, crate::http::HttpResponse>>,
     ) -> &mut Self {
         self.global_http_interceptors
             .push(HttpInterceptorEntry::Ready(interceptor));

@@ -11,12 +11,8 @@
 use std::sync::Arc;
 
 use ulo::{
-    Body, Error, HttpResponse, UloFactory, async_trait, catch,
-    context::HttpContext,
-    controller,
-    errors::{GuardRejection, HttpError},
-    get, module, routes,
-    traits::Guard,
+    Body, Error, HttpResponse, UloFactory, async_trait, catch, controller, errors::GuardRejection,
+    get, http::HttpContext, http::HttpError, module, routes, traits::Guard,
 };
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::use_guards;
@@ -24,7 +20,7 @@ use ulo_macros::use_guards;
 #[catch(GuardRejection)]
 async fn guard_catcher(err: &GuardRejection, _ctx: &HttpContext) -> HttpResponse {
     let mut resp = HttpResponse::new();
-    resp.status = ulo::errors::http_status(err.kind());
+    resp.status = ulo::http::http_status(err.kind());
     resp.body = Some(Body::text(format!("catch:{}", err.message())));
     resp
 }

@@ -37,8 +37,8 @@ use std::fmt;
 
 use serde::{Deserialize, Deserializer};
 use ulo::async_trait;
-use ulo::context::HttpContext;
 use ulo::extractors::{FromContext, Json, Path, Payload, Query, Validated};
+use ulo::http::HttpContext;
 use ulo::rpc::{RpcData, RpcError};
 use ulo::traits::{Guard, Interceptor, InterceptorNext};
 use ulo::ws::{WsClient, WsHandlerResult, WsMessage};

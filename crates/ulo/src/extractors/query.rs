@@ -1,7 +1,7 @@
 use serde::de::DeserializeOwned;
 
 use super::FromContext;
-use crate::context::HttpContext;
+use crate::http::HttpContext;
 
 /// Extracts typed query parameters from the URL.
 ///

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 
 use crate::adapter::BindTarget;
-use crate::http_types::RequestPart;
+use crate::http::RequestPart;
 use crate::ws::{WsError, WsMessage, WsSink};
 
 /// Result of the message callback — tells the adapter what to do next.
@@ -106,7 +106,7 @@ impl WsConnectionCallbacks {
 /// it down.
 ///
 /// Same-port (HTTP upgrade) gateways are handled by
-/// [`HttpAdapter::register_ws_route`](crate::adapter::HttpAdapter::register_ws_route).
+/// [`HttpAdapter::register_ws_route`](crate::http::HttpAdapter::register_ws_route).
 #[async_trait]
 pub trait WebSocketAdapter: Send + Sync + 'static {
     /// Register a gateway path for `port`, storing `callbacks` for each

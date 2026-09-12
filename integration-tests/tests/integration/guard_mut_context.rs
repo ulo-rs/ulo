@@ -4,7 +4,8 @@
 //! `extension_bus.rs` covers the other half, where the reader is the handler.
 
 use ulo::async_trait;
-use ulo::context::{HandlerContext, HttpContext};
+use ulo::context::HandlerContext;
+use ulo::http::HttpContext;
 use ulo::traits::Guard;
 
 #[derive(Clone, Debug, PartialEq)]

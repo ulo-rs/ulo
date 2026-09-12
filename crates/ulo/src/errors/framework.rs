@@ -239,7 +239,7 @@ impl Error for PanicRecovered {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::errors::http_error::render_error;
+    use crate::http::error::render_error;
 
     #[test]
     fn guard_rejection_renders_403() {

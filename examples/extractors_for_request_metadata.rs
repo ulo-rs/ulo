@@ -10,7 +10,7 @@
 
 use std::fmt;
 use ulo::Body;
-use ulo::context::HttpContext;
+use ulo::http::HttpContext;
 use ulo::{FromContext, controller, get, module, routes};
 
 /// ## 4. ClientIp Extractor

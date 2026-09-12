@@ -37,11 +37,11 @@ use std::sync::Arc;
 use serde_json::json;
 use ulo::extractors::Payload;
 use ulo::{
-    Body, Error, ErrorKind, HttpResponse, RpcClient, RpcError, UloFactory, async_trait,
-    context::HttpContext,
-    controller,
+    Body, Error, ErrorKind, HttpResponse, RpcClient, RpcError, UloFactory, async_trait, controller,
     extractors::Path,
-    get, module, routes,
+    get,
+    http::HttpContext,
+    module, routes,
     traits::{ChainError, ErrorHandler},
 };
 use ulo_macros::{event_pattern, new, patterns};

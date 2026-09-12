@@ -1,7 +1,7 @@
 //! `ulo::Error` — the framework's error contract.
 //!
 //! A type implementing `Error` declares its semantic [`kind`](Error::kind);
-//! the transport's handler error type ([`HttpError`](crate::errors::HttpError),
+//! the transport's handler error type ([`HttpError`](crate::http::HttpError),
 //! [`RpcError`](crate::rpc::RpcError),
 //! [`WsError`](crate::ws::WsError)) carries the wire shape and provides
 //! a `From<E: Error>` blanket so a `ulo::Error` returned by a handler flows
@@ -39,7 +39,7 @@ use serde_json::Value;
 /// Coarse classification of error semantics, transport-independent.
 ///
 /// Each transport's rendering layer maps a kind to its own wire form
-/// (HTTP status codes via [`http_status`](crate::errors::http_status),
+/// (HTTP status codes via [`http_status`](crate::http::http_status),
 /// RPC/WS status strings via [`name`](Self::name)). The kind layer means
 /// a single [`Error`] impl produces the right shape on every transport
 /// without per-transport conversion code on the error type itself.
@@ -97,7 +97,7 @@ impl ErrorKind {
 ///
 /// Implementing `Error` makes the type renderable on every transport via
 /// the per-transport `From<E: Error>` blankets — it `?`-flows into
-/// [`HttpError`](crate::errors::HttpError),
+/// [`HttpError`](crate::http::HttpError),
 /// [`RpcError`](crate::rpc::RpcError), and
 /// [`WsError`](crate::ws::WsError) automatically. The transport's
 /// handler error type owns the rendering; this trait owns the semantic

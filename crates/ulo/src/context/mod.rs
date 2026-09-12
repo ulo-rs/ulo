@@ -9,7 +9,6 @@
 mod cancellation;
 mod extensions;
 mod handler_context;
-mod http;
 mod metadata;
 pub(crate) mod shared;
 mod standalone;
@@ -17,7 +16,6 @@ mod standalone;
 pub use self::cancellation::CancellationToken;
 pub use self::extensions::Extensions;
 pub use self::handler_context::HandlerContext;
-pub use self::http::HttpContext;
 pub use self::metadata::Metadata;
 pub use self::standalone::StandaloneContext;
 
@@ -25,6 +23,7 @@ pub use self::standalone::StandaloneContext;
 mod handle_bounds_tests {
     use super::*;
     use crate::grpc::GrpcContext;
+    use crate::http::HttpContext;
     use crate::rpc::RpcContext;
     use crate::ws::WsContext;
 

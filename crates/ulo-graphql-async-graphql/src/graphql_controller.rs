@@ -145,8 +145,8 @@ where
 {
     async fn execute(
         &self,
-        ctx: &ulo::context::HttpContext,
-    ) -> ulo::traits::ExecutionResult<HttpResponse, ulo::errors::HttpError> {
+        ctx: &ulo::http::HttpContext,
+    ) -> ulo::traits::ExecutionResult<HttpResponse, ulo::http::HttpError> {
         let Some(req) = ctx.take_request() else {
             return ulo::traits::ExecutionResult::Ok(HttpResponse {
                 status: 400,
@@ -175,11 +175,7 @@ where
     Subscription: SubscriptionType + 'static,
     Ctx: ContextBuilder,
 {
-    async fn execute_inner(
-        &self,
-        req: HttpRequest,
-        ctx: &ulo::context::HttpContext,
-    ) -> HttpResponse {
+    async fn execute_inner(&self, req: HttpRequest, ctx: &ulo::http::HttpContext) -> HttpResponse {
         let (parts, body) = req.into_parts();
         let body_bytes = match body.collect().await {
             Ok(b) => b,
@@ -247,8 +243,8 @@ struct GraphQLPlaygroundController {
 impl Route for GraphQLPlaygroundController {
     async fn execute(
         &self,
-        _ctx: &ulo::context::HttpContext,
-    ) -> ulo::traits::ExecutionResult<HttpResponse, ulo::errors::HttpError> {
+        _ctx: &ulo::http::HttpContext,
+    ) -> ulo::traits::ExecutionResult<HttpResponse, ulo::http::HttpError> {
         HttpResponse {
             status: 200,
             body: Some(Body::text(self.playground_html.clone())),

@@ -1,4 +1,4 @@
-use crate::http_types::trim_trailing_slashes;
+use crate::http::trim_trailing_slashes;
 
 /// Represents a route pattern with optional HTTP method filtering
 #[derive(Debug, Clone)]

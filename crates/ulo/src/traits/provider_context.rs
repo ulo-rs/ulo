@@ -1,5 +1,6 @@
-use crate::context::{HttpContext, StandaloneContext};
+use crate::context::StandaloneContext;
 use crate::grpc::GrpcContext;
+use crate::http::HttpContext;
 use crate::rpc::RpcContext;
 use crate::ws::WsContext;
 
@@ -89,7 +90,7 @@ impl ProviderContext {
     }
 
     /// The HTTP request parts, when this execution is an HTTP one.
-    pub fn request_parts(&self) -> Option<&crate::http_types::RequestPart> {
+    pub fn request_parts(&self) -> Option<&crate::http::RequestPart> {
         match self {
             Self::Http(c) => Some(c.request()),
             _ => None,

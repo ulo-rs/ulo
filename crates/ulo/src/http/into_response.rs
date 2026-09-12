@@ -89,7 +89,7 @@ where
     fn into_response(self) -> HttpResponse {
         match self {
             Ok(value) => value.into_response(),
-            Err(error) => crate::errors::http_error::render_error(&error),
+            Err(error) => crate::http::error::render_error(&error),
         }
     }
 }

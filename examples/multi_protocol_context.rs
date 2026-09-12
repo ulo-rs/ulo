@@ -28,7 +28,7 @@
 
 use serde_json::json;
 use ulo::async_trait;
-use ulo::context::HttpContext;
+use ulo::http::HttpContext;
 use ulo::rpc::RpcContext;
 use ulo::rpc::RpcHandlerResult;
 use ulo::traits::{Guard, Interceptor, InterceptorNext};

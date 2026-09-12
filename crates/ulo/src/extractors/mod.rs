@@ -21,7 +21,7 @@
 //! compile time; one it doesn't recognise fails at extraction with
 //! [`BodyExtractionError`], naming itself.
 //!
-//! [`HttpContext::request`]: crate::context::HttpContext::request
+//! [`HttpContext::request`]: crate::http::HttpContext::request
 
 mod body;
 mod body_stream;

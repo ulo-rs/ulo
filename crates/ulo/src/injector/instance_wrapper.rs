@@ -2,13 +2,11 @@ use std::sync::Arc;
 
 use crate::{
     async_trait,
+    context::HandlerContext,
     context::Metadata,
-    context::{HandlerContext, HttpContext},
     enhancer::EnhancerMetadata,
-    errors::{
-        Error, GuardRejection, HttpError, MiddlewareFailure, PanicRecovered, PipelineSegment,
-    },
-    http_types::{HttpMethod, HttpRequest, HttpResponse},
+    errors::{Error, GuardRejection, MiddlewareFailure, PanicRecovered, PipelineSegment},
+    http::{HttpContext, HttpError, HttpMethod, HttpRequest, HttpResponse},
     middleware::{Middleware, MiddlewareChain},
     traits::{
         ExecutionResult, Guard, HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry,
@@ -162,7 +160,7 @@ impl InstanceWrapper {
                     }
                 }
 
-                Self::safe_render(|| crate::errors::http_error::render_error(&event))
+                Self::safe_render(|| crate::http::error::render_error(&event))
             }
         }
     }
@@ -306,7 +304,7 @@ impl InstanceWrapper {
             }
         }
 
-        Self::safe_render(|| crate::errors::http_error::render_error(&event))
+        Self::safe_render(|| crate::http::error::render_error(&event))
     }
 
     /// Drive the transport's error renderer with panic recovery. A panic
@@ -340,7 +338,7 @@ impl InstanceWrapper {
     fn fallback_500_response() -> HttpResponse {
         HttpResponse {
             body: Some(
-                crate::http_types::Body::text(
+                crate::http::Body::text(
                     r#"{"statusCode":500,"message":"Internal Server Error","error":"Internal Server Error"}"#,
                 )
                 .with_content_type("application/json"),

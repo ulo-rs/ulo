@@ -583,7 +583,7 @@ pub fn provide(input: TokenStream) -> TokenStream {
 /// (so the chain advances to the next handler).
 ///
 /// ```ignore
-/// use ulo::{context::HttpContext, errors::HttpError, HttpResponse};
+/// use ulo::{http::HttpContext, http::HttpError, HttpResponse};
 ///
 /// #[catch(HttpError)]
 /// async fn render_4xx(err: &HttpError, _ctx: &HttpContext) -> HttpResponse {

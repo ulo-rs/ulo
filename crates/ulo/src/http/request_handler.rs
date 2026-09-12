@@ -1,6 +1,6 @@
 use std::pin::Pin;
 
-use crate::http_types::{HttpRequest, HttpResponse};
+use crate::http::{HttpRequest, HttpResponse};
 
 pub(crate) type BoxFuture<T> = Pin<Box<dyn std::future::Future<Output = T> + Send>>;
 

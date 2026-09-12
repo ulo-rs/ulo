@@ -167,10 +167,10 @@ pub fn one_body_assertion(
                 const _: () = {
                     assert!(
                         !(<#first_ty as ::ulo::extractors::FromContext<
-                            ::ulo::context::HttpContext,
+                            ::ulo::http::HttpContext,
                         >>::CONSUMES
                             && <#second_ty as ::ulo::extractors::FromContext<
-                                ::ulo::context::HttpContext,
+                                ::ulo::http::HttpContext,
                             >>::CONSUMES),
                         #message
                     );
@@ -284,7 +284,7 @@ pub fn generate_extractor_extractions(
             // `None` on failure instead of a 400.
             ExtractorKind::Optional { inner_type } => quote! {
                 let #param_name = <#inner_type as ::ulo::extractors::FromContext<
-                    ::ulo::context::HttpContext,
+                    ::ulo::http::HttpContext,
                 >>::extract(__ctx).await.ok();
             },
 
@@ -292,7 +292,7 @@ pub fn generate_extractor_extractions(
                 let failure = extraction_failed(quote! { __e.to_string() });
                 quote! {
                     let #param_name = match <#param_type as ::ulo::extractors::FromContext<
-                        ::ulo::context::HttpContext,
+                        ::ulo::http::HttpContext,
                     >>::extract(__ctx).await {
                         ::std::result::Result::Ok(__value) => __value,
                         ::std::result::Result::Err(__e) => { #failure }

@@ -28,7 +28,7 @@ use std::{borrow::Cow, fmt};
 use serde_json::{Value, json};
 
 use crate::errors::{Error, ErrorKind};
-use crate::http_types::{Body, HttpResponse, IntoResponse};
+use crate::http::{Body, HttpResponse, IntoResponse};
 
 /// HTTP status code for an [`ErrorKind`]. The HTTP transport owns this
 /// mapping — `ErrorKind` itself is transport-independent.
@@ -214,7 +214,7 @@ impl HttpError {
 
 /// Render an arbitrary [`ulo::Error`](crate::errors::Error) as the
 /// canonical HTTP envelope. Merges `details()` into the body when present.
-pub fn render_error(err: &dyn Error) -> HttpResponse {
+pub(crate) fn render_error(err: &dyn Error) -> HttpResponse {
     let kind = err.kind();
     let mut body = json!({
         "statusCode": http_status(kind),

@@ -8,7 +8,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ulo::async_trait;
-use ulo::context::HttpContext;
+use ulo::http::HttpContext;
 use ulo::traits::Guard;
 use ulo::{Body, controller, get, injectable, module, new, routes};
 

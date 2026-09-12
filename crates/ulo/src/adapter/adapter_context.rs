@@ -1,13 +1,13 @@
 use std::{pin::Pin, sync::Arc};
 
 use crate::{
-    http_types::{Body, HttpRequest, HttpResponse, trim_trailing_slashes},
+    http::{Body, HttpRequest, HttpResponse, trim_trailing_slashes},
     middleware::MiddlewareChain,
 };
 
 /// Runtime context the framework hands to an adapter at serve time.
 ///
-/// Passed to [`HttpAdapter::into_lifecycle`](crate::adapter::HttpAdapter::into_lifecycle)
+/// Passed to [`HttpAdapter::into_lifecycle`](crate::http::HttpAdapter::into_lifecycle)
 /// after all `register_route`/`register_ws_route` calls.
 ///
 /// New fields can be added here without changing the trait signature —
@@ -74,7 +74,7 @@ impl AdapterContext {
 
 /// Trim trailing slashes from the request path, preserving the root `/` and
 /// the query string. Registered route paths never carry a trailing slash
-/// ([`join_route`](crate::http_types::join_route) trims them), so this is
+/// ([`join_route`](crate::http::join_route) trims them), so this is
 /// the request-side half of trailing-slash-insensitive matching.
 ///
 /// A URI that fails to reparse after trimming (never a path-form URI in
@@ -102,7 +102,7 @@ fn normalize_request_path(mut req: HttpRequest) -> HttpRequest {
 #[cfg(test)]
 mod tests {
     use super::normalize_request_path;
-    use crate::http_types::{HttpRequest, RequestBody};
+    use crate::http::{HttpRequest, RequestBody};
 
     fn request(uri: &str) -> HttpRequest {
         HttpRequest(

@@ -21,8 +21,8 @@
 use serde::Serialize;
 use serde_json::json;
 use ulo::{
-    Body, Error, HttpRequest, HttpResponse, UloFactory, async_trait, catch, context::HttpContext,
-    controller, errors::HttpError, get, injectable, module, post, routes, traits::Guard,
+    Body, Error, HttpRequest, HttpResponse, UloFactory, async_trait, catch, controller, get,
+    http::HttpContext, http::HttpError, injectable, module, post, routes, traits::Guard,
 };
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::use_guards;
@@ -86,7 +86,7 @@ impl Error for PaymentDeclined {
 #[catch(PaymentDeclined)]
 async fn render_payment_declined(err: &PaymentDeclined, _ctx: &HttpContext) -> HttpResponse {
     HttpResponse::builder()
-        .status(ulo::errors::http_status(err.kind()))
+        .status(ulo::http::http_status(err.kind()))
         .header("Retry-After", err.retry_after_secs.to_string())
         .json(json!({
             "type": "payment_declined",
@@ -159,7 +159,7 @@ impl Guard<HttpContext> for AuthGuard {
 #[catch(ulo::errors::GuardRejection)]
 async fn auth_failure(err: &ulo::errors::GuardRejection, _ctx: &HttpContext) -> HttpResponse {
     HttpResponse::builder()
-        .status(ulo::errors::http_status(err.kind()))
+        .status(ulo::http::http_status(err.kind()))
         .json(json!({
             "error": "auth_required",
             "hint": "Send `x-auth-token: <token>`",

@@ -9,7 +9,7 @@ mod builtin_module;
 pub mod context;
 mod error;
 mod startup_check;
-pub use context::{CancellationToken, HandlerContext, HttpContext, StandaloneContext};
+pub use context::{CancellationToken, HandlerContext, StandaloneContext};
 #[doc(hidden)]
 pub mod __construct;
 #[doc(hidden)]
@@ -37,13 +37,12 @@ pub mod grpc;
 pub use grpc::{
     GrpcAdapter, GrpcCode, GrpcContext, GrpcHandlerResult, GrpcLifecycleHandle, GrpcStatus,
 };
-mod http_types;
+pub mod http;
 mod injector;
 pub mod middleware;
 mod modules;
 mod panic_recovery;
 mod provider_scope;
-mod request;
 mod router;
 pub mod rpc;
 mod scanner;
@@ -61,10 +60,11 @@ pub use tracing;
 pub use serde_json;
 
 // Re-exports for adapter crates
-pub use adapter::{AdapterContext, BindTarget, HttpAdapter, HttpLifecycleHandle, RequestHandler};
-pub use http_types::{
-    Body, BoxBody, HttpMethod, HttpRequest, HttpResponse, HttpResponseBuilder, IntoResponse,
-    PathParams, RequestBody, RequestBoxBody, RequestPart, Sse, SseEvent, join_route, sse,
+pub use adapter::{AdapterContext, BindTarget};
+pub use http::{
+    Body, BoxBody, HttpAdapter, HttpContext, HttpError, HttpLifecycleHandle, HttpMethod,
+    HttpRequest, HttpResponse, HttpResponseBuilder, IntoResponse, PathParams, RequestBody,
+    RequestBoxBody, RequestHandler, RequestPart, Sse, SseEvent, join_route, sse,
 };
 pub use rpc::{
     RpcAdapter, RpcCallInfo, RpcClient, RpcClientError, RpcClientTransport, RpcContext,
@@ -80,7 +80,7 @@ pub use ws::{
 
 // Re-export built-in providers
 pub use extension::{Extension, ExtensionFactory};
-pub use request::{Request, RequestFactory};
+pub use http::{Request, RequestFactory};
 
 // Re-export ModuleRef for dynamic DI resolution
 pub use di::IntoToken;
@@ -104,7 +104,7 @@ pub use traits::{ExecutionCache, ModuleMetadata, ProviderContext};
 
 pub use error::{AdapterResult, InitResult, ResolutionError, SetupResult, StartupError};
 pub use errors::{
-    Error, ErrorKind, GuardRejection, HttpError, MiddlewareFailure, PanicRecovered, PipelineSegment,
+    Error, ErrorKind, GuardRejection, MiddlewareFailure, PanicRecovered, PipelineSegment,
 };
 pub use startup_check::StartupCheck;
 
@@ -119,6 +119,4 @@ pub use factory::UloFactory;
 pub use modules::{CheckedModule, DynamicModule, ModuleIdentity};
 
 #[cfg(feature = "tower-compat")]
-pub mod tower_compat;
-#[cfg(feature = "tower-compat")]
-pub use tower_compat::TowerLayer;
+pub use http::tower::TowerLayer;
