@@ -100,7 +100,7 @@ pub use provider_scope::ProviderScope;
 
 pub use traits_helpers::{ExecutionCache, ModuleMetadata, ProviderContext};
 
-pub use error::{AdapterResult, InitResult, ResolutionError, StartupError};
+pub use error::{AdapterResult, InitResult, ResolutionError, SetupResult, StartupError};
 pub use errors::{
     Error, ErrorKind, GuardRejection, HttpError, MiddlewareFailure, PanicRecovered, PipelineSegment,
 };
