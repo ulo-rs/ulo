@@ -54,7 +54,7 @@
 //!
 //! ## Response bodies
 //!
-//! Ulo's [`Body::stream`](ulo::http_helpers::Body::stream) is forwarded to
+//! Ulo's [`Body::stream`](ulo::Body::stream) is forwarded to
 //! salvo as `ResBody::Boxed`, so chunks reach the client incrementally. SSE
 //! and other long-lived streaming responses work without buffering.
 //!

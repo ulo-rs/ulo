@@ -326,8 +326,8 @@ fn extraction_failed(details: TokenStream) -> TokenStream {
             "error": "Extraction failed",
             "details": #details,
         });
-        return ::ulo::http_helpers::ExecutionResult::Ok(::ulo::http_helpers::HttpResponse {
-            body: Some(::ulo::http_helpers::Body::json(__error_body)),
+        return ::ulo::traits::ExecutionResult::Ok(::ulo::HttpResponse {
+            body: Some(::ulo::Body::json(__error_body)),
             status: 400,
             headers: vec![],
         });

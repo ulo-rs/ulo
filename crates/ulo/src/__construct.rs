@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::traits_helpers::Provider;
-use crate::traits_helpers::ProviderContext;
+use crate::traits::Provider;
+use crate::traits::ProviderContext;
 
 /// The already-built dependency providers passed to a factory's `build`, keyed by token.
 pub type ResolvedDeps = FxHashMap<String, Arc<Box<dyn Provider>>>;

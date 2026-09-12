@@ -15,7 +15,7 @@ use ulo::context::{HandlerContext, RpcContext, WsContext};
 use ulo::injectable;
 use ulo::module;
 use ulo::rpc::{RpcData, RpcError};
-use ulo::traits_helpers::{ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo::traits::{ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::websocket::{WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsMessage};
 use ulo_macros::{controller, new, patterns, subscriptions, websocket_gateway};
 
@@ -59,7 +59,7 @@ impl RecoveryErrorHandler {}
 impl ErrorHandler<RpcContext, RpcData> for RecoveryErrorHandler {
     async fn handle_error(
         &self,
-        _error: ulo::traits_helpers::ChainError<'_>,
+        _error: ulo::traits::ChainError<'_>,
         _ctx: &RpcContext,
     ) -> Option<RpcData> {
         Some(RpcData::json(serde_json::json!("recovered")))
@@ -70,7 +70,7 @@ impl ErrorHandler<RpcContext, RpcData> for RecoveryErrorHandler {
 impl ErrorHandler<WsContext, WsMessage> for RecoveryErrorHandler {
     async fn handle_error(
         &self,
-        _error: ulo::traits_helpers::ChainError<'_>,
+        _error: ulo::traits::ChainError<'_>,
         _ctx: &WsContext,
     ) -> Option<WsMessage> {
         Some(WsMessage::text("recovered"))

@@ -309,20 +309,20 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #[::ulo::async_trait(?Send)]
-        impl ::ulo::traits_helpers::ModuleMetadata for #input_ident {
+        impl ::ulo::traits::ModuleMetadata for #input_ident {
             fn identity(&self) -> ::ulo::ModuleIdentity {
                 ::ulo::ModuleIdentity::of_type::<Self>()
             }
             fn is_global(&self) -> bool {
                 #is_global
             }
-            fn imports(&self) -> Option<Vec<Box<dyn ::ulo::traits_helpers::ModuleMetadata>>> {
+            fn imports(&self) -> Option<Vec<Box<dyn ::ulo::traits::ModuleMetadata>>> {
                 Some(vec![#(Box::new(#imports)),*])
             }
-            fn controllers(&self) -> Option<Vec<Box<dyn ::ulo::traits_helpers::ControllerFactory>>> {
+            fn controllers(&self) -> Option<Vec<Box<dyn ::ulo::traits::ControllerFactory>>> {
                 Some(vec![#(Box::new(#controllers)),*])
             }
-            fn providers(&self) -> Option<Vec<Box<dyn ::ulo::traits_helpers::ProviderFactory>>> {
+            fn providers(&self) -> Option<Vec<Box<dyn ::ulo::traits::ProviderFactory>>> {
                 Some(vec![#(Box::new(#providers)),*])
             }
             fn exports(&self) -> Option<Vec<String>> {

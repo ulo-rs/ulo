@@ -53,7 +53,7 @@ impl HandlerContext for StandaloneContext {
         &self.inner.extensions
     }
 
-    fn cache(&self) -> &crate::traits_helpers::ExecutionCache {
+    fn cache(&self) -> &crate::traits::ExecutionCache {
         &self.inner.cache
     }
 

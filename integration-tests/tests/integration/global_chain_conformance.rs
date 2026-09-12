@@ -17,7 +17,7 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::{Body, UloFactory, async_trait, controller, get, module, routes};
 
 use crate::common::TestServer;

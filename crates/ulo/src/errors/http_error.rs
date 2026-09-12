@@ -28,7 +28,7 @@ use std::{borrow::Cow, fmt};
 use serde_json::{Value, json};
 
 use crate::errors::{Error, ErrorKind};
-use crate::http_helpers::{Body, HttpResponse, IntoResponse};
+use crate::http_types::{Body, HttpResponse, IntoResponse};
 
 /// HTTP status code for an [`ErrorKind`]. The HTTP transport owns this
 /// mapping — `ErrorKind` itself is transport-independent.

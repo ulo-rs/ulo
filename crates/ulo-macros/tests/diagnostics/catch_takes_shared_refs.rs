@@ -21,8 +21,8 @@ impl std::error::Error for MyError {}
 async fn handle(
     _e: &mut MyError,
     _ctx: &ulo::context::HttpContext,
-) -> ulo::http_helpers::HttpResponse {
-    ulo::http_helpers::HttpResponse::default()
+) -> ulo::HttpResponse {
+    ulo::HttpResponse::default()
 }
 
 fn main() {}

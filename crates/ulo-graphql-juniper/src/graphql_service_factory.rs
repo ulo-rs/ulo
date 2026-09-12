@@ -7,7 +7,7 @@ use juniper::{
 };
 use std::sync::Arc;
 use ulo::FxHashMap;
-use ulo::traits_helpers::{Injectable, Provider, ProviderFactory};
+use ulo::traits::{Injectable, Provider, ProviderFactory};
 
 /// `ProviderFactory` for `GraphQLService` — registered during module scanning.
 pub struct GraphQLServiceFactory<Query, Mutation, Subscription, Ctx, S = DefaultScalarValue>
@@ -104,7 +104,7 @@ where
         "GraphQLService".to_string()
     }
 
-    async fn build(&self, _deps: FxHashMap<String, ulo::traits_helpers::Injectable>) -> Injectable {
+    async fn build(&self, _deps: FxHashMap<String, ulo::traits::Injectable>) -> Injectable {
         Injectable::new(
             Arc::new(Box::new(GraphQLService::new(
                 self.schema.clone(),

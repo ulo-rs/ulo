@@ -153,7 +153,7 @@ impl HandlerContext for GrpcContext {
         &self.inner.shared.extensions
     }
 
-    fn cache(&self) -> &crate::traits_helpers::ExecutionCache {
+    fn cache(&self) -> &crate::traits::ExecutionCache {
         &self.inner.shared.cache
     }
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::http_helpers::RequestPart;
+use crate::http_types::RequestPart;
 
 use super::{WsClient, WsHandshake};
 

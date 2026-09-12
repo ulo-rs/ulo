@@ -7,11 +7,11 @@
 //! dependency resolved late enough would still run but observe the wrong
 //! request.
 use std::sync::{Arc, Mutex, OnceLock};
+use ulo::HttpResponse;
 use ulo::async_trait;
 use ulo::context::HttpContext;
-use ulo::http_helpers::HttpResponse;
-use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext, MiddlewareConsumer};
+use ulo::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::traits::{Guard, Interceptor, InterceptorNext, MiddlewareConsumer};
 use ulo::{
     Body, RequestPart, controller, get, injectable, module, new, provider_value, routes,
     use_guards, use_interceptors,

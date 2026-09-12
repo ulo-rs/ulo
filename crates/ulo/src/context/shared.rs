@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::context::Metadata;
 
 use super::{CancellationToken, Extensions};
-use crate::traits_helpers::ExecutionCache;
+use crate::traits::ExecutionCache;
 
 /// State shared by every per-transport handler context.
 ///

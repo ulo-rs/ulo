@@ -6,7 +6,7 @@ use serde_json::json;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use ulo::{
     FxHashMap,
-    traits_helpers::{Injectable, Provider, ProviderContext, ProviderFactory},
+    traits::{Injectable, Provider, ProviderContext, ProviderFactory},
 };
 
 use crate::health_check_result::{HealthEntry, HealthIndicatorResult};

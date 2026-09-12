@@ -14,9 +14,9 @@ use std::collections::HashMap;
 use std::fmt;
 
 use serde::Deserialize;
+use ulo::Body;
 use ulo::context::HttpContext;
 use ulo::extractors::Json;
-use ulo::http_helpers::Body;
 use ulo::{FromContext, controller, get, module, post, routes};
 
 /// ## 7. Cookies Extractor

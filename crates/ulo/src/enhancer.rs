@@ -1,4 +1,4 @@
-use crate::traits_helpers::{HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry};
+use crate::traits::{HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry};
 
 /// Resolved HTTP enhancer pipeline for a single route.
 ///

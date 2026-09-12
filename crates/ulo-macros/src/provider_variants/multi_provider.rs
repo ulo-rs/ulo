@@ -143,7 +143,7 @@ fn contrib_provider_tokens(
         }
 
         #[::ulo::async_trait]
-        impl ::ulo::traits_helpers::Provider for #contrib_name {
+        impl ::ulo::traits::Provider for #contrib_name {
             fn token(&self) -> ::std::string::String {
                 self.synthetic_token.clone()
             }
@@ -196,7 +196,7 @@ fn generate_type_multi(
             struct #factory_name;
 
             #[::ulo::async_trait]
-            impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
+            impl ::ulo::traits::ProviderFactory for #factory_name {
                 fn token(&self) -> ::std::string::String {
                     format!(
                         "__ulo_multi__{}__{}",
@@ -215,9 +215,9 @@ fn generate_type_multi(
 
                 async fn build(
                     &self,
-                    deps: ::ulo::FxHashMap<::std::string::String, ::ulo::traits_helpers::Injectable>,
-                ) -> ::ulo::traits_helpers::Injectable {
-                    let ::ulo::traits_helpers::Injectable { instance: inner_provider, .. } = #factory_ident.build(deps).await;
+                    deps: ::ulo::FxHashMap<::std::string::String, ::ulo::traits::Injectable>,
+                ) -> ::ulo::traits::Injectable {
+                    let ::ulo::traits::Injectable { instance: inner_provider, .. } = #factory_ident.build(deps).await;
                     let any_box = inner_provider
                         .resolve(::ulo::ProviderContext::None)
                         .await;
@@ -236,10 +236,10 @@ fn generate_type_multi(
                         ::ulo::di::token_of::<#concrete_type>()
                     );
                     let base_token = #base_token_expr;
-                    ::ulo::traits_helpers::Injectable::new(
+                    ::ulo::traits::Injectable::new(
                         ::std::sync::Arc::new(
                             ::std::boxed::Box::new(#contrib_name { item: erased, synthetic_token, base_token })
-                                as ::std::boxed::Box<dyn ::ulo::traits_helpers::Provider>,
+                                as ::std::boxed::Box<dyn ::ulo::traits::Provider>,
                         ),
                         ::std::vec::Vec::new(),
                     )
@@ -268,7 +268,7 @@ fn generate_value_multi(
             struct #factory_name;
 
             #[::ulo::async_trait]
-            impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
+            impl ::ulo::traits::ProviderFactory for #factory_name {
                 fn token(&self) -> ::std::string::String {
                     format!(
                         "__ulo_multi__{}__{}",
@@ -287,8 +287,8 @@ fn generate_value_multi(
 
                 async fn build(
                     &self,
-                    _deps: ::ulo::FxHashMap<::std::string::String, ::ulo::traits_helpers::Injectable>,
-                ) -> ::ulo::traits_helpers::Injectable {
+                    _deps: ::ulo::FxHashMap<::std::string::String, ::ulo::traits::Injectable>,
+                ) -> ::ulo::traits::Injectable {
                     let value = #value_expr;
                     let trait_arc: ::std::sync::Arc<#trait_ty> =
                         ::std::sync::Arc::new(value);
@@ -299,10 +299,10 @@ fn generate_value_multi(
                         concat!(file!(), ":", line!(), ":", column!())
                     );
                     let base_token = #base_token_expr;
-                    ::ulo::traits_helpers::Injectable::new(
+                    ::ulo::traits::Injectable::new(
                         ::std::sync::Arc::new(
                             ::std::boxed::Box::new(#contrib_name { item: erased, synthetic_token, base_token })
-                                as ::std::boxed::Box<dyn ::ulo::traits_helpers::Provider>,
+                                as ::std::boxed::Box<dyn ::ulo::traits::Provider>,
                         ),
                         ::std::vec::Vec::new(),
                     )
@@ -331,7 +331,7 @@ fn generate_factory_multi(
             struct #factory_name;
 
             #[::ulo::async_trait]
-            impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
+            impl ::ulo::traits::ProviderFactory for #factory_name {
                 fn token(&self) -> ::std::string::String {
                     format!(
                         "__ulo_multi__{}__{}",
@@ -350,8 +350,8 @@ fn generate_factory_multi(
 
                 async fn build(
                     &self,
-                    _deps: ::ulo::FxHashMap<::std::string::String, ::ulo::traits_helpers::Injectable>,
-                ) -> ::ulo::traits_helpers::Injectable {
+                    _deps: ::ulo::FxHashMap<::std::string::String, ::ulo::traits::Injectable>,
+                ) -> ::ulo::traits::Injectable {
                     let factory = #closure_expr;
                     let value = factory();
                     let trait_arc: ::std::sync::Arc<#trait_ty> =
@@ -363,10 +363,10 @@ fn generate_factory_multi(
                         concat!(file!(), ":", line!(), ":", column!())
                     );
                     let base_token = #base_token_expr;
-                    ::ulo::traits_helpers::Injectable::new(
+                    ::ulo::traits::Injectable::new(
                         ::std::sync::Arc::new(
                             ::std::boxed::Box::new(#contrib_name { item: erased, synthetic_token, base_token })
-                                as ::std::boxed::Box<dyn ::ulo::traits_helpers::Provider>,
+                                as ::std::boxed::Box<dyn ::ulo::traits::Provider>,
                         ),
                         ::std::vec::Vec::new(),
                     )
@@ -400,7 +400,7 @@ fn generate_alias_multi(
             struct #factory_name;
 
             #[::ulo::async_trait]
-            impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
+            impl ::ulo::traits::ProviderFactory for #factory_name {
                 fn token(&self) -> ::std::string::String {
                     format!(
                         "__ulo_multi__{}__{}",
@@ -419,8 +419,8 @@ fn generate_alias_multi(
 
                 async fn build(
                     &self,
-                    deps: ::ulo::FxHashMap<::std::string::String, ::ulo::traits_helpers::Injectable>,
-                ) -> ::ulo::traits_helpers::Injectable {
+                    deps: ::ulo::FxHashMap<::std::string::String, ::ulo::traits::Injectable>,
+                ) -> ::ulo::traits::Injectable {
                     let existing_provider = deps
                         .get(&#existing_token_expr)
                         .map(|inj| inj.instance.clone())
@@ -446,10 +446,10 @@ fn generate_alias_multi(
                         #existing_token_expr
                     );
                     let base_token = #base_token_expr;
-                    ::ulo::traits_helpers::Injectable::new(
+                    ::ulo::traits::Injectable::new(
                         ::std::sync::Arc::new(
                             ::std::boxed::Box::new(#contrib_name { item: erased, synthetic_token, base_token })
-                                as ::std::boxed::Box<dyn ::ulo::traits_helpers::Provider>,
+                                as ::std::boxed::Box<dyn ::ulo::traits::Provider>,
                         ),
                         ::std::vec::Vec::new(),
                     )
@@ -481,7 +481,7 @@ fn generate_token_provider_multi(
             struct #factory_name;
 
             #[::ulo::async_trait]
-            impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
+            impl ::ulo::traits::ProviderFactory for #factory_name {
                 fn token(&self) -> ::std::string::String {
                     format!(
                         "__ulo_multi__{}__{}",
@@ -500,9 +500,9 @@ fn generate_token_provider_multi(
 
                 async fn build(
                     &self,
-                    deps: ::ulo::FxHashMap<::std::string::String, ::ulo::traits_helpers::Injectable>,
-                ) -> ::ulo::traits_helpers::Injectable {
-                    let ::ulo::traits_helpers::Injectable { instance: inner_provider, .. } = #concrete_type::__ulo_provider_factory().build(deps).await;
+                    deps: ::ulo::FxHashMap<::std::string::String, ::ulo::traits::Injectable>,
+                ) -> ::ulo::traits::Injectable {
+                    let ::ulo::traits::Injectable { instance: inner_provider, .. } = #concrete_type::__ulo_provider_factory().build(deps).await;
                     let any_box = inner_provider
                         .resolve(::ulo::ProviderContext::None)
                         .await;
@@ -521,10 +521,10 @@ fn generate_token_provider_multi(
                         ::ulo::di::token_of::<#concrete_type>()
                     );
                     let base_token = #base_token_expr;
-                    ::ulo::traits_helpers::Injectable::new(
+                    ::ulo::traits::Injectable::new(
                         ::std::sync::Arc::new(
                             ::std::boxed::Box::new(#contrib_name { item: erased, synthetic_token, base_token })
-                                as ::std::boxed::Box<dyn ::ulo::traits_helpers::Provider>,
+                                as ::std::boxed::Box<dyn ::ulo::traits::Provider>,
                         ),
                         ::std::vec::Vec::new(),
                     )

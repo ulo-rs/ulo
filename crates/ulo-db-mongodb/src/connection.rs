@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use mongodb::{Client, Database, options::ClientOptions};
 use ulo::{
     FxHashMap, StartupCheck,
-    traits_helpers::{Provider, ProviderContext, ProviderFactory},
+    traits::{Provider, ProviderContext, ProviderFactory},
 };
 
 pub(crate) struct MongoConnectionFactory {
@@ -28,8 +28,8 @@ impl ProviderFactory for MongoConnectionFactory {
 
     async fn build(
         &self,
-        _deps: FxHashMap<String, ulo::traits_helpers::Injectable>,
-    ) -> ulo::traits_helpers::Injectable {
+        _deps: FxHashMap<String, ulo::traits::Injectable>,
+    ) -> ulo::traits::Injectable {
         // `build` returns the instance directly, so a failure is carried into the provider and
         // reported from `on_module_init`, which can return it. The driver connects lazily, so
         // only URI parsing and client construction are checked here.
@@ -58,7 +58,7 @@ impl ProviderFactory for MongoConnectionFactory {
         };
         let db = client.as_ref().map(|c| c.database(&self.db_name));
 
-        ulo::traits_helpers::Injectable::new(
+        ulo::traits::Injectable::new(
             Arc::new(Box::new(MongoConnectionProvider {
                 client,
                 db,

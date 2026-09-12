@@ -23,9 +23,6 @@ pub use self::into_response::IntoResponse;
 mod sse;
 pub use self::sse::{Sse, SseEvent, sse};
 
-mod execution_result;
-pub use self::execution_result::ExecutionResult;
-
 /// Join a controller's route prefix with a handler's sub-path, normalizing slashes.
 ///
 /// The `#[controller]` prefix lives on the struct and the sub-path on the `#[routes]` handler, so the

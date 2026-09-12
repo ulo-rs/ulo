@@ -20,8 +20,8 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use ulo::async_trait;
-use ulo::traits_helpers::MiddlewareConsumer;
-use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::traits::MiddlewareConsumer;
+use ulo::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::{Body, TowerLayer, controller, get, module, post, routes};
 
 // ── Test 1: basic header injection ───────────────────────────────────────────
@@ -204,13 +204,12 @@ impl<S> Layer<S> for EchoExtensionLayer {
 
 impl<S, B> tower::Service<http::Request<B>> for EchoExtensionService<S>
 where
-    S: tower::Service<http::Request<B>, Response = http::Response<ulo::http_helpers::BoxBody>>
-        + Send,
+    S: tower::Service<http::Request<B>, Response = http::Response<ulo::BoxBody>> + Send,
     S::Future: Send + 'static,
     S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     B: Send + 'static,
 {
-    type Response = http::Response<ulo::http_helpers::BoxBody>;
+    type Response = http::Response<ulo::BoxBody>;
     type Error = Box<dyn std::error::Error + Send + Sync>;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 

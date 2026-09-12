@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use ulo::{
     BroadcastService, FxHashMap,
-    traits_helpers::{Injectable, Provider, ProviderContext, ProviderFactory},
+    traits::{Injectable, Provider, ProviderContext, ProviderFactory},
 };
 
 use crate::{

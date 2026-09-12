@@ -179,7 +179,7 @@ async fn a_dynamic_module_is_found_by_its_base() {
 /// that reaches the imported one.
 #[tokio::test]
 async fn a_full_key_reaches_one_of_two_same_type_modules() {
-    use ulo::traits_helpers::ModuleMetadata;
+    use ulo::traits::ModuleMetadata;
 
     let app = UloFactory::create(TwoGqlModule).await.unwrap();
 

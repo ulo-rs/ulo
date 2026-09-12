@@ -10,14 +10,14 @@
 
 use serial_test::serial;
 use std::sync::{Arc, Mutex};
+use ulo::HttpResponse;
 use ulo::async_trait;
-use ulo::http_helpers::HttpResponse;
 use ulo::{Body, UloFactory, controller, get, module, routes, use_guards, use_interceptors};
 use ulo_http_axum::AxumAdapter;
 
 use ulo::context::HttpContext;
-use ulo::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext};
+use ulo::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::traits::{Guard, Interceptor, InterceptorNext};
 
 // ============================================================================
 // EXECUTION ORDER TRACKER

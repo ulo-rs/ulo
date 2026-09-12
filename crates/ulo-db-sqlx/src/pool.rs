@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use sqlx::{Database, Pool, pool::PoolOptions};
 use ulo::{
     FxHashMap, StartupCheck,
-    traits_helpers::{Injectable, Provider, ProviderContext, ProviderFactory},
+    traits::{Injectable, Provider, ProviderContext, ProviderFactory},
 };
 
 pub(crate) struct SqlxPoolFactory<DB: Database> {
@@ -37,7 +37,7 @@ where
         Some(self.url.clone())
     }
 
-    async fn build(&self, _deps: FxHashMap<String, ulo::traits_helpers::Injectable>) -> Injectable {
+    async fn build(&self, _deps: FxHashMap<String, ulo::traits::Injectable>) -> Injectable {
         // Configured lazily: the server is contacted by the startup check, so every integration
         // reaches an unreachable one on the same schedule rather than on its driver's. What is
         // left here is URL parsing, which needs no network.

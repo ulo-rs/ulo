@@ -15,7 +15,7 @@ use futures_util::Stream;
 use ulo::context::{GrpcContext, RpcContext};
 use ulo::extractors::{Inbound, Payload};
 use ulo::rpc::{RpcData, RpcError};
-use ulo::traits_helpers::Guard;
+use ulo::traits::Guard;
 use ulo::*;
 use ulo_macros::{controller, grpc_methods, message_pattern, new, patterns, use_guards};
 

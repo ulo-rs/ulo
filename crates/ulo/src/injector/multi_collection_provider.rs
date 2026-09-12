@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::{
     ProviderScope,
-    traits_helpers::{Provider, ProviderContext},
+    traits::{Provider, ProviderContext},
 };
 
 /// Holds all contributions for a given multi-provider base token.

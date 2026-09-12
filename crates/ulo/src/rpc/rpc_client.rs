@@ -9,7 +9,7 @@ use crate::adapter::RpcClientTransport;
 use crate::async_trait;
 use crate::provider_scope::ProviderScope;
 use crate::rpc::{RpcClientError, RpcData, RpcReplyStream};
-use crate::traits_helpers::{Provider, ProviderContext};
+use crate::traits::{Provider, ProviderContext};
 
 /// Map a reply stream's items through `RpcData::parse`, keeping errors in
 /// place.

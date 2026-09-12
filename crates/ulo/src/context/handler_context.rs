@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use crate::context::Metadata;
 
 use super::{CancellationToken, Extensions};
-use crate::traits_helpers::ExecutionCache;
+use crate::traits::ExecutionCache;
 
 /// The universal interface every per-request context implements.
 ///

@@ -6,7 +6,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 use ulo::async_trait;
 use ulo::context::{HandlerContext, WsContext};
-use ulo::traits_helpers::Guard;
+use ulo::traits::Guard;
 use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
     injectable, module, new, subscribe_message, subscriptions, use_guards, websocket_gateway,

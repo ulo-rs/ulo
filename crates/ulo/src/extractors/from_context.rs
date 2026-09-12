@@ -4,7 +4,7 @@ use std::fmt;
 use std::future::Future;
 
 use crate::context::{HandlerContext, HttpContext};
-use crate::http_helpers::HttpRequest;
+use crate::http_types::HttpRequest;
 
 /// Extracts a value from the context handling the current message.
 ///

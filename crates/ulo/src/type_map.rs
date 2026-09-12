@@ -5,7 +5,7 @@
 //! enhancers write and handlers read is [`Extensions`](crate::context::Extensions) instead, which
 //! is shared by handle and mutable through it.
 //!
-//! Nothing here is transport-specific. It sits at the crate root rather than under `http_helpers`
+//! Nothing here is transport-specific. It sits at the crate root rather than under `http_types`
 //! because its two users are a declared-metadata map read on all four transports and an RPC call
 //! descriptor, and neither is HTTP.
 //!

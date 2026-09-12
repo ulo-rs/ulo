@@ -18,9 +18,8 @@ use poem::{
 use ulo::websocket::{WsMessage, WsSink};
 use ulo::{
     AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
-    HttpRequest, HttpResponse, MessageCallbackResult, RequestHandler, WebSocketAdapter,
-    WsConnectionCallbacks, async_trait,
-    http_helpers::{PathParams, RequestBody, RequestPart},
+    HttpRequest, HttpResponse, MessageCallbackResult, PathParams, RequestBody, RequestHandler,
+    RequestPart, WebSocketAdapter, WsConnectionCallbacks, async_trait,
 };
 
 use crate::poem_websocket_adapter::{poem_to_ws_message, ws_message_to_poem};

@@ -11,7 +11,7 @@
 
 use ulo::async_trait;
 use ulo::context::HttpContext;
-use ulo::traits_helpers::Guard;
+use ulo::traits::Guard;
 use ulo::*;
 use ulo_http_axum::AxumAdapter;
 

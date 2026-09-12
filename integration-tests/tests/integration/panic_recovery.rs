@@ -21,7 +21,7 @@ use ulo::{
     controller,
     errors::{ErrorKind, HttpError, PanicRecovered, PipelineSegment},
     get, module, routes,
-    traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext},
+    traits::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext},
 };
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{use_error_handlers, use_guards, use_interceptors};

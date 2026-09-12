@@ -2,7 +2,7 @@ use crate::error::SetupResult;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-use crate::traits_helpers::middleware::{Middleware, MiddlewareConfiguration};
+use crate::traits::middleware::{Middleware, MiddlewareConfiguration};
 
 /// Middleware manager for organizing middleware by module
 ///
@@ -120,7 +120,7 @@ impl Default for MiddlewareManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits_helpers::middleware::{Middleware, MiddlewareResult, NextHandle};
+    use crate::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
     use async_trait::async_trait;
 
     // Dummy middleware for testing

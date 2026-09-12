@@ -5,7 +5,7 @@ use crate::error::StartupError;
 
 use crate::{
     injector::Container,
-    traits_helpers::{MiddlewareConsumer, ModuleMetadata},
+    traits::{MiddlewareConsumer, ModuleMetadata},
 };
 
 pub struct DependencyScanner {

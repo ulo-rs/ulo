@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 
 use crate::adapter::BindTarget;
-use crate::http_helpers::RequestPart;
+use crate::http_types::RequestPart;
 use crate::websocket::{WsError, WsMessage, WsSink};
 
 /// Result of the message callback — tells the adapter what to do next.

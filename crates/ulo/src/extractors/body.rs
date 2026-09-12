@@ -2,7 +2,7 @@ use serde::de::DeserializeOwned;
 
 use super::{BodyExtractionError, FromContext, take_body};
 use crate::context::HttpContext;
-use crate::http_helpers::HttpRequest;
+use crate::http_types::HttpRequest;
 
 /// Extracts and deserializes the request body, auto-detecting content type.
 ///

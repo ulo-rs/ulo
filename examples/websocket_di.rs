@@ -7,7 +7,7 @@
 // 4. Zero manual wiring - framework handles everything automatically
 
 use ulo::context::WsContext;
-use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext};
+use ulo::traits::{Guard, Interceptor, InterceptorNext};
 use ulo::websocket::{BroadcastModule, BroadcastService};
 use ulo::*;
 use ulo_macros::{injectable, module, new, subscriptions, websocket_gateway};

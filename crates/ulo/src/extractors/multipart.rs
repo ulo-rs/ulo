@@ -3,7 +3,7 @@ use http_body_util::BodyExt;
 
 use super::{BodyExtractionError, FromContext, take_body};
 use crate::context::HttpContext;
-use crate::http_helpers::{HttpRequest, RequestBody, RequestBoxBody};
+use crate::http_types::{HttpRequest, RequestBody, RequestBoxBody};
 
 pub use multer::Field;
 

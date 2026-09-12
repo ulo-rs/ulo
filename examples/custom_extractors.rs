@@ -13,8 +13,8 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use ulo::Body;
 use ulo::context::HttpContext;
-use ulo::http_helpers::Body;
 use ulo::{FromContext, controller, get, module, routes};
 
 /// ## 1. CurrentUser Extractor

@@ -16,7 +16,7 @@ use ulo::{
     controller,
     errors::{GuardRejection, HttpError},
     get, module, routes,
-    traits_helpers::Guard,
+    traits::Guard,
 };
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::use_guards;
@@ -54,7 +54,7 @@ async fn other_catcher(_err: &OtherError, _ctx: &HttpContext) -> HttpResponse {
 // rather than something that merely compiles as a value.
 #[test]
 fn catch_struct_implements_error_handler_trait() {
-    fn assert_impls<T: ulo::traits_helpers::ErrorHandler<HttpContext, HttpResponse>>() {}
+    fn assert_impls<T: ulo::traits::ErrorHandler<HttpContext, HttpResponse>>() {}
     assert_impls::<guard_catcher>();
     assert_impls::<other_catcher>();
 }

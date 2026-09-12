@@ -29,7 +29,7 @@ use ulo::{
     controller,
     errors::{GuardRejection, HttpError},
     get, module, routes,
-    traits_helpers::{ChainError, ErrorHandler, Guard},
+    traits::{ChainError, ErrorHandler, Guard},
 };
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::use_guards;

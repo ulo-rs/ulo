@@ -4,8 +4,8 @@ use async_graphql::{ObjectType, SubscriptionType};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::sync::Arc;
-use ulo::traits_helpers::{Controller, ControllerFactory, Dispatch, Provider, Route};
-use ulo::{FxHashMap, HttpMethod, HttpRequest, HttpResponse, http_helpers::Body};
+use ulo::traits::{Controller, ControllerFactory, Dispatch, Provider, Route};
+use ulo::{Body, FxHashMap, HttpMethod, HttpRequest, HttpResponse};
 
 /// GraphQL request payload
 #[derive(Debug, Deserialize)]
@@ -146,9 +146,9 @@ where
     async fn execute(
         &self,
         ctx: &ulo::context::HttpContext,
-    ) -> ulo::http_helpers::ExecutionResult<HttpResponse, ulo::errors::HttpError> {
+    ) -> ulo::traits::ExecutionResult<HttpResponse, ulo::errors::HttpError> {
         let Some(req) = ctx.take_request() else {
-            return ulo::http_helpers::ExecutionResult::Ok(HttpResponse {
+            return ulo::traits::ExecutionResult::Ok(HttpResponse {
                 status: 400,
                 headers: vec![],
                 body: Some(Body::json(serde_json::json!({
@@ -248,7 +248,7 @@ impl Route for GraphQLPlaygroundController {
     async fn execute(
         &self,
         _ctx: &ulo::context::HttpContext,
-    ) -> ulo::http_helpers::ExecutionResult<HttpResponse, ulo::errors::HttpError> {
+    ) -> ulo::traits::ExecutionResult<HttpResponse, ulo::errors::HttpError> {
         HttpResponse {
             status: 200,
             body: Some(Body::text(self.playground_html.clone())),

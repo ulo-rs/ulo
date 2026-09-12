@@ -6,7 +6,7 @@ use crate::error::ResolutionError;
 use rustc_hash::FxHashMap;
 
 use crate::di::token::IntoToken;
-use crate::traits_helpers::{Provider, ProviderContext};
+use crate::traits::{Provider, ProviderContext};
 
 pub type ProviderStore = FxHashMap<String, FxHashMap<String, Arc<Box<dyn Provider>>>>;
 

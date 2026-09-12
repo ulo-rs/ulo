@@ -5,7 +5,8 @@ use rustc_hash::FxHashMap;
 
 use crate::context::Metadata;
 use crate::errors::HttpError;
-use crate::http_helpers::{ExecutionResult, HttpMethod, HttpResponse};
+use crate::http_types::{HttpMethod, HttpResponse};
+use crate::traits::ExecutionResult;
 
 use crate::context::HttpContext;
 

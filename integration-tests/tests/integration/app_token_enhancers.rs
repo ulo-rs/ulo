@@ -7,11 +7,11 @@
 //! observable: a global that ran without its injected tracker would still
 //! answer requests.
 use std::sync::{Arc, Mutex, OnceLock};
+use ulo::HttpResponse;
 use ulo::async_trait;
 use ulo::context::HttpContext;
 use ulo::di::{APP_GUARD, APP_INTERCEPTOR};
-use ulo::http_helpers::HttpResponse;
-use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext};
+use ulo::traits::{Guard, Interceptor, InterceptorNext};
 use ulo::{Body, controller, get, injectable, module, new, provider_token, provider_value, routes};
 
 use crate::common::TestServer;

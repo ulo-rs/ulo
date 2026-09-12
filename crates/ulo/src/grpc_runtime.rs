@@ -18,9 +18,7 @@ use crate::errors::{GuardRejection, PipelineSegment};
 use crate::grpc_status::GrpcHandlerResult;
 use crate::grpc_status::GrpcStatus;
 use crate::panic_recovery::catch_async;
-use crate::traits_helpers::{
-    GrpcGuardEntry, GrpcInterceptorEntry, Guard, Interceptor, InterceptorNext,
-};
+use crate::traits::{GrpcGuardEntry, GrpcInterceptorEntry, Guard, Interceptor, InterceptorNext};
 
 /// Run guards then wrap the user delegation in the interceptor chain.
 ///

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::http_helpers::{HttpRequest, HttpResponse};
+use crate::http_types::{HttpRequest, HttpResponse};
 use crate::middleware::RoutePattern;
 
 /// Result type for middleware chain execution
@@ -72,7 +72,7 @@ impl NextHandle {
 ///
 /// ## Body access
 ///
-/// The request body arrives as [`RequestBody::Streaming`][crate::http_helpers::RequestBody] —
+/// The request body arrives as [`RequestBody::Streaming`][crate::http_types::RequestBody] —
 /// a one-time consumable stream. If you don't need it, pass the request through unchanged:
 ///
 /// ```rust,ignore
@@ -84,7 +84,7 @@ impl NextHandle {
 ///
 /// If you do need to inspect the body, you must buffer it and put it back. The first call
 /// to `collect()` drains the stream — leaving it consumed means the controller receives
-/// nothing. Restore it as [`RequestBody::Buffered`][crate::http_helpers::RequestBody] so
+/// nothing. Restore it as [`RequestBody::Buffered`][crate::http_types::RequestBody] so
 /// downstream can read the bytes:
 ///
 /// ```rust,ignore

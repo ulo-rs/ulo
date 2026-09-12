@@ -11,7 +11,7 @@ use ulo::async_trait;
 use ulo::context::{Extensions, HandlerContext, HttpContext, WsContext};
 use ulo::extractors::{Bytes as UloBytes, Path};
 use ulo::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::traits_helpers::Guard;
+use ulo::traits::Guard;
 use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
     Body, UloFactory, controller, get, injectable, module, new, post, routes, set_metadata,

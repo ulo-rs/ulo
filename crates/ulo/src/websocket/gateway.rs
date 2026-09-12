@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::context::Metadata;
 use crate::context::WsContext;
-use crate::http_helpers::ExecutionResult;
+use crate::traits::ExecutionResult;
 
 use super::{DisconnectReason, WsClient, WsError, WsHandlerOutput};
 

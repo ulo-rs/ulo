@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::FxHashMap;
 use crate::async_trait;
 use crate::provider_scope::ProviderScope;
-use crate::traits_helpers::{Provider, ProviderContext, ProviderFactory};
+use crate::traits::{Provider, ProviderContext, ProviderFactory};
 
 use super::BroadcastService;
 
@@ -46,9 +46,9 @@ impl ProviderFactory for BroadcastServiceManager {
 
     async fn build(
         &self,
-        _deps: FxHashMap<String, crate::traits_helpers::Injectable>,
-    ) -> crate::traits_helpers::Injectable {
-        crate::traits_helpers::Injectable::new(
+        _deps: FxHashMap<String, crate::traits::Injectable>,
+    ) -> crate::traits::Injectable {
+        crate::traits::Injectable::new(
             Arc::new(Box::new(BroadcastServiceProvider {
                 instance: BroadcastService::new(),
             }) as Box<dyn Provider>),

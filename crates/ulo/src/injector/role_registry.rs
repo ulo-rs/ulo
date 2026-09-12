@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 use crate::{
     adapter::{GrpcServiceSource, ResolvedGrpcEnhancers},
     rpc::RpcControllerWrapper,
-    traits_helpers::{
+    traits::{
         GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc,
         HttpGuardEntry, HttpInterceptorEntry, ProviderRole, RpcErrorHandlerArc, RpcGuardEntry,
         RpcInterceptorEntry, WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,

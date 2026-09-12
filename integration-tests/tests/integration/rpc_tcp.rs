@@ -23,7 +23,7 @@ use ulo::extractors::Payload;
 use ulo::injectable;
 use ulo::module;
 use ulo::rpc::{RpcData, RpcError};
-use ulo::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
+use ulo::traits::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo_macros::{controller, new, patterns, set_metadata};
 
 /// Spawn an app with the TCP RPC adapter on an OS-assigned port and wait

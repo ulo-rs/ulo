@@ -3,10 +3,10 @@
 //! from contributing to the enhancer pipeline — a fresh instance is constructed
 //! per request using the DynGuardFactory / DynInterceptorFactory path.
 
+use ulo::HttpResponse;
 use ulo::async_trait;
 use ulo::context::{HttpContext, WsContext};
-use ulo::http_helpers::HttpResponse;
-use ulo::traits_helpers::{Guard, Interceptor, InterceptorNext};
+use ulo::traits::{Guard, Interceptor, InterceptorNext};
 use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
     Body, Request, controller, get, injectable, module, routes, use_guards, use_interceptors,

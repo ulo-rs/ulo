@@ -5,7 +5,7 @@ use std::any::Any;
 use std::sync::Arc;
 use ulo::FxHashMap;
 use ulo::async_trait;
-use ulo::traits_helpers::{Provider, ProviderContext, ProviderFactory};
+use ulo::traits::{Provider, ProviderContext, ProviderFactory};
 
 /// Service that provides access to configuration
 ///
@@ -107,9 +107,9 @@ impl<T: Config + Clone + Send + Sync + 'static> ProviderFactory for ConfigServic
 
     async fn build(
         &self,
-        _deps: FxHashMap<String, ulo::traits_helpers::Injectable>,
-    ) -> ulo::traits_helpers::Injectable {
-        ulo::traits_helpers::Injectable::new(
+        _deps: FxHashMap<String, ulo::traits::Injectable>,
+    ) -> ulo::traits::Injectable {
+        ulo::traits::Injectable::new(
             Arc::new(Box::new(ConfigService {
                 config: self.config.clone(),
             }) as Box<dyn Provider>),

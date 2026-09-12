@@ -47,9 +47,9 @@ union exists.
 
 ## Member 1 — `Type` and `DynamicModule` collapse into one trait object
 
-In ulo, both kinds of module implement one trait, [`ModuleMetadata`](../../ulo/src/traits_helpers/module_metadata.rs).
+In ulo, both kinds of module implement one trait, [`ModuleMetadata`](../../ulo/src/traits/module_metadata.rs).
 The trait is the shared interface TypeScript lacks. A macro-generated module and a runtime-built
-[`DynamicModule`](../../ulo/src/module_helpers/dynamic_module.rs) satisfy the same method set:
+[`DynamicModule`](../../ulo/src/modules/dynamic_module.rs) satisfy the same method set:
 
 ```rust
 // #[module] generates this for a user struct

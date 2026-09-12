@@ -6,8 +6,8 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 use ulo::AdapterResult;
+use ulo::RequestPart;
 use ulo::async_trait;
-use ulo::http_helpers::RequestPart;
 use ulo::websocket::{SendError, TrySendError, WsMessage, WsSink};
 use ulo::{
     BindTarget, MessageCallbackResult, WebSocketAdapter, WsConnectionCallbacks, WsLifecycleHandle,

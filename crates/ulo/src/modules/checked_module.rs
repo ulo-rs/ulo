@@ -1,5 +1,5 @@
 use crate::startup_check::StartupCheck;
-use crate::traits_helpers::{ControllerFactory, ModuleMetadata, ProviderFactory};
+use crate::traits::{ControllerFactory, ModuleMetadata, ProviderFactory};
 
 use super::DynamicModule;
 
