@@ -12,7 +12,7 @@ use ulo::context::RpcContext;
 use ulo::extractors::{Payload, Validated};
 use ulo::module;
 use ulo::rpc::{RpcData, RpcError};
-use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo_macros::{controller, new, patterns, subscriptions, websocket_gateway};
 use validator::Validate;
 

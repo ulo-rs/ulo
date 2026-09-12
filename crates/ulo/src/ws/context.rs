@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
 use crate::context::Metadata;
-use crate::websocket::{Session, WsClient, WsMessage};
+use crate::ws::{Session, WsClient, WsMessage};
 
-use super::{CancellationToken, Extensions, HandlerContext, shared::SharedState};
+use crate::context::shared::SharedState;
+use crate::context::{CancellationToken, Extensions, HandlerContext};
 
 /// Per-request context for WebSocket handlers.
 ///
 /// One per execution: one inbound message, or one connect. A
-/// handler answers by returning a [`WsHandlerOutput`](crate::websocket::WsHandlerOutput),
+/// handler answers by returning a [`WsHandlerOutput`](crate::ws::WsHandlerOutput),
 /// streams included, so nothing about the answer lives here.
 #[derive(Clone)]
 pub struct WsContext {

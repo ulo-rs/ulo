@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::application::UloApplication;
 use crate::application_context::UloApplicationContext;
-use crate::context::{GrpcContext, HttpContext, RpcContext, WsContext};
+use crate::context::{GrpcContext, HttpContext, RpcContext};
 use crate::error::StartupError;
 use crate::http_types::HttpResponse;
 use crate::injector::{Container, InstanceLoader};
@@ -17,7 +17,8 @@ use crate::traits::{
     RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry, WsErrorHandlerArc, WsGuardEntry,
     WsInterceptorEntry,
 };
-use crate::websocket::WsMessage;
+use crate::ws::WsContext;
+use crate::ws::WsMessage;
 
 /// Entry point for building a ulo application: registers global middleware
 /// and enhancers, then constructs the DI container from a root
@@ -115,7 +116,7 @@ impl UloFactory {
 
     pub fn use_global_ws_interceptors(
         &mut self,
-        interceptor: Arc<dyn Interceptor<WsContext, crate::websocket::WsHandlerResult>>,
+        interceptor: Arc<dyn Interceptor<WsContext, crate::ws::WsHandlerResult>>,
     ) -> &mut Self {
         self.global_ws_interceptors
             .push(WsInterceptorEntry::Ready(interceptor));

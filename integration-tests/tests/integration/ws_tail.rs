@@ -14,9 +14,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use ulo::context::{HandlerContext, WsContext};
+use ulo::context::HandlerContext;
 use ulo::module;
-use ulo::websocket::{WsHandlerOutput, WsHandlerResult, WsMessage};
+use ulo::ws::WsContext;
+use ulo::ws::{WsHandlerOutput, WsHandlerResult, WsMessage};
 use ulo_macros::{new, subscriptions, websocket_gateway};
 
 use crate::common::TestServer;

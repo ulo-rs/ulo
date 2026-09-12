@@ -19,13 +19,14 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::context::{GrpcContext, HttpContext, RpcContext, WsContext};
+use crate::context::{GrpcContext, HttpContext, RpcContext};
 use crate::grpc_status::GrpcStatus;
 use crate::http_types::HttpResponse;
 use crate::rpc::RpcData;
 use crate::traits::middleware::Middleware;
 use crate::traits::{ErrorHandler, Guard, Interceptor};
-use crate::websocket::WsMessage;
+use crate::ws::WsContext;
+use crate::ws::WsMessage;
 
 /// Define a probe: an inherent `detect` (gated on `$bound`) that coerces to `Arc<$out>`, shadowing
 /// a blanket fallback `detect` that returns `None`.
@@ -93,8 +94,8 @@ probe!(
 probe!(
     WsInterceptorProbe,
     WsInterceptorProbeFallback,
-    Interceptor<WsContext, crate::websocket::WsHandlerResult>,
-    dyn Interceptor<WsContext, crate::websocket::WsHandlerResult>
+    Interceptor<WsContext, crate::ws::WsHandlerResult>,
+    dyn Interceptor<WsContext, crate::ws::WsHandlerResult>
 );
 probe!(
     GrpcInterceptorProbe,
@@ -172,7 +173,7 @@ type_probe!(
 type_probe!(
     WsInterceptorTypeProbe,
     WsInterceptorTypeProbeFallback,
-    Interceptor<WsContext, crate::websocket::WsHandlerResult>
+    Interceptor<WsContext, crate::ws::WsHandlerResult>
 );
 type_probe!(
     GrpcInterceptorTypeProbe,

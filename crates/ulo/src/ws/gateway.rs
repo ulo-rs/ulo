@@ -3,8 +3,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::context::Metadata;
-use crate::context::WsContext;
 use crate::traits::ExecutionResult;
+use crate::ws::WsContext;
 
 use super::{DisconnectReason, WsClient, WsError, WsHandlerOutput};
 
@@ -70,7 +70,7 @@ pub trait Gateway: Send + Sync {
 
     /// Connection lifecycle: called when a client disconnects
     /// Connection teardown. `context` is the disconnect's own execution, and is how the connection's
-    /// [`Session`](crate::websocket::Session) is read one last time. No enhancers run here — a
+    /// [`Session`](crate::ws::Session) is read one last time. No enhancers run here — a
     /// disconnect cannot be rejected.
     async fn on_disconnect(
         &self,

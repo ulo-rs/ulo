@@ -11,12 +11,13 @@ use std::time::Duration;
 use ulo::rpc::{RpcHandlerOutput, RpcHandlerResult};
 
 use ulo::async_trait;
-use ulo::context::{HandlerContext, RpcContext, WsContext};
+use ulo::context::{HandlerContext, RpcContext};
 use ulo::injectable;
 use ulo::module;
 use ulo::rpc::{RpcData, RpcError};
 use ulo::traits::{ErrorHandler, Guard, Interceptor, InterceptorNext};
-use ulo::websocket::{WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsMessage};
+use ulo::ws::WsContext;
+use ulo::ws::{WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsMessage};
 use ulo_macros::{controller, new, patterns, subscriptions, websocket_gateway};
 
 use crate::common::TestServer;

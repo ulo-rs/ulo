@@ -41,7 +41,7 @@ use ulo::context::HttpContext;
 use ulo::extractors::{FromContext, Json, Path, Payload, Query, Validated};
 use ulo::rpc::{RpcData, RpcError};
 use ulo::traits::{Guard, Interceptor, InterceptorNext};
-use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{Body, HttpResponse};
 use ulo::{controller, get, injectable, module, patterns, post, routes};
 use ulo_macros::{new, subscriptions, websocket_gateway};

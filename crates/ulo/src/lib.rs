@@ -11,7 +11,6 @@ mod error;
 mod startup_check;
 pub use context::{
     CancellationToken, GrpcContext, HandlerContext, HttpContext, RpcContext, StandaloneContext,
-    WsContext,
 };
 #[doc(hidden)]
 pub mod __construct;
@@ -49,7 +48,7 @@ pub mod rpc;
 mod scanner;
 pub mod traits;
 mod type_map;
-pub mod websocket;
+pub mod ws;
 
 // Re-exported for use in macro-generated code — not part of the public API.
 #[doc(hidden)]
@@ -63,8 +62,7 @@ pub use serde_json;
 // Re-exports for adapter crates
 pub use adapter::{
     AdapterContext, BindTarget, GrpcAdapter, GrpcLifecycleHandle, HttpAdapter, HttpLifecycleHandle,
-    MessageCallbackResult, RequestHandler, RpcAdapter, RpcClientTransport, RpcLifecycleHandle,
-    RpcMessageCallbacks, WebSocketAdapter, WsConnectionCallbacks, WsLifecycleHandle,
+    RequestHandler, RpcAdapter, RpcClientTransport, RpcLifecycleHandle, RpcMessageCallbacks,
 };
 pub use http_types::{
     Body, BoxBody, HttpMethod, HttpRequest, HttpResponse, HttpResponseBuilder, IntoResponse,
@@ -75,10 +73,11 @@ pub use rpc::{
     RpcEnhancers, RpcError, RpcHandlerEnhancers, RpcHandlerOutput, RpcHandlerResult,
     RpcReplyStream,
 };
-pub use websocket::{
+pub use ws::{
     BroadcastError, BroadcastModule, BroadcastService, BroadcastTarget, ClientId, DisconnectReason,
-    Gateway, GatewayEnhancers, GatewayHandlerEnhancers, RoomId, SendError, Session, TrySendError,
-    WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsHandshake, WsMessage, WsSink,
+    Gateway, GatewayEnhancers, GatewayHandlerEnhancers, MessageCallbackResult, RoomId, SendError,
+    Session, TrySendError, WebSocketAdapter, WsClient, WsConnectionCallbacks, WsContext, WsError,
+    WsHandlerOutput, WsHandlerResult, WsHandshake, WsLifecycleHandle, WsMessage, WsSink,
 };
 
 // Re-export built-in providers

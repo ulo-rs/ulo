@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use ulo::websocket::{BroadcastService, WsMessage, WsSink};
+use ulo::ws::{BroadcastService, WsMessage, WsSink};
 use ulo_http_axum::TokioSender;
 
 // Helpers
@@ -144,7 +144,7 @@ mod di_tests {
     use std::sync::Arc;
     use ulo::UloFactory;
     use ulo::module;
-    use ulo::websocket::{BroadcastModule, BroadcastService, WsMessage, WsSink};
+    use ulo::ws::{BroadcastModule, BroadcastService, WsMessage, WsSink};
     use ulo_http_axum::TokioSender;
 
     #[module(imports: [BroadcastModule::new()])]

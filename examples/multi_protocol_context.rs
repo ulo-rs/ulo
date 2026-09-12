@@ -28,10 +28,11 @@
 
 use serde_json::json;
 use ulo::async_trait;
-use ulo::context::{HttpContext, RpcContext, WsContext};
+use ulo::context::{HttpContext, RpcContext};
 use ulo::rpc::RpcHandlerResult;
 use ulo::traits::{Guard, Interceptor, InterceptorNext};
-use ulo::websocket::{WsClient, WsError, WsHandlerResult, WsMessage};
+use ulo::ws::WsContext;
+use ulo::ws::{WsClient, WsError, WsHandlerResult, WsMessage};
 use ulo::*;
 use ulo_macros::{controller, injectable, module, patterns, subscriptions, websocket_gateway};
 

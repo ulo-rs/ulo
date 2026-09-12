@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use futures_util::{SinkExt, StreamExt};
 use ulo::UloFactory;
 use ulo::module;
-use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo_macros::{new, subscribe_message, subscriptions, websocket_gateway};
 
 /// Never bound by anything. Its only job is to pair the gateway with the

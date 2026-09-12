@@ -1,5 +1,5 @@
 use poem::web::websocket::Message;
-use ulo::websocket::{WsError, WsMessage};
+use ulo::ws::{WsError, WsMessage};
 
 pub(crate) fn poem_to_ws_message(msg: Message) -> Result<WsMessage, WsError> {
     match msg {

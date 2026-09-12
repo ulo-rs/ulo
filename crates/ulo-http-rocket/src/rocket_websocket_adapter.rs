@@ -1,5 +1,5 @@
 use rocket_ws::Message;
-use ulo::websocket::{WsError, WsMessage};
+use ulo::ws::{WsError, WsMessage};
 
 pub(crate) fn rocket_to_ws_message(msg: Message) -> Result<WsMessage, WsError> {
     match msg {

@@ -11,7 +11,7 @@ use crate::{
         RpcInterceptorEntry, WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
         middleware::Middleware,
     },
-    websocket::Gateway,
+    ws::Gateway,
 };
 
 pub(crate) struct RoleRegistry {
