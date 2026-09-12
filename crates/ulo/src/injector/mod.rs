@@ -15,10 +15,9 @@ pub use self::instance_wrapper::InstanceWrapper;
 pub use crate::di::token::IntoToken;
 
 mod module_ref;
-pub use self::module_ref::{ModuleRef, ProviderStore};
+pub use self::module_ref::ModuleRef;
 
 mod module_ref_provider;
-pub use self::module_ref_provider::ModuleRefProvider;
 
 mod role_registry;
 pub(crate) use self::role_registry::RoleRegistry;

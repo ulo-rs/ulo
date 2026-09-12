@@ -21,17 +21,13 @@ pub type InitResult = Result<(), Box<dyn Error + Send + Sync + 'static>>;
 /// [`GrpcAdapter`]: crate::adapter::GrpcAdapter
 pub type AdapterResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>;
 
-/// Return type for the DI setup surface — [`Container`], [`InstanceLoader`],
-/// [`DependencyGraph`] and the dispatch-target resolvers.
+/// Return type for the DI setup surface — the container, the instance loader, the dependency
+/// graph and the dispatch-target resolvers, none of which a caller reaches directly.
 ///
 /// These build the module graph, and what they report is the graph being unbuildable: a provider
 /// nothing exports, a module that is not imported, a cycle. A caller has no recovery to choose
 /// between, which is why the type names no cases and [`StartupError::Setup`] is where every one of
 /// them arrives.
-///
-/// [`Container`]: crate::injector::Container
-/// [`InstanceLoader`]: crate::injector::InstanceLoader
-/// [`DependencyGraph`]: crate::injector::DependencyGraph
 pub type SetupResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>;
 
 /// Errors from the startup phases: building the application
