@@ -68,7 +68,6 @@ impl RpcContext {
 
     /// One wire field by key.
     #[doc(alias = "metadata")]
-    #[doc(alias = "metadata")]
     pub fn header(&self, key: &str) -> Option<&str> {
         self.inner.headers.get(key).map(|s| s.as_str())
     }

@@ -128,10 +128,11 @@ transport_factory_types!(
     GrpcInterceptorEntry
 );
 
-pub type HttpErrorHandlerArc = Arc<dyn ErrorHandler<HttpContext, HttpResponse>>;
-pub type RpcErrorHandlerArc = Arc<dyn ErrorHandler<RpcContext, RpcData>>;
-pub type WsErrorHandlerArc = Arc<dyn ErrorHandler<WsContext, WsMessage>>;
-pub type GrpcErrorHandlerArc = Arc<dyn ErrorHandler<GrpcContext, crate::grpc_status::GrpcStatus>>;
+pub(crate) type HttpErrorHandlerArc = Arc<dyn ErrorHandler<HttpContext, HttpResponse>>;
+pub(crate) type RpcErrorHandlerArc = Arc<dyn ErrorHandler<RpcContext, RpcData>>;
+pub(crate) type WsErrorHandlerArc = Arc<dyn ErrorHandler<WsContext, WsMessage>>;
+pub(crate) type GrpcErrorHandlerArc =
+    Arc<dyn ErrorHandler<GrpcContext, crate::grpc_status::GrpcStatus>>;
 
 /// Role trait-objects a provider may contribute to the registry.
 ///

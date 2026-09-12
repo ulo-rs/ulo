@@ -392,7 +392,7 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
         #[doc(hidden)]
         #[derive(::std::clone::Clone)]
         pub struct #wrapper_ident {
-            source: ::ulo::traits::DispatchSource<#self_ident>,
+            source: ::ulo::__enhancer::DispatchSource<#self_ident>,
             enhancers: ::std::sync::Arc<::ulo::adapter::ResolvedGrpcEnhancers>,
         }
 
@@ -407,14 +407,14 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
     // ── The source companion, and `GrpcServiceSource` on it ────────────────
     let grpc_trait_impl = quote! {
         #[doc(hidden)]
-        pub struct #source_ident(::ulo::traits::DispatchSource<#self_ident>);
+        pub struct #source_ident(::ulo::__enhancer::DispatchSource<#self_ident>);
 
         impl #self_ident {
             /// Shadows the `DispatchBridge` default: this controller dispatches gRPC.
             #[doc(hidden)]
             #[allow(non_snake_case, clippy::all)]
             pub fn __ulo_dispatch(
-                source: &::ulo::traits::DispatchSource<#self_ident>,
+                source: &::ulo::__enhancer::DispatchSource<#self_ident>,
             ) -> ::ulo::traits::Dispatch {
                 // The route prefix is HTTP's argument; a gRPC service cannot use one.
                 if !<#self_ident>::__ulo_prefix().is_empty() {

@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use crate::application::UloApplication;
 use crate::application_context::UloApplicationContext;
-use crate::context::Metadata;
 use crate::context::{GrpcContext, HttpContext, RpcContext, WsContext};
 use crate::error::StartupError;
 use crate::http_types::HttpResponse;

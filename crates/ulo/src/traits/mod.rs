@@ -11,20 +11,22 @@ pub use self::execution_cache::ExecutionCache;
 mod provider_context;
 pub use self::provider_context::ProviderContext;
 
-mod provider;
-pub use self::provider::{
-    DynGrpcGuardFactory, DynGrpcInterceptorFactory, DynHttpGuardFactory, DynHttpInterceptorFactory,
-    DynRpcGuardFactory, DynRpcInterceptorFactory, DynWsGuardFactory, DynWsInterceptorFactory,
+pub(crate) mod provider;
+pub use self::provider::{Injectable, Provider, ProviderFactory, ProviderRole};
+
+// The enhancer plumbing keeps an in-crate path; its public one is `__enhancer`, which is where a
+// macro expansion names it.
+pub(crate) use self::dispatch_source::DispatchSource;
+pub(crate) use self::provider::{
     GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc, HttpGuardEntry,
-    HttpInterceptorEntry, Injectable, Provider, ProviderFactory, ProviderRole, RpcErrorHandlerArc,
-    RpcGuardEntry, RpcInterceptorEntry, WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
+    HttpInterceptorEntry, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
+    WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
 };
 
 mod controller;
 pub use self::controller::{Controller, ControllerEnhancers, ControllerFactory, Dispatch, Route};
 
-mod dispatch_source;
-pub use self::dispatch_source::{DispatchSource, request_scoped_dependencies};
+pub(crate) mod dispatch_source;
 
 mod interceptor;
 pub use self::interceptor::{Interceptor, InterceptorNext};

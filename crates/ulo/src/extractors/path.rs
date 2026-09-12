@@ -1,8 +1,7 @@
 use super::FromContext;
 use crate::context::HttpContext;
-use crate::http_types::{PathParams, RequestPart};
+use crate::http_types::PathParams;
 use serde::de::DeserializeOwned;
-use std::str::FromStr;
 
 /// Extracts typed path parameters from the URL.
 ///

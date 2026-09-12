@@ -85,7 +85,7 @@ impl InterceptorNext<RpcContext, RpcHandlerResult> for RpcChainNext {
 }
 
 /// Wraps an [`RpcControllerSource`] with the full guard/interceptor pipeline.
-pub struct RpcControllerWrapper {
+pub(crate) struct RpcControllerWrapper {
     source: Arc<dyn RpcControllerSource>,
     guards: Vec<RpcGuardEntry>,
     interceptors: Vec<RpcInterceptorEntry>,
@@ -100,7 +100,7 @@ pub struct RpcControllerWrapper {
 }
 
 impl RpcControllerWrapper {
-    pub fn new(
+    pub(crate) fn new(
         source: Arc<dyn RpcControllerSource>,
         guards: Vec<RpcGuardEntry>,
         interceptors: Vec<RpcInterceptorEntry>,
@@ -124,11 +124,15 @@ impl RpcControllerWrapper {
         }
     }
 
-    pub fn patterns(&self) -> Vec<String> {
+    pub(crate) fn patterns(&self) -> Vec<String> {
         self.source.patterns()
     }
 
-    pub async fn handle_message(&self, data: RpcData, info: RpcCallInfo) -> RpcHandlerResult {
+    pub(crate) async fn handle_message(
+        &self,
+        data: RpcData,
+        info: RpcCallInfo,
+    ) -> RpcHandlerResult {
         let RpcCallInfo {
             pattern,
             headers,

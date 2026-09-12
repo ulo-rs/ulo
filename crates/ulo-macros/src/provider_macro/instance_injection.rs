@@ -550,7 +550,7 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
     // instance; its provider fires init/bootstrap on each one it builds.
     let on_singleton = |call: TokenStream| {
         quote! {
-            if let ::ulo::traits::DispatchSource::Singleton(__inst) = &self.source {
+            if let ::ulo::__enhancer::DispatchSource::Singleton(__inst) = &self.source {
                 use ::ulo::__lifecycle::LifecycleBridge as _;
                 #call
             }
@@ -569,7 +569,7 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
         #provider
 
         pub struct #object_name {
-            source: ::ulo::traits::DispatchSource<#struct_name>,
+            source: ::ulo::__enhancer::DispatchSource<#struct_name>,
         }
 
         #[::ulo::async_trait]
@@ -624,7 +624,7 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
                 let __force_request: bool = <#struct_name>::__ulo_is_request_scoped();
                 let __declared =
                     <Self as ::ulo::traits::ControllerFactory>::dependency_tokens(self);
-                let __request_deps = ::ulo::traits::request_scoped_dependencies(
+                let __request_deps = ::ulo::__enhancer::request_scoped_dependencies(
                     &__declared,
                     &dependencies,
                 );
@@ -639,13 +639,13 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
                 }
 
                 let __source = if __force_request || !__request_deps.is_empty() {
-                    ::ulo::traits::DispatchSource::PerCall(
+                    ::ulo::__enhancer::DispatchSource::PerCall(
                         ::std::sync::Arc::new(Box::new(#per_call_provider { dependencies })
                             as Box<dyn ::ulo::traits::Provider>),
                     )
                 } else {
                     // Built at startup, outside any execution, and shared by every call.
-                    ::ulo::traits::DispatchSource::Singleton(::std::sync::Arc::new(
+                    ::ulo::__enhancer::DispatchSource::Singleton(::std::sync::Arc::new(
                         <#struct_name>::__ulo_build_from_deps(
                             &dependencies,
                             ::ulo::ProviderContext::None,

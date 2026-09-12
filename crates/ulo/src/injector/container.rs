@@ -363,7 +363,9 @@ impl Container {
         &self.role_registry.gateways
     }
 
-    pub fn rpc_controllers(&self) -> &FxHashMap<String, Arc<crate::rpc::RpcControllerWrapper>> {
+    pub(crate) fn rpc_controllers(
+        &self,
+    ) -> &FxHashMap<String, Arc<crate::rpc::RpcControllerWrapper>> {
         &self.role_registry.rpc_controllers
     }
 
@@ -498,7 +500,7 @@ impl Container {
         Ok(module_ref.get_provider_by_token(provider_token))
     }
 
-    pub fn get_controller_instances(
+    pub(crate) fn get_controller_instances(
         &mut self,
         module_ref_token: &String,
     ) -> SetupResult<Drain<'_, String, Arc<InstanceWrapper>>> {

@@ -82,7 +82,7 @@ impl InterceptorNext<WsContext, WsHandlerResult> for WsChainNext {
 
 /// Parallel to `InstanceWrapper` on the HTTP side — wraps a gateway with the full
 /// guard/interceptor pipeline and tracks its own connected clients.
-pub struct GatewayWrapper {
+pub(crate) struct GatewayWrapper {
     gateway: Arc<Box<dyn Gateway>>,
     guards: Vec<WsGuardEntry>,
     interceptors: Vec<WsInterceptorEntry>,
@@ -100,7 +100,7 @@ pub struct GatewayWrapper {
 }
 
 impl GatewayWrapper {
-    pub fn new(
+    pub(crate) fn new(
         gateway: Arc<Box<dyn Gateway>>,
         guards: Vec<WsGuardEntry>,
         interceptors: Vec<WsInterceptorEntry>,
@@ -142,7 +142,7 @@ impl GatewayWrapper {
     /// shape, and refusing one is answered by not opening it. The same rule decides the message
     /// path: a refused message has an open socket to answer on, so it goes through the chain and
     /// the caller is told.
-    pub async fn begin_connect(&self, client: WsClient) -> Result<WsContext, WsError> {
+    pub(crate) async fn begin_connect(&self, client: WsClient) -> Result<WsContext, WsError> {
         // The client was born with its session, so a guard below writes to the store every later
         // execution on this connection reads.
         let context = WsContext::new(
@@ -187,7 +187,7 @@ impl GatewayWrapper {
 
     /// Phase 2 of connection setup: fire the `on_connect` lifecycle hook on the context phase 1
     /// built, so the hook reads the bag the guards wrote to.
-    pub async fn complete_connect(&self, context: &WsContext) -> Result<(), WsError> {
+    pub(crate) async fn complete_connect(&self, context: &WsContext) -> Result<(), WsError> {
         let client = context.client();
         if !self.clients.read().contains_key(&client.id) {
             return Err(WsError::ConnectionClosed("Client not found".into()));
@@ -197,12 +197,7 @@ impl GatewayWrapper {
     }
 
     /// Handle new WebSocket connection (simple path — no ConnectionManager).
-    pub async fn handle_connect(&self, client: WsClient) -> Result<(), WsError> {
-        let context = self.begin_connect(client).await?;
-        self.complete_connect(&context).await
-    }
-
-    pub async fn handle_message(
+    pub(crate) async fn handle_message(
         &self,
         client_id: String,
         message: WsMessage,
@@ -508,7 +503,7 @@ impl GatewayWrapper {
         }
     }
 
-    pub async fn handle_disconnect(&self, client_id: String, reason: DisconnectReason) {
+    pub(crate) async fn handle_disconnect(&self, client_id: String, reason: DisconnectReason) {
         let maybe = self.clients.write().remove(&client_id);
         if let Some(client) = maybe {
             tracing::debug!(client_id = %client_id, "WebSocket client disconnected");
@@ -551,27 +546,15 @@ impl GatewayWrapper {
         }
     }
 
-    pub async fn clients(&self) -> Vec<WsClient> {
-        self.clients.read().values().cloned().collect()
-    }
-
-    pub async fn get_client(&self, client_id: &str) -> Option<WsClient> {
-        self.clients.read().get(client_id).cloned()
-    }
-
-    pub async fn call_after_init(&self) {
+    pub(crate) async fn call_after_init(&self) {
         self.gateway.after_init().await;
     }
 
-    pub fn path(&self) -> String {
-        self.gateway.path()
-    }
-
-    pub fn namespace(&self) -> Option<String> {
+    pub(crate) fn namespace(&self) -> Option<String> {
         self.gateway.namespace()
     }
 
-    pub fn port(&self) -> Option<u16> {
+    pub(crate) fn port(&self) -> Option<u16> {
         self.gateway.port()
     }
 }

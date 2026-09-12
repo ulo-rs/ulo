@@ -40,7 +40,7 @@ impl InterceptorNext<HttpContext, HttpResponse> for ChainNext {
     }
 }
 
-pub struct InstanceWrapper {
+pub(crate) struct InstanceWrapper {
     instance: Arc<dyn Route>,
     guards: Vec<HttpGuardEntry>,
     interceptors: Vec<HttpInterceptorEntry>,
@@ -50,7 +50,7 @@ pub struct InstanceWrapper {
 }
 
 impl InstanceWrapper {
-    pub fn new(
+    pub(crate) fn new(
         instance: Arc<dyn Route>,
         enhancer_metadata: EnhancerMetadata,
         global_enhancers: EnhancerMetadata,
@@ -77,25 +77,21 @@ impl InstanceWrapper {
         }
     }
 
-    pub fn path(&self) -> String {
+    pub(crate) fn path(&self) -> String {
         self.instance.path()
     }
 
-    pub fn method(&self) -> HttpMethod {
+    pub(crate) fn method(&self) -> HttpMethod {
         self.instance.method()
     }
 
-    pub fn add_middleware(&mut self, middleware: Arc<dyn Middleware>) {
-        self.middleware_chain.use_middleware(middleware);
-    }
-
-    pub fn set_middleware(&mut self, middleware: Vec<Arc<dyn Middleware>>) {
+    pub(crate) fn set_middleware(&mut self, middleware: Vec<Arc<dyn Middleware>>) {
         for m in middleware {
             self.middleware_chain.use_middleware(m);
         }
     }
 
-    pub async fn handle_request(&self, req: HttpRequest) -> HttpResponse {
+    pub(crate) async fn handle_request(&self, req: HttpRequest) -> HttpResponse {
         let method = self.method();
         let path = self.path();
         tracing::debug!(method = %method.as_str(), path = %path, "incoming request");
