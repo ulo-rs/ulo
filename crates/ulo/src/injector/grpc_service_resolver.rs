@@ -27,25 +27,24 @@ impl GrpcServiceResolver {
         &self,
         svc: &dyn GrpcServiceSource,
     ) -> SetupResult<ResolvedGrpcEnhancers> {
-        let guards = self.resolve_guards(svc.get_guard_tokens())?;
-        let interceptors = self.resolve_interceptors(svc.get_interceptor_tokens())?;
-        let error_handlers = self.resolve_error_handlers(svc.get_error_handler_tokens())?;
+        let enhancers = svc.enhancers();
+        let guards = self.resolve_guards(enhancers.guard_tokens)?;
+        let interceptors = self.resolve_interceptors(enhancers.interceptor_tokens)?;
+        let error_handlers = self.resolve_error_handlers(enhancers.error_handler_tokens)?;
 
         let mut handler_guards: HashMap<String, Vec<GrpcGuardEntry>> = HashMap::new();
         let mut handler_interceptors: HashMap<String, Vec<GrpcInterceptorEntry>> = HashMap::new();
         let mut handler_error_handlers: HashMap<String, Vec<GrpcErrorHandlerArc>> = HashMap::new();
-        for method in svc.get_handler_methods() {
-            handler_guards.insert(
-                method.clone(),
-                self.resolve_guards(svc.get_handler_guard_tokens(&method))?,
-            );
+        for handler in enhancers.handlers {
+            let method = handler.method;
+            handler_guards.insert(method.clone(), self.resolve_guards(handler.guard_tokens)?);
             handler_interceptors.insert(
                 method.clone(),
-                self.resolve_interceptors(svc.get_handler_interceptor_tokens(&method))?,
+                self.resolve_interceptors(handler.interceptor_tokens)?,
             );
             handler_error_handlers.insert(
-                method.clone(),
-                self.resolve_error_handlers(svc.get_handler_error_handler_tokens(&method))?,
+                method,
+                self.resolve_error_handlers(handler.error_handler_tokens)?,
             );
         }
 

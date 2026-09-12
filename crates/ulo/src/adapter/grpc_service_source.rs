@@ -20,15 +20,15 @@ use std::sync::Arc;
 use crate::traits_helpers::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
 
 /// Per-service bundle of resolved enhancer instances. Built by the framework
-/// at create from the token getters on [`GrpcServiceSource`] and handed to
+/// at create from [`GrpcServiceSource::enhancers`] and handed to
 /// [`GrpcServiceSource::register_with`] so the macro-generated wrapper can
 /// invoke them per call without touching the DI container at request time.
 #[derive(Default, Clone)]
 pub struct ResolvedGrpcEnhancers {
     /// Service-level guards; run on every method.
     pub guards: Vec<GrpcGuardEntry>,
-    /// Method-level guards keyed by method name (the suffix after `Service/`,
-    /// matching what `#[grpc_methods]` emits in `get_handler_methods`).
+    /// Method-level guards keyed by the handler's Rust method name, which is what
+    /// [`GrpcHandlerEnhancers::method`] carries and what the generated wrapper looks up with.
     pub handler_guards: std::collections::HashMap<String, Vec<GrpcGuardEntry>>,
     /// Service-level interceptors; wrap every method's user delegation.
     pub interceptors: Vec<GrpcInterceptorEntry>,
@@ -42,6 +42,27 @@ pub struct ResolvedGrpcEnhancers {
     /// Method-level error handlers. Composed with service-level into one
     /// reverse-order chain per call.
     pub handler_error_handlers: std::collections::HashMap<String, Vec<GrpcErrorHandlerArc>>,
+}
+
+/// The enhancer tokens a gRPC service declares, resolved once at create. Service-level tokens
+/// apply to every method; each `handlers` entry adds tokens for one method. A flat descriptor
+/// instead of seven accessor methods — the macro builds it, the resolver reads it once.
+#[derive(Default)]
+pub struct GrpcEnhancers {
+    pub guard_tokens: Vec<String>,
+    pub interceptor_tokens: Vec<String>,
+    pub error_handler_tokens: Vec<String>,
+    pub handlers: Vec<GrpcHandlerEnhancers>,
+}
+
+/// Per-handler (per-method) enhancer tokens, applied on top of the service-level ones.
+#[derive(Default)]
+pub struct GrpcHandlerEnhancers {
+    /// The handler's Rust method name, which is the key the generated wrapper resolves by.
+    pub method: String,
+    pub guard_tokens: Vec<String>,
+    pub interceptor_tokens: Vec<String>,
+    pub error_handler_tokens: Vec<String>,
 }
 
 /// A gRPC service's declarations plus its registration hook — implemented by `#[grpc_methods]` on
@@ -63,37 +84,10 @@ pub trait GrpcServiceSource: Send + Sync + 'static {
         enhancers: Arc<ResolvedGrpcEnhancers>,
     );
 
-    // -- Enhancer token getters; default empty so a hand-written source does not
-    //    have to touch them. The macro overrides these with the tokens parsed
-    //    from `#[use_guards(...)]` etc.
-
-    fn get_guard_tokens(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn get_interceptor_tokens(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn get_error_handler_tokens(&self) -> Vec<String> {
-        vec![]
-    }
-
-    /// Methods carrying any per-method enhancer attribute. Used by the
-    /// resolver to know which methods to query the per-handler getters for.
-    fn get_handler_methods(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn get_handler_guard_tokens(&self, _method: &str) -> Vec<String> {
-        vec![]
-    }
-
-    fn get_handler_interceptor_tokens(&self, _method: &str) -> Vec<String> {
-        vec![]
-    }
-
-    fn get_handler_error_handler_tokens(&self, _method: &str) -> Vec<String> {
-        vec![]
+    /// All enhancer tokens for this service — service-level plus per-method — read once at
+    /// startup. Default is empty: a service with no declared enhancers, and the shape a
+    /// hand-written source can leave alone.
+    fn enhancers(&self) -> GrpcEnhancers {
+        GrpcEnhancers::default()
     }
 }
