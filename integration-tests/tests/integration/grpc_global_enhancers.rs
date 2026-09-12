@@ -21,7 +21,7 @@ use ulo::context::GrpcContext;
 use ulo::extractors::{Inbound, Payload};
 use ulo::traits_helpers::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::{GrpcHandlerResult, GrpcStatus};
-use ulo_macros::{controller, grpc_methods, injectable, module, new, use_guards};
+use ulo_macros::{controller, grpc_methods, injectable, module, new, use_guards, use_interceptors};
 
 mod globals_pb {
     tonic::include_proto!("ulo_test.orders");
@@ -49,6 +49,34 @@ impl Guard<GrpcContext> for GlobalGuard {
     async fn can_activate(&self, _ctx: &GrpcContext) -> bool {
         record("global:guard");
         true
+    }
+}
+
+#[injectable]
+pub struct MethodGuard {}
+
+#[ulo::async_trait]
+impl Guard<GrpcContext> for MethodGuard {
+    async fn can_activate(&self, _ctx: &GrpcContext) -> bool {
+        record("method:guard");
+        true
+    }
+}
+
+#[injectable]
+pub struct MethodInterceptor {}
+
+#[ulo::async_trait]
+impl Interceptor<GrpcContext, GrpcHandlerResult> for MethodInterceptor {
+    async fn intercept(
+        &self,
+        ctx: &GrpcContext,
+        next: Box<dyn InterceptorNext<GrpcContext, GrpcHandlerResult>>,
+    ) -> GrpcHandlerResult {
+        record("method:before");
+        let answer = next.run(ctx).await;
+        record("method:after");
+        answer
     }
 }
 
@@ -162,6 +190,8 @@ impl GlobalsGrpcService {
     }
 
     #[grpc_method]
+    #[use_guards(MethodGuard)]
+    #[use_interceptors(MethodInterceptor)]
     async fn bulk_create(
         &self,
         _inbound: Inbound<globals_pb::CreateOrderRequest>,
@@ -181,7 +211,7 @@ impl GlobalsGrpcService {
     }
 }
 
-#[module(controllers: [GlobalsGrpcService], providers: [ServiceGuard])]
+#[module(controllers: [GlobalsGrpcService], providers: [ServiceGuard, MethodGuard, MethodInterceptor])]
 impl GlobalsGrpcModule {}
 
 // ── harness ────────────────────────────────────────────────────────────────
@@ -322,5 +352,60 @@ async fn a_global_error_handler_claims_what_the_service_leaves() {
     assert_eq!(err.message(), "claimed globally");
 
     assert!(seen().contains(&"global:error_handler".to_string()));
+    stop(shutdown).await;
+}
+
+/// A global guard runs once on a method that names its own, not once per level it was
+/// folded into.
+#[serial]
+#[tokio_localset_test::localset_test]
+async fn a_global_guard_runs_once_on_a_method_with_its_own_guard() {
+    SEEN.lock().unwrap().clear();
+
+    let (port, shutdown) = boot(|f| {
+        f.use_global_grpc_guards(Arc::new(GlobalGuard));
+    })
+    .await;
+    let mut client = connect(port).await;
+
+    let _ = client
+        .bulk_create(futures_util::stream::iter(vec![order("keyboard", 1)]))
+        .await;
+
+    let guards: Vec<String> = seen()
+        .into_iter()
+        .filter(|e| e.ends_with("guard"))
+        .collect();
+    assert_eq!(
+        guards,
+        vec!["global:guard", "service:guard", "method:guard"],
+        "the global guard belongs to the service level alone"
+    );
+    stop(shutdown).await;
+}
+
+/// And a global interceptor wraps such a method once, rather than once per level.
+#[serial]
+#[tokio_localset_test::localset_test]
+async fn a_global_interceptor_wraps_once_on_a_method_with_its_own() {
+    SEEN.lock().unwrap().clear();
+
+    let (port, shutdown) = boot(|f| {
+        f.use_global_grpc_interceptors(Arc::new(GlobalInterceptor));
+    })
+    .await;
+    let mut client = connect(port).await;
+
+    let _ = client
+        .bulk_create(futures_util::stream::iter(vec![order("keyboard", 1)]))
+        .await;
+
+    let wraps = seen().iter().filter(|e| *e == "global:before").count();
+    assert_eq!(
+        wraps,
+        1,
+        "one global registration is one wrap: {:?}",
+        seen()
+    );
     stop(shutdown).await;
 }

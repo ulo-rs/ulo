@@ -219,9 +219,8 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
         .map(|i| &i.token_expr)
         .collect();
 
-    // One entry per method that carries any per-method enhancer attribute.
-    // `get_handler_methods` returns the names so the resolver knows which
-    // methods to query the per-handler getters for.
+    // One entry per method that carries any per-method enhancer attribute; each becomes a
+    // `GrpcHandlerEnhancers` in the descriptor, keyed by the method's Rust name.
     let mut handler_enhancer_entries: Vec<(
         String,
         Vec<TokenStream>,
@@ -294,109 +293,37 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
         }
     }
 
-    // ── token-getter impls (only emitted when non-empty so manual-impl users
-    //    don't see surprising overrides) ──────────────────────────────────
-    let ctrl_guard_tokens_impl = if !ctrl_guard_tokens.is_empty() {
-        quote! {
-            fn get_guard_tokens(&self) -> ::std::vec::Vec<::std::string::String> {
-                vec![#(#ctrl_guard_tokens),*]
-            }
-        }
-    } else {
-        quote! {}
-    };
-
-    let ctrl_interceptor_tokens_impl = if !ctrl_interceptor_tokens.is_empty() {
-        quote! {
-            fn get_interceptor_tokens(&self) -> ::std::vec::Vec<::std::string::String> {
-                vec![#(#ctrl_interceptor_tokens),*]
-            }
-        }
-    } else {
-        quote! {}
-    };
-
-    let ctrl_error_handler_tokens_impl = if !ctrl_error_handler_tokens.is_empty() {
-        quote! {
-            fn get_error_handler_tokens(&self) -> ::std::vec::Vec<::std::string::String> {
-                vec![#(#ctrl_error_handler_tokens),*]
-            }
-        }
-    } else {
-        quote! {}
-    };
-
-    let handler_methods_impl = if !handler_enhancer_entries.is_empty() {
-        let names: Vec<&str> = handler_enhancer_entries
-            .iter()
-            .map(|(n, _, _, _)| n.as_str())
-            .collect();
-        quote! {
-            fn get_handler_methods(&self) -> ::std::vec::Vec<::std::string::String> {
-                vec![#(#names.to_string()),*]
-            }
-        }
-    } else {
-        quote! {}
-    };
-
-    let handler_guard_tokens_impl = {
-        let arms: Vec<_> = handler_enhancer_entries
-            .iter()
-            .filter(|(_, g, _, _)| !g.is_empty())
-            .map(|(name, guards, _, _)| quote! { #name => vec![#(#guards),*], })
-            .collect();
-        if !arms.is_empty() {
+    // ── one descriptor, emitted only when the service declares something ───
+    let handler_entries: Vec<TokenStream> = handler_enhancer_entries
+        .iter()
+        .map(|(name, guards, interceptors, error_handlers)| {
             quote! {
-                fn get_handler_guard_tokens(&self, method: &str) -> ::std::vec::Vec<::std::string::String> {
-                    match method {
-                        #(#arms)*
-                        _ => vec![],
-                    }
+                ::ulo::adapter::GrpcHandlerEnhancers {
+                    method: #name.to_string(),
+                    guard_tokens: vec![#(#guards),*],
+                    interceptor_tokens: vec![#(#interceptors),*],
+                    error_handler_tokens: vec![#(#error_handlers),*],
                 }
             }
-        } else {
-            quote! {}
-        }
-    };
+        })
+        .collect();
 
-    let handler_interceptor_tokens_impl = {
-        let arms: Vec<_> = handler_enhancer_entries
-            .iter()
-            .filter(|(_, _, i, _)| !i.is_empty())
-            .map(|(name, _, interceptors, _)| quote! { #name => vec![#(#interceptors),*], })
-            .collect();
-        if !arms.is_empty() {
-            quote! {
-                fn get_handler_interceptor_tokens(&self, method: &str) -> ::std::vec::Vec<::std::string::String> {
-                    match method {
-                        #(#arms)*
-                        _ => vec![],
-                    }
+    let enhancers_impl = if ctrl_guard_tokens.is_empty()
+        && ctrl_interceptor_tokens.is_empty()
+        && ctrl_error_handler_tokens.is_empty()
+        && handler_entries.is_empty()
+    {
+        quote! {}
+    } else {
+        quote! {
+            fn enhancers(&self) -> ::ulo::adapter::GrpcEnhancers {
+                ::ulo::adapter::GrpcEnhancers {
+                    guard_tokens: vec![#(#ctrl_guard_tokens),*],
+                    interceptor_tokens: vec![#(#ctrl_interceptor_tokens),*],
+                    error_handler_tokens: vec![#(#ctrl_error_handler_tokens),*],
+                    handlers: vec![#(#handler_entries),*],
                 }
             }
-        } else {
-            quote! {}
-        }
-    };
-
-    let handler_error_handler_tokens_impl = {
-        let arms: Vec<_> = handler_enhancer_entries
-            .iter()
-            .filter(|(_, _, _, e)| !e.is_empty())
-            .map(|(name, _, _, handlers)| quote! { #name => vec![#(#handlers),*], })
-            .collect();
-        if !arms.is_empty() {
-            quote! {
-                fn get_handler_error_handler_tokens(&self, method: &str) -> ::std::vec::Vec<::std::string::String> {
-                    match method {
-                        #(#arms)*
-                        _ => vec![],
-                    }
-                }
-            }
-        } else {
-            quote! {}
         }
     };
 
@@ -508,13 +435,7 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
                 #token.to_string()
             }
 
-            #ctrl_guard_tokens_impl
-            #ctrl_interceptor_tokens_impl
-            #ctrl_error_handler_tokens_impl
-            #handler_methods_impl
-            #handler_guard_tokens_impl
-            #handler_interceptor_tokens_impl
-            #handler_error_handler_tokens_impl
+            #enhancers_impl
 
             fn register_with(
                 &self,

@@ -27,25 +27,27 @@ impl GrpcServiceResolver {
         &self,
         svc: &dyn GrpcServiceSource,
     ) -> SetupResult<ResolvedGrpcEnhancers> {
-        let guards = self.resolve_guards(svc.get_guard_tokens())?;
-        let interceptors = self.resolve_interceptors(svc.get_interceptor_tokens())?;
-        let error_handlers = self.resolve_error_handlers(svc.get_error_handler_tokens())?;
+        let enhancers = svc.enhancers();
+        let guards = self.resolve_guards(enhancers.guard_tokens)?;
+        let interceptors = self.resolve_interceptors(enhancers.interceptor_tokens)?;
+        let error_handlers = self.resolve_error_handlers(enhancers.error_handler_tokens)?;
 
         let mut handler_guards: HashMap<String, Vec<GrpcGuardEntry>> = HashMap::new();
         let mut handler_interceptors: HashMap<String, Vec<GrpcInterceptorEntry>> = HashMap::new();
         let mut handler_error_handlers: HashMap<String, Vec<GrpcErrorHandlerArc>> = HashMap::new();
-        for method in svc.get_handler_methods() {
+        for handler in enhancers.handlers {
+            let method = handler.method;
             handler_guards.insert(
                 method.clone(),
-                self.resolve_guards(svc.get_handler_guard_tokens(&method))?,
+                self.resolve_handler_guards(handler.guard_tokens)?,
             );
             handler_interceptors.insert(
                 method.clone(),
-                self.resolve_interceptors(svc.get_handler_interceptor_tokens(&method))?,
+                self.resolve_handler_interceptors(handler.interceptor_tokens)?,
             );
             handler_error_handlers.insert(
-                method.clone(),
-                self.resolve_error_handlers(svc.get_handler_error_handler_tokens(&method))?,
+                method,
+                self.resolve_handler_error_handlers(handler.error_handler_tokens)?,
             );
         }
 
@@ -59,6 +61,10 @@ impl GrpcServiceResolver {
         })
     }
 
+    /// Service-level entries, with the transport's globals ahead of them.
+    ///
+    /// The globals belong to this level alone. A method's own entries stack on top of what is
+    /// resolved here, so resolving them with the globals too would run each global twice.
     fn resolve_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<GrpcGuardEntry>> {
         let mut guards = self.container.borrow().get_global_grpc_guards();
         for token in tokens {
@@ -142,5 +148,34 @@ impl GrpcServiceResolver {
                     token
                 ).into()
             })
+    }
+
+    /// Method-level entries on their own: the globals are already in the service-level vector
+    /// these stack on top of.
+    fn resolve_handler_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<GrpcGuardEntry>> {
+        tokens
+            .into_iter()
+            .map(|token| self.resolve_guard_by_token(&token))
+            .collect()
+    }
+
+    fn resolve_handler_interceptors(
+        &self,
+        tokens: Vec<String>,
+    ) -> SetupResult<Vec<GrpcInterceptorEntry>> {
+        tokens
+            .into_iter()
+            .map(|token| self.resolve_interceptor_by_token(&token))
+            .collect()
+    }
+
+    fn resolve_handler_error_handlers(
+        &self,
+        tokens: Vec<String>,
+    ) -> SetupResult<Vec<GrpcErrorHandlerArc>> {
+        tokens
+            .into_iter()
+            .map(|token| self.resolve_error_handler_by_token(&token))
+            .collect()
     }
 }
