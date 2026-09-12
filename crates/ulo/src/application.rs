@@ -15,9 +15,10 @@ use crate::error::{ResolutionError, StartupError};
 use event_listener::Event;
 
 use crate::{
-    adapter::{AdapterContext, BindTarget, HttpAdapter, server_lifecycle::ServerLifecycle},
+    adapter::{AdapterContext, BindTarget, server_lifecycle::ServerLifecycle},
     application_context::UloApplicationContext,
     grpc::GrpcAdapter,
+    http::HttpAdapter,
     injector::{Container, GatewayResolver, IntoToken},
     router::RoutesResolver,
     rpc::{RpcAdapter, RpcCallInfo, RpcControllerWrapper, RpcData, RpcError, RpcMessageCallbacks},
@@ -525,7 +526,7 @@ impl UloApplication {
                 ));
                 // Upgrade requests arrive with trailing slashes already
                 // trimmed (AdapterContext), so register the trimmed form.
-                let trimmed = crate::http_types::trim_trailing_slashes(path);
+                let trimmed = crate::http::trim_trailing_slashes(path);
                 http.register_ws_route(trimmed, callbacks)
                     .map_err(|source| StartupError::Adapter {
                         transport: "websocket",

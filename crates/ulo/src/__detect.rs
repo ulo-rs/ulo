@@ -19,10 +19,10 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::context::HttpContext;
 use crate::grpc::GrpcContext;
 use crate::grpc::GrpcStatus;
-use crate::http_types::HttpResponse;
+use crate::http::HttpContext;
+use crate::http::HttpResponse;
 use crate::rpc::RpcContext;
 use crate::rpc::RpcData;
 use crate::traits::middleware::Middleware;

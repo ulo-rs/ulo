@@ -3,7 +3,8 @@
 //! The class half existed nowhere before: `#[set_metadata]` was read from method attributes only, so
 //! an annotation on the impl block compiled and did nothing.
 
-use ulo::context::{HandlerContext, HttpContext};
+use ulo::context::HandlerContext;
+use ulo::http::HttpContext;
 use ulo::{Body, controller, get, module, routes, set_metadata};
 
 use crate::common::TestServer;

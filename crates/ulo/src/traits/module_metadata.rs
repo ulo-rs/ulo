@@ -255,20 +255,18 @@ impl MiddlewareConsumer {
     #[cfg(feature = "tower-compat")]
     pub fn apply_tower<L, B>(&mut self, layer: L) -> MiddlewareConfigProxy<'_>
     where
-        L: tower::Layer<crate::tower_compat::UloNextService> + Send + Sync + 'static,
-        L::Service: tower::Service<
-                http::Request<crate::http_types::RequestBoxBody>,
-                Response = http::Response<B>,
-            > + Send
+        L: tower::Layer<crate::http::tower::UloNextService> + Send + Sync + 'static,
+        L::Service: tower::Service<http::Request<crate::http::RequestBoxBody>, Response = http::Response<B>>
+            + Send
             + 'static,
         B: http_body::Body<Data = bytes::Bytes> + Send + Sync + 'static,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-        <L::Service as tower::Service<http::Request<crate::http_types::RequestBoxBody>>>::Error:
+        <L::Service as tower::Service<http::Request<crate::http::RequestBoxBody>>>::Error:
             Into<Box<dyn std::error::Error + Send + Sync>>,
-        <L::Service as tower::Service<http::Request<crate::http_types::RequestBoxBody>>>::Future:
+        <L::Service as tower::Service<http::Request<crate::http::RequestBoxBody>>>::Future:
             Send + 'static,
     {
-        self.apply(crate::tower_compat::TowerLayer::new(layer))
+        self.apply(crate::http::tower::TowerLayer::new(layer))
     }
 
     fn finalize_current(&mut self) {
@@ -358,20 +356,18 @@ impl<'a> MiddlewareConfigProxy<'a> {
     #[cfg(feature = "tower-compat")]
     pub fn apply_also_tower<L, B>(self, layer: L) -> Self
     where
-        L: tower::Layer<crate::tower_compat::UloNextService> + Send + Sync + 'static,
-        L::Service: tower::Service<
-                http::Request<crate::http_types::RequestBoxBody>,
-                Response = http::Response<B>,
-            > + Send
+        L: tower::Layer<crate::http::tower::UloNextService> + Send + Sync + 'static,
+        L::Service: tower::Service<http::Request<crate::http::RequestBoxBody>, Response = http::Response<B>>
+            + Send
             + 'static,
         B: http_body::Body<Data = bytes::Bytes> + Send + Sync + 'static,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-        <L::Service as tower::Service<http::Request<crate::http_types::RequestBoxBody>>>::Error:
+        <L::Service as tower::Service<http::Request<crate::http::RequestBoxBody>>>::Error:
             Into<Box<dyn std::error::Error + Send + Sync>>,
-        <L::Service as tower::Service<http::Request<crate::http_types::RequestBoxBody>>>::Future:
+        <L::Service as tower::Service<http::Request<crate::http::RequestBoxBody>>>::Future:
             Send + 'static,
     {
-        self.apply_also(crate::tower_compat::TowerLayer::new(layer))
+        self.apply_also(crate::http::tower::TowerLayer::new(layer))
     }
 
     /// Specify a single route to apply middleware to

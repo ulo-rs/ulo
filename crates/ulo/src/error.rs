@@ -15,7 +15,7 @@ pub type InitResult = Result<(), Box<dyn Error + Send + Sync + 'static>>;
 /// whatever arrives into [`StartupError::Adapter`] with the transport name attached, at the layer
 /// holding it, and reads nothing else off the value.
 ///
-/// [`HttpAdapter`]: crate::adapter::HttpAdapter
+/// [`HttpAdapter`]: crate::http::HttpAdapter
 /// [`WebSocketAdapter`]: crate::ws::WebSocketAdapter
 /// [`RpcAdapter`]: crate::rpc::RpcAdapter
 /// [`GrpcAdapter`]: crate::grpc::GrpcAdapter

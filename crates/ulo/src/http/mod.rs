@@ -1,5 +1,26 @@
+//! Everything that is HTTP and nothing that is not: the request and response, the body, the
+//! method, the context one request runs in, the error it answers with, the adapter trait an
+//! integration crate implements, and the request-scoped provider a handler injects.
+//!
+//! What an HTTP handler shares with the other transports — `Guard`, `Interceptor`, `FromContext`,
+//! `ExecutionResult` — is in the crate's core, because it means the same thing there.
+
+mod adapter;
 mod body;
+mod context;
+mod lifecycle;
+mod provider;
+mod request_handler;
+#[cfg(feature = "tower-compat")]
+pub mod tower;
+pub use self::adapter::HttpAdapter;
 pub use self::body::{Body, BoxBody};
+pub use self::context::HttpContext;
+pub(crate) mod error;
+pub use self::error::{HttpError, http_reason, http_status};
+pub use self::lifecycle::HttpLifecycleHandle;
+pub use self::provider::{Request, RequestFactory};
+pub use self::request_handler::RequestHandler;
 
 mod http_response;
 pub use self::http_response::{HttpResponse, HttpResponseBuilder};

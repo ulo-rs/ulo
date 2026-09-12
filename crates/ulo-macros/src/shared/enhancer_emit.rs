@@ -38,13 +38,13 @@ pub struct EnhancerSpec {
     pub role_variant: TokenStream,
     /// `::ulo::__enhancer::HttpGuardEntry` etc.
     pub entry_path: TokenStream,
-    /// `::ulo::traits::Guard<::ulo::context::HttpContext>` etc.
+    /// `::ulo::traits::Guard<::ulo::http::HttpContext>` etc.
     pub trait_path: TokenStream,
     /// `::ulo::__enhancer::DynHttpGuardFactory` etc.
     pub dyn_factory_trait: TokenStream,
     /// Camel-case suffix used to derive a unique factory struct name per kind.
     pub factory_suffix: &'static str,
-    /// `::ulo::context::HttpContext` etc. — what this kind's factory is handed.
+    /// `::ulo::http::HttpContext` etc. — what this kind's factory is handed.
     pub context_path: TokenStream,
     /// `::ulo::ProviderContext::Http` etc. — how that context is wrapped for
     /// the provider being built.
@@ -76,19 +76,19 @@ impl EnhancerKind {
             EnhancerKind::HttpGuard => EnhancerSpec {
                 role_variant: quote! { ::ulo::traits::ProviderRole::HttpGuard },
                 entry_path: quote! { ::ulo::__enhancer::HttpGuardEntry },
-                trait_path: quote! { ::ulo::traits::Guard<::ulo::context::HttpContext> },
+                trait_path: quote! { ::ulo::traits::Guard<::ulo::http::HttpContext> },
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynHttpGuardFactory },
                 factory_suffix: "HttpGuard",
-                context_path: quote! { ::ulo::context::HttpContext },
+                context_path: quote! { ::ulo::http::HttpContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::Http },
             },
             EnhancerKind::HttpInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::traits::ProviderRole::HttpInterceptor },
                 entry_path: quote! { ::ulo::__enhancer::HttpInterceptorEntry },
-                trait_path: quote! { ::ulo::traits::Interceptor<::ulo::context::HttpContext, ::ulo::HttpResponse> },
+                trait_path: quote! { ::ulo::traits::Interceptor<::ulo::http::HttpContext, ::ulo::HttpResponse> },
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynHttpInterceptorFactory },
                 factory_suffix: "HttpInterceptor",
-                context_path: quote! { ::ulo::context::HttpContext },
+                context_path: quote! { ::ulo::http::HttpContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::Http },
             },
             EnhancerKind::RpcGuard => EnhancerSpec {

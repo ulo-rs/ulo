@@ -6,7 +6,7 @@ use std::net::TcpListener;
 /// is already bound and listening.
 ///
 /// Passed to [`use_http_adapter`](crate::UloApplication::use_http_adapter)
-/// and threaded into [`HttpAdapter::into_lifecycle`](crate::adapter::HttpAdapter::into_lifecycle).
+/// and threaded into [`HttpAdapter::into_lifecycle`](crate::http::HttpAdapter::into_lifecycle).
 /// Converts from the common shapes:
 ///
 /// ```no_run

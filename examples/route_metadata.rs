@@ -26,11 +26,8 @@
 //! from the extension bag, leaving how the caller got there to whatever is transport-specific.
 
 use ulo::{
-    Body, async_trait,
-    context::{HandlerContext, HttpContext},
-    controller, get, module, routes, set_metadata,
-    traits::Guard,
-    use_guards,
+    Body, async_trait, context::HandlerContext, controller, get, http::HttpContext, module, routes,
+    set_metadata, traits::Guard, use_guards,
 };
 
 // ============================================================================

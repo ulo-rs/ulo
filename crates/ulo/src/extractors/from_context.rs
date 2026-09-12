@@ -3,8 +3,9 @@
 use std::fmt;
 use std::future::Future;
 
-use crate::context::{HandlerContext, HttpContext};
-use crate::http_types::HttpRequest;
+use crate::context::HandlerContext;
+use crate::http::HttpContext;
+use crate::http::HttpRequest;
 
 /// Extracts a value from the context handling the current message.
 ///
@@ -19,7 +20,7 @@ use crate::http_types::HttpRequest;
 /// body takes it with [`take_body`]. See the [module docs](super) for both
 /// shapes.
 ///
-/// [`HttpContext::request`]: crate::context::HttpContext::request
+/// [`HttpContext::request`]: crate::http::HttpContext::request
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an extractor for `{C}`",
     label = "cannot be extracted from this context",

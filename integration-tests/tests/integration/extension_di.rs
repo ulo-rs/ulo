@@ -9,7 +9,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ulo::async_trait;
-use ulo::context::{Extensions, HttpContext};
+use ulo::context::Extensions;
+use ulo::http::HttpContext;
 use ulo::traits::Guard;
 use ulo::{Body, Extension, controller, get, injectable, module, routes};
 

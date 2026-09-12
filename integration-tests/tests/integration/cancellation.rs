@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serial_test::serial;
-use ulo::context::{HandlerContext, HttpContext};
+use ulo::context::HandlerContext;
+use ulo::http::HttpContext;
 use ulo::{Body, controller, get, module, routes};
 
 use crate::common::TestServer;

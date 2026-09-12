@@ -20,7 +20,7 @@ impl std::error::Error for MyError {}
 #[ulo::catch(MyError)]
 async fn handle(
     _e: &mut MyError,
-    _ctx: &ulo::context::HttpContext,
+    _ctx: &ulo::http::HttpContext,
 ) -> ulo::HttpResponse {
     ulo::HttpResponse::default()
 }

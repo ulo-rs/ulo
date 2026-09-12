@@ -1,31 +1,13 @@
-//! Internal lifecycle handles wrapping each adapter kind.
-//!
-//! Each handle owns its concrete adapter and exposes only the
-//! [`ServerLifecycle`] surface to the orchestrator. Per-transport bind logic
-//! happens in the handle's constructor — that's where the adapter's typed
-//! methods are still in scope. Once stored as `Box<dyn ServerLifecycle>`
-//! the orchestration layer cannot tell HTTP from gRPC.
-//!
-//! Adding a new adapter kind = add a new handle here + a typed
-//! `use_*_adapter()` method on `UloApplication`. Orchestration code in
-//! `UloApplication::bind`, `run`, and `close_adapters` does not change.
+//! The lifecycle handle for the HTTP adapter.
 
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 
-use crate::error::AdapterResult;
 use async_trait::async_trait;
 
-use crate::adapter::server_lifecycle::ServerLifecycle;
-
-/// Boxed shutdown action the adapter produces alongside the serve future.
-/// Lets the lifecycle handle drive shutdown without holding a reference
-/// back to the adapter — the adapter's own state (channel sender, signal,
-/// etc.) is captured in the closure and the handle just calls it.
-pub(crate) type ShutdownCallback = Box<
-    dyn FnOnce() -> Pin<Box<dyn Future<Output = AdapterResult> + Send + 'static>> + Send + Sync,
->;
+use crate::adapter::server_lifecycle::{ServerLifecycle, ShutdownCallback};
+use crate::error::AdapterResult;
 
 /// Lifecycle handle for an HTTP adapter. Constructed by each adapter
 /// crate's `into_lifecycle` implementation; owns the concrete state

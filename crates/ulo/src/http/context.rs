@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::http_types::{HttpRequest, RequestBody, RequestPart};
+use crate::http::{HttpRequest, RequestBody, RequestPart};
 
-use super::{CancellationToken, Extensions, HandlerContext, Metadata, shared::SharedState};
+use crate::context::shared::SharedState;
+use crate::context::{CancellationToken, Extensions, HandlerContext, Metadata};
 
 /// The execution context for one HTTP request.
 ///

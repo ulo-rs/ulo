@@ -280,7 +280,7 @@ mod tests {
         // Instantiated at a real context to prove the bound is satisfiable, not
         // merely well-formed.
         let parts = http::Request::builder().body(()).unwrap().into_parts().0;
-        let ctx = crate::context::HttpContext::from_parts(parts);
+        let ctx = crate::http::HttpContext::from_parts(parts);
         ctx.extensions().insert(Principal("alice"));
 
         let bag = read_from_any(&ctx).await;

@@ -5,8 +5,8 @@ use rustc_hash::FxHashMap;
 
 use super::{ErrorHandler, Guard, Interceptor, ProviderContext, middleware::Middleware};
 use crate::{
-    ProviderScope, context::HttpContext, grpc::GrpcContext, http_types::HttpResponse,
-    rpc::RpcContext, rpc::RpcData, ws::WsContext, ws::WsMessage,
+    ProviderScope, grpc::GrpcContext, http::HttpContext, http::HttpResponse, rpc::RpcContext,
+    rpc::RpcData, ws::WsContext, ws::WsMessage,
 };
 
 #[allow(unused_imports)]

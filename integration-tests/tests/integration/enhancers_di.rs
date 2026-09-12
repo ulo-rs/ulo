@@ -9,7 +9,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 use ulo::HttpResponse;
 use ulo::async_trait;
-use ulo::context::HttpContext;
+use ulo::http::HttpContext;
 use ulo::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::traits::{Guard, Interceptor, InterceptorNext, MiddlewareConsumer};
 use ulo::{

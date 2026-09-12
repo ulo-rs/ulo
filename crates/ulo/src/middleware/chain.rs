@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::{
     errors::PipelineSegment,
-    http_types::{HttpRequest, HttpResponse},
+    http::{HttpRequest, HttpResponse},
     traits::middleware::{Middleware, MiddlewareResult, NextHandle, NextInternal},
 };
 

@@ -1,11 +1,5 @@
 pub(crate) mod adapter_context;
 pub(crate) mod bind_target;
-pub(crate) mod http_adapter;
-pub(crate) mod lifecycle_handles;
-pub(crate) mod request_handler;
 pub(crate) mod server_lifecycle;
 pub use adapter_context::AdapterContext;
 pub use bind_target::BindTarget;
-pub use http_adapter::HttpAdapter;
-pub use lifecycle_handles::HttpLifecycleHandle;
-pub use request_handler::RequestHandler;

@@ -39,3 +39,11 @@ pub(crate) trait ServerLifecycle: Send + 'static {
     /// Idempotent; safe to call multiple times.
     async fn shutdown(&mut self) -> AdapterResult;
 }
+
+/// Boxed shutdown action the adapter produces alongside the serve future.
+/// Lets the lifecycle handle drive shutdown without holding a reference
+/// back to the adapter — the adapter's own state (channel sender, signal,
+/// etc.) is captured in the closure and the handle just calls it.
+pub(crate) type ShutdownCallback = Box<
+    dyn FnOnce() -> Pin<Box<dyn Future<Output = AdapterResult> + Send + 'static>> + Send + Sync,
+>;

@@ -8,8 +8,9 @@
 //! `guard_mut_context.rs` covers the enhancer-to-enhancer half.
 
 use ulo::async_trait;
-use ulo::context::{Extensions, HandlerContext, HttpContext};
+use ulo::context::{Extensions, HandlerContext};
 use ulo::extractors::{Bytes as UloBytes, Path};
+use ulo::http::HttpContext;
 use ulo::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::traits::Guard;
 use ulo::ws::WsContext;

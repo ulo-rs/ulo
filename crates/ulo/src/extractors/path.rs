@@ -1,6 +1,6 @@
 use super::FromContext;
-use crate::context::HttpContext;
-use crate::http_types::PathParams;
+use crate::http::HttpContext;
+use crate::http::PathParams;
 use serde::de::DeserializeOwned;
 
 /// Extracts typed path parameters from the URL.

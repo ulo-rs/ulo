@@ -1,7 +1,8 @@
 use crate::async_trait;
-use crate::context::{HandlerContext, HttpContext};
-use crate::errors::HttpError;
-use crate::http_types::{Body, HttpResponse};
+use crate::context::HandlerContext;
+use crate::http::HttpContext;
+use crate::http::HttpError;
+use crate::http::{Body, HttpResponse};
 use crate::rpc::RpcContext;
 use crate::rpc::RpcData;
 use crate::ws::WsContext;

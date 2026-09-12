@@ -10,8 +10,7 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 
-use crate::adapter::lifecycle_handles::ShutdownCallback;
-use crate::adapter::server_lifecycle::ServerLifecycle;
+use crate::adapter::server_lifecycle::{ServerLifecycle, ShutdownCallback};
 use crate::error::AdapterResult;
 
 pub struct RpcLifecycleHandle {

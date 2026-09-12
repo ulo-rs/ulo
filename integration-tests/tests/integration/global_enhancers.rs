@@ -15,7 +15,7 @@ use ulo::async_trait;
 use ulo::{Body, UloFactory, controller, get, module, routes, use_guards, use_interceptors};
 use ulo_http_axum::AxumAdapter;
 
-use ulo::context::HttpContext;
+use ulo::http::HttpContext;
 use ulo::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::traits::{Guard, Interceptor, InterceptorNext};
 

@@ -5,9 +5,9 @@ use async_trait::async_trait;
 
 use crate::adapter::adapter_context::AdapterContext;
 use crate::adapter::bind_target::BindTarget;
-use crate::adapter::lifecycle_handles::HttpLifecycleHandle;
-use crate::adapter::request_handler::RequestHandler;
-use crate::http_types::HttpMethod;
+use crate::http::HttpLifecycleHandle;
+use crate::http::HttpMethod;
+use crate::http::request_handler::RequestHandler;
 use crate::ws::WsConnectionCallbacks;
 
 /// Implemented by every HTTP transport adapter (axum, actix, poem, rocket,
