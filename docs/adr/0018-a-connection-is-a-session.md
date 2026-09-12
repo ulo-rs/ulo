@@ -86,7 +86,7 @@ A reconnect produces a new session. This is a connection's lifetime, not a user'
 
 ### Disconnect becomes an execution
 
-`GatewayTrait::on_disconnect` gains a context, so teardown reads the session the way every other
+`Gateway::on_disconnect` gains a context, so teardown reads the session the way every other
 participant does. It gains no enhancer chain: rejecting a disconnect is meaningless, and a guard there
 would be a trap.
 
@@ -120,7 +120,7 @@ could want one later, and one HTTP/2 connection carries many streams.
   point: WebSocket is the only transport with a session.
 - `WsContext::new` takes the session handle, since every execution on a connection must receive the
   same one.
-- Breaking for `GatewayTrait::on_disconnect` implementors, which gain a context parameter.
+- Breaking for `Gateway::on_disconnect` implementors, which gain a context parameter.
 - Two bags of the same underlying type live one call apart, separated by their access paths. The
   newtype narrows the mistake rather than removing it.
 - A handler or enhancer that reads the session and needs a service to act on it passes the value down.

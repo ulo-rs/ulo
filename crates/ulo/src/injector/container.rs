@@ -12,7 +12,7 @@ use crate::{
         ProviderFactory, ProviderRole, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
         WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
     },
-    websocket::GatewayTrait,
+    websocket::Gateway,
 };
 
 use super::{InstanceWrapper, RoleRegistry, module::Module};
@@ -362,7 +362,7 @@ impl UloContainer {
         self.role_registry.get_roles_for_token(token)
     }
 
-    pub fn get_gateways(&self) -> &FxHashMap<String, Arc<Box<dyn GatewayTrait>>> {
+    pub fn get_gateways(&self) -> &FxHashMap<String, Arc<Box<dyn Gateway>>> {
         &self.role_registry.gateways
     }
 

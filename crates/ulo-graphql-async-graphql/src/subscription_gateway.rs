@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ulo::traits_helpers::{Provider, ProviderContext};
 use ulo::{
-    DisconnectReason, GatewayTrait, ProviderScope, WsClient, WsError, WsHandlerOutput, WsMessage,
+    DisconnectReason, Gateway, ProviderScope, WsClient, WsError, WsHandlerOutput, WsMessage,
     context::WsContext,
 };
 
@@ -102,10 +102,10 @@ where
     }
 }
 
-// ---- GatewayTrait -----------------------------------------------------
+// ---- Gateway -----------------------------------------------------
 
 #[async_trait]
-impl<Q, M, S> GatewayTrait for GraphQLSubscriptionGateway<Q, M, S>
+impl<Q, M, S> Gateway for GraphQLSubscriptionGateway<Q, M, S>
 where
     Q: ObjectType + 'static,
     M: ObjectType + 'static,

@@ -605,7 +605,7 @@ pub fn catch(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// WebSocket gateway macro for defining WebSocket message handlers.
 ///
-/// Similar to `#[controller]` but for WebSocket connections. Implements `GatewayTrait`
+/// Similar to `#[controller]` but for WebSocket connections. Implements `Gateway`
 /// and handles WebSocket lifecycle events and message routing.
 ///
 /// # Syntax

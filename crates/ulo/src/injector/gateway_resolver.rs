@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::error::SetupResult;
 
 use crate::traits_helpers::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
-use crate::websocket::{GatewayTrait, GatewayWrapper};
+use crate::websocket::{Gateway, GatewayWrapper};
 
 use super::UloContainer;
 
@@ -29,7 +29,7 @@ impl GatewayResolver {
             .collect()
     }
 
-    fn wrap_gateway(&self, gateway: Arc<Box<dyn GatewayTrait>>) -> SetupResult<GatewayWrapper> {
+    fn wrap_gateway(&self, gateway: Arc<Box<dyn Gateway>>) -> SetupResult<GatewayWrapper> {
         let enhancers = gateway.enhancers();
         let guards = self.resolve_guards(enhancers.guard_tokens)?;
         let interceptors = self.resolve_interceptors(enhancers.interceptor_tokens)?;

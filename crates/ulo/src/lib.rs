@@ -66,15 +66,15 @@ pub use http_helpers::{
 };
 pub use injector::InstanceWrapper;
 pub use rpc::{
-    RpcCallInfo, RpcClient, RpcClientError, RpcControllerSource, RpcControllerTrait, RpcData,
+    RpcCallInfo, RpcClient, RpcClientError, RpcController, RpcControllerSource, RpcData,
     RpcEnhancers, RpcError, RpcHandlerEnhancers, RpcHandlerOutput, RpcHandlerResult,
     RpcReplyStream,
 };
 pub use websocket::{
     BroadcastError, BroadcastModule, BroadcastService, BroadcastTarget, ClientId, DisconnectReason,
-    GatewayEnhancers, GatewayHandlerEnhancers, GatewayTrait, GatewayWrapper, RoomId, SendError,
-    Session, TrySendError, WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsHandshake,
-    WsMessage, WsSink,
+    Gateway, GatewayEnhancers, GatewayHandlerEnhancers, GatewayWrapper, RoomId, SendError, Session,
+    TrySendError, WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsHandshake, WsMessage,
+    WsSink,
 };
 
 // Re-export built-in providers

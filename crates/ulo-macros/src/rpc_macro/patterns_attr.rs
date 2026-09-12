@@ -1,11 +1,11 @@
 //! `#[patterns]` — the impl-side pattern router for an RPC controller.
 //!
 //! Pairs with `#[controller]` on the struct, and is what makes the controller RPC: it emits the
-//! `__ulo_dispatch` shadow answering `Dispatch::Rpc`, the `RpcControllerTrait` impl, and the
+//! `__ulo_dispatch` shadow answering `Dispatch::Rpc`, the `RpcController` impl, and the
 //! source companion. It scans the impl for `#[message_pattern]` (request-response) and
 //! `#[event_pattern]` (fire-and-forget) handlers and the controller- and handler-level enhancer
 //! attrs, and emits inherent `__ulo_rpc_*` fns that out-rank the `RpcHandlersBridge` defaults at
-//! the concrete-type call sites in the `RpcControllerTrait` impl. RPC has no connection hooks, so
+//! the concrete-type call sites in the `RpcController` impl. RPC has no connection hooks, so
 //! the scan is pure aggregation. It leaves `#[new]` and `#[on_*]` intact for their own macros.
 
 use proc_macro2::TokenStream;
@@ -205,7 +205,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
         }
 
         #[::ulo::async_trait]
-        impl ::ulo::rpc::RpcControllerTrait for #struct_name {
+        impl ::ulo::rpc::RpcController for #struct_name {
             async fn handle_message(
                 &self,
                 ctx: &::ulo::context::RpcContext,
@@ -255,7 +255,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
             async fn instance(
                 &self,
                 ctx: &::ulo::context::RpcContext,
-            ) -> ::std::sync::Arc<dyn ::ulo::rpc::RpcControllerTrait> {
+            ) -> ::std::sync::Arc<dyn ::ulo::rpc::RpcController> {
                 self.0
                     .instance(::ulo::ProviderContext::Rpc(ctx.clone()))
                     .await

@@ -13,7 +13,7 @@ use crate::traits_helpers::{
 };
 
 use super::{
-    DisconnectReason, GatewayTrait, WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsMessage,
+    DisconnectReason, Gateway, WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsMessage,
 };
 use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
@@ -63,7 +63,7 @@ impl Drop for ScopedStream {
 
 struct WsChainNext {
     interceptors: Vec<Arc<dyn Interceptor<WsContext, WsHandlerResult>>>,
-    gateway: Arc<Box<dyn GatewayTrait>>,
+    gateway: Arc<Box<dyn Gateway>>,
     error_handlers: Vec<WsErrorHandlerArc>,
 }
 
@@ -83,7 +83,7 @@ impl InterceptorNext<WsContext, WsHandlerResult> for WsChainNext {
 /// Parallel to `InstanceWrapper` on the HTTP side — wraps a gateway with the full
 /// guard/interceptor pipeline and tracks its own connected clients.
 pub struct GatewayWrapper {
-    gateway: Arc<Box<dyn GatewayTrait>>,
+    gateway: Arc<Box<dyn Gateway>>,
     guards: Vec<WsGuardEntry>,
     interceptors: Vec<WsInterceptorEntry>,
     error_handlers: Vec<WsErrorHandlerArc>,
@@ -101,7 +101,7 @@ pub struct GatewayWrapper {
 
 impl GatewayWrapper {
     pub fn new(
-        gateway: Arc<Box<dyn GatewayTrait>>,
+        gateway: Arc<Box<dyn Gateway>>,
         guards: Vec<WsGuardEntry>,
         interceptors: Vec<WsInterceptorEntry>,
         error_handlers: Vec<WsErrorHandlerArc>,
@@ -331,7 +331,7 @@ impl GatewayWrapper {
     async fn execute_with_interceptors(
         context: &WsContext,
         interceptors: &[Arc<dyn Interceptor<WsContext, WsHandlerResult>>],
-        gateway: &Arc<Box<dyn GatewayTrait>>,
+        gateway: &Arc<Box<dyn Gateway>>,
         error_handlers: &[WsErrorHandlerArc],
     ) -> WsHandlerResult {
         if interceptors.is_empty() {
@@ -410,7 +410,7 @@ impl GatewayWrapper {
     /// `WsError::to_message` is the fallback frame when none claims.
     async fn execute_handler_with_error_handling(
         context: &WsContext,
-        gateway: &Arc<Box<dyn GatewayTrait>>,
+        gateway: &Arc<Box<dyn Gateway>>,
         error_handlers: &[WsErrorHandlerArc],
     ) -> WsHandlerResult {
         match Self::execute_handler(context, gateway).await {
@@ -495,7 +495,7 @@ impl GatewayWrapper {
 
     async fn execute_handler(
         context: &WsContext,
-        gateway: &Arc<Box<dyn GatewayTrait>>,
+        gateway: &Arc<Box<dyn Gateway>>,
     ) -> ExecutionResult<WsHandlerOutput, WsError> {
         let result = AssertUnwindSafe(gateway.handle_event(context))
             .catch_unwind()
@@ -602,7 +602,7 @@ mod tests {
         struct TestGateway;
 
         #[async_trait::async_trait]
-        impl GatewayTrait for TestGateway {
+        impl Gateway for TestGateway {
             fn get_token(&self) -> String {
                 "TestGateway".to_string()
             }

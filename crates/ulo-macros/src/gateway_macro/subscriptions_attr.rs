@@ -3,7 +3,7 @@
 //! Pairs with `#[websocket_gateway("/p")]` on the struct. Scans the impl for `#[subscribe_message]`
 //! handlers and the gateway- and handler-level enhancer attrs, and emits inherent `__ulo_ws_*` fns
 //! that out-rank the `WsHandlersBridge` defaults at the concrete-type call sites in the generated
-//! `GatewayTrait` impl. It owns only the *aggregate* — the `handle_event` match over the variable set
+//! `Gateway` impl. It owns only the *aggregate* — the `handle_event` match over the variable set
 //! of handlers, plus the enhancers descriptor. Single-slot connection hooks (`#[on_connect]` /
 //! `#[on_disconnect]` / `#[after_init]`) are their own per-method macros, so they are left intact here
 //! and a gateway with only hooks needs no `#[subscriptions]` at all.

@@ -7,7 +7,7 @@ mod broadcast;
 mod broadcast_module;
 mod broadcast_provider;
 mod extractors;
-mod gateway_trait;
+mod gateway;
 mod gateway_wrapper;
 pub mod helpers;
 mod session;
@@ -23,7 +23,7 @@ pub use broadcast::{
 };
 pub use broadcast_module::BroadcastModule;
 pub use extractors::PayloadError;
-pub use gateway_trait::{GatewayEnhancers, GatewayHandlerEnhancers, GatewayTrait};
+pub use gateway::{Gateway, GatewayEnhancers, GatewayHandlerEnhancers};
 pub use gateway_wrapper::GatewayWrapper;
 pub use session::Session;
 pub use ws_client::{WsClient, WsHandshake};

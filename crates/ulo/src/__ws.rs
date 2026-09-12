@@ -1,6 +1,6 @@
 //! Bridge between a `#[websocket_gateway]` struct and its optional `#[subscriptions]` impl.
 //!
-//! `#[websocket_gateway]` emits `impl GatewayTrait for Struct` with `get_path`/`namespace`/`port`
+//! `#[websocket_gateway]` emits `impl Gateway for Struct` with `get_path`/`namespace`/`port`
 //! baked from the attribute, and the behavior methods delegating to `Self::__ulo_ws_*` at the
 //! concrete type. `#[subscriptions]` shadows `__ulo_ws_handle_event` / `__ulo_ws_enhancers`; the
 //! single-slot connection-hook macros (`#[on_connect]` / `#[on_disconnect]` / `#[after_init]`) each
@@ -18,7 +18,7 @@ use crate::websocket::{DisconnectReason, GatewayEnhancers, WsClient, WsError, Ws
 
 /// Blanket "no handlers" defaults, implemented for every type. `#[subscriptions]` shadows these with
 /// inherent fns of the same name, which win at the concrete-type call site in the generated
-/// `GatewayTrait` impl.
+/// `Gateway` impl.
 #[async_trait]
 pub trait WsHandlersBridge {
     async fn __ulo_ws_after_init(&self) {}

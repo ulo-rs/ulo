@@ -41,7 +41,7 @@ three separate traits would need three impls that could drift apart.
 
 Extraction reads from the context, which is what allows the trait to be generic over one. A handler
 therefore receives its context and nothing beside it: `Route::execute` and
-`GatewayTrait::handle_event` both take only `&mut C`. What used to be passed alongside — the
+`Gateway::handle_event` both take only `&mut C`. What used to be passed alongside — the
 request, the client, the message, the event — all live on the context, so passing them as well was
 duplication that only the fixed signatures concealed.
 
@@ -86,8 +86,8 @@ because neither covers the other's set:
 
 - Breaking for custom body extractors, which need a `FromContext` impl added — six lines, and
   `extract_body` is exported for the purpose. Custom metadata extractors carry forward untouched.
-- Breaking for `Route` and `GatewayTrait` implementors outside the macros. Four `Route` impls and one
-  `GatewayTrait` impl are in-tree, all in the GraphQL crates.
+- Breaking for `Route` and `Gateway` implementors outside the macros. Four `Route` impls and one
+  `Gateway` impl are in-tree, all in the GraphQL crates.
 - Existing WebSocket handlers taking `(WsClient, WsMessage)` classify to what they already mean and
   keep compiling. The pair becomes the most common choice rather than the only signature.
 - An enhancer that reads the body used to leave the handler an empty one; it now leaves an extraction

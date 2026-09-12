@@ -3,7 +3,7 @@
 //! Placed on the struct, exactly like `#[injectable]`: `#[inject]` fields are dependencies and
 //! construction/lifecycle reach the impl through the `ulo::__construct` / `ulo::__lifecycle`
 //! bridges. A gateway is a provider with a role, so this emits the provider wiring (carrying the
-//! gateway role) plus `impl GatewayTrait`, baking path/namespace/port from the attribute and
+//! gateway role) plus `impl Gateway`, baking path/namespace/port from the attribute and
 //! delegating the behavior methods to the `WsHandlersBridge`. The message handlers live in a sibling
 //! `#[subscriptions] impl`; the connection hooks (`#[on_connect]` / `#[on_disconnect]` /
 //! `#[after_init]`) are their own per-method macros. The struct attribute sees none of them.
@@ -115,7 +115,7 @@ pub fn handle_websocket_gateway(attr: TokenStream, item: TokenStream) -> Result<
             ..Default::default()
         },
     )?;
-    let gateway_trait_impl = generate_gateway_trait_impl(
+    let gateway_impl = generate_gateway_impl(
         &struct_name,
         &args.path,
         args.namespace.as_deref(),
@@ -128,15 +128,15 @@ pub fn handle_websocket_gateway(attr: TokenStream, item: TokenStream) -> Result<
 
         #provider_system
 
-        #gateway_trait_impl
+        #gateway_impl
     })
 }
 
-/// `impl GatewayTrait` for the gateway struct. Identity (token), path, namespace, and port are baked
+/// `impl Gateway` for the gateway struct. Identity (token), path, namespace, and port are baked
 /// from the attribute; the behavior methods delegate to `Self::__ulo_ws_*`, which the
 /// `#[subscriptions]` impl shadows with inherent fns. Without that impl, the `WsHandlersBridge`
 /// defaults answer — no routing, connections allowed.
-fn generate_gateway_trait_impl(
+fn generate_gateway_impl(
     struct_name: &Ident,
     path: &str,
     namespace: Option<&str>,
@@ -162,7 +162,7 @@ fn generate_gateway_trait_impl(
 
     quote! {
         #[::ulo::async_trait]
-        impl ::ulo::GatewayTrait for #struct_name {
+        impl ::ulo::Gateway for #struct_name {
             fn get_token(&self) -> String {
                 #struct_token.to_string()
             }
