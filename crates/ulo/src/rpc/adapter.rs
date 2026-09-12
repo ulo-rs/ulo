@@ -76,7 +76,5 @@ pub trait RpcAdapter: Send + Sync + 'static {
     /// receive-loop future, and packages a shutdown callback (captured
     /// from the adapter's own state) into the handle. The framework
     /// joins the serve future alongside every other adapter's serve.
-    async fn into_lifecycle(
-        self: Box<Self>,
-    ) -> AdapterResult<crate::adapter::lifecycle_handles::RpcLifecycleHandle>;
+    async fn into_lifecycle(self: Box<Self>) -> AdapterResult<crate::rpc::RpcLifecycleHandle>;
 }

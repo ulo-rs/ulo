@@ -4,8 +4,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::context::Metadata;
-use crate::context::RpcContext;
 use crate::errors::{PanicRecovered, PipelineSegment};
+use crate::rpc::RpcContext;
 use crate::traits::ExecutionResult;
 use crate::traits::{
     Guard, Interceptor, InterceptorNext, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,

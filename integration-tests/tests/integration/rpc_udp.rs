@@ -14,8 +14,8 @@
 
 use std::time::Duration;
 
-use ulo::context::RpcContext;
 use ulo::module;
+use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
 use ulo_macros::{controller, new, patterns};
 

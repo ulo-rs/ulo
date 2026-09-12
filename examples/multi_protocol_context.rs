@@ -28,7 +28,8 @@
 
 use serde_json::json;
 use ulo::async_trait;
-use ulo::context::{HttpContext, RpcContext};
+use ulo::context::HttpContext;
+use ulo::rpc::RpcContext;
 use ulo::rpc::RpcHandlerResult;
 use ulo::traits::{Guard, Interceptor, InterceptorNext};
 use ulo::ws::WsContext;
@@ -156,7 +157,7 @@ pub struct OrdersRpc {}
 #[use_interceptors(LoggingInterceptor)]
 impl OrdersRpc {
     #[message_pattern("order.create")]
-    async fn create(&self, data: RpcData, _ctx: &context::RpcContext) -> Result<RpcData, RpcError> {
+    async fn create(&self, data: RpcData, _ctx: &RpcContext) -> Result<RpcData, RpcError> {
         let payload = data
             .as_json()
             .ok_or_else(|| RpcError::Internal("expected JSON payload".into()))?;

@@ -1,7 +1,7 @@
 // ADR-0041: every RPC handler parameter is a `FromContext<RpcContext>`. The
 // bare-DTO form is gone, and a plain type fails at the parameter with the note
 // naming what to write.
-use ulo::context::RpcContext;
+use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
 use ulo::{controller, patterns};
 

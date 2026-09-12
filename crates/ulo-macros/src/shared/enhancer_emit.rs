@@ -94,19 +94,19 @@ impl EnhancerKind {
             EnhancerKind::RpcGuard => EnhancerSpec {
                 role_variant: quote! { ::ulo::traits::ProviderRole::RpcGuard },
                 entry_path: quote! { ::ulo::__enhancer::RpcGuardEntry },
-                trait_path: quote! { ::ulo::traits::Guard<::ulo::context::RpcContext> },
+                trait_path: quote! { ::ulo::traits::Guard<::ulo::rpc::RpcContext> },
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynRpcGuardFactory },
                 factory_suffix: "RpcGuard",
-                context_path: quote! { ::ulo::context::RpcContext },
+                context_path: quote! { ::ulo::rpc::RpcContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::Rpc },
             },
             EnhancerKind::RpcInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::traits::ProviderRole::RpcInterceptor },
                 entry_path: quote! { ::ulo::__enhancer::RpcInterceptorEntry },
-                trait_path: quote! { ::ulo::traits::Interceptor<::ulo::context::RpcContext, ::ulo::rpc::RpcHandlerResult> },
+                trait_path: quote! { ::ulo::traits::Interceptor<::ulo::rpc::RpcContext, ::ulo::rpc::RpcHandlerResult> },
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynRpcInterceptorFactory },
                 factory_suffix: "RpcInterceptor",
-                context_path: quote! { ::ulo::context::RpcContext },
+                context_path: quote! { ::ulo::rpc::RpcContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::Rpc },
             },
             EnhancerKind::WsGuard => EnhancerSpec {

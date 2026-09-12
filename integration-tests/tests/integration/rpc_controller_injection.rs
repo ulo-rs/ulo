@@ -6,7 +6,7 @@
 //! not reachable from a test.
 #![allow(dead_code)]
 
-use ulo::context::RpcContext;
+use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
 use ulo::*;
 use ulo_macros::{controller, message_pattern, new, patterns};

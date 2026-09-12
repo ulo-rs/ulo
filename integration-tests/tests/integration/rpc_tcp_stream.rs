@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
-use ulo::context::{HandlerContext, RpcContext};
+use ulo::context::HandlerContext;
+use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
 use ulo_macros::{controller, module, new, patterns};
 

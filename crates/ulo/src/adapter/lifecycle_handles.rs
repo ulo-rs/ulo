@@ -19,8 +19,6 @@ use async_trait::async_trait;
 
 use crate::adapter::server_lifecycle::ServerLifecycle;
 
-// ─── HTTP ────────────────────────────────────────────────────────────────────
-
 /// Boxed shutdown action the adapter produces alongside the serve future.
 /// Lets the lifecycle handle drive shutdown without holding a reference
 /// back to the adapter — the adapter's own state (channel sender, signal,
@@ -67,56 +65,6 @@ impl ServerLifecycle for HttpLifecycleHandle {
 
     fn local_addr(&self) -> Option<SocketAddr> {
         Some(self.local_addr)
-    }
-
-    fn take_serve(&mut self) -> Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>> {
-        self.serve.take()
-    }
-
-    async fn shutdown(&mut self) -> AdapterResult {
-        if let Some(cb) = self.shutdown.take() {
-            cb().await
-        } else {
-            Ok(())
-        }
-    }
-}
-
-// ─── WebSocket (separate-port) ──────────────────────────────────────────────
-//
-// One handle per unique separate-port listener. A single adapter produces
-pub struct RpcLifecycleHandle {
-    local_addr: Option<SocketAddr>,
-    serve: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
-    shutdown: Option<ShutdownCallback>,
-}
-
-impl RpcLifecycleHandle {
-    pub fn new<F, Fut>(
-        local_addr: Option<SocketAddr>,
-        serve: Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
-        shutdown: F,
-    ) -> Self
-    where
-        F: FnOnce() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = AdapterResult> + Send + 'static,
-    {
-        Self {
-            local_addr,
-            serve: Some(serve),
-            shutdown: Some(Box::new(move || Box::pin(shutdown()))),
-        }
-    }
-}
-
-#[async_trait]
-impl ServerLifecycle for RpcLifecycleHandle {
-    fn name(&self) -> &'static str {
-        "rpc"
-    }
-
-    fn local_addr(&self) -> Option<SocketAddr> {
-        self.local_addr
     }
 
     fn take_serve(&mut self) -> Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>> {

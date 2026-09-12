@@ -9,7 +9,7 @@ mod builtin_module;
 pub mod context;
 mod error;
 mod startup_check;
-pub use context::{CancellationToken, HandlerContext, HttpContext, RpcContext, StandaloneContext};
+pub use context::{CancellationToken, HandlerContext, HttpContext, StandaloneContext};
 #[doc(hidden)]
 pub mod __construct;
 #[doc(hidden)]
@@ -61,18 +61,15 @@ pub use tracing;
 pub use serde_json;
 
 // Re-exports for adapter crates
-pub use adapter::{
-    AdapterContext, BindTarget, HttpAdapter, HttpLifecycleHandle, RequestHandler, RpcAdapter,
-    RpcClientTransport, RpcLifecycleHandle, RpcMessageCallbacks,
-};
+pub use adapter::{AdapterContext, BindTarget, HttpAdapter, HttpLifecycleHandle, RequestHandler};
 pub use http_types::{
     Body, BoxBody, HttpMethod, HttpRequest, HttpResponse, HttpResponseBuilder, IntoResponse,
     PathParams, RequestBody, RequestBoxBody, RequestPart, Sse, SseEvent, join_route, sse,
 };
 pub use rpc::{
-    RpcCallInfo, RpcClient, RpcClientError, RpcController, RpcControllerSource, RpcData,
-    RpcEnhancers, RpcError, RpcHandlerEnhancers, RpcHandlerOutput, RpcHandlerResult,
-    RpcReplyStream,
+    RpcAdapter, RpcCallInfo, RpcClient, RpcClientError, RpcClientTransport, RpcContext,
+    RpcController, RpcControllerSource, RpcData, RpcEnhancers, RpcError, RpcHandlerEnhancers,
+    RpcHandlerOutput, RpcHandlerResult, RpcLifecycleHandle, RpcMessageCallbacks, RpcReplyStream,
 };
 pub use ws::{
     BroadcastError, BroadcastModule, BroadcastService, BroadcastTarget, ClientId, DisconnectReason,

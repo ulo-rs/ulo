@@ -8,9 +8,9 @@
 use std::time::Duration;
 
 use serde::Deserialize;
-use ulo::context::RpcContext;
 use ulo::extractors::{Payload, Validated};
 use ulo::module;
+use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
 use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo_macros::{controller, new, patterns, subscriptions, websocket_gateway};

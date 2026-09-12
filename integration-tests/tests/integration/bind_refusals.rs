@@ -7,7 +7,7 @@
 
 use std::net::TcpListener;
 
-use ulo::context::RpcContext;
+use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
 use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{StartupError, UloFactory, module};

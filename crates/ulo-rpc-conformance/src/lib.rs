@@ -41,7 +41,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
-use ulo::context::{HandlerContext, RpcContext};
+use ulo::context::HandlerContext;
+use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
 use ulo::{RpcClient, UloFactory};
 use ulo_macros::{controller, module, new, patterns};

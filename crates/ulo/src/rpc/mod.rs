@@ -1,4 +1,8 @@
+mod adapter;
+mod client_transport;
+mod context;
 mod extractors;
+mod lifecycle;
 mod rpc_call_info;
 mod rpc_client;
 mod rpc_client_error;
@@ -11,7 +15,11 @@ mod rpc_handler_output;
 mod rpc_reply_stream;
 pub mod wire;
 
+pub use adapter::{RpcAdapter, RpcMessageCallbacks};
+pub use client_transport::RpcClientTransport;
+pub use context::RpcContext;
 pub use extractors::PayloadError;
+pub use lifecycle::RpcLifecycleHandle;
 pub use rpc_call_info::RpcCallInfo;
 pub use rpc_client::{RpcClient, RpcRequest};
 pub use rpc_client_error::RpcClientError;

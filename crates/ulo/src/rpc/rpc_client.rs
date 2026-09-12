@@ -5,9 +5,9 @@ use std::sync::Arc;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 
-use crate::adapter::RpcClientTransport;
 use crate::async_trait;
 use crate::provider_scope::ProviderScope;
+use crate::rpc::RpcClientTransport;
 use crate::rpc::{RpcClientError, RpcData, RpcReplyStream};
 use crate::traits::{Provider, ProviderContext};
 
@@ -236,7 +236,7 @@ impl RpcRequest<'_> {
     ///
     /// The transport carries these as whatever it calls headers — NATS headers, AMQP headers, Kafka
     /// record headers, MQTT user properties — and the handler reads them back through
-    /// [`RpcContext::headers`](crate::context::RpcContext::headers).
+    /// [`RpcContext::headers`](crate::rpc::RpcContext::headers).
     #[doc(alias = "metadata")]
     pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.insert(key.into(), value.into());

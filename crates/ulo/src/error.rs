@@ -17,7 +17,7 @@ pub type InitResult = Result<(), Box<dyn Error + Send + Sync + 'static>>;
 ///
 /// [`HttpAdapter`]: crate::adapter::HttpAdapter
 /// [`WebSocketAdapter`]: crate::ws::WebSocketAdapter
-/// [`RpcAdapter`]: crate::adapter::RpcAdapter
+/// [`RpcAdapter`]: crate::rpc::RpcAdapter
 /// [`GrpcAdapter`]: crate::grpc::GrpcAdapter
 pub type AdapterResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>;
 
