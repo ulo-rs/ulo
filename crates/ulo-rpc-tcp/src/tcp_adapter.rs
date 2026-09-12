@@ -2,13 +2,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
 use futures_util::FutureExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 use tracing::Instrument;
+use ulo::AdapterResult;
 use ulo::rpc::wire;
 use ulo::{BindTarget, RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks, async_trait};
 
@@ -128,25 +128,26 @@ impl RpcAdapter for TcpAdapter {
         &mut self,
         _patterns: &[String],
         callbacks: Arc<RpcMessageCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         // Bind synchronously so port-in-use surfaces as `Err` from
         // `app.start()` instead of panicking inside the spawned accept loop.
         let target = self
             .target
             .take()
-            .context("TcpAdapter: register_handlers() called more than once")?;
+            .ok_or_else(|| "TcpAdapter: register_handlers() called more than once".to_string())?;
         let described = target.to_string();
         let std_listener = target
             .into_std_listener()
-            .with_context(|| format!("TcpAdapter: failed to listen on {described}"))?;
+            .map_err(|e| format!("TcpAdapter: failed to listen on {described}: {e}"))?;
         std_listener
             .set_nonblocking(true)
-            .context("TcpAdapter: failed to set listener nonblocking")?;
-        let listener = TcpListener::from_std(std_listener)
-            .context("TcpAdapter: failed to register listener with the tokio runtime")?;
+            .map_err(|e| format!("TcpAdapter: failed to set listener nonblocking: {e}"))?;
+        let listener = TcpListener::from_std(std_listener).map_err(|e| {
+            format!("TcpAdapter: failed to register listener with the tokio runtime: {e}")
+        })?;
         let local_addr = listener
             .local_addr()
-            .context("TcpAdapter: failed to read local address from listener")?;
+            .map_err(|e| format!("TcpAdapter: failed to read local address from listener: {e}"))?;
 
         self.callbacks = Some(callbacks);
         self.listener = Some(listener);
@@ -154,7 +155,7 @@ impl RpcAdapter for TcpAdapter {
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> Result<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
         let callbacks = self
             .callbacks
             .take()

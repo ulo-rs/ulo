@@ -14,6 +14,5 @@ categories = ["network-programming"]
 ulo = { path = "../ulo", default-features = false }
 tokio = { workspace = true, features = ["full"] }
 serde_json.workspace = true
-anyhow.workspace = true
 tracing.workspace = true
 futures-util.workspace = true

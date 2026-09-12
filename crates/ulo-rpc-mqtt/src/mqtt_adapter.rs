@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
 use futures::FutureExt;
 use rumqttc::v5::mqttbytes::QoS;
 use rumqttc::v5::mqttbytes::v5::{Packet, Publish, PublishProperties};
 use rumqttc::v5::{AsyncClient, Event, MqttOptions};
+use ulo::AdapterResult;
 use ulo::{RpcAdapter, RpcCallInfo, RpcMessageCallbacks};
 
 use crate::wire::{bytes_to_data, user_properties_to_metadata};
@@ -48,13 +48,13 @@ impl RpcAdapter for MqttAdapter {
         &mut self,
         patterns: &[String],
         callbacks: Arc<RpcMessageCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.patterns = patterns.to_vec();
         self.callbacks = Some(callbacks);
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> Result<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
         let host = self.host.clone();
         let port = self.port;
         let patterns = std::mem::take(&mut self.patterns);

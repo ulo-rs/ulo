@@ -3,10 +3,10 @@ use std::convert::TryFrom;
 use std::io::Cursor;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::watch;
+use ulo::AdapterResult;
 
 use rocket::Config;
 use rocket::data::{ByteUnit, Data};
@@ -444,7 +444,7 @@ impl HttpAdapter for RocketAdapter {
         method: HttpMethod,
         path: &str,
         handler: Arc<dyn RequestHandler>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.routes.push((method, path.to_owned(), handler));
         Ok(())
     }
@@ -453,7 +453,7 @@ impl HttpAdapter for RocketAdapter {
         &mut self,
         path: &str,
         callbacks: Arc<WsConnectionCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.ws_routes.push((path.to_owned(), callbacks));
         Ok(())
     }
@@ -462,16 +462,19 @@ impl HttpAdapter for RocketAdapter {
         mut self: Box<Self>,
         target: BindTarget,
         ctx: AdapterContext,
-    ) -> Result<HttpLifecycleHandle> {
+    ) -> AdapterResult<HttpLifecycleHandle> {
         // Rocket fuses bind and serve into `launch()` with no public hook for
         // an existing listener, so only address targets are supported.
         let (hostname, port) = match target {
             BindTarget::Addr { hostname, port } => (hostname, port),
-            other => anyhow::bail!(
-                "RocketAdapter cannot adopt a {}; rocket binds internally from \
+            other => {
+                return Err(format!(
+                    "RocketAdapter cannot adopt a {}; rocket binds internally from \
                  figment config — pass a (host, port) address instead",
-                other
-            ),
+                    other
+                )
+                .into());
+            }
         };
         let routes = std::mem::take(&mut self.routes);
         let ws_routes = std::mem::take(&mut self.ws_routes);
@@ -536,7 +539,7 @@ impl HttpAdapter for RocketAdapter {
             .attach(liftoff)
             .ignite()
             .await
-            .map_err(|e| anyhow!("rocket failed to ignite: {}", e))?;
+            .map_err(|e| format!("rocket failed to ignite: {}", e))?;
         let shutdown_handle = rocket.shutdown();
 
         // Forward ulo's shutdown signal to rocket's notify().
@@ -553,7 +556,7 @@ impl HttpAdapter for RocketAdapter {
 
         let local_addr = addr_rx
             .await
-            .map_err(|_| anyhow!("rocket liftoff fairing did not fire — bind failed"))?;
+            .map_err(|_| "rocket liftoff fairing did not fire — bind failed".to_string())?;
 
         let serve = Box::pin(async move {
             let _ = serve_task.await;

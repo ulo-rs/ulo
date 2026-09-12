@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
 use futures::FutureExt;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::message::Message;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use rdkafka::util::Timeout;
+use ulo::AdapterResult;
 use ulo::{RpcAdapter, RpcCallInfo, RpcMessageCallbacks};
 
 use crate::wire::{
@@ -64,13 +64,13 @@ impl RpcAdapter for KafkaAdapter {
         &mut self,
         patterns: &[String],
         callbacks: Arc<RpcMessageCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.patterns = patterns.to_vec();
         self.callbacks = Some(callbacks);
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> Result<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
         let brokers = self.brokers.clone();
         let group_id = self.group_id.clone();
         let patterns = std::mem::take(&mut self.patterns);

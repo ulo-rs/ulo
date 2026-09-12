@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use anyhow::Result;
 use futures::{FutureExt, StreamExt};
+use ulo::AdapterResult;
 use ulo::{RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks};
 
 use crate::wire::RequestEnvelope;
@@ -48,13 +48,13 @@ impl RpcAdapter for RedisAdapter {
         &mut self,
         patterns: &[String],
         callbacks: Arc<RpcMessageCallbacks>,
-    ) -> Result<()> {
+    ) -> AdapterResult {
         self.patterns = patterns.to_vec();
         self.callbacks = Some(callbacks);
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> Result<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
         let url = self.url.clone();
         let patterns = std::mem::take(&mut self.patterns);
         let callbacks = self

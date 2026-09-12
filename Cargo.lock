@@ -8521,7 +8521,6 @@ dependencies = [
 name = "ulo-grpc"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures-util",
  "http 1.4.2",
@@ -8552,7 +8551,6 @@ name = "ulo-http-actix"
 version = "0.1.0"
 dependencies = [
  "actix-web",
- "anyhow",
  "futures-util",
  "http 1.4.2",
  "http-body-util",
@@ -8568,7 +8566,6 @@ dependencies = [
 name = "ulo-http-axum"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "axum",
  "futures-util",
  "http-body-util",
@@ -8588,7 +8585,6 @@ dependencies = [
 name = "ulo-http-poem"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bytes",
  "futures-util",
  "http 1.4.2",
@@ -8608,7 +8604,6 @@ dependencies = [
 name = "ulo-http-rocket"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bytes",
  "futures-util",
  "http 1.4.2",
@@ -8630,7 +8625,6 @@ dependencies = [
 name = "ulo-http-salvo"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bytes",
  "futures-util",
  "http 1.4.2",
@@ -8714,7 +8708,6 @@ dependencies = [
 name = "ulo-rpc-nats"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-nats",
  "bytes",
  "futures",
@@ -8732,7 +8725,6 @@ dependencies = [
 name = "ulo-rpc-rabbitmq"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "futures",
  "lapin",
  "serde_json",
@@ -8768,7 +8760,6 @@ dependencies = [
 name = "ulo-rpc-tcp"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "futures-util",
  "serde_json",
  "tokio",
@@ -8780,7 +8771,6 @@ dependencies = [
 name = "ulo-rpc-udp"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "futures-util",
  "serde_json",
  "tokio",

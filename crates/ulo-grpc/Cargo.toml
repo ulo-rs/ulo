@@ -24,7 +24,6 @@ tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
 tokio-stream = { workspace = true, features = ["net"] }
 http.workspace = true
 futures-util.workspace = true
-anyhow.workspace = true
 tracing.workspace = true
 http-body = "1"
 async-trait.workspace = true
