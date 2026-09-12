@@ -120,3 +120,48 @@ pub use modules::{CheckedModule, DynamicModule, ModuleIdentity};
 
 #[cfg(feature = "tower-compat")]
 pub use http::tower::TowerLayer;
+
+/// What an application writes whatever it serves.
+///
+/// `use ulo::prelude::*` brings the bootstrap, the macros, the DI vocabulary, the enhancer traits
+/// and the extraction traits — everything that means the same thing on HTTP, RPC, WebSocket and
+/// gRPC. What a transport adds is its own: `ulo::http::{Body, HttpResponse}`,
+/// `ulo::rpc::RpcData`, `ulo::ws::WsMessage`, `ulo::grpc::GrpcStatus`.
+///
+/// The prelude deliberately carries no transport's types. A framework that put HTTP's in here
+/// would be saying HTTP is the default and the rest are extras, which is not how anything else in
+/// the crate is arranged.
+///
+/// ```rust
+/// use ulo::http::Body;
+/// use ulo::prelude::*;
+///
+/// #[controller("/health")]
+/// pub struct Health {}
+///
+/// #[routes]
+/// impl Health {
+///     #[get("/")]
+///     async fn check(&self) -> Body {
+///         Body::text("ok")
+///     }
+/// }
+///
+/// #[module(controllers: [Health])]
+/// impl AppModule {}
+/// ```
+pub mod prelude {
+    pub use crate::{BoundAdapters, ShutdownHandle, StartupCheck, StartupError, UloApplication};
+    pub use crate::{UloApplicationContext, UloFactory};
+
+    pub use crate::di::{ModuleMetadata, ProviderContext};
+    pub use crate::{CheckedModule, DynamicModule, Extension, ModuleIdentity, ModuleRef};
+    pub use crate::{InitResult, ProviderScope};
+
+    pub use crate::enhancer::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
+    pub use crate::errors::{Error, ErrorKind};
+    pub use crate::extract::{FromContext, Payload, Validated, take_body};
+
+    pub use crate::async_trait;
+    pub use ulo_macros::*;
+}
