@@ -111,11 +111,11 @@ where
         Box::new(service)
     }
 
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         "GraphQLService".to_string()
     }
 
-    fn get_scope(&self) -> ProviderScope {
+    fn scope(&self) -> ProviderScope {
         // Schema is singleton - created once and shared
         ProviderScope::Singleton
     }

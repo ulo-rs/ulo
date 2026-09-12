@@ -27,7 +27,7 @@ struct FakeFactory {
 
 #[async_trait]
 impl ProviderFactory for FakeFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 
@@ -51,7 +51,7 @@ struct FakeProvider {
 
 #[async_trait]
 impl Provider for FakeProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
     async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {

@@ -220,7 +220,7 @@ impl<'a, T: 'static> ModuleRefQuery<'a, T> {
         };
 
         self.execution
-            .ensure_can_build(provider_instance.get_scope(), &self.token)?;
+            .ensure_can_build(provider_instance.scope(), &self.token)?;
 
         provider_instance
             .resolve(self.execution.clone())

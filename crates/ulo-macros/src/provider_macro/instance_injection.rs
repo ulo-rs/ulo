@@ -366,12 +366,12 @@ fn generate_singleton_provider(
                 Box::new((*self.instance).clone())
             }
 
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 ::ulo::di::token_of::<#struct_name>()
             }
 
 
-            fn get_scope(&self) -> ::ulo::ProviderScope {
+            fn scope(&self) -> ::ulo::ProviderScope {
                 ::ulo::ProviderScope::Singleton
             }
 
@@ -514,12 +514,12 @@ fn generate_request_provider(
                 #execute_body
             }
 
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 ::ulo::di::token_of::<#struct_name>()
             }
 
 
-            fn get_scope(&self) -> ::ulo::ProviderScope {
+            fn scope(&self) -> ::ulo::ProviderScope {
                 ::ulo::ProviderScope::Request
             }
         }
@@ -574,7 +574,7 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
 
         #[::ulo::async_trait]
         impl ::ulo::traits_helpers::Controller for #object_name {
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 #struct_token.to_string()
             }
 
@@ -606,11 +606,11 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
 
         #[::ulo::async_trait]
         impl ::ulo::traits_helpers::ControllerFactory for #factory_name {
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 #struct_token.to_string()
             }
 
-            fn get_dependencies(&self) -> Vec<String> {
+            fn dependency_tokens(&self) -> Vec<String> {
                 <#struct_name>::__ulo_dependencies()
             }
 
@@ -623,7 +623,7 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
             ) -> ::std::sync::Arc<dyn ::ulo::traits_helpers::Controller> {
                 let __force_request: bool = <#struct_name>::__ulo_is_request_scoped();
                 let __declared =
-                    <Self as ::ulo::traits_helpers::ControllerFactory>::get_dependencies(self);
+                    <Self as ::ulo::traits_helpers::ControllerFactory>::dependency_tokens(self);
                 let __request_deps = ::ulo::traits_helpers::request_scoped_dependencies(
                     &__declared,
                     &dependencies,
@@ -724,11 +724,11 @@ pub(crate) fn generate_dispatch_provider(
                 Box::new(__instance)
             }
 
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 ::ulo::di::token_of::<#struct_name>()
             }
 
-            fn get_scope(&self) -> ::ulo::ProviderScope {
+            fn scope(&self) -> ::ulo::ProviderScope {
                 ::ulo::ProviderScope::Request
             }
         }
@@ -817,12 +817,12 @@ fn generate_transient_provider(
                 Box::new(instance)
             }
 
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 ::ulo::di::token_of::<#struct_name>()
             }
 
 
-            fn get_scope(&self) -> ::ulo::ProviderScope {
+            fn scope(&self) -> ::ulo::ProviderScope {
                 ::ulo::ProviderScope::Transient
             }
         }
@@ -955,7 +955,7 @@ fn generate_field_resolutions(dependencies: &DependencyInfo) -> (Vec<TokenStream
                         __lookup_token, #field_name_str
                     ));
 
-                if matches!(provider.get_scope(), ::ulo::ProviderScope::Transient) {
+                if matches!(provider.scope(), ::ulo::ProviderScope::Transient) {
                     #(
                         #field_idents = {
                             let any_box = provider.resolve(__exec_ctx.clone()).await;
@@ -1120,7 +1120,7 @@ fn generate_factory_field_resolutions(
                         __lookup_token, #field_name_str
                     ));
 
-                if matches!(provider.get_scope(), ::ulo::ProviderScope::Transient) {
+                if matches!(provider.scope(), ::ulo::ProviderScope::Transient) {
                     #(
                         #field_idents = {
                             let any_box = provider.resolve(::ulo::ProviderContext::None).await;
@@ -1277,7 +1277,7 @@ fn generate_singleton_factory(
                     {
                         let __lookup_token = #lookup_token_expr;
                         if let Some(provider) = dependencies.get(&__lookup_token) {
-                            let dep_scope = provider.get_scope();
+                            let dep_scope = provider.scope();
                             if matches!(dep_scope, ::ulo::ProviderScope::Request) {
                                 panic!(
                                     "\n❌ Scope validation error in provider '{}':\n\
@@ -1322,11 +1322,11 @@ fn generate_singleton_factory(
 
         #[::ulo::async_trait]
         impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 ::ulo::di::token_of::<#struct_name>()
             }
 
-            fn get_dependencies(&self) -> Vec<String> {
+            fn dependency_tokens(&self) -> Vec<String> {
                 // A `#[new]` constructor supplies its own dependency tokens (inherent fn shadows the
                 // blanket `CtorBridge` default); otherwise fall back to the field-injection tokens.
                 use ::ulo::__construct::CtorBridge as _;
@@ -1395,7 +1395,7 @@ fn generate_request_factory(
     } else {
         quote! {
             let __has_request_deps = __deps.values().any(|inj|
-                matches!(inj.instance.get_scope(), ::ulo::ProviderScope::Request)
+                matches!(inj.instance.scope(), ::ulo::ProviderScope::Request)
             );
             let __all_deps = ::std::sync::Arc::new(
                 __deps.iter()
@@ -1423,11 +1423,11 @@ fn generate_request_factory(
 
         #[::ulo::async_trait]
         impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 ::ulo::di::token_of::<#struct_name>()
             }
 
-            fn get_dependencies(&self) -> Vec<String> {
+            fn dependency_tokens(&self) -> Vec<String> {
                 // A `#[new]` constructor supplies its own dependency tokens; else fall back to the
                 // field-injection tokens.
                 use ::ulo::__construct::CtorBridge as _;
@@ -1475,7 +1475,7 @@ fn generate_transient_factory(
     let build_body = if has_enhancer_roles {
         quote! {
             let __has_request_deps = __deps.values().any(|inj|
-                matches!(inj.instance.get_scope(), ::ulo::ProviderScope::Request)
+                matches!(inj.instance.scope(), ::ulo::ProviderScope::Request)
             );
             let __all_deps = ::std::sync::Arc::new(
                 __deps.iter()
@@ -1509,11 +1509,11 @@ fn generate_transient_factory(
 
         #[::ulo::async_trait]
         impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 ::ulo::di::token_of::<#struct_name>()
             }
 
-            fn get_dependencies(&self) -> Vec<String> {
+            fn dependency_tokens(&self) -> Vec<String> {
                 // A `#[new]` constructor supplies its own dependency tokens; else fall back to the
                 // field-injection tokens.
                 use ::ulo::__construct::CtorBridge as _;
@@ -1563,7 +1563,7 @@ fn generate_create_field_resolutions(
                         "Missing multi-provider '{}' for field '{}'",
                         __lookup_token, #field_name_str
                     ));
-                let __ctx = if matches!(__provider.get_scope(), ::ulo::ProviderScope::Request) {
+                let __ctx = if matches!(__provider.scope(), ::ulo::ProviderScope::Request) {
                     __exec_ctx.clone()
                 } else {
                     ::ulo::ProviderContext::None
@@ -1602,7 +1602,7 @@ fn generate_create_field_resolutions(
                         "Missing dependency '{}' for field '{}'",
                         __lookup_token, #field_name_str
                     ));
-                let __ctx = if matches!(__provider.get_scope(), ::ulo::ProviderScope::Request) {
+                let __ctx = if matches!(__provider.scope(), ::ulo::ProviderScope::Request) {
                     __exec_ctx.clone()
                 } else {
                     ::ulo::ProviderContext::None

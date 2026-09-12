@@ -37,23 +37,24 @@ pub struct GatewayHandlerEnhancers {
 /// disconnect's [`DisconnectReason`] — the macros forward neither.
 #[async_trait]
 pub trait Gateway: Send + Sync {
-    /// Get unique token for DI registration
-    fn get_token(&self) -> String;
+    /// The DI token this gateway is registered under.
+    fn token(&self) -> String;
 
-    /// Get WebSocket path (e.g., "/chat", "/notifications")
-    fn get_path(&self) -> String;
+    /// The path clients connect to, such as `/chat`.
+    fn path(&self) -> String;
 
-    /// Get namespace (optional, for multi-tenancy)
-    fn get_namespace(&self) -> Option<String> {
+    /// The namespace this gateway's clients belong to, if it declares one. A broadcast can
+    /// target a single namespace.
+    fn namespace(&self) -> Option<String> {
         None
     }
 
-    /// Get the port this gateway listens on.
+    /// The port this gateway listens on.
     ///
     /// `None` (default) means same port as the HTTP server.
     /// `Some(port)` triggers a separate WebSocket server on that port — requires a
     /// `WebSocketAdapter` to be registered via `UloApplication::use_websocket_adapter()`.
-    fn get_port(&self) -> Option<u16> {
+    fn port(&self) -> Option<u16> {
         None
     }
 

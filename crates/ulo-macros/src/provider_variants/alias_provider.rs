@@ -62,14 +62,14 @@ pub fn handle_provider_alias(input: TokenStream) -> Result<TokenStream> {
             // Implement Provider for the alias provider wrapper
             #[ulo::async_trait]
             impl ulo::traits_helpers::Provider for #provider_name {
-                fn get_token(&self) -> String {
+                fn token(&self) -> String {
                     #alias_token_expr
                 }
 
 
-                fn get_scope(&self) -> ulo::ProviderScope {
+                fn scope(&self) -> ulo::ProviderScope {
                     // Inherit scope from target provider
-                    self.target_provider.get_scope()
+                    self.target_provider.scope()
                 }
 
                 async fn resolve(
@@ -82,11 +82,11 @@ pub fn handle_provider_alias(input: TokenStream) -> Result<TokenStream> {
 
             #[ulo::async_trait]
             impl ulo::traits_helpers::ProviderFactory for #factory_name {
-                fn get_token(&self) -> String {
+                fn token(&self) -> String {
                     #alias_token_expr
                 }
 
-                fn get_dependencies(&self) -> Vec<String> {
+                fn dependency_tokens(&self) -> Vec<String> {
                     vec![#existing_token_expr]
                 }
 

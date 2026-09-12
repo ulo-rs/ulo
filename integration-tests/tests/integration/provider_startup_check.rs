@@ -20,7 +20,7 @@ struct ProbeFactory {
 
 #[async_trait]
 impl ProviderFactory for ProbeFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         TOKEN.to_string()
     }
 
@@ -41,7 +41,7 @@ struct ProbeProvider {
 
 #[async_trait]
 impl Provider for ProbeProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         TOKEN.to_string()
     }
 

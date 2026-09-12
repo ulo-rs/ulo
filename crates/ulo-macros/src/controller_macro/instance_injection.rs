@@ -449,10 +449,10 @@ fn enhancers_method(enhancer_infos: &HashMap<String, Vec<EnhancerInfo>>) -> Toke
     }
 }
 
-/// `get_path` joins the controller's runtime prefix (`__ulo_prefix`) with this route's sub-path.
+/// `path` joins the controller's runtime prefix (`__ulo_prefix`) with this route's sub-path.
 fn get_path_method(struct_name: &Ident, route_path: &str) -> TokenStream {
     quote! {
-        fn get_path(&self) -> String {
+        fn path(&self) -> String {
             ::ulo::http_helpers::join_route(#struct_name::__ulo_prefix(), #route_path)
         }
     }
@@ -466,13 +466,13 @@ fn route_common_methods(
     metadata_exprs: &[TokenStream],
 ) -> TokenStream {
     let enhancers = enhancers_method(enhancer_infos);
-    let get_path = get_path_method(struct_name, route_path);
+    let path = get_path_method(struct_name, route_path);
     quote! {
-        fn get_method(&self) -> ::ulo::http_helpers::HttpMethod {
+        fn method(&self) -> ::ulo::http_helpers::HttpMethod {
             ::ulo::http_helpers::HttpMethod::from_string(#http_method).unwrap()
         }
 
-        #get_path
+        #path
 
         #enhancers
 

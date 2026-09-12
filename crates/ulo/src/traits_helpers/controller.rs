@@ -55,14 +55,15 @@ pub trait Route: Send + Sync {
     /// context, so there is no off-phase write to overrule; an enhancer
     /// short-circuits by returning too.
     async fn execute(&self, ctx: &HttpContext) -> ExecutionResult<HttpResponse, HttpError>;
-    fn get_path(&self) -> String;
-    fn get_method(&self) -> HttpMethod;
+    fn path(&self) -> String;
+    fn method(&self) -> HttpMethod;
 
     fn enhancers(&self) -> ControllerEnhancers {
         ControllerEnhancers::default()
     }
 
-    /// Get route metadata (roles, permissions, custom config)
+    /// What this route declares — roles, permissions, anything a guard or interceptor reads
+    /// off the context before the handler runs.
     fn metadata(&self) -> Arc<Metadata> {
         Arc::new(Metadata::new())
     }
@@ -75,7 +76,7 @@ pub trait Route: Send + Sync {
 /// not once per route.
 #[async_trait]
 pub trait Controller: Send + Sync {
-    fn get_token(&self) -> String;
+    fn token(&self) -> String;
     fn dispatch(&self) -> Dispatch;
 
     // Lifecycle Hooks
@@ -93,8 +94,8 @@ pub trait Controller: Send + Sync {
 
 #[async_trait]
 pub trait ControllerFactory {
-    fn get_token(&self) -> String;
-    fn get_dependencies(&self) -> Vec<String> {
+    fn token(&self) -> String;
+    fn dependency_tokens(&self) -> Vec<String> {
         vec![]
     }
     async fn build(&self, deps: FxHashMap<String, Arc<Box<dyn Provider>>>) -> Arc<dyn Controller>;

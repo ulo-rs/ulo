@@ -184,8 +184,8 @@ fn generate_caching_provider(
 
         #[ulo::async_trait]
         impl<__T: #type_bounds> ulo::traits_helpers::Provider for #provider_name<__T> {
-            fn get_token(&self) -> String { #token_expr }
-            fn get_scope(&self) -> ulo::ProviderScope { #scope_expr }
+            fn token(&self) -> String { #token_expr }
+            fn scope(&self) -> ulo::ProviderScope { #scope_expr }
 
             async fn resolve(
                 &self,
@@ -358,8 +358,8 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
 
                 #[ulo::async_trait]
                 impl ulo::traits_helpers::Provider for FactoryProviderWithDeps {
-                    fn get_token(&self) -> String { #token_expr }
-                    fn get_scope(&self) -> ulo::ProviderScope { #scope_expr }
+                    fn token(&self) -> String { #token_expr }
+                    fn scope(&self) -> ulo::ProviderScope { #scope_expr }
 
                     async fn resolve(
                         &self,
@@ -392,8 +392,8 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
 
                 #[ulo::async_trait]
                 impl ulo::traits_helpers::Provider for FactoryProviderWithDeps {
-                    fn get_token(&self) -> String { #token_expr }
-                    fn get_scope(&self) -> ulo::ProviderScope { #scope_expr }
+                    fn token(&self) -> String { #token_expr }
+                    fn scope(&self) -> ulo::ProviderScope { #scope_expr }
 
                     async fn resolve(
                         &self,
@@ -434,11 +434,11 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
 
             #[ulo::async_trait]
             impl ulo::traits_helpers::ProviderFactory for #factory_name {
-                fn get_token(&self) -> String {
+                fn token(&self) -> String {
                     #token_expr
                 }
 
-                fn get_dependencies(&self) -> Vec<String> {
+                fn dependency_tokens(&self) -> Vec<String> {
                     vec![#(#dep_tokens),*]
                 }
 

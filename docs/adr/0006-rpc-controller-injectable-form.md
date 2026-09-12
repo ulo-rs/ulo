@@ -39,8 +39,8 @@ impl OrdersController {
 
 - `#[rpc_controller]` is a **struct** attribute and produces a *complete* controller on its own: it
   re-emits the struct with `Clone`/`InjectFields`, emits the provider wiring carrying the
-  rpc-controller **role**, and emits `impl RpcController` with `get_token` baked from the struct
-  name. `get_patterns`, `handle_message`, and `enhancers` delegate to `Self::__ulo_rpc_*`, resolving
+  rpc-controller **role**, and emits `impl RpcController` with `token` baked from the struct
+  name. `patterns`, `handle_message`, and `enhancers` delegate to `Self::__ulo_rpc_*`, resolving
   to the `__rpc::RpcHandlersBridge` default when no `#[patterns]` impl shadows them. Construction and
   lifecycle reuse the provider bridges, so `#[inject]`, `#[new]`, and `#[on_*]` behave as on any
   injectable.
@@ -53,7 +53,7 @@ Unlike the gateway, **RPC has no connection hooks** (no per-connection lifecycle
 request/response or a fire-and-forget event). So there are no single-slot hook macros to split out:
 `#[patterns]` is *pure aggregation*, the same shape as `#[routes]`. And unlike the gateway's path /
 namespace / port — which are baked from the attribute because the struct knows them — the RPC
-**pattern list is impl-derived**, so `get_patterns` bridges through `#[patterns]` like the handlers do.
+**pattern list is impl-derived**, so `patterns` bridges through `#[patterns]` like the handlers do.
 
 A controller with no `#[patterns]` impl is valid: it registers as a provider but exposes no patterns
 (the bridge defaults answer — empty pattern list, `PatternNotFound`, no enhancers).

@@ -117,7 +117,7 @@ impl UloDependenciesScanner {
             let mut app_guards: usize = 0;
             let mut app_interceptors: usize = 0;
             for provider in providers {
-                let provider_token = provider.get_token();
+                let provider_token = provider.token();
 
                 // Detect APP_* token providers and register them separately
                 const APP_GUARD_NAME: &str = crate::di::APP_GUARD.name();
@@ -125,13 +125,13 @@ impl UloDependenciesScanner {
                 match provider_token.as_str() {
                     APP_GUARD_NAME => {
                         app_guards += 1;
-                        let provider_type_token = provider.get_token();
+                        let provider_type_token = provider.token();
                         container
                             .register_app_guard_provider(module_token.clone(), provider_type_token);
                     }
                     APP_INTERCEPTOR_NAME => {
                         app_interceptors += 1;
-                        let provider_type_token = provider.get_token();
+                        let provider_type_token = provider.token();
                         container.register_app_interceptor_provider(
                             module_token.clone(),
                             provider_type_token,
@@ -141,7 +141,7 @@ impl UloDependenciesScanner {
                 }
 
                 // Detect multi-provider contributions and record them by base token
-                if let Some(base_token) = provider.get_multi_base_token() {
+                if let Some(base_token) = provider.multi_base_token() {
                     container.register_multi_provider(
                         base_token,
                         module_token.clone(),
@@ -286,11 +286,11 @@ impl UloDependenciesScanner {
                     for provider in providers {
                         // Skip request-scoped providers — they are built into an
                         // execution, and bootstrap is not one.
-                        if provider.get_scope() == crate::ProviderScope::Request {
+                        if provider.scope() == crate::ProviderScope::Request {
                             continue;
                         }
 
-                        tracing::debug!(module = %module_token, provider = %provider.get_token(), hook = "on_application_bootstrap", "lifecycle hook");
+                        tracing::debug!(module = %module_token, provider = %provider.token(), hook = "on_application_bootstrap", "lifecycle hook");
                         provider
                             .on_application_bootstrap()
                             .await
@@ -354,11 +354,11 @@ impl UloDependenciesScanner {
                     for provider in providers {
                         // Skip request-scoped providers — they are built into an
                         // execution, and module initialisation is not one.
-                        if provider.get_scope() == crate::ProviderScope::Request {
+                        if provider.scope() == crate::ProviderScope::Request {
                             continue;
                         }
 
-                        tracing::debug!(module = %module_token, provider = %provider.get_token(), hook = "on_module_init", "lifecycle hook");
+                        tracing::debug!(module = %module_token, provider = %provider.token(), hook = "on_module_init", "lifecycle hook");
                         provider.on_module_init().await.map_err(|source| {
                             StartupError::HookFailed {
                                 module: module_token.clone(),

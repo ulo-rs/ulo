@@ -24,7 +24,7 @@ pub(crate) struct SharedBroadcastServiceProviderFactory {
 
 #[async_trait]
 impl ProviderFactory for SharedBroadcastServiceProviderFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<BroadcastService>()
     }
 
@@ -44,7 +44,7 @@ struct SharedBroadcastServiceProvider {
 
 #[async_trait]
 impl Provider for SharedBroadcastServiceProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<BroadcastService>()
     }
 
@@ -78,7 +78,7 @@ fn make_process_id() -> String {
 
 #[async_trait]
 impl ProviderFactory for RedisBroadcastServiceFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<RedisBroadcastService>()
     }
 
@@ -153,7 +153,7 @@ struct RedisBroadcastServiceProvider {
 
 #[async_trait]
 impl Provider for RedisBroadcastServiceProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<RedisBroadcastService>()
     }
 

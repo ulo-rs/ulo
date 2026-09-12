@@ -69,12 +69,12 @@ pub fn handle_provider_token(input: TokenStream) -> Result<TokenStream> {
 
             #[ulo::async_trait]
             impl ulo::traits_helpers::ProviderFactory for #wrapper_factory_name {
-                fn get_token(&self) -> String {
+                fn token(&self) -> String {
                     #token_expr
                 }
 
-                fn get_dependencies(&self) -> Vec<String> {
-                    #type_path::__ulo_provider_factory().get_dependencies()
+                fn dependency_tokens(&self) -> Vec<String> {
+                    #type_path::__ulo_provider_factory().dependency_tokens()
                 }
 
                 async fn build(
@@ -93,13 +93,13 @@ pub fn handle_provider_token(input: TokenStream) -> Result<TokenStream> {
 
                     #[ulo::async_trait]
                     impl ulo::traits_helpers::Provider for CustomTokenProvider {
-                        fn get_token(&self) -> String {
+                        fn token(&self) -> String {
                             self.custom_token.clone()
                         }
 
 
-                        fn get_scope(&self) -> ulo::ProviderScope {
-                            self.inner_provider.get_scope()
+                        fn scope(&self) -> ulo::ProviderScope {
+                            self.inner_provider.scope()
                         }
 
                         async fn resolve(

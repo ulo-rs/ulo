@@ -20,7 +20,7 @@ fn unique_id() -> u64 {
 ///
 /// The factory:
 /// - Returns a synthetic token unique to this (base_token, inner_type) pair
-/// - Overrides `get_multi_base_token()` so the scanner registers it correctly
+/// - Overrides `multi_base_token()` so the scanner registers it correctly
 /// - On `build()`, constructs the inner value, coerces it to `Arc<dyn Trait + Send + Sync>`,
 ///   wraps it in a double-Arc (`Arc<Arc<dyn Trait+Send+Sync>>` stored as `Arc<dyn Any+Send+Sync>`)
 ///   so the injection-site codegen can recover the trait pointer via `Arc::downcast`.
@@ -144,13 +144,13 @@ fn contrib_provider_tokens(
 
         #[::ulo::async_trait]
         impl ::ulo::traits_helpers::Provider for #contrib_name {
-            fn get_token(&self) -> ::std::string::String {
+            fn token(&self) -> ::std::string::String {
                 self.synthetic_token.clone()
             }
-            fn get_scope(&self) -> ::ulo::ProviderScope {
+            fn scope(&self) -> ::ulo::ProviderScope {
                 ::ulo::ProviderScope::Singleton
             }
-            fn get_multi_base_token(&self) -> ::std::option::Option<::std::string::String> {
+            fn multi_base_token(&self) -> ::std::option::Option<::std::string::String> {
                 ::std::option::Option::Some(self.base_token.clone())
             }
             fn as_multi_item(
@@ -197,7 +197,7 @@ fn generate_type_multi(
 
             #[::ulo::async_trait]
             impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
-                fn get_token(&self) -> ::std::string::String {
+                fn token(&self) -> ::std::string::String {
                     format!(
                         "__ulo_multi__{}__{}",
                         #base_token_expr,
@@ -205,12 +205,12 @@ fn generate_type_multi(
                     )
                 }
 
-                fn get_multi_base_token(&self) -> ::std::option::Option<::std::string::String> {
+                fn multi_base_token(&self) -> ::std::option::Option<::std::string::String> {
                     ::std::option::Option::Some(#base_token_expr)
                 }
 
-                fn get_dependencies(&self) -> ::std::vec::Vec<::std::string::String> {
-                    #factory_ident.get_dependencies()
+                fn dependency_tokens(&self) -> ::std::vec::Vec<::std::string::String> {
+                    #factory_ident.dependency_tokens()
                 }
 
                 async fn build(
@@ -269,7 +269,7 @@ fn generate_value_multi(
 
             #[::ulo::async_trait]
             impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
-                fn get_token(&self) -> ::std::string::String {
+                fn token(&self) -> ::std::string::String {
                     format!(
                         "__ulo_multi__{}__{}",
                         #base_token_expr,
@@ -277,11 +277,11 @@ fn generate_value_multi(
                     )
                 }
 
-                fn get_multi_base_token(&self) -> ::std::option::Option<::std::string::String> {
+                fn multi_base_token(&self) -> ::std::option::Option<::std::string::String> {
                     ::std::option::Option::Some(#base_token_expr)
                 }
 
-                fn get_dependencies(&self) -> ::std::vec::Vec<::std::string::String> {
+                fn dependency_tokens(&self) -> ::std::vec::Vec<::std::string::String> {
                     vec![]
                 }
 
@@ -332,7 +332,7 @@ fn generate_factory_multi(
 
             #[::ulo::async_trait]
             impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
-                fn get_token(&self) -> ::std::string::String {
+                fn token(&self) -> ::std::string::String {
                     format!(
                         "__ulo_multi__{}__{}",
                         #base_token_expr,
@@ -340,11 +340,11 @@ fn generate_factory_multi(
                     )
                 }
 
-                fn get_multi_base_token(&self) -> ::std::option::Option<::std::string::String> {
+                fn multi_base_token(&self) -> ::std::option::Option<::std::string::String> {
                     ::std::option::Option::Some(#base_token_expr)
                 }
 
-                fn get_dependencies(&self) -> ::std::vec::Vec<::std::string::String> {
+                fn dependency_tokens(&self) -> ::std::vec::Vec<::std::string::String> {
                     vec![]
                 }
 
@@ -401,7 +401,7 @@ fn generate_alias_multi(
 
             #[::ulo::async_trait]
             impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
-                fn get_token(&self) -> ::std::string::String {
+                fn token(&self) -> ::std::string::String {
                     format!(
                         "__ulo_multi__{}__{}",
                         #base_token_expr,
@@ -409,11 +409,11 @@ fn generate_alias_multi(
                     )
                 }
 
-                fn get_multi_base_token(&self) -> ::std::option::Option<::std::string::String> {
+                fn multi_base_token(&self) -> ::std::option::Option<::std::string::String> {
                     ::std::option::Option::Some(#base_token_expr)
                 }
 
-                fn get_dependencies(&self) -> ::std::vec::Vec<::std::string::String> {
+                fn dependency_tokens(&self) -> ::std::vec::Vec<::std::string::String> {
                     vec![#existing_token_expr]
                 }
 
@@ -482,7 +482,7 @@ fn generate_token_provider_multi(
 
             #[::ulo::async_trait]
             impl ::ulo::traits_helpers::ProviderFactory for #factory_name {
-                fn get_token(&self) -> ::std::string::String {
+                fn token(&self) -> ::std::string::String {
                     format!(
                         "__ulo_multi__{}__{}",
                         #base_token_expr,
@@ -490,12 +490,12 @@ fn generate_token_provider_multi(
                     )
                 }
 
-                fn get_multi_base_token(&self) -> ::std::option::Option<::std::string::String> {
+                fn multi_base_token(&self) -> ::std::option::Option<::std::string::String> {
                     ::std::option::Option::Some(#base_token_expr)
                 }
 
-                fn get_dependencies(&self) -> ::std::vec::Vec<::std::string::String> {
-                    #concrete_type::__ulo_provider_factory().get_dependencies()
+                fn dependency_tokens(&self) -> ::std::vec::Vec<::std::string::String> {
+                    #concrete_type::__ulo_provider_factory().dependency_tokens()
                 }
 
                 async fn build(

@@ -115,7 +115,7 @@ pub(crate) struct DiskHealthIndicatorFactory;
 
 #[async_trait]
 impl ProviderFactory for DiskHealthIndicatorFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<DiskHealthIndicator>()
     }
 
@@ -128,7 +128,7 @@ struct DiskHealthIndicatorProvider;
 
 #[async_trait]
 impl Provider for DiskHealthIndicatorProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<DiskHealthIndicator>()
     }
 

@@ -58,11 +58,11 @@ macro_rules! impl_diesel_health {
 
         #[async_trait]
         impl ProviderFactory for $factory {
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 ulo::di::token_of::<$indicator>()
             }
 
-            fn get_dependencies(&self) -> Vec<String> {
+            fn dependency_tokens(&self) -> Vec<String> {
                 vec![ulo::di::token_of::<$pool>()]
             }
 
@@ -86,7 +86,7 @@ macro_rules! impl_diesel_health {
 
         #[async_trait]
         impl Provider for $provider {
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 ulo::di::token_of::<$indicator>()
             }
 

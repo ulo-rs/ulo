@@ -79,7 +79,7 @@ impl<T: Config> Provider for ConfigService<T> {
         Box::new(self.clone())
     }
 
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<ConfigService<T>>()
     }
 }
@@ -101,7 +101,7 @@ impl<T: Config> ConfigServiceFactory<T> {
 
 #[async_trait]
 impl<T: Config + Clone + Send + Sync + 'static> ProviderFactory for ConfigServiceFactory<T> {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<ConfigService<T>>()
     }
 

@@ -79,8 +79,8 @@ impl RoutesResolver {
         };
 
         for (_, mut wrapper) in controllers_vec {
-            let route_path = wrapper.get_path();
-            let route_method = wrapper.get_method();
+            let route_path = wrapper.path();
+            let route_method = wrapper.method();
 
             let route_middleware = {
                 let container = self.container.borrow();

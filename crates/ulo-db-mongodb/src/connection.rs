@@ -18,7 +18,7 @@ pub(crate) struct MongoConnectionFactory {
 
 #[async_trait]
 impl ProviderFactory for MongoConnectionFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 
@@ -87,7 +87,7 @@ struct MongoConnectionProvider {
 
 #[async_trait]
 impl Provider for MongoConnectionProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 

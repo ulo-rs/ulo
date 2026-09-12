@@ -176,7 +176,7 @@ pub(crate) struct HealthCheckServiceFactory;
 
 #[async_trait]
 impl ProviderFactory for HealthCheckServiceFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<HealthCheckService>()
     }
 
@@ -189,7 +189,7 @@ struct HealthCheckServiceProvider;
 
 #[async_trait]
 impl Provider for HealthCheckServiceProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<HealthCheckService>()
     }
 

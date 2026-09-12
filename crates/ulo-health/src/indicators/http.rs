@@ -151,7 +151,7 @@ pub(crate) struct HttpHealthIndicatorFactory;
 
 #[async_trait]
 impl ProviderFactory for HttpHealthIndicatorFactory {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<HttpHealthIndicator>()
     }
 
@@ -169,7 +169,7 @@ struct HttpHealthIndicatorProvider {
 
 #[async_trait]
 impl Provider for HttpHealthIndicatorProvider {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         ulo::di::token_of::<HttpHealthIndicator>()
     }
 

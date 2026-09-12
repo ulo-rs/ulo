@@ -563,16 +563,16 @@ impl GatewayWrapper {
         self.gateway.after_init().await;
     }
 
-    pub fn get_path(&self) -> String {
-        self.gateway.get_path()
+    pub fn path(&self) -> String {
+        self.gateway.path()
     }
 
-    pub fn get_namespace(&self) -> Option<String> {
-        self.gateway.get_namespace()
+    pub fn namespace(&self) -> Option<String> {
+        self.gateway.namespace()
     }
 
-    pub fn get_port(&self) -> Option<u16> {
-        self.gateway.get_port()
+    pub fn port(&self) -> Option<u16> {
+        self.gateway.port()
     }
 }
 
@@ -603,11 +603,11 @@ mod tests {
 
         #[async_trait::async_trait]
         impl Gateway for TestGateway {
-            fn get_token(&self) -> String {
+            fn token(&self) -> String {
                 "TestGateway".to_string()
             }
 
-            fn get_path(&self) -> String {
+            fn path(&self) -> String {
                 "/test".to_string()
             }
 

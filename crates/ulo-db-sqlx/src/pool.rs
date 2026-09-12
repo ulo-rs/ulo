@@ -29,7 +29,7 @@ where
     for<'q> <DB as Database>::Arguments<'q>: sqlx::IntoArguments<'q, DB>,
     Pool<DB>: Send + Sync + Clone + 'static,
 {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 
@@ -95,7 +95,7 @@ where
     for<'q> <DB as Database>::Arguments<'q>: sqlx::IntoArguments<'q, DB>,
     Pool<DB>: Send + Sync + Clone + 'static,
 {
-    fn get_token(&self) -> String {
+    fn token(&self) -> String {
         self.token.clone()
     }
 
