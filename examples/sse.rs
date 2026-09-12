@@ -28,7 +28,7 @@ use std::time::Duration;
 use futures::Stream;
 use futures::stream;
 use tokio::sync::broadcast;
-use ulo::extractors::Bytes;
+use ulo::http::extract::Bytes;
 use ulo::*;
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{injectable, new};

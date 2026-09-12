@@ -6,7 +6,7 @@
 //! got the wrong one fails on the body it cannot read.
 use crate::common::TestServer;
 use serde::Deserialize;
-use ulo::{Body, Request, controller, extractors::Json, get, module, post, routes};
+use ulo::{Body, Request, controller, get, http::extract::Json, module, post, routes};
 
 #[derive(Debug, Deserialize)]
 struct CreateDto {

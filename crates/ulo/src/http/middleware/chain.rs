@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::{
     errors::PipelineSegment,
+    http::middleware::{Middleware, MiddlewareResult, NextHandle, NextInternal},
     http::{HttpRequest, HttpResponse},
-    traits::middleware::{Middleware, MiddlewareResult, NextHandle, NextInternal},
 };
 
 pub(crate) struct FinalHandler {

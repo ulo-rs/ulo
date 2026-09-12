@@ -15,8 +15,8 @@ use std::sync::Arc;
 use serde::Deserialize;
 use ulo::HttpResponse;
 use ulo::async_trait;
-use ulo::extractors::{Json, Query};
 use ulo::http::HttpContext;
+use ulo::http::extract::{Json, Query};
 use ulo::traits::{ChainError, ErrorHandler};
 use ulo::{Body, UloFactory, controller, get, module, post, routes};
 

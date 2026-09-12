@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use ulo::async_trait;
 use ulo::context::{Extensions, HandlerContext};
 use ulo::errors::{ErrorKind, PanicRecovered, PipelineSegment};
-use ulo::extractors::Payload;
+use ulo::extract::Payload;
 use ulo::injectable;
 use ulo::module;
 use ulo::rpc::RpcContext;

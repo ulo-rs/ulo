@@ -17,10 +17,10 @@ pub fn extract_body_from_param(marker_param: &MarkerParam) -> Result<TokenStream
     // Generate: Body<T> extractor call, reading the body off the context like any
     // other body extractor — and reporting the same way when it has already gone.
     let extract_token_stream = quote! {
-        let #param_name = match <::ulo::extractors::Body<#param_type>
-            as ::ulo::extractors::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await
+        let #param_name = match <::ulo::http::extract::Body<#param_type>
+            as ::ulo::extract::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await
         {
-            Ok(::ulo::extractors::Body(value)) => value,
+            Ok(::ulo::http::extract::Body(value)) => value,
             Err(e) => {
                 let error_body = ::ulo::serde_json::json!({
                     "error": "Failed to extract request body",
@@ -49,8 +49,8 @@ pub fn extract_query_from_param(marker_param: &MarkerParam) -> Result<TokenStrea
     // If no argument provided, extract as struct using Query<T>
     let Some(marker_arg) = &marker_param.marker_arg else {
         let extract_token_stream = quote! {
-            let #param_name = match <::ulo::extractors::Query<#param_type> as ::ulo::extractors::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await {
-                Ok(::ulo::extractors::Query(value)) => value,
+            let #param_name = match <::ulo::http::extract::Query<#param_type> as ::ulo::extract::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await {
+                Ok(::ulo::http::extract::Query(value)) => value,
                 Err(e) => {
                     let error_body = ::ulo::serde_json::json!({
                         "error": "Failed to extract query parameters",
@@ -79,8 +79,8 @@ pub fn extract_query_from_param(marker_param: &MarkerParam) -> Result<TokenStrea
             quote! {
                 let #param_name: #param_type = {
                     let __qp: std::collections::HashMap<String, String> =
-                        <::ulo::extractors::Query<std::collections::HashMap<String, String>>
-                            as ::ulo::extractors::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await
+                        <::ulo::http::extract::Query<std::collections::HashMap<String, String>>
+                            as ::ulo::extract::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await
                         .map(|q| q.0)
                         .unwrap_or_default();
                     __qp.get(#marker_arg)
@@ -92,8 +92,8 @@ pub fn extract_query_from_param(marker_param: &MarkerParam) -> Result<TokenStrea
             quote! {
                 let #param_name: #param_type = {
                     let __qp: std::collections::HashMap<String, String> =
-                        <::ulo::extractors::Query<std::collections::HashMap<String, String>>
-                            as ::ulo::extractors::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await
+                        <::ulo::http::extract::Query<std::collections::HashMap<String, String>>
+                            as ::ulo::extract::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await
                         .map(|q| q.0)
                         .unwrap_or_default();
                     match __qp.get(#marker_arg) {
@@ -120,8 +120,8 @@ pub fn extract_query_from_param(marker_param: &MarkerParam) -> Result<TokenStrea
             quote! {
                 let #param_name: #param_type = {
                     let __qp: std::collections::HashMap<String, String> =
-                        <::ulo::extractors::Query<std::collections::HashMap<String, String>>
-                            as ::ulo::extractors::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await
+                        <::ulo::http::extract::Query<std::collections::HashMap<String, String>>
+                            as ::ulo::extract::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await
                         .map(|q| q.0)
                         .unwrap_or_default();
                     match __qp.get(#marker_arg) {
@@ -158,7 +158,7 @@ pub fn extract_query_from_param(marker_param: &MarkerParam) -> Result<TokenStrea
     } else {
         // For complex types, use Query<T> extractor
         quote! {
-            let #param_name = match <::ulo::Query<#param_type> as ::ulo::extractors::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await {
+            let #param_name = match <::ulo::Query<#param_type> as ::ulo::extract::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await {
                 Ok(::ulo::Query(value)) => value,
                 Err(e) => {
                     let error_body = ::ulo::serde_json::json!({

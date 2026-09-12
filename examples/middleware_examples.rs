@@ -18,7 +18,7 @@
 use serde_json::json;
 use ulo::{
     Body, HttpResponse, async_trait,
-    middleware::{Middleware, MiddlewareResult, NextHandle},
+    http::middleware::{Middleware, MiddlewareResult, NextHandle},
     traits::MiddlewareConsumer,
     *,
 };

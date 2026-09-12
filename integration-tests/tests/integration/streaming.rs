@@ -8,7 +8,7 @@ use crate::common::TestServer;
 use futures_util::stream;
 use ulo::{
     Body, controller,
-    extractors::{BodyStream, Bytes},
+    http::extract::{BodyStream, Bytes},
     module, post, routes,
 };
 

@@ -149,7 +149,7 @@ impl OrdersGrpcService {
     #[grpc_method]
     async fn create(
         &self,
-        ulo::extractors::Payload(req): ulo::extractors::Payload<orders_pb::CreateOrderRequest>,
+        ulo::extract::Payload(req): ulo::extract::Payload<orders_pb::CreateOrderRequest>,
     ) -> Result<orders_pb::CreateOrderResponse, InvalidQty> {
         if req.qty == 0 {
             return Err(InvalidQty);

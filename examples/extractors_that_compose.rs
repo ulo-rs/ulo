@@ -15,8 +15,8 @@ use std::fmt;
 
 use serde::Deserialize;
 use ulo::Body;
-use ulo::extractors::Json;
 use ulo::http::HttpContext;
+use ulo::http::extract::Json;
 use ulo::{FromContext, controller, get, module, post, routes};
 
 /// ## 7. Cookies Extractor

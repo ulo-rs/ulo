@@ -1,6 +1,6 @@
 use std::any::type_name;
 
-use crate::extractors::FromContext;
+use crate::extract::FromContext;
 use crate::grpc::GrpcContext;
 use crate::grpc::runtime::RequestError;
 

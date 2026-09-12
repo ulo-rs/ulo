@@ -8,7 +8,9 @@
 mod adapter;
 mod body;
 mod context;
+pub mod extract;
 mod lifecycle;
+pub mod middleware;
 mod provider;
 mod request_handler;
 #[cfg(feature = "tower-compat")]

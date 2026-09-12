@@ -614,10 +614,10 @@ fn one_taker_assertion(params: &[(syn::Ident, syn::Type)]) -> TokenStream {
             assertions.push(quote! {
                 const _: () = {
                     assert!(
-                        !(<#first_ty as ::ulo::extractors::FromContext<
+                        !(<#first_ty as ::ulo::extract::FromContext<
                             ::ulo::grpc::GrpcContext,
                         >>::CONSUMES
-                            && <#second_ty as ::ulo::extractors::FromContext<
+                            && <#second_ty as ::ulo::extract::FromContext<
                                 ::ulo::grpc::GrpcContext,
                             >>::CONSUMES),
                         #message
@@ -683,7 +683,7 @@ fn lower_handler(
                 syn::Error::new_spanned(typed, "a gRPC handler's parameters are named")
             })?;
         extractions.push(quote! {
-            let #name = match <#ty as ::ulo::extractors::FromContext<
+            let #name = match <#ty as ::ulo::extract::FromContext<
                 ::ulo::grpc::GrpcContext,
             >>::extract(&__ctx).await {
                 ::std::result::Result::Ok(__value) => __value,

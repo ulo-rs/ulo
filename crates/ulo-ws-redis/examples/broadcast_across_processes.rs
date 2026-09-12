@@ -25,7 +25,7 @@
 //!     {"event":"say","data":{"room":"lobby","text":"hello from wherever"}}
 
 use serde::Deserialize;
-use ulo::extractors::Payload;
+use ulo::extract::Payload;
 use ulo::ws::{WsClient, WsHandlerOutput, WsHandlerResult, WsMessage};
 use ulo::*;
 use ulo_http_axum::AxumAdapter;

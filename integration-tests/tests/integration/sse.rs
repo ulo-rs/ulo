@@ -14,7 +14,7 @@ use crate::common::TestServer;
 use futures_util::{StreamExt, stream};
 use tokio::sync::broadcast;
 use ulo::{
-    HttpResponse, Sse, SseEvent, controller, extractors::Bytes, get, module, post, routes, sse,
+    HttpResponse, Sse, SseEvent, controller, get, http::extract::Bytes, module, post, routes, sse,
 };
 use ulo_macros::{injectable, new};
 

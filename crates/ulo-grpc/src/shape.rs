@@ -16,7 +16,7 @@
 use std::any::{Any, type_name};
 use std::ops::{Deref, DerefMut};
 
-use ulo::extractors::FromContext;
+use ulo::extract::FromContext;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
 use ulo::grpc::{RequestCarrier, RequestError};

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::http::HttpResponse;
-use crate::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
+use crate::http::middleware::{Middleware, MiddlewareResult, NextHandle};
 
 /// Origins allowed to make cross-origin requests.
 #[derive(Debug, Clone)]

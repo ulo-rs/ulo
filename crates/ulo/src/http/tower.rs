@@ -10,8 +10,8 @@ use http_body_util::{BodyExt, Full};
 use tower::{Layer, Service, ServiceExt};
 
 use crate::async_trait;
+use crate::http::middleware::{Middleware, MiddlewareResult, NextHandle, NextInternal};
 use crate::http::{Body, BoxBody, HttpRequest, HttpResponse, RequestBody, RequestBoxBody};
-use crate::traits::middleware::{Middleware, MiddlewareResult, NextHandle, NextInternal};
 
 fn to_ulo_response<B>(resp: http::Response<B>) -> HttpResponse
 where

@@ -16,7 +16,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use futures::stream;
 use serde_json::json;
-use ulo::extractors::{BodyStream, Bytes, Path};
+use ulo::http::extract::{BodyStream, Bytes, Path};
 use ulo::*;
 use ulo_http_rocket::RocketAdapter;
 use ulo_macros::{module, new, subscriptions, websocket_gateway};

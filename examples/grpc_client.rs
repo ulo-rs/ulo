@@ -94,7 +94,7 @@ impl OrdersService {
     #[grpc_method]
     async fn create(
         &self,
-        ulo::extractors::Payload(req): ulo::extractors::Payload<orders_pb::CreateOrderRequest>,
+        ulo::extract::Payload(req): ulo::extract::Payload<orders_pb::CreateOrderRequest>,
     ) -> orders_pb::CreateOrderResponse {
         orders_pb::CreateOrderResponse {
             id: 1,

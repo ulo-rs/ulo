@@ -5,7 +5,7 @@
 //! own route table (salvo, actix, rocket) must recognize a `{param}` segment
 //! when deciding 405 vs 404.
 
-use ulo::extractors::Path;
+use ulo::http::extract::Path;
 use ulo::{Body, UloFactory, controller, get, module, routes};
 
 use crate::common::TestServer;

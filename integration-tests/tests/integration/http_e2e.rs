@@ -9,7 +9,7 @@ use crate::common::TestServer;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use ulo::{
-    Body, Request, controller, extractors::Json, get, injectable, module, new, post, routes,
+    Body, Request, controller, get, http::extract::Json, injectable, module, new, post, routes,
 };
 use ulo_config::{Config, ConfigModule, ConfigService};
 
@@ -260,8 +260,8 @@ async fn json_body_and_request_extraction() {
 #[tokio_localset_test::localset_test]
 async fn request_extensions_pattern() {
     use ulo::async_trait;
+    use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
     use ulo::traits::MiddlewareConsumer;
-    use ulo::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
 
     #[derive(Clone)]
     struct UserId(String);

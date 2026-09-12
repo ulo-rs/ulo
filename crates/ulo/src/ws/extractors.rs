@@ -18,7 +18,7 @@ use std::fmt;
 
 use serde::de::DeserializeOwned;
 
-use crate::extractors::{FromContext, Payload};
+use crate::extract::{FromContext, Payload};
 use crate::ws::WsContext;
 use crate::ws::{WsClient, WsMessage};
 

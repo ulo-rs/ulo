@@ -15,7 +15,7 @@
 //!     websocat ws://127.0.0.1:3100
 //!     {"event":"ping","data":{}}
 
-use ulo::extractors::Payload;
+use ulo::extract::Payload;
 use ulo::ws::{WsHandlerResult, WsMessage};
 use ulo::*;
 use ulo_macros::{module, new, subscriptions, websocket_gateway};

@@ -18,7 +18,7 @@
 //!        -F "avatar=@/path/to/avatar.png"
 
 use serde_json::{Value, json};
-use ulo::extractors::Multipart;
+use ulo::http::extract::Multipart;
 use ulo::*;
 use ulo_http_axum::AxumAdapter;
 

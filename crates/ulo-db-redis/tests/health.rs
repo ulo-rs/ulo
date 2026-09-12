@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::redis::Redis;
-use ulo::extractors::{Bytes, Path};
+use ulo::http::extract::{Bytes, Path};
 use ulo::*;
 use ulo_db_redis::{AsyncCommands, ConnectionManager, RedisHealthIndicator, RedisModule};
 use ulo_health::{HealthCheckService, HealthIndicator, TerminusModule};

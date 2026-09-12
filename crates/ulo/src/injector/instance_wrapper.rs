@@ -6,8 +6,8 @@ use crate::{
     context::Metadata,
     enhancer::EnhancerMetadata,
     errors::{Error, GuardRejection, MiddlewareFailure, PanicRecovered, PipelineSegment},
+    http::middleware::{Middleware, MiddlewareChain},
     http::{HttpContext, HttpError, HttpMethod, HttpRequest, HttpResponse},
-    middleware::{Middleware, MiddlewareChain},
     traits::{
         ExecutionResult, Guard, HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry,
         Interceptor, InterceptorNext, Route,

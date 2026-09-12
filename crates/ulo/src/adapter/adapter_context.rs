@@ -1,8 +1,8 @@
 use std::{pin::Pin, sync::Arc};
 
 use crate::{
+    http::middleware::MiddlewareChain,
     http::{Body, HttpRequest, HttpResponse, trim_trailing_slashes},
-    middleware::MiddlewareChain,
 };
 
 /// Runtime context the framework hands to an adapter at serve time.

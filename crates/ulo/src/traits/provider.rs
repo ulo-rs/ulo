@@ -3,7 +3,8 @@ use std::{any::Any, future::Future, pin::Pin, sync::Arc};
 use async_trait::async_trait;
 use rustc_hash::FxHashMap;
 
-use super::{ErrorHandler, Guard, Interceptor, ProviderContext, middleware::Middleware};
+use super::{ErrorHandler, Guard, Interceptor, ProviderContext};
+use crate::http::middleware::Middleware;
 use crate::{
     ProviderScope, grpc::GrpcContext, http::HttpContext, http::HttpResponse, rpc::RpcContext,
     rpc::RpcData, ws::WsContext, ws::WsMessage,

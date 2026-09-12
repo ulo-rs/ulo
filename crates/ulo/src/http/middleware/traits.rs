@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use crate::http::middleware::RoutePattern;
 use crate::http::{HttpRequest, HttpResponse};
-use crate::middleware::RoutePattern;
 
 /// Result type for middleware chain execution
 pub type MiddlewareResult = Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>>;

@@ -26,7 +26,7 @@
 //! ```ignore
 //! use std::net::SocketAddr;
 //! use ulo::UloFactory;
-//! use ulo::extractors::Payload;
+//! use ulo::extract::Payload;
 //! use ulo_macros::{controller, grpc_methods, module, new};
 //!
 //! mod orders_pb {

@@ -11,7 +11,7 @@ use crate::common::{ExecutionOrder, TestServer};
 use ulo::async_trait;
 use ulo::context::HandlerContext;
 use ulo::http::HttpContext;
-use ulo::traits::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::traits::{Guard, Interceptor, InterceptorNext, MiddlewareConsumer};
 use ulo::{
     Body, HttpResponse, controller, get, injectable, module, post, provider_factory,
