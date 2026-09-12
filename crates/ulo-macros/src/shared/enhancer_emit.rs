@@ -112,19 +112,19 @@ impl EnhancerKind {
             EnhancerKind::WsGuard => EnhancerSpec {
                 role_variant: quote! { ::ulo::traits::ProviderRole::WsGuard },
                 entry_path: quote! { ::ulo::__enhancer::WsGuardEntry },
-                trait_path: quote! { ::ulo::traits::Guard<::ulo::context::WsContext> },
+                trait_path: quote! { ::ulo::traits::Guard<::ulo::ws::WsContext> },
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynWsGuardFactory },
                 factory_suffix: "WsGuard",
-                context_path: quote! { ::ulo::context::WsContext },
+                context_path: quote! { ::ulo::ws::WsContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::WebSocket },
             },
             EnhancerKind::WsInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::traits::ProviderRole::WsInterceptor },
                 entry_path: quote! { ::ulo::__enhancer::WsInterceptorEntry },
-                trait_path: quote! { ::ulo::traits::Interceptor<::ulo::context::WsContext, ::ulo::websocket::WsHandlerResult> },
+                trait_path: quote! { ::ulo::traits::Interceptor<::ulo::ws::WsContext, ::ulo::ws::WsHandlerResult> },
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynWsInterceptorFactory },
                 factory_suffix: "WsInterceptor",
-                context_path: quote! { ::ulo::context::WsContext },
+                context_path: quote! { ::ulo::ws::WsContext },
                 provider_ctx_variant: quote! { ::ulo::ProviderContext::WebSocket },
             },
             EnhancerKind::GrpcGuard => EnhancerSpec {

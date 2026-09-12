@@ -6,10 +6,11 @@ use rustc_hash::FxHashMap;
 use super::{ErrorHandler, Guard, Interceptor, ProviderContext, middleware::Middleware};
 use crate::{
     ProviderScope,
-    context::{GrpcContext, HttpContext, RpcContext, WsContext},
+    context::{GrpcContext, HttpContext, RpcContext},
     http_types::HttpResponse,
     rpc::RpcData,
-    websocket::WsMessage,
+    ws::WsContext,
+    ws::WsMessage,
 };
 
 #[allow(unused_imports)]
@@ -112,7 +113,7 @@ transport_factory_types!(
 
 transport_factory_types!(
     WsContext,
-    crate::websocket::WsHandlerResult,
+    crate::ws::WsHandlerResult,
     DynWsGuardFactory,
     WsGuardEntry,
     DynWsInterceptorFactory,
@@ -158,7 +159,7 @@ pub enum ProviderRole {
     GrpcErrorHandler(GrpcErrorHandlerArc),
 
     Middleware(Arc<dyn Middleware>),
-    Gateway(Arc<Box<dyn crate::websocket::Gateway>>),
+    Gateway(Arc<Box<dyn crate::ws::Gateway>>),
 }
 
 /// A fully-built, ready-to-inject provider with its role registrations.

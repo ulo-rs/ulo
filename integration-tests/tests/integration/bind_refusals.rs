@@ -9,7 +9,7 @@ use std::net::TcpListener;
 
 use ulo::context::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
-use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{StartupError, UloFactory, module};
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{

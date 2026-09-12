@@ -8,12 +8,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ulo::async_trait;
-use ulo::context::WsContext;
 use ulo::errors::{ErrorKind, PanicRecovered, PipelineSegment};
 use ulo::injectable;
 use ulo::module;
 use ulo::traits::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
-use ulo::websocket::{WsClient, WsError, WsHandlerResult, WsMessage};
+use ulo::ws::WsContext;
+use ulo::ws::{WsClient, WsError, WsHandlerResult, WsMessage};
 use ulo_macros::{new, subscriptions, websocket_gateway};
 
 use crate::common::TestServer;

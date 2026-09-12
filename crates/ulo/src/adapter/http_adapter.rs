@@ -3,12 +3,12 @@ use std::sync::Arc;
 use crate::error::AdapterResult;
 use async_trait::async_trait;
 
-use crate::adapter::WsConnectionCallbacks;
 use crate::adapter::adapter_context::AdapterContext;
 use crate::adapter::bind_target::BindTarget;
 use crate::adapter::lifecycle_handles::HttpLifecycleHandle;
 use crate::adapter::request_handler::RequestHandler;
 use crate::http_types::HttpMethod;
+use crate::ws::WsConnectionCallbacks;
 
 /// Implemented by every HTTP transport adapter (axum, actix, poem, rocket,
 /// salvo). The framework calls [`register_route`](Self::register_route) and

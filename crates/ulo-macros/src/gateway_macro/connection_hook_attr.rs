@@ -89,7 +89,7 @@ pub fn handle_conn_hook(hook: ConnHook, item: TokenStream) -> Result<TokenStream
             async fn #bridge_method(
                 &self,
                 client: &::ulo::WsClient,
-                context: &::ulo::context::WsContext,
+                context: &::ulo::ws::WsContext,
             ) -> ::std::result::Result<(), ::ulo::WsError> {
                 #forward_call
             }
@@ -101,7 +101,7 @@ pub fn handle_conn_hook(hook: ConnHook, item: TokenStream) -> Result<TokenStream
                 &self,
                 client: &::ulo::WsClient,
                 reason: ::ulo::DisconnectReason,
-                context: &::ulo::context::WsContext,
+                context: &::ulo::ws::WsContext,
             ) {
                 #forward_call;
             }

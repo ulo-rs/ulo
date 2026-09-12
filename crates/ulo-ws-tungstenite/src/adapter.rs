@@ -8,7 +8,7 @@ use tokio_tungstenite::tungstenite::Message;
 use ulo::AdapterResult;
 use ulo::RequestPart;
 use ulo::async_trait;
-use ulo::websocket::{SendError, TrySendError, WsMessage, WsSink};
+use ulo::ws::{SendError, TrySendError, WsMessage, WsSink};
 use ulo::{
     BindTarget, MessageCallbackResult, WebSocketAdapter, WsConnectionCallbacks, WsLifecycleHandle,
 };
@@ -190,7 +190,7 @@ async fn run_ws_connection(
             // The handshake is already done, so a refusal is answered the only
             // way the protocol leaves: the canonical envelope, then a close
             // carrying the code for it.
-            for frame in ulo::websocket::refusal_frames(&e) {
+            for frame in ulo::ws::refusal_frames(&e) {
                 let _ = sender.send(frame).await;
             }
             return;

@@ -22,7 +22,7 @@
 
 use serde::Deserialize;
 use ulo::extractors::Json;
-use ulo::websocket::{BroadcastModule, BroadcastService, WsClient, WsMessage};
+use ulo::ws::{BroadcastModule, BroadcastService, WsClient, WsMessage};
 use ulo::*;
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{module, new, subscriptions, websocket_gateway};

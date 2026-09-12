@@ -12,7 +12,7 @@ use serde_json::Value;
 use ulo::traits::{Provider, ProviderContext};
 use ulo::{
     DisconnectReason, Gateway, ProviderScope, WsClient, WsError, WsHandlerOutput, WsMessage,
-    context::WsContext,
+    ws::WsContext,
 };
 
 use crate::subscription_context_builder::SubscriptionContextBuilder;
@@ -147,7 +147,7 @@ where
 
     async fn handle_event(
         &self,
-        ctx: &ulo::context::WsContext,
+        ctx: &ulo::ws::WsContext,
     ) -> ulo::traits::ExecutionResult<WsHandlerOutput, ulo::WsError> {
         let client = ctx.client().clone();
         let message = ctx.message().clone();
@@ -161,7 +161,7 @@ where
         &self,
         client: &WsClient,
         _reason: DisconnectReason,
-        _context: &ulo::context::WsContext,
+        _context: &ulo::ws::WsContext,
     ) {
         self.init_payloads.lock().unwrap().remove(&client.id);
         let mut handles = self.abort_handles.lock().unwrap();

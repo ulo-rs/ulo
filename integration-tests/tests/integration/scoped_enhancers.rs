@@ -5,9 +5,10 @@
 
 use ulo::HttpResponse;
 use ulo::async_trait;
-use ulo::context::{HttpContext, WsContext};
+use ulo::context::HttpContext;
 use ulo::traits::{Guard, Interceptor, InterceptorNext};
-use ulo::websocket::{WsClient, WsHandlerResult, WsMessage};
+use ulo::ws::WsContext;
+use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
     Body, Request, controller, get, injectable, module, routes, use_guards, use_interceptors,
 };

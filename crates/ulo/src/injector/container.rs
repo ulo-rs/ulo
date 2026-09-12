@@ -12,7 +12,7 @@ use crate::{
         ProviderFactory, ProviderRole, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
         WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
     },
-    websocket::Gateway,
+    ws::Gateway,
 };
 
 use super::{InstanceWrapper, RoleRegistry, module::Module};

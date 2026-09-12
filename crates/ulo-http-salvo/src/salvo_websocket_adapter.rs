@@ -1,5 +1,5 @@
 use salvo::websocket::Message;
-use ulo::websocket::{WsError, WsMessage};
+use ulo::ws::{WsError, WsMessage};
 
 pub(crate) fn salvo_to_ws_message(msg: Message) -> Result<WsMessage, WsError> {
     if msg.is_text() {

@@ -1,6 +1,6 @@
 use tokio::sync::mpsc;
 use ulo::async_trait;
-use ulo::websocket::{SendError, TrySendError, WsMessage, WsSink};
+use ulo::ws::{SendError, TrySendError, WsMessage, WsSink};
 
 /// Tokio mpsc-backed `WsSink`, used by the Salvo adapter to forward outbound
 /// messages from the framework into the per-connection write task.

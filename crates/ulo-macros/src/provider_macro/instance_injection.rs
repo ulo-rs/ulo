@@ -250,7 +250,7 @@ fn generate_role_pushes(traits: &EnhancerTraits) -> TokenStream {
         pushes.push(quote! {
             __roles.push(::ulo::traits::ProviderRole::Gateway(
                 ::std::sync::Arc::new(
-                    Box::new((*instance).clone()) as Box<dyn ::ulo::websocket::Gateway>
+                    Box::new((*instance).clone()) as Box<dyn ::ulo::ws::Gateway>
                 )
             ));
         });

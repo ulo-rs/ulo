@@ -183,7 +183,7 @@ fn generate_gateway_impl(
             async fn on_connect(
                 &self,
                 client: &::ulo::WsClient,
-                context: &::ulo::context::WsContext,
+                context: &::ulo::ws::WsContext,
             ) -> Result<(), ::ulo::WsError> {
                 use ::ulo::__ws::WsHandlersBridge as _;
                 <Self>::__ulo_ws_on_connect(self, client, context).await
@@ -193,7 +193,7 @@ fn generate_gateway_impl(
                 &self,
                 client: &::ulo::WsClient,
                 reason: ::ulo::DisconnectReason,
-                context: &::ulo::context::WsContext,
+                context: &::ulo::ws::WsContext,
             ) {
                 use ::ulo::__ws::WsHandlersBridge as _;
                 <Self>::__ulo_ws_on_disconnect(self, client, reason, context).await
@@ -216,7 +216,7 @@ fn generate_gateway_impl(
 
             async fn handle_event(
                 &self,
-                __ctx: &::ulo::context::WsContext,
+                __ctx: &::ulo::ws::WsContext,
             ) -> ::ulo::traits::ExecutionResult<::ulo::WsHandlerOutput, ::ulo::WsError> {
                 use ::ulo::__ws::WsHandlersBridge as _;
                 <Self>::__ulo_ws_handle_event(self, __ctx).await

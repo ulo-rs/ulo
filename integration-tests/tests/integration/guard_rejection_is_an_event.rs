@@ -19,12 +19,13 @@ use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
 use ulo::UloFactory;
 use ulo::async_trait;
-use ulo::context::{GrpcContext, RpcContext, WsContext};
+use ulo::context::{GrpcContext, RpcContext};
 use ulo::errors::GuardRejection;
 use ulo::extractors::{Inbound, Payload};
 use ulo::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
 use ulo::traits::Guard;
-use ulo::websocket::{WsHandlerResult, WsMessage};
+use ulo::ws::WsContext;
+use ulo::ws::{WsHandlerResult, WsMessage};
 use ulo::{Error, GrpcStatus, catch, injectable, module};
 use ulo_macros::{
     controller, grpc_methods, message_pattern, new, patterns, subscribe_message, subscriptions,
