@@ -19,11 +19,12 @@ pub enum Dispatch {
     Grpc(Arc<dyn crate::grpc::GrpcServiceSource>),
 }
 
-/// A controller: one DI instance exposing its routes and lifecycle hooks.
+/// A controller: one DI instance exposing what it dispatches on and its lifecycle hooks.
 ///
-/// Built once per controller struct by its [`ControllerFactory`]. `routes()` yields
-/// one [`Route`] per handler method; the lifecycle hooks fire once per controller,
-/// not once per route.
+/// Built once per controller struct by its [`ControllerFactory`]. [`dispatch`](Controller::dispatch)
+/// yields the transport's own dispatch surface — one [`Route`] per handler method on HTTP, a single
+/// source on RPC and gRPC. The lifecycle hooks fire once per controller, not once per route or
+/// pattern.
 #[async_trait]
 pub trait Controller: Send + Sync {
     fn token(&self) -> String;

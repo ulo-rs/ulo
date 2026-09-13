@@ -1,7 +1,8 @@
-//! Standalone application context for non-HTTP scenarios
+//! The application as a DI root, with nothing served.
 //!
-//! Use this for CLI tools, CRON jobs, background workers, and other
-//! scenarios where you need dependency injection without an HTTP server.
+//! What a CLI tool, a CRON job, a background worker or a test builds: the module graph resolves and
+//! the lifecycle hooks run, and no transport is bound. An application that serves is
+//! [`UloApplication`](crate::UloApplication) instead.
 
 use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
 
@@ -14,7 +15,7 @@ use crate::{
     spi::Provider,
 };
 
-/// Full DI container without an HTTP server
+/// The module graph, resolvable, with no transport bound.
 pub struct UloApplicationContext {
     container: Rc<RefCell<Container>>,
 }

@@ -8,8 +8,8 @@
 //! The kinds here are what every transport shares: [`ErrorKind`], and the framework events a
 //! `#[catch]` handler can claim.
 
-pub mod error;
-pub mod framework;
+mod error;
+mod framework;
 
 pub use error::{Error, ErrorKind};
 pub use framework::{GuardRejection, MiddlewareFailure, PanicRecovered, PipelineSegment, Unrouted};

@@ -1,10 +1,10 @@
-//! Per-request execution contexts.
+//! The context one execution runs in.
 //!
-//! Each transport (HTTP, RPC, WebSocket) has its own concrete context type
-//! with transport-specific fields. They all implement [`HandlerContext`], the
-//! universal interface that lets a single enhancer (guard / interceptor /
-//! error handler) be written for one transport, all transports, or a
-//! chosen subset.
+//! Each transport (HTTP, RPC, WebSocket, gRPC) has its own concrete context type with
+//! transport-specific fields, and [`StandaloneContext`] is the one for an execution with no
+//! transport behind it. They all implement [`HandlerContext`], the universal interface that lets a
+//! single enhancer (guard / interceptor / error handler) be written for one transport, all four, or
+//! a chosen subset.
 
 mod cancellation;
 mod extensions;
