@@ -12,7 +12,7 @@ pub(crate) use self::dependency_graph::{DependencyGraph, find_dependency_cycle};
 mod instance_wrapper;
 pub(crate) use self::instance_wrapper::InstanceWrapper;
 
-pub(crate) use crate::di::token::IntoToken;
+pub(crate) use crate::di::IntoToken;
 
 mod module_ref;
 pub use self::module_ref::ModuleRef;

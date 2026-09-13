@@ -8,7 +8,7 @@
 mod execution_cache;
 mod module_metadata;
 mod provider_context;
-pub mod token;
+mod token;
 
 pub use execution_cache::ExecutionCache;
 pub use module_metadata::{MiddlewareConsumer, ModuleMetadata};
