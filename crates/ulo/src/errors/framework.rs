@@ -9,8 +9,12 @@ use std::fmt;
 
 use crate::errors::{Error, ErrorKind};
 
-/// Emitted when an HTTP guard returns `false` (or aborts). The chain runs on
-/// this event before the framework's default 403 envelope is rendered.
+/// Emitted when a guard returns `false`, on all four transports. The chain runs on this event
+/// before the transport's own rejection is rendered — 403 on HTTP, a `forbidden` frame on RPC,
+/// `PermissionDenied` on gRPC, the canonical envelope on WebSocket.
+///
+/// A WebSocket *connect* guard is the exception: its `false` refuses the upgrade. A refused
+/// connection has no answer to shape, so no event is raised.
 #[derive(Debug, Clone)]
 pub struct GuardRejection {
     /// Zero-based position of the rejecting guard in the resolved chain.
