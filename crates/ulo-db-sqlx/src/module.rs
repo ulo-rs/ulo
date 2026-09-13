@@ -2,10 +2,10 @@
 use std::marker::PhantomData;
 
 #[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
-use ulo::{CheckedModule, DynamicModule, StartupCheck};
-
-#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
 use crate::pool::SqlxPoolFactory;
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
+use ulo::StartupCheck;
+use ulo::di::{CheckedModule, DynamicModule};
 
 pub struct SqlxModule;
 

@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use redis::aio::MultiplexedConnection;
-use ulo::{BroadcastError, BroadcastService, ClientId, RoomId, SendError, WsMessage, WsSink};
-
 use crate::message::{BroadcastTargetKind, RedisBroadcastPayload};
+use redis::aio::MultiplexedConnection;
+use ulo::ws::{BroadcastError, BroadcastService, ClientId, RoomId, SendError, WsMessage, WsSink};
 
 /// Cross-process WebSocket broadcaster backed by Redis Pub/Sub.
 ///

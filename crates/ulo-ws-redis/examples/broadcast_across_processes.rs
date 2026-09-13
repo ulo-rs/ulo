@@ -26,8 +26,8 @@
 
 use serde::Deserialize;
 use ulo::extract::Payload;
+use ulo::prelude::*;
 use ulo::ws::{WsClient, WsHandlerOutput, WsHandlerResult, WsMessage};
-use ulo::*;
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{module, new, subscriptions, websocket_gateway};
 use ulo_ws_redis::{RedisBroadcastModule, RedisBroadcastService};

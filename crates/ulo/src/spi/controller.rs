@@ -31,10 +31,10 @@ pub trait Controller: Send + Sync {
 
     // Lifecycle Hooks
 
-    async fn on_module_init(&self) -> crate::InitResult {
+    async fn on_module_init(&self) -> crate::di::InitResult {
         Ok(())
     }
-    async fn on_application_bootstrap(&self) -> crate::InitResult {
+    async fn on_application_bootstrap(&self) -> crate::di::InitResult {
         Ok(())
     }
     async fn before_application_shutdown(&self, _signal: Option<String>) {}

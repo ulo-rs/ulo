@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::IntoNatsServers;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::OnceCell;
+use ulo::async_trait;
 use ulo::rpc::wire::{self, ReplyFrame, parse_response};
 use ulo::rpc::{ReplySink, RpcReplyStream};
-use ulo::{RpcClientError, RpcClientTransport, RpcData, async_trait};
-
-use crate::IntoNatsServers;
+use ulo::rpc::{RpcClientError, RpcClientTransport, RpcData};
 
 /// NATS transport for [`RpcClient`].
 ///
@@ -27,11 +27,11 @@ use crate::IntoNatsServers;
 /// ```ignore
 /// provider_value!(
 ///     "INVENTORY_CLIENT",
-///     ulo::RpcClient::new(ulo_rpc_nats::NatsClientTransport::new("nats://localhost:4222"))
+///     ulo::rpc::RpcClient::new(ulo_rpc_nats::NatsClientTransport::new("nats://localhost:4222"))
 /// )
 /// ```
 ///
-/// [`RpcClient`]: ulo::RpcClient
+/// [`RpcClient`]: ulo::rpc::RpcClient
 /// [`send`]: NatsClientTransport::send
 /// [`emit`]: NatsClientTransport::emit
 pub struct NatsClientTransport {

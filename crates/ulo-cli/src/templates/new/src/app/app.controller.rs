@@ -1,5 +1,5 @@
 use super::app_service::AppService;
-use ulo::*;
+use ulo::prelude::*;
 
 #[controller("/app")]
 pub struct AppController {

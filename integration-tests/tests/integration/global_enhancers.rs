@@ -10,9 +10,10 @@
 
 use serial_test::serial;
 use std::sync::{Arc, Mutex};
-use ulo::HttpResponse;
 use ulo::async_trait;
-use ulo::{Body, UloFactory, controller, get, module, routes, use_guards, use_interceptors};
+use ulo::http::Body;
+use ulo::http::HttpResponse;
+use ulo::{UloFactory, controller, get, module, routes, use_guards, use_interceptors};
 use ulo_http_axum::AxumAdapter;
 
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};

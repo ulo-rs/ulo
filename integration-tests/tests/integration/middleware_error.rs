@@ -12,10 +12,10 @@
 use crate::common::TestServer;
 use ulo::async_trait;
 use ulo::di::MiddlewareConsumer;
+use ulo::http::Body;
 use ulo::http::HttpError;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::{Body, controller, get, module, routes};
-
+use ulo::{controller, get, module, routes};
 // ── Test 1: custom status code ────────────────────────────────────────────────
 
 struct RejectWith(HttpError);

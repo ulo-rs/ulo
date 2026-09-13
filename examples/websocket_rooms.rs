@@ -11,8 +11,9 @@
 //! Connect with: websocat ws://localhost:3000/chat
 
 use serde::{Deserialize, Serialize};
+use ulo::prelude::*;
+use ulo::ws::WsHandlerResult;
 use ulo::ws::{BroadcastModule, BroadcastService, WsClient, WsError, WsHandlerOutput, WsMessage};
-use ulo::*;
 use ulo_macros::{module, new, subscriptions, websocket_gateway};
 
 // Message types

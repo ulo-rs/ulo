@@ -1,7 +1,7 @@
-use redis::aio::ConnectionManager;
-use ulo::{CheckedModule, DynamicModule, StartupCheck};
-
 use crate::connection::RedisConnectionFactory;
+use redis::aio::ConnectionManager;
+use ulo::StartupCheck;
+use ulo::di::{CheckedModule, DynamicModule};
 
 pub struct RedisModule;
 

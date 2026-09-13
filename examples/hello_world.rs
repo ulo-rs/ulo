@@ -8,7 +8,8 @@
 //!            curl http://127.0.0.1:3000/hello/json
 
 use serde_json::json;
-use ulo::*;
+use ulo::http::Body;
+use ulo::prelude::*;
 use ulo_http_axum::AxumAdapter;
 
 #[controller("/hello")]

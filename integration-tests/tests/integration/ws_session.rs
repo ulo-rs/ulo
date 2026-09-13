@@ -4,6 +4,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use crate::common::TestServer;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 use ulo::async_trait;
@@ -12,12 +13,9 @@ use ulo::enhancer::Guard;
 use ulo::ws::WsContext;
 use ulo::ws::{Session, WsClient, WsHandlerResult, WsMessage};
 use ulo::{
-    DisconnectReason, injectable, module, new, on_connect, on_disconnect, set_metadata,
-    subscribe_message, subscriptions, use_guards, websocket_gateway,
+    injectable, module, new, on_connect, on_disconnect, set_metadata, subscribe_message,
+    subscriptions, use_guards, websocket_gateway,
 };
-
-use crate::common::TestServer;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Principal(String);
 
@@ -58,7 +56,7 @@ impl SessionGateway {
     }
 
     #[on_connect]
-    async fn greet(&self, _client: &WsClient) -> Result<(), ulo::WsError> {
+    async fn greet(&self, _client: &WsClient) -> Result<(), ulo::ws::WsError> {
         Ok(())
     }
 

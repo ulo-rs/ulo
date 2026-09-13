@@ -6,7 +6,8 @@
 //! the first request that needed it.
 use crate::common::TestServer;
 use serial_test::serial;
-use ulo::{Body, controller, get, injectable, module, routes};
+use ulo::http::Body;
+use ulo::{controller, get, injectable, module, routes};
 use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]

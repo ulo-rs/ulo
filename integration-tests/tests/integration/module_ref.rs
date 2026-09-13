@@ -6,7 +6,7 @@
 //! matter more than the successes. Request-scoped resolution through a handle
 //! is covered too — it needs an execution to resolve into, and asking without
 //! one is a refusal rather than a panic.
-use ulo::*;
+use ulo::prelude::*;
 use uuid::Uuid;
 
 // Test providers

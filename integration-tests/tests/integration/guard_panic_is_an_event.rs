@@ -22,10 +22,11 @@ use ulo::enhancer::Guard;
 use ulo::errors::PanicRecovered;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
+use ulo::grpc::GrpcStatus;
 use ulo::grpc::extract::Inbound;
 use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
-use ulo::{GrpcStatus, catch, injectable, module};
+use ulo::{catch, injectable, module};
 use ulo_macros::{
     controller, grpc_methods, message_pattern, new, patterns, use_error_handlers, use_guards,
 };

@@ -1,6 +1,7 @@
 // ADR-0031: one transport per struct. A second handler impl collides on the
 // generated dispatch entry rather than quietly serving two protocols.
-use ulo::{Body, controller, get, patterns, routes};
+use ulo::{controller, get, patterns, routes};
+use ulo::http::Body;
 use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
 

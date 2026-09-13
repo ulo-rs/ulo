@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use futures::{FutureExt, StreamExt};
-use ulo::AdapterResult;
-use ulo::{RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks};
-
 use crate::wire::RequestEnvelope;
+use futures::{FutureExt, StreamExt};
 use ulo::rpc::wire::{frame_panic, frame_response};
+use ulo::rpc::{RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks};
+use ulo::spi::AdapterResult;
 
 /// Redis Pub/Sub transport adapter for the Ulo RPC gateway.
 ///
@@ -54,7 +53,7 @@ impl RpcAdapter for RedisAdapter {
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::rpc::RpcLifecycleHandle> {
         let url = self.url.clone();
         let patterns = std::mem::take(&mut self.patterns);
         let callbacks = self
@@ -176,7 +175,7 @@ impl RpcAdapter for RedisAdapter {
             }
         });
 
-        Ok(ulo::RpcLifecycleHandle::new(
+        Ok(ulo::rpc::RpcLifecycleHandle::new(
             None,
             serve,
             move || async move {
@@ -287,7 +286,7 @@ async fn handle_message(
     };
 
     let response = match outcome {
-        Ok(Ok(ulo::RpcHandlerOutput::Stream(stream))) => {
+        Ok(Ok(ulo::rpc::RpcHandlerOutput::Stream(stream))) => {
             ulo::rpc::wire::drive_reply_stream(stream, |frame| {
                 let mut publisher = publisher.clone();
                 let reply_to = reply_to.clone();

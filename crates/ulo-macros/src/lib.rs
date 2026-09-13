@@ -481,12 +481,12 @@ macro_rules! lifecycle_hook_macro {
 lifecycle_hook_macro!(
     on_module_init,
     provider_macro::lifecycle_attr::Hook::OnInit,
-    "Lifecycle hook on a `#[injectable]` struct: `async fn(&self) -> ulo::InitResult`, run after the DI container is built. Returning `Err` aborts startup."
+    "Lifecycle hook on a `#[injectable]` struct: `async fn(&self) -> ulo::di::InitResult`, run after the DI container is built. Returning `Err` aborts startup."
 );
 lifecycle_hook_macro!(
     on_application_bootstrap,
     provider_macro::lifecycle_attr::Hook::OnBootstrap,
-    "Lifecycle hook: `async fn(&self) -> ulo::InitResult`, run after all modules initialize, before the server accepts connections."
+    "Lifecycle hook: `async fn(&self) -> ulo::di::InitResult`, run after all modules initialize, before the server accepts connections."
 );
 lifecycle_hook_macro!(
     on_module_destroy,

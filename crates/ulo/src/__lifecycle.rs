@@ -15,7 +15,7 @@
 
 use async_trait::async_trait;
 
-use crate::InitResult;
+use crate::di::InitResult;
 
 /// Blanket no-op lifecycle defaults, implemented for every type. The `#[on_*]` hook macros shadow
 /// the relevant method with an inherent `async fn` of the same name, which wins at the call site.

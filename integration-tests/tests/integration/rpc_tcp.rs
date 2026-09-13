@@ -30,14 +30,14 @@ use ulo_macros::{controller, new, patterns, set_metadata};
 /// Spawn an app with the TCP RPC adapter on an OS-assigned port and wait
 /// for `app.bind().await` to surface the listening address before returning.
 /// The caller is guaranteed the listener is live by the time it gets the port.
-async fn start_rpc_server(module: impl ulo::ModuleMetadata + 'static) -> u16 {
+async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16 {
     start_rpc_server_with_handlers(module, vec![]).await
 }
 
 /// Spawn an app with the TCP RPC adapter on an OS-assigned port and
 /// register the supplied global RPC error handlers before bootstrap.
 async fn start_rpc_server_with_handlers(
-    module: impl ulo::ModuleMetadata + 'static,
+    module: impl ulo::di::ModuleMetadata + 'static,
     handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcData>>>,
 ) -> u16 {
     use ulo::UloFactory;
@@ -816,7 +816,7 @@ impl TcpMetaModule {}
 
 #[tokio_localset_test::localset_test]
 async fn tcp_client_metadata_reaches_handler() {
-    use ulo::RpcClient;
+    use ulo::rpc::RpcClient;
 
     let port = start_rpc_server(TcpMetaModule).await;
     let client = RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));

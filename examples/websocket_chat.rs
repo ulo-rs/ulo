@@ -14,7 +14,8 @@
 //! Send:      {"event": "message", "data": "Hello"}
 //!            {"event": "ping"}
 
-use ulo::*;
+use ulo::prelude::*;
+use ulo::ws::{WsClient, WsError, WsHandlerResult, WsMessage};
 use ulo_macros::{module, new, subscriptions, websocket_gateway};
 
 #[websocket_gateway("/chat")]

@@ -155,14 +155,14 @@ impl TailGrpcModule {}
 
 async fn boot<M>(module: M) -> (u16, ulo::ShutdownHandle)
 where
-    M: ulo::ModuleMetadata + 'static,
+    M: ulo::di::ModuleMetadata + 'static,
 {
     boot_with(module, |a| a).await
 }
 
 async fn boot_with<M, F>(module: M, configure: F) -> (u16, ulo::ShutdownHandle)
 where
-    M: ulo::ModuleMetadata + 'static,
+    M: ulo::di::ModuleMetadata + 'static,
     F: FnOnce(ulo_grpc::GrpcAdapter) -> ulo_grpc::GrpcAdapter + Send + 'static,
 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();

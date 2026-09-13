@@ -8,14 +8,14 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::common::TestServer;
 use ulo::async_trait;
 use ulo::context::Extensions;
+use ulo::di::Extension;
 use ulo::enhancer::Guard;
+use ulo::http::Body;
 use ulo::http::HttpContext;
-use ulo::{Body, Extension, controller, get, injectable, module, routes};
-
-use crate::common::TestServer;
-
+use ulo::{controller, get, injectable, module, routes};
 #[derive(Clone, Debug, PartialEq)]
 pub struct CurrentUser(String);
 

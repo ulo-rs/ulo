@@ -119,7 +119,7 @@ fn generate_bridges(
                     String,
                     ::std::sync::Arc<Box<dyn ::ulo::spi::Provider>>,
                 >,
-                __exec_ctx: ::ulo::ProviderContext,
+                __exec_ctx: ::ulo::di::ProviderContext,
             ) -> Self {
                 use ::ulo::__construct::CtorBridge as _;
                 match <Self>::__ulo_ctor_build(dependencies, __exec_ctx.clone()) {
@@ -195,7 +195,7 @@ fn resolve_fields(dependencies: &DependencyInfo) -> (Vec<TokenStream>, Vec<Ident
                 let __lookup_token = #token;
                 let __provider = dependencies.get(&__lookup_token)
                     .unwrap_or_else(|| panic!("Missing dependency '{}'", __lookup_token));
-                if matches!(__provider.scope(), ::ulo::ProviderScope::Transient) {
+                if matches!(__provider.scope(), ::ulo::di::ProviderScope::Transient) {
                     #(
                         #idents = {
                             let __ctx = #ctx;
@@ -251,10 +251,10 @@ fn resolve_one(name: &Ident, ty: &Type, token: &TokenStream) -> TokenStream {
 /// execution is what makes one construction shared across the request.
 fn ctx_expr() -> TokenStream {
     quote! {
-        if matches!(__provider.scope(), ::ulo::ProviderScope::Request) {
+        if matches!(__provider.scope(), ::ulo::di::ProviderScope::Request) {
             __exec_ctx.clone()
         } else {
-            ::ulo::ProviderContext::None
+            ::ulo::di::ProviderContext::None
         }
     }
 }

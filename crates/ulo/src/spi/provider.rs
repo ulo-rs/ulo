@@ -7,7 +7,7 @@ use crate::di::ProviderContext;
 use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::http::middleware::Middleware;
 use crate::{
-    ProviderScope, grpc::GrpcContext, http::HttpContext, http::HttpResponse, rpc::RpcContext,
+    di::ProviderScope, grpc::GrpcContext, http::HttpContext, http::HttpResponse, rpc::RpcContext,
     rpc::RpcData, ws::WsContext, ws::WsMessage,
 };
 
@@ -38,10 +38,10 @@ pub trait Provider: Send + Sync {
 
     // Lifecycle hooks — overridden by the macro when the user annotates a method.
     // Default implementations are no-ops so providers without hooks incur no overhead.
-    async fn on_module_init(&self) -> crate::InitResult {
+    async fn on_module_init(&self) -> crate::di::InitResult {
         Ok(())
     }
-    async fn on_application_bootstrap(&self) -> crate::InitResult {
+    async fn on_application_bootstrap(&self) -> crate::di::InitResult {
         Ok(())
     }
     async fn on_module_destroy(&self) {}

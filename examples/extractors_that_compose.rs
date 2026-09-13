@@ -14,11 +14,11 @@ use std::collections::HashMap;
 use std::fmt;
 
 use serde::Deserialize;
-use ulo::Body;
+use ulo::extract::FromContext;
+use ulo::http::Body;
 use ulo::http::HttpContext;
 use ulo::http::extract::Json;
-use ulo::{FromContext, controller, get, module, post, routes};
-
+use ulo::{controller, get, module, post, routes};
 /// ## 7. Cookies Extractor
 ///
 /// Parses Cookie header into a HashMap.

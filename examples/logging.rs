@@ -25,7 +25,8 @@
 //! To compile the default logger out entirely, disable the crate's default
 //! features: `ulo = { version = "0.2", default-features = false }`.
 
-use ulo::*;
+use ulo::http::Body;
+use ulo::prelude::*;
 use ulo_http_axum::AxumAdapter;
 
 #[controller("/hello")]

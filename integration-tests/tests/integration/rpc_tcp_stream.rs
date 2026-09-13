@@ -18,7 +18,7 @@ use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
 use ulo_macros::{controller, module, new, patterns};
 
-async fn start_rpc_server(module: impl ulo::ModuleMetadata + 'static) -> u16 {
+async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16 {
     use ulo::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
@@ -271,7 +271,7 @@ async fn a_binary_item_travels_base64_and_decodes_back() {
     .await;
     assert!(frames[0].get("stream_b64").is_some(), "got {frames:?}");
 
-    let client = ulo::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
+    let client = ulo::rpc::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
     let mut stream = client
         .stream("bytes.stream", RpcData::json(serde_json::json!(null)))
         .await
@@ -316,13 +316,13 @@ async fn a_framework_error_mid_stream_is_an_error_end() {
     assert_eq!(frames[0]["end"], true);
     assert_eq!(frames[0]["err"]["status"], "error");
 
-    let client = ulo::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
+    let client = ulo::rpc::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
     let mut stream = client
         .stream("interr.stream", RpcData::json(serde_json::json!(null)))
         .await
         .unwrap();
     match stream.next().await {
-        Some(Err(ulo::RpcClientError::Remote { status, .. })) => assert_eq!(status, "error"),
+        Some(Err(ulo::rpc::RpcClientError::Remote { status, .. })) => assert_eq!(status, "error"),
         other => panic!("expected a Remote error item, got {other:?}"),
     }
     assert!(stream.next().await.is_none());
@@ -331,7 +331,7 @@ async fn a_framework_error_mid_stream_is_an_error_end() {
 #[tokio_localset_test::localset_test]
 async fn the_bag_stays_readable_across_the_drain() {
     let port = start_rpc_server(StreamModule).await;
-    let client = ulo::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
+    let client = ulo::rpc::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
     let stream = client
         .stream("bag.stream", RpcData::json(serde_json::json!(null)))
         .await
@@ -440,7 +440,7 @@ async fn a_cancel_before_the_first_item_drops_the_handler_future() {
 #[tokio_localset_test::localset_test]
 async fn an_early_client_drop_sends_the_cancel_notice() {
     let port = start_rpc_server(StreamModule).await;
-    let client = ulo::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
+    let client = ulo::rpc::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
     let mut stream = client
         .stream("probe.client_drop", RpcData::json(serde_json::json!(null)))
         .await
@@ -457,7 +457,7 @@ async fn an_early_client_drop_sends_the_cancel_notice() {
 #[tokio_localset_test::localset_test]
 async fn a_stream_call_to_a_single_handler_is_one_item_then_the_end() {
     let port = start_rpc_server(StreamModule).await;
-    let client = ulo::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
+    let client = ulo::rpc::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
     let mut stream = client
         .stream("single.echo", RpcData::json(serde_json::json!(null)))
         .await
@@ -472,12 +472,12 @@ async fn a_stream_call_to_a_single_handler_is_one_item_then_the_end() {
 #[tokio_localset_test::localset_test]
 async fn a_send_to_a_streaming_handler_fails_loudly() {
     let port = start_rpc_server(StreamModule).await;
-    let client = ulo::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
+    let client = ulo::rpc::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
     match client
         .send("count.stream", RpcData::json(serde_json::json!(null)))
         .await
     {
-        Err(ulo::RpcClientError::Transport(msg)) => {
+        Err(ulo::rpc::RpcClientError::Transport(msg)) => {
             assert!(msg.contains("use stream()"), "got: {msg}")
         }
         other => panic!("expected a loud transport error, got {other:?}"),

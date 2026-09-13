@@ -9,8 +9,8 @@
 use crate::common::TestServer;
 use serial_test::serial;
 use std::sync::atomic::{AtomicU32, Ordering};
-use ulo::{Body, controller, get, injectable, module, routes};
-
+use ulo::http::Body;
+use ulo::{controller, get, injectable, module, routes};
 // ---- Test 1: Singleton controller + singleton provider ----------------------
 
 #[injectable]

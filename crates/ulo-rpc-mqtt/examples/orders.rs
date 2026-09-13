@@ -13,8 +13,8 @@
 //!     cargo run -p ulo-rpc-mqtt --example orders
 
 use serde::{Deserialize, Serialize};
-use ulo::RpcClient;
 use ulo::UloFactory;
+use ulo::rpc::RpcClient;
 use ulo::rpc::{RpcData, RpcError};
 use ulo_macros::{controller, module, new, patterns};
 use ulo_rpc_mqtt::{MqttAdapter, MqttClientTransport};

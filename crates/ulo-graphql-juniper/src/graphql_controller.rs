@@ -6,10 +6,10 @@ use juniper::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
+use ulo::FxHashMap;
 use ulo::http::Route;
+use ulo::http::{Body, HttpMethod, HttpRequest, HttpResponse};
 use ulo::spi::{Controller, ControllerFactory, Dispatch, Provider};
-use ulo::{Body, FxHashMap, HttpMethod, HttpRequest, HttpResponse};
-
 /// GraphQL request payload
 #[derive(Debug, Deserialize)]
 struct GraphQLRequest {
@@ -313,7 +313,7 @@ where
 
         let service_any = self
             .graphql_service
-            .resolve(ulo::ProviderContext::Http(ctx.clone()))
+            .resolve(ulo::di::ProviderContext::Http(ctx.clone()))
             .await;
 
         let service = service_any

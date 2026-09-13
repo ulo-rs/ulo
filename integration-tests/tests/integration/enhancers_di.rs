@@ -6,21 +6,19 @@
 //! is a separate claim for each. The interceptor case also pins order, since a
 //! dependency resolved late enough would still run but observe the wrong
 //! request.
+use crate::common::TestServer;
+use serial_test::serial;
 use std::sync::{Arc, Mutex, OnceLock};
-use ulo::HttpResponse;
 use ulo::async_trait;
 use ulo::di::MiddlewareConsumer;
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
 use ulo::http::HttpContext;
+use ulo::http::HttpResponse;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::http::{Body, RequestPart};
 use ulo::{
-    Body, RequestPart, controller, get, injectable, module, new, provider_value, routes,
-    use_guards, use_interceptors,
+    controller, get, injectable, module, new, provider_value, routes, use_guards, use_interceptors,
 };
-
-use crate::common::TestServer;
-use serial_test::serial;
-
 // ---- shared tracker -----------------------------------------------------------
 // Tests are serial; all share the same Arc via clone. Each test calls clear()
 // before its first request so state from a prior test doesn't leak.
@@ -122,7 +120,7 @@ impl Middleware for HeaderValidationMiddleware {
             .tracker
             .track("middleware:header_validation");
         if !next.request().headers().contains_key("x-request-id") {
-            let mut response = ulo::HttpResponse::new();
+            let mut response = ulo::http::HttpResponse::new();
             response.status = 400;
             response.body = Some(Body::text("Missing X-Request-ID header".to_string()));
             return Ok(response);

@@ -21,4 +21,4 @@ pub(crate) const CANCEL_SUBJECT: &str = "ulo.rpc.cancel";
 pub use nats_adapter::NatsAdapter;
 pub use nats_client_transport::NatsClientTransport;
 pub use servers::IntoNatsServers;
-pub use ulo::{RpcAdapter, RpcClient, RpcClientTransport};
+pub use ulo::rpc::{RpcAdapter, RpcClient, RpcClientTransport};

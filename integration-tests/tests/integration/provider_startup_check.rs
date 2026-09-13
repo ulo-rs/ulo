@@ -11,9 +11,9 @@ use std::sync::Arc;
 
 use ulo::di::ProviderContext;
 
+use ulo::di::{DynamicModule, InitResult};
 use ulo::spi::{Injectable, Provider, ProviderFactory};
-use ulo::{DynamicModule, FxHashMap, InitResult, StartupError, UloFactory, async_trait};
-
+use ulo::{FxHashMap, StartupError, UloFactory, async_trait};
 const TOKEN: &str = "PROBE_CONNECTION";
 
 struct ProbeFactory {

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::watch;
-use ulo::AdapterResult;
+use ulo::spi::AdapterResult;
 
 use rocket::Config;
 use rocket::data::{ByteUnit, Data};
@@ -17,15 +17,15 @@ use rocket::response::Response as RocketResponse;
 use rocket::route::{Handler, Outcome, Route};
 use rocket_ws::WebSocket as RocketWs;
 
-use ulo::ws::{WsMessage, WsSink};
-use ulo::{
-    AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
-    HttpRequest, HttpResponse, MessageCallbackResult, PathParams, RequestBody, RequestHandler,
-    RequestPart, WsConnectionCallbacks,
-};
-
 use crate::rocket_websocket_adapter::{rocket_to_ws_message, ws_message_to_rocket};
 use crate::tokio_sender::TokioSender;
+use ulo::http::{
+    Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod, HttpRequest, HttpResponse,
+    PathParams, RequestBody, RequestHandler, RequestPart,
+};
+use ulo::spi::{AdapterContext, BindTarget};
+use ulo::ws::{MessageCallbackResult, WsConnectionCallbacks};
+use ulo::ws::{WsMessage, WsSink};
 
 /// Default request-body size limit. Rocket requires an explicit limit on
 /// `Data::open(limit)` and we have to materialize the body into `Bytes`

@@ -11,12 +11,11 @@
 //! is the application's fault rather than the caller's, which is why it is
 //! logged at error level as well as answered.
 
-use ulo::extract::{FromContext, take_body};
-use ulo::http::HttpContext;
-use ulo::{Body, controller, module, post, routes};
-
 use crate::common::TestServer;
-
+use ulo::extract::{FromContext, take_body};
+use ulo::http::Body;
+use ulo::http::HttpContext;
+use ulo::{controller, module, post, routes};
 /// Reads the body and does not say so. The compile-time check counts
 /// `CONSUMES`, and this leaves it at the default.
 pub struct QuietBodyReader(pub usize);

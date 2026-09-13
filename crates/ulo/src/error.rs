@@ -28,7 +28,7 @@ pub type AdapterResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static
 /// nothing exports, a module that is not imported, a cycle. A caller has no recovery to choose
 /// between, which is why the type names no cases and [`StartupError::Setup`] is where every one of
 /// them arrives.
-pub type SetupResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>;
+pub(crate) type SetupResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>;
 
 /// Errors from the startup phases: building the application
 /// ([`UloFactory::create`]) and acquiring its sockets ([`UloApplication::bind`]).
@@ -130,7 +130,7 @@ pub enum ResolutionError {
     /// passing [`ProviderContext::standalone`] where the work arrived over no transport.
     ///
     /// [`ModuleRef`]: crate::injector::ModuleRef
-    /// [`ProviderContext::standalone`]: crate::ProviderContext::standalone
+    /// [`ProviderContext::standalone`]: crate::di::ProviderContext::standalone
     #[error(
         "provider `{token}` is request-scoped and cannot be built outside an execution. Resolve \
          it in one with `resolve`, on the application or on a `ModuleRef`; \

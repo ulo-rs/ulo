@@ -57,7 +57,8 @@
 //!
 //! ```ignore
 //! use ulo_graphql_async_graphql::{ContextBuilder, async_graphql::Data};
-//! use ulo::{HttpRequest, injectable};
+//! use ulo::http::HttpRequest;
+//! use ulo::injectable;
 //! use async_trait::async_trait;
 //!
 //! #[injectable]

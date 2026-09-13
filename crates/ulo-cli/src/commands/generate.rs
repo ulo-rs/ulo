@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use colored::Colorize;
 use regex::Regex;
 use std::path::PathBuf;
-use tokio::fs::{self};
+use tokio::fs;
 
 #[derive(clap::Args)]
 pub struct GenerateArgs {
@@ -144,7 +144,11 @@ async fn update_app_module(resource_name: &str) -> Result<()> {
 
     let module_import = format!("use super::{}::{}_module::*;", resource_name, snake_case);
     if !content.contains(&module_import) {
-        content = content.replacen("use ulo::*;", &format!("use ulo::*;\n{}", module_import), 1);
+        content = content.replacen(
+            "use ulo::prelude::*;",
+            &format!("use ulo::prelude::*;\n{}", module_import),
+            1,
+        );
     }
 
     let module_insert = format!("{}Module", upper_case_first_letter);

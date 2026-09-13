@@ -1,4 +1,4 @@
-use ulo::*;
+use ulo::prelude::*;
 
 use super::resource_name_controller::RESOURCE_NAME_CONTROLLER;
 use super::resource_name_service::RESOURCE_NAME_SERVICE;

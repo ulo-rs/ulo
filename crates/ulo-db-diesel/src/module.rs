@@ -1,6 +1,6 @@
 #[cfg(any(feature = "postgres", feature = "mysql"))]
-use ulo::{CheckedModule, DynamicModule, StartupCheck};
-
+use ulo::StartupCheck;
+use ulo::di::{CheckedModule, DynamicModule};
 pub struct DieselModule;
 
 impl DieselModule {

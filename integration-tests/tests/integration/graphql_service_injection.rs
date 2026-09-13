@@ -3,7 +3,8 @@
 //! token, so the declared export and the built instance meet.
 
 use ulo::UloFactory;
-use ulo::{ProviderContext, injectable, module};
+use ulo::di::ProviderContext;
+use ulo::{injectable, module};
 use ulo_graphql_async_graphql::async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
 use ulo_graphql_async_graphql::{DefaultContextBuilder, GraphQLModule, GraphQLService};
 

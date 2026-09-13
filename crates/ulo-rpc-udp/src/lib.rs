@@ -8,4 +8,4 @@ mod udp_client_transport;
 
 pub use udp_adapter::UdpAdapter;
 pub use udp_client_transport::UdpClientTransport;
-pub use ulo::{RpcAdapter, RpcClient, RpcClientTransport};
+pub use ulo::rpc::{RpcAdapter, RpcClient, RpcClientTransport};

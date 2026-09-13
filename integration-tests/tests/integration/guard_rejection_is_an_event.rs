@@ -23,12 +23,13 @@ use ulo::enhancer::Guard;
 use ulo::errors::GuardRejection;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
+use ulo::grpc::GrpcStatus;
 use ulo::grpc::extract::Inbound;
 use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcHandlerOutput, RpcHandlerResult};
 use ulo::ws::WsContext;
 use ulo::ws::{WsHandlerResult, WsMessage};
-use ulo::{Error, GrpcStatus, catch, injectable, module};
+use ulo::{Error, catch, injectable, module};
 use ulo_macros::{
     controller, grpc_methods, message_pattern, new, patterns, subscribe_message, subscriptions,
     use_error_handlers, use_guards, websocket_gateway,

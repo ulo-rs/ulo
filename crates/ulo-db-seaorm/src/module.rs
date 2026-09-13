@@ -1,7 +1,7 @@
-use sea_orm::DatabaseConnection;
-use ulo::{CheckedModule, DynamicModule, StartupCheck};
-
 use crate::connection::SeaOrmConnectionFactory;
+use sea_orm::DatabaseConnection;
+use ulo::StartupCheck;
+use ulo::di::{CheckedModule, DynamicModule};
 
 pub struct SeaOrmModule;
 

@@ -730,7 +730,7 @@ fn lower_handler(
 
     // The error arm is the same whichever shape the reply takes.
     let failure = quote! {
-        let __status = ::ulo::GrpcStatus::of(__err);
+        let __status = ::ulo::grpc::GrpcStatus::of(__err);
         let mut __answer = ::tonic::Status::new(
             ::tonic::Code::from_i32(__status.code as i32),
             __status.message.clone(),
@@ -833,7 +833,7 @@ fn lower_handler(
                 // the answer has begun.
                 let __map_item = |__item| {
                     ::std::result::Result::map_err(__item, |__err| {
-                        let __status = ::ulo::GrpcStatus::of(__err);
+                        let __status = ::ulo::grpc::GrpcStatus::of(__err);
                         ::tonic::Status::new(
                             ::tonic::Code::from_i32(__status.code as i32),
                             __status.message,
@@ -1100,7 +1100,7 @@ fn build_wrapper_method(
             // streaming reply is re-typed on the way out.
             let __outcome: ::std::sync::Arc<::std::sync::Mutex<::std::option::Option<_>>>
                 = ::std::sync::Arc::new(::std::sync::Mutex::new(::std::option::Option::None));
-            let __panic: ::std::sync::Arc<::std::sync::Mutex<::std::option::Option<::ulo::PanicRecovered>>>
+            let __panic: ::std::sync::Arc<::std::sync::Mutex<::std::option::Option<::ulo::errors::PanicRecovered>>>
                 = ::std::sync::Arc::new(::std::sync::Mutex::new(::std::option::Option::None));
             let __outcome_capture = __outcome.clone();
             let __panic_capture = __panic.clone();
@@ -1118,7 +1118,7 @@ fn build_wrapper_method(
                     // the connection.
                     let __caught = ::ulo::__grpc::catch_handler_panic(async move {
                         let __inner = __source
-                            .resolve(::ulo::ProviderContext::Grpc(__build_ctx))
+                            .resolve(::ulo::di::ProviderContext::Grpc(__build_ctx))
                             .await;
                         <#self_ident as #trait_path>::#method_ident(
                             &__inner, #(#forward_args),*
@@ -1196,8 +1196,8 @@ fn build_wrapper_method(
                     let __stashed = ::ulo::grpc::GrpcFailure::recover(
                         ::std::error::Error::source(&__status),
                     );
-                    let __wrapped = ::ulo::GrpcStatus::new(
-                        ::ulo::GrpcCode::from_i32(__status.code() as i32),
+                    let __wrapped = ::ulo::grpc::GrpcStatus::new(
+                        ::ulo::grpc::GrpcCode::from_i32(__status.code() as i32),
                         __status.message().to_string(),
                     );
                     let __mapped = match &__stashed {

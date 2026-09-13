@@ -31,4 +31,4 @@ mod wire;
 
 pub use mqtt_adapter::MqttAdapter;
 pub use mqtt_client_transport::MqttClientTransport;
-pub use ulo::{RpcAdapter, RpcClient, RpcClientTransport};
+pub use ulo::rpc::{RpcAdapter, RpcClient, RpcClientTransport};

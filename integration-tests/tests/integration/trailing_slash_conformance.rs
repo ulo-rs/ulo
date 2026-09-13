@@ -6,14 +6,13 @@
 //! registered paths never carry one. The query string survives trimming, and
 //! the root path `/` is preserved.
 //!
-//! [`AdapterContext`]: ulo::AdapterContext
-
-use serde::Deserialize;
-use ulo::http::extract::{Path, Query};
-use ulo::{Body, UloFactory, controller, get, module, routes};
+//! [`AdapterContext`]: ulo::spi::AdapterContext
 
 use crate::common::TestServer;
-
+use serde::Deserialize;
+use ulo::http::Body;
+use ulo::http::extract::{Path, Query};
+use ulo::{UloFactory, controller, get, module, routes};
 #[derive(Deserialize)]
 struct EchoParams {
     name: String,
@@ -59,7 +58,7 @@ impl RootController {
 #[module(controllers: [AppController, RootController])]
 impl TrailingSlashModule {}
 
-async fn boot(adapter: impl ulo::HttpAdapter + 'static) -> TestServer {
+async fn boot(adapter: impl ulo::http::HttpAdapter + 'static) -> TestServer {
     TestServer::start_adapter(UloFactory::new(), TrailingSlashModule, adapter).await
 }
 

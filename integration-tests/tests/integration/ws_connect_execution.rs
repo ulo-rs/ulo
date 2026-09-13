@@ -7,6 +7,7 @@
 
 use std::sync::{Mutex, OnceLock};
 
+use crate::common::TestServer;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 use ulo::async_trait;
@@ -18,9 +19,6 @@ use ulo::{
     injectable, module, new, on_connect, subscribe_message, subscriptions, use_guards,
     websocket_gateway,
 };
-
-use crate::common::TestServer;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Principal(String);
 
@@ -59,7 +57,7 @@ impl ConnectExecutionGateway {
 
     /// Reads the bag the connect guard wrote to, through the connect's own context.
     #[on_connect]
-    async fn greet(&self, _client: &WsClient, ctx: &WsContext) -> Result<(), ulo::WsError> {
+    async fn greet(&self, _client: &WsClient, ctx: &WsContext) -> Result<(), ulo::ws::WsError> {
         *seen().lock().unwrap() = ctx.extensions().get::<Principal>();
         Ok(())
     }

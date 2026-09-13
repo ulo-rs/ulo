@@ -16,7 +16,9 @@
 //!   cargo run --example socket_activation
 
 use listenfd::ListenFd;
-use ulo::*;
+use ulo::http::HttpError;
+use ulo::prelude::*;
+use ulo::spi::BindTarget;
 use ulo_macros::{controller, get, module, routes};
 
 #[controller("/")]

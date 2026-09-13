@@ -7,7 +7,7 @@
 //! `ulo::__lifecycle::LifecycleBridge` no-op of the same name. The derive's `Provider` impl always
 //! calls the `__ulo_lc_*` methods, so the user hook runs when present and the no-op otherwise.
 //!
-//! Hooks are `async fn(&self)`. `on_module_init`/`on_application_bootstrap` return `ulo::InitResult`; the three
+//! Hooks are `async fn(&self)`. `on_module_init`/`on_application_bootstrap` return `ulo::di::InitResult`; the three
 //! shutdown/destroy hooks return `()`, and `before_application_shutdown`/`on_application_shutdown` receive
 //! `signal: Option<String>`.
 
@@ -103,7 +103,7 @@ pub fn handle_hook(hook: Hook, item: TokenStream) -> Result<TokenStream> {
     let bridge_fn = if hook.returns_init_result() {
         quote! {
             #[doc(hidden)]
-            async fn #bridge_method(&self) -> ::ulo::InitResult {
+            async fn #bridge_method(&self) -> ::ulo::di::InitResult {
                 #forward_call
             }
         }

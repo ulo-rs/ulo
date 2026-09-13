@@ -21,7 +21,7 @@ use ulo::enhancer::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNex
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
-use ulo::{GrpcHandlerResult, GrpcStatus};
+use ulo::grpc::{GrpcHandlerResult, GrpcStatus};
 use ulo_macros::{controller, grpc_methods, injectable, module, new, use_guards, use_interceptors};
 
 mod globals_pb {

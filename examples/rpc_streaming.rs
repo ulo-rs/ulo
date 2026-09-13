@@ -16,10 +16,11 @@
 use std::time::Duration;
 
 use futures::StreamExt;
+use ulo::UloFactory;
 use ulo::context::HandlerContext;
 use ulo::rpc::RpcContext;
+use ulo::rpc::{RpcClient, RpcData, RpcError};
 use ulo::rpc::{RpcHandlerOutput, RpcHandlerResult};
-use ulo::{RpcClient, RpcData, RpcError, UloFactory};
 use ulo_macros::{controller, module, new, patterns};
 
 #[controller]

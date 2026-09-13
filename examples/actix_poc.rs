@@ -20,8 +20,9 @@
 
 use futures::StreamExt;
 use serde_json::json;
+use ulo::http::Body;
 use ulo::http::extract::{BodyStream, Bytes, Path};
-use ulo::*;
+use ulo::prelude::*;
 use ulo_http_actix::ActixAdapter;
 use ulo_macros::module;
 

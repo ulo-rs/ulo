@@ -13,9 +13,10 @@ use std::time::Duration;
 use crate::common::TestServer;
 use futures_util::{StreamExt, stream};
 use tokio::sync::broadcast;
-use ulo::{
-    HttpResponse, Sse, SseEvent, controller, get, http::extract::Bytes, module, post, routes, sse,
-};
+use ulo::http::sse;
+use ulo::http::{HttpResponse, Sse, SseEvent};
+use ulo::sse;
+use ulo::{controller, get, http::extract::Bytes, module, post, routes};
 use ulo_macros::{injectable, new};
 
 // ── Service ──────────────────────────────────────────────────────────────────
@@ -62,7 +63,7 @@ pub struct SseController {
 #[routes]
 impl SseController {
     #[get("/basic")]
-    async fn basic(&self) -> impl ulo::IntoResponse {
+    async fn basic(&self) -> impl ulo::http::IntoResponse {
         sse(stream::iter([
             SseEvent::data("hello"),
             SseEvent::data("world"),
@@ -70,7 +71,7 @@ impl SseController {
     }
 
     #[get("/fields")]
-    async fn fields(&self) -> impl ulo::IntoResponse {
+    async fn fields(&self) -> impl ulo::http::IntoResponse {
         sse(stream::iter([SseEvent::data("payload")
             .event("update")
             .id("42")
@@ -78,12 +79,12 @@ impl SseController {
     }
 
     #[get("/multiline")]
-    async fn multiline(&self) -> impl ulo::IntoResponse {
+    async fn multiline(&self) -> impl ulo::http::IntoResponse {
         sse(stream::iter([SseEvent::data("line1\nline2\nline3")]))
     }
 
     #[get("/fallible")]
-    async fn fallible(&self) -> impl ulo::IntoResponse {
+    async fn fallible(&self) -> impl ulo::http::IntoResponse {
         Sse::new(stream::iter([Ok::<SseEvent, std::io::Error>(
             SseEvent::data("ok-event"),
         )]))
@@ -91,7 +92,7 @@ impl SseController {
 
     // Bounded to 2 events so the test connection closes after receiving them
     #[get("/live")]
-    async fn live(&self) -> impl ulo::IntoResponse {
+    async fn live(&self) -> impl ulo::http::IntoResponse {
         sse(self.events.subscribe().take(2))
     }
 
@@ -110,7 +111,7 @@ impl SseController {
     }
 
     #[post("/emit")]
-    async fn emit_event(&self, Bytes(data): Bytes) -> impl ulo::IntoResponse {
+    async fn emit_event(&self, Bytes(data): Bytes) -> impl ulo::http::IntoResponse {
         self.events
             .emit(String::from_utf8_lossy(&data).into_owned());
         HttpResponse::no_content().build()

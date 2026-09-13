@@ -5,7 +5,8 @@
 
 use serial_test::serial;
 use ulo::UloFactory;
-use ulo::{RequestPart, async_trait, module};
+use ulo::http::RequestPart;
+use ulo::{async_trait, module};
 use ulo_graphql_async_graphql::async_graphql::{
     Data, EmptyMutation, EmptySubscription, Object, Schema,
 };

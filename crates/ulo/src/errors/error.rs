@@ -104,7 +104,7 @@ impl ErrorKind {
 /// vocabulary.
 ///
 /// gRPC stops one hop short, because a handler's signature belongs to tonic:
-/// `From<E>` builds a [`GrpcStatus`](crate::GrpcStatus), and
+/// `From<E>` builds a [`GrpcStatus`](crate::grpc::GrpcStatus), and
 /// `ulo_grpc::to_status` carries that into `tonic::Status`, which the orphan
 /// rule keeps ulo from doing on its own.
 pub trait Error: std::error::Error + Send + Sync + 'static {

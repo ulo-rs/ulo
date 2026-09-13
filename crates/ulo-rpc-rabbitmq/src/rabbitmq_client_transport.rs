@@ -3,16 +3,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::wire::data_to_bytes;
 use futures::{SinkExt, StreamExt};
 use lapin::options::{BasicConsumeOptions, BasicPublishOptions, ExchangeDeclareOptions};
 use lapin::types::{AMQPValue, FieldTable};
 use lapin::{BasicProperties, Channel, Connection};
 use tokio::sync::{OnceCell, mpsc, oneshot};
+use ulo::async_trait;
 use ulo::rpc::wire::{self, ReplyFrame};
 use ulo::rpc::{ReplySink, RpcReplyStream};
-use ulo::{RpcClientError, RpcClientTransport, RpcData, async_trait};
-
-use crate::wire::data_to_bytes;
+use ulo::rpc::{RpcClientError, RpcClientTransport, RpcData};
 
 /// RabbitMQ direct reply-to pseudo-queue. Publishing with this as `reply_to`
 /// tells the broker to route the reply straight back to this connection's
@@ -43,11 +43,11 @@ type Pending = Arc<Mutex<HashMap<String, PendingSlot>>>;
 /// ```ignore
 /// provider_value!(
 ///     "INVENTORY_CLIENT",
-///     ulo::RpcClient::new(ulo_rpc_rabbitmq::RabbitMqClientTransport::new("amqp://127.0.0.1:5672/%2f"))
+///     ulo::rpc::RpcClient::new(ulo_rpc_rabbitmq::RabbitMqClientTransport::new("amqp://127.0.0.1:5672/%2f"))
 /// )
 /// ```
 ///
-/// [`RpcClient`]: ulo::RpcClient
+/// [`RpcClient`]: ulo::rpc::RpcClient
 /// [`send`]: RabbitMqClientTransport::send
 pub struct RabbitMqClientTransport {
     uri: String,

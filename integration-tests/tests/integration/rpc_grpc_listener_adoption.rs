@@ -40,7 +40,7 @@ impl AdoptionModule {}
 
 /// Start an app whose RPC adapter was built from a caller-owned socket, and
 /// return the address `bind()` reports for it.
-async fn start_rpc_on(adapter: impl ulo::RpcAdapter) -> SocketAddr {
+async fn start_rpc_on(adapter: impl ulo::rpc::RpcAdapter) -> SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {

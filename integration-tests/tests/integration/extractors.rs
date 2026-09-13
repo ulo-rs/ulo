@@ -9,9 +9,10 @@
 use crate::common::TestServer;
 use serde::Deserialize;
 use ulo::{
-    Body, controller,
+    controller,
     extract::Validated,
     get,
+    http::Body,
     http::extract::{Bytes as RenamedBytes, Json, Path, Query},
     module, post, routes,
 };

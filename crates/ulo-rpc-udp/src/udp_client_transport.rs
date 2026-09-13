@@ -6,10 +6,10 @@ use std::time::Duration;
 use futures_util::SinkExt;
 use tokio::net::UdpSocket;
 use tokio::sync::{Mutex, mpsc, oneshot};
+use ulo::async_trait;
 use ulo::rpc::wire::{self, ReplyFrame};
 use ulo::rpc::{ReplySink, RpcReplyStream};
-use ulo::{RpcClientError, RpcClientTransport, RpcData, async_trait};
-
+use ulo::rpc::{RpcClientError, RpcClientTransport, RpcData};
 /// Maximum UDP datagram payload (theoretical max minus IPv4 + UDP headers).
 const MAX_DATAGRAM: usize = 65_507;
 
@@ -67,11 +67,11 @@ struct Inner {
 /// ```ignore
 /// provider_value!(
 ///     "ORDERS_CLIENT",
-///     ulo::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", 4000))
+///     ulo::rpc::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", 4000))
 /// )
 /// ```
 ///
-/// [`RpcClient`]: ulo::RpcClient
+/// [`RpcClient`]: ulo::rpc::RpcClient
 // Slot type shared between the public transport and the background reader
 // loop. The reader clears the slot on exit so the next caller rebuilds the
 // socket — this is the lazy-reconnect path.

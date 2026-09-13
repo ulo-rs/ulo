@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
-use ulo::AdapterResult;
+use ulo::spi::AdapterResult;
 
 use actix_web::body::BoxBody;
 use actix_web::dev::{
@@ -12,11 +12,11 @@ use actix_web::{
     HttpResponse as ActixHttpResponse, HttpServer, ResponseError, web, web::Bytes,
 };
 use futures_util::future::LocalBoxFuture;
-use ulo::{
-    AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
-    HttpRequest, HttpResponse, PathParams, RequestBody, RequestHandler,
+use ulo::http::{
+    Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod, HttpRequest, HttpResponse,
+    PathParams, RequestBody, RequestHandler,
 };
-
+use ulo::spi::{AdapterContext, BindTarget};
 pub struct ActixAdapter {
     routes: Vec<(HttpMethod, String, Arc<dyn RequestHandler>)>,
 }

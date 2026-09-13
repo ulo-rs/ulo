@@ -8,7 +8,8 @@
 use crate::common::TestServer;
 use serial_test::serial;
 use std::sync::atomic::{AtomicU32, Ordering};
-use ulo::{Body, controller, get, injectable, module, new, routes};
+use ulo::http::Body;
+use ulo::{controller, get, injectable, module, new, routes};
 use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]

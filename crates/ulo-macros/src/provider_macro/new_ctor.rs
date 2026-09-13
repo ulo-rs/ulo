@@ -63,7 +63,7 @@ pub fn handle_new(item: TokenStream) -> Result<TokenStream> {
         #[allow(unused_variables, non_snake_case)]
         fn __ulo_ctor_build<'a>(
             deps: &'a ::ulo::__construct::ResolvedDeps,
-            __exec_ctx: ::ulo::ProviderContext,
+            __exec_ctx: ::ulo::di::ProviderContext,
         ) -> ::std::option::Option<
             ::std::pin::Pin<Box<dyn ::std::future::Future<Output = Self> + Send + 'a>>
         > {
@@ -128,10 +128,10 @@ fn resolve_param(name: &Ident, ty: &Type, token: &TokenStream) -> TokenStream {
                     "Missing dependency '{}' for #[new] parameter '{}'",
                     __lookup_token, #name_str
                 ));
-            let __ctx = if matches!(__provider.scope(), ::ulo::ProviderScope::Request) {
+            let __ctx = if matches!(__provider.scope(), ::ulo::di::ProviderScope::Request) {
                 __exec_ctx.clone()
             } else {
-                ::ulo::ProviderContext::None
+                ::ulo::di::ProviderContext::None
             };
             let __any = __provider
                 .resolve(__ctx)

@@ -61,7 +61,7 @@
 //!
 //! ## Response bodies
 //!
-//! Ulo's [`Body::stream`](ulo::Body::stream) is forwarded
+//! Ulo's [`Body::stream`](ulo::http::Body::stream) is forwarded
 //! into a `poem::Body` via `BoxBody`, so chunks reach the client
 //! incrementally. SSE and other long-lived streaming responses work
 //! without buffering.
@@ -100,4 +100,6 @@ pub(crate) mod tokio_sender;
 pub use poem_adapter::PoemAdapter;
 pub use tokio_sender::TokioSender;
 
-pub use ulo::{HttpAdapter, WebSocketAdapter};
+pub use ulo::http::HttpAdapter;
+
+pub use ulo::ws::WebSocketAdapter;

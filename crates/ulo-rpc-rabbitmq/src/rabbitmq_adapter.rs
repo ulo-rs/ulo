@@ -1,16 +1,15 @@
 use std::sync::Arc;
 
+use crate::wire::{bytes_to_data, headers_to_metadata};
 use futures::{FutureExt, StreamExt};
 use lapin::options::{
     BasicAckOptions, BasicConsumeOptions, BasicPublishOptions, QueueDeclareOptions,
 };
 use lapin::types::FieldTable;
 use lapin::{BasicProperties, Channel, Connection};
-use ulo::AdapterResult;
-use ulo::{RpcAdapter, RpcCallInfo, RpcMessageCallbacks};
-
-use crate::wire::{bytes_to_data, headers_to_metadata};
 use ulo::rpc::wire::{frame_panic, frame_response};
+use ulo::rpc::{RpcAdapter, RpcCallInfo, RpcMessageCallbacks};
+use ulo::spi::AdapterResult;
 
 /// RabbitMQ (AMQP) transport adapter for the Ulo RPC gateway.
 ///
@@ -61,7 +60,7 @@ impl RpcAdapter for RabbitMqAdapter {
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::rpc::RpcLifecycleHandle> {
         let uri = self.uri.clone();
         let patterns = std::mem::take(&mut self.patterns);
         let callbacks = self
@@ -202,7 +201,7 @@ impl RpcAdapter for RabbitMqAdapter {
             let _ = conn.close(200, "shutdown".into()).await;
         });
 
-        Ok(ulo::RpcLifecycleHandle::new(
+        Ok(ulo::rpc::RpcLifecycleHandle::new(
             None,
             serve,
             move || async move {
@@ -290,7 +289,7 @@ async fn handle_delivery(
     };
 
     let response = match outcome {
-        Ok(Ok(ulo::RpcHandlerOutput::Stream(stream))) => {
+        Ok(Ok(ulo::rpc::RpcHandlerOutput::Stream(stream))) => {
             ulo::rpc::wire::drive_reply_stream(stream, |frame| {
                 let channel = channel.clone();
                 let reply_to = reply_to.clone();

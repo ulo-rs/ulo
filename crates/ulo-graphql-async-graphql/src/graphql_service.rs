@@ -5,9 +5,9 @@ use serde_json::Value;
 use std::any::Any;
 use std::sync::Arc;
 use ulo::di::ProviderContext;
+use ulo::di::ProviderScope;
+use ulo::http::RequestPart;
 use ulo::spi::Provider;
-use ulo::{ProviderScope, RequestPart};
-
 /// Injectable GraphQL service that executes GraphQL queries.
 ///
 /// This service is automatically provided by the `GraphQLModule` and can be

@@ -21,7 +21,7 @@ use crate::common::TestServer;
 /// Start an Axum-backed app with the supplied global WS error handlers wired
 /// before bootstrap.
 async fn start_ws_server_with_handlers(
-    module: impl ulo::ModuleMetadata + 'static,
+    module: impl ulo::di::ModuleMetadata + 'static,
     handlers: Vec<Arc<dyn ErrorHandler<WsContext, WsMessage>>>,
 ) -> u16 {
     use ulo::UloFactory;

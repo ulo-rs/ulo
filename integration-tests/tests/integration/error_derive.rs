@@ -3,7 +3,6 @@
 
 use std::fmt;
 use ulo::{Error, ErrorKind};
-
 #[derive(ulo::Error)]
 #[error_kind(NotFound)]
 struct StructTagged(String);

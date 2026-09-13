@@ -8,7 +8,6 @@
 //! Run with:  cargo run --example derive_injectable
 
 use ulo::{UloFactory, injectable, module, new};
-
 #[injectable]
 pub struct Config {
     #[default("production".to_string())]

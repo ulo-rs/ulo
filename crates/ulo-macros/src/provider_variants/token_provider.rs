@@ -98,13 +98,13 @@ pub fn handle_provider_token(input: TokenStream) -> Result<TokenStream> {
                         }
 
 
-                        fn scope(&self) -> ulo::ProviderScope {
+                        fn scope(&self) -> ulo::di::ProviderScope {
                             self.inner_provider.scope()
                         }
 
                         async fn resolve(
                             &self,
-                            ctx: ulo::ProviderContext,
+                            ctx: ulo::di::ProviderContext,
                         ) -> Box<dyn std::any::Any + Send> {
                             self.inner_provider.resolve(ctx).await
                         }

@@ -13,10 +13,10 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use ulo::Body;
+use ulo::extract::FromContext;
+use ulo::http::Body;
 use ulo::http::HttpContext;
-use ulo::{FromContext, controller, get, module, routes};
-
+use ulo::{controller, get, module, routes};
 /// ## 1. CurrentUser Extractor
 ///
 /// This is the most common custom decorator pattern - extracting the

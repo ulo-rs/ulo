@@ -3,15 +3,14 @@
 //! from contributing to the enhancer pipeline — a fresh instance is constructed
 //! per request using the DynGuardFactory / DynInterceptorFactory path.
 
-use ulo::HttpResponse;
 use ulo::async_trait;
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
 use ulo::http::HttpContext;
+use ulo::http::HttpResponse;
+use ulo::http::{Body, Request};
 use ulo::ws::WsContext;
 use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
-use ulo::{
-    Body, Request, controller, get, injectable, module, routes, use_guards, use_interceptors,
-};
+use ulo::{controller, get, injectable, module, routes, use_guards, use_interceptors};
 use ulo_macros::{new, subscriptions, websocket_gateway};
 
 use crate::common::TestServer;

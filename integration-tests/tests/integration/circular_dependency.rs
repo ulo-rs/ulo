@@ -6,7 +6,7 @@
 //! leaves the author to find the other half by hand.
 #![allow(dead_code)]
 
-use ulo::*;
+use ulo::prelude::*;
 
 // Global modules keep the import graph acyclic — both get ordered and reach the injector's
 // Phase-1 stall — while the providers still form a `ServiceA` <-> `ServiceB` cycle. `#[new]`

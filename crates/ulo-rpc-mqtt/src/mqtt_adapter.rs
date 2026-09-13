@@ -1,15 +1,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::wire::{bytes_to_data, user_properties_to_metadata};
 use futures::FutureExt;
 use rumqttc::v5::mqttbytes::QoS;
 use rumqttc::v5::mqttbytes::v5::{Packet, Publish, PublishProperties};
 use rumqttc::v5::{AsyncClient, Event, MqttOptions};
-use ulo::AdapterResult;
-use ulo::{RpcAdapter, RpcCallInfo, RpcMessageCallbacks};
-
-use crate::wire::{bytes_to_data, user_properties_to_metadata};
 use ulo::rpc::wire::{frame_panic, frame_response};
+use ulo::rpc::{RpcAdapter, RpcCallInfo, RpcMessageCallbacks};
+use ulo::spi::AdapterResult;
 
 /// MQTT v5 transport adapter for the Ulo RPC gateway.
 ///
@@ -54,7 +53,7 @@ impl RpcAdapter for MqttAdapter {
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::rpc::RpcLifecycleHandle> {
         let host = self.host.clone();
         let port = self.port;
         let patterns = std::mem::take(&mut self.patterns);
@@ -164,7 +163,7 @@ impl RpcAdapter for MqttAdapter {
             }
         });
 
-        Ok(ulo::RpcLifecycleHandle::new(
+        Ok(ulo::rpc::RpcLifecycleHandle::new(
             None,
             serve,
             move || async move {
@@ -207,7 +206,7 @@ async fn handle_publish(
     };
 
     let response = match outcome {
-        Ok(Ok(ulo::RpcHandlerOutput::Stream(stream))) => {
+        Ok(Ok(ulo::rpc::RpcHandlerOutput::Stream(stream))) => {
             ulo::rpc::wire::drive_reply_stream(stream, |frame| {
                 let client = client.clone();
                 let response_topic = response_topic.clone();

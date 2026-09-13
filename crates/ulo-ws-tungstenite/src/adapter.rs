@@ -5,14 +5,12 @@ use futures_util::{FutureExt, SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
-use ulo::AdapterResult;
-use ulo::RequestPart;
 use ulo::async_trait;
+use ulo::http::RequestPart;
+use ulo::spi::AdapterResult;
+use ulo::spi::BindTarget;
+use ulo::ws::{MessageCallbackResult, WebSocketAdapter, WsConnectionCallbacks, WsLifecycleHandle};
 use ulo::ws::{SendError, TrySendError, WsMessage, WsSink};
-use ulo::{
-    BindTarget, MessageCallbackResult, WebSocketAdapter, WsConnectionCallbacks, WsLifecycleHandle,
-};
-
 // ── TokioSender ───────────────────────────────────────────────────────────────
 
 struct TokioSender {

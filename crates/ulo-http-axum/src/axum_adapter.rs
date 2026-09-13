@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
-use ulo::AdapterResult;
+use ulo::spi::AdapterResult;
 
 use axum::{
     Router, ServiceExt as AxumServiceExt,
@@ -17,15 +17,16 @@ use futures_util::{FutureExt, SinkExt, StreamExt};
 use std::str::FromStr;
 use tower::ServiceExt as TowerServiceExt;
 
-use ulo::ws::{WsMessage, WsSink};
-use ulo::{
-    AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
-    HttpRequest, HttpResponse, MessageCallbackResult, PathParams, RequestBody, RequestHandler,
-    RequestPart, WebSocketAdapter, WsConnectionCallbacks, async_trait,
-};
-
 use crate::axum_websocket_adapter::{axum_to_ws_message, ws_message_to_axum};
 use crate::tokio_sender::TokioSender;
+use ulo::async_trait;
+use ulo::http::{
+    Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod, HttpRequest, HttpResponse,
+    PathParams, RequestBody, RequestHandler, RequestPart,
+};
+use ulo::spi::{AdapterContext, BindTarget};
+use ulo::ws::{MessageCallbackResult, WebSocketAdapter, WsConnectionCallbacks};
+use ulo::ws::{WsMessage, WsSink};
 
 #[derive(Clone)]
 pub struct AxumAdapter {
@@ -506,7 +507,7 @@ impl WebSocketAdapter for AxumAdapter {
     async fn into_lifecycle_handles(
         mut self: Box<Self>,
         targets: Vec<(u16, BindTarget)>,
-    ) -> AdapterResult<Vec<ulo::WsLifecycleHandle>> {
+    ) -> AdapterResult<Vec<ulo::ws::WsLifecycleHandle>> {
         let mut handles = Vec::with_capacity(targets.len());
         for (declared_port, target) in targets {
             let router = match self.ws_ports.remove(&declared_port) {
@@ -532,7 +533,7 @@ impl WebSocketAdapter for AxumAdapter {
                     .await
                     .ok();
             });
-            handles.push(ulo::WsLifecycleHandle::new(
+            handles.push(ulo::ws::WsLifecycleHandle::new(
                 local_addr,
                 serve,
                 move || async move {

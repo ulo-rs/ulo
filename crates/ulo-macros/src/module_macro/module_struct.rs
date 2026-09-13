@@ -244,14 +244,14 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         if let Some(method) = hooks.on_module_init {
             methods.push(quote! {
-                async fn on_module_init(&self) -> ::ulo::InitResult {
+                async fn on_module_init(&self) -> ::ulo::di::InitResult {
                     self.#method().await
                 }
             });
         }
         if let Some(method) = hooks.on_application_bootstrap {
             methods.push(quote! {
-                async fn on_application_bootstrap(&self) -> ::ulo::InitResult {
+                async fn on_application_bootstrap(&self) -> ::ulo::di::InitResult {
                     self.#method().await
                 }
             });
@@ -310,8 +310,8 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #[::ulo::async_trait(?Send)]
         impl ::ulo::di::ModuleMetadata for #input_ident {
-            fn identity(&self) -> ::ulo::ModuleIdentity {
-                ::ulo::ModuleIdentity::of_type::<Self>()
+            fn identity(&self) -> ::ulo::di::ModuleIdentity {
+                ::ulo::di::ModuleIdentity::of_type::<Self>()
             }
             fn is_global(&self) -> bool {
                 #is_global

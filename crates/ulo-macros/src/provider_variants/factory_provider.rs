@@ -185,11 +185,11 @@ fn generate_caching_provider(
         #[ulo::async_trait]
         impl<__T: #type_bounds> ulo::spi::Provider for #provider_name<__T> {
             fn token(&self) -> String { #token_expr }
-            fn scope(&self) -> ulo::ProviderScope { #scope_expr }
+            fn scope(&self) -> ulo::di::ProviderScope { #scope_expr }
 
             async fn resolve(
                 &self,
-                _ctx: ulo::ProviderContext,
+                _ctx: ulo::di::ProviderContext,
             ) -> Box<dyn std::any::Any + Send> {
                 #execute_body
             }
@@ -229,10 +229,10 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
     } = syn::parse2(input)?;
 
     let scope_expr = match scope.as_deref() {
-        Some("request") => quote! { ulo::ProviderScope::Request },
-        Some("singleton") => quote! { ulo::ProviderScope::Singleton },
-        Some("transient") => quote! { ulo::ProviderScope::Transient },
-        None => quote! { ulo::ProviderScope::Singleton },
+        Some("request") => quote! { ulo::di::ProviderScope::Request },
+        Some("singleton") => quote! { ulo::di::ProviderScope::Singleton },
+        Some("transient") => quote! { ulo::di::ProviderScope::Transient },
+        None => quote! { ulo::di::ProviderScope::Singleton },
         Some(other) => {
             return Err(syn::Error::new(
                 proc_macro2::Span::call_site(),
@@ -279,7 +279,7 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
                     let provider = _dependencies
                         .get(&#type_token)
                         .expect(&format!("Dependency not found: {}", #type_token));
-                    let instance = provider.resolve(ulo::ProviderContext::None).await;
+                    let instance = provider.resolve(ulo::di::ProviderContext::None).await;
                     *instance
                         .downcast::<#param_type>()
                         .expect(&format!("Failed to downcast {}", #type_token))
@@ -359,11 +359,11 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
                 #[ulo::async_trait]
                 impl ulo::spi::Provider for FactoryProviderWithDeps {
                     fn token(&self) -> String { #token_expr }
-                    fn scope(&self) -> ulo::ProviderScope { #scope_expr }
+                    fn scope(&self) -> ulo::di::ProviderScope { #scope_expr }
 
                     async fn resolve(
                         &self,
-                        _ctx: ulo::ProviderContext,
+                        _ctx: ulo::di::ProviderContext,
                     ) -> Box<dyn std::any::Any + Send> {
                         let _dependencies = &self.deps;
                         let factory = #factory_expr;
@@ -393,11 +393,11 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
                 #[ulo::async_trait]
                 impl ulo::spi::Provider for FactoryProviderWithDeps {
                     fn token(&self) -> String { #token_expr }
-                    fn scope(&self) -> ulo::ProviderScope { #scope_expr }
+                    fn scope(&self) -> ulo::di::ProviderScope { #scope_expr }
 
                     async fn resolve(
                         &self,
-                        _ctx: ulo::ProviderContext,
+                        _ctx: ulo::di::ProviderContext,
                     ) -> Box<dyn std::any::Any + Send> {
                         let _dependencies = &self.deps;
                         let factory = #factory_expr;

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use async_graphql::{ObjectType, Schema, SubscriptionType};
-use async_trait::async_trait;
-use ulo::spi::{Injectable, ProviderFactory, ProviderRole};
-use ulo::{FxHashMap, Gateway};
-
 use crate::subscription_context_builder::SubscriptionContextBuilder;
 use crate::subscription_gateway::GraphQLSubscriptionGateway;
+use async_graphql::{ObjectType, Schema, SubscriptionType};
+use async_trait::async_trait;
+use ulo::FxHashMap;
+use ulo::spi::{Injectable, ProviderFactory, ProviderRole};
+use ulo::ws::Gateway;
 
 pub struct GraphQLSubscriptionGatewayFactory<Q, M, S>
 where

@@ -33,7 +33,7 @@ struct User {
 #[injectable]
 pub struct _AuthService;
 impl _AuthService {
-    fn verify_token(&self, req: &ulo::RequestPart) -> Option<User> {
+    fn verify_token(&self, req: &ulo::http::RequestPart) -> Option<User> {
         // In a real app, verify JWT token from headers
         let auth_value = req
             .headers
@@ -97,7 +97,7 @@ pub struct _GraphQLContextBuilder {
 
 #[async_trait]
 impl ContextBuilder for _GraphQLContextBuilder {
-    async fn build(&self, req: &ulo::RequestPart) -> Data {
+    async fn build(&self, req: &ulo::http::RequestPart) -> Data {
         let mut data = Data::default();
 
         // Add HTTP request to context

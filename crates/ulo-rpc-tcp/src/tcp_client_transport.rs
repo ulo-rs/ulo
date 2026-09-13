@@ -7,10 +7,10 @@ use futures_util::SinkExt;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, mpsc, oneshot};
+use ulo::async_trait;
 use ulo::rpc::wire::{self, ReplyFrame};
 use ulo::rpc::{ReplySink, RpcReplyStream};
-use ulo::{RpcClientError, RpcClientTransport, RpcData, async_trait};
-
+use ulo::rpc::{RpcClientError, RpcClientTransport, RpcData};
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// One awaited call in the correlation map.
@@ -58,11 +58,11 @@ struct Inner {
 /// ```ignore
 /// provider_value!(
 ///     "ORDERS_CLIENT",
-///     ulo::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", 4000))
+///     ulo::rpc::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", 4000))
 /// )
 /// ```
 ///
-/// [`RpcClient`]: ulo::RpcClient
+/// [`RpcClient`]: ulo::rpc::RpcClient
 // Slot type shared between the public transport and the background reader
 // loop. The reader clears the slot on exit so the next caller rebuilds the
 // connection — this is the lazy-reconnect path.

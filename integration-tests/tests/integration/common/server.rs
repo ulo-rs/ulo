@@ -1,5 +1,5 @@
-use ulo::ModuleMetadata;
 use ulo::UloFactory;
+use ulo::di::ModuleMetadata;
 use ulo_http_axum::AxumAdapter;
 
 /// Install a tracing subscriber that reads `RUST_LOG` (e.g. `RUST_LOG=ulo=debug`).
@@ -35,7 +35,7 @@ impl TestServer {
     pub async fn start_adapter(
         factory: UloFactory,
         module: impl ModuleMetadata + 'static,
-        adapter: impl ulo::HttpAdapter + 'static,
+        adapter: impl ulo::http::HttpAdapter + 'static,
     ) -> Self {
         Self::start_target(factory, module, adapter, ("127.0.0.1", 0)).await
     }
@@ -45,8 +45,8 @@ impl TestServer {
     pub async fn start_target(
         factory: UloFactory,
         module: impl ModuleMetadata + 'static,
-        adapter: impl ulo::HttpAdapter + 'static,
-        target: impl Into<ulo::BindTarget>,
+        adapter: impl ulo::http::HttpAdapter + 'static,
+        target: impl Into<ulo::spi::BindTarget>,
     ) -> Self {
         init_tracing();
 

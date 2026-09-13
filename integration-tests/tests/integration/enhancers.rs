@@ -14,11 +14,11 @@ use ulo::di::MiddlewareConsumer;
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
 use ulo::http::HttpContext;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::http::{Body, HttpResponse};
 use ulo::{
-    Body, HttpResponse, controller, get, injectable, module, post, provider_factory,
-    provider_token, provider_value, routes, use_guards, use_interceptors,
+    controller, get, injectable, module, post, provider_factory, provider_token, provider_value,
+    routes, use_guards, use_interceptors,
 };
-
 pub struct OrderTrackerMiddleware {
     name: String,
     tracker: ExecutionOrder,

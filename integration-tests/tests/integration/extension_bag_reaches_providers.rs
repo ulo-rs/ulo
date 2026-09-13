@@ -8,8 +8,8 @@
 //! claim that still passes when scope is wrong, since a singleton returns
 //! whichever request populated it first.
 
-use ulo::{Body, Request, UloFactory, controller, get, injectable, module, new, routes};
-
+use ulo::http::{Body, Request};
+use ulo::{UloFactory, controller, get, injectable, module, new, routes};
 // ===== 1. Define types to store in extensions =====
 
 #[derive(Clone, Debug)]

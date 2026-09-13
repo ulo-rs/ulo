@@ -4,6 +4,7 @@
 //! than the only signature — those handlers still compile everywhere else in
 //! this suite, which is the compatibility half of the same change.
 
+use crate::common::TestServer;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio_tungstenite::tungstenite::Message;
@@ -16,9 +17,6 @@ use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
     injectable, module, new, subscribe_message, subscriptions, use_guards, websocket_gateway,
 };
-
-use crate::common::TestServer;
-
 #[derive(Deserialize)]
 pub struct PlaceOrder {
     item: String,

@@ -93,7 +93,7 @@ impl<S> Sse<S> {
 ///
 /// ```rust,ignore
 /// use futures::stream;
-/// use ulo::{sse, SseEvent};
+/// use ulo::http::{SseEvent, sse};
 ///
 /// #[get("/events")]
 /// async fn events(&self) -> impl IntoResponse {

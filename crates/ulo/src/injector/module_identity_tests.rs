@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::DynamicModule;
 use crate::FxHashMap;
+use crate::di::DynamicModule;
 use crate::di::{ModuleMetadata, ProviderContext};
 use crate::injector::{Container, InstanceLoader};
 use crate::scanner::DependencyScanner;
@@ -73,8 +73,8 @@ impl Root {
 
 #[async_trait(?Send)]
 impl ModuleMetadata for Root {
-    fn identity(&self) -> crate::ModuleIdentity {
-        crate::ModuleIdentity::named("test::Root")
+    fn identity(&self) -> crate::di::ModuleIdentity {
+        crate::di::ModuleIdentity::named("test::Root")
     }
     fn imports(&self) -> Option<Vec<Box<dyn ModuleMetadata>>> {
         self.imports.lock().take()

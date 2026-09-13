@@ -6,11 +6,10 @@
 
 use std::sync::Arc;
 
-use ulo::http::middleware::{AllowedOrigins, CorsMiddleware, CorsOptions};
-use ulo::{Body, UloFactory, controller, get, module, routes};
-
 use crate::common::TestServer;
-
+use ulo::http::Body;
+use ulo::http::middleware::{AllowedOrigins, CorsMiddleware, CorsOptions};
+use ulo::{UloFactory, controller, get, module, routes};
 #[controller("/")]
 pub struct DataController {}
 

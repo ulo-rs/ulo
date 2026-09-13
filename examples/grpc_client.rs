@@ -23,7 +23,8 @@
 
 use std::net::SocketAddr;
 
-use ulo::{Body, UloFactory, module, provider_factory};
+use ulo::http::Body;
+use ulo::{UloFactory, module, provider_factory};
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{controller, get, grpc_methods, new, routes};
 

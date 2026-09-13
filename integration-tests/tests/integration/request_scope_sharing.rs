@@ -7,13 +7,12 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::common::TestServer;
 use ulo::async_trait;
 use ulo::enhancer::Guard;
+use ulo::http::Body;
 use ulo::http::HttpContext;
-use ulo::{Body, controller, get, injectable, module, new, routes};
-
-use crate::common::TestServer;
-
+use ulo::{controller, get, injectable, module, new, routes};
 /// Bumped once per `RequestId` construction — the count under test.
 static BUILDS: AtomicU64 = AtomicU64::new(0);
 /// The id the guard was handed, read back by the assertions.

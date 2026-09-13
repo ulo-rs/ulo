@@ -8,14 +8,13 @@
 //! are covered, because they detect at different points: a singleton at
 //! construction, a request-scoped guard on each request.
 
+use crate::common::TestServer;
+use serial_test::serial;
 use ulo::async_trait;
 use ulo::enhancer::Guard;
 use ulo::http::HttpContext;
-use ulo::{Body, RequestPart, controller, get, injectable, module, routes, use_guards};
-
-use crate::common::TestServer;
-use serial_test::serial;
-
+use ulo::http::{Body, RequestPart};
+use ulo::{controller, get, injectable, module, routes, use_guards};
 #[injectable]
 pub struct AuthService {
     #[default(true)]

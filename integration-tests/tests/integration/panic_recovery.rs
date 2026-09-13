@@ -16,12 +16,14 @@ use std::sync::{
 };
 
 use ulo::{
-    Body, HttpResponse, UloFactory, async_trait, controller,
+    UloFactory, async_trait, controller,
     enhancer::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext},
     errors::{ErrorKind, PanicRecovered, PipelineSegment},
     get,
+    http::Body,
     http::HttpContext,
     http::HttpError,
+    http::HttpResponse,
     module, routes,
 };
 use ulo_http_axum::AxumAdapter;
@@ -52,7 +54,7 @@ macro_rules! recording_handler {
     };
 }
 
-async fn start_app(module: impl ulo::ModuleMetadata + 'static) -> std::net::SocketAddr {
+async fn start_app(module: impl ulo::di::ModuleMetadata + 'static) -> std::net::SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
 
     let local = tokio::task::LocalSet::new();

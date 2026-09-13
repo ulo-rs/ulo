@@ -6,11 +6,13 @@
 
 use std::collections::HashMap;
 
-use ulo::RequestPart;
 use ulo::UloFactory;
+use ulo::di::ProviderContext;
 use ulo::http::HttpContext;
+use ulo::http::RequestPart;
 use ulo::rpc::RpcContext;
-use ulo::{ProviderContext, RpcData, injectable, module, new};
+use ulo::rpc::RpcData;
+use ulo::{injectable, module, new};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -114,7 +116,7 @@ async fn without_an_execution_there_is_nothing_to_resolve_in() {
         .expect_err("`None` is the absence of an execution, not one to build in");
 
     match error {
-        ulo::ResolutionError::RequestScopeOutsideExecution { token } => assert!(
+        ulo::di::ResolutionError::RequestScopeOutsideExecution { token } => assert!(
             token.contains("Stamp"),
             "the refusal names the provider, got: {token}"
         ),

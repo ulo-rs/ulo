@@ -64,7 +64,7 @@ impl CheckedModule {
 }
 
 impl ModuleMetadata for CheckedModule {
-    fn identity(&self) -> crate::ModuleIdentity {
+    fn identity(&self) -> crate::di::ModuleIdentity {
         self.built.identity()
     }
 

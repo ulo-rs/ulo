@@ -5,11 +5,10 @@
 //! own route table (salvo, actix, rocket) must recognize a `{param}` segment
 //! when deciding 405 vs 404.
 
-use ulo::http::extract::Path;
-use ulo::{Body, UloFactory, controller, get, module, routes};
-
 use crate::common::TestServer;
-
+use ulo::http::Body;
+use ulo::http::extract::Path;
+use ulo::{UloFactory, controller, get, module, routes};
 #[controller("/users")]
 pub struct UsersController {}
 
@@ -24,7 +23,7 @@ impl UsersController {
 #[module(controllers: [UsersController])]
 impl ParamSyntaxModule {}
 
-async fn boot(adapter: impl ulo::HttpAdapter + 'static) -> TestServer {
+async fn boot(adapter: impl ulo::http::HttpAdapter + 'static) -> TestServer {
     TestServer::start_adapter(UloFactory::new(), ParamSyntaxModule, adapter).await
 }
 

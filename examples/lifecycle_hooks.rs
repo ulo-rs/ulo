@@ -19,7 +19,7 @@
 //!
 //! Run with: cargo run --example lifecycle_hooks
 
-use ulo::*;
+use ulo::prelude::*;
 use ulo_macros::{
     before_application_shutdown, injectable, module, new, on_application_bootstrap,
     on_application_shutdown, on_module_destroy, on_module_init,
@@ -47,7 +47,7 @@ impl DatabaseService {
     }
 
     #[on_module_init]
-    async fn connect(&self) -> ulo::InitResult {
+    async fn connect(&self) -> ulo::di::InitResult {
         println!(
             "DatabaseService::on_module_init() - Connecting to {}",
             self.name
@@ -58,7 +58,7 @@ impl DatabaseService {
     }
 
     #[on_application_bootstrap]
-    async fn on_ready(&self) -> ulo::InitResult {
+    async fn on_ready(&self) -> ulo::di::InitResult {
         println!("DatabaseService::on_application_bootstrap() - Ready to serve requests");
         Ok(())
     }
@@ -127,7 +127,7 @@ impl UserService {
     }
 
     #[on_module_init]
-    async fn warm_cache(&self) -> ulo::InitResult {
+    async fn warm_cache(&self) -> ulo::di::InitResult {
         println!("UserService::on_module_init() - Warming cache");
         Ok(())
     }
@@ -149,13 +149,13 @@ impl UserService {
 #[module(providers: [DatabaseService, LoggerService, UserService])]
 impl AppModule {
     #[on_module_init]
-    async fn on_module_init(&self) -> ulo::InitResult {
+    async fn on_module_init(&self) -> ulo::di::InitResult {
         println!("AppModule::on_module_init() - Module initializing");
         Ok(())
     }
 
     #[on_application_bootstrap]
-    async fn on_application_bootstrap(&self) -> ulo::InitResult {
+    async fn on_application_bootstrap(&self) -> ulo::di::InitResult {
         println!("AppModule::on_application_bootstrap() - Application bootstrapped");
         Ok(())
     }

@@ -12,16 +12,15 @@
 
 use std::sync::Arc;
 
+use crate::common::TestServer;
 use serde::Deserialize;
-use ulo::HttpResponse;
 use ulo::async_trait;
 use ulo::enhancer::{ChainError, ErrorHandler};
+use ulo::http::Body;
 use ulo::http::HttpContext;
+use ulo::http::HttpResponse;
 use ulo::http::extract::{Json, Query};
-use ulo::{Body, UloFactory, controller, get, module, post, routes};
-
-use crate::common::TestServer;
-
+use ulo::{UloFactory, controller, get, module, post, routes};
 #[derive(Deserialize)]
 pub struct NeedsName {
     #[allow(dead_code)]

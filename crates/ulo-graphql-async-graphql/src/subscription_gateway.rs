@@ -5,18 +5,16 @@ use std::sync::{Arc, Mutex};
 use futures::future::AbortHandle;
 use futures::stream::Abortable;
 
+use crate::subscription_context_builder::SubscriptionContextBuilder;
 use async_graphql::{ObjectType, Schema, SubscriptionType};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ulo::di::ProviderContext;
+use ulo::di::ProviderScope;
 use ulo::spi::Provider;
-use ulo::{
-    DisconnectReason, Gateway, ProviderScope, WsClient, WsError, WsHandlerOutput, WsMessage,
-    ws::WsContext,
-};
-
-use crate::subscription_context_builder::SubscriptionContextBuilder;
+use ulo::ws::WsContext;
+use ulo::ws::{DisconnectReason, Gateway, WsClient, WsError, WsHandlerOutput, WsMessage};
 
 // ---- graphql-ws protocol message types --------------------------------
 
@@ -149,7 +147,7 @@ where
     async fn handle_event(
         &self,
         ctx: &ulo::ws::WsContext,
-    ) -> ulo::spi::ExecutionResult<WsHandlerOutput, ulo::WsError> {
+    ) -> ulo::spi::ExecutionResult<WsHandlerOutput, ulo::ws::WsError> {
         let client = ctx.client().clone();
         let message = ctx.message().clone();
         let event = ctx.event().to_string();

@@ -8,9 +8,8 @@
 use crate::common::TestServer;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
-use ulo::{
-    Body, Request, controller, get, http::extract::Json, injectable, module, new, post, routes,
-};
+use ulo::http::{Body, Request};
+use ulo::{controller, get, http::extract::Json, injectable, module, new, post, routes};
 use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]

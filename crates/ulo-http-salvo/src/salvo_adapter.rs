@@ -4,7 +4,7 @@ use std::sync::Arc;
 use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
 use tokio::sync::watch;
-use ulo::AdapterResult;
+use ulo::spi::AdapterResult;
 
 use salvo::Router;
 use salvo::conn::tcp::TcpAcceptor;
@@ -13,15 +13,16 @@ use salvo::http::{Request as SalvoRequest, Response as SalvoResponse};
 use salvo::websocket::WebSocketUpgrade;
 use salvo::{Depot, FlowCtrl, Handler, Server, async_trait as salvo_async_trait};
 
-use ulo::ws::{WsMessage, WsSink};
-use ulo::{
-    AdapterContext, BindTarget, Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod,
-    HttpRequest, HttpResponse, MessageCallbackResult, PathParams, RequestBody, RequestHandler,
-    RequestPart, WebSocketAdapter, WsConnectionCallbacks, async_trait,
-};
-
 use crate::salvo_websocket_adapter::{salvo_to_ws_message, ws_message_to_salvo};
 use crate::tokio_sender::TokioSender;
+use ulo::async_trait;
+use ulo::http::{
+    Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod, HttpRequest, HttpResponse,
+    PathParams, RequestBody, RequestHandler, RequestPart,
+};
+use ulo::spi::{AdapterContext, BindTarget};
+use ulo::ws::{MessageCallbackResult, WebSocketAdapter, WsConnectionCallbacks};
+use ulo::ws::{WsMessage, WsSink};
 
 #[derive(Clone)]
 pub struct SalvoAdapter {
@@ -638,7 +639,7 @@ impl WebSocketAdapter for SalvoAdapter {
     async fn into_lifecycle_handles(
         mut self: Box<Self>,
         targets: Vec<(u16, BindTarget)>,
-    ) -> AdapterResult<Vec<ulo::WsLifecycleHandle>> {
+    ) -> AdapterResult<Vec<ulo::ws::WsLifecycleHandle>> {
         let mut handles = Vec::with_capacity(targets.len());
         for (declared_port, target) in targets {
             let routes = match self.ws_ports.remove(&declared_port) {
@@ -680,7 +681,7 @@ impl WebSocketAdapter for SalvoAdapter {
                 server.serve(router).await;
             });
 
-            handles.push(ulo::WsLifecycleHandle::new(
+            handles.push(ulo::ws::WsLifecycleHandle::new(
                 local_addr,
                 serve,
                 move || async move {

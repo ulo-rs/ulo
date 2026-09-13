@@ -1,7 +1,7 @@
 error[E0277]: `std::string::String` is not an extractor for `RpcContext`
-  --> tests/diagnostics/rpc_params_are_extractors.rs:14:44
+  --> tests/diagnostics/rpc_params_are_extractors.rs:13:44
    |
-14 |     async fn get(&self, _not_an_extractor: String, _c: &RpcContext) -> Result<RpcData, RpcError> {
+13 |     async fn get(&self, _not_an_extractor: String, _c: &RpcContext) -> Result<RpcData, RpcError> {
    |                                            ^^^^^^ cannot be extracted from this context
    |
    = help: the trait `FromContext<RpcContext>` is not implemented for `std::string::String`
@@ -16,9 +16,9 @@ help: the following other types implement trait `FromContext<C>`
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Payload<T>`
 
 error[E0277]: `std::string::String` is not an extractor for `RpcContext`
-  --> tests/diagnostics/rpc_params_are_extractors.rs:11:1
+  --> tests/diagnostics/rpc_params_are_extractors.rs:10:1
    |
-11 | #[patterns]
+10 | #[patterns]
    | ^^^^^^^^^^^ cannot be extracted from this context
    |
    = help: the trait `FromContext<RpcContext>` is not implemented for `std::string::String`

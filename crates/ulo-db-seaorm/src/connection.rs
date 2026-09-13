@@ -95,7 +95,7 @@ impl Provider for SeaOrmConnectionProvider {
         Box::new(db)
     }
 
-    async fn on_module_init(&self) -> ulo::InitResult {
+    async fn on_module_init(&self) -> ulo::di::InitResult {
         if let Some(message) = &self.init_error {
             return Err(message.clone().into());
         }

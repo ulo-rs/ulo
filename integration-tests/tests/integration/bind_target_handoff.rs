@@ -13,7 +13,8 @@ use std::net::TcpListener;
 use serial_test::serial;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use ulo::UloFactory;
-use ulo::{Body, controller, get, module, routes};
+use ulo::http::Body;
+use ulo::{controller, get, module, routes};
 use ulo_http_axum::AxumAdapter;
 
 #[controller("/generation")]

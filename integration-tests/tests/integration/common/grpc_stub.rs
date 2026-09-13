@@ -5,7 +5,6 @@
 //! that answer, once, rather than in every fixture.
 
 use ulo::{Error, ErrorKind};
-
 #[derive(Debug)]
 pub struct NotServed;
 

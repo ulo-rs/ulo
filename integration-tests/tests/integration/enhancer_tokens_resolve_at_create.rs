@@ -16,9 +16,9 @@ use ulo::enhancer::Guard;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
+use ulo::prelude::*;
 use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
-use ulo::*;
 use ulo_macros::{controller, grpc_methods, message_pattern, new, patterns, use_guards};
 
 mod orders_pb {

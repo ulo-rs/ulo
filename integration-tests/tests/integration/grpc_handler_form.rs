@@ -17,7 +17,8 @@ use ulo::extract::Payload as Aliased;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
-use ulo::{ErrorKind, GrpcCode, GrpcStatus, async_trait, injectable, module};
+use ulo::grpc::{GrpcCode, GrpcStatus};
+use ulo::{ErrorKind, async_trait, injectable, module};
 use ulo_grpc::GrpcRequest;
 use ulo_macros::{controller, grpc_methods, new, use_error_handlers, use_guards};
 

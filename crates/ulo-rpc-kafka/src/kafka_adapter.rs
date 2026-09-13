@@ -2,20 +2,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::wire::{
+    HEADER_CORRELATION_ID, HEADER_REPLY_TO, build_headers, bytes_to_data, header_str,
+    metadata_from_headers,
+};
 use futures::FutureExt;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::message::Message;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use rdkafka::util::Timeout;
-use ulo::AdapterResult;
-use ulo::{RpcAdapter, RpcCallInfo, RpcMessageCallbacks};
-
-use crate::wire::{
-    HEADER_CORRELATION_ID, HEADER_REPLY_TO, build_headers, bytes_to_data, header_str,
-    metadata_from_headers,
-};
 use ulo::rpc::wire::{frame_panic, frame_response};
+use ulo::rpc::{RpcAdapter, RpcCallInfo, RpcMessageCallbacks};
+use ulo::spi::AdapterResult;
 
 /// Apache Kafka transport adapter for the Ulo RPC gateway.
 ///
@@ -70,7 +69,7 @@ impl RpcAdapter for KafkaAdapter {
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::rpc::RpcLifecycleHandle> {
         let brokers = self.brokers.clone();
         let group_id = self.group_id.clone();
         let patterns = std::mem::take(&mut self.patterns);
@@ -216,7 +215,7 @@ impl RpcAdapter for KafkaAdapter {
             }
         });
 
-        Ok(ulo::RpcLifecycleHandle::new(
+        Ok(ulo::rpc::RpcLifecycleHandle::new(
             None,
             serve,
             move || async move {
@@ -264,7 +263,7 @@ async fn handle_message(
     };
 
     let response = match outcome {
-        Ok(Ok(ulo::RpcHandlerOutput::Stream(stream))) => {
+        Ok(Ok(ulo::rpc::RpcHandlerOutput::Stream(stream))) => {
             ulo::rpc::wire::drive_reply_stream(stream, |frame| {
                 let producer = producer.clone();
                 let reply_to = reply_to.clone();

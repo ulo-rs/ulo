@@ -2,7 +2,9 @@ use std::{any::Any, sync::Arc};
 
 use parking_lot::RwLock;
 
-use crate::{ProviderScope, async_trait, di::ProviderContext, spi::Provider};
+use crate::async_trait;
+use crate::di::{ProviderContext, ProviderScope};
+use crate::spi::Provider;
 
 use super::{ModuleRef, module_ref::ProviderStore};
 

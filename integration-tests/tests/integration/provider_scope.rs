@@ -5,7 +5,8 @@
 //! - Request: Same instance within one execution, fresh instance for the next
 //! - Transient: Fresh instance per injection point at construction time
 
-use ulo::{Body, controller, get, module, provider_factory, routes};
+use ulo::http::Body;
+use ulo::{controller, get, module, provider_factory, routes};
 use uuid::Uuid;
 
 use crate::common::TestServer;

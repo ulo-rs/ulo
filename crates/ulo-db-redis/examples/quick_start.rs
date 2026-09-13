@@ -12,7 +12,8 @@
 //!     curl http://127.0.0.1:3000/counter
 
 use redis::AsyncCommands;
-use ulo::{Body, UloFactory, controller, get, injectable, module, post, routes};
+use ulo::http::Body;
+use ulo::{UloFactory, controller, get, injectable, module, post, routes};
 use ulo_db_redis::{ConnectionManager, RedisModule};
 use ulo_http_axum::AxumAdapter;
 

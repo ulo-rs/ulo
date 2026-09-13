@@ -12,7 +12,10 @@ pub(crate) mod provider;
 
 pub use self::controller::{Controller, ControllerFactory, Dispatch};
 pub use self::execution_result::ExecutionResult;
+
 pub use self::provider::{Injectable, Provider, ProviderFactory, ProviderRole};
+pub use crate::adapter::{AdapterContext, BindTarget};
+pub use crate::error::AdapterResult;
 
 // The enhancer plumbing keeps an in-crate path; its public one is `__enhancer`, which is where a
 // macro expansion names it.

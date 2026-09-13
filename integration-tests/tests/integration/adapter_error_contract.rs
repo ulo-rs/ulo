@@ -9,11 +9,10 @@ use std::error::Error;
 use std::sync::Arc;
 
 use ulo::rpc::RpcContext;
+use ulo::rpc::{RpcAdapter, RpcLifecycleHandle, RpcMessageCallbacks};
 use ulo::rpc::{RpcData, RpcError};
-use ulo::{
-    AdapterResult, RpcAdapter, RpcLifecycleHandle, RpcMessageCallbacks, StartupError, UloFactory,
-    async_trait, module,
-};
+use ulo::spi::AdapterResult;
+use ulo::{StartupError, UloFactory, async_trait, module};
 use ulo_macros::{controller, message_pattern, new, patterns};
 
 /// The kind of error an adapter crate writes for itself, on std alone.

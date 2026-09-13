@@ -7,9 +7,10 @@
 // 4. Zero manual wiring - framework handles everything automatically
 
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
+use ulo::prelude::*;
 use ulo::ws::WsContext;
+use ulo::ws::WsHandlerResult;
 use ulo::ws::{BroadcastModule, BroadcastService};
-use ulo::*;
 use ulo_macros::{injectable, module, new, subscriptions, websocket_gateway};
 
 #[injectable]
@@ -63,12 +64,12 @@ impl ChatGateway {
     #[subscribe_message("message")]
     async fn handle_message(
         &self,
-        client: ulo::WsClient,
-        message: ulo::WsMessage,
-    ) -> ulo::WsHandlerResult {
+        client: ulo::ws::WsClient,
+        message: ulo::ws::WsMessage,
+    ) -> ulo::ws::WsHandlerResult {
         let text = message
             .as_text()
-            .ok_or_else(|| ulo::WsError::InvalidMessage("Expected text message".into()))?;
+            .ok_or_else(|| ulo::ws::WsError::InvalidMessage("Expected text message".into()))?;
 
         println!("[ChatGateway] Received from {}: {}", client.id, text);
 
@@ -78,16 +79,16 @@ impl ChatGateway {
             .send_event("message", &response)
             .await?;
 
-        Ok(ulo::WsHandlerOutput::Empty)
+        Ok(ulo::ws::WsHandlerOutput::Empty)
     }
 
     #[subscribe_message("ping")]
     async fn handle_ping(
         &self,
-        _client: ulo::WsClient,
-        _message: ulo::WsMessage,
-    ) -> ulo::WsHandlerResult {
-        Ok(ulo::WsMessage::text("pong").into())
+        _client: ulo::ws::WsClient,
+        _message: ulo::ws::WsMessage,
+    ) -> ulo::ws::WsHandlerResult {
+        Ok(ulo::ws::WsMessage::text("pong").into())
     }
 }
 

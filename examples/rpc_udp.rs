@@ -50,33 +50,33 @@ impl OrdersController {
     #[message_pattern("order.create")]
     async fn create_order(
         &self,
-        data: ulo::RpcData,
+        data: ulo::rpc::RpcData,
         _ctx: &ulo::rpc::RpcContext,
-    ) -> Result<ulo::RpcData, ulo::RpcError> {
+    ) -> Result<ulo::rpc::RpcData, ulo::rpc::RpcError> {
         let payload = data
             .as_json()
-            .ok_or_else(|| ulo::RpcError::Internal("expected JSON payload".into()))?;
+            .ok_or_else(|| ulo::rpc::RpcError::Internal("expected JSON payload".into()))?;
 
         let item = payload["item"].as_str().unwrap_or("unknown");
         let qty = payload["qty"].as_u64().unwrap_or(1) as u32;
 
         if qty == 0 {
-            return Err(ulo::RpcError::Internal("qty must be positive".into()));
+            return Err(ulo::rpc::RpcError::Internal("qty must be positive".into()));
         }
 
         let order = self.service.create_order(item, qty);
-        Ok(ulo::RpcData::json(order))
+        Ok(ulo::rpc::RpcData::json(order))
     }
 
     #[event_pattern("order.shipped")]
     async fn on_order_shipped(
         &self,
-        data: ulo::RpcData,
+        data: ulo::rpc::RpcData,
         _ctx: &ulo::rpc::RpcContext,
-    ) -> Result<(), ulo::RpcError> {
+    ) -> Result<(), ulo::rpc::RpcError> {
         let payload = data
             .as_json()
-            .ok_or_else(|| ulo::RpcError::Internal("expected JSON payload".into()))?;
+            .ok_or_else(|| ulo::rpc::RpcError::Internal("expected JSON payload".into()))?;
 
         let order_id = payload["order_id"].as_u64().unwrap_or(0);
         self.service.handle_shipment(order_id);

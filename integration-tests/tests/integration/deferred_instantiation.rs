@@ -9,7 +9,6 @@
 
 use ulo::UloFactory;
 use ulo::{injectable, module};
-
 #[injectable]
 pub struct SharedClock {
     #[default("tick".to_string())]

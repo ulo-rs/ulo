@@ -29,4 +29,4 @@ mod wire;
 
 pub use rabbitmq_adapter::RabbitMqAdapter;
 pub use rabbitmq_client_transport::RabbitMqClientTransport;
-pub use ulo::{RpcAdapter, RpcClient, RpcClientTransport};
+pub use ulo::rpc::{RpcAdapter, RpcClient, RpcClientTransport};

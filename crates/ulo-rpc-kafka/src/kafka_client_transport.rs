@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::wire::{HEADER_CORRELATION_ID, build_headers, header_str};
 use futures::SinkExt;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{Consumer, StreamConsumer};
@@ -10,11 +11,10 @@ use rdkafka::message::Message;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use rdkafka::util::Timeout;
 use tokio::sync::{OnceCell, mpsc, oneshot};
+use ulo::async_trait;
 use ulo::rpc::wire::{self, ReplyFrame};
 use ulo::rpc::{ReplySink, RpcReplyStream};
-use ulo::{RpcClientError, RpcClientTransport, RpcData, async_trait};
-
-use crate::wire::{HEADER_CORRELATION_ID, build_headers, header_str};
+use ulo::rpc::{RpcClientError, RpcClientTransport, RpcData};
 
 /// One awaited call in the correlation map.
 enum PendingSlot {
@@ -43,11 +43,11 @@ type Pending = Arc<Mutex<HashMap<String, PendingSlot>>>;
 /// ```ignore
 /// provider_value!(
 ///     "INVENTORY_CLIENT",
-///     ulo::RpcClient::new(ulo_rpc_kafka::KafkaClientTransport::new("127.0.0.1:9092"))
+///     ulo::rpc::RpcClient::new(ulo_rpc_kafka::KafkaClientTransport::new("127.0.0.1:9092"))
 /// )
 /// ```
 ///
-/// [`RpcClient`]: ulo::RpcClient
+/// [`RpcClient`]: ulo::rpc::RpcClient
 /// [`send`]: KafkaClientTransport::send
 pub struct KafkaClientTransport {
     brokers: String,

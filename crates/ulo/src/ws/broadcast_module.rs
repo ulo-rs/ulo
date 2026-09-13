@@ -27,8 +27,8 @@ impl BroadcastModule {
 }
 
 impl ModuleMetadata for BroadcastModule {
-    fn identity(&self) -> crate::ModuleIdentity {
-        crate::ModuleIdentity::named("UloBroadcastModule")
+    fn identity(&self) -> crate::di::ModuleIdentity {
+        crate::di::ModuleIdentity::named("UloBroadcastModule")
     }
 
     fn is_global(&self) -> bool {

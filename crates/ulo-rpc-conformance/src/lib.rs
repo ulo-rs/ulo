@@ -41,10 +41,11 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
+use ulo::UloFactory;
 use ulo::context::HandlerContext;
+use ulo::rpc::RpcClient;
 use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
-use ulo::{RpcClient, UloFactory};
 use ulo_macros::{controller, module, new, patterns};
 
 /// How long each phase may take. A Kafka broker boots slowly and assigns
@@ -79,9 +80,9 @@ impl Default for Budget {
 /// dropping it tears the broker down.
 pub trait Broker: Sized + 'static {
     /// The server-side adapter under test.
-    type Adapter: ulo::RpcAdapter;
+    type Adapter: ulo::rpc::RpcAdapter;
     /// The client-side transport under test.
-    type Transport: ulo::RpcClientTransport + 'static;
+    type Transport: ulo::rpc::RpcClientTransport + 'static;
 
     /// Start a broker nothing else is using. Called once per case, so state
     /// never leaks between them.

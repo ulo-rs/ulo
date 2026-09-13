@@ -27,9 +27,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use ulo::extract::Payload;
 use ulo::{
-    Body, RpcClient, UloFactory, controller, get,
+    UloFactory, controller, get,
+    http::Body,
     http::extract::{Json, Query},
     injectable, module, post, routes,
+    rpc::RpcClient,
 };
 use ulo_macros::{new, patterns, provider_value};
 
@@ -99,9 +101,9 @@ impl OrdersRpcController {
         &self,
         Payload(payload): Payload<CreateOrderDto>,
         _ctx: &ulo::rpc::RpcContext,
-    ) -> Result<OrderDto, ulo::RpcError> {
+    ) -> Result<OrderDto, ulo::rpc::RpcError> {
         if payload.qty == 0 {
-            return Err(ulo::RpcError::Internal("qty must be positive".into()));
+            return Err(ulo::rpc::RpcError::Internal("qty must be positive".into()));
         }
         Ok(self.service.create_order(&payload.item, payload.qty))
     }
@@ -111,7 +113,7 @@ impl OrdersRpcController {
         &self,
         Payload(payload): Payload<ShipOrderDto>,
         _ctx: &ulo::rpc::RpcContext,
-    ) -> Result<(), ulo::RpcError> {
+    ) -> Result<(), ulo::rpc::RpcError> {
         self.service.handle_shipment(payload.order_id);
         Ok(())
     }
@@ -171,7 +173,7 @@ impl OrdersHttpController {
     providers: [OrdersService, // Register the RpcClient under a named token so it can be injected.
         provider_value!(
             "ORDER_SERVICE_CLIENT",
-            ulo::RpcClient::new(ulo_rpc_nats::NatsClientTransport::new("nats://127.0.0.1:4222"))
+            ulo::rpc::RpcClient::new(ulo_rpc_nats::NatsClientTransport::new("nats://127.0.0.1:4222"))
         )],
     controllers: [OrdersHttpController, OrdersRpcController],
 )]

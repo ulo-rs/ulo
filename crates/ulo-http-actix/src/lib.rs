@@ -31,4 +31,4 @@ mod actix_adapter;
 
 pub use actix_adapter::ActixAdapter;
 
-pub use ulo::HttpAdapter;
+pub use ulo::http::HttpAdapter;

@@ -6,8 +6,8 @@
 //! macro emits. The parameter case is the one field injection cannot express.
 use crate::common::TestServer;
 use std::time::Duration;
-use ulo::{Body, controller, get, injectable, module, new, provide, routes};
-
+use ulo::http::Body;
+use ulo::{controller, get, injectable, module, new, provide, routes};
 #[tokio_localset_test::localset_test]
 async fn provider_constructor_patterns() {
     #[injectable]

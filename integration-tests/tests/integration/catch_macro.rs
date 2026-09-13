@@ -10,9 +10,10 @@
 
 use std::sync::Arc;
 
+use ulo::http::{Body, HttpResponse};
 use ulo::{
-    Body, Error, HttpResponse, UloFactory, async_trait, catch, controller, enhancer::Guard,
-    errors::GuardRejection, get, http::HttpContext, http::HttpError, module, routes,
+    Error, UloFactory, async_trait, catch, controller, enhancer::Guard, errors::GuardRejection,
+    get, http::HttpContext, http::HttpError, module, routes,
 };
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::use_guards;
@@ -66,7 +67,9 @@ impl Guard<HttpContext> for DenyGuard {
     }
 }
 
-async fn start_with_catchers(module: impl ulo::ModuleMetadata + 'static) -> std::net::SocketAddr {
+async fn start_with_catchers(
+    module: impl ulo::di::ModuleMetadata + 'static,
+) -> std::net::SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
 
     let local = tokio::task::LocalSet::new();

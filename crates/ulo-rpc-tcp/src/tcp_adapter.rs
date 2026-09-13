@@ -8,10 +8,11 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 use tracing::Instrument;
-use ulo::AdapterResult;
+use ulo::async_trait;
 use ulo::rpc::wire;
-use ulo::{BindTarget, RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks, async_trait};
-
+use ulo::rpc::{RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks};
+use ulo::spi::AdapterResult;
+use ulo::spi::BindTarget;
 const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// TCP transport adapter for the Ulo RPC gateway.
@@ -155,7 +156,7 @@ impl RpcAdapter for TcpAdapter {
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::rpc::RpcLifecycleHandle> {
         let callbacks = self
             .callbacks
             .take()
@@ -212,7 +213,7 @@ impl RpcAdapter for TcpAdapter {
         });
 
         let shutdown_tx = self.shutdown_tx.clone();
-        Ok(ulo::RpcLifecycleHandle::new(
+        Ok(ulo::rpc::RpcLifecycleHandle::new(
             local_addr,
             serve,
             move || async move {
@@ -410,7 +411,7 @@ async fn handle_connection(
                             tracing::error!("RPC handler panicked; returning error to caller");
                             write_frame(&writer, wire::frame_panic().into_json_value(), &id).await;
                         }
-                        Ok(Ok(ulo::RpcHandlerOutput::Stream(stream))) => {
+                        Ok(Ok(ulo::rpc::RpcHandlerOutput::Stream(stream))) => {
                             wire::drive_reply_stream(stream, |mut frame| {
                                 let writer = writer.clone();
                                 let id = id.clone();

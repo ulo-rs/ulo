@@ -93,7 +93,7 @@ impl Provider for RedisConnectionProvider {
         // ConnectionManager is Clone (Arc-backed); clones share the same underlying connection.
         Box::new(self.manager.clone().expect("redis connection unavailable"))
     }
-    async fn on_module_init(&self) -> ulo::InitResult {
+    async fn on_module_init(&self) -> ulo::di::InitResult {
         if let Some(message) = &self.init_error {
             return Err(message.clone().into());
         }

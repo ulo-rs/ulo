@@ -268,14 +268,14 @@ fn generate_lifecycle_direct_methods(hooks: &LifecycleHooks) -> TokenStream {
 
     if let Some(method) = &hooks.on_module_init {
         methods.push(quote! {
-            async fn on_module_init(&self) -> ::ulo::InitResult {
+            async fn on_module_init(&self) -> ::ulo::di::InitResult {
                 self.instance.#method().await
             }
         });
     }
     if let Some(method) = &hooks.on_application_bootstrap {
         methods.push(quote! {
-            async fn on_application_bootstrap(&self) -> ::ulo::InitResult {
+            async fn on_application_bootstrap(&self) -> ::ulo::di::InitResult {
                 self.instance.#method().await
             }
         });
@@ -317,11 +317,11 @@ fn generate_lifecycle_direct_methods(hooks: &LifecycleHooks) -> TokenStream {
 /// inherent method wins over the blanket when present.
 fn generate_bridge_lifecycle_methods(struct_name: &Ident) -> TokenStream {
     quote! {
-        async fn on_module_init(&self) -> ::ulo::InitResult {
+        async fn on_module_init(&self) -> ::ulo::di::InitResult {
             use ::ulo::__lifecycle::LifecycleBridge as _;
             #struct_name::__ulo_lc_on_init(&*self.instance).await
         }
-        async fn on_application_bootstrap(&self) -> ::ulo::InitResult {
+        async fn on_application_bootstrap(&self) -> ::ulo::di::InitResult {
             use ::ulo::__lifecycle::LifecycleBridge as _;
             #struct_name::__ulo_lc_on_bootstrap(&*self.instance).await
         }
@@ -361,7 +361,7 @@ fn generate_singleton_provider(
         impl ::ulo::spi::Provider for #provider_name {
             async fn resolve(
                 &self,
-                _ctx: ::ulo::ProviderContext,
+                _ctx: ::ulo::di::ProviderContext,
             ) -> Box<dyn ::std::any::Any + Send> {
                 Box::new((*self.instance).clone())
             }
@@ -371,8 +371,8 @@ fn generate_singleton_provider(
             }
 
 
-            fn scope(&self) -> ::ulo::ProviderScope {
-                ::ulo::ProviderScope::Singleton
+            fn scope(&self) -> ::ulo::di::ProviderScope {
+                ::ulo::di::ProviderScope::Singleton
             }
 
             #lifecycle_methods
@@ -509,7 +509,7 @@ fn generate_request_provider(
         impl ::ulo::spi::Provider for #provider_name {
             async fn resolve(
                 &self,
-                _ctx: ::ulo::ProviderContext,
+                _ctx: ::ulo::di::ProviderContext,
             ) -> Box<dyn ::std::any::Any + Send> {
                 #execute_body
             }
@@ -519,8 +519,8 @@ fn generate_request_provider(
             }
 
 
-            fn scope(&self) -> ::ulo::ProviderScope {
-                ::ulo::ProviderScope::Request
+            fn scope(&self) -> ::ulo::di::ProviderScope {
+                ::ulo::di::ProviderScope::Request
             }
         }
     }
@@ -583,11 +583,11 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
                 <#struct_name>::__ulo_dispatch(&self.source)
             }
 
-            async fn on_module_init(&self) -> ::ulo::InitResult {
+            async fn on_module_init(&self) -> ::ulo::di::InitResult {
                 #init_body
                 Ok(())
             }
-            async fn on_application_bootstrap(&self) -> ::ulo::InitResult {
+            async fn on_application_bootstrap(&self) -> ::ulo::di::InitResult {
                 #boot_body
                 Ok(())
             }
@@ -648,7 +648,7 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
                     ::ulo::__enhancer::DispatchSource::Singleton(::std::sync::Arc::new(
                         <#struct_name>::__ulo_build_from_deps(
                             &dependencies,
-                            ::ulo::ProviderContext::None,
+                            ::ulo::di::ProviderContext::None,
                         )
                         .await,
                     ))
@@ -687,7 +687,7 @@ pub(crate) fn generate_dispatch_provider(
         impl ::ulo::spi::Provider for #provider_name {
             async fn resolve(
                 &self,
-                _ctx: ::ulo::ProviderContext,
+                _ctx: ::ulo::di::ProviderContext,
             ) -> Box<dyn ::std::any::Any + Send> {
                 let __exec_ctx = _ctx;
                 if __exec_ctx.cache().is_none() {
@@ -728,8 +728,8 @@ pub(crate) fn generate_dispatch_provider(
                 ::ulo::di::token_of::<#struct_name>()
             }
 
-            fn scope(&self) -> ::ulo::ProviderScope {
-                ::ulo::ProviderScope::Request
+            fn scope(&self) -> ::ulo::di::ProviderScope {
+                ::ulo::di::ProviderScope::Request
             }
         }
     }
@@ -799,7 +799,7 @@ fn generate_transient_provider(
         impl ::ulo::spi::Provider for #provider_name {
             async fn resolve(
                 &self,
-                _ctx: ::ulo::ProviderContext,
+                _ctx: ::ulo::di::ProviderContext,
             ) -> Box<dyn ::std::any::Any + Send> {
                 // Build via the `#[new]` constructor when one exists, else by field injection.
                 // A transient is rebuilt at every injection point, so it is built inside
@@ -822,8 +822,8 @@ fn generate_transient_provider(
             }
 
 
-            fn scope(&self) -> ::ulo::ProviderScope {
-                ::ulo::ProviderScope::Transient
+            fn scope(&self) -> ::ulo::di::ProviderScope {
+                ::ulo::di::ProviderScope::Transient
             }
         }
     }
@@ -955,7 +955,7 @@ fn generate_field_resolutions(dependencies: &DependencyInfo) -> (Vec<TokenStream
                         __lookup_token, #field_name_str
                     ));
 
-                if matches!(provider.scope(), ::ulo::ProviderScope::Transient) {
+                if matches!(provider.scope(), ::ulo::di::ProviderScope::Transient) {
                     #(
                         #field_idents = {
                             let any_box = provider.resolve(__exec_ctx.clone()).await;
@@ -1027,7 +1027,7 @@ fn generate_factory_field_resolutions(
                         "Missing multi-provider '{}' for field '{}'",
                         __lookup_token, #field_name_str
                     ));
-                let any_box = provider.resolve(::ulo::ProviderContext::None).await;
+                let any_box = provider.resolve(::ulo::di::ProviderContext::None).await;
                 let erased_items = *any_box
                     .downcast::<Vec<::std::sync::Arc<dyn ::std::any::Any + Send + Sync>>>()
                     .unwrap_or_else(|_| panic!(
@@ -1080,7 +1080,7 @@ fn generate_factory_field_resolutions(
                             __lookup_token, #field_name_str
                         ));
 
-                    let any_box = provider.resolve(::ulo::ProviderContext::None).await;
+                    let any_box = provider.resolve(::ulo::di::ProviderContext::None).await;
 
                     *any_box.downcast::<#full_type>()
                         .unwrap_or_else(|_| panic!(
@@ -1120,10 +1120,10 @@ fn generate_factory_field_resolutions(
                         __lookup_token, #field_name_str
                     ));
 
-                if matches!(provider.scope(), ::ulo::ProviderScope::Transient) {
+                if matches!(provider.scope(), ::ulo::di::ProviderScope::Transient) {
                     #(
                         #field_idents = {
-                            let any_box = provider.resolve(::ulo::ProviderContext::None).await;
+                            let any_box = provider.resolve(::ulo::di::ProviderContext::None).await;
                             *any_box.downcast::<#full_type>()
                                 .unwrap_or_else(|_| panic!(
                                     "Failed to downcast '{}' to {}",
@@ -1134,7 +1134,7 @@ fn generate_factory_field_resolutions(
                     )*
                 } else {
                     let #temp_var: #full_type = {
-                        let any_box = provider.resolve(::ulo::ProviderContext::None).await;
+                        let any_box = provider.resolve(::ulo::di::ProviderContext::None).await;
                         *any_box.downcast::<#full_type>()
                             .unwrap_or_else(|_| panic!(
                                 "Failed to downcast '{}' to {}",
@@ -1278,7 +1278,7 @@ fn generate_singleton_factory(
                         let __lookup_token = #lookup_token_expr;
                         if let Some(provider) = dependencies.get(&__lookup_token) {
                             let dep_scope = provider.scope();
-                            if matches!(dep_scope, ::ulo::ProviderScope::Request) {
+                            if matches!(dep_scope, ::ulo::di::ProviderScope::Request) {
                                 panic!(
                                     "\n❌ Scope validation error in provider '{}':\n\
                                      \n\
@@ -1345,7 +1345,7 @@ fn generate_singleton_factory(
 
                 // Build via the `#[new]` constructor if one exists, else by field injection.
                 // Singletons are built at startup, outside any execution.
-                let __exec_ctx = ::ulo::ProviderContext::None;
+                let __exec_ctx = ::ulo::di::ProviderContext::None;
                 let instance = match <#struct_name>::__ulo_ctor_build(&dependencies, __exec_ctx.clone()) {
                     ::std::option::Option::Some(__fut) => ::std::sync::Arc::new(__fut.await),
                     ::std::option::Option::None => ::std::sync::Arc::new({
@@ -1395,7 +1395,7 @@ fn generate_request_factory(
     } else {
         quote! {
             let __has_request_deps = __deps.values().any(|inj|
-                matches!(inj.instance.scope(), ::ulo::ProviderScope::Request)
+                matches!(inj.instance.scope(), ::ulo::di::ProviderScope::Request)
             );
             let __all_deps = ::std::sync::Arc::new(
                 __deps.iter()
@@ -1475,7 +1475,7 @@ fn generate_transient_factory(
     let build_body = if has_enhancer_roles {
         quote! {
             let __has_request_deps = __deps.values().any(|inj|
-                matches!(inj.instance.scope(), ::ulo::ProviderScope::Request)
+                matches!(inj.instance.scope(), ::ulo::di::ProviderScope::Request)
             );
             let __all_deps = ::std::sync::Arc::new(
                 __deps.iter()
@@ -1563,10 +1563,10 @@ fn generate_create_field_resolutions(
                         "Missing multi-provider '{}' for field '{}'",
                         __lookup_token, #field_name_str
                     ));
-                let __ctx = if matches!(__provider.scope(), ::ulo::ProviderScope::Request) {
+                let __ctx = if matches!(__provider.scope(), ::ulo::di::ProviderScope::Request) {
                     __exec_ctx.clone()
                 } else {
-                    ::ulo::ProviderContext::None
+                    ::ulo::di::ProviderContext::None
                 };
                 let __any_box = __provider.resolve(__ctx).await;
                 let erased_items = *__any_box
@@ -1602,10 +1602,10 @@ fn generate_create_field_resolutions(
                         "Missing dependency '{}' for field '{}'",
                         __lookup_token, #field_name_str
                     ));
-                let __ctx = if matches!(__provider.scope(), ::ulo::ProviderScope::Request) {
+                let __ctx = if matches!(__provider.scope(), ::ulo::di::ProviderScope::Request) {
                     __exec_ctx.clone()
                 } else {
-                    ::ulo::ProviderContext::None
+                    ::ulo::di::ProviderContext::None
                 };
                 let __any_box = __provider.resolve(__ctx).await;
                 *__any_box.downcast::<#full_type>()
@@ -1708,7 +1708,7 @@ fn generate_dyn_factories(
         impl #builder_struct_name {
             async fn __build_instance<'a>(
                 &'a self,
-                __exec_ctx: ::ulo::ProviderContext,
+                __exec_ctx: ::ulo::di::ProviderContext,
             ) -> #struct_name {
                 // A `#[new]` constructor takes over construction; otherwise fall back to field
                 // injection. Both thread the execution so request-scoped sub-dependencies

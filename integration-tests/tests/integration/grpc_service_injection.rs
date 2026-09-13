@@ -10,7 +10,7 @@
 use futures_util::Stream;
 use ulo::extract::Payload;
 use ulo::grpc::extract::Inbound;
-use ulo::*;
+use ulo::prelude::*;
 use ulo_macros::{controller, grpc_methods, new};
 
 use crate::common::NotServed;
