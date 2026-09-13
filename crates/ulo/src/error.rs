@@ -7,7 +7,7 @@ use std::error::Error;
 /// at the scanner layer, where that information is in scope.
 pub type InitResult = Result<(), Box<dyn Error + Send + Sync + 'static>>;
 
-/// Return type for the transport adapter SPI — [`HttpAdapter`], [`WebSocketAdapter`],
+/// Return type for the transport adapter SPI — [`HttpAdapter`], [`WsAdapter`],
 /// [`RpcAdapter`] and [`GrpcAdapter`].
 ///
 /// Any error type implementing `std::error::Error + Send + Sync` can be returned with `?`, and
@@ -16,7 +16,7 @@ pub type InitResult = Result<(), Box<dyn Error + Send + Sync + 'static>>;
 /// holding it, and reads nothing else off the value.
 ///
 /// [`HttpAdapter`]: crate::http::HttpAdapter
-/// [`WebSocketAdapter`]: crate::ws::WebSocketAdapter
+/// [`WsAdapter`]: crate::ws::WsAdapter
 /// [`RpcAdapter`]: crate::rpc::RpcAdapter
 /// [`GrpcAdapter`]: crate::grpc::GrpcAdapter
 pub type AdapterResult<T = ()> = Result<T, Box<dyn Error + Send + Sync + 'static>>;

@@ -23,8 +23,8 @@ use crate::{
     router::RoutesResolver,
     rpc::{RpcAdapter, RpcCallInfo, RpcControllerWrapper, RpcData, RpcError, RpcMessageCallbacks},
     ws::{
-        BroadcastService, DisconnectReason, GatewayWrapper, MessageCallbackResult,
-        WebSocketAdapter, WsClientMap, WsConnectionCallbacks, WsError, WsHandlerOutput, WsMessage,
+        BroadcastService, DisconnectReason, GatewayWrapper, MessageCallbackResult, WsAdapter,
+        WsClientMap, WsConnectionCallbacks, WsError, WsHandlerOutput, WsMessage,
         helpers::create_client_from_parts,
     },
 };
@@ -164,7 +164,7 @@ pub struct UloApplication {
     routes_resolver: RoutesResolver,
     context: UloApplicationContext,
     ws_gateways: HashMap<String, Arc<GatewayWrapper>>,
-    ws_adapter: Option<Box<dyn WebSocketAdapter>>,
+    ws_adapter: Option<Box<dyn WsAdapter>>,
     /// Sockets supplied for separate-port gateways, keyed by the declared
     /// `port = N`. Drained in `bind()` as each unique port is handed to the
     /// adapter; whatever is left names a port no gateway declared.
@@ -235,10 +235,10 @@ impl UloApplication {
     /// Gateway discovery is deferred to `bind()` to allow adapter configuration beforehand.
     pub fn use_websocket_adapter<A>(&mut self, adapter: A) -> Result<&mut Self, StartupError>
     where
-        A: WebSocketAdapter,
+        A: WsAdapter,
     {
         self.require_state(AppState::Configuring, "use_websocket_adapter")?;
-        self.ws_adapter = Some(Box::new(adapter) as Box<dyn WebSocketAdapter>);
+        self.ws_adapter = Some(Box::new(adapter) as Box<dyn WsAdapter>);
         tracing::debug!("WebSocket adapter registered");
         Ok(self)
     }

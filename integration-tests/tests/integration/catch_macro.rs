@@ -21,7 +21,7 @@ use ulo_macros::use_guards;
 #[catch(GuardRejection)]
 async fn guard_catcher(err: &GuardRejection, _ctx: &HttpContext) -> HttpResponse {
     let mut resp = HttpResponse::new();
-    resp.status = ulo::http::http_status(err.kind());
+    resp.status = ulo::http::status_for(err.kind());
     resp.body = Some(Body::text(format!("catch:{}", err.message())));
     resp
 }

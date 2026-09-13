@@ -87,7 +87,7 @@ impl Error for PaymentDeclined {
 #[catch(PaymentDeclined)]
 async fn render_payment_declined(err: &PaymentDeclined, _ctx: &HttpContext) -> HttpResponse {
     HttpResponse::builder()
-        .status(ulo::http::http_status(err.kind()))
+        .status(ulo::http::status_for(err.kind()))
         .header("Retry-After", err.retry_after_secs.to_string())
         .json(json!({
             "type": "payment_declined",
@@ -160,7 +160,7 @@ impl Guard<HttpContext> for AuthGuard {
 #[catch(ulo::errors::GuardRejection)]
 async fn auth_failure(err: &ulo::errors::GuardRejection, _ctx: &HttpContext) -> HttpResponse {
     HttpResponse::builder()
-        .status(ulo::http::http_status(err.kind()))
+        .status(ulo::http::status_for(err.kind()))
         .json(json!({
             "error": "auth_required",
             "hint": "Send `x-auth-token: <token>`",

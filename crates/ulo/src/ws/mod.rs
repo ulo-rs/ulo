@@ -23,7 +23,7 @@ mod ws_handler_output;
 mod ws_message;
 
 pub use self::context::WsContext;
-pub use adapter::{MessageCallbackResult, WebSocketAdapter, WsConnectionCallbacks};
+pub use adapter::{MessageCallbackResult, WsAdapter, WsConnectionCallbacks};
 pub use broadcast::{
     BroadcastError, BroadcastService, BroadcastTarget, ClientId, RoomId, SendError, TrySendError,
     WsSink,

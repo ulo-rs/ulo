@@ -36,7 +36,7 @@ impl EchoController {
 #[module(controllers: [EchoController])]
 struct RpcModule;
 
-/// Declares its own port, so it needs a `WebSocketAdapter` rather than the HTTP listener.
+/// Declares its own port, so it needs a `WsAdapter` rather than the HTTP listener.
 #[websocket_gateway("/events", port = 19310)]
 pub struct EventsGateway {}
 

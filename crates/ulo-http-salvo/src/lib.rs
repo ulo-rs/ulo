@@ -6,7 +6,7 @@
 //! # ulo-http-salvo
 //!
 //! [Salvo](https://salvo.rs) adapter for the ulo framework. Implements both
-//! `HttpAdapter` and `WebSocketAdapter`, so a single adapter type covers HTTP
+//! `HttpAdapter` and `WsAdapter`, so a single adapter type covers HTTP
 //! routes, same-port WebSocket upgrades, and separate-port WebSocket servers.
 //!
 //! ## Usage
@@ -94,4 +94,4 @@ pub use tokio_sender::TokioSender;
 
 pub use ulo::http::HttpAdapter;
 
-pub use ulo::ws::WebSocketAdapter;
+pub use ulo::ws::WsAdapter;

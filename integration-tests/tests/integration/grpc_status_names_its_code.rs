@@ -1,6 +1,6 @@
 //! A handler names a gRPC code the kind table cannot reach.
 //!
-//! `grpc_code` maps eleven `ErrorKind`s onto the canonical codes.
+//! `code_for` maps eleven `ErrorKind`s onto the canonical codes.
 //! `FailedPrecondition` and `OutOfRange` are outside it, and reaching one used
 //! to mean registering a chain handler to claim the error and answer with the
 //! status. `GrpcStatus` is a `ulo::Error`, so a handler returns one directly.
