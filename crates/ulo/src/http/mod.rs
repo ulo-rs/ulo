@@ -20,11 +20,11 @@ pub use self::adapter::HttpAdapter;
 pub use self::body::{Body, BoxBody};
 pub use self::context::HttpContext;
 pub(crate) mod error;
-pub use self::error::{HttpError, http_reason, http_status};
+pub use self::error::{HttpError, reason_for, status_for};
 pub use self::lifecycle::HttpLifecycleHandle;
 pub use self::provider::{Request, RequestFactory};
 pub use self::request_handler::RequestHandler;
-pub use self::route::{ControllerEnhancers, Route};
+pub use self::route::{Route, RouteEnhancers};
 
 mod http_response;
 pub use self::http_response::{HttpResponse, HttpResponseBuilder};

@@ -7,7 +7,7 @@
 //! # ulo-http-poem
 //!
 //! [Poem](https://crates.io/crates/poem) adapter for the ulo framework.
-//! Implements both `HttpAdapter` and `WebSocketAdapter`, so a single adapter
+//! Implements both `HttpAdapter` and `WsAdapter`, so a single adapter
 //! type covers HTTP routes, same-port WebSocket upgrades, and separate-port
 //! WebSocket servers.
 //!
@@ -102,4 +102,4 @@ pub use tokio_sender::TokioSender;
 
 pub use ulo::http::HttpAdapter;
 
-pub use ulo::ws::WebSocketAdapter;
+pub use ulo::ws::WsAdapter;

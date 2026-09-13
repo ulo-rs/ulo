@@ -1,7 +1,7 @@
 //! The lifecycle handle for the WebSocket adapter.
 //!
 //! One handle per unique separate-port listener. A single adapter produces N handles inside
-//! `WebSocketAdapter::into_lifecycle_handles`; each handle gets a clone of the adapter's shutdown
+//! `WsAdapter::into_lifecycle_handles`; each handle gets a clone of the adapter's shutdown
 //! signal in its callback, so calling `shutdown` on any handle flips the watch and every port wakes
 //! up to drain. Idempotent by construction — `watch::Sender::send(true)` after the value is already
 //! `true` is a no-op.

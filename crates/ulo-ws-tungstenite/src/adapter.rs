@@ -9,7 +9,7 @@ use ulo::async_trait;
 use ulo::http::RequestPart;
 use ulo::spi::AdapterResult;
 use ulo::spi::BindTarget;
-use ulo::ws::{MessageCallbackResult, WebSocketAdapter, WsConnectionCallbacks, WsLifecycleHandle};
+use ulo::ws::{MessageCallbackResult, WsAdapter, WsConnectionCallbacks, WsLifecycleHandle};
 use ulo::ws::{SendError, TrySendError, WsMessage, WsSink};
 // ── TokioSender ───────────────────────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ impl Default for TungsteniteAdapter {
 }
 
 #[async_trait]
-impl WebSocketAdapter for TungsteniteAdapter {
+impl WsAdapter for TungsteniteAdapter {
     fn register_gateway(
         &mut self,
         port: u16,

@@ -5,7 +5,7 @@
 
 //! tokio-tungstenite adapter for standalone WebSocket deployment with the Ulo framework.
 //!
-//! Provides `TungsteniteAdapter`, which implements `WebSocketAdapter` for separate-port
+//! Provides `TungsteniteAdapter`, which implements `WsAdapter` for separate-port
 //! WebSocket servers — gateways that declare `port = N` in the `#[websocket_gateway]` macro
 //! are routed here instead of through the HTTP adapter.
 //!

@@ -7,7 +7,7 @@
 //!
 //! Axum adapter for the Ulo framework.
 //!
-//! This crate provides an implementation of Ulo's `HttpAdapter` and `WebSocketAdapter` traits
+//! This crate provides an implementation of Ulo's `HttpAdapter` and `WsAdapter` traits
 //! for the Axum web framework.
 //!
 //! ## Usage
@@ -37,4 +37,4 @@ pub use tokio_sender::TokioSender;
 
 pub use ulo::http::HttpAdapter;
 
-pub use ulo::ws::WebSocketAdapter;
+pub use ulo::ws::WsAdapter;

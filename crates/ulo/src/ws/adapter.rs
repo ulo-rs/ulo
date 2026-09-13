@@ -108,7 +108,7 @@ impl WsConnectionCallbacks {
 /// Same-port (HTTP upgrade) gateways are handled by
 /// [`HttpAdapter::register_ws_route`](crate::http::HttpAdapter::register_ws_route).
 #[async_trait]
-pub trait WebSocketAdapter: Send + Sync + 'static {
+pub trait WsAdapter: Send + Sync + 'static {
     /// Register a gateway path for `port`, storing `callbacks` for each
     /// incoming connection.
     ///

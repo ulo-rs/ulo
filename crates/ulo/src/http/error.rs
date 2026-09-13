@@ -32,7 +32,7 @@ use crate::http::{Body, HttpResponse, IntoResponse};
 
 /// HTTP status code for an [`ErrorKind`]. The HTTP transport owns this
 /// mapping — `ErrorKind` itself is transport-independent.
-pub fn http_status(kind: ErrorKind) -> u16 {
+pub fn status_for(kind: ErrorKind) -> u16 {
     match kind {
         ErrorKind::BadRequest => 400,
         ErrorKind::Unauthorized => 401,
@@ -49,7 +49,7 @@ pub fn http_status(kind: ErrorKind) -> u16 {
 }
 
 /// HTTP reason phrase for an [`ErrorKind`], used in the canonical envelope.
-pub fn http_reason(kind: ErrorKind) -> &'static str {
+pub fn reason_for(kind: ErrorKind) -> &'static str {
     match kind {
         ErrorKind::BadRequest => "Bad Request",
         ErrorKind::Unauthorized => "Unauthorized",
@@ -155,7 +155,7 @@ impl HttpError {
             Self::UnprocessableEntity(_) => 422,
             Self::InternalServerError(_) => 500,
             Self::Custom { status, .. } => *status,
-            Self::AppError(e) => http_status(e.kind()),
+            Self::AppError(e) => status_for(e.kind()),
         }
     }
 
@@ -185,7 +185,7 @@ impl HttpError {
             Self::UnprocessableEntity(_) => "Unprocessable Entity",
             Self::InternalServerError(_) => "Internal Server Error",
             Self::Custom { .. } => "Error",
-            Self::AppError(e) => http_reason(e.kind()),
+            Self::AppError(e) => reason_for(e.kind()),
         }
     }
 
@@ -217,9 +217,9 @@ impl HttpError {
 pub(crate) fn render_error(err: &dyn Error) -> HttpResponse {
     let kind = err.kind();
     let mut body = json!({
-        "statusCode": http_status(kind),
+        "statusCode": status_for(kind),
         "message": err.message(),
-        "error": http_reason(kind),
+        "error": reason_for(kind),
     });
     if let Some(details) = err.details()
         && let Value::Object(map) = &mut body
@@ -227,7 +227,7 @@ pub(crate) fn render_error(err: &dyn Error) -> HttpResponse {
         map.insert("details".to_string(), details);
     }
     HttpResponse {
-        status: http_status(kind),
+        status: status_for(kind),
         body: Some(Body::json(body)),
         headers: vec![],
     }

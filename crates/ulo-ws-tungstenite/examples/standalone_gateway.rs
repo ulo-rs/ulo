@@ -1,6 +1,6 @@
 //! A WebSocket server with no HTTP server beside it.
 //!
-//! `TungsteniteAdapter` implements `WebSocketAdapter` and nothing else: it
+//! `TungsteniteAdapter` implements `WsAdapter` and nothing else: it
 //! serves raw TCP, so a gateway reaches clients without an HTTP adapter being
 //! registered at all. That is the case the same-port adapters cannot cover —
 //! axum, poem and salvo carry WebSocket over their own HTTP router, and

@@ -13,14 +13,17 @@ use crate::enhancer::{Guard, Interceptor};
 use crate::http::{HttpContext, HttpError, HttpMethod, HttpResponse};
 use crate::spi::{ExecutionResult, HttpErrorHandlerArc};
 
-/// Per-route enhancer manifest — both DI-resolved tokens and direct-instantiation arcs.
+/// What one route declares. A `#[controller]` yields one [`Route`] per handler method, so this is
+/// the whole manifest for that method — what the other transports split across a target-level
+/// descriptor and a per-handler one.
 ///
-/// `*_tokens` come from `#[use_guards(MyGuard)]`-style attributes that resolve via
-/// the DI container; `guards` / `interceptors` / `error_handlers` come
-/// from `#[use_guards(MyGuard{})]`-style attributes that bypass DI and instantiate
-/// the enhancer inline.
+/// Each role arrives two ways. `*_tokens` come from `#[use_guards(MyGuard)]` and resolve against
+/// the DI container, so the enhancer may hold injected dependencies. `guards` / `interceptors` /
+/// `error_handlers` come from `#[use_guards(MyGuard{})]`, which builds the value at the
+/// declaration site and never consults the container. The resolver runs the DI-resolved ones
+/// first.
 #[derive(Default)]
-pub struct ControllerEnhancers {
+pub struct RouteEnhancers {
     pub guard_tokens: Vec<String>,
     pub interceptor_tokens: Vec<String>,
     pub error_handler_tokens: Vec<String>,
@@ -48,8 +51,8 @@ pub trait Route: Send + Sync {
     fn path(&self) -> String;
     fn method(&self) -> HttpMethod;
 
-    fn enhancers(&self) -> ControllerEnhancers {
-        ControllerEnhancers::default()
+    fn enhancers(&self) -> RouteEnhancers {
+        RouteEnhancers::default()
     }
 
     /// What this route declares — roles, permissions, anything a guard or interceptor reads

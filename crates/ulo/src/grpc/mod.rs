@@ -20,4 +20,4 @@ pub use runtime::{GrpcFailure, RequestCarrier, RequestError};
 pub use service_source::{
     GrpcEnhancers, GrpcHandlerEnhancers, GrpcServiceSource, ResolvedGrpcEnhancers,
 };
-pub use status::{GrpcCode, GrpcHandlerResult, GrpcStatus, error_kind, grpc_code};
+pub use status::{GrpcCode, GrpcHandlerResult, GrpcStatus, code_for, kind_for};

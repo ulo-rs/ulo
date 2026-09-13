@@ -19,7 +19,7 @@ use crate::ws::WsContext;
 #[non_exhaustive]
 pub enum ProviderContext {
     Http(HttpContext),
-    WebSocket(WsContext),
+    Ws(WsContext),
     Rpc(RpcContext),
     Grpc(GrpcContext),
     /// An execution with no transport behind it — a CLI command, a job, a test.
@@ -46,7 +46,7 @@ impl ProviderContext {
         use crate::context::HandlerContext;
         match self {
             Self::Http(c) => Some(c.cache()),
-            Self::WebSocket(c) => Some(c.cache()),
+            Self::Ws(c) => Some(c.cache()),
             Self::Rpc(c) => Some(c.cache()),
             Self::Grpc(c) => Some(c.cache()),
             Self::Standalone(c) => Some(c.cache()),
@@ -59,7 +59,7 @@ impl ProviderContext {
         use crate::context::HandlerContext;
         match self {
             Self::Http(c) => Some(c.extensions().clone()),
-            Self::WebSocket(c) => Some(c.extensions().clone()),
+            Self::Ws(c) => Some(c.extensions().clone()),
             Self::Rpc(c) => Some(c.extensions().clone()),
             Self::Grpc(c) => Some(c.extensions().clone()),
             Self::Standalone(c) => Some(c.extensions().clone()),
@@ -106,7 +106,7 @@ impl From<HttpContext> for ProviderContext {
 
 impl From<WsContext> for ProviderContext {
     fn from(ctx: WsContext) -> Self {
-        Self::WebSocket(ctx)
+        Self::Ws(ctx)
     }
 }
 

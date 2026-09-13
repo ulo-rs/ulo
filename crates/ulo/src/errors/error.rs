@@ -39,7 +39,7 @@ use serde_json::Value;
 /// Coarse classification of error semantics, transport-independent.
 ///
 /// Each transport's rendering layer maps a kind to its own wire form
-/// (HTTP status codes via [`http_status`](crate::http::http_status),
+/// (HTTP status codes via [`status_for`](crate::http::status_for),
 /// RPC/WS status strings via [`name`](Self::name)). The kind layer means
 /// a single [`Error`] impl produces the right shape on every transport
 /// without per-transport conversion code on the error type itself.

@@ -129,14 +129,14 @@ impl std::fmt::Display for GrpcStatus {
 impl std::error::Error for GrpcStatus {}
 
 /// The gRPC code for an [`ErrorKind`], the way
-/// [`http_status`](crate::http::http_status) gives its HTTP status.
+/// [`status_for`](crate::http::status_for) gives its HTTP status.
 ///
 /// Follows the canonical HTTP-to-gRPC table, so a `NotFound` is `NOT_FOUND`
 /// on the wire and a caller's generated client sees what it expects.
 /// `Conflict` maps to `Aborted`, the table's answer for 409; a service that
 /// means "this already exists" rather than "the state moved under you" says
 /// `GrpcCode::AlreadyExists` itself.
-pub fn grpc_code(kind: ErrorKind) -> GrpcCode {
+pub fn code_for(kind: ErrorKind) -> GrpcCode {
     match kind {
         ErrorKind::BadRequest => GrpcCode::InvalidArgument,
         ErrorKind::Unauthorized => GrpcCode::Unauthenticated,
@@ -154,18 +154,18 @@ pub fn grpc_code(kind: ErrorKind) -> GrpcCode {
 
 impl From<ErrorKind> for GrpcCode {
     fn from(kind: ErrorKind) -> Self {
-        grpc_code(kind)
+        code_for(kind)
     }
 }
 
-/// The [`ErrorKind`] a gRPC code stands for, the inverse of [`grpc_code`] where
+/// The [`ErrorKind`] a gRPC code stands for, the inverse of [`code_for`] where
 /// the table has an answer.
 ///
 /// Five codes are outside it — `FailedPrecondition`, `OutOfRange`,
 /// `AlreadyExists`, `DataLoss`, `Cancelled` — and answer `Internal`, which is
 /// what a `GrpcStatus` renders as on a transport that reads kinds rather than
 /// codes.
-pub fn error_kind(code: GrpcCode) -> ErrorKind {
+pub fn kind_for(code: GrpcCode) -> ErrorKind {
     match code {
         GrpcCode::InvalidArgument => ErrorKind::BadRequest,
         GrpcCode::Unauthenticated => ErrorKind::Unauthorized,
@@ -184,7 +184,7 @@ pub fn error_kind(code: GrpcCode) -> ErrorKind {
 /// code no [`ErrorKind`] reaches.
 impl Error for GrpcStatus {
     fn kind(&self) -> ErrorKind {
-        error_kind(self.code)
+        kind_for(self.code)
     }
 
     fn message(&self) -> std::borrow::Cow<'_, str> {
@@ -202,7 +202,7 @@ impl GrpcStatus {
             return status.clone();
         }
         Self {
-            code: grpc_code(error.kind()),
+            code: code_for(error.kind()),
             message: error.message().into_owned(),
             source: Some(Arc::new(error)),
         }
@@ -214,7 +214,7 @@ impl GrpcStatus {
     /// this is what the framework calls where it holds an error it cannot take.
     pub fn from_error(error: &(dyn Error + Send + Sync)) -> Self {
         Self {
-            code: grpc_code(error.kind()),
+            code: code_for(error.kind()),
             message: error.message().into_owned(),
             source: None,
         }
@@ -304,15 +304,11 @@ mod tests {
             ErrorKind::Unimplemented,
             ErrorKind::Internal,
         ] {
-            assert_eq!(
-                error_kind(grpc_code(kind)),
-                kind,
-                "{kind:?} did not survive"
-            );
+            assert_eq!(kind_for(code_for(kind)), kind, "{kind:?} did not survive");
         }
         // The two kinds that share `InvalidArgument` cannot both come back.
         assert_eq!(
-            error_kind(grpc_code(ErrorKind::UnprocessableEntity)),
+            kind_for(code_for(ErrorKind::UnprocessableEntity)),
             ErrorKind::BadRequest
         );
     }
@@ -326,7 +322,7 @@ mod tests {
             GrpcCode::DataLoss,
             GrpcCode::Cancelled,
         ] {
-            assert_eq!(error_kind(code), ErrorKind::Internal, "{code:?}");
+            assert_eq!(kind_for(code), ErrorKind::Internal, "{code:?}");
         }
     }
 
@@ -346,7 +342,7 @@ mod tests {
             (ErrorKind::Internal, GrpcCode::Internal),
         ];
         for (kind, code) in table {
-            assert_eq!(grpc_code(kind), code, "kind {kind:?}");
+            assert_eq!(code_for(kind), code, "kind {kind:?}");
         }
     }
 

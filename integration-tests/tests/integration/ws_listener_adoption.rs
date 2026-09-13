@@ -41,7 +41,7 @@ impl AdoptedGateway {
 #[module(providers: [AdoptedGateway])]
 struct AdoptedModule;
 
-async fn case_serves_on_caller_socket(adapter: impl ulo::ws::WebSocketAdapter) {
+async fn case_serves_on_caller_socket(adapter: impl ulo::ws::WsAdapter) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let expected = listener.local_addr().unwrap();
 

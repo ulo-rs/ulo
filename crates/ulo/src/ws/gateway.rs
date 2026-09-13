@@ -67,7 +67,7 @@ pub trait Gateway: Send + Sync {
     ///
     /// `None` (default) means same port as the HTTP server.
     /// `Some(port)` triggers a separate WebSocket server on that port — requires a
-    /// `WebSocketAdapter` to be registered via `UloApplication::use_websocket_adapter()`.
+    /// `WsAdapter` to be registered via `UloApplication::use_websocket_adapter()`.
     fn port(&self) -> Option<u16> {
         None
     }

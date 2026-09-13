@@ -65,9 +65,9 @@
 //! Same-port upgrades go through `rocket_ws::WebSocket`. Routes registered
 //! via `register_ws_route` are mounted as `GET` (matching RFC 6455) and the upgrade
 //! is performed inside the handler. The adapter does not implement
-//! `WebSocketAdapter`, so `#[websocket_gateway(port = N)]` gateways will
+//! `WsAdapter`, so `#[websocket_gateway(port = N)]` gateways will
 //! fail registration — pair ulo-http-rocket with `ulo-ws-tungstenite` (or
-//! another `WebSocketAdapter`) for separate-port WS.
+//! another `WsAdapter`) for separate-port WS.
 //!
 //! ## Graceful shutdown
 //!

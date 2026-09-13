@@ -436,8 +436,8 @@ fn enhancers_method(enhancer_infos: &HashMap<String, Vec<EnhancerInfo>>) -> Toke
         enhancer_vecs(enhancer_infos, "error_handlers");
 
     quote! {
-        fn enhancers(&self) -> ::ulo::http::ControllerEnhancers {
-            ::ulo::http::ControllerEnhancers {
+        fn enhancers(&self) -> ::ulo::http::RouteEnhancers {
+            ::ulo::http::RouteEnhancers {
                 guard_tokens: vec![#(#guard_tokens),*],
                 interceptor_tokens: vec![#(#interceptor_tokens),*],
                 error_handler_tokens: vec![#(#error_handler_tokens),*],

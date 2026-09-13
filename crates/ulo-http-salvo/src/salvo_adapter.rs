@@ -21,7 +21,7 @@ use ulo::http::{
     PathParams, RequestBody, RequestHandler, RequestPart,
 };
 use ulo::spi::{AdapterContext, BindTarget};
-use ulo::ws::{MessageCallbackResult, WebSocketAdapter, WsConnectionCallbacks};
+use ulo::ws::{MessageCallbackResult, WsAdapter, WsConnectionCallbacks};
 use ulo::ws::{WsMessage, WsSink};
 
 #[derive(Clone)]
@@ -622,7 +622,7 @@ impl HttpAdapter for SalvoAdapter {
 }
 
 #[async_trait]
-impl WebSocketAdapter for SalvoAdapter {
+impl WsAdapter for SalvoAdapter {
     fn register_gateway(
         &mut self,
         port: u16,
