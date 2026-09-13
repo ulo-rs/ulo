@@ -1,4 +1,5 @@
 use super::app_service::AppService;
+use ulo::http::Body;
 use ulo::prelude::*;
 
 #[controller("/app")]

@@ -85,8 +85,6 @@ pub use errors::{Error, ErrorKind};
 pub use factory::UloFactory;
 pub use startup_check::StartupCheck;
 
-#[cfg(feature = "tower-compat")]
-
 /// What an application writes whatever it serves.
 ///
 /// `use ulo::prelude::*` brings the bootstrap, the macros, the DI vocabulary, the enhancer traits
