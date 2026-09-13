@@ -55,7 +55,7 @@ use quote::{format_ident, quote};
 use syn::{ItemImpl, Path, Result, Token, parse2};
 
 use crate::enhancer::enhancer::{
-    create_enhancer_infos, get_enhancers_attr, has_enhancer_attribute,
+    create_enhancer_infos, enhancer_vecs, get_enhancers_attr, has_enhancer_attribute,
 };
 use crate::shared::attr_is;
 use crate::shared::set_metadata::{merged_metadata_exprs, metadata_ctor};
@@ -193,40 +193,42 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
     let wrapper_ident = format_ident!("__{}Enhanced", self_ident);
     let source_ident = grpc_source_ident(&self_ident);
 
+    /// One method's enhancer declarations, both ways in: `*_tokens` resolve against the DI container,
+    /// the rest are values built at the declaration site.
+    struct HandlerEnhancers {
+        method: String,
+        guard_tokens: Vec<TokenStream>,
+        interceptor_tokens: Vec<TokenStream>,
+        error_handler_tokens: Vec<TokenStream>,
+        guards: Vec<TokenStream>,
+        interceptors: Vec<TokenStream>,
+        error_handlers: Vec<TokenStream>,
+    }
+
+    impl HandlerEnhancers {
+        /// A method carrying an enhancer attribute that named nothing this generator reads.
+        fn is_empty(&self) -> bool {
+            self.guard_tokens.is_empty()
+                && self.interceptor_tokens.is_empty()
+                && self.error_handler_tokens.is_empty()
+                && self.guards.is_empty()
+                && self.interceptors.is_empty()
+                && self.error_handlers.is_empty()
+        }
+    }
+
     // ── parse enhancer attrs (block-level + per-method) ─────────────────────
     let ctrl_enhancers_attr = get_enhancers_attr(&impl_block.attrs)?;
     let ctrl_enhancer_infos = create_enhancer_infos(ctrl_enhancers_attr, Vec::new())?;
-    let empty_vec = Vec::new();
-    let ctrl_guard_tokens: Vec<_> = ctrl_enhancer_infos
-        .get("guards")
-        .unwrap_or(&empty_vec)
-        .iter()
-        .filter(|i| !i.token_expr.is_empty())
-        .map(|i| &i.token_expr)
-        .collect();
-    let ctrl_interceptor_tokens: Vec<_> = ctrl_enhancer_infos
-        .get("interceptors")
-        .unwrap_or(&empty_vec)
-        .iter()
-        .filter(|i| !i.token_expr.is_empty())
-        .map(|i| &i.token_expr)
-        .collect();
-    let ctrl_error_handler_tokens: Vec<_> = ctrl_enhancer_infos
-        .get("error_handlers")
-        .unwrap_or(&empty_vec)
-        .iter()
-        .filter(|i| !i.token_expr.is_empty())
-        .map(|i| &i.token_expr)
-        .collect();
+    let (ctrl_guard_tokens, ctrl_guard_instances) = enhancer_vecs(&ctrl_enhancer_infos, "guards");
+    let (ctrl_interceptor_tokens, ctrl_interceptor_instances) =
+        enhancer_vecs(&ctrl_enhancer_infos, "interceptors");
+    let (ctrl_error_handler_tokens, ctrl_error_handler_instances) =
+        enhancer_vecs(&ctrl_enhancer_infos, "error_handlers");
 
     // One entry per method that carries any per-method enhancer attribute; each becomes a
     // `GrpcHandlerEnhancers` in the descriptor, keyed by the method's Rust name.
-    let mut handler_enhancer_entries: Vec<(
-        String,
-        Vec<TokenStream>,
-        Vec<TokenStream>,
-        Vec<TokenStream>,
-    )> = Vec::new();
+    let mut handler_enhancer_entries: Vec<HandlerEnhancers> = Vec::new();
     let mut method_idents: Vec<&syn::Ident> = Vec::new();
     let mut method_sigs_for_wrapper: Vec<&syn::ImplItemFn> = Vec::new();
     let mut assoc_types: Vec<&syn::ImplItemType> = Vec::new();
@@ -241,35 +243,21 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
                 let method_attr = get_enhancers_attr(&method.attrs)?;
                 if !method_attr.is_empty() {
                     let infos = create_enhancer_infos(method_attr, Vec::new())?;
-                    let guards: Vec<TokenStream> = infos
-                        .get("guards")
-                        .unwrap_or(&empty_vec)
-                        .iter()
-                        .filter(|i| !i.token_expr.is_empty())
-                        .map(|i| i.token_expr.clone())
-                        .collect();
-                    let interceptors: Vec<TokenStream> = infos
-                        .get("interceptors")
-                        .unwrap_or(&empty_vec)
-                        .iter()
-                        .filter(|i| !i.token_expr.is_empty())
-                        .map(|i| i.token_expr.clone())
-                        .collect();
-                    let error_handlers: Vec<TokenStream> = infos
-                        .get("error_handlers")
-                        .unwrap_or(&empty_vec)
-                        .iter()
-                        .filter(|i| !i.token_expr.is_empty())
-                        .map(|i| i.token_expr.clone())
-                        .collect();
-                    if !guards.is_empty() || !interceptors.is_empty() || !error_handlers.is_empty()
-                    {
-                        handler_enhancer_entries.push((
-                            method_name,
-                            guards,
-                            interceptors,
-                            error_handlers,
-                        ));
+                    let (guard_tokens, guards) = enhancer_vecs(&infos, "guards");
+                    let (interceptor_tokens, interceptors) = enhancer_vecs(&infos, "interceptors");
+                    let (error_handler_tokens, error_handlers) =
+                        enhancer_vecs(&infos, "error_handlers");
+                    let entry = HandlerEnhancers {
+                        method: method_name,
+                        guard_tokens,
+                        interceptor_tokens,
+                        error_handler_tokens,
+                        guards,
+                        interceptors,
+                        error_handlers,
+                    };
+                    if !entry.is_empty() {
+                        handler_enhancer_entries.push(entry);
                     }
                 }
             }
@@ -296,13 +284,23 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
     // ── one descriptor, emitted only when the service declares something ───
     let handler_entries: Vec<TokenStream> = handler_enhancer_entries
         .iter()
-        .map(|(name, guards, interceptors, error_handlers)| {
+        .map(|e| {
+            let (method, gt, it, et) = (
+                &e.method,
+                &e.guard_tokens,
+                &e.interceptor_tokens,
+                &e.error_handler_tokens,
+            );
+            let (gi, ii, ei) = (&e.guards, &e.interceptors, &e.error_handlers);
             quote! {
                 ::ulo::grpc::GrpcHandlerEnhancers {
-                    method: #name.to_string(),
-                    guard_tokens: vec![#(#guards),*],
-                    interceptor_tokens: vec![#(#interceptors),*],
-                    error_handler_tokens: vec![#(#error_handlers),*],
+                    method: #method.to_string(),
+                    guard_tokens: vec![#(#gt),*],
+                    interceptor_tokens: vec![#(#it),*],
+                    error_handler_tokens: vec![#(#et),*],
+                    guards: vec![#(::std::sync::Arc::new(#gi)),*],
+                    interceptors: vec![#(::std::sync::Arc::new(#ii)),*],
+                    error_handlers: vec![#(::std::sync::Arc::new(#ei)),*],
                 }
             }
         })
@@ -311,6 +309,9 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
     let enhancers_impl = if ctrl_guard_tokens.is_empty()
         && ctrl_interceptor_tokens.is_empty()
         && ctrl_error_handler_tokens.is_empty()
+        && ctrl_guard_instances.is_empty()
+        && ctrl_interceptor_instances.is_empty()
+        && ctrl_error_handler_instances.is_empty()
         && handler_entries.is_empty()
     {
         quote! {}
@@ -321,6 +322,9 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
                     guard_tokens: vec![#(#ctrl_guard_tokens),*],
                     interceptor_tokens: vec![#(#ctrl_interceptor_tokens),*],
                     error_handler_tokens: vec![#(#ctrl_error_handler_tokens),*],
+                    guards: vec![#(::std::sync::Arc::new(#ctrl_guard_instances)),*],
+                    interceptors: vec![#(::std::sync::Arc::new(#ctrl_interceptor_instances)),*],
+                    error_handlers: vec![#(::std::sync::Arc::new(#ctrl_error_handler_instances)),*],
                     handlers: vec![#(#handler_entries),*],
                 }
             }

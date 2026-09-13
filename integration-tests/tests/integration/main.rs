@@ -59,6 +59,7 @@ mod guard_panic_is_an_event;
 mod guard_rejection_is_an_event;
 mod http_e2e;
 mod import_cycle;
+mod inline_enhancers;
 mod lifecycle_hooks;
 mod marker_free_enhancers;
 mod metadata_overlay;
