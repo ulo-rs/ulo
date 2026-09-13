@@ -8,13 +8,12 @@ use bytes::Bytes;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use crate::common::TestServer;
 use serial_test::serial;
 use ulo::context::HandlerContext;
+use ulo::http::Body;
 use ulo::http::HttpContext;
-use ulo::{Body, controller, get, module, routes};
-
-use crate::common::TestServer;
-
+use ulo::{controller, get, module, routes};
 static HANDLER_DROPPED: AtomicBool = AtomicBool::new(false);
 
 struct Sentinel;

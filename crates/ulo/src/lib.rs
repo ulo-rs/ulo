@@ -3,13 +3,6 @@
 // job does not pass `-D warnings`, so a warning here would accumulate unnoticed.
 #![deny(unreachable_pub)]
 
-pub mod adapter;
-mod application_context;
-mod builtin_module;
-pub mod context;
-mod error;
-mod startup_check;
-pub use context::{CancellationToken, HandlerContext, StandaloneContext};
 #[doc(hidden)]
 pub mod __construct;
 #[doc(hidden)]
@@ -26,17 +19,19 @@ pub mod __lifecycle;
 pub mod __rpc;
 #[doc(hidden)]
 pub mod __ws;
+pub mod adapter;
 mod application;
+mod application_context;
+mod builtin_module;
+pub mod context;
 pub mod di;
 pub mod enhancer;
+mod error;
 pub mod errors;
 mod extension;
 pub mod extract;
 mod factory;
 pub mod grpc;
-pub use grpc::{
-    GrpcAdapter, GrpcCode, GrpcContext, GrpcHandlerResult, GrpcLifecycleHandle, GrpcStatus,
-};
 pub mod http;
 mod injector;
 mod modules;
@@ -46,6 +41,7 @@ mod router;
 pub mod rpc;
 mod scanner;
 pub mod spi;
+mod startup_check;
 mod type_map;
 pub mod ws;
 
@@ -59,33 +55,10 @@ pub use tracing;
 pub use serde_json;
 
 // Re-exports for adapter crates
-pub use adapter::{AdapterContext, BindTarget};
-pub use http::{
-    Body, BoxBody, HttpAdapter, HttpContext, HttpError, HttpLifecycleHandle, HttpMethod,
-    HttpRequest, HttpResponse, HttpResponseBuilder, IntoResponse, PathParams, RequestBody,
-    RequestBoxBody, RequestHandler, RequestPart, Sse, SseEvent, join_route, sse,
-};
-pub use rpc::{
-    RpcAdapter, RpcCallInfo, RpcClient, RpcClientError, RpcClientTransport, RpcContext,
-    RpcController, RpcControllerSource, RpcData, RpcEnhancers, RpcError, RpcHandlerEnhancers,
-    RpcHandlerOutput, RpcHandlerResult, RpcLifecycleHandle, RpcMessageCallbacks, RpcReplyStream,
-};
-pub use ws::{
-    BroadcastError, BroadcastModule, BroadcastService, BroadcastTarget, ClientId, DisconnectReason,
-    Gateway, GatewayEnhancers, GatewayHandlerEnhancers, MessageCallbackResult, RoomId, SendError,
-    Session, TrySendError, WebSocketAdapter, WsClient, WsConnectionCallbacks, WsContext, WsError,
-    WsHandlerOutput, WsHandlerResult, WsHandshake, WsLifecycleHandle, WsMessage, WsSink,
-};
 
 // Re-export built-in providers
-pub use extension::{Extension, ExtensionFactory};
-pub use http::{Request, RequestFactory};
 
 // Re-export ModuleRef for dynamic DI resolution
-pub use di::IntoToken;
-pub use injector::ModuleRef;
-
-pub use application_context::UloApplicationContext;
 
 // Re-export dependencies used in macro-generated code
 // This allows users to only depend on `ulo` without needing to add these explicitly
@@ -97,29 +70,20 @@ pub use futures;
 pub use rustc_hash::FxHashMap;
 
 // Re-export provider scope
-pub use provider_scope::ProviderScope;
-
-pub use di::{ExecutionCache, ModuleMetadata, ProviderContext};
-
-pub use error::{AdapterResult, InitResult, ResolutionError, SetupResult, StartupError};
-pub use errors::{
-    Error, ErrorKind, GuardRejection, MiddlewareFailure, PanicRecovered, PipelineSegment,
-};
-pub use startup_check::StartupCheck;
 
 // Re-export trait so users wont have to import manually
-pub use extract::{FromContext, take_body};
-pub use http::extract::BodyStream;
 
 // Re-export macros
 pub use ulo_macros::*;
 
+// What a `main` writes. Everything else lives in the module that owns it, and `prelude` collects
+// what an application reaches for whatever it serves.
 pub use application::{BoundAdapters, ShutdownHandle, UloApplication};
+pub use application_context::UloApplicationContext;
+pub use error::StartupError;
+pub use errors::{Error, ErrorKind};
 pub use factory::UloFactory;
-pub use modules::{CheckedModule, DynamicModule, ModuleIdentity};
-
-#[cfg(feature = "tower-compat")]
-pub use http::tower::TowerLayer;
+pub use startup_check::StartupCheck;
 
 /// What an application writes whatever it serves.
 ///
@@ -154,9 +118,9 @@ pub mod prelude {
     pub use crate::{BoundAdapters, ShutdownHandle, StartupCheck, StartupError, UloApplication};
     pub use crate::{UloApplicationContext, UloFactory};
 
+    pub use crate::di::{CheckedModule, DynamicModule, Extension, InitResult, ModuleIdentity};
     pub use crate::di::{ModuleMetadata, ProviderContext};
-    pub use crate::{CheckedModule, DynamicModule, Extension, ModuleIdentity, ModuleRef};
-    pub use crate::{InitResult, ProviderScope};
+    pub use crate::di::{ModuleRef, ProviderScope};
 
     pub use crate::enhancer::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
     pub use crate::errors::{Error, ErrorKind};

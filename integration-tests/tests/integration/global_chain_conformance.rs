@@ -13,15 +13,14 @@
 //! `#[serial]` must precede `#[localset_test]` — the localset macro rebuilds
 //! the function and drops any attribute written after it.
 //!
-//! [`AdapterContext`]: ulo::AdapterContext
+//! [`AdapterContext`]: ulo::spi::AdapterContext
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::{Body, UloFactory, async_trait, controller, get, module, routes};
-
 use crate::common::TestServer;
-
+use ulo::http::Body;
+use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
+use ulo::{UloFactory, async_trait, controller, get, module, routes};
 static EVENTS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
 fn events() -> &'static Mutex<Vec<String>> {
@@ -57,7 +56,7 @@ struct Block;
 impl Middleware for Block {
     async fn handle(&self, next: NextHandle) -> MiddlewareResult {
         if next.request().headers().contains_key("x-block") {
-            return Ok(ulo::HttpResponse::forbidden().text("blocked").build());
+            return Ok(ulo::http::HttpResponse::forbidden().text("blocked").build());
         }
         next.run().await
     }
@@ -70,7 +69,7 @@ struct Preflight;
 impl Middleware for Preflight {
     async fn handle(&self, next: NextHandle) -> MiddlewareResult {
         if next.request().method().as_str() == "OPTIONS" {
-            return Ok(ulo::HttpResponse::no_content()
+            return Ok(ulo::http::HttpResponse::no_content()
                 .header("access-control-allow-origin", "*")
                 .build());
         }
@@ -112,7 +111,7 @@ impl ConformanceController {
 #[module(controllers: [ConformanceController])]
 impl ConformanceModule {}
 
-async fn boot(adapter: impl ulo::HttpAdapter + 'static) -> TestServer {
+async fn boot(adapter: impl ulo::http::HttpAdapter + 'static) -> TestServer {
     let mut factory = UloFactory::new();
     factory
         .use_global_middleware(Arc::new(Recording))

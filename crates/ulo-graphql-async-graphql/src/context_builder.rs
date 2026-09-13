@@ -1,6 +1,6 @@
 use async_graphql::Data;
 use async_trait::async_trait;
-use ulo::RequestPart;
+use ulo::http::RequestPart;
 
 /// Trait for building GraphQL context from HTTP requests.
 ///
@@ -13,7 +13,7 @@ use ulo::RequestPart;
 ///
 /// ```rust
 /// use ulo_graphql_async_graphql::{ContextBuilder, async_graphql::Data};
-/// use ulo::RequestPart;
+/// use ulo::http::RequestPart;
 /// use async_trait::async_trait;
 ///
 /// struct SimpleContext;
@@ -30,7 +30,8 @@ use ulo::RequestPart;
 ///
 /// ```ignore
 /// use ulo_graphql_async_graphql::{ContextBuilder, async_graphql::Data};
-/// use ulo::{RequestPart, injectable};
+/// use ulo::http::RequestPart;
+/// use ulo::injectable;
 /// use async_trait::async_trait;
 ///
 /// #[injectable]

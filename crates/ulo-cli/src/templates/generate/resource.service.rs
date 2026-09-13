@@ -1,4 +1,4 @@
-use ulo::*;
+use ulo::prelude::*;
 
 #[injectable]
 pub struct RESOURCE_NAME_SERVICE;

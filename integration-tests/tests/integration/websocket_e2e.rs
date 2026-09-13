@@ -35,7 +35,8 @@ use ulo::ws::{
     WsMessage,
 };
 
-use ulo::{Body, controller, module, post, routes};
+use ulo::http::Body;
+use ulo::{controller, module, post, routes};
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{new, on_connect, subscriptions, websocket_gateway};
 use ulo_ws_tungstenite::TungsteniteAdapter;

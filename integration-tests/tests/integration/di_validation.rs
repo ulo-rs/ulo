@@ -5,8 +5,8 @@
 //! means holding one arbitrary request's state forever. That failure is
 //! invisible at runtime — the application serves correctly until two requests
 //! disagree — so it is refused when the graph is built.
-use ulo::{ProviderContext, UloFactory, injectable, module};
-
+use ulo::di::ProviderContext;
+use ulo::{UloFactory, injectable, module};
 #[tokio::test]
 async fn valid_singleton_injects_singleton() {
     #[injectable]

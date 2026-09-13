@@ -12,7 +12,8 @@
 
 use juniper::{EmptyMutation, EmptySubscription, RootNode, graphql_object};
 use ulo::UloFactory;
-use ulo::{ProviderContext, injectable, module};
+use ulo::di::ProviderContext;
+use ulo::{injectable, module};
 use ulo_graphql_juniper::{DefaultContext, DefaultContextBuilder, GraphQLModule, GraphQLService};
 
 pub struct Query;

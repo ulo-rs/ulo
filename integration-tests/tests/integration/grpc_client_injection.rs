@@ -95,7 +95,7 @@ pub struct CallerController {
 #[routes]
 impl CallerController {
     #[get("/place")]
-    async fn place(&self) -> ulo::Body {
+    async fn place(&self) -> ulo::http::Body {
         let mut orders = self.orders.clone();
         let reply = orders
             .create(probe_pb::CreateOrderRequest {
@@ -104,7 +104,7 @@ impl CallerController {
             })
             .await
             .expect("the injected client must reach the server");
-        ulo::Body::text(reply.into_inner().status)
+        ulo::http::Body::text(reply.into_inner().status)
     }
 }
 

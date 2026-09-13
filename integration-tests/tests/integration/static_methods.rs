@@ -6,8 +6,8 @@
 //! because a static handler still runs inside an execution even though it holds
 //! no instance to scope.
 use crate::common::TestServer;
-use ulo::{Body, HttpRequest, controller, get, injectable, module, routes};
-
+use ulo::http::{Body, HttpRequest};
+use ulo::{controller, get, injectable, module, routes};
 #[controller("/static")]
 pub struct StaticController {}
 

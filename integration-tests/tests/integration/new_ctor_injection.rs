@@ -6,14 +6,13 @@
 
 use std::sync::Arc;
 
-use ulo::async_trait;
-use ulo::enhancer::Guard;
-use ulo::http::HttpContext;
-use ulo::{Body, UloFactory, controller, get, injectable, module, new, routes, use_guards};
-
 use crate::common::TestServer;
 use serial_test::serial;
-
+use ulo::async_trait;
+use ulo::enhancer::Guard;
+use ulo::http::Body;
+use ulo::http::HttpContext;
+use ulo::{UloFactory, controller, get, injectable, module, new, routes, use_guards};
 #[injectable]
 pub struct ConfigService {
     #[default(8080)]

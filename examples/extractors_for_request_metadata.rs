@@ -9,10 +9,10 @@
 //!     cargo run --example extractors_for_request_metadata
 
 use std::fmt;
-use ulo::Body;
+use ulo::extract::FromContext;
+use ulo::http::Body;
 use ulo::http::HttpContext;
-use ulo::{FromContext, controller, get, module, routes};
-
+use ulo::{controller, get, module, routes};
 /// ## 4. ClientIp Extractor
 ///
 /// Extracts client IP, respecting X-Forwarded-For for proxies.

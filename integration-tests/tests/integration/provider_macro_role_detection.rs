@@ -8,14 +8,13 @@
 //! guard below is applied by token with `#[use_guards("TOKEN")]` and gates a
 //! route 403/200.
 
-use ulo::async_trait;
-use ulo::enhancer::Guard;
-use ulo::http::HttpContext;
-use ulo::{Body, controller, get, module, provider_factory, provider_value, routes, use_guards};
-
 use crate::common::TestServer;
 use serial_test::serial;
-
+use ulo::async_trait;
+use ulo::enhancer::Guard;
+use ulo::http::Body;
+use ulo::http::HttpContext;
+use ulo::{controller, get, module, provider_factory, provider_value, routes, use_guards};
 // A guard registered as a singleton value under a string token — detected from the type, no marker.
 #[derive(Clone)]
 pub struct ValueGuard;

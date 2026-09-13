@@ -8,11 +8,11 @@
 //! two forms would surface.
 use crate::common::TestServer;
 use std::time::Duration;
+use ulo::http::Body;
 use ulo::{
-    Body, controller, get, injectable, module, new, provider_alias, provider_factory,
-    provider_token, provider_value, routes,
+    controller, get, injectable, module, new, provider_alias, provider_factory, provider_token,
+    provider_value, routes,
 };
-
 #[tokio_localset_test::localset_test]
 async fn provider_value_injects_constant() {
     #[controller()]

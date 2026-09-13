@@ -23,7 +23,8 @@ use std::time::{Duration, Instant};
 
 use futures::future::BoxFuture;
 use serde_json::json;
-use ulo::*;
+use ulo::http::IntoResponse;
+use ulo::prelude::*;
 use ulo_health::{
     DiskHealthIndicator, HealthCheckService, HealthEntry, HealthIndicator, HealthIndicatorResult,
     HttpHealthIndicator, MemoryHealthIndicator, TerminusModule,

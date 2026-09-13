@@ -66,7 +66,7 @@ impl Default for HttpResponse {
 /// # Example
 ///
 /// ```rust
-/// use ulo::HttpResponse;
+/// use ulo::http::HttpResponse;
 /// use serde_json::json;
 ///
 /// let response = HttpResponse::ok()

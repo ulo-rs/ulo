@@ -7,21 +7,20 @@
 //!
 //! `guard_mut_context.rs` covers the enhancer-to-enhancer half.
 
+use crate::common::TestServer;
 use ulo::async_trait;
 use ulo::context::{Extensions, HandlerContext};
 use ulo::enhancer::Guard;
+use ulo::http::Body;
 use ulo::http::HttpContext;
 use ulo::http::extract::{Bytes as UloBytes, Path};
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::ws::WsContext;
 use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
-    Body, UloFactory, controller, get, injectable, module, new, post, routes, set_metadata,
+    UloFactory, controller, get, injectable, module, new, post, routes, set_metadata,
     subscriptions, websocket_gateway,
 };
-
-use crate::common::TestServer;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Principal(String);
 

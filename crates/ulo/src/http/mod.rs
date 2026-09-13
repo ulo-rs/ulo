@@ -53,7 +53,7 @@ pub use self::sse::{Sse, SseEvent, sse};
 /// full path is composed at route-registration time rather than baked in by the macro.
 ///
 /// Trailing slashes are insignificant: the joined path never carries one (except the root `/`),
-/// and [`AdapterContext`](crate::AdapterContext) trims them from incoming request paths, so
+/// and [`AdapterContext`](crate::spi::AdapterContext) trims them from incoming request paths, so
 /// `/app` and `/app/` address the same route.
 ///
 /// `"/api" + "/users"` → `"/api/users"`; `"/" + "/x"` → `"/x"`; `"/api" + ""` → `"/api"`;

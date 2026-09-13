@@ -6,17 +6,16 @@
 //! startup resolves it. The dependency is what makes that resolution
 //! observable: a global that ran without its injected tracker would still
 //! answer requests.
+use crate::common::TestServer;
+use serial_test::serial;
 use std::sync::{Arc, Mutex, OnceLock};
-use ulo::HttpResponse;
 use ulo::async_trait;
 use ulo::di::{APP_GUARD, APP_INTERCEPTOR};
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
+use ulo::http::Body;
 use ulo::http::HttpContext;
-use ulo::{Body, controller, get, injectable, module, new, provider_token, provider_value, routes};
-
-use crate::common::TestServer;
-use serial_test::serial;
-
+use ulo::http::HttpResponse;
+use ulo::{controller, get, injectable, module, new, provider_token, provider_value, routes};
 static TRACKER: OnceLock<ExecutionTracker> = OnceLock::new();
 
 fn get_tracker() -> ExecutionTracker {

@@ -7,8 +7,8 @@
 //! is asserted against what it produced, not merely that it produced something.
 use crate::common::TestServer;
 use std::time::Duration;
-use ulo::{Body, controller, get, injectable, module, new, provide, routes};
-
+use ulo::http::Body;
+use ulo::{controller, get, injectable, module, new, provide, routes};
 #[injectable]
 pub struct ConfigService {
     env: String,

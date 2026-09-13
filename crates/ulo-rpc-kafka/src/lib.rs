@@ -32,4 +32,4 @@ mod wire;
 
 pub use kafka_adapter::KafkaAdapter;
 pub use kafka_client_transport::KafkaClientTransport;
-pub use ulo::{RpcAdapter, RpcClient, RpcClientTransport};
+pub use ulo::rpc::{RpcAdapter, RpcClient, RpcClientTransport};

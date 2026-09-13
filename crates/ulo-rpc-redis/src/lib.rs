@@ -28,4 +28,4 @@ mod wire;
 
 pub use redis_adapter::RedisAdapter;
 pub use redis_client_transport::RedisClientTransport;
-pub use ulo::{RpcAdapter, RpcClient, RpcClientTransport};
+pub use ulo::rpc::{RpcAdapter, RpcClient, RpcClientTransport};

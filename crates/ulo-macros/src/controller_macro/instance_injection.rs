@@ -235,9 +235,9 @@ fn generate_controller_wrapper(
 
     let method_call = if is_sse {
         if sse_stream_is_fallible(&method.sig.output) {
-            quote! { ::ulo::Sse::new(#method_call) }
+            quote! { ::ulo::http::Sse::new(#method_call) }
         } else {
-            quote! { ::ulo::sse(#method_call) }
+            quote! { ::ulo::http::sse(#method_call) }
         }
     } else {
         method_call
@@ -357,7 +357,7 @@ fn generate_route_wrapper(
             // may move the request out of it.
             quote! {
                 let controller = self.source
-                    .resolve(::ulo::ProviderContext::Http(__ctx.clone()))
+                    .resolve(::ulo::di::ProviderContext::Http(__ctx.clone()))
                     .await;
             },
         )
@@ -383,7 +383,7 @@ fn generate_route_wrapper(
                 &self,
                 __ctx: &::ulo::http::HttpContext,
             ) -> ::ulo::spi::ExecutionResult<
-                ::ulo::HttpResponse,
+                ::ulo::http::HttpResponse,
                 ::ulo::http::HttpError,
             > {
                 // Cloned, not borrowed: building a request-scoped dependency holds
@@ -395,7 +395,7 @@ fn generate_route_wrapper(
 
                 #(#marker_params_extraction)*
 
-                use ::ulo::IntoResponse;
+                use ::ulo::http::IntoResponse;
                 #exec_body
             }
 
@@ -453,7 +453,7 @@ fn enhancers_method(enhancer_infos: &HashMap<String, Vec<EnhancerInfo>>) -> Toke
 fn get_path_method(struct_name: &Ident, route_path: &str) -> TokenStream {
     quote! {
         fn path(&self) -> String {
-            ::ulo::join_route(#struct_name::__ulo_prefix(), #route_path)
+            ::ulo::http::join_route(#struct_name::__ulo_prefix(), #route_path)
         }
     }
 }
@@ -468,8 +468,8 @@ fn route_common_methods(
     let enhancers = enhancers_method(enhancer_infos);
     let path = get_path_method(struct_name, route_path);
     quote! {
-        fn method(&self) -> ::ulo::HttpMethod {
-            ::ulo::HttpMethod::from_string(#http_method).unwrap()
+        fn method(&self) -> ::ulo::http::HttpMethod {
+            ::ulo::http::HttpMethod::from_string(#http_method).unwrap()
         }
 
         #path
@@ -490,7 +490,7 @@ fn exec_body_for(method_call: &TokenStream, returns_result: bool) -> TokenStream
         quote! {
             match #method_call {
                 ::std::result::Result::Ok(__t) => ::ulo::spi::ExecutionResult::Ok(
-                    ::ulo::IntoResponse::into_response(__t),
+                    ::ulo::http::IntoResponse::into_response(__t),
                 ),
                 ::std::result::Result::Err(__e) => ::ulo::spi::ExecutionResult::Err(
                     ::std::convert::Into::<::ulo::http::HttpError>::into(__e),
@@ -500,7 +500,7 @@ fn exec_body_for(method_call: &TokenStream, returns_result: bool) -> TokenStream
     } else {
         quote! {
             ::ulo::spi::ExecutionResult::Ok(
-                ::ulo::IntoResponse::into_response(#method_call),
+                ::ulo::http::IntoResponse::into_response(#method_call),
             )
         }
     }

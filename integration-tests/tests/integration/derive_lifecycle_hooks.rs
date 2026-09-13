@@ -32,13 +32,13 @@ pub struct HookedService {
 
 impl HookedService {
     #[on_module_init]
-    async fn init(&self) -> ulo::InitResult {
+    async fn init(&self) -> ulo::di::InitResult {
         get_log().lock().unwrap().push("init");
         Ok(())
     }
 
     #[on_application_bootstrap]
-    async fn bootstrap(&self) -> ulo::InitResult {
+    async fn bootstrap(&self) -> ulo::di::InitResult {
         get_log().lock().unwrap().push("bootstrap");
         Ok(())
     }

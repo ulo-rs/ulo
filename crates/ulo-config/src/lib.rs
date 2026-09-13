@@ -238,8 +238,8 @@ impl<T: Config> ConfigModule<T> {
 
 // Implement ModuleMetadata for DI system integration
 impl<T: Config> ulo::di::ModuleMetadata for ConfigModule<T> {
-    fn identity(&self) -> ulo::ModuleIdentity {
-        ulo::ModuleIdentity::of_type::<Self>()
+    fn identity(&self) -> ulo::di::ModuleIdentity {
+        ulo::di::ModuleIdentity::of_type::<Self>()
     }
 
     fn imports(&self) -> Option<Vec<Box<dyn ulo::di::ModuleMetadata>>> {

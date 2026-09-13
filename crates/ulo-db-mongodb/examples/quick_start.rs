@@ -12,7 +12,8 @@ use futures::TryStreamExt;
 use mongodb::Database;
 use mongodb::bson::doc;
 use serde::{Deserialize, Serialize};
-use ulo::{Body, UloFactory, controller, get, injectable, module, post, routes};
+use ulo::http::Body;
+use ulo::{UloFactory, controller, get, injectable, module, post, routes};
 use ulo_db_mongodb::MongoModule;
 use ulo_http_axum::AxumAdapter;
 

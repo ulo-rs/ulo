@@ -19,9 +19,8 @@ use std::ops::{Deref, DerefMut};
 use ulo::extract::FromContext;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
+use ulo::grpc::{GrpcCode, GrpcStatus};
 use ulo::grpc::{RequestCarrier, RequestError};
-use ulo::{GrpcCode, GrpcStatus};
-
 /// One proto method's request, as its trait declares it.
 ///
 /// Implemented by the marker types ulo-build writes, one per method, in a

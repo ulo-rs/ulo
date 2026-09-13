@@ -8,14 +8,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ulo::AdapterResult;
 use ulo::rpc::RpcContext;
+use ulo::rpc::{RpcAdapter, RpcLifecycleHandle, RpcMessageCallbacks};
 use ulo::rpc::{RpcData, RpcError};
+use ulo::spi::AdapterResult;
 use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
-use ulo::{
-    RpcAdapter, RpcLifecycleHandle, RpcMessageCallbacks, StartupError, UloFactory, async_trait,
-    module,
-};
+use ulo::{StartupError, UloFactory, async_trait, module};
 use ulo_macros::{
     controller, message_pattern, new, patterns, subscribe_message, subscriptions, websocket_gateway,
 };

@@ -67,14 +67,14 @@ pub fn handle_provider_alias(input: TokenStream) -> Result<TokenStream> {
                 }
 
 
-                fn scope(&self) -> ulo::ProviderScope {
+                fn scope(&self) -> ulo::di::ProviderScope {
                     // Inherit scope from target provider
                     self.target_provider.scope()
                 }
 
                 async fn resolve(
                     &self,
-                    ctx: ulo::ProviderContext,
+                    ctx: ulo::di::ProviderContext,
                 ) -> Box<dyn std::any::Any + Send> {
                     self.target_provider.resolve(ctx).await
                 }

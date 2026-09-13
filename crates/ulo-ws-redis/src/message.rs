@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use ulo::WsMessage;
+use ulo::ws::WsMessage;
 
 /// Envelope published to the `ulo:broadcast` Redis channel.
 ///

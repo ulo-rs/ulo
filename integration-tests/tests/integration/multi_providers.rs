@@ -8,8 +8,8 @@
 //! collection type degrades into something else.
 use crate::common::TestServer;
 use std::sync::Arc;
-use ulo::{Body, controller, get, injectable, module, provide, routes};
-
+use ulo::http::Body;
+use ulo::{controller, get, injectable, module, provide, routes};
 // Shared plugin trait used across all tests in this file
 trait Plugin: Send + Sync {
     fn name(&self) -> &'static str;

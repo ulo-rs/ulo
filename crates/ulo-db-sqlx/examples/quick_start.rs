@@ -11,7 +11,8 @@
 //!     curl http://127.0.0.1:3000/health/db
 
 use sqlx::{Pool, Postgres};
-use ulo::{Body, UloFactory, controller, get, injectable, module, routes};
+use ulo::http::Body;
+use ulo::{UloFactory, controller, get, injectable, module, routes};
 use ulo_db_sqlx::SqlxModule;
 use ulo_http_axum::AxumAdapter;
 

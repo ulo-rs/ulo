@@ -29,7 +29,8 @@ use futures::Stream;
 use futures::stream;
 use tokio::sync::broadcast;
 use ulo::http::extract::Bytes;
-use ulo::*;
+use ulo::http::{HttpResponse, IntoResponse, SseEvent, sse};
+use ulo::prelude::*;
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{injectable, new};
 

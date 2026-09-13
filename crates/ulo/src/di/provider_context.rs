@@ -75,10 +75,10 @@ impl ProviderContext {
     /// returns the refusal instead.
     pub(crate) fn ensure_can_build(
         &self,
-        scope: crate::ProviderScope,
+        scope: crate::di::ProviderScope,
         token: &str,
     ) -> Result<(), crate::error::ResolutionError> {
-        if scope == crate::ProviderScope::Request && self.cache().is_none() {
+        if scope == crate::di::ProviderScope::Request && self.cache().is_none() {
             return Err(
                 crate::error::ResolutionError::RequestScopeOutsideExecution {
                     token: token.to_string(),

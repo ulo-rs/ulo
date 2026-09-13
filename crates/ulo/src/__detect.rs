@@ -102,8 +102,8 @@ probe!(
 probe!(
     GrpcInterceptorProbe,
     GrpcInterceptorProbeFallback,
-    Interceptor<GrpcContext, crate::GrpcHandlerResult>,
-    dyn Interceptor<GrpcContext, crate::GrpcHandlerResult>
+    Interceptor<GrpcContext, crate::grpc::GrpcHandlerResult>,
+    dyn Interceptor<GrpcContext, crate::grpc::GrpcHandlerResult>
 );
 
 probe!(HttpErrorHandlerProbe, HttpErrorHandlerProbeFallback, ErrorHandler<HttpContext, HttpResponse>, dyn ErrorHandler<HttpContext, HttpResponse>);
@@ -180,7 +180,7 @@ type_probe!(
 type_probe!(
     GrpcInterceptorTypeProbe,
     GrpcInterceptorTypeProbeFallback,
-    Interceptor<GrpcContext, crate::GrpcHandlerResult>
+    Interceptor<GrpcContext, crate::grpc::GrpcHandlerResult>
 );
 
 /// Brings every fallback trait into scope so the inline `detect()` / `is()` calls resolve.

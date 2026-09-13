@@ -12,9 +12,9 @@
 
 use std::net::TcpListener;
 
-use ulo::{Body, UloFactory, controller, get, module, routes};
-
 use crate::common::TestServer;
+use ulo::http::Body;
+use ulo::{UloFactory, controller, get, module, routes};
 
 #[controller("/inherited")]
 pub struct InheritedController {}
@@ -30,7 +30,7 @@ impl InheritedController {
 #[module(controllers: [InheritedController])]
 impl BindTargetModule {}
 
-async fn case_serves_on_caller_socket(adapter: impl ulo::HttpAdapter + 'static) {
+async fn case_serves_on_caller_socket(adapter: impl ulo::http::HttpAdapter + 'static) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let expected = listener.local_addr().unwrap();
 

@@ -25,11 +25,11 @@
 //! `RolesGuard` below is written that way: it reads the requirement from metadata and the caller
 //! from the extension bag, leaving how the caller got there to whatever is transport-specific.
 
+use ulo::http::Body;
 use ulo::{
-    Body, async_trait, context::HandlerContext, controller, enhancer::Guard, get,
-    http::HttpContext, module, routes, set_metadata, use_guards,
+    async_trait, context::HandlerContext, controller, enhancer::Guard, get, http::HttpContext,
+    module, routes, set_metadata, use_guards,
 };
-
 // ============================================================================
 // Metadata Types
 // ============================================================================

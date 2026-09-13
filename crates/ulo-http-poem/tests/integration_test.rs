@@ -6,8 +6,10 @@
 
 use futures_util::{SinkExt, StreamExt};
 use ulo::UloFactory;
+use ulo::http::Body;
 use ulo::http::extract::{BodyStream, Bytes, Path, Query};
-use ulo::*;
+use ulo::prelude::*;
+use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo_http_poem::PoemAdapter;
 use ulo_macros::{module, new, subscriptions, websocket_gateway};
 
@@ -95,7 +97,7 @@ struct Bound {
     ws_addr: Option<std::net::SocketAddr>,
 }
 
-async fn start(module: impl ulo::ModuleMetadata + 'static, with_ws_adapter: bool) -> Bound {
+async fn start(module: impl ulo::di::ModuleMetadata + 'static, with_ws_adapter: bool) -> Bound {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let local = tokio::task::LocalSet::new();
     local.spawn_local(async move {

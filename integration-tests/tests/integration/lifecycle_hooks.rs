@@ -30,13 +30,13 @@ fn get_log() -> Arc<Mutex<Vec<&'static str>>> {
 pub struct HookedService {}
 impl HookedService {
     #[on_module_init]
-    async fn on_module_init(&self) -> ulo::InitResult {
+    async fn on_module_init(&self) -> ulo::di::InitResult {
         get_log().lock().unwrap().push("provider:init");
         Ok(())
     }
 
     #[on_application_bootstrap]
-    async fn on_application_bootstrap(&self) -> ulo::InitResult {
+    async fn on_application_bootstrap(&self) -> ulo::di::InitResult {
         get_log().lock().unwrap().push("provider:bootstrap");
         Ok(())
     }
@@ -45,13 +45,13 @@ impl HookedService {
 #[module(providers: [HookedService])]
 impl HookModule {
     #[on_module_init]
-    async fn on_module_init(&self) -> ulo::InitResult {
+    async fn on_module_init(&self) -> ulo::di::InitResult {
         get_log().lock().unwrap().push("module:init");
         Ok(())
     }
 
     #[on_application_bootstrap]
-    async fn on_module_bootstrap(&self) -> ulo::InitResult {
+    async fn on_module_bootstrap(&self) -> ulo::di::InitResult {
         get_log().lock().unwrap().push("module:bootstrap");
         Ok(())
     }
@@ -93,7 +93,7 @@ async fn path_qualified_module_hook_attr_fires() {
     #[module(providers: [])]
     impl QualifiedHookModule {
         #[ulo::on_module_init]
-        async fn on_module_init(&self) -> ulo::InitResult {
+        async fn on_module_init(&self) -> ulo::di::InitResult {
             qualified_log().lock().unwrap().push("module:init");
             Ok(())
         }
@@ -109,13 +109,13 @@ pub struct HookedRpcController {}
 #[patterns]
 impl HookedRpcController {
     #[on_module_init]
-    async fn ready(&self) -> ulo::InitResult {
+    async fn ready(&self) -> ulo::di::InitResult {
         get_log().lock().unwrap().push("rpc-controller:init");
         Ok(())
     }
 
     #[on_application_bootstrap]
-    async fn started(&self) -> ulo::InitResult {
+    async fn started(&self) -> ulo::di::InitResult {
         get_log().lock().unwrap().push("rpc-controller:bootstrap");
         Ok(())
     }
@@ -163,13 +163,13 @@ impl HookedGrpcService {
     }
 
     #[on_module_init]
-    async fn ready(&self) -> ulo::InitResult {
+    async fn ready(&self) -> ulo::di::InitResult {
         get_log().lock().unwrap().push("grpc-service:init");
         Ok(())
     }
 
     #[on_application_bootstrap]
-    async fn started(&self) -> ulo::InitResult {
+    async fn started(&self) -> ulo::di::InitResult {
         get_log().lock().unwrap().push("grpc-service:bootstrap");
         Ok(())
     }

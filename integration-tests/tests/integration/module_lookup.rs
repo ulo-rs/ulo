@@ -2,9 +2,10 @@
 //! is not a type. The handle is the same `ModuleRef` an injected field gets:
 //! it resolves providers in that module's scope.
 
-use ulo::ResolutionError;
 use ulo::UloFactory;
-use ulo::{DynamicModule, injectable, module, provider_value};
+use ulo::di::DynamicModule;
+use ulo::di::ResolutionError;
+use ulo::{injectable, module, provider_value};
 use ulo_config::{Config, ConfigModule, ConfigService};
 use ulo_graphql_async_graphql::async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
 use ulo_graphql_async_graphql::{DefaultContextBuilder, GraphQLModule};

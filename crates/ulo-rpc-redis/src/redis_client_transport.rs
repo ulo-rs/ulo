@@ -3,13 +3,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::wire::RequestEnvelope;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::{OnceCell, mpsc, oneshot};
+use ulo::async_trait;
 use ulo::rpc::wire::{self, ReplyFrame};
 use ulo::rpc::{ReplySink, RpcReplyStream};
-use ulo::{RpcClientError, RpcClientTransport, RpcData, async_trait};
-
-use crate::wire::RequestEnvelope;
+use ulo::rpc::{RpcClientError, RpcClientTransport, RpcData};
 
 /// One awaited call in the correlation map.
 enum PendingSlot {
@@ -38,11 +38,11 @@ type Pending = Arc<Mutex<HashMap<String, PendingSlot>>>;
 /// ```ignore
 /// provider_value!(
 ///     "INVENTORY_CLIENT",
-///     ulo::RpcClient::new(ulo_rpc_redis::RedisClientTransport::new("redis://127.0.0.1:6379"))
+///     ulo::rpc::RpcClient::new(ulo_rpc_redis::RedisClientTransport::new("redis://127.0.0.1:6379"))
 /// )
 /// ```
 ///
-/// [`RpcClient`]: ulo::RpcClient
+/// [`RpcClient`]: ulo::rpc::RpcClient
 /// [`send`]: RedisClientTransport::send
 pub struct RedisClientTransport {
     url: String,

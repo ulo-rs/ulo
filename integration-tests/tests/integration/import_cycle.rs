@@ -5,7 +5,7 @@
 //! visibility rather than construction order. The distinction is only
 //! observable if a provider resolves across the cycle, which the
 //! second test does.
-use ulo::*;
+use ulo::prelude::*;
 
 // Two modules that import each other. An import edge is a visibility relationship, not a
 // construction dependency, so a mutual import cycle must boot and both modules' providers

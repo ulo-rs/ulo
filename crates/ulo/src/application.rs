@@ -387,7 +387,7 @@ impl UloApplication {
     ///
     /// Everything resolved in one execution shares its cache, so a request-scoped
     /// provider is built once for all of them. Use
-    /// [`ProviderContext::standalone`](crate::ProviderContext::standalone) where the
+    /// [`ProviderContext::standalone`](crate::di::ProviderContext::standalone) where the
     /// work arrived over no transport.
     pub async fn resolve<T: 'static>(
         &self,

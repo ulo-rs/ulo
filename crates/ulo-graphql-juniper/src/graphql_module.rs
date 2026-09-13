@@ -19,7 +19,8 @@ use ulo::spi::{ControllerFactory, ProviderFactory};
 ///
 /// ```rust
 /// use juniper::{EmptyMutation, EmptySubscription, RootNode, graphql_object};
-/// use ulo::{module, UloFactory, HttpAdapter};
+/// use ulo::http::HttpAdapter;
+/// use ulo::{UloFactory, module};
 /// use ulo_http_axum::AxumAdapter;
 /// use ulo_graphql_juniper::{GraphQLModule, DefaultContextBuilder, DefaultContext};
 ///
@@ -169,11 +170,11 @@ where
     Mutation::TypeInfo: Send + Sync,
     Subscription::TypeInfo: Send + Sync,
 {
-    fn identity(&self) -> ulo::ModuleIdentity {
+    fn identity(&self) -> ulo::di::ModuleIdentity {
         // Full type (context builder included) plus the value config — the same
         // identity model as the async-graphql module and `DynamicModule`: only
         // an identical import dedups.
-        ulo::ModuleIdentity::of_type::<Self>().fingerprinted(&(&self.path, self.playground))
+        ulo::di::ModuleIdentity::of_type::<Self>().fingerprinted(&(&self.path, self.playground))
     }
 
     fn providers(&self) -> Option<Vec<Box<dyn ProviderFactory>>> {

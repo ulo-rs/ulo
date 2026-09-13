@@ -191,12 +191,12 @@ pub use shape::{GrpcRequest, MethodShape};
 /// }
 /// ```
 pub fn to_status<E: ulo::Error>(error: E) -> tonic::Status {
-    to_tonic(ulo::GrpcStatus::of(error))
+    to_tonic(ulo::grpc::GrpcStatus::of(error))
 }
 
 /// The status a `GrpcStatus` renders as, keeping any error it carries on the
 /// answer's source slot.
-fn to_tonic(status: ulo::GrpcStatus) -> tonic::Status {
+fn to_tonic(status: ulo::grpc::GrpcStatus) -> tonic::Status {
     let mut answer = tonic::Status::new(
         tonic::Code::from_i32(status.code as i32),
         status.message.clone(),

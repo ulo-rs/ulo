@@ -12,7 +12,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ulo::{UloFactory, injectable, module};
-
 /// Stands in for the generated `db::PrismaClient`.
 #[derive(Clone)]
 struct FakeClient {

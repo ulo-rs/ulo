@@ -1,6 +1,7 @@
 use super::resource_name_service::RESOURCE_NAME_SERVICE;
 use ulo::http::extract::Path;
-use ulo::*;
+use ulo::http::Body;
+use ulo::prelude::*;
 
 #[controller("/resource_name")]
 pub struct RESOURCE_NAME_CONTROLLER {

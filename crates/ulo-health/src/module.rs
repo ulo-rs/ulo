@@ -1,4 +1,4 @@
-use ulo::DynamicModule;
+use ulo::di::DynamicModule;
 
 use crate::health_check_service::HealthCheckServiceFactory;
 

@@ -7,7 +7,8 @@
 //! # Example
 //!
 //! ```rust
-//! use ulo::{Body, Request, controller, get, routes};
+//! use ulo::http::{Body, Request};
+//! use ulo::{controller, get, routes};
 //!
 //! #[controller("/users")]
 //! pub struct UserController {

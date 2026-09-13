@@ -69,12 +69,12 @@ impl OrdersController {
     #[message_pattern("orders.create")]
     async fn create_order(
         &self,
-        data: ulo::RpcData,
+        data: ulo::rpc::RpcData,
         _ctx: &ulo::rpc::RpcContext,
-    ) -> Result<ulo::RpcData, ulo::RpcError> {
+    ) -> Result<ulo::rpc::RpcData, ulo::rpc::RpcError> {
         let payload = data
             .as_json()
-            .ok_or_else(|| ulo::RpcError::Internal("expected JSON payload".into()))?;
+            .ok_or_else(|| ulo::rpc::RpcError::Internal("expected JSON payload".into()))?;
 
         let item = payload["item"].as_str().unwrap_or("unknown");
         let qty = payload["qty"].as_u64().unwrap_or(1);
@@ -83,7 +83,7 @@ impl OrdersController {
         // automatically — we never mention them here.
         tracing::info!(item, qty, "handler called");
 
-        Ok(ulo::RpcData::json(serde_json::json!({
+        Ok(ulo::rpc::RpcData::json(serde_json::json!({
             "id": 1001,
             "item": item,
             "qty": qty,

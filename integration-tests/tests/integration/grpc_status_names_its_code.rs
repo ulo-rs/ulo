@@ -12,7 +12,8 @@ use ulo::UloFactory;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;
-use ulo::{ErrorKind, GrpcCode, GrpcStatus, async_trait, injectable, module};
+use ulo::grpc::{GrpcCode, GrpcStatus};
+use ulo::{ErrorKind, async_trait, injectable, module};
 use ulo_macros::{controller, grpc_methods, new, use_error_handlers};
 
 use crate::common::NotServed;
@@ -173,7 +174,7 @@ impl ClaimedNamedCodeService {
 #[module(controllers: [ClaimedNamedCodeService], providers: [ReopenHandler])]
 impl ClaimedNamedCodeModule {}
 
-async fn boot(module: impl ulo::ModuleMetadata + 'static) -> u16 {
+async fn boot(module: impl ulo::di::ModuleMetadata + 'static) -> u16 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();

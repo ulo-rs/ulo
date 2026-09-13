@@ -45,7 +45,7 @@ pub fn handle_subscriptions(item: TokenStream) -> Result<TokenStream> {
                     match self.#method_name(#(#call_args),*).await {
                         Ok(__output) => ::ulo::spi::ExecutionResult::Ok(__output),
                         Err(__err) => ::ulo::spi::ExecutionResult::Err(
-                            ::std::convert::Into::<::ulo::WsError>::into(__err),
+                            ::std::convert::Into::<::ulo::ws::WsError>::into(__err),
                         ),
                     }
                 }
@@ -82,7 +82,7 @@ pub fn handle_subscriptions(item: TokenStream) -> Result<TokenStream> {
             async fn __ulo_ws_handle_event(
                 &self,
                 __ctx: &::ulo::ws::WsContext,
-            ) -> ::ulo::spi::ExecutionResult<::ulo::WsHandlerOutput, ::ulo::WsError> {
+            ) -> ::ulo::spi::ExecutionResult<::ulo::ws::WsHandlerOutput, ::ulo::ws::WsError> {
                 let __event = ::std::string::String::from(__ctx.event());
                 match __event.as_str() {
                     #(#match_arms)*
@@ -90,7 +90,7 @@ pub fn handle_subscriptions(item: TokenStream) -> Result<TokenStream> {
                     // it. Unclaimed it renders the `NotFound` envelope it always
                     // did.
                     _ => ::ulo::spi::ExecutionResult::Err(
-                        ::ulo::WsError::AppError(::std::sync::Arc::new(
+                        ::ulo::ws::WsError::AppError(::std::sync::Arc::new(
                             ::ulo::errors::Unrouted::new(__event),
                         )),
                     ),
@@ -173,7 +173,7 @@ fn handler_params(method: &syn::ImplItemFn) -> (Vec<TokenStream>, Vec<TokenStrea
                 ::std::result::Result::Ok(__value) => __value,
                 ::std::result::Result::Err(__e) => {
                     return ::ulo::spi::ExecutionResult::Err(
-                        ::ulo::WsError::Internal(__e.to_string()),
+                        ::ulo::ws::WsError::Internal(__e.to_string()),
                     );
                 }
             };
@@ -240,7 +240,7 @@ fn build_enhancers_fn(
             continue;
         }
         handler_entries.push(quote! {
-            ::ulo::GatewayHandlerEnhancers {
+            ::ulo::ws::GatewayHandlerEnhancers {
                 event: #event.to_string(),
                 guard_tokens: vec![#(#hg),*],
                 interceptor_tokens: vec![#(#hi),*],
@@ -252,8 +252,8 @@ fn build_enhancers_fn(
     Ok(quote! {
         #[doc(hidden)]
         #[allow(non_snake_case, clippy::all)]
-        fn __ulo_ws_enhancers(&self) -> ::ulo::GatewayEnhancers {
-            ::ulo::GatewayEnhancers {
+        fn __ulo_ws_enhancers(&self) -> ::ulo::ws::GatewayEnhancers {
+            ::ulo::ws::GatewayEnhancers {
                 guard_tokens: vec![#(#guard_tokens),*],
                 interceptor_tokens: vec![#(#interceptor_tokens),*],
                 error_handler_tokens: vec![#(#error_handler_tokens),*],

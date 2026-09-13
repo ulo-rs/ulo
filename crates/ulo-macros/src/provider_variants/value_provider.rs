@@ -115,13 +115,13 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
                     }
 
 
-                    fn scope(&self) -> ulo::ProviderScope {
-                        ulo::ProviderScope::Singleton
+                    fn scope(&self) -> ulo::di::ProviderScope {
+                        ulo::di::ProviderScope::Singleton
                     }
 
                     async fn resolve(
                         &self,
-                        _ctx: ulo::ProviderContext,
+                        _ctx: ulo::di::ProviderContext,
                     ) -> Box<dyn std::any::Any + Send> {
                         self.instance.resolve(_ctx).await
                     }
@@ -191,11 +191,11 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
                 #[ulo::async_trait]
                 impl ulo::spi::Provider for #provider_name {
                     fn token(&self) -> String { #token_expr }
-                    fn scope(&self) -> ulo::ProviderScope { ulo::ProviderScope::Singleton }
+                    fn scope(&self) -> ulo::di::ProviderScope { ulo::di::ProviderScope::Singleton }
 
                     async fn resolve(
                         &self,
-                        _ctx: ulo::ProviderContext,
+                        _ctx: ulo::di::ProviderContext,
                     ) -> Box<dyn std::any::Any + Send> {
                         Box::new((*self.instance).clone())
                     }
@@ -249,11 +249,11 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
                         #[ulo::async_trait]
                         impl ulo::spi::Provider for #provider_name {
                             fn token(&self) -> String { #token_expr }
-                            fn scope(&self) -> ulo::ProviderScope { ulo::ProviderScope::Singleton }
+                            fn scope(&self) -> ulo::di::ProviderScope { ulo::di::ProviderScope::Singleton }
 
                             async fn resolve(
                                 &self,
-                                _ctx: ulo::ProviderContext,
+                                _ctx: ulo::di::ProviderContext,
                             ) -> Box<dyn std::any::Any + Send> {
                                 (self.get_value)()
                             }

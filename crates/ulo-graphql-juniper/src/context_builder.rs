@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use ulo::RequestPart;
+use ulo::http::RequestPart;
 
 /// Trait for building GraphQL context from HTTP request metadata.
 ///
@@ -11,7 +11,7 @@ use ulo::RequestPart;
 ///
 /// ```ignore
 /// use async_trait::async_trait;
-/// use ulo::RequestPart;
+/// use ulo::http::RequestPart;
 /// use ulo_graphql_juniper::ContextBuilder;
 /// use juniper::Context as JuniperContext;
 ///

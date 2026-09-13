@@ -13,18 +13,17 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use ulo::HttpResponse;
+use crate::common::TestServer;
+use serial_test::serial;
 use ulo::async_trait;
 use ulo::enhancer::{ChainError, ErrorHandler, Guard};
 use ulo::errors::GuardRejection;
+use ulo::http::Body;
 use ulo::http::HttpContext;
+use ulo::http::HttpResponse;
 use ulo::{
-    Body, UloFactory, controller, get, injectable, module, routes, use_error_handlers, use_guards,
+    UloFactory, controller, get, injectable, module, routes, use_error_handlers, use_guards,
 };
-
-use serial_test::serial;
-
-use crate::common::TestServer;
 
 /// Every handler that runs records itself, so a claim by one does not hide
 /// whether an earlier one was consulted at all.

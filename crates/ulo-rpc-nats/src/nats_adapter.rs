@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
+use crate::IntoNatsServers;
 use bytes::Bytes;
 use futures::{FutureExt, StreamExt};
-use ulo::AdapterResult;
 use ulo::rpc::wire;
-use ulo::{RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks};
-
-use crate::IntoNatsServers;
+use ulo::rpc::{RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks};
+use ulo::spi::AdapterResult;
 
 /// NATS transport adapter for the Ulo RPC gateway.
 ///
@@ -73,7 +72,7 @@ impl RpcAdapter for NatsAdapter {
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::rpc::RpcLifecycleHandle> {
         let servers = self.servers.clone();
         let patterns = std::mem::take(&mut self.patterns);
         let callbacks = self
@@ -226,7 +225,7 @@ impl RpcAdapter for NatsAdapter {
                                     );
                                     Bytes::from(wire::frame_panic().into_bytes())
                                 }
-                                Ok(Ok(ulo::RpcHandlerOutput::Stream(stream))) => {
+                                Ok(Ok(ulo::rpc::RpcHandlerOutput::Stream(stream))) => {
                                     wire::drive_reply_stream(stream, |frame| {
                                         let client = client.clone();
                                         let inbox = inbox.clone();
@@ -270,7 +269,7 @@ impl RpcAdapter for NatsAdapter {
         // NATS has no listener — no local_addr — and no graceful shutdown
         // signal in the current implementation; the close callback is a
         // no-op.
-        Ok(ulo::RpcLifecycleHandle::new(None, serve, || async {
+        Ok(ulo::rpc::RpcLifecycleHandle::new(None, serve, || async {
             Ok(())
         }))
     }

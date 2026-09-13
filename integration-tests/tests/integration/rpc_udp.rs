@@ -22,7 +22,7 @@ use ulo_macros::{controller, new, patterns};
 /// Spawn an app with the UDP RPC adapter on an OS-assigned port and wait
 /// for `app.bind().await` to surface the listening address before returning.
 /// The caller is guaranteed the socket is live by the time it gets the port.
-async fn start_rpc_server(module: impl ulo::ModuleMetadata + 'static) -> u16 {
+async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16 {
     use ulo::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
@@ -303,8 +303,7 @@ async fn spawn_lossy_echo(drop_first: usize) -> u16 {
 /// is dropped; without retries the same scenario times out.
 #[tokio_localset_test::localset_test]
 async fn udp_client_retries_recover_from_packet_loss() {
-    use ulo::{RpcClientTransport, RpcData};
-
+    use ulo::rpc::{RpcClientTransport, RpcData};
     // No retries → the dropped first datagram is fatal.
     let port_no_retry = spawn_lossy_echo(1).await;
     let no_retry = ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port_no_retry)
@@ -317,7 +316,7 @@ async fn udp_client_retries_recover_from_packet_loss() {
         )
         .await
         .expect_err("first datagram dropped, no retries → Timeout");
-    assert!(matches!(err, ulo::RpcClientError::Timeout));
+    assert!(matches!(err, ulo::rpc::RpcClientError::Timeout));
 
     // One retry → the second datagram gets through.
     let port_retry = spawn_lossy_echo(1).await;
@@ -341,8 +340,7 @@ async fn udp_client_retries_recover_from_packet_loss() {
 
 #[tokio_localset_test::localset_test]
 async fn udp_client_transport_round_trips_and_rejects_oversized() {
-    use ulo::{RpcClientTransport, RpcData};
-
+    use ulo::rpc::{RpcClientTransport, RpcData};
     let port = start_rpc_server(UdpRpcModule).await;
 
     let transport = ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port)
@@ -368,7 +366,7 @@ async fn udp_client_transport_round_trips_and_rejects_oversized() {
         .await
         .expect_err("oversized payload should fail");
     match err {
-        ulo::RpcClientError::Transport(msg) => assert!(msg.contains("exceeds")),
+        ulo::rpc::RpcClientError::Transport(msg) => assert!(msg.contains("exceeds")),
         other => panic!("expected Transport error, got {other:?}"),
     }
 }
@@ -587,7 +585,7 @@ impl UdpMetaModule {}
 #[tokio_localset_test::localset_test]
 async fn udp_client_metadata_reaches_handler() {
     use std::time::Duration;
-    use ulo::RpcClient;
+    use ulo::rpc::RpcClient;
 
     let port = start_rpc_server(UdpMetaModule).await;
     let client = RpcClient::new(

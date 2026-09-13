@@ -13,8 +13,8 @@
 //!     REDIS_URL=redis://127.0.0.1:6379 cargo run -p ulo-rpc-redis --example orders
 
 use serde::{Deserialize, Serialize};
-use ulo::RpcClient;
 use ulo::UloFactory;
+use ulo::rpc::RpcClient;
 use ulo::rpc::{RpcData, RpcError};
 use ulo_macros::{controller, module, new, patterns};
 use ulo_rpc_redis::{RedisAdapter, RedisClientTransport};

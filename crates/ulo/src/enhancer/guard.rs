@@ -25,7 +25,7 @@ use crate::context::HandlerContext;
 /// handler already holds the context, and a gRPC handler takes it off the tonic
 /// request with `Extensions::adopt(request.extensions())`.
 ///
-/// On HTTP, [`Extension<T>`](crate::Extension) injects the same value into a
+/// On HTTP, [`Extension<T>`](crate::di::Extension) injects the same value into a
 /// guard and into anything below the controller, so both ends declare it rather
 /// than reaching for the bag by type.
 #[async_trait]

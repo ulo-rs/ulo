@@ -35,4 +35,6 @@ pub(crate) mod tokio_sender;
 pub use axum_adapter::AxumAdapter;
 pub use tokio_sender::TokioSender;
 
-pub use ulo::{HttpAdapter, WebSocketAdapter};
+pub use ulo::http::HttpAdapter;
+
+pub use ulo::ws::WebSocketAdapter;

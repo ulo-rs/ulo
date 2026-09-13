@@ -12,7 +12,8 @@
 //!     cargo run -p ulo-db-prisma --example quick_start
 //!     curl http://127.0.0.1:3000/users
 
-use ulo::{Body, UloFactory, controller, get, injectable, module, routes};
+use ulo::http::Body;
+use ulo::{UloFactory, controller, get, injectable, module, routes};
 use ulo_db_prisma::PrismaModule;
 use ulo_http_axum::AxumAdapter;
 

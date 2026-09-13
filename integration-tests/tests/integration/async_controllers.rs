@@ -5,8 +5,8 @@
 //! passing says nothing about an async one: the failure mode is a response
 //! written from a future nobody polled.
 use crate::common::TestServer;
-use ulo::{Body, controller, get, injectable, module, routes};
-
+use ulo::http::Body;
+use ulo::{controller, get, injectable, module, routes};
 #[injectable]
 pub struct AsyncService;
 impl AsyncService {

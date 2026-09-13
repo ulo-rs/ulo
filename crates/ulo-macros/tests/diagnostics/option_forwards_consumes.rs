@@ -4,8 +4,8 @@
 // compile time.
 use serde::Deserialize;
 use ulo::http::extract::{Bytes, Json};
-use ulo::{Body, controller, post, routes};
-
+use ulo::{controller, post, routes};
+use ulo::http::Body;
 #[derive(Deserialize)]
 pub struct Payload {
     pub a: i32,

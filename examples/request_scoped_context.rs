@@ -12,7 +12,8 @@
 use ulo::async_trait;
 use ulo::enhancer::Guard;
 use ulo::http::HttpContext;
-use ulo::*;
+use ulo::http::{Body, Request};
+use ulo::prelude::*;
 use ulo_http_axum::AxumAdapter;
 
 #[derive(Clone, Debug)]

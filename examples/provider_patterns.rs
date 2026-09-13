@@ -11,7 +11,6 @@ use ulo::{
     UloFactory, injectable, module, new, provider_alias, provider_factory, provider_token,
     provider_value,
 };
-
 // ---- providers ---------------------------------------------------------------
 
 #[injectable]

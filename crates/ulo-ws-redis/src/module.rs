@@ -1,9 +1,9 @@
-use ulo::{BroadcastService, DynamicModule};
-
 use crate::{
     provider::{RedisBroadcastServiceFactory, SharedBroadcastServiceProviderFactory},
     service::RedisBroadcastService,
 };
+use ulo::di::DynamicModule;
+use ulo::ws::BroadcastService;
 
 pub struct RedisBroadcastModule;
 

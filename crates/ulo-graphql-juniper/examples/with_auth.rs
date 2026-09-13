@@ -48,7 +48,7 @@ impl User {
 #[injectable]
 pub struct _AuthService;
 impl _AuthService {
-    fn verify_token(&self, req: &ulo::RequestPart) -> Option<User> {
+    fn verify_token(&self, req: &ulo::http::RequestPart) -> Option<User> {
         // In a real app, verify JWT token from headers
         let auth_value = req
             .headers
@@ -123,7 +123,7 @@ pub struct _GraphQLContextBuilder {
 impl ContextBuilder for _GraphQLContextBuilder {
     type Context = GraphQLContext;
 
-    async fn build(&self, req: &ulo::RequestPart) -> Self::Context {
+    async fn build(&self, req: &ulo::http::RequestPart) -> Self::Context {
         GraphQLContext {
             user: self.auth_service.verify_token(req),
             database_service: Arc::new(self.database_service.clone()),

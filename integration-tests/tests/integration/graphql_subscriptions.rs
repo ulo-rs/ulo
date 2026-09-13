@@ -8,8 +8,9 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
+use ulo::async_trait;
 use ulo::module;
-use ulo::{WsClient, async_trait};
+use ulo::ws::WsClient;
 use ulo_graphql_async_graphql::{
     DefaultContextBuilder, GraphQLModule, SubscriptionContextBuilder,
     async_graphql::{self, Context, EmptyMutation, Object, Schema, Subscription},

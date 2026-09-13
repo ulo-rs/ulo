@@ -7,8 +7,8 @@ use juniper::{
 use serde_json::Value;
 use std::fmt;
 use std::sync::Arc;
-use ulo::RequestPart;
 use ulo::di::ProviderContext;
+use ulo::http::RequestPart;
 use ulo::spi::Provider;
 /// Injectable GraphQL service.
 ///

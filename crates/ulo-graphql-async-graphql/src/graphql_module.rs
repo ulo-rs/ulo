@@ -40,7 +40,7 @@ use ulo::spi::{ControllerFactory, ProviderFactory};
 ///
 /// ```ignore
 /// use ulo_graphql_async_graphql::{GraphQLModule, ContextBuilder, async_graphql::*};
-/// use ulo::HttpRequest;
+/// use ulo::http::HttpRequest;
 /// use async_trait::async_trait;
 ///
 /// struct MyContextBuilder {
@@ -201,12 +201,12 @@ where
     Subscription: SubscriptionType + 'static,
     Ctx: ContextBuilder,
 {
-    fn identity(&self) -> ulo::ModuleIdentity {
+    fn identity(&self) -> ulo::di::ModuleIdentity {
         // Full type (context builder included) plus the value config, so two
         // imports differing in either are distinct modules: colliding on the
         // path surfaces as a duplicate-route bind error, and different paths
         // mount as two endpoints. Only an identical import dedups as a diamond.
-        ulo::ModuleIdentity::of_type::<Self>().fingerprinted(&(
+        ulo::di::ModuleIdentity::of_type::<Self>().fingerprinted(&(
             &self.path,
             self.playground_enabled,
             &self.subscription_path,

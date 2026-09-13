@@ -11,7 +11,8 @@
 //!     curl http://127.0.0.1:3000/health/db
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
-use ulo::{Body, UloFactory, controller, get, injectable, module, routes};
+use ulo::http::Body;
+use ulo::{UloFactory, controller, get, injectable, module, routes};
 use ulo_db_seaorm::SeaOrmModule;
 use ulo_http_axum::AxumAdapter;
 

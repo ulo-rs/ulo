@@ -1,6 +1,6 @@
 use std::{future::Future, marker::PhantomData};
 
-use ulo::DynamicModule;
+use ulo::di::DynamicModule;
 
 use crate::client::PrismaClientFactory;
 

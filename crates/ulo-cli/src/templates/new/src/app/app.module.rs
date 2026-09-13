@@ -1,4 +1,4 @@
-use ulo::*;
+use ulo::prelude::*;
 
 use super::app_controller::AppController;
 use super::app_service::AppService;

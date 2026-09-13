@@ -7,7 +7,8 @@
 //! disagree — each test pins one pair.
 
 use ulo::UloFactory;
-use ulo::{ProviderContext, injectable, module, provider_factory, provider_value};
+use ulo::di::ProviderContext;
+use ulo::{injectable, module, provider_factory, provider_value};
 use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Clone)]

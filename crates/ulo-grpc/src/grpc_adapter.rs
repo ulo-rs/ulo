@@ -10,7 +10,7 @@ use tonic::server::NamedService;
 use tonic::service::{Routes, RoutesBuilder};
 use tonic::transport::Server;
 use tower::Service;
-use ulo::AdapterResult;
+use ulo::spi::AdapterResult;
 
 use ulo::async_trait;
 use ulo::grpc::{GrpcServiceSource, ResolvedGrpcEnhancers};
@@ -22,7 +22,7 @@ use crate::tracing_layer::TracingLayer;
 const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Where the adapter gets its socket. Holds a `SocketAddr` rather than
-/// reusing [`ulo::BindTarget`], whose address arm is a hostname string:
+/// reusing [`ulo::spi::BindTarget`], whose address arm is a hostname string:
 /// routing a `SocketAddr` through one would re-resolve it and drop an IPv6
 /// scope id along the way.
 enum GrpcTarget {
@@ -219,7 +219,7 @@ impl GrpcAdapter {
 }
 
 #[async_trait]
-impl ulo::GrpcAdapter for GrpcAdapter {
+impl ulo::grpc::GrpcAdapter for GrpcAdapter {
     fn register_services(
         &mut self,
         services: Vec<(Arc<dyn GrpcServiceSource>, Arc<ResolvedGrpcEnhancers>)>,
@@ -238,7 +238,7 @@ impl ulo::GrpcAdapter for GrpcAdapter {
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::GrpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::grpc::GrpcLifecycleHandle> {
         // Bind synchronously so port-in-use surfaces as `Err` from
         // `app.bind()` instead of panicking inside the spawned serve loop.
         let target = self
@@ -364,7 +364,7 @@ impl ulo::GrpcAdapter for GrpcAdapter {
         });
 
         let shutdown_tx = self.shutdown_tx.clone();
-        Ok(ulo::GrpcLifecycleHandle::new(
+        Ok(ulo::grpc::GrpcLifecycleHandle::new(
             Some(local_addr),
             serve,
             move || async move {

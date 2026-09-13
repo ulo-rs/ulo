@@ -7,17 +7,17 @@ use tokio::net::UdpSocket;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 use tracing::Instrument;
-use ulo::AdapterResult;
+use ulo::async_trait;
 use ulo::rpc::wire;
-use ulo::{RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks, async_trait};
-
+use ulo::rpc::{RpcAdapter, RpcCallInfo, RpcData, RpcMessageCallbacks};
+use ulo::spi::AdapterResult;
 /// Maximum UDP datagram payload (theoretical max minus IPv4 + UDP headers).
 const MAX_DATAGRAM: usize = 65_507;
 
 const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Where the adapter gets its socket. The datagram counterpart of
-/// [`ulo::BindTarget`], which is TCP-typed and so cannot carry a
+/// [`ulo::spi::BindTarget`], which is TCP-typed and so cannot carry a
 /// `UdpSocket`; private because the two constructors cover the whole surface.
 enum UdpTarget {
     Addr { hostname: String, port: u16 },
@@ -200,7 +200,7 @@ impl RpcAdapter for UdpAdapter {
         Ok(())
     }
 
-    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::RpcLifecycleHandle> {
+    async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::rpc::RpcLifecycleHandle> {
         let callbacks = self
             .callbacks
             .take()
@@ -320,7 +320,7 @@ impl RpcAdapter for UdpAdapter {
         });
 
         let shutdown_tx = self.shutdown_tx.clone();
-        Ok(ulo::RpcLifecycleHandle::new(
+        Ok(ulo::rpc::RpcLifecycleHandle::new(
             local_addr,
             serve,
             move || async move {
@@ -427,7 +427,7 @@ async fn handle_datagram(
                 tracing::error!("RPC handler panicked; returning error to caller");
                 wire::frame_panic().into_json_value()
             }
-            Ok(Ok(ulo::RpcHandlerOutput::Stream(stream))) => {
+            Ok(Ok(ulo::rpc::RpcHandlerOutput::Stream(stream))) => {
                 wire::drive_reply_stream(stream, |mut frame| {
                     let socket = socket.clone();
                     let id = id.clone();

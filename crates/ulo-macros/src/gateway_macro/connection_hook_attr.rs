@@ -88,9 +88,9 @@ pub fn handle_conn_hook(hook: ConnHook, item: TokenStream) -> Result<TokenStream
             #[allow(non_snake_case, unused_variables, clippy::all)]
             async fn #bridge_method(
                 &self,
-                client: &::ulo::WsClient,
+                client: &::ulo::ws::WsClient,
                 context: &::ulo::ws::WsContext,
-            ) -> ::std::result::Result<(), ::ulo::WsError> {
+            ) -> ::std::result::Result<(), ::ulo::ws::WsError> {
                 #forward_call
             }
         },
@@ -99,8 +99,8 @@ pub fn handle_conn_hook(hook: ConnHook, item: TokenStream) -> Result<TokenStream
             #[allow(non_snake_case, unused_variables, clippy::all)]
             async fn #bridge_method(
                 &self,
-                client: &::ulo::WsClient,
-                reason: ::ulo::DisconnectReason,
+                client: &::ulo::ws::WsClient,
+                reason: ::ulo::ws::DisconnectReason,
                 context: &::ulo::ws::WsContext,
             ) {
                 #forward_call;

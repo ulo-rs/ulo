@@ -243,7 +243,7 @@ impl UloApplicationContext {
         for module_token in modules {
             if let Ok(providers) = container.lifecycle_instances(&module_token) {
                 for provider in providers {
-                    if provider.scope() == crate::ProviderScope::Request {
+                    if provider.scope() == crate::di::ProviderScope::Request {
                         continue;
                     }
                     provider.before_application_shutdown(signal.clone()).await;
@@ -270,7 +270,7 @@ impl UloApplicationContext {
         for module_token in modules {
             if let Ok(providers) = container.lifecycle_instances(&module_token) {
                 for provider in providers {
-                    if provider.scope() == crate::ProviderScope::Request {
+                    if provider.scope() == crate::di::ProviderScope::Request {
                         continue;
                     }
                     provider.on_module_destroy().await;
@@ -300,7 +300,7 @@ impl UloApplicationContext {
         for module_token in modules {
             if let Ok(providers) = container.lifecycle_instances(&module_token) {
                 for provider in providers {
-                    if provider.scope() == crate::ProviderScope::Request {
+                    if provider.scope() == crate::di::ProviderScope::Request {
                         continue;
                     }
                     provider.on_application_shutdown(signal.clone()).await;

@@ -3,12 +3,11 @@
 //! The class half existed nowhere before: `#[set_metadata]` was read from method attributes only, so
 //! an annotation on the impl block compiled and did nothing.
 
-use ulo::context::HandlerContext;
-use ulo::http::HttpContext;
-use ulo::{Body, controller, get, module, routes, set_metadata};
-
 use crate::common::TestServer;
-
+use ulo::context::HandlerContext;
+use ulo::http::Body;
+use ulo::http::HttpContext;
+use ulo::{controller, get, module, routes, set_metadata};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tier(&'static str);
 

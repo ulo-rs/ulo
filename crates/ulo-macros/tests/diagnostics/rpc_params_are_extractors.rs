@@ -4,7 +4,6 @@
 use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError};
 use ulo::{controller, patterns};
-
 #[controller]
 pub struct Orders {}
 

@@ -13,8 +13,8 @@
 //!     KAFKA_BROKERS=127.0.0.1:9092 cargo run -p ulo-rpc-kafka --example orders
 
 use serde::{Deserialize, Serialize};
-use ulo::RpcClient;
 use ulo::UloFactory;
+use ulo::rpc::RpcClient;
 use ulo::rpc::{RpcData, RpcError};
 use ulo_macros::{controller, module, new, patterns};
 use ulo_rpc_kafka::{KafkaAdapter, KafkaClientTransport};

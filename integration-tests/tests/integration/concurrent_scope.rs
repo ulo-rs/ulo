@@ -11,7 +11,8 @@
 
 use crate::common::TestServer;
 use futures_util::future::join_all;
-use ulo::{Body, controller, get, module, provider_factory, routes};
+use ulo::http::Body;
+use ulo::{controller, get, module, provider_factory, routes};
 use uuid::Uuid;
 
 #[tokio_localset_test::localset_test]

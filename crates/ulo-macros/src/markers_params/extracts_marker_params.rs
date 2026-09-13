@@ -26,8 +26,8 @@ pub fn extract_body_from_param(marker_param: &MarkerParam) -> Result<TokenStream
                     "error": "Failed to extract request body",
                     "details": e.to_string()
                 });
-                return ::ulo::spi::ExecutionResult::Ok(::ulo::HttpResponse {
-                    body: Some(::ulo::Body::json(error_body)),
+                return ::ulo::spi::ExecutionResult::Ok(::ulo::http::HttpResponse {
+                    body: Some(::ulo::http::Body::json(error_body)),
                     status: 400,
                     headers: vec![],
                 });
@@ -56,8 +56,8 @@ pub fn extract_query_from_param(marker_param: &MarkerParam) -> Result<TokenStrea
                         "error": "Failed to extract query parameters",
                         "details": e.to_string()
                     });
-                    return ::ulo::spi::ExecutionResult::Ok(::ulo::HttpResponse {
-                        body: Some(::ulo::Body::json(error_body)),
+                    return ::ulo::spi::ExecutionResult::Ok(::ulo::http::HttpResponse {
+                        body: Some(::ulo::http::Body::json(error_body)),
                         status: 400,
                         headers: vec![],
                     });
@@ -105,8 +105,8 @@ pub fn extract_query_from_param(marker_param: &MarkerParam) -> Result<TokenStrea
                                     "param": #marker_arg,
                                     "details": format!("Parse error: {}", e)
                                 });
-                                return ::ulo::spi::ExecutionResult::Ok(::ulo::HttpResponse {
-                                    body: Some(::ulo::Body::json(error_body)),
+                                return ::ulo::spi::ExecutionResult::Ok(::ulo::http::HttpResponse {
+                                    body: Some(::ulo::http::Body::json(error_body)),
                                     status: 400,
                                     headers: vec![],
                                 });
@@ -133,8 +133,8 @@ pub fn extract_query_from_param(marker_param: &MarkerParam) -> Result<TokenStrea
                                     "param": #marker_arg,
                                     "details": format!("Parse error: {}", e)
                                 });
-                                return ::ulo::spi::ExecutionResult::Ok(::ulo::HttpResponse {
-                                    body: Some(::ulo::Body::json(error_body)),
+                                return ::ulo::spi::ExecutionResult::Ok(::ulo::http::HttpResponse {
+                                    body: Some(::ulo::http::Body::json(error_body)),
                                     status: 400,
                                     headers: vec![],
                                 });
@@ -145,8 +145,8 @@ pub fn extract_query_from_param(marker_param: &MarkerParam) -> Result<TokenStrea
                                 "error": "Missing required query parameter",
                                 "param": #marker_arg
                             });
-                            return ::ulo::spi::ExecutionResult::Ok(::ulo::HttpResponse {
-                                body: Some(::ulo::Body::json(error_body)),
+                            return ::ulo::spi::ExecutionResult::Ok(::ulo::http::HttpResponse {
+                                body: Some(::ulo::http::Body::json(error_body)),
                                 status: 400,
                                 headers: vec![],
                             });
@@ -158,15 +158,15 @@ pub fn extract_query_from_param(marker_param: &MarkerParam) -> Result<TokenStrea
     } else {
         // For complex types, use Query<T> extractor
         quote! {
-            let #param_name = match <::ulo::Query<#param_type> as ::ulo::extract::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await {
-                Ok(::ulo::Query(value)) => value,
+            let #param_name = match <::ulo::http::extract::Query<#param_type> as ::ulo::extract::FromContext<::ulo::http::HttpContext>>::extract(__ctx).await {
+                Ok(::ulo::http::extract::Query(value)) => value,
                 Err(e) => {
                     let error_body = ::ulo::serde_json::json!({
                         "error": "Failed to extract query parameters",
                         "details": e.to_string()
                     });
-                    return ::ulo::spi::ExecutionResult::Ok(::ulo::HttpResponse {
-                        body: Some(::ulo::Body::json(error_body)),
+                    return ::ulo::spi::ExecutionResult::Ok(::ulo::http::HttpResponse {
+                        body: Some(::ulo::http::Body::json(error_body)),
                         status: 400,
                         headers: vec![],
                     });
@@ -188,7 +188,7 @@ pub fn extract_path_param_from_param(marker_param: &MarkerParam) -> Result<Token
 
     let extract_token_stream = quote! {
         let #param_name: #param_type = match (&_req_parts.extensions)
-            .get::<::ulo::PathParams>()
+            .get::<::ulo::http::PathParams>()
             .and_then(|p| p.get(#marker_arg))
         {
             Some(value) => match value.parse() {
@@ -199,8 +199,8 @@ pub fn extract_path_param_from_param(marker_param: &MarkerParam) -> Result<Token
                         "param": #marker_arg,
                         "details": format!("Parse error: {}", e)
                     });
-                    return ::ulo::spi::ExecutionResult::Ok(::ulo::HttpResponse {
-                        body: Some(::ulo::Body::json(error_body)),
+                    return ::ulo::spi::ExecutionResult::Ok(::ulo::http::HttpResponse {
+                        body: Some(::ulo::http::Body::json(error_body)),
                         status: 400,
                         headers: vec![],
                     });
@@ -211,8 +211,8 @@ pub fn extract_path_param_from_param(marker_param: &MarkerParam) -> Result<Token
                     "error": "Missing required path parameter",
                     "param": #marker_arg
                 });
-                return ::ulo::spi::ExecutionResult::Ok(::ulo::HttpResponse {
-                    body: Some(::ulo::Body::json(error_body)),
+                return ::ulo::spi::ExecutionResult::Ok(::ulo::http::HttpResponse {
+                    body: Some(::ulo::http::Body::json(error_body)),
                     status: 400,
                     headers: vec![],
                 });

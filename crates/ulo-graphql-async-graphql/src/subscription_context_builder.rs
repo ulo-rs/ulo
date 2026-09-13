@@ -1,7 +1,7 @@
 use async_graphql::Data;
 use async_trait::async_trait;
 use serde_json::Value;
-use ulo::WsClient;
+use ulo::ws::WsClient;
 
 /// Builds GraphQL context data for a subscription request.
 ///

@@ -290,7 +290,7 @@ impl DependencyScanner {
                     for provider in providers {
                         // Skip request-scoped providers — they are built into an
                         // execution, and bootstrap is not one.
-                        if provider.scope() == crate::ProviderScope::Request {
+                        if provider.scope() == crate::di::ProviderScope::Request {
                             continue;
                         }
 
@@ -358,7 +358,7 @@ impl DependencyScanner {
                     for provider in providers {
                         // Skip request-scoped providers — they are built into an
                         // execution, and module initialisation is not one.
-                        if provider.scope() == crate::ProviderScope::Request {
+                        if provider.scope() == crate::di::ProviderScope::Request {
                             continue;
                         }
 

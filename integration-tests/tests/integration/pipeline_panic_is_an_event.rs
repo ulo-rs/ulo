@@ -21,10 +21,12 @@ use ulo::enhancer::{Interceptor, InterceptorNext};
 use ulo::errors::PanicRecovered;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
+use ulo::grpc::GrpcStatus;
 use ulo::grpc::extract::Inbound;
 use ulo::http::HttpContext;
+use ulo::http::HttpResponse;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
-use ulo::{GrpcStatus, HttpResponse, catch, controller, get, injectable, module, routes};
+use ulo::{catch, controller, get, injectable, module, routes};
 use ulo_macros::{grpc_methods, new, use_error_handlers, use_interceptors};
 
 use crate::common::TestServer;
@@ -64,8 +66,8 @@ async fn a_panicking_middleware_is_answered_by_the_chain() {
     #[routes]
     impl MiddlewarePanicController {
         #[get("/ping")]
-        fn ping(&self) -> ulo::Body {
-            ulo::Body::text("unreachable")
+        fn ping(&self) -> ulo::http::Body {
+            ulo::http::Body::text("unreachable")
         }
     }
 

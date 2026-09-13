@@ -17,7 +17,9 @@ use crate::http::{HttpRequest, RequestBody, RequestBoxBody};
 ///
 /// ```rust
 /// use ulo::futures::{StreamExt, pin_mut};
-/// use ulo::{Body, BodyStream, controller, post, routes};
+/// use ulo::http::Body;
+/// use ulo::http::extract::BodyStream;
+/// use ulo::{controller, post, routes};
 ///
 /// #[controller("/files")]
 /// pub struct Uploads {}

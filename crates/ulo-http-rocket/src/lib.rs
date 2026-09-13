@@ -54,7 +54,7 @@
 //!
 //! ## Response bodies
 //!
-//! Ulo's [`Body::stream`](ulo::Body::stream) is bridged
+//! Ulo's [`Body::stream`](ulo::http::Body::stream) is bridged
 //! into rocket's `streamed_body` via `tokio_util::io::StreamReader`, so
 //! chunks reach the client incrementally. Buffered bodies use
 //! `sized_body` for an accurate Content-Length without forcing chunked
@@ -108,4 +108,4 @@ pub(crate) mod tokio_sender;
 pub use rocket_adapter::RocketAdapter;
 pub use tokio_sender::TokioSender;
 
-pub use ulo::HttpAdapter;
+pub use ulo::http::HttpAdapter;

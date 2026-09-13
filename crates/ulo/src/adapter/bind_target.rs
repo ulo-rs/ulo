@@ -10,7 +10,7 @@ use std::net::TcpListener;
 /// Converts from the common shapes:
 ///
 /// ```no_run
-/// # use ulo::BindTarget;
+/// # use ulo::spi::BindTarget;
 /// let by_addr: BindTarget = ("127.0.0.1", 3000).into();
 ///
 /// let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

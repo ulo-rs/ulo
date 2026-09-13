@@ -2,6 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::common::TestServer;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 use ulo::async_trait;
@@ -12,9 +13,6 @@ use ulo::ws::{WsClient, WsHandlerResult, WsMessage};
 use ulo::{
     injectable, module, new, subscribe_message, subscriptions, use_guards, websocket_gateway,
 };
-
-use crate::common::TestServer;
-
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]

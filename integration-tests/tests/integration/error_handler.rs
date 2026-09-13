@@ -24,12 +24,14 @@
 use std::sync::Arc;
 
 use ulo::{
-    Body, HttpResponse, UloFactory, async_trait, controller,
+    UloFactory, async_trait, controller,
     enhancer::{ChainError, ErrorHandler, Guard},
     errors::GuardRejection,
     get,
+    http::Body,
     http::HttpContext,
     http::HttpError,
+    http::HttpResponse,
     module, routes,
 };
 use ulo_http_axum::AxumAdapter;
@@ -266,7 +268,7 @@ async fn scope_chain_overrides_app_error_default_on_user_error() {
 // ---- Test harness -----------------------------------------------------------
 
 async fn start_app(
-    module: impl ulo::ModuleMetadata + 'static,
+    module: impl ulo::di::ModuleMetadata + 'static,
     chain_handler: Option<Arc<dyn ErrorHandler<HttpContext, HttpResponse>>>,
 ) -> std::net::SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();

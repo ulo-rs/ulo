@@ -3,16 +3,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::wire::data_to_bytes;
 use futures::SinkExt;
 use rumqttc::v5::mqttbytes::QoS;
 use rumqttc::v5::mqttbytes::v5::{Packet, PublishProperties};
 use rumqttc::v5::{AsyncClient, Event, MqttOptions};
 use tokio::sync::{OnceCell, mpsc, oneshot};
+use ulo::async_trait;
 use ulo::rpc::wire::{self, ReplyFrame};
 use ulo::rpc::{ReplySink, RpcReplyStream};
-use ulo::{RpcClientError, RpcClientTransport, RpcData, async_trait};
-
-use crate::wire::data_to_bytes;
+use ulo::rpc::{RpcClientError, RpcClientTransport, RpcData};
 
 /// One awaited call in the correlation map.
 enum PendingSlot {
@@ -41,11 +41,11 @@ type Pending = Arc<Mutex<HashMap<String, PendingSlot>>>;
 /// ```ignore
 /// provider_value!(
 ///     "INVENTORY_CLIENT",
-///     ulo::RpcClient::new(ulo_rpc_mqtt::MqttClientTransport::new("127.0.0.1", 1883))
+///     ulo::rpc::RpcClient::new(ulo_rpc_mqtt::MqttClientTransport::new("127.0.0.1", 1883))
 /// )
 /// ```
 ///
-/// [`RpcClient`]: ulo::RpcClient
+/// [`RpcClient`]: ulo::rpc::RpcClient
 /// [`send`]: MqttClientTransport::send
 pub struct MqttClientTransport {
     host: String,

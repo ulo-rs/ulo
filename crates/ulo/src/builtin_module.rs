@@ -3,9 +3,9 @@
 //! This module provides built-in providers that should be globally available
 //! to all modules without requiring explicit imports.
 
-use crate::RequestFactory;
 use crate::di::ModuleMetadata;
 use crate::extension::ExtensionsFactory;
+use crate::http::RequestFactory;
 use crate::spi::{ControllerFactory, ProviderFactory};
 /// Built-in global module that provides core framework functionality
 ///
@@ -15,8 +15,8 @@ use crate::spi::{ControllerFactory, ProviderFactory};
 pub(crate) struct BuiltinModule;
 
 impl ModuleMetadata for BuiltinModule {
-    fn identity(&self) -> crate::ModuleIdentity {
-        crate::ModuleIdentity::named("UloBuiltinModule")
+    fn identity(&self) -> crate::di::ModuleIdentity {
+        crate::di::ModuleIdentity::named("UloBuiltinModule")
     }
 
     fn is_global(&self) -> bool {

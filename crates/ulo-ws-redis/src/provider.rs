@@ -3,9 +3,10 @@ use std::{any::Any, sync::Arc};
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use ulo::{
-    BroadcastService, FxHashMap,
+    FxHashMap,
     di::ProviderContext,
     spi::{Injectable, Provider, ProviderFactory},
+    ws::BroadcastService,
 };
 
 use crate::{

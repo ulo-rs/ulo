@@ -94,7 +94,7 @@ impl Provider for MongoConnectionProvider {
         Box::new(self.db.clone().expect("mongo database unavailable"))
     }
 
-    async fn on_module_init(&self) -> ulo::InitResult {
+    async fn on_module_init(&self) -> ulo::di::InitResult {
         if let Some(message) = &self.init_error {
             return Err(message.clone().into());
         }

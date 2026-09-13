@@ -5,8 +5,8 @@
 //! breaks is the registration itself, and it breaks as an unresolved dependency
 //! at startup.
 use crate::common::TestServer;
-use ulo::{Body, Request, controller, get, module, routes};
-
+use ulo::http::{Body, Request};
+use ulo::{controller, get, module, routes};
 #[controller("/test")]
 pub struct TestController {
     #[inject]

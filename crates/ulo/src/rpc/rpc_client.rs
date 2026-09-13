@@ -334,7 +334,7 @@ impl Provider for RpcClient {
         ProviderScope::Singleton
     }
 
-    async fn on_application_bootstrap(&self) -> crate::InitResult {
+    async fn on_application_bootstrap(&self) -> crate::di::InitResult {
         self.connect()
             .await
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)

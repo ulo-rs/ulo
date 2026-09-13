@@ -17,7 +17,7 @@ use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};
 use ulo_macros::{controller, module, new, patterns};
 
-async fn start_rpc_server(module: impl ulo::ModuleMetadata + 'static) -> u16 {
+async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16 {
     use ulo::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let local = tokio::task::LocalSet::new();
@@ -199,7 +199,7 @@ async fn stream_datagrams_arrive_in_order_then_the_end_marker() {
 #[tokio_localset_test::localset_test]
 async fn a_binary_item_travels_base64_and_decodes_back() {
     let port = start_rpc_server(UdpStreamModule).await;
-    let client = ulo::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port));
+    let client = ulo::rpc::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port));
     let mut stream = client
         .stream("bytes.stream", RpcData::json(serde_json::json!(null)))
         .await
@@ -270,7 +270,7 @@ async fn a_cancel_datagram_stops_the_producer() {
 #[tokio_localset_test::localset_test]
 async fn an_early_client_drop_sends_the_cancel_notice() {
     let port = start_rpc_server(UdpStreamModule).await;
-    let client = ulo::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port));
+    let client = ulo::rpc::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port));
     let mut stream = client
         .stream("probe.client_drop", RpcData::json(serde_json::json!(null)))
         .await
@@ -287,7 +287,7 @@ async fn an_early_client_drop_sends_the_cancel_notice() {
 #[tokio_localset_test::localset_test]
 async fn a_stream_call_to_a_single_handler_is_one_item_then_the_end() {
     let port = start_rpc_server(UdpStreamModule).await;
-    let client = ulo::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port));
+    let client = ulo::rpc::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port));
     let mut stream = client
         .stream("single.echo", RpcData::json(serde_json::json!(null)))
         .await
@@ -302,12 +302,12 @@ async fn a_stream_call_to_a_single_handler_is_one_item_then_the_end() {
 #[tokio_localset_test::localset_test]
 async fn a_send_to_a_streaming_handler_fails_loudly() {
     let port = start_rpc_server(UdpStreamModule).await;
-    let client = ulo::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port));
+    let client = ulo::rpc::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port));
     match client
         .send("count.stream", RpcData::json(serde_json::json!(null)))
         .await
     {
-        Err(ulo::RpcClientError::Transport(msg)) => {
+        Err(ulo::rpc::RpcClientError::Transport(msg)) => {
             assert!(msg.contains("use stream()"), "got: {msg}")
         }
         other => panic!("expected a loud transport error, got {other:?}"),

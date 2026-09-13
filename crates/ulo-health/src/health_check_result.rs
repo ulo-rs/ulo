@@ -1,6 +1,5 @@
 use serde_json::{Value, json};
-use ulo::{Body, HttpResponse, IntoResponse};
-
+use ulo::http::{Body, HttpResponse, IntoResponse};
 /// A single indicator's result, carried by both the healthy (`Ok`) and
 /// unhealthy (`Err`) arms of [`HealthIndicatorResult`].
 pub struct HealthEntry {

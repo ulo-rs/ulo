@@ -24,7 +24,7 @@ pub trait ModuleMetadata {
 
     /// Called after the DI container is fully initialized, before bootstrap. Returning `Err` aborts
     /// startup. Mirrors a provider's `on_module_init`.
-    async fn on_module_init(&self) -> crate::InitResult {
+    async fn on_module_init(&self) -> crate::di::InitResult {
         Ok(())
     }
 
@@ -42,7 +42,7 @@ pub trait ModuleMetadata {
     ///     }
     /// }
     /// ```
-    async fn on_application_bootstrap(&self) -> crate::InitResult {
+    async fn on_application_bootstrap(&self) -> crate::di::InitResult {
         Ok(())
     }
 
@@ -100,11 +100,11 @@ impl<T: ModuleMetadata> ModuleMetadata for GlobalModuleWrapper<T> {
         self.inner.configure_middleware(consumer)
     }
 
-    async fn on_module_init(&self) -> crate::InitResult {
+    async fn on_module_init(&self) -> crate::di::InitResult {
         self.inner.on_module_init().await
     }
 
-    async fn on_application_bootstrap(&self) -> crate::InitResult {
+    async fn on_application_bootstrap(&self) -> crate::di::InitResult {
         self.inner.on_application_bootstrap().await
     }
 
@@ -224,7 +224,7 @@ impl MiddlewareConsumer {
     }
 
     /// Apply a [`tower::Layer`] directly as middleware, without wrapping it in
-    /// [`TowerLayer`](crate::TowerLayer).
+    /// [`TowerLayer`](crate::http::tower::TowerLayer).
     ///
     /// This is sugar for `.apply(TowerLayer::new(layer))`. Use it when composing
     /// Tower layers via `ServiceBuilder::into_inner()` or passing a single layer inline.

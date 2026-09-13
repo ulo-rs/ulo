@@ -162,7 +162,7 @@ fn generate_gateway_impl(
 
     quote! {
         #[::ulo::async_trait]
-        impl ::ulo::Gateway for #struct_name {
+        impl ::ulo::ws::Gateway for #struct_name {
             fn token(&self) -> String {
                 #struct_token.to_string()
             }
@@ -182,17 +182,17 @@ fn generate_gateway_impl(
 
             async fn on_connect(
                 &self,
-                client: &::ulo::WsClient,
+                client: &::ulo::ws::WsClient,
                 context: &::ulo::ws::WsContext,
-            ) -> Result<(), ::ulo::WsError> {
+            ) -> Result<(), ::ulo::ws::WsError> {
                 use ::ulo::__ws::WsHandlersBridge as _;
                 <Self>::__ulo_ws_on_connect(self, client, context).await
             }
 
             async fn on_disconnect(
                 &self,
-                client: &::ulo::WsClient,
-                reason: ::ulo::DisconnectReason,
+                client: &::ulo::ws::WsClient,
+                reason: ::ulo::ws::DisconnectReason,
                 context: &::ulo::ws::WsContext,
             ) {
                 use ::ulo::__ws::WsHandlersBridge as _;
@@ -217,12 +217,12 @@ fn generate_gateway_impl(
             async fn handle_event(
                 &self,
                 __ctx: &::ulo::ws::WsContext,
-            ) -> ::ulo::spi::ExecutionResult<::ulo::WsHandlerOutput, ::ulo::WsError> {
+            ) -> ::ulo::spi::ExecutionResult<::ulo::ws::WsHandlerOutput, ::ulo::ws::WsError> {
                 use ::ulo::__ws::WsHandlersBridge as _;
                 <Self>::__ulo_ws_handle_event(self, __ctx).await
             }
 
-            fn enhancers(&self) -> ::ulo::GatewayEnhancers {
+            fn enhancers(&self) -> ::ulo::ws::GatewayEnhancers {
                 use ::ulo::__ws::WsHandlersBridge as _;
                 <Self>::__ulo_ws_enhancers(self)
             }
