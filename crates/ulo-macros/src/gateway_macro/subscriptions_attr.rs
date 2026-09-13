@@ -13,7 +13,7 @@ use quote::quote;
 use syn::{Attribute, ImplItem, ItemImpl, LitStr, Result, parse2};
 
 use crate::enhancer::enhancer::{
-    create_enhancer_infos, get_enhancers_attr, has_enhancer_attribute,
+    create_enhancer_infos, enhancer_vecs, get_enhancers_attr, has_enhancer_attribute,
 };
 use crate::shared::attr_is;
 use crate::shared::set_metadata::{get_metadata_exprs, merged_metadata_exprs, metadata_ctor};
@@ -202,19 +202,11 @@ fn build_enhancers_fn(
     let gateway_enhancers_attr = get_enhancers_attr(&impl_block.attrs)?;
     let enhancer_infos = create_enhancer_infos(gateway_enhancers_attr, Vec::new())?;
 
-    let tokens_for = |key: &str| -> Vec<TokenStream> {
-        let empty = Vec::new();
-        enhancer_infos
-            .get(key)
-            .unwrap_or(&empty)
-            .iter()
-            .filter(|info| !info.token_expr.is_empty())
-            .map(|info| info.token_expr.clone())
-            .collect()
-    };
-    let guard_tokens = tokens_for("guards");
-    let interceptor_tokens = tokens_for("interceptors");
-    let error_handler_tokens = tokens_for("error_handlers");
+    let (guard_tokens, guard_instances) = enhancer_vecs(&enhancer_infos, "guards");
+    let (interceptor_tokens, interceptor_instances) =
+        enhancer_vecs(&enhancer_infos, "interceptors");
+    let (error_handler_tokens, error_handler_instances) =
+        enhancer_vecs(&enhancer_infos, "error_handlers");
 
     let mut handler_entries: Vec<TokenStream> = Vec::new();
     for (event, method) in message_handlers {
@@ -223,20 +215,16 @@ fn build_enhancers_fn(
             continue;
         }
         let handler_infos = create_enhancer_infos(method_enhancers_attr, Vec::new())?;
-        let htokens_for = |key: &str| -> Vec<TokenStream> {
-            let empty = Vec::new();
-            handler_infos
-                .get(key)
-                .unwrap_or(&empty)
-                .iter()
-                .filter(|info| !info.token_expr.is_empty())
-                .map(|info| info.token_expr.clone())
-                .collect()
-        };
-        let hg = htokens_for("guards");
-        let hi = htokens_for("interceptors");
-        let he = htokens_for("error_handlers");
-        if hg.is_empty() && hi.is_empty() && he.is_empty() {
+        let (hg, hgi) = enhancer_vecs(&handler_infos, "guards");
+        let (hi, hii) = enhancer_vecs(&handler_infos, "interceptors");
+        let (he, hei) = enhancer_vecs(&handler_infos, "error_handlers");
+        if hg.is_empty()
+            && hi.is_empty()
+            && he.is_empty()
+            && hgi.is_empty()
+            && hii.is_empty()
+            && hei.is_empty()
+        {
             continue;
         }
         handler_entries.push(quote! {
@@ -245,6 +233,9 @@ fn build_enhancers_fn(
                 guard_tokens: vec![#(#hg),*],
                 interceptor_tokens: vec![#(#hi),*],
                 error_handler_tokens: vec![#(#he),*],
+                guards: vec![#(::std::sync::Arc::new(#hgi)),*],
+                interceptors: vec![#(::std::sync::Arc::new(#hii)),*],
+                error_handlers: vec![#(::std::sync::Arc::new(#hei)),*],
             }
         });
     }
@@ -257,6 +248,9 @@ fn build_enhancers_fn(
                 guard_tokens: vec![#(#guard_tokens),*],
                 interceptor_tokens: vec![#(#interceptor_tokens),*],
                 error_handler_tokens: vec![#(#error_handler_tokens),*],
+                guards: vec![#(::std::sync::Arc::new(#guard_instances)),*],
+                interceptors: vec![#(::std::sync::Arc::new(#interceptor_instances)),*],
+                error_handlers: vec![#(::std::sync::Arc::new(#error_handler_instances)),*],
                 handlers: vec![#(#handler_entries),*],
             }
         }

@@ -3,29 +3,43 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::context::Metadata;
+use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::spi::ExecutionResult;
-use crate::ws::WsContext;
+use crate::ws::{WsContext, WsHandlerResult, WsMessage};
 
 use super::{DisconnectReason, WsClient, WsError, WsHandlerOutput};
 
-/// The enhancer tokens a gateway declares, resolved once at registration. Gateway-level tokens apply
-/// to every handler; each `handlers` entry adds tokens for one event. A flat descriptor instead of a
-/// dozen accessor methods — the gateway macro builds it, the resolver reads it once.
+/// What a gateway declares, read once at registration. Gateway-level entries apply to every
+/// handler; each `handlers` entry adds to one event. A flat descriptor instead of a dozen accessor
+/// methods — the gateway macro builds it, the resolver reads it once.
+///
+/// Each role arrives two ways. `*_tokens` come from `#[use_guards(MyGuard)]` and resolve against
+/// the DI container, so the enhancer may hold injected dependencies. `guards` / `interceptors` /
+/// `error_handlers` come from `#[use_guards(MyGuard{})]`, which builds the value at the
+/// declaration site and never consults the container. The resolver runs the DI-resolved ones
+/// first.
 #[derive(Default)]
 pub struct GatewayEnhancers {
     pub guard_tokens: Vec<String>,
     pub interceptor_tokens: Vec<String>,
     pub error_handler_tokens: Vec<String>,
+    pub guards: Vec<Arc<dyn Guard<WsContext>>>,
+    pub interceptors: Vec<Arc<dyn Interceptor<WsContext, WsHandlerResult>>>,
+    pub error_handlers: Vec<Arc<dyn ErrorHandler<WsContext, WsMessage>>>,
     pub handlers: Vec<GatewayHandlerEnhancers>,
 }
 
-/// Per-handler (per-event) enhancer tokens, applied on top of the gateway-level ones.
+/// What one handler declares on top of its gateway's, keyed by event. Same two ways in as
+/// [`GatewayEnhancers`].
 #[derive(Default)]
 pub struct GatewayHandlerEnhancers {
     pub event: String,
     pub guard_tokens: Vec<String>,
     pub interceptor_tokens: Vec<String>,
     pub error_handler_tokens: Vec<String>,
+    pub guards: Vec<Arc<dyn Guard<WsContext>>>,
+    pub interceptors: Vec<Arc<dyn Interceptor<WsContext, WsHandlerResult>>>,
+    pub error_handlers: Vec<Arc<dyn ErrorHandler<WsContext, WsMessage>>>,
 }
 
 /// A WebSocket gateway: it answers a connection's lifecycle and every message on it.

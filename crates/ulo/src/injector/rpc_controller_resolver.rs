@@ -1,11 +1,13 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::error::SetupResult;
 
 use super::Container;
-use crate::rpc::{RpcControllerSource, RpcControllerWrapper};
+use crate::enhancer::{Guard, Interceptor};
+use crate::rpc::{RpcContext, RpcControllerSource, RpcControllerWrapper, RpcHandlerResult};
 use crate::spi::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};
 /// Resolves one RPC controller's enhancer tokens into a ready-to-serve
 /// `RpcControllerWrapper`. Called by the instance loader while controllers are stored, so a
@@ -24,9 +26,11 @@ impl RpcControllerResolver {
         source: std::sync::Arc<dyn RpcControllerSource>,
     ) -> SetupResult<RpcControllerWrapper> {
         let enhancers = source.enhancers();
-        let guards = self.resolve_guards(enhancers.guard_tokens)?;
-        let interceptors = self.resolve_interceptors(enhancers.interceptor_tokens)?;
-        let error_handlers = self.resolve_error_handlers(enhancers.error_handler_tokens)?;
+        let guards = self.resolve_guards(enhancers.guard_tokens, enhancers.guards)?;
+        let interceptors =
+            self.resolve_interceptors(enhancers.interceptor_tokens, enhancers.interceptors)?;
+        let error_handlers =
+            self.resolve_error_handlers(enhancers.error_handler_tokens, enhancers.error_handlers)?;
         let metadata = source.metadata();
         let handler_metadata: HashMap<String, std::sync::Arc<crate::context::Metadata>> =
             source.handler_metadata().into_iter().collect();
@@ -39,15 +43,21 @@ impl RpcControllerResolver {
             let pattern = handler.pattern;
             handler_guards.insert(
                 pattern.clone(),
-                self.resolve_handler_guards(handler.guard_tokens)?,
+                self.resolve_handler_guards(handler.guard_tokens, handler.guards)?,
             );
             handler_interceptors.insert(
                 pattern.clone(),
-                self.resolve_handler_interceptors(handler.interceptor_tokens)?,
+                self.resolve_handler_interceptors(
+                    handler.interceptor_tokens,
+                    handler.interceptors,
+                )?,
             );
             handler_error_handlers.insert(
                 pattern.clone(),
-                self.resolve_handler_error_handlers(handler.error_handler_tokens)?,
+                self.resolve_handler_error_handlers(
+                    handler.error_handler_tokens,
+                    handler.error_handlers,
+                )?,
             );
         }
 
@@ -64,29 +74,44 @@ impl RpcControllerResolver {
         ))
     }
 
-    fn resolve_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<RpcGuardEntry>> {
+    fn resolve_guards(
+        &self,
+        tokens: Vec<String>,
+        instances: Vec<Arc<dyn Guard<RpcContext>>>,
+    ) -> SetupResult<Vec<RpcGuardEntry>> {
         let mut guards = self.container.borrow().global_rpc_guards();
         for token in tokens {
             let entry = self.resolve_guard_by_token(&token)?;
             guards.push(entry);
         }
+        guards.extend(instances.into_iter().map(RpcGuardEntry::Ready));
         Ok(guards)
     }
 
-    fn resolve_interceptors(&self, tokens: Vec<String>) -> SetupResult<Vec<RpcInterceptorEntry>> {
+    fn resolve_interceptors(
+        &self,
+        tokens: Vec<String>,
+        instances: Vec<Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>>,
+    ) -> SetupResult<Vec<RpcInterceptorEntry>> {
         let mut interceptors = self.container.borrow().global_rpc_interceptors();
         for token in tokens {
             let entry = self.resolve_interceptor_by_token(&token)?;
             interceptors.push(entry);
         }
+        interceptors.extend(instances.into_iter().map(RpcInterceptorEntry::Ready));
         Ok(interceptors)
     }
 
-    fn resolve_error_handlers(&self, tokens: Vec<String>) -> SetupResult<Vec<RpcErrorHandlerArc>> {
+    fn resolve_error_handlers(
+        &self,
+        tokens: Vec<String>,
+        instances: Vec<RpcErrorHandlerArc>,
+    ) -> SetupResult<Vec<RpcErrorHandlerArc>> {
         let mut error_handlers = self.container.borrow().global_rpc_error_handlers();
         for token in tokens {
             error_handlers.push(self.resolve_error_handler_by_token(&token)?);
         }
+        error_handlers.extend(instances);
         Ok(error_handlers)
     }
 
@@ -150,36 +175,42 @@ impl RpcControllerResolver {
             })
     }
 
-    fn resolve_handler_guards(&self, tokens: Vec<String>) -> SetupResult<Vec<RpcGuardEntry>> {
-        tokens
+    fn resolve_handler_guards(
+        &self,
+        tokens: Vec<String>,
+        instances: Vec<Arc<dyn Guard<RpcContext>>>,
+    ) -> SetupResult<Vec<RpcGuardEntry>> {
+        let mut guards: Vec<RpcGuardEntry> = tokens
             .into_iter()
-            .map(|token| {
-                let entry = self.resolve_guard_by_token(&token)?;
-                Ok(entry)
-            })
-            .collect()
+            .map(|token| self.resolve_guard_by_token(&token))
+            .collect::<SetupResult<_>>()?;
+        guards.extend(instances.into_iter().map(RpcGuardEntry::Ready));
+        Ok(guards)
     }
 
     fn resolve_handler_interceptors(
         &self,
         tokens: Vec<String>,
+        instances: Vec<Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>>,
     ) -> SetupResult<Vec<RpcInterceptorEntry>> {
-        tokens
+        let mut interceptors: Vec<RpcInterceptorEntry> = tokens
             .into_iter()
-            .map(|token| {
-                let entry = self.resolve_interceptor_by_token(&token)?;
-                Ok(entry)
-            })
-            .collect()
+            .map(|token| self.resolve_interceptor_by_token(&token))
+            .collect::<SetupResult<_>>()?;
+        interceptors.extend(instances.into_iter().map(RpcInterceptorEntry::Ready));
+        Ok(interceptors)
     }
 
     fn resolve_handler_error_handlers(
         &self,
         tokens: Vec<String>,
+        instances: Vec<RpcErrorHandlerArc>,
     ) -> SetupResult<Vec<RpcErrorHandlerArc>> {
-        tokens
+        let mut error_handlers: Vec<RpcErrorHandlerArc> = tokens
             .into_iter()
             .map(|t| self.resolve_error_handler_by_token(&t))
-            .collect()
+            .collect::<SetupResult<_>>()?;
+        error_handlers.extend(instances);
+        Ok(error_handlers)
     }
 }

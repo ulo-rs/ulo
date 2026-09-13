@@ -3,28 +3,42 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::context::Metadata;
-use crate::rpc::RpcContext;
+use crate::enhancer::{ErrorHandler, Guard, Interceptor};
+use crate::rpc::{RpcContext, RpcData, RpcHandlerResult};
 
 use super::RpcController;
 
-/// The enhancer tokens an RPC controller declares, resolved once at create. Controller-level
-/// tokens apply to every handler; each `handlers` entry adds tokens for one pattern. A flat
-/// descriptor instead of a dozen accessor methods — the macro builds it, the resolver reads it once.
+/// What an RPC controller declares, read once at create. Controller-level entries apply to every
+/// handler; each `handlers` entry adds to one pattern. A flat descriptor instead of a dozen
+/// accessor methods — the macro builds it, the resolver reads it once.
+///
+/// Each role arrives two ways. `*_tokens` come from `#[use_guards(MyGuard)]` and resolve against
+/// the DI container, so the enhancer may hold injected dependencies. `guards` / `interceptors` /
+/// `error_handlers` come from `#[use_guards(MyGuard{})]`, which builds the value at the
+/// declaration site and never consults the container. The resolver runs the DI-resolved ones
+/// first.
 #[derive(Default)]
 pub struct RpcEnhancers {
     pub guard_tokens: Vec<String>,
     pub interceptor_tokens: Vec<String>,
     pub error_handler_tokens: Vec<String>,
+    pub guards: Vec<Arc<dyn Guard<RpcContext>>>,
+    pub interceptors: Vec<Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>>,
+    pub error_handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcData>>>,
     pub handlers: Vec<RpcHandlerEnhancers>,
 }
 
-/// Per-handler (per-pattern) enhancer tokens, applied on top of the controller-level ones.
+/// What one handler declares on top of its controller's, keyed by pattern. Same two ways in as
+/// [`RpcEnhancers`].
 #[derive(Default)]
 pub struct RpcHandlerEnhancers {
     pub pattern: String,
     pub guard_tokens: Vec<String>,
     pub interceptor_tokens: Vec<String>,
     pub error_handler_tokens: Vec<String>,
+    pub guards: Vec<Arc<dyn Guard<RpcContext>>>,
+    pub interceptors: Vec<Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>>,
+    pub error_handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcData>>>,
 }
 
 /// What an RPC controller declares, and where its instances come from.

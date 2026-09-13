@@ -17,6 +17,8 @@
 
 use std::sync::Arc;
 
+use crate::enhancer::{ErrorHandler, Guard, Interceptor};
+use crate::grpc::{GrpcContext, GrpcHandlerResult, GrpcStatus};
 use crate::spi::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
 /// Per-service bundle of resolved enhancer instances. Built by the framework
 /// at create from [`GrpcServiceSource::enhancers`] and handed to
@@ -43,18 +45,28 @@ pub struct ResolvedGrpcEnhancers {
     pub(crate) handler_error_handlers: std::collections::HashMap<String, Vec<GrpcErrorHandlerArc>>,
 }
 
-/// The enhancer tokens a gRPC service declares, resolved once at create. Service-level tokens
-/// apply to every method; each `handlers` entry adds tokens for one method. A flat descriptor
-/// instead of seven accessor methods — the macro builds it, the resolver reads it once.
+/// What a gRPC service declares, read once at create. Service-level entries apply to every method;
+/// each `handlers` entry adds to one method. A flat descriptor instead of seven accessor methods —
+/// the macro builds it, the resolver reads it once.
+///
+/// Each role arrives two ways. `*_tokens` come from `#[use_guards(MyGuard)]` and resolve against
+/// the DI container, so the enhancer may hold injected dependencies. `guards` / `interceptors` /
+/// `error_handlers` come from `#[use_guards(MyGuard{})]`, which builds the value at the
+/// declaration site and never consults the container. The resolver runs the DI-resolved ones
+/// first.
 #[derive(Default)]
 pub struct GrpcEnhancers {
     pub guard_tokens: Vec<String>,
     pub interceptor_tokens: Vec<String>,
     pub error_handler_tokens: Vec<String>,
+    pub guards: Vec<Arc<dyn Guard<GrpcContext>>>,
+    pub interceptors: Vec<Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>>,
+    pub error_handlers: Vec<Arc<dyn ErrorHandler<GrpcContext, GrpcStatus>>>,
     pub handlers: Vec<GrpcHandlerEnhancers>,
 }
 
-/// Per-handler (per-method) enhancer tokens, applied on top of the service-level ones.
+/// What one handler declares on top of its service's, keyed by method. Same two ways in as
+/// [`GrpcEnhancers`].
 #[derive(Default)]
 pub struct GrpcHandlerEnhancers {
     /// The handler's Rust method name, which is the key the generated wrapper resolves by.
@@ -62,6 +74,9 @@ pub struct GrpcHandlerEnhancers {
     pub guard_tokens: Vec<String>,
     pub interceptor_tokens: Vec<String>,
     pub error_handler_tokens: Vec<String>,
+    pub guards: Vec<Arc<dyn Guard<GrpcContext>>>,
+    pub interceptors: Vec<Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>>,
+    pub error_handlers: Vec<Arc<dyn ErrorHandler<GrpcContext, GrpcStatus>>>,
 }
 
 /// A gRPC service's declarations plus its registration hook — implemented by `#[grpc_methods]` on

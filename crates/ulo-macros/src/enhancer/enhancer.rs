@@ -85,6 +85,29 @@ pub fn create_enhancer_infos(
     Ok(enhancers)
 }
 
+/// Split one role's manifest entries into the DI tokens and the values built at the declaration
+/// site. `#[use_guards(MyGuard)]` fills the first, `#[use_guards(MyGuard{})]` the second, and an
+/// entry never fills both. Every transport's generator reads its descriptor through this, so a
+/// role that reaches one transport reaches all four.
+pub fn enhancer_vecs(
+    infos: &HashMap<String, Vec<EnhancerInfo>>,
+    key: &str,
+) -> (Vec<TokenStream>, Vec<TokenStream>) {
+    let empty = Vec::new();
+    let entries = infos.get(key).unwrap_or(&empty);
+    let tokens = entries
+        .iter()
+        .filter(|i| !i.token_expr.is_empty())
+        .map(|i| i.token_expr.clone())
+        .collect();
+    let instances = entries
+        .iter()
+        .filter(|i| !i.instance_expr.is_empty())
+        .map(|i| i.instance_expr.clone())
+        .collect();
+    (tokens, instances)
+}
+
 /// Extract enhancer information from an expression
 /// Returns: (type_ident, optional_instance_expr)
 ///
