@@ -13,9 +13,6 @@ mod guard;
 mod interceptor;
 pub(crate) mod metadata;
 
-pub use error_handler::{
-    ChainError, DefaultHttpErrorHandler, DefaultRpcErrorHandler, DefaultWsErrorHandler,
-    ErrorHandler,
-};
+pub use error_handler::{ChainError, ErrorHandler};
 pub use guard::Guard;
 pub use interceptor::{Interceptor, InterceptorNext};

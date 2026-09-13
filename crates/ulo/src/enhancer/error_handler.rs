@@ -1,13 +1,5 @@
 use crate::async_trait;
 use crate::context::HandlerContext;
-use crate::http::HttpContext;
-use crate::http::HttpError;
-use crate::http::{Body, HttpResponse};
-use crate::rpc::RpcContext;
-use crate::rpc::RpcData;
-use crate::ws::WsContext;
-use crate::ws::WsMessage;
-use serde_json::json;
 use std::error::Error;
 
 /// Convenience alias for the borrowed error reference passed to handlers.
@@ -20,95 +12,15 @@ pub type ChainError<'a> = &'a (dyn Error + Send + Sync + 'static);
 
 /// Customize how errors are turned into responses.
 ///
-/// Handlers are tried in order (method > controller > global) until one
-/// returns `Some`. Return `None` to pass to the next handler; if all return
-/// `None`, the framework's default fallback is sent.
+/// Handlers are tried in order (method > controller > global) until one returns `Some`. Return
+/// `None` to pass the error to the next one.
+///
+/// When every handler passes, the transport renders the error itself: the canonical envelope,
+/// carrying the status, code or frame its [`ErrorKind`](crate::errors::ErrorKind) maps to. That
+/// rendering is not an `ErrorHandler` and cannot be replaced by installing one — it reads
+/// `kind()`, `message()` and `details()` off [`Error`](crate::errors::Error), and this trait is
+/// handed the `std::error::Error` supertrait, which those do not reach.
 #[async_trait]
 pub trait ErrorHandler<C: ?Sized + HandlerContext, R>: Send + Sync {
     async fn handle_error(&self, error: ChainError<'_>, ctx: &C) -> Option<R>;
-}
-
-/// Default fallback for HTTP routes that didn't match a registered handler.
-pub struct DefaultHttpErrorHandler;
-
-#[async_trait]
-impl ErrorHandler<HttpContext, HttpResponse> for DefaultHttpErrorHandler {
-    async fn handle_error(
-        &self,
-        error: ChainError<'_>,
-        _ctx: &HttpContext,
-    ) -> Option<HttpResponse> {
-        if let Some(http_error) = error.downcast_ref::<HttpError>() {
-            return Some(http_error.to_response());
-        }
-        Some(HttpResponse {
-            status: 500,
-            body: Some(Body::json(json!({
-                "statusCode": 500,
-                "message": "Internal Server Error",
-                "error": "Internal Server Error",
-            }))),
-            headers: vec![],
-        })
-    }
-}
-
-/// Default fallback for RPC handlers that returned an error not claimed by a
-/// registered handler.
-pub struct DefaultRpcErrorHandler;
-
-#[async_trait]
-impl ErrorHandler<RpcContext, RpcData> for DefaultRpcErrorHandler {
-    async fn handle_error(&self, error: ChainError<'_>, _ctx: &RpcContext) -> Option<RpcData> {
-        let message = if let Some(http_error) = error.downcast_ref::<HttpError>() {
-            http_error.message().to_string()
-        } else {
-            error.to_string()
-        };
-        Some(RpcData::json(
-            json!({ "status": "error", "message": message }),
-        ))
-    }
-}
-
-/// Default fallback for WebSocket handlers.
-pub struct DefaultWsErrorHandler;
-
-#[async_trait]
-impl ErrorHandler<WsContext, WsMessage> for DefaultWsErrorHandler {
-    async fn handle_error(&self, error: ChainError<'_>, _ctx: &WsContext) -> Option<WsMessage> {
-        let message = if let Some(http_error) = error.downcast_ref::<HttpError>() {
-            http_error.message().to_string()
-        } else {
-            error.to_string()
-        };
-        Some(WsMessage::text(
-            json!({ "status": "error", "message": message }).to_string(),
-        ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn default_http_handler_with_http_error() {
-        let handler = DefaultHttpErrorHandler;
-        let error = HttpError::not_found("Resource not found");
-        let stub = http::Request::builder().body(()).unwrap();
-        let ctx = HttpContext::from_parts(stub.into_parts().0);
-        let r = handler.handle_error(&error, &ctx).await.unwrap();
-        assert_eq!(r.status, 404);
-    }
-
-    #[tokio::test]
-    async fn default_http_handler_with_unknown_error() {
-        let handler = DefaultHttpErrorHandler;
-        let error = std::io::Error::new(std::io::ErrorKind::Other, "Unknown error");
-        let stub = http::Request::builder().body(()).unwrap();
-        let ctx = HttpContext::from_parts(stub.into_parts().0);
-        let r = handler.handle_error(&error, &ctx).await.unwrap();
-        assert_eq!(r.status, 500);
-    }
 }
