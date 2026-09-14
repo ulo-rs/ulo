@@ -186,14 +186,11 @@ impl RpcControllerWrapper {
                 // an unclaimed one renders as the `forbidden` frame it always
                 // did.
                 let rejection = crate::errors::GuardRejection::new(index);
-                for (position, handler) in all_error_handlers.iter().rev().enumerate() {
-                    if let Some(claimed) = crate::enhancer::pipeline::offer_to::<Rpc>(
-                        handler, &rejection, &ctx, position,
-                    )
-                    .await
-                    {
-                        return claimed;
-                    }
+                if let Some(claimed) =
+                    crate::enhancer::pipeline::claim::<Rpc>(&all_error_handlers, &rejection, &ctx)
+                        .await
+                {
+                    return claimed;
                 }
                 return Err(RpcError::Forbidden("Guard rejected message".into()));
             }
@@ -299,12 +296,10 @@ impl RpcControllerWrapper {
         error_handlers: &[RpcErrorHandlerArc],
         event: PanicRecovered,
     ) -> RpcHandlerResult {
-        for (position, handler) in error_handlers.iter().rev().enumerate() {
-            if let Some(claimed) =
-                crate::enhancer::pipeline::offer_to::<Rpc>(handler, &event, context, position).await
-            {
-                return claimed;
-            }
+        if let Some(claimed) =
+            crate::enhancer::pipeline::claim::<Rpc>(&error_handlers, &event, context).await
+        {
+            return claimed;
         }
         let rpc_err = RpcError::from(event);
         Ok(RpcHandlerOutput::Single(Self::safe_render(|| {
@@ -346,17 +341,11 @@ impl RpcControllerWrapper {
                     RpcError::AppError(e) => e.as_ref(),
                     other => other,
                 };
-                for (position, handler) in error_handlers.iter().rev().enumerate() {
-                    if let Some(claimed) = crate::enhancer::pipeline::offer_to::<Rpc>(
-                        handler,
-                        observed_err,
-                        context,
-                        position,
-                    )
-                    .await
-                    {
-                        return claimed;
-                    }
+                if let Some(claimed) =
+                    crate::enhancer::pipeline::claim::<Rpc>(&error_handlers, observed_err, context)
+                        .await
+                {
+                    return claimed;
                 }
                 Ok(RpcHandlerOutput::Single(Self::safe_render(|| {
                     rpc_err.to_data()

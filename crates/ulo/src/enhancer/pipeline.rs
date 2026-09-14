@@ -41,6 +41,24 @@ pub(crate) async fn interceptors_for<T: Transport>(
     out
 }
 
+/// Walk the chain and answer with the first claim, or `None` if nobody claims.
+///
+/// Reverse registration order, so the most specific handler is consulted first: a handler declared
+/// on the method before one declared on the target, and both before a global. Every transport
+/// stacks its tiers into one vector in that order, so reversing it here is the whole rule.
+pub(crate) async fn claim<T: Transport>(
+    handlers: &[ErrorHandlerArc<T>],
+    error: &(dyn std::error::Error + Send + Sync + 'static),
+    ctx: &T::Context,
+) -> Option<T::Answer> {
+    for (position, handler) in handlers.iter().rev().enumerate() {
+        if let Some(claimed) = offer_to::<T>(handler, error, ctx, position).await {
+            return Some(claimed);
+        }
+    }
+    None
+}
+
 /// Offer one error to one chain handler.
 ///
 /// `None` means the handler declined, and a handler that panics declines too: the panic is logged

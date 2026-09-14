@@ -145,14 +145,14 @@ impl InstanceWrapper {
                 };
 
                 let event = MiddlewareFailure::new(e.to_string());
-                for (position, handler) in self.error_handlers.iter().rev().enumerate() {
-                    if let Some(response) = crate::enhancer::pipeline::offer_to::<Http>(
-                        handler, &event, &error_ctx, position,
-                    )
-                    .await
-                    {
-                        return response;
-                    }
+                if let Some(response) = crate::enhancer::pipeline::claim::<Http>(
+                    &self.error_handlers,
+                    &event,
+                    &error_ctx,
+                )
+                .await
+                {
+                    return response;
                 }
 
                 Self::safe_render(|| crate::http::error::render_error(&event))
@@ -264,12 +264,10 @@ impl InstanceWrapper {
     where
         E: Error,
     {
-        for (position, handler) in error_handlers.iter().rev().enumerate() {
-            if let Some(handled) =
-                crate::enhancer::pipeline::offer_to::<Http>(handler, &event, ctx, position).await
-            {
-                return handled;
-            }
+        if let Some(handled) =
+            crate::enhancer::pipeline::claim::<Http>(&error_handlers, &event, ctx).await
+        {
+            return handled;
         }
 
         Self::safe_render(|| crate::http::error::render_error(&event))
@@ -366,13 +364,10 @@ impl InstanceWrapper {
         error_handlers: &[HttpErrorHandlerArc],
         event: PanicRecovered,
     ) -> HttpResponse {
-        for (position, handler) in error_handlers.iter().rev().enumerate() {
-            if let Some(claimed) =
-                crate::enhancer::pipeline::offer_to::<Http>(handler, &event, context, position)
-                    .await
-            {
-                return claimed;
-            }
+        if let Some(claimed) =
+            crate::enhancer::pipeline::claim::<Http>(&error_handlers, &event, context).await
+        {
+            return claimed;
         }
         Self::safe_render(|| HttpError::from(event).to_response())
     }
@@ -418,17 +413,11 @@ impl InstanceWrapper {
                     HttpError::AppError(e) => e.as_ref(),
                     other => other,
                 };
-                for (position, handler) in error_handlers.iter().rev().enumerate() {
-                    if let Some(claimed) = crate::enhancer::pipeline::offer_to::<Http>(
-                        handler,
-                        observed_err,
-                        context,
-                        position,
-                    )
-                    .await
-                    {
-                        return claimed;
-                    }
+                if let Some(claimed) =
+                    crate::enhancer::pipeline::claim::<Http>(&error_handlers, observed_err, context)
+                        .await
+                {
+                    return claimed;
                 }
                 Self::safe_render(|| http_err.to_response())
             }

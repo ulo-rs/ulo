@@ -333,12 +333,10 @@ impl GatewayWrapper {
         error_handlers: &[WsErrorHandlerArc],
         event: PanicRecovered,
     ) -> WsHandlerResult {
-        for (position, handler) in error_handlers.iter().rev().enumerate() {
-            if let Some(claimed) =
-                crate::enhancer::pipeline::offer_to::<Ws>(handler, &event, context, position).await
-            {
-                return claimed;
-            }
+        if let Some(claimed) =
+            crate::enhancer::pipeline::claim::<Ws>(&error_handlers, &event, context).await
+        {
+            return claimed;
         }
         let ws_err = WsError::from(event);
         Ok(WsHandlerOutput::Single(Self::safe_render(|| {
@@ -358,13 +356,10 @@ impl GatewayWrapper {
         error_handlers: &[WsErrorHandlerArc],
         rejection: crate::errors::GuardRejection,
     ) -> WsHandlerResult {
-        for (position, handler) in error_handlers.iter().rev().enumerate() {
-            if let Some(claimed) =
-                crate::enhancer::pipeline::offer_to::<Ws>(handler, &rejection, context, position)
-                    .await
-            {
-                return claimed;
-            }
+        if let Some(claimed) =
+            crate::enhancer::pipeline::claim::<Ws>(&error_handlers, &rejection, context).await
+        {
+            return claimed;
         }
         Ok(WsHandlerOutput::Single(Self::safe_render(|| {
             super::ws_error::render_error(&rejection)
@@ -388,17 +383,11 @@ impl GatewayWrapper {
                     WsError::AppError(e) => e.as_ref(),
                     other => other,
                 };
-                for (position, handler) in error_handlers.iter().rev().enumerate() {
-                    if let Some(msg) = crate::enhancer::pipeline::offer_to::<Ws>(
-                        handler,
-                        observed_err,
-                        context,
-                        position,
-                    )
-                    .await
-                    {
-                        return msg;
-                    }
+                if let Some(msg) =
+                    crate::enhancer::pipeline::claim::<Ws>(&error_handlers, observed_err, context)
+                        .await
+                {
+                    return msg;
                 }
                 Ok(WsHandlerOutput::Single(Self::safe_render(|| {
                     ws_err.to_message()

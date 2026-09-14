@@ -1043,14 +1043,14 @@ fn make_rpc_callbacks(
                 None,
                 info.extensions,
             );
-            for (position, handler) in global_error_handlers.iter().rev().enumerate() {
-                if let Some(claimed) = crate::enhancer::pipeline::offer_to::<
-                    crate::spi::transport::Rpc,
-                >(handler, &event, &ctx, position)
-                .await
-                {
-                    return claimed;
-                }
+            if let Some(claimed) = crate::enhancer::pipeline::claim::<crate::spi::transport::Rpc>(
+                &global_error_handlers,
+                &event,
+                &ctx,
+            )
+            .await
+            {
+                return claimed;
             }
             Err(RpcError::PatternNotFound(info.pattern))
         })
