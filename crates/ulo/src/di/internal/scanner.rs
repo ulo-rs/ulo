@@ -4,8 +4,8 @@ use crate::error::SetupResult;
 use crate::error::StartupError;
 
 use crate::{
+    di::internal::Container,
     di::{MiddlewareConsumer, ModuleMetadata},
-    injector::Container,
 };
 
 pub(crate) struct DependencyScanner {

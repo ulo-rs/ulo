@@ -5,16 +5,16 @@ use std::sync::Arc;
 use crate::application::UloApplication;
 use crate::application_context::UloApplicationContext;
 use crate::di::ModuleMetadata;
+use crate::di::internal::scanner::DependencyScanner;
+use crate::di::internal::{Container, InstanceLoader};
 use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::error::StartupError;
 use crate::grpc::GrpcContext;
 use crate::http::HttpContext;
 use crate::http::HttpResponse;
 use crate::http::middleware::Middleware;
-use crate::injector::{Container, InstanceLoader};
 use crate::rpc::RpcContext;
 use crate::rpc::RpcData;
-use crate::scanner::DependencyScanner;
 use crate::spi::{
     GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc, HttpGuardEntry,
     HttpInterceptorEntry, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
@@ -229,7 +229,8 @@ impl UloFactory {
 
         // HTTP adapters trigger bootstrap through their own init; standalone needs it explicitly
         {
-            let mut scanner = crate::scanner::DependencyScanner::new(container.clone());
+            let mut scanner =
+                crate::di::internal::scanner::DependencyScanner::new(container.clone());
             scanner.call_bootstrap_hooks().await?;
         }
 
@@ -249,7 +250,7 @@ impl UloFactory {
         let mut scanner = DependencyScanner::new(container.clone());
 
         // Register built-in global module
-        scanner.scan(Box::new(crate::builtin_module::BuiltinModule))?;
+        scanner.scan(Box::new(crate::di::internal::builtin_module::BuiltinModule))?;
 
         // Scan user's root module
         scanner.scan(module)?;

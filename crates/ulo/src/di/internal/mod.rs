@@ -1,3 +1,9 @@
+//! The DI engine: what builds the module graph and answers a resolution.
+//!
+//! Private to `di`, which is the vocabulary an application and an integration crate write against.
+//! Nothing here is nameable from outside the crate, and `ModuleRef` is the one type that leaves —
+//! re-exported by `di` as the handle a caller resolves against.
+
 mod container;
 pub(crate) use self::container::Container;
 
@@ -22,14 +28,12 @@ mod module_ref_provider;
 mod role_registry;
 pub(crate) use self::role_registry::RoleRegistry;
 
-mod gateway_resolver;
-pub(crate) use self::gateway_resolver::GatewayResolver;
+pub(crate) mod builtin_module;
+pub(crate) mod scanner;
 
-mod rpc_controller_resolver;
-pub(crate) use self::rpc_controller_resolver::RpcControllerResolver;
-
-mod grpc_service_resolver;
-pub(crate) use self::grpc_service_resolver::GrpcServiceResolver;
+/// One resolver per transport, each turning what a dispatch target declares into what the
+/// dispatcher serves. Four things doing one job, in one place.
+pub(crate) mod resolve;
 
 #[cfg(test)]
 mod module_identity_tests;

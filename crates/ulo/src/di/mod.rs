@@ -7,6 +7,8 @@
 //! `spi`.
 
 mod execution;
+pub(crate) mod internal;
+
 mod execution_cache;
 mod module_metadata;
 mod token;
@@ -18,6 +20,6 @@ pub use token::{APP_GUARD, APP_INTERCEPTOR, APP_MIDDLEWARE, IntoToken, Token, to
 
 pub use crate::error::{InitResult, ResolutionError};
 pub use crate::extension::{Extension, ExtensionFactory};
-pub use crate::injector::ModuleRef;
 pub use crate::modules::{CheckedModule, DynamicModule, ModuleIdentity};
 pub use crate::provider_scope::ProviderScope;
+pub use internal::ModuleRef;

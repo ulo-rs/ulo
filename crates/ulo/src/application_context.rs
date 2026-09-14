@@ -10,7 +10,7 @@ use crate::error::ResolutionError;
 
 use crate::{
     di::Execution,
-    injector::{Container, IntoToken, ModuleRef},
+    di::internal::{Container, IntoToken, ModuleRef},
     modules::ModuleIdentity,
     spi::Provider,
 };

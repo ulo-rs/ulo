@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::error::SetupResult;
 
-use super::Container;
+use super::super::Container;
 use crate::enhancer::{Guard, Interceptor};
 use crate::rpc::{RpcContext, RpcControllerSource, RpcControllerWrapper, RpcHandlerResult};
 use crate::spi::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};

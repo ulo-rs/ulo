@@ -9,7 +9,7 @@ use crate::enhancer::{Guard, Interceptor};
 use crate::spi::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
 use crate::ws::{Gateway, GatewayWrapper, WsContext, WsHandlerResult};
 
-use super::Container;
+use super::super::Container;
 
 pub(crate) struct GatewayResolver {
     container: Rc<RefCell<Container>>,
