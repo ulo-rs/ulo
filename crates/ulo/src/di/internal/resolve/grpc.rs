@@ -78,7 +78,7 @@ impl GrpcServiceResolver {
         tokens: Vec<String>,
         instances: Vec<Arc<dyn Guard<GrpcContext>>>,
     ) -> SetupResult<Vec<GrpcGuardEntry>> {
-        let mut guards = self.container.borrow().global_grpc_guards();
+        let mut guards = self.container.borrow().global_grpc.guards.clone();
         for token in tokens {
             let entry = self.resolve_guard_by_token(&token)?;
             guards.push(entry);
@@ -91,7 +91,8 @@ impl GrpcServiceResolver {
         self.container
             .borrow()
             .role_registry()
-            .grpc_guards
+            .grpc
+            .guards
             .get(token)
             .cloned()
             .ok_or_else(|| {
@@ -112,7 +113,7 @@ impl GrpcServiceResolver {
         tokens: Vec<String>,
         instances: Vec<Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>>,
     ) -> SetupResult<Vec<GrpcInterceptorEntry>> {
-        let mut interceptors = self.container.borrow().global_grpc_interceptors();
+        let mut interceptors = self.container.borrow().global_grpc.interceptors.clone();
         for token in tokens {
             let entry = self.resolve_interceptor_by_token(&token)?;
             interceptors.push(entry);
@@ -125,7 +126,8 @@ impl GrpcServiceResolver {
         self.container
             .borrow()
             .role_registry()
-            .grpc_interceptors
+            .grpc
+            .interceptors
             .get(token)
             .cloned()
             .ok_or_else(|| {
@@ -146,7 +148,7 @@ impl GrpcServiceResolver {
         tokens: Vec<String>,
         instances: Vec<GrpcErrorHandlerArc>,
     ) -> SetupResult<Vec<GrpcErrorHandlerArc>> {
-        let mut handlers = self.container.borrow().global_grpc_error_handlers();
+        let mut handlers = self.container.borrow().global_grpc.error_handlers.clone();
         for token in tokens {
             handlers.push(self.resolve_error_handler_by_token(&token)?);
         }
@@ -158,7 +160,7 @@ impl GrpcServiceResolver {
         self.container
             .borrow()
             .role_registry()
-            .grpc_error_handlers
+            .grpc.error_handlers
             .get(token)
             .cloned()
             .ok_or_else(|| {

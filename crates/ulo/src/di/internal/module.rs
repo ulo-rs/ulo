@@ -1,3 +1,4 @@
+use crate::spi::transport::{EnhancerSet, Http};
 use std::{collections::hash_map::Drain, sync::Arc};
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -6,7 +7,6 @@ use super::InstanceWrapper;
 
 use crate::{
     di::ModuleMetadata,
-    enhancer::metadata::EnhancerMetadata,
     http::Route,
     spi::{Controller, ControllerFactory, Provider, ProviderFactory},
 };
@@ -63,12 +63,12 @@ impl Module {
 
     /// Register one route's dispatch unit. Keyed per controller + method + path so
     /// routes from different controllers never collide in the map.
-    pub fn add_route_instance(
+    pub(crate) fn add_route_instance(
         &mut self,
         controller_token: &str,
         route: Arc<dyn Route>,
-        enhancer_metadata: EnhancerMetadata,
-        global_enhancers: EnhancerMetadata,
+        enhancer_metadata: EnhancerSet<Http>,
+        global_enhancers: EnhancerSet<Http>,
     ) {
         let key = format!(
             "{}::{} {}",

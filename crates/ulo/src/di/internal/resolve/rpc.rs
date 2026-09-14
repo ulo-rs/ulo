@@ -79,7 +79,7 @@ impl RpcControllerResolver {
         tokens: Vec<String>,
         instances: Vec<Arc<dyn Guard<RpcContext>>>,
     ) -> SetupResult<Vec<RpcGuardEntry>> {
-        let mut guards = self.container.borrow().global_rpc_guards();
+        let mut guards = self.container.borrow().global_rpc.guards.clone();
         for token in tokens {
             let entry = self.resolve_guard_by_token(&token)?;
             guards.push(entry);
@@ -93,7 +93,7 @@ impl RpcControllerResolver {
         tokens: Vec<String>,
         instances: Vec<Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>>,
     ) -> SetupResult<Vec<RpcInterceptorEntry>> {
-        let mut interceptors = self.container.borrow().global_rpc_interceptors();
+        let mut interceptors = self.container.borrow().global_rpc.interceptors.clone();
         for token in tokens {
             let entry = self.resolve_interceptor_by_token(&token)?;
             interceptors.push(entry);
@@ -107,7 +107,7 @@ impl RpcControllerResolver {
         tokens: Vec<String>,
         instances: Vec<RpcErrorHandlerArc>,
     ) -> SetupResult<Vec<RpcErrorHandlerArc>> {
-        let mut error_handlers = self.container.borrow().global_rpc_error_handlers();
+        let mut error_handlers = self.container.borrow().global_rpc.error_handlers.clone();
         for token in tokens {
             error_handlers.push(self.resolve_error_handler_by_token(&token)?);
         }
@@ -119,7 +119,8 @@ impl RpcControllerResolver {
         self.container
             .borrow()
             .role_registry()
-            .rpc_guards
+            .rpc
+            .guards
             .get(token)
             .cloned()
             .ok_or_else(|| {
@@ -139,7 +140,8 @@ impl RpcControllerResolver {
         self.container
             .borrow()
             .role_registry()
-            .rpc_interceptors
+            .rpc
+            .interceptors
             .get(token)
             .cloned()
             .ok_or_else(|| {
@@ -159,7 +161,7 @@ impl RpcControllerResolver {
         self.container
             .borrow()
             .role_registry()
-            .rpc_error_handlers
+            .rpc.error_handlers
             .get(token)
             .cloned()
             .ok_or_else(|| {

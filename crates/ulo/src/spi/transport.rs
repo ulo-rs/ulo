@@ -115,6 +115,68 @@ impl<T: Transport> Clone for InterceptorEntry<T> {
     }
 }
 
+/// An error handler as the framework stores it. One instance, shared by every call: unlike a guard
+/// or an interceptor, an error handler has no per-call arm.
+pub(crate) type ErrorHandlerArc<T> =
+    Arc<dyn crate::enhancer::ErrorHandler<<T as Transport>::Context, <T as Transport>::Answer>>;
+
+/// Every enhancer one transport has registered, keyed by the token a declaration names.
+pub(crate) struct EnhancerRegistry<T: Transport> {
+    pub(crate) guards: rustc_hash::FxHashMap<String, GuardEntry<T>>,
+    pub(crate) interceptors: rustc_hash::FxHashMap<String, InterceptorEntry<T>>,
+    pub(crate) error_handlers: rustc_hash::FxHashMap<String, ErrorHandlerArc<T>>,
+}
+
+impl<T: Transport> Default for EnhancerRegistry<T> {
+    fn default() -> Self {
+        Self {
+            guards: rustc_hash::FxHashMap::default(),
+            interceptors: rustc_hash::FxHashMap::default(),
+            error_handlers: rustc_hash::FxHashMap::default(),
+        }
+    }
+}
+
+/// One transport's guards, interceptors and error handlers, in the order they run.
+///
+/// The shape both tiers take: what a transport runs on every dispatch target, and what one target
+/// resolved from its own declarations.
+pub(crate) struct EnhancerSet<T: Transport> {
+    pub(crate) guards: Vec<GuardEntry<T>>,
+    pub(crate) interceptors: Vec<InterceptorEntry<T>>,
+    pub(crate) error_handlers: Vec<ErrorHandlerArc<T>>,
+}
+
+impl<T: Transport> EnhancerSet<T> {
+    /// Append everything in `other`, keeping this set's entries ahead of it.
+    pub(crate) fn extend_from(&mut self, other: &Self) {
+        self.guards.extend(other.guards.iter().cloned());
+        self.interceptors.extend(other.interceptors.iter().cloned());
+        self.error_handlers
+            .extend(other.error_handlers.iter().cloned());
+    }
+}
+
+impl<T: Transport> Clone for EnhancerSet<T> {
+    fn clone(&self) -> Self {
+        Self {
+            guards: self.guards.clone(),
+            interceptors: self.interceptors.clone(),
+            error_handlers: self.error_handlers.clone(),
+        }
+    }
+}
+
+impl<T: Transport> Default for EnhancerSet<T> {
+    fn default() -> Self {
+        Self {
+            guards: Vec::new(),
+            interceptors: Vec::new(),
+            error_handlers: Vec::new(),
+        }
+    }
+}
+
 pub type HttpGuardEntry = GuardEntry<Http>;
 pub type HttpInterceptorEntry = InterceptorEntry<Http>;
 pub type RpcGuardEntry = GuardEntry<Rpc>;
@@ -123,3 +185,7 @@ pub type WsGuardEntry = GuardEntry<Ws>;
 pub type WsInterceptorEntry = InterceptorEntry<Ws>;
 pub type GrpcGuardEntry = GuardEntry<Grpc>;
 pub type GrpcInterceptorEntry = InterceptorEntry<Grpc>;
+pub(crate) type HttpErrorHandlerArc = ErrorHandlerArc<Http>;
+pub(crate) type RpcErrorHandlerArc = ErrorHandlerArc<Rpc>;
+pub(crate) type WsErrorHandlerArc = ErrorHandlerArc<Ws>;
+pub(crate) type GrpcErrorHandlerArc = ErrorHandlerArc<Grpc>;

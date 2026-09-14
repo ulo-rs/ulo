@@ -22,10 +22,8 @@ pub use crate::error::AdapterResult;
 // The enhancer plumbing keeps an in-crate path; its public one is `__enhancer`, which is where a
 // macro expansion names it.
 pub(crate) use self::dispatch_source::DispatchSource;
-pub(crate) use self::provider::{
-    GrpcErrorHandlerArc, HttpErrorHandlerArc, RpcErrorHandlerArc, WsErrorHandlerArc,
-};
 pub(crate) use self::transport::{
-    GrpcGuardEntry, GrpcInterceptorEntry, HttpGuardEntry, HttpInterceptorEntry, RpcGuardEntry,
-    RpcInterceptorEntry, WsGuardEntry, WsInterceptorEntry,
+    GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc, HttpGuardEntry,
+    HttpInterceptorEntry, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
+    WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
 };

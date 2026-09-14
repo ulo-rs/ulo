@@ -14,10 +14,10 @@ use crate::http::HttpContext;
 use crate::http::HttpResponse;
 use crate::http::middleware::Middleware;
 use crate::rpc::RpcContext;
+use crate::spi::transport::{EnhancerSet, Grpc, Http, Rpc, Ws};
 use crate::spi::{
-    GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc, HttpGuardEntry,
-    HttpInterceptorEntry, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
-    WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
+    GrpcGuardEntry, GrpcInterceptorEntry, HttpGuardEntry, HttpInterceptorEntry, RpcGuardEntry,
+    RpcInterceptorEntry, WsGuardEntry, WsInterceptorEntry,
 };
 use crate::ws::WsContext;
 
@@ -37,18 +37,10 @@ use crate::ws::WsContext;
 #[derive(Default)]
 pub struct UloFactory {
     global_middleware: Vec<Arc<dyn Middleware>>,
-    global_http_guards: Vec<HttpGuardEntry>,
-    global_http_interceptors: Vec<HttpInterceptorEntry>,
-    global_http_error_handlers: Vec<HttpErrorHandlerArc>,
-    global_rpc_guards: Vec<RpcGuardEntry>,
-    global_rpc_interceptors: Vec<RpcInterceptorEntry>,
-    global_rpc_error_handlers: Vec<RpcErrorHandlerArc>,
-    global_ws_guards: Vec<WsGuardEntry>,
-    global_ws_interceptors: Vec<WsInterceptorEntry>,
-    global_ws_error_handlers: Vec<WsErrorHandlerArc>,
-    global_grpc_guards: Vec<GrpcGuardEntry>,
-    global_grpc_interceptors: Vec<GrpcInterceptorEntry>,
-    global_grpc_error_handlers: Vec<GrpcErrorHandlerArc>,
+    global_http: EnhancerSet<Http>,
+    global_rpc: EnhancerSet<Rpc>,
+    global_ws: EnhancerSet<Ws>,
+    global_grpc: EnhancerSet<Grpc>,
 }
 
 impl UloFactory {
@@ -64,7 +56,7 @@ impl UloFactory {
 
     /// Register a global guard that runs on every HTTP route.
     pub fn use_global_http_guards(&mut self, guard: Arc<dyn Guard<HttpContext>>) -> &mut Self {
-        self.global_http_guards.push(HttpGuardEntry::Ready(guard));
+        self.global_http.guards.push(HttpGuardEntry::Ready(guard));
         self
     }
 
@@ -73,7 +65,8 @@ impl UloFactory {
         &mut self,
         interceptor: Arc<dyn Interceptor<HttpContext, crate::http::HttpResponse>>,
     ) -> &mut Self {
-        self.global_http_interceptors
+        self.global_http
+            .interceptors
             .push(HttpInterceptorEntry::Ready(interceptor));
         self
     }
@@ -84,12 +77,12 @@ impl UloFactory {
         &mut self,
         handler: Arc<dyn ErrorHandler<HttpContext, HttpResponse>>,
     ) -> &mut Self {
-        self.global_http_error_handlers.push(handler);
+        self.global_http.error_handlers.push(handler);
         self
     }
 
     pub fn use_global_rpc_guards(&mut self, guard: Arc<dyn Guard<RpcContext>>) -> &mut Self {
-        self.global_rpc_guards.push(RpcGuardEntry::Ready(guard));
+        self.global_rpc.guards.push(RpcGuardEntry::Ready(guard));
         self
     }
 
@@ -97,7 +90,8 @@ impl UloFactory {
         &mut self,
         interceptor: Arc<dyn Interceptor<RpcContext, crate::rpc::RpcHandlerResult>>,
     ) -> &mut Self {
-        self.global_rpc_interceptors
+        self.global_rpc
+            .interceptors
             .push(RpcInterceptorEntry::Ready(interceptor));
         self
     }
@@ -106,12 +100,12 @@ impl UloFactory {
         &mut self,
         handler: Arc<dyn ErrorHandler<RpcContext, crate::rpc::RpcHandlerResult>>,
     ) -> &mut Self {
-        self.global_rpc_error_handlers.push(handler);
+        self.global_rpc.error_handlers.push(handler);
         self
     }
 
     pub fn use_global_ws_guards(&mut self, guard: Arc<dyn Guard<WsContext>>) -> &mut Self {
-        self.global_ws_guards.push(WsGuardEntry::Ready(guard));
+        self.global_ws.guards.push(WsGuardEntry::Ready(guard));
         self
     }
 
@@ -119,7 +113,8 @@ impl UloFactory {
         &mut self,
         interceptor: Arc<dyn Interceptor<WsContext, crate::ws::WsHandlerResult>>,
     ) -> &mut Self {
-        self.global_ws_interceptors
+        self.global_ws
+            .interceptors
             .push(WsInterceptorEntry::Ready(interceptor));
         self
     }
@@ -128,14 +123,14 @@ impl UloFactory {
         &mut self,
         handler: Arc<dyn ErrorHandler<WsContext, crate::ws::WsHandlerResult>>,
     ) -> &mut Self {
-        self.global_ws_error_handlers.push(handler);
+        self.global_ws.error_handlers.push(handler);
         self
     }
 
     /// Register a global guard that runs on every gRPC method, ahead of the
     /// service's own and its methods'.
     pub fn use_global_grpc_guards(&mut self, guard: Arc<dyn Guard<GrpcContext>>) -> &mut Self {
-        self.global_grpc_guards.push(GrpcGuardEntry::Ready(guard));
+        self.global_grpc.guards.push(GrpcGuardEntry::Ready(guard));
         self
     }
 
@@ -144,7 +139,8 @@ impl UloFactory {
         &mut self,
         interceptor: Arc<dyn Interceptor<GrpcContext, crate::grpc::GrpcHandlerResult>>,
     ) -> &mut Self {
-        self.global_grpc_interceptors
+        self.global_grpc
+            .interceptors
             .push(GrpcInterceptorEntry::Ready(interceptor));
         self
     }
@@ -155,7 +151,7 @@ impl UloFactory {
         &mut self,
         handler: Arc<dyn ErrorHandler<GrpcContext, crate::grpc::GrpcHandlerResult>>,
     ) -> &mut Self {
-        self.global_grpc_error_handlers.push(handler);
+        self.global_grpc.error_handlers.push(handler);
         self
     }
 
@@ -266,42 +262,10 @@ impl UloFactory {
         // Register global enhancers
         {
             let mut container_mut = container.borrow_mut();
-            for guard in &self.global_http_guards {
-                container_mut.add_global_http_guard(guard.clone());
-            }
-            for interceptor in &self.global_http_interceptors {
-                container_mut.add_global_http_interceptor(interceptor.clone());
-            }
-            for handler in &self.global_http_error_handlers {
-                container_mut.add_global_http_error_handler(handler.clone());
-            }
-            for guard in &self.global_rpc_guards {
-                container_mut.add_global_rpc_guard(guard.clone());
-            }
-            for interceptor in &self.global_rpc_interceptors {
-                container_mut.add_global_rpc_interceptor(interceptor.clone());
-            }
-            for handler in &self.global_rpc_error_handlers {
-                container_mut.add_global_rpc_error_handler(handler.clone());
-            }
-            for guard in &self.global_ws_guards {
-                container_mut.add_global_ws_guard(guard.clone());
-            }
-            for interceptor in &self.global_ws_interceptors {
-                container_mut.add_global_ws_interceptor(interceptor.clone());
-            }
-            for handler in &self.global_ws_error_handlers {
-                container_mut.add_global_ws_error_handler(handler.clone());
-            }
-            for guard in &self.global_grpc_guards {
-                container_mut.add_global_grpc_guard(guard.clone());
-            }
-            for interceptor in &self.global_grpc_interceptors {
-                container_mut.add_global_grpc_interceptor(interceptor.clone());
-            }
-            for handler in &self.global_grpc_error_handlers {
-                container_mut.add_global_grpc_error_handler(handler.clone());
-            }
+            container_mut.global_http.extend_from(&self.global_http);
+            container_mut.global_rpc.extend_from(&self.global_rpc);
+            container_mut.global_ws.extend_from(&self.global_ws);
+            container_mut.global_grpc.extend_from(&self.global_grpc);
         }
 
         scanner.scan_middleware()?;

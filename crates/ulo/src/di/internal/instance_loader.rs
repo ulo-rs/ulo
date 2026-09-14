@@ -1,4 +1,5 @@
 use crate::error::SetupResult;
+use crate::spi::transport::{EnhancerSet, Http};
 use rustc_hash::FxHashMap;
 use std::{
     any::Any,
@@ -53,7 +54,6 @@ use super::{
     multi_collection_provider::MultiCollectionProvider,
 };
 use crate::{
-    enhancer::metadata::EnhancerMetadata,
     http::Route,
     spi::{Controller, Dispatch, HttpGuardEntry, HttpInterceptorEntry, Injectable, Provider},
 };
@@ -240,7 +240,8 @@ impl InstanceLoader {
                 .container
                 .borrow()
                 .role_registry()
-                .http_guards
+                .http
+                .guards
                 .get(&provider_token)
                 .cloned()
                 .ok_or_else(|| {
@@ -249,7 +250,7 @@ impl InstanceLoader {
                         provider_token
                     )
                 })?;
-            self.container.borrow_mut().add_global_http_guard(guard);
+            self.container.borrow_mut().global_http.guards.push(guard);
         }
 
         for (_, provider_token) in app_interceptor_providers {
@@ -257,7 +258,7 @@ impl InstanceLoader {
                 .container
                 .borrow()
                 .role_registry()
-                .http_interceptors
+                .http.interceptors
                 .get(&provider_token)
                 .cloned()
                 .ok_or_else(|| {
@@ -268,7 +269,9 @@ impl InstanceLoader {
                 })?;
             self.container
                 .borrow_mut()
-                .add_global_http_interceptor(interceptor);
+                .global_http
+                .interceptors
+                .push(interceptor);
         }
 
         Ok(())
@@ -537,14 +540,14 @@ impl InstanceLoader {
     fn resolve_enhancers_from_tokens(
         &self,
         route: &Arc<dyn Route>,
-    ) -> SetupResult<EnhancerMetadata> {
+    ) -> SetupResult<EnhancerSet<Http>> {
         let registry = self.container.borrow();
         let registry = registry.role_registry();
         let declared = route.enhancers();
 
         let mut guards: Vec<HttpGuardEntry> = Vec::new();
         for token in declared.guard_tokens {
-            let guard = registry.http_guards.get(&token).cloned().ok_or_else(|| {
+            let guard = registry.http.guards.get(&token).cloned().ok_or_else(|| {
                 format!(
                     "HTTP Guard '{}' not found in registry. A guard registers automatically by \
                      implementing Guard<HttpContext> (or a universal blanket impl); make sure the \
@@ -561,7 +564,8 @@ impl InstanceLoader {
         let mut interceptors: Vec<HttpInterceptorEntry> = Vec::new();
         for token in declared.interceptor_tokens {
             let interceptor = registry
-                .http_interceptors
+                .http
+                .interceptors
                 .get(&token)
                 .cloned()
                 .ok_or_else(|| {
@@ -587,7 +591,7 @@ impl InstanceLoader {
         let mut error_handlers = Vec::new();
         for token in declared.error_handler_tokens {
             let eh = registry
-                .http_error_handlers
+                .http.error_handlers
                 .get(&token)
                 .cloned()
                 .ok_or_else(|| {
@@ -604,7 +608,7 @@ impl InstanceLoader {
         }
         error_handlers.extend(declared.error_handlers);
 
-        Ok(EnhancerMetadata {
+        Ok(EnhancerSet {
             guards,
             interceptors,
             error_handlers,
@@ -744,7 +748,7 @@ impl InstanceLoader {
 
 /// `Dispatch` with enhancer tokens already resolved — the shape Phase B stores from.
 enum ResolvedDispatch {
-    Http(Vec<(Arc<dyn Route>, EnhancerMetadata)>),
+    Http(Vec<(Arc<dyn Route>, EnhancerSet<Http>)>),
     Rpc(Arc<crate::rpc::RpcControllerWrapper>),
     Grpc(
         Arc<dyn crate::grpc::GrpcServiceSource>,
