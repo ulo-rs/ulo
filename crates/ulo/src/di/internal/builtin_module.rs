@@ -4,7 +4,7 @@
 //! to all modules without requiring explicit imports.
 
 use crate::di::ModuleMetadata;
-use crate::extension::ExtensionsFactory;
+use crate::di::extension::ExtensionsFactory;
 use crate::http::RequestFactory;
 use crate::spi::{ControllerFactory, ProviderFactory};
 /// Built-in global module that provides core framework functionality

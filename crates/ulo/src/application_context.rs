@@ -11,7 +11,7 @@ use crate::error::ResolutionError;
 use crate::{
     di::Execution,
     di::internal::{Container, IntoToken, ModuleRef},
-    modules::ModuleIdentity,
+    di::module::ModuleIdentity,
     spi::Provider,
 };
 

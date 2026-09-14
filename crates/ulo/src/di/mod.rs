@@ -7,19 +7,21 @@
 //! `spi`.
 
 mod execution;
-pub(crate) mod internal;
-
 mod execution_cache;
-mod module_metadata;
+mod extension;
+pub(crate) mod internal;
+pub(crate) mod module;
+mod scope;
 mod token;
 
 pub use execution::Execution;
 pub use execution_cache::ExecutionCache;
-pub use module_metadata::{MiddlewareConsumer, ModuleMetadata};
+pub use extension::{Extension, ExtensionFactory};
+pub use internal::ModuleRef;
+pub use module::{
+    CheckedModule, DynamicModule, MiddlewareConsumer, ModuleIdentity, ModuleMetadata,
+};
+pub use scope::ProviderScope;
 pub use token::{APP_GUARD, APP_INTERCEPTOR, APP_MIDDLEWARE, IntoToken, Token, token_of};
 
 pub use crate::error::{InitResult, ResolutionError};
-pub use crate::extension::{Extension, ExtensionFactory};
-pub use crate::modules::{CheckedModule, DynamicModule, ModuleIdentity};
-pub use crate::provider_scope::ProviderScope;
-pub use internal::ModuleRef;
