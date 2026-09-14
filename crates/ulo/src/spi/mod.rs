@@ -10,6 +10,7 @@ mod controller;
 pub(crate) mod dispatch_source;
 mod execution_result;
 pub(crate) mod provider;
+pub(crate) mod transport;
 
 pub use self::controller::{Controller, ControllerFactory, Dispatch};
 pub use self::execution_result::ExecutionResult;
@@ -22,7 +23,9 @@ pub use crate::error::AdapterResult;
 // macro expansion names it.
 pub(crate) use self::dispatch_source::DispatchSource;
 pub(crate) use self::provider::{
-    GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc, HttpGuardEntry,
-    HttpInterceptorEntry, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
-    WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
+    GrpcErrorHandlerArc, HttpErrorHandlerArc, RpcErrorHandlerArc, WsErrorHandlerArc,
+};
+pub(crate) use self::transport::{
+    GrpcGuardEntry, GrpcInterceptorEntry, HttpGuardEntry, HttpInterceptorEntry, RpcGuardEntry,
+    RpcInterceptorEntry, WsGuardEntry, WsInterceptorEntry,
 };

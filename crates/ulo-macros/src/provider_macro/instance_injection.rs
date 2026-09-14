@@ -1732,7 +1732,7 @@ fn generate_dyn_factories(
     for kind in active_kinds {
         let spec = kind.spec();
         let trait_path = &spec.trait_path;
-        let factory_trait_path = &spec.dyn_factory_trait;
+        let factory_trait_path = &spec.factory_trait;
         let role_variant = &spec.role_variant;
         let entry_path = &spec.entry_path;
         let context_path = &spec.context_path;

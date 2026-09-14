@@ -6,13 +6,16 @@
 //! between `create` and dispatch, and [`DispatchSource`] is where a dispatch target's instance
 //! comes from.
 //!
+//! [`Transport`] and its four markers sit here too. The one place outside this crate that names
+//! them is the code `#[injectable]` writes for an enhancer carrying execution-scoped
+//! dependencies.
+//!
 //! They are `pub` because the expansion lands outside this crate, and hidden because naming one by
 //! hand means writing what a macro writes.
 
 pub use crate::spi::dispatch_source::{DispatchSource, execution_scoped_dependencies};
-pub use crate::spi::provider::{
-    DynGrpcGuardFactory, DynGrpcInterceptorFactory, DynHttpGuardFactory, DynHttpInterceptorFactory,
-    DynRpcGuardFactory, DynRpcInterceptorFactory, DynWsGuardFactory, DynWsInterceptorFactory,
-    GrpcGuardEntry, GrpcInterceptorEntry, HttpGuardEntry, HttpInterceptorEntry, RpcGuardEntry,
-    RpcInterceptorEntry, WsGuardEntry, WsInterceptorEntry,
+pub use crate::spi::transport::{
+    Grpc, GrpcGuardEntry, GrpcInterceptorEntry, GuardEntry, GuardFactory, Http, HttpGuardEntry,
+    HttpInterceptorEntry, InterceptorEntry, InterceptorFactory, Rpc, RpcGuardEntry,
+    RpcInterceptorEntry, Transport, Ws, WsGuardEntry, WsInterceptorEntry,
 };

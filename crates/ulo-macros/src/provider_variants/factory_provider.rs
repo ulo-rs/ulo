@@ -519,7 +519,7 @@ fn generate_noncaching_factory_structs(
         let trait_path = &spec.trait_path;
         let entry_path = &spec.entry_path;
         let role_variant = &spec.role_variant;
-        let dyn_factory_trait = &spec.dyn_factory_trait;
+        let factory_trait = &spec.factory_trait;
         let context_path = &spec.context_path;
         let value_probe = format_ident!("{}Probe", spec.factory_suffix);
         let type_probe = format_ident!("{}TypeProbe", spec.factory_suffix);
@@ -529,7 +529,7 @@ fn generate_noncaching_factory_structs(
                 all_deps: #deps_arc_ty,
             }
 
-            impl #dyn_factory_trait for #struct_name {
+            impl #factory_trait for #struct_name {
                 fn create<'a>(
                     &'a self,
                     _ctx: &'a #context_path,
