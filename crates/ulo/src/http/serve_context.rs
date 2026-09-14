@@ -5,22 +5,25 @@ use crate::{
     http::{Body, HttpRequest, HttpResponse, trim_trailing_slashes},
 };
 
-/// Runtime context the framework hands to an adapter at serve time.
+/// What the framework hands an HTTP adapter at serve time, once per serving session rather than
+/// once per request — [`HttpContext`](crate::http::HttpContext) is the per-request one.
 ///
-/// Passed to [`HttpAdapter::into_lifecycle`](crate::http::HttpAdapter::into_lifecycle)
-/// after all `register_route`/`register_ws_route` calls.
+/// Passed to [`HttpAdapter::into_lifecycle`](crate::http::HttpAdapter::into_lifecycle) after every
+/// `register_route` / `register_ws_route` call. It is HTTP's alone: it carries the global
+/// middleware chain, which is an HTTP concept (ADR-0007), and [`execute`](Self::execute) takes an
+/// [`HttpRequest`] and answers with an [`HttpResponse`].
 ///
-/// New fields can be added here without changing the trait signature —
-/// adapters ignore fields they don't need.
+/// New fields can be added here without changing the trait signature — adapters ignore the ones
+/// they do not read.
 ///
 /// TODO: add graceful shutdown signal.
-pub struct AdapterContext {
+pub struct ServeContext {
     /// Runs before the adapter's routing on every request — including
     /// unknown paths (404) and method mismatches (405).
     pub global_chain: Arc<MiddlewareChain>,
 }
 
-impl AdapterContext {
+impl ServeContext {
     pub fn new(global_chain: MiddlewareChain) -> Self {
         Self {
             global_chain: Arc::new(global_chain),

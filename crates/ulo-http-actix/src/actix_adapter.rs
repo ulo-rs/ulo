@@ -12,11 +12,12 @@ use actix_web::{
     HttpResponse as ActixHttpResponse, HttpServer, ResponseError, web, web::Bytes,
 };
 use futures_util::future::LocalBoxFuture;
+use ulo::http::ServeContext;
 use ulo::http::{
     Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod, HttpRequest, HttpResponse,
     PathParams, RequestBody, RequestHandler,
 };
-use ulo::spi::{AdapterContext, BindTarget};
+use ulo::spi::BindTarget;
 pub struct ActixAdapter {
     routes: Vec<(HttpMethod, String, Arc<dyn RequestHandler>)>,
 }
@@ -220,7 +221,7 @@ async fn actix_response_to_ulo(res: ActixHttpResponse<BoxBody>) -> HttpResponse 
 /// routing matches on, so middleware can rewrite paths, short-circuit (auth,
 /// CORS preflight), and observe every response — including 404s and 405s.
 struct GlobalChain {
-    ctx: Arc<AdapterContext>,
+    ctx: Arc<ServeContext>,
 }
 
 impl<S> Transform<S, ServiceRequest> for GlobalChain
@@ -244,7 +245,7 @@ where
 
 struct GlobalChainMiddleware<S> {
     service: Rc<S>,
-    ctx: Arc<AdapterContext>,
+    ctx: Arc<ServeContext>,
 }
 
 impl<S> ActixService<ServiceRequest> for GlobalChainMiddleware<S>
@@ -379,7 +380,7 @@ impl HttpAdapter for ActixAdapter {
     async fn into_lifecycle(
         mut self: Box<Self>,
         target: BindTarget,
-        ctx: AdapterContext,
+        ctx: ServeContext,
     ) -> AdapterResult<HttpLifecycleHandle> {
         let addr = target.to_string();
         // actix-server adopts a listener as-is (its `listen` docs push socket

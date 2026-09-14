@@ -6,8 +6,8 @@ use crate::error::AdapterResult;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 
-use crate::adapter::BindTarget;
 use crate::http::RequestPart;
+use crate::spi::BindTarget;
 use crate::ws::{WsError, WsMessage, WsSink};
 
 /// Result of the message callback — tells the adapter what to do next.

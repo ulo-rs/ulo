@@ -20,11 +20,12 @@ use tower::ServiceExt as TowerServiceExt;
 use crate::axum_websocket_adapter::{axum_to_ws_message, ws_message_to_axum};
 use crate::tokio_sender::TokioSender;
 use ulo::async_trait;
+use ulo::http::ServeContext;
 use ulo::http::{
     Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod, HttpRequest, HttpResponse,
     PathParams, RequestBody, RequestHandler, RequestPart,
 };
-use ulo::spi::{AdapterContext, BindTarget};
+use ulo::spi::BindTarget;
 use ulo::ws::{MessageCallbackResult, WsAdapter, WsConnectionCallbacks};
 use ulo::ws::{WsMessage, WsSink};
 
@@ -271,7 +272,7 @@ fn native_to_ulo_response(res: Response<Body>) -> HttpResponse {
 #[derive(Clone)]
 struct GlobalChainService {
     router: Router,
-    ctx: Arc<AdapterContext>,
+    ctx: Arc<ServeContext>,
 }
 
 impl tower::Service<Request<Body>> for GlobalChainService {
@@ -393,7 +394,7 @@ impl HttpAdapter for AxumAdapter {
     async fn into_lifecycle(
         mut self: Box<Self>,
         target: BindTarget,
-        ctx: AdapterContext,
+        ctx: ServeContext,
     ) -> AdapterResult<HttpLifecycleHandle> {
         let routes = std::mem::take(&mut self.routes);
 

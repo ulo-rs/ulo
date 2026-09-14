@@ -8,9 +8,10 @@ use std::sync::Arc;
 
 use tokio::sync::oneshot;
 use ulo::http::HttpMethod;
+use ulo::http::ServeContext;
 use ulo::http::{Body, HttpAdapter, HttpLifecycleHandle, RequestHandler};
 use ulo::spi::AdapterResult;
-use ulo::spi::{AdapterContext, BindTarget};
+use ulo::spi::BindTarget;
 use ulo::{UloFactory, async_trait, controller, get, module, routes};
 #[controller("/probe")]
 pub struct ProbeController {}
@@ -46,7 +47,7 @@ impl HttpAdapter for DyingAdapter {
     async fn into_lifecycle(
         self: Box<Self>,
         target: BindTarget,
-        _ctx: AdapterContext,
+        _ctx: ServeContext,
     ) -> AdapterResult<HttpLifecycleHandle> {
         let listener = target.into_std_listener()?;
         let local_addr = listener.local_addr()?;

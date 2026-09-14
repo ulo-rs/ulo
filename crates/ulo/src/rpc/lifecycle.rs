@@ -10,8 +10,8 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 
-use crate::adapter::server_lifecycle::{ServerLifecycle, ShutdownCallback};
 use crate::error::AdapterResult;
+use crate::server_lifecycle::{ServerLifecycle, ShutdownCallback};
 
 pub struct RpcLifecycleHandle {
     local_addr: Option<SocketAddr>,

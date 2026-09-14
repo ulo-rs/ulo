@@ -1,12 +1,12 @@
 //! Conformance suite for trailing-slash-insensitive route matching.
 //!
 //! `/app` and `/app/` address the same route on every HTTP adapter:
-//! [`AdapterContext`] trims trailing slashes from the request path before the
+//! [`ServeContext`] trims trailing slashes from the request path before the
 //! global chain and the native router see it, and `join_route` guarantees
 //! registered paths never carry one. The query string survives trimming, and
 //! the root path `/` is preserved.
 //!
-//! [`AdapterContext`]: ulo::spi::AdapterContext
+//! [`ServeContext`]: ulo::spi::ServeContext
 
 use crate::common::TestServer;
 use serde::Deserialize;

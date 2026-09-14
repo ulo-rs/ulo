@@ -6,8 +6,8 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 
-use crate::adapter::server_lifecycle::{ServerLifecycle, ShutdownCallback};
 use crate::error::AdapterResult;
+use crate::server_lifecycle::{ServerLifecycle, ShutdownCallback};
 
 /// Lifecycle handle for an HTTP adapter. Constructed by each adapter
 /// crate's `into_lifecycle` implementation; owns the concrete state

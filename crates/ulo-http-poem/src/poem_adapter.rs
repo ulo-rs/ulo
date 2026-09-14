@@ -18,11 +18,12 @@ use poem::{
 use crate::poem_websocket_adapter::{poem_to_ws_message, ws_message_to_poem};
 use crate::tokio_sender::TokioSender;
 use ulo::async_trait;
+use ulo::http::ServeContext;
 use ulo::http::{
     Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod, HttpRequest, HttpResponse,
     PathParams, RequestBody, RequestHandler, RequestPart,
 };
-use ulo::spi::{AdapterContext, BindTarget};
+use ulo::spi::BindTarget;
 use ulo::ws::{MessageCallbackResult, WsAdapter, WsConnectionCallbacks};
 use ulo::ws::{WsMessage, WsSink};
 
@@ -241,7 +242,7 @@ fn to_poem_path(path: &str) -> String {
 /// natively — including 404s, 405s, and WebSocket handshakes.
 struct GlobalChainEndpoint {
     inner: Arc<BoxEndpoint<'static, PoemResponse>>,
-    ctx: Arc<AdapterContext>,
+    ctx: Arc<ServeContext>,
 }
 
 impl Endpoint for GlobalChainEndpoint {
@@ -489,7 +490,7 @@ impl HttpAdapter for PoemAdapter {
     async fn into_lifecycle(
         mut self: Box<Self>,
         target: BindTarget,
-        ctx: AdapterContext,
+        ctx: ServeContext,
     ) -> AdapterResult<HttpLifecycleHandle> {
         let routes = std::mem::take(&mut self.routes);
         let ws_routes = std::mem::take(&mut self.ws_routes);

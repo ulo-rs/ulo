@@ -19,7 +19,6 @@ pub mod __lifecycle;
 pub mod __rpc;
 #[doc(hidden)]
 pub mod __ws;
-pub mod adapter;
 mod application;
 mod application_context;
 mod builtin_module;
@@ -40,6 +39,7 @@ mod provider_scope;
 mod router;
 pub mod rpc;
 mod scanner;
+mod server_lifecycle;
 pub mod spi;
 mod startup_check;
 mod type_map;
