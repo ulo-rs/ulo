@@ -1,3 +1,4 @@
+use crate::spi::transport::Rpc;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -7,7 +8,7 @@ use super::{
     RpcCallInfo, RpcControllerSource, RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult,
 };
 use crate::context::Metadata;
-use crate::enhancer::{Guard, Interceptor, InterceptorNext};
+use crate::enhancer::{Interceptor, InterceptorNext};
 use crate::errors::{PanicRecovered, PipelineSegment};
 use crate::rpc::RpcContext;
 use crate::spi::ExecutionResult;
@@ -161,7 +162,7 @@ impl RpcControllerWrapper {
         if let Some(h) = self.handler_error_handlers.get(&pattern) {
             all_error_handlers.extend_from_slice(h);
         }
-        let guards = Self::resolve_guards(&all_guards, &ctx).await;
+        let guards = crate::enhancer::pipeline::guards_for::<Rpc>(&all_guards, &ctx).await;
         for (index, guard) in guards.iter().enumerate() {
             // A panicking guard is a bug, not a verdict: it takes the same
             // route as any other pipeline panic, so `#[catch(PanicRecovered)]`
@@ -186,8 +187,10 @@ impl RpcControllerWrapper {
                 // did.
                 let rejection = crate::errors::GuardRejection::new(index);
                 for (position, handler) in all_error_handlers.iter().rev().enumerate() {
-                    if let Some(claimed) =
-                        Self::try_chain_handler(handler, &rejection, &ctx, position).await
+                    if let Some(claimed) = crate::enhancer::pipeline::offer_to::<Rpc>(
+                        handler, &rejection, &ctx, position,
+                    )
+                    .await
                     {
                         return claimed;
                     }
@@ -196,7 +199,8 @@ impl RpcControllerWrapper {
             }
         }
 
-        let interceptors = Self::resolve_interceptors(&all_interceptors, &ctx).await;
+        let interceptors =
+            crate::enhancer::pipeline::interceptors_for::<Rpc>(&all_interceptors, &ctx).await;
         let answer =
             Self::execute_with_interceptors(&ctx, &interceptors, &self.source, &all_error_handlers)
                 .await;
@@ -258,56 +262,6 @@ impl RpcControllerWrapper {
     /// `position` counts from the most specific handler — the chain runs
     /// pattern, then controller, then global — and is logged so a panic names
     /// which registration it came from.
-    pub(crate) async fn try_chain_handler(
-        handler: &RpcErrorHandlerArc,
-        error: &(dyn std::error::Error + Send + Sync + 'static),
-        ctx: &RpcContext,
-        position: usize,
-    ) -> Option<RpcHandlerResult> {
-        match crate::panic_recovery::catch_async(
-            crate::errors::PipelineSegment::ErrorHandler,
-            handler.handle_error(error, ctx),
-        )
-        .await
-        {
-            Ok(opt) => opt,
-            Err(panic_event) => {
-                tracing::error!(chain_position = position, error = %error, panic = %panic_event.message, "error handler panicked; trying the next one");
-                None
-            }
-        }
-    }
-
-    async fn resolve_guards(
-        entries: &[RpcGuardEntry],
-        ctx: &RpcContext,
-    ) -> Vec<Arc<dyn Guard<RpcContext>>> {
-        let mut out = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let g = match entry {
-                RpcGuardEntry::Ready(g) => g.clone(),
-                RpcGuardEntry::Factory(f) => f.create(ctx).await,
-            };
-            out.push(g);
-        }
-        out
-    }
-
-    async fn resolve_interceptors(
-        entries: &[RpcInterceptorEntry],
-        ctx: &RpcContext,
-    ) -> Vec<Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>> {
-        let mut out = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let i = match entry {
-                RpcInterceptorEntry::Ready(i) => i.clone(),
-                RpcInterceptorEntry::Factory(f) => f.create(ctx).await,
-            };
-            out.push(i);
-        }
-        out
-    }
-
     async fn execute_with_interceptors(
         context: &RpcContext,
         interceptors: &[Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>],
@@ -346,7 +300,8 @@ impl RpcControllerWrapper {
         event: PanicRecovered,
     ) -> RpcHandlerResult {
         for (position, handler) in error_handlers.iter().rev().enumerate() {
-            if let Some(claimed) = Self::try_chain_handler(handler, &event, context, position).await
+            if let Some(claimed) =
+                crate::enhancer::pipeline::offer_to::<Rpc>(handler, &event, context, position).await
             {
                 return claimed;
             }
@@ -392,8 +347,13 @@ impl RpcControllerWrapper {
                     other => other,
                 };
                 for (position, handler) in error_handlers.iter().rev().enumerate() {
-                    if let Some(claimed) =
-                        Self::try_chain_handler(handler, observed_err, context, position).await
+                    if let Some(claimed) = crate::enhancer::pipeline::offer_to::<Rpc>(
+                        handler,
+                        observed_err,
+                        context,
+                        position,
+                    )
+                    .await
                     {
                         return claimed;
                     }

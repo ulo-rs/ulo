@@ -1044,8 +1044,10 @@ fn make_rpc_callbacks(
                 info.extensions,
             );
             for (position, handler) in global_error_handlers.iter().rev().enumerate() {
-                if let Some(claimed) =
-                    RpcControllerWrapper::try_chain_handler(handler, &event, &ctx, position).await
+                if let Some(claimed) = crate::enhancer::pipeline::offer_to::<
+                    crate::spi::transport::Rpc,
+                >(handler, &event, &ctx, position)
+                .await
                 {
                     return claimed;
                 }

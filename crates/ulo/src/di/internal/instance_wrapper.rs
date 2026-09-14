@@ -146,8 +146,10 @@ impl InstanceWrapper {
 
                 let event = MiddlewareFailure::new(e.to_string());
                 for (position, handler) in self.error_handlers.iter().rev().enumerate() {
-                    if let Some(response) =
-                        Self::try_chain_handler(handler, &event, &error_ctx, position).await
+                    if let Some(response) = crate::enhancer::pipeline::offer_to::<Http>(
+                        handler, &event, &error_ctx, position,
+                    )
+                    .await
                     {
                         return response;
                     }
@@ -156,36 +158,6 @@ impl InstanceWrapper {
                 Self::safe_render(|| crate::http::error::render_error(&event))
             }
         }
-    }
-
-    async fn resolve_guards(
-        entries: &[HttpGuardEntry],
-        ctx: &HttpContext,
-    ) -> Vec<Arc<dyn Guard<HttpContext>>> {
-        let mut out = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let g = match entry {
-                HttpGuardEntry::Ready(g) => g.clone(),
-                HttpGuardEntry::Factory(f) => f.create(ctx).await,
-            };
-            out.push(g);
-        }
-        out
-    }
-
-    async fn resolve_interceptors(
-        entries: &[HttpInterceptorEntry],
-        ctx: &HttpContext,
-    ) -> Vec<Arc<dyn Interceptor<HttpContext, HttpResponse>>> {
-        let mut out = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let i = match entry {
-                HttpInterceptorEntry::Ready(i) => i.clone(),
-                HttpInterceptorEntry::Factory(f) => f.create(ctx).await,
-            };
-            out.push(i);
-        }
-        out
     }
 
     async fn execute_controller_logic(
@@ -201,8 +173,9 @@ impl InstanceWrapper {
         // is constructed once only if both resolve against the same one.
         let context = HttpContext::new(req, metadata.clone());
 
-        let guards = Self::resolve_guards(&guards, &context).await;
-        let interceptors = Self::resolve_interceptors(&interceptors, &context).await;
+        let guards = crate::enhancer::pipeline::guards_for::<Http>(&guards, &context).await;
+        let interceptors =
+            crate::enhancer::pipeline::interceptors_for::<Http>(&interceptors, &context).await;
 
         let response = Self::run_chain(
             &context,
@@ -292,7 +265,9 @@ impl InstanceWrapper {
         E: Error,
     {
         for (position, handler) in error_handlers.iter().rev().enumerate() {
-            if let Some(handled) = Self::try_chain_handler(handler, &event, ctx, position).await {
+            if let Some(handled) =
+                crate::enhancer::pipeline::offer_to::<Http>(handler, &event, ctx, position).await
+            {
                 return handled;
             }
         }
@@ -350,26 +325,6 @@ impl InstanceWrapper {
     /// `position` counts from the most specific handler — the chain runs
     /// method, then controller, then global — and is logged so a panic names
     /// which registration it came from.
-    async fn try_chain_handler(
-        handler: &HttpErrorHandlerArc,
-        error: &(dyn std::error::Error + Send + Sync + 'static),
-        ctx: &HttpContext,
-        position: usize,
-    ) -> Option<HttpResponse> {
-        match crate::panic_recovery::catch_async(
-            PipelineSegment::ErrorHandler,
-            handler.handle_error(error, ctx),
-        )
-        .await
-        {
-            Ok(opt) => opt,
-            Err(panic_event) => {
-                tracing::error!(chain_position = position, error = %error, panic = %panic_event.message, "error handler panicked; trying the next one");
-                None
-            }
-        }
-    }
-
     /// Onion/Russian doll dispatch through the interceptor chain.
     async fn execute_with_interceptors(
         context: &HttpContext,
@@ -412,7 +367,9 @@ impl InstanceWrapper {
         event: PanicRecovered,
     ) -> HttpResponse {
         for (position, handler) in error_handlers.iter().rev().enumerate() {
-            if let Some(claimed) = Self::try_chain_handler(handler, &event, context, position).await
+            if let Some(claimed) =
+                crate::enhancer::pipeline::offer_to::<Http>(handler, &event, context, position)
+                    .await
             {
                 return claimed;
             }
@@ -462,8 +419,13 @@ impl InstanceWrapper {
                     other => other,
                 };
                 for (position, handler) in error_handlers.iter().rev().enumerate() {
-                    if let Some(claimed) =
-                        Self::try_chain_handler(handler, observed_err, context, position).await
+                    if let Some(claimed) = crate::enhancer::pipeline::offer_to::<Http>(
+                        handler,
+                        observed_err,
+                        context,
+                        position,
+                    )
+                    .await
                     {
                         return claimed;
                     }
