@@ -1,18 +1,19 @@
-use std::{any::Any, future::Future, pin::Pin, sync::Arc};
+use std::{any::Any, sync::Arc};
 
 use async_trait::async_trait;
 use rustc_hash::FxHashMap;
 
+use super::transport::{
+    GrpcGuardEntry, GrpcInterceptorEntry, HttpGuardEntry, HttpInterceptorEntry, RpcGuardEntry,
+    RpcInterceptorEntry, WsGuardEntry, WsInterceptorEntry,
+};
 use crate::di::Execution;
-use crate::enhancer::{ErrorHandler, Guard, Interceptor};
+use crate::enhancer::ErrorHandler;
 use crate::http::middleware::Middleware;
 use crate::{
     di::ProviderScope, grpc::GrpcContext, http::HttpContext, http::HttpResponse, rpc::RpcContext,
     rpc::RpcData, ws::WsContext, ws::WsMessage,
 };
-
-#[allow(unused_imports)]
-use std::marker::PhantomData;
 
 #[async_trait]
 pub trait Provider: Send + Sync {
@@ -48,84 +49,6 @@ pub trait Provider: Send + Sync {
     async fn before_application_shutdown(&self, _signal: Option<String>) {}
     async fn on_application_shutdown(&self, _signal: Option<String>) {}
 }
-
-// ---- Per-transport entry / factory types (typed registries) ----------------
-
-macro_rules! transport_factory_types {
-    (
-        $context:ty, $answer:ty,
-        $guard_factory:ident, $guard_entry:ident,
-        $interceptor_factory:ident, $interceptor_entry:ident
-    ) => {
-        pub trait $guard_factory: Send + Sync {
-            fn create<'a>(
-                &'a self,
-                ctx: &'a $context,
-            ) -> Pin<Box<dyn Future<Output = Arc<dyn Guard<$context> + Send + Sync>> + Send + 'a>>;
-        }
-
-        #[derive(Clone)]
-        pub enum $guard_entry {
-            Ready(Arc<dyn Guard<$context>>),
-            Factory(Arc<dyn $guard_factory>),
-        }
-
-        pub trait $interceptor_factory: Send + Sync {
-            fn create<'a>(
-                &'a self,
-                ctx: &'a $context,
-            ) -> Pin<
-                Box<
-                    dyn Future<Output = Arc<dyn Interceptor<$context, $answer> + Send + Sync>>
-                        + Send
-                        + 'a,
-                >,
-            >;
-        }
-
-        #[derive(Clone)]
-        pub enum $interceptor_entry {
-            Ready(Arc<dyn Interceptor<$context, $answer>>),
-            Factory(Arc<dyn $interceptor_factory>),
-        }
-    };
-}
-
-transport_factory_types!(
-    HttpContext,
-    HttpResponse,
-    DynHttpGuardFactory,
-    HttpGuardEntry,
-    DynHttpInterceptorFactory,
-    HttpInterceptorEntry
-);
-
-transport_factory_types!(
-    RpcContext,
-    crate::rpc::RpcHandlerResult,
-    DynRpcGuardFactory,
-    RpcGuardEntry,
-    DynRpcInterceptorFactory,
-    RpcInterceptorEntry
-);
-
-transport_factory_types!(
-    WsContext,
-    crate::ws::WsHandlerResult,
-    DynWsGuardFactory,
-    WsGuardEntry,
-    DynWsInterceptorFactory,
-    WsInterceptorEntry
-);
-
-transport_factory_types!(
-    GrpcContext,
-    crate::grpc::GrpcHandlerResult,
-    DynGrpcGuardFactory,
-    GrpcGuardEntry,
-    DynGrpcInterceptorFactory,
-    GrpcInterceptorEntry
-);
 
 pub(crate) type HttpErrorHandlerArc = Arc<dyn ErrorHandler<HttpContext, HttpResponse>>;
 pub(crate) type RpcErrorHandlerArc = Arc<dyn ErrorHandler<RpcContext, RpcData>>;
