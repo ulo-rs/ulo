@@ -42,7 +42,6 @@ mod scanner;
 mod server_lifecycle;
 pub mod spi;
 mod startup_check;
-mod type_map;
 pub mod ws;
 
 // Re-exported for use in macro-generated code — not part of the public API.

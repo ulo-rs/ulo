@@ -1,11 +1,10 @@
 //! A synchronous type-keyed map.
 //!
-//! Storage for things built once and read many times — a handler's declared
-//! [`Metadata`](crate::context::Metadata), an RPC call's descriptor. Per-execution state that
-//! enhancers write and handlers read is [`Extensions`](crate::context::Extensions) instead, which
-//! is shared by handle and mutable through it.
+//! Storage for things built once and read many times — a handler's declared [`Metadata`], an RPC
+//! call's descriptor. Per-execution state that enhancers write and handlers read is
+//! [`Extensions`](super::Extensions) instead, which is shared by handle and mutable through it.
 //!
-//! One user: [`Metadata`](crate::context::Metadata), which is built once per declaration site and
+//! One user: [`Metadata`], which is built once per declaration site and
 //! read on every call through it.
 //!
 //! # Implementation Note
