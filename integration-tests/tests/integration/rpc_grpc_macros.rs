@@ -2032,7 +2032,7 @@ async fn grpc_guard_write_reaches_the_handler() {
 /// number are holding one instance.
 static GRPC_CALL_IDS: AtomicU64 = AtomicU64::new(0);
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct GrpcCallScoped {
     #[default(0)]
     id: u64,
@@ -2056,7 +2056,7 @@ pub struct GrpcGuardSaw(u64);
 
 /// Reads `GrpcCallScoped` before the service exists, so the id it records is the
 /// one the execution already holds by the time the service is built.
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct GrpcCallScopedGuard {
     #[inject]
     scoped: GrpcCallScoped,
@@ -2074,7 +2074,7 @@ impl ulo::enhancer::Guard<ulo::grpc::GrpcContext> for GrpcCallScopedGuard {
 /// Numbers each service construction.
 static PER_CALL_GRPC_BUILDS: AtomicU64 = AtomicU64::new(0);
 
-#[controller(scope = "request")]
+#[controller(scope = "execution")]
 pub struct PerCallGrpcService {
     #[inject]
     scoped: GrpcCallScoped,
@@ -2239,8 +2239,8 @@ where
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
-/// `#[controller(scope = "request")]` builds the service inside the call it
-/// serves: a fresh one per call, and its request-scoped dependency is the
+/// `#[controller(scope = "execution")]` builds the service inside the call it
+/// serves: a fresh one per call, and its execution-scoped dependency is the
 /// instance the call already holds rather than a second one.
 #[tokio_localset_test::localset_test]
 async fn a_request_scoped_grpc_service_is_built_per_call() {
@@ -2291,7 +2291,7 @@ async fn a_request_scoped_grpc_service_is_built_per_call() {
         .expect("shutdown must complete");
 }
 
-/// A service that declares no scope and injects nothing request-scoped is still
+/// A service that declares no scope and injects nothing execution-scoped is still
 /// built once and shared.
 #[tokio_localset_test::localset_test]
 async fn a_singleton_grpc_service_is_built_once() {

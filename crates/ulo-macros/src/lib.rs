@@ -51,7 +51,7 @@ fn unconsumed_enhancer_error(name: &str, item: TokenStream) -> TokenStream {
 /// the `Clone` impl the container needs, so the struct carries no derive ceremony.
 ///
 /// Arguments override defaults:
-/// - `#[injectable(scope = "request")]` / `"transient"` — default is singleton.
+/// - `#[injectable(scope = "execution")]` / `"transient"` — default is singleton.
 /// - `#[injectable(init = "new")]` — assemble via `Self::new(inject_fields…)` instead of a struct
 ///   literal. (Usually unnecessary — prefer `#[new]` on the constructor method, which also injects
 ///   parameters that aren't stored fields.)
@@ -59,7 +59,7 @@ fn unconsumed_enhancer_error(name: &str, item: TokenStream) -> TokenStream {
 /// Construction logic (`#[new]`) and lifecycle hooks (`#[on_module_init]`, …) live on the struct's `impl`.
 ///
 /// ```ignore
-/// #[injectable(scope = "request")]
+/// #[injectable(scope = "execution")]
 /// pub struct UserService {
 ///     #[inject] repo: UserRepo,
 /// }

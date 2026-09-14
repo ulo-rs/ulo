@@ -140,7 +140,7 @@ async fn singleton_controllers_share_state() {
 async fn request_scoped_controllers_create_per_request() {
     static REQUEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-    #[controller("/api", scope = "request")]
+    #[controller("/api", scope = "execution")]
     pub struct RequestController {
         request_id: u32,
     }

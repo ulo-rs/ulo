@@ -38,7 +38,7 @@ async fn scope_behavior() {
         }
     }
 
-    #[controller("/request-scoped", scope = "request")]
+    #[controller("/execution-scoped", scope = "execution")]
     pub struct RequestController {
         #[inject("SINGLETON")]
         singleton1: Counter,
@@ -90,7 +90,7 @@ async fn scope_behavior() {
         controllers: [RequestController, SingletonController],
         providers: [
             provider_factory!("SINGLETON", || Counter::new_singleton(), Counter, scope = "singleton"),
-            provider_factory!("REQUEST", || Counter::new_request(), scope = "request"),
+            provider_factory!("REQUEST", || Counter::new_request(), scope = "execution"),
             provider_factory!("TRANSIENT", || Counter::new_transient(), scope = "transient"),
         ],
     )]
@@ -132,7 +132,7 @@ async fn scope_behavior() {
 
     let req_resp1 = server
         .client()
-        .get(server.url("/request-scoped/get"))
+        .get(server.url("/execution-scoped/get"))
         .send()
         .await
         .unwrap();
@@ -153,7 +153,7 @@ async fn scope_behavior() {
     let r_ids1: Vec<&str> = request_part1.split('|').collect();
     assert_eq!(
         r_ids1[0], r_ids1[1],
-        "Request scope should share same instance within request: {}",
+        "Execution scope should share same instance within request: {}",
         req_body1
     );
 
@@ -166,7 +166,7 @@ async fn scope_behavior() {
 
     let req_resp2 = server
         .client()
-        .get(server.url("/request-scoped/get"))
+        .get(server.url("/execution-scoped/get"))
         .send()
         .await
         .unwrap();
@@ -187,7 +187,7 @@ async fn scope_behavior() {
     let r_ids2: Vec<&str> = request_part2.split('|').collect();
     assert_ne!(
         r_ids1[0], r_ids2[0],
-        "Request scope should create new instance for new request: req1={}, req2={}",
+        "Execution scope should create new instance for new request: req1={}, req2={}",
         request_part1, request_part2
     );
 

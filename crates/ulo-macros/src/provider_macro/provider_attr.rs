@@ -57,13 +57,19 @@ fn parse_args(attr: TokenStream) -> Result<(ProviderScope, Option<String>)> {
             "scope" => {
                 scope = match value.as_str() {
                     "singleton" => ProviderScope::Singleton,
-                    "request" => ProviderScope::Request,
+                    "execution" => ProviderScope::Execution,
+                    "request" => {
+                        return Err(syn::Error::new_spanned(
+                            &nv.value,
+                            crate::shared::scope_parser::SCOPE_RENAMED,
+                        ));
+                    }
                     "transient" => ProviderScope::Transient,
                     other => {
                         return Err(syn::Error::new_spanned(
                             &nv.value,
                             format!(
-                                "Invalid scope: '{}'. Must be 'singleton', 'request', or 'transient'",
+                                "Invalid scope: '{}'. Must be 'singleton', 'execution', or 'transient'",
                                 other
                             ),
                         ));

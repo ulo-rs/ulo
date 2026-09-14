@@ -288,9 +288,9 @@ impl DependencyScanner {
                 let container = self.container.borrow();
                 if let Ok(providers) = container.lifecycle_instances(module_token) {
                     for provider in providers {
-                        // Skip request-scoped providers — they are built into an
+                        // Skip execution-scoped providers — they are built into an
                         // execution, and bootstrap is not one.
-                        if provider.scope() == crate::di::ProviderScope::Request {
+                        if provider.scope() == crate::di::ProviderScope::Execution {
                             continue;
                         }
 
@@ -356,9 +356,9 @@ impl DependencyScanner {
                 let container = self.container.borrow();
                 if let Ok(providers) = container.lifecycle_instances(module_token) {
                     for provider in providers {
-                        // Skip request-scoped providers — they are built into an
+                        // Skip execution-scoped providers — they are built into an
                         // execution, and module initialisation is not one.
-                        if provider.scope() == crate::di::ProviderScope::Request {
+                        if provider.scope() == crate::di::ProviderScope::Execution {
                             continue;
                         }
 

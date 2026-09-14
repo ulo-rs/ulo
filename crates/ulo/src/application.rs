@@ -385,7 +385,7 @@ impl UloApplication {
 
     /// Resolves a provider `T` in an execution.
     ///
-    /// Everything resolved in one execution shares its cache, so a request-scoped
+    /// Everything resolved in one execution shares its cache, so an execution-scoped
     /// provider is built once for all of them. Use
     /// [`ProviderContext::standalone`](crate::di::ProviderContext::standalone) where the
     /// work arrived over no transport.

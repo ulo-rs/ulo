@@ -8,13 +8,13 @@ use super::{CancellationToken, Extensions, HandlerContext, shared::SharedState};
 ///
 /// A CLI command, a cron tick, a background job, a test — one unit of work that
 /// arrived over nothing. It carries what any execution carries, so a
-/// request-scoped provider can be built into it and shared by everything
+/// execution-scoped provider can be built into it and shared by everything
 /// resolved in it:
 ///
 /// ```rust,ignore
 /// let execution = ProviderContext::standalone();
 /// let repo = app.resolve::<Repo>(&execution).await?;
-/// let audit = app.resolve::<AuditLog>(&execution).await?;  // same request-scoped deps
+/// let audit = app.resolve::<AuditLog>(&execution).await?;  // same execution-scoped deps
 /// ```
 ///
 /// The execution lasts as long as the handle. Dropping it ends it, which is what

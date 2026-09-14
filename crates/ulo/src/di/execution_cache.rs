@@ -6,11 +6,11 @@ use std::{
 
 use parking_lot::Mutex;
 
-/// Per-execution instance cache for request-scoped providers.
+/// Per-execution instance cache for execution-scoped providers.
 ///
 /// One per execution, held by that execution's context. Ensures every
 /// construction site — enhancer factories, the controller, any `#[new]`
-/// constructor — resolves a request-scoped type once and shares the result,
+/// constructor — resolves an execution-scoped type once and shares the result,
 /// without a global registry.
 ///
 /// Nothing in it is transport-specific. It lives on the context because that is
@@ -21,7 +21,7 @@ use parking_lot::Mutex;
 /// [`get`](Self::get) hands back a clone, and injected fields bind an owned
 /// value. The cache therefore guarantees *one construction* per request, not
 /// one live value: two injection sites hold two copies that were built once.
-/// A request-scoped provider whose state must be visible across sites has to
+/// An execution-scoped provider whose state must be visible across sites has to
 /// carry that state behind a shared handle (`Arc<Mutex<_>>`, `Arc<OnceLock<_>>`)
 /// — mutating a plain field mutates only that site's copy.
 pub struct ExecutionCache {

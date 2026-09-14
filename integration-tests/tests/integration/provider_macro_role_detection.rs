@@ -3,7 +3,7 @@
 //! expression, never a role.
 //!
 //! Detection anchors at a different point per scope: a singleton is probed on
-//! the value `build()` produced, a request-scoped provider on the `-> T` its
+//! the value `build()` produced, an execution-scoped provider on the `-> T` its
 //! closure writes, there being no value to probe until a request arrives. Each
 //! guard below is applied by token with `#[use_guards("TOKEN")]` and gates a
 //! route 403/200.
@@ -26,7 +26,7 @@ impl Guard<HttpContext> for ValueGuard {
     }
 }
 
-// A guard built by a factory closure; request-scoped, so the closure's `-> FactoryGuard` names the
+// A guard built by a factory closure; execution-scoped, so the closure's `-> FactoryGuard` names the
 // type for the registration gate.
 #[derive(Clone)]
 pub struct FactoryGuard;
@@ -61,8 +61,8 @@ impl GuardedController {
     providers: [
         // value provider + type hint → stored concretely → role auto-detected. No `guard` arg.
         provider_value!("VALUE_GUARD", ValueGuard, ValueGuard),
-        // request-scoped factory; `-> FactoryGuard` names the produced type for the gate.
-        provider_factory!("FACTORY_GUARD", || -> FactoryGuard { FactoryGuard }, scope = "request"),
+        // execution-scoped factory; `-> FactoryGuard` names the produced type for the gate.
+        provider_factory!("FACTORY_GUARD", || -> FactoryGuard { FactoryGuard }, scope = "execution"),
     ],
 )]
 struct ProviderMacroModule {}

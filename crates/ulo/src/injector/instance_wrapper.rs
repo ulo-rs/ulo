@@ -203,7 +203,7 @@ impl InstanceWrapper {
         metadata: Arc<Metadata>,
     ) -> HttpResponse {
         // The context comes first now: it owns the execution's cache, so a
-        // request-scoped provider injected into a guard and into the controller
+        // execution-scoped provider injected into a guard and into the controller
         // is constructed once only if both resolve against the same one.
         let context = HttpContext::new(req, metadata.clone());
 

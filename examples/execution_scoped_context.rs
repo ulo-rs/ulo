@@ -1,11 +1,11 @@
-//! Passing request-scoped data from a guard to the code that needs it
+//! Passing execution-scoped data from a guard to the code that needs it
 //!
 //! A guard authenticates the caller and attaches the result. Everything else in
-//! the request reads it by declaring `Extension<CurrentUser>` — the controller,
+//! the execution reads it by declaring `Extension<CurrentUser>` — the controller,
 //! and a service two constructions below it that has no route and no request of
 //! its own. Nothing threads the user through call signatures.
 //!
-//! Run with:  cargo run --example request_scoped_context
+//! Run with:  cargo run --example execution_scoped_context
 //! Test:      curl -H 'authorization: Bearer alice-token' http://127.0.0.1:3000/orders
 //!            curl http://127.0.0.1:3000/orders
 
@@ -24,7 +24,7 @@ pub struct CurrentUser {
 
 /// Reads the credential off the request and attaches the caller. Rejecting here
 /// means the handler never runs, so everything downstream can assume a user.
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct AuthGuard {
     #[inject]
     user: Extension<CurrentUser>,
@@ -57,7 +57,7 @@ impl Guard<HttpContext> for AuthGuard {
 
 /// Deep in the call tree: no route, no context, no request parameter. It
 /// declares what it needs and the container supplies this request's value.
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct AuditLog {
     #[inject]
     user: Extension<CurrentUser>,
@@ -72,7 +72,7 @@ impl AuditLog {
     }
 }
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct OrderService {
     #[inject]
     audit: AuditLog,
@@ -121,7 +121,7 @@ impl AppModule {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("🔐 request-scoped context\n");
+    println!("🔐 execution-scoped context\n");
     println!("  curl -H 'authorization: Bearer alice-token' http://127.0.0.1:3000/orders");
     println!("  curl http://127.0.0.1:3000/orders    # 403, the guard rejects");
     println!();

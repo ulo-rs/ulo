@@ -43,7 +43,7 @@ impl Hasher for IdHasher {
     }
 }
 
-/// A type map for storing request-scoped data.
+/// A type map for storing execution-scoped data.
 ///
 /// This allows middleware to pass typed data to controllers and services
 /// without coupling them to HTTP types.

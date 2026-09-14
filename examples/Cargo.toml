@@ -168,8 +168,8 @@ name = "socket_activation"
 path = "socket_activation.rs"
 
 [[example]]
-name = "request_scoped_context"
-path = "request_scoped_context.rs"
+name = "execution_scoped_context"
+path = "execution_scoped_context.rs"
 
 [[example]]
 name = "rpc_streaming"

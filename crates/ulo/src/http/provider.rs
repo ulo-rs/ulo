@@ -1,4 +1,4 @@
-//! Built-in request-scoped provider for accessing the current HTTP request.
+//! Built-in execution-scoped provider for accessing the current HTTP request.
 //!
 //! Inject `Request` into a controller to access method, URI, headers,
 //! path/query params, and typed extensions set by middleware — without taking
@@ -40,11 +40,11 @@ use crate::http::HttpContext;
 use crate::http::{PathParams, RequestPart};
 use crate::provider_scope::ProviderScope;
 use crate::spi::{Provider, ProviderFactory};
-/// Built-in request-scoped provider for accessing HTTP request metadata.
+/// Built-in execution-scoped provider for accessing HTTP request metadata.
 ///
 /// # Scope
 ///
-/// `Request` is request-scoped and cannot be injected into singleton providers.
+/// `Request` is execution-scoped and cannot be injected into singleton providers.
 #[derive(Clone)]
 pub struct Request {
     inner: Arc<RequestPart>,
@@ -72,7 +72,7 @@ impl Provider for Request {
     }
 
     fn scope(&self) -> ProviderScope {
-        ProviderScope::Request
+        ProviderScope::Execution
     }
 }
 

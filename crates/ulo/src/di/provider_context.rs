@@ -7,7 +7,7 @@ use crate::ws::WsContext;
 /// The execution a provider is being built for.
 ///
 /// Passed to [`Provider::resolve`](crate::spi::Provider::resolve) so a
-/// request-scoped provider can reach the execution it belongs to — its cache,
+/// execution-scoped provider can reach the execution it belongs to — its cache,
 /// its extension bag, and whatever the transport carries.
 ///
 /// Each variant holds a context handle, which is cheap to clone. State every
@@ -32,7 +32,7 @@ impl ProviderContext {
     /// A fresh execution belonging to no transport.
     ///
     /// What a caller resolving providers by hand starts with. Everything resolved
-    /// against the returned value shares one cache, so a request-scoped provider is
+    /// against the returned value shares one cache, so an execution-scoped provider is
     /// built once for all of them; the execution ends when the value is dropped.
     pub fn standalone() -> Self {
         Self::Standalone(StandaloneContext::new())
@@ -40,7 +40,7 @@ impl ProviderContext {
 
     /// The execution's instance cache, or `None` outside an execution.
     ///
-    /// This is what a request-scoped provider needs and the only thing it needs
+    /// This is what an execution-scoped provider needs and the only thing it needs
     /// from every transport, which is why it is reachable without matching.
     pub fn cache(&self) -> Option<&crate::di::ExecutionCache> {
         use crate::context::HandlerContext;
@@ -69,7 +69,7 @@ impl ProviderContext {
 
     /// Refuses a provider whose scope this execution cannot satisfy.
     ///
-    /// A request-scoped instance lives in the execution's cache. Where there is no
+    /// An execution-scoped instance lives in the execution's cache. Where there is no
     /// execution there is nowhere to put it, and the generated provider panics on
     /// the missing cache — so a caller resolving by hand checks here first and
     /// returns the refusal instead.
@@ -78,12 +78,10 @@ impl ProviderContext {
         scope: crate::di::ProviderScope,
         token: &str,
     ) -> Result<(), crate::error::ResolutionError> {
-        if scope == crate::di::ProviderScope::Request && self.cache().is_none() {
-            return Err(
-                crate::error::ResolutionError::RequestScopeOutsideExecution {
-                    token: token.to_string(),
-                },
-            );
+        if scope == crate::di::ProviderScope::Execution && self.cache().is_none() {
+            return Err(crate::error::ResolutionError::ExecutionRequired {
+                token: token.to_string(),
+            });
         }
 
         Ok(())

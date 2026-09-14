@@ -82,11 +82,11 @@ impl From<Box<dyn Error + Send + Sync + 'static>> for StartupError {
 /// [`ModuleRef`]. Every variant carries what a caller needs to act on it rather than only to
 /// report it: [`ProviderNotFound`] says whether one module was searched or all of them,
 /// [`AmbiguousModule`] hands back the full keys that [`get_module_by_id`] accepts, and
-/// [`RequestScopeOutsideExecution`] names the provider that needs an execution to be built in.
+/// [`ExecutionRequired`] names the provider that needs an execution to be built in.
 ///
 /// [`ProviderNotFound`]: ResolutionError::ProviderNotFound
 /// [`AmbiguousModule`]: ResolutionError::AmbiguousModule
-/// [`RequestScopeOutsideExecution`]: ResolutionError::RequestScopeOutsideExecution
+/// [`ExecutionRequired`]: ResolutionError::ExecutionRequired
 /// [`UloApplication`]: crate::UloApplication
 /// [`UloApplicationContext`]: crate::application_context::UloApplicationContext
 /// [`ModuleRef`]: crate::injector::ModuleRef
@@ -125,18 +125,18 @@ pub enum ResolutionError {
     #[error("provider `{token}` is not the requested type")]
     TypeMismatch { token: String },
 
-    /// A request-scoped provider lives in an execution's cache, and there is nowhere to put one
+    /// An execution-scoped provider lives in an execution's cache, and there is nowhere to put one
     /// without an execution. Resolve it with `resolve` on the application or on a [`ModuleRef`],
     /// passing [`ProviderContext::standalone`] where the work arrived over no transport.
     ///
     /// [`ModuleRef`]: crate::injector::ModuleRef
     /// [`ProviderContext::standalone`]: crate::di::ProviderContext::standalone
     #[error(
-        "provider `{token}` is request-scoped and cannot be built outside an execution. Resolve \
+        "provider `{token}` is execution-scoped and cannot be built outside an execution. Resolve \
          it in one with `resolve`, on the application or on a `ModuleRef`; \
          `ProviderContext::standalone()` builds an execution where there is no transport."
     )]
-    RequestScopeOutsideExecution { token: String },
+    ExecutionRequired { token: String },
 }
 
 fn searched_in(module: &Option<String>) -> String {

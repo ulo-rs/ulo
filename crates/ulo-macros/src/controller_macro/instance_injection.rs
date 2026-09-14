@@ -353,7 +353,7 @@ fn generate_route_wrapper(
                 source: ::ulo::__enhancer::DispatchSource<#struct_name>,
             },
             // Resolve the instance before the extractors run: a per-call build reads
-            // request-scoped dependencies through the context, while a body extractor
+            // execution-scoped dependencies through the context, while a body extractor
             // may move the request out of it.
             quote! {
                 let controller = self.source
@@ -386,7 +386,7 @@ fn generate_route_wrapper(
                 ::ulo::http::HttpResponse,
                 ::ulo::http::HttpError,
             > {
-                // Cloned, not borrowed: building a request-scoped dependency holds
+                // Cloned, not borrowed: building an execution-scoped dependency holds
                 // the parts across an await, and the extractions below need the
                 // context back exclusively.
                 let _req_parts = __ctx.request().clone();

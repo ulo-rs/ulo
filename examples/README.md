@@ -35,7 +35,7 @@ each Rust one.
 | gRPC | `grpc_service`, `grpc_client` |
 | Streaming | `sse` |
 | Lifecycle and operations | `lifecycle_hooks`, `graceful_shutdown`, `health_checks`, `logging` |
-| Scoping | `request_scoped_context`, `multi_protocol_context` |
+| Scoping | `execution_scoped_context`, `multi_protocol_context` |
 | Adapters | `salvo_poc`, `poem_poc`, `rocket_poc`, `actix_poc` |
 | Deployment | `socket_activation` |
 

@@ -6,7 +6,7 @@
 //! `build()` knows it (`ulo::__detect`) and registers the role from that, so
 //! the role registry resolves a guard its author never labelled. Both scopes
 //! are covered, because they detect at different points: a singleton at
-//! construction, a request-scoped guard on each request.
+//! construction, an execution-scoped guard on each request.
 
 use crate::common::TestServer;
 use serial_test::serial;
@@ -41,10 +41,10 @@ impl Guard<HttpContext> for AdminGuard {
     }
 }
 
-// A request-scoped guard, also marker-free: `#[injectable(scope = "request")]` sets the
+// An execution-scoped guard, also marker-free: `#[injectable(scope = "execution")]` sets the
 // scope; the `impl Guard<HttpContext>` is detected per request through the dyn-factory path. This
 // exercises the type-level probe (registration decision) + value probe (per-request coercion).
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct RequestScopedGuard {
     #[default(false)]
     _per_request: bool,
@@ -121,7 +121,7 @@ async fn marker_free_request_scoped_guard_blocks_and_admits() {
     assert_eq!(
         resp.status(),
         403,
-        "request-scoped guard must block without x-allow"
+        "execution-scoped guard must block without x-allow"
     );
 
     let resp = server
@@ -134,7 +134,7 @@ async fn marker_free_request_scoped_guard_blocks_and_admits() {
     assert_eq!(
         resp.status(),
         200,
-        "request-scoped guard must admit with x-allow"
+        "execution-scoped guard must admit with x-allow"
     );
     assert_eq!(resp.text().await.unwrap(), "scoped ok");
 }

@@ -113,7 +113,7 @@ fn extract_param_inject_token(pat_type: &syn::PatType) -> Result<Option<TokenStr
     Ok(None)
 }
 
-/// Resolve one constructor parameter from the dependency map, scope-aware: a request-scoped
+/// Resolve one constructor parameter from the dependency map, scope-aware: an execution-scoped
 /// parameter is resolved in the active execution (threaded via `__exec_ctx`),
 /// anything else with `ProviderContext::None` — mirroring the field-injection
 /// paths. Panics with a clear message on a missing dep or absent request context.
@@ -128,7 +128,7 @@ fn resolve_param(name: &Ident, ty: &Type, token: &TokenStream) -> TokenStream {
                     "Missing dependency '{}' for #[new] parameter '{}'",
                     __lookup_token, #name_str
                 ));
-            let __ctx = if matches!(__provider.scope(), ::ulo::di::ProviderScope::Request) {
+            let __ctx = if matches!(__provider.scope(), ::ulo::di::ProviderScope::Execution) {
                 __exec_ctx.clone()
             } else {
                 ::ulo::di::ProviderContext::None

@@ -20,7 +20,7 @@ use ulo::{controller, get, injectable, module, routes};
 pub struct CurrentUser(String);
 
 /// Writes through the DI view, the way application code would.
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct AuthGuard {
     #[inject]
     user: Extension<CurrentUser>,
@@ -35,7 +35,7 @@ impl Guard<HttpContext> for AuthGuard {
 }
 
 /// Two levels below the controller, with no route and no context of its own.
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct AuditLog {
     #[inject]
     user: Extension<CurrentUser>,
@@ -50,7 +50,7 @@ impl AuditLog {
     }
 }
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct OrderService {
     #[inject]
     audit: AuditLog,
@@ -124,7 +124,7 @@ async fn the_bag_injects_without_a_per_type_view() {
 
 /// Writes on its first run only, so a value seen on the second request could
 /// only have survived from the first.
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct OnceGuard {
     #[inject]
     user: Extension<CurrentUser>,

@@ -8,7 +8,7 @@
 //! This attribute produces a complete controller: the re-emitted struct (with `InjectFields`),
 //! the `ControllerFactory`, the `Controller` object, the per-call provider its `DispatchSource`
 //! resolves from, and four inherent bridge fns (build-from-deps, the dependency token list, the
-//! route prefix, and whether the controller is explicitly request-scoped). The object's
+//! route prefix, and whether the controller is explicitly execution-scoped). The object's
 //! `dispatch()` goes through the `DispatchBridge`, whose default dispatches nothing — so a
 //! controller with no handler impl is valid, and the handler impl (`#[routes]`, `#[patterns]`,
 //! `#[grpc_methods]`) names the transport by shadowing `__ulo_dispatch`.
@@ -43,7 +43,7 @@ pub fn handle_controller(attr: TokenStream, item: TokenStream) -> Result<TokenSt
 
     let struct_name = struct_def.ident.clone();
     let path = args.path;
-    let is_request = matches!(args.scope, ControllerScope::Request);
+    let is_execution_scoped = matches!(args.scope, ControllerScope::Execution);
     let dependencies = extract_struct_dependencies(&struct_def)?;
 
     let emitted_struct = add_inject_fields(&struct_def);
@@ -52,7 +52,7 @@ pub fn handle_controller(attr: TokenStream, item: TokenStream) -> Result<TokenSt
         &struct_def.fields,
         &dependencies,
         &path,
-        is_request,
+        is_execution_scoped,
     );
     let system = generate_dispatch_system(&struct_name);
 
@@ -70,7 +70,7 @@ fn generate_bridges(
     fields: &Fields,
     dependencies: &DependencyInfo,
     path: &str,
-    is_request: bool,
+    is_execution_scoped: bool,
 ) -> TokenStream {
     let field_tokens: Vec<&TokenStream> = dependencies
         .fields
@@ -149,7 +149,7 @@ fn generate_bridges(
             #[doc(hidden)]
             #[allow(non_snake_case)]
             pub fn __ulo_is_request_scoped() -> bool {
-                #is_request
+                #is_execution_scoped
             }
         }
     }
@@ -158,7 +158,7 @@ fn generate_bridges(
 /// Resolve the `#[inject]` fields from the dependency map.
 ///
 /// Fields are grouped by lookup token and deduplicated scope-aware, matching NestJS: singleton and
-/// request-scoped providers are resolved once and shared (cloned) across same-token fields, while
+/// execution-scoped providers are resolved once and shared (cloned) across same-token fields, while
 /// transient providers get a fresh instance per field. The explicit dedup is required because not
 /// every provider caches in the `RequestCache` (e.g. closure-based `provider_factory!`). Returns the
 /// resolution statements plus the field names, in declaration order.
@@ -225,7 +225,7 @@ fn resolve_fields(dependencies: &DependencyInfo) -> (Vec<TokenStream>, Vec<Ident
     (resolutions, field_names)
 }
 
-/// One scope-aware field resolution: request-scoped providers get the active HTTP context (threaded
+/// One scope-aware field resolution: execution-scoped providers get the active HTTP context (threaded
 /// via `request_parts` + the shared `__request_cache`), anything else `ProviderContext::None`.
 fn resolve_one(name: &Ident, ty: &Type, token: &TokenStream) -> TokenStream {
     let name_str = name.to_string();
@@ -247,11 +247,11 @@ fn resolve_one(name: &Ident, ty: &Type, token: &TokenStream) -> TokenStream {
 }
 
 /// The `ProviderContext` for a `__provider` in scope: this execution when the
-/// provider is request-scoped, `None` otherwise. Resolving it in the same
+/// provider is execution-scoped, `None` otherwise. Resolving it in the same
 /// execution is what makes one construction shared across the request.
 fn ctx_expr() -> TokenStream {
     quote! {
-        if matches!(__provider.scope(), ::ulo::di::ProviderScope::Request) {
+        if matches!(__provider.scope(), ::ulo::di::ProviderScope::Execution) {
             __exec_ctx.clone()
         } else {
             ::ulo::di::ProviderContext::None

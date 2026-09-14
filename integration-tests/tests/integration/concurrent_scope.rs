@@ -1,9 +1,9 @@
-//! Request-scoped instances stay isolated when requests overlap in time.
+//! Execution-scoped instances stay isolated when requests overlap in time.
 //!
 //! A scope bug is invisible sequentially — one request at a time gets a correct
 //! instance whether or not the cache is per-request — and surfaces only under
 //! concurrency, as one request reading another's state.
-// provider_scope.rs proves that sequential requests get isolated request-scoped
+// provider_scope.rs proves that sequential requests get isolated execution-scoped
 // instances. This file proves the same holds under concurrency: if the request
 // context machinery has any shared mutable state (a stray RefCell, a map keyed
 // on thread-id instead of request-id), concurrent requests would see each
@@ -22,7 +22,7 @@ async fn request_scoped_instances_are_isolated_under_concurrency() {
         id: String,
     }
 
-    #[controller("/", scope = "request")]
+    #[controller("/", scope = "execution")]
     pub struct TestController {
         #[inject("REQ_ID")]
         req_id: RequestId,
@@ -39,7 +39,7 @@ async fn request_scoped_instances_are_isolated_under_concurrency() {
     #[module(
         controllers: [TestController],
         providers: [
-            provider_factory!("REQ_ID", || RequestId { id: Uuid::new_v4().to_string() }, RequestId, scope = "request"),
+            provider_factory!("REQ_ID", || RequestId { id: Uuid::new_v4().to_string() }, RequestId, scope = "execution"),
         ],
     )]
     impl TestModule {}
@@ -61,7 +61,7 @@ async fn request_scoped_instances_are_isolated_under_concurrency() {
     assert_eq!(
         unique.len(),
         N,
-        "each of the {} concurrent requests must get a distinct request-scoped ID; \
+        "each of the {} concurrent requests must get a distinct execution-scoped ID; \
         duplicates indicate scope context leak: {:?}",
         N,
         ids

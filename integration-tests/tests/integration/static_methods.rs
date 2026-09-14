@@ -2,7 +2,7 @@
 //! impl block as handlers that take one.
 //!
 //! The macro decides per method whether to emit an instance receiver, so a
-//! mixed block is where that decision is observable. Request scope is covered
+//! mixed block is where that decision is observable. Execution scope is covered
 //! because a static handler still runs inside an execution even though it holds
 //! no instance to scope.
 use crate::common::TestServer;
@@ -103,14 +103,14 @@ async fn mixed_static_and_instance_methods() {
     assert_eq!(resp.text().await.unwrap(), "From static method");
 }
 
-#[controller("/request-static", scope = "request")]
+#[controller("/request-static", scope = "execution")]
 pub struct RequestScopedStaticController {}
 
 #[routes]
 impl RequestScopedStaticController {
     #[get("/test")]
     fn test(_req: HttpRequest) -> Body {
-        Body::text("Static method in request-scoped controller".to_string())
+        Body::text("Static method in execution-scoped controller".to_string())
     }
 }
 
@@ -130,7 +130,7 @@ async fn request_scoped_static_methods() {
     assert_eq!(resp.status(), 200);
     assert_eq!(
         resp.text().await.unwrap(),
-        "Static method in request-scoped controller"
+        "Static method in execution-scoped controller"
     );
 }
 

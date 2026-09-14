@@ -17,7 +17,7 @@ pub(crate) type ProviderStore = FxHashMap<String, FxHashMap<String, Arc<Box<dyn 
 /// global (fallback) resolution modes.
 ///
 /// [`get`](Self::get) builds outside any execution, which limits it to providers
-/// that can exist there. A request-scoped provider cannot, so it is reached with
+/// that can exist there. An execution-scoped provider cannot, so it is reached with
 /// [`resolve`](Self::resolve), which builds in an execution you hand it.
 ///
 /// # Examples
@@ -110,7 +110,7 @@ impl ModuleRef {
 
     /// Resolve a provider by its type in an execution
     ///
-    /// Reaches what [`get`](Self::get) cannot: a request-scoped provider is built
+    /// Reaches what [`get`](Self::get) cannot: an execution-scoped provider is built
     /// into the execution's cache, so resolving one twice in the same execution
     /// returns the instance the handler is holding rather than a second one.
     ///

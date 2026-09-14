@@ -7,7 +7,7 @@
 //! pure aggregation.
 //!
 //! What a controller *declares* — its patterns and its enhancer tokens — takes no receiver, because
-//! the framework has to read it at startup to register the controller, and a request-scoped
+//! the framework has to read it at startup to register the controller, and an execution-scoped
 //! controller has no instance until a call arrives. Only `handle_message` needs one.
 //!
 //! Both forms carry the same constraint: the call site must name the concrete type. Reached through

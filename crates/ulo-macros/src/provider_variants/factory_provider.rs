@@ -229,22 +229,26 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
     } = syn::parse2(input)?;
 
     let scope_expr = match scope.as_deref() {
-        Some("request") => quote! { ulo::di::ProviderScope::Request },
+        Some("execution") => quote! { ulo::di::ProviderScope::Execution },
         Some("singleton") => quote! { ulo::di::ProviderScope::Singleton },
         Some("transient") => quote! { ulo::di::ProviderScope::Transient },
         None => quote! { ulo::di::ProviderScope::Singleton },
         Some(other) => {
             return Err(syn::Error::new(
                 proc_macro2::Span::call_site(),
-                format!(
-                    "Invalid scope '{}'. Expected 'singleton', 'request', or 'transient'",
-                    other
-                ),
+                if other == "request" {
+                    crate::shared::scope_parser::SCOPE_RENAMED.to_string()
+                } else {
+                    format!(
+                        "Invalid scope '{}'. Expected 'singleton', 'execution', or 'transient'",
+                        other
+                    )
+                },
             ));
         }
     };
 
-    if lifecycle && matches!(scope.as_deref(), Some("request") | Some("transient")) {
+    if lifecycle && matches!(scope.as_deref(), Some("execution") | Some("transient")) {
         return Err(syn::Error::new(
             proc_macro2::Span::call_site(),
             "lifecycle is only compatible with singleton scope",
@@ -311,7 +315,7 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
     let factory_name = format_ident!("__UloFactoryProviderFactory_{}", sanitized_name);
     let provider_name = format_ident!("__UloFactoryProvider_{}", sanitized_name);
 
-    let needs_caching = !matches!(scope.as_deref(), Some("request") | Some("transient"));
+    let needs_caching = !matches!(scope.as_deref(), Some("execution") | Some("transient"));
 
     // The non-caching path registers enhancers from the produced value's type. Since registration
     // is decided in build() before any value exists, it needs the concrete type by name: prefer the
@@ -471,7 +475,7 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
 /// value-probes the fresh result (compiles for any output type via the `None` fallback, and only
 /// ever runs for a kind whose registration the type-probe admitted, so the `expect` can't fire).
 /// Dep resolution uses `ProviderContext::None`, as the non-caching provider's
-/// `execute()` does — nothing here is request-scoped.
+/// `execute()` does — nothing here is execution-scoped.
 ///
 /// Returns `(struct_defs, role_push_stmts)`; role pushes assume `__all_deps: Arc<FxHashMap<...>>`.
 fn generate_noncaching_factory_structs(

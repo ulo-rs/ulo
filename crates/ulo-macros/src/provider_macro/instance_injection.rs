@@ -222,7 +222,7 @@ fn generate_provider_wrapper(
             lifecycle_hooks,
             lifecycle_via_bridge,
         ),
-        ProviderScope::Request => generate_request_provider(
+        ProviderScope::Execution => generate_execution_provider(
             struct_name,
             &provider_ident(struct_name),
             dependencies,
@@ -380,7 +380,7 @@ fn generate_singleton_provider(
     }
 }
 
-fn generate_request_provider(
+fn generate_execution_provider(
     struct_name: &Ident,
     provider_name: &Ident,
     dependencies: &DependencyInfo,
@@ -447,13 +447,13 @@ fn generate_request_provider(
 
     let scope_hook_error = reject_lifecycle_hooks(
         lifecycle_hooks,
-        "Lifecycle hooks are not supported on request-scoped providers. Request-scoped \
+        "Lifecycle hooks are not supported on execution-scoped providers. Execution-scoped \
          instances are created per-request and dropped when the response is sent — they do \
          not exist at application init or shutdown, so neither startup nor shutdown hooks \
          can fire. Use a singleton provider if you need lifecycle hooks.",
     );
 
-    // Request-scoped providers require an active execution. Constructing one outside
+    // Execution-scoped providers require an active execution. Constructing one outside
     // of any execution would silently violate the declared scope contract. Which
     // execution it is does not matter — every transport has one, and the cache that
     // makes the scope mean anything lives on it.
@@ -465,7 +465,7 @@ fn generate_request_provider(
         let __exec_ctx = _ctx;
         if __exec_ctx.cache().is_none() {
             panic!(
-                "Request-scoped provider '{}' requires an active execution; it cannot be \
+                "Execution-scoped provider '{}' requires an active execution; it cannot be \
                  resolved outside one.",
                 ::std::any::type_name::<#struct_name>()
             );
@@ -476,7 +476,7 @@ fn generate_request_provider(
         {
             return Box::new(__cached);
         }
-        // Thread the execution on, so a request-scoped constructor parameter resolves in
+        // Thread the execution on, so an execution-scoped constructor parameter resolves in
         // the same one and is shared rather than rebuilt.
         let instance = match <#struct_name>::__ulo_ctor_build(
             &self.dependencies,
@@ -520,7 +520,7 @@ fn generate_request_provider(
 
 
             fn scope(&self) -> ::ulo::di::ProviderScope {
-                ::ulo::di::ProviderScope::Request
+                ::ulo::di::ProviderScope::Execution
             }
         }
     }
@@ -633,7 +633,7 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
                     ::ulo::tracing::warn!(
                         controller = #struct_token,
                         request_scoped_deps = ?__request_deps,
-                        "Controller automatically elevated to request scope due to request-scoped \
+                        "Controller automatically elevated to execution scope due to execution-scoped \
                          providers. Silence this by declaring #[controller(scope = \"request\")]."
                     );
                 }
@@ -702,7 +702,7 @@ pub(crate) fn generate_dispatch_provider(
                 {
                     return Box::new(__cached);
                 }
-                // `__exec_ctx` threads into the build, so a request-scoped dependency resolves
+                // `__exec_ctx` threads into the build, so an execution-scoped dependency resolves
                 // in the same execution and is shared rather than rebuilt.
                 let __instance = <#struct_name>::__ulo_build_from_deps(
                     &self.dependencies,
@@ -729,7 +729,7 @@ pub(crate) fn generate_dispatch_provider(
             }
 
             fn scope(&self) -> ::ulo::di::ProviderScope {
-                ::ulo::di::ProviderScope::Request
+                ::ulo::di::ProviderScope::Execution
             }
         }
     }
@@ -803,7 +803,7 @@ fn generate_transient_provider(
             ) -> Box<dyn ::std::any::Any + Send> {
                 // Build via the `#[new]` constructor when one exists, else by field injection.
                 // A transient is rebuilt at every injection point, so it is built inside
-                // whatever execution asked for it — and its request-scoped fields resolve in
+                // whatever execution asked for it — and its execution-scoped fields resolve in
                 // that same one rather than starting a new one.
                 use ::ulo::__construct::CtorBridge as _;
                 let __exec_ctx = _ctx;
@@ -1169,7 +1169,7 @@ fn generate_factory(
         ProviderScope::Singleton => {
             generate_singleton_factory(struct_name, dependencies, enhancer_traits)
         }
-        ProviderScope::Request => {
+        ProviderScope::Execution => {
             generate_request_factory(struct_name, dependencies, enhancer_traits)
         }
         ProviderScope::Transient => {
@@ -1278,18 +1278,18 @@ fn generate_singleton_factory(
                         let __lookup_token = #lookup_token_expr;
                         if let Some(provider) = dependencies.get(&__lookup_token) {
                             let dep_scope = provider.scope();
-                            if matches!(dep_scope, ::ulo::di::ProviderScope::Request) {
+                            if matches!(dep_scope, ::ulo::di::ProviderScope::Execution) {
                                 panic!(
                                     "\n❌ Scope validation error in provider '{}':\n\
                                      \n\
-                                     Singleton-scoped providers cannot inject Request-scoped providers.\n\
-                                     Dependency '{}' depends on '{}' which has Request scope.\n\
+                                     Singleton-scoped providers cannot inject Execution-scoped providers.\n\
+                                     Dependency '{}' depends on '{}' which has Execution scope.\n\
                                      \n\
                                      This restriction prevents data leakage across requests. Singleton providers\n\
                                      live for the entire application lifetime and would capture stale request data.\n\
                                      \n\
                                      Solutions:\n\
-                                     1. Change '{}' to Request scope: #[injectable(scope = \"request\")]\n\
+                                     1. Change '{}' to Execution scope: #[injectable(scope = \"request\")]\n\
                                      2. Change '{}' to Singleton scope (if appropriate for your use case)\n\
                                      3. Pass request-specific data as method parameters instead of injecting\n\
                                      4. Extract data in controller (which has HttpRequest access) and pass it down\n\
@@ -1395,7 +1395,7 @@ fn generate_request_factory(
     } else {
         quote! {
             let __has_request_deps = __deps.values().any(|inj|
-                matches!(inj.instance.scope(), ::ulo::di::ProviderScope::Request)
+                matches!(inj.instance.scope(), ::ulo::di::ProviderScope::Execution)
             );
             let __all_deps = ::std::sync::Arc::new(
                 __deps.iter()
@@ -1475,7 +1475,7 @@ fn generate_transient_factory(
     let build_body = if has_enhancer_roles {
         quote! {
             let __has_request_deps = __deps.values().any(|inj|
-                matches!(inj.instance.scope(), ::ulo::di::ProviderScope::Request)
+                matches!(inj.instance.scope(), ::ulo::di::ProviderScope::Execution)
             );
             let __all_deps = ::std::sync::Arc::new(
                 __deps.iter()
@@ -1563,7 +1563,7 @@ fn generate_create_field_resolutions(
                         "Missing multi-provider '{}' for field '{}'",
                         __lookup_token, #field_name_str
                     ));
-                let __ctx = if matches!(__provider.scope(), ::ulo::di::ProviderScope::Request) {
+                let __ctx = if matches!(__provider.scope(), ::ulo::di::ProviderScope::Execution) {
                     __exec_ctx.clone()
                 } else {
                     ::ulo::di::ProviderContext::None
@@ -1602,7 +1602,7 @@ fn generate_create_field_resolutions(
                         "Missing dependency '{}' for field '{}'",
                         __lookup_token, #field_name_str
                     ));
-                let __ctx = if matches!(__provider.scope(), ::ulo::di::ProviderScope::Request) {
+                let __ctx = if matches!(__provider.scope(), ::ulo::di::ProviderScope::Execution) {
                     __exec_ctx.clone()
                 } else {
                     ::ulo::di::ProviderContext::None
@@ -1711,7 +1711,7 @@ fn generate_dyn_factories(
                 __exec_ctx: ::ulo::di::ProviderContext,
             ) -> #struct_name {
                 // A `#[new]` constructor takes over construction; otherwise fall back to field
-                // injection. Both thread the execution so request-scoped sub-dependencies
+                // injection. Both thread the execution so execution-scoped sub-dependencies
                 // resolve in it rather than in one of their own.
                 use ::ulo::__construct::CtorBridge as _;
                 if let ::std::option::Option::Some(__fut) =

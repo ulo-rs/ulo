@@ -5,7 +5,7 @@
 //! it needs instead of having it threaded down through every signature.
 //!
 //! ```rust,ignore
-//! #[injectable(scope = "request")]
+//! #[injectable(scope = "execution")]
 //! pub struct AuditLog {
 //!     #[inject]
 //!     user: Extension<CurrentUser>,
@@ -29,9 +29,9 @@
 //!
 //! # Scope
 //!
-//! These are request-scoped, so they cannot be injected into singletons — a
+//! These are execution-scoped, so they cannot be injected into singletons — a
 //! singleton holding one request's values would serve them to every later
-//! request. The container refuses it at startup. Request scope is an HTTP
+//! request. The container refuses it at startup. Execution scope is an HTTP
 //! concept in ulo: WebSocket gateways and RPC controllers are built once at
 //! startup, so their handlers read the bag off the client or the context
 //! instead.
@@ -131,7 +131,7 @@ impl<T: Send + Sync + 'static> Provider for Extension<T> {
     async fn resolve(&self, ctx: ProviderContext) -> Box<dyn Any + Send> {
         let Some(bag) = ctx.extensions() else {
             panic!(
-                "Extension<{}> is request-scoped and cannot be resolved outside an execution",
+                "Extension<{}> is execution-scoped and cannot be resolved outside an execution",
                 std::any::type_name::<T>()
             );
         };
@@ -139,7 +139,7 @@ impl<T: Send + Sync + 'static> Provider for Extension<T> {
     }
 
     fn scope(&self) -> ProviderScope {
-        ProviderScope::Request
+        ProviderScope::Execution
     }
 }
 
@@ -155,13 +155,13 @@ impl Provider for Extensions {
 
     async fn resolve(&self, ctx: ProviderContext) -> Box<dyn Any + Send> {
         let Some(bag) = ctx.extensions() else {
-            panic!("Extensions is request-scoped and cannot be resolved outside an execution");
+            panic!("Extensions is execution-scoped and cannot be resolved outside an execution");
         };
         Box::new(bag)
     }
 
     fn scope(&self) -> ProviderScope {
-        ProviderScope::Request
+        ProviderScope::Execution
     }
 }
 

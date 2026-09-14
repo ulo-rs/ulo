@@ -179,9 +179,9 @@ impl UloApplicationContext {
 
     /// Resolves a provider `T` in an execution.
     ///
-    /// What [`get`](Self::get) cannot reach: a request-scoped provider is built into
+    /// What [`get`](Self::get) cannot reach: an execution-scoped provider is built into
     /// the execution's cache, so it needs one. Everything resolved in the same
-    /// execution shares that cache — a request-scoped type is built once and handed
+    /// execution shares that cache — an execution-scoped type is built once and handed
     /// to each of them, the way a handler and its guards see one instance.
     ///
     /// The execution can be any transport's context, or
@@ -244,7 +244,7 @@ impl UloApplicationContext {
         for module_token in modules {
             if let Ok(providers) = container.lifecycle_instances(&module_token) {
                 for provider in providers {
-                    if provider.scope() == crate::di::ProviderScope::Request {
+                    if provider.scope() == crate::di::ProviderScope::Execution {
                         continue;
                     }
                     provider.before_application_shutdown(signal.clone()).await;
@@ -271,7 +271,7 @@ impl UloApplicationContext {
         for module_token in modules {
             if let Ok(providers) = container.lifecycle_instances(&module_token) {
                 for provider in providers {
-                    if provider.scope() == crate::di::ProviderScope::Request {
+                    if provider.scope() == crate::di::ProviderScope::Execution {
                         continue;
                     }
                     provider.on_module_destroy().await;
@@ -301,7 +301,7 @@ impl UloApplicationContext {
         for module_token in modules {
             if let Ok(providers) = container.lifecycle_instances(&module_token) {
                 for provider in providers {
-                    if provider.scope() == crate::di::ProviderScope::Request {
+                    if provider.scope() == crate::di::ProviderScope::Execution {
                         continue;
                     }
                     provider.on_application_shutdown(signal.clone()).await;
