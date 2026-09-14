@@ -257,7 +257,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
                 ctx: &::ulo::rpc::RpcContext,
             ) -> ::std::sync::Arc<dyn ::ulo::rpc::RpcController> {
                 self.0
-                    .resolve(::ulo::di::ProviderContext::Rpc(ctx.clone()))
+                    .resolve(::ulo::di::Execution::Rpc(ctx.clone()))
                     .await
             }
         }

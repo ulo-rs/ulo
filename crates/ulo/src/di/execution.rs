@@ -12,12 +12,12 @@ use crate::ws::WsContext;
 ///
 /// Each variant holds a context handle, which is cheap to clone. State every
 /// execution has is reached through
-/// [`HandlerContext`](crate::context::HandlerContext) whichever variant this is;
+/// [`ExecutionContext`](crate::context::ExecutionContext) whichever variant this is;
 /// state one transport has is reached by matching, and a standalone execution has
 /// none to match on.
 #[derive(Clone)]
 #[non_exhaustive]
-pub enum ProviderContext {
+pub enum Execution {
     Http(HttpContext),
     Ws(WsContext),
     Rpc(RpcContext),
@@ -28,7 +28,7 @@ pub enum ProviderContext {
     None,
 }
 
-impl ProviderContext {
+impl Execution {
     /// A fresh execution belonging to no transport.
     ///
     /// What a caller resolving providers by hand starts with. Everything resolved
@@ -43,7 +43,7 @@ impl ProviderContext {
     /// This is what an execution-scoped provider needs and the only thing it needs
     /// from every transport, which is why it is reachable without matching.
     pub fn cache(&self) -> Option<&crate::di::ExecutionCache> {
-        use crate::context::HandlerContext;
+        use crate::context::ExecutionContext;
         match self {
             Self::Http(c) => Some(c.cache()),
             Self::Ws(c) => Some(c.cache()),
@@ -56,7 +56,7 @@ impl ProviderContext {
 
     /// The execution's extension bag, or `None` outside an execution.
     pub fn extensions(&self) -> Option<crate::context::Extensions> {
-        use crate::context::HandlerContext;
+        use crate::context::ExecutionContext;
         match self {
             Self::Http(c) => Some(c.extensions().clone()),
             Self::Ws(c) => Some(c.extensions().clone()),
@@ -96,31 +96,31 @@ impl ProviderContext {
     }
 }
 
-impl From<HttpContext> for ProviderContext {
+impl From<HttpContext> for Execution {
     fn from(ctx: HttpContext) -> Self {
         Self::Http(ctx)
     }
 }
 
-impl From<WsContext> for ProviderContext {
+impl From<WsContext> for Execution {
     fn from(ctx: WsContext) -> Self {
         Self::Ws(ctx)
     }
 }
 
-impl From<RpcContext> for ProviderContext {
+impl From<RpcContext> for Execution {
     fn from(ctx: RpcContext) -> Self {
         Self::Rpc(ctx)
     }
 }
 
-impl From<GrpcContext> for ProviderContext {
+impl From<GrpcContext> for Execution {
     fn from(ctx: GrpcContext) -> Self {
         Self::Grpc(ctx)
     }
 }
 
-impl From<StandaloneContext> for ProviderContext {
+impl From<StandaloneContext> for Execution {
     fn from(ctx: StandaloneContext) -> Self {
         Self::Standalone(ctx)
     }

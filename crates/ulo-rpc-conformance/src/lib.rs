@@ -42,7 +42,7 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use ulo::UloFactory;
-use ulo::context::HandlerContext;
+use ulo::context::ExecutionContext;
 use ulo::rpc::RpcClient;
 use ulo::rpc::RpcContext;
 use ulo::rpc::{RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult};

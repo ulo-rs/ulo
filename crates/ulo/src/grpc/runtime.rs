@@ -439,7 +439,7 @@ impl<S: futures::Stream> futures::Stream for ScopedGrpcStream<S> {
 impl<S> Drop for ScopedGrpcStream<S> {
     fn drop(&mut self) {
         if !self.drained {
-            use crate::context::HandlerContext as _;
+            use crate::context::ExecutionContext as _;
             self.context.cancellation().cancel();
         }
     }

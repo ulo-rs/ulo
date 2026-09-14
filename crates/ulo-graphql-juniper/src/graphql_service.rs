@@ -7,7 +7,7 @@ use juniper::{
 use serde_json::Value;
 use std::fmt;
 use std::sync::Arc;
-use ulo::di::ProviderContext;
+use ulo::di::Execution;
 use ulo::http::RequestPart;
 use ulo::spi::Provider;
 /// Injectable GraphQL service.
@@ -231,7 +231,7 @@ where
         "GraphQLService".to_string()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn std::any::Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn std::any::Any + Send> {
         let service: GraphQLService<Query, Mutation, Subscription, Ctx, S> = GraphQLService {
             schema: self.schema.clone(),
             context_builder: self.context_builder.clone(),

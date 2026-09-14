@@ -54,7 +54,7 @@ impl futures::Stream for ScopedStream {
 impl Drop for ScopedStream {
     fn drop(&mut self) {
         if !self.drained {
-            use crate::context::HandlerContext as _;
+            use crate::context::ExecutionContext as _;
             self.context.cancellation().cancel();
         }
     }

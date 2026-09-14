@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::context::Metadata;
 
-use super::{CancellationToken, Extensions, HandlerContext, shared::SharedState};
+use super::{CancellationToken, ExecutionContext, Extensions, shared::SharedState};
 
 /// An execution with no transport behind it.
 ///
@@ -12,7 +12,7 @@ use super::{CancellationToken, Extensions, HandlerContext, shared::SharedState};
 /// resolved in it:
 ///
 /// ```rust,ignore
-/// let execution = ProviderContext::standalone();
+/// let execution = Execution::standalone();
 /// let repo = app.resolve::<Repo>(&execution).await?;
 /// let audit = app.resolve::<AuditLog>(&execution).await?;  // same execution-scoped deps
 /// ```
@@ -42,7 +42,7 @@ impl Default for StandaloneContext {
     }
 }
 
-impl HandlerContext for StandaloneContext {
+impl ExecutionContext for StandaloneContext {
     /// Always `None`: metadata is what a handler declared about itself, and there
     /// is no handler here.
     fn metadata(&self) -> Option<&Metadata> {

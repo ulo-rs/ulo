@@ -6,7 +6,7 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 
 use crate::async_trait;
-use crate::di::ProviderContext;
+use crate::di::Execution;
 use crate::provider_scope::ProviderScope;
 use crate::rpc::RpcClientTransport;
 use crate::rpc::{RpcClientError, RpcData, RpcReplyStream};
@@ -326,7 +326,7 @@ impl Provider for RpcClient {
         crate::di::token_of::<Self>()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         Box::new(self.clone())
     }
 

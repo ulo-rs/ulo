@@ -16,7 +16,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use serial_test::serial;
 use ulo::UloFactory;
-use ulo::context::HandlerContext;
+use ulo::context::ExecutionContext;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::{ErrorKind, module};

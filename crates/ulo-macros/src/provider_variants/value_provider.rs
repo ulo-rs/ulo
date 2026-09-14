@@ -121,7 +121,7 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
 
                     async fn resolve(
                         &self,
-                        _ctx: ulo::di::ProviderContext,
+                        _ctx: ulo::di::Execution,
                     ) -> Box<dyn std::any::Any + Send> {
                         self.instance.resolve(_ctx).await
                     }
@@ -195,7 +195,7 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
 
                     async fn resolve(
                         &self,
-                        _ctx: ulo::di::ProviderContext,
+                        _ctx: ulo::di::Execution,
                     ) -> Box<dyn std::any::Any + Send> {
                         Box::new((*self.instance).clone())
                     }
@@ -253,7 +253,7 @@ pub fn handle_provider_value(input: TokenStream) -> Result<TokenStream> {
 
                             async fn resolve(
                                 &self,
-                                _ctx: ulo::di::ProviderContext,
+                                _ctx: ulo::di::Execution,
                             ) -> Box<dyn std::any::Any + Send> {
                                 (self.get_value)()
                             }

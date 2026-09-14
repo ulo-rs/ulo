@@ -7,7 +7,7 @@
 //! disagree — each test pins one pair.
 
 use ulo::UloFactory;
-use ulo::di::ProviderContext;
+use ulo::di::Execution;
 use ulo::{injectable, module, provider_factory, provider_value};
 use ulo_config::{Config, ConfigModule, ConfigService};
 
@@ -42,7 +42,7 @@ mod bare_inject_generic {
             .await
             .expect("a `Handle<Marker>` field must find the `Handle<Marker>` registration");
 
-        app.resolve::<Consumer>(&ProviderContext::standalone())
+        app.resolve::<Consumer>(&Execution::standalone())
             .await
             .expect("the consumer built, so it resolves");
     }
@@ -70,7 +70,7 @@ mod resolve_generic {
         let app = UloFactory::create(TestModule).await.unwrap();
 
         let service = app
-            .resolve::<ConfigService<TokenTestConfig>>(&ProviderContext::standalone())
+            .resolve::<ConfigService<TokenTestConfig>>(&Execution::standalone())
             .await
             .expect("`resolve` speaks the same token the registration used");
 
@@ -132,7 +132,7 @@ mod explicit_inject_generic {
             .expect("both spellings must find the one registration");
 
         let consumer = app
-            .resolve::<Consumer>(&ProviderContext::standalone())
+            .resolve::<Consumer>(&Execution::standalone())
             .await
             .unwrap();
         assert_eq!(
@@ -173,7 +173,7 @@ mod qualified_path_inject {
             .expect("`helpers::Service` and `Service` are the same type, so the same token");
 
         let consumer = app
-            .resolve::<Consumer>(&ProviderContext::standalone())
+            .resolve::<Consumer>(&Execution::standalone())
             .await
             .unwrap();
         assert_eq!(consumer.service.label, "qualified");

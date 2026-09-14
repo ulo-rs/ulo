@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use crate::http::{HttpRequest, RequestBody, RequestPart};
 
 use crate::context::shared::SharedState;
-use crate::context::{CancellationToken, Extensions, HandlerContext, Metadata};
+use crate::context::{CancellationToken, ExecutionContext, Extensions, Metadata};
 
 /// The execution context for one HTTP request.
 ///
@@ -91,7 +91,7 @@ impl HttpContext {
     }
 }
 
-impl HandlerContext for HttpContext {
+impl ExecutionContext for HttpContext {
     fn metadata(&self) -> Option<&Metadata> {
         self.inner.shared.metadata.as_deref()
     }
@@ -112,7 +112,7 @@ impl HandlerContext for HttpContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::HandlerContext;
+    use crate::context::ExecutionContext;
 
     #[derive(Clone, PartialEq, Debug)]
     struct Principal(&'static str);

@@ -127,14 +127,14 @@ pub enum ResolutionError {
 
     /// An execution-scoped provider lives in an execution's cache, and there is nowhere to put one
     /// without an execution. Resolve it with `resolve` on the application or on a [`ModuleRef`],
-    /// passing [`ProviderContext::standalone`] where the work arrived over no transport.
+    /// passing [`Execution::standalone`] where the work arrived over no transport.
     ///
     /// [`ModuleRef`]: crate::injector::ModuleRef
-    /// [`ProviderContext::standalone`]: crate::di::ProviderContext::standalone
+    /// [`Execution::standalone`]: crate::di::Execution::standalone
     #[error(
         "provider `{token}` is execution-scoped and cannot be built outside an execution. Resolve \
          it in one with `resolve`, on the application or on a `ModuleRef`; \
-         `ProviderContext::standalone()` builds an execution where there is no transport."
+         `Execution::standalone()` builds an execution where there is no transport."
     )]
     ExecutionRequired { token: String },
 }

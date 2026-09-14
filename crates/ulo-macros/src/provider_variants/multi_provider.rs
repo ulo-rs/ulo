@@ -162,7 +162,7 @@ fn contrib_provider_tokens(
             }
             async fn resolve(
                 &self,
-                _ctx: ::ulo::di::ProviderContext,
+                _ctx: ::ulo::di::Execution,
             ) -> ::std::boxed::Box<dyn ::std::any::Any + Send> {
                 ::std::boxed::Box::new(self.item.clone())
             }
@@ -219,7 +219,7 @@ fn generate_type_multi(
                 ) -> ::ulo::spi::Injectable {
                     let ::ulo::spi::Injectable { instance: inner_provider, .. } = #factory_ident.build(deps).await;
                     let any_box = inner_provider
-                        .resolve(::ulo::di::ProviderContext::None)
+                        .resolve(::ulo::di::Execution::None)
                         .await;
                     let concrete = *any_box
                         .downcast::<#concrete_type>()
@@ -429,7 +429,7 @@ fn generate_alias_multi(
                             #existing_token_expr
                         ));
                     let any_box = existing_provider
-                        .resolve(::ulo::di::ProviderContext::None)
+                        .resolve(::ulo::di::Execution::None)
                         .await;
                     let concrete = *any_box
                         .downcast::<#concrete_type>()
@@ -504,7 +504,7 @@ fn generate_token_provider_multi(
                 ) -> ::ulo::spi::Injectable {
                     let ::ulo::spi::Injectable { instance: inner_provider, .. } = #concrete_type::__ulo_provider_factory().build(deps).await;
                     let any_box = inner_provider
-                        .resolve(::ulo::di::ProviderContext::None)
+                        .resolve(::ulo::di::Execution::None)
                         .await;
                     let concrete = *any_box
                         .downcast::<#concrete_type>()

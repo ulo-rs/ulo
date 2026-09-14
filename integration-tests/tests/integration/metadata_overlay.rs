@@ -4,7 +4,7 @@
 //! an annotation on the impl block compiled and did nothing.
 
 use crate::common::TestServer;
-use ulo::context::HandlerContext;
+use ulo::context::ExecutionContext;
 use ulo::http::Body;
 use ulo::http::HttpContext;
 use ulo::{controller, get, module, routes, set_metadata};

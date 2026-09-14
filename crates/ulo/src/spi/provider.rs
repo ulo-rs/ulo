@@ -3,7 +3,7 @@ use std::{any::Any, future::Future, pin::Pin, sync::Arc};
 use async_trait::async_trait;
 use rustc_hash::FxHashMap;
 
-use crate::di::ProviderContext;
+use crate::di::Execution;
 use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::http::middleware::Middleware;
 use crate::{
@@ -24,7 +24,7 @@ pub trait Provider: Send + Sync {
     /// one per execution and caches it on `ctx`, so everything in the same call that asks for
     /// this token shares it; a transient one builds on every call. The answer is erased —
     /// callers downcast to the concrete type the token stands for.
-    async fn resolve(&self, ctx: ProviderContext) -> Box<dyn Any + Send>;
+    async fn resolve(&self, ctx: Execution) -> Box<dyn Any + Send>;
     fn scope(&self) -> ProviderScope {
         ProviderScope::Singleton
     }

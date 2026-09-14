@@ -6,7 +6,7 @@ use reqwest::{Client, Response};
 use serde_json::json;
 use ulo::{
     FxHashMap,
-    di::ProviderContext,
+    di::Execution,
     spi::{Injectable, Provider, ProviderFactory},
 };
 
@@ -174,7 +174,7 @@ impl Provider for HttpHealthIndicatorProvider {
         ulo::di::token_of::<HttpHealthIndicator>()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         Box::new(self.indicator.clone())
     }
 }

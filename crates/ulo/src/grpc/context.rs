@@ -7,7 +7,7 @@ use crate::context::Metadata;
 use crate::grpc::runtime::{RequestCarrier, RequestError};
 
 use crate::context::shared::SharedState;
-use crate::context::{CancellationToken, Extensions, HandlerContext};
+use crate::context::{CancellationToken, ExecutionContext, Extensions};
 
 /// Per-request context for gRPC handlers.
 ///
@@ -144,7 +144,7 @@ impl GrpcContext {
     }
 }
 
-impl HandlerContext for GrpcContext {
+impl ExecutionContext for GrpcContext {
     fn metadata(&self) -> Option<&Metadata> {
         self.inner.shared.metadata.as_deref()
     }

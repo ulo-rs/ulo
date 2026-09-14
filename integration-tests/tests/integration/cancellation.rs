@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::common::TestServer;
 use serial_test::serial;
-use ulo::context::HandlerContext;
+use ulo::context::ExecutionContext;
 use ulo::http::Body;
 use ulo::http::HttpContext;
 use ulo::{controller, get, module, routes};

@@ -9,7 +9,7 @@
 
 use crate::common::TestServer;
 use ulo::async_trait;
-use ulo::context::{Extensions, HandlerContext};
+use ulo::context::{ExecutionContext, Extensions};
 use ulo::enhancer::Guard;
 use ulo::http::Body;
 use ulo::http::HttpContext;

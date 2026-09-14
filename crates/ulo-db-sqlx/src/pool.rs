@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use sqlx::{Database, Pool, pool::PoolOptions};
 use ulo::{
     FxHashMap, StartupCheck,
-    di::ProviderContext,
+    di::Execution,
     spi::{Injectable, Provider, ProviderFactory},
 };
 
@@ -100,7 +100,7 @@ where
         self.token.clone()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         // Pool<DB> is Arc-backed; cloning is cheap and shares the same connection pool.
         Box::new(self.pool.clone().expect("database pool unavailable"))
     }

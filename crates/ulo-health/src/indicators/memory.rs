@@ -6,7 +6,7 @@ use serde_json::json;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use ulo::{
     FxHashMap,
-    di::ProviderContext,
+    di::Execution,
     spi::{Injectable, Provider, ProviderFactory},
 };
 
@@ -134,7 +134,7 @@ impl Provider for MemoryHealthIndicatorProvider {
         ulo::di::token_of::<MemoryHealthIndicator>()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         Box::new(MemoryHealthIndicator)
     }
 }

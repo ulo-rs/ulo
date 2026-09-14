@@ -1088,7 +1088,7 @@ fn build_wrapper_method(
             // not a copy — the guards below write into the same bag.
             let mut #req_ident = #req_ident;
             #req_ident.extensions_mut().insert(
-                ::ulo::context::HandlerContext::extensions(&__ctx).clone()
+                ::ulo::context::ExecutionContext::extensions(&__ctx).clone()
             );
             // The context itself rides the request too, since the signature
             // cannot carry it: this is where a handler reaches the cancellation
@@ -1122,7 +1122,7 @@ fn build_wrapper_method(
                     // the connection.
                     let __caught = ::ulo::__grpc::catch_handler_panic(async move {
                         let __inner = __source
-                            .resolve(::ulo::di::ProviderContext::Grpc(__build_ctx))
+                            .resolve(::ulo::di::Execution::Grpc(__build_ctx))
                             .await;
                         <#self_ident as #trait_path>::#method_ident(
                             &__inner, #(#forward_args),*

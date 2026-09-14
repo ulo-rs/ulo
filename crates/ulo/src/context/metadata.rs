@@ -25,7 +25,7 @@ use crate::type_map::TypeMap;
 /// A handler's declared configuration — roles, a rate-limit tier, a feature flag.
 ///
 /// Built once at registration from the `#[set_metadata]` entries on the handler and on its impl
-/// block, and read through [`HandlerContext::metadata`](super::HandlerContext::metadata) on every
+/// block, and read through [`ExecutionContext::metadata`](super::ExecutionContext::metadata) on every
 /// transport. A type nothing declared reads back as absent rather than as an error, which is what
 /// lets one guard serve annotated and unannotated handlers alike.
 #[derive(Clone, Default)]

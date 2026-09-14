@@ -6,7 +6,7 @@
 //! the caller's patience rather than its own guess.
 //!
 //! The handler below reads it through `time_remaining()`, which is also what
-//! pins that accessor as reachable: it was defined on `impl dyn HandlerContext`
+//! pins that accessor as reachable: it was defined on `impl dyn ExecutionContext`
 //! and so did not resolve on the `&GrpcContext` a handler holds.
 
 #![allow(dead_code)]
@@ -19,7 +19,7 @@ use crate::common::NotServed;
 use futures_util::Stream;
 use serial_test::serial;
 use ulo::UloFactory;
-use ulo::context::HandlerContext;
+use ulo::context::ExecutionContext;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;

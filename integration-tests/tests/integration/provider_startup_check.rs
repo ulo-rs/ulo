@@ -9,7 +9,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use ulo::di::ProviderContext;
+use ulo::di::Execution;
 
 use ulo::di::{DynamicModule, InitResult};
 use ulo::spi::{Injectable, Provider, ProviderFactory};
@@ -47,7 +47,7 @@ impl Provider for ProbeProvider {
         TOKEN.to_string()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         Box::new(())
     }
 

@@ -119,7 +119,7 @@ fn generate_bridges(
                     String,
                     ::std::sync::Arc<Box<dyn ::ulo::spi::Provider>>,
                 >,
-                __exec_ctx: ::ulo::di::ProviderContext,
+                __exec_ctx: ::ulo::di::Execution,
             ) -> Self {
                 use ::ulo::__construct::CtorBridge as _;
                 match <Self>::__ulo_ctor_build(dependencies, __exec_ctx.clone()) {
@@ -226,7 +226,7 @@ fn resolve_fields(dependencies: &DependencyInfo) -> (Vec<TokenStream>, Vec<Ident
 }
 
 /// One scope-aware field resolution: execution-scoped providers get the active HTTP context (threaded
-/// via `request_parts` + the shared `__request_cache`), anything else `ProviderContext::None`.
+/// via `request_parts` + the shared `__request_cache`), anything else `Execution::None`.
 fn resolve_one(name: &Ident, ty: &Type, token: &TokenStream) -> TokenStream {
     let name_str = name.to_string();
     let ctx = ctx_expr();
@@ -246,7 +246,7 @@ fn resolve_one(name: &Ident, ty: &Type, token: &TokenStream) -> TokenStream {
     }
 }
 
-/// The `ProviderContext` for a `__provider` in scope: this execution when the
+/// The `Execution` for a `__provider` in scope: this execution when the
 /// provider is execution-scoped, `None` otherwise. Resolving it in the same
 /// execution is what makes one construction shared across the request.
 fn ctx_expr() -> TokenStream {
@@ -254,7 +254,7 @@ fn ctx_expr() -> TokenStream {
         if matches!(__provider.scope(), ::ulo::di::ProviderScope::Execution) {
             __exec_ctx.clone()
         } else {
-            ::ulo::di::ProviderContext::None
+            ::ulo::di::Execution::None
         }
     }
 }

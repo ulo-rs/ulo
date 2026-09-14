@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::any::Any;
 use std::sync::Arc;
-use ulo::di::ProviderContext;
+use ulo::di::Execution;
 use ulo::di::ProviderScope;
 use ulo::http::RequestPart;
 use ulo::spi::Provider;
@@ -102,7 +102,7 @@ where
     Subscription: SubscriptionType + 'static,
     Ctx: ContextBuilder,
 {
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         //Box::new(self.clone())
 
         let service: GraphQLService<Query, Mutation, Subscription, Ctx> = GraphQLService {

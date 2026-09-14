@@ -313,7 +313,7 @@ where
 
         let service_any = self
             .graphql_service
-            .resolve(ulo::di::ProviderContext::Http(ctx.clone()))
+            .resolve(ulo::di::Execution::Http(ctx.clone()))
             .await;
 
         let service = service_any

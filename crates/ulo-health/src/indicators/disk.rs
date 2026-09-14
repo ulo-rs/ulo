@@ -6,7 +6,7 @@ use serde_json::json;
 use sysinfo::Disks;
 use ulo::{
     FxHashMap,
-    di::ProviderContext,
+    di::Execution,
     spi::{Injectable, Provider, ProviderFactory},
 };
 
@@ -133,7 +133,7 @@ impl Provider for DiskHealthIndicatorProvider {
         ulo::di::token_of::<DiskHealthIndicator>()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         Box::new(DiskHealthIndicator)
     }
 }

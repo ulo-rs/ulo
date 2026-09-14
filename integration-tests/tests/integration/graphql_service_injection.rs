@@ -3,7 +3,7 @@
 //! token, so the declared export and the built instance meet.
 
 use ulo::UloFactory;
-use ulo::di::ProviderContext;
+use ulo::di::Execution;
 use ulo::{injectable, module};
 use ulo_graphql_async_graphql::async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
 use ulo_graphql_async_graphql::{DefaultContextBuilder, GraphQLModule, GraphQLService};
@@ -43,7 +43,7 @@ async fn an_importing_module_injects_the_exported_service() {
         .await
         .expect("the exported service resolves across the module boundary");
 
-    app.resolve::<Consumer>(&ProviderContext::standalone())
+    app.resolve::<Consumer>(&Execution::standalone())
         .await
         .expect("the consumer built, so it resolves");
 }

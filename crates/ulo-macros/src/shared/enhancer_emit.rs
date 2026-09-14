@@ -46,7 +46,7 @@ pub struct EnhancerSpec {
     pub factory_suffix: &'static str,
     /// `::ulo::http::HttpContext` etc. — what this kind's factory is handed.
     pub context_path: TokenStream,
-    /// `::ulo::di::ProviderContext::Http` etc. — how that context is wrapped for
+    /// `::ulo::di::Execution::Http` etc. — how that context is wrapped for
     /// the provider being built.
     pub provider_ctx_variant: TokenStream,
 }
@@ -80,7 +80,7 @@ impl EnhancerKind {
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynHttpGuardFactory },
                 factory_suffix: "HttpGuard",
                 context_path: quote! { ::ulo::http::HttpContext },
-                provider_ctx_variant: quote! { ::ulo::di::ProviderContext::Http },
+                provider_ctx_variant: quote! { ::ulo::di::Execution::Http },
             },
             EnhancerKind::HttpInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::HttpInterceptor },
@@ -89,7 +89,7 @@ impl EnhancerKind {
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynHttpInterceptorFactory },
                 factory_suffix: "HttpInterceptor",
                 context_path: quote! { ::ulo::http::HttpContext },
-                provider_ctx_variant: quote! { ::ulo::di::ProviderContext::Http },
+                provider_ctx_variant: quote! { ::ulo::di::Execution::Http },
             },
             EnhancerKind::RpcGuard => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::RpcGuard },
@@ -98,7 +98,7 @@ impl EnhancerKind {
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynRpcGuardFactory },
                 factory_suffix: "RpcGuard",
                 context_path: quote! { ::ulo::rpc::RpcContext },
-                provider_ctx_variant: quote! { ::ulo::di::ProviderContext::Rpc },
+                provider_ctx_variant: quote! { ::ulo::di::Execution::Rpc },
             },
             EnhancerKind::RpcInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::RpcInterceptor },
@@ -107,7 +107,7 @@ impl EnhancerKind {
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynRpcInterceptorFactory },
                 factory_suffix: "RpcInterceptor",
                 context_path: quote! { ::ulo::rpc::RpcContext },
-                provider_ctx_variant: quote! { ::ulo::di::ProviderContext::Rpc },
+                provider_ctx_variant: quote! { ::ulo::di::Execution::Rpc },
             },
             EnhancerKind::WsGuard => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::WsGuard },
@@ -116,7 +116,7 @@ impl EnhancerKind {
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynWsGuardFactory },
                 factory_suffix: "WsGuard",
                 context_path: quote! { ::ulo::ws::WsContext },
-                provider_ctx_variant: quote! { ::ulo::di::ProviderContext::Ws },
+                provider_ctx_variant: quote! { ::ulo::di::Execution::Ws },
             },
             EnhancerKind::WsInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::WsInterceptor },
@@ -125,7 +125,7 @@ impl EnhancerKind {
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynWsInterceptorFactory },
                 factory_suffix: "WsInterceptor",
                 context_path: quote! { ::ulo::ws::WsContext },
-                provider_ctx_variant: quote! { ::ulo::di::ProviderContext::Ws },
+                provider_ctx_variant: quote! { ::ulo::di::Execution::Ws },
             },
             EnhancerKind::GrpcGuard => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::GrpcGuard },
@@ -134,7 +134,7 @@ impl EnhancerKind {
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynGrpcGuardFactory },
                 factory_suffix: "GrpcGuard",
                 context_path: quote! { ::ulo::grpc::GrpcContext },
-                provider_ctx_variant: quote! { ::ulo::di::ProviderContext::Grpc },
+                provider_ctx_variant: quote! { ::ulo::di::Execution::Grpc },
             },
             EnhancerKind::GrpcInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::GrpcInterceptor },
@@ -143,7 +143,7 @@ impl EnhancerKind {
                 dyn_factory_trait: quote! { ::ulo::__enhancer::DynGrpcInterceptorFactory },
                 factory_suffix: "GrpcInterceptor",
                 context_path: quote! { ::ulo::grpc::GrpcContext },
-                provider_ctx_variant: quote! { ::ulo::di::ProviderContext::Grpc },
+                provider_ctx_variant: quote! { ::ulo::di::Execution::Grpc },
             },
         }
     }

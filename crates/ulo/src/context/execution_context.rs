@@ -10,13 +10,13 @@ use crate::di::ExecutionCache;
 /// Each transport (HTTP, RPC, gRPC, WebSocket) has its own concrete context
 /// type with transport-specific fields; they all implement this trait so that
 /// **universal** enhancers (guards, interceptors, error handlers) can
-/// be written once via a blanket impl over `C: HandlerContext`.
+/// be written once via a blanket impl over `C: ExecutionContext`.
 ///
 /// Methods on this trait are deliberately limited to what every transport can
 /// implement honestly — no method requires a transport to fake an answer. If a
 /// concept only makes sense for some transports (HTTP headers, gRPC metadata,
 /// WS client identity), it lives on the concrete context, not here.
-pub trait HandlerContext: Send + Sync {
+pub trait ExecutionContext: Send + Sync {
     /// What the handler declared about itself with `#[set_metadata(...)]`, on the impl block or on
     /// the handler, with the handler winning where both name one type.
     ///
@@ -62,11 +62,11 @@ pub trait HandlerContext: Send + Sync {
         None
     }
 
-    /// Time remaining until [`deadline`](HandlerContext::deadline), if one is
+    /// Time remaining until [`deadline`](ExecutionContext::deadline), if one is
     /// set. `Duration::ZERO` once the deadline has passed, rather than a
     /// negative span or a panic.
     ///
-    /// A provided method rather than an inherent one on `dyn HandlerContext`:
+    /// A provided method rather than an inherent one on `dyn ExecutionContext`:
     /// the only transport with a deadline to read is gRPC, and a gRPC handler
     /// is handed `&GrpcContext` (ADR-0038), which an inherent `dyn` impl does
     /// not reach.

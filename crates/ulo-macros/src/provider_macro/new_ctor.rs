@@ -63,7 +63,7 @@ pub fn handle_new(item: TokenStream) -> Result<TokenStream> {
         #[allow(unused_variables, non_snake_case)]
         fn __ulo_ctor_build<'a>(
             deps: &'a ::ulo::__construct::ResolvedDeps,
-            __exec_ctx: ::ulo::di::ProviderContext,
+            __exec_ctx: ::ulo::di::Execution,
         ) -> ::std::option::Option<
             ::std::pin::Pin<Box<dyn ::std::future::Future<Output = Self> + Send + 'a>>
         > {
@@ -115,7 +115,7 @@ fn extract_param_inject_token(pat_type: &syn::PatType) -> Result<Option<TokenStr
 
 /// Resolve one constructor parameter from the dependency map, scope-aware: an execution-scoped
 /// parameter is resolved in the active execution (threaded via `__exec_ctx`),
-/// anything else with `ProviderContext::None` — mirroring the field-injection
+/// anything else with `Execution::None` — mirroring the field-injection
 /// paths. Panics with a clear message on a missing dep or absent request context.
 fn resolve_param(name: &Ident, ty: &Type, token: &TokenStream) -> TokenStream {
     let name_str = name.to_string();
@@ -131,7 +131,7 @@ fn resolve_param(name: &Ident, ty: &Type, token: &TokenStream) -> TokenStream {
             let __ctx = if matches!(__provider.scope(), ::ulo::di::ProviderScope::Execution) {
                 __exec_ctx.clone()
             } else {
-                ::ulo::di::ProviderContext::None
+                ::ulo::di::Execution::None
             };
             let __any = __provider
                 .resolve(__ctx)

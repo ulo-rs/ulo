@@ -33,8 +33,8 @@ use std::sync::Arc;
 
 use crate::FxHashMap;
 use crate::async_trait;
-use crate::context::HandlerContext;
-use crate::di::ProviderContext;
+use crate::context::ExecutionContext;
+use crate::di::Execution;
 use crate::extract::FromContext;
 use crate::http::HttpContext;
 use crate::http::{PathParams, RequestPart};
@@ -58,8 +58,8 @@ impl Provider for Request {
         crate::di::token_of::<Request>()
     }
 
-    async fn resolve(&self, ctx: ProviderContext) -> Box<dyn Any + Send> {
-        let ProviderContext::Http(http_ctx) = &ctx else {
+    async fn resolve(&self, ctx: Execution) -> Box<dyn Any + Send> {
+        let Execution::Http(http_ctx) = &ctx else {
             panic!("Request provider requires an HTTP execution context");
         };
         let cache = http_ctx.cache();

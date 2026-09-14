@@ -9,7 +9,7 @@
 //! dropped looks exactly like an enhancer that chose not to act.
 use crate::common::{ExecutionOrder, TestServer};
 use ulo::async_trait;
-use ulo::context::HandlerContext;
+use ulo::context::ExecutionContext;
 use ulo::di::MiddlewareConsumer;
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
 use ulo::http::HttpContext;

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use super::BroadcastService;
 use crate::FxHashMap;
 use crate::async_trait;
-use crate::di::ProviderContext;
+use crate::di::Execution;
 use crate::provider_scope::ProviderScope;
 use crate::spi::{Provider, ProviderFactory};
 /// Singleton provider that hands out clones of the pre-built `BroadcastService`.
@@ -18,7 +18,7 @@ impl Provider for BroadcastServiceProvider {
         crate::di::token_of::<BroadcastService>()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         Box::new(self.instance.clone())
     }
 

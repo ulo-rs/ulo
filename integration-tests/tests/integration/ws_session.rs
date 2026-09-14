@@ -8,7 +8,7 @@ use crate::common::TestServer;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 use ulo::async_trait;
-use ulo::context::HandlerContext;
+use ulo::context::ExecutionContext;
 use ulo::enhancer::Guard;
 use ulo::ws::WsContext;
 use ulo::ws::{Session, WsClient, WsHandlerResult, WsMessage};

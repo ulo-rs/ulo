@@ -5,7 +5,7 @@ use futures::future::BoxFuture;
 use sea_orm::DatabaseConnection;
 use ulo::{
     FxHashMap,
-    di::ProviderContext,
+    di::Execution,
     spi::{Injectable, Provider, ProviderFactory},
 };
 use ulo_health::{HealthEntry, HealthIndicator, HealthIndicatorResult};
@@ -78,8 +78,8 @@ impl Provider for SeaOrmHealthProvider {
         ulo::di::token_of::<SeaOrmHealthIndicator>()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
-        let resolved = self.connection.resolve(ProviderContext::None).await;
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
+        let resolved = self.connection.resolve(Execution::None).await;
         let db = *resolved
             .downcast::<DatabaseConnection>()
             .expect("the registered connection provider yields a DatabaseConnection");

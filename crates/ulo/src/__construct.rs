@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::di::ProviderContext;
+use crate::di::Execution;
 use crate::spi::Provider;
 
 /// The already-built dependency providers passed to a factory's `build`, keyed by token.
@@ -35,7 +35,7 @@ pub type ResolvedDeps = FxHashMap<String, Arc<Box<dyn Provider>>>;
 /// either means "no `#[new]` — use field injection".
 ///
 /// The context parameter carries the execution being served, so a constructor parameter that is
-/// itself execution-scoped resolves in that same execution; it is `ProviderContext::None` for
+/// itself execution-scoped resolves in that same execution; it is `Execution::None` for
 /// construction outside any execution, matching the field-injection paths.
 pub trait CtorBridge: Sized {
     fn __ulo_ctor_tokens() -> Option<Vec<String>> {
@@ -44,7 +44,7 @@ pub trait CtorBridge: Sized {
 
     fn __ulo_ctor_build<'a>(
         _deps: &'a ResolvedDeps,
-        _ctx: ProviderContext,
+        _ctx: Execution,
     ) -> Option<Pin<Box<dyn Future<Output = Self> + Send + 'a>>> {
         None
     }

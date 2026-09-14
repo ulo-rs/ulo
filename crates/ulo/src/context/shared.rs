@@ -5,12 +5,12 @@ use crate::context::Metadata;
 use super::{CancellationToken, Extensions};
 use crate::di::ExecutionCache;
 
-/// State shared by every per-transport handler context.
+/// State shared by every per-transport execution context.
 ///
-/// Every concrete handler context (`HttpContext`, `RpcContext`, `WsContext`)
-/// holds one of these and delegates the universal `HandlerContext` methods to it.
+/// Every concrete one (`HttpContext`, `RpcContext`, `WsContext`, `GrpcContext`)
+/// holds one of these and delegates the universal `ExecutionContext` methods to it.
 /// Keeping the shared bits in one struct avoids per-context boilerplate and
-/// keeps the `HandlerContext` impls a thin delegation.
+/// keeps the `ExecutionContext` impls a thin delegation.
 pub(crate) struct SharedState {
     pub(crate) metadata: Option<Arc<Metadata>>,
     pub(crate) extensions: Extensions,

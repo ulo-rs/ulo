@@ -3,7 +3,7 @@ use std::{any::Any, sync::Arc};
 use parking_lot::RwLock;
 
 use crate::async_trait;
-use crate::di::{ProviderContext, ProviderScope};
+use crate::di::{Execution, ProviderScope};
 use crate::spi::Provider;
 
 use super::{ModuleRef, module_ref::ProviderStore};
@@ -24,7 +24,7 @@ impl ModuleRefProvider {
 
 #[async_trait]
 impl Provider for ModuleRefProvider {
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         Box::new(ModuleRef::new(
             self.module_token.clone(),
             self.store.clone(),
