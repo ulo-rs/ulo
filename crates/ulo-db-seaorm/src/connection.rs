@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use ulo::{
     FxHashMap, StartupCheck,
-    di::ProviderContext,
+    di::Execution,
     spi::{Provider, ProviderFactory},
 };
 
@@ -84,7 +84,7 @@ impl Provider for SeaOrmConnectionProvider {
         self.token.clone()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         // DatabaseConnection is Clone — it wraps a connection pool internally.
         let db = self
             .db

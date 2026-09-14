@@ -5,7 +5,7 @@ use futures::future::BoxFuture;
 use mongodb::{Client, Database, options::ClientOptions};
 use ulo::{
     FxHashMap,
-    di::ProviderContext,
+    di::Execution,
     spi::{Injectable, Provider, ProviderFactory},
 };
 use ulo_health::{HealthEntry, HealthIndicator, HealthIndicatorResult};
@@ -78,8 +78,8 @@ impl Provider for MongoHealthProvider {
         ulo::di::token_of::<MongoHealthIndicator>()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
-        let resolved = self.connection.resolve(ProviderContext::None).await;
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
+        let resolved = self.connection.resolve(Execution::None).await;
         let db = *resolved
             .downcast::<Database>()
             .expect("the registered connection provider yields a Database");

@@ -74,7 +74,7 @@ pub fn handle_provider_alias(input: TokenStream) -> Result<TokenStream> {
 
                 async fn resolve(
                     &self,
-                    ctx: ulo::di::ProviderContext,
+                    ctx: ulo::di::Execution,
                 ) -> Box<dyn std::any::Any + Send> {
                     self.target_provider.resolve(ctx).await
                 }

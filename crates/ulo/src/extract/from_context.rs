@@ -3,7 +3,7 @@
 use std::fmt;
 use std::future::Future;
 
-use crate::context::HandlerContext;
+use crate::context::ExecutionContext;
 use crate::http::HttpContext;
 use crate::http::HttpRequest;
 
@@ -28,7 +28,7 @@ use crate::http::HttpRequest;
             framework's extractors — `Payload<T>` for a message, `Json<T>` or `Query<T>` on \
             HTTP — or implement `FromContext<{C}>` for `{Self}`."
 )]
-pub trait FromContext<C: HandlerContext>: Sized {
+pub trait FromContext<C: ExecutionContext>: Sized {
     type Error: fmt::Display;
 
     /// Whether extracting this consumes what it reads, leaving nothing for a
@@ -48,7 +48,7 @@ pub trait FromContext<C: HandlerContext>: Sized {
 }
 
 /// `None` where the inner extractor fails, consuming whatever it consumes.
-impl<C: HandlerContext, T: FromContext<C>> FromContext<C> for Option<T> {
+impl<C: ExecutionContext, T: FromContext<C>> FromContext<C> for Option<T> {
     type Error = std::convert::Infallible;
 
     const CONSUMES: bool = T::CONSUMES;

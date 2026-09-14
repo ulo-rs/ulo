@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use super::HandlerContext;
+use super::ExecutionContext;
 
 /// A typed per-message key-value bag, shared by everything handling that message.
 ///
@@ -168,11 +168,11 @@ impl Extensions {
 /// ```
 ///
 /// One impl covers every transport. The bag is reached through
-/// [`HandlerContext`], which every context implements, so nothing here is
+/// [`ExecutionContext`], which every context implements, so nothing here is
 /// specific to HTTP — the same parameter means the same thing in a WebSocket or
 /// RPC handler. Extraction never fails: a message with nothing attached yields
 /// an empty bag.
-impl<C: HandlerContext> crate::extract::FromContext<C> for Extensions {
+impl<C: ExecutionContext> crate::extract::FromContext<C> for Extensions {
     type Error = std::convert::Infallible;
 
     async fn extract(ctx: &C) -> Result<Self, Self::Error> {
@@ -266,13 +266,13 @@ mod tests {
 
     /// The claim the single impl rests on: extraction is generic over the
     /// context, not repeated per transport. If this compiles, one impl serves
-    /// every `HandlerContext` there is — including any added later.
+    /// every `ExecutionContext` there is — including any added later.
     #[tokio::test]
     async fn extraction_is_generic_over_the_context() {
         #[derive(Clone, PartialEq, Debug)]
         struct Principal(&'static str);
 
-        async fn read_from_any<C: HandlerContext>(ctx: &C) -> Extensions {
+        async fn read_from_any<C: ExecutionContext>(ctx: &C) -> Extensions {
             use crate::extract::FromContext;
             Extensions::extract(ctx).await.expect("infallible")
         }

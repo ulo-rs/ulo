@@ -21,7 +21,7 @@ use std::time::Duration;
 use futures_util::{Stream, StreamExt};
 use serial_test::serial;
 use ulo::UloFactory;
-use ulo::context::{CancellationToken, HandlerContext};
+use ulo::context::{CancellationToken, ExecutionContext};
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::extract::Inbound;

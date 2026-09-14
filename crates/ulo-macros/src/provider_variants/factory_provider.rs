@@ -189,7 +189,7 @@ fn generate_caching_provider(
 
             async fn resolve(
                 &self,
-                _ctx: ulo::di::ProviderContext,
+                _ctx: ulo::di::Execution,
             ) -> Box<dyn std::any::Any + Send> {
                 #execute_body
             }
@@ -283,7 +283,7 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
                     let provider = _dependencies
                         .get(&#type_token)
                         .expect(&format!("Dependency not found: {}", #type_token));
-                    let instance = provider.resolve(ulo::di::ProviderContext::None).await;
+                    let instance = provider.resolve(ulo::di::Execution::None).await;
                     *instance
                         .downcast::<#param_type>()
                         .expect(&format!("Failed to downcast {}", #type_token))
@@ -367,7 +367,7 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
 
                     async fn resolve(
                         &self,
-                        _ctx: ulo::di::ProviderContext,
+                        _ctx: ulo::di::Execution,
                     ) -> Box<dyn std::any::Any + Send> {
                         let _dependencies = &self.deps;
                         let factory = #factory_expr;
@@ -401,7 +401,7 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
 
                     async fn resolve(
                         &self,
-                        _ctx: ulo::di::ProviderContext,
+                        _ctx: ulo::di::Execution,
                     ) -> Box<dyn std::any::Any + Send> {
                         let _dependencies = &self.deps;
                         let factory = #factory_expr;
@@ -474,7 +474,7 @@ pub fn handle_provider_factory(input: TokenStream) -> Result<TokenStream> {
 /// One `Dyn*Factory` is emitted per enhancer kind; each `create()` re-invokes the closure and
 /// value-probes the fresh result (compiles for any output type via the `None` fallback, and only
 /// ever runs for a kind whose registration the type-probe admitted, so the `expect` can't fire).
-/// Dep resolution uses `ProviderContext::None`, as the non-caching provider's
+/// Dep resolution uses `Execution::None`, as the non-caching provider's
 /// `execute()` does — nothing here is execution-scoped.
 ///
 /// Returns `(struct_defs, role_push_stmts)`; role pushes assume `__all_deps: Arc<FxHashMap<...>>`.

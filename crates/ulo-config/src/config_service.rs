@@ -5,7 +5,7 @@ use std::any::Any;
 use std::sync::Arc;
 use ulo::FxHashMap;
 use ulo::async_trait;
-use ulo::di::ProviderContext;
+use ulo::di::Execution;
 use ulo::spi::{Provider, ProviderFactory};
 /// Service that provides access to configuration
 ///
@@ -74,7 +74,7 @@ impl<T: Config + Clone + 'static> ConfigService<T> {
 /// Implement Provider so ConfigService can be injected as a dependency
 #[async_trait]
 impl<T: Config> Provider for ConfigService<T> {
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         // Return a clone of self for injection
         Box::new(self.clone())
     }

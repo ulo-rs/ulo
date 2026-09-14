@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use ulo::UloFactory;
-use ulo::di::ProviderContext;
+use ulo::di::Execution;
 use ulo::http::HttpContext;
 use ulo::http::RequestPart;
 use ulo::rpc::RpcContext;
@@ -40,7 +40,7 @@ fn request_parts() -> RequestPart {
 #[tokio::test]
 async fn one_execution_holds_one_instance() {
     let app = UloFactory::create(TestModule).await.unwrap();
-    let execution = ProviderContext::standalone();
+    let execution = Execution::standalone();
 
     let first = app
         .resolve::<Stamp>(&execution)
@@ -62,11 +62,11 @@ async fn a_second_execution_builds_its_own() {
     let app = UloFactory::create(TestModule).await.unwrap();
 
     let first = app
-        .resolve::<Stamp>(&ProviderContext::standalone())
+        .resolve::<Stamp>(&Execution::standalone())
         .await
         .expect("an execution-scoped provider resolves in an execution");
     let second = app
-        .resolve::<Stamp>(&ProviderContext::standalone())
+        .resolve::<Stamp>(&Execution::standalone())
         .await
         .expect("an execution-scoped provider resolves in an execution");
 
@@ -77,7 +77,7 @@ async fn a_second_execution_builds_its_own() {
 async fn a_transport_execution_resolves_the_same_way() {
     let app = UloFactory::create(TestModule).await.unwrap();
 
-    let http: ProviderContext = HttpContext::from_parts(request_parts()).into();
+    let http: Execution = HttpContext::from_parts(request_parts()).into();
     let first = app
         .resolve::<Stamp>(&http)
         .await
@@ -88,7 +88,7 @@ async fn a_transport_execution_resolves_the_same_way() {
         .expect("an HTTP request is an execution");
     assert_eq!(first.id, second.id);
 
-    let rpc: ProviderContext = RpcContext::new(
+    let rpc: Execution = RpcContext::new(
         "orders.create",
         RpcData::json(serde_json::json!({})),
         HashMap::new(),
@@ -111,7 +111,7 @@ async fn without_an_execution_there_is_nothing_to_resolve_in() {
     let app = UloFactory::create(TestModule).await.unwrap();
 
     let error = app
-        .resolve::<Stamp>(&ProviderContext::None)
+        .resolve::<Stamp>(&Execution::None)
         .await
         .expect_err("`None` is the absence of an execution, not one to build in");
 

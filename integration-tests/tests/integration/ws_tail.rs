@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use ulo::context::HandlerContext;
+use ulo::context::ExecutionContext;
 use ulo::module;
 use ulo::ws::WsContext;
 use ulo::ws::{WsHandlerOutput, WsHandlerResult, WsMessage};

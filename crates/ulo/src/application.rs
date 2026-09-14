@@ -388,11 +388,11 @@ impl UloApplication {
     ///
     /// Everything resolved in one execution shares its cache, so an execution-scoped
     /// provider is built once for all of them. Use
-    /// [`ProviderContext::standalone`](crate::di::ProviderContext::standalone) where the
+    /// [`Execution::standalone`](crate::di::Execution::standalone) where the
     /// work arrived over no transport.
     pub async fn resolve<T: 'static>(
         &self,
-        execution: &crate::di::ProviderContext,
+        execution: &crate::di::Execution,
     ) -> Result<T, ResolutionError> {
         self.context.resolve::<T>(execution).await
     }
@@ -401,7 +401,7 @@ impl UloApplication {
     pub async fn resolve_by_token<T: 'static>(
         &self,
         token: impl IntoToken<T>,
-        execution: &crate::di::ProviderContext,
+        execution: &crate::di::Execution,
     ) -> Result<T, ResolutionError> {
         self.context.resolve_by_token::<T>(token, execution).await
     }

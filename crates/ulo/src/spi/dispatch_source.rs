@@ -4,7 +4,7 @@ use std::sync::Arc;
 use rustc_hash::FxHashMap;
 
 use super::provider::Provider;
-use crate::di::ProviderContext;
+use crate::di::Execution;
 
 /// How a dispatch target's instance is held: built once at startup and shared by every
 /// call, or resolved per call from the target's own provider.
@@ -12,7 +12,7 @@ use crate::di::ProviderContext;
 /// One value of this type sits behind every dispatch target — HTTP controller, RPC
 /// controller, gRPC service — and [`resolve`](DispatchSource::resolve) is the one
 /// resolution path. The transports differ only in where they call it and which
-/// [`ProviderContext`] variant they pass.
+/// [`Execution`] variant they pass.
 pub enum DispatchSource<T> {
     /// Built at startup and shared by every call.
     Singleton(Arc<T>),
@@ -37,7 +37,7 @@ impl<T> Clone for DispatchSource<T> {
 
 impl<T: Any + Send + Sync> DispatchSource<T> {
     /// Resolve the instance serving the execution `ctx` belongs to.
-    pub async fn resolve(&self, ctx: ProviderContext) -> Arc<T> {
+    pub async fn resolve(&self, ctx: Execution) -> Arc<T> {
         match self {
             Self::Singleton(instance) => instance.clone(),
             Self::PerCall(provider) => {

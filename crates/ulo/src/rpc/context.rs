@@ -5,7 +5,7 @@ use crate::context::Metadata;
 use crate::rpc::RpcData;
 
 use crate::context::shared::SharedState;
-use crate::context::{CancellationToken, Extensions, HandlerContext};
+use crate::context::{CancellationToken, ExecutionContext, Extensions};
 
 /// Per-request context for RPC handlers.
 ///
@@ -107,7 +107,7 @@ mod tests {
     }
 }
 
-impl HandlerContext for RpcContext {
+impl ExecutionContext for RpcContext {
     fn metadata(&self) -> Option<&Metadata> {
         self.inner.shared.metadata.as_deref()
     }

@@ -5,7 +5,7 @@ use futures::future::BoxFuture;
 use redis::aio::ConnectionManager;
 use ulo::{
     FxHashMap,
-    di::ProviderContext,
+    di::Execution,
     spi::{Injectable, Provider, ProviderFactory},
 };
 use ulo_health::{HealthEntry, HealthIndicator, HealthIndicatorResult};
@@ -78,8 +78,8 @@ impl Provider for RedisHealthProvider {
         ulo::di::token_of::<RedisHealthIndicator>()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
-        let resolved = self.connection.resolve(ProviderContext::None).await;
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
+        let resolved = self.connection.resolve(Execution::None).await;
         let manager = *resolved
             .downcast::<ConnectionManager>()
             .expect("the registered connection provider yields a ConnectionManager");

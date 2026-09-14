@@ -1918,7 +1918,7 @@ impl BusGuard {}
 #[ulo::async_trait]
 impl ulo::enhancer::Guard<ulo::grpc::GrpcContext> for BusGuard {
     async fn can_activate(&self, ctx: &ulo::grpc::GrpcContext) -> bool {
-        use ulo::context::HandlerContext;
+        use ulo::context::ExecutionContext;
         ctx.extensions().insert(BusPrincipal("carol".into()));
         true
     }
@@ -2065,7 +2065,7 @@ pub struct GrpcCallScopedGuard {
 #[ulo::async_trait]
 impl ulo::enhancer::Guard<ulo::grpc::GrpcContext> for GrpcCallScopedGuard {
     async fn can_activate(&self, ctx: &ulo::grpc::GrpcContext) -> bool {
-        use ulo::context::HandlerContext;
+        use ulo::context::ExecutionContext;
         ctx.extensions().insert(GrpcGuardSaw(self.scoped.id()));
         true
     }
@@ -2346,7 +2346,7 @@ pub struct RecordDeclared {}
 #[ulo::async_trait]
 impl ulo::enhancer::Guard<ulo::grpc::GrpcContext> for RecordDeclared {
     async fn can_activate(&self, ctx: &ulo::grpc::GrpcContext) -> bool {
-        use ulo::context::HandlerContext as _;
+        use ulo::context::ExecutionContext as _;
         let m = ctx.metadata();
         let tier = m
             .and_then(|m| m.get::<Tier>())

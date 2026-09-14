@@ -57,7 +57,7 @@ impl WsClient {
     ///
     /// The bag for the execution being handled is a different thing with a shorter life: take
     /// [`Extensions`](crate::context::Extensions) as a handler parameter, or read
-    /// [`WsContext::extensions`](crate::context::HandlerContext::extensions).
+    /// [`WsContext::extensions`](crate::context::ExecutionContext::extensions).
     pub fn session(&self) -> &Session {
         &self.session
     }

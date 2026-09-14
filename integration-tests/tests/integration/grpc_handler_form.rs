@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use serial_test::serial;
 use ulo::UloFactory;
-use ulo::context::{Extensions, HandlerContext};
+use ulo::context::{ExecutionContext, Extensions};
 use ulo::extract::Payload as Aliased;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;

@@ -3,7 +3,7 @@ use std::{any::Any, future::Future, marker::PhantomData, sync::Arc};
 use async_trait::async_trait;
 use ulo::{
     FxHashMap,
-    di::ProviderContext,
+    di::Execution,
     spi::{Provider, ProviderFactory},
 };
 
@@ -54,7 +54,7 @@ impl<C: Send + Sync + Clone + 'static> Provider for PrismaClientProvider<C> {
         self.token.clone()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         Box::new(self.client.clone())
     }
 }

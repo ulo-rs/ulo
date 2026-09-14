@@ -53,7 +53,7 @@ pub enum ExtractorKind {
     Request,
     /// Extensions extractor (the per-message bag) — parts-only
     Extensions,
-    /// `&HttpContext` — the handler context itself, forwarded rather than extracted
+    /// `&HttpContext` — the execution context itself, forwarded rather than extracted
     Context,
     /// `Option<T>` — extracted as `T`, answering `None` where that fails.
     Optional {

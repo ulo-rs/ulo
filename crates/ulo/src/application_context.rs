@@ -9,7 +9,7 @@ use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
 use crate::error::ResolutionError;
 
 use crate::{
-    di::ProviderContext,
+    di::Execution,
     injector::{Container, IntoToken, ModuleRef},
     modules::ModuleIdentity,
     spi::Provider,
@@ -76,18 +76,18 @@ impl UloApplicationContext {
     pub async fn get<T: 'static>(&self) -> Result<T, ResolutionError> {
         let token = crate::di::token_of::<T>();
         let provider = self.provider_in_any_module(&token)?;
-        ProviderContext::None.ensure_can_build(provider.scope(), &token)?;
+        Execution::None.ensure_can_build(provider.scope(), &token)?;
 
-        downcast(provider.resolve(ProviderContext::None).await, &token)
+        downcast(provider.resolve(Execution::None).await, &token)
     }
 
     /// Returns an instance of `T` from a specific module's scope in the DI container
     pub async fn get_from<T: 'static>(&self, module_token: &str) -> Result<T, ResolutionError> {
         let token = crate::di::token_of::<T>();
         let provider = self.provider_in_module(module_token, &token)?;
-        ProviderContext::None.ensure_can_build(provider.scope(), &token)?;
+        Execution::None.ensure_can_build(provider.scope(), &token)?;
 
-        downcast(provider.resolve(ProviderContext::None).await, &token)
+        downcast(provider.resolve(Execution::None).await, &token)
     }
 
     /// The module handle for `M`, found by its identity.
@@ -149,7 +149,7 @@ impl UloApplicationContext {
     async fn module_ref_for(&self, module_id: &str) -> Result<ModuleRef, ResolutionError> {
         let token = crate::di::token_of::<ModuleRef>();
         let provider = self.provider_in_module(module_id, &token)?;
-        downcast(provider.resolve(ProviderContext::None).await, &token)
+        downcast(provider.resolve(Execution::None).await, &token)
     }
 
     /// Returns an instance from the DI container by token rather than type; use when providers are registered with a custom token
@@ -159,9 +159,9 @@ impl UloApplicationContext {
     ) -> Result<T, ResolutionError> {
         let token = token.into_token();
         let provider = self.provider_in_any_module(&token)?;
-        ProviderContext::None.ensure_can_build(provider.scope(), &token)?;
+        Execution::None.ensure_can_build(provider.scope(), &token)?;
 
-        downcast(provider.resolve(ProviderContext::None).await, &token)
+        downcast(provider.resolve(Execution::None).await, &token)
     }
 
     /// Returns an instance by token from a specific module's scope in the DI container
@@ -172,9 +172,9 @@ impl UloApplicationContext {
     ) -> Result<T, ResolutionError> {
         let token = token.into_token();
         let provider = self.provider_in_module(module_token, &token)?;
-        ProviderContext::None.ensure_can_build(provider.scope(), &token)?;
+        Execution::None.ensure_can_build(provider.scope(), &token)?;
 
-        downcast(provider.resolve(ProviderContext::None).await, &token)
+        downcast(provider.resolve(Execution::None).await, &token)
     }
 
     /// Resolves a provider `T` in an execution.
@@ -185,23 +185,20 @@ impl UloApplicationContext {
     /// to each of them, the way a handler and its guards see one instance.
     ///
     /// The execution can be any transport's context, or
-    /// [`ProviderContext::standalone`] where the work arrived over nothing: a CLI
+    /// [`Execution::standalone`] where the work arrived over nothing: a CLI
     /// command, a job, a test.
     ///
     /// # Example
     /// ```rust,ignore
-    /// let execution = ProviderContext::standalone();
+    /// let execution = Execution::standalone();
     /// let repo = ctx.resolve::<Repo>(&execution).await?;
     /// let audit = ctx.resolve::<AuditLog>(&execution).await?;
     ///
     /// // An HTTP execution, when the work is genuinely a request:
-    /// let execution: ProviderContext = HttpContext::from_parts(parts).into();
+    /// let execution: Execution = HttpContext::from_parts(parts).into();
     /// let service = ctx.resolve::<RequestService>(&execution).await?;
     /// ```
-    pub async fn resolve<T: 'static>(
-        &self,
-        execution: &ProviderContext,
-    ) -> Result<T, ResolutionError> {
+    pub async fn resolve<T: 'static>(&self, execution: &Execution) -> Result<T, ResolutionError> {
         let token = crate::di::token_of::<T>();
         let provider = self.provider_in_any_module(&token)?;
         execution.ensure_can_build(provider.scope(), &token)?;
@@ -213,7 +210,7 @@ impl UloApplicationContext {
     pub async fn resolve_by_token<T: 'static>(
         &self,
         token: impl IntoToken<T>,
-        execution: &ProviderContext,
+        execution: &Execution,
     ) -> Result<T, ResolutionError> {
         let token = token.into_token();
         let provider = self.provider_in_any_module(&token)?;

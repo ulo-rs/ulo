@@ -4,7 +4,7 @@ use crate::context::Metadata;
 use crate::ws::{Session, WsClient, WsMessage};
 
 use crate::context::shared::SharedState;
-use crate::context::{CancellationToken, Extensions, HandlerContext};
+use crate::context::{CancellationToken, ExecutionContext, Extensions};
 
 /// Per-request context for WebSocket handlers.
 ///
@@ -46,7 +46,7 @@ impl WsContext {
 
     /// The connection's store, shared by every execution on it.
     ///
-    /// Distinct from [`extensions`](crate::context::HandlerContext::extensions), which empties with
+    /// Distinct from [`extensions`](crate::context::ExecutionContext::extensions), which empties with
     /// this execution. What belongs to the connection rather than the message goes here.
     pub fn session(&self) -> &Session {
         self.inner.client.session()
@@ -61,7 +61,7 @@ impl WsContext {
     }
 }
 
-impl HandlerContext for WsContext {
+impl ExecutionContext for WsContext {
     fn metadata(&self) -> Option<&Metadata> {
         self.inner.shared.metadata.as_deref()
     }

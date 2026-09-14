@@ -4,7 +4,7 @@
 //! `extension_bus.rs` covers the other half, where the reader is the handler.
 
 use ulo::async_trait;
-use ulo::context::HandlerContext;
+use ulo::context::ExecutionContext;
 use ulo::enhancer::Guard;
 use ulo::http::HttpContext;
 
@@ -81,15 +81,15 @@ async fn require_admin_denies_when_no_principal_was_attached() {
 }
 
 /// A guard that runs on EVERY transport via one blanket impl. It can only use
-/// the universal `HandlerContext` surface (route metadata, extensions,
+/// the universal `ExecutionContext` surface (route metadata, extensions,
 /// cancellation) — no `ctx.request()` (HTTP) or `ctx.client()` (WS), because
 /// those live on the concrete context types, not the shared trait. This is
-/// exactly the `impl<C: HandlerContext> Guard<C>` form the guard docs
+/// exactly the `impl<C: ExecutionContext> Guard<C>` form the guard docs
 /// describe, and it compiles.
 struct UniversalGuard;
 
 #[async_trait]
-impl<C: HandlerContext + ?Sized> Guard<C> for UniversalGuard {
+impl<C: ExecutionContext + ?Sized> Guard<C> for UniversalGuard {
     async fn can_activate(&self, ctx: &C) -> bool {
         ctx.extensions().get::<Denied>().is_none()
     }

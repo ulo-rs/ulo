@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use redis::aio::{ConnectionManager, ConnectionManagerConfig};
 use ulo::{
     FxHashMap, StartupCheck,
-    di::ProviderContext,
+    di::Execution,
     spi::{Provider, ProviderFactory},
 };
 
@@ -89,7 +89,7 @@ impl Provider for RedisConnectionProvider {
         self.token.clone()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         // ConnectionManager is Clone (Arc-backed); clones share the same underlying connection.
         Box::new(self.manager.clone().expect("redis connection unavailable"))
     }

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use futures::future::{BoxFuture, join_all};
 use ulo::{
     FxHashMap,
-    di::ProviderContext,
+    di::Execution,
     spi::{Injectable, Provider, ProviderFactory},
 };
 
@@ -194,7 +194,7 @@ impl Provider for HealthCheckServiceProvider {
         ulo::di::token_of::<HealthCheckService>()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         Box::new(HealthCheckService)
     }
 }

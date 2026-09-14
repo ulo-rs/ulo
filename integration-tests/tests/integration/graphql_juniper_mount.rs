@@ -12,7 +12,7 @@
 
 use juniper::{EmptyMutation, EmptySubscription, RootNode, graphql_object};
 use ulo::UloFactory;
-use ulo::di::ProviderContext;
+use ulo::di::Execution;
 use ulo::{injectable, module};
 use ulo_graphql_juniper::{DefaultContext, DefaultContextBuilder, GraphQLModule, GraphQLService};
 
@@ -65,7 +65,7 @@ async fn an_importing_module_injects_the_exported_service() {
         .await
         .expect("the exported service resolves across the module boundary");
 
-    app.resolve::<Consumer>(&ProviderContext::standalone())
+    app.resolve::<Consumer>(&Execution::standalone())
         .await
         .expect("the consumer built, so it resolves");
 }

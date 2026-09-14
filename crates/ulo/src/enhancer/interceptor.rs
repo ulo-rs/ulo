@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 
-use crate::context::HandlerContext;
+use crate::context::ExecutionContext;
 
 /// The next step in the interceptor chain.
 ///
 /// `run` consumes `Box<Self>` so it can only be called once — the type system
 /// prevents an interceptor from invoking the downstream handler twice.
 #[async_trait]
-pub trait InterceptorNext<C: ?Sized + HandlerContext, R>: Send {
+pub trait InterceptorNext<C: ?Sized + ExecutionContext, R>: Send {
     async fn run(self: Box<Self>, context: &C) -> R;
 }
 
@@ -22,6 +22,6 @@ pub trait InterceptorNext<C: ?Sized + HandlerContext, R>: Send {
 /// `Result<RpcHandlerOutput, RpcError>` on RPC, `Result<WsHandlerOutput,
 /// WsError>` on WebSocket, `Result<(), GrpcStatus>` on gRPC.
 #[async_trait]
-pub trait Interceptor<C: ?Sized + HandlerContext, R>: Send + Sync {
+pub trait Interceptor<C: ?Sized + ExecutionContext, R>: Send + Sync {
     async fn intercept(&self, context: &C, next: Box<dyn InterceptorNext<C, R>>) -> R;
 }

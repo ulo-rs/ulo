@@ -43,7 +43,7 @@ use std::sync::Arc;
 use crate::FxHashMap;
 use crate::async_trait;
 use crate::context::Extensions;
-use crate::di::ProviderContext;
+use crate::di::Execution;
 use crate::provider_scope::ProviderScope;
 use crate::spi::{Injectable, Provider, ProviderFactory};
 /// An injectable view of one type in the request's extension bag.
@@ -128,7 +128,7 @@ impl<T: Send + Sync + 'static> Provider for Extension<T> {
         crate::di::token_of::<Extension<T>>()
     }
 
-    async fn resolve(&self, ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, ctx: Execution) -> Box<dyn Any + Send> {
         let Some(bag) = ctx.extensions() else {
             panic!(
                 "Extension<{}> is execution-scoped and cannot be resolved outside an execution",
@@ -153,7 +153,7 @@ impl Provider for Extensions {
         crate::di::token_of::<Extensions>()
     }
 
-    async fn resolve(&self, ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, ctx: Execution) -> Box<dyn Any + Send> {
         let Some(bag) = ctx.extensions() else {
             panic!("Extensions is execution-scoped and cannot be resolved outside an execution");
         };

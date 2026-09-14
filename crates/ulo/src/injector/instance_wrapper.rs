@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     async_trait,
-    context::HandlerContext,
+    context::ExecutionContext,
     context::Metadata,
     enhancer::metadata::EnhancerMetadata,
     enhancer::{Guard, Interceptor, InterceptorNext},
@@ -130,7 +130,7 @@ impl InstanceWrapper {
                 }
 
                 // Middleware failed before the request body could be split; we have no
-                // parts to thread through to the handler context. Construct a stub
+                // parts to thread through to the execution context. Construct a stub
                 // from a minimal request so error handlers still get a typed context.
                 let stub = http::Request::builder().body(()).unwrap();
                 let error_ctx = HttpContext::from_parts(stub.into_parts().0);

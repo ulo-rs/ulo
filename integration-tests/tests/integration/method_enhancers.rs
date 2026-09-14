@@ -11,7 +11,7 @@ use std::time::Duration;
 use ulo::rpc::{RpcHandlerOutput, RpcHandlerResult};
 
 use ulo::async_trait;
-use ulo::context::HandlerContext;
+use ulo::context::ExecutionContext;
 use ulo::enhancer::{ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::injectable;
 use ulo::module;

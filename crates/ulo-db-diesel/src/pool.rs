@@ -6,7 +6,7 @@ use async_trait::async_trait;
 #[cfg(any(feature = "postgres", feature = "mysql"))]
 use ulo::{
     FxHashMap, StartupCheck,
-    di::ProviderContext,
+    di::Execution,
     spi::{Injectable, Provider, ProviderFactory},
 };
 
@@ -82,7 +82,7 @@ macro_rules! impl_diesel_pool {
                 self.token.clone()
             }
 
-            async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+            async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
                 Box::new(self.pool.clone().expect("database pool unavailable"))
             }
 

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 
 use crate::FxHashMap;
 use crate::di::DynamicModule;
-use crate::di::{ModuleMetadata, ProviderContext};
+use crate::di::{Execution, ModuleMetadata};
 use crate::injector::{Container, InstanceLoader};
 use crate::scanner::DependencyScanner;
 use crate::spi::{ControllerFactory, Injectable, Provider, ProviderFactory};
@@ -52,7 +52,7 @@ impl Provider for FakeProvider {
     fn token(&self) -> String {
         self.token.clone()
     }
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         Box::new(0i32)
     }
 }

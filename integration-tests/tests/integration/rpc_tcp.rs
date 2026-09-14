@@ -17,7 +17,7 @@ use ulo::rpc::{RpcHandlerOutput, RpcHandlerResult};
 
 use serde::{Deserialize, Serialize};
 use ulo::async_trait;
-use ulo::context::{Extensions, HandlerContext};
+use ulo::context::{ExecutionContext, Extensions};
 use ulo::enhancer::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
 use ulo::errors::{ErrorKind, PanicRecovered, PipelineSegment};
 use ulo::extract::Payload;

@@ -93,7 +93,7 @@ impl PluginLoader {
 
     pub async fn resolve_request_scoped(
         &self,
-        execution: &ProviderContext,
+        execution: &Execution,
     ) -> Result<RequestScopedService, String> {
         self.module_ref
             .resolve::<RequestScopedService>(execution)
@@ -310,7 +310,7 @@ async fn resolve_builds_a_request_scoped_provider_in_the_execution() {
         .await
         .expect("PluginLoader should be available");
 
-    let execution = ProviderContext::standalone();
+    let execution = Execution::standalone();
 
     let first = plugin_loader
         .resolve_request_scoped(&execution)
@@ -326,7 +326,7 @@ async fn resolve_builds_a_request_scoped_provider_in_the_execution() {
         "one execution holds one instance of an execution-scoped provider"
     );
 
-    let elsewhere = ProviderContext::standalone();
+    let elsewhere = Execution::standalone();
     let third = plugin_loader
         .resolve_request_scoped(&elsewhere)
         .await
@@ -349,7 +349,7 @@ async fn the_module_and_the_application_resolve_into_one_cache() {
         .await
         .expect("PluginLoader should be available");
 
-    let execution = ProviderContext::standalone();
+    let execution = Execution::standalone();
 
     let through_module = plugin_loader
         .resolve_request_scoped(&execution)

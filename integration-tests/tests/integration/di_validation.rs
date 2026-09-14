@@ -5,7 +5,7 @@
 //! means holding one arbitrary request's state forever. That failure is
 //! invisible at runtime — the application serves correctly until two requests
 //! disagree — so it is refused when the graph is built.
-use ulo::di::ProviderContext;
+use ulo::di::Execution;
 use ulo::{UloFactory, injectable, module};
 #[tokio::test]
 async fn valid_singleton_injects_singleton() {
@@ -46,7 +46,7 @@ async fn valid_request_injects_singleton() {
     impl TestModule {}
 
     let app = UloFactory::create(TestModule).await.unwrap();
-    let execution = ProviderContext::standalone();
+    let execution = Execution::standalone();
     app.resolve::<RequestService>(&execution)
         .await
         .expect("execution-scoped service with singleton dep should resolve");
@@ -75,7 +75,7 @@ async fn valid_transient_injects_any_scope() {
     impl TestModule {}
 
     let app = UloFactory::create(TestModule).await.unwrap();
-    let execution = ProviderContext::standalone();
+    let execution = Execution::standalone();
     app.resolve::<TransientService>(&execution)
         .await
         .expect("transient with mixed deps should resolve");
@@ -140,7 +140,7 @@ async fn request_can_inject_transient() {
     impl TestModule {}
 
     let app = UloFactory::create(TestModule).await.unwrap();
-    let execution = ProviderContext::standalone();
+    let execution = Execution::standalone();
     app.resolve::<RequestService>(&execution)
         .await
         .expect("execution-scoped with transient dep should resolve");
@@ -172,7 +172,7 @@ async fn complex_valid_hierarchy() {
     impl TestModule {}
 
     let app = UloFactory::create(TestModule).await.unwrap();
-    let execution = ProviderContext::standalone();
+    let execution = Execution::standalone();
     app.resolve::<TopService>(&execution)
         .await
         .expect("three-level hierarchy should resolve");

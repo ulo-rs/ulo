@@ -3,7 +3,7 @@
 use validator::Validate;
 
 use super::FromContext;
-use crate::context::HandlerContext;
+use crate::context::ExecutionContext;
 
 /// Runs `validator` over what the inner extractor produced, before the handler
 /// sees it.
@@ -137,7 +137,7 @@ impl<T: Validate> ValidatableExtractor for crate::extract::Payload<T> {
 
 impl<C, E> FromContext<C> for Validated<E>
 where
-    C: HandlerContext,
+    C: ExecutionContext,
     E: FromContext<C> + ValidatableExtractor,
 {
     type Error = ValidationError;

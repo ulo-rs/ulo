@@ -403,7 +403,7 @@ pub fn use_error_handlers(_attr: TokenStream, item: TokenStream) -> TokenStream 
 ///
 /// Works the same on `#[routes]`, `#[subscriptions]`, `#[patterns]` and `#[grpc_methods]`. Read it
 /// back with `ctx.metadata()`, which every context carries, so a guard written over
-/// `HandlerContext` reads it on any of them.
+/// `ExecutionContext` reads it on any of them.
 ///
 /// On gRPC a handler reaches the context differently rather than not at all. The tonic trait
 /// dictates that signature, so guards, interceptors and error handlers receive one as a parameter

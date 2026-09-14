@@ -5,8 +5,8 @@ use parking_lot::RwLock;
 use crate::error::ResolutionError;
 use rustc_hash::FxHashMap;
 
+use crate::di::Execution;
 use crate::di::IntoToken;
-use crate::di::ProviderContext;
 use crate::spi::Provider;
 pub(crate) type ProviderStore = FxHashMap<String, FxHashMap<String, Arc<Box<dyn Provider>>>>;
 
@@ -79,7 +79,7 @@ impl ModuleRef {
             module_ref: self,
             token: std::any::type_name::<T>().to_string(),
             strict: true,
-            execution: ProviderContext::None,
+            execution: Execution::None,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -103,7 +103,7 @@ impl ModuleRef {
             module_ref: self,
             token: token.into_token(),
             strict: true,
-            execution: ProviderContext::None,
+            execution: Execution::None,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -122,10 +122,10 @@ impl ModuleRef {
     ///
     /// ```ignore
     /// // In a guard, an interceptor, or anywhere the context reaches:
-    /// let execution: ProviderContext = ctx.clone().into();
+    /// let execution: Execution = ctx.clone().into();
     /// let audit = module_ref.resolve::<AuditLog>(&execution).await?;
     /// ```
-    pub fn resolve<T: 'static>(&self, execution: &ProviderContext) -> ModuleRefQuery<'_, T> {
+    pub fn resolve<T: 'static>(&self, execution: &Execution) -> ModuleRefQuery<'_, T> {
         ModuleRefQuery {
             module_ref: self,
             token: std::any::type_name::<T>().to_string(),
@@ -141,7 +141,7 @@ impl ModuleRef {
     pub fn resolve_by_token<T: 'static>(
         &self,
         token: impl IntoToken<T>,
-        execution: &ProviderContext,
+        execution: &Execution,
     ) -> ModuleRefQuery<'_, T> {
         ModuleRefQuery {
             module_ref: self,
@@ -164,7 +164,7 @@ pub struct ModuleRefQuery<'a, T: 'static> {
     token: String,
     strict: bool,
     /// The execution to build in; `None` for a `get`, which has none.
-    execution: ProviderContext,
+    execution: Execution,
     _phantom: std::marker::PhantomData<T>,
 }
 

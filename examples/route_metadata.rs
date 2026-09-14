@@ -20,14 +20,14 @@
 //!
 //! ## One guard, any transport
 //!
-//! `metadata()` and `extensions()` are both on `HandlerContext`, so a guard written over it
+//! `metadata()` and `extensions()` are both on `ExecutionContext`, so a guard written over it
 //! registers unchanged on an HTTP controller, a WebSocket gateway or an RPC controller.
 //! `RolesGuard` below is written that way: it reads the requirement from metadata and the caller
 //! from the extension bag, leaving how the caller got there to whatever is transport-specific.
 
 use ulo::http::Body;
 use ulo::{
-    async_trait, context::HandlerContext, controller, enhancer::Guard, get, http::HttpContext,
+    async_trait, context::ExecutionContext, controller, enhancer::Guard, get, http::HttpContext,
     module, routes, set_metadata, use_guards,
 };
 // ============================================================================
@@ -76,7 +76,7 @@ impl Guard<HttpContext> for IdentifyCaller {
     }
 }
 
-/// The policy, over `HandlerContext` rather than one transport's context.
+/// The policy, over `ExecutionContext` rather than one transport's context.
 ///
 /// Registers unchanged on a `#[routes]`, `#[subscriptions]` or `#[patterns]` impl. Before
 /// `#[set_metadata]` was collected on every transport this still compiled off HTTP — and read an
@@ -84,7 +84,7 @@ impl Guard<HttpContext> for IdentifyCaller {
 pub struct RolesGuard;
 
 #[async_trait]
-impl<C: HandlerContext> Guard<C> for RolesGuard {
+impl<C: ExecutionContext> Guard<C> for RolesGuard {
     async fn can_activate(&self, context: &C) -> bool {
         let Some(metadata) = context.metadata() else {
             return true;
@@ -111,7 +111,7 @@ impl<C: HandlerContext> Guard<C> for RolesGuard {
 pub struct RateLimitGuard;
 
 #[async_trait]
-impl<C: HandlerContext> Guard<C> for RateLimitGuard {
+impl<C: ExecutionContext> Guard<C> for RateLimitGuard {
     async fn can_activate(&self, context: &C) -> bool {
         let Some(metadata) = context.metadata() else {
             return true;

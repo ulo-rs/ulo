@@ -5,7 +5,7 @@ use futures::future::BoxFuture;
 use sqlx::{Database, Pool};
 use ulo::{
     FxHashMap,
-    di::ProviderContext,
+    di::Execution,
     spi::{Injectable, Provider, ProviderFactory},
 };
 use ulo_health::{HealthEntry, HealthIndicator, HealthIndicatorResult};
@@ -125,8 +125,8 @@ where
         ulo::di::token_of::<SqlxHealthIndicator<DB>>()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
-        let resolved = self.connection.resolve(ProviderContext::None).await;
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
+        let resolved = self.connection.resolve(Execution::None).await;
         let pool = *resolved
             .downcast::<Pool<DB>>()
             .expect("the registered pool provider yields a Pool");

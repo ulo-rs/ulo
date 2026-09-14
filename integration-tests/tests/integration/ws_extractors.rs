@@ -9,7 +9,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio_tungstenite::tungstenite::Message;
 use ulo::async_trait;
-use ulo::context::{Extensions, HandlerContext};
+use ulo::context::{ExecutionContext, Extensions};
 use ulo::enhancer::Guard;
 use ulo::extract::Payload;
 use ulo::ws::WsContext;

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use mongodb::{Client, Database, options::ClientOptions};
 use ulo::{
     FxHashMap, StartupCheck,
-    di::ProviderContext,
+    di::Execution,
     spi::{Provider, ProviderFactory},
 };
 
@@ -89,7 +89,7 @@ impl Provider for MongoConnectionProvider {
         self.token.clone()
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         // Database is Clone (Arc-backed); cloning shares the same connection pool.
         Box::new(self.db.clone().expect("mongo database unavailable"))
     }

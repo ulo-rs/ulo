@@ -27,7 +27,7 @@ use ulo_macros::{
     controller, message_pattern, new, patterns, subscribe_message, subscriptions, websocket_gateway,
 };
 
-use ulo::context::HandlerContext;
+use ulo::context::ExecutionContext;
 
 use crate::common::TestServer;
 

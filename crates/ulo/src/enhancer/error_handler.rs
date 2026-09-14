@@ -1,5 +1,5 @@
 use crate::async_trait;
-use crate::context::HandlerContext;
+use crate::context::ExecutionContext;
 use std::error::Error;
 
 /// Convenience alias for the borrowed error reference passed to handlers.
@@ -21,6 +21,6 @@ pub type ChainError<'a> = &'a (dyn Error + Send + Sync + 'static);
 /// `kind()`, `message()` and `details()` off [`Error`](crate::errors::Error), and this trait is
 /// handed the `std::error::Error` supertrait, which those do not reach.
 #[async_trait]
-pub trait ErrorHandler<C: ?Sized + HandlerContext, R>: Send + Sync {
+pub trait ErrorHandler<C: ?Sized + ExecutionContext, R>: Send + Sync {
     async fn handle_error(&self, error: ChainError<'_>, ctx: &C) -> Option<R>;
 }

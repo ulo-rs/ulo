@@ -2,17 +2,18 @@
 //! resolution happens in.
 //!
 //! A module is a DI scope. [`ModuleMetadata`] is what one declares, [`ModuleRef`] is the handle
-//! that resolves against it, and [`ProviderContext`] names the execution an execution-scoped provider
-//! is built for. What an integration crate implements to *be* a provider is `spi`.
+//! that resolves against it, and [`Execution`] is the one a scoped provider is built for — which
+//! transport is running, or none. What an integration crate implements to *be* a provider is
+//! `spi`.
 
+mod execution;
 mod execution_cache;
 mod module_metadata;
-mod provider_context;
 mod token;
 
+pub use execution::Execution;
 pub use execution_cache::ExecutionCache;
 pub use module_metadata::{MiddlewareConsumer, ModuleMetadata};
-pub use provider_context::ProviderContext;
 pub use token::{APP_GUARD, APP_INTERCEPTOR, APP_MIDDLEWARE, IntoToken, Token, token_of};
 
 pub use crate::error::{InitResult, ResolutionError};

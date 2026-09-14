@@ -8,7 +8,7 @@ use futures::future::BoxFuture;
 #[cfg(any(feature = "postgres", feature = "mysql"))]
 use ulo::{
     FxHashMap,
-    di::ProviderContext,
+    di::Execution,
     spi::{Injectable, Provider, ProviderFactory},
 };
 #[cfg(any(feature = "postgres", feature = "mysql"))]
@@ -94,11 +94,11 @@ macro_rules! impl_diesel_health {
 
             async fn resolve(
                 &self,
-                _ctx: ProviderContext,
+                _ctx: Execution,
             ) -> Box<dyn Any + Send> {
                 let resolved = self
                     .connection
-                    .resolve(ProviderContext::None)
+                    .resolve(Execution::None)
                     .await;
                 let pool = *resolved
                     .downcast::<$pool>()

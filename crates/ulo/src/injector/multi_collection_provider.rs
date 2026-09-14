@@ -2,7 +2,7 @@ use std::{any::Any, sync::Arc};
 
 use async_trait::async_trait;
 
-use crate::di::{ProviderContext, ProviderScope};
+use crate::di::{Execution, ProviderScope};
 use crate::spi::Provider;
 
 /// Holds all contributions for a given multi-provider base token.
@@ -26,7 +26,7 @@ impl Provider for MultiCollectionProvider {
         ProviderScope::Singleton
     }
 
-    async fn resolve(&self, _ctx: ProviderContext) -> Box<dyn Any + Send> {
+    async fn resolve(&self, _ctx: Execution) -> Box<dyn Any + Send> {
         Box::new(self.items.clone())
     }
 }
