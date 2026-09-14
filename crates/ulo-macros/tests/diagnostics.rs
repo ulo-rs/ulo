@@ -73,6 +73,10 @@ const DOCUMENTED: &[(&str, &str)] = &[
         "rpc_params_are_extractors",
         "is not an extractor for `RpcContext`",
     ),
+    (
+        "scope_request_renamed",
+        "scope = \"request\" is now scope = \"execution\"",
+    ),
 ];
 
 #[test]
