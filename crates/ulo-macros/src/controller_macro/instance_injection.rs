@@ -1,7 +1,7 @@
 //! `#[routes]` impl-side controller codegen.
 //!
 //! `#[controller("/p")]` on the struct ([controller_attr]) emits the DI bridges
-//! (`__ulo_build_from_deps` / `__ulo_dependencies` / `__ulo_prefix` / `__ulo_is_request_scoped`).
+//! (`__ulo_build_from_deps` / `__ulo_dependencies` / `__ulo_prefix` / `__ulo_is_execution_scoped`).
 //! `#[routes]` on the impl — this module — scans the handler methods and emits one `Route` wrapper
 //! per handler method plus the shadowing `__ulo_dispatch` that answers `Dispatch::Http` with
 //! them, built around the controller's `DispatchSource`. Each wrapper resolves its instance

@@ -55,7 +55,7 @@ impl<T: Any + Send + Sync> DispatchSource<T> {
 
 /// The declared dependency tokens that are execution-scoped — the scan that decides
 /// whether a dispatch target is built per call.
-pub fn request_scoped_dependencies(
+pub fn execution_scoped_dependencies(
     declared: &[String],
     dependencies: &FxHashMap<String, Arc<Box<dyn Provider>>>,
 ) -> Vec<String> {

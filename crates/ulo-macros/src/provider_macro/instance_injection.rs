@@ -621,24 +621,24 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
                     ::std::sync::Arc<Box<dyn ::ulo::spi::Provider>>,
                 >,
             ) -> ::std::sync::Arc<dyn ::ulo::spi::Controller> {
-                let __force_request: bool = <#struct_name>::__ulo_is_request_scoped();
+                let __force_execution: bool = <#struct_name>::__ulo_is_execution_scoped();
                 let __declared =
                     <Self as ::ulo::spi::ControllerFactory>::dependency_tokens(self);
-                let __request_deps = ::ulo::__enhancer::request_scoped_dependencies(
+                let __execution_deps = ::ulo::__enhancer::execution_scoped_dependencies(
                     &__declared,
                     &dependencies,
                 );
 
-                if !__force_request && !__request_deps.is_empty() {
+                if !__force_execution && !__execution_deps.is_empty() {
                     ::ulo::tracing::warn!(
                         controller = #struct_token,
-                        request_scoped_deps = ?__request_deps,
+                        execution_scoped_deps = ?__execution_deps,
                         "Controller automatically elevated to execution scope due to execution-scoped \
-                         providers. Silence this by declaring #[controller(scope = \"request\")]."
+                         providers. Silence this by declaring #[controller(scope = \"execution\")]."
                     );
                 }
 
-                let __source = if __force_request || !__request_deps.is_empty() {
+                let __source = if __force_execution || !__execution_deps.is_empty() {
                     ::ulo::__enhancer::DispatchSource::PerCall(
                         ::std::sync::Arc::new(Box::new(#per_call_provider { dependencies })
                             as Box<dyn ::ulo::spi::Provider>),
