@@ -69,10 +69,18 @@ impl Interceptor<RpcContext, RpcHandlerResult> for GlobalInterceptor {
 struct GlobalErrorHandler;
 
 #[async_trait]
-impl ErrorHandler<RpcContext, RpcData> for GlobalErrorHandler {
-    async fn handle_error(&self, _error: ChainError<'_>, _ctx: &RpcContext) -> Option<RpcData> {
+impl ErrorHandler<RpcContext, RpcHandlerResult> for GlobalErrorHandler {
+    async fn handle_error(
+        &self,
+        _error: ChainError<'_>,
+        _ctx: &RpcContext,
+    ) -> Option<RpcHandlerResult> {
         record("global:error_handler");
-        Some(RpcData::from_serialize(&serde_json::json!({"claimed": "globally"})).unwrap())
+        Some(Ok(RpcData::from_serialize(
+            &serde_json::json!({"claimed": "globally"}),
+        )
+        .unwrap()
+        .into()))
     }
 }
 

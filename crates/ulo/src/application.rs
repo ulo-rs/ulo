@@ -1020,7 +1020,6 @@ fn make_rpc_callbacks(
     let pattern_map = Arc::new(pattern_map);
 
     use crate::rpc::RpcContext;
-    use crate::rpc::RpcHandlerOutput;
 
     let global_error_handlers = Arc::new(global_error_handlers);
 
@@ -1046,7 +1045,7 @@ fn make_rpc_callbacks(
                 if let Some(claimed) =
                     RpcControllerWrapper::try_chain_handler(handler, &event, &ctx, position).await
                 {
-                    return Ok(RpcHandlerOutput::Single(claimed));
+                    return claimed;
                 }
             }
             Err(RpcError::PatternNotFound(info.pattern))

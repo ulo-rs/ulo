@@ -11,6 +11,7 @@ use serial_test::serial;
 use ulo::UloFactory;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
+use ulo::grpc::GrpcHandlerResult;
 use ulo::grpc::extract::Inbound;
 use ulo::grpc::{GrpcCode, GrpcStatus};
 use ulo::{ErrorKind, async_trait, injectable, module};
@@ -50,14 +51,17 @@ impl ulo::Error for WindowClosed {
 pub struct ReopenHandler {}
 
 #[async_trait]
-impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcStatus> for ReopenHandler {
+impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcHandlerResult> for ReopenHandler {
     async fn handle_error(
         &self,
         error: ulo::enhancer::ChainError<'_>,
         _ctx: &GrpcContext,
-    ) -> Option<GrpcStatus> {
+    ) -> Option<GrpcHandlerResult> {
         error.downcast_ref::<WindowClosed>()?;
-        Some(GrpcStatus::new(GrpcCode::Unavailable, "try again at 09:00"))
+        Some(Err(GrpcStatus::new(
+            GrpcCode::Unavailable,
+            "try again at 09:00",
+        )))
     }
 }
 

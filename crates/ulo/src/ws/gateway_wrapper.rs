@@ -364,7 +364,7 @@ impl GatewayWrapper {
         for (position, handler) in error_handlers.iter().rev().enumerate() {
             if let Some(claimed) = Self::try_chain_handler(handler, &event, context, position).await
             {
-                return Ok(WsHandlerOutput::Single(claimed));
+                return claimed;
             }
         }
         let ws_err = WsError::from(event);
@@ -389,7 +389,7 @@ impl GatewayWrapper {
             if let Some(claimed) =
                 Self::try_chain_handler(handler, &rejection, context, position).await
             {
-                return Ok(WsHandlerOutput::Single(claimed));
+                return claimed;
             }
         }
         Ok(WsHandlerOutput::Single(Self::safe_render(|| {
@@ -418,7 +418,7 @@ impl GatewayWrapper {
                     if let Some(msg) =
                         Self::try_chain_handler(handler, observed_err, context, position).await
                     {
-                        return Ok(WsHandlerOutput::Single(msg));
+                        return msg;
                     }
                 }
                 Ok(WsHandlerOutput::Single(Self::safe_render(|| {
@@ -472,7 +472,7 @@ impl GatewayWrapper {
         error: &(dyn std::error::Error + Send + Sync + 'static),
         ctx: &WsContext,
         position: usize,
-    ) -> Option<WsMessage> {
+    ) -> Option<WsHandlerResult> {
         match crate::panic_recovery::catch_async(
             crate::errors::PipelineSegment::ErrorHandler,
             handler.handle_error(error, ctx),

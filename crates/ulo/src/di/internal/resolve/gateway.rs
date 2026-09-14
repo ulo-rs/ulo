@@ -210,7 +210,7 @@ impl GatewayResolver {
             .ok_or_else(|| {
                 format!(
                     "WS ErrorHandler '{}' not found in registry. An error handler registers \
-                     automatically by implementing ErrorHandler<WsContext, WsMessage>; make sure \
+                     automatically by implementing ErrorHandler<WsContext, WsHandlerResult>; make sure \
                      the provider is in the module's `providers` list. For `provider_factory!` \
                      under a string/const token, name the produced type so it can be detected — \
                      annotate the closure's return type or pass a type hint.",

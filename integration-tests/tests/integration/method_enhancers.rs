@@ -58,24 +58,24 @@ pub struct RecoveryErrorHandler {}
 impl RecoveryErrorHandler {}
 
 #[async_trait]
-impl ErrorHandler<RpcContext, RpcData> for RecoveryErrorHandler {
+impl ErrorHandler<RpcContext, RpcHandlerResult> for RecoveryErrorHandler {
     async fn handle_error(
         &self,
         _error: ulo::enhancer::ChainError<'_>,
         _ctx: &RpcContext,
-    ) -> Option<RpcData> {
-        Some(RpcData::json(serde_json::json!("recovered")))
+    ) -> Option<RpcHandlerResult> {
+        Some(Ok(RpcData::json(serde_json::json!("recovered")).into()))
     }
 }
 
 #[async_trait]
-impl ErrorHandler<WsContext, WsMessage> for RecoveryErrorHandler {
+impl ErrorHandler<WsContext, WsHandlerResult> for RecoveryErrorHandler {
     async fn handle_error(
         &self,
         _error: ulo::enhancer::ChainError<'_>,
         _ctx: &WsContext,
-    ) -> Option<WsMessage> {
-        Some(WsMessage::text("recovered"))
+    ) -> Option<WsHandlerResult> {
+        Some(Ok(WsMessage::text("recovered").into()))
     }
 }
 

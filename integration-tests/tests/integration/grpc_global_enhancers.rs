@@ -112,10 +112,14 @@ impl Interceptor<GrpcContext, GrpcHandlerResult> for GlobalInterceptor {
 struct GlobalErrorHandler;
 
 #[ulo::async_trait]
-impl ErrorHandler<GrpcContext, GrpcStatus> for GlobalErrorHandler {
-    async fn handle_error(&self, _error: ChainError<'_>, _ctx: &GrpcContext) -> Option<GrpcStatus> {
+impl ErrorHandler<GrpcContext, GrpcHandlerResult> for GlobalErrorHandler {
+    async fn handle_error(
+        &self,
+        _error: ChainError<'_>,
+        _ctx: &GrpcContext,
+    ) -> Option<GrpcHandlerResult> {
         record("global:error_handler");
-        Some(GrpcStatus::permission_denied("claimed globally"))
+        Some(Err(GrpcStatus::permission_denied("claimed globally")))
     }
 }
 

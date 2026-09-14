@@ -35,12 +35,13 @@ use crate::common::TestServer;
 /// declared metadata, so `metadata()` is `None`. Contrast the WebSocket
 /// handler below, where the event did reach a gateway.
 #[catch(Unrouted)]
-async fn rpc_unrouted(err: &Unrouted, ctx: &RpcContext) -> RpcData {
-    RpcData::from_serialize(&serde_json::json!({
+async fn rpc_unrouted(err: &Unrouted, ctx: &RpcContext) -> RpcHandlerResult {
+    Ok(RpcData::from_serialize(&serde_json::json!({
         "missing": err.target,
         "metadata_is_none": ctx.metadata().is_none(),
     }))
     .unwrap()
+    .into())
 }
 
 /// A WebSocket event nothing subscribes to still arrived at a gateway, so the
@@ -49,12 +50,13 @@ async fn rpc_unrouted(err: &Unrouted, ctx: &RpcContext) -> RpcData {
 /// where it does. `None` would mean nothing was reached at all, which is the
 /// RPC case above and not this one.
 #[catch(Unrouted)]
-async fn ws_unrouted(err: &Unrouted, ctx: &WsContext) -> WsMessage {
-    WsMessage::text(format!(
+async fn ws_unrouted(err: &Unrouted, ctx: &WsContext) -> WsHandlerResult {
+    Ok(WsMessage::text(format!(
         "missing:{}:metadata_none={}",
         err.target,
         ctx.metadata().is_none()
     ))
+    .into())
 }
 
 // ── RPC ────────────────────────────────────────────────────────────────────

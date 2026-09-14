@@ -38,7 +38,7 @@ async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16
 /// register the supplied global RPC error handlers before bootstrap.
 async fn start_rpc_server_with_handlers(
     module: impl ulo::di::ModuleMetadata + 'static,
-    handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcData>>>,
+    handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcHandlerResult>>>,
 ) -> u16 {
     use ulo::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
@@ -72,8 +72,12 @@ struct RpcSegmentRecorder {
 }
 
 #[async_trait]
-impl ErrorHandler<RpcContext, RpcData> for RpcSegmentRecorder {
-    async fn handle_error(&self, error: ChainError<'_>, _ctx: &RpcContext) -> Option<RpcData> {
+impl ErrorHandler<RpcContext, RpcHandlerResult> for RpcSegmentRecorder {
+    async fn handle_error(
+        &self,
+        error: ChainError<'_>,
+        _ctx: &RpcContext,
+    ) -> Option<RpcHandlerResult> {
         self.count.fetch_add(1, Ordering::SeqCst);
         if let Some(p) = error.downcast_ref::<PanicRecovered>() {
             *self.captured.lock().unwrap() = Some(p.during);
@@ -670,8 +674,12 @@ pub struct PanickingRpcErrorHandler {}
 impl PanickingRpcErrorHandler {}
 
 #[async_trait]
-impl ErrorHandler<RpcContext, RpcData> for PanickingRpcErrorHandler {
-    async fn handle_error(&self, _error: ChainError<'_>, _ctx: &RpcContext) -> Option<RpcData> {
+impl ErrorHandler<RpcContext, RpcHandlerResult> for PanickingRpcErrorHandler {
+    async fn handle_error(
+        &self,
+        _error: ChainError<'_>,
+        _ctx: &RpcContext,
+    ) -> Option<RpcHandlerResult> {
         panic!("rpc error-handler kaboom");
     }
 }

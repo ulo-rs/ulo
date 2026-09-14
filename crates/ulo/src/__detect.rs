@@ -21,14 +21,14 @@ use std::sync::Arc;
 
 use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::grpc::GrpcContext;
-use crate::grpc::GrpcStatus;
+use crate::grpc::GrpcHandlerResult;
 use crate::http::HttpContext;
 use crate::http::HttpResponse;
 use crate::http::middleware::Middleware;
 use crate::rpc::RpcContext;
-use crate::rpc::RpcData;
+use crate::rpc::RpcHandlerResult;
 use crate::ws::WsContext;
-use crate::ws::WsMessage;
+use crate::ws::WsHandlerResult;
 
 /// Define a probe: an inherent `detect` (gated on `$bound`) that coerces to `Arc<$out>`, shadowing
 /// a blanket fallback `detect` that returns `None`.
@@ -107,9 +107,9 @@ probe!(
 );
 
 probe!(HttpErrorHandlerProbe, HttpErrorHandlerProbeFallback, ErrorHandler<HttpContext, HttpResponse>, dyn ErrorHandler<HttpContext, HttpResponse>);
-probe!(RpcErrorHandlerProbe, RpcErrorHandlerProbeFallback, ErrorHandler<RpcContext, RpcData>, dyn ErrorHandler<RpcContext, RpcData>);
-probe!(WsErrorHandlerProbe, WsErrorHandlerProbeFallback, ErrorHandler<WsContext, WsMessage>, dyn ErrorHandler<WsContext, WsMessage>);
-probe!(GrpcErrorHandlerProbe, GrpcErrorHandlerProbeFallback, ErrorHandler<GrpcContext, GrpcStatus>, dyn ErrorHandler<GrpcContext, GrpcStatus>);
+probe!(RpcErrorHandlerProbe, RpcErrorHandlerProbeFallback, ErrorHandler<RpcContext, RpcHandlerResult>, dyn ErrorHandler<RpcContext, RpcHandlerResult>);
+probe!(WsErrorHandlerProbe, WsErrorHandlerProbeFallback, ErrorHandler<WsContext, WsHandlerResult>, dyn ErrorHandler<WsContext, WsHandlerResult>);
+probe!(GrpcErrorHandlerProbe, GrpcErrorHandlerProbeFallback, ErrorHandler<GrpcContext, GrpcHandlerResult>, dyn ErrorHandler<GrpcContext, GrpcHandlerResult>);
 
 probe!(
     MiddlewareProbe,

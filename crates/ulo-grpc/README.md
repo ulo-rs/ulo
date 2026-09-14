@@ -151,8 +151,8 @@ A guard is a provider that implements `Guard<GrpcContext>`. The framework runs t
 pub struct AuthGuard {}
 
 #[ulo::async_trait]
-impl ulo::traits::Guard<ulo::GrpcContext> for AuthGuard {
-    async fn can_activate(&self, ctx: &ulo::GrpcContext) -> bool {
+impl ulo::enhancer::Guard<ulo::grpc::GrpcContext> for AuthGuard {
+    async fn can_activate(&self, ctx: &ulo::grpc::GrpcContext) -> bool {
         ctx.header("authorization") == Some("Bearer secret-token")
     }
 }
@@ -167,13 +167,19 @@ An interceptor is a provider that implements `Interceptor<GrpcContext, GrpcHandl
 pub struct LoggingInterceptor {}
 
 #[ulo::async_trait]
-impl ulo::traits::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult>
-    for LoggingInterceptor {
+impl ulo::enhancer::Interceptor<ulo::grpc::GrpcContext, ulo::grpc::GrpcHandlerResult>
+    for LoggingInterceptor
+{
     async fn intercept(
         &self,
-        ctx: &ulo::GrpcContext,
-        next: Box<dyn ulo::traits::InterceptorNext<ulo::GrpcContext, ulo::GrpcHandlerResult>>,
-    ) -> ulo::GrpcHandlerResult {
+        ctx: &ulo::grpc::GrpcContext,
+        next: Box<
+            dyn ulo::enhancer::InterceptorNext<
+                ulo::grpc::GrpcContext,
+                ulo::grpc::GrpcHandlerResult,
+            >,
+        >,
+    ) -> ulo::grpc::GrpcHandlerResult {
         tracing::info!(method = %ctx.method(), "before");
         let answer = next.run(ctx).await;
         tracing::info!(method = %ctx.method(), "after");
@@ -184,26 +190,28 @@ impl ulo::traits::Interceptor<ulo::GrpcContext, ulo::GrpcHandlerResult>
 
 ### Error handlers
 
-An error handler is a provider that implements `ErrorHandler<GrpcContext, GrpcStatus>`. The chain offers it every error a handler returned and every caught panic (as a typed `PanicRecovered`). Returning `Some(GrpcStatus)` claims the answer; `None` lets the next handler decide, falling back on full miss to the status the handler already answered with.
+An error handler is a provider that implements `ErrorHandler<GrpcContext, GrpcHandlerResult>`. The chain offers it every error a handler returned and every caught panic (as a typed `PanicRecovered`). Returning `Some(Err(status))` claims the answer; `None` lets the next handler decide, falling back on full miss to the status the handler already answered with. `Some(Ok(()))` declines as `None` does — this transport's handler type carries no reply, so an `Ok` has nothing to put on the wire.
 
 ```rust
 #[injectable]
 pub struct QtyErrorHandler {}
 
 #[ulo::async_trait]
-impl ulo::traits::ErrorHandler<ulo::GrpcContext, ulo::GrpcStatus> for QtyErrorHandler {
+impl ulo::enhancer::ErrorHandler<ulo::grpc::GrpcContext, ulo::grpc::GrpcHandlerResult>
+    for QtyErrorHandler
+{
     async fn handle_error(
         &self,
-        error: ulo::traits::ChainError<'_>,
-        _ctx: &ulo::GrpcContext,
-    ) -> Option<ulo::GrpcStatus> {
+        error: ulo::enhancer::ChainError<'_>,
+        _ctx: &ulo::grpc::GrpcContext,
+    ) -> Option<ulo::grpc::GrpcHandlerResult> {
         let OrderError::InvalidQty { qty } = error.downcast_ref::<OrderError>()? else {
             return None;
         };
-        Some(ulo::GrpcStatus::new(
-            ulo::GrpcCode::FailedPrecondition,
+        Some(Err(ulo::grpc::GrpcStatus::new(
+            ulo::grpc::GrpcCode::FailedPrecondition,
             format!("qty must be positive, got {qty}"),
-        ))
+        )))
     }
 }
 ```

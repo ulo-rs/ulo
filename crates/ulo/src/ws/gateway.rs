@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use crate::context::Metadata;
 use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::spi::ExecutionResult;
-use crate::ws::{WsContext, WsHandlerResult, WsMessage};
+use crate::ws::{WsContext, WsHandlerResult};
 
 use super::{DisconnectReason, WsClient, WsError, WsHandlerOutput};
 
@@ -25,7 +25,7 @@ pub struct GatewayEnhancers {
     pub error_handler_tokens: Vec<String>,
     pub guards: Vec<Arc<dyn Guard<WsContext>>>,
     pub interceptors: Vec<Arc<dyn Interceptor<WsContext, WsHandlerResult>>>,
-    pub error_handlers: Vec<Arc<dyn ErrorHandler<WsContext, WsMessage>>>,
+    pub error_handlers: Vec<Arc<dyn ErrorHandler<WsContext, WsHandlerResult>>>,
     pub handlers: Vec<GatewayHandlerEnhancers>,
 }
 
@@ -39,7 +39,7 @@ pub struct GatewayHandlerEnhancers {
     pub error_handler_tokens: Vec<String>,
     pub guards: Vec<Arc<dyn Guard<WsContext>>>,
     pub interceptors: Vec<Arc<dyn Interceptor<WsContext, WsHandlerResult>>>,
-    pub error_handlers: Vec<Arc<dyn ErrorHandler<WsContext, WsMessage>>>,
+    pub error_handlers: Vec<Arc<dyn ErrorHandler<WsContext, WsHandlerResult>>>,
 }
 
 /// A WebSocket gateway: it answers a connection's lifecycle and every message on it.

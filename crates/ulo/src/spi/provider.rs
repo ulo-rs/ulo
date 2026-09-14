@@ -12,7 +12,7 @@ use crate::enhancer::ErrorHandler;
 use crate::http::middleware::Middleware;
 use crate::{
     di::ProviderScope, grpc::GrpcContext, http::HttpContext, http::HttpResponse, rpc::RpcContext,
-    rpc::RpcData, ws::WsContext, ws::WsMessage,
+    rpc::RpcHandlerResult, ws::WsContext, ws::WsHandlerResult,
 };
 
 #[async_trait]
@@ -51,9 +51,10 @@ pub trait Provider: Send + Sync {
 }
 
 pub(crate) type HttpErrorHandlerArc = Arc<dyn ErrorHandler<HttpContext, HttpResponse>>;
-pub(crate) type RpcErrorHandlerArc = Arc<dyn ErrorHandler<RpcContext, RpcData>>;
-pub(crate) type WsErrorHandlerArc = Arc<dyn ErrorHandler<WsContext, WsMessage>>;
-pub(crate) type GrpcErrorHandlerArc = Arc<dyn ErrorHandler<GrpcContext, crate::grpc::GrpcStatus>>;
+pub(crate) type RpcErrorHandlerArc = Arc<dyn ErrorHandler<RpcContext, RpcHandlerResult>>;
+pub(crate) type WsErrorHandlerArc = Arc<dyn ErrorHandler<WsContext, WsHandlerResult>>;
+pub(crate) type GrpcErrorHandlerArc =
+    Arc<dyn ErrorHandler<GrpcContext, crate::grpc::GrpcHandlerResult>>;
 
 /// Role trait-objects a provider may contribute to the registry.
 ///

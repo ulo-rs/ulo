@@ -28,6 +28,7 @@ mod enhancers;
 mod enhancers_di;
 mod error_derive;
 mod error_handler;
+mod error_handler_answers_a_handlers_type;
 mod error_handler_precedence;
 mod execution_scope_sharing;
 mod extension_bag_reaches_providers;
