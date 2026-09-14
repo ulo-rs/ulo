@@ -4,16 +4,13 @@ use async_trait::async_trait;
 use rustc_hash::FxHashMap;
 
 use super::transport::{
-    GrpcGuardEntry, GrpcInterceptorEntry, HttpGuardEntry, HttpInterceptorEntry, RpcGuardEntry,
-    RpcInterceptorEntry, WsGuardEntry, WsInterceptorEntry,
+    GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc, HttpGuardEntry,
+    HttpInterceptorEntry, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
+    WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
 };
 use crate::di::Execution;
-use crate::enhancer::ErrorHandler;
+use crate::di::ProviderScope;
 use crate::http::middleware::Middleware;
-use crate::{
-    di::ProviderScope, grpc::GrpcContext, http::HttpContext, http::HttpResponse, rpc::RpcContext,
-    rpc::RpcHandlerResult, ws::WsContext, ws::WsHandlerResult,
-};
 
 #[async_trait]
 pub trait Provider: Send + Sync {
@@ -49,12 +46,6 @@ pub trait Provider: Send + Sync {
     async fn before_application_shutdown(&self, _signal: Option<String>) {}
     async fn on_application_shutdown(&self, _signal: Option<String>) {}
 }
-
-pub(crate) type HttpErrorHandlerArc = Arc<dyn ErrorHandler<HttpContext, HttpResponse>>;
-pub(crate) type RpcErrorHandlerArc = Arc<dyn ErrorHandler<RpcContext, RpcHandlerResult>>;
-pub(crate) type WsErrorHandlerArc = Arc<dyn ErrorHandler<WsContext, WsHandlerResult>>;
-pub(crate) type GrpcErrorHandlerArc =
-    Arc<dyn ErrorHandler<GrpcContext, crate::grpc::GrpcHandlerResult>>;
 
 /// Role trait-objects a provider may contribute to the registry.
 ///

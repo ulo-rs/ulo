@@ -5,14 +5,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     di::ModuleMetadata,
-    enhancer::metadata::EnhancerMetadata,
     http::middleware::MiddlewareManager,
-    spi::{
-        Controller, ControllerFactory, GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry,
-        HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry, Provider, ProviderFactory,
-        ProviderRole, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry, WsErrorHandlerArc,
-        WsGuardEntry, WsInterceptorEntry,
-    },
+    spi::transport::{EnhancerSet, Grpc, Http, Rpc, Ws},
+    spi::{Controller, ControllerFactory, Provider, ProviderFactory, ProviderRole},
     ws::Gateway,
 };
 
@@ -30,22 +25,11 @@ pub struct Container {
     global_provider_sources: FxHashMap<String, (String, String)>,
     /// Global provider tokens - registered during scan phase (before instance creation)
     global_provider_tokens: FxHashSet<String>,
-    /// Global enhancers - applied to every HTTP route's pipeline.
-    global_http_guards: Vec<HttpGuardEntry>,
-    global_http_interceptors: Vec<HttpInterceptorEntry>,
-    global_http_error_handlers: Vec<HttpErrorHandlerArc>,
-    /// Global enhancers - applied to every RPC controller's pipeline.
-    global_rpc_guards: Vec<RpcGuardEntry>,
-    global_rpc_interceptors: Vec<RpcInterceptorEntry>,
-    global_rpc_error_handlers: Vec<RpcErrorHandlerArc>,
-    /// Global enhancers - applied to every WS gateway's pipeline.
-    global_ws_guards: Vec<WsGuardEntry>,
-    global_ws_interceptors: Vec<WsInterceptorEntry>,
-    global_ws_error_handlers: Vec<WsErrorHandlerArc>,
-    /// Global enhancers - applied to every gRPC service's pipeline.
-    global_grpc_guards: Vec<GrpcGuardEntry>,
-    global_grpc_interceptors: Vec<GrpcInterceptorEntry>,
-    global_grpc_error_handlers: Vec<GrpcErrorHandlerArc>,
+    /// What each transport runs on every one of its dispatch targets.
+    pub(crate) global_http: EnhancerSet<Http>,
+    pub(crate) global_rpc: EnhancerSet<Rpc>,
+    pub(crate) global_ws: EnhancerSet<Ws>,
+    pub(crate) global_grpc: EnhancerSet<Grpc>,
     /// APP_* token providers - providers registered with special tokens (module_token, provider_token)
     /// These will be resolved to global enhancers after DI container is built
     app_guard_providers: Vec<(String, String)>,
@@ -72,118 +56,18 @@ impl Container {
         Self {
             modules: FxHashMap::default(),
             middleware_manager: Some(MiddlewareManager::new()),
+            global_http: EnhancerSet::default(),
+            global_rpc: EnhancerSet::default(),
+            global_ws: EnhancerSet::default(),
+            global_grpc: EnhancerSet::default(),
             global_providers: FxHashMap::default(),
             global_provider_sources: FxHashMap::default(),
             global_provider_tokens: FxHashSet::default(),
-            global_http_guards: Vec::new(),
-            global_http_interceptors: Vec::new(),
-            global_http_error_handlers: Vec::new(),
-            global_rpc_guards: Vec::new(),
-            global_rpc_interceptors: Vec::new(),
-            global_rpc_error_handlers: Vec::new(),
-            global_ws_guards: Vec::new(),
-            global_ws_interceptors: Vec::new(),
-            global_ws_error_handlers: Vec::new(),
-            global_grpc_guards: Vec::new(),
-            global_grpc_interceptors: Vec::new(),
-            global_grpc_error_handlers: Vec::new(),
             app_guard_providers: Vec::new(),
             app_interceptor_providers: Vec::new(),
             multi_providers: FxHashMap::default(),
             multi_collection_providers: FxHashMap::default(),
             role_registry: RoleRegistry::new(),
-        }
-    }
-
-    pub fn add_global_http_guard(&mut self, guard: HttpGuardEntry) {
-        self.global_http_guards.push(guard);
-    }
-
-    pub fn add_global_http_interceptor(&mut self, interceptor: HttpInterceptorEntry) {
-        self.global_http_interceptors.push(interceptor);
-    }
-
-    pub fn add_global_http_error_handler(&mut self, handler: HttpErrorHandlerArc) {
-        self.global_http_error_handlers.push(handler);
-    }
-
-    pub fn add_global_rpc_guard(&mut self, guard: RpcGuardEntry) {
-        self.global_rpc_guards.push(guard);
-    }
-
-    pub fn add_global_rpc_interceptor(&mut self, interceptor: RpcInterceptorEntry) {
-        self.global_rpc_interceptors.push(interceptor);
-    }
-
-    pub fn add_global_rpc_error_handler(&mut self, handler: RpcErrorHandlerArc) {
-        self.global_rpc_error_handlers.push(handler);
-    }
-
-    pub fn global_rpc_guards(&self) -> Vec<RpcGuardEntry> {
-        self.global_rpc_guards.clone()
-    }
-
-    pub fn global_rpc_interceptors(&self) -> Vec<RpcInterceptorEntry> {
-        self.global_rpc_interceptors.clone()
-    }
-
-    pub fn global_rpc_error_handlers(&self) -> Vec<RpcErrorHandlerArc> {
-        self.global_rpc_error_handlers.clone()
-    }
-
-    pub fn add_global_ws_guard(&mut self, guard: WsGuardEntry) {
-        self.global_ws_guards.push(guard);
-    }
-
-    pub fn add_global_ws_interceptor(&mut self, interceptor: WsInterceptorEntry) {
-        self.global_ws_interceptors.push(interceptor);
-    }
-
-    pub fn add_global_ws_error_handler(&mut self, handler: WsErrorHandlerArc) {
-        self.global_ws_error_handlers.push(handler);
-    }
-
-    pub fn global_ws_guards(&self) -> Vec<WsGuardEntry> {
-        self.global_ws_guards.clone()
-    }
-
-    pub fn global_ws_interceptors(&self) -> Vec<WsInterceptorEntry> {
-        self.global_ws_interceptors.clone()
-    }
-
-    pub fn global_ws_error_handlers(&self) -> Vec<WsErrorHandlerArc> {
-        self.global_ws_error_handlers.clone()
-    }
-
-    pub fn add_global_grpc_guard(&mut self, guard: GrpcGuardEntry) {
-        self.global_grpc_guards.push(guard);
-    }
-
-    pub fn global_grpc_guards(&self) -> Vec<GrpcGuardEntry> {
-        self.global_grpc_guards.clone()
-    }
-
-    pub fn add_global_grpc_interceptor(&mut self, interceptor: GrpcInterceptorEntry) {
-        self.global_grpc_interceptors.push(interceptor);
-    }
-
-    pub fn global_grpc_interceptors(&self) -> Vec<GrpcInterceptorEntry> {
-        self.global_grpc_interceptors.clone()
-    }
-
-    pub fn add_global_grpc_error_handler(&mut self, handler: GrpcErrorHandlerArc) {
-        self.global_grpc_error_handlers.push(handler);
-    }
-
-    pub fn global_grpc_error_handlers(&self) -> Vec<GrpcErrorHandlerArc> {
-        self.global_grpc_error_handlers.clone()
-    }
-
-    pub fn global_enhancers(&self) -> EnhancerMetadata {
-        EnhancerMetadata {
-            guards: self.global_http_guards.clone(),
-            interceptors: self.global_http_interceptors.clone(),
-            error_handlers: self.global_http_error_handlers.clone(),
         }
     }
 
@@ -252,51 +136,57 @@ impl Container {
         for role in roles {
             match role {
                 ProviderRole::HttpGuard(g) => {
-                    self.role_registry.http_guards.insert(token.clone(), g);
+                    self.role_registry.http.guards.insert(token.clone(), g);
                 }
                 ProviderRole::HttpInterceptor(i) => {
                     self.role_registry
-                        .http_interceptors
+                        .http
+                        .interceptors
                         .insert(token.clone(), i);
                 }
                 ProviderRole::HttpErrorHandler(eh) => {
                     self.role_registry
-                        .http_error_handlers
+                        .http
+                        .error_handlers
                         .insert(token.clone(), eh);
                 }
                 ProviderRole::RpcGuard(g) => {
-                    self.role_registry.rpc_guards.insert(token.clone(), g);
+                    self.role_registry.rpc.guards.insert(token.clone(), g);
                 }
                 ProviderRole::RpcInterceptor(i) => {
-                    self.role_registry.rpc_interceptors.insert(token.clone(), i);
+                    self.role_registry.rpc.interceptors.insert(token.clone(), i);
                 }
                 ProviderRole::RpcErrorHandler(eh) => {
                     self.role_registry
-                        .rpc_error_handlers
+                        .rpc
+                        .error_handlers
                         .insert(token.clone(), eh);
                 }
                 ProviderRole::WsGuard(g) => {
-                    self.role_registry.ws_guards.insert(token.clone(), g);
+                    self.role_registry.ws.guards.insert(token.clone(), g);
                 }
                 ProviderRole::WsInterceptor(i) => {
-                    self.role_registry.ws_interceptors.insert(token.clone(), i);
+                    self.role_registry.ws.interceptors.insert(token.clone(), i);
                 }
                 ProviderRole::WsErrorHandler(eh) => {
                     self.role_registry
-                        .ws_error_handlers
+                        .ws
+                        .error_handlers
                         .insert(token.clone(), eh);
                 }
                 ProviderRole::GrpcGuard(g) => {
-                    self.role_registry.grpc_guards.insert(token.clone(), g);
+                    self.role_registry.grpc.guards.insert(token.clone(), g);
                 }
                 ProviderRole::GrpcInterceptor(i) => {
                     self.role_registry
-                        .grpc_interceptors
+                        .grpc
+                        .interceptors
                         .insert(token.clone(), i);
                 }
                 ProviderRole::GrpcErrorHandler(eh) => {
                     self.role_registry
-                        .grpc_error_handlers
+                        .grpc
+                        .error_handlers
                         .insert(token.clone(), eh);
                 }
                 ProviderRole::Middleware(m) => {
@@ -406,14 +296,14 @@ impl Container {
         Ok(())
     }
 
-    pub fn add_route_instance(
+    pub(crate) fn add_route_instance(
         &mut self,
         module_ref_token: &String,
         controller_token: &str,
         route: Arc<dyn crate::http::Route>,
-        enhancer_metadata: EnhancerMetadata,
+        enhancer_metadata: EnhancerSet<Http>,
     ) -> SetupResult {
-        let global_enhancers = self.global_enhancers();
+        let global_enhancers = self.global_http.clone();
         let module_ref = self
             .modules
             .get_mut(module_ref_token)

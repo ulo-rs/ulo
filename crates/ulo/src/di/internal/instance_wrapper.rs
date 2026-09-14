@@ -1,10 +1,10 @@
+use crate::spi::transport::{EnhancerSet, Http};
 use std::sync::Arc;
 
 use crate::{
     async_trait,
     context::ExecutionContext,
     context::Metadata,
-    enhancer::metadata::EnhancerMetadata,
     enhancer::{Guard, Interceptor, InterceptorNext},
     errors::{Error, GuardRejection, MiddlewareFailure, PanicRecovered, PipelineSegment},
     http::Route,
@@ -49,8 +49,8 @@ pub(crate) struct InstanceWrapper {
 impl InstanceWrapper {
     pub(crate) fn new(
         instance: Arc<dyn Route>,
-        enhancer_metadata: EnhancerMetadata,
-        global_enhancers: EnhancerMetadata,
+        enhancer_metadata: EnhancerSet<Http>,
+        global_enhancers: EnhancerSet<Http>,
     ) -> Self {
         // Execution order: global → controller → method
         let mut guards = global_enhancers.guards;

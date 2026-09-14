@@ -85,7 +85,7 @@ impl GatewayResolver {
         tokens: Vec<String>,
         instances: Vec<Arc<dyn Guard<WsContext>>>,
     ) -> SetupResult<Vec<WsGuardEntry>> {
-        let mut guards = self.container.borrow().global_ws_guards();
+        let mut guards = self.container.borrow().global_ws.guards.clone();
         for token in tokens {
             let entry = self.resolve_guard_by_token(&token)?;
             guards.push(entry);
@@ -99,7 +99,7 @@ impl GatewayResolver {
         tokens: Vec<String>,
         instances: Vec<Arc<dyn Interceptor<WsContext, WsHandlerResult>>>,
     ) -> SetupResult<Vec<WsInterceptorEntry>> {
-        let mut interceptors = self.container.borrow().global_ws_interceptors();
+        let mut interceptors = self.container.borrow().global_ws.interceptors.clone();
         for token in tokens {
             let entry = self.resolve_interceptor_by_token(&token)?;
             interceptors.push(entry);
@@ -113,7 +113,7 @@ impl GatewayResolver {
         tokens: Vec<String>,
         instances: Vec<WsErrorHandlerArc>,
     ) -> SetupResult<Vec<WsErrorHandlerArc>> {
-        let mut error_handlers = self.container.borrow().global_ws_error_handlers();
+        let mut error_handlers = self.container.borrow().global_ws.error_handlers.clone();
         for token in tokens {
             error_handlers.push(self.resolve_error_handler_by_token(&token)?);
         }
@@ -164,7 +164,8 @@ impl GatewayResolver {
         self.container
             .borrow()
             .role_registry()
-            .ws_guards
+            .ws
+            .guards
             .get(token)
             .cloned()
             .ok_or_else(|| {
@@ -184,7 +185,8 @@ impl GatewayResolver {
         self.container
             .borrow()
             .role_registry()
-            .ws_interceptors
+            .ws
+            .interceptors
             .get(token)
             .cloned()
             .ok_or_else(|| {
@@ -204,7 +206,7 @@ impl GatewayResolver {
         self.container
             .borrow()
             .role_registry()
-            .ws_error_handlers
+            .ws.error_handlers
             .get(token)
             .cloned()
             .ok_or_else(|| {

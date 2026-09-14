@@ -11,7 +11,6 @@
 mod error_handler;
 mod guard;
 mod interceptor;
-pub(crate) mod metadata;
 
 pub use error_handler::{ChainError, ErrorHandler};
 pub use guard::Guard;
