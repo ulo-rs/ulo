@@ -3,11 +3,11 @@ use std::sync::Arc;
 use rustc_hash::FxHashMap;
 
 use crate::{
+    dispatch::transport::{EnhancerRegistry, Grpc, Http, Rpc, Ws},
     grpc::{GrpcServiceSource, ResolvedGrpcEnhancers},
     http::middleware::Middleware,
     rpc::RpcControllerWrapper,
     spi::ProviderRole,
-    spi::transport::{EnhancerRegistry, Grpc, Http, Rpc, Ws},
     ws::Gateway,
 };
 

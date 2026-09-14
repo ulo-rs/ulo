@@ -16,8 +16,10 @@ use event_listener::Event;
 
 use crate::{
     application_context::UloApplicationContext,
-    di::internal::{Container, IntoToken, resolve::GatewayResolver, resolve::RoutesResolver},
+    di::internal::{Container, IntoToken},
+    dispatch::resolve::GatewayResolver,
     grpc::GrpcAdapter,
+    http::RouteMount,
     http::{HttpAdapter, ServeContext},
     rpc::{RpcAdapter, RpcCallInfo, RpcControllerWrapper, RpcData, RpcError, RpcMessageCallbacks},
     server_lifecycle::ServerLifecycle,
@@ -161,7 +163,8 @@ pub struct UloApplication {
     // `None` and `servers` holds the live handles.
     http_adapter: Option<Box<dyn HttpAdapter>>,
     http_target: Option<BindTarget>,
-    routes_resolver: RoutesResolver,
+    container: Rc<RefCell<Container>>,
+    routes: RouteMount,
     context: UloApplicationContext,
     ws_gateways: HashMap<String, Arc<GatewayWrapper>>,
     ws_adapter: Option<Box<dyn WsAdapter>>,
@@ -188,7 +191,8 @@ impl UloApplication {
             http_adapter: None,
             http_target: None,
             context: UloApplicationContext::new(container.clone()),
-            routes_resolver: RoutesResolver::new(container),
+            container: container.clone(),
+            routes: RouteMount::new(container),
             ws_gateways: HashMap::new(),
             ws_adapter: None,
             ws_targets: HashMap::new(),
@@ -225,7 +229,7 @@ impl UloApplication {
     ) -> Result<&mut Self, StartupError> {
         self.require_state(AppState::Configuring, "use_http_adapter")?;
         let mut boxed = Box::new(adapter) as Box<dyn HttpAdapter>;
-        self.routes_resolver.resolve(boxed.as_mut())?;
+        self.routes.mount(boxed.as_mut())?;
         self.http_adapter = Some(boxed);
         self.http_target = Some(target.into());
         tracing::debug!("HTTP adapter registered");
@@ -304,7 +308,7 @@ impl UloApplication {
     }
 
     fn discover_gateways(&mut self) -> Result<(), StartupError> {
-        let resolver = GatewayResolver::new(self.routes_resolver.container.clone());
+        let resolver = GatewayResolver::new(self.container.clone());
         self.ws_gateways = resolver.resolve()?;
 
         if !self.ws_gateways.is_empty() {
@@ -320,7 +324,6 @@ impl UloApplication {
     fn discover_rpc_controllers(&mut self) {
         // Wrappers are stored fully resolved at create; this only collects them for the adapter.
         self.rpc_controllers = self
-            .routes_resolver
             .container
             .borrow()
             .rpc_controllers()
@@ -459,9 +462,8 @@ impl UloApplication {
     /// environment that is busy.
     async fn bind_adapters(&mut self) -> Result<BoundAdapters, StartupError> {
         {
-            let mut scanner = crate::di::internal::scanner::DependencyScanner::new(
-                self.routes_resolver.container.clone(),
-            );
+            let mut scanner =
+                crate::di::internal::scanner::DependencyScanner::new(self.container.clone());
             scanner.call_bootstrap_hooks().await?;
         }
 
@@ -644,13 +646,7 @@ impl UloApplication {
                     tracing::debug!(pattern = %pattern, "RPC pattern registered");
                 }
 
-                let rpc_global_handlers = self
-                    .routes_resolver
-                    .container
-                    .borrow()
-                    .global_rpc
-                    .error_handlers
-                    .clone();
+                let rpc_global_handlers = self.container.borrow().global_rpc.error_handlers.clone();
                 let callbacks = Arc::new(make_rpc_callbacks(
                     self.rpc_controllers.clone(),
                     rpc_global_handlers,
@@ -672,7 +668,6 @@ impl UloApplication {
         let grpc_adapter = if let Some(mut adapter) = self.grpc_adapter.take() {
             // Bundles are stored fully resolved at create; this only hands them to the adapter.
             let grpc_services: Vec<_> = self
-                .routes_resolver
                 .container
                 .borrow()
                 .grpc_services()
@@ -754,7 +749,7 @@ impl UloApplication {
                     "HTTP"
                 };
 
-                let ctx = ServeContext::new(self.routes_resolver.take_global_chain());
+                let ctx = ServeContext::new(self.routes.take_global_chain());
                 let handle = http_adapter
                     .into_lifecycle(target, ctx)
                     .await
@@ -1043,12 +1038,13 @@ fn make_rpc_callbacks(
                 None,
                 info.extensions,
             );
-            if let Some(claimed) = crate::enhancer::pipeline::claim::<crate::spi::transport::Rpc>(
-                &global_error_handlers,
-                &event,
-                &ctx,
-            )
-            .await
+            if let Some(claimed) =
+                crate::enhancer::pipeline::claim::<crate::dispatch::transport::Rpc>(
+                    &global_error_handlers,
+                    &event,
+                    &ctx,
+                )
+                .await
             {
                 return claimed;
             }

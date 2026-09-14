@@ -15,9 +15,6 @@ mod multi_collection_provider;
 mod dependency_graph;
 pub(crate) use self::dependency_graph::{DependencyGraph, find_dependency_cycle};
 
-mod instance_wrapper;
-pub(crate) use self::instance_wrapper::InstanceWrapper;
-
 pub(crate) use crate::di::IntoToken;
 
 mod module_ref;
@@ -25,15 +22,11 @@ pub use self::module_ref::ModuleRef;
 
 mod module_ref_provider;
 
-mod role_registry;
-pub(crate) use self::role_registry::RoleRegistry;
-
 pub(crate) mod builtin_module;
 pub(crate) mod scanner;
 
 /// One resolver per transport, each turning what a dispatch target declares into what the
 /// dispatcher serves. Four things doing one job, in one place.
-pub(crate) mod resolve;
 
 #[cfg(test)]
 mod module_identity_tests;

@@ -7,9 +7,10 @@ use juniper::{
 use serde::Deserialize;
 use std::sync::Arc;
 use ulo::FxHashMap;
+use ulo::dispatch::{Controller, ControllerFactory, Targets};
 use ulo::http::Route;
 use ulo::http::{Body, HttpMethod, HttpRequest, HttpResponse};
-use ulo::spi::{Controller, ControllerFactory, Dispatch, Provider};
+use ulo::spi::Provider;
 /// GraphQL request payload
 #[derive(Debug, Deserialize)]
 struct GraphQLRequest {
@@ -171,8 +172,8 @@ impl Controller for GraphQLController {
         self.token.clone()
     }
 
-    fn dispatch(&self) -> Dispatch {
-        Dispatch::Http(self.routes.clone())
+    fn targets(&self) -> Targets {
+        Targets::Http(self.routes.clone())
     }
 }
 
@@ -235,9 +236,9 @@ where
     async fn execute(
         &self,
         ctx: &ulo::http::HttpContext,
-    ) -> ulo::spi::ExecutionResult<HttpResponse, ulo::http::HttpError> {
+    ) -> ulo::dispatch::ExecutionResult<HttpResponse, ulo::http::HttpError> {
         let Some(req) = ctx.take_request() else {
-            return ulo::spi::ExecutionResult::Ok(HttpResponse {
+            return ulo::dispatch::ExecutionResult::Ok(HttpResponse {
                 status: 400,
                 headers: vec![],
                 body: Some(Body::json(serde_json::json!({
@@ -348,7 +349,7 @@ impl Route for GraphQLPlaygroundController {
     async fn execute(
         &self,
         _ctx: &ulo::http::HttpContext,
-    ) -> ulo::spi::ExecutionResult<HttpResponse, ulo::http::HttpError> {
+    ) -> ulo::dispatch::ExecutionResult<HttpResponse, ulo::http::HttpError> {
         HttpResponse {
             status: 200,
             body: Some(Body::text(self.playground_html.clone())),

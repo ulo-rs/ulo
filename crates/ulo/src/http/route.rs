@@ -9,9 +9,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::context::Metadata;
+use crate::dispatch::ExecutionResult;
 use crate::enhancer::{Guard, Interceptor};
 use crate::http::{HttpContext, HttpError, HttpMethod, HttpResponse};
-use crate::spi::{ExecutionResult, HttpErrorHandlerArc};
+use crate::spi::HttpErrorHandlerArc;
 
 /// What one route declares. A `#[controller]` yields one [`Route`] per handler method, so this is
 /// the whole manifest for that method — what the other transports split across a target-level

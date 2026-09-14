@@ -1,5 +1,5 @@
+use crate::dispatch::transport::{EnhancerSet, Http};
 use crate::error::SetupResult;
-use crate::spi::transport::{EnhancerSet, Http};
 use rustc_hash::FxHashMap;
 use std::{
     any::Any,
@@ -54,8 +54,9 @@ use super::{
     multi_collection_provider::MultiCollectionProvider,
 };
 use crate::{
+    dispatch::{Controller, Targets},
     http::Route,
-    spi::{Controller, Dispatch, Injectable, Provider},
+    spi::{Injectable, Provider},
 };
 
 pub(crate) struct InstanceLoader {
@@ -465,14 +466,16 @@ impl InstanceLoader {
         // Phase A: expand each controller into its dispatch under an immutable borrow, resolving
         // every transport's enhancer tokens against the role registry — a misdeclared token fails
         // create(), whatever the transport.
-        let rpc_resolver = super::resolve::RpcControllerResolver::new(self.container.clone());
-        let grpc_resolver = super::resolve::GrpcServiceResolver::new(self.container.clone());
+        let rpc_resolver =
+            crate::dispatch::resolve::RpcControllerResolver::new(self.container.clone());
+        let grpc_resolver =
+            crate::dispatch::resolve::GrpcServiceResolver::new(self.container.clone());
         type ResolvedController = (Arc<dyn Controller>, ResolvedDispatch);
         let resolved: Vec<ResolvedController> = controllers
             .into_iter()
             .map(|controller| {
-                let dispatch = match controller.dispatch() {
-                    Dispatch::Http(routes) => ResolvedDispatch::Http(
+                let dispatch = match controller.targets() {
+                    Targets::Http(routes) => ResolvedDispatch::Http(
                         routes
                             .into_iter()
                             .map(|route| {
@@ -481,10 +484,10 @@ impl InstanceLoader {
                             })
                             .collect::<SetupResult<Vec<_>>>()?,
                     ),
-                    Dispatch::Rpc(source) => {
+                    Targets::Rpc(source) => {
                         ResolvedDispatch::Rpc(Arc::new(rpc_resolver.wrap_controller(source)?))
                     }
-                    Dispatch::Grpc(source) => {
+                    Targets::Grpc(source) => {
                         let enhancers = grpc_resolver.resolve_for(source.as_ref())?;
                         ResolvedDispatch::Grpc(source, Arc::new(enhancers))
                     }
@@ -531,10 +534,10 @@ impl InstanceLoader {
     ) -> SetupResult<EnhancerSet<Http>> {
         let declared = route.enhancers();
         let container = self.container.borrow();
-        super::resolve::resolve_target::<Http>(
+        crate::dispatch::resolve::resolve_target::<Http>(
             &container.role_registry().http,
             &container.global_http,
-            super::resolve::Declared {
+            crate::dispatch::resolve::Declared {
                 guard_tokens: declared.guard_tokens,
                 guards: declared.guards,
                 interceptor_tokens: declared.interceptor_tokens,
@@ -676,7 +679,7 @@ impl InstanceLoader {
     }
 }
 
-/// `Dispatch` with enhancer tokens already resolved — the shape Phase B stores from.
+/// `Targets` with enhancer tokens already resolved — the shape Phase B stores from.
 enum ResolvedDispatch {
     Http(Vec<(Arc<dyn Route>, EnhancerSet<Http>)>),
     Rpc(Arc<crate::rpc::RpcControllerWrapper>),

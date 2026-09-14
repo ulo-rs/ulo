@@ -2,18 +2,19 @@ use crate::error::SetupResult;
 use std::{cell::RefCell, pin::Pin, rc::Rc, sync::Arc};
 
 use crate::{
-    di::internal::{Container, InstanceWrapper},
+    di::internal::Container,
+    http::RoutePipeline,
     http::middleware::MiddlewareChain,
     http::{HttpAdapter, HttpRequest, HttpResponse, RequestHandler},
 };
 
-/// Wraps an `InstanceWrapper` as an opaque `RequestHandler`.
+/// One mounted route, as the adapter sees it.
 ///
-/// This keeps `InstanceWrapper` out of the adapter API — the adapter receives
+/// This keeps `RoutePipeline` out of the adapter API — the adapter receives
 /// an `Arc<dyn RequestHandler>` and never sees framework internals.
-struct InstanceHandler(Arc<InstanceWrapper>);
+struct MountedRoute(Arc<RoutePipeline>);
 
-impl RequestHandler for InstanceHandler {
+impl RequestHandler for MountedRoute {
     fn handle(
         &self,
         req: HttpRequest,
@@ -23,12 +24,12 @@ impl RequestHandler for InstanceHandler {
     }
 }
 
-pub(crate) struct RoutesResolver {
-    pub(crate) container: Rc<RefCell<Container>>,
+pub(crate) struct RouteMount {
+    container: Rc<RefCell<Container>>,
     global_chain: Option<MiddlewareChain>,
 }
 
-impl RoutesResolver {
+impl RouteMount {
     pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
         Self {
             container,
@@ -36,9 +37,9 @@ impl RoutesResolver {
         }
     }
 
-    /// Register all routes with the adapter and store the global chain for
+    /// Register every route with the adapter, and keep the global chain for
     /// `take_global_chain` to hand to `start()` later.
-    pub(crate) fn resolve(&mut self, http_adapter: &mut dyn HttpAdapter) -> SetupResult {
+    pub(crate) fn mount(&mut self, http_adapter: &mut dyn HttpAdapter) -> SetupResult {
         let modules_token = self.container.borrow().module_tokens();
 
         for module_token in modules_token {
@@ -100,7 +101,7 @@ impl RoutesResolver {
                 w.set_middleware(route_middleware);
             }
 
-            let handler: Arc<dyn RequestHandler> = Arc::new(InstanceHandler(wrapper));
+            let handler: Arc<dyn RequestHandler> = Arc::new(MountedRoute(wrapper));
             http_adapter.register_route(route_method, &route_path, handler)?;
         }
 

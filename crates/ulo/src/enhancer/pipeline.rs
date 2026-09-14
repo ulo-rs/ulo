@@ -7,9 +7,9 @@
 
 use std::sync::Arc;
 
+use crate::dispatch::transport::{ErrorHandlerArc, GuardEntry, InterceptorEntry, Transport};
 use crate::enhancer::{Guard, Interceptor};
 use crate::errors::PipelineSegment;
-use crate::spi::transport::{ErrorHandlerArc, GuardEntry, InterceptorEntry, Transport};
 
 /// The guards this call runs, in declaration order.
 pub(crate) async fn guards_for<T: Transport>(

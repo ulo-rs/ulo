@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::dispatch::transport::Ws;
 use crate::error::SetupResult;
-use crate::spi::transport::Ws;
 use crate::ws::{Gateway, GatewayWrapper};
 
-use super::super::Container;
-use super::enhancers::{Declared, resolve_handler, resolve_target};
+use super::{Declared, resolve_handler, resolve_target};
+use crate::di::internal::Container;
 
 pub(crate) struct GatewayResolver {
     container: Rc<RefCell<Container>>,

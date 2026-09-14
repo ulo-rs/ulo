@@ -1,7 +1,8 @@
 use crate::di::module::ModuleIdentity;
+use crate::dispatch::ControllerFactory;
 use crate::http::middleware::{IntoRoutePattern, RoutePattern};
 use crate::http::middleware::{Middleware, MiddlewareConfiguration};
-use crate::spi::{ControllerFactory, ProviderFactory};
+use crate::spi::ProviderFactory;
 use async_trait::async_trait;
 use std::sync::Arc;
 

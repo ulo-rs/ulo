@@ -573,12 +573,12 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
         }
 
         #[::ulo::async_trait]
-        impl ::ulo::spi::Controller for #object_name {
+        impl ::ulo::dispatch::Controller for #object_name {
             fn token(&self) -> String {
                 #struct_token.to_string()
             }
 
-            fn dispatch(&self) -> ::ulo::spi::Dispatch {
+            fn targets(&self) -> ::ulo::dispatch::Targets {
                 use ::ulo::__dispatch::DispatchBridge as _;
                 <#struct_name>::__ulo_dispatch(&self.source)
             }
@@ -605,7 +605,7 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
         pub struct #factory_name;
 
         #[::ulo::async_trait]
-        impl ::ulo::spi::ControllerFactory for #factory_name {
+        impl ::ulo::dispatch::ControllerFactory for #factory_name {
             fn token(&self) -> String {
                 #struct_token.to_string()
             }
@@ -620,10 +620,10 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
                     String,
                     ::std::sync::Arc<Box<dyn ::ulo::spi::Provider>>,
                 >,
-            ) -> ::std::sync::Arc<dyn ::ulo::spi::Controller> {
+            ) -> ::std::sync::Arc<dyn ::ulo::dispatch::Controller> {
                 let __force_execution: bool = <#struct_name>::__ulo_is_execution_scoped();
                 let __declared =
-                    <Self as ::ulo::spi::ControllerFactory>::dependency_tokens(self);
+                    <Self as ::ulo::dispatch::ControllerFactory>::dependency_tokens(self);
                 let __execution_deps = ::ulo::__enhancer::execution_scoped_dependencies(
                     &__declared,
                     &dependencies,
@@ -660,7 +660,7 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
 
         impl #struct_name {
             #[doc(hidden)]
-            pub fn __ulo_controller_factory() -> impl ::ulo::spi::ControllerFactory {
+            pub fn __ulo_controller_factory() -> impl ::ulo::dispatch::ControllerFactory {
                 #factory_name
             }
         }

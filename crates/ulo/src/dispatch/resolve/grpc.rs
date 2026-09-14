@@ -2,12 +2,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::dispatch::transport::Grpc;
 use crate::error::SetupResult;
 use crate::grpc::{GrpcServiceSource, ResolvedGrpcEnhancers};
-use crate::spi::transport::Grpc;
 
-use super::super::Container;
-use super::enhancers::{Declared, resolve_handler, resolve_target};
+use super::{Declared, resolve_handler, resolve_target};
+use crate::di::internal::Container;
 
 /// Resolves one gRPC service's enhancer bundle from the role registry by token.
 /// Mirrors [`RpcControllerResolver`](super::RpcControllerResolver) — called by the instance

@@ -1,16 +1,17 @@
-use crate::spi::transport::{EnhancerSet, Http};
+use crate::dispatch::transport::{EnhancerSet, Http};
 use std::sync::Arc;
 
 use crate::{
     async_trait,
     context::ExecutionContext,
     context::Metadata,
+    dispatch::ExecutionResult,
     enhancer::{Guard, Interceptor, InterceptorNext},
     errors::{Error, GuardRejection, MiddlewareFailure, PanicRecovered, PipelineSegment},
     http::Route,
     http::middleware::{Middleware, MiddlewareChain},
     http::{HttpContext, HttpError, HttpMethod, HttpRequest, HttpResponse},
-    spi::{ExecutionResult, HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry},
+    spi::{HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry},
 };
 use futures::FutureExt;
 use std::panic::AssertUnwindSafe;
@@ -26,7 +27,7 @@ struct ChainNext {
 #[async_trait]
 impl InterceptorNext<HttpContext, HttpResponse> for ChainNext {
     async fn run(self: Box<Self>, context: &HttpContext) -> HttpResponse {
-        InstanceWrapper::execute_with_interceptors(
+        RoutePipeline::execute_with_interceptors(
             context,
             &self.interceptors,
             &self.instance,
@@ -37,7 +38,7 @@ impl InterceptorNext<HttpContext, HttpResponse> for ChainNext {
     }
 }
 
-pub(crate) struct InstanceWrapper {
+pub(crate) struct RoutePipeline {
     instance: Arc<dyn Route>,
     guards: Vec<HttpGuardEntry>,
     interceptors: Vec<HttpInterceptorEntry>,
@@ -46,7 +47,7 @@ pub(crate) struct InstanceWrapper {
     metadata: Arc<Metadata>,
 }
 
-impl InstanceWrapper {
+impl RoutePipeline {
     /// `enhancers` is final: the resolver folded this transport's globals in ahead of what the
     /// route declared, which is the order they run.
     pub(crate) fn new(instance: Arc<dyn Route>, enhancers: EnhancerSet<Http>) -> Self {

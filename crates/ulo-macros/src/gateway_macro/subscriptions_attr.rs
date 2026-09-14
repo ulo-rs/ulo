@@ -43,8 +43,8 @@ pub fn handle_subscriptions(item: TokenStream) -> Result<TokenStream> {
                 #event => {
                     #(#extractions)*
                     match self.#method_name(#(#call_args),*).await {
-                        Ok(__output) => ::ulo::spi::ExecutionResult::Ok(__output),
-                        Err(__err) => ::ulo::spi::ExecutionResult::Err(
+                        Ok(__output) => ::ulo::dispatch::ExecutionResult::Ok(__output),
+                        Err(__err) => ::ulo::dispatch::ExecutionResult::Err(
                             ::std::convert::Into::<::ulo::ws::WsError>::into(__err),
                         ),
                     }
@@ -82,14 +82,14 @@ pub fn handle_subscriptions(item: TokenStream) -> Result<TokenStream> {
             async fn __ulo_ws_handle_event(
                 &self,
                 __ctx: &::ulo::ws::WsContext,
-            ) -> ::ulo::spi::ExecutionResult<::ulo::ws::WsHandlerOutput, ::ulo::ws::WsError> {
+            ) -> ::ulo::dispatch::ExecutionResult<::ulo::ws::WsHandlerOutput, ::ulo::ws::WsError> {
                 let __event = ::std::string::String::from(__ctx.event());
                 match __event.as_str() {
                     #(#match_arms)*
                     // A typed event, so a `#[catch(Unrouted)]` handler can claim
                     // it. Unclaimed it renders the `NotFound` envelope it always
                     // did.
-                    _ => ::ulo::spi::ExecutionResult::Err(
+                    _ => ::ulo::dispatch::ExecutionResult::Err(
                         ::ulo::ws::WsError::AppError(::std::sync::Arc::new(
                             ::ulo::errors::Unrouted::new(__event),
                         )),
@@ -172,7 +172,7 @@ fn handler_params(method: &syn::ImplItemFn) -> (Vec<TokenStream>, Vec<TokenStrea
             >>::extract(__ctx).await {
                 ::std::result::Result::Ok(__value) => __value,
                 ::std::result::Result::Err(__e) => {
-                    return ::ulo::spi::ExecutionResult::Err(
+                    return ::ulo::dispatch::ExecutionResult::Err(
                         ::ulo::ws::WsError::Internal(__e.to_string()),
                     );
                 }

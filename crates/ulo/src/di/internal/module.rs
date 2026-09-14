@@ -1,14 +1,15 @@
-use crate::spi::transport::{EnhancerSet, Http};
+use crate::dispatch::transport::{EnhancerSet, Http};
 use std::{collections::hash_map::Drain, sync::Arc};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::InstanceWrapper;
+use crate::http::RoutePipeline;
 
 use crate::{
     di::ModuleMetadata,
+    dispatch::{Controller, ControllerFactory},
     http::Route,
-    spi::{Controller, ControllerFactory, Provider, ProviderFactory},
+    spi::{Provider, ProviderFactory},
 };
 pub struct Module {
     controllers: FxHashMap<String, Box<dyn ControllerFactory>>,
@@ -16,7 +17,7 @@ pub struct Module {
     imports: FxHashSet<String>,
     exports: FxHashSet<String>,
     /// One per route, the dispatch units the router registers with the adapter.
-    controllers_instances: FxHashMap<String, Arc<InstanceWrapper>>,
+    controllers_instances: FxHashMap<String, Arc<RoutePipeline>>,
     /// One per controller struct, kept for lifecycle hooks (fired once each).
     controller_objects: Vec<Arc<dyn Controller>>,
     providers_instances: FxHashMap<String, Arc<Box<dyn Provider>>>,
@@ -75,7 +76,7 @@ impl Module {
             route.method().as_str(),
             route.path()
         );
-        let instance_wrapper = InstanceWrapper::new(route, enhancers);
+        let instance_wrapper = RoutePipeline::new(route, enhancers);
         self.controllers_instances
             .insert(key, Arc::new(instance_wrapper));
     }
@@ -112,9 +113,7 @@ impl Module {
         &self.controllers
     }
 
-    pub(crate) fn drain_controllers_instances(
-        &mut self,
-    ) -> Drain<'_, String, Arc<InstanceWrapper>> {
+    pub(crate) fn drain_controllers_instances(&mut self) -> Drain<'_, String, Arc<RoutePipeline>> {
         self.controllers_instances.drain()
     }
 

@@ -319,7 +319,7 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
             fn imports(&self) -> Option<Vec<Box<dyn ::ulo::di::ModuleMetadata>>> {
                 Some(vec![#(Box::new(#imports)),*])
             }
-            fn controllers(&self) -> Option<Vec<Box<dyn ::ulo::spi::ControllerFactory>>> {
+            fn controllers(&self) -> Option<Vec<Box<dyn ::ulo::dispatch::ControllerFactory>>> {
                 Some(vec![#(Box::new(#controllers)),*])
             }
             fn providers(&self) -> Option<Vec<Box<dyn ::ulo::spi::ProviderFactory>>> {

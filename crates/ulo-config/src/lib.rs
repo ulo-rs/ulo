@@ -246,7 +246,7 @@ impl<T: Config> ulo::di::ModuleMetadata for ConfigModule<T> {
         None
     }
 
-    fn controllers(&self) -> Option<Vec<Box<dyn ulo::spi::ControllerFactory>>> {
+    fn controllers(&self) -> Option<Vec<Box<dyn ulo::dispatch::ControllerFactory>>> {
         None
     }
 

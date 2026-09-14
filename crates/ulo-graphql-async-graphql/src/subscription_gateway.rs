@@ -147,7 +147,7 @@ where
     async fn handle_event(
         &self,
         ctx: &ulo::ws::WsContext,
-    ) -> ulo::spi::ExecutionResult<WsHandlerOutput, ulo::ws::WsError> {
+    ) -> ulo::dispatch::ExecutionResult<WsHandlerOutput, ulo::ws::WsError> {
         let client = ctx.client().clone();
         let message = ctx.message().clone();
         let event = ctx.event().to_string();

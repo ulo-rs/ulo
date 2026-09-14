@@ -6,7 +6,7 @@
 //! maps any [`GrpcStatus`] back to `tonic::Status`, then either returns or
 //! delegates to the user's body.
 
-use crate::spi::transport::Grpc;
+use crate::dispatch::transport::Grpc;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};

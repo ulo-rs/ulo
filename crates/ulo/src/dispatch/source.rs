@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use super::provider::Provider;
 use crate::di::Execution;
+use crate::spi::provider::Provider;
 
 /// How a dispatch target's instance is held: built once at startup and shared by every
 /// call, or resolved per call from the target's own provider.

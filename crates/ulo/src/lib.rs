@@ -23,6 +23,7 @@ mod application;
 mod application_context;
 pub mod context;
 pub mod di;
+pub mod dispatch;
 pub mod enhancer;
 mod error;
 pub mod errors;

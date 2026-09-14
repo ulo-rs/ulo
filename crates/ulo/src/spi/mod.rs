@@ -6,14 +6,7 @@
 //! takes to *be* one of the things `di` hands out.
 
 mod bind_target;
-mod controller;
-pub(crate) mod dispatch_source;
-mod execution_result;
 pub(crate) mod provider;
-pub(crate) mod transport;
-
-pub use self::controller::{Controller, ControllerFactory, Dispatch};
-pub use self::execution_result::ExecutionResult;
 
 pub use self::bind_target::BindTarget;
 pub use self::provider::{Injectable, Provider, ProviderFactory, ProviderRole};
@@ -21,8 +14,7 @@ pub use crate::error::AdapterResult;
 
 // The enhancer plumbing keeps an in-crate path; its public one is `__enhancer`, which is where a
 // macro expansion names it.
-pub(crate) use self::dispatch_source::DispatchSource;
-pub(crate) use self::transport::{
+pub(crate) use crate::dispatch::transport::{
     GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc, HttpGuardEntry,
     HttpInterceptorEntry, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
     WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,

@@ -15,7 +15,8 @@ use crate::di::DynamicModule;
 use crate::di::internal::scanner::DependencyScanner;
 use crate::di::internal::{Container, InstanceLoader};
 use crate::di::{Execution, ModuleMetadata};
-use crate::spi::{ControllerFactory, Injectable, Provider, ProviderFactory};
+use crate::dispatch::ControllerFactory;
+use crate::spi::{Injectable, Provider, ProviderFactory};
 /// A provider that builds a trivial value. `token` is its injection token; `hint` is the
 /// configuration fingerprint folded into the owning module's identity.
 struct FakeFactory {
