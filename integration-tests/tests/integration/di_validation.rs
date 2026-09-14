@@ -1,7 +1,7 @@
-//! Which scope may inject which: a singleton cannot depend on a request-scoped
+//! Which scope may inject which: a singleton cannot depend on an execution-scoped
 //! provider, and anything may depend on a transient one.
 //!
-//! A singleton outlives every request, so holding something request-scoped
+//! A singleton outlives every request, so holding something execution-scoped
 //! means holding one arbitrary request's state forever. That failure is
 //! invisible at runtime — the application serves correctly until two requests
 //! disagree — so it is refused when the graph is built.
@@ -35,7 +35,7 @@ async fn valid_request_injects_singleton() {
     pub struct SingletonService {}
     impl SingletonService {}
 
-    #[injectable(scope = "request")]
+    #[injectable(scope = "execution")]
     pub struct RequestService {
         #[inject]
         dep: SingletonService,
@@ -49,7 +49,7 @@ async fn valid_request_injects_singleton() {
     let execution = ProviderContext::standalone();
     app.resolve::<RequestService>(&execution)
         .await
-        .expect("request-scoped service with singleton dep should resolve");
+        .expect("execution-scoped service with singleton dep should resolve");
 }
 
 #[tokio::test]
@@ -58,7 +58,7 @@ async fn valid_transient_injects_any_scope() {
     pub struct SingletonService {}
     impl SingletonService {}
 
-    #[injectable(scope = "request")]
+    #[injectable(scope = "execution")]
     pub struct RequestService {}
     impl RequestService {}
 
@@ -84,7 +84,7 @@ async fn valid_transient_injects_any_scope() {
 #[tokio::test]
 #[should_panic(expected = "Scope validation error")]
 async fn singleton_cannot_inject_request_scoped() {
-    #[injectable(scope = "request")]
+    #[injectable(scope = "execution")]
     pub struct RequestService {}
     impl RequestService {}
 
@@ -129,7 +129,7 @@ async fn request_can_inject_transient() {
     pub struct TransientService {}
     impl TransientService {}
 
-    #[injectable(scope = "request")]
+    #[injectable(scope = "execution")]
     pub struct RequestService {
         #[inject]
         transient_dep: TransientService,
@@ -143,7 +143,7 @@ async fn request_can_inject_transient() {
     let execution = ProviderContext::standalone();
     app.resolve::<RequestService>(&execution)
         .await
-        .expect("request-scoped with transient dep should resolve");
+        .expect("execution-scoped with transient dep should resolve");
 }
 
 #[tokio::test]
@@ -159,7 +159,7 @@ async fn complex_valid_hierarchy() {
     }
     impl MiddleService {}
 
-    #[injectable(scope = "request")]
+    #[injectable(scope = "execution")]
     pub struct TopService {
         #[inject]
         middle: MiddleService,
@@ -181,7 +181,7 @@ async fn complex_valid_hierarchy() {
 #[tokio::test]
 #[should_panic(expected = "Scope validation error")]
 async fn explicit_singleton_with_request_fails() {
-    #[injectable(scope = "request")]
+    #[injectable(scope = "execution")]
     pub struct RequestService {}
     impl RequestService {}
 

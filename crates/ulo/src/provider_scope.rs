@@ -2,7 +2,7 @@
 ///
 /// This determines when and how often provider instances are created:
 /// - **Singleton**: Created once at startup, shared by every execution (default, 95% of use cases)
-/// - **Request**: Created once per execution, shared within that execution only (5% of use cases)
+/// - **Execution**: Created once per execution, shared within that execution only (5% of use cases)
 /// - **Transient**: Created every time it's injected, never cached (<1% of use cases)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderScope {
@@ -23,20 +23,20 @@ pub enum ProviderScope {
     /// ```
     Singleton,
 
-    /// Created once per execution and shared within it — one HTTP request, one
-    /// WebSocket message, one RPC or gRPC call. Dropped when that execution ends.
+    /// Created once per execution and shared within it — one HTTP request, one WebSocket message,
+    /// one RPC or gRPC call, or one standalone execution. Dropped when that execution ends.
     ///
-    /// **Use for:** Per-execution context, caller identity, audit logging
+    /// **Use for:** Per-execution state, caller identity, audit logging
     ///
     /// # Example
     /// ```ignore
-    /// #[injectable(scope = "request")]
-    /// pub struct RequestContext {
-    ///     request_id: String,
+    /// #[injectable(scope = "execution")]
+    /// pub struct CallerIdentity {
+    ///     correlation_id: String,
     ///     user: Option<User>,
     /// }
     /// ```
-    Request,
+    Execution,
 
     /// Created every time it's injected. Never cached.
     /// Each dependent gets a unique instance.
@@ -63,7 +63,7 @@ impl std::fmt::Display for ProviderScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Singleton => write!(f, "singleton"),
-            Self::Request => write!(f, "request"),
+            Self::Execution => write!(f, "execution"),
             Self::Transient => write!(f, "transient"),
         }
     }
@@ -75,10 +75,10 @@ impl std::str::FromStr for ProviderScope {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "singleton" => Ok(Self::Singleton),
-            "request" => Ok(Self::Request),
+            "execution" => Ok(Self::Execution),
             "transient" => Ok(Self::Transient),
             _ => Err(format!(
-                "Invalid scope: '{}'. Must be 'singleton', 'request', or 'transient'",
+                "Invalid scope: '{}'. Must be 'singleton', 'execution', or 'transient'",
                 s
             )),
         }
@@ -101,8 +101,8 @@ mod tests {
             ProviderScope::Singleton
         );
         assert_eq!(
-            "request".parse::<ProviderScope>().unwrap(),
-            ProviderScope::Request
+            "execution".parse::<ProviderScope>().unwrap(),
+            ProviderScope::Execution
         );
         assert_eq!(
             "transient".parse::<ProviderScope>().unwrap(),
@@ -115,8 +115,8 @@ mod tests {
             ProviderScope::Singleton
         );
         assert_eq!(
-            "Request".parse::<ProviderScope>().unwrap(),
-            ProviderScope::Request
+            "Execution".parse::<ProviderScope>().unwrap(),
+            ProviderScope::Execution
         );
     }
 
@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn test_display() {
         assert_eq!(ProviderScope::Singleton.to_string(), "singleton");
-        assert_eq!(ProviderScope::Request.to_string(), "request");
+        assert_eq!(ProviderScope::Execution.to_string(), "execution");
         assert_eq!(ProviderScope::Transient.to_string(), "transient");
     }
 }

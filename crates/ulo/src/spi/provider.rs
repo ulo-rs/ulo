@@ -20,7 +20,7 @@ pub trait Provider: Send + Sync {
 
     /// The value this provider supplies to the execution `ctx` opens.
     ///
-    /// A singleton answers with the value built at startup. A request-scoped provider builds
+    /// A singleton answers with the value built at startup. An execution-scoped provider builds
     /// one per execution and caches it on `ctx`, so everything in the same call that asks for
     /// this token shares it; a transient one builds on every call. The answer is erased —
     /// callers downcast to the concrete type the token stands for.

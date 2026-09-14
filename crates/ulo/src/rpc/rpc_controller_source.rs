@@ -75,8 +75,8 @@ pub trait RpcControllerSource: Send + Sync {
 
     /// Resolve the controller serving `ctx`.
     ///
-    /// A singleton answers with the instance built at startup. A request-scoped one is built
-    /// inside `ctx`'s execution, so its request-scoped dependencies resolve against that
+    /// A singleton answers with the instance built at startup. An execution-scoped one is built
+    /// inside `ctx`'s execution, so its execution-scoped dependencies resolve against that
     /// execution's cache and are shared with whatever else in the call already asked for them.
     async fn resolve(&self, ctx: &RpcContext) -> Arc<dyn RpcController>;
 }

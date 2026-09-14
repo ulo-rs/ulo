@@ -1,4 +1,4 @@
-//! A dispatch target whose dependency is request-scoped is itself built per
+//! A dispatch target whose dependency is execution-scoped is itself built per
 //! request, whether or not it declared a scope.
 //!
 //! Without the elevation a singleton controller would capture the first
@@ -38,11 +38,11 @@ impl OkController {
 #[module(providers: [SingletonProvider], controllers: [OkController])]
 impl OkModule {}
 
-// ---- Test 2: Singleton controller + request-scoped provider (scope promotion) ---
+// ---- Test 2: Singleton controller + execution-scoped provider (scope promotion) ---
 
 static REQUEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct RequestScopedProvider {}
 impl RequestScopedProvider {
     fn get_request_id(&self) -> u32 {
@@ -50,7 +50,7 @@ impl RequestScopedProvider {
     }
 }
 
-// Singleton controller with a request-scoped dep — framework promotes to request scope
+// Singleton controller with an execution-scoped dep — framework promotes to execution scope
 #[controller("/problematic")]
 pub struct ProblematicController {
     #[inject]
@@ -70,7 +70,7 @@ impl ProblematicModule {}
 
 // ---- Test 3: Request controller + request provider (valid) ------------------
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct AnotherRequestProvider {}
 impl AnotherRequestProvider {
     fn get_data(&self) -> String {
@@ -78,7 +78,7 @@ impl AnotherRequestProvider {
     }
 }
 
-#[controller("/correct", scope = "request")]
+#[controller("/correct", scope = "execution")]
 pub struct CorrectController {
     #[inject]
     provider: AnotherRequestProvider,
@@ -105,7 +105,7 @@ impl CacheProvider {
     }
 }
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct SessionProvider {}
 impl SessionProvider {
     fn get_session(&self) -> String {
@@ -138,7 +138,7 @@ impl MixedModule {}
 
 // ---- Test 5: Explicit singleton + request dep (contradiction, still promotes) -----
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct ContradictoryRequestProvider {}
 impl ContradictoryRequestProvider {
     fn get_id(&self) -> String {
@@ -183,8 +183,8 @@ async fn singleton_controller_with_singleton_provider() {
 #[tokio_localset_test::localset_test]
 async fn singleton_controller_promoted_to_request_scope_when_dep_is_request() {
     // The framework detects the scope mismatch and silently promotes the controller to
-    // request-scoped rather than panicking. The endpoint must still be reachable and
-    // return the request-scoped provider's output.
+    // execution-scoped rather than panicking. The endpoint must still be reachable and
+    // return the execution-scoped provider's output.
     let server = TestServer::start(ProblematicModule).await;
     let resp = server
         .client()
@@ -195,7 +195,7 @@ async fn singleton_controller_promoted_to_request_scope_when_dep_is_request() {
     assert_eq!(resp.status(), 200);
     assert!(
         resp.text().await.unwrap().starts_with("Request ID:"),
-        "request-scoped provider must be accessible after scope promotion"
+        "execution-scoped provider must be accessible after scope promotion"
     );
 }
 

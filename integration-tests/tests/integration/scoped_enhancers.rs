@@ -15,9 +15,9 @@ use ulo_macros::{new, subscriptions, websocket_gateway};
 
 use crate::common::TestServer;
 
-// ---- request-scoped guard, no injected deps ----------------------------------
+// ---- execution-scoped guard, no injected deps ----------------------------------
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct RequestGuard {}
 impl RequestGuard {}
 
@@ -28,9 +28,9 @@ impl Guard<HttpContext> for RequestGuard {
     }
 }
 
-// ---- request-scoped guard that injects Request -------------------------------
+// ---- execution-scoped guard that injects Request -------------------------------
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct HeaderGuard {
     #[inject]
     request: Request,
@@ -235,13 +235,13 @@ async fn transient_scoped_interceptor() {
     assert_eq!(resp.text().await.unwrap(), "pong");
 }
 
-/// A request-scoped guard on a WS gateway reads the HTTP upgrade handshake headers.
+/// An execution-scoped guard on a WS gateway reads the HTTP upgrade handshake headers.
 ///
 /// The guard injects `Request` (built from the upgrade `RequestPart`) and checks
 /// `x-auth-token`. This exercises the full path:
 /// Axum upgrade parts → WsConnectionCallbacks → begin_connect → DynGuardFactory::create(Some(parts))
 #[tokio_localset_test::localset_test]
-async fn ws_request_scoped_guard_uses_handshake_header() {
+async fn ws_execution_scoped_guard_uses_handshake_header() {
     use futures_util::{SinkExt, StreamExt};
 
     let server = TestServer::start(WsGuardModule).await;

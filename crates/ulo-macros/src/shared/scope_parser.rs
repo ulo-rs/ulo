@@ -3,11 +3,17 @@ use syn::{
     parse::{Parse, ParseStream},
 };
 
+/// What `scope = "request"` is answered with. The unit was never one HTTP request; ADR-0046 has
+/// the reasoning, and the old spelling is refused rather than accepted as an alias.
+pub(crate) const SCOPE_RENAMED: &str = "scope = \"request\" is now scope = \"execution\". The unit is one \
+execution: one HTTP request, one WebSocket message, one RPC or gRPC call, or one standalone \
+execution.";
+
 /// Provider scope types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderScope {
     Singleton,
-    Request,
+    Execution,
     Transient,
 }
 
@@ -17,11 +23,11 @@ impl Default for ProviderScope {
     }
 }
 
-/// Controller scope types (only Singleton and Request)
+/// Controller scope types (only Singleton and Execution)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControllerScope {
     Singleton,
-    Request,
+    Execution,
 }
 
 impl Default for ControllerScope {
@@ -32,15 +38,15 @@ impl Default for ControllerScope {
 
 /// Parse injectable attribute
 /// Supports two syntaxes:
-/// 1. Attribute: #[injectable(scope = "request", init = "new")] pub struct Foo { ... }
-/// 2. Inline: #[injectable(scope = "request", pub struct Foo { ... })]
+/// 1. Attribute: #[injectable(scope = "execution", init = "new")] pub struct Foo { ... }
+/// 2. Inline: #[injectable(scope = "execution", pub struct Foo { ... })]
 pub struct ProviderStructArgs {
     pub scope: ProviderScope,
     pub init: Option<String>, // Optional custom constructor method name
     pub struct_def: Option<ItemStruct>, // None if using attribute syntax
 }
 
-/// Parse controller_struct attribute: #[controller_struct(scope = "request", init = "new", pub struct Foo { ... })]
+/// Parse controller_struct attribute: #[controller_struct(scope = "execution", init = "new", pub struct Foo { ... })]
 pub struct ControllerStructArgs {
     pub scope: ControllerScope,
     pub was_explicit: bool,   // Did user explicitly write scope = "..."?
@@ -73,19 +79,20 @@ impl Parse for ProviderStructArgs {
             let ident: syn::Ident = input.parse()?;
 
             if ident == "scope" {
-                // Parse: scope = "request"
+                // Parse: scope = "execution"
                 let _eq: Token![=] = input.parse()?;
                 let value: LitStr = input.parse()?;
 
                 scope = match value.value().as_str() {
                     "singleton" => ProviderScope::Singleton,
-                    "request" => ProviderScope::Request,
+                    "execution" => ProviderScope::Execution,
+                    "request" => return Err(syn::Error::new(value.span(), SCOPE_RENAMED)),
                     "transient" => ProviderScope::Transient,
                     other => {
                         return Err(syn::Error::new(
                             value.span(),
                             format!(
-                                "Invalid scope: '{}'. Must be 'singleton', 'request', or 'transient'",
+                                "Invalid scope: '{}'. Must be 'singleton', 'execution', or 'transient'",
                                 other
                             ),
                         ));
@@ -136,19 +143,20 @@ impl Parse for ControllerStructArgs {
             let ident: syn::Ident = input.parse()?;
 
             if ident == "scope" {
-                // Parse: scope = "request"
+                // Parse: scope = "execution"
                 let _eq: Token![=] = input.parse()?;
                 let value: LitStr = input.parse()?;
 
                 was_explicit = true; // User explicitly set the scope
                 scope = match value.value().as_str() {
                     "singleton" => ControllerScope::Singleton,
-                    "request" => ControllerScope::Request,
+                    "execution" => ControllerScope::Execution,
+                    "request" => return Err(syn::Error::new(value.span(), SCOPE_RENAMED)),
                     other => {
                         return Err(syn::Error::new(
                             value.span(),
                             format!(
-                                "Invalid controller scope: '{}'. Must be 'singleton' or 'request'. Note: Controllers cannot be 'transient'",
+                                "Invalid controller scope: '{}'. Must be 'singleton' or 'execution'. Note: Controllers cannot be 'transient'",
                                 other
                             ),
                         ));
@@ -211,12 +219,13 @@ impl Parse for ControllerArgs {
                 was_explicit = true;
                 scope = match value.value().as_str() {
                     "singleton" => ControllerScope::Singleton,
-                    "request" => ControllerScope::Request,
+                    "execution" => ControllerScope::Execution,
+                    "request" => return Err(syn::Error::new(value.span(), SCOPE_RENAMED)),
                     other => {
                         return Err(syn::Error::new(
                             value.span(),
                             format!(
-                                "Invalid controller scope: '{}'. Must be 'singleton' or 'request'",
+                                "Invalid controller scope: '{}'. Must be 'singleton' or 'execution'",
                                 other
                             ),
                         ));

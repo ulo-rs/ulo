@@ -1,4 +1,4 @@
-//! What "request scope" means on a WebSocket: one instance per message, not per connection.
+//! What "execution scope" means on a WebSocket: one instance per message, not per connection.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -19,15 +19,15 @@ static NEXT: AtomicU64 = AtomicU64::new(1);
 pub struct SeenId(u64);
 
 /// One per execution, numbered in construction order.
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct CallId {
     #[default(NEXT.fetch_add(1, Ordering::SeqCst))]
     pub id: u64,
 }
 
-/// Request-scoped because it holds a request-scoped dependency, which is what puts it on the
+/// Execution-scoped because it holds an execution-scoped dependency, which is what puts it on the
 /// per-execution factory path rather than being built once at startup.
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct StampCallId {
     #[inject]
     call: CallId,
@@ -41,7 +41,7 @@ impl Guard<WsContext> for StampCallId {
     }
 }
 
-#[websocket_gateway("/ws-request-scope")]
+#[websocket_gateway("/ws-execution-scope")]
 pub struct ScopeGateway {}
 
 #[subscriptions]
@@ -65,7 +65,7 @@ impl ScopeModule {}
 #[tokio_localset_test::localset_test]
 async fn a_request_scoped_provider_is_rebuilt_for_every_message() {
     let server = TestServer::start(ScopeModule).await;
-    let url = format!("ws://127.0.0.1:{}/ws-request-scope", server.port);
+    let url = format!("ws://127.0.0.1:{}/ws-execution-scope", server.port);
     let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
 
     let mut seen = Vec::new();

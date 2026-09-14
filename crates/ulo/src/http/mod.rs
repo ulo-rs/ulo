@@ -1,6 +1,6 @@
 //! Everything that is HTTP and nothing that is not: the request and response, the body, the
 //! method, the context one request runs in, the error it answers with, the adapter trait an
-//! integration crate implements, and the request-scoped provider a handler injects.
+//! integration crate implements, and the execution-scoped provider a handler injects.
 //!
 //! What an HTTP handler shares with the other transports — `Guard`, `Interceptor`, `FromContext`,
 //! `ExecutionResult` — is in the crate's core, because it means the same thing there.

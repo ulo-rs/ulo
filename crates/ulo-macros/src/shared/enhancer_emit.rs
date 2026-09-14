@@ -6,7 +6,7 @@
 //! dyn-factory shapes, so they're a separate small kind to keep `EnhancerKind`
 //! uniform.
 //!
-//! Every emission site (singleton role-push, request-scoped dyn-factory,
+//! Every emission site (singleton role-push, execution-scoped dyn-factory,
 //! `provider_factory!` ready, `provider_factory!` non-caching factory) reads
 //! from these specs instead of restating the per-variant constants inline.
 

@@ -74,8 +74,8 @@ impl Guard<HttpContext> for PortGuard {
     }
 }
 
-// Request-scoped #[new]: built fresh per request, ConfigService injected, not stored.
-#[injectable(scope = "request")]
+// Execution-scoped #[new]: built fresh per request, ConfigService injected, not stored.
+#[injectable(scope = "execution")]
 pub struct ReqServer {
     port: u16,
 }
@@ -93,10 +93,10 @@ impl ReqServer {
     }
 }
 
-// The case the request-context fix unlocks: a request-scoped #[new] provider whose constructor
-// injects ANOTHER request-scoped provider (ReqServer). Before the fix this panicked, because the
+// The case the request-context fix unlocks: an execution-scoped #[new] provider whose constructor
+// injects ANOTHER execution-scoped provider (ReqServer). Before the fix this panicked, because the
 // constructor resolved its params with no request context.
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct ReqFacade {
     port: u16,
 }
@@ -188,7 +188,7 @@ impl ApiController {
     }
 }
 
-// Injects the request-scoped #[new] provider as a field (the request-scoped DI path) and echoes its
+// Injects the execution-scoped #[new] provider as a field (the execution-scoped DI path) and echoes its
 // derived port — proving the constructor ran per request, not that a defaulted field was used.
 #[controller("/req")]
 pub struct ReqController {
@@ -205,7 +205,7 @@ impl ReqController {
         Body::text(self.server.port().to_string())
     }
 
-    // ReqFacade was built via #[new] injecting the request-scoped ReqServer — exercises the
+    // ReqFacade was built via #[new] injecting the execution-scoped ReqServer — exercises the
     // request-context threading through the constructor bridge.
     #[get("/facade-port")]
     fn facade_port(&self) -> Body {
@@ -297,7 +297,7 @@ async fn new_ctor_request_scope_resolves_per_request() {
     assert_eq!(
         resp.text().await.unwrap(),
         "8080",
-        "request-scoped #[new] must run the constructor (injected port), not default the field"
+        "execution-scoped #[new] must run the constructor (injected port), not default the field"
     );
 }
 
@@ -305,7 +305,7 @@ async fn new_ctor_request_scope_resolves_per_request() {
 #[tokio_localset_test::localset_test]
 async fn new_ctor_can_inject_request_scoped_dependency() {
     let server = TestServer::start(NewCtorModule).await;
-    // ReqFacade's #[new] injects the request-scoped ReqServer — resolves only because the
+    // ReqFacade's #[new] injects the execution-scoped ReqServer — resolves only because the
     // constructor bridge threads the request context.
     let resp = server
         .client()

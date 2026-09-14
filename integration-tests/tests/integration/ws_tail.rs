@@ -4,7 +4,7 @@
 //! its end does not.
 //!
 //! WebSocket is the transport where this matters most and was proved last. Its
-//! request scope is one message, so the execution behind a stream is the
+//! execution scope is one message, so the execution behind a stream is the
 //! narrowest of the four, and a producer that outlives it runs until the
 //! process ends. HTTP, RPC over tcp and udp, and gRPC each pinned this;
 //! `ws_handler_stream.rs` covers the drain-to-completion path only, which is

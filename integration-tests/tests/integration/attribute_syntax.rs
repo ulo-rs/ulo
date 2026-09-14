@@ -26,7 +26,7 @@ impl SimpleService {
 }
 
 // Test 2: New syntax with scope
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct RequestService {
     #[inject]
     config: ConfigService<TestConfig>,

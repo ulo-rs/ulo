@@ -1,4 +1,4 @@
-//! Data a middleware puts in the request extension bag reaches a request-scoped
+//! Data a middleware puts in the request extension bag reaches an execution-scoped
 //! provider and the controller that injects it, without either extracting it by
 //! hand.
 //!
@@ -18,9 +18,9 @@ pub struct UserId(String);
 #[derive(Clone, Debug)]
 pub struct RequestId(String);
 
-// ===== 2. Request-scoped provider using from_request =====
+// ===== 2. Execution-scoped provider using from_request =====
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct RequestContext {
     user_id: String,
     request_id: String,
@@ -29,7 +29,7 @@ pub struct RequestContext {
 
 impl RequestContext {
     /// Built per request from the injected `Request` — the modern replacement for the old
-    /// `init = "from_request"` magic: `Request` is a request-scoped injectable, so `#[new]` resolves
+    /// `init = "from_request"` magic: `Request` is an execution-scoped injectable, so `#[new]` resolves
     /// it and the constructor reads the same request extensions.
     #[new]
     fn new(req: Request) -> Self {
@@ -88,7 +88,7 @@ impl UserService {
 #[controller("/users")]
 pub struct UserController {
     #[inject]
-    context: RequestContext, // Request-scoped context
+    context: RequestContext, // Execution-scoped context
     #[inject]
     user_service: UserService, // Singleton service
 }

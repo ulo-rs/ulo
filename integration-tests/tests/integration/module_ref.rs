@@ -3,7 +3,7 @@
 //!
 //! Strict resolution is the point: a handle that fell back to the global store
 //! would satisfy every lookup and erase the module boundary, so the refusals
-//! matter more than the successes. Request-scoped resolution through a handle
+//! matter more than the successes. Execution-scoped resolution through a handle
 //! is covered too — it needs an execution to resolve into, and asking without
 //! one is a refusal rather than a panic.
 use ulo::prelude::*;
@@ -39,7 +39,7 @@ impl CacheService {
 }
 
 #[derive(Debug)]
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct RequestScopedService {
     pub id: String,
 }
@@ -293,10 +293,10 @@ async fn request_scoped_get_is_refused_not_a_panic() {
     let message = plugin_loader
         .load_request_scoped()
         .await
-        .expect_err("`get` has no execution to build a request-scoped provider in");
+        .expect_err("`get` has no execution to build an execution-scoped provider in");
 
     assert!(
-        message.contains("RequestScopedService") && message.contains("request-scoped"),
+        message.contains("RequestScopedService") && message.contains("execution-scoped"),
         "the refusal should name the provider and its scope, got: {message}"
     );
 }
@@ -315,22 +315,22 @@ async fn resolve_builds_a_request_scoped_provider_in_the_execution() {
     let first = plugin_loader
         .resolve_request_scoped(&execution)
         .await
-        .expect("an execution is all a request-scoped provider needs");
+        .expect("an execution is all an execution-scoped provider needs");
     let second = plugin_loader
         .resolve_request_scoped(&execution)
         .await
-        .expect("an execution is all a request-scoped provider needs");
+        .expect("an execution is all an execution-scoped provider needs");
 
     assert_eq!(
         first.id, second.id,
-        "one execution holds one instance of a request-scoped provider"
+        "one execution holds one instance of an execution-scoped provider"
     );
 
     let elsewhere = ProviderContext::standalone();
     let third = plugin_loader
         .resolve_request_scoped(&elsewhere)
         .await
-        .expect("an execution is all a request-scoped provider needs");
+        .expect("an execution is all an execution-scoped provider needs");
 
     assert_ne!(
         first.id, third.id,

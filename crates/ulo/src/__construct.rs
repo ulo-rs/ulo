@@ -35,7 +35,7 @@ pub type ResolvedDeps = FxHashMap<String, Arc<Box<dyn Provider>>>;
 /// either means "no `#[new]` — use field injection".
 ///
 /// The context parameter carries the execution being served, so a constructor parameter that is
-/// itself request-scoped resolves in that same execution; it is `ProviderContext::None` for
+/// itself execution-scoped resolves in that same execution; it is `ProviderContext::None` for
 /// construction outside any execution, matching the field-injection paths.
 pub trait CtorBridge: Sized {
     fn __ulo_ctor_tokens() -> Option<Vec<String>> {

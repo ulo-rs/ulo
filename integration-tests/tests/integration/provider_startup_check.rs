@@ -3,7 +3,7 @@
 //!
 //! This is the mechanism the database modules use to report a connection they could not establish,
 //! without `ProviderFactory::build` needing to be fallible: `build` carries the failure into the
-//! provider, and `on_module_init` — which the scanner calls for every non-request-scoped provider
+//! provider, and `on_module_init` — which the scanner calls for every non-execution-scoped provider
 //! — returns it.
 
 use std::any::Any;

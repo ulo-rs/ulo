@@ -53,7 +53,7 @@ impl<T: Any + Send + Sync> DispatchSource<T> {
     }
 }
 
-/// The declared dependency tokens that are request-scoped — the scan that decides
+/// The declared dependency tokens that are execution-scoped — the scan that decides
 /// whether a dispatch target is built per call.
 pub fn request_scoped_dependencies(
     declared: &[String],
@@ -63,7 +63,7 @@ pub fn request_scoped_dependencies(
         .iter()
         .filter(|token| {
             dependencies.get(*token).is_some_and(|provider| {
-                matches!(provider.scope(), crate::di::ProviderScope::Request)
+                matches!(provider.scope(), crate::di::ProviderScope::Execution)
             })
         })
         .cloned()

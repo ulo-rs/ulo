@@ -40,7 +40,7 @@ pub trait HandlerContext: Send + Sync {
 
     /// The instances built for this execution.
     ///
-    /// A request-scoped type resolved twice in one execution is constructed
+    /// An execution-scoped type resolved twice in one execution is constructed
     /// once and shared. Nothing in here is transport-specific — it lives on the
     /// context because that is the object whose lifetime it shares.
     fn cache(&self) -> &ExecutionCache;

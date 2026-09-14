@@ -1,6 +1,6 @@
 //! Resolving a provider by hand, outside any handler.
 //!
-//! A request-scoped provider is built into an execution's cache, so resolving one
+//! An execution-scoped provider is built into an execution's cache, so resolving one
 //! means having an execution to resolve it in — a transport's context where the
 //! work arrived over a wire, a standalone execution where it did not.
 
@@ -16,7 +16,7 @@ use ulo::{injectable, module, new};
 use uuid::Uuid;
 
 #[derive(Debug)]
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct Stamp {
     pub id: String,
 }
@@ -45,11 +45,11 @@ async fn one_execution_holds_one_instance() {
     let first = app
         .resolve::<Stamp>(&execution)
         .await
-        .expect("a request-scoped provider resolves in an execution");
+        .expect("an execution-scoped provider resolves in an execution");
     let second = app
         .resolve::<Stamp>(&execution)
         .await
-        .expect("a request-scoped provider resolves in an execution");
+        .expect("an execution-scoped provider resolves in an execution");
 
     assert_eq!(
         first.id, second.id,
@@ -64,11 +64,11 @@ async fn a_second_execution_builds_its_own() {
     let first = app
         .resolve::<Stamp>(&ProviderContext::standalone())
         .await
-        .expect("a request-scoped provider resolves in an execution");
+        .expect("an execution-scoped provider resolves in an execution");
     let second = app
         .resolve::<Stamp>(&ProviderContext::standalone())
         .await
-        .expect("a request-scoped provider resolves in an execution");
+        .expect("an execution-scoped provider resolves in an execution");
 
     assert_ne!(first.id, second.id);
 }
@@ -116,7 +116,7 @@ async fn without_an_execution_there_is_nothing_to_resolve_in() {
         .expect_err("`None` is the absence of an execution, not one to build in");
 
     match error {
-        ulo::di::ResolutionError::RequestScopeOutsideExecution { token } => assert!(
+        ulo::di::ResolutionError::ExecutionRequired { token } => assert!(
             token.contains("Stamp"),
             "the refusal names the provider, got: {token}"
         ),

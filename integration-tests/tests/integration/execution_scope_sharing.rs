@@ -1,4 +1,4 @@
-//! A request-scoped provider is constructed once per request, no matter how many
+//! An execution-scoped provider is constructed once per request, no matter how many
 //! sites inject it.
 //!
 //! The two sites here are the ones the framework builds separately: an enhancer
@@ -18,7 +18,7 @@ static BUILDS: AtomicU64 = AtomicU64::new(0);
 /// The id the guard was handed, read back by the assertions.
 static GUARD_SAW: AtomicU64 = AtomicU64::new(0);
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct RequestId {
     id: u64,
 }
@@ -32,7 +32,7 @@ impl RequestId {
     }
 }
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct RecordingGuard {
     #[inject]
     request_id: RequestId,

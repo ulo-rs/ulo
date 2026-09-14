@@ -1037,14 +1037,14 @@ async fn an_rpc_handler_can_take_nothing() {
     assert_eq!(shape_call(port, "shape.nothing").await, "ok");
 }
 
-// ---- request scope on a transport that is not HTTP ---------------------------
+// ---- execution scope on a transport that is not HTTP ---------------------------
 
 /// Counts how many times it is constructed, process-wide.
 static SCOPED_BUILDS: AtomicUsize = AtomicUsize::new(0);
 
-/// Request-scoped, so one construction per execution and no more — the property
+/// Execution-scoped, so one construction per execution and no more — the property
 /// that used to be reachable only on HTTP.
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct PerCall {
     #[default(0)]
     id: usize,
@@ -1067,7 +1067,7 @@ impl PerCall {
 
 /// Resolves `PerCall` twice through two separate guards plus the handler. All
 /// three must see one instance.
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct ScopedGuardA {
     #[inject]
     scoped: PerCall,
@@ -1081,7 +1081,7 @@ impl Guard<RpcContext> for ScopedGuardA {
     }
 }
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct ScopedGuardB {
     #[inject]
     scoped: PerCall,
@@ -1126,11 +1126,11 @@ impl ScopedRpcController {
 #[module(controllers: [ScopedRpcController], providers: [PerCall, ScopedGuardA, ScopedGuardB])]
 impl ScopedRpcModule {}
 
-/// A request-scoped provider injected into two RPC guards is constructed once
+/// An execution-scoped provider injected into two RPC guards is constructed once
 /// per call and shared, exactly as on HTTP.
 ///
 /// Registering this at all used to be refused at startup — the RPC resolver
-/// rejected a factory enhancer with request-scoped dependencies on the grounds
+/// rejected a factory enhancer with execution-scoped dependencies on the grounds
 /// that "RPC has no HTTP request context". Every transport carries an execution
 /// now, and the cache that makes the scope mean anything lives on it.
 #[tokio_localset_test::localset_test]
@@ -1165,7 +1165,7 @@ async fn a_request_scoped_provider_is_shared_within_one_rpc_call() {
 /// tests run concurrently and that counter is reset by its own test.
 static CALL_IDS: AtomicUsize = AtomicUsize::new(0);
 
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct CallScoped {
     #[default(0)]
     id: usize,
@@ -1189,7 +1189,7 @@ pub struct GuardSaw(usize);
 
 /// Reads `CallScoped` before the controller exists, so the id it records is the
 /// one the execution already holds by the time the controller is built.
-#[injectable(scope = "request")]
+#[injectable(scope = "execution")]
 pub struct CallScopedGuard {
     #[inject]
     scoped: CallScoped,
@@ -1206,7 +1206,7 @@ impl Guard<RpcContext> for CallScopedGuard {
 /// Numbers each controller construction.
 static PER_CALL_CONTROLLER_BUILDS: AtomicUsize = AtomicUsize::new(0);
 
-#[controller(scope = "request")]
+#[controller(scope = "execution")]
 pub struct PerCallRpcController {
     #[inject]
     scoped: CallScoped,
@@ -1265,8 +1265,8 @@ impl SingletonRpcController {
 #[module(controllers: [SingletonRpcController])]
 impl SingletonRpcModule {}
 
-/// `#[controller(scope = "request")]` builds the controller inside the call it
-/// serves: a fresh one per message, and its request-scoped dependency is the
+/// `#[controller(scope = "execution")]` builds the controller inside the call it
+/// serves: a fresh one per message, and its execution-scoped dependency is the
 /// instance the call already holds rather than a second one.
 #[tokio_localset_test::localset_test]
 async fn a_request_scoped_rpc_controller_is_built_per_call() {
@@ -1299,11 +1299,11 @@ async fn a_request_scoped_rpc_controller_is_built_per_call() {
     // Equal ids mean the controller joined that same execution rather than starting one.
     assert_eq!(
         first["controller_saw"], first["guard_saw"],
-        "the controller shares the call's request-scoped instance: {first}"
+        "the controller shares the call's execution-scoped instance: {first}"
     );
     assert_eq!(
         second["controller_saw"], second["guard_saw"],
-        "the controller shares the call's request-scoped instance: {second}"
+        "the controller shares the call's execution-scoped instance: {second}"
     );
     assert_ne!(
         first["controller_saw"], second["controller_saw"],
@@ -1342,7 +1342,7 @@ async fn a_singleton_rpc_controller_is_built_once() {
 /// Numbers each construction of the controller that never declares a scope.
 static ELEVATED_CONTROLLER_BUILDS: AtomicUsize = AtomicUsize::new(0);
 
-/// Declares no scope, and depends on a request-scoped provider.
+/// Declares no scope, and depends on an execution-scoped provider.
 #[controller]
 pub struct ElevatedRpcController {
     #[inject]
@@ -1373,7 +1373,7 @@ impl ElevatedRpcController {
 #[module(controllers: [ElevatedRpcController], providers: [CallScoped])]
 impl ElevatedRpcModule {}
 
-/// A controller that declares no scope but depends on a request-scoped provider is elevated rather
+/// A controller that declares no scope but depends on an execution-scoped provider is elevated rather
 /// than refused. Registering this used to abort at startup: a singleton cannot hold something that
 /// belongs to one call, and `#[controller]` had no other scope to offer.
 #[tokio_localset_test::localset_test]
@@ -1405,7 +1405,7 @@ async fn an_rpc_controller_elevates_to_request_scope() {
     );
     assert_ne!(
         first["saw"], second["saw"],
-        "and its request-scoped dependency is the calling execution's: {first} then {second}"
+        "and its execution-scoped dependency is the calling execution's: {first} then {second}"
     );
 }
 
