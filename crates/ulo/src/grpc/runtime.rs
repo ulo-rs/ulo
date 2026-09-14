@@ -313,7 +313,11 @@ pub async fn run_grpc_error_chain(
         )
         .await;
         match outcome {
-            Ok(Some(claimed)) => return Some(claimed),
+            Ok(Some(Err(claimed))) => return Some(claimed),
+            // A claim carrying no status has nothing to put on the wire: this transport's
+            // handler type holds no reply, so `Ok(())` says only that the handler declined to
+            // reshape. The next handler gets its turn, as it does for `None`.
+            Ok(Some(Ok(()))) => continue,
             Ok(None) => continue,
             Err(panic_event) => {
                 tracing::error!(chain_position = position, error = %err, panic = %panic_event.message, "error handler panicked; trying the next one");

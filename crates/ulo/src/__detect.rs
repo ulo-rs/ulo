@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::grpc::GrpcContext;
-use crate::grpc::GrpcStatus;
+use crate::grpc::GrpcHandlerResult;
 use crate::http::HttpContext;
 use crate::http::HttpResponse;
 use crate::http::middleware::Middleware;
@@ -109,7 +109,7 @@ probe!(
 probe!(HttpErrorHandlerProbe, HttpErrorHandlerProbeFallback, ErrorHandler<HttpContext, HttpResponse>, dyn ErrorHandler<HttpContext, HttpResponse>);
 probe!(RpcErrorHandlerProbe, RpcErrorHandlerProbeFallback, ErrorHandler<RpcContext, RpcHandlerResult>, dyn ErrorHandler<RpcContext, RpcHandlerResult>);
 probe!(WsErrorHandlerProbe, WsErrorHandlerProbeFallback, ErrorHandler<WsContext, WsHandlerResult>, dyn ErrorHandler<WsContext, WsHandlerResult>);
-probe!(GrpcErrorHandlerProbe, GrpcErrorHandlerProbeFallback, ErrorHandler<GrpcContext, GrpcStatus>, dyn ErrorHandler<GrpcContext, GrpcStatus>);
+probe!(GrpcErrorHandlerProbe, GrpcErrorHandlerProbeFallback, ErrorHandler<GrpcContext, GrpcHandlerResult>, dyn ErrorHandler<GrpcContext, GrpcHandlerResult>);
 
 probe!(
     MiddlewareProbe,

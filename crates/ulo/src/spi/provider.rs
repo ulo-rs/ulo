@@ -53,7 +53,8 @@ pub trait Provider: Send + Sync {
 pub(crate) type HttpErrorHandlerArc = Arc<dyn ErrorHandler<HttpContext, HttpResponse>>;
 pub(crate) type RpcErrorHandlerArc = Arc<dyn ErrorHandler<RpcContext, RpcHandlerResult>>;
 pub(crate) type WsErrorHandlerArc = Arc<dyn ErrorHandler<WsContext, WsHandlerResult>>;
-pub(crate) type GrpcErrorHandlerArc = Arc<dyn ErrorHandler<GrpcContext, crate::grpc::GrpcStatus>>;
+pub(crate) type GrpcErrorHandlerArc =
+    Arc<dyn ErrorHandler<GrpcContext, crate::grpc::GrpcHandlerResult>>;
 
 /// Role trait-objects a provider may contribute to the registry.
 ///

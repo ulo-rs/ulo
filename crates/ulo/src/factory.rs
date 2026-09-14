@@ -153,7 +153,7 @@ impl UloFactory {
     /// method-level handlers — the most specific is consulted first.
     pub fn use_global_grpc_error_handler(
         &mut self,
-        handler: Arc<dyn ErrorHandler<GrpcContext, crate::grpc::GrpcStatus>>,
+        handler: Arc<dyn ErrorHandler<GrpcContext, crate::grpc::GrpcHandlerResult>>,
     ) -> &mut Self {
         self.global_grpc_error_handlers.push(handler);
         self

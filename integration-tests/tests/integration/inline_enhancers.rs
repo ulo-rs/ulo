@@ -482,14 +482,14 @@ mod grpc {
     pub struct ClaimingErrorHandler;
 
     #[async_trait]
-    impl ErrorHandler<GrpcContext, GrpcStatus> for ClaimingErrorHandler {
+    impl ErrorHandler<GrpcContext, GrpcHandlerResult> for ClaimingErrorHandler {
         async fn handle_error(
             &self,
             _error: ChainError<'_>,
             _ctx: &GrpcContext,
-        ) -> Option<GrpcStatus> {
+        ) -> Option<GrpcHandlerResult> {
             record("claimed");
-            Some(GrpcStatus::not_found("claimed"))
+            Some(Err(GrpcStatus::not_found("claimed")))
         }
     }
 

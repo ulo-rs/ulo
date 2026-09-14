@@ -164,7 +164,7 @@ impl GrpcServiceResolver {
             .ok_or_else(|| {
                 format!(
                     "gRPC ErrorHandler '{}' not found in registry. An error handler registers \
-                     automatically by implementing ErrorHandler<GrpcContext, GrpcStatus>; make \
+                     automatically by implementing ErrorHandler<GrpcContext, GrpcHandlerResult>; make \
                      sure the provider is in the module's `providers` list. For `provider_factory!` \
                      under a string/const token, name the produced type so it can be detected — \
                      annotate the closure's return type or pass a type hint.",

@@ -157,10 +157,11 @@ impl ulo::enhancer::Interceptor<ulo::grpc::GrpcContext, ulo::grpc::GrpcHandlerRe
 
 // ─── Error handler ──────────────────────────────────────────────────────────
 //
-// A provider implementing `ErrorHandler<GrpcContext, GrpcStatus>` is
+// A provider implementing `ErrorHandler<GrpcContext, GrpcHandlerResult>` is
 // registered as one by that impl. The chain offers it every error a handler
-// returned and every caught panic. Returning `Some(...)` claims the answer with
-// a new status; `None` lets the next handler decide, falling back to the status
+// returned and every caught panic. Returning `Some(Err(status))` claims the
+// answer with a new status; `None` lets the next handler decide, falling back
+// to the status
 // the error's kind maps to if none claims.
 
 #[injectable]
@@ -168,23 +169,23 @@ pub struct QtyErrorHandler {}
 impl QtyErrorHandler {}
 
 #[ulo::async_trait]
-impl ulo::enhancer::ErrorHandler<ulo::grpc::GrpcContext, ulo::grpc::GrpcStatus>
+impl ulo::enhancer::ErrorHandler<ulo::grpc::GrpcContext, ulo::grpc::GrpcHandlerResult>
     for QtyErrorHandler
 {
     async fn handle_error(
         &self,
         error: ulo::enhancer::ChainError<'_>,
         _ctx: &ulo::grpc::GrpcContext,
-    ) -> Option<ulo::grpc::GrpcStatus> {
+    ) -> Option<ulo::grpc::GrpcHandlerResult> {
         // The chain is handed the handler's own error, so this matches a
         // variant rather than a substring of a message.
         let OrderError::InvalidQty { qty } = error.downcast_ref::<OrderError>()? else {
             return None;
         };
-        Some(ulo::grpc::GrpcStatus::new(
+        Some(Err(ulo::grpc::GrpcStatus::new(
             ulo::grpc::GrpcCode::FailedPrecondition,
             format!("qty must be positive, got {qty}"),
-        ))
+        )))
     }
 }
 

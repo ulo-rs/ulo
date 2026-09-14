@@ -23,6 +23,7 @@ use ulo::enhancer::Guard;
 use ulo::errors::GuardRejection;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
+use ulo::grpc::GrpcHandlerResult;
 use ulo::grpc::GrpcStatus;
 use ulo::grpc::extract::Inbound;
 use ulo::rpc::RpcContext;
@@ -64,17 +65,17 @@ async fn rpc_catcher(err: &GuardRejection, _ctx: &RpcContext) -> RpcHandlerResul
 pub struct GrpcCatcher {}
 
 #[async_trait]
-impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcStatus> for GrpcCatcher {
+impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcHandlerResult> for GrpcCatcher {
     async fn handle_error(
         &self,
         error: ulo::enhancer::ChainError<'_>,
         _ctx: &GrpcContext,
-    ) -> Option<GrpcStatus> {
+    ) -> Option<GrpcHandlerResult> {
         let rejection = error.downcast_ref::<GuardRejection>()?;
-        Some(GrpcStatus::unauthenticated(format!(
+        Some(Err(GrpcStatus::unauthenticated(format!(
             "caught:{}",
             rejection.message()
-        )))
+        ))))
     }
 }
 

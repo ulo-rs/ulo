@@ -61,7 +61,7 @@ pub struct GrpcEnhancers {
     pub error_handler_tokens: Vec<String>,
     pub guards: Vec<Arc<dyn Guard<GrpcContext>>>,
     pub interceptors: Vec<Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>>,
-    pub error_handlers: Vec<Arc<dyn ErrorHandler<GrpcContext, GrpcStatus>>>,
+    pub error_handlers: Vec<Arc<dyn ErrorHandler<GrpcContext, GrpcHandlerResult>>>,
     pub handlers: Vec<GrpcHandlerEnhancers>,
 }
 
@@ -76,7 +76,7 @@ pub struct GrpcHandlerEnhancers {
     pub error_handler_tokens: Vec<String>,
     pub guards: Vec<Arc<dyn Guard<GrpcContext>>>,
     pub interceptors: Vec<Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>>,
-    pub error_handlers: Vec<Arc<dyn ErrorHandler<GrpcContext, GrpcStatus>>>,
+    pub error_handlers: Vec<Arc<dyn ErrorHandler<GrpcContext, GrpcHandlerResult>>>,
 }
 
 /// A gRPC service's declarations plus its registration hook — implemented by `#[grpc_methods]` on

@@ -21,6 +21,7 @@ use ulo::enhancer::{Interceptor, InterceptorNext};
 use ulo::errors::PanicRecovered;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
+use ulo::grpc::GrpcHandlerResult;
 use ulo::grpc::GrpcStatus;
 use ulo::grpc::extract::Inbound;
 use ulo::http::HttpContext;
@@ -100,17 +101,17 @@ async fn a_panicking_middleware_is_answered_by_the_chain() {
 pub struct GrpcPipelineCatcher {}
 
 #[async_trait]
-impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcStatus> for GrpcPipelineCatcher {
+impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcHandlerResult> for GrpcPipelineCatcher {
     async fn handle_error(
         &self,
         error: ulo::enhancer::ChainError<'_>,
         _ctx: &GrpcContext,
-    ) -> Option<GrpcStatus> {
+    ) -> Option<GrpcHandlerResult> {
         let panic = error.downcast_ref::<PanicRecovered>()?;
-        Some(GrpcStatus::unauthenticated(format!(
+        Some(Err(GrpcStatus::unauthenticated(format!(
             "caught:{}",
             panic.during.as_str()
-        )))
+        ))))
     }
 }
 

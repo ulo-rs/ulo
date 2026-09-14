@@ -22,6 +22,7 @@ use ulo::enhancer::Guard;
 use ulo::errors::PanicRecovered;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
+use ulo::grpc::GrpcHandlerResult;
 use ulo::grpc::GrpcStatus;
 use ulo::grpc::extract::Inbound;
 use ulo::rpc::RpcContext;
@@ -53,17 +54,17 @@ async fn rpc_panic_catcher(err: &PanicRecovered, _ctx: &RpcContext) -> RpcHandle
 pub struct GrpcPanicCatcher {}
 
 #[async_trait]
-impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcStatus> for GrpcPanicCatcher {
+impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcHandlerResult> for GrpcPanicCatcher {
     async fn handle_error(
         &self,
         error: ulo::enhancer::ChainError<'_>,
         _ctx: &GrpcContext,
-    ) -> Option<GrpcStatus> {
+    ) -> Option<GrpcHandlerResult> {
         let panic = error.downcast_ref::<PanicRecovered>()?;
-        Some(GrpcStatus::unauthenticated(format!(
+        Some(Err(GrpcStatus::unauthenticated(format!(
             "caught:{}",
             panic.during.as_str()
-        )))
+        ))))
     }
 }
 

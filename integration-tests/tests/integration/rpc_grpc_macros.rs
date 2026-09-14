@@ -955,20 +955,20 @@ pub struct ConditionalErrorHandler {}
 impl ConditionalErrorHandler {}
 
 #[ulo::async_trait]
-impl ulo::enhancer::ErrorHandler<ulo::grpc::GrpcContext, ulo::grpc::GrpcStatus>
+impl ulo::enhancer::ErrorHandler<ulo::grpc::GrpcContext, ulo::grpc::GrpcHandlerResult>
     for ConditionalErrorHandler
 {
     async fn handle_error(
         &self,
         error: ulo::enhancer::ChainError<'_>,
         _ctx: &ulo::grpc::GrpcContext,
-    ) -> ::std::option::Option<ulo::grpc::GrpcStatus> {
+    ) -> ::std::option::Option<ulo::grpc::GrpcHandlerResult> {
         let msg = error.to_string();
         if msg.contains("remap-me") {
-            Some(ulo::grpc::GrpcStatus::new(
+            Some(Err(ulo::grpc::GrpcStatus::new(
                 ulo::grpc::GrpcCode::FailedPrecondition,
                 "remapped by handler",
-            ))
+            )))
         } else {
             None
         }
@@ -1622,14 +1622,14 @@ pub struct PanickingGrpcErrorHandler {}
 impl PanickingGrpcErrorHandler {}
 
 #[ulo::async_trait]
-impl ulo::enhancer::ErrorHandler<ulo::grpc::GrpcContext, ulo::grpc::GrpcStatus>
+impl ulo::enhancer::ErrorHandler<ulo::grpc::GrpcContext, ulo::grpc::GrpcHandlerResult>
     for PanickingGrpcErrorHandler
 {
     async fn handle_error(
         &self,
         _error: ulo::enhancer::ChainError<'_>,
         _ctx: &ulo::grpc::GrpcContext,
-    ) -> Option<ulo::grpc::GrpcStatus> {
+    ) -> Option<ulo::grpc::GrpcHandlerResult> {
         panic!("error-handler kaboom");
     }
 }

@@ -12,6 +12,7 @@ use serial_test::serial;
 use ulo::UloFactory;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
+use ulo::grpc::GrpcHandlerResult;
 use ulo::grpc::extract::Inbound;
 use ulo::grpc::{GrpcCode, GrpcStatus};
 use ulo::{ErrorKind, async_trait, injectable, module};
@@ -49,17 +50,17 @@ impl ulo::Error for OutOfStock {
 pub struct RestockHandler {}
 
 #[async_trait]
-impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcStatus> for RestockHandler {
+impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcHandlerResult> for RestockHandler {
     async fn handle_error(
         &self,
         error: ulo::enhancer::ChainError<'_>,
         _ctx: &GrpcContext,
-    ) -> Option<GrpcStatus> {
+    ) -> Option<GrpcHandlerResult> {
         let out_of_stock = error.downcast_ref::<OutOfStock>()?;
-        Some(GrpcStatus::new(
+        Some(Err(GrpcStatus::new(
             GrpcCode::FailedPrecondition,
             format!("restock:{}", out_of_stock.item),
-        ))
+        )))
     }
 }
 

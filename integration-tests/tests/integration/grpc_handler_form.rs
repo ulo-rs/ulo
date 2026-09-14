@@ -16,6 +16,7 @@ use ulo::context::{ExecutionContext, Extensions};
 use ulo::extract::Payload as Aliased;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
+use ulo::grpc::GrpcHandlerResult;
 use ulo::grpc::extract::Inbound;
 use ulo::grpc::{GrpcCode, GrpcStatus};
 use ulo::{ErrorKind, async_trait, injectable, module};
@@ -57,17 +58,17 @@ impl ulo::Error for NoName {
 pub struct NoNameHandler {}
 
 #[async_trait]
-impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcStatus> for NoNameHandler {
+impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcHandlerResult> for NoNameHandler {
     async fn handle_error(
         &self,
         error: ulo::enhancer::ChainError<'_>,
         _ctx: &GrpcContext,
-    ) -> Option<GrpcStatus> {
+    ) -> Option<GrpcHandlerResult> {
         error.downcast_ref::<NoName>()?;
-        Some(GrpcStatus::new(
+        Some(Err(GrpcStatus::new(
             GrpcCode::FailedPrecondition,
             "caught:no-name",
-        ))
+        )))
     }
 }
 
