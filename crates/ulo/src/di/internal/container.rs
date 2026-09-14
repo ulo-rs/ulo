@@ -303,12 +303,11 @@ impl Container {
         route: Arc<dyn crate::http::Route>,
         enhancer_metadata: EnhancerSet<Http>,
     ) -> SetupResult {
-        let global_enhancers = self.global_http.clone();
         let module_ref = self
             .modules
             .get_mut(module_ref_token)
             .ok_or_else(|| "Module not found".to_string())?;
-        module_ref.add_route_instance(controller_token, route, enhancer_metadata, global_enhancers);
+        module_ref.add_route_instance(controller_token, route, enhancer_metadata);
         Ok(())
     }
 
