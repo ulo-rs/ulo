@@ -1285,13 +1285,13 @@ fn generate_singleton_factory(
                                      Singleton-scoped providers cannot inject Execution-scoped providers.\n\
                                      Dependency '{}' depends on '{}' which has Execution scope.\n\
                                      \n\
-                                     This restriction prevents data leakage across requests. Singleton providers\n\
-                                     live for the entire application lifetime and would capture stale request data.\n\
+                                     This restriction prevents data leakage across executions. Singleton providers\n\
+                                     live for the entire application lifetime and would capture stale data from one execution.\n\
                                      \n\
                                      Solutions:\n\
-                                     1. Change '{}' to Execution scope: #[injectable(scope = \"request\")]\n\
+                                     1. Change '{}' to Execution scope: #[injectable(scope = \"execution\")]\n\
                                      2. Change '{}' to Singleton scope (if appropriate for your use case)\n\
-                                     3. Pass request-specific data as method parameters instead of injecting\n\
+                                     3. Pass execution-specific data as method parameters instead of injecting\n\
                                      4. Extract data in controller (which has HttpRequest access) and pass it down\n\
                                      \n",
                                     ::std::any::type_name::<#struct_name>(),
