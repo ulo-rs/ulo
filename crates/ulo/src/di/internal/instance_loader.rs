@@ -55,7 +55,7 @@ use super::{
 };
 use crate::{
     http::Route,
-    spi::{Controller, Dispatch, HttpGuardEntry, HttpInterceptorEntry, Injectable, Provider},
+    spi::{Controller, Dispatch, Injectable, Provider},
 };
 
 pub(crate) struct InstanceLoader {
@@ -521,98 +521,28 @@ impl InstanceLoader {
         Ok(())
     }
 
-    /// Resolve enhancers from both DI container and direct instantiation
+    /// Resolve one route's declared enhancers, with the transport's globals ahead of them.
     ///
-    /// Enhancers can be provided in two ways:
-    /// 1. **DI-based** (`#[use_guards(AuthGuard)]`):
-    ///    - Generates token → looked up in DI container
-    ///    - Must be registered in module providers
-    ///    - Supports dependency injection
-    ///
-    /// 2. **Direct instantiation** (`#[use_guards(MyGuard{})]` or `#[use_guards(MyGuard::new())]`):
-    ///    - Generates instance expression → directly instantiated
-    ///    - No DI lookup performed
-    ///    - No dependency injection support
-    ///
-    /// Both types are collected and combined in order:
-    /// - First: DI-resolved enhancers (from tokens)
-    /// - Then: Directly instantiated enhancers (from instances)
+    /// A `#[controller]` yields one `Route` per handler method and each registers separately, so
+    /// HTTP has one tier where the other three have two.
     fn resolve_enhancers_from_tokens(
         &self,
         route: &Arc<dyn Route>,
     ) -> SetupResult<EnhancerSet<Http>> {
-        let registry = self.container.borrow();
-        let registry = registry.role_registry();
         let declared = route.enhancers();
-
-        let mut guards: Vec<HttpGuardEntry> = Vec::new();
-        for token in declared.guard_tokens {
-            let guard = registry.http.guards.get(&token).cloned().ok_or_else(|| {
-                format!(
-                    "HTTP Guard '{}' not found in registry. A guard registers automatically by \
-                     implementing Guard<HttpContext> (or a universal blanket impl); make sure the \
-                     provider is in the module's `providers` list. For `provider_factory!` under a \
-                     string/const token, name the produced type so it can be detected — annotate \
-                     the closure's return type (`|| -> MyGuard`) or pass a type hint.",
-                    token
-                )
-            })?;
-            guards.push(guard);
-        }
-        guards.extend(declared.guards.into_iter().map(HttpGuardEntry::Ready));
-
-        let mut interceptors: Vec<HttpInterceptorEntry> = Vec::new();
-        for token in declared.interceptor_tokens {
-            let interceptor = registry
-                .http
-                .interceptors
-                .get(&token)
-                .cloned()
-                .ok_or_else(|| {
-                    format!(
-                        "HTTP Interceptor '{}' not found in registry. An interceptor registers \
-                         automatically by implementing Interceptor<HttpContext>; make sure the \
-                         provider is in the module's `providers` list. For `provider_factory!` \
-                         under a string/const token, name the produced type so it can be detected \
-                         — annotate the closure's return type (`|| -> MyInterceptor`) or pass a \
-                         type hint.",
-                        token
-                    )
-                })?;
-            interceptors.push(interceptor);
-        }
-        interceptors.extend(
-            declared
-                .interceptors
-                .into_iter()
-                .map(HttpInterceptorEntry::Ready),
-        );
-
-        let mut error_handlers = Vec::new();
-        for token in declared.error_handler_tokens {
-            let eh = registry
-                .http.error_handlers
-                .get(&token)
-                .cloned()
-                .ok_or_else(|| {
-                    format!(
-                        "HTTP ErrorHandler '{}' not found in registry. An error handler registers \
-                         automatically by implementing ErrorHandler<HttpContext, HttpResponse>; \
-                         make sure the provider is in the module's `providers` list. For \
-                         `provider_factory!` under a string/const token, name the produced type so \
-                         it can be detected — annotate the closure's return type or pass a type hint.",
-                        token
-                    )
-                })?;
-            error_handlers.push(eh);
-        }
-        error_handlers.extend(declared.error_handlers);
-
-        Ok(EnhancerSet {
-            guards,
-            interceptors,
-            error_handlers,
-        })
+        let container = self.container.borrow();
+        super::resolve::resolve_target::<Http>(
+            &container.role_registry().http,
+            &container.global_http,
+            super::resolve::Declared {
+                guard_tokens: declared.guard_tokens,
+                guards: declared.guards,
+                interceptor_tokens: declared.interceptor_tokens,
+                interceptors: declared.interceptors,
+                error_handler_tokens: declared.error_handler_tokens,
+                error_handlers: declared.error_handlers,
+            },
+        )
     }
 
     fn resolve_dependencies(

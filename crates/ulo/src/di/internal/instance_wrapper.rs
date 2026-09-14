@@ -47,20 +47,14 @@ pub(crate) struct InstanceWrapper {
 }
 
 impl InstanceWrapper {
-    pub(crate) fn new(
-        instance: Arc<dyn Route>,
-        enhancer_metadata: EnhancerSet<Http>,
-        global_enhancers: EnhancerSet<Http>,
-    ) -> Self {
-        // Execution order: global → controller → method
-        let mut guards = global_enhancers.guards;
-        guards.extend(enhancer_metadata.guards);
-
-        let mut interceptors = global_enhancers.interceptors;
-        interceptors.extend(enhancer_metadata.interceptors);
-
-        let mut error_handlers = global_enhancers.error_handlers;
-        error_handlers.extend(enhancer_metadata.error_handlers);
+    /// `enhancers` is final: the resolver folded this transport's globals in ahead of what the
+    /// route declared, which is the order they run.
+    pub(crate) fn new(instance: Arc<dyn Route>, enhancers: EnhancerSet<Http>) -> Self {
+        let EnhancerSet {
+            guards,
+            interceptors,
+            error_handlers,
+        } = enhancers;
 
         let metadata = instance.metadata();
 

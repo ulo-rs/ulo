@@ -67,8 +67,7 @@ impl Module {
         &mut self,
         controller_token: &str,
         route: Arc<dyn Route>,
-        enhancer_metadata: EnhancerSet<Http>,
-        global_enhancers: EnhancerSet<Http>,
+        enhancers: EnhancerSet<Http>,
     ) {
         let key = format!(
             "{}::{} {}",
@@ -76,7 +75,7 @@ impl Module {
             route.method().as_str(),
             route.path()
         );
-        let instance_wrapper = InstanceWrapper::new(route, enhancer_metadata, global_enhancers);
+        let instance_wrapper = InstanceWrapper::new(route, enhancers);
         self.controllers_instances
             .insert(key, Arc::new(instance_wrapper));
     }

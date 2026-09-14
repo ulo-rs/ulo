@@ -27,6 +27,9 @@ pub trait Transport: 'static {
     ///
     /// An error handler answers with its own type, which on three of the four is narrower.
     type Answer;
+
+    /// How a diagnostic names this transport.
+    const NAME: &'static str;
 }
 
 /// HTTP, served by an `HttpAdapter`.
@@ -34,6 +37,7 @@ pub struct Http;
 impl Transport for Http {
     type Context = HttpContext;
     type Answer = HttpResponse;
+    const NAME: &'static str = "HTTP";
 }
 
 /// Pattern-addressed RPC, served by an `RpcAdapter`.
@@ -41,6 +45,7 @@ pub struct Rpc;
 impl Transport for Rpc {
     type Context = RpcContext;
     type Answer = crate::rpc::RpcHandlerResult;
+    const NAME: &'static str = "RPC";
 }
 
 /// WebSocket, served by a same-port `HttpAdapter` or a separate-port `WsAdapter`.
@@ -48,6 +53,7 @@ pub struct Ws;
 impl Transport for Ws {
     type Context = WsContext;
     type Answer = crate::ws::WsHandlerResult;
+    const NAME: &'static str = "WS";
 }
 
 /// gRPC, served by a `GrpcAdapter`.
@@ -55,6 +61,7 @@ pub struct Grpc;
 impl Transport for Grpc {
     type Context = GrpcContext;
     type Answer = crate::grpc::GrpcHandlerResult;
+    const NAME: &'static str = "gRPC";
 }
 
 /// Builds a guard inside the execution being served.

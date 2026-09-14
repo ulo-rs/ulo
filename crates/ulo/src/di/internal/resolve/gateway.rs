@@ -4,12 +4,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::error::SetupResult;
-
-use crate::enhancer::{Guard, Interceptor};
-use crate::spi::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
-use crate::ws::{Gateway, GatewayWrapper, WsContext, WsHandlerResult};
+use crate::spi::transport::Ws;
+use crate::ws::{Gateway, GatewayWrapper};
 
 use super::super::Container;
+use super::enhancers::{Declared, resolve_handler, resolve_target};
 
 pub(crate) struct GatewayResolver {
     container: Rc<RefCell<Container>>,
@@ -31,194 +30,58 @@ impl GatewayResolver {
     }
 
     fn wrap_gateway(&self, gateway: Arc<Box<dyn Gateway>>) -> SetupResult<GatewayWrapper> {
-        let enhancers = gateway.enhancers();
-        let guards = self.resolve_guards(enhancers.guard_tokens, enhancers.guards)?;
-        let interceptors =
-            self.resolve_interceptors(enhancers.interceptor_tokens, enhancers.interceptors)?;
-        let error_handlers =
-            self.resolve_error_handlers(enhancers.error_handler_tokens, enhancers.error_handlers)?;
+        let declared = gateway.enhancers();
         let metadata = gateway.metadata();
-        let handler_metadata: HashMap<String, std::sync::Arc<crate::context::Metadata>> =
+        let handler_metadata: HashMap<String, Arc<crate::context::Metadata>> =
             gateway.handler_metadata().into_iter().collect();
 
-        let mut handler_guards: HashMap<String, Vec<WsGuardEntry>> = HashMap::new();
-        let mut handler_interceptors: HashMap<String, Vec<WsInterceptorEntry>> = HashMap::new();
-        let mut handler_error_handlers: HashMap<String, Vec<WsErrorHandlerArc>> = HashMap::new();
+        let container = self.container.borrow();
+        let registry = &container.role_registry().ws;
 
-        for handler in enhancers.handlers {
-            let event = handler.event;
-            handler_guards.insert(
-                event.clone(),
-                self.resolve_handler_guards(handler.guard_tokens, handler.guards)?,
-            );
-            handler_interceptors.insert(
-                event.clone(),
-                self.resolve_handler_interceptors(
-                    handler.interceptor_tokens,
-                    handler.interceptors,
-                )?,
-            );
-            handler_error_handlers.insert(
-                event.clone(),
-                self.resolve_handler_error_handlers(
-                    handler.error_handler_tokens,
-                    handler.error_handlers,
-                )?,
-            );
+        let gateway_level = resolve_target::<Ws>(
+            registry,
+            &container.global_ws,
+            Declared {
+                guard_tokens: declared.guard_tokens,
+                guards: declared.guards,
+                interceptor_tokens: declared.interceptor_tokens,
+                interceptors: declared.interceptors,
+                error_handler_tokens: declared.error_handler_tokens,
+                error_handlers: declared.error_handlers,
+            },
+        )?;
+
+        let mut handler_guards = HashMap::new();
+        let mut handler_interceptors = HashMap::new();
+        let mut handler_error_handlers = HashMap::new();
+        for handler in declared.handlers {
+            let event = handler.event.clone();
+            let set = resolve_handler::<Ws>(
+                registry,
+                Declared {
+                    guard_tokens: handler.guard_tokens,
+                    guards: handler.guards,
+                    interceptor_tokens: handler.interceptor_tokens,
+                    interceptors: handler.interceptors,
+                    error_handler_tokens: handler.error_handler_tokens,
+                    error_handlers: handler.error_handlers,
+                },
+            )?;
+            handler_guards.insert(event.clone(), set.guards);
+            handler_interceptors.insert(event.clone(), set.interceptors);
+            handler_error_handlers.insert(event, set.error_handlers);
         }
 
         Ok(GatewayWrapper::new(
             gateway,
-            guards,
-            interceptors,
-            error_handlers,
+            gateway_level.guards,
+            gateway_level.interceptors,
+            gateway_level.error_handlers,
             metadata,
             handler_metadata,
             handler_guards,
             handler_interceptors,
             handler_error_handlers,
         ))
-    }
-
-    fn resolve_guards(
-        &self,
-        tokens: Vec<String>,
-        instances: Vec<Arc<dyn Guard<WsContext>>>,
-    ) -> SetupResult<Vec<WsGuardEntry>> {
-        let mut guards = self.container.borrow().global_ws.guards.clone();
-        for token in tokens {
-            let entry = self.resolve_guard_by_token(&token)?;
-            guards.push(entry);
-        }
-        guards.extend(instances.into_iter().map(WsGuardEntry::Ready));
-        Ok(guards)
-    }
-
-    fn resolve_interceptors(
-        &self,
-        tokens: Vec<String>,
-        instances: Vec<Arc<dyn Interceptor<WsContext, WsHandlerResult>>>,
-    ) -> SetupResult<Vec<WsInterceptorEntry>> {
-        let mut interceptors = self.container.borrow().global_ws.interceptors.clone();
-        for token in tokens {
-            let entry = self.resolve_interceptor_by_token(&token)?;
-            interceptors.push(entry);
-        }
-        interceptors.extend(instances.into_iter().map(WsInterceptorEntry::Ready));
-        Ok(interceptors)
-    }
-
-    fn resolve_error_handlers(
-        &self,
-        tokens: Vec<String>,
-        instances: Vec<WsErrorHandlerArc>,
-    ) -> SetupResult<Vec<WsErrorHandlerArc>> {
-        let mut error_handlers = self.container.borrow().global_ws.error_handlers.clone();
-        for token in tokens {
-            error_handlers.push(self.resolve_error_handler_by_token(&token)?);
-        }
-        error_handlers.extend(instances);
-        Ok(error_handlers)
-    }
-
-    fn resolve_handler_guards(
-        &self,
-        tokens: Vec<String>,
-        instances: Vec<Arc<dyn Guard<WsContext>>>,
-    ) -> SetupResult<Vec<WsGuardEntry>> {
-        let mut guards: Vec<WsGuardEntry> = tokens
-            .into_iter()
-            .map(|token| self.resolve_guard_by_token(&token))
-            .collect::<SetupResult<_>>()?;
-        guards.extend(instances.into_iter().map(WsGuardEntry::Ready));
-        Ok(guards)
-    }
-
-    fn resolve_handler_interceptors(
-        &self,
-        tokens: Vec<String>,
-        instances: Vec<Arc<dyn Interceptor<WsContext, WsHandlerResult>>>,
-    ) -> SetupResult<Vec<WsInterceptorEntry>> {
-        let mut interceptors: Vec<WsInterceptorEntry> = tokens
-            .into_iter()
-            .map(|token| self.resolve_interceptor_by_token(&token))
-            .collect::<SetupResult<_>>()?;
-        interceptors.extend(instances.into_iter().map(WsInterceptorEntry::Ready));
-        Ok(interceptors)
-    }
-
-    fn resolve_handler_error_handlers(
-        &self,
-        tokens: Vec<String>,
-        instances: Vec<WsErrorHandlerArc>,
-    ) -> SetupResult<Vec<WsErrorHandlerArc>> {
-        let mut error_handlers: Vec<WsErrorHandlerArc> = tokens
-            .into_iter()
-            .map(|t| self.resolve_error_handler_by_token(&t))
-            .collect::<SetupResult<_>>()?;
-        error_handlers.extend(instances);
-        Ok(error_handlers)
-    }
-
-    fn resolve_guard_by_token(&self, token: &str) -> SetupResult<WsGuardEntry> {
-        self.container
-            .borrow()
-            .role_registry()
-            .ws
-            .guards
-            .get(token)
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "WS Guard '{}' not found in registry. A guard registers automatically by \
-                     implementing Guard<WsContext>; make sure the provider is in the module's \
-                     `providers` list. For `provider_factory!` under a string/const token, name \
-                     the produced type so it can be detected — annotate the closure's return type \
-                     (`|| -> MyGuard`) or pass a type hint.",
-                    token
-                )
-                .into()
-            })
-    }
-
-    fn resolve_interceptor_by_token(&self, token: &str) -> SetupResult<WsInterceptorEntry> {
-        self.container
-            .borrow()
-            .role_registry()
-            .ws
-            .interceptors
-            .get(token)
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "WS Interceptor '{}' not found in registry. An interceptor registers \
-                     automatically by implementing Interceptor<WsContext>; make sure the provider \
-                     is in the module's `providers` list. For `provider_factory!` under a \
-                     string/const token, name the produced type so it can be detected — annotate \
-                     the closure's return type (`|| -> MyInterceptor`) or pass a type hint.",
-                    token
-                )
-                .into()
-            })
-    }
-
-    fn resolve_error_handler_by_token(&self, token: &str) -> SetupResult<WsErrorHandlerArc> {
-        self.container
-            .borrow()
-            .role_registry()
-            .ws.error_handlers
-            .get(token)
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "WS ErrorHandler '{}' not found in registry. An error handler registers \
-                     automatically by implementing ErrorHandler<WsContext, WsHandlerResult>; make sure \
-                     the provider is in the module's `providers` list. For `provider_factory!` \
-                     under a string/const token, name the produced type so it can be detected — \
-                     annotate the closure's return type or pass a type hint.",
-                    token
-                )
-                .into()
-            })
     }
 }
