@@ -123,6 +123,22 @@ impl ErrorHandler<GrpcContext, GrpcHandlerResult> for GlobalErrorHandler {
     }
 }
 
+/// Claims by answering `Ok(())`, which on this transport carries no status and so declines: the
+/// handler type holds no reply, leaving nothing to put on the wire.
+struct DecliningErrorHandler;
+
+#[ulo::async_trait]
+impl ErrorHandler<GrpcContext, GrpcHandlerResult> for DecliningErrorHandler {
+    async fn handle_error(
+        &self,
+        _error: ChainError<'_>,
+        _ctx: &GrpcContext,
+    ) -> Option<GrpcHandlerResult> {
+        record("declining:error_handler");
+        Some(Ok(()))
+    }
+}
+
 #[injectable]
 pub struct ServiceGuard {}
 
@@ -357,6 +373,41 @@ async fn a_global_error_handler_claims_what_the_service_leaves() {
     assert_eq!(err.message(), "claimed globally");
 
     assert!(seen().contains(&"global:error_handler".to_string()));
+    stop(shutdown).await;
+}
+
+/// A handler answering `Ok(())` passes the error on rather than ending the walk.
+///
+/// The two are registered claiming-first, so the reverse walk consults the declining one first. If
+/// a decline stopped the chain, the call would come back with the handler's own `Internal` and
+/// `"claimed globally"` would never be reached.
+#[serial]
+#[tokio_localset_test::localset_test]
+async fn a_handler_declining_with_ok_lets_the_next_one_claim() {
+    SEEN.lock().unwrap().clear();
+
+    let (port, shutdown) = boot(|f| {
+        f.use_global_grpc_error_handler(Arc::new(GlobalErrorHandler));
+        f.use_global_grpc_error_handler(Arc::new(DecliningErrorHandler));
+    })
+    .await;
+    let mut client = connect(port).await;
+
+    let err = client
+        .create(order("ignored", 0))
+        .await
+        .expect_err("qty=0 must fail");
+
+    assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    assert_eq!(err.message(), "claimed globally");
+    assert_eq!(
+        seen()
+            .into_iter()
+            .filter(|s| s.ends_with("error_handler"))
+            .collect::<Vec<_>>(),
+        vec!["declining:error_handler", "global:error_handler"],
+        "the declining handler is consulted first and the walk carries on"
+    );
     stop(shutdown).await;
 }
 
