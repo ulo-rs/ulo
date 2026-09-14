@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 
 use crate::http::Route;
 
-use super::provider::Provider;
+use crate::spi::provider::Provider;
 
 /// What a controller hands over to be dispatched on.
 ///
@@ -13,7 +13,7 @@ use super::provider::Provider;
 /// set of patterns, gRPC on a registration with the tonic router. Everything else a controller
 /// carries — its token, its dependencies, its lifecycle, the scope it is built at — is common to all
 /// three and lives on [`Controller`] itself.
-pub enum Dispatch {
+pub enum Targets {
     Http(Vec<Arc<dyn Route>>),
     Rpc(Arc<dyn crate::rpc::RpcControllerSource>),
     Grpc(Arc<dyn crate::grpc::GrpcServiceSource>),
@@ -21,14 +21,14 @@ pub enum Dispatch {
 
 /// A controller: one DI instance exposing what it dispatches on and its lifecycle hooks.
 ///
-/// Built once per controller struct by its [`ControllerFactory`]. [`dispatch`](Controller::dispatch)
+/// Built once per controller struct by its [`ControllerFactory`]. [`targets`](Controller::targets)
 /// yields the transport's own dispatch surface — one [`Route`] per handler method on HTTP, a single
 /// source on RPC and gRPC. The lifecycle hooks fire once per controller, not once per route or
 /// pattern.
 #[async_trait]
 pub trait Controller: Send + Sync {
     fn token(&self) -> String;
-    fn dispatch(&self) -> Dispatch;
+    fn targets(&self) -> Targets;
 
     // Lifecycle Hooks
 

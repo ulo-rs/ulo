@@ -100,9 +100,9 @@ fn generate_ulo_dispatch(struct_name: &Ident, metadata: &[MetadataInfo]) -> Toke
             #[allow(non_snake_case, clippy::all)]
             pub fn __ulo_dispatch(
                 source: &::ulo::__enhancer::DispatchSource<#struct_name>,
-            ) -> ::ulo::spi::Dispatch {
+            ) -> ::ulo::dispatch::Targets {
                 let _ = source;
-                ::ulo::spi::Dispatch::Http(vec![#(#creations),*])
+                ::ulo::dispatch::Targets::Http(vec![#(#creations),*])
             }
         }
     }
@@ -382,7 +382,7 @@ fn generate_route_wrapper(
             async fn execute(
                 &self,
                 __ctx: &::ulo::http::HttpContext,
-            ) -> ::ulo::spi::ExecutionResult<
+            ) -> ::ulo::dispatch::ExecutionResult<
                 ::ulo::http::HttpResponse,
                 ::ulo::http::HttpError,
             > {
@@ -489,17 +489,17 @@ fn exec_body_for(method_call: &TokenStream, returns_result: bool) -> TokenStream
     if returns_result {
         quote! {
             match #method_call {
-                ::std::result::Result::Ok(__t) => ::ulo::spi::ExecutionResult::Ok(
+                ::std::result::Result::Ok(__t) => ::ulo::dispatch::ExecutionResult::Ok(
                     ::ulo::http::IntoResponse::into_response(__t),
                 ),
-                ::std::result::Result::Err(__e) => ::ulo::spi::ExecutionResult::Err(
+                ::std::result::Result::Err(__e) => ::ulo::dispatch::ExecutionResult::Err(
                     ::std::convert::Into::<::ulo::http::HttpError>::into(__e),
                 ),
             }
         }
     } else {
         quote! {
-            ::ulo::spi::ExecutionResult::Ok(
+            ::ulo::dispatch::ExecutionResult::Ok(
                 ::ulo::http::IntoResponse::into_response(#method_call),
             )
         }

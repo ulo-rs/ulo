@@ -13,8 +13,8 @@
 //! They are `pub` because the expansion lands outside this crate, and hidden because naming one by
 //! hand means writing what a macro writes.
 
-pub use crate::spi::dispatch_source::{DispatchSource, execution_scoped_dependencies};
-pub use crate::spi::transport::{
+pub use crate::dispatch::source::{DispatchSource, execution_scoped_dependencies};
+pub use crate::dispatch::transport::{
     Grpc, GrpcGuardEntry, GrpcInterceptorEntry, GuardEntry, GuardFactory, Http, HttpGuardEntry,
     HttpInterceptorEntry, InterceptorEntry, InterceptorFactory, Rpc, RpcGuardEntry,
     RpcInterceptorEntry, Transport, Ws, WsGuardEntry, WsInterceptorEntry,

@@ -12,16 +12,16 @@
 
 #![doc(hidden)]
 
-use crate::spi::{Dispatch, DispatchSource};
+use crate::dispatch::{DispatchSource, Targets};
 /// Blanket "no dispatch" default, implemented for every type: an empty HTTP route list, which
 /// registers nothing. A handler-impl macro shadows this with an inherent `__ulo_dispatch` of the
 /// same name, which wins at the call site.
 pub trait DispatchBridge {
-    fn __ulo_dispatch(_source: &DispatchSource<Self>) -> Dispatch
+    fn __ulo_dispatch(_source: &DispatchSource<Self>) -> Targets
     where
         Self: Sized,
     {
-        Dispatch::Http(Vec::new())
+        Targets::Http(Vec::new())
     }
 }
 

@@ -1,5 +1,6 @@
 use crate::di::ModuleMetadata;
-use crate::spi::{ControllerFactory, ProviderFactory};
+use crate::dispatch::ControllerFactory;
+use crate::spi::ProviderFactory;
 use crate::ws::BroadcastService;
 use crate::ws::broadcast_provider::BroadcastServiceManager;
 

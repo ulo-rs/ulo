@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::dispatch::transport::Rpc;
 use crate::error::SetupResult;
 use crate::rpc::{RpcControllerSource, RpcControllerWrapper, RpcHandlerEnhancers};
-use crate::spi::transport::Rpc;
 
-use super::super::Container;
-use super::enhancers::{Declared, resolve_handler, resolve_target};
+use super::{Declared, resolve_handler, resolve_target};
+use crate::di::internal::Container;
 
 /// Resolves one RPC controller's enhancer tokens into a ready-to-serve
 /// `RpcControllerWrapper`. Called by the instance loader while controllers are stored, so a

@@ -5,8 +5,9 @@
 
 use crate::di::ModuleMetadata;
 use crate::di::extension::ExtensionsFactory;
+use crate::dispatch::ControllerFactory;
 use crate::http::RequestFactory;
-use crate::spi::{ControllerFactory, ProviderFactory};
+use crate::spi::ProviderFactory;
 /// Built-in global module that provides core framework functionality
 ///
 /// Currently provides:

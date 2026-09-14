@@ -9,13 +9,21 @@
 //! One copy, parameterised by the transport. What differs between them is the noun in the
 //! diagnostic.
 
+mod grpc;
+mod rpc;
+mod ws;
+
+pub(crate) use self::grpc::GrpcServiceResolver;
+pub(crate) use self::rpc::RpcControllerResolver;
+pub(crate) use self::ws::GatewayResolver;
+
 use std::sync::Arc;
 
-use crate::enhancer::{Guard, Interceptor};
-use crate::error::SetupResult;
-use crate::spi::transport::{
+use crate::dispatch::transport::{
     EnhancerRegistry, EnhancerSet, ErrorHandlerArc, GuardEntry, InterceptorEntry, Transport,
 };
+use crate::enhancer::{Guard, Interceptor};
+use crate::error::SetupResult;
 
 /// What one declaration names, before any of it is resolved.
 pub(crate) struct Declared<T: Transport> {

@@ -1,4 +1,4 @@
-use crate::spi::transport::Rpc;
+use crate::dispatch::transport::Rpc;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -8,10 +8,10 @@ use super::{
     RpcCallInfo, RpcControllerSource, RpcData, RpcError, RpcHandlerOutput, RpcHandlerResult,
 };
 use crate::context::Metadata;
+use crate::dispatch::ExecutionResult;
 use crate::enhancer::{Interceptor, InterceptorNext};
 use crate::errors::{PanicRecovered, PipelineSegment};
 use crate::rpc::RpcContext;
-use crate::spi::ExecutionResult;
 use crate::spi::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};
 use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};

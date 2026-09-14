@@ -1,4 +1,4 @@
-use crate::spi::transport::Ws;
+use crate::dispatch::transport::Ws;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -6,9 +6,9 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 
 use crate::context::Metadata;
+use crate::dispatch::ExecutionResult;
 use crate::enhancer::{Interceptor, InterceptorNext};
 use crate::errors::{PanicRecovered, PipelineSegment};
-use crate::spi::ExecutionResult;
 use crate::spi::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
 use crate::ws::WsContext;
 
@@ -80,7 +80,7 @@ impl InterceptorNext<WsContext, WsHandlerResult> for WsChainNext {
     }
 }
 
-/// Parallel to `InstanceWrapper` on the HTTP side — wraps a gateway with the full
+/// Parallel to `RoutePipeline` on the HTTP side — wraps a gateway with the full
 /// guard/interceptor pipeline and tracks its own connected clients.
 pub(crate) struct GatewayWrapper {
     gateway: Arc<Box<dyn Gateway>>,

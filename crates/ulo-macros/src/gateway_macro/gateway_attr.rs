@@ -217,7 +217,7 @@ fn generate_gateway_impl(
             async fn handle_event(
                 &self,
                 __ctx: &::ulo::ws::WsContext,
-            ) -> ::ulo::spi::ExecutionResult<::ulo::ws::WsHandlerOutput, ::ulo::ws::WsError> {
+            ) -> ::ulo::dispatch::ExecutionResult<::ulo::ws::WsHandlerOutput, ::ulo::ws::WsError> {
                 use ::ulo::__ws::WsHandlersBridge as _;
                 <Self>::__ulo_ws_handle_event(self, __ctx).await
             }

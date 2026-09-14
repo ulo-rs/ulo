@@ -5,13 +5,17 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     di::ModuleMetadata,
+    dispatch::transport::{EnhancerSet, Grpc, Http, Rpc, Ws},
+    dispatch::{Controller, ControllerFactory},
     http::middleware::MiddlewareManager,
-    spi::transport::{EnhancerSet, Grpc, Http, Rpc, Ws},
-    spi::{Controller, ControllerFactory, Provider, ProviderFactory, ProviderRole},
+    spi::{Provider, ProviderFactory, ProviderRole},
     ws::Gateway,
 };
 
-use super::{InstanceWrapper, RoleRegistry, module::Module};
+use crate::dispatch::registry::RoleRegistry;
+
+use super::module::Module;
+use crate::http::RoutePipeline;
 
 pub struct Container {
     modules: FxHashMap<String, Module>,
@@ -393,7 +397,7 @@ impl Container {
     pub(crate) fn get_controller_instances(
         &mut self,
         module_ref_token: &String,
-    ) -> SetupResult<Drain<'_, String, Arc<InstanceWrapper>>> {
+    ) -> SetupResult<Drain<'_, String, Arc<RoutePipeline>>> {
         let module_ref = self
             .modules
             .get_mut(module_ref_token)

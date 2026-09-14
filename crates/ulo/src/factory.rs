@@ -7,6 +7,7 @@ use crate::application_context::UloApplicationContext;
 use crate::di::ModuleMetadata;
 use crate::di::internal::scanner::DependencyScanner;
 use crate::di::internal::{Container, InstanceLoader};
+use crate::dispatch::transport::{EnhancerSet, Grpc, Http, Rpc, Ws};
 use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::error::StartupError;
 use crate::grpc::GrpcContext;
@@ -14,7 +15,6 @@ use crate::http::HttpContext;
 use crate::http::HttpResponse;
 use crate::http::middleware::Middleware;
 use crate::rpc::RpcContext;
-use crate::spi::transport::{EnhancerSet, Grpc, Http, Rpc, Ws};
 use crate::spi::{
     GrpcGuardEntry, GrpcInterceptorEntry, HttpGuardEntry, HttpInterceptorEntry, RpcGuardEntry,
     RpcInterceptorEntry, WsGuardEntry, WsInterceptorEntry,
