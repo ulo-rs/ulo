@@ -37,6 +37,7 @@ pub struct DynamicModule {
     // providers(), which takes &self. The scanner calls providers() exactly once per module
     // during scan_modules_for_dependencies, so draining on first call is safe.
     providers: Mutex<Option<Vec<Box<dyn ProviderFactory>>>>,
+    controllers: Mutex<Option<Vec<Box<dyn ControllerFactory>>>>,
     exports: Vec<String>,
     global: bool,
 }
@@ -55,7 +56,7 @@ impl ModuleMetadata for DynamicModule {
     }
 
     fn controllers(&self) -> Option<Vec<Box<dyn ControllerFactory>>> {
-        None
+        self.controllers.lock().take()
     }
 
     fn providers(&self) -> Option<Vec<Box<dyn ProviderFactory>>> {
@@ -70,6 +71,7 @@ impl ModuleMetadata for DynamicModule {
 pub struct DynamicModuleBuilder {
     id: String,
     providers: Vec<Box<dyn ProviderFactory>>,
+    controllers: Vec<Box<dyn ControllerFactory>>,
     exports: Vec<String>,
     global: bool,
 }
@@ -77,6 +79,16 @@ pub struct DynamicModuleBuilder {
 impl DynamicModuleBuilder {
     pub fn provider<F: ProviderFactory + 'static>(mut self, factory: F) -> Self {
         self.providers.push(Box::new(factory));
+        self
+    }
+
+    /// Declare a dispatch target this module serves.
+    ///
+    /// What `controllers:` takes on a `#[module]`, for a module built at runtime: an integration
+    /// whose target comes from a value it was configured with — a schema, a path — rather than
+    /// from an attribute on a struct.
+    pub fn controller<F: ControllerFactory + 'static>(mut self, factory: F) -> Self {
+        self.controllers.push(Box::new(factory));
         self
     }
 
@@ -104,6 +116,7 @@ impl DynamicModuleBuilder {
         DynamicModule {
             identity,
             providers: Mutex::new(Some(self.providers)),
+            controllers: Mutex::new(Some(self.controllers)),
             exports: self.exports,
             global: self.global,
         }
@@ -130,6 +143,7 @@ impl DynamicModule {
         DynamicModuleBuilder {
             id: id.into(),
             providers: Vec::new(),
+            controllers: Vec::new(),
             exports: Vec::new(),
             global: false,
         }

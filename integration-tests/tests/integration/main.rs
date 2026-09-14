@@ -23,6 +23,7 @@ mod derive_lifecycle_hooks;
 mod di_core;
 mod di_providers;
 mod di_validation;
+mod dynamic_module_controllers;
 mod enhancer_tokens_resolve_at_create;
 mod enhancers;
 mod enhancers_di;
