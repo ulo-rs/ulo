@@ -1,3 +1,4 @@
+use crate::spi::transport::Ws;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -5,7 +6,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 
 use crate::context::Metadata;
-use crate::enhancer::{Guard, Interceptor, InterceptorNext};
+use crate::enhancer::{Interceptor, InterceptorNext};
 use crate::errors::{PanicRecovered, PipelineSegment};
 use crate::spi::ExecutionResult;
 use crate::spi::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
@@ -151,7 +152,7 @@ impl GatewayWrapper {
             Some(self.metadata.clone()),
         );
 
-        let guards = Self::resolve_guards(&self.guards, &context).await;
+        let guards = crate::enhancer::pipeline::guards_for::<Ws>(&self.guards, &context).await;
         for (i, guard) in guards.iter().enumerate() {
             // A panic in `can_activate` is treated as a hard rejection so the
             // dispatcher doesn't tear down: the panic is logged and the
@@ -237,7 +238,7 @@ impl GatewayWrapper {
             all_error_handlers.extend_from_slice(h);
         }
 
-        let guards = Self::resolve_guards(&all_guards, &context).await;
+        let guards = crate::enhancer::pipeline::guards_for::<Ws>(&all_guards, &context).await;
         for (guard_index, guard) in guards.iter().enumerate() {
             let activated = match crate::panic_recovery::catch_async(
                 crate::errors::PipelineSegment::Guard,
@@ -267,7 +268,8 @@ impl GatewayWrapper {
             }
         }
 
-        let interceptors = Self::resolve_interceptors(&all_interceptors, &context).await;
+        let interceptors =
+            crate::enhancer::pipeline::interceptors_for::<Ws>(&all_interceptors, &context).await;
 
         let answer = Self::execute_with_interceptors(
             &context,
@@ -290,36 +292,6 @@ impl GatewayWrapper {
             )),
             other => other,
         }
-    }
-
-    async fn resolve_guards(
-        entries: &[WsGuardEntry],
-        ctx: &WsContext,
-    ) -> Vec<Arc<dyn Guard<WsContext>>> {
-        let mut out = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let g = match entry {
-                WsGuardEntry::Ready(g) => g.clone(),
-                WsGuardEntry::Factory(f) => f.create(ctx).await,
-            };
-            out.push(g);
-        }
-        out
-    }
-
-    async fn resolve_interceptors(
-        entries: &[WsInterceptorEntry],
-        ctx: &WsContext,
-    ) -> Vec<Arc<dyn Interceptor<WsContext, WsHandlerResult>>> {
-        let mut out = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let i = match entry {
-                WsInterceptorEntry::Ready(i) => i.clone(),
-                WsInterceptorEntry::Factory(f) => f.create(ctx).await,
-            };
-            out.push(i);
-        }
-        out
     }
 
     async fn execute_with_interceptors(
@@ -361,11 +333,10 @@ impl GatewayWrapper {
         error_handlers: &[WsErrorHandlerArc],
         event: PanicRecovered,
     ) -> WsHandlerResult {
-        for (position, handler) in error_handlers.iter().rev().enumerate() {
-            if let Some(claimed) = Self::try_chain_handler(handler, &event, context, position).await
-            {
-                return claimed;
-            }
+        if let Some(claimed) =
+            crate::enhancer::pipeline::claim::<Ws>(&error_handlers, &event, context).await
+        {
+            return claimed;
         }
         let ws_err = WsError::from(event);
         Ok(WsHandlerOutput::Single(Self::safe_render(|| {
@@ -385,12 +356,10 @@ impl GatewayWrapper {
         error_handlers: &[WsErrorHandlerArc],
         rejection: crate::errors::GuardRejection,
     ) -> WsHandlerResult {
-        for (position, handler) in error_handlers.iter().rev().enumerate() {
-            if let Some(claimed) =
-                Self::try_chain_handler(handler, &rejection, context, position).await
-            {
-                return claimed;
-            }
+        if let Some(claimed) =
+            crate::enhancer::pipeline::claim::<Ws>(&error_handlers, &rejection, context).await
+        {
+            return claimed;
         }
         Ok(WsHandlerOutput::Single(Self::safe_render(|| {
             super::ws_error::render_error(&rejection)
@@ -414,12 +383,11 @@ impl GatewayWrapper {
                     WsError::AppError(e) => e.as_ref(),
                     other => other,
                 };
-                for (position, handler) in error_handlers.iter().rev().enumerate() {
-                    if let Some(msg) =
-                        Self::try_chain_handler(handler, observed_err, context, position).await
-                    {
-                        return msg;
-                    }
+                if let Some(msg) =
+                    crate::enhancer::pipeline::claim::<Ws>(&error_handlers, observed_err, context)
+                        .await
+                {
+                    return msg;
                 }
                 Ok(WsHandlerOutput::Single(Self::safe_render(|| {
                     ws_err.to_message()
@@ -467,26 +435,6 @@ impl GatewayWrapper {
     /// `position` counts from the most specific handler — the chain runs
     /// event, then gateway, then global — and is logged so a panic names which
     /// registration it came from.
-    async fn try_chain_handler(
-        handler: &WsErrorHandlerArc,
-        error: &(dyn std::error::Error + Send + Sync + 'static),
-        ctx: &WsContext,
-        position: usize,
-    ) -> Option<WsHandlerResult> {
-        match crate::panic_recovery::catch_async(
-            crate::errors::PipelineSegment::ErrorHandler,
-            handler.handle_error(error, ctx),
-        )
-        .await
-        {
-            Ok(opt) => opt,
-            Err(panic_event) => {
-                tracing::error!(chain_position = position, error = %error, panic = %panic_event.message, "error handler panicked; trying the next one");
-                None
-            }
-        }
-    }
-
     async fn execute_handler(
         context: &WsContext,
         gateway: &Arc<Box<dyn Gateway>>,

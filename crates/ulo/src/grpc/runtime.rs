@@ -6,20 +6,20 @@
 //! maps any [`GrpcStatus`] back to `tonic::Status`, then either returns or
 //! delegates to the user's body.
 
+use crate::spi::transport::Grpc;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::enhancer::{Guard, Interceptor, InterceptorNext};
+use crate::enhancer::{Interceptor, InterceptorNext};
 use crate::errors::{GuardRejection, PipelineSegment};
 use crate::grpc::GrpcContext;
 use crate::grpc::GrpcHandlerResult;
 use crate::grpc::GrpcStatus;
 use crate::grpc::ResolvedGrpcEnhancers;
 use crate::panic_recovery::catch_async;
-use crate::spi::{GrpcGuardEntry, GrpcInterceptorEntry};
 /// Run guards then wrap the user delegation in the interceptor chain.
 ///
 /// `delegate` is the user's `<UserType as ProtoTrait>::method(&self.inner, req)`
@@ -49,7 +49,8 @@ where
     if let Some(per_method) = enhancers.handler_interceptors.get(method) {
         all_interceptors.extend_from_slice(per_method);
     }
-    let interceptors = resolve_interceptors(&all_interceptors, ctx).await;
+    let interceptors =
+        crate::enhancer::pipeline::interceptors_for::<Grpc>(&all_interceptors, ctx).await;
 
     // An interceptor panic is caught deep in the link chain, where neither the
     // enhancers nor the method name are in scope. The slot carries the event
@@ -103,7 +104,7 @@ async fn run_grpc_guards_inline(
         all_guards.extend_from_slice(per_method);
     }
 
-    let guards = resolve_guards(&all_guards, ctx).await;
+    let guards = crate::enhancer::pipeline::guards_for::<Grpc>(&all_guards, ctx).await;
     for (index, guard) in guards.iter().enumerate() {
         // A panicking guard is a bug, not a verdict: the chain gets first
         // claim on the typed event, and an unclaimed one renders `Internal`
@@ -250,36 +251,6 @@ where
     }
 }
 
-async fn resolve_guards(
-    entries: &[GrpcGuardEntry],
-    ctx: &GrpcContext,
-) -> Vec<Arc<dyn Guard<GrpcContext>>> {
-    let mut out = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let g = match entry {
-            GrpcGuardEntry::Ready(g) => g.clone(),
-            GrpcGuardEntry::Factory(f) => f.create(ctx).await,
-        };
-        out.push(g);
-    }
-    out
-}
-
-async fn resolve_interceptors(
-    entries: &[GrpcInterceptorEntry],
-    ctx: &GrpcContext,
-) -> Vec<Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>> {
-    let mut out = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let i = match entry {
-            GrpcInterceptorEntry::Ready(i) => i.clone(),
-            GrpcInterceptorEntry::Factory(f) => f.create(ctx).await,
-        };
-        out.push(i);
-    }
-    out
-}
-
 /// Run the error-handler chain for one gRPC call.
 ///
 /// Walks service- + method-level error handlers in **reverse**
@@ -302,26 +273,13 @@ pub async fn run_grpc_error_chain(
     if let Some(per_method) = enhancers.handler_error_handlers.get(method) {
         all.extend_from_slice(per_method);
     }
+    // This transport walks the chain itself rather than through `claim`, because `Ok(())` is a
+    // decline here and has to pass the error to the next handler. `claim` answers the first
+    // `Some` whatever it wraps, which would stop the walk on a handler that declined.
     for (position, handler) in all.iter().rev().enumerate() {
-        // Wrap the chain handler so a panicking `handle_error` doesn't
-        // kill the rest of the chain (and lose the original error).
-        // Policy: log the panic, treat it as a `None` claim, move on to
-        // the next handler.
-        let outcome = catch_async(
-            PipelineSegment::ErrorHandler,
-            handler.handle_error(err, ctx),
-        )
-        .await;
-        match outcome {
-            Ok(Some(Err(claimed))) => return Some(claimed),
-            // A claim carrying no status has nothing to put on the wire: this transport's
-            // handler type holds no reply, so `Ok(())` says only that the handler declined to
-            // reshape. The next handler gets its turn, as it does for `None`.
-            Ok(Some(Ok(()))) => continue,
-            Ok(None) => continue,
-            Err(panic_event) => {
-                tracing::error!(chain_position = position, error = %err, panic = %panic_event.message, "error handler panicked; trying the next one");
-            }
+        match crate::enhancer::pipeline::offer_to::<Grpc>(handler, err, ctx, position).await {
+            Some(Err(status)) => return Some(status),
+            Some(Ok(())) | None => continue,
         }
     }
     None
