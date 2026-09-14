@@ -73,10 +73,18 @@ impl Interceptor<RpcContext, RpcHandlerResult> for MarkingInterceptor {
 struct ClaimingErrorHandler;
 
 #[async_trait]
-impl ErrorHandler<RpcContext, RpcData> for ClaimingErrorHandler {
-    async fn handle_error(&self, _error: ChainError<'_>, _ctx: &RpcContext) -> Option<RpcData> {
+impl ErrorHandler<RpcContext, RpcHandlerResult> for ClaimingErrorHandler {
+    async fn handle_error(
+        &self,
+        _error: ChainError<'_>,
+        _ctx: &RpcContext,
+    ) -> Option<RpcHandlerResult> {
         record("claimed");
-        Some(RpcData::from_serialize(&serde_json::json!({"claimed": true})).unwrap())
+        Some(Ok(RpcData::from_serialize(
+            &serde_json::json!({"claimed": true}),
+        )
+        .unwrap()
+        .into()))
     }
 }
 
@@ -264,14 +272,14 @@ mod ws {
     pub struct ClaimingErrorHandler;
 
     #[async_trait]
-    impl ErrorHandler<WsContext, WsMessage> for ClaimingErrorHandler {
+    impl ErrorHandler<WsContext, WsHandlerResult> for ClaimingErrorHandler {
         async fn handle_error(
             &self,
             _error: ChainError<'_>,
             _ctx: &WsContext,
-        ) -> Option<WsMessage> {
+        ) -> Option<WsHandlerResult> {
             record("claimed");
-            Some(WsMessage::text("claimed"))
+            Some(Ok(WsMessage::text("claimed").into()))
         }
     }
 

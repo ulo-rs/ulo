@@ -41,8 +41,12 @@ use panic_pb::orders_server::{Orders, OrdersServer};
 // ── the catchers ───────────────────────────────────────────────────────────
 
 #[catch(PanicRecovered)]
-async fn rpc_panic_catcher(err: &PanicRecovered, _ctx: &RpcContext) -> RpcData {
-    RpcData::from_serialize(&serde_json::json!({ "caught": err.during.as_str() })).unwrap()
+async fn rpc_panic_catcher(err: &PanicRecovered, _ctx: &RpcContext) -> RpcHandlerResult {
+    Ok(
+        RpcData::from_serialize(&serde_json::json!({ "caught": err.during.as_str() }))
+            .unwrap()
+            .into(),
+    )
 }
 
 #[injectable]

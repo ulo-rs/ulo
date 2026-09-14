@@ -22,7 +22,7 @@ use crate::common::TestServer;
 /// before bootstrap.
 async fn start_ws_server_with_handlers(
     module: impl ulo::di::ModuleMetadata + 'static,
-    handlers: Vec<Arc<dyn ErrorHandler<WsContext, WsMessage>>>,
+    handlers: Vec<Arc<dyn ErrorHandler<WsContext, WsHandlerResult>>>,
 ) -> u16 {
     use ulo::UloFactory;
     use ulo_http_axum::AxumAdapter;
@@ -55,8 +55,12 @@ struct WsSegmentRecorder {
 }
 
 #[async_trait]
-impl ErrorHandler<WsContext, WsMessage> for WsSegmentRecorder {
-    async fn handle_error(&self, error: ChainError<'_>, _ctx: &WsContext) -> Option<WsMessage> {
+impl ErrorHandler<WsContext, WsHandlerResult> for WsSegmentRecorder {
+    async fn handle_error(
+        &self,
+        error: ChainError<'_>,
+        _ctx: &WsContext,
+    ) -> Option<WsHandlerResult> {
         self.count.fetch_add(1, Ordering::SeqCst);
         if let Some(p) = error.downcast_ref::<PanicRecovered>() {
             *self.captured.lock().unwrap() = Some(p.during);
@@ -286,8 +290,12 @@ pub struct PanickingWsErrorHandler {}
 impl PanickingWsErrorHandler {}
 
 #[async_trait]
-impl ErrorHandler<WsContext, WsMessage> for PanickingWsErrorHandler {
-    async fn handle_error(&self, _error: ChainError<'_>, _ctx: &WsContext) -> Option<WsMessage> {
+impl ErrorHandler<WsContext, WsHandlerResult> for PanickingWsErrorHandler {
+    async fn handle_error(
+        &self,
+        _error: ChainError<'_>,
+        _ctx: &WsContext,
+    ) -> Option<WsHandlerResult> {
         panic!("ws error-handler kaboom");
     }
 }

@@ -14,14 +14,12 @@ use crate::http::HttpContext;
 use crate::http::HttpResponse;
 use crate::http::middleware::Middleware;
 use crate::rpc::RpcContext;
-use crate::rpc::RpcData;
 use crate::spi::{
     GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc, HttpGuardEntry,
     HttpInterceptorEntry, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
     WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
 };
 use crate::ws::WsContext;
-use crate::ws::WsMessage;
 
 /// Entry point for building a ulo application: registers global middleware
 /// and enhancers, then constructs the DI container from a root
@@ -106,7 +104,7 @@ impl UloFactory {
 
     pub fn use_global_rpc_error_handler(
         &mut self,
-        handler: Arc<dyn ErrorHandler<RpcContext, RpcData>>,
+        handler: Arc<dyn ErrorHandler<RpcContext, crate::rpc::RpcHandlerResult>>,
     ) -> &mut Self {
         self.global_rpc_error_handlers.push(handler);
         self
@@ -128,7 +126,7 @@ impl UloFactory {
 
     pub fn use_global_ws_error_handler(
         &mut self,
-        handler: Arc<dyn ErrorHandler<WsContext, WsMessage>>,
+        handler: Arc<dyn ErrorHandler<WsContext, crate::ws::WsHandlerResult>>,
     ) -> &mut Self {
         self.global_ws_error_handlers.push(handler);
         self

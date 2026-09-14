@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::context::Metadata;
 use crate::enhancer::{ErrorHandler, Guard, Interceptor};
-use crate::rpc::{RpcContext, RpcData, RpcHandlerResult};
+use crate::rpc::{RpcContext, RpcHandlerResult};
 
 use super::RpcController;
 
@@ -24,7 +24,7 @@ pub struct RpcEnhancers {
     pub error_handler_tokens: Vec<String>,
     pub guards: Vec<Arc<dyn Guard<RpcContext>>>,
     pub interceptors: Vec<Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>>,
-    pub error_handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcData>>>,
+    pub error_handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcHandlerResult>>>,
     pub handlers: Vec<RpcHandlerEnhancers>,
 }
 
@@ -38,7 +38,7 @@ pub struct RpcHandlerEnhancers {
     pub error_handler_tokens: Vec<String>,
     pub guards: Vec<Arc<dyn Guard<RpcContext>>>,
     pub interceptors: Vec<Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>>,
-    pub error_handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcData>>>,
+    pub error_handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcHandlerResult>>>,
 }
 
 /// What an RPC controller declares, and where its instances come from.

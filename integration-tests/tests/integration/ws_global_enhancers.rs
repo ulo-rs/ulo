@@ -77,10 +77,14 @@ impl Interceptor<WsContext, WsHandlerResult> for GlobalInterceptor {
 struct GlobalErrorHandler;
 
 #[async_trait]
-impl ErrorHandler<WsContext, WsMessage> for GlobalErrorHandler {
-    async fn handle_error(&self, _error: ChainError<'_>, _ctx: &WsContext) -> Option<WsMessage> {
+impl ErrorHandler<WsContext, WsHandlerResult> for GlobalErrorHandler {
+    async fn handle_error(
+        &self,
+        _error: ChainError<'_>,
+        _ctx: &WsContext,
+    ) -> Option<WsHandlerResult> {
         record("global:error_handler".to_string());
-        Some(WsMessage::text("claimed globally"))
+        Some(Ok(WsMessage::text("claimed globally").into()))
     }
 }
 

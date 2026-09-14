@@ -189,7 +189,7 @@ impl RpcControllerWrapper {
                     if let Some(claimed) =
                         Self::try_chain_handler(handler, &rejection, &ctx, position).await
                     {
-                        return Ok(RpcHandlerOutput::Single(claimed));
+                        return claimed;
                     }
                 }
                 return Err(RpcError::Forbidden("Guard rejected message".into()));
@@ -263,7 +263,7 @@ impl RpcControllerWrapper {
         error: &(dyn std::error::Error + Send + Sync + 'static),
         ctx: &RpcContext,
         position: usize,
-    ) -> Option<RpcData> {
+    ) -> Option<RpcHandlerResult> {
         match crate::panic_recovery::catch_async(
             crate::errors::PipelineSegment::ErrorHandler,
             handler.handle_error(error, ctx),
@@ -348,7 +348,7 @@ impl RpcControllerWrapper {
         for (position, handler) in error_handlers.iter().rev().enumerate() {
             if let Some(claimed) = Self::try_chain_handler(handler, &event, context, position).await
             {
-                return Ok(RpcHandlerOutput::Single(claimed));
+                return claimed;
             }
         }
         let rpc_err = RpcError::from(event);
@@ -395,7 +395,7 @@ impl RpcControllerWrapper {
                     if let Some(claimed) =
                         Self::try_chain_handler(handler, observed_err, context, position).await
                     {
-                        return Ok(RpcHandlerOutput::Single(claimed));
+                        return claimed;
                     }
                 }
                 Ok(RpcHandlerOutput::Single(Self::safe_render(|| {

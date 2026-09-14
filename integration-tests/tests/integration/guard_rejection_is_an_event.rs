@@ -47,13 +47,17 @@ use rejection_pb::orders_server::{Orders, OrdersServer};
 // ── the catchers ───────────────────────────────────────────────────────────
 
 #[catch(GuardRejection)]
-async fn ws_catcher(err: &GuardRejection, _ctx: &WsContext) -> WsMessage {
-    WsMessage::text(format!("caught:{}", err.message()))
+async fn ws_catcher(err: &GuardRejection, _ctx: &WsContext) -> WsHandlerResult {
+    Ok(WsMessage::text(format!("caught:{}", err.message())).into())
 }
 
 #[catch(GuardRejection)]
-async fn rpc_catcher(err: &GuardRejection, _ctx: &RpcContext) -> RpcData {
-    RpcData::from_serialize(&serde_json::json!({ "caught": err.message() })).unwrap()
+async fn rpc_catcher(err: &GuardRejection, _ctx: &RpcContext) -> RpcHandlerResult {
+    Ok(
+        RpcData::from_serialize(&serde_json::json!({ "caught": err.message() }))
+            .unwrap()
+            .into(),
+    )
 }
 
 #[injectable]
