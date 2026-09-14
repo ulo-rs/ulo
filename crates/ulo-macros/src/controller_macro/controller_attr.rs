@@ -148,7 +148,7 @@ fn generate_bridges(
 
             #[doc(hidden)]
             #[allow(non_snake_case)]
-            pub fn __ulo_is_request_scoped() -> bool {
+            pub fn __ulo_is_execution_scoped() -> bool {
                 #is_execution_scoped
             }
         }

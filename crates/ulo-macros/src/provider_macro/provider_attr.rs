@@ -101,7 +101,7 @@ fn str_lit_value(expr: &Expr) -> Result<String> {
     } else {
         Err(syn::Error::new_spanned(
             expr,
-            "expected a string literal, e.g. scope = \"request\"",
+            "expected a string literal, e.g. scope = \"execution\"",
         ))
     }
 }
