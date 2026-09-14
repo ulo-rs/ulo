@@ -462,8 +462,8 @@ impl InstanceLoader {
         // Phase A: expand each controller into its dispatch under an immutable borrow, resolving
         // every transport's enhancer tokens against the role registry — a misdeclared token fails
         // create(), whatever the transport.
-        let rpc_resolver = super::RpcControllerResolver::new(self.container.clone());
-        let grpc_resolver = super::GrpcServiceResolver::new(self.container.clone());
+        let rpc_resolver = super::resolve::RpcControllerResolver::new(self.container.clone());
+        let grpc_resolver = super::resolve::GrpcServiceResolver::new(self.container.clone());
         type ResolvedController = (Arc<dyn Controller>, ResolvedDispatch);
         let resolved: Vec<ResolvedController> = controllers
             .into_iter()

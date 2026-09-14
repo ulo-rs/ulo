@@ -21,28 +21,20 @@ pub mod __rpc;
 pub mod __ws;
 mod application;
 mod application_context;
-mod builtin_module;
 pub mod context;
 pub mod di;
 pub mod enhancer;
 mod error;
 pub mod errors;
-mod extension;
 pub mod extract;
 mod factory;
 pub mod grpc;
 pub mod http;
-mod injector;
-mod modules;
 mod panic_recovery;
-mod provider_scope;
-mod router;
 pub mod rpc;
-mod scanner;
 mod server_lifecycle;
 pub mod spi;
 mod startup_check;
-mod type_map;
 pub mod ws;
 
 // Re-exported for use in macro-generated code — not part of the public API.

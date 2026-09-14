@@ -35,10 +35,10 @@ use crate::FxHashMap;
 use crate::async_trait;
 use crate::context::ExecutionContext;
 use crate::di::Execution;
+use crate::di::ProviderScope;
 use crate::extract::FromContext;
 use crate::http::HttpContext;
 use crate::http::{PathParams, RequestPart};
-use crate::provider_scope::ProviderScope;
 use crate::spi::{Provider, ProviderFactory};
 /// Built-in execution-scoped provider for accessing HTTP request metadata.
 ///

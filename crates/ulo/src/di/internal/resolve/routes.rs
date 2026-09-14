@@ -2,9 +2,9 @@ use crate::error::SetupResult;
 use std::{cell::RefCell, pin::Pin, rc::Rc, sync::Arc};
 
 use crate::{
+    di::internal::{Container, InstanceWrapper},
     http::middleware::MiddlewareChain,
     http::{HttpAdapter, HttpRequest, HttpResponse, RequestHandler},
-    injector::{Container, InstanceWrapper},
 };
 
 /// Wraps an `InstanceWrapper` as an opaque `RequestHandler`.

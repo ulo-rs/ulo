@@ -12,6 +12,7 @@ mod extensions;
 mod metadata;
 pub(crate) mod shared;
 mod standalone;
+mod type_map;
 
 pub use self::cancellation::CancellationToken;
 pub use self::execution_context::ExecutionContext;

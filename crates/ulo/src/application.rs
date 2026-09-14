@@ -16,10 +16,9 @@ use event_listener::Event;
 
 use crate::{
     application_context::UloApplicationContext,
+    di::internal::{Container, IntoToken, resolve::GatewayResolver, resolve::RoutesResolver},
     grpc::GrpcAdapter,
     http::{HttpAdapter, ServeContext},
-    injector::{Container, GatewayResolver, IntoToken},
-    router::RoutesResolver,
     rpc::{RpcAdapter, RpcCallInfo, RpcControllerWrapper, RpcData, RpcError, RpcMessageCallbacks},
     server_lifecycle::ServerLifecycle,
     spi::BindTarget,
@@ -371,7 +370,7 @@ impl UloApplication {
     /// [`UloApplicationContext::get_module`](crate::application_context::UloApplicationContext::get_module).
     pub async fn get_module<M: 'static>(
         &self,
-    ) -> Result<crate::injector::ModuleRef, ResolutionError> {
+    ) -> Result<crate::di::internal::ModuleRef, ResolutionError> {
         self.context.get_module::<M>().await
     }
 
@@ -380,7 +379,7 @@ impl UloApplication {
     pub async fn get_module_by_id(
         &self,
         id: &str,
-    ) -> Result<crate::injector::ModuleRef, ResolutionError> {
+    ) -> Result<crate::di::internal::ModuleRef, ResolutionError> {
         self.context.get_module_by_id(id).await
     }
 
@@ -460,8 +459,9 @@ impl UloApplication {
     /// environment that is busy.
     async fn bind_adapters(&mut self) -> Result<BoundAdapters, StartupError> {
         {
-            let mut scanner =
-                crate::scanner::DependencyScanner::new(self.routes_resolver.container.clone());
+            let mut scanner = crate::di::internal::scanner::DependencyScanner::new(
+                self.routes_resolver.container.clone(),
+            );
             scanner.call_bootstrap_hooks().await?;
         }
 

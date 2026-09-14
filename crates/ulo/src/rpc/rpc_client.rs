@@ -7,7 +7,7 @@ use futures::stream::BoxStream;
 
 use crate::async_trait;
 use crate::di::Execution;
-use crate::provider_scope::ProviderScope;
+use crate::di::ProviderScope;
 use crate::rpc::RpcClientTransport;
 use crate::rpc::{RpcClientError, RpcData, RpcReplyStream};
 use crate::spi::Provider;

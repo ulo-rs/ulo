@@ -5,7 +5,7 @@ use super::BroadcastService;
 use crate::FxHashMap;
 use crate::async_trait;
 use crate::di::Execution;
-use crate::provider_scope::ProviderScope;
+use crate::di::ProviderScope;
 use crate::spi::{Provider, ProviderFactory};
 /// Singleton provider that hands out clones of the pre-built `BroadcastService`.
 pub(crate) struct BroadcastServiceProvider {

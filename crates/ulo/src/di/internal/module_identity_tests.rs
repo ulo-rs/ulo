@@ -12,9 +12,9 @@ use async_trait::async_trait;
 
 use crate::FxHashMap;
 use crate::di::DynamicModule;
+use crate::di::internal::scanner::DependencyScanner;
+use crate::di::internal::{Container, InstanceLoader};
 use crate::di::{Execution, ModuleMetadata};
-use crate::injector::{Container, InstanceLoader};
-use crate::scanner::DependencyScanner;
 use crate::spi::{ControllerFactory, Injectable, Provider, ProviderFactory};
 /// A provider that builds a trivial value. `token` is its injection token; `hint` is the
 /// configuration fingerprint folded into the owning module's identity.
@@ -149,7 +149,7 @@ fn add_module_dedups_identical_dynamic_modules() {
 async fn load(root: Root) -> crate::error::SetupResult<Rc<RefCell<Container>>> {
     let container = Rc::new(RefCell::new(Container::new()));
     let mut scanner = DependencyScanner::new(container.clone());
-    scanner.scan(Box::new(crate::builtin_module::BuiltinModule))?;
+    scanner.scan(Box::new(crate::di::internal::builtin_module::BuiltinModule))?;
     scanner.scan(Box::new(root))?;
     scanner.scan_middleware()?;
     InstanceLoader::new(container.clone())

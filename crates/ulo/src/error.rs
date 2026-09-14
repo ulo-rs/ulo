@@ -89,7 +89,7 @@ impl From<Box<dyn Error + Send + Sync + 'static>> for StartupError {
 /// [`ExecutionRequired`]: ResolutionError::ExecutionRequired
 /// [`UloApplication`]: crate::UloApplication
 /// [`UloApplicationContext`]: crate::application_context::UloApplicationContext
-/// [`ModuleRef`]: crate::injector::ModuleRef
+/// [`ModuleRef`]: crate::di::internal::ModuleRef
 /// [`get_module_by_id`]: crate::application_context::UloApplicationContext::get_module_by_id
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -129,7 +129,7 @@ pub enum ResolutionError {
     /// without an execution. Resolve it with `resolve` on the application or on a [`ModuleRef`],
     /// passing [`Execution::standalone`] where the work arrived over no transport.
     ///
-    /// [`ModuleRef`]: crate::injector::ModuleRef
+    /// [`ModuleRef`]: crate::di::internal::ModuleRef
     /// [`Execution::standalone`]: crate::di::Execution::standalone
     #[error(
         "provider `{token}` is execution-scoped and cannot be built outside an execution. Resolve \
