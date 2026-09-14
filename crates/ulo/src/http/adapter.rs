@@ -3,11 +3,11 @@ use std::sync::Arc;
 use crate::error::AdapterResult;
 use async_trait::async_trait;
 
-use crate::adapter::adapter_context::AdapterContext;
-use crate::adapter::bind_target::BindTarget;
 use crate::http::HttpLifecycleHandle;
 use crate::http::HttpMethod;
+use crate::http::ServeContext;
 use crate::http::request_handler::RequestHandler;
+use crate::spi::BindTarget;
 use crate::ws::WsConnectionCallbacks;
 
 /// Implemented by every HTTP transport adapter (axum, actix, poem, rocket,
@@ -30,7 +30,7 @@ use crate::ws::WsConnectionCallbacks;
 /// rocket, salvo) each with their own middleware model, and the framework
 /// already owns a cross-adapter abstraction that solves this without
 /// touching the trait surface: the global middleware chain in
-/// [`AdapterContext`](crate::adapter::AdapterContext) runs pre-routing on
+/// [`ServeContext`](crate::http::ServeContext) runs pre-routing on
 /// every HTTP adapter.
 ///
 /// Users wanting bounded concurrent in-flight on HTTP can:
@@ -93,7 +93,7 @@ pub trait HttpAdapter: Send + Sync + 'static {
     ///    [`HttpLifecycleHandle::new`].
     ///
     /// `ctx` carries the global middleware chain and other adapter-shared
-    /// runtime context. The adapter must anchor [`AdapterContext::execute`]
+    /// runtime context. The adapter must anchor [`ServeContext::execute`]
     /// at its outermost point, wrapping the entire native router — not
     /// inside matched-route handlers. The chain then observes every inbound
     /// request (matched, unknown path, method mismatch, WebSocket upgrade),
@@ -103,6 +103,6 @@ pub trait HttpAdapter: Send + Sync + 'static {
     async fn into_lifecycle(
         self: Box<Self>,
         target: BindTarget,
-        ctx: AdapterContext,
+        ctx: ServeContext,
     ) -> AdapterResult<HttpLifecycleHandle>;
 }

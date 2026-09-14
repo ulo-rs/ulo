@@ -15,13 +15,14 @@ use crate::error::{ResolutionError, StartupError};
 use event_listener::Event;
 
 use crate::{
-    adapter::{AdapterContext, BindTarget, server_lifecycle::ServerLifecycle},
     application_context::UloApplicationContext,
     grpc::GrpcAdapter,
-    http::HttpAdapter,
+    http::{HttpAdapter, ServeContext},
     injector::{Container, GatewayResolver, IntoToken},
     router::RoutesResolver,
     rpc::{RpcAdapter, RpcCallInfo, RpcControllerWrapper, RpcData, RpcError, RpcMessageCallbacks},
+    server_lifecycle::ServerLifecycle,
+    spi::BindTarget,
     ws::{
         BroadcastService, DisconnectReason, GatewayWrapper, MessageCallbackResult, WsAdapter,
         WsClientMap, WsConnectionCallbacks, WsError, WsHandlerOutput, WsMessage,
@@ -525,7 +526,7 @@ impl UloApplication {
                     broadcast_service.clone(),
                 ));
                 // Upgrade requests arrive with trailing slashes already
-                // trimmed (AdapterContext), so register the trimmed form.
+                // trimmed (ServeContext), so register the trimmed form.
                 let trimmed = crate::http::trim_trailing_slashes(path);
                 http.register_ws_route(trimmed, callbacks)
                     .map_err(|source| StartupError::Adapter {
@@ -751,7 +752,7 @@ impl UloApplication {
                     "HTTP"
                 };
 
-                let ctx = AdapterContext::new(self.routes_resolver.take_global_chain());
+                let ctx = ServeContext::new(self.routes_resolver.take_global_chain());
                 let handle = http_adapter
                     .into_lifecycle(target, ctx)
                     .await

@@ -14,6 +14,7 @@ pub mod middleware;
 mod provider;
 mod request_handler;
 mod route;
+mod serve_context;
 #[cfg(feature = "tower-compat")]
 pub mod tower;
 pub use self::adapter::HttpAdapter;
@@ -25,6 +26,7 @@ pub use self::lifecycle::HttpLifecycleHandle;
 pub use self::provider::{Request, RequestFactory};
 pub use self::request_handler::RequestHandler;
 pub use self::route::{Route, RouteEnhancers};
+pub use self::serve_context::ServeContext;
 
 mod http_response;
 pub use self::http_response::{HttpResponse, HttpResponseBuilder};
@@ -53,7 +55,7 @@ pub use self::sse::{Sse, SseEvent, sse};
 /// full path is composed at route-registration time rather than baked in by the macro.
 ///
 /// Trailing slashes are insignificant: the joined path never carries one (except the root `/`),
-/// and [`AdapterContext`](crate::spi::AdapterContext) trims them from incoming request paths, so
+/// and [`ServeContext`] trims them from incoming request paths, so
 /// `/app` and `/app/` address the same route.
 ///
 /// `"/api" + "/users"` → `"/api/users"`; `"/" + "/x"` → `"/x"`; `"/api" + ""` → `"/api"`;

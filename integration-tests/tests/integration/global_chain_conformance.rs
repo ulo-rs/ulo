@@ -1,6 +1,6 @@
 //! Conformance suite for the global middleware chain's pre-routing contract.
 //!
-//! The contract ([`AdapterContext`]): the global chain observes every inbound
+//! The contract ([`ServeContext`]): the global chain observes every inbound
 //! HTTP request before route resolution, may short-circuit with a response,
 //! and the request it forwards is the one the router matches on.
 //!
@@ -13,7 +13,7 @@
 //! `#[serial]` must precede `#[localset_test]` — the localset macro rebuilds
 //! the function and drops any attribute written after it.
 //!
-//! [`AdapterContext`]: ulo::spi::AdapterContext
+//! [`ServeContext`]: ulo::spi::ServeContext
 
 use std::sync::{Arc, Mutex, OnceLock};
 

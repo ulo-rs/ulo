@@ -16,11 +16,12 @@ use salvo::{Depot, FlowCtrl, Handler, Server, async_trait as salvo_async_trait};
 use crate::salvo_websocket_adapter::{salvo_to_ws_message, ws_message_to_salvo};
 use crate::tokio_sender::TokioSender;
 use ulo::async_trait;
+use ulo::http::ServeContext;
 use ulo::http::{
     Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod, HttpRequest, HttpResponse,
     PathParams, RequestBody, RequestHandler, RequestPart,
 };
-use ulo::spi::{AdapterContext, BindTarget};
+use ulo::spi::BindTarget;
 use ulo::ws::{MessageCallbackResult, WsAdapter, WsConnectionCallbacks};
 use ulo::ws::{WsMessage, WsSink};
 
@@ -338,7 +339,7 @@ impl Handler for UloFallbackHandler {
 /// `inner` and is driven through salvo's public `hyper_handler` entry.
 struct GlobalChainHandler {
     inner: Arc<salvo::Service>,
-    ctx: Arc<AdapterContext>,
+    ctx: Arc<ServeContext>,
 }
 
 #[salvo_async_trait]
@@ -549,7 +550,7 @@ impl HttpAdapter for SalvoAdapter {
     async fn into_lifecycle(
         mut self: Box<Self>,
         target: BindTarget,
-        ctx: AdapterContext,
+        ctx: ServeContext,
     ) -> AdapterResult<HttpLifecycleHandle> {
         let routes = std::mem::take(&mut self.routes);
         let ws_routes = std::mem::take(&mut self.ws_routes);

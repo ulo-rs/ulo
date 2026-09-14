@@ -19,11 +19,12 @@ use rocket_ws::WebSocket as RocketWs;
 
 use crate::rocket_websocket_adapter::{rocket_to_ws_message, ws_message_to_rocket};
 use crate::tokio_sender::TokioSender;
+use ulo::http::ServeContext;
 use ulo::http::{
     Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod, HttpRequest, HttpResponse,
     PathParams, RequestBody, RequestHandler, RequestPart,
 };
-use ulo::spi::{AdapterContext, BindTarget};
+use ulo::spi::BindTarget;
 use ulo::ws::{MessageCallbackResult, WsConnectionCallbacks};
 use ulo::ws::{WsMessage, WsSink};
 
@@ -241,7 +242,7 @@ fn take_ws_marker(res: &HttpResponse) -> Option<(usize, HashMap<String, String>)
 /// WebSocket upgrades.
 #[derive(Clone)]
 struct GlobalChainHandler {
-    ctx: Arc<AdapterContext>,
+    ctx: Arc<ServeContext>,
     http_routes: Arc<Vec<(HttpMethod, String, Arc<dyn RequestHandler>)>>,
     ws_routes: Arc<Vec<(String, Arc<WsConnectionCallbacks>)>>,
 }
@@ -461,7 +462,7 @@ impl HttpAdapter for RocketAdapter {
     async fn into_lifecycle(
         mut self: Box<Self>,
         target: BindTarget,
-        ctx: AdapterContext,
+        ctx: ServeContext,
     ) -> AdapterResult<HttpLifecycleHandle> {
         // Rocket fuses bind and serve into `launch()` with no public hook for
         // an existing listener, so only address targets are supported.

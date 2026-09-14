@@ -164,7 +164,7 @@ mod tests {
         manager.add_global(Arc::new(DummyMiddleware::new("global")));
 
         // Global middleware is excluded from get_middleware_for_route — it runs
-        // pre-routing via AdapterContext::execute, not per-route.
+        // pre-routing via ServeContext::execute, not per-route.
         let middleware = manager.get_middleware_for_route("TestModule", "/api/test", "GET");
         assert_eq!(middleware.len(), 0);
     }
