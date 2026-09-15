@@ -79,16 +79,18 @@ where the build script cannot reach — gets its companion from `ulo_build::shap
   whole-request extractor, so a handler spelling `tonic::Request<T>` now spells that. ADR-0042's
   road-not-taken paragraph said the whole-request form could not survive extraction; it survives
   as this type, rebuilt from nothing because the carrier keeps the request whole.
-- `build.rs` gains one line, `ulo_build::shapes("pkg")`, taking the string `include_proto!`
-  takes. A crate that already had to depend on `ulo-grpc` to compile (ADR-0042) now also has a
-  build-dependency on `ulo-build`.
+- `build.rs` is one line, `ulo_build::compile_protos("proto/orders.proto")`: tonic's codegen with
+  a vendored `protoc`, then the shapes. tonic's own options go through `configure().tonic(..)`,
+  and a proto compiled elsewhere adds `ulo_build::shapes("pkg")`, taking the string
+  `include_proto!` takes. A crate that already had to depend on `ulo-grpc` to compile (ADR-0042)
+  now also has a build-dependency on `ulo-build`, and no build-dependency on tonic.
 - One `Box`, one lock and one downcast per call, beside tonic's own per-call allocations.
 - `#[grpc_stream]` stays. It marks the reply, which changes what code the macro emits, and no type
-  can tell a macro that at expansion. A manifest the build step writes and the macro reads could
-  carry it; that is a follow-up, with the build step verified to re-expand on a proto change.
-- Guards still do not see the message: the request is installed after the enhancer wrapper has
-  run them. Installing before the guards, so a guard could take it under the same one-taker rule,
-  is possible and not done.
+  can tell a macro that at expansion.
+- The request is installed before the guards run, so a guard or interceptor reads a copy through
+  `GrpcContext::message::<T>()` and the handler's extractor still takes the original. A copy is
+  what keeps the one-taker rule true; a streamed request has no copy and answers
+  `RequestError::Streamed`, so a guard on a client-streaming method decides on the context alone.
 
 ## Roads not taken
 

@@ -17,6 +17,7 @@ use ulo::extract::Payload as Aliased;
 use ulo::extract::Payload;
 use ulo::grpc::GrpcContext;
 use ulo::grpc::GrpcHandlerResult;
+use ulo::grpc::RequestError;
 use ulo::grpc::extract::Inbound;
 use ulo::grpc::{GrpcCode, GrpcStatus};
 use ulo::{ErrorKind, async_trait, injectable, module};
@@ -31,6 +32,7 @@ use greeter_pb::greeter_client::GreeterClient;
 use greeter_pb::greeter_server::{Greeter, GreeterServer};
 
 static SAW_CANCEL: AtomicBool = AtomicBool::new(false);
+static PEEK_REFUSED_ON_STREAM: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone)]
 struct Seen(String);
@@ -82,6 +84,26 @@ impl ulo::enhancer::Guard<GrpcContext> for MarkGuard {
     async fn can_activate(&self, ctx: &GrpcContext) -> bool {
         ctx.extensions().insert(Seen("from-guard".to_string()));
         true
+    }
+}
+
+/// Reads the message before the handler runs and refuses one name. Where the
+/// caller streams there is nothing to copy, which the guard records and lets
+/// through.
+#[injectable]
+pub struct NameGuard {}
+
+#[async_trait]
+impl ulo::enhancer::Guard<GrpcContext> for NameGuard {
+    async fn can_activate(&self, ctx: &GrpcContext) -> bool {
+        match ctx.message::<greeter_pb::GreetRequest>() {
+            Ok(request) => request.name != "mallory",
+            Err(RequestError::Streamed) => {
+                PEEK_REFUSED_ON_STREAM.store(true, Ordering::SeqCst);
+                true
+            }
+            Err(other) => panic!("a guard reading the message: {other}"),
+        }
     }
 }
 
@@ -144,7 +166,7 @@ impl GreeterService {
     /// The execution's bag beside the request — and before it, since the
     /// request is one extractor among the others and holds no position.
     #[grpc_method]
-    #[use_guards(MarkGuard)]
+    #[use_guards(MarkGuard, NameGuard)]
     async fn greet_with_bag(
         &self,
         extensions: Extensions,
@@ -189,6 +211,7 @@ impl GreeterService {
     /// The caller's stream arrives as `Inbound<T>`, which yields the message
     /// type rather than tonic's `Streaming`.
     #[grpc_method]
+    #[use_guards(NameGuard)]
     async fn greet_all(
         &self,
         mut inbound: Inbound<greeter_pb::GreetRequest>,
@@ -257,7 +280,7 @@ impl GreeterService {
     }
 }
 
-#[module(controllers: [GreeterService], providers: [NoNameHandler, MarkGuard])]
+#[module(controllers: [GreeterService], providers: [NoNameHandler, MarkGuard, NameGuard])]
 impl GreeterModule {}
 
 async fn boot() -> u16 {
@@ -419,6 +442,31 @@ async fn a_handler_takes_the_execution_s_bag_beside_its_request() {
 
 #[serial]
 #[tokio_localset_test::localset_test]
+async fn a_guard_reads_the_message_and_the_handler_still_takes_it() {
+    let mut client = client(boot().await).await;
+
+    let refused = client
+        .greet_with_bag(greeter_pb::GreetRequest {
+            name: "mallory".to_string(),
+        })
+        .await
+        .expect_err("the guard refuses this name");
+    assert_eq!(refused.code(), tonic::Code::PermissionDenied);
+
+    // The same guard read this one and let it through; the handler's
+    // `Payload` was still whole after the guard's copy.
+    let reply = client
+        .greet_with_bag(greeter_pb::GreetRequest {
+            name: "ada".to_string(),
+        })
+        .await
+        .expect("the call succeeds")
+        .into_inner();
+    assert_eq!(reply.message, "ada:from-guard");
+}
+
+#[serial]
+#[tokio_localset_test::localset_test]
 async fn a_handler_can_take_the_request_whole() {
     let mut client = client(boot().await).await;
 
@@ -453,6 +501,28 @@ async fn a_handler_reads_the_caller_s_stream() {
         .into_inner();
 
     assert_eq!(reply.message, "ada, grace, edsger");
+}
+
+#[serial]
+#[tokio_localset_test::localset_test]
+async fn a_guard_cannot_copy_a_stream_and_the_handler_still_reads_it() {
+    PEEK_REFUSED_ON_STREAM.store(false, Ordering::SeqCst);
+    let mut client = client(boot().await).await;
+
+    let names = futures_util::stream::iter(["ada", "grace"].map(|name| greeter_pb::GreetRequest {
+        name: name.to_string(),
+    }));
+    let reply = client
+        .greet_all(names)
+        .await
+        .expect("the call succeeds")
+        .into_inner();
+
+    assert_eq!(reply.message, "ada, grace");
+    assert!(
+        PEEK_REFUSED_ON_STREAM.load(Ordering::SeqCst),
+        "the guard was told the caller streams"
+    );
 }
 
 #[serial]

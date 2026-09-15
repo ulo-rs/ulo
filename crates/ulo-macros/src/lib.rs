@@ -809,10 +809,14 @@ pub fn event_pattern(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// first three in one handler fail to compile naming both.
 ///
 /// What each method carries is read off the proto, not the handler: `build.rs`
-/// runs `ulo_build::shapes("pkg")` after tonic's codegen, which writes a
-/// `{service}_ulo` module beside the `{service}_server` one, and this macro
-/// projects through it. A companion written elsewhere is named on the
-/// attribute: `#[grpc_methods(pb::orders_server::Orders, shapes = pb::my_shapes)]`.
+/// runs `ulo_build::compile_protos("proto/orders.proto")`, which after tonic's
+/// codegen writes a `{service}_ulo` module beside the `{service}_server` one,
+/// and this macro projects through it. A companion written elsewhere is named
+/// on the attribute: `#[grpc_methods(pb::orders_server::Orders, shapes = pb::my_shapes)]`.
+///
+/// The request is installed on the execution before the guards run, so a guard
+/// or interceptor reads a copy with `ctx.message::<T>()` and the handler still
+/// takes the original.
 ///
 /// A handler answers with the reply message, or with `tonic::Response<T>` to set
 /// reply metadata itself. Its error implements `ulo::Error`, so `#[catch]`

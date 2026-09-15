@@ -78,6 +78,38 @@ impl GrpcContext {
         *slot = RequestSlot::Installed(carrier);
     }
 
+    /// A copy of the message the call carries, leaving it for the handler.
+    ///
+    /// For a guard or interceptor deciding on the message before the handler
+    /// runs: the request is installed ahead of the guards, and a copy is what
+    /// keeps the handler's `Payload<T>` whole. `T` is the method's request
+    /// message; another type answers [`RequestError::Mismatch`] naming both,
+    /// and a method whose caller streams answers [`RequestError::Streamed`],
+    /// since a stream has one reader.
+    ///
+    /// ```ignore
+    /// async fn can_activate(&self, ctx: &GrpcContext) -> bool {
+    ///     ctx.message::<CreateOrderRequest>()
+    ///         .map(|req| req.qty <= self.max_qty)
+    ///         .unwrap_or(false)
+    /// }
+    /// ```
+    pub fn message<T: 'static>(&self) -> Result<T, RequestError> {
+        let slot = self.inner.request.lock().unwrap_or_else(|e| e.into_inner());
+        let carrier = match &*slot {
+            RequestSlot::Installed(carrier) => carrier,
+            RequestSlot::Taken => return Err(RequestError::Taken),
+            RequestSlot::Empty => return Err(RequestError::Missing),
+        };
+        let copy = carrier.clone_message().ok_or(RequestError::Streamed)?;
+        copy.downcast::<T>()
+            .map(|message| *message)
+            .map_err(|_| RequestError::Mismatch {
+                asked: std::any::type_name::<T>(),
+                carried: carrier.carries(),
+            })
+    }
+
     /// Take the request, once. The first line of an extractor that reads the
     /// message; the built-in ones downcast what comes back.
     pub fn take_request(&self) -> Result<Box<dyn RequestCarrier>, RequestError> {
@@ -247,9 +279,38 @@ mod tests {
         fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send> {
             self
         }
+        fn clone_message(&self) -> Option<Box<dyn std::any::Any + Send>> {
+            Some(Box::new(self.0))
+        }
         fn carries(&self) -> &'static str {
             "u32"
         }
+    }
+
+    #[test]
+    fn a_copy_leaves_the_request_for_the_handler() {
+        let ctx = GrpcContext::new("pkg.Svc/Method", HashMap::new(), None, None);
+        assert_eq!(ctx.message::<u32>().err(), Some(RequestError::Missing));
+
+        ctx.install_request(Box::new(Carrying(7)));
+        assert_eq!(ctx.message::<u32>(), Ok(7));
+        assert_eq!(ctx.message::<u32>(), Ok(7), "a copy is not a take");
+        assert_eq!(
+            ctx.message::<String>().err(),
+            Some(RequestError::Mismatch {
+                asked: std::any::type_name::<String>(),
+                carried: "u32",
+            })
+        );
+
+        let carrier = ctx
+            .take_request()
+            .expect("still installed after two copies");
+        assert_eq!(
+            carrier.take_message().downcast::<u32>().ok(),
+            Some(Box::new(7))
+        );
+        assert_eq!(ctx.message::<u32>().err(), Some(RequestError::Taken));
     }
 
     #[test]

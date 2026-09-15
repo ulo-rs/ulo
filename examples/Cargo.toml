@@ -35,9 +35,7 @@ tokio-stream.workspace = true
 listenfd = "1.0.2"
 
 [build-dependencies]
-tonic-prost-build = "0.14"
 ulo-build = { path = "../crates/ulo-build" }
-protoc-bin-vendored = "3"
 
 [[example]]
 name = "hello_world"

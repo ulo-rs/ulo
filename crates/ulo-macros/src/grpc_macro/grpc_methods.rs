@@ -13,10 +13,13 @@
 //! execution, and every parameter of the handler is then a `FromContext<GrpcContext>`, in any
 //! order, with `&GrpcContext` passing through as it does on the other three transports.
 //!
-//! Lowering runs first: each handler keeps its body under `__ulo_grpc_<name>` and gains a proto
-//! trait method that unwraps the request, calls it, and renders its answer. The hidden name is what
-//! keeps the generated method from resolving to itself. From there the rest of this module sees an
-//! ordinary trait impl, and emits three things alongside it:
+//! Lowering runs first: each handler keeps its body under `__ulo_grpc_<name>` and gains two
+//! things — a hidden `__ulo_grpc_run_<name>(&self, &GrpcContext)` that extracts its parameters
+//! from the execution, calls it and renders its answer, and a proto trait method that installs
+//! the request on the execution and calls the run fn. The hidden names are what keep the
+//! generated method from resolving to itself. The enhancer wrapper below installs the request
+//! itself, before the guards, and calls the run fn directly. From there the rest of this module
+//! sees an ordinary trait impl, and emits three things alongside it:
 //!
 //! 1. A `MyServiceGrpcServiceSource` companion carrying the service's declarations — its token and
 //!    its enhancer tokens — and an `instance` that answers with the service serving a given call.
@@ -363,9 +366,9 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
             build_wrapper_method(
                 method,
                 &self_ident,
-                &trait_path,
                 &trait_short,
                 &impl_block.attrs,
+                &shapes,
             )
         })
         .collect::<Result<Vec<_>>>()?;
@@ -514,8 +517,9 @@ fn lower_handlers_impl(
             continue;
         }
 
-        let (handler, generated) = lower_handler(method, streams, shapes)?;
+        let (handler, run, generated) = lower_handler(method, streams, shapes, proto_trait)?;
         handler_items.push(syn::ImplItem::Fn(handler));
+        handler_items.push(syn::ImplItem::Fn(run));
         generated_items.extend(generated);
     }
 
@@ -633,6 +637,12 @@ fn one_taker_assertion(params: &[(syn::Ident, syn::Type)]) -> TokenStream {
     quote! { #(#assertions)* }
 }
 
+/// The hidden entry the enhancer wrapper calls once the request is installed
+/// and the guards have run: extraction, the handler, the rendering.
+fn run_ident(name: &syn::Ident) -> syn::Ident {
+    format_ident!("__ulo_grpc_run_{}", name)
+}
+
 /// `&GrpcContext` — the context itself, not something extracted from it, which
 /// is how the other three transports read it too.
 fn is_grpc_context_ref(ty: &syn::Type) -> bool {
@@ -650,9 +660,11 @@ fn lower_handler(
     method: &syn::ImplItemFn,
     streams: Option<Option<syn::Ident>>,
     shapes: &Path,
-) -> Result<(syn::ImplItemFn, Vec<syn::ImplItem>)> {
+    proto_trait: &Path,
+) -> Result<(syn::ImplItemFn, syn::ImplItemFn, Vec<syn::ImplItem>)> {
     let name = &method.sig.ident;
     let hidden = format_ident!("__ulo_grpc_{}", name);
+    let run = run_ident(name);
 
     if method.sig.asyncness.is_none() {
         return Err(syn::Error::new_spanned(
@@ -679,7 +691,7 @@ fn lower_handler(
         };
         let ty = typed.ty.as_ref();
         if is_grpc_context_ref(ty) {
-            call_args.push(quote! { &__ctx });
+            call_args.push(quote! { __ctx });
             continue;
         }
         let name = crate::controller_macro::extractor_params::extract_param_name(&typed.pat)
@@ -689,7 +701,7 @@ fn lower_handler(
         extractions.push(quote! {
             let #name = match <#ty as ::ulo::extract::FromContext<
                 ::ulo::grpc::GrpcContext,
-            >>::extract(&__ctx).await {
+            >>::extract(__ctx).await {
                 ::std::result::Result::Ok(__value) => __value,
                 ::std::result::Result::Err(__e) => {
                     return ::std::result::Result::Err(::tonic::Status::internal(__e.to_string()));
@@ -702,8 +714,12 @@ fn lower_handler(
 
     let one_taker = one_taker_assertion(&extracted);
     let request_arg_ty = quote! { <#shape as ::ulo_grpc::MethodShape>::Arg };
-    let bind_request = quote! {
-        #one_taker
+
+    // The trait method is the door tonic knocks on when no wrapper stands in
+    // front of it: it installs the request and runs. Under the enhancer
+    // wrapper the request is installed before the guards, and the wrapper
+    // calls the run fn directly.
+    let install_and_run = quote! {
         let __ctx = match ::ulo::grpc::GrpcContext::of(request.extensions()) {
             ::std::option::Option::Some(__ctx) => __ctx,
             ::std::option::Option::None => {
@@ -713,6 +729,10 @@ fn lower_handler(
             }
         };
         <#shape as ::ulo_grpc::MethodShape>::install(request, &__ctx);
+        Self::#run(self, &__ctx).await
+    };
+    let bind_params = quote! {
+        #one_taker
         #(#extractions)*
     };
 
@@ -799,6 +819,7 @@ fn lower_handler(
 
     let mut generated: Vec<syn::ImplItem> = Vec::new();
 
+    let run_fn: syn::ImplItemFn;
     let generated_fn: syn::ImplItemFn = if let Some(named_assoc) = streams {
         // tonic names a streaming reply's associated type after the method, and
         // the trait declares it: `greet_many` pairs with `GreetManyStream`. A
@@ -823,14 +844,16 @@ fn lower_handler(
             >>;
         });
 
-        syn::parse_quote! {
-            #(#carried)*
-            async fn #name(
+        run_fn = syn::parse_quote! {
+            #[doc(hidden)]
+            async fn #run(
                 &self,
-                request: ::tonic::Request<#request_arg_ty>,
-            ) -> ::std::result::Result<::tonic::Response<Self::#assoc>, ::tonic::Status> {
-                let __ctx = ::ulo::grpc::GrpcContext::of(request.extensions());
-                #bind_request
+                __ctx: &::ulo::grpc::GrpcContext,
+            ) -> ::std::result::Result<
+                ::tonic::Response<<Self as #proto_trait>::#assoc>,
+                ::tonic::Status,
+            > {
+                #bind_params
                 // Each item carries the caller's own error type, which reaches
                 // the wire as the code its kind means. Only the reply that opens
                 // the stream reaches the chain — an item failing arrives after
@@ -846,17 +869,36 @@ fn lower_handler(
                 };
                 #call_stream
             }
+        };
+
+        syn::parse_quote! {
+            #(#carried)*
+            async fn #name(
+                &self,
+                request: ::tonic::Request<#request_arg_ty>,
+            ) -> ::std::result::Result<::tonic::Response<Self::#assoc>, ::tonic::Status> {
+                #install_and_run
+            }
         }
     } else {
+        run_fn = syn::parse_quote! {
+            #[doc(hidden)]
+            async fn #run(
+                &self,
+                __ctx: &::ulo::grpc::GrpcContext,
+            ) -> ::std::result::Result<::tonic::Response<#answer_ty>, ::tonic::Status> {
+                #bind_params
+                #call_unary
+            }
+        };
+
         syn::parse_quote! {
             #(#carried)*
             async fn #name(
                 &self,
                 request: ::tonic::Request<#request_arg_ty>,
             ) -> ::std::result::Result<::tonic::Response<#answer_ty>, ::tonic::Status> {
-                let __ctx = ::ulo::grpc::GrpcContext::of(request.extensions());
-                #bind_request
-                #call_unary
+                #install_and_run
             }
         }
     };
@@ -872,7 +914,7 @@ fn lower_handler(
             && !attr_is(attr, "set_metadata")
     });
 
-    Ok((handler, generated))
+    Ok((handler, run_fn, generated))
 }
 
 /// The associated type tonic declares for a streaming method: the method's
@@ -985,13 +1027,16 @@ fn answer_type(output: &syn::ReturnType) -> Result<(syn::Type, bool)> {
 fn build_wrapper_method(
     method: &syn::ImplItemFn,
     self_ident: &syn::Ident,
-    trait_path: &Path,
     trait_short: &str,
     impl_attrs: &[syn::Attribute],
+    shapes: &Path,
 ) -> Result<TokenStream> {
     let sig = &method.sig;
     let method_name_lit = sig.ident.to_string();
     let method_path_lit = format!("{}/{}", trait_short, method_name_lit);
+    let marker = format_ident!("{}", to_upper_camel(&method_name_lit));
+    let shape = quote! { #shapes::#marker };
+    let run = run_ident(&sig.ident);
 
     // The impl block's `#[set_metadata]` entries then the method's, merged here rather than at every
     // call. The map is built once and shared, the service having one shape for the process.
@@ -1012,25 +1057,9 @@ fn build_wrapper_method(
         },
     };
 
-    // Forward every non-receiver argument to the user impl by name.
-    let forward_args: Vec<TokenStream> = sig
-        .inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            syn::FnArg::Receiver(_) => None,
-            syn::FnArg::Typed(pt) => match pt.pat.as_ref() {
-                syn::Pat::Ident(pi) => {
-                    let ident = &pi.ident;
-                    Some(quote! { #ident })
-                }
-                _ => Some(quote! { compile_error!("#[grpc_methods] requires named arguments") }),
-            },
-        })
-        .collect();
-
-    // The first non-receiver argument is the tonic Request — its metadata
-    // and remote_addr come off a borrow, so we read both without
-    // consuming the request before handing it to the user delegate.
+    // The first non-receiver argument is the tonic Request. Its metadata and
+    // remote_addr come off a borrow, read before the request is installed on
+    // the execution.
     let req_ident = match sig.inputs.iter().nth(1) {
         Some(syn::FnArg::Typed(pt)) => match pt.pat.as_ref() {
             syn::Pat::Ident(pi) => &pi.ident,
@@ -1094,6 +1123,9 @@ fn build_wrapper_method(
             // cannot carry it: this is where a handler reaches the cancellation
             // token, the declared metadata, and the execution's cache.
             #req_ident.extensions_mut().insert(__ctx.clone());
+            // Installed before the guards run, so a guard reads a copy of the
+            // message and the handler's extractor still takes the original.
+            <#shape as ::ulo_grpc::MethodShape>::install(#req_ident, &__ctx);
 
             // Two slots so the macro can distinguish a returned reply
             // (Ok or Err) from a caught panic, and feed the panic event
@@ -1110,6 +1142,7 @@ fn build_wrapper_method(
             let __panic_capture = __panic.clone();
             let __source = self.source.clone();
             let __build_ctx = __ctx.clone();
+            let __run_ctx = __ctx.clone();
 
             let __pipeline = ::ulo::__grpc::run_grpc_pipeline(
                 &__ctx,
@@ -1124,9 +1157,7 @@ fn build_wrapper_method(
                         let __inner = __source
                             .resolve(::ulo::di::Execution::Grpc(__build_ctx))
                             .await;
-                        <#self_ident as #trait_path>::#method_ident(
-                            &__inner, #(#forward_args),*
-                        ).await
+                        #self_ident::#run(&__inner, &__run_ctx).await
                     }).await;
                     match __caught {
                         ::std::result::Result::Ok(__reply) => {
