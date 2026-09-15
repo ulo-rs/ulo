@@ -40,6 +40,7 @@ use ulo::async_trait;
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
 use ulo::extract::{FromContext, Payload, Validated};
 use ulo::http::HttpContext;
+use ulo::http::HttpHandlerResult;
 use ulo::http::extract::{Json, Path, Query};
 use ulo::http::{Body, HttpResponse};
 use ulo::rpc::{RpcData, RpcError};
@@ -248,20 +249,20 @@ impl Guard<HttpContext> for AdminGuard {
 pub struct MaintenanceWindow {}
 
 #[async_trait]
-impl Interceptor<HttpContext, HttpResponse> for MaintenanceWindow {
+impl Interceptor<HttpContext, HttpHandlerResult> for MaintenanceWindow {
     async fn intercept(
         &self,
         ctx: &HttpContext,
-        next: Box<dyn InterceptorNext<HttpContext, HttpResponse>>,
-    ) -> HttpResponse {
+        next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+    ) -> HttpHandlerResult {
         if ctx.request().headers.contains_key("x-maintenance") {
-            return HttpResponse {
+            return Ok(HttpResponse {
                 status: 503,
                 body: Some(Body::json(serde_json::json!({
                     "error": "closed for maintenance",
                 }))),
                 headers: vec![],
-            };
+            });
         }
         next.run(ctx).await
     }

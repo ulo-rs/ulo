@@ -14,6 +14,7 @@ use ulo::di::{APP_GUARD, APP_INTERCEPTOR};
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
 use ulo::http::Body;
 use ulo::http::HttpContext;
+use ulo::http::HttpHandlerResult;
 use ulo::http::HttpResponse;
 use ulo::{controller, get, injectable, module, new, provider_token, provider_value, routes};
 static TRACKER: OnceLock<ExecutionTracker> = OnceLock::new();
@@ -98,12 +99,12 @@ impl AppInterceptorWithDI {
 }
 
 #[async_trait]
-impl Interceptor<HttpContext, HttpResponse> for AppInterceptorWithDI {
+impl Interceptor<HttpContext, HttpHandlerResult> for AppInterceptorWithDI {
     async fn intercept(
         &self,
         context: &HttpContext,
-        next: Box<dyn InterceptorNext<HttpContext, HttpResponse>>,
-    ) -> HttpResponse {
+        next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+    ) -> HttpHandlerResult {
         self.tracker.track(&format!(
             "interceptor:app_token:{}:before",
             self.service.get_name()

@@ -23,7 +23,7 @@ use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::grpc::GrpcContext;
 use crate::grpc::GrpcHandlerResult;
 use crate::http::HttpContext;
-use crate::http::HttpResponse;
+use crate::http::HttpHandlerResult;
 use crate::http::middleware::Middleware;
 use crate::rpc::RpcContext;
 use crate::rpc::RpcHandlerResult;
@@ -84,8 +84,8 @@ probe!(
 probe!(
     HttpInterceptorProbe,
     HttpInterceptorProbeFallback,
-    Interceptor<HttpContext, HttpResponse>,
-    dyn Interceptor<HttpContext, HttpResponse>
+    Interceptor<HttpContext, HttpHandlerResult>,
+    dyn Interceptor<HttpContext, HttpHandlerResult>
 );
 probe!(
     RpcInterceptorProbe,
@@ -106,7 +106,7 @@ probe!(
     dyn Interceptor<GrpcContext, crate::grpc::GrpcHandlerResult>
 );
 
-probe!(HttpErrorHandlerProbe, HttpErrorHandlerProbeFallback, ErrorHandler<HttpContext, HttpResponse>, dyn ErrorHandler<HttpContext, HttpResponse>);
+probe!(HttpErrorHandlerProbe, HttpErrorHandlerProbeFallback, ErrorHandler<HttpContext, HttpHandlerResult>, dyn ErrorHandler<HttpContext, HttpHandlerResult>);
 probe!(RpcErrorHandlerProbe, RpcErrorHandlerProbeFallback, ErrorHandler<RpcContext, RpcHandlerResult>, dyn ErrorHandler<RpcContext, RpcHandlerResult>);
 probe!(WsErrorHandlerProbe, WsErrorHandlerProbeFallback, ErrorHandler<WsContext, WsHandlerResult>, dyn ErrorHandler<WsContext, WsHandlerResult>);
 probe!(GrpcErrorHandlerProbe, GrpcErrorHandlerProbeFallback, ErrorHandler<GrpcContext, GrpcHandlerResult>, dyn ErrorHandler<GrpcContext, GrpcHandlerResult>);
@@ -165,7 +165,7 @@ type_probe!(
 type_probe!(
     HttpInterceptorTypeProbe,
     HttpInterceptorTypeProbeFallback,
-    Interceptor<HttpContext, HttpResponse>
+    Interceptor<HttpContext, HttpHandlerResult>
 );
 type_probe!(
     RpcInterceptorTypeProbe,

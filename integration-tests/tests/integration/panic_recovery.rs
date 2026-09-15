@@ -15,6 +15,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+use ulo::http::HttpHandlerResult;
 use ulo::{
     UloFactory, async_trait, controller,
     enhancer::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext},
@@ -39,12 +40,12 @@ macro_rules! recording_handler {
         struct $name;
 
         #[async_trait]
-        impl ErrorHandler<HttpContext, HttpResponse> for $name {
+        impl ErrorHandler<HttpContext, HttpHandlerResult> for $name {
             async fn handle_error(
                 &self,
                 error: ChainError<'_>,
                 _ctx: &HttpContext,
-            ) -> Option<HttpResponse> {
+            ) -> Option<HttpHandlerResult> {
                 if let Some(panic) = error.downcast_ref::<PanicRecovered>() {
                     $sink.lock().unwrap().push(panic.during);
                 }
@@ -178,12 +179,12 @@ async fn panicking_guard_renders_500_via_panic_recovered() {
 struct PanickingInterceptor;
 
 #[async_trait]
-impl Interceptor<HttpContext, HttpResponse> for PanickingInterceptor {
+impl Interceptor<HttpContext, HttpHandlerResult> for PanickingInterceptor {
     async fn intercept(
         &self,
         _ctx: &HttpContext,
-        _next: Box<dyn InterceptorNext<HttpContext, HttpResponse>>,
-    ) -> HttpResponse {
+        _next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+    ) -> HttpHandlerResult {
         panic!("interceptor kaboom");
     }
 }
@@ -236,12 +237,12 @@ async fn panicking_interceptor_renders_500_via_panic_recovered() {
 struct PanickingErrorHandler;
 
 #[async_trait]
-impl ErrorHandler<HttpContext, HttpResponse> for PanickingErrorHandler {
+impl ErrorHandler<HttpContext, HttpHandlerResult> for PanickingErrorHandler {
     async fn handle_error(
         &self,
         _error: ChainError<'_>,
         _ctx: &HttpContext,
-    ) -> Option<HttpResponse> {
+    ) -> Option<HttpHandlerResult> {
         panic!("error-handler kaboom");
     }
 }
@@ -253,12 +254,12 @@ static CHAIN_CONTINUED: AtomicUsize = AtomicUsize::new(0);
 struct ChainSurvivor;
 
 #[async_trait]
-impl ErrorHandler<HttpContext, HttpResponse> for ChainSurvivor {
+impl ErrorHandler<HttpContext, HttpHandlerResult> for ChainSurvivor {
     async fn handle_error(
         &self,
         _error: ChainError<'_>,
         _ctx: &HttpContext,
-    ) -> Option<HttpResponse> {
+    ) -> Option<HttpHandlerResult> {
         CHAIN_CONTINUED.fetch_add(1, Ordering::SeqCst);
         None
     }

@@ -30,6 +30,7 @@ use serde_json::json;
 use ulo::async_trait;
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
 use ulo::http::HttpContext;
+use ulo::http::HttpHandlerResult;
 use ulo::http::{Body, HttpResponse};
 use ulo::prelude::*;
 use ulo::rpc::RpcContext;
@@ -85,12 +86,12 @@ pub struct LoggingInterceptor {}
 impl LoggingInterceptor {}
 
 #[async_trait]
-impl Interceptor<HttpContext, HttpResponse> for LoggingInterceptor {
+impl Interceptor<HttpContext, HttpHandlerResult> for LoggingInterceptor {
     async fn intercept(
         &self,
         ctx: &HttpContext,
-        next: Box<dyn InterceptorNext<HttpContext, HttpResponse>>,
-    ) -> HttpResponse {
+        next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+    ) -> HttpHandlerResult {
         let req = ctx.request();
         println!(
             "[HTTP]      {} {} (agent: {:?})",

@@ -12,7 +12,6 @@ use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::error::StartupError;
 use crate::grpc::GrpcContext;
 use crate::http::HttpContext;
-use crate::http::HttpResponse;
 use crate::http::middleware::Middleware;
 use crate::rpc::RpcContext;
 use crate::spi::{
@@ -63,7 +62,7 @@ impl UloFactory {
     /// Register a global interceptor that wraps every HTTP route handler.
     pub fn use_global_http_interceptors(
         &mut self,
-        interceptor: Arc<dyn Interceptor<HttpContext, crate::http::HttpResponse>>,
+        interceptor: Arc<dyn Interceptor<HttpContext, crate::http::HttpHandlerResult>>,
     ) -> &mut Self {
         self.global_http
             .interceptors
@@ -75,7 +74,7 @@ impl UloFactory {
     /// method-level handlers — the most specific is consulted first.
     pub fn use_global_http_error_handler(
         &mut self,
-        handler: Arc<dyn ErrorHandler<HttpContext, HttpResponse>>,
+        handler: Arc<dyn ErrorHandler<HttpContext, crate::http::HttpHandlerResult>>,
     ) -> &mut Self {
         self.global_http.error_handlers.push(handler);
         self

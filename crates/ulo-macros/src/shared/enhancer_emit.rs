@@ -85,7 +85,7 @@ impl EnhancerKind {
             EnhancerKind::HttpInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::HttpInterceptor },
                 entry_path: quote! { ::ulo::__enhancer::HttpInterceptorEntry },
-                trait_path: quote! { ::ulo::enhancer::Interceptor<::ulo::http::HttpContext, ::ulo::http::HttpResponse> },
+                trait_path: quote! { ::ulo::enhancer::Interceptor<::ulo::http::HttpContext, ::ulo::http::HttpHandlerResult> },
                 factory_trait: quote! { ::ulo::__enhancer::InterceptorFactory<::ulo::__enhancer::Http> },
                 factory_suffix: "HttpInterceptor",
                 context_path: quote! { ::ulo::http::HttpContext },

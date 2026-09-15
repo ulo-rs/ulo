@@ -13,6 +13,7 @@ use ulo::async_trait;
 use ulo::di::MiddlewareConsumer;
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
 use ulo::http::HttpContext;
+use ulo::http::HttpHandlerResult;
 use ulo::http::HttpResponse;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::http::{Body, RequestPart};
@@ -183,12 +184,12 @@ impl LoggingInterceptor {
 }
 
 #[async_trait]
-impl Interceptor<HttpContext, HttpResponse> for LoggingInterceptor {
+impl Interceptor<HttpContext, HttpHandlerResult> for LoggingInterceptor {
     async fn intercept(
         &self,
         context: &HttpContext,
-        next: Box<dyn InterceptorNext<HttpContext, HttpResponse>>,
-    ) -> HttpResponse {
+        next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+    ) -> HttpHandlerResult {
         self.tracker.track("interceptor:before");
         let answer = next.run(context).await;
         self.tracker.track("interceptor:after");
@@ -208,12 +209,12 @@ impl TimingInterceptor {
 }
 
 #[async_trait]
-impl Interceptor<HttpContext, HttpResponse> for TimingInterceptor {
+impl Interceptor<HttpContext, HttpHandlerResult> for TimingInterceptor {
     async fn intercept(
         &self,
         context: &HttpContext,
-        next: Box<dyn InterceptorNext<HttpContext, HttpResponse>>,
-    ) -> HttpResponse {
+        next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+    ) -> HttpHandlerResult {
         self.tracker.track("interceptor:timing_start");
         let answer = next.run(context).await;
         self.tracker.track("interceptor:timing_end");

@@ -25,6 +25,12 @@ pub use self::context::HttpContext;
 pub(crate) mod error;
 pub use self::error::{HttpError, reason_for, status_for};
 pub use self::lifecycle::HttpLifecycleHandle;
+/// What an HTTP handler, interceptor and error handler answer with.
+///
+/// The `Err` side carries what the error chain is offered: a guard's rejection, a handler's own
+/// error, or a panic recovered from any segment below.
+pub type HttpHandlerResult = Result<HttpResponse, HttpError>;
+
 pub(crate) use self::mount::RouteMount;
 pub(crate) use self::pipeline::RoutePipeline;
 pub use self::provider::{Request, RequestFactory};

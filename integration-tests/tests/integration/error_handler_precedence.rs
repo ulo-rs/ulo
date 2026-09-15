@@ -20,6 +20,7 @@ use ulo::enhancer::{ChainError, ErrorHandler, Guard};
 use ulo::errors::GuardRejection;
 use ulo::http::Body;
 use ulo::http::HttpContext;
+use ulo::http::HttpHandlerResult;
 use ulo::http::HttpResponse;
 use ulo::{
     UloFactory, controller, get, injectable, module, routes, use_error_handlers, use_guards,
@@ -44,24 +45,24 @@ impl Guard<HttpContext> for Reject {
 }
 
 /// Records that it ran, then answers with its own scope's name.
-fn claim(scope: &'static str) -> Option<HttpResponse> {
+fn claim(scope: &'static str) -> Option<HttpHandlerResult> {
     ran().lock().unwrap().push(scope);
     let mut resp = HttpResponse::new();
     resp.status = 403;
     resp.body = Some(Body::text(scope));
-    Some(resp)
+    Some(Ok(resp))
 }
 
 #[injectable]
 pub struct MethodHandler {}
 
 #[async_trait]
-impl ErrorHandler<HttpContext, HttpResponse> for MethodHandler {
+impl ErrorHandler<HttpContext, HttpHandlerResult> for MethodHandler {
     async fn handle_error(
         &self,
         error: ChainError<'_>,
         _ctx: &HttpContext,
-    ) -> Option<HttpResponse> {
+    ) -> Option<HttpHandlerResult> {
         error.downcast_ref::<GuardRejection>()?;
         claim("method")
     }
@@ -71,12 +72,12 @@ impl ErrorHandler<HttpContext, HttpResponse> for MethodHandler {
 pub struct ControllerHandler {}
 
 #[async_trait]
-impl ErrorHandler<HttpContext, HttpResponse> for ControllerHandler {
+impl ErrorHandler<HttpContext, HttpHandlerResult> for ControllerHandler {
     async fn handle_error(
         &self,
         error: ChainError<'_>,
         _ctx: &HttpContext,
-    ) -> Option<HttpResponse> {
+    ) -> Option<HttpHandlerResult> {
         error.downcast_ref::<GuardRejection>()?;
         claim("controller")
     }
@@ -87,12 +88,12 @@ impl ErrorHandler<HttpContext, HttpResponse> for ControllerHandler {
 pub struct ObservingHandler {}
 
 #[async_trait]
-impl ErrorHandler<HttpContext, HttpResponse> for ObservingHandler {
+impl ErrorHandler<HttpContext, HttpHandlerResult> for ObservingHandler {
     async fn handle_error(
         &self,
         error: ChainError<'_>,
         _ctx: &HttpContext,
-    ) -> Option<HttpResponse> {
+    ) -> Option<HttpHandlerResult> {
         error.downcast_ref::<GuardRejection>()?;
         ran().lock().unwrap().push("method");
         None
@@ -103,12 +104,12 @@ impl ErrorHandler<HttpContext, HttpResponse> for ObservingHandler {
 struct GlobalHandler;
 
 #[async_trait]
-impl ErrorHandler<HttpContext, HttpResponse> for GlobalHandler {
+impl ErrorHandler<HttpContext, HttpHandlerResult> for GlobalHandler {
     async fn handle_error(
         &self,
         error: ChainError<'_>,
         _ctx: &HttpContext,
-    ) -> Option<HttpResponse> {
+    ) -> Option<HttpHandlerResult> {
         error.downcast_ref::<GuardRejection>()?;
         claim("global")
     }
