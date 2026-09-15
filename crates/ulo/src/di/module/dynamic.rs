@@ -77,8 +77,27 @@ pub struct DynamicModuleBuilder {
 }
 
 impl DynamicModuleBuilder {
-    pub fn provider<F: ProviderFactory + 'static>(mut self, factory: F) -> Self {
+    /// Declare a provider by a factory value, for one that carries configuration it was built
+    /// with — a URL, a pool size. Use [`provider`](Self::provider) where the type declares itself.
+    pub fn provider_factory<F: ProviderFactory + 'static>(mut self, factory: F) -> Self {
         self.providers.push(Box::new(factory));
+        self
+    }
+
+    /// Declare a dispatch target this module serves, by the type that declares it.
+    ///
+    /// What `controllers: [Orders]` takes on a `#[module]`, spelled for a builder.
+    pub fn controller<T: crate::di::DeclaresController>(mut self) -> Self {
+        self.controllers.push(Box::new(T::controller_factory()));
+        self
+    }
+
+    /// Declare a provider by the type that declares it.
+    ///
+    /// What `providers: [Db]` takes on a `#[module]`. Use
+    /// [`provider_factory`](Self::provider_factory) for a factory carrying configuration.
+    pub fn provider<T: crate::di::DeclaresProvider>(mut self) -> Self {
+        self.providers.push(Box::new(T::provider_factory()));
         self
     }
 
@@ -87,7 +106,7 @@ impl DynamicModuleBuilder {
     /// What `controllers:` takes on a `#[module]`, for a module built at runtime: an integration
     /// whose target comes from a value it was configured with — a schema, a path — rather than
     /// from an attribute on a struct.
-    pub fn controller<F: ControllerFactory + 'static>(mut self, factory: F) -> Self {
+    pub fn controller_factory<F: ControllerFactory + 'static>(mut self, factory: F) -> Self {
         self.controllers.push(Box::new(factory));
         self
     }

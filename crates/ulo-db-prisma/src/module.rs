@@ -49,7 +49,7 @@ impl PrismaModule {
         Fut: Future<Output = C> + Send + 'static,
     {
         DynamicModule::builder("PrismaModule")
-            .provider(PrismaClientFactory::<C, F, Fut> {
+            .provider_factory(PrismaClientFactory::<C, F, Fut> {
                 connect,
                 token: ulo::di::token_of::<C>(),
                 _client: PhantomData,
@@ -95,7 +95,7 @@ impl PrismaModule {
     {
         let name: String = name.into();
         DynamicModule::builder(format!("PrismaModule::{name}"))
-            .provider(PrismaClientFactory::<C, F, Fut> {
+            .provider_factory(PrismaClientFactory::<C, F, Fut> {
                 connect,
                 token: name.clone(),
                 _client: PhantomData,

@@ -190,6 +190,12 @@ fn generate_provider_factory_accessor(struct_name: &Ident) -> TokenStream {
                 #factory_name
             }
         }
+
+        impl ::ulo::di::DeclaresProvider for #struct_name {
+            fn provider_factory() -> impl ::ulo::spi::ProviderFactory + 'static {
+                #factory_name
+            }
+        }
     }
 }
 
@@ -661,6 +667,12 @@ pub(crate) fn generate_dispatch_system(struct_name: &Ident) -> TokenStream {
         impl #struct_name {
             #[doc(hidden)]
             pub fn __ulo_controller_factory() -> impl ::ulo::dispatch::ControllerFactory {
+                #factory_name
+            }
+        }
+
+        impl ::ulo::di::DeclaresController for #struct_name {
+            fn controller_factory() -> impl ::ulo::dispatch::ControllerFactory + 'static {
                 #factory_name
             }
         }

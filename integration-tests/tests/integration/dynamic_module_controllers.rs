@@ -9,33 +9,44 @@ use ulo::di::DynamicModule;
 use ulo::dispatch::ControllerFactory;
 use ulo::http::Body;
 use ulo::prelude::*;
-use ulo_macros::{controller, get, module, routes};
+use ulo_macros::{controller, get, injectable, module, routes};
 
 use crate::common::TestServer;
 
+/// Injected into the controller below, and declared by type rather than by factory.
+#[injectable]
+pub struct Greeting {
+    #[default("from a dynamic module".to_string())]
+    text: String,
+}
+
 /// Built from a value rather than from an attribute: the path is chosen when the module is made.
 #[controller("/dyn")]
-pub struct GreetingController {}
+pub struct GreetingController {
+    #[inject]
+    greeting: Greeting,
+}
 
 #[routes]
 impl GreetingController {
     #[get("/hello")]
     async fn hello(&self) -> Body {
-        Body::text("from a dynamic module")
+        Body::text(self.greeting.text.clone())
     }
 }
 
 fn runtime_module() -> DynamicModule {
     DynamicModule::builder("RuntimeGreetings")
-        .controller(GreetingController::__ulo_controller_factory())
+        .provider::<Greeting>()
+        .controller::<GreetingController>()
         .build()
 }
 
 #[module(imports: [runtime_module()])]
 pub struct AppModule;
 
-/// The route the dynamic module declared answers, so the target reached registration by the same
-/// path a `controllers:` entry does.
+/// The route the dynamic module declared answers, and answers with the provider the same module
+/// declared — so both reached registration by the path their `#[module]` list counterparts do.
 #[tokio_localset_test::localset_test]
 async fn a_dynamic_module_s_controller_serves() {
     let server = TestServer::start(AppModule).await;

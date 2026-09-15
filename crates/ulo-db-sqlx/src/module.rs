@@ -18,7 +18,7 @@ impl SqlxModule {
         CheckedModule::new(move |check: Option<StartupCheck>| {
             #[allow(unused_mut)]
             let mut builder = DynamicModule::builder("SqlxModule::postgres")
-                .provider(SqlxPoolFactory::<Postgres> {
+                .provider_factory(SqlxPoolFactory::<Postgres> {
                     url: url.clone(),
                     token: ulo::di::token_of::<Pool<Postgres>>(),
                     check,
@@ -29,7 +29,7 @@ impl SqlxModule {
             #[cfg(feature = "health")]
             {
                 builder = builder
-                    .provider(crate::health::SqlxHealthIndicatorFactory::<Postgres> {
+                    .provider_factory(crate::health::SqlxHealthIndicatorFactory::<Postgres> {
                         _db: PhantomData,
                     })
                     .export::<crate::health::SqlxHealthIndicator<Postgres>>();
@@ -71,7 +71,7 @@ impl SqlxModule {
         let url: String = url.into();
         CheckedModule::new(move |check: Option<StartupCheck>| {
             DynamicModule::builder(format!("SqlxModule::postgres::{name}"))
-                .provider(SqlxPoolFactory::<Postgres> {
+                .provider_factory(SqlxPoolFactory::<Postgres> {
                     url: url.clone(),
                     token: name.clone(),
                     check,
@@ -91,7 +91,7 @@ impl SqlxModule {
         CheckedModule::new(move |check: Option<StartupCheck>| {
             #[allow(unused_mut)]
             let mut builder = DynamicModule::builder("SqlxModule::mysql")
-                .provider(SqlxPoolFactory::<MySql> {
+                .provider_factory(SqlxPoolFactory::<MySql> {
                     url: url.clone(),
                     token: ulo::di::token_of::<Pool<MySql>>(),
                     check,
@@ -102,7 +102,7 @@ impl SqlxModule {
             #[cfg(feature = "health")]
             {
                 builder = builder
-                    .provider(crate::health::SqlxHealthIndicatorFactory::<MySql> {
+                    .provider_factory(crate::health::SqlxHealthIndicatorFactory::<MySql> {
                         _db: PhantomData,
                     })
                     .export::<crate::health::SqlxHealthIndicator<MySql>>();
@@ -120,7 +120,7 @@ impl SqlxModule {
         let url: String = url.into();
         CheckedModule::new(move |check: Option<StartupCheck>| {
             DynamicModule::builder(format!("SqlxModule::mysql::{name}"))
-                .provider(SqlxPoolFactory::<MySql> {
+                .provider_factory(SqlxPoolFactory::<MySql> {
                     url: url.clone(),
                     token: name.clone(),
                     check,
@@ -140,7 +140,7 @@ impl SqlxModule {
         CheckedModule::new(move |check: Option<StartupCheck>| {
             #[allow(unused_mut)]
             let mut builder = DynamicModule::builder("SqlxModule::sqlite")
-                .provider(SqlxPoolFactory::<Sqlite> {
+                .provider_factory(SqlxPoolFactory::<Sqlite> {
                     url: url.clone(),
                     token: ulo::di::token_of::<Pool<Sqlite>>(),
                     check,
@@ -151,7 +151,7 @@ impl SqlxModule {
             #[cfg(feature = "health")]
             {
                 builder = builder
-                    .provider(crate::health::SqlxHealthIndicatorFactory::<Sqlite> {
+                    .provider_factory(crate::health::SqlxHealthIndicatorFactory::<Sqlite> {
                         _db: PhantomData,
                     })
                     .export::<crate::health::SqlxHealthIndicator<Sqlite>>();
@@ -169,7 +169,7 @@ impl SqlxModule {
         let url: String = url.into();
         CheckedModule::new(move |check: Option<StartupCheck>| {
             DynamicModule::builder(format!("SqlxModule::sqlite::{name}"))
-                .provider(SqlxPoolFactory::<Sqlite> {
+                .provider_factory(SqlxPoolFactory::<Sqlite> {
                     url: url.clone(),
                     token: name.clone(),
                     check,

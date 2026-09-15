@@ -51,7 +51,7 @@ fn gql(
 
 fn dynamic() -> DynamicModule {
     DynamicModule::builder("LookupDyn")
-        .provider(provider_value!("LOOKUP_VALUE", 7u32))
+        .provider_factory(provider_value!("LOOKUP_VALUE", 7u32))
         .export_token("LOOKUP_VALUE")
         .build()
 }

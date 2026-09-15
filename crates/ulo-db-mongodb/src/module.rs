@@ -38,7 +38,7 @@ impl MongoModule {
         CheckedModule::new(move |check: Option<StartupCheck>| {
             #[allow(unused_mut)]
             let mut builder = DynamicModule::builder("MongoModule")
-                .provider(MongoConnectionFactory {
+                .provider_factory(MongoConnectionFactory {
                     uri: uri.clone(),
                     db_name: db_name.clone(),
                     token: ulo::di::token_of::<Database>(),
@@ -49,7 +49,7 @@ impl MongoModule {
             #[cfg(feature = "health")]
             {
                 builder = builder
-                    .provider(crate::health::MongoHealthIndicatorFactory)
+                    .provider_factory(crate::health::MongoHealthIndicatorFactory)
                     .export::<crate::health::MongoHealthIndicator>();
             }
 
@@ -92,7 +92,7 @@ impl MongoModule {
         let db_name: String = db_name.into();
         CheckedModule::new(move |check: Option<StartupCheck>| {
             DynamicModule::builder(format!("MongoModule::{name}"))
-                .provider(MongoConnectionFactory {
+                .provider_factory(MongoConnectionFactory {
                     uri: uri.clone(),
                     db_name: db_name.clone(),
                     token: name.clone(),
