@@ -2,7 +2,7 @@
 name = "ulo-build"
 version = "0.1.0"
 edition.workspace = true
-rust-version = "1.85"
+rust-version.workspace = true
 description = "Build-script companion for ulo-grpc: writes what each proto method carries beside the trait tonic generated"
 license.workspace = true
 repository.workspace = true
@@ -10,8 +10,16 @@ homepage.workspace = true
 keywords = ["ulo", "grpc", "tonic", "build", "codegen"]
 categories = ["development-tools::build-utils"]
 
+[features]
+# `compile_protos` finds protoc on its own. Opt out to use the one on PATH, or
+# the one `PROTOC` names.
+default = ["vendored-protoc"]
+vendored-protoc = ["dep:protoc-bin-vendored"]
+
 [dependencies]
 syn = { version = "2", features = ["full", "parsing", "printing"] }
 quote = "1"
 proc-macro2 = "1"
 prettyplease = "0.2"
+tonic-prost-build = "0.14"
+protoc-bin-vendored = { version = "3", optional = true }

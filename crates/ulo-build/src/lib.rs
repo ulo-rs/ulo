@@ -1,27 +1,40 @@
-//! What each method of a tonic-generated service carries, written beside the
-//! trait so `#[grpc_methods]` can name it without reading a handler.
-//!
-//! tonic-build turns a `.proto` service into a trait whose methods are declared
-//! with their request types: `tonic::Request<GreetRequest>`, or
-//! `tonic::Request<tonic::Streaming<GreetRequest>>` when the caller streams.
-//! The impl `#[grpc_methods]` writes has to repeat those types, and a macro
-//! cannot resolve a name to find them. This crate reads them off the trait
-//! tonic wrote and appends a companion module — one marker type per method,
-//! implementing `ulo_grpc::MethodShape` — that the macro projects through:
+//! The build script for a crate that serves gRPC through `#[grpc_methods]`.
 //!
 //! ```ignore
 //! // build.rs
-//! tonic_prost_build::compile_protos("proto/orders.proto")?;
-//! ulo_build::shapes("ulo_examples.orders")?;
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     ulo_build::compile_protos("proto/orders.proto")?;
+//!     Ok(())
+//! }
 //! ```
 //!
-//! [`shapes`] takes the string `tonic::include_proto!` takes and rewrites the
-//! file that macro includes in place, so nothing else in the crate changes.
-//! A trait tonic did not write — hand-written, or generated somewhere the
-//! build script cannot reach — goes through [`shapes_in_file`] instead.
+//! [`compile_protos`] runs tonic's codegen with a `protoc` this crate ships,
+//! then writes what each service method carries beside the trait tonic
+//! generated. That companion is what lets a handler's parameters be
+//! extractors: tonic declares each method with its request type,
+//! `tonic::Request<GreetRequest>` or `tonic::Request<tonic::Streaming<GreetRequest>>`,
+//! the impl `#[grpc_methods]` writes has to repeat it, and a macro cannot
+//! resolve a name to find it. The companion is one marker type per method,
+//! implementing `ulo_grpc::MethodShape`, that the macro projects through.
+//!
+//! tonic's own options go through [`Builder::tonic`]:
+//!
+//! ```ignore
+//! ulo_build::configure()
+//!     .tonic(|b| b.file_descriptor_set_path(&descriptor))
+//!     .compile_protos(&["proto/orders.proto"], &["proto"])?;
+//! ```
+//!
+//! A `.proto` compiled by something else keeps its own call and adds one:
+//! [`shapes`] takes the string `tonic::include_proto!` takes and rewrites that
+//! file in place, [`shapes_in_out_dir`] does the same for every file with a
+//! service, and a trait tonic did not write goes through [`shapes_in_file`].
 //!
 //! The companion sits beside the `*_server` module at the same depth, so the
 //! `super::` paths tonic wrote resolve to the same items from inside it.
+//!
+//! `protoc` comes from the `vendored-protoc` feature, on by default. With it
+//! off, or with `PROTOC` set, the one named or the one on `PATH` is used.
 
 use std::fmt;
 use std::io;
@@ -34,6 +47,87 @@ use syn::{Item, ItemTrait, TraitItem, Type};
 /// Marks where this crate's output begins in a rewritten file, so a second
 /// run replaces its own section rather than appending another.
 const SENTINEL: &str = "// ==== ulo-build: what each method carries, for #[grpc_methods] ====";
+
+/// Compile one `.proto`, includes resolved from its directory, and write the
+/// shapes for every service it declares.
+pub fn compile_protos(proto: impl AsRef<Path>) -> Result<(), Error> {
+    let proto = proto.as_ref();
+    let dir = proto.parent().ok_or_else(|| {
+        Error::Io(
+            io::Error::other("a .proto lives in a directory"),
+            proto.into(),
+        )
+    })?;
+    configure().compile_protos(&[proto], &[dir])
+}
+
+/// tonic's codegen with the shapes written after it. [`Builder::tonic`] takes
+/// every tonic-prost-build option.
+pub fn configure() -> Builder {
+    Builder {
+        tonic: tonic_prost_build::configure(),
+    }
+}
+
+/// See [`configure`].
+pub struct Builder {
+    tonic: tonic_prost_build::Builder,
+}
+
+impl Builder {
+    /// Configure the tonic-prost-build step: a descriptor set path, type
+    /// attributes, client or server only — whatever its builder offers.
+    pub fn tonic(
+        mut self,
+        configure: impl FnOnce(tonic_prost_build::Builder) -> tonic_prost_build::Builder,
+    ) -> Self {
+        self.tonic = configure(self.tonic);
+        self
+    }
+
+    /// Run tonic's codegen over `protos`, then write the shapes for every
+    /// service it wrote into `OUT_DIR`.
+    pub fn compile_protos<P: AsRef<Path>>(self, protos: &[P], includes: &[P]) -> Result<(), Error> {
+        let protos: Vec<PathBuf> = protos.iter().map(|p| p.as_ref().to_path_buf()).collect();
+        let mut includes: Vec<PathBuf> =
+            includes.iter().map(|p| p.as_ref().to_path_buf()).collect();
+        let mut config = tonic_prost_build::Config::new();
+
+        #[cfg(feature = "vendored-protoc")]
+        if std::env::var_os("PROTOC").is_none() {
+            config
+                .protoc_executable(protoc_bin_vendored::protoc_bin_path().map_err(Error::protoc)?);
+            includes.push(protoc_bin_vendored::include_path().map_err(Error::protoc)?);
+        }
+
+        self.tonic
+            .compile_with_config(config, &protos, &includes)
+            .map_err(Error::Codegen)?;
+        shapes_in_out_dir()
+    }
+}
+
+/// Write the shapes for every service in `OUT_DIR`, whichever files hold
+/// them. A file without a service is left as it is.
+pub fn shapes_in_out_dir() -> Result<(), Error> {
+    let out_dir = std::env::var_os("OUT_DIR").ok_or(Error::NoOutDir)?;
+    shapes_in_dir(Path::new(&out_dir))
+}
+
+fn shapes_in_dir(dir: &Path) -> Result<(), Error> {
+    let entries = std::fs::read_dir(dir).map_err(|e| Error::Io(e, dir.to_path_buf()))?;
+    for entry in entries {
+        let path = entry.map_err(|e| Error::Io(e, dir.to_path_buf()))?.path();
+        if path.extension().is_none_or(|ext| ext != "rs") {
+            continue;
+        }
+        match shapes_in_file(&path) {
+            Ok(()) | Err(Error::NoService) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
 
 /// Write the shapes for the services in `$OUT_DIR/{package}.rs`.
 ///
@@ -218,6 +312,17 @@ pub enum Error {
     Parse(syn::Error),
     /// The file declares no trait whose methods take a `Request<_>`.
     NoService,
+    /// tonic-prost-build refused the protos.
+    Codegen(io::Error),
+    /// The vendored `protoc` could not be located.
+    Protoc(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl Error {
+    #[cfg(feature = "vendored-protoc")]
+    fn protoc(e: protoc_bin_vendored::Error) -> Self {
+        Error::Protoc(Box::new(e))
+    }
 }
 
 impl fmt::Display for Error {
@@ -234,6 +339,8 @@ impl fmt::Display for Error {
                 "no service trait found — run this after the tonic step that writes the file, \
                  with the string you hand to `tonic::include_proto!`"
             ),
+            Error::Codegen(e) => write!(f, "tonic-prost-build: {e}"),
+            Error::Protoc(e) => write!(f, "vendored protoc: {e}"),
         }
     }
 }
@@ -241,8 +348,9 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::Io(e, _) => Some(e),
+            Error::Io(e, _) | Error::Codegen(e) => Some(e),
             Error::Parse(e) => Some(e),
+            Error::Protoc(e) => Some(e.as_ref()),
             _ => None,
         }
     }
@@ -328,6 +436,26 @@ mod tests {
         let twice = with_companion(&once).unwrap();
         assert_eq!(once, twice);
         assert_eq!(twice.matches("pub mod greeter_ulo").count(), 1);
+    }
+
+    #[test]
+    fn the_directory_sweep_writes_only_where_a_service_is() {
+        let dir = std::env::temp_dir().join(format!("ulo-build-sweep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("with_service.rs"), GENERATED).unwrap();
+        std::fs::write(dir.join("messages_only.rs"), "pub struct Only {}\n").unwrap();
+        std::fs::write(dir.join("descriptor.bin"), b"\x00not rust").unwrap();
+
+        shapes_in_dir(&dir).unwrap();
+
+        let with = std::fs::read_to_string(dir.join("with_service.rs")).unwrap();
+        assert!(with.contains("pub mod greeter_ulo"), "{with}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("messages_only.rs")).unwrap(),
+            "pub struct Only {}\n",
+            "a file with no service is left alone"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
