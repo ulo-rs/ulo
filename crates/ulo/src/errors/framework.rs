@@ -10,8 +10,8 @@ use std::fmt;
 use crate::errors::{Error, ErrorKind};
 
 /// Emitted when a guard returns `false`, on all four transports. The chain runs on this event
-/// before the transport's own rejection is rendered — 403 on HTTP, a `forbidden` frame on RPC,
-/// `PermissionDenied` on gRPC, the canonical envelope on WebSocket.
+/// before the transport's own rejection is rendered — 403 on HTTP, a `Forbidden` wire-`err` frame
+/// on RPC, `PermissionDenied` on gRPC, the canonical envelope on WebSocket.
 ///
 /// A WebSocket *connect* guard is the exception: its `false` refuses the upgrade. A refused
 /// connection has no answer to shape, so no event is raised.

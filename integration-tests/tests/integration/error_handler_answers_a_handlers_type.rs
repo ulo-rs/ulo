@@ -12,7 +12,7 @@ use serial_test::serial;
 use ulo::enhancer::{ChainError, ErrorHandler};
 use ulo::rpc::{RpcContext, RpcError, RpcHandlerOutput, RpcHandlerResult};
 use ulo::{UloFactory, async_trait, controller, module};
-use ulo_macros::{message_pattern, patterns};
+use ulo_macros::{message_pattern, patterns, use_guards};
 
 /// Claims by answering `Empty`: the call is over and carries no data back.
 pub struct ClaimsWithNothing;
@@ -46,6 +46,16 @@ impl ErrorHandler<RpcContext, RpcHandlerResult> for ClaimsWithAnError {
     }
 }
 
+/// Refuses every call, so the guard path has something to reject.
+pub struct AlwaysRefuse;
+
+#[async_trait]
+impl ulo::enhancer::Guard<RpcContext> for AlwaysRefuse {
+    async fn can_activate(&self, _ctx: &RpcContext) -> bool {
+        false
+    }
+}
+
 #[controller]
 pub struct FailingController {}
 
@@ -54,6 +64,12 @@ impl FailingController {
     #[message_pattern("claims.fail")]
     async fn fail(&self) -> RpcHandlerResult {
         Err(RpcError::Internal("handler said no".into()))
+    }
+
+    #[message_pattern("claims.guarded")]
+    #[use_guards(AlwaysRefuse {})]
+    async fn guarded(&self) -> RpcHandlerResult {
+        Ok(RpcHandlerOutput::Empty)
     }
 }
 
@@ -101,6 +117,35 @@ async fn call(port: u16, pattern: &str) -> serde_json::Value {
     serde_json::from_str(&line).expect("the reply must be JSON")
 }
 
+/// What the caller sees when a failure reaches the wire unclaimed.
+///
+/// Two failures, one of each kind the dispatcher can produce: a handler that returned an error, and
+/// a guard that refused. Both are the same event to a caller — the call did not succeed — and this
+/// records which frame each arrives in.
+#[serial]
+#[tokio_localset_test::localset_test]
+async fn an_unclaimed_failure_names_its_kind() {
+    let port = boot(|_| {}).await;
+
+    let from_handler = call(port, "claims.fail").await;
+    let from_guard = call(port, "claims.guarded").await;
+
+    assert_eq!(
+        from_handler["response"]["kind"], "Internal",
+        "a handler's error: {from_handler}"
+    );
+    // The envelope carries the error's own message, not its `Display` rendering — no
+    // `Internal error:` prefix. The RPC examples print this exact frame.
+    assert_eq!(
+        from_handler["response"]["message"], "handler said no",
+        "a handler's error: {from_handler}"
+    );
+    assert_eq!(
+        from_guard["response"]["kind"], "Forbidden",
+        "a guard's refusal: {from_guard}"
+    );
+}
+
 #[serial]
 #[tokio_localset_test::localset_test]
 async fn a_claim_can_answer_with_no_data() {
@@ -129,7 +174,7 @@ async fn a_claim_can_answer_with_an_error_of_its_own() {
     let reply = call(port, "claims.fail").await;
 
     assert_eq!(
-        reply["err"]["status"], "forbidden",
+        reply["response"]["kind"], "Forbidden",
         "the chain's error replaces the handler's `internal`: {reply}"
     );
 }

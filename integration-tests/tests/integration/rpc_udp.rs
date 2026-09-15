@@ -144,7 +144,7 @@ async fn udp_unknown_pattern_returns_error_frame() {
     .expect("unknown pattern should reply with an error");
 
     assert_eq!(resp["id"], "1");
-    assert_eq!(resp["err"]["status"], "not_found");
+    assert_eq!(resp["err"]["status"], "NotFound");
 }
 
 /// A panicking RPC handler is caught by the dispatcher, surfaced as a

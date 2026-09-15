@@ -362,9 +362,10 @@ async fn ws_method_level_enhancers_work() {
         .unwrap();
         let reply = ws.next().await.unwrap().unwrap();
         let json: serde_json::Value = serde_json::from_str(reply.to_text().unwrap()).unwrap();
-        assert!(
-            json.get("error").is_some(),
-            "the interceptor should have answered"
+        assert_eq!(
+            json["kind"], "Internal",
+            "an interceptor's refusal renders the canonical envelope, as every other failure on \
+             this gateway does: {json}"
         );
 
         ws.send(tokio_tungstenite::tungstenite::Message::Text(
@@ -427,7 +428,7 @@ async fn ws_method_level_enhancers_work() {
 ///   - `{"allow":"ok"}` → guard passes, interceptor prefixes → "prefixed:all-ok"
 ///   - `{}`             → guard blocks → Forbidden
 ///
-/// "rpc.refused"    → interceptor answers → err frame
+/// "rpc.refused"    → interceptor refuses → the envelope its kind names
 /// "rpc.recovering" → handler errors; chain claims via RecoveryErrorHandler
 ///                    → "recovered"
 /// "rpc.plain"      → "plain-ok" always  (isolation control)
@@ -439,12 +440,12 @@ async fn rpc_method_level_enhancers_work() {
     assert_eq!(resp["response"], "prefixed:all-ok");
 
     let resp = tcp_rpc(port, "rpc.all", serde_json::json!({})).await;
-    assert_eq!(resp["err"]["status"], "forbidden");
+    assert_eq!(resp["response"]["kind"], "Forbidden");
 
     let resp = tcp_rpc(port, "rpc.refused", serde_json::json!({})).await;
-    assert!(
-        resp.get("err").is_some(),
-        "the interceptor should have answered"
+    assert_eq!(
+        resp["response"]["kind"], "Internal",
+        "an interceptor's refusal is an answer this controller produced: {resp}"
     );
 
     // User-handler `Err(RpcError::Internal)` flows through the chain;

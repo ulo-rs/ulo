@@ -141,14 +141,14 @@ async fn an_unrouted_rpc_pattern_is_claimable() {
     );
 }
 
-/// Unclaimed, the caller sees the frame it always saw.
+/// Unclaimed, the miss answers in the wire-`err` lane, naming the kind it is: nothing routed.
 #[serial]
 #[tokio_localset_test::localset_test]
-async fn an_unclaimed_rpc_miss_renders_as_before() {
+async fn an_unclaimed_rpc_miss_names_its_kind() {
     let port = boot_rpc(|_| {}).await;
     let reply = call(port, "nobody.claims.this").await;
 
-    assert_eq!(reply["err"]["status"], "not_found", "reply: {reply}");
+    assert_eq!(reply["err"]["status"], "NotFound", "reply: {reply}");
 }
 
 // ── WebSocket ──────────────────────────────────────────────────────────────

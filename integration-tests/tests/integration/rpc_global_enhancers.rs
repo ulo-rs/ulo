@@ -192,7 +192,7 @@ async fn a_global_rpc_guard_rejecting_stops_the_call() {
     .await;
     let reply = call(port, "globals.echo").await;
 
-    assert_eq!(reply["err"]["status"], "forbidden", "reply: {reply}");
+    assert_eq!(reply["response"]["kind"], "Forbidden", "reply: {reply}");
     assert_eq!(seen(), vec!["global:deny"]);
 }
 

@@ -314,7 +314,7 @@ async fn a_framework_error_mid_stream_is_an_error_end() {
     .await;
     assert_eq!(frames.len(), 1, "got {frames:?}");
     assert_eq!(frames[0]["end"], true);
-    assert_eq!(frames[0]["err"]["status"], "error");
+    assert_eq!(frames[0]["err"]["status"], "Internal");
 
     let client = ulo::rpc::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
     let mut stream = client
@@ -322,7 +322,9 @@ async fn a_framework_error_mid_stream_is_an_error_end() {
         .await
         .unwrap();
     match stream.next().await {
-        Some(Err(ulo::rpc::RpcClientError::Remote { status, .. })) => assert_eq!(status, "error"),
+        Some(Err(ulo::rpc::RpcClientError::Remote { status, .. })) => {
+            assert_eq!(status, "Internal")
+        }
         other => panic!("expected a Remote error item, got {other:?}"),
     }
     assert!(stream.next().await.is_none());

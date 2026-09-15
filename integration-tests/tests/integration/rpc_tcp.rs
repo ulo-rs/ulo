@@ -874,7 +874,7 @@ async fn an_empty_patterns_impl_registers_no_patterns() {
     .await
     .expect("a bare controller must still leave a serving app");
     assert_eq!(
-        resp["err"]["status"], "not_found",
+        resp["err"]["status"], "NotFound",
         "a controller with no #[patterns] impl routes nothing"
     );
 }
