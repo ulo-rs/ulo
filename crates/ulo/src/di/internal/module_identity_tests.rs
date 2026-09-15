@@ -94,7 +94,7 @@ impl ModuleMetadata for Root {
 /// A global module exporting one connection under `token`, fingerprinted by `url`.
 fn conn_module(base: &str, token: &str, url: &str) -> DynamicModule {
     DynamicModule::builder(base)
-        .provider(FakeFactory {
+        .provider_factory(FakeFactory {
             token: token.into(),
             hint: Some(url.into()),
         })
@@ -108,7 +108,7 @@ fn conn_module(base: &str, token: &str, url: &str) -> DynamicModule {
 #[test]
 fn no_hint_keeps_base_identity() {
     let m = DynamicModule::builder("Mod")
-        .provider(FakeFactory {
+        .provider_factory(FakeFactory {
             token: "t".into(),
             hint: None,
         })

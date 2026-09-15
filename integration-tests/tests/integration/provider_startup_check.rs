@@ -62,7 +62,7 @@ impl Provider for ProbeProvider {
 
 fn probe_module(reachable: bool) -> DynamicModule {
     DynamicModule::builder("ProbeModule")
-        .provider(ProbeFactory { reachable })
+        .provider_factory(ProbeFactory { reachable })
         .build()
 }
 

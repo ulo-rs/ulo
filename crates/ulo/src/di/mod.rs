@@ -6,6 +6,7 @@
 //! transport is running, or none. What an integration crate implements to *be* a provider is
 //! `spi`.
 
+mod declares;
 mod execution;
 mod execution_cache;
 mod extension;
@@ -14,6 +15,7 @@ pub(crate) mod module;
 mod scope;
 mod token;
 
+pub use declares::{DeclaresController, DeclaresProvider};
 pub use execution::Execution;
 pub use execution_cache::ExecutionCache;
 pub use extension::{Extension, ExtensionFactory};
