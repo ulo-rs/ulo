@@ -536,8 +536,8 @@ mod tests {
             parse_reply_frame(br#"{"end":true}"#),
             ReplyFrame::End
         ));
-        match parse_reply_frame(br#"{"end":true,"err":{"message":"m","status":"forbidden"}}"#) {
-            ReplyFrame::EndErr { status, .. } => assert_eq!(status, "forbidden"),
+        match parse_reply_frame(br#"{"end":true,"err":{"message":"m","status":"Forbidden"}}"#) {
+            ReplyFrame::EndErr { status, .. } => assert_eq!(status, "Forbidden"),
             other => panic!("expected EndErr, got {other:?}"),
         }
         assert!(matches!(

@@ -132,7 +132,7 @@ mod tests {
         futures_executor::block_on(async {
             tx.send(Err(RpcClientError::Remote {
                 message: "boom".into(),
-                status: "error".into(),
+                status: "Internal".into(),
             }))
             .await
             .unwrap();

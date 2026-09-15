@@ -269,15 +269,9 @@ impl RpcControllerWrapper {
         }))
     }
 
-    /// Run one chain handler with panic recovery: a panicking
-    /// `handle_error` is logged and answers `None`, so the caller continues
-    /// to the next handler. Without this, a single bad chain handler would
-    /// kill the whole error-recovery path and the original error would
-    /// never reach the fallback `to_data` rendering.
-    ///
-    /// `position` counts from the most specific handler — the chain runs
-    /// pattern, then controller, then global — and is logged so a panic names
-    /// which registration it came from.
+    /// Walk the interceptor chain, innermost link last. A panic in any
+    /// interceptor is caught here and leaves as `Err`, so user code cannot
+    /// unwind past the dispatcher.
     async fn execute_with_interceptors(
         context: &RpcContext,
         interceptors: &[Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>],
