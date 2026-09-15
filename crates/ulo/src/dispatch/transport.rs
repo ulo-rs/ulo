@@ -11,9 +11,7 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use crate::context::ExecutionContext;
 use crate::enhancer::{Guard, Interceptor};
-use crate::{
-    grpc::GrpcContext, http::HttpContext, http::HttpResponse, rpc::RpcContext, ws::WsContext,
-};
+use crate::{grpc::GrpcContext, http::HttpContext, rpc::RpcContext, ws::WsContext};
 
 /// One transport, as a type.
 ///
@@ -23,9 +21,12 @@ pub trait Transport: 'static {
     /// What a handler, guard, interceptor and error handler on this transport are given.
     type Context: ExecutionContext;
 
-    /// What an interceptor on this transport answers with.
+    /// What an interceptor on this transport answers with, and what an error handler claiming an
+    /// error answers with.
     ///
-    /// An error handler answers with its own type, which on three of the four is narrower.
+    /// Fallible on every transport: a guard's rejection, an interceptor's refusal and a panic
+    /// anywhere below all arrive as the `Err` side, so the error chain runs once above the
+    /// interceptors rather than at each level that could produce one.
     type Answer;
 
     /// How a diagnostic names this transport.
@@ -36,7 +37,7 @@ pub trait Transport: 'static {
 pub struct Http;
 impl Transport for Http {
     type Context = HttpContext;
-    type Answer = HttpResponse;
+    type Answer = crate::http::HttpHandlerResult;
     const NAME: &'static str = "HTTP";
 }
 

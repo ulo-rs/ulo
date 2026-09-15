@@ -13,6 +13,7 @@ use ulo::context::ExecutionContext;
 use ulo::di::MiddlewareConsumer;
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
 use ulo::http::HttpContext;
+use ulo::http::HttpHandlerResult;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::http::{Body, HttpResponse};
 use ulo::{
@@ -144,12 +145,12 @@ impl LoggingInterceptor {
 }
 
 #[async_trait]
-impl Interceptor<HttpContext, HttpResponse> for LoggingInterceptor {
+impl Interceptor<HttpContext, HttpHandlerResult> for LoggingInterceptor {
     async fn intercept(
         &self,
         _context: &HttpContext,
-        next: Box<dyn InterceptorNext<HttpContext, HttpResponse>>,
-    ) -> HttpResponse {
+        next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+    ) -> HttpHandlerResult {
         self.tracker
             .track(format!("interceptor:{}:before", self.name));
         let answer = next.run(_context).await;
@@ -172,12 +173,12 @@ impl ValidationInterceptor {
 }
 
 #[async_trait]
-impl Interceptor<HttpContext, HttpResponse> for ValidationInterceptor {
+impl Interceptor<HttpContext, HttpHandlerResult> for ValidationInterceptor {
     async fn intercept(
         &self,
         context: &HttpContext,
-        next: Box<dyn InterceptorNext<HttpContext, HttpResponse>>,
-    ) -> HttpResponse {
+        next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+    ) -> HttpHandlerResult {
         self.tracker.track("interceptor:validation");
         let is_invalid = context
             .request()
@@ -191,7 +192,7 @@ impl Interceptor<HttpContext, HttpResponse> for ValidationInterceptor {
             let mut response = HttpResponse::new();
             response.status = 400;
             response.body = Some(Body::text("Validation failed".to_string()));
-            return response;
+            return Ok(response);
         }
         next.run(context).await
     }

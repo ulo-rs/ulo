@@ -25,6 +25,7 @@ use ulo::grpc::GrpcHandlerResult;
 use ulo::grpc::GrpcStatus;
 use ulo::grpc::extract::Inbound;
 use ulo::http::HttpContext;
+use ulo::http::HttpHandlerResult;
 use ulo::http::HttpResponse;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::{catch, controller, get, injectable, module, routes};
@@ -42,11 +43,11 @@ use pipeline_pb::orders_server::{Orders, OrdersServer};
 // ── HTTP: a panicking middleware ───────────────────────────────────────────
 
 #[catch(PanicRecovered)]
-async fn http_panic_catcher(err: &PanicRecovered, _ctx: &HttpContext) -> HttpResponse {
-    HttpResponse::builder()
+async fn http_panic_catcher(err: &PanicRecovered, _ctx: &HttpContext) -> HttpHandlerResult {
+    Ok(HttpResponse::builder()
         .status(418)
         .json(serde_json::json!({ "caught": err.during.as_str() }))
-        .build()
+        .build())
 }
 
 struct PanickingMiddleware;

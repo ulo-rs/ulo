@@ -18,6 +18,7 @@ use ulo_http_axum::AxumAdapter;
 
 use ulo::enhancer::{Guard, Interceptor, InterceptorNext};
 use ulo::http::HttpContext;
+use ulo::http::HttpHandlerResult;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
 // ============================================================================
 // EXECUTION ORDER TRACKER
@@ -121,12 +122,12 @@ impl GlobalInterceptor {
 }
 
 #[async_trait]
-impl Interceptor<HttpContext, HttpResponse> for GlobalInterceptor {
+impl Interceptor<HttpContext, HttpHandlerResult> for GlobalInterceptor {
     async fn intercept(
         &self,
         context: &HttpContext,
-        next: Box<dyn InterceptorNext<HttpContext, HttpResponse>>,
-    ) -> HttpResponse {
+        next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+    ) -> HttpHandlerResult {
         get_tracker().track("interceptor:global:before");
         let answer = next.run(context).await;
         get_tracker().track("interceptor:global:after");
@@ -143,12 +144,12 @@ impl ControllerInterceptor {
 }
 
 #[async_trait]
-impl Interceptor<HttpContext, HttpResponse> for ControllerInterceptor {
+impl Interceptor<HttpContext, HttpHandlerResult> for ControllerInterceptor {
     async fn intercept(
         &self,
         context: &HttpContext,
-        next: Box<dyn InterceptorNext<HttpContext, HttpResponse>>,
-    ) -> HttpResponse {
+        next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+    ) -> HttpHandlerResult {
         get_tracker().track("interceptor:controller:before");
         let answer = next.run(context).await;
         get_tracker().track("interceptor:controller:after");
@@ -165,12 +166,12 @@ impl MethodInterceptor {
 }
 
 #[async_trait]
-impl Interceptor<HttpContext, HttpResponse> for MethodInterceptor {
+impl Interceptor<HttpContext, HttpHandlerResult> for MethodInterceptor {
     async fn intercept(
         &self,
         context: &HttpContext,
-        next: Box<dyn InterceptorNext<HttpContext, HttpResponse>>,
-    ) -> HttpResponse {
+        next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+    ) -> HttpHandlerResult {
         get_tracker().track("interceptor:method:before");
         let answer = next.run(context).await;
         get_tracker().track("interceptor:method:after");

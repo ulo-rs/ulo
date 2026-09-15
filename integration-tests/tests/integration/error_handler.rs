@@ -23,9 +23,10 @@
 
 use std::sync::Arc;
 
+use ulo::http::HttpHandlerResult;
 use ulo::{
     UloFactory, async_trait, controller,
-    enhancer::{ChainError, ErrorHandler, Guard},
+    enhancer::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext},
     errors::GuardRejection,
     get,
     http::Body,
@@ -35,7 +36,7 @@ use ulo::{
     module, routes,
 };
 use ulo_http_axum::AxumAdapter;
-use ulo_macros::use_guards;
+use ulo_macros::{use_guards, use_interceptors};
 
 // ---- Canonical-envelope responses (no chain involvement) ---------------------
 
@@ -165,20 +166,87 @@ struct MarkerHandler {
 }
 
 #[async_trait]
-impl ErrorHandler<HttpContext, HttpResponse> for MarkerHandler {
+impl ErrorHandler<HttpContext, HttpHandlerResult> for MarkerHandler {
     async fn handle_error(
         &self,
         error: ChainError<'_>,
         _ctx: &HttpContext,
-    ) -> Option<HttpResponse> {
+    ) -> Option<HttpHandlerResult> {
         // Chain handlers downcast to the framework's typed event — there's
         // no synthesized `HttpError` to dispatch on anymore.
         error.downcast_ref::<GuardRejection>()?;
         let mut resp = HttpResponse::new();
         resp.status = 403;
         resp.body = Some(Body::text(self.marker));
-        Some(resp)
+        Some(Ok(resp))
     }
+}
+
+/// An interceptor that refuses reaches the chain, as one that panics already did.
+///
+/// The refusal and the panic are the same shape now: both leave the interceptor as the `Err` side
+/// of its answer, and the chain above claims either. Before, only the panic was routed — the
+/// deliberate failure rendered whatever the interceptor had built and skipped every `#[catch]`
+/// handler the application registered.
+#[tokio_localset_test::localset_test]
+async fn chain_fires_on_an_interceptor_refusing() {
+    /// Claims whatever reaches it, so the test asserts the refusal *arrived* rather than
+    /// asserting which type it arrived as.
+    pub struct ClaimsAnything;
+
+    #[async_trait]
+    impl ErrorHandler<HttpContext, HttpHandlerResult> for ClaimsAnything {
+        async fn handle_error(
+            &self,
+            _error: ChainError<'_>,
+            _ctx: &HttpContext,
+        ) -> Option<HttpHandlerResult> {
+            let mut resp = HttpResponse::new();
+            resp.status = 200;
+            resp.body = Some(Body::text("interceptor-caught"));
+            Some(Ok(resp))
+        }
+    }
+
+    pub struct RefusingInterceptor;
+
+    #[async_trait]
+    impl Interceptor<HttpContext, HttpHandlerResult> for RefusingInterceptor {
+        async fn intercept(
+            &self,
+            _ctx: &HttpContext,
+            _next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+        ) -> HttpHandlerResult {
+            Err(HttpError::custom(503, "refused before the handler"))
+        }
+    }
+
+    #[controller("/api")]
+    pub struct InterceptedController {}
+
+    #[routes]
+    impl InterceptedController {
+        #[get("/refused")]
+        #[use_interceptors(RefusingInterceptor {})]
+        fn refused(&self) -> Result<Body, HttpError> {
+            Ok(Body::text("should not reach"))
+        }
+    }
+
+    #[module(controllers: [InterceptedController], providers: [])]
+    impl InterceptedModule {}
+
+    let addr = start_app(InterceptedModule, Some(Arc::new(ClaimsAnything))).await;
+
+    let resp = reqwest::get(format!("http://{}/api/refused", addr))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.text().await.unwrap(),
+        "interceptor-caught",
+        "the chain claims an interceptor's refusal"
+    );
 }
 
 #[tokio_localset_test::localset_test]
@@ -219,17 +287,17 @@ async fn chain_fires_on_guard_rejection() {
 struct HttpErrorOverride;
 
 #[async_trait]
-impl ErrorHandler<HttpContext, HttpResponse> for HttpErrorOverride {
+impl ErrorHandler<HttpContext, HttpHandlerResult> for HttpErrorOverride {
     async fn handle_error(
         &self,
         error: ChainError<'_>,
         _ctx: &HttpContext,
-    ) -> Option<HttpResponse> {
+    ) -> Option<HttpHandlerResult> {
         let e = error.downcast_ref::<HttpError>()?;
         let mut resp = HttpResponse::new();
         resp.status = e.status_code();
         resp.body = Some(Body::text(format!("scope-override:{}", e.message())));
-        Some(resp)
+        Some(Ok(resp))
     }
 }
 
@@ -269,7 +337,7 @@ async fn scope_chain_overrides_app_error_default_on_user_error() {
 
 async fn start_app(
     module: impl ulo::di::ModuleMetadata + 'static,
-    chain_handler: Option<Arc<dyn ErrorHandler<HttpContext, HttpResponse>>>,
+    chain_handler: Option<Arc<dyn ErrorHandler<HttpContext, HttpHandlerResult>>>,
 ) -> std::net::SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
 

@@ -36,6 +36,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 use ulo::extract::Payload;
+use ulo::http::HttpHandlerResult;
 use ulo::{
     Error, ErrorKind, UloFactory, async_trait, controller,
     enhancer::{ChainError, ErrorHandler},
@@ -89,8 +90,12 @@ struct ErrorReporter {
 }
 
 #[async_trait]
-impl ErrorHandler<HttpContext, HttpResponse> for ErrorReporter {
-    async fn handle_error(&self, error: ChainError<'_>, ctx: &HttpContext) -> Option<HttpResponse> {
+impl ErrorHandler<HttpContext, HttpHandlerResult> for ErrorReporter {
+    async fn handle_error(
+        &self,
+        error: ChainError<'_>,
+        ctx: &HttpContext,
+    ) -> Option<HttpHandlerResult> {
         let report = json!({
             "message": error.to_string(),
             "path": ctx.request().uri.path(),

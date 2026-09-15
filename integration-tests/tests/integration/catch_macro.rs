@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use ulo::http::HttpHandlerResult;
 use ulo::http::{Body, HttpResponse};
 use ulo::{
     Error, UloFactory, async_trait, catch, controller, enhancer::Guard, errors::GuardRejection,
@@ -19,11 +20,11 @@ use ulo_http_axum::AxumAdapter;
 use ulo_macros::use_guards;
 
 #[catch(GuardRejection)]
-async fn guard_catcher(err: &GuardRejection, _ctx: &HttpContext) -> HttpResponse {
+async fn guard_catcher(err: &GuardRejection, _ctx: &HttpContext) -> HttpHandlerResult {
     let mut resp = HttpResponse::new();
     resp.status = ulo::http::status_for(err.kind());
     resp.body = Some(Body::text(format!("catch:{}", err.message())));
-    resp
+    Ok(resp)
 }
 
 // A non-HttpError type — used only to verify downcast_ref returns None and
@@ -40,18 +41,18 @@ impl std::fmt::Display for OtherError {
 impl std::error::Error for OtherError {}
 
 #[catch(OtherError)]
-async fn other_catcher(_err: &OtherError, _ctx: &HttpContext) -> HttpResponse {
+async fn other_catcher(_err: &OtherError, _ctx: &HttpContext) -> HttpHandlerResult {
     let mut resp = HttpResponse::new();
     resp.status = 500;
     resp.body = Some(Body::text("OTHER-CAUGHT"));
-    resp
+    Ok(resp)
 }
 
 // Static type-level checks: the macro must produce real `ErrorHandler` impls
 // rather than something that merely compiles as a value.
 #[test]
 fn catch_struct_implements_error_handler_trait() {
-    fn assert_impls<T: ulo::enhancer::ErrorHandler<HttpContext, HttpResponse>>() {}
+    fn assert_impls<T: ulo::enhancer::ErrorHandler<HttpContext, HttpHandlerResult>>() {}
     assert_impls::<guard_catcher>();
     assert_impls::<other_catcher>();
 }

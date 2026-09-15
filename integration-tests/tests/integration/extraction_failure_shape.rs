@@ -18,6 +18,7 @@ use ulo::async_trait;
 use ulo::enhancer::{ChainError, ErrorHandler};
 use ulo::http::Body;
 use ulo::http::HttpContext;
+use ulo::http::HttpHandlerResult;
 use ulo::http::HttpResponse;
 use ulo::http::extract::{Json, Query};
 use ulo::{UloFactory, controller, get, module, post, routes};
@@ -89,12 +90,16 @@ async fn an_extraction_failure_names_itself_and_says_why() {
 struct ClaimEverything;
 
 #[async_trait]
-impl ErrorHandler<HttpContext, HttpResponse> for ClaimEverything {
-    async fn handle_error(&self, _e: ChainError<'_>, _ctx: &HttpContext) -> Option<HttpResponse> {
+impl ErrorHandler<HttpContext, HttpHandlerResult> for ClaimEverything {
+    async fn handle_error(
+        &self,
+        _e: ChainError<'_>,
+        _ctx: &HttpContext,
+    ) -> Option<HttpHandlerResult> {
         let mut resp = HttpResponse::new();
         resp.status = 599;
         resp.body = Some(Body::text("claimed-by-chain"));
-        Some(resp)
+        Some(Ok(resp))
     }
 }
 

@@ -18,23 +18,14 @@ use std::panic::AssertUnwindSafe;
 
 /// The next step in the interceptor chain after factory entries are resolved.
 struct ChainNext {
-    interceptors: Vec<Arc<dyn Interceptor<HttpContext, HttpResponse>>>,
+    interceptors: Vec<Arc<dyn Interceptor<HttpContext, crate::http::HttpHandlerResult>>>,
     instance: Arc<dyn Route>,
-    error_handlers: Vec<HttpErrorHandlerArc>,
-    metadata: Arc<Metadata>,
 }
 
 #[async_trait]
-impl InterceptorNext<HttpContext, HttpResponse> for ChainNext {
-    async fn run(self: Box<Self>, context: &HttpContext) -> HttpResponse {
-        RoutePipeline::execute_with_interceptors(
-            context,
-            &self.interceptors,
-            &self.instance,
-            &self.error_handlers,
-            &self.metadata,
-        )
-        .await
+impl InterceptorNext<HttpContext, crate::http::HttpHandlerResult> for ChainNext {
+    async fn run(self: Box<Self>, context: &HttpContext) -> crate::http::HttpHandlerResult {
+        RoutePipeline::execute_with_interceptors(context, &self.interceptors, &self.instance).await
     }
 }
 
@@ -146,17 +137,17 @@ impl RoutePipeline {
                 };
 
                 let event = MiddlewareFailure::new(e.to_string());
-                if let Some(response) = crate::enhancer::pipeline::claim::<Http>(
+                match crate::enhancer::pipeline::claim::<Http>(
                     &self.error_handlers,
                     &event,
                     &error_ctx,
                 )
                 .await
                 {
-                    return response;
+                    Some(Ok(response)) => response,
+                    Some(Err(reshaped)) => Self::safe_render(|| reshaped.to_response()),
+                    None => Self::safe_render(|| crate::http::error::render_error(&event)),
                 }
-
-                Self::safe_render(|| crate::http::error::render_error(&event))
             }
         }
     }
@@ -178,15 +169,30 @@ impl RoutePipeline {
         let interceptors =
             crate::enhancer::pipeline::interceptors_for::<Http>(&interceptors, &context).await;
 
-        let response = Self::run_chain(
-            &context,
-            instance,
-            guards,
-            interceptors,
-            error_handlers,
-            metadata,
-        )
-        .await;
+        let answer = Self::run_chain(&context, instance, guards, interceptors).await;
+
+        // The one place the error chain runs. A guard's rejection, an interceptor's refusal, a
+        // handler's own error and a panic from any of them all arrive here as `Err`, so a
+        // `#[catch]` handler sees every one of them — which it did not when each segment rendered
+        // whatever it had produced.
+        let response = match answer {
+            Ok(response) => response,
+            Err(http_err) => {
+                // The chain is offered the domain error where one is wrapped, so
+                // `#[catch(MyError)]` matches what the handler actually raised.
+                let observed: &(dyn std::error::Error + Send + Sync + 'static) = match &http_err {
+                    HttpError::AppError(e) => e.as_ref(),
+                    other => other,
+                };
+                match crate::enhancer::pipeline::claim::<Http>(&error_handlers, observed, &context)
+                    .await
+                {
+                    Some(Ok(claimed)) => claimed,
+                    Some(Err(reshaped)) => Self::safe_render(|| reshaped.to_response()),
+                    None => Self::safe_render(|| http_err.to_response()),
+                }
+            }
+        };
 
         // The execution ends when the answer does. A streaming body has produced
         // nothing yet at this point, so the context rides it to the last frame
@@ -208,20 +214,18 @@ impl RoutePipeline {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Guards, then the interceptor chain. Every way this can fail leaves as `Err`, and the one
+    /// place that consults the error chain is the caller.
     async fn run_chain(
         context: &HttpContext,
         instance: Arc<dyn Route>,
         guards: Vec<Arc<dyn Guard<HttpContext>>>,
-        interceptors: Vec<Arc<dyn Interceptor<HttpContext, HttpResponse>>>,
-        error_handlers: Vec<HttpErrorHandlerArc>,
-        metadata: Arc<Metadata>,
-    ) -> HttpResponse {
+        interceptors: Vec<Arc<dyn Interceptor<HttpContext, crate::http::HttpHandlerResult>>>,
+    ) -> crate::http::HttpHandlerResult {
         for (i, guard) in guards.iter().enumerate() {
-            // `can_activate` is user code — catch panics so the request
-            // doesn't tear down. A panicking guard is treated as a hard
-            // rejection: the chain gets `PanicRecovered { during: Guard }`
-            // and renders the normal forbidden envelope.
+            // `can_activate` is user code — catch panics so the request doesn't tear down. A
+            // panicking guard is a hard rejection, and the chain sees `PanicRecovered` where a
+            // refusal gives it `GuardRejection`.
             let activated = match crate::panic_recovery::catch_async(
                 PipelineSegment::Guard,
                 guard.can_activate(&context),
@@ -231,27 +235,19 @@ impl RoutePipeline {
                 Ok(b) => b,
                 Err(event) => {
                     tracing::debug!(guard_index = i, panic = %event.message, "guard panicked");
-                    return Self::handle_framework_event(event, &error_handlers, context).await;
+                    return Err(HttpError::from(event));
                 }
             };
             if !activated {
                 tracing::debug!(guard_index = i, "guard rejected request");
-                let event = GuardRejection::new(i);
-                return Self::handle_framework_event(event, &error_handlers, context).await;
+                return Err(HttpError::from(GuardRejection::new(i)));
             }
         }
 
         if !interceptors.is_empty() {
             tracing::trace!(count = interceptors.len(), "entering interceptor chain");
         }
-        Self::execute_with_interceptors(
-            context,
-            &interceptors,
-            &instance,
-            &error_handlers,
-            &metadata,
-        )
-        .await
+        Self::execute_with_interceptors(context, &interceptors, &instance).await
     }
 
     /// Run the chain on a typed framework event. If nothing claims it, the
@@ -265,13 +261,11 @@ impl RoutePipeline {
     where
         E: Error,
     {
-        if let Some(handled) =
-            crate::enhancer::pipeline::claim::<Http>(&error_handlers, &event, ctx).await
-        {
-            return handled;
+        match crate::enhancer::pipeline::claim::<Http>(&error_handlers, &event, ctx).await {
+            Some(Ok(handled)) => handled,
+            Some(Err(reshaped)) => Self::safe_render(|| reshaped.to_response()),
+            None => Self::safe_render(|| crate::http::error::render_error(&event)),
         }
-
-        Self::safe_render(|| crate::http::error::render_error(&event))
     }
 
     /// Drive the transport's error renderer with panic recovery. A panic
@@ -325,15 +319,16 @@ impl RoutePipeline {
     /// method, then controller, then global — and is logged so a panic names
     /// which registration it came from.
     /// Onion/Russian doll dispatch through the interceptor chain.
+    ///
+    /// An interceptor's panic becomes the `Err` side, as a deliberate refusal already is, so both
+    /// reach the one chain above rather than one being rendered here and the other not.
     async fn execute_with_interceptors(
         context: &HttpContext,
-        interceptors: &[Arc<dyn Interceptor<HttpContext, HttpResponse>>],
+        interceptors: &[Arc<dyn Interceptor<HttpContext, crate::http::HttpHandlerResult>>],
         instance: &Arc<dyn Route>,
-        error_handlers: &[HttpErrorHandlerArc],
-        metadata: &Arc<Metadata>,
-    ) -> HttpResponse {
+    ) -> crate::http::HttpHandlerResult {
         if interceptors.is_empty() {
-            return Self::execute_handler(context, instance, error_handlers).await;
+            return Self::execute_handler(context, instance).await;
         }
 
         let (first, rest) = interceptors.split_first().unwrap();
@@ -341,8 +336,6 @@ impl RoutePipeline {
         let next = ChainNext {
             interceptors: rest.to_vec(),
             instance: instance.clone(),
-            error_handlers: error_handlers.to_vec(),
-            metadata: metadata.clone(),
         };
 
         match crate::panic_recovery::catch_async(
@@ -351,38 +344,17 @@ impl RoutePipeline {
         )
         .await
         {
-            Ok(response) => response,
-            Err(event) => Self::record_pipeline_panic(context, error_handlers, event).await,
+            Ok(answer) => answer,
+            Err(event) => Err(HttpError::from(event)),
         }
     }
 
-    /// Surface a panicking pre-handler segment (an interceptor) through the
-    /// chain: lift `PanicRecovered` into an `HttpError`, give error handlers
-    /// first claim, and fall back to the default rendering. The panic reaches
-    /// the client either way — remapped by a chain handler, or as a 500.
-    async fn record_pipeline_panic(
-        context: &HttpContext,
-        error_handlers: &[HttpErrorHandlerArc],
-        event: PanicRecovered,
-    ) -> HttpResponse {
-        if let Some(claimed) =
-            crate::enhancer::pipeline::claim::<Http>(&error_handlers, &event, context).await
-        {
-            return claimed;
-        }
-        Self::safe_render(|| HttpError::from(event).to_response())
-    }
-
-    /// Run the handler, then route the result.
-    ///
-    /// `Ok` is the answer. On `Err`, the chain's most-specific handler gets
-    /// first claim on the underlying error, and `HttpError::to_response` is
-    /// the fallback envelope when none claims.
+    /// Run the user handler. A panic below is a `PanicRecovered` on the `Err` side, and the chain
+    /// that might claim it runs once, above the interceptors.
     async fn execute_handler(
         context: &HttpContext,
         instance: &Arc<dyn Route>,
-        error_handlers: &[HttpErrorHandlerArc],
-    ) -> HttpResponse {
+    ) -> crate::http::HttpHandlerResult {
         tracing::trace!("executing controller handler");
         // `AssertUnwindSafe`: handler bodies aren't required to be unwind-safe
         // and adding `RefUnwindSafe` bounds to user code would be punitive.
@@ -392,36 +364,13 @@ impl RoutePipeline {
         let exec_result = AssertUnwindSafe(instance.execute(context))
             .catch_unwind()
             .await;
-        let exec_result = match exec_result {
-            Ok(result) => result,
-            Err(payload) => {
-                let event =
-                    PanicRecovered::from_panic_payload(PipelineSegment::HandlerBody, payload);
-                // Lift the framework event into HttpError via the From blanket.
-                ExecutionResult::Err(HttpError::from(event))
-            }
-        };
         match exec_result {
-            ExecutionResult::Ok(response) => response,
-            ExecutionResult::Err(http_err) => {
-                // For chain dispatch, expose the underlying domain error
-                // (when wrapped) so downcasting against `MyError`
-                // continues to work the way `#[catch(MyError)]` expects. For
-                // non-`AppError` variants (named HttpError variants), pass the
-                // HttpError itself.
-                let observed_err: &(dyn std::error::Error + Send + Sync + 'static) = match &http_err
-                {
-                    HttpError::AppError(e) => e.as_ref(),
-                    other => other,
-                };
-                if let Some(claimed) =
-                    crate::enhancer::pipeline::claim::<Http>(&error_handlers, observed_err, context)
-                        .await
-                {
-                    return claimed;
-                }
-                Self::safe_render(|| http_err.to_response())
-            }
+            Ok(ExecutionResult::Ok(response)) => Ok(response),
+            Ok(ExecutionResult::Err(http_err)) => Err(http_err),
+            Err(payload) => Err(HttpError::from(PanicRecovered::from_panic_payload(
+                PipelineSegment::HandlerBody,
+                payload,
+            ))),
         }
     }
 }

@@ -29,7 +29,7 @@ pub struct RouteEnhancers {
     pub interceptor_tokens: Vec<String>,
     pub error_handler_tokens: Vec<String>,
     pub guards: Vec<Arc<dyn Guard<HttpContext>>>,
-    pub interceptors: Vec<Arc<dyn Interceptor<HttpContext, HttpResponse>>>,
+    pub interceptors: Vec<Arc<dyn Interceptor<HttpContext, crate::http::HttpHandlerResult>>>,
     pub error_handlers: Vec<HttpErrorHandlerArc>,
 }
 

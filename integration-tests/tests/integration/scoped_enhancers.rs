@@ -14,6 +14,7 @@ use ulo::{controller, get, injectable, module, routes, use_guards, use_intercept
 use ulo_macros::{new, subscriptions, websocket_gateway};
 
 use crate::common::TestServer;
+use ulo::http::HttpHandlerResult;
 
 // ---- execution-scoped guard, no injected deps ----------------------------------
 
@@ -53,17 +54,20 @@ pub struct TransientInterceptor {}
 impl TransientInterceptor {}
 
 #[async_trait]
-impl Interceptor<HttpContext, HttpResponse> for TransientInterceptor {
+impl Interceptor<HttpContext, HttpHandlerResult> for TransientInterceptor {
     async fn intercept(
         &self,
         context: &HttpContext,
-        next: Box<dyn InterceptorNext<HttpContext, HttpResponse>>,
-    ) -> HttpResponse {
-        let mut answer = next.run(context).await;
-        answer
-            .headers
-            .push(("x-transient".to_string(), "hit".to_string()));
-        answer
+        next: Box<dyn InterceptorNext<HttpContext, HttpHandlerResult>>,
+    ) -> HttpHandlerResult {
+        // The header goes on a response there is one to put it on. A failure below passes
+        // through untouched, for the chain above to claim.
+        next.run(context).await.map(|mut response| {
+            response
+                .headers
+                .push(("x-transient".to_string(), "hit".to_string()));
+            response
+        })
     }
 }
 

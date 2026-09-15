@@ -20,7 +20,7 @@
 
 use serde::Serialize;
 use serde_json::json;
-use ulo::http::{Body, HttpRequest, HttpResponse};
+use ulo::http::{Body, HttpHandlerResult, HttpRequest, HttpResponse};
 use ulo::{
     Error, UloFactory, async_trait, catch, controller, enhancer::Guard, get, http::HttpContext,
     http::HttpError, injectable, module, post, routes,
@@ -85,8 +85,8 @@ impl Error for PaymentDeclined {
 // this handler, the canonical envelope (status 422 + `{"statusCode":...}`)
 // would render via the `From<PaymentDeclined> for HttpError` blanket.
 #[catch(PaymentDeclined)]
-async fn render_payment_declined(err: &PaymentDeclined, _ctx: &HttpContext) -> HttpResponse {
-    HttpResponse::builder()
+async fn render_payment_declined(err: &PaymentDeclined, _ctx: &HttpContext) -> HttpHandlerResult {
+    Ok(HttpResponse::builder()
         .status(ulo::http::status_for(err.kind()))
         .header("Retry-After", err.retry_after_secs.to_string())
         .json(json!({
@@ -94,7 +94,7 @@ async fn render_payment_declined(err: &PaymentDeclined, _ctx: &HttpContext) -> H
             "reason_code": err.reason_code,
             "retry_after_secs": err.retry_after_secs,
         }))
-        .build()
+        .build())
 }
 
 // ---- Service ----------------------------------------------------------------
@@ -158,15 +158,15 @@ impl Guard<HttpContext> for AuthGuard {
 // in place.
 
 #[catch(ulo::errors::GuardRejection)]
-async fn auth_failure(err: &ulo::errors::GuardRejection, _ctx: &HttpContext) -> HttpResponse {
-    HttpResponse::builder()
+async fn auth_failure(err: &ulo::errors::GuardRejection, _ctx: &HttpContext) -> HttpHandlerResult {
+    Ok(HttpResponse::builder()
         .status(ulo::http::status_for(err.kind()))
         .json(json!({
             "error": "auth_required",
             "hint": "Send `x-auth-token: <token>`",
             "detail": err.message(),
         }))
-        .build()
+        .build())
 }
 
 // ---- Controllers ------------------------------------------------------------
