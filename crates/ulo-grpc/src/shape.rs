@@ -38,7 +38,11 @@ pub trait MethodShape {
 }
 
 /// Install a request whose caller sent one message.
-pub fn message<T: Send + 'static>(request: tonic::Request<T>, ctx: &GrpcContext) {
+///
+/// The message is `Clone` so a guard or interceptor can read a copy through
+/// `GrpcContext::message` before the handler takes it; every prost-generated
+/// message is.
+pub fn message<T: Clone + Send + 'static>(request: tonic::Request<T>, ctx: &GrpcContext) {
     ctx.install_request(Box::new(MessageRequest(request)));
 }
 
@@ -49,13 +53,17 @@ pub fn stream<T: Send + 'static>(request: tonic::Request<tonic::Streaming<T>>, c
 
 struct MessageRequest<T>(tonic::Request<T>);
 
-impl<T: Send + 'static> RequestCarrier for MessageRequest<T> {
+impl<T: Clone + Send + 'static> RequestCarrier for MessageRequest<T> {
     fn take_message(self: Box<Self>) -> Box<dyn Any + Send> {
         Box::new(self.0.into_inner())
     }
 
     fn into_any(self: Box<Self>) -> Box<dyn Any + Send> {
         self
+    }
+
+    fn clone_message(&self) -> Option<Box<dyn Any + Send>> {
+        Some(Box::new(self.0.get_ref().clone()))
     }
 
     fn carries(&self) -> &'static str {
@@ -82,6 +90,10 @@ impl<T: Send + 'static> RequestCarrier for StreamRequest<T> {
 
     fn into_any(self: Box<Self>) -> Box<dyn Any + Send> {
         self
+    }
+
+    fn clone_message(&self) -> Option<Box<dyn Any + Send>> {
+        None
     }
 
     fn carries(&self) -> &'static str {
@@ -119,7 +131,7 @@ impl<T> DerefMut for GrpcRequest<T> {
     }
 }
 
-impl<T: Send + 'static> FromContext<GrpcContext> for GrpcRequest<T> {
+impl<T: Clone + Send + 'static> FromContext<GrpcContext> for GrpcRequest<T> {
     type Error = RequestError;
 
     const CONSUMES: bool = true;
