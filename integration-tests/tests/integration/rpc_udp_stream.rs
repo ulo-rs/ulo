@@ -223,7 +223,7 @@ async fn a_framework_error_mid_stream_is_an_error_end() {
     .await;
     assert_eq!(frames.len(), 1, "got {frames:?}");
     assert_eq!(frames[0]["end"], true);
-    assert_eq!(frames[0]["err"]["status"], "error");
+    assert_eq!(frames[0]["err"]["status"], "Internal");
 }
 
 #[tokio_localset_test::localset_test]

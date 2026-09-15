@@ -13,7 +13,7 @@
 //   # error
 //   echo '{"pattern":"order.create","data":{"item":"keyboard","qty":0},"id":"req-2"}' \
 //     | nc -u -w1 127.0.0.1 4000
-//   → {"id":"req-2","err":{"message":"Internal error: qty must be positive","status":"error"}}
+//   → {"id":"req-2","response":{"status":"error","kind":"Internal","message":"qty must be positive"}}
 //
 //   # fire-and-forget (no id → no reply)
 //   echo '{"pattern":"order.shipped","data":{"order_id":1001}}' \

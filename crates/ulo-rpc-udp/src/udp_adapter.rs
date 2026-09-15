@@ -104,7 +104,7 @@ impl std::fmt::Display for UdpTarget {
 /// By default the adapter spawns one task per inbound datagram with no
 /// upper bound. Set a cap with [`UdpAdapter::with_max_inflight`] to
 /// reject datagrams that would exceed it. Rejected request-response
-/// datagrams get an `"overloaded"` error frame back; fire-and-forget
+/// datagrams get an `TooManyRequests` error frame back; fire-and-forget
 /// datagrams are dropped with a log line.
 pub struct UdpAdapter {
     target: Option<UdpTarget>,
@@ -159,7 +159,7 @@ impl UdpAdapter {
 
     /// Cap the number of concurrently running datagram handlers. Inbound
     /// datagrams over the cap are rejected immediately with an
-    /// `"overloaded"` error frame (or dropped, for fire-and-forget).
+    /// `TooManyRequests` error frame (or dropped, for fire-and-forget).
     /// Default: unbounded.
     pub fn with_max_inflight(mut self, max: usize) -> Self {
         self.inflight = Some(Arc::new(Semaphore::new(max)));
@@ -366,7 +366,7 @@ async fn drain_tasks(tasks: Arc<Mutex<JoinSet<()>>>, drain_timeout: Option<Durat
     }
 }
 
-/// Send an `"overloaded"` error frame to the source if the inbound datagram
+/// Send an `TooManyRequests` error frame to the source if the inbound datagram
 /// has an `id` (request-response). Fire-and-forget messages are dropped with
 /// a log line — there's no caller waiting to be notified.
 async fn reject_overloaded(socket: &UdpSocket, src: std::net::SocketAddr, msg: &serde_json::Value) {
@@ -379,7 +379,7 @@ async fn reject_overloaded(socket: &UdpSocket, src: std::net::SocketAddr, msg: &
 
     let frame = serde_json::json!({
         "id": id,
-        "err": { "message": "server at capacity", "status": "overloaded" }
+        "err": { "message": "server at capacity", "status": ulo::errors::ErrorKind::TooManyRequests.name() }
     });
     let bytes = frame.to_string().into_bytes();
     if let Err(e) = socket.send_to(&bytes, src).await {

@@ -9,13 +9,11 @@ use super::{
 };
 use crate::context::Metadata;
 use crate::dispatch::ExecutionResult;
-use crate::enhancer::{Interceptor, InterceptorNext};
-use crate::errors::{PanicRecovered, PipelineSegment};
+use crate::enhancer::{Guard, Interceptor, InterceptorNext};
 use crate::rpc::RpcContext;
 use crate::spi::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};
+use futures::StreamExt;
 use futures::stream::BoxStream;
-use futures::{FutureExt, StreamExt};
-use std::panic::AssertUnwindSafe;
 
 /// Delegates to the handler's reply stream while owning the execution's
 /// context — cache, extensions, and token stay alive until the last item.
@@ -67,19 +65,13 @@ impl Drop for ScopedRpcStream {
 struct RpcChainNext {
     interceptors: Vec<Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>>,
     source: Arc<dyn RpcControllerSource>,
-    error_handlers: Vec<RpcErrorHandlerArc>,
 }
 
 #[async_trait]
 impl InterceptorNext<RpcContext, RpcHandlerResult> for RpcChainNext {
     async fn run(self: Box<Self>, context: &RpcContext) -> RpcHandlerResult {
-        RpcControllerWrapper::execute_with_interceptors(
-            context,
-            &self.interceptors,
-            &self.source,
-            &self.error_handlers,
-        )
-        .await
+        RpcControllerWrapper::execute_with_interceptors(context, &self.interceptors, &self.source)
+            .await
     }
 }
 
@@ -163,44 +155,39 @@ impl RpcControllerWrapper {
             all_error_handlers.extend_from_slice(h);
         }
         let guards = crate::enhancer::pipeline::guards_for::<Rpc>(&all_guards, &ctx).await;
-        for (index, guard) in guards.iter().enumerate() {
-            // A panicking guard is a bug, not a verdict: it takes the same
-            // route as any other pipeline panic, so `#[catch(PanicRecovered)]`
-            // claims it and an unclaimed one renders `Internal` rather than
-            // telling the caller its credentials were refused.
-            let activated = match crate::panic_recovery::catch_async(
-                crate::errors::PipelineSegment::Guard,
-                guard.can_activate(&ctx),
-            )
-            .await
-            {
-                Ok(b) => b,
-                Err(event) => {
-                    tracing::debug!(guard_index = index, panic = %event.message, "guard panicked");
-                    return Self::record_pipeline_panic(&ctx, &all_error_handlers, event).await;
-                }
-            };
-            if !activated {
-                // The chain gets first claim, as it does on HTTP: a
-                // `#[catch(GuardRejection)]` handler reshapes the refusal, and
-                // an unclaimed one renders as the `forbidden` frame it always
-                // did.
-                let rejection = crate::errors::GuardRejection::new(index);
-                if let Some(claimed) =
-                    crate::enhancer::pipeline::claim::<Rpc>(&all_error_handlers, &rejection, &ctx)
-                        .await
-                {
-                    return claimed;
-                }
-                return Err(RpcError::Forbidden("Guard rejected message".into()));
-            }
-        }
-
         let interceptors =
             crate::enhancer::pipeline::interceptors_for::<Rpc>(&all_interceptors, &ctx).await;
-        let answer =
-            Self::execute_with_interceptors(&ctx, &interceptors, &self.source, &all_error_handlers)
-                .await;
+
+        let answer = Self::run_chain(&ctx, &self.source, &guards, &interceptors).await;
+
+        // The one place the chain runs. A guard's refusal, a panic from any segment and the
+        // handler's own error all arrive as `Err`, so a `#[catch]` handler is offered every one
+        // of them and an unclaimed one renders the same way whichever produced it.
+        let answer = match answer {
+            Ok(output) => Ok(output),
+            Err(rpc_err) => {
+                let observed: &(dyn std::error::Error + Send + Sync + 'static) = match &rpc_err {
+                    RpcError::AppError(e) => e.as_ref(),
+                    other => other,
+                };
+                match crate::enhancer::pipeline::claim::<Rpc>(&all_error_handlers, observed, &ctx)
+                    .await
+                {
+                    // Everything this controller produces is an answer, so it renders as one. A
+                    // chain handler that recovered the call answers with its reply; one that
+                    // reshaped the failure, and an unclaimed failure, both answer with the
+                    // canonical envelope. A wire-`err` frame is reserved for a call that reached
+                    // no controller at all.
+                    Some(Ok(output)) => Ok(output),
+                    Some(Err(reshaped)) => Ok(RpcHandlerOutput::Single(Self::safe_render(|| {
+                        reshaped.to_data()
+                    }))),
+                    None => Ok(RpcHandlerOutput::Single(Self::safe_render(|| {
+                        rpc_err.to_data()
+                    }))),
+                }
+            }
+        };
 
         // The execution ends when the answer does. A stream has emitted nothing
         // at this point, so the context rides it rather than dying here.
@@ -215,6 +202,38 @@ impl RpcControllerWrapper {
             )),
             other => other,
         }
+    }
+
+    /// Guards, then the interceptor chain. Every way this can fail leaves as `Err`.
+    async fn run_chain(
+        ctx: &RpcContext,
+        source: &Arc<dyn RpcControllerSource>,
+        guards: &[Arc<dyn Guard<RpcContext>>],
+        interceptors: &[Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>],
+    ) -> RpcHandlerResult {
+        for (index, guard) in guards.iter().enumerate() {
+            // A panicking guard is a bug, not a verdict: it takes the same route as any other
+            // pipeline panic, so `#[catch(PanicRecovered)]` sees it and a refusal gives the chain
+            // `GuardRejection` instead.
+            match crate::panic_recovery::catch_async(
+                crate::errors::PipelineSegment::Guard,
+                guard.can_activate(ctx),
+            )
+            .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::debug!(guard_index = index, "guard rejected message");
+                    return Err(RpcError::from(crate::errors::GuardRejection::new(index)));
+                }
+                Err(event) => {
+                    tracing::debug!(guard_index = index, panic = %event.message, "guard panicked");
+                    return Err(RpcError::from(event));
+                }
+            }
+        }
+
+        Self::execute_with_interceptors(ctx, interceptors, source).await
     }
 
     /// Drive `RpcError::to_data` with panic recovery — a panic in the
@@ -263,10 +282,9 @@ impl RpcControllerWrapper {
         context: &RpcContext,
         interceptors: &[Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>],
         source: &Arc<dyn RpcControllerSource>,
-        error_handlers: &[RpcErrorHandlerArc],
     ) -> RpcHandlerResult {
         if interceptors.is_empty() {
-            return Self::execute_handler(context, source, error_handlers).await;
+            return Self::execute_handler(context, source).await;
         }
 
         let (first, rest) = interceptors.split_first().unwrap();
@@ -274,7 +292,6 @@ impl RpcControllerWrapper {
         let next = RpcChainNext {
             interceptors: rest.to_vec(),
             source: source.clone(),
-            error_handlers: error_handlers.to_vec(),
         };
 
         match crate::panic_recovery::catch_async(
@@ -284,73 +301,25 @@ impl RpcControllerWrapper {
         .await
         {
             Ok(answer) => answer,
-            Err(event) => Self::record_pipeline_panic(context, error_handlers, event).await,
+            Err(event) => Err(RpcError::from(event)),
         }
     }
 
-    /// Surface a panicking pre-handler segment (an interceptor) through the
-    /// chain: error handlers get first claim, and the fallback is a
-    /// wire-`Err` Internal envelope.
-    async fn record_pipeline_panic(
-        context: &RpcContext,
-        error_handlers: &[RpcErrorHandlerArc],
-        event: PanicRecovered,
-    ) -> RpcHandlerResult {
-        if let Some(claimed) =
-            crate::enhancer::pipeline::claim::<Rpc>(&error_handlers, &event, context).await
-        {
-            return claimed;
-        }
-        let rpc_err = RpcError::from(event);
-        Ok(RpcHandlerOutput::Single(Self::safe_render(|| {
-            rpc_err.to_data()
-        })))
-    }
-
-    /// Run the handler, then route the result.
-    ///
-    /// `Ok` is the answer. On `Err`, the chain's most-specific handler gets
-    /// first claim on the underlying error, and `RpcError::to_data` is the
-    /// fallback envelope when none claims.
+    /// Run the user handler. A panic below is a `PanicRecovered` on the `Err` side.
     async fn execute_handler(
         context: &RpcContext,
         source: &Arc<dyn RpcControllerSource>,
-        error_handlers: &[RpcErrorHandlerArc],
     ) -> RpcHandlerResult {
-        // The instance is asked for here and nowhere earlier: a guard that rejects, an
-        // interceptor that answers never builds a controller. Construction
-        // sits inside the same `catch_unwind` as the handler body, so a panicking `#[new]` renders
-        // an envelope instead of tearing down the dispatcher.
-        let exec_result =
-            AssertUnwindSafe(async { source.resolve(context).await.handle_message(context).await })
-                .catch_unwind()
-                .await;
-        let exec_result = match exec_result {
-            Ok(result) => result,
-            Err(payload) => {
-                let event =
-                    PanicRecovered::from_panic_payload(PipelineSegment::HandlerBody, payload);
-                ExecutionResult::Err(RpcError::from(event))
-            }
-        };
+        let controller = source.resolve(context).await;
+        let exec_result = crate::panic_recovery::catch_async(
+            crate::errors::PipelineSegment::HandlerBody,
+            controller.handle_message(context),
+        )
+        .await;
         match exec_result {
-            ExecutionResult::Ok(output) => Ok(output),
-            ExecutionResult::Err(rpc_err) => {
-                let observed_err: &(dyn std::error::Error + Send + Sync + 'static) = match &rpc_err
-                {
-                    RpcError::AppError(e) => e.as_ref(),
-                    other => other,
-                };
-                if let Some(claimed) =
-                    crate::enhancer::pipeline::claim::<Rpc>(&error_handlers, observed_err, context)
-                        .await
-                {
-                    return claimed;
-                }
-                Ok(RpcHandlerOutput::Single(Self::safe_render(|| {
-                    rpc_err.to_data()
-                })))
-            }
+            Ok(ExecutionResult::Ok(output)) => Ok(output),
+            Ok(ExecutionResult::Err(rpc_err)) => Err(rpc_err),
+            Err(event) => Err(RpcError::from(event)),
         }
     }
 }

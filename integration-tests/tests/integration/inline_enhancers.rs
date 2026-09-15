@@ -198,7 +198,7 @@ async fn an_rpc_handler_s_inline_guard_rejects_the_call() {
 
     let reply = call(port, "inline.denied").await;
 
-    assert_eq!(reply["err"]["status"], "forbidden", "reply: {reply}");
+    assert_eq!(reply["response"]["kind"], "Forbidden", "reply: {reply}");
     assert_eq!(seen(), vec!["deny"], "the handler must not run");
 }
 

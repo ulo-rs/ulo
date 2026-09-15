@@ -14,7 +14,7 @@
 //
 //   # error — handler returns Err
 //   nats req order.create '{"item":"keyboard","qty":0}'
-//   → {"err":{"message":"Internal error: qty must be positive","status":"error"}}
+//   → {"response":{"status":"error","kind":"Internal","message":"qty must be positive"}}
 //
 //   # fire-and-forget — no reply-to, no response
 //   nats pub order.shipped '{"order_id":1001}'

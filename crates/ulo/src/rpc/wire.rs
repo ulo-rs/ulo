@@ -86,13 +86,11 @@ pub fn frame_response(outcome: RpcHandlerResult) -> ResponseFrame {
                 }
             }))
         }
-        Err(RpcError::AppError(arc)) => match RpcError::AppError(arc).to_data() {
-            RpcData::Binary(b) => ResponseFrame::Raw(b),
-            RpcData::Json(v) => ResponseFrame::Json(json!({ "response": v })),
-            RpcData::Text(s) => ResponseFrame::Json(json!({ "response": s })),
-        },
+        // The `Result` chooses the frame, not the variant that happens to survive to here. A
+        // caller learns the call failed from the frame it arrived in, and what failed from
+        // `status` — the same name the envelope's `kind` carries.
         Err(e) => ResponseFrame::Json(json!({
-            "err": { "message": e.to_string(), "status": error_status(&e) }
+            "err": { "message": e.to_string(), "status": e.kind().name() }
         })),
     }
 }
@@ -101,7 +99,7 @@ pub fn frame_response(outcome: RpcHandlerResult) -> ResponseFrame {
 /// caller sees a generic internal error.
 pub fn frame_panic() -> ResponseFrame {
     ResponseFrame::Json(json!({
-        "err": { "message": "internal server error", "status": "error" }
+        "err": { "message": "internal server error", "status": crate::errors::ErrorKind::Internal.name() }
     }))
 }
 
@@ -130,18 +128,6 @@ pub fn parse_response(bytes: &[u8]) -> Result<RpcData, RpcClientError> {
             }
         }
         Err(_) => Ok(RpcData::Binary(bytes.to_vec())),
-    }
-}
-
-fn error_status(e: &RpcError) -> &'static str {
-    match e {
-        RpcError::PatternNotFound(_) => "not_found",
-        RpcError::Forbidden(_) => "forbidden",
-        RpcError::Internal(_) => "error",
-        RpcError::AppError(_) => unreachable!(
-            "RpcError::AppError is framed into the Ok+envelope branch before \
-             reaching wire-Err framing"
-        ),
     }
 }
 
@@ -179,7 +165,7 @@ pub fn frame_stream_error(e: &RpcError) -> Vec<serde_json::Value> {
         }
         other => vec![json!({
             "end": true,
-            "err": { "message": other.to_string(), "status": error_status(other) }
+            "err": { "message": other.to_string(), "status": other.kind().name() }
         })],
     }
 }
@@ -206,7 +192,7 @@ pub enum ReplyFrame {
     EndErr {
         /// The error's display text.
         message: String,
-        /// The wire status — `not_found` / `forbidden` / `error`.
+        /// The failure's kind, by the name `ErrorKind::name` gives it.
         status: String,
     },
 }
@@ -413,10 +399,12 @@ mod tests {
         assert_eq!(bytes, br#"{"response":null}"#);
     }
 
+    /// A controller answers with the envelope, and the envelope rides the response lane — the
+    /// call reached a controller, which is what separates it from a wire-`err` frame.
     #[test]
-    fn app_error_rides_the_response_lane() {
-        let outcome = Err(RpcError::AppError(Arc::new(Teapot)));
-        let v = frame_response(outcome).into_json_value();
+    fn an_answered_failure_rides_the_response_lane() {
+        let envelope = RpcError::AppError(Arc::new(Teapot)).to_data();
+        let v = frame_response(Ok(RpcHandlerOutput::Single(envelope))).into_json_value();
         assert_eq!(v["response"]["status"], "error");
         assert_eq!(v["response"]["kind"], "Conflict");
         assert_eq!(v["response"]["message"], "teapot");
@@ -425,7 +413,7 @@ mod tests {
     #[test]
     fn framework_error_frames_into_wire_err() {
         let v = frame_response(Err(RpcError::Forbidden("nope".into()))).into_json_value();
-        assert_eq!(v["err"]["status"], "forbidden");
+        assert_eq!(v["err"]["status"], "Forbidden");
         assert_eq!(
             v["err"]["message"],
             RpcError::Forbidden("nope".into()).to_string()
@@ -437,7 +425,7 @@ mod tests {
         let bytes = frame_panic().into_bytes();
         assert_eq!(
             bytes,
-            br#"{"err":{"message":"internal server error","status":"error"}}"#
+            br#"{"err":{"message":"internal server error","status":"Internal"}}"#
         );
     }
 
@@ -462,7 +450,7 @@ mod tests {
     fn framework_error_parses_back_as_remote() {
         let bytes = frame_response(Err(RpcError::Forbidden("nope".into()))).into_bytes();
         match parse_response(&bytes) {
-            Err(RpcClientError::Remote { status, .. }) => assert_eq!(status, "forbidden"),
+            Err(RpcClientError::Remote { status, .. }) => assert_eq!(status, "Forbidden"),
             other => panic!("expected Remote error, got {other:?}"),
         }
     }
@@ -527,7 +515,7 @@ mod tests {
         let frames = frame_stream_error(&RpcError::Internal("boom".into()));
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0]["end"], true);
-        assert_eq!(frames[0]["err"]["status"], "error");
+        assert_eq!(frames[0]["err"]["status"], "Internal");
     }
 
     #[test]
@@ -598,7 +586,7 @@ mod tests {
         let frames = frames.lock();
         assert_eq!(frames.len(), 2);
         assert_eq!(frames[1]["end"], true);
-        assert_eq!(frames[1]["err"]["status"], "error");
+        assert_eq!(frames[1]["err"]["status"], "Internal");
     }
 
     #[test]

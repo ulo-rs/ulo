@@ -16,13 +16,14 @@
 //   echo '{"pattern":"order.create","data":{"item":"keyboard","qty":3},"id":"req-1"}' | nc 127.0.0.1 4000
 //   → {"id":"req-1","response":{"id":1001,"item":"keyboard","qty":3,"status":"created"}}
 //
-//   # error — handler returns Err; adapter sends an error envelope instead of hanging
+//   # error — the handler returned Err, so the call reached this controller and answers
+//   #         in the response lane, carrying the canonical envelope
 //   echo '{"pattern":"order.create","data":{"item":"keyboard","qty":0},"id":"req-2"}' | nc 127.0.0.1 4000
-//   → {"id":"req-2","err":{"message":"Internal error: qty must be positive","status":"error"}}
+//   → {"id":"req-2","response":{"status":"error","kind":"Internal","message":"qty must be positive"}}
 //
-//   # unknown pattern — framework returns PatternNotFound
+//   # unknown pattern — nothing routed, so the reply is an `err` frame instead
 //   echo '{"pattern":"does.not.exist","data":{},"id":"req-3"}' | nc 127.0.0.1 4000
-//   → {"id":"req-3","err":{"message":"Pattern not found: does.not.exist","status":"not_found"}}
+//   → {"id":"req-3","err":{"message":"Pattern not found: does.not.exist","status":"NotFound"}}
 //
 //   # fire-and-forget (no id → no reply regardless of outcome)
 //   echo '{"pattern":"order.shipped","data":{"order_id":1001}}' | nc 127.0.0.1 4000

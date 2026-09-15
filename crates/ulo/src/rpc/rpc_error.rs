@@ -44,6 +44,19 @@ pub enum RpcError {
 }
 
 impl RpcError {
+    /// What this failure is, in the one vocabulary a wire payload names it by.
+    ///
+    /// The same string the envelope's `kind` carries, so a caller reading the frame and a caller
+    /// reading the payload learn the failure by the same name.
+    pub fn kind(&self) -> crate::errors::ErrorKind {
+        match self {
+            Self::AppError(e) => e.kind(),
+            Self::PatternNotFound(_) => crate::errors::ErrorKind::NotFound,
+            Self::Forbidden(_) => crate::errors::ErrorKind::Forbidden,
+            Self::Internal(_) => crate::errors::ErrorKind::Internal,
+        }
+    }
+
     /// Render as an [`RpcData`] payload using the canonical envelope:
     /// `{"status":"error","kind":"...","message":...}`. For
     /// [`AppError`](Self::AppError), reads `kind` / `message` / `details`

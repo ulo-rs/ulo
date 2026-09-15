@@ -7,7 +7,7 @@
 //! - in-flight requests are awaited during `close()` up to the configured
 //!   drain timeout; tasks still running after the timeout are aborted
 //! - inbound requests that would exceed `with_max_inflight` are rejected
-//!   with an `"overloaded"` frame and the slot is released when the
+//!   with a `TooManyRequests` frame and the slot is released when the
 //!   in-flight handler completes
 
 use std::sync::Arc;
@@ -376,7 +376,7 @@ async fn tcp_drain_aborts_after_timeout() {
 
 /// With `with_max_inflight(1)` and a slow handler holding the only slot, a
 /// concurrent request on a second connection must be rejected immediately
-/// with an `"overloaded"` frame rather than queuing. After the slow handler
+/// with a `TooManyRequests` frame rather than queuing. After the slow handler
 /// completes the slot is released and a follow-up request succeeds.
 #[tokio_localset_test::localset_test]
 async fn tcp_backpressure_rejects_excess_and_releases_after_completion() {
@@ -413,7 +413,7 @@ async fn tcp_backpressure_rejects_excess_and_releases_after_completion() {
     // Give the server time to spawn the handler so the slot is genuinely held.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Connection 2: should be rejected with "overloaded" since the slot is full.
+    // Connection 2: should be rejected as TooManyRequests since the slot is full.
     let stream2 = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
         .await
         .unwrap();
@@ -430,7 +430,7 @@ async fn tcp_backpressure_rejects_excess_and_releases_after_completion() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(v["id"], "2");
-    assert_eq!(v["err"]["status"], "overloaded");
+    assert_eq!(v["err"]["status"], "TooManyRequests");
 
     // Wait for the slow handler on connection 1 to finish.
     let mut line = String::new();
@@ -874,7 +874,7 @@ async fn an_empty_patterns_impl_registers_no_patterns() {
     .await
     .expect("a bare controller must still leave a serving app");
     assert_eq!(
-        resp["err"]["status"], "not_found",
+        resp["err"]["status"], "NotFound",
         "a controller with no #[patterns] impl routes nothing"
     );
 }
