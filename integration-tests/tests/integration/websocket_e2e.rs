@@ -551,3 +551,66 @@ async fn gateway_port_zero_binds_separately_from_http_port_zero() {
     let reply = ws.next().await.unwrap().unwrap();
     assert_eq!(reply.to_text().unwrap(), "pong");
 }
+
+/// A keepalive is not a call. Axum hands Ping and Pong frames up to the gateway alongside
+/// text, so the gateway has to recognise that neither one is asking for an answer — a client
+/// that pings must not get an error frame back for it.
+#[tokio_localset_test::localset_test]
+async fn a_keepalive_ping_is_not_answered_with_an_error_frame() {
+    let server = TestServer::start(EchoModule).await;
+    let ws_url = format!("ws://127.0.0.1:{}/echo", server.port);
+    let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url).await.unwrap();
+
+    ws.send(tokio_tungstenite::tungstenite::Message::Ping(
+        Vec::new().into(),
+    ))
+    .await
+    .unwrap();
+    // A real call behind the ping: its reply is the marker for "everything the ping
+    // produced has already been read", so the assertion does not rest on a timeout.
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        r#"{"event": "message", "data": "after"}"#.to_string().into(),
+    ))
+    .await
+    .unwrap();
+
+    loop {
+        match ws.next().await.unwrap().unwrap() {
+            tokio_tungstenite::tungstenite::Message::Pong(_) => {}
+            tokio_tungstenite::tungstenite::Message::Text(t) => {
+                assert_eq!(
+                    t.as_str(),
+                    r#"Echo: {"event": "message", "data": "after"}"#,
+                    "the ping drew a text frame of its own"
+                );
+                break;
+            }
+            other => panic!("unexpected frame: {other:?}"),
+        }
+    }
+}
+
+/// A frame that names no event fails to route, exactly as an event nothing handles does,
+/// and both are answered in the one vocabulary this gateway speaks: the canonical envelope
+/// carrying the kind that tells them apart.
+#[tokio_localset_test::localset_test]
+async fn an_unroutable_frame_renders_the_canonical_envelope() {
+    let server = TestServer::start(EchoModule).await;
+    let ws_url = format!("ws://127.0.0.1:{}/echo", server.port);
+    let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url).await.unwrap();
+
+    for (frame, kind) in [
+        (r#"{"data": "no event here"}"#, "BadRequest"),
+        (r#"{"event": "nothing-handles-this"}"#, "NotFound"),
+    ] {
+        ws.send(tokio_tungstenite::tungstenite::Message::Text(
+            frame.to_string().into(),
+        ))
+        .await
+        .unwrap();
+        let reply = ws.next().await.unwrap().unwrap();
+        let json: serde_json::Value = serde_json::from_str(reply.to_text().unwrap()).unwrap();
+        assert_eq!(json["status"], "error", "{frame} answered {json}");
+        assert_eq!(json["kind"], kind, "{frame} answered {json}");
+    }
+}

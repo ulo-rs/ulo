@@ -362,9 +362,10 @@ async fn ws_method_level_enhancers_work() {
         .unwrap();
         let reply = ws.next().await.unwrap().unwrap();
         let json: serde_json::Value = serde_json::from_str(reply.to_text().unwrap()).unwrap();
-        assert!(
-            json.get("error").is_some(),
-            "the interceptor should have answered"
+        assert_eq!(
+            json["kind"], "Internal",
+            "an interceptor's refusal renders the canonical envelope, as every other failure on \
+             this gateway does: {json}"
         );
 
         ws.send(tokio_tungstenite::tungstenite::Message::Text(

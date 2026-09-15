@@ -26,8 +26,7 @@ use crate::{
     spi::BindTarget,
     ws::{
         BroadcastService, DisconnectReason, GatewayWrapper, MessageCallbackResult, WsAdapter,
-        WsClientMap, WsConnectionCallbacks, WsError, WsHandlerOutput, WsMessage,
-        helpers::create_client_from_parts,
+        WsClientMap, WsConnectionCallbacks, WsHandlerOutput, helpers::create_client_from_parts,
     },
 };
 
@@ -961,20 +960,10 @@ fn make_ws_callbacks(
                         MessageCallbackResult::Continue
                     }
                     Ok(WsHandlerOutput::Stream(stream)) => MessageCallbackResult::Stream(stream),
-                    Err(e) => match &e {
-                        // Connection is already gone — stop the read loop.
-                        WsError::ConnectionClosed(_) => MessageCallbackResult::Stop,
-                        // Guard rejected this message; drop it silently and keep
-                        // the connection alive so other handlers can still run.
-                        WsError::AuthFailed(_) => MessageCallbackResult::Continue,
-                        _ => {
-                            let error_msg = WsMessage::text(
-                                serde_json::json!({ "error": e.to_string() }).to_string(),
-                            );
-                            handle.send_to(&client_id, error_msg).await;
-                            MessageCallbackResult::Continue
-                        }
-                    },
+                    // The gateway answers every failure it can answer, frame included, so what
+                    // reaches here is the one case with nothing left to answer on: the client
+                    // is gone. Stop reading from it.
+                    Err(_) => MessageCallbackResult::Stop,
                 }
             })
         },

@@ -7,7 +7,7 @@ use parking_lot::RwLock;
 
 use crate::context::Metadata;
 use crate::dispatch::ExecutionResult;
-use crate::enhancer::{Interceptor, InterceptorNext};
+use crate::enhancer::{Guard, Interceptor, InterceptorNext};
 use crate::errors::{PanicRecovered, PipelineSegment};
 use crate::spi::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
 use crate::ws::WsContext;
@@ -64,19 +64,12 @@ impl Drop for ScopedStream {
 struct WsChainNext {
     interceptors: Vec<Arc<dyn Interceptor<WsContext, WsHandlerResult>>>,
     gateway: Arc<Box<dyn Gateway>>,
-    error_handlers: Vec<WsErrorHandlerArc>,
 }
 
 #[async_trait]
 impl InterceptorNext<WsContext, WsHandlerResult> for WsChainNext {
     async fn run(self: Box<Self>, context: &WsContext) -> WsHandlerResult {
-        GatewayWrapper::execute_with_interceptors(
-            context,
-            &self.interceptors,
-            &self.gateway,
-            &self.error_handlers,
-        )
-        .await
+        GatewayWrapper::execute_with_interceptors(context, &self.interceptors, &self.gateway).await
     }
 }
 
@@ -196,7 +189,10 @@ impl GatewayWrapper {
         self.gateway.on_connect(client, context).await
     }
 
-    /// Handle new WebSocket connection (simple path — no ConnectionManager).
+    /// Handle one inbound frame, from routing it to framing the answer.
+    ///
+    /// Answers `Err` only when there is nothing left to answer on — the client has gone. Every
+    /// other outcome, failures included, leaves as an `Ok` the caller writes to the socket.
     pub(crate) async fn handle_message(
         &self,
         client_id: String,
@@ -209,7 +205,28 @@ impl GatewayWrapper {
             .cloned()
             .ok_or_else(|| WsError::ConnectionClosed("Client not found".into()))?;
 
-        let event = self.extract_event(&message)?;
+        // A control frame is the protocol talking, not the application. A keepalive names no
+        // event because it is not asking for one, and answering it would put an error frame on
+        // the wire in reply to a ping.
+        if matches!(
+            message,
+            WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Close(_)
+        ) {
+            return Ok(WsHandlerOutput::Empty);
+        }
+
+        // A frame naming no event fails to route with the socket still open, so the caller is
+        // told, exactly as it is for an event nothing handles. Guards and interceptors do not
+        // run: a guard answers whether a caller may make some call and an interceptor wraps
+        // that call, and this frame named none. An error handler does run, because there is an
+        // answer to shape. Its context carries an empty event, for the same reason.
+        let (event, unroutable) = match self.extract_event(&message) {
+            Ok(event) => (event, None),
+            Err(e) => {
+                tracing::debug!(client_id = %client_id, reason = %e, "WebSocket frame did not route");
+                (String::new(), Some(e))
+            }
+        };
 
         tracing::trace!(client_id = %client_id, event = %event, "WebSocket message received");
 
@@ -225,59 +242,65 @@ impl GatewayWrapper {
             ),
         );
 
-        let mut all_guards = self.guards.clone();
-        if let Some(h) = self.handler_guards.get(&event) {
-            all_guards.extend_from_slice(h);
-        }
-        let mut all_interceptors = self.interceptors.clone();
-        if let Some(h) = self.handler_interceptors.get(&event) {
-            all_interceptors.extend_from_slice(h);
-        }
         let mut all_error_handlers = self.error_handlers.clone();
         if let Some(h) = self.handler_error_handlers.get(&event) {
             all_error_handlers.extend_from_slice(h);
         }
 
-        let guards = crate::enhancer::pipeline::guards_for::<Ws>(&all_guards, &context).await;
-        for (guard_index, guard) in guards.iter().enumerate() {
-            let activated = match crate::panic_recovery::catch_async(
-                crate::errors::PipelineSegment::Guard,
-                guard.can_activate(&context),
-            )
-            .await
-            {
-                Ok(b) => b,
-                Err(event) => {
-                    // Guard panic is a developer error, not a rejection
-                    // verdict: route through the same path as other
-                    // pipeline panics so the chain runs once and the
-                    // canonical envelope reaches the client. Without this,
-                    // `WsError::AuthFailed` would drop unsent in
-                    // `UloApplication`'s message callback.
-                    tracing::debug!(guard_index = guard_index, panic = %event.message, "guard panicked");
-                    return Self::record_pipeline_panic(&context, &all_error_handlers, event).await;
+        let answer = match unroutable {
+            // Resolving guards and interceptors is what constructs them, execution-scoped ones
+            // included, so an unroutable frame must not reach it — a flood of garbage would
+            // otherwise build a pipeline per frame and run none of it.
+            Some(e) => Err(e),
+            None => {
+                let mut all_guards = self.guards.clone();
+                if let Some(h) = self.handler_guards.get(&event) {
+                    all_guards.extend_from_slice(h);
                 }
-            };
-            if !activated {
-                return Self::record_guard_rejection(
-                    &context,
-                    &all_error_handlers,
-                    crate::errors::GuardRejection::new(guard_index),
-                )
-                .await;
+                let mut all_interceptors = self.interceptors.clone();
+                if let Some(h) = self.handler_interceptors.get(&event) {
+                    all_interceptors.extend_from_slice(h);
+                }
+
+                let guards =
+                    crate::enhancer::pipeline::guards_for::<Ws>(&all_guards, &context).await;
+                let interceptors =
+                    crate::enhancer::pipeline::interceptors_for::<Ws>(&all_interceptors, &context)
+                        .await;
+                Self::run_chain(&context, &self.gateway, &guards, &interceptors).await
             }
-        }
+        };
 
-        let interceptors =
-            crate::enhancer::pipeline::interceptors_for::<Ws>(&all_interceptors, &context).await;
-
-        let answer = Self::execute_with_interceptors(
-            &context,
-            &interceptors,
-            &self.gateway,
-            &all_error_handlers,
-        )
-        .await;
+        // The one place the chain runs. A guard's refusal, a panic from any segment and the
+        // handler's own error all arrive as `Err`, so a `#[catch]` handler is offered every one of
+        // them and an unclaimed one renders the same envelope whichever produced it.
+        //
+        // A refused message renders rather than failing the call: the socket stays open and the
+        // client learns its message went nowhere, which is what the read loop needs.
+        let answer = match answer {
+            Ok(output) => Ok(output),
+            Err(ws_err) => {
+                let observed: &(dyn std::error::Error + Send + Sync + 'static) = match &ws_err {
+                    WsError::AppError(e) => e.as_ref(),
+                    other => other,
+                };
+                match crate::enhancer::pipeline::claim::<Ws>(
+                    &all_error_handlers,
+                    observed,
+                    &context,
+                )
+                .await
+                {
+                    Some(Ok(output)) => Ok(output),
+                    Some(Err(reshaped)) => Ok(WsHandlerOutput::Single(Self::safe_render(|| {
+                        reshaped.to_message()
+                    }))),
+                    None => Ok(WsHandlerOutput::Single(Self::safe_render(|| {
+                        ws_err.to_message()
+                    }))),
+                }
+            }
+        };
 
         // The execution ends when the answer does. A stream has emitted nothing
         // at this point, so the context rides it rather than dying here.
@@ -294,15 +317,47 @@ impl GatewayWrapper {
         }
     }
 
+    /// Guards, then the interceptor chain. Every way this can fail leaves as `Err`.
+    async fn run_chain(
+        context: &WsContext,
+        gateway: &Arc<Box<dyn Gateway>>,
+        guards: &[Arc<dyn Guard<WsContext>>],
+        interceptors: &[Arc<dyn Interceptor<WsContext, WsHandlerResult>>],
+    ) -> WsHandlerResult {
+        for (guard_index, guard) in guards.iter().enumerate() {
+            // A guard's panic is a developer error, not a verdict: it takes the same route as any
+            // other pipeline panic, so the chain sees `PanicRecovered` where a refusal gives it
+            // `GuardRejection`.
+            match crate::panic_recovery::catch_async(
+                crate::errors::PipelineSegment::Guard,
+                guard.can_activate(context),
+            )
+            .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::debug!(guard_index = guard_index, "guard rejected message");
+                    return Err(WsError::from(crate::errors::GuardRejection::new(
+                        guard_index,
+                    )));
+                }
+                Err(event) => {
+                    tracing::debug!(guard_index = guard_index, panic = %event.message, "guard panicked");
+                    return Err(WsError::from(event));
+                }
+            }
+        }
+
+        Self::execute_with_interceptors(context, interceptors, gateway).await
+    }
+
     async fn execute_with_interceptors(
         context: &WsContext,
         interceptors: &[Arc<dyn Interceptor<WsContext, WsHandlerResult>>],
         gateway: &Arc<Box<dyn Gateway>>,
-        error_handlers: &[WsErrorHandlerArc],
     ) -> WsHandlerResult {
         if interceptors.is_empty() {
-            return Self::execute_handler_with_error_handling(context, gateway, error_handlers)
-                .await;
+            return Self::execute_handler(context, gateway).await;
         }
 
         let (first, rest) = interceptors.split_first().unwrap();
@@ -310,7 +365,6 @@ impl GatewayWrapper {
         let next = WsChainNext {
             interceptors: rest.to_vec(),
             gateway: gateway.clone(),
-            error_handlers: error_handlers.to_vec(),
         };
 
         match crate::panic_recovery::catch_async(
@@ -320,79 +374,7 @@ impl GatewayWrapper {
         .await
         {
             Ok(answer) => answer,
-            Err(event) => Self::record_pipeline_panic(context, error_handlers, event).await,
-        }
-    }
-
-    /// Surface a panicking pre-handler segment (an interceptor; it flows
-    /// through `execute_handler`'s `ExecutionResult::Err` instead) through
-    /// the chain so it cannot tear down the connection. Error handlers get
-    /// first claim, and the fallback is a wire-`Err` frame.
-    async fn record_pipeline_panic(
-        context: &WsContext,
-        error_handlers: &[WsErrorHandlerArc],
-        event: PanicRecovered,
-    ) -> WsHandlerResult {
-        if let Some(claimed) =
-            crate::enhancer::pipeline::claim::<Ws>(&error_handlers, &event, context).await
-        {
-            return claimed;
-        }
-        let ws_err = WsError::from(event);
-        Ok(WsHandlerOutput::Single(Self::safe_render(|| {
-            ws_err.to_message()
-        })))
-    }
-
-    /// Route a guard's refusal through the chain, as HTTP does.
-    ///
-    /// A refused message has an open socket to answer on, so the caller is told
-    /// which is what every other transport does, and a `#[catch(GuardRejection)]`
-    /// handler gets first claim on the shape. Returning the rendered message
-    /// rather than `Err` is what keeps the connection usable: the read loop
-    /// carries on, and the client learns its message went nowhere.
-    async fn record_guard_rejection(
-        context: &WsContext,
-        error_handlers: &[WsErrorHandlerArc],
-        rejection: crate::errors::GuardRejection,
-    ) -> WsHandlerResult {
-        if let Some(claimed) =
-            crate::enhancer::pipeline::claim::<Ws>(&error_handlers, &rejection, context).await
-        {
-            return claimed;
-        }
-        Ok(WsHandlerOutput::Single(Self::safe_render(|| {
-            super::ws_error::render_error(&rejection)
-        })))
-    }
-
-    /// Run the handler, then route the outcome.
-    ///
-    /// `Ok` is the answer, streams included. On `Err`, the chain's
-    /// most-specific handler gets first claim on the underlying error, and
-    /// `WsError::to_message` is the fallback frame when none claims.
-    async fn execute_handler_with_error_handling(
-        context: &WsContext,
-        gateway: &Arc<Box<dyn Gateway>>,
-        error_handlers: &[WsErrorHandlerArc],
-    ) -> WsHandlerResult {
-        match Self::execute_handler(context, gateway).await {
-            ExecutionResult::Ok(output) => Ok(output),
-            ExecutionResult::Err(ws_err) => {
-                let observed_err: &(dyn std::error::Error + Send + Sync + 'static) = match &ws_err {
-                    WsError::AppError(e) => e.as_ref(),
-                    other => other,
-                };
-                if let Some(msg) =
-                    crate::enhancer::pipeline::claim::<Ws>(&error_handlers, observed_err, context)
-                        .await
-                {
-                    return msg;
-                }
-                Ok(WsHandlerOutput::Single(Self::safe_render(|| {
-                    ws_err.to_message()
-                })))
-            }
+            Err(event) => Err(WsError::from(event)),
         }
     }
 
@@ -426,27 +408,23 @@ impl GatewayWrapper {
         WsMessage::text(r#"{"status":"error","kind":"Internal","message":"Internal Server Error"}"#)
     }
 
-    /// Run one chain handler with panic recovery: a panicking
-    /// `handle_error` is logged and answers `None`, so the caller continues
-    /// to the next handler. Without this, a single bad chain handler would
-    /// kill the whole error-recovery path and the original error would
-    /// never reach the fallback `to_message` rendering.
-    ///
-    /// `position` counts from the most specific handler — the chain runs
-    /// event, then gateway, then global — and is logged so a panic names which
-    /// registration it came from.
+    /// Call the handler. A panic in it is caught here and becomes `PanicRecovered`,
+    /// so user code cannot unwind into the adapter's read loop and take the
+    /// connection down with it.
     async fn execute_handler(
         context: &WsContext,
         gateway: &Arc<Box<dyn Gateway>>,
-    ) -> ExecutionResult<WsHandlerOutput, WsError> {
+    ) -> WsHandlerResult {
         let result = AssertUnwindSafe(gateway.handle_event(context))
             .catch_unwind()
             .await;
         match result {
-            Ok(exec) => exec,
-            Err(payload) => ExecutionResult::Err(WsError::from(
-                PanicRecovered::from_panic_payload(PipelineSegment::HandlerBody, payload),
-            )),
+            Ok(ExecutionResult::Ok(output)) => Ok(output),
+            Ok(ExecutionResult::Err(ws_err)) => Err(ws_err),
+            Err(payload) => Err(WsError::from(PanicRecovered::from_panic_payload(
+                PipelineSegment::HandlerBody,
+                payload,
+            ))),
         }
     }
 
