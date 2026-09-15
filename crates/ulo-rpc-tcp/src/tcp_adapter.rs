@@ -62,7 +62,7 @@ const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 /// By default the adapter spawns one task per inbound message with no
 /// upper bound. Set a cap with [`TcpAdapter::with_max_inflight`] to
 /// reject requests that would exceed it. Rejected request-response
-/// messages get an `TooManyRequests` error frame back; fire-and-forget
+/// messages get an `"overloaded"` error frame back; fire-and-forget
 /// messages are dropped with a log line.
 pub struct TcpAdapter {
     target: Option<BindTarget>,
@@ -115,7 +115,7 @@ impl TcpAdapter {
 
     /// Cap the number of concurrently running handler tasks across all
     /// connections. Inbound requests over the cap are rejected immediately
-    /// with an `TooManyRequests` error frame (or dropped, for fire-and-forget).
+    /// with an `"overloaded"` error frame (or dropped, for fire-and-forget).
     /// Default: unbounded.
     pub fn with_max_inflight(mut self, max: usize) -> Self {
         self.inflight = Some(Arc::new(Semaphore::new(max)));
@@ -344,7 +344,7 @@ async fn handle_connection(
                                         "id": id,
                                         "err": {
                                             "message": "server at capacity",
-                                            "status": ulo::errors::ErrorKind::TooManyRequests.name()
+                                            "status": "overloaded"
                                         }
                                     });
                                     let mut line = frame.to_string();

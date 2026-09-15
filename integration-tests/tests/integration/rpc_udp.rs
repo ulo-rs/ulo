@@ -9,7 +9,7 @@
 //!   configured drain timeout; tasks still running after the timeout are
 //!   aborted
 //! - inbound datagrams that would exceed `with_max_inflight` are rejected
-//!   with a `TooManyRequests` frame and the slot is released when the
+//!   with an `"overloaded"` frame and the slot is released when the
 //!   in-flight handler completes
 
 use std::time::Duration;
@@ -483,7 +483,7 @@ async fn udp_drain_aborts_after_timeout() {
 }
 
 /// With `with_max_inflight(1)` and a slow handler holding the only slot, a
-/// concurrent datagram must be rejected immediately with a `TooManyRequests`
+/// concurrent datagram must be rejected immediately with an `"overloaded"`
 /// frame. After the slow handler completes the slot is released and a
 /// follow-up datagram succeeds.
 #[tokio_localset_test::localset_test]
@@ -519,7 +519,7 @@ async fn udp_backpressure_rejects_excess_and_releases_after_completion() {
     // Give the server time to spawn the handler so the slot is genuinely held.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Client 2: must be rejected as TooManyRequests while the slot is full.
+    // Client 2: must be rejected with "overloaded" while the slot is full.
     let client2 = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     client2
         .connect(format!("127.0.0.1:{}", port))
@@ -535,7 +535,7 @@ async fn udp_backpressure_rejects_excess_and_releases_after_completion() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&buf[..n]).unwrap();
     assert_eq!(v["id"], "2");
-    assert_eq!(v["err"]["status"], "TooManyRequests");
+    assert_eq!(v["err"]["status"], "overloaded");
 
     // Wait for client 1's reply — slot is freed when this handler finishes.
     let mut buf = vec![0u8; 65_507];
