@@ -6,6 +6,5 @@
 //! writing what the macro writes.
 
 pub use crate::grpc::runtime::{
-    IntoScoped, ScopedGrpcStream, catch_handler_panic, empty_enhancers, run_grpc_error_chain,
-    run_grpc_pipeline,
+    IntoScoped, ScopedGrpcStream, catch_handler_panic, empty_enhancers, run_grpc_pipeline,
 };
