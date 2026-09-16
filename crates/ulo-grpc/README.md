@@ -189,7 +189,7 @@ impl ulo::enhancer::Interceptor<ulo::grpc::GrpcContext, ulo::grpc::GrpcHandlerRe
 
 ### Error handlers
 
-An error handler is a provider that implements `ErrorHandler<GrpcContext, GrpcHandlerResult>`. The chain offers it every error a handler returned and every caught panic (as a typed `PanicRecovered`). Returning `Some(Err(status))` claims the answer; `None` lets the next handler decide, falling back on full miss to the status the handler already answered with. `Some(Ok(()))` declines as `None` does — this transport's handler type carries no reply, so an `Ok` has nothing to put on the wire.
+An error handler is a provider that implements `ErrorHandler<GrpcContext, GrpcHandlerResult>`. The chain runs once above the interceptors, so it is offered every way a call can fail: a guard's refusal (as a typed `GuardRejection`), an interceptor's refusal, the error a handler returned, and a panic in any of them (as a typed `PanicRecovered`). Returning `Some(Err(status))` claims the answer; `None` lets the next handler decide, falling back on full miss to the status the handler already answered with. `Some(Ok(()))` declines as `None` does — this transport's handler type carries no reply, so an `Ok` has nothing to put on the wire.
 
 ```rust
 #[injectable]

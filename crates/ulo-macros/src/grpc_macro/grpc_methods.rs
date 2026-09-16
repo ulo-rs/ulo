@@ -704,7 +704,9 @@ fn lower_handler(
             >>::extract(__ctx).await {
                 ::std::result::Result::Ok(__value) => __value,
                 ::std::result::Result::Err(__e) => {
-                    return ::std::result::Result::Err(::tonic::Status::internal(__e.to_string()));
+                    return ::std::result::Result::Err(
+                        ::ulo::grpc::GrpcStatus::internal(__e.to_string()),
+                    );
                 }
             };
         });
@@ -729,7 +731,10 @@ fn lower_handler(
             }
         };
         <#shape as ::ulo_grpc::MethodShape>::install(request, &__ctx);
-        Self::#run(self, &__ctx).await
+        // The one place a status flattens into tonic's: reached without the wrapper, there is no
+        // chain above to be offered the error the status carries, so it rides out on the source
+        // slot as `GrpcFailure` instead.
+        ::std::result::Result::map_err(Self::#run(self, &__ctx).await, ::ulo_grpc::to_status)
     };
     let bind_params = quote! {
         #one_taker
@@ -752,21 +757,10 @@ fn lower_handler(
         .filter(|attr| has_enhancer_attribute(attr) || attr_is(attr, "set_metadata"))
         .collect();
 
-    // The error arm is the same whichever shape the reply takes.
+    // The error arm is the same whichever shape the reply takes. `of` keeps the error on the
+    // status, which is what lets the chain above see its type rather than the code it mapped to.
     let failure = quote! {
-        let __status = ::ulo::grpc::GrpcStatus::of(__err);
-        let mut __answer = ::tonic::Status::new(
-            ::tonic::Code::from_i32(__status.code as i32),
-            __status.message.clone(),
-        );
-        // The domain error rides out on the answer, which is what lets the
-        // chain see its type rather than the status it flattened into.
-        if let ::std::option::Option::Some(__source) = __status.into_source() {
-            __answer.set_source(::std::sync::Arc::new(
-                ::ulo::grpc::GrpcFailure::new(__source),
-            ));
-        }
-        ::std::result::Result::Err(__answer)
+        ::std::result::Result::Err(::ulo::grpc::GrpcStatus::of(__err))
     };
 
     let wrap_reply = if carried_response.is_some() {
@@ -851,7 +845,7 @@ fn lower_handler(
                 __ctx: &::ulo::grpc::GrpcContext,
             ) -> ::std::result::Result<
                 ::tonic::Response<<Self as #proto_trait>::#assoc>,
-                ::tonic::Status,
+                ::ulo::grpc::GrpcStatus,
             > {
                 #bind_params
                 // Each item carries the caller's own error type, which reaches
@@ -886,7 +880,7 @@ fn lower_handler(
             async fn #run(
                 &self,
                 __ctx: &::ulo::grpc::GrpcContext,
-            ) -> ::std::result::Result<::tonic::Response<#answer_ty>, ::tonic::Status> {
+            ) -> ::std::result::Result<::tonic::Response<#answer_ty>, ::ulo::grpc::GrpcStatus> {
                 #bind_params
                 #call_unary
             }
@@ -1127,19 +1121,17 @@ fn build_wrapper_method(
             // message and the handler's extractor still takes the original.
             <#shape as ::ulo_grpc::MethodShape>::install(#req_ident, &__ctx);
 
-            // Two slots so the macro can distinguish a returned reply
-            // (Ok or Err) from a caught panic, and feed the panic event
-            // (not its synthesized status) to the error chain.
+            // The reply travels in a side-channel: it is the type the user's method returns, and
+            // a chain-runner generic over every method cannot name it. Everything that can fail
+            // travels in the pipeline's own `Result`, which is what the chain above reads.
+            //
             // Inferred, not spelled: the delegate fills this with the type the
             // user's method returns, while the signature above names the
             // wrapper's own associated type. The two differ wherever a
             // streaming reply is re-typed on the way out.
             let __outcome: ::std::sync::Arc<::std::sync::Mutex<::std::option::Option<_>>>
                 = ::std::sync::Arc::new(::std::sync::Mutex::new(::std::option::Option::None));
-            let __panic: ::std::sync::Arc<::std::sync::Mutex<::std::option::Option<::ulo::errors::PanicRecovered>>>
-                = ::std::sync::Arc::new(::std::sync::Mutex::new(::std::option::Option::None));
             let __outcome_capture = __outcome.clone();
-            let __panic_capture = __panic.clone();
             let __source = self.source.clone();
             let __build_ctx = __ctx.clone();
             let __run_ctx = __ctx.clone();
@@ -1160,104 +1152,58 @@ fn build_wrapper_method(
                         #self_ident::#run(&__inner, &__run_ctx).await
                     }).await;
                     match __caught {
-                        ::std::result::Result::Ok(__reply) => {
+                        ::std::result::Result::Ok(::std::result::Result::Ok(__reply)) => {
                             *__outcome_capture.lock().expect("grpc pipeline outcome mutex poisoned") =
                                 ::std::option::Option::Some(__reply);
+                            ::std::result::Result::Ok(())
+                        }
+                        ::std::result::Result::Ok(::std::result::Result::Err(__status)) => {
+                            ::std::result::Result::Err(__status)
                         }
                         ::std::result::Result::Err(__panic_event) => {
-                            *__panic_capture.lock().expect("grpc pipeline panic mutex poisoned") =
-                                ::std::option::Option::Some(__panic_event);
+                            // The event rides on the status, so the chain is offered the type a
+                            // `#[catch(PanicRecovered)]` handler matches rather than the message
+                            // it renders as.
+                            let __message = format!("handler panicked: {}", __panic_event);
+                            ::std::result::Result::Err(
+                                ::ulo::grpc::GrpcStatus::internal(__message)
+                                    .caused_by(__panic_event),
+                            )
                         }
                     }
                 },
             ).await;
 
-            if let ::std::result::Result::Err(__status) = __pipeline {
-                let __code = ::tonic::Code::from_i32(__status.code as i32);
-                return ::std::result::Result::Err(::tonic::Status::new(__code, __status.message));
-            }
-
-            // Caught panic: route the typed `PanicRecovered` through the
-            // error chain so a `#[catch]` handler can claim it. Chain falls
-            // back to `Internal` carrying the panic message. The take is bound to
-            // a local so the `MutexGuard` is dropped before the `.await`
-            // — holding it across would make the wrapper future `!Send`.
-            let __taken_panic = __panic
-                .lock()
-                .expect("grpc pipeline panic mutex poisoned")
-                .take();
-            if let ::std::option::Option::Some(__panic_event) = __taken_panic {
-                let __mapped = ::ulo::__grpc::run_grpc_error_chain(
-                    &__ctx, &self.enhancers, #method_name_lit, &__panic_event,
-                ).await;
-                return ::std::result::Result::Err(match __mapped {
-                    ::std::option::Option::Some(__grpc) => {
-                        let __code = ::tonic::Code::from_i32(__grpc.code as i32);
-                        ::tonic::Status::new(__code, __grpc.message)
+            match __pipeline {
+                // Guards, interceptors, the handler and every panic below them all fail as one
+                // `Err`, and the chain has already had its claim on it by the time it arrives.
+                ::std::result::Result::Err(__status) => {
+                    ::std::result::Result::Err(::ulo_grpc::to_status(__status))
+                }
+                ::std::result::Result::Ok(()) => {
+                    let __taken = __outcome
+                        .lock()
+                        .expect("grpc pipeline outcome mutex poisoned")
+                        .take();
+                    match __taken {
+                        ::std::option::Option::Some(__reply) => {
+                            // The execution ends when the answer does. A streaming reply
+                            // has produced nothing yet, so the context rides it to the
+                            // last item instead of dying with the handler.
+                            let (__meta, __body, __ext) = __reply.into_parts();
+                            ::std::result::Result::Ok(::tonic::Response::from_parts(
+                                __meta,
+                                ::ulo::__grpc::IntoScoped::into_scoped(__body, __ctx.clone()),
+                                __ext,
+                            ))
+                        }
+                        ::std::option::Option::None => ::std::result::Result::Err(
+                            ::tonic::Status::internal(
+                                "interceptor short-circuited the call without producing a response"
+                            ),
+                        ),
                     }
-                    ::std::option::Option::None => ::tonic::Status::internal(format!(
-                        "handler panicked: {}", __panic_event
-                    )),
-                });
-            }
-
-            let __taken_outcome = __outcome
-                .lock()
-                .expect("grpc pipeline outcome mutex poisoned")
-                .take();
-            match __taken_outcome {
-                ::std::option::Option::Some(::std::result::Result::Ok(__reply)) => {
-                    // The execution ends when the answer does. A streaming reply
-                    // has produced nothing yet, so the context rides it to the
-                    // last item instead of dying with the handler.
-                    let (__meta, __body, __ext) = __reply.into_parts();
-                    ::std::result::Result::Ok(::tonic::Response::from_parts(
-                        __meta,
-                        ::ulo::__grpc::IntoScoped::into_scoped(__body, __ctx.clone()),
-                        __ext,
-                    ))
                 }
-                ::std::option::Option::Some(::std::result::Result::Err(__status)) => {
-                    // A failed call is offered to the error chain. If a
-                    // handler claims it, the claimed `GrpcStatus` becomes the
-                    // wire reply; otherwise the status passes through
-                    // unchanged.
-                    //
-                    // The generated method attached the handler's domain error
-                    // to the answer, so the chain is given the type rather than
-                    // the status it flattened into — which is what lets
-                    // `#[catch(MyError)]` match here as it does on the other
-                    // transports.
-                    let __stashed = ::ulo::grpc::GrpcFailure::recover(
-                        ::std::error::Error::source(&__status),
-                    );
-                    let __wrapped = ::ulo::grpc::GrpcStatus::new(
-                        ::ulo::grpc::GrpcCode::from_i32(__status.code() as i32),
-                        __status.message().to_string(),
-                    );
-                    let __mapped = match &__stashed {
-                        ::std::option::Option::Some(__domain) => {
-                            ::ulo::__grpc::run_grpc_error_chain(
-                                &__ctx, &self.enhancers, #method_name_lit, __domain.as_ref(),
-                            ).await
-                        }
-                        ::std::option::Option::None => {
-                            ::ulo::__grpc::run_grpc_error_chain(
-                                &__ctx, &self.enhancers, #method_name_lit, &__wrapped,
-                            ).await
-                        }
-                    };
-                    ::std::result::Result::Err(match __mapped {
-                        ::std::option::Option::Some(__grpc) => {
-                            let __code = ::tonic::Code::from_i32(__grpc.code as i32);
-                            ::tonic::Status::new(__code, __grpc.message)
-                        }
-                        ::std::option::Option::None => __status,
-                    })
-                }
-                ::std::option::Option::None => ::std::result::Result::Err(::tonic::Status::internal(
-                    "interceptor short-circuited the call without producing a response"
-                )),
             }
         }
     })

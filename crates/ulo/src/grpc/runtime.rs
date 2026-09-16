@@ -2,14 +2,13 @@
 //!
 //! Lives here so the chain logic is tonic-free, unit-testable, and shared
 //! across every gRPC service the macro emits. The macro generates a thin
-//! per-method shim that builds a [`GrpcContext`], calls into this module,
-//! maps any [`GrpcStatus`] back to `tonic::Status`, then either returns or
-//! delegates to the user's body.
+//! per-method shim that builds a [`GrpcContext`], hands this module the user's
+//! handler as a delegate, and maps whatever comes back to tonic's types.
 
 use crate::dispatch::transport::Grpc;
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
@@ -20,81 +19,64 @@ use crate::grpc::GrpcHandlerResult;
 use crate::grpc::GrpcStatus;
 use crate::grpc::ResolvedGrpcEnhancers;
 use crate::panic_recovery::catch_async;
-/// Run guards then wrap the user delegation in the interceptor chain.
+
+/// Run guards, then the interceptor chain, then the error chain over whatever failed.
 ///
-/// `delegate` is the user's `<UserType as ProtoTrait>::method(&self.inner, req)`
-/// call, packaged as a closure that returns `()`. The user's typed
-/// `Result<Response<_>, Status>` is method-specific and can't fit a
-/// generic chain-runner signature, so the macro stashes it in an
-/// `Arc<Mutex<Option<_>>>` side-channel inside the closure and reads it
-/// back after `run_grpc_pipeline` returns.
+/// `delegate` is the user's handler, packaged by the macro as a closure answering this transport's
+/// [`GrpcHandlerResult`]: `Ok(())` once the typed reply is in the macro's side-channel — the user's
+/// `Result<Response<_>, Status>` is method-specific and cannot fit a generic chain-runner signature
+/// — and `Err` for anything that failed below the chain.
 ///
-/// Returns `Err(GrpcStatus)` when a guard rejects or an interceptor answers
-/// with one instead of calling `next.run(ctx)`. The macro maps `GrpcStatus` to
-/// `tonic::Status` at the wire boundary; `Ok(())` means the chain completed
-/// normally and the user's delegate (which fills the side-channel) was reached.
+/// Every way a call can fail leaves as `Err(GrpcStatus)` carrying its own cause: a refusal carries
+/// its [`GuardRejection`], a panic anywhere below carries its `PanicRecovered`, a handler's failure
+/// carries the domain error it raised. So the chain runs here, once, over all of them, rather than
+/// at each level that can produce one.
 pub async fn run_grpc_pipeline<D, Fut>(
     ctx: &GrpcContext,
     enhancers: &ResolvedGrpcEnhancers,
     method: &str,
     delegate: D,
-) -> Result<(), GrpcStatus>
+) -> GrpcHandlerResult
 where
     D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
+    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
 {
-    run_grpc_guards_inline(ctx, enhancers, method).await?;
-
-    let mut all_interceptors = enhancers.interceptors.clone();
-    if let Some(per_method) = enhancers.handler_interceptors.get(method) {
-        all_interceptors.extend_from_slice(per_method);
-    }
-    let interceptors =
-        crate::enhancer::pipeline::interceptors_for::<Grpc>(&all_interceptors, ctx).await;
-
-    // An interceptor panic is caught deep in the link chain, where neither the
-    // enhancers nor the method name are in scope. The slot carries the event
-    // back out to here, which has both, so the chain gets first claim on it —
-    // the same side-channel the generated wrapper uses for a handler panic.
-    let panicked: PanicSlot = Arc::new(Mutex::new(None));
-    let answer = execute_with_interceptors(ctx, &interceptors, panicked.clone(), delegate).await;
-
-    // Bound to a local: the guard must drop before the `.await` below, or the
-    // future stops being `Send`.
-    let caught = panicked
-        .lock()
-        .expect("interceptor panic slot poisoned")
-        .take();
-    match caught {
-        Some(event) => {
-            let claimed = run_grpc_error_chain(ctx, enhancers, method, &event).await;
-            Err(claimed.unwrap_or_else(|| {
-                GrpcStatus::new(
-                    crate::grpc::GrpcCode::Internal,
-                    format!("interceptor panicked: {}", event.message),
-                )
-            }))
+    let answer = match run_grpc_guards(ctx, enhancers, method).await {
+        Ok(()) => {
+            let mut all_interceptors = enhancers.interceptors.clone();
+            if let Some(per_method) = enhancers.handler_interceptors.get(method) {
+                all_interceptors.extend_from_slice(per_method);
+            }
+            let interceptors =
+                crate::enhancer::pipeline::interceptors_for::<Grpc>(&all_interceptors, ctx).await;
+            execute_with_interceptors(ctx, &interceptors, delegate).await
         }
-        None => answer,
-    }
+        Err(refused) => Err(refused),
+    };
+
+    let Err(status) = answer else {
+        return answer;
+    };
+
+    // The chain is offered the cause where the status carries one, so `#[catch(MyError)]` matches
+    // what the handler raised and `#[catch(GuardRejection)]` the refusal, rather than the status
+    // each of them flattened into. Bound to a local: the borrow has to end before the `Err` below
+    // takes the status back.
+    let claimed = {
+        let observed: &(dyn std::error::Error + Send + Sync + 'static) = match status.source() {
+            Some(cause) => cause,
+            None => &status,
+        };
+        run_grpc_error_chain(ctx, enhancers, method, observed).await
+    };
+    Err(claimed.unwrap_or(status))
 }
 
-/// Carries a caught interceptor panic out of the link chain to
-/// [`run_grpc_pipeline`], which holds what the error chain needs.
-type PanicSlot = Arc<Mutex<Option<crate::errors::PanicRecovered>>>;
-
-/// Guards-only entry point — same shape as PR #1 shipped, retained for
-/// services that declare no interceptors so the macro can skip the
-/// closure-boxing cost.
-pub(crate) async fn run_grpc_guards(
-    ctx: &GrpcContext,
-    enhancers: &ResolvedGrpcEnhancers,
-    method: &str,
-) -> Result<(), GrpcStatus> {
-    run_grpc_guards_inline(ctx, enhancers, method).await
-}
-
-async fn run_grpc_guards_inline(
+/// The guards this call runs, in declaration order.
+///
+/// A refusal and a panic both leave as an `Err` carrying the event, which is what the chain above
+/// is offered. Unclaimed, the status each was built with is what reaches the caller.
+async fn run_grpc_guards(
     ctx: &GrpcContext,
     enhancers: &ResolvedGrpcEnhancers,
     method: &str,
@@ -106,30 +88,25 @@ async fn run_grpc_guards_inline(
 
     let guards = crate::enhancer::pipeline::guards_for::<Grpc>(&all_guards, ctx).await;
     for (index, guard) in guards.iter().enumerate() {
-        // A panicking guard is a bug, not a verdict: the chain gets first
-        // claim on the typed event, and an unclaimed one renders `Internal`
-        // rather than telling the caller its credentials were refused.
+        // A panicking guard is a bug, not a verdict: it carries `PanicRecovered` rather than a
+        // rejection, so an unclaimed one renders `Internal` rather than telling the caller its
+        // credentials were refused.
         let activated = match catch_async(PipelineSegment::Guard, guard.can_activate(ctx)).await {
             Ok(b) => b,
             Err(event) => {
                 tracing::debug!(guard_index = index, panic = %event.message, "guard panicked");
-                let claimed = run_grpc_error_chain(ctx, enhancers, method, &event).await;
-                return Err(claimed.unwrap_or_else(|| {
-                    GrpcStatus::new(
-                        crate::grpc::GrpcCode::Internal,
-                        format!("guard {} panicked: {}", index, event.message),
-                    )
-                }));
+                return Err(GrpcStatus::new(
+                    crate::grpc::GrpcCode::Internal,
+                    format!("guard {} panicked: {}", index, event.message),
+                )
+                .caused_by(event));
             }
         };
         if !activated {
-            // The chain gets first claim, as it does on HTTP; an unclaimed
-            // refusal renders as the `PermissionDenied` it always did.
-            let event = GuardRejection::new(index);
-            let claimed = run_grpc_error_chain(ctx, enhancers, method, &event).await;
-            return Err(claimed.unwrap_or_else(|| {
+            return Err(
                 GrpcStatus::permission_denied(format!("guard {} rejected request", index))
-            }));
+                    .caused_by(GuardRejection::new(index)),
+            );
         }
     }
     Ok(())
@@ -142,19 +119,17 @@ async fn run_grpc_guards_inline(
 async fn execute_with_interceptors<D, Fut>(
     ctx: &GrpcContext,
     interceptors: &[Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>],
-    panicked: PanicSlot,
     delegate: D,
 ) -> GrpcHandlerResult
 where
     D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
+    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
 {
     if interceptors.is_empty() {
-        delegate().await;
-        return Ok(());
+        return delegate().await;
     }
 
-    let next = build_next(&interceptors[1..], panicked.clone(), delegate);
+    let next = build_next(&interceptors[1..], delegate);
     match catch_async(
         PipelineSegment::Middleware,
         interceptors[0].intercept(ctx, next),
@@ -162,63 +137,51 @@ where
     .await
     {
         Ok(answer) => answer,
-        Err(event) => record_interceptor_panic(&panicked, event),
+        Err(event) => Err(interceptor_panicked(event)),
     }
 }
 
 fn build_next<D, Fut>(
     rest: &[Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>],
-    panicked: PanicSlot,
     delegate: D,
 ) -> Box<dyn InterceptorNext<GrpcContext, GrpcHandlerResult>>
 where
     D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
+    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
 {
     if rest.is_empty() {
-        Box::new(LeafNext {
-            delegate: Some(delegate),
-        })
+        Box::new(LeafNext { delegate })
     } else {
         Box::new(LinkNext {
             head: rest[0].clone(),
             rest: rest[1..].to_vec(),
-            panicked,
-            delegate: Some(delegate),
+            delegate,
         })
     }
 }
 
-/// Stash the event for [`run_grpc_pipeline`] to route, and answer with the
-/// status it renders when nothing claims it.
-fn record_interceptor_panic(
-    panicked: &PanicSlot,
-    event: crate::errors::PanicRecovered,
-) -> GrpcHandlerResult {
-    let status = GrpcStatus::new(
+/// The status a panicking interceptor answers with, carrying the event the chain above is offered.
+fn interceptor_panicked(event: crate::errors::PanicRecovered) -> GrpcStatus {
+    GrpcStatus::new(
         crate::grpc::GrpcCode::Internal,
         format!("interceptor panicked: {}", event.message),
-    );
-    *panicked.lock().expect("interceptor panic slot poisoned") = Some(event);
-    Err(status)
+    )
+    .caused_by(event)
 }
 
 /// Innermost link: invokes the user delegate.
 struct LeafNext<D> {
-    delegate: Option<D>,
+    delegate: D,
 }
 
 #[async_trait]
 impl<D, Fut> InterceptorNext<GrpcContext, GrpcHandlerResult> for LeafNext<D>
 where
     D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
+    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
 {
-    async fn run(mut self: Box<Self>, _ctx: &GrpcContext) -> GrpcHandlerResult {
-        if let Some(delegate) = self.delegate.take() {
-            delegate().await;
-        }
-        Ok(())
+    async fn run(self: Box<Self>, _ctx: &GrpcContext) -> GrpcHandlerResult {
+        (self.delegate)().await
     }
 }
 
@@ -226,44 +189,31 @@ where
 struct LinkNext<D> {
     head: Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>,
     rest: Vec<Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>>,
-    panicked: PanicSlot,
-    delegate: Option<D>,
+    delegate: D,
 }
 
 #[async_trait]
 impl<D, Fut> InterceptorNext<GrpcContext, GrpcHandlerResult> for LinkNext<D>
 where
     D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
+    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
 {
-    async fn run(mut self: Box<Self>, ctx: &GrpcContext) -> GrpcHandlerResult {
-        match self.delegate.take() {
-            Some(delegate) => {
-                let next = build_next(&self.rest, self.panicked.clone(), delegate);
-                match catch_async(PipelineSegment::Middleware, self.head.intercept(ctx, next)).await
-                {
-                    Ok(answer) => answer,
-                    Err(event) => record_interceptor_panic(&self.panicked, event),
-                }
-            }
-            None => Ok(()),
+    async fn run(self: Box<Self>, ctx: &GrpcContext) -> GrpcHandlerResult {
+        let this = *self;
+        let next = build_next(&this.rest, this.delegate);
+        match catch_async(PipelineSegment::Middleware, this.head.intercept(ctx, next)).await {
+            Ok(answer) => answer,
+            Err(event) => Err(interceptor_panicked(event)),
         }
     }
 }
 
-/// Run the error-handler chain for one gRPC call.
+/// Offer one failure to the service's and the method's error handlers.
 ///
-/// Walks service- + method-level error handlers in **reverse**
-/// registration order. The first handler that returns `Some(GrpcStatus)`
-/// claims the response; the macro maps that to `tonic::Status` at the wire
-/// boundary. `None` from every handler means no rewrite — the caller keeps
-/// the original status.
-///
-/// The same chain handles two distinct sources: a user-returned
-/// `Err(Status)` (wrapped as `GrpcStatus` by the macro before being
-/// passed here) and a caught handler panic, where `err` is a
-/// `PanicRecovered` event a `#[catch]` handler can downcast.
-pub async fn run_grpc_error_chain(
+/// Reverse registration order, so the most specific handler is consulted first. A handler claiming
+/// with `Some(Err(status))` answers the call; `Some(Ok(()))` carries no reply on this transport and
+/// declines as `None` does. Nothing claiming it leaves the status the call failed with.
+async fn run_grpc_error_chain(
     ctx: &GrpcContext,
     enhancers: &ResolvedGrpcEnhancers,
     method: &str,
@@ -300,9 +250,9 @@ impl GrpcFailure {
 
     /// The error a status carries, read off the source slot.
     ///
-    /// Called by the `#[grpc_methods]` wrapper on its way to the error chain,
-    /// so a `#[catch(MyError)]` handler matches on this transport as it does on
-    /// the other three.
+    /// The way back for a caller holding a `tonic::Status` ulo produced — a tower layer, or a
+    /// service of its own wrapping one of ulo's. Inside ulo's dispatch a failure never flattens:
+    /// it reaches the chain as the `GrpcStatus` it was raised with, error and all.
     pub fn recover(
         source: Option<&(dyn std::error::Error + 'static)>,
     ) -> Option<Arc<dyn crate::errors::Error>> {
