@@ -20,7 +20,7 @@ pub trait InterceptorNext<C: ?Sized + ExecutionContext, R>: Send {
 ///
 /// `R` is what the transport answers with: `HttpResponse` on HTTP,
 /// `Result<RpcHandlerOutput, RpcError>` on RPC, `Result<WsHandlerOutput,
-/// WsError>` on WebSocket, `Result<(), GrpcStatus>` on gRPC.
+/// WsError>` on WebSocket, `Result<GrpcReply, GrpcStatus>` on gRPC.
 #[async_trait]
 pub trait Interceptor<C: ?Sized + ExecutionContext, R>: Send + Sync {
     async fn intercept(&self, context: &C, next: Box<dyn InterceptorNext<C, R>>) -> R;

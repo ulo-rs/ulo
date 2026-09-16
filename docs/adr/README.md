@@ -61,3 +61,6 @@ the history is part of the value.
 - [0043 — A gRPC method's shape comes from the proto](0043-a-grpc-method-s-shape-comes-from-the-proto.md)
 - [0044 — The framework is named ulo](0044-the-framework-is-named-ulo.md)
 - [0045 — A public error names what a caller can act on](0045-a-public-error-names-what-a-caller-can-act-on.md)
+- [0046 — The unit a scope names is an execution](0046-the-unit-a-scope-names-is-an-execution.md)
+- [0047 — The context family names the execution](0047-the-context-family-names-the-execution.md)
+- [0048 — A gRPC reply travels through the pipeline](0048-a-grpc-reply-travels-through-the-pipeline.md)

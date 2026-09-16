@@ -120,12 +120,12 @@ impl ulo::enhancer::ErrorHandler<GrpcContext, GrpcHandlerResult> for GrpcPipelin
 pub struct PanickingGrpcPipelineInterceptor {}
 
 #[async_trait]
-impl Interceptor<GrpcContext, Result<(), GrpcStatus>> for PanickingGrpcPipelineInterceptor {
+impl Interceptor<GrpcContext, GrpcHandlerResult> for PanickingGrpcPipelineInterceptor {
     async fn intercept(
         &self,
         _ctx: &GrpcContext,
-        _next: Box<dyn InterceptorNext<GrpcContext, Result<(), GrpcStatus>>>,
-    ) -> Result<(), GrpcStatus> {
+        _next: Box<dyn InterceptorNext<GrpcContext, GrpcHandlerResult>>,
+    ) -> GrpcHandlerResult {
         panic!("grpc interceptor kaboom");
     }
 }

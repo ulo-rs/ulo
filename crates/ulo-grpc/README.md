@@ -159,7 +159,7 @@ impl ulo::enhancer::Guard<ulo::grpc::GrpcContext> for AuthGuard {
 
 ### Interceptors
 
-An interceptor is a provider that implements `Interceptor<GrpcContext, GrpcHandlerResult>`. The chain wraps the handler — `next.run(ctx).await` proceeds; returning without calling it short-circuits.
+An interceptor is a provider that implements `Interceptor<GrpcContext, GrpcHandlerResult>`. The chain wraps the handler — `next.run(ctx).await` proceeds and answers with the reply or the failure; returning without calling it short-circuits. The reply is erased, so reading or replacing one names the method's own type: `answer.downcast_ref::<tonic::Response<CreateOrderResponse>>()`, and `Ok(GrpcReply::new(tonic::Response::new(reply)))` to answer without running the handler.
 
 ```rust
 #[injectable]
@@ -189,7 +189,7 @@ impl ulo::enhancer::Interceptor<ulo::grpc::GrpcContext, ulo::grpc::GrpcHandlerRe
 
 ### Error handlers
 
-An error handler is a provider that implements `ErrorHandler<GrpcContext, GrpcHandlerResult>`. The chain runs once above the interceptors, so it is offered every way a call can fail: a guard's refusal (as a typed `GuardRejection`), an interceptor's refusal, the error a handler returned, and a panic in any of them (as a typed `PanicRecovered`). Returning `Some(Err(status))` claims the answer; `None` lets the next handler decide, falling back on full miss to the status the handler already answered with. `Some(Ok(()))` declines as `None` does — this transport's handler type carries no reply, so an `Ok` has nothing to put on the wire.
+An error handler is a provider that implements `ErrorHandler<GrpcContext, GrpcHandlerResult>`. The chain runs once above the interceptors, so it is offered every way a call can fail: a guard's refusal (as a typed `GuardRejection`), an interceptor's refusal, the error a handler returned, and a panic in any of them (as a typed `PanicRecovered`). Returning `Some(Err(status))` claims the failure and reshapes it, and `Some(Ok(reply))` claims it and recovers the call with a reply of the method's own type. `None` lets the next handler decide, falling back on full miss to the status the call already failed with.
 
 ```rust
 #[injectable]

@@ -62,14 +62,20 @@ where
     // what the handler raised and `#[catch(GuardRejection)]` the refusal, rather than the status
     // each of them flattened into. Bound to a local: the borrow has to end before the `Err` below
     // takes the status back.
+    let mut handlers = enhancers.error_handlers.clone();
+    if let Some(per_method) = enhancers.handler_error_handlers.get(method) {
+        handlers.extend_from_slice(per_method);
+    }
     let claimed = {
         let observed: &(dyn std::error::Error + Send + Sync + 'static) = match status.source() {
             Some(cause) => cause,
             None => &status,
         };
-        run_grpc_error_chain(ctx, enhancers, method, observed).await
+        crate::enhancer::pipeline::claim::<Grpc>(&handlers, observed, ctx).await
     };
-    Err(claimed.unwrap_or(status))
+    // A claim answers what an interceptor answers: `Ok` recovers the call with a reply of its own,
+    // `Err` reshapes the failure. Unclaimed, the status the call failed with is the answer.
+    claimed.unwrap_or(Err(status))
 }
 
 /// The guards this call runs, in declaration order.
@@ -208,31 +214,61 @@ where
     }
 }
 
-/// Offer one failure to the service's and the method's error handlers.
+/// The reply a gRPC call answers with, erased.
 ///
-/// Reverse registration order, so the most specific handler is consulted first. A handler claiming
-/// with `Some(Err(status))` answers the call; `Some(Ok(()))` carries no reply on this transport and
-/// declines as `None` does. Nothing claiming it leaves the status the call failed with.
-async fn run_grpc_error_chain(
-    ctx: &GrpcContext,
-    enhancers: &ResolvedGrpcEnhancers,
-    method: &str,
-    err: &(dyn std::error::Error + Send + Sync + 'static),
-) -> Option<crate::grpc::GrpcStatus> {
-    let mut all = enhancers.error_handlers.clone();
-    if let Some(per_method) = enhancers.handler_error_handlers.get(method) {
-        all.extend_from_slice(per_method);
-    }
-    // This transport walks the chain itself rather than through `claim`, because `Ok(())` is a
-    // decline here and has to pass the error to the next handler. `claim` answers the first
-    // `Some` whatever it wraps, which would stop the walk on a handler that declined.
-    for (position, handler) in all.iter().rev().enumerate() {
-        match crate::enhancer::pipeline::offer_to::<Grpc>(handler, err, ctx, position).await {
-            Some(Err(status)) => return Some(status),
-            Some(Ok(())) | None => continue,
+/// A reply's type is the method's — tonic's trait names it, and for a streaming method it is an
+/// associated type the user's impl defines — while one guard, interceptor and error-handler list
+/// serves every method of a service. So the type cannot be in the signature those share, and the
+/// reply travels as the value it is with its name beside it.
+///
+/// Built where `tonic::Response<T>` is nameable, which is the user's crate: the generated wrapper
+/// erases the reply on the way in and downcasts it on the way out, naming the method's own type.
+/// An enhancer reading or replacing a reply names that type itself.
+pub struct GrpcReply {
+    value: Box<dyn std::any::Any + Send>,
+    carries: &'static str,
+}
+
+impl GrpcReply {
+    /// Erase a reply. `T` is the `tonic::Response<_>` the method answers with.
+    pub fn new<T: Send + 'static>(value: T) -> Self {
+        Self {
+            value: Box::new(value),
+            carries: std::any::type_name::<T>(),
         }
     }
-    None
+
+    /// Take the reply, or hand it back untouched where it carries something else.
+    pub fn downcast<T: Send + 'static>(self) -> Result<T, Self> {
+        let carries = self.carries;
+        match self.value.downcast::<T>() {
+            Ok(value) => Ok(*value),
+            Err(value) => Err(Self { value, carries }),
+        }
+    }
+
+    /// Read the reply where it is what the reader expects, leaving it in place.
+    pub fn downcast_ref<T: Send + 'static>(&self) -> Option<&T> {
+        self.value.downcast_ref::<T>()
+    }
+
+    /// Read the reply to change it in place.
+    pub fn downcast_mut<T: Send + 'static>(&mut self) -> Option<&mut T> {
+        self.value.downcast_mut::<T>()
+    }
+
+    /// What it carries, named for the diagnostic when something asks for another type.
+    pub fn carries(&self) -> &'static str {
+        self.carries
+    }
+}
+
+impl std::fmt::Debug for GrpcReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GrpcReply")
+            .field("carries", &self.carries)
+            .finish()
+    }
 }
 
 /// Carries a domain error through a `tonic::Status`'s source slot.

@@ -369,6 +369,8 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
                 &trait_short,
                 &impl_block.attrs,
                 &shapes,
+                &trait_path,
+                &assoc_idents,
             )
         })
         .collect::<Result<Vec<_>>>()?;
@@ -1008,11 +1010,11 @@ fn answer_type(output: &syn::ReturnType) -> Result<(syn::Type, bool)> {
 }
 
 /// Build the wrapper's proto-trait method body. Runs the full pipeline
-/// (guards → interceptors → user delegation) via `run_grpc_pipeline`,
-/// maps any short-circuit [`GrpcStatus`] to `tonic::Status`, and reads
-/// the user's typed reply back from a side-channel set inside the
-/// delegate closure (the chain runner can't be generic over the
-/// per-method response type).
+/// (guards → interceptors → user delegation) via `run_grpc_pipeline`, and
+/// answers with what it produced: a `GrpcStatus` mapped to `tonic::Status`, or
+/// the reply downcast back to this method's own type. The reply is erased for
+/// the trip because the enhancers between the two ends are one list for the
+/// whole service, and each method's reply is its own type.
 ///
 /// Delegation uses UFCS — `<UserType as ProtoTrait>::method(&inner, ...)`
 /// — so the user's body's `self.<field>` accesses, `Self::SomeStream`
@@ -1024,6 +1026,8 @@ fn build_wrapper_method(
     trait_short: &str,
     impl_attrs: &[syn::Attribute],
     shapes: &Path,
+    trait_path: &Path,
+    assoc_idents: &std::collections::HashSet<String>,
 ) -> Result<TokenStream> {
     let sig = &method.sig;
     let method_name_lit = sig.ident.to_string();
@@ -1078,6 +1082,7 @@ fn build_wrapper_method(
     let generics = &sig.generics;
 
     let output = &sig.output;
+    let reply_ty = user_reply_type(output, self_ident, trait_path, assoc_idents)?;
 
     Ok(quote! {
         #asyncness fn #method_ident #generics (#inputs) #output {
@@ -1121,17 +1126,6 @@ fn build_wrapper_method(
             // message and the handler's extractor still takes the original.
             <#shape as ::ulo_grpc::MethodShape>::install(#req_ident, &__ctx);
 
-            // The reply travels in a side-channel: it is the type the user's method returns, and
-            // a chain-runner generic over every method cannot name it. Everything that can fail
-            // travels in the pipeline's own `Result`, which is what the chain above reads.
-            //
-            // Inferred, not spelled: the delegate fills this with the type the
-            // user's method returns, while the signature above names the
-            // wrapper's own associated type. The two differ wherever a
-            // streaming reply is re-typed on the way out.
-            let __outcome: ::std::sync::Arc<::std::sync::Mutex<::std::option::Option<_>>>
-                = ::std::sync::Arc::new(::std::sync::Mutex::new(::std::option::Option::None));
-            let __outcome_capture = __outcome.clone();
             let __source = self.source.clone();
             let __build_ctx = __ctx.clone();
             let __run_ctx = __ctx.clone();
@@ -1152,10 +1146,11 @@ fn build_wrapper_method(
                         #self_ident::#run(&__inner, &__run_ctx).await
                     }).await;
                     match __caught {
+                        // Erased here and downcast below: the guards, interceptors and error
+                        // handlers between the two are one list for the whole service, and this
+                        // reply's type is this method's.
                         ::std::result::Result::Ok(::std::result::Result::Ok(__reply)) => {
-                            *__outcome_capture.lock().expect("grpc pipeline outcome mutex poisoned") =
-                                ::std::option::Option::Some(__reply);
-                            ::std::result::Result::Ok(())
+                            ::std::result::Result::Ok(::ulo::grpc::GrpcReply::new(__reply))
                         }
                         ::std::result::Result::Ok(::std::result::Result::Err(__status)) => {
                             ::std::result::Result::Err(__status)
@@ -1180,13 +1175,9 @@ fn build_wrapper_method(
                 ::std::result::Result::Err(__status) => {
                     ::std::result::Result::Err(::ulo_grpc::to_status(__status))
                 }
-                ::std::result::Result::Ok(()) => {
-                    let __taken = __outcome
-                        .lock()
-                        .expect("grpc pipeline outcome mutex poisoned")
-                        .take();
-                    match __taken {
-                        ::std::option::Option::Some(__reply) => {
+                ::std::result::Result::Ok(__reply) => {
+                    match ::ulo::grpc::GrpcReply::downcast::<#reply_ty>(__reply) {
+                        ::std::result::Result::Ok(__reply) => {
                             // The execution ends when the answer does. A streaming reply
                             // has produced nothing yet, so the context rides it to the
                             // last item instead of dying with the handler.
@@ -1197,16 +1188,104 @@ fn build_wrapper_method(
                                 __ext,
                             ))
                         }
-                        ::std::option::Option::None => ::std::result::Result::Err(
-                            ::tonic::Status::internal(
-                                "interceptor short-circuited the call without producing a response"
-                            ),
+                        // An enhancer answered with a reply of another method's type, or of no
+                        // method's. Nothing below can render it, so the call fails naming both.
+                        ::std::result::Result::Err(__other) => ::std::result::Result::Err(
+                            ::tonic::Status::internal(format!(
+                                "an enhancer answered this call with `{}`, and it replies `{}`",
+                                ::ulo::grpc::GrpcReply::carries(&__other),
+                                ::std::any::type_name::<#reply_ty>(),
+                            )),
                         ),
                     }
                 }
             }
         }
     })
+}
+
+/// The `tonic::Response<_>` the user's own impl answers with, which is what the wrapper has to
+/// name to take a reply back out of a `GrpcReply`.
+///
+/// The wrapper's signature is the generated method's with `Self` rebound, so `Self::GreetManyStream`
+/// there is the `ScopedGrpcStream<_>` the wrapper declares while the value in hand is the stream it
+/// wraps. Rewriting each associated type through the user's impl names what was erased.
+fn user_reply_type(
+    output: &syn::ReturnType,
+    self_ident: &syn::Ident,
+    trait_path: &Path,
+    assoc_idents: &std::collections::HashSet<String>,
+) -> Result<syn::Type> {
+    let syn::ReturnType::Type(_, ty) = output else {
+        return Err(syn::Error::new_spanned(
+            output,
+            "a gRPC method answers with `Result<Response<_>, Status>`",
+        ));
+    };
+    let mut reply = result_ok_type(ty).ok_or_else(|| {
+        syn::Error::new_spanned(
+            ty,
+            "a gRPC method answers with `Result<Response<_>, Status>`",
+        )
+    })?;
+    rewrite_self_assoc(&mut reply, self_ident, trait_path, assoc_idents);
+    Ok(reply)
+}
+
+/// Rebind every `Self::X` in `ty` that names an associated type of this impl to
+/// `<UserType as Trait>::X`.
+fn rewrite_self_assoc(
+    ty: &mut syn::Type,
+    self_ident: &syn::Ident,
+    trait_path: &Path,
+    declared: &std::collections::HashSet<String>,
+) {
+    match ty {
+        syn::Type::Path(tp) => {
+            // `Self::X`, and `<Self as Trait>::X` which normalises to the same type.
+            let assoc = if tp.qself.is_none() && tp.path.segments.len() == 2 {
+                let head = &tp.path.segments[0];
+                let tail = &tp.path.segments[1];
+                (head.ident == "Self" && declared.contains(&tail.ident.to_string()))
+                    .then(|| tail.ident.clone())
+            } else if tp.qself.as_ref().is_some_and(|qself| {
+                matches!(qself.ty.as_ref(), syn::Type::Path(inner)
+                    if inner.qself.is_none() && inner.path.is_ident("Self"))
+            }) {
+                tp.path
+                    .segments
+                    .last()
+                    .filter(|last| declared.contains(&last.ident.to_string()))
+                    .map(|last| last.ident.clone())
+            } else {
+                None
+            };
+            if let Some(name) = assoc {
+                *ty = syn::parse_quote! { <#self_ident as #trait_path>::#name };
+                return;
+            }
+            for segment in &mut tp.path.segments {
+                if let syn::PathArguments::AngleBracketed(args) = &mut segment.arguments {
+                    for arg in &mut args.args {
+                        if let syn::GenericArgument::Type(inner) = arg {
+                            rewrite_self_assoc(inner, self_ident, trait_path, declared);
+                        }
+                    }
+                }
+            }
+        }
+        syn::Type::Reference(r) => {
+            rewrite_self_assoc(&mut r.elem, self_ident, trait_path, declared)
+        }
+        syn::Type::Paren(p) => rewrite_self_assoc(&mut p.elem, self_ident, trait_path, declared),
+        syn::Type::Group(g) => rewrite_self_assoc(&mut g.elem, self_ident, trait_path, declared),
+        syn::Type::Tuple(t) => {
+            for inner in &mut t.elems {
+                rewrite_self_assoc(inner, self_ident, trait_path, declared);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Record every `Self::X` in `ty` whose `X` names an associated type of this

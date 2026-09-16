@@ -123,8 +123,7 @@ impl ErrorHandler<GrpcContext, GrpcHandlerResult> for GlobalErrorHandler {
     }
 }
 
-/// Claims by answering `Ok(())`, which on this transport carries no status and so declines: the
-/// handler type holds no reply, leaving nothing to put on the wire.
+/// Declines, which is `None` and nothing else — an `Ok` carries the reply the call answers with.
 struct DecliningErrorHandler;
 
 #[ulo::async_trait]
@@ -135,7 +134,7 @@ impl ErrorHandler<GrpcContext, GrpcHandlerResult> for DecliningErrorHandler {
         _ctx: &GrpcContext,
     ) -> Option<GrpcHandlerResult> {
         record("declining:error_handler");
-        Some(Ok(()))
+        None
     }
 }
 
@@ -376,14 +375,14 @@ async fn a_global_error_handler_claims_what_the_service_leaves() {
     stop(shutdown).await;
 }
 
-/// A handler answering `Ok(())` passes the error on rather than ending the walk.
+/// A declining handler passes the error on rather than ending the walk.
 ///
 /// The two are registered claiming-first, so the reverse walk consults the declining one first. If
-/// a decline stopped the chain, the call would come back with the handler's own `Internal` and
+/// a decline stopped the chain, the call would come back with the status the handler raised and
 /// `"claimed globally"` would never be reached.
 #[serial]
 #[tokio_localset_test::localset_test]
-async fn a_handler_declining_with_ok_lets_the_next_one_claim() {
+async fn a_declining_handler_lets_the_next_one_claim() {
     SEEN.lock().unwrap().clear();
 
     let (port, shutdown) = boot(|f| {
