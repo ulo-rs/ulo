@@ -1,18 +1,11 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Vendor protoc so the test suite doesn't depend on a system install.
-    let protoc = protoc_bin_vendored::protoc_bin_path()?;
-    // SAFETY: build.rs is single-threaded; setting an env var here is fine.
-    unsafe {
-        std::env::set_var("PROTOC", protoc);
-    }
     // The descriptor set is what a reflection service serves: the compiled
     // schema, so a client can discover the API without holding the `.proto`.
     let descriptor =
         std::path::PathBuf::from(std::env::var("OUT_DIR")?).join("orders_descriptor.bin");
-    tonic_prost_build::configure()
-        .file_descriptor_set_path(&descriptor)
+    ulo_build::configure()
+        .tonic(|b| b.file_descriptor_set_path(&descriptor))
         .compile_protos(&["proto/orders.proto"], &["proto"])?;
-    ulo_build::shapes("ulo_test.orders")?;
 
     // A service whose Rust method name and route name diverge, which the proto
     // path cannot produce: prost derives one from the other. `grpc_manual_trait_form`

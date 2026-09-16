@@ -19,8 +19,7 @@
 //!
 //! ```ignore
 //! // build.rs
-//! tonic_prost_build::compile_protos("proto/orders.proto")?;
-//! ulo_build::shapes("ulo_examples.orders")?;
+//! ulo_build::compile_protos("proto/orders.proto")?;
 //! ```
 //!
 //! ```ignore
@@ -86,8 +85,8 @@
 //! ```ignore
 //! // build.rs — write the compiled schema somewhere the binary can read it
 //! let descriptor = PathBuf::from(env::var("OUT_DIR")?).join("orders_descriptor.bin");
-//! tonic_prost_build::configure()
-//!     .file_descriptor_set_path(&descriptor)
+//! ulo_build::configure()
+//!     .tonic(|b| b.file_descriptor_set_path(&descriptor))
 //!     .compile_protos(&["proto/orders.proto"], &["proto"])?;
 //!
 //! // main.rs

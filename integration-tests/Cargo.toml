@@ -57,9 +57,7 @@ anyhow.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [build-dependencies]
-tonic-prost-build = "0.14"
 ulo-build = { path = "../crates/ulo-build" }
 # The manual (no-proto) codegen path, for a service whose method name and route
-# name diverge — see tests/integration/grpc_stream_optin.rs.
+# name diverge — see tests/integration/grpc_manual_trait_form.rs.
 tonic-build = "0.14"
-protoc-bin-vendored = "3"

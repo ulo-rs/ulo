@@ -3634,7 +3634,6 @@ dependencies = [
  "http 1.4.2",
  "juniper",
  "prost",
- "protoc-bin-vendored",
  "rand 0.8.7",
  "rcgen",
  "reqwest",
@@ -3649,7 +3648,6 @@ dependencies = [
  "tonic-build",
  "tonic-health",
  "tonic-prost",
- "tonic-prost-build",
  "tonic-reflection",
  "tower",
  "tower-http",
@@ -8297,8 +8295,10 @@ version = "0.1.0"
 dependencies = [
  "prettyplease",
  "proc-macro2",
+ "protoc-bin-vendored",
  "quote",
  "syn",
+ "tonic-prost-build",
 ]
 
 [[package]]
@@ -8459,14 +8459,12 @@ dependencies = [
  "futures",
  "listenfd",
  "prost",
- "protoc-bin-vendored",
  "serde",
  "serde_json",
  "tokio",
  "tokio-stream",
  "tonic",
  "tonic-prost",
- "tonic-prost-build",
  "tracing",
  "ulo",
  "ulo-build",

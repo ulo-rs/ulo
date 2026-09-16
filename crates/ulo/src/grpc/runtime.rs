@@ -448,6 +448,11 @@ pub trait RequestCarrier: Send + 'static {
     /// The carrier whole, for an extractor that wants the wire's own view.
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send>;
 
+    /// A copy of the message, for a reader that leaves it in place — a guard
+    /// or interceptor deciding on it before the handler takes it. `None`
+    /// where the caller streams: a stream has one reader.
+    fn clone_message(&self) -> Option<Box<dyn std::any::Any + Send>>;
+
     /// What the call carries, named for the diagnostic when a handler asks
     /// for something else.
     fn carries(&self) -> &'static str;
@@ -458,6 +463,7 @@ pub trait RequestCarrier: Send + 'static {
 /// Each is a fault in the handler or the dispatch rather than in the call, so
 /// the generated method answers `Internal` with the message.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RequestError {
     /// A parameter before this one took it. The macro rejects two takers at
     /// compile time; this is what an extractor written around that sees.
@@ -469,6 +475,9 @@ pub enum RequestError {
         asked: &'static str,
         carried: &'static str,
     },
+    /// A copy was asked for and the caller streams. A stream has one reader:
+    /// the handler, as `Inbound<T>`.
+    Streamed,
 }
 
 impl std::fmt::Display for RequestError {
@@ -487,6 +496,10 @@ impl std::fmt::Display for RequestError {
                     "the handler asked for `{asked}` but the call carries `{carried}`"
                 )
             }
+            RequestError::Streamed => f.write_str(
+                "the caller streams, and a stream cannot be copied — the handler reads it as \
+                 `Inbound<T>`",
+            ),
         }
     }
 }

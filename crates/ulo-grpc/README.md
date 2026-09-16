@@ -30,23 +30,22 @@ tonic = "0.14"
 tokio = { version = "1", features = ["full"] }
 
 [build-dependencies]
-tonic-prost-build = "0.14"
 ulo-build = "0.1"
 ```
 
-A `build.rs` compiles your `.proto` into Rust, then writes what each method
-carries beside the trait tonic generated — that is what lets a handler's
-parameters be extractors in any order:
+A `build.rs` compiles your `.proto` into Rust and writes what each method
+carries beside the trait tonic generated, which is what lets a handler's
+parameters be extractors in any order. `protoc` ships with `ulo-build`:
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tonic_prost_build::compile_protos("proto/orders.proto")?;
-    ulo_build::shapes("ulo_examples.orders")?;
+    ulo_build::compile_protos("proto/orders.proto")?;
     Ok(())
 }
 ```
 
-`shapes` takes the string you hand to `tonic::include_proto!`.
+tonic's own options, a descriptor set for reflection say, go through
+`ulo_build::configure().tonic(|b| b.file_descriptor_set_path(&path))`.
 
 ## Quick Start
 
