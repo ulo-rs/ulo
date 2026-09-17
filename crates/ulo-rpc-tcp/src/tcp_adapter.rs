@@ -411,7 +411,7 @@ async fn handle_connection(
                             tracing::error!("RPC handler panicked; returning error to caller");
                             write_frame(&writer, wire::frame_panic().into_json_value(), &id).await;
                         }
-                        Ok(Ok(ulo::rpc::RpcHandlerOutput::Stream(stream))) => {
+                        Ok(Ok(ulo::dispatch::Cardinality::Many(stream))) => {
                             wire::drive_reply_stream(stream, |mut frame| {
                                 let writer = writer.clone();
                                 let id = id.clone();

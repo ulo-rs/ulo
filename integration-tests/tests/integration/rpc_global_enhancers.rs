@@ -10,6 +10,7 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use ulo::dispatch::Cardinality;
 
 use serial_test::serial;
 use ulo::UloFactory;
@@ -109,7 +110,7 @@ impl GlobalsRpcController {
     #[message_pattern("globals.echo")]
     async fn echo(&self) -> RpcHandlerResult {
         record("handler");
-        Ok(RpcHandlerOutput::Single(
+        Ok(Cardinality::One(
             RpcData::from_serialize(&serde_json::json!({"echo": true})).unwrap(),
         ))
     }

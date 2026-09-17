@@ -225,7 +225,7 @@ impl RpcAdapter for NatsAdapter {
                                     );
                                     Bytes::from(wire::frame_panic().into_bytes())
                                 }
-                                Ok(Ok(ulo::rpc::RpcHandlerOutput::Stream(stream))) => {
+                                Ok(Ok(ulo::dispatch::Cardinality::Many(stream))) => {
                                     wire::drive_reply_stream(stream, |frame| {
                                         let client = client.clone();
                                         let inbox = inbox.clone();

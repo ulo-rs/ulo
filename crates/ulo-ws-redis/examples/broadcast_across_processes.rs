@@ -72,7 +72,7 @@ impl ChatGateway {
             .send_event("said", say.text)
             .await
             .ok();
-        Ok(WsHandlerOutput::Empty)
+        Ok(Cardinality::Empty)
     }
 }
 

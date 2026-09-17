@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use ulo::dispatch::Cardinality;
 
 use serial_test::serial;
 use ulo::enhancer::{ChainError, ErrorHandler};
@@ -24,7 +25,7 @@ impl ErrorHandler<RpcContext, RpcHandlerResult> for ClaimsWithNothing {
         _error: ChainError<'_>,
         _ctx: &RpcContext,
     ) -> Option<RpcHandlerResult> {
-        Some(Ok(RpcHandlerOutput::Empty))
+        Some(Ok(Cardinality::Empty))
     }
 }
 
@@ -69,7 +70,7 @@ impl FailingController {
     #[message_pattern("claims.guarded")]
     #[use_guards(AlwaysRefuse {})]
     async fn guarded(&self) -> RpcHandlerResult {
-        Ok(RpcHandlerOutput::Empty)
+        Ok(Cardinality::Empty)
     }
 }
 

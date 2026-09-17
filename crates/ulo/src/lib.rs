@@ -115,6 +115,7 @@ pub mod prelude {
     pub use crate::di::{Execution, ModuleMetadata};
     pub use crate::di::{ModuleRef, ProviderScope};
 
+    pub use crate::dispatch::Cardinality;
     pub use crate::enhancer::{ChainError, ErrorHandler, Guard, Interceptor, InterceptorNext};
     pub use crate::errors::{Error, ErrorKind};
     pub use crate::extract::{FromContext, Payload, Validated, take_body};

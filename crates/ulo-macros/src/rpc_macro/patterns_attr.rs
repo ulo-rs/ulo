@@ -67,7 +67,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
                         #(#extractions)*
                         match self.#method_name(#(#call_args),*).await {
                             Ok(__data) => ::ulo::dispatch::ExecutionResult::Ok(
-                                ::ulo::rpc::RpcHandlerOutput::Single(__data),
+                                ::ulo::dispatch::Cardinality::One(__data),
                             ),
                             Err(__err) => ::ulo::dispatch::ExecutionResult::Err(
                                 ::std::convert::Into::<::ulo::rpc::RpcError>::into(__err),
@@ -82,7 +82,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
                         match self.#method_name(#(#call_args),*).await {
                             Ok(__result) => match ::ulo::rpc::RpcData::from_serialize(&__result) {
                                 Ok(__data) => ::ulo::dispatch::ExecutionResult::Ok(
-                                    ::ulo::rpc::RpcHandlerOutput::Single(__data),
+                                    ::ulo::dispatch::Cardinality::One(__data),
                                 ),
                                 Err(__e) => ::ulo::dispatch::ExecutionResult::Err(
                                     ::ulo::rpc::RpcError::Internal(__e.to_string()),
@@ -108,7 +108,7 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
                     #(#extractions)*
                     match self.#method_name(#(#call_args),*).await {
                         Ok(()) => ::ulo::dispatch::ExecutionResult::Ok(
-                            ::ulo::rpc::RpcHandlerOutput::Empty,
+                            ::ulo::dispatch::Cardinality::Empty,
                         ),
                         Err(__err) => ::ulo::dispatch::ExecutionResult::Err(
                             ::std::convert::Into::<::ulo::rpc::RpcError>::into(__err),

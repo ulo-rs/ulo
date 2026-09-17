@@ -8,6 +8,7 @@
 //! - Isolation: a method-level enhancer does not affect sibling handlers ("plain").
 
 use std::time::Duration;
+use ulo::dispatch::Cardinality;
 use ulo::rpc::{RpcHandlerOutput, RpcHandlerResult};
 
 use ulo::async_trait;
@@ -111,9 +112,9 @@ impl Interceptor<WsContext, WsHandlerResult> for WsPrefixInterceptor {
         next: Box<dyn InterceptorNext<WsContext, WsHandlerResult>>,
     ) -> WsHandlerResult {
         match next.run(ctx).await? {
-            WsHandlerOutput::Single(msg) => {
+            Cardinality::One(msg) => {
                 let prefixed = format!("prefixed:{}", msg.as_text().unwrap_or(""));
-                Ok(WsHandlerOutput::Single(WsMessage::text(prefixed)))
+                Ok(Cardinality::One(WsMessage::text(prefixed)))
             }
             other => Ok(other),
         }
@@ -197,16 +198,14 @@ impl Interceptor<RpcContext, RpcHandlerResult> for RpcPrefixInterceptor {
     ) -> RpcHandlerResult {
         let answer = next.run(ctx).await?;
         let prefixed: Option<String> = match &answer {
-            RpcHandlerOutput::Single(data) => data
+            Cardinality::One(data) => data
                 .as_json()
                 .and_then(|v| v.as_str())
                 .map(|s| format!("prefixed:{}", s)),
             _ => None,
         };
         match prefixed {
-            Some(val) => Ok(RpcHandlerOutput::Single(RpcData::json(serde_json::json!(
-                val
-            )))),
+            Some(val) => Ok(Cardinality::One(RpcData::json(serde_json::json!(val)))),
             None => Ok(answer),
         }
     }

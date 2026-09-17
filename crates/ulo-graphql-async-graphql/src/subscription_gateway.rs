@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use ulo::dispatch::Cardinality;
 
 use futures::future::AbortHandle;
 use futures::stream::Abortable;
@@ -66,7 +67,7 @@ enum ServerMessage<'a> {
 ///
 /// Register it by calling `.with_subscription_path("/graphql/ws")` on `GraphQLModule`.
 /// The gateway handles the full graphql-ws handshake and drives `Schema::execute_stream`
-/// as a `WsHandlerOutput::Stream`.
+/// as a `Cardinality::Many`.
 pub struct GraphQLSubscriptionGateway<Q, M, S>
 where
     Q: ObjectType + 'static,
@@ -211,15 +212,15 @@ where
                         .insert(client.id.clone(), v);
                 }
                 let ack = serde_json::to_string(&ServerMessage::ConnectionAck).unwrap();
-                Ok(WsHandlerOutput::Single(WsMessage::text(ack)))
+                Ok(Cardinality::One(WsMessage::text(ack)))
             }
 
             ClientMessage::Ping { .. } => {
                 let pong = serde_json::to_string(&ServerMessage::Pong).unwrap();
-                Ok(WsHandlerOutput::Single(WsMessage::text(pong)))
+                Ok(Cardinality::One(WsMessage::text(pong)))
             }
 
-            ClientMessage::Pong { .. } => Ok(WsHandlerOutput::Empty),
+            ClientMessage::Pong { .. } => Ok(Cardinality::Empty),
 
             ClientMessage::Complete { id } => {
                 if let Some(handle) = self
@@ -230,7 +231,7 @@ where
                 {
                     handle.abort();
                 }
-                Ok(WsHandlerOutput::Empty)
+                Ok(Cardinality::Empty)
             }
 
             ClientMessage::Subscribe { id, payload } => {
@@ -301,10 +302,9 @@ where
             .unwrap()
             .insert((client.id.clone(), id), abort_handle);
 
-        Ok(WsHandlerOutput::Stream(Box::pin(Abortable::new(
-            full_stream,
-            abort_reg,
-        ))))
+        // Items cannot fail: a refusal is already a `graphql-transport-ws` error frame in the
+        // stream, not a failed item, which is what this transport's `Infallible` says.
+        Ok(Cardinality::stream(Abortable::new(full_stream, abort_reg)))
     }
 }
 
