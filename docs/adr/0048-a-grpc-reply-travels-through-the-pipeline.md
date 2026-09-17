@@ -5,6 +5,10 @@ Status: accepted
 Revisits the consequence [ADR-0033](0033-a-grpc-streaming-reply-is-part-of-its-execution.md) drew
 from a gRPC reply's type not being the framework's.
 
+[ADR-0049](0049-an-answer-is-an-envelope-and-a-cardinality.md) redraws the erasure boundary below:
+a reply's headers are uniform across methods and reach an enhancer without a downcast, and only its
+message is erased.
+
 ## Context
 
 An enhancer on this transport was typed `Interceptor<GrpcContext, Result<(), GrpcStatus>>`, and the

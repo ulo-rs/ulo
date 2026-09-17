@@ -159,7 +159,11 @@ impl ulo::enhancer::Guard<ulo::grpc::GrpcContext> for AuthGuard {
 
 ### Interceptors
 
-An interceptor is a provider that implements `Interceptor<GrpcContext, GrpcHandlerResult>`. The chain wraps the handler — `next.run(ctx).await` proceeds and answers with the reply or the failure; returning without calling it short-circuits. The reply is erased, so reading or replacing one names the method's own type: `answer.downcast_ref::<tonic::Response<CreateOrderResponse>>()`, and `Ok(GrpcReply::new(tonic::Response::new(reply)))` to answer without running the handler.
+An interceptor is a provider that implements `Interceptor<GrpcContext, GrpcHandlerResult>`. The chain wraps the handler — `next.run(ctx).await` proceeds and answers with the reply or the failure; returning without calling it short-circuits.
+
+A reply's headers name no method: `reply.header("x-cache")` reads one and `reply.set_header("x-served-by", "ulo")` writes one, whichever method answered, so an interceptor registered globally stamps every reply in the application.
+
+A reply's message is the method's own, and reaching it names that type — `answer.downcast_ref::<tonic::Response<CreateOrderResponse>>()` to read it, `Ok(ulo_grpc::reply(tonic::Response::new(msg)))` to answer without running the handler. An interceptor that answers this way is correct for the one method whose reply it built: registered on that method it cannot be wrong, registered on a service it answers every other method of that service with a type nothing below can render, and registered globally it does that to every other method in the application. Each of those fails the call with `Internal` naming both types. Cache-shaped interceptors are the ones naturally registered globally, so key the reply by `ctx.method()` and pass `next.run(ctx)` through for anything else.
 
 ```rust
 #[injectable]

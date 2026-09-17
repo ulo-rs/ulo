@@ -214,62 +214,136 @@ where
     }
 }
 
-/// The reply a gRPC call answers with, erased.
+/// The reply a gRPC call answers with: its headers reachable, its message erased.
 ///
 /// A reply's type is the method's — tonic's trait names it, and for a streaming method it is an
 /// associated type the user's impl defines — while one guard, interceptor and error-handler list
-/// serves every method of a service. So the type cannot be in the signature those share, and the
-/// reply travels as the value it is with its name beside it.
+/// serves every method of a service. So the message cannot be in the signature those share, and it
+/// travels as the value it is with its name beside it.
 ///
-/// Built where `tonic::Response<T>` is nameable, which is the user's crate: the generated wrapper
-/// erases the reply on the way in and downcasts it on the way out, naming the method's own type.
-/// An enhancer reading or replacing a reply names that type itself.
-pub struct GrpcReply {
-    value: Box<dyn std::any::Any + Send>,
-    carries: &'static str,
-}
+/// Its headers are not the method's. [`header`](Self::header) and [`set_header`](Self::set_header)
+/// name no reply type, so an interceptor stamping every reply of a service is written once.
+/// Reaching the message names it, through [`downcast`](Self::downcast), and an enhancer doing that
+/// is answering for one method.
+///
+/// Built where `tonic::Response<T>` is nameable, which is the wire crate: the generated wrapper
+/// wraps the reply on the way in and downcasts it on the way out.
+pub struct GrpcReply(Box<dyn ReplyEnvelope>);
 
 impl GrpcReply {
-    /// Erase a reply. `T` is the `tonic::Response<_>` the method answers with.
-    pub fn new<T: Send + 'static>(value: T) -> Self {
-        Self {
-            value: Box::new(value),
-            carries: std::any::type_name::<T>(),
-        }
+    /// Hold a reply. The argument is the wire crate's carrier around the
+    /// `tonic::Response<_>` the method answers with.
+    pub fn new(envelope: impl ReplyEnvelope) -> Self {
+        Self(Box::new(envelope))
+    }
+
+    /// A header on the reply, where it is set and its value is ASCII.
+    ///
+    /// The method's reply type does not appear, so an enhancer serving every method of a service
+    /// reads one without knowing which method answered.
+    pub fn header(&self, key: &str) -> Option<&str> {
+        self.0.header(key)
+    }
+
+    /// Set a header on the reply, replacing any value already under the key.
+    ///
+    /// The counterpart to [`header`](Self::header), and the same reason: an interceptor stamping
+    /// every reply of a service writes this once.
+    pub fn set_header(&mut self, key: &str, value: &str) -> Result<(), InvalidHeader> {
+        self.0.set_header(key, value)
     }
 
     /// Take the reply, or hand it back untouched where it carries something else.
+    ///
+    /// The type is checked through a borrow before the carrier is consumed, so a reply handed back
+    /// still has its envelope. An enhancer trying one reply type and then another keeps whatever
+    /// headers are on it across the first attempt.
     pub fn downcast<T: Send + 'static>(self) -> Result<T, Self> {
-        let carries = self.carries;
-        match self.value.downcast::<T>() {
+        if !self.0.as_any().is::<T>() {
+            return Err(self);
+        }
+        match self.0.into_any().downcast::<T>() {
             Ok(value) => Ok(*value),
-            Err(value) => Err(Self { value, carries }),
+            // `is::<T>` answered for this value one line above.
+            Err(_) => unreachable!("a reply that is `T` downcasts to `T`"),
         }
     }
 
     /// Read the reply where it is what the reader expects, leaving it in place.
     pub fn downcast_ref<T: Send + 'static>(&self) -> Option<&T> {
-        self.value.downcast_ref::<T>()
+        self.0.as_any().downcast_ref::<T>()
     }
 
     /// Read the reply to change it in place.
     pub fn downcast_mut<T: Send + 'static>(&mut self) -> Option<&mut T> {
-        self.value.downcast_mut::<T>()
+        self.0.as_any_mut().downcast_mut::<T>()
     }
 
     /// What it carries, named for the diagnostic when something asks for another type.
     pub fn carries(&self) -> &'static str {
-        self.carries
+        self.0.carries()
     }
 }
 
 impl std::fmt::Debug for GrpcReply {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GrpcReply")
-            .field("carries", &self.carries)
+            .field("carries", &self.0.carries())
             .finish()
     }
 }
+
+/// What a gRPC reply carries beside its message, and what an enhancer may do to it.
+///
+/// `ulo` names no tonic type, so the envelope reaches core as a trait the wire crate implements —
+/// the road [`RequestCarrier`] takes for the request. `ulo-grpc` implements this on a newtype over
+/// `tonic::Response<T>`, which is what the orphan rule leaves available.
+///
+/// The header methods name no reply type, which is what lets one enhancer list serve every method
+/// of a service. Reaching the message itself still names it, through [`GrpcReply::downcast`].
+pub trait ReplyEnvelope: Send + 'static {
+    /// One header of the reply, where it is set and its value is ASCII.
+    fn header(&self, key: &str) -> Option<&str>;
+
+    /// Set a header, replacing any value already under the key.
+    fn set_header(&mut self, key: &str, value: &str) -> Result<(), InvalidHeader>;
+
+    /// The reply whole, for a reader naming the method's own type.
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send>;
+
+    /// The reply, borrowed.
+    fn as_any(&self) -> &(dyn std::any::Any + Send);
+
+    /// The reply, borrowed to change in place.
+    fn as_any_mut(&mut self) -> &mut (dyn std::any::Any + Send);
+
+    /// What it carries, named for the diagnostic when something asks for another type.
+    fn carries(&self) -> &'static str;
+}
+
+/// A header key or value the wire cannot carry.
+///
+/// gRPC metadata keys are lowercase ASCII tokens and a non-`-bin` value is ASCII. A key or value
+/// outside that is refused rather than dropped, so a stamping interceptor learns its header did
+/// not go out.
+///
+/// Nothing lifts this into a [`GrpcStatus`], so `?` does not reach for one. Whether a header that
+/// did not go out should fail the call depends on where its key came from, and only the enhancer
+/// knows: a literal is the author's to get right, which `expect` states, while a key read from
+/// configuration or echoed off the request can be malformed on one call out of many, and failing
+/// that call serves the caller worse than dropping the stamp.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidHeader {
+    pub key: String,
+}
+
+impl std::fmt::Display for InvalidHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "`{}` is not a header the wire can carry", self.key)
+    }
+}
+
+impl std::error::Error for InvalidHeader {}
 
 /// Carries a domain error through a `tonic::Status`'s source slot.
 ///
