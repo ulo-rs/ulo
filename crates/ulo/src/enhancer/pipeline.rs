@@ -41,6 +41,59 @@ pub(crate) async fn interceptors_for<T: Transport>(
     out
 }
 
+/// The innermost step of the interceptor chain: resolve the handler and run it.
+///
+/// One per transport, and each is its own two lines of how to reach a handler — a route's
+/// `execute`, a controller resolved per call and asked to handle a message, a gateway asked to
+/// handle an event. Everything wrapped around it is [`through_interceptors`], once.
+#[async_trait::async_trait]
+pub(crate) trait Leaf<T: Transport>: Send + Sync {
+    async fn call(&self, ctx: &T::Context) -> T::Answer;
+}
+
+/// Run `leaf` with `interceptors` wrapped around it, outermost first.
+///
+/// Each interceptor is handed the rest of the chain and may decline to call it, which is how a
+/// cache hit answers without the handler running. A panic in one is recovered here rather than
+/// below, so the chain above is offered the event with the segment it came from.
+pub(crate) async fn through_interceptors<T: Transport>(
+    ctx: &T::Context,
+    interceptors: &[Arc<dyn Interceptor<T::Context, T::Answer>>],
+    leaf: Arc<dyn Leaf<T>>,
+) -> T::Answer {
+    let Some((first, rest)) = interceptors.split_first() else {
+        return leaf.call(ctx).await;
+    };
+
+    let next = ChainNext::<T> {
+        interceptors: rest.to_vec(),
+        leaf: leaf.clone(),
+    };
+
+    match crate::panic_recovery::catch_async(
+        PipelineSegment::Middleware,
+        first.intercept(ctx, Box::new(next)),
+    )
+    .await
+    {
+        Ok(answer) => answer,
+        Err(event) => T::interceptor_panicked(event),
+    }
+}
+
+/// What an interceptor is handed: the interceptors below it, and the leaf under those.
+struct ChainNext<T: Transport> {
+    interceptors: Vec<Arc<dyn Interceptor<T::Context, T::Answer>>>,
+    leaf: Arc<dyn Leaf<T>>,
+}
+
+#[async_trait::async_trait]
+impl<T: Transport> crate::enhancer::InterceptorNext<T::Context, T::Answer> for ChainNext<T> {
+    async fn run(self: Box<Self>, ctx: &T::Context) -> T::Answer {
+        through_interceptors::<T>(ctx, &self.interceptors, self.leaf).await
+    }
+}
+
 /// Walk the chain and answer with the first claim, or `None` if nobody claims.
 ///
 /// Reverse registration order, so the most specific handler is consulted first: a handler declared

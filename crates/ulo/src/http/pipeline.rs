@@ -6,26 +6,32 @@ use crate::{
     context::ExecutionContext,
     context::Metadata,
     dispatch::ExecutionResult,
-    enhancer::{Guard, Interceptor, InterceptorNext},
+    enhancer::pipeline::{Leaf, through_interceptors},
+    enhancer::{Guard, Interceptor},
     errors::{Error, GuardRejection, MiddlewareFailure, PanicRecovered, PipelineSegment},
     http::Route,
     http::middleware::{Middleware, MiddlewareChain},
     http::{HttpContext, HttpError, HttpMethod, HttpRequest, HttpResponse},
     spi::{HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry},
 };
-use futures::FutureExt;
-use std::panic::AssertUnwindSafe;
 
-/// The next step in the interceptor chain after factory entries are resolved.
-struct ChainNext {
-    interceptors: Vec<Arc<dyn Interceptor<HttpContext, crate::http::HttpHandlerResult>>>,
-    instance: Arc<dyn Route>,
-}
+/// The innermost step of the chain: the matched route's own handler.
+struct RouteLeaf(Arc<dyn Route>);
 
 #[async_trait]
-impl InterceptorNext<HttpContext, crate::http::HttpHandlerResult> for ChainNext {
-    async fn run(self: Box<Self>, context: &HttpContext) -> crate::http::HttpHandlerResult {
-        RoutePipeline::execute_with_interceptors(context, &self.interceptors, &self.instance).await
+impl Leaf<Http> for RouteLeaf {
+    async fn call(&self, context: &HttpContext) -> crate::http::HttpHandlerResult {
+        tracing::trace!("executing controller handler");
+        match crate::panic_recovery::catch_async(
+            PipelineSegment::HandlerBody,
+            self.0.execute(context),
+        )
+        .await
+        {
+            Ok(ExecutionResult::Ok(response)) => Ok(response),
+            Ok(ExecutionResult::Err(http_err)) => Err(http_err),
+            Err(event) => Err(HttpError::from(event)),
+        }
     }
 }
 
@@ -247,7 +253,7 @@ impl RoutePipeline {
         if !interceptors.is_empty() {
             tracing::trace!(count = interceptors.len(), "entering interceptor chain");
         }
-        Self::execute_with_interceptors(context, &interceptors, &instance).await
+        through_interceptors::<Http>(context, &interceptors, Arc::new(RouteLeaf(instance))).await
     }
 
     /// Run the chain on a typed framework event. If nothing claims it, the
@@ -306,71 +312,6 @@ impl RoutePipeline {
             ),
             status: 500,
             headers: vec![],
-        }
-    }
-
-    /// Run one chain handler with panic recovery: a panicking
-    /// `handle_error` is logged and answers `None`, so the caller continues
-    /// to the next handler. Without this, a single bad chain handler would
-    /// kill the whole error-recovery path and the original error would
-    /// never reach the fallback rendering.
-    ///
-    /// `position` counts from the most specific handler — the chain runs
-    /// method, then controller, then global — and is logged so a panic names
-    /// which registration it came from.
-    /// Onion/Russian doll dispatch through the interceptor chain.
-    ///
-    /// An interceptor's panic becomes the `Err` side, as a deliberate refusal already is, so both
-    /// reach the one chain above rather than one being rendered here and the other not.
-    async fn execute_with_interceptors(
-        context: &HttpContext,
-        interceptors: &[Arc<dyn Interceptor<HttpContext, crate::http::HttpHandlerResult>>],
-        instance: &Arc<dyn Route>,
-    ) -> crate::http::HttpHandlerResult {
-        if interceptors.is_empty() {
-            return Self::execute_handler(context, instance).await;
-        }
-
-        let (first, rest) = interceptors.split_first().unwrap();
-
-        let next = ChainNext {
-            interceptors: rest.to_vec(),
-            instance: instance.clone(),
-        };
-
-        match crate::panic_recovery::catch_async(
-            PipelineSegment::Middleware,
-            first.intercept(context, Box::new(next)),
-        )
-        .await
-        {
-            Ok(answer) => answer,
-            Err(event) => Err(HttpError::from(event)),
-        }
-    }
-
-    /// Run the user handler. A panic below is a `PanicRecovered` on the `Err` side, and the chain
-    /// that might claim it runs once, above the interceptors.
-    async fn execute_handler(
-        context: &HttpContext,
-        instance: &Arc<dyn Route>,
-    ) -> crate::http::HttpHandlerResult {
-        tracing::trace!("executing controller handler");
-        // `AssertUnwindSafe`: handler bodies aren't required to be unwind-safe
-        // and adding `RefUnwindSafe` bounds to user code would be punitive.
-        // We trust the application to set its own state to a sane shape after
-        // a panic — this layer only ensures the panic doesn't escape the
-        // dispatcher.
-        let exec_result = AssertUnwindSafe(instance.execute(context))
-            .catch_unwind()
-            .await;
-        match exec_result {
-            Ok(ExecutionResult::Ok(response)) => Ok(response),
-            Ok(ExecutionResult::Err(http_err)) => Err(http_err),
-            Err(payload) => Err(HttpError::from(PanicRecovered::from_panic_payload(
-                PipelineSegment::HandlerBody,
-                payload,
-            ))),
         }
     }
 }
