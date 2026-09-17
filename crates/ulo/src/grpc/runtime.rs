@@ -23,9 +23,8 @@ use crate::panic_recovery::catch_async;
 /// Run guards, then the interceptor chain, then the error chain over whatever failed.
 ///
 /// `delegate` is the user's handler, packaged by the macro as a closure answering this transport's
-/// [`GrpcHandlerResult`]: `Ok(())` once the typed reply is in the macro's side-channel — the user's
-/// `Result<Response<_>, Status>` is method-specific and cannot fit a generic chain-runner signature
-/// — and `Err` for anything that failed below the chain.
+/// [`GrpcHandlerResult`]: the reply inside a [`GrpcReply`], or `Err` for anything that failed below
+/// the chain.
 ///
 /// Every way a call can fail leaves as `Err(GrpcStatus)` carrying its own cause: a refusal carries
 /// its [`GuardRejection`], a panic anywhere below carries its `PanicRecovered`, a handler's failure
