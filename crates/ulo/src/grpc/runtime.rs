@@ -398,64 +398,9 @@ pub fn empty_enhancers() -> Arc<ResolvedGrpcEnhancers> {
         handler_error_handlers: HashMap::new(),
     })
 }
-
-/// Delegates to a streaming reply while owning the execution's context — cache,
-/// extensions and cancellation token stay alive until the last item.
-///
-/// The `#[grpc_methods]` wrapper declares this as its associated stream type,
-/// so it is the reply tonic serves. `Pin<Box<_>>` rather than a pin projection:
-/// the inner stream is the user's associated type and carries no `Unpin` bound.
-pub struct ScopedGrpcStream<S> {
-    inner: std::pin::Pin<Box<S>>,
-    context: GrpcContext,
-    /// Set once the inner stream answers `None`. An item carrying a `Status`
-    /// does not set it: tonic ends the call there and drops this un-drained, so
-    /// the producer behind an abnormal end hears the token too.
-    drained: bool,
-}
-
-impl<S> ScopedGrpcStream<S> {
-    pub fn new(inner: S, context: GrpcContext) -> Self {
-        Self {
-            inner: Box::pin(inner),
-            context,
-            drained: false,
-        }
-    }
-}
-
-impl<S: futures::Stream> futures::Stream for ScopedGrpcStream<S> {
-    type Item = S::Item;
-
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-        let polled = this.inner.as_mut().poll_next(cx);
-        if matches!(polled, std::task::Poll::Ready(None)) {
-            this.drained = true;
-        }
-        polled
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-/// A stream dropped with items still to come is the caller having gone — a reset
-/// stream, a dead connection, or the drain deadline dropping the server. The
-/// handler returned when it had a stream, so whatever feeds that stream is not
-/// inside a future tonic drops.
-impl<S> Drop for ScopedGrpcStream<S> {
-    fn drop(&mut self) {
-        if !self.drained {
-            use crate::context::ExecutionContext as _;
-            self.context.cancellation().cancel();
-        }
-    }
-}
+/// gRPC's [`ScopedStream`](crate::dispatch::ScopedStream), named for the generated code that
+/// declares it as a method's associated stream type.
+pub type ScopedGrpcStream<S> = crate::dispatch::ScopedStream<std::pin::Pin<Box<S>>, GrpcContext>;
 
 /// Carries a reply from the type the user's method produced to the type the
 /// generated wrapper's signature declares.
@@ -478,7 +423,9 @@ impl<T> IntoScoped<T> for T {
 
 impl<S: futures::Stream> IntoScoped<ScopedGrpcStream<S>> for S {
     fn into_scoped(self, context: GrpcContext) -> ScopedGrpcStream<S> {
-        ScopedGrpcStream::new(self, context)
+        // Pinned here and nowhere else: a generated stream type carries no `Unpin` bound, and the
+        // other two transports hand `ScopedStream` a `BoxStream` that is already pinned.
+        ScopedGrpcStream::new(Box::pin(self), context)
     }
 }
 

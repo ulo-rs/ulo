@@ -17,49 +17,6 @@ use super::{
     DisconnectReason, Gateway, WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsMessage,
 };
 use futures::StreamExt;
-use futures::stream::BoxStream;
-
-/// Delegates to an inner stream while holding something alive alongside it.
-///
-/// `BoxStream` is a `Pin<Box<_>>` and therefore `Unpin`, so the projection needs
-/// no pin machinery. The HTTP side does the same for response bodies.
-struct ScopedStream {
-    inner: BoxStream<'static, Result<WsMessage, std::convert::Infallible>>,
-    context: WsContext,
-    /// Set once the inner stream answers `None`, which is the end of it.
-    drained: bool,
-}
-
-impl futures::Stream for ScopedStream {
-    type Item = Result<WsMessage, std::convert::Infallible>;
-
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-        let polled = std::pin::Pin::new(&mut this.inner).poll_next(cx);
-        if matches!(polled, std::task::Poll::Ready(None)) {
-            this.drained = true;
-        }
-        polled
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-/// A stream dropped with messages still to come is the connection having gone. The handler returned
-/// when it had a stream, so whatever feeds that stream is not inside a future anything drops.
-impl Drop for ScopedStream {
-    fn drop(&mut self) {
-        if !self.drained {
-            use crate::context::ExecutionContext as _;
-            self.context.cancellation().cancel();
-        }
-    }
-}
 
 /// The innermost step of the chain: the gateway asked to handle this event.
 struct GatewayLeaf(Arc<Box<dyn Gateway>>);
@@ -311,12 +268,7 @@ impl GatewayWrapper {
         // at this point, so the context rides it rather than dying here.
         match answer {
             Ok(Cardinality::Many(stream)) => Ok(Cardinality::Many(
-                ScopedStream {
-                    inner: stream,
-                    context,
-                    drained: false,
-                }
-                .boxed(),
+                crate::dispatch::ScopedStream::new(stream, context).boxed(),
             )),
             other => other,
         }

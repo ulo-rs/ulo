@@ -139,15 +139,15 @@ delegates back to a splitter. gRPC's pair is not, and cannot be folded in with t
 `LinkNext`/`LeafNext` are generic over a `FnOnce` delegate rather than holding a source, because the
 delegate's reply type is the method's and does not appear in a shared signature.
 
-One cancellation-scoping wrapper for the three stream wrappers. `ScopedBody` stays separate: it
-fires an opaque `FnOnce` rather than a token because `http` does not depend on `context`, and it is
-built only when something asked to be kept alive.
+One cancellation-scoping wrapper for the three stream wrappers. `ScopedBody` stays separate on two
+counts: it implements `http_body::Body` where the others implement `futures::Stream`, and it fires
+an opaque `FnOnce` rather than a token because `http` does not depend on `context`.
 
-Collapsing those three settles a disagreement rather than inheriting one. `ScopedRpcStream` and
-`ScopedGrpcStream` count an item carrying an error as an abnormal end and fire the token;
-`ScopedBody` counts an errored frame as a drained body and does not. Both spellings are in the tree,
-two of them under comments that argue for firing. One wrapper has one rule, and which rule is a
-decision the collapse has to make.
+The three agree on what ends a tail, so the collapse inherits their rule rather than choosing one.
+A stream is drained when it answers `None`; an item carrying an error is an abnormal end, and the
+wrapper dropped un-drained fires the token so the producer behind it stops. `ScopedBody` counts an
+errored frame as a drained body and does not fire. That disagreement outlives the collapse, because
+the wrapper it belongs to is not in it.
 
 An RPC or WebSocket handler naming `RpcHandlerOutput::Single` or `WsHandlerOutput::Stream` names
 `Cardinality::One` or `Cardinality::Many`, and a WebSocket one builds its stream through
