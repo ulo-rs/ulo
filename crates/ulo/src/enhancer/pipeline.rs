@@ -7,7 +7,9 @@
 
 use std::sync::Arc;
 
-use crate::dispatch::transport::{ErrorHandlerArc, GuardEntry, InterceptorEntry, Transport};
+use crate::dispatch::transport::{
+    Answer, ErrorHandlerArc, GuardEntry, InterceptorEntry, Transport,
+};
 use crate::enhancer::{Guard, Interceptor};
 use crate::errors::PipelineSegment;
 
@@ -30,7 +32,7 @@ pub(crate) async fn guards_for<T: Transport>(
 pub(crate) async fn interceptors_for<T: Transport>(
     entries: &[InterceptorEntry<T>],
     ctx: &T::Context,
-) -> Vec<Arc<dyn Interceptor<T::Context, T::Answer>>> {
+) -> Vec<Arc<dyn Interceptor<T::Context, Answer<T>>>> {
     let mut out = Vec::with_capacity(entries.len());
     for entry in entries {
         out.push(match entry {
@@ -48,7 +50,7 @@ pub(crate) async fn interceptors_for<T: Transport>(
 /// handle an event. Everything wrapped around it is [`through_interceptors`], once.
 #[async_trait::async_trait]
 pub(crate) trait Leaf<T: Transport>: Send + Sync {
-    async fn call(&self, ctx: &T::Context) -> T::Answer;
+    async fn call(&self, ctx: &T::Context) -> Answer<T>;
 }
 
 /// Run `leaf` with `interceptors` wrapped around it, outermost first.
@@ -58,9 +60,9 @@ pub(crate) trait Leaf<T: Transport>: Send + Sync {
 /// below, so the chain above is offered the event with the segment it came from.
 pub(crate) async fn through_interceptors<T: Transport>(
     ctx: &T::Context,
-    interceptors: &[Arc<dyn Interceptor<T::Context, T::Answer>>],
+    interceptors: &[Arc<dyn Interceptor<T::Context, Answer<T>>>],
     leaf: Arc<dyn Leaf<T>>,
-) -> T::Answer {
+) -> Answer<T> {
     let Some((first, rest)) = interceptors.split_first() else {
         return leaf.call(ctx).await;
     };
@@ -77,19 +79,19 @@ pub(crate) async fn through_interceptors<T: Transport>(
     .await
     {
         Ok(answer) => answer,
-        Err(event) => T::interceptor_panicked(event),
+        Err(event) => Err(T::Error::from(event)),
     }
 }
 
 /// What an interceptor is handed: the interceptors below it, and the leaf under those.
 struct ChainNext<T: Transport> {
-    interceptors: Vec<Arc<dyn Interceptor<T::Context, T::Answer>>>,
+    interceptors: Vec<Arc<dyn Interceptor<T::Context, Answer<T>>>>,
     leaf: Arc<dyn Leaf<T>>,
 }
 
 #[async_trait::async_trait]
-impl<T: Transport> crate::enhancer::InterceptorNext<T::Context, T::Answer> for ChainNext<T> {
-    async fn run(self: Box<Self>, ctx: &T::Context) -> T::Answer {
+impl<T: Transport> crate::enhancer::InterceptorNext<T::Context, Answer<T>> for ChainNext<T> {
+    async fn run(self: Box<Self>, ctx: &T::Context) -> Answer<T> {
         through_interceptors::<T>(ctx, &self.interceptors, self.leaf).await
     }
 }
@@ -103,7 +105,7 @@ pub(crate) async fn claim<T: Transport>(
     handlers: &[ErrorHandlerArc<T>],
     error: &(dyn std::error::Error + Send + Sync + 'static),
     ctx: &T::Context,
-) -> Option<T::Answer> {
+) -> Option<Answer<T>> {
     for (position, handler) in handlers.iter().rev().enumerate() {
         if let Some(claimed) = offer_to::<T>(handler, error, ctx, position).await {
             return Some(claimed);
@@ -122,7 +124,7 @@ pub(crate) async fn offer_to<T: Transport>(
     error: &(dyn std::error::Error + Send + Sync + 'static),
     ctx: &T::Context,
     position: usize,
-) -> Option<T::Answer> {
+) -> Option<Answer<T>> {
     match crate::panic_recovery::catch_async(
         PipelineSegment::ErrorHandler,
         handler.handle_error(error, ctx),

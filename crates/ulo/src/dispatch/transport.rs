@@ -22,71 +22,62 @@ pub trait Transport: 'static {
     /// What a handler, guard, interceptor and error handler on this transport are given.
     type Context: ExecutionContext;
 
-    /// What an interceptor on this transport answers with, and what an error handler claiming an
-    /// error answers with.
+    /// What this transport answers with when the call succeeds.
+    type Output: Send;
+
+    /// What it fails with.
     ///
-    /// Fallible on every transport: a guard's rejection, an interceptor's refusal and a panic
-    /// anywhere below all arrive as the `Err` side, so the error chain runs once above the
-    /// interceptors rather than at each level that could produce one.
-    type Answer: Send;
+    /// A guard's rejection, an interceptor's refusal and a panic anywhere below all arrive here,
+    /// so the error chain runs once above the interceptors rather than at each level that could
+    /// produce one. `From<PanicRecovered>` is what lets a walk that catches a panic build the
+    /// failure without asking the transport how.
+    type Error: Send + From<PanicRecovered>;
 
     /// How a diagnostic names this transport.
     const NAME: &'static str;
-
-    /// The answer a panicking interceptor produces, carrying the event the chain above is offered.
-    ///
-    /// Each transport lifts a `PanicRecovered` into its own error type, and the walk over the
-    /// interceptors is otherwise the same on all of them — this is the one step in it that is not.
-    fn interceptor_panicked(event: PanicRecovered) -> Self::Answer;
 }
+
+/// What a call on `T` answers with.
+///
+/// Fallible on every transport, which is the shape [`Transport::Error`] exists to fix. Spelled as a
+/// free alias rather than an associated type with a default, because associated-type defaults are
+/// unstable.
+pub(crate) type Answer<T> = Result<<T as Transport>::Output, <T as Transport>::Error>;
 
 /// HTTP, served by an `HttpAdapter`.
 pub struct Http;
 impl Transport for Http {
     type Context = HttpContext;
-    type Answer = crate::http::HttpHandlerResult;
+    type Output = crate::http::HttpResponse;
+    type Error = crate::http::HttpError;
     const NAME: &'static str = "HTTP";
-
-    fn interceptor_panicked(event: PanicRecovered) -> Self::Answer {
-        Err(crate::http::HttpError::from(event))
-    }
 }
 
 /// Pattern-addressed RPC, served by an `RpcAdapter`.
 pub struct Rpc;
 impl Transport for Rpc {
     type Context = RpcContext;
-    type Answer = crate::rpc::RpcHandlerResult;
+    type Output = crate::rpc::RpcHandlerOutput;
+    type Error = crate::rpc::RpcError;
     const NAME: &'static str = "RPC";
-
-    fn interceptor_panicked(event: PanicRecovered) -> Self::Answer {
-        Err(crate::rpc::RpcError::from(event))
-    }
 }
 
 /// WebSocket, served by a same-port `HttpAdapter` or a separate-port `WsAdapter`.
 pub struct Ws;
 impl Transport for Ws {
     type Context = WsContext;
-    type Answer = crate::ws::WsHandlerResult;
+    type Output = crate::ws::WsHandlerOutput;
+    type Error = crate::ws::WsError;
     const NAME: &'static str = "WS";
-
-    fn interceptor_panicked(event: PanicRecovered) -> Self::Answer {
-        Err(crate::ws::WsError::from(event))
-    }
 }
 
 /// gRPC, served by a `GrpcAdapter`.
 pub struct Grpc;
 impl Transport for Grpc {
     type Context = GrpcContext;
-    type Answer = crate::grpc::GrpcHandlerResult;
+    type Output = crate::grpc::GrpcReply;
+    type Error = crate::grpc::GrpcStatus;
     const NAME: &'static str = "gRPC";
-
-    fn interceptor_panicked(event: PanicRecovered) -> Self::Answer {
-        let message = format!("interceptor panicked: {}", event.message);
-        Err(crate::grpc::GrpcStatus::internal(message).caused_by(event))
-    }
 }
 
 /// Builds a guard inside the execution being served.
@@ -107,7 +98,7 @@ pub trait InterceptorFactory<T: Transport>: Send + Sync {
         ctx: &'a T::Context,
     ) -> Pin<
         Box<
-            dyn Future<Output = Arc<dyn Interceptor<T::Context, T::Answer> + Send + Sync>>
+            dyn Future<Output = Arc<dyn Interceptor<T::Context, Answer<T>> + Send + Sync>>
                 + Send
                 + 'a,
         >,
@@ -134,7 +125,7 @@ impl<T: Transport> Clone for GuardEntry<T> {
 
 /// An interceptor as the framework stores it. See [`GuardEntry`].
 pub enum InterceptorEntry<T: Transport> {
-    Ready(Arc<dyn Interceptor<T::Context, T::Answer>>),
+    Ready(Arc<dyn Interceptor<T::Context, Answer<T>>>),
     Factory(Arc<dyn InterceptorFactory<T>>),
 }
 
@@ -150,7 +141,7 @@ impl<T: Transport> Clone for InterceptorEntry<T> {
 /// An error handler as the framework stores it. One instance, shared by every call: unlike a guard
 /// or an interceptor, an error handler has no per-call arm.
 pub(crate) type ErrorHandlerArc<T> =
-    Arc<dyn crate::enhancer::ErrorHandler<<T as Transport>::Context, <T as Transport>::Answer>>;
+    Arc<dyn crate::enhancer::ErrorHandler<<T as Transport>::Context, Answer<T>>>;
 
 /// Every enhancer one transport has registered, keyed by the token a declaration names.
 pub(crate) struct EnhancerRegistry<T: Transport> {

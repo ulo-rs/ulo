@@ -134,9 +134,23 @@ from taking it**, because taking it consumes the carrier and the envelope with i
 `as_any` first and consumes only on a match, so a reply handed back on a mismatch still has its
 headers.
 
+**`Transport` names the two halves separately.** `type Output` is what a transport answers with and
+`type Error` is what it fails with, and `Answer<T>` is the `Result` over them, spelled as a free
+alias because associated-type defaults are unstable. Bounding `Error` by `From<PanicRecovered>` is
+what a shared walk needs to build a failure it did not get from a handler: the walk over HTTP's,
+RPC's and WebSocket's interceptors catches a panic above the leaf and writes
+`Err(T::Error::from(event))`.
+
+The bound is not free: it fixes the `Err` half of every transport's answer to one shape at the trait,
+which the adapter SPI does not otherwise require, and gRPC carries it for a walk its own chain does
+not use. What it buys is that the shared walk writes that step itself. Without the bound the step is
+a `fn interceptor_panicked` on the trait — one implementation per transport for a conversion the
+shared code cannot spell in a type it does not know. HTTP, RPC and WebSocket lift any `ulo::Error`
+through a blanket `From`; gRPC has none by ADR-0039 and names this conversion on its own.
+
 ## Consequences
 
-Four things become writable that a `Transport::Answer` nothing can read does not allow.
+Four things become writable that an unconstrained answer type does not allow.
 
 One interceptor covering all four transports. `Guard<C>` is already written that way — it answers
 `bool` — while `Interceptor<C, R>` has no shared vocabulary for `R`. A rate limiter, a timeout and a
@@ -193,7 +207,3 @@ names its states, at the cost of the ones an `http_body::Body` already carries.
 without `Infallible`, and it would offer a handler a channel the protocol has no frame for. The
 divergence is in the wire, and a type that hides it invites code that cannot run.
 
-**Constrain `Transport::Answer` to `Result<Answer<Self>, Self::Error>`.** The bound is writable and
-would make every generic function see the structure without an associated-type projection at each
-use. It fixes the `Err` half of every transport's answer to one shape at the trait, which the
-adapter SPI does not otherwise require, and nothing in this decision needs it.
