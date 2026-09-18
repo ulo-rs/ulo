@@ -65,3 +65,4 @@ the history is part of the value.
 - [0047 — The context family names the execution](0047-the-context-family-names-the-execution.md)
 - [0048 — A gRPC reply travels through the pipeline](0048-a-grpc-reply-travels-through-the-pipeline.md)
 - [0049 — An answer is an envelope and a cardinality](0049-an-answer-is-an-envelope-and-a-cardinality.md)
+- [0050 — What a handler may return is a type](0050-what-a-handler-may-return-is-a-type.md)

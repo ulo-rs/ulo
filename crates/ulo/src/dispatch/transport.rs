@@ -42,7 +42,7 @@ pub trait Transport: 'static {
 /// Fallible on every transport, which is the shape [`Transport::Error`] exists to fix. Spelled as a
 /// free alias rather than an associated type with a default, because associated-type defaults are
 /// unstable.
-pub(crate) type Answer<T> = Result<<T as Transport>::Output, <T as Transport>::Error>;
+pub type Answer<T> = Result<<T as Transport>::Output, <T as Transport>::Error>;
 
 /// HTTP, served by an `HttpAdapter`.
 pub struct Http;

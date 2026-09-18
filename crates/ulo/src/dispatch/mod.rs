@@ -9,6 +9,7 @@
 
 mod controller;
 mod execution_result;
+mod into_output;
 mod items;
 pub(crate) mod registry;
 pub(crate) mod resolve;
@@ -18,7 +19,9 @@ pub(crate) mod transport;
 
 pub use self::controller::{Controller, ControllerFactory, Targets};
 pub use self::execution_result::ExecutionResult;
+pub use self::into_output::IntoOutput;
 pub use self::items::Items;
 pub use self::scoped_stream::ScopedStream;
+pub use self::transport::{Answer, Grpc, Http, Rpc, Transport, Ws};
 
 pub(crate) use self::source::DispatchSource;

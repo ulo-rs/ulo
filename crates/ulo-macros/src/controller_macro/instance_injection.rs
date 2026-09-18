@@ -243,8 +243,6 @@ fn generate_controller_wrapper(
         method_call
     };
 
-    let returns_result = returns_result_type(&method.sig.output);
-
     let wrapper = generate_route_wrapper(
         &controller_name,
         struct_name,
@@ -255,7 +253,6 @@ fn generate_controller_wrapper(
         &marker_params_extraction,
         &metadata_exprs,
         is_static_method,
-        returns_result,
     );
 
     Ok((
@@ -343,7 +340,6 @@ fn generate_route_wrapper(
     marker_params_extraction: &[TokenStream],
     metadata_exprs: &[TokenStream],
     is_static_method: bool,
-    returns_result: bool,
 ) -> TokenStream {
     let (struct_fields, resolve_instance) = if is_static_method {
         (quote! {}, quote! {})
@@ -363,7 +359,7 @@ fn generate_route_wrapper(
         )
     };
 
-    let exec_body = exec_body_for(method_call, returns_result);
+    let exec_body = exec_body_for(method_call);
     let common = route_common_methods(
         struct_name,
         route_path,
@@ -485,39 +481,18 @@ fn route_common_methods(
     }
 }
 
-fn exec_body_for(method_call: &TokenStream, returns_result: bool) -> TokenStream {
-    if returns_result {
-        quote! {
-            match #method_call {
-                ::std::result::Result::Ok(__t) => ::ulo::dispatch::ExecutionResult::Ok(
-                    ::ulo::http::IntoResponse::into_response(__t),
-                ),
-                ::std::result::Result::Err(__e) => ::ulo::dispatch::ExecutionResult::Err(
-                    ::std::convert::Into::<::ulo::http::HttpError>::into(__e),
-                ),
-            }
-        }
-    } else {
-        quote! {
-            ::ulo::dispatch::ExecutionResult::Ok(
-                ::ulo::http::IntoResponse::into_response(#method_call),
-            )
+/// One shape for every handler.
+///
+/// No return type is read. What the value converts to is decided by `IntoOutput<Http>`, which a
+/// `Result` satisfies through its own impl, so a handler's `Err` reaches the error side whatever
+/// its return type is spelled as.
+fn exec_body_for(method_call: &TokenStream) -> TokenStream {
+    quote! {
+        match ::ulo::dispatch::IntoOutput::<::ulo::__enhancer::Http>::into_output(#method_call) {
+            ::std::result::Result::Ok(__out) => ::ulo::dispatch::ExecutionResult::Ok(__out),
+            ::std::result::Result::Err(__e) => ::ulo::dispatch::ExecutionResult::Err(__e),
         }
     }
-}
-
-/// `true` when the user method's return type is `Result<_, _>`.
-fn returns_result_type(output: &syn::ReturnType) -> bool {
-    if let syn::ReturnType::Type(_, ty) = output
-        && let syn::Type::Path(type_path) = ty.as_ref()
-    {
-        return type_path
-            .path
-            .segments
-            .last()
-            .is_some_and(|seg| seg.ident == "Result");
-    }
-    false
 }
 
 /// `true` when the return type is `impl Stream<Item = Result<_, _>>` — the per-event fallible

@@ -49,49 +49,21 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
         .map(|(pattern, method)| {
             let method_name = &method.sig.ident;
             let (extractions, call_args) = handler_params(method);
-            if returns_rpc_handler_output(method) {
-                quote! {
-                    #pattern => {
-                        #(#extractions)*
-                        match self.#method_name(#(#call_args),*).await {
-                            Ok(__output) => ::ulo::dispatch::ExecutionResult::Ok(__output),
-                            Err(__err) => ::ulo::dispatch::ExecutionResult::Err(
-                                ::std::convert::Into::<::ulo::rpc::RpcError>::into(__err),
-                            ),
+            quote! {
+                #pattern => {
+                    #(#extractions)*
+                    use ::ulo::rpc::fallback::{Answered as _, Serialized as _};
+                    match self.#method_name(#(#call_args),*).await {
+                        Ok(__value) => {
+                            let __answers = ::ulo::rpc::fallback::Answers::new(__value);
+                            match (&&__answers).ulo_answer() {
+                                Ok(__output) => ::ulo::dispatch::ExecutionResult::Ok(__output),
+                                Err(__err) => ::ulo::dispatch::ExecutionResult::Err(__err),
+                            }
                         }
-                    }
-                }
-            } else if returns_rpc_data(method) {
-                quote! {
-                    #pattern => {
-                        #(#extractions)*
-                        match self.#method_name(#(#call_args),*).await {
-                            Ok(__data) => ::ulo::dispatch::ExecutionResult::Ok(
-                                ::ulo::dispatch::Items::One(__data),
-                            ),
-                            Err(__err) => ::ulo::dispatch::ExecutionResult::Err(
-                                ::std::convert::Into::<::ulo::rpc::RpcError>::into(__err),
-                            ),
-                        }
-                    }
-                }
-            } else {
-                quote! {
-                    #pattern => {
-                        #(#extractions)*
-                        match self.#method_name(#(#call_args),*).await {
-                            Ok(__result) => match ::ulo::rpc::RpcData::from_serialize(&__result) {
-                                Ok(__data) => ::ulo::dispatch::ExecutionResult::Ok(
-                                    ::ulo::dispatch::Items::One(__data),
-                                ),
-                                Err(__e) => ::ulo::dispatch::ExecutionResult::Err(
-                                    ::ulo::rpc::RpcError::Internal(__e.to_string()),
-                                ),
-                            },
-                            Err(__err) => ::ulo::dispatch::ExecutionResult::Err(
-                                ::std::convert::Into::<::ulo::rpc::RpcError>::into(__err),
-                            ),
-                        }
+                        Err(__err) => ::ulo::dispatch::ExecutionResult::Err(
+                            ::std::convert::Into::<::ulo::rpc::RpcError>::into(__err),
+                        ),
                     }
                 }
             }
@@ -380,17 +352,6 @@ fn check_event_return_type(method: &syn::ImplItemFn) -> Result<()> {
         "#[event_pattern] handler must return `Result<(), RpcError>` — use `#[message_pattern]` to return data",
     ))
 }
-
-/// True if the type path ends in `RpcData`.
-fn is_rpc_data(ty: &syn::Type) -> bool {
-    if let syn::Type::Path(tp) = ty {
-        if let Some(seg) = tp.path.segments.last() {
-            return seg.ident == "RpcData";
-        }
-    }
-    false
-}
-
 /// Extraction for a handler's parameters, in signature order.
 ///
 /// Every parameter is a `FromContext<RpcContext>`, so a handler takes what it
@@ -448,60 +409,6 @@ fn is_rpc_context_ref(ty: &syn::Type) -> bool {
     };
     matches!(&*type_ref.elem, syn::Type::Path(p)
         if p.path.segments.last().is_some_and(|s| s.ident == "RpcContext"))
-}
-
-/// True when a `#[message_pattern]` handler answers with `RpcHandlerOutput` itself — declared as
-/// `-> RpcHandlerResult` or `-> Result<RpcHandlerOutput, E>` — so the generated arm passes the
-/// output through untouched. Checked before [`returns_rpc_data`], which reads any unrecognized
-/// return shape as its passthrough case.
-fn returns_rpc_handler_output(method: &syn::ImplItemFn) -> bool {
-    let syn::ReturnType::Type(_, ty) = &method.sig.output else {
-        return false;
-    };
-    let syn::Type::Path(tp) = ty.as_ref() else {
-        return false;
-    };
-    let Some(seg) = tp.path.segments.last() else {
-        return false;
-    };
-    if seg.ident == "RpcHandlerResult" {
-        return true;
-    }
-    if seg.ident != "Result" {
-        return false;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
-        return false;
-    };
-    let Some(syn::GenericArgument::Type(inner)) = args.args.first() else {
-        return false;
-    };
-    matches!(inner, syn::Type::Path(p)
-        if p.path.segments.last().is_some_and(|s| s.ident == "RpcHandlerOutput"))
-}
-
-/// True when a `#[message_pattern]` handler's `Ok` arm is `RpcData` (forwarded as-is); any other `T`
-/// is serialized via `RpcData::from_serialize`.
-fn returns_rpc_data(method: &syn::ImplItemFn) -> bool {
-    let syn::ReturnType::Type(_, ty) = &method.sig.output else {
-        return true;
-    };
-    let syn::Type::Path(tp) = ty.as_ref() else {
-        return true;
-    };
-    let Some(seg) = tp.path.segments.last() else {
-        return true;
-    };
-    if seg.ident != "Result" {
-        return true;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
-        return true;
-    };
-    let Some(syn::GenericArgument::Type(inner)) = args.args.first() else {
-        return true;
-    };
-    is_rpc_data(inner)
 }
 
 /// The controller's declared metadata: the impl block's entries as the base, and one merged entry per

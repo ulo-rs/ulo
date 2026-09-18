@@ -267,8 +267,9 @@ impl IntoResponse for HttpError {
 
 /// Lift any [`ulo::Error`](crate::errors::Error) into
 /// [`HttpError::AppError`]. Handlers returning `Result<T, MyDomainError>`
-/// use this via `?` and via the macro's auto-conversion at the dispatcher
-/// boundary.
+/// use this via `?`, and through the `E: Into<T::Error>` bound on
+/// [`IntoOutput`](crate::dispatch::IntoOutput)'s impl for `Result`, which is
+/// what puts a returned error on the error side.
 impl<E: Error> From<E> for HttpError {
     fn from(e: E) -> Self {
         Self::AppError(Arc::new(e))

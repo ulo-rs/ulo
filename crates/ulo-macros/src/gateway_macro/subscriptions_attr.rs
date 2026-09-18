@@ -42,11 +42,11 @@ pub fn handle_subscriptions(item: TokenStream) -> Result<TokenStream> {
             quote! {
                 #event => {
                     #(#extractions)*
-                    match self.#method_name(#(#call_args),*).await {
+                    match ::ulo::dispatch::IntoOutput::<::ulo::__enhancer::Ws>::into_output(
+                        self.#method_name(#(#call_args),*).await,
+                    ) {
                         Ok(__output) => ::ulo::dispatch::ExecutionResult::Ok(__output),
-                        Err(__err) => ::ulo::dispatch::ExecutionResult::Err(
-                            ::std::convert::Into::<::ulo::ws::WsError>::into(__err),
-                        ),
+                        Err(__err) => ::ulo::dispatch::ExecutionResult::Err(__err),
                     }
                 }
             }

@@ -50,3 +50,30 @@ pub type WsHandlerOutput = Items<WsMessage, std::convert::Infallible>;
 
 /// Convenience alias for the return type of `#[subscribe_message]` handlers.
 pub type WsHandlerResult = Result<WsHandlerOutput, WsError>;
+
+/// A WebSocket handler may answer with a frame, with nothing, or with a stream of frames.
+///
+/// `WsMessage` and `()` are the two a handler writes most, and neither needs to name
+/// [`Items`](crate::dispatch::Items) to say how many frames it is.
+mod into_output {
+    use super::{WsHandlerOutput, WsMessage};
+    use crate::dispatch::{Answer, IntoOutput, Items, Ws};
+
+    impl IntoOutput<Ws> for WsHandlerOutput {
+        fn into_output(self) -> Answer<Ws> {
+            Ok(self)
+        }
+    }
+
+    impl IntoOutput<Ws> for WsMessage {
+        fn into_output(self) -> Answer<Ws> {
+            Ok(Items::One(self))
+        }
+    }
+
+    impl IntoOutput<Ws> for () {
+        fn into_output(self) -> Answer<Ws> {
+            Ok(Items::Empty)
+        }
+    }
+}
