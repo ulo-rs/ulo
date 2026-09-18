@@ -1,14 +1,26 @@
 use serde_json::Value;
 
 use super::{Body, HttpResponse};
+use crate::dispatch::{IntoOutput, transport::Http};
 
 /// Converts a value into an [`HttpResponse`].
 ///
 /// Implement this to make a type returnable from a controller handler.
 /// All built-in types (`Body`, `String`, `&str`, `serde_json::Value`, etc.)
 /// are already covered.
+///
+/// This is HTTP's spelling of [`IntoOutput<Http>`](crate::dispatch::IntoOutput), which every
+/// implementor gets through the blanket below. A handler's `Result` is served by
+/// `IntoOutput`'s own impl and does not go through here, which is what keeps a returned error on
+/// the error path instead of rendering it.
 pub trait IntoResponse {
     fn into_response(self) -> HttpResponse;
+}
+
+impl<T: IntoResponse> IntoOutput<Http> for T {
+    fn into_output(self) -> crate::dispatch::transport::Answer<Http> {
+        Ok(self.into_response())
+    }
 }
 
 impl IntoResponse for HttpResponse {
@@ -77,19 +89,6 @@ impl IntoResponse for &'static str {
         HttpResponse {
             body: Some(Body::text(self)),
             ..HttpResponse::new()
-        }
-    }
-}
-
-impl<T, E> IntoResponse for Result<T, E>
-where
-    T: IntoResponse,
-    E: crate::errors::Error,
-{
-    fn into_response(self) -> HttpResponse {
-        match self {
-            Ok(value) => value.into_response(),
-            Err(error) => crate::http::error::render_error(&error),
         }
     }
 }
