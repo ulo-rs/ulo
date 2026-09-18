@@ -119,8 +119,9 @@ async fn an_application_is_built_and_bound_inside_a_spawned_task() {
             .unwrap();
         let bound = app.bind().await.unwrap();
         let shutdown = app.shutdown_handle();
-        // `ShutdownHandle` is not `Debug`, so the send is not unwrapped.
-        let _ = addr_tx.send((bound.http.expect("HTTP not bound"), shutdown));
+        addr_tx
+            .send((bound.http.expect("HTTP not bound"), shutdown))
+            .unwrap();
         app.run().await;
     });
 
