@@ -62,6 +62,23 @@ impl RpcError {
     /// [`AppError`](Self::AppError), reads `kind` / `message` / `details`
     /// from the wrapped error; for the framework variants, uses a fixed
     /// `kind` per variant.
+    ///
+    /// What it returns is an answer, not a failure. A handler answers with the
+    /// envelope by returning `Ok(err.to_data())` — `#[patterns]` takes the
+    /// value inside a `Result`, and a bare `-> RpcData` does not compile. The
+    /// error chain is never offered the error, and a `#[catch]` handler
+    /// registered for it does not run. A handler that means to fail returns
+    /// `Err`.
+    ///
+    /// The frame is the one an unclaimed failure from a controller produces, so
+    /// nothing on the wire says which path wrote it. A dispatch failure is not:
+    /// [`PatternNotFound`](Self::PatternNotFound) and
+    /// [`Forbidden`](Self::Forbidden) leaving the dispatcher travel the
+    /// `{"err":…}` lane.
+    ///
+    /// An error handler reaches this by catching [`RpcError`] itself. For
+    /// [`AppError`](Self::AppError) the chain is handed the unwrapped domain
+    /// error, which carries no renderer.
     pub fn to_data(&self) -> RpcData {
         match self {
             Self::AppError(e) => render_error(e.as_ref()),

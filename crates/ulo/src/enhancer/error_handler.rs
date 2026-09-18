@@ -17,9 +17,11 @@ pub type ChainError<'a> = &'a (dyn Error + Send + Sync + 'static);
 ///
 /// When every handler passes, the transport renders the error itself: the canonical envelope,
 /// carrying the status, code or frame its [`ErrorKind`](crate::errors::ErrorKind) maps to. That
-/// rendering is not an `ErrorHandler` and cannot be replaced by installing one — it reads
-/// `kind()`, `message()` and `details()` off [`Error`](crate::errors::Error), and this trait is
-/// handed the `std::error::Error` supertrait, which those do not reach.
+/// rendering is not an `ErrorHandler` and a handler catching a domain error cannot reproduce it —
+/// it reads `kind()`, `message()` and `details()` off [`Error`](crate::errors::Error), and this
+/// trait is handed the `std::error::Error` supertrait, which those do not reach. A handler that
+/// catches the transport's own error type holds the renderer: `HttpError::to_response`,
+/// `RpcError::to_data` and `WsError::to_message` each build the same envelope.
 #[async_trait]
 pub trait ErrorHandler<C: ?Sized + ExecutionContext, R>: Send + Sync {
     async fn handle_error(&self, error: ChainError<'_>, ctx: &C) -> Option<R>;
