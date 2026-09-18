@@ -308,7 +308,7 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
-        #[::ulo::async_trait(?Send)]
+        #[::ulo::async_trait]
         impl ::ulo::di::ModuleMetadata for #input_ident {
             fn identity(&self) -> ::ulo::di::ModuleIdentity {
                 ::ulo::di::ModuleIdentity::of_type::<Self>()

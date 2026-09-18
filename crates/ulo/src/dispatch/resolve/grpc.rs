@@ -1,6 +1,6 @@
-use std::cell::RefCell;
+use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::dispatch::transport::Grpc;
 use crate::error::SetupResult;
@@ -15,11 +15,11 @@ use crate::di::internal::Container;
 /// stored `(service, enhancers)` pair to the adapter, which forwards `enhancers` into
 /// [`GrpcServiceSource::register_with`].
 pub(crate) struct GrpcServiceResolver {
-    container: Rc<RefCell<Container>>,
+    container: Arc<RwLock<Container>>,
 }
 
 impl GrpcServiceResolver {
-    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Arc<RwLock<Container>>) -> Self {
         Self { container }
     }
 
@@ -28,7 +28,7 @@ impl GrpcServiceResolver {
         svc: &dyn GrpcServiceSource,
     ) -> SetupResult<ResolvedGrpcEnhancers> {
         let declared = svc.enhancers();
-        let container = self.container.borrow();
+        let container = self.container.read();
         let registry = &container.role_registry().grpc;
 
         let service = resolve_target::<Grpc>(

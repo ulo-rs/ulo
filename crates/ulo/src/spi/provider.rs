@@ -92,7 +92,7 @@ impl Injectable {
 }
 
 #[async_trait]
-pub trait ProviderFactory {
+pub trait ProviderFactory: Send + Sync {
     fn token(&self) -> String;
     fn dependency_tokens(&self) -> Vec<String> {
         vec![]

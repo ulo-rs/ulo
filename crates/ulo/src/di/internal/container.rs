@@ -15,7 +15,17 @@ use crate::{
 use crate::dispatch::registry::RoleRegistry;
 
 use super::module::Module;
+use crate::di::ProviderScope;
 use crate::http::RoutePipeline;
+
+/// What one module contributes to a lifecycle phase, detached from the container.
+///
+/// Produced by [`Container::module_lifecycle`]; see there for why the handles are cloned out.
+pub(crate) struct ModuleLifecycle {
+    pub(crate) metadata: Arc<dyn ModuleMetadata>,
+    pub(crate) providers: Vec<Arc<Box<dyn Provider>>>,
+    pub(crate) controllers: Vec<Arc<dyn Controller>>,
+}
 
 pub struct Container {
     modules: FxHashMap<String, Module>,
@@ -213,15 +223,25 @@ impl Container {
 
     /// Every provider instance a module's lifecycle hooks must reach. Controllers are held
     /// separately and iterated beside these.
-    pub fn lifecycle_instances(
-        &self,
-        module_ref_token: &String,
-    ) -> SetupResult<Vec<&Arc<Box<dyn Provider>>>> {
-        let module_ref = self
-            .modules
-            .get(module_ref_token)
-            .ok_or_else(|| "Module not found".to_string())?;
-        Ok(module_ref.provider_instances().values().collect())
+    /// One module's hook-carrying handles, cloned out of the container.
+    ///
+    /// Every lifecycle hook is awaited and the container sits behind a lock, so a caller
+    /// takes the handles and releases the lock rather than holding it across each await.
+    ///
+    /// Execution-scoped providers are left out: they are built into an execution, and no
+    /// lifecycle phase is one.
+    pub(crate) fn module_lifecycle(&self, module_ref_token: &str) -> Option<ModuleLifecycle> {
+        let module = self.modules.get(module_ref_token)?;
+        Some(ModuleLifecycle {
+            metadata: module.metadata(),
+            providers: module
+                .provider_instances()
+                .values()
+                .filter(|provider| provider.scope() != ProviderScope::Execution)
+                .cloned()
+                .collect(),
+            controllers: module.controller_objects().to_vec(),
+        })
     }
 
     /// Register an RPC controller's resolved wrapper under its token. Called from the controller
@@ -340,7 +360,7 @@ impl Container {
     pub fn provider_factories(
         &self,
         module_ref_token: &String,
-    ) -> SetupResult<&FxHashMap<String, Box<dyn ProviderFactory>>> {
+    ) -> SetupResult<&FxHashMap<String, Arc<dyn ProviderFactory>>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
@@ -351,7 +371,7 @@ impl Container {
     pub fn controller_factories(
         &self,
         module_ref_token: &String,
-    ) -> SetupResult<&FxHashMap<String, Box<dyn ControllerFactory>>> {
+    ) -> SetupResult<&FxHashMap<String, Arc<dyn ControllerFactory>>> {
         let module_ref = self
             .modules
             .get(module_ref_token)
@@ -386,7 +406,7 @@ impl Container {
         &self,
         module_ref_token: &String,
         provider_token: &String,
-    ) -> SetupResult<Option<&dyn ProviderFactory>> {
+    ) -> SetupResult<Option<Arc<dyn ProviderFactory>>> {
         let module_ref = self
             .modules
             .get(module_ref_token)

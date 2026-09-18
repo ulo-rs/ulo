@@ -3,9 +3,8 @@
 //! exporting the same token are refused instead of silently shadowing; a name gives each instance a
 //! distinct token so deliberate multiplicity resolves.
 
+use parking_lot::RwLock;
 use std::any::Any;
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -72,7 +71,7 @@ impl Root {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl ModuleMetadata for Root {
     fn identity(&self) -> crate::di::ModuleIdentity {
         crate::di::ModuleIdentity::named("test::Root")
@@ -147,8 +146,8 @@ fn add_module_dedups_identical_dynamic_modules() {
 
 // ── Mechanism 3 + the knob: end-to-end through scanner + loader ───────────────────────────────
 
-async fn load(root: Root) -> crate::error::SetupResult<Rc<RefCell<Container>>> {
-    let container = Rc::new(RefCell::new(Container::new()));
+async fn load(root: Root) -> crate::error::SetupResult<Arc<RwLock<Container>>> {
+    let container = Arc::new(RwLock::new(Container::new()));
     let mut scanner = DependencyScanner::new(container.clone());
     scanner.scan(Box::new(crate::di::internal::builtin_module::BuiltinModule))?;
     scanner.scan(Box::new(root))?;
@@ -161,59 +160,47 @@ async fn load(root: Root) -> crate::error::SetupResult<Rc<RefCell<Container>>> {
 
 #[tokio::test]
 async fn two_unnamed_connections_are_refused() {
-    tokio::task::LocalSet::new()
-        .run_until(async {
-            let root = Root::new(vec![
-                Box::new(conn_module("Conn", "conn", "postgres://a")),
-                Box::new(conn_module("Conn", "conn", "postgres://b")),
-            ]);
-            let msg = match load(root).await {
-                Ok(_) => panic!("clash must abort startup"),
-                Err(e) => e.to_string(),
-            };
-            assert!(
-                msg.contains("exported globally by two modules") && msg.contains("conn"),
-                "unexpected error: {msg}"
-            );
-        })
-        .await;
+    let root = Root::new(vec![
+        Box::new(conn_module("Conn", "conn", "postgres://a")),
+        Box::new(conn_module("Conn", "conn", "postgres://b")),
+    ]);
+    let msg = match load(root).await {
+        Ok(_) => panic!("clash must abort startup"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        msg.contains("exported globally by two modules") && msg.contains("conn"),
+        "unexpected error: {msg}"
+    );
 }
 
 #[tokio::test]
 async fn named_connections_coexist_and_resolve() {
-    tokio::task::LocalSet::new()
-        .run_until(async {
-            let root = Root::new(vec![
-                Box::new(conn_module("Conn::primary", "primary", "postgres://a")),
-                Box::new(conn_module("Conn::replica", "replica", "postgres://b")),
-            ]);
-            let container = load(root).await.expect("named connections must coexist");
-            let c = container.borrow();
-            assert!(c.get_global_provider(&"primary".to_string()).is_some());
-            assert!(c.get_global_provider(&"replica".to_string()).is_some());
-        })
-        .await;
+    let root = Root::new(vec![
+        Box::new(conn_module("Conn::primary", "primary", "postgres://a")),
+        Box::new(conn_module("Conn::replica", "replica", "postgres://b")),
+    ]);
+    let container = load(root).await.expect("named connections must coexist");
+    let c = container.read();
+    assert!(c.get_global_provider(&"primary".to_string()).is_some());
+    assert!(c.get_global_provider(&"replica".to_string()).is_some());
 }
 
 #[tokio::test]
 async fn same_connection_imported_twice_dedups() {
-    tokio::task::LocalSet::new()
-        .run_until(async {
-            // Two identical registrations (same base, same config) — a diamond import. They collapse
-            // to one module, so there is no clash and the single connection resolves.
-            let root = Root::new(vec![
-                Box::new(conn_module("Conn", "conn", "postgres://a")),
-                Box::new(conn_module("Conn", "conn", "postgres://a")),
-            ]);
-            let container = load(root)
-                .await
-                .expect("identical imports must dedup, not clash");
-            assert!(
-                container
-                    .borrow()
-                    .get_global_provider(&"conn".to_string())
-                    .is_some()
-            );
-        })
-        .await;
+    // Two identical registrations (same base, same config) — a diamond import. They collapse
+    // to one module, so there is no clash and the single connection resolves.
+    let root = Root::new(vec![
+        Box::new(conn_module("Conn", "conn", "postgres://a")),
+        Box::new(conn_module("Conn", "conn", "postgres://a")),
+    ]);
+    let container = load(root)
+        .await
+        .expect("identical imports must dedup, not clash");
+    assert!(
+        container
+            .read()
+            .get_global_provider(&"conn".to_string())
+            .is_some()
+    );
 }

@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use parking_lot::RwLock;
 use std::sync::Arc;
 
 use crate::application::UloApplication;
@@ -187,7 +186,7 @@ impl UloFactory {
         &self,
         module: impl ModuleMetadata + 'static,
     ) -> Result<UloApplication, StartupError> {
-        let container = Rc::new(RefCell::new(Container::new()));
+        let container = Arc::new(RwLock::new(Container::new()));
 
         self.initialize(Box::new(module), container.clone()).await?;
 
@@ -216,7 +215,7 @@ impl UloFactory {
         &self,
         module: impl ModuleMetadata + 'static,
     ) -> Result<UloApplicationContext, StartupError> {
-        let container = Rc::new(RefCell::new(Container::new()));
+        let container = Arc::new(RwLock::new(Container::new()));
 
         self.initialize(Box::new(module), container.clone()).await?;
 
@@ -235,7 +234,7 @@ impl UloFactory {
     async fn initialize(
         &self,
         module: Box<dyn ModuleMetadata>,
-        container: Rc<RefCell<Container>>,
+        container: Arc<RwLock<Container>>,
     ) -> Result<(), StartupError> {
         init_default_logger();
 
@@ -250,7 +249,7 @@ impl UloFactory {
 
         // Register global middleware
         {
-            let mut container_mut = container.borrow_mut();
+            let mut container_mut = container.write();
             if let Some(middleware_manager) = container_mut.middleware_manager_mut() {
                 for middleware in &self.global_middleware {
                     middleware_manager.add_global(middleware.clone());
@@ -260,7 +259,7 @@ impl UloFactory {
 
         // Register global enhancers
         {
-            let mut container_mut = container.borrow_mut();
+            let mut container_mut = container.write();
             container_mut.global_http.extend_from(&self.global_http);
             container_mut.global_rpc.extend_from(&self.global_rpc);
             container_mut.global_ws.extend_from(&self.global_ws);

@@ -1,6 +1,5 @@
-use std::cell::RefCell;
+use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::dispatch::transport::Ws;
@@ -11,16 +10,16 @@ use super::{Declared, resolve_handler, resolve_target};
 use crate::di::internal::Container;
 
 pub(crate) struct GatewayResolver {
-    container: Rc<RefCell<Container>>,
+    container: Arc<RwLock<Container>>,
 }
 
 impl GatewayResolver {
-    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Arc<RwLock<Container>>) -> Self {
         Self { container }
     }
 
     pub(crate) fn resolve(&self) -> SetupResult<HashMap<String, Arc<GatewayWrapper>>> {
-        let raw = self.container.borrow().gateways().clone();
+        let raw = self.container.read().gateways().clone();
         raw.into_iter()
             .map(|(path, gateway)| {
                 let wrapper = self.wrap_gateway(gateway)?;
@@ -35,7 +34,7 @@ impl GatewayResolver {
         let handler_metadata: HashMap<String, Arc<crate::context::Metadata>> =
             gateway.handler_metadata().into_iter().collect();
 
-        let container = self.container.borrow();
+        let container = self.container.read();
         let registry = &container.role_registry().ws;
 
         let gateway_level = resolve_target::<Ws>(

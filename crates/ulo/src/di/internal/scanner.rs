@@ -1,4 +1,5 @@
-use std::{cell::RefCell, rc::Rc};
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 use crate::error::SetupResult;
 use crate::error::StartupError;
@@ -9,11 +10,11 @@ use crate::{
 };
 
 pub(crate) struct DependencyScanner {
-    container: Rc<RefCell<Container>>,
+    container: Arc<RwLock<Container>>,
 }
 
 impl DependencyScanner {
-    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Arc<RwLock<Container>>) -> Self {
         Self { container }
     }
     pub(crate) fn scan(&mut self, module: Box<dyn ModuleMetadata>) -> SetupResult {
@@ -56,7 +57,7 @@ impl DependencyScanner {
     }
 
     pub(crate) fn scan_modules_for_dependencies(&mut self) -> SetupResult {
-        let modules_token = self.container.borrow().module_tokens();
+        let modules_token = self.container.read().module_tokens();
         for module_token in modules_token {
             self.insert_providers(module_token.clone())?;
             self.insert_controllers(module_token.clone())?;
@@ -67,7 +68,7 @@ impl DependencyScanner {
     }
 
     fn insert_module(&mut self, module: Box<dyn ModuleMetadata>) -> SetupResult {
-        let mut container = self.container.borrow_mut();
+        let mut container = self.container.write();
         container.add_module(module)
     }
 
@@ -76,7 +77,7 @@ impl DependencyScanner {
         module_token: String,
         imports: Vec<String>,
     ) -> SetupResult {
-        let mut container = self.container.borrow_mut();
+        let mut container = self.container.write();
 
         for import in imports {
             container.add_import(&module_token, import)?;
@@ -86,7 +87,7 @@ impl DependencyScanner {
     }
 
     pub(crate) fn insert_controllers(&mut self, module_token: String) -> SetupResult {
-        let mut container = self.container.borrow_mut();
+        let mut container = self.container.write();
         let module_ref = container.get_module_by_token(&module_token);
         let resolved_module_ref = match module_ref {
             Some(module_ref) => module_ref,
@@ -107,7 +108,7 @@ impl DependencyScanner {
     }
 
     pub(crate) fn insert_providers(&mut self, module_token: String) -> SetupResult {
-        let mut container = self.container.borrow_mut();
+        let mut container = self.container.write();
         let module_ref = container.get_module_by_token(&module_token);
         let resolved_module_ref = match module_ref {
             Some(module_ref) => module_ref,
@@ -168,7 +169,7 @@ impl DependencyScanner {
     }
 
     pub(crate) fn insert_exports(&mut self, module_token: String) -> SetupResult {
-        let mut container = self.container.borrow_mut();
+        let mut container = self.container.write();
         let module_ref = container.get_module_by_token(&module_token);
         let resolved_module_ref = match module_ref {
             Some(module_ref) => module_ref,
@@ -195,7 +196,7 @@ impl DependencyScanner {
     }
 
     pub(crate) fn scan_middleware(&mut self) -> SetupResult {
-        let modules_token = self.container.borrow().module_tokens();
+        let modules_token = self.container.read().module_tokens();
         for module_token in modules_token {
             self.register_module_middleware(&module_token)?;
         }
@@ -204,7 +205,7 @@ impl DependencyScanner {
 
     fn register_module_middleware(&mut self, module_token: &str) -> SetupResult {
         let middleware_configs = {
-            let container = self.container.borrow();
+            let container = self.container.read();
 
             let module_ref = container
                 .get_module_by_token(&module_token.to_string())
@@ -217,7 +218,7 @@ impl DependencyScanner {
             consumer.build()
         };
 
-        let mut container_mut = self.container.borrow_mut();
+        let mut container_mut = self.container.write();
 
         let middleware_manager = container_mut
             .middleware_manager_mut()
@@ -231,7 +232,7 @@ impl DependencyScanner {
     }
 
     pub(crate) async fn call_lifecycle_hooks(&mut self) -> Result<(), StartupError> {
-        let modules_token = self.container.borrow().module_tokens();
+        let modules_token = self.container.read().module_tokens();
 
         for module_token in &modules_token {
             self.call_module_init_hook(module_token).await?;
@@ -244,7 +245,7 @@ impl DependencyScanner {
 
     /// Runs after `call_lifecycle_hooks` (OnModuleInit) but before the application starts listening.
     pub(crate) async fn call_bootstrap_hooks(&mut self) -> Result<(), StartupError> {
-        let modules_token = self.container.borrow().module_tokens();
+        let modules_token = self.container.read().module_tokens();
 
         for module_token in &modules_token {
             self.call_module_bootstrap_hook(module_token).await?;
@@ -256,27 +257,25 @@ impl DependencyScanner {
     }
 
     async fn call_module_bootstrap_hook(&mut self, module_token: &str) -> Result<(), StartupError> {
-        {
-            let container = self.container.borrow();
-            let module_ref = container
+        let metadata = {
+            let container = self.container.read();
+            container
                 .get_module_by_token(&module_token.to_string())
                 .ok_or_else(|| {
                     StartupError::Setup(format!("Module not found: {module_token}").into())
-                })?;
-
-            tracing::debug!(module = %module_token, hook = "on_application_bootstrap", "lifecycle hook");
-            module_ref
+                })?
                 .metadata()
-                .on_application_bootstrap()
-                .await
-                .map_err(|source| StartupError::HookFailed {
-                    module: module_token.to_string(),
-                    hook: "on_application_bootstrap",
-                    source,
-                })?;
-        }
+        };
 
-        Ok(())
+        tracing::debug!(module = %module_token, hook = "on_application_bootstrap", "lifecycle hook");
+        metadata
+            .on_application_bootstrap()
+            .await
+            .map_err(|source| StartupError::HookFailed {
+                module: module_token.to_string(),
+                hook: "on_application_bootstrap",
+                source,
+            })
     }
 
     async fn call_provider_bootstrap_hooks(
@@ -284,109 +283,87 @@ impl DependencyScanner {
         modules_token: &[String],
     ) -> Result<(), StartupError> {
         for module_token in modules_token {
-            {
-                let container = self.container.borrow();
-                if let Ok(providers) = container.lifecycle_instances(module_token) {
-                    for provider in providers {
-                        // Skip execution-scoped providers — they are built into an
-                        // execution, and bootstrap is not one.
-                        if provider.scope() == crate::di::ProviderScope::Execution {
-                            continue;
-                        }
+            let lifecycle = self.container.read().module_lifecycle(module_token);
+            let Some(lifecycle) = lifecycle else {
+                continue;
+            };
 
-                        tracing::debug!(module = %module_token, provider = %provider.token(), hook = "on_application_bootstrap", "lifecycle hook");
-                        provider
-                            .on_application_bootstrap()
-                            .await
-                            .map_err(|source| StartupError::HookFailed {
-                                module: module_token.clone(),
-                                hook: "on_application_bootstrap",
-                                source,
-                            })?;
-                    }
-                }
+            for provider in lifecycle.providers {
+                tracing::debug!(module = %module_token, provider = %provider.token(), hook = "on_application_bootstrap", "lifecycle hook");
+                provider
+                    .on_application_bootstrap()
+                    .await
+                    .map_err(|source| StartupError::HookFailed {
+                        module: module_token.clone(),
+                        hook: "on_application_bootstrap",
+                        source,
+                    })?;
             }
 
-            {
-                let container = self.container.borrow();
-                if let Some(module) = container.get_module_by_token(module_token) {
-                    for controller in module.controller_objects() {
-                        controller
-                            .on_application_bootstrap()
-                            .await
-                            .map_err(|source| StartupError::HookFailed {
-                                module: module_token.clone(),
-                                hook: "on_application_bootstrap",
-                                source,
-                            })?;
-                    }
-                }
+            for controller in lifecycle.controllers {
+                controller
+                    .on_application_bootstrap()
+                    .await
+                    .map_err(|source| StartupError::HookFailed {
+                        module: module_token.clone(),
+                        hook: "on_application_bootstrap",
+                        source,
+                    })?;
             }
         }
         Ok(())
     }
 
     async fn call_module_init_hook(&mut self, module_token: &str) -> Result<(), StartupError> {
-        {
-            let container = self.container.borrow();
-            let module_ref = container
+        let metadata = {
+            let container = self.container.read();
+            container
                 .get_module_by_token(&module_token.to_string())
                 .ok_or_else(|| {
                     StartupError::Setup(format!("Module not found: {module_token}").into())
-                })?;
-
-            tracing::debug!(module = %module_token, hook = "on_module_init", "lifecycle hook");
-            module_ref
+                })?
                 .metadata()
-                .on_module_init()
-                .await
-                .map_err(|source| StartupError::HookFailed {
-                    module: module_token.to_string(),
-                    hook: "on_module_init",
-                    source,
-                })?;
-        }
+        };
 
-        Ok(())
+        tracing::debug!(module = %module_token, hook = "on_module_init", "lifecycle hook");
+        metadata
+            .on_module_init()
+            .await
+            .map_err(|source| StartupError::HookFailed {
+                module: module_token.to_string(),
+                hook: "on_module_init",
+                source,
+            })
     }
 
     async fn call_provider_init_hooks(&self, modules_token: &[String]) -> Result<(), StartupError> {
         for module_token in modules_token {
-            {
-                let container = self.container.borrow();
-                if let Ok(providers) = container.lifecycle_instances(module_token) {
-                    for provider in providers {
-                        // Skip execution-scoped providers — they are built into an
-                        // execution, and module initialisation is not one.
-                        if provider.scope() == crate::di::ProviderScope::Execution {
-                            continue;
-                        }
+            let lifecycle = self.container.read().module_lifecycle(module_token);
+            let Some(lifecycle) = lifecycle else {
+                continue;
+            };
 
-                        tracing::debug!(module = %module_token, provider = %provider.token(), hook = "on_module_init", "lifecycle hook");
-                        provider.on_module_init().await.map_err(|source| {
-                            StartupError::HookFailed {
-                                module: module_token.clone(),
-                                hook: "on_module_init",
-                                source,
-                            }
-                        })?;
-                    }
-                }
+            for provider in lifecycle.providers {
+                tracing::debug!(module = %module_token, provider = %provider.token(), hook = "on_module_init", "lifecycle hook");
+                provider
+                    .on_module_init()
+                    .await
+                    .map_err(|source| StartupError::HookFailed {
+                        module: module_token.clone(),
+                        hook: "on_module_init",
+                        source,
+                    })?;
             }
 
-            {
-                let container = self.container.borrow();
-                if let Some(module) = container.get_module_by_token(module_token) {
-                    for controller in module.controller_objects() {
-                        controller.on_module_init().await.map_err(|source| {
-                            StartupError::HookFailed {
-                                module: module_token.clone(),
-                                hook: "on_module_init",
-                                source,
-                            }
-                        })?;
-                    }
-                }
+            for controller in lifecycle.controllers {
+                controller
+                    .on_module_init()
+                    .await
+                    .map_err(|source| StartupError::HookFailed {
+                        module: module_token.clone(),
+                        hook: "on_module_init",
+                        source,
+                    })?;
             }
         }
         Ok(())

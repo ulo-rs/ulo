@@ -5,7 +5,7 @@
 //! re-exported by `di` as the handle a caller resolves against.
 
 mod container;
-pub(crate) use self::container::Container;
+pub(crate) use self::container::{Container, ModuleLifecycle};
 
 mod instance_loader;
 pub(crate) use self::instance_loader::InstanceLoader;
