@@ -47,6 +47,24 @@ pub struct ShutdownHandle {
     inner: Arc<ShutdownInner>,
 }
 
+/// Prints the two flags a caller can observe.
+///
+/// Written rather than derived: a derive would need one on the private `ShutdownInner` too, and
+/// would render its two `event_listener::Event` wakers, which carry no state worth reading.
+/// `completed` is taken from the flag because [`ShutdownHandle::completed`] awaits rather than
+/// reports.
+impl std::fmt::Debug for ShutdownHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShutdownHandle")
+            .field("is_shutdown", &self.is_shutdown())
+            .field(
+                "completed",
+                &self.inner.completed_flag.load(Ordering::SeqCst),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
 impl ShutdownHandle {
     fn new() -> Self {
         Self {
@@ -1063,5 +1081,33 @@ mod send_invariant {
     fn serving_futures_are_send(app: UloApplication, mut ctx: UloApplicationContext) {
         assert_send_future(app.start());
         assert_send_future(async move { ctx.close().await });
+    }
+}
+
+#[cfg(test)]
+mod shutdown_handle_debug {
+    use super::*;
+
+    #[test]
+    fn debug_reports_the_two_observable_flags() {
+        let handle = ShutdownHandle::new();
+        assert_eq!(
+            format!("{handle:?}"),
+            "ShutdownHandle { is_shutdown: false, completed: false, .. }"
+        );
+
+        handle.shutdown();
+        assert_eq!(
+            format!("{handle:?}"),
+            "ShutdownHandle { is_shutdown: true, completed: false, .. }"
+        );
+    }
+
+    /// The shape that wanted the bound: `oneshot::Sender::send` answers `Result<(), T>`, so
+    /// handing a handle to a waiting task and unwrapping the send needs `T: Debug`.
+    #[test]
+    fn a_handle_rides_the_error_side_of_a_result() {
+        let sent: Result<(), ShutdownHandle> = Ok(());
+        sent.unwrap();
     }
 }
