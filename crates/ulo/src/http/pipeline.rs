@@ -205,8 +205,9 @@ impl RoutePipeline {
         // rather than dying here with the handler.
         match response.body {
             Some(body) => {
-                // Dropped owing frames, the client is gone. Work feeding the body escaped the
-                // handler's future and would otherwise learn only at its next send.
+                // Dropped without the body having answered `None`, the exchange ended early.
+                // Work feeding the body escaped the handler's future and would otherwise learn
+                // only at its next send.
                 let cancellation = context.cancellation().clone();
                 HttpResponse {
                     body: Some(

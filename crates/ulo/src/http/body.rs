@@ -25,11 +25,13 @@ enum BodyInner {
 struct ScopedBody {
     inner: BoxBody,
     _keep_alive: Box<dyn std::any::Any + Send>,
-    /// Run when this is dropped with frames still to come. Held as a callback rather than a
-    /// cancellation token because a body knows nothing about executions, and `http`
+    /// Run when this is dropped without the body having answered `None`. Held as a callback
+    /// rather than a cancellation token because a body knows nothing about executions, and `http`
     /// depending on `context` would point an edge back the way it already runs.
     on_abandoned: Option<Box<dyn FnOnce() + Send>>,
-    /// Set once the inner body answers `None` or an error, either being the end of it.
+    /// Set once the inner body answers `None`. An error does not set it: the body is over either
+    /// way, but an error is an abnormal end, and dropping this un-drained is what reaches whatever
+    /// feeds it. `ScopedStream` ends a tail on the same event.
     drained: bool,
 }
 
@@ -43,10 +45,7 @@ impl http_body::Body for ScopedBody {
     ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         let this = self.get_mut();
         let polled = std::pin::Pin::new(&mut this.inner).poll_frame(cx);
-        if matches!(
-            polled,
-            std::task::Poll::Ready(None) | std::task::Poll::Ready(Some(Err(_)))
-        ) {
+        if matches!(polled, std::task::Poll::Ready(None)) {
             this.drained = true;
         }
         polled
@@ -61,9 +60,10 @@ impl http_body::Body for ScopedBody {
     }
 }
 
-/// A body dropped with frames still owed is the client having gone. Nothing else observes that: the
-/// handler returned when it had a stream, and whatever feeds that stream is not inside the future
-/// hyper drops.
+/// A body dropped before it answered `None` is an exchange that ended early — the client gone, or
+/// a frame carrying an error that hyper cannot frame a clean end after. Nothing else observes it:
+/// the handler returned when it had a stream, and whatever feeds that stream is not inside the
+/// future hyper drops.
 impl Drop for ScopedBody {
     fn drop(&mut self) {
         if !self.drained {
@@ -237,10 +237,11 @@ impl Body {
         self
     }
 
-    /// Run `f` if this body is dropped before its last frame.
+    /// Run `f` if this body is dropped without having answered `None`.
     ///
-    /// The dispatcher fires the execution's cancellation token here, so work feeding a stream can
-    /// stop at the moment the client goes rather than at its next send.
+    /// That covers a client that went away and a frame that carried an error, which ends the body
+    /// without ending it cleanly. The dispatcher fires the execution's cancellation token here, so
+    /// work feeding a stream stops at that moment rather than at its next send.
     pub fn on_abandoned(mut self, f: impl FnOnce() + Send + 'static) -> Self {
         self.on_abandoned = Some(Box::new(f));
         self

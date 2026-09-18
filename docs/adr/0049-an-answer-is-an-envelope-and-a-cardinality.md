@@ -143,11 +143,11 @@ One cancellation-scoping wrapper for the three stream wrappers. `ScopedBody` sta
 counts: it implements `http_body::Body` where the others implement `futures::Stream`, and it fires
 an opaque `FnOnce` rather than a token because `http` does not depend on `context`.
 
-The three agree on what ends a tail, so the collapse inherits their rule rather than choosing one.
-A stream is drained when it answers `None`; an item carrying an error is an abnormal end, and the
-wrapper dropped un-drained fires the token so the producer behind it stops. `ScopedBody` counts an
-errored frame as a drained body and does not fire. That disagreement outlives the collapse, because
-the wrapper it belongs to is not in it.
+All four wrappers end a tail on `None`. A stream or body that answers it is drained; one dropped
+before that signals, and the producer behind it stops. An item or frame carrying an error is an
+abnormal end: the transport stops drawing there and the wrapper is dropped un-drained, which reaches
+the producer the same way. `ScopedBody` signals through its `FnOnce` where the other three cancel a
+token, and WebSocket's item type is `Infallible`, so an errored item cannot arise there.
 
 An RPC or WebSocket handler naming `RpcHandlerOutput::Single` or `WsHandlerOutput::Stream` names
 `Cardinality::One` or `Cardinality::Many`, and a WebSocket one builds its stream through
