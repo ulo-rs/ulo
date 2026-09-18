@@ -39,7 +39,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
-use ulo::dispatch::Cardinality;
+use ulo::dispatch::Items;
 
 use futures::StreamExt;
 use ulo::UloFactory;
@@ -155,7 +155,7 @@ impl ConformanceController {
 
     #[message_pattern("count.stream")]
     async fn count(&self, _d: RpcData) -> RpcHandlerResult {
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             futures::stream::iter((1..=3).map(|n| Ok(RpcData::json(serde_json::json!(n))))).boxed(),
         ))
     }
@@ -184,7 +184,7 @@ impl ConformanceController {
                 }
             }
         });
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             tokio_stream::wrappers::ReceiverStream::new(rx).boxed(),
         ))
     }

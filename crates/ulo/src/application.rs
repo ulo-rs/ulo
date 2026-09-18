@@ -1,4 +1,4 @@
-use crate::dispatch::Cardinality;
+use crate::dispatch::Items;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -955,15 +955,15 @@ fn make_ws_callbacks(
             let handle = h_message.clone();
             Box::pin(async move {
                 match gateway.handle_message(client_id.clone(), msg).await {
-                    Ok(Cardinality::Empty) => MessageCallbackResult::Continue,
-                    Ok(Cardinality::One(response)) => {
+                    Ok(Items::Empty) => MessageCallbackResult::Continue,
+                    Ok(Items::One(response)) => {
                         handle.send_to(&client_id, response).await;
                         MessageCallbackResult::Continue
                     }
                     // The adapter SPI carries what the wire carries. A WebSocket item's error
                     // type is `Infallible`, so unwrapping one here is total: there is no value of
                     // that type for the `Err` arm to be given.
-                    Ok(Cardinality::Many(stream)) => {
+                    Ok(Items::Many(stream)) => {
                         use futures::StreamExt as _;
                         MessageCallbackResult::Stream(
                             stream

@@ -206,7 +206,7 @@ async fn handle_publish(
     };
 
     let response = match outcome {
-        Ok(Ok(ulo::dispatch::Cardinality::Many(stream))) => {
+        Ok(Ok(ulo::dispatch::Items::Many(stream))) => {
             ulo::rpc::wire::drive_reply_stream(stream, |frame| {
                 let client = client.clone();
                 let response_topic = response_topic.clone();

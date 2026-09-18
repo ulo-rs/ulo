@@ -9,7 +9,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use ulo::dispatch::Cardinality;
+use ulo::dispatch::Items;
 
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
@@ -128,7 +128,7 @@ impl UdpStreamController {
 
     #[message_pattern("count.stream")]
     async fn count(&self, _d: RpcData) -> RpcHandlerResult {
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             futures_util::stream::iter((1..=3).map(|n| Ok(RpcData::json(serde_json::json!(n)))))
                 .boxed(),
         ))
@@ -136,21 +136,21 @@ impl UdpStreamController {
 
     #[message_pattern("bytes.stream")]
     async fn bytes(&self, _d: RpcData) -> RpcHandlerResult {
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             futures_util::stream::iter(vec![Ok(RpcData::binary(vec![0, 159, 146, 150]))]).boxed(),
         ))
     }
 
     #[message_pattern("interr.stream")]
     async fn internal_err(&self, _d: RpcData) -> RpcHandlerResult {
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             futures_util::stream::iter(vec![Err(RpcError::Internal("cursor died".into()))]).boxed(),
         ))
     }
 
     #[message_pattern("oversize.stream")]
     async fn oversize(&self, _d: RpcData) -> RpcHandlerResult {
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             futures_util::stream::iter(vec![
                 Ok(RpcData::text("x".repeat(70_000))),
                 Ok(RpcData::json(serde_json::json!(2))),
@@ -161,12 +161,12 @@ impl UdpStreamController {
 
     #[message_pattern("probe.cancel")]
     async fn probe_cancel(&self, _d: RpcData, ctx: &RpcContext) -> RpcHandlerResult {
-        Ok(Cardinality::Many(ticker(ctx, &CANCEL_DATAGRAM_SEEN)))
+        Ok(Items::Many(ticker(ctx, &CANCEL_DATAGRAM_SEEN)))
     }
 
     #[message_pattern("probe.client_drop")]
     async fn probe_client_drop(&self, _d: RpcData, ctx: &RpcContext) -> RpcHandlerResult {
-        Ok(Cardinality::Many(ticker(ctx, &CLIENT_DROP_SEEN)))
+        Ok(Items::Many(ticker(ctx, &CLIENT_DROP_SEEN)))
     }
 
     #[message_pattern("single.echo")]

@@ -1,4 +1,4 @@
-use crate::dispatch::Cardinality;
+use crate::dispatch::Items;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -176,7 +176,7 @@ impl GatewayWrapper {
             message,
             WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Close(_)
         ) {
-            return Ok(Cardinality::Empty);
+            return Ok(Items::Empty);
         }
 
         // A frame naming no event fails to route with the socket still open, so the caller is
@@ -256,10 +256,10 @@ impl GatewayWrapper {
                 .await
                 {
                     Some(Ok(output)) => Ok(output),
-                    Some(Err(reshaped)) => Ok(Cardinality::One(Self::safe_render(|| {
-                        reshaped.to_message()
-                    }))),
-                    None => Ok(Cardinality::One(Self::safe_render(|| ws_err.to_message()))),
+                    Some(Err(reshaped)) => {
+                        Ok(Items::One(Self::safe_render(|| reshaped.to_message())))
+                    }
+                    None => Ok(Items::One(Self::safe_render(|| ws_err.to_message()))),
                 }
             }
         };
@@ -267,7 +267,7 @@ impl GatewayWrapper {
         // The execution ends when the answer does. A stream has emitted nothing
         // at this point, so the context rides it rather than dying here.
         match answer {
-            Ok(Cardinality::Many(stream)) => Ok(Cardinality::Many(
+            Ok(Items::Many(stream)) => Ok(Items::Many(
                 crate::dispatch::ScopedStream::new(stream, context).boxed(),
             )),
             other => other,
@@ -438,7 +438,7 @@ mod tests {
                 &self,
                 _ctx: &WsContext,
             ) -> ExecutionResult<WsHandlerOutput, WsError> {
-                ExecutionResult::Ok(Cardinality::Empty)
+                ExecutionResult::Ok(Items::Empty)
             }
         }
 

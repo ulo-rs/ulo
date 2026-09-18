@@ -54,10 +54,10 @@ it is the constraint ADR-0048 erased around.
 
 ## Decision
 
-**An answer is an envelope and a cardinality.**
+**An answer is an envelope and a cardinality.** The type that carries the count is `Items`.
 
 ```rust
-pub enum Cardinality<T, E> {
+pub enum Items<T, E> {
     /// Nothing goes back.
     Empty,
     /// One item.
@@ -70,23 +70,23 @@ pub enum Cardinality<T, E> {
 Each transport names its envelope and its item, and the cardinality is the same type where the
 items are payload:
 
-| Transport | envelope | item | item failure | carries `Cardinality` |
+| Transport | envelope | item | item failure | carries `Items` |
 | --- | --- | --- | --- | --- |
 | RPC | — | `RpcData` | `RpcError` | yes |
 | WebSocket | — | `WsMessage` | `Infallible` | yes |
 | gRPC | metadata, extensions | erased | `GrpcStatus` | no — the payload is erased whole |
 | HTTP | status, headers | `Frame<Bytes>` | `Box<dyn Error>` | no — a frame is data or trailers |
 
-`RpcHandlerOutput` and `WsHandlerOutput` become names for `Cardinality<RpcData, RpcError>` and
-`Cardinality<WsMessage, Infallible>`. One type, and a spelling each transport keeps for the
-signature a hand-written handler writes: `ExecutionResult<WsHandlerOutput, WsError>` reads as a
-return type where the instantiation spelled out does not.
+`RpcHandlerOutput` and `WsHandlerOutput` become names for `Items<RpcData, RpcError>` and
+`Items<WsMessage, Infallible>`. One type, and a spelling each transport keeps for the signature a
+hand-written handler writes: `ExecutionResult<WsHandlerOutput, WsError>` reads as a return type
+where the instantiation spelled out does not.
 
 **HTTP's body keeps `Option<Body>` over `Buffered | Streaming`.** It has the same three states, and
 it is not a cardinality: an `http_body::Body` yields frames, and a frame is data or trailers, so a
-stream of them is not a stream of payload items. `Cardinality<Bytes, _>` drops the trailers a body
+stream of them is not a stream of payload items. `Items<Bytes, _>` drops the trailers a body
 built from a tower service carries through `from_box_body`; axum hands those to hyper untouched,
-and the other four adapters drop them in the adapter already. `Cardinality<Frame<Bytes>, _>` keeps
+and the other four adapters drop them in the adapter already. `Items<Frame<Bytes>, _>` keeps
 them by making `Many` mean "frames, some of which are metadata", which is not what the variant says
 anywhere else. The remaining reading puts trailers in the envelope, and neither
 `HttpResponse` nor a `ReplyEnvelope` holds a value that arrives after the payload.
@@ -175,30 +175,30 @@ abnormal end: the transport stops drawing there and the wrapper is dropped un-dr
 the producer the same way. `ScopedBody` signals through its `FnOnce` where the other three cancel a
 token, and WebSocket's item type is `Infallible`, so an errored item cannot arise there.
 
-An RPC or WebSocket handler naming `RpcHandlerOutput::Single` or `WsHandlerOutput::Stream` names
-`Cardinality::One` or `Cardinality::Many`, and a WebSocket one builds its stream through
-`Cardinality::stream` rather than mapping each item into an `Ok` the wire cannot contradict. A gRPC
+An RPC or WebSocket handler answers `Items::One` or `Items::Many` where the per-transport enums had
+`Single` and `Stream`, and a WebSocket one builds its stream through `Items::stream` rather than
+mapping each item into an `Ok` the wire cannot contradict. A gRPC
 enhancer holding a `GrpcReply` reaches a header without a downcast and the message with one, where
 both sit behind the method's own `tonic::Response<T>` otherwise. An HTTP handler writes what it
 wrote before.
 
-Two of the four transports carry `Cardinality`, which is what an operator written over it reaches.
+Two of the four transports carry `Items`, which is what an operator written over it reaches.
 That is the limit of the type: an answer on HTTP is an `HttpResponse` and its body's count is two
 levels below one, so an operator meets HTTP through code that knows about `HttpResponse` whatever
 `Body` holds. The type does not unify the four, and unifying the two it does is what it is for.
 
 ## Roads not taken
 
-**Erase a gRPC payload per item.** `Cardinality<Box<dyn Any + Send>, GrpcStatus>` is the shape that
+**Erase a gRPC payload per item.** `Items<Box<dyn Any + Send>, GrpcStatus>` is the shape that
 puts gRPC inside the cardinality rather than beside it, and it is what would extend `take`,
 `timeout` and counting to a gRPC stream. It costs one heap allocation per streamed message where
 tonic passes items by value, on the one transport whose streams are shaped for volume. The envelope
 unifies without paying it, which is where the split above is drawn.
 
-**Fold `HttpResponse` into `Cardinality` whole.** A status and a set of headers are not a count of
+**Fold `HttpResponse` into `Items` whole.** A status and a set of headers are not a count of
 items, and an answer that carried only a cardinality would have nowhere to put them.
 
-**Fold HTTP's `Body` into `Cardinality`, one level down.** It has the three states, and the reading
+**Fold HTTP's `Body` into `Items`, one level down.** It has the three states, and the reading
 that makes it a cardinality puts trailers in the envelope, where nothing holds them. Carrying them
 as items instead spends the meaning of `Many` to do it. What the fold would buy is a `Body` that
 names its states, at the cost of the ones an `http_body::Body` already carries.

@@ -1,4 +1,4 @@
-use crate::dispatch::Cardinality;
+use crate::dispatch::Items;
 
 mod adapter;
 mod client_transport;
@@ -33,10 +33,10 @@ pub use rpc_reply_stream::{ReplySink, RpcReplyStream};
 
 /// What an RPC handler answers with: nothing, one reply, or a stream of them.
 ///
-/// `Cardinality` is the shape every transport with a count uses (ADR-0049); this names RPC's
+/// `Items` is the shape every transport with a count uses (ADR-0049); this names RPC's
 /// instantiation of it. An item can fail mid-stream because an RPC call has a correlation and a
 /// canonical error envelope to carry one.
-pub type RpcHandlerOutput = Cardinality<RpcData, RpcError>;
+pub type RpcHandlerOutput = Items<RpcData, RpcError>;
 
 /// What an RPC call answers with — the value the pipeline returns and the `R`
 /// of [`Interceptor`](crate::enhancer::Interceptor) on this transport.

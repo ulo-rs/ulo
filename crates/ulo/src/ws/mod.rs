@@ -5,7 +5,7 @@
 //! What a gateway shares with the other transports — `Guard`, `Interceptor`, `FromContext`,
 //! `Payload` — is in the crate's core, because it means the same thing there.
 
-use crate::dispatch::Cardinality;
+use crate::dispatch::Items;
 
 mod adapter;
 mod broadcast;
@@ -42,11 +42,11 @@ pub use ws_message::{CloseFrame, WsMessage};
 
 /// What a WebSocket handler answers with: nothing, one message, or a stream of them.
 ///
-/// `Cardinality` is the shape every transport with a count uses (ADR-0049); this names WebSocket's
+/// `Items` is the shape every transport with a count uses (ADR-0049); this names WebSocket's
 /// instantiation of it. An item cannot fail: a frame is a frame, and an error to a client is
 /// another message the gateway shapes. Build the stream with
-/// [`Cardinality::stream`](crate::dispatch::Cardinality::stream), which says so once.
-pub type WsHandlerOutput = Cardinality<WsMessage, std::convert::Infallible>;
+/// [`Items::stream`](crate::dispatch::Items::stream), which says so once.
+pub type WsHandlerOutput = Items<WsMessage, std::convert::Infallible>;
 
 /// Convenience alias for the return type of `#[subscribe_message]` handlers.
 pub type WsHandlerResult = Result<WsHandlerOutput, WsError>;
