@@ -10,6 +10,12 @@
 //! disjointness from coherence, which reasons about every possible type, to inference, which sees
 //! the concrete one a handler returns. `Result` implements no `Stream` today, and a type that did
 //! both would make [`into_sse`] ambiguous at the call rather than conflicting at the impl.
+//!
+//! Only `futures-core` could add that impl. The orphan rule refuses `impl Stream for
+//! Result<MyEvent, MyErr>` downstream even with both parameters local, because `Result` is not
+//! `#[fundamental]` and a local type inside it does not make the self type local. Were it added,
+//! `#[sse]` would have nowhere to put a turbofish. [`Sse::new`] carries no marker, and a `#[get]`
+//! handler naming `Sse::new(v)` or `Ok(Sse::new(s))` reaches either reading.
 
 #![doc(hidden)]
 
