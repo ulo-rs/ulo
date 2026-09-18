@@ -65,7 +65,7 @@ impl HttpAdapter for DyingAdapter {
     }
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_dead_serve_loop_closes_the_application() {
     let (die, dies) = oneshot::channel();
 
@@ -75,7 +75,7 @@ async fn a_dead_serve_loop_closes_the_application() {
     app.bind().await.unwrap();
 
     let shutdown = app.shutdown_handle();
-    let run = tokio::task::spawn_local(async move { app.run().await });
+    let run = tokio::spawn(async move { app.run().await });
 
     die.send(()).unwrap();
 

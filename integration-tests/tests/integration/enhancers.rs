@@ -198,7 +198,7 @@ impl Interceptor<HttpContext, HttpHandlerResult> for ValidationInterceptor {
     }
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn enhancers_execution_order() {
     use std::sync::OnceLock;
     static TRACKER: OnceLock<ExecutionOrder> = OnceLock::new();
@@ -337,7 +337,7 @@ async fn enhancers_execution_order() {
     tracker.assert_not_contains("controller:validate");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn guard_authorization() {
     use std::sync::OnceLock;
 
@@ -403,7 +403,7 @@ async fn guard_authorization() {
     assert!(events.contains(&"controller:auth_only".to_string()));
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn di_in_enhancers() {
     #[injectable]
     pub struct AuthService {}
@@ -463,7 +463,7 @@ async fn di_in_enhancers() {
     assert_eq!(resp.status(), 200);
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn app_token_global_enhancers() {
     use std::sync::OnceLock;
     use ulo::di::APP_GUARD;
@@ -533,7 +533,7 @@ async fn app_token_global_enhancers() {
 // Regression: the enhancer scan matched path-qualified attributes for stripping but
 // collected them via `Path::get_ident`, which fails on multi-segment paths — the
 // attribute vanished without applying the enhancer.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn path_qualified_enhancer_attrs() {
     use std::sync::OnceLock;
 
@@ -596,7 +596,7 @@ async fn path_qualified_enhancer_attrs() {
 
 // Regression: same-kind attributes stacked on one handler were collected into a map
 // keyed by attribute name, so the second silently replaced the first.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn stacked_enhancer_attrs_accumulate() {
     use std::sync::OnceLock;
 

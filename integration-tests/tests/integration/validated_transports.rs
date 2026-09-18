@@ -88,14 +88,12 @@ async fn pick_free_port() -> u16 {
 async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16 {
     use ulo::UloFactory;
     let port = pick_free_port().await;
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(module).await.unwrap();
         app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", port))
             .unwrap();
         app.start().await.unwrap();
     });
-    tokio::task::spawn_local(async move { local.await });
     port
 }
 
@@ -133,7 +131,7 @@ async fn tcp_rpc(port: u16, pattern: &str, data: serde_json::Value) -> serde_jso
 // ---- tests -------------------------------------------------------------------
 
 /// An RPC payload is validated by the handler's own signature.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn rpc_validated_payload_admits_valid_and_refuses_invalid() {
     let port = start_rpc_server(ValidatedRpcModule).await;
 
@@ -153,7 +151,7 @@ async fn rpc_validated_payload_admits_valid_and_refuses_invalid() {
 }
 
 /// The same wrapper over the same DTO, validating a WebSocket frame.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn ws_validated_payload_admits_valid_and_refuses_invalid() {
     use futures_util::{SinkExt, StreamExt};
 

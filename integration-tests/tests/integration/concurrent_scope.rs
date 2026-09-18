@@ -15,7 +15,7 @@ use ulo::http::Body;
 use ulo::{controller, get, module, provider_factory, routes};
 use uuid::Uuid;
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn request_scoped_instances_are_isolated_under_concurrency() {
     #[derive(Clone)]
     struct RequestId {

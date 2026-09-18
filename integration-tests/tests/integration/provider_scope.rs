@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::common::TestServer;
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn scope_behavior() {
     #[derive(Clone)]
     struct Counter {

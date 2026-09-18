@@ -73,8 +73,7 @@ async fn start_with_catchers(
 ) -> std::net::SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
 
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut factory = UloFactory::new();
         // Both registered. `other_catcher` is consulted first (later
         // registration → higher priority via reverse iteration). It must
@@ -90,14 +89,10 @@ async fn start_with_catchers(
         app.run().await;
     });
 
-    tokio::task::spawn_local(async move {
-        local.await;
-    });
-
     addr_rx.await.unwrap()
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn catch_handler_intercepts_framework_error() {
     // Guard rejection produces a framework-generated 403 → chain runs →
     // http_catcher claims it.
@@ -133,7 +128,7 @@ async fn catch_handler_intercepts_framework_error() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn non_matching_catch_falls_through() {
     // Sanity: a catcher whose target type doesn't match the boxed error must
     // return None so the chain advances. If our downcast were buggy and

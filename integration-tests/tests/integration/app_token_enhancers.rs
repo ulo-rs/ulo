@@ -151,7 +151,7 @@ impl TestController {
 impl TestModule {}
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn app_token_enhancers_with_di() {
     TRACKER.set(ExecutionTracker::new()).ok();
     let tracker = get_tracker();

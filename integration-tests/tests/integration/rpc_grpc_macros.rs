@@ -304,8 +304,7 @@ async fn boot_guarded() -> (u16, ulo::ShutdownHandle) {
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(GuardedGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -317,7 +316,6 @@ async fn boot_guarded() -> (u16, ulo::ShutdownHandle) {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -565,8 +563,7 @@ async fn boot_intercepted() -> (u16, ulo::ShutdownHandle) {
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(InterceptedGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -578,7 +575,6 @@ async fn boot_intercepted() -> (u16, ulo::ShutdownHandle) {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -587,8 +583,7 @@ async fn boot_deny() -> (u16, ulo::ShutdownHandle) {
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(DenyGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -600,7 +595,6 @@ async fn boot_deny() -> (u16, ulo::ShutdownHandle) {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -619,8 +613,7 @@ where
     let adapter = configure(ulo_grpc::GrpcAdapter::new(addr));
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(GrpcMacrosModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -632,7 +625,6 @@ where
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -646,7 +638,7 @@ async fn connect(port: u16) -> OrdersClient<tonic::transport::Channel> {
         .expect("gRPC connect should succeed")
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_service_macro_di_round_trip() {
     let (port, shutdown) = boot().await;
     let mut client = connect(port).await;
@@ -685,7 +677,7 @@ async fn grpc_service_macro_di_round_trip() {
         .expect("shutdown must complete");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_server_streaming_round_trip() {
     let (port, shutdown) = boot().await;
     let mut client = connect(port).await;
@@ -713,7 +705,7 @@ async fn grpc_server_streaming_round_trip() {
         .expect("shutdown must complete");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_client_streaming_round_trip() {
     let (port, shutdown) = boot().await;
     let mut client = connect(port).await;
@@ -757,7 +749,7 @@ async fn grpc_client_streaming_round_trip() {
 /// waits for in-flight handlers to return. With `with_drain_timeout` the
 /// budget elapses, the serve future is dropped, and the in-flight stream
 /// is aborted (clients see UNAVAILABLE).
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_drain_timeout_aborts_long_running_streams() {
     let drain = Duration::from_millis(150);
     let (port, shutdown) = boot_with(move |a| a.with_drain_timeout(drain)).await;
@@ -807,7 +799,7 @@ async fn grpc_drain_timeout_aborts_long_running_streams() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_bidi_streaming_round_trip() {
     let (port, shutdown) = boot().await;
     let mut client = connect(port).await;
@@ -853,7 +845,7 @@ async fn grpc_bidi_streaming_round_trip() {
 
 /// Service-level `#[use_guards(AuthGuard)]` lets through a request that
 /// carries the `authorization` metadata the guard checks for.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_guard_accepts_request() {
     let (port, shutdown) = boot_guarded().await;
     let mut client = connect(port).await;
@@ -883,7 +875,7 @@ async fn grpc_guard_accepts_request() {
 /// A missing `authorization` header makes `AuthGuard` reject — the wire
 /// status is `PERMISSION_DENIED`, mirroring how guard rejections surface
 /// across the framework's other transports.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_guard_rejects_with_permission_denied() {
     let (port, shutdown) = boot_guarded().await;
     let mut client = connect(port).await;
@@ -904,7 +896,7 @@ async fn grpc_guard_rejects_with_permission_denied() {
 /// runs both `AuthGuard` *and* `AdminGuard`. The service-level guard alone
 /// (just `authorization`) is no longer enough; the request must also carry
 /// the admin role for `create` to dispatch.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_guard_method_level_stacks_on_block_level() {
     let (port, shutdown) = boot_guarded().await;
     let mut client = connect(port).await;
@@ -1042,8 +1034,7 @@ async fn boot_error_handled() -> (u16, ulo::ShutdownHandle) {
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(ErrorHandledGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -1055,7 +1046,6 @@ async fn boot_error_handled() -> (u16, ulo::ShutdownHandle) {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -1125,8 +1115,7 @@ async fn boot_panicky() -> (u16, ulo::ShutdownHandle) {
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(PanickyGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -1138,7 +1127,6 @@ async fn boot_panicky() -> (u16, ulo::ShutdownHandle) {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -1146,7 +1134,7 @@ async fn boot_panicky() -> (u16, ulo::ShutdownHandle) {
 
 /// A service-level interceptor wraps the user delegation: `before` runs,
 /// the handler runs in the middle, `after` runs as the chain unwinds.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_interceptor_runs_around_handler() {
     let _serial = lock_interceptor_test();
     drain_interceptor_log();
@@ -1176,7 +1164,7 @@ async fn grpc_interceptor_runs_around_handler() {
 /// An interceptor that returns `Err(...)` without calling
 /// `next.run` short-circuits the call. The user handler never runs and
 /// the wire status comes from the interceptor's `GrpcStatus`.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_interceptor_short_circuits_with_error() {
     let _serial = lock_interceptor_test();
     drain_interceptor_log();
@@ -1209,7 +1197,7 @@ async fn grpc_interceptor_short_circuits_with_error() {
 /// service-level `before` runs first, then the method-level `before`,
 /// the handler runs, then unwinds in reverse (method-level `after`,
 /// service-level `after`).
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_interceptor_method_level_stacks_inside_service_level() {
     let _serial = lock_interceptor_test();
     drain_interceptor_log();
@@ -1250,7 +1238,7 @@ async fn grpc_interceptor_method_level_stacks_inside_service_level() {
 /// A registered error handler whose `handle_error` returns `Some` claims
 /// the response: the wire status comes from the handler's `GrpcStatus`,
 /// not the user's original `Err(Status)`.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_error_handler_claims_and_remaps_user_err() {
     let (port, shutdown) = boot_error_handled().await;
     let mut client = connect(port).await;
@@ -1277,7 +1265,7 @@ async fn grpc_error_handler_claims_and_remaps_user_err() {
 /// `Err(Status)` passes through unchanged. Same server as the claim test
 /// — the only difference is the request payload, which the handler uses
 /// to decide whether to claim.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_error_handler_passes_through_when_no_claim() {
     let (port, shutdown) = boot_error_handled().await;
     let mut client = connect(port).await;
@@ -1307,7 +1295,7 @@ async fn grpc_error_handler_passes_through_when_no_claim() {
 /// — the framework catches the panic and surfaces it as `Internal` to
 /// the wire. The panic payload bubbles into the status message so an
 /// operator inspecting the response can correlate.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_panic_in_handler_surfaces_as_internal() {
     let (port, shutdown) = boot_panicky().await;
     let mut client = connect(port).await;
@@ -1508,8 +1496,7 @@ async fn boot_guard_panic() -> (u16, ulo::ShutdownHandle) {
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(GuardPanicGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -1521,7 +1508,6 @@ async fn boot_guard_panic() -> (u16, ulo::ShutdownHandle) {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -1530,8 +1516,7 @@ async fn boot_interceptor_panic() -> (u16, ulo::ShutdownHandle) {
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(InterceptorPanicGrpcModule)
             .await
             .unwrap();
@@ -1545,7 +1530,6 @@ async fn boot_interceptor_panic() -> (u16, ulo::ShutdownHandle) {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -1553,7 +1537,7 @@ async fn boot_interceptor_panic() -> (u16, ulo::ShutdownHandle) {
 /// connection: it is a bug, not the "guard said no" verdict a
 /// `PermissionDenied` would report. A second call confirms the server stays
 /// up across the catch.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_panic_in_guard_surfaces_as_internal() {
     let (port, shutdown) = boot_guard_panic().await;
     let mut client = connect(port).await;
@@ -1591,7 +1575,7 @@ async fn grpc_panic_in_guard_surfaces_as_internal() {
 /// A panicking interceptor surfaces as `Internal` rather than tearing
 /// down the connection. The chain runner sets a status on the context;
 /// the wrapper reads it and converts to `tonic::Status`.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_panic_in_interceptor_surfaces_as_internal() {
     let (port, shutdown) = boot_interceptor_panic().await;
     let mut client = connect(port).await;
@@ -1699,8 +1683,7 @@ async fn boot_error_handler_panic() -> (u16, ulo::ShutdownHandle) {
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(ErrorHandlerPanicGrpcModule)
             .await
             .unwrap();
@@ -1714,7 +1697,6 @@ async fn boot_error_handler_panic() -> (u16, ulo::ShutdownHandle) {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -1722,7 +1704,7 @@ async fn boot_error_handler_panic() -> (u16, ulo::ShutdownHandle) {
 /// the original handler error passes through unchanged. Verifies the
 /// chain-runner's log-and-continue policy specifically — a single bad
 /// handler must not erase the original error.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_panic_in_error_handler_continues_chain_to_default_rendering() {
     let (port, shutdown) = boot_error_handler_panic().await;
     let mut client = connect(port).await;
@@ -1823,8 +1805,7 @@ where
     let adapter = configure(ulo_grpc::GrpcAdapter::new(addr));
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(SlowGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -1836,7 +1817,6 @@ where
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -1846,7 +1826,7 @@ where
 /// proving the permit is released cleanly. Mirrors the TCP
 /// backpressure test
 /// (`tcp_backpressure_rejects_excess_and_releases_after_completion`).
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_backpressure_rejects_excess_and_releases_after_completion() {
     let (port, shutdown) = boot_slow_with(|a| a.with_max_inflight(1)).await;
 
@@ -1857,7 +1837,7 @@ async fn grpc_backpressure_rejects_excess_and_releases_after_completion() {
 
     // Fire call A first; give the server time to spawn the slow handler
     // and acquire the only permit before issuing call B.
-    let call_a = tokio::task::spawn_local(async move {
+    let call_a = tokio::spawn(async move {
         client_a
             .create(orders_pb::CreateOrderRequest {
                 item: "a".into(),
@@ -1989,13 +1969,12 @@ struct BusGrpcModule;
 
 /// The last transport to get it: `extension_bus.rs` covers HTTP and WebSocket,
 /// `rpc_tcp.rs` covers RPC.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_guard_write_reaches_the_handler() {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(BusGrpcModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -2006,7 +1985,6 @@ async fn grpc_guard_write_reaches_the_handler() {
         let _ = port_tx.send(port);
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
 
     let port = port_rx.await.unwrap();
     let mut client = connect(port).await;
@@ -2221,8 +2199,7 @@ where
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(module).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -2235,14 +2212,13 @@ where
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
 /// `#[controller(scope = "execution")]` builds the service inside the call it
 /// serves: a fresh one per call, and its execution-scoped dependency is the
 /// instance the call already holds rather than a second one.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_request_scoped_grpc_service_is_built_per_call() {
     let (port, shutdown) = boot_module(PerCallGrpcModule).await;
     let mut client = connect(port).await;
@@ -2293,7 +2269,7 @@ async fn a_request_scoped_grpc_service_is_built_per_call() {
 
 /// A service that declares no scope and injects nothing execution-scoped is still
 /// built once and shared.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_singleton_grpc_service_is_built_once() {
     let (port, shutdown) = boot_module(SingletonGrpcModule).await;
     let mut client = connect(port).await;
@@ -2434,7 +2410,7 @@ struct MetaGrpcModule;
 
 /// The service's entries reach every method, and a method that declares its own shadows the
 /// matching type. Read through a guard, that being the only participant holding the context.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn declared_metadata_reaches_a_grpc_guard() {
     DECLARED_SEEN.lock().unwrap().clear();
     let (port, shutdown) = boot_module(MetaGrpcModule).await;

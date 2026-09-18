@@ -92,7 +92,7 @@ impl AppController {
 impl AppModule {}
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn config_read_from_env_vars() {
     // SAFETY: `#[serial]` runs this test alone, so nothing else reads the
     // environment while it is written.
@@ -150,7 +150,7 @@ async fn config_read_from_env_vars() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn config_falls_back_to_defaults() {
     // SAFETY: `#[serial]` runs this test alone, so nothing else reads the
     // environment while it is written.

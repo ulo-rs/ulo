@@ -105,8 +105,7 @@ async fn boot() -> (u16, ulo::ShutdownHandle) {
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(ReflectionModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -115,14 +114,13 @@ async fn boot() -> (u16, ulo::ShutdownHandle) {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
 /// A client with no `.proto` asks the server what it serves, and is told about
 /// the service `#[grpc_methods]` registered.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn reflection_lists_the_services_the_framework_registered() {
     let (port, shutdown) = boot().await;
 

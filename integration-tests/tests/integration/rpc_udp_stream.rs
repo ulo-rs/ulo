@@ -21,8 +21,7 @@ use ulo_macros::{controller, module, new, patterns};
 async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16 {
     use ulo::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let factory = UloFactory::new();
         let mut app = factory.create_with(module).await.unwrap();
         app.use_rpc_adapter(ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 0))
@@ -36,7 +35,6 @@ async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16
         );
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     port_rx.await.expect("RPC server failed to bind")
 }
 
@@ -178,7 +176,7 @@ impl UdpStreamController {
 #[module(controllers: [UdpStreamController])]
 impl UdpStreamModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn stream_datagrams_arrive_in_order_then_the_end_marker() {
     let port = start_rpc_server(UdpStreamModule).await;
     let frames = udp_stream_frames(
@@ -197,7 +195,7 @@ async fn stream_datagrams_arrive_in_order_then_the_end_marker() {
     assert!(frames[3].get("err").is_none());
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_binary_item_travels_base64_and_decodes_back() {
     let port = start_rpc_server(UdpStreamModule).await;
     let client = ulo::rpc::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port));
@@ -212,7 +210,7 @@ async fn a_binary_item_travels_base64_and_decodes_back() {
     assert!(stream.next().await.is_none());
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_framework_error_mid_stream_is_an_error_end() {
     let port = start_rpc_server(UdpStreamModule).await;
     let frames = udp_stream_frames(
@@ -227,7 +225,7 @@ async fn a_framework_error_mid_stream_is_an_error_end() {
     assert_eq!(frames[0]["err"]["status"], "Internal");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_oversize_item_ends_the_stream_loudly() {
     let port = start_rpc_server(UdpStreamModule).await;
     let frames = udp_stream_frames(
@@ -243,7 +241,7 @@ async fn an_oversize_item_ends_the_stream_loudly() {
     assert!(msg.contains("exceeds"), "got: {msg}");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_cancel_datagram_stops_the_producer() {
     let port = start_rpc_server(UdpStreamModule).await;
     let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -268,7 +266,7 @@ async fn a_cancel_datagram_stops_the_producer() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_early_client_drop_sends_the_cancel_notice() {
     let port = start_rpc_server(UdpStreamModule).await;
     let client = ulo::rpc::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port));
@@ -285,7 +283,7 @@ async fn an_early_client_drop_sends_the_cancel_notice() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_stream_call_to_a_single_handler_is_one_item_then_the_end() {
     let port = start_rpc_server(UdpStreamModule).await;
     let client = ulo::rpc::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port));
@@ -300,7 +298,7 @@ async fn a_stream_call_to_a_single_handler_is_one_item_then_the_end() {
     assert!(stream.next().await.is_none());
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_send_to_a_streaming_handler_fails_loudly() {
     let port = start_rpc_server(UdpStreamModule).await;
     let client = ulo::rpc::RpcClient::new(ulo_rpc_udp::UdpClientTransport::new("127.0.0.1", port));

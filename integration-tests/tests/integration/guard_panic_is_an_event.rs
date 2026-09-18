@@ -114,13 +114,12 @@ impl PanicGuardRpcController {
 impl RpcGuardPanicEventModule {}
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_panicking_rpc_guard_is_answered_by_the_chain() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut factory = UloFactory::new();
         factory.use_global_rpc_error_handler(Arc::new(rpc_panic_catcher));
         let mut app = factory.create_with(RpcGuardPanicEventModule).await.unwrap();
@@ -130,7 +129,6 @@ async fn a_panicking_rpc_guard_is_answered_by_the_chain() {
         let _ = port_tx.send(bound.rpc.expect("rpc must bind").port());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     let port = port_rx.await.unwrap();
 
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
@@ -211,13 +209,12 @@ impl PanicGuardGrpcService {
 impl GrpcGuardPanicEventModule {}
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_panicking_grpc_guard_is_answered_by_the_chain() {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::new()
             .create_with(GrpcGuardPanicEventModule)
             .await
@@ -227,7 +224,6 @@ async fn a_panicking_grpc_guard_is_answered_by_the_chain() {
         let _ = port_tx.send(bound.grpc.expect("grpc must bind").port());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     let port = port_rx.await.unwrap();
 
     let mut client = OrdersClient::new(

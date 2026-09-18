@@ -53,7 +53,7 @@ impl TwoPathsModule {}
 
 /// Same schema at two paths is two modules, and both serve.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn two_paths_mount_two_endpoints() {
     let server = TestServer::start(TwoPathsModule).await;
 
@@ -87,15 +87,10 @@ impl ClashModule {}
 #[test]
 fn a_second_context_builder_on_one_path_is_refused() {
     let message = crate::common::panic_message(|| async {
-        let local = tokio::task::LocalSet::new();
-        local
-            .run_until(async {
-                let mut app = UloFactory::create(ClashModule).await.unwrap();
-                app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
-                    .unwrap();
-                let _ = app.bind().await;
-            })
-            .await;
+        let mut app = UloFactory::create(ClashModule).await.unwrap();
+        app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
+            .unwrap();
+        let _ = app.bind().await;
     });
 
     assert!(
@@ -109,7 +104,7 @@ impl DiamondModule {}
 
 /// An identical import is still a diamond: one module, one endpoint.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_identical_import_dedups() {
     let server = TestServer::start(DiamondModule).await;
 

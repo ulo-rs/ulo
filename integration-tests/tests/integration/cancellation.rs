@@ -42,7 +42,7 @@ impl ProbeController {
 impl ProbeModule {}
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_disconnect_drops_the_handler_future() {
     HANDLER_DROPPED.store(false, Ordering::SeqCst);
     let server = TestServer::start(ProbeModule).await;
@@ -71,7 +71,7 @@ async fn a_disconnect_drops_the_handler_future() {
 /// Negative control: a client that stays connected must not see the handler dropped, or the test
 /// above would pass for a reason that has nothing to do with disconnecting.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_live_connection_does_not_drop_the_handler() {
     HANDLER_DROPPED.store(false, Ordering::SeqCst);
     let server = TestServer::start(ProbeModule).await;
@@ -181,7 +181,7 @@ impl TailModule {}
 
 /// The producer stops when the body is dropped, rather than at whatever it was going to do next.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_dropped_body_cancels_the_work_feeding_it() {
     PRODUCER_SAW_CANCEL.store(false, Ordering::SeqCst);
     WORK_AFTER_DISCONNECT.store(0, Ordering::SeqCst);
@@ -208,7 +208,7 @@ async fn a_dropped_body_cancels_the_work_feeding_it() {
 /// An error ends a body, and ending is not the same as finishing: the task feeding it is told, the
 /// way it is told behind an RPC reply stream or a gRPC streaming reply that ends the same way.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_body_that_fails_mid_stream_cancels_the_work_feeding_it() {
     ERRORED_SAW_CANCEL.store(false, Ordering::SeqCst);
 

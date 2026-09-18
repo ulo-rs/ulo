@@ -40,7 +40,7 @@ use ulo_macros::{use_guards, use_interceptors};
 
 // ---- Canonical-envelope responses (no chain involvement) ---------------------
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn http_error_renders_via_app_error_default() {
     #[controller("/api")]
     pub struct HttpErrController {}
@@ -80,7 +80,7 @@ impl std::fmt::Display for InvoiceMissing {
 
 impl std::error::Error for InvoiceMissing {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn custom_app_error_renders_canonical_envelope() {
     #[controller("/api")]
     pub struct CustomErrController {}
@@ -109,7 +109,7 @@ async fn custom_app_error_renders_canonical_envelope() {
     assert_eq!(body["message"], "invoice inv-42 not found");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn unmatched_chain_handler_falls_through_to_app_error_default() {
     // The chain runs on user errors (symmetric with framework events), but
     // a handler that downcasts to a *different* type than the boxed user
@@ -188,7 +188,7 @@ impl ErrorHandler<HttpContext, HttpHandlerResult> for MarkerHandler {
 /// of its answer, and the chain above claims either. Before, only the panic was routed — the
 /// deliberate failure rendered whatever the interceptor had built and skipped every `#[catch]`
 /// handler the application registered.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn chain_fires_on_an_interceptor_refusing() {
     /// Claims whatever reaches it, so the test asserts the refusal *arrived* rather than
     /// asserting which type it arrived as.
@@ -249,7 +249,7 @@ async fn chain_fires_on_an_interceptor_refusing() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn chain_fires_on_guard_rejection() {
     #[controller("/api")]
     pub struct GuardedController {}
@@ -301,7 +301,7 @@ impl ErrorHandler<HttpContext, HttpHandlerResult> for HttpErrorOverride {
     }
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn scope_chain_overrides_app_error_default_on_user_error() {
     // Stratification in action: `ulo::Error` is the type-level default, the
     // chain is the scope-level override. A handler registered on this scope
@@ -341,8 +341,7 @@ async fn start_app(
 ) -> std::net::SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
 
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut factory = UloFactory::new();
         if let Some(handler) = chain_handler {
             factory.use_global_http_error_handler(handler);
@@ -353,10 +352,6 @@ async fn start_app(
         let bound = app.bind().await.unwrap();
         let _ = addr_tx.send(bound.http.expect("HTTP adapter not bound"));
         app.run().await;
-    });
-
-    tokio::task::spawn_local(async move {
-        local.await;
     });
 
     addr_rx.await.unwrap()

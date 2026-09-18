@@ -56,7 +56,7 @@ async fn case_serves_on_caller_socket(adapter: impl ulo::http::HttpAdapter + 'st
 macro_rules! bind_target_suite {
     ($adapter_mod:ident, $adapter:expr) => {
         mod $adapter_mod {
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn serves_on_caller_supplied_listener() {
                 super::case_serves_on_caller_socket($adapter).await;
             }
@@ -69,7 +69,7 @@ bind_target_suite!(poem, ulo_http_poem::PoemAdapter::new());
 bind_target_suite!(salvo, ulo_http_salvo::SalvoAdapter::new());
 bind_target_suite!(actix, ulo_http_actix::ActixAdapter::new());
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn rocket_refuses_a_pre_bound_listener() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
 

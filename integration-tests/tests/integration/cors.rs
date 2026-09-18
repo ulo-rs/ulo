@@ -46,7 +46,7 @@ fn header<'a>(resp: &'a reqwest::Response, name: &str) -> Option<&'a str> {
     resp.headers().get(name).and_then(|v| v.to_str().ok())
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn preflight_answered_without_options_route() {
     let server = permissive_server().await;
 
@@ -75,7 +75,7 @@ async fn preflight_answered_without_options_route() {
     assert!(header(&resp, "vary").unwrap().contains("Origin"));
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn actual_request_is_decorated() {
     let server = permissive_server().await;
 
@@ -92,7 +92,7 @@ async fn actual_request_is_decorated() {
     assert_eq!(resp.text().await.unwrap(), "payload");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn same_origin_request_untouched() {
     let server = permissive_server().await;
 
@@ -107,7 +107,7 @@ async fn same_origin_request_untouched() {
     assert_eq!(header(&resp, "access-control-allow-origin"), None);
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn allowlist_echoes_origin_with_credentials() {
     let server = allowlist_server().await;
 
@@ -134,7 +134,7 @@ async fn allowlist_echoes_origin_with_credentials() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn disallowed_origin_gets_no_cors_headers() {
     let server = allowlist_server().await;
 
@@ -163,7 +163,7 @@ async fn disallowed_origin_gets_no_cors_headers() {
     assert_eq!(header(&preflight, "access-control-allow-origin"), None);
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn preflight_carries_max_age() {
     let server = allowlist_server().await;
 

@@ -48,7 +48,7 @@ impl XController {
 impl XModule {}
 
 /// The envelope, field by field.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_extraction_failure_names_itself_and_says_why() {
     let server = TestServer::start(XModule).await;
 
@@ -106,7 +106,7 @@ impl ErrorHandler<HttpContext, HttpHandlerResult> for ClaimEverything {
 /// An extraction failure is written before any enhancer holds a value, so the
 /// chain never sees it. A handler that claims everything still does not claim
 /// this one.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_extraction_failure_does_not_reach_the_error_chain() {
     let mut factory = UloFactory::new();
     factory.use_global_http_error_handler(Arc::new(ClaimEverything));

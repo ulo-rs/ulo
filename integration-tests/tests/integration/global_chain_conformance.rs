@@ -10,9 +10,6 @@
 //! to a route without an OPTIONS handler, and a path rewrite that changes
 //! which route runs.
 //!
-//! `#[serial]` must precede `#[localset_test]` — the localset macro rebuilds
-//! the function and drops any attribute written after it.
-//!
 //! [`ServeContext`]: ulo::spi::ServeContext
 
 use std::sync::{Arc, Mutex, OnceLock};
@@ -244,37 +241,37 @@ macro_rules! conformance_suite {
             use serial_test::serial;
 
             #[serial(global_chain)]
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn chain_runs_on_matched_route() {
                 super::case_matched_route(super::boot($adapter).await).await;
             }
 
             #[serial(global_chain)]
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn chain_runs_on_unknown_path() {
                 super::case_unknown_path(super::boot($adapter).await).await;
             }
 
             #[serial(global_chain)]
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn chain_runs_on_method_mismatch() {
                 super::case_method_mismatch(super::boot($adapter).await).await;
             }
 
             #[serial(global_chain)]
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn middleware_answers_preflight() {
                 super::case_preflight(super::boot($adapter).await).await;
             }
 
             #[serial(global_chain)]
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn middleware_short_circuits_before_handler() {
                 super::case_short_circuit(super::boot($adapter).await).await;
             }
 
             #[serial(global_chain)]
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn request_rewrite_changes_matched_route() {
                 super::case_rewrite(super::boot($adapter).await).await;
             }

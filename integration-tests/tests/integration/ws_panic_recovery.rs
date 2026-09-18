@@ -28,8 +28,7 @@ async fn start_ws_server_with_handlers(
     use ulo_http_axum::AxumAdapter;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut factory = UloFactory::new();
         for h in handlers {
             factory.use_global_ws_error_handler(h);
@@ -40,9 +39,6 @@ async fn start_ws_server_with_handlers(
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.http.expect("HTTP adapter not bound").port());
         app.run().await;
-    });
-    tokio::task::spawn_local(async move {
-        local.await;
     });
     port_rx.await.unwrap()
 }
@@ -99,7 +95,7 @@ impl PanicGatewayModule {}
 /// Note: the test produces a "panicked at" line in stderr — that is the
 /// Rust panic hook firing before catch_unwind catches the unwind. It is
 /// expected and does not indicate a test failure.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn ws_handler_panic_renders_envelope_and_keeps_connection_alive() {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
@@ -180,7 +176,7 @@ impl WsGuardPanicGateway {
 #[module(providers: [PanickingWsGuard, WsGuardPanicGateway])]
 impl WsGuardPanicModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn ws_guard_panic_renders_envelope_and_keeps_connection_alive() {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
@@ -251,7 +247,7 @@ impl WsInterceptorPanicGateway {
 #[module(providers: [PanickingWsInterceptor, WsInterceptorPanicGateway])]
 impl WsInterceptorPanicModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn ws_interceptor_panic_renders_envelope_and_keeps_connection_alive() {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
@@ -322,7 +318,7 @@ impl WsErrorHandlerPanicGateway {
 #[module(providers: [PanickingWsErrorHandler, WsErrorHandlerPanicGateway])]
 impl WsErrorHandlerPanicModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn ws_error_handler_panic_continues_chain_to_default_rendering() {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
@@ -398,7 +394,7 @@ impl WsRenderPanicGateway {
 #[module(providers: [WsRenderPanicGateway])]
 impl WsRenderPanicModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn ws_renderer_panic_falls_back_to_safe_envelope() {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;

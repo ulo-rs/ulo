@@ -267,14 +267,12 @@ async fn pick_free_port() -> u16 {
 async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16 {
     use ulo::UloFactory;
     let port = pick_free_port().await;
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(module).await.unwrap();
         app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", port))
             .unwrap();
         app.start().await.unwrap();
     });
-    tokio::task::spawn_local(async move { local.await });
     port
 }
 
@@ -324,7 +322,7 @@ async fn tcp_rpc(port: u16, pattern: &str, data: serde_json::Value) -> serde_jso
 /// Without `x-allow`:
 ///   "all"   → guard blocks silently (no reply)
 ///   "plain" → still "plain-ok"  (guard is isolated to "all")
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn ws_method_level_enhancers_work() {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::handshake::client::generate_key;
@@ -431,7 +429,7 @@ async fn ws_method_level_enhancers_work() {
 /// "rpc.recovering" → handler errors; chain claims via RecoveryErrorHandler
 ///                    → "recovered"
 /// "rpc.plain"      → "plain-ok" always  (isolation control)
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn rpc_method_level_enhancers_work() {
     let port = start_rpc_server(RpcMethodEnhancersModule).await;
 

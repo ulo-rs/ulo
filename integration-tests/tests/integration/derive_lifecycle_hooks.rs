@@ -73,7 +73,7 @@ pub struct PlainService {
 struct LifecycleModule {}
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn derive_startup_hooks_fire() {
     get_log().lock().unwrap().clear();
 
@@ -91,14 +91,13 @@ async fn derive_startup_hooks_fire() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn derive_shutdown_hooks_fire() {
     get_log().lock().unwrap().clear();
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
 
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(LifecycleModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
@@ -106,7 +105,6 @@ async fn derive_shutdown_hooks_fire() {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
 
     let shutdown = shutdown_rx.await.unwrap();
     shutdown.shutdown();

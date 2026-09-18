@@ -72,7 +72,7 @@ impl ExtractorController {
 )]
 impl ExtractorModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_query_extractor() {
     let server = TestServer::start(ExtractorModule).await;
 
@@ -110,7 +110,7 @@ async fn test_query_extractor() {
     assert_eq!(resp.status(), 400);
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_aliased_body_extractor_receives_body() {
     let server = TestServer::start(ExtractorModule).await;
 
@@ -125,7 +125,7 @@ async fn test_aliased_body_extractor_receives_body() {
     assert_eq!(resp.text().await.unwrap(), "len=13");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_json_extractor() {
     let server = TestServer::start(ExtractorModule).await;
 
@@ -194,7 +194,7 @@ impl ValidatedController {
 )]
 impl ValidatedModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_validated_extractor() {
     let server = TestServer::start(ValidatedModule).await;
 
@@ -242,7 +242,7 @@ async fn test_validated_extractor() {
     assert_eq!(resp.status(), 400);
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_typed_path_extractor() {
     let server = TestServer::start(ExtractorModule).await;
 
@@ -296,7 +296,7 @@ impl WrappedQueryController {
 )]
 impl WrappedQueryModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_validated_query_leaves_the_body_alone() {
     let server = TestServer::start(WrappedQueryModule).await;
 

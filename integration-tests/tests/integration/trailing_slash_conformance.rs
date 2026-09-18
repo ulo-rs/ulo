@@ -97,27 +97,27 @@ async fn case_root_path_preserved(server: TestServer) {
 macro_rules! trailing_slash_suite {
     ($adapter_mod:ident, $adapter:expr) => {
         mod $adapter_mod {
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn controller_root_matches_both_forms() {
                 super::case_controller_root(super::boot($adapter).await).await;
             }
 
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn nested_and_param_paths_match_both_forms() {
                 super::case_nested_and_params(super::boot($adapter).await).await;
             }
 
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn query_survives_trimming() {
                 super::case_query_survives(super::boot($adapter).await).await;
             }
 
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn declared_trailing_slash_matches_both_forms() {
                 super::case_declared_with_trailing_slash(super::boot($adapter).await).await;
             }
 
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn root_path_preserved() {
                 super::case_root_path_preserved(super::boot($adapter).await).await;
             }

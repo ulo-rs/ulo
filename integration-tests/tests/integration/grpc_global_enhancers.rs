@@ -244,8 +244,7 @@ where
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut factory = UloFactory::new();
         configure(&mut factory);
         let mut app = factory.create_with(GlobalsGrpcModule).await.unwrap();
@@ -256,7 +255,6 @@ where
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -286,7 +284,7 @@ async fn stop(shutdown: ulo::ShutdownHandle) {
 
 /// A guard the service never names still runs, and runs first.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_guard_runs_ahead_of_the_service_s_own() {
     SEEN.lock().unwrap().clear();
 
@@ -307,7 +305,7 @@ async fn a_global_guard_runs_ahead_of_the_service_s_own() {
 
 /// And rejecting from there stops the call before the service's guard is asked.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_guard_rejecting_stops_the_call() {
     SEEN.lock().unwrap().clear();
 
@@ -329,7 +327,7 @@ async fn a_global_guard_rejecting_stops_the_call() {
 
 /// An interceptor registered globally wraps the whole chain below it.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_interceptor_wraps_every_method() {
     SEEN.lock().unwrap().clear();
 
@@ -354,7 +352,7 @@ async fn a_global_interceptor_wraps_every_method() {
 
 /// A handler's own `Err` is offered to the global handler, which reshapes it.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_error_handler_claims_what_the_service_leaves() {
     SEEN.lock().unwrap().clear();
 
@@ -381,7 +379,7 @@ async fn a_global_error_handler_claims_what_the_service_leaves() {
 /// a decline stopped the chain, the call would come back with the status the handler raised and
 /// `"claimed globally"` would never be reached.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_declining_handler_lets_the_next_one_claim() {
     SEEN.lock().unwrap().clear();
 
@@ -413,7 +411,7 @@ async fn a_declining_handler_lets_the_next_one_claim() {
 /// A global guard runs once on a method that names its own, not once per level it was
 /// folded into.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_guard_runs_once_on_a_method_with_its_own_guard() {
     SEEN.lock().unwrap().clear();
 
@@ -441,7 +439,7 @@ async fn a_global_guard_runs_once_on_a_method_with_its_own_guard() {
 
 /// And a global interceptor wraps such a method once, rather than once per level.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_interceptor_wraps_once_on_a_method_with_its_own() {
     SEEN.lock().unwrap().clear();
 

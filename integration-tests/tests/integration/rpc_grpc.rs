@@ -17,7 +17,7 @@ use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_check_response::ServingStatus as PbServingStatus;
 use tonic_health::pb::health_client::HealthClient;
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_adapter_seam_round_trip_and_shuts_down() {
     use ulo::UloFactory;
 
@@ -39,8 +39,7 @@ async fn grpc_adapter_seam_round_trip_and_shuts_down() {
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
 
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(EmptyModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -52,7 +51,6 @@ async fn grpc_adapter_seam_round_trip_and_shuts_down() {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
 
     let port = port_rx.await.unwrap();
     let shutdown = shutdown_rx.await.unwrap();

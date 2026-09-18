@@ -32,7 +32,7 @@ impl TestController {
 #[module(controllers: [TestController], providers: [])]
 impl TestModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn request_auto_injected_without_providers_entry() {
     let server = TestServer::start(TestModule).await;
 

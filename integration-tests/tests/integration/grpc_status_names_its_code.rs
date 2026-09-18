@@ -182,15 +182,13 @@ async fn boot(module: impl ulo::di::ModuleMetadata + 'static) -> u16 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::new().create_with(module).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.grpc.expect("grpc must bind").port());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     port_rx.await.unwrap()
 }
 
@@ -215,7 +213,7 @@ async fn create(port: u16, item: &str) -> tonic::Status {
 /// No `ErrorKind` maps to `FailedPrecondition`, so deriving the code from the
 /// status's own `kind()` would answer `Internal`.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_answers_with_a_code_no_kind_reaches() {
     let err = create(boot(NamedCodeModule).await, "late").await;
 
@@ -226,7 +224,7 @@ async fn a_handler_answers_with_a_code_no_kind_reaches() {
 /// Nothing is registered to claim it, so the named code goes to the wire even
 /// though the carried error's kind maps elsewhere.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_carried_error_does_not_overwrite_the_named_code() {
     let err = create(boot(NamedCodeModule).await, "early").await;
 
@@ -236,7 +234,7 @@ async fn a_carried_error_does_not_overwrite_the_named_code() {
 
 /// The chain is offered the carried error rather than the status it rode on.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn the_chain_sees_the_error_a_named_status_carries() {
     let err = create(boot(ClaimedNamedCodeModule).await, "early").await;
 

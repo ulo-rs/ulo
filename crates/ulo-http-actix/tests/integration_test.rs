@@ -59,8 +59,7 @@ impl HttpOnlyModule {}
 /// against whatever else holds the port on the machine.
 async fn start() -> std::net::SocketAddr {
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(HttpOnlyModule).await.unwrap();
         app.use_http_adapter(ActixAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
@@ -68,38 +67,30 @@ async fn start() -> std::net::SocketAddr {
         let _ = tx.send(bound.http.expect("HTTP not bound"));
         app.run().await;
     });
-    tokio::task::spawn_local(async move {
-        local.await;
-    });
     rx.await.unwrap()
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn http_get_path_param_route_through_actix() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let addr = start().await;
-            let base = format!("http://{addr}");
-            let client = reqwest::Client::new();
+    let addr = start().await;
+    let base = format!("http://{addr}");
+    let client = reqwest::Client::new();
 
-            let r = client
-                .get(format!("{base}/api/hello"))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 200);
-            assert_eq!(r.text().await.unwrap(), "hello");
+    let r = client
+        .get(format!("{base}/api/hello"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "hello");
 
-            let r = client
-                .get(format!("{base}/api/users/42"))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 200);
-            assert_eq!(r.text().await.unwrap(), "user 42");
-        })
-        .await;
+    let r = client
+        .get(format!("{base}/api/users/42"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "user 42");
 }
 
 /// actix-web's `PayloadConfig` default, which the adapter never raises.
@@ -110,38 +101,33 @@ const PAYLOAD_LIMIT: usize = 262_144;
 /// the chunk count is what distinguishes this one.
 #[tokio::test(flavor = "current_thread")]
 async fn a_streaming_handler_receives_the_body_already_collected() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let addr = start().await;
-            let base = format!("http://{addr}");
-            let client = reqwest::Client::new();
+    let addr = start().await;
+    let base = format!("http://{addr}");
+    let client = reqwest::Client::new();
 
-            let r = client
-                .post(format!("{base}/api/echo"))
-                .body("hello world")
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 200);
-            assert_eq!(r.text().await.unwrap(), "echo:11");
+    let r = client
+        .post(format!("{base}/api/echo"))
+        .body("hello world")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "echo:11");
 
-            let payload = vec![0u8; PAYLOAD_LIMIT];
-            let r = client
-                .post(format!("{base}/api/count"))
-                .body(payload)
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 200);
-            assert_eq!(
-                r.text().await.unwrap(),
-                format!("count:{PAYLOAD_LIMIT} chunks:1"),
-                "actix collects the payload before dispatch; more than one chunk \
-                 means it grew a streaming path and the adapter table is now wrong"
-            );
-        })
-        .await;
+    let payload = vec![0u8; PAYLOAD_LIMIT];
+    let r = client
+        .post(format!("{base}/api/count"))
+        .body(payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(
+        r.text().await.unwrap(),
+        format!("count:{PAYLOAD_LIMIT} chunks:1"),
+        "actix collects the payload before dispatch; more than one chunk \
+         means it grew a streaming path and the adapter table is now wrong"
+    );
 }
 
 /// A request one byte over the limit is refused with 413 before any handler
@@ -152,19 +138,14 @@ async fn a_streaming_handler_receives_the_body_already_collected() {
 /// `PayloadConfig`, which the adapter does not surface.
 #[tokio::test(flavor = "current_thread")]
 async fn a_payload_over_the_actix_limit_is_refused() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let addr = start().await;
-            let client = reqwest::Client::new();
+    let addr = start().await;
+    let client = reqwest::Client::new();
 
-            let r = client
-                .post(format!("http://{addr}/api/count"))
-                .body(vec![0u8; PAYLOAD_LIMIT + 1])
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 413);
-        })
-        .await;
+    let r = client
+        .post(format!("http://{addr}/api/count"))
+        .body(vec![0u8; PAYLOAD_LIMIT + 1])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 413);
 }

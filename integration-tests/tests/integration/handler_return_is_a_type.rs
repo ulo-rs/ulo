@@ -67,8 +67,7 @@ impl SpellingModule {}
 
 async fn start() -> std::net::SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut factory = UloFactory::new();
         factory.use_global_http_error_handler(Arc::new(claim_refused));
         let mut app = factory.create_with(SpellingModule).await.unwrap();
@@ -78,11 +77,10 @@ async fn start() -> std::net::SocketAddr {
         let _ = addr_tx.send(bound.http.unwrap());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     addr_rx.await.unwrap()
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn every_spelling_reaches_the_error_chain() {
     let addr = start().await;
     *CLAIMED.lock().unwrap() = 0;

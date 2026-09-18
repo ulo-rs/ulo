@@ -77,64 +77,58 @@ impl AppModule {}
 async fn main() -> anyhow::Result<()> {
     let endpoint = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
 
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async move {
-            let server = {
-                let endpoint = endpoint.clone();
-                tokio::task::spawn_local(async move {
-                    let mut app = UloFactory::create(AppModule).await.unwrap();
-                    app.use_rpc_adapter(RedisAdapter::new(endpoint.clone()))
-                        .unwrap();
-                    app.bind().await.unwrap();
-                    println!("serving order.* over Redis");
-                    app.run().await;
-                })
-            };
-
-            // Give the server its subscriptions before the first call.
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-            let client = RpcClient::new(RedisClientTransport::new(endpoint.clone()));
-
-            let created = client
-                .send(
-                    "order.create",
-                    RpcData::from_serialize(&serde_json::json!({
-                        "item": "keyboard",
-                        "qty": 3
-                    }))?,
-                )
-                .await?;
-            println!("order.create -> {:?}", created.as_json());
-
-            // An error from the handler comes back inside a successful frame,
-            // as the canonical envelope rather than a transport failure.
-            let refused = client
-                .send(
-                    "order.create",
-                    RpcData::from_serialize(&serde_json::json!({
-                        "item": "keyboard",
-                        "qty": 0
-                    }))?,
-                )
-                .await;
-            println!("order.create (qty 0) -> {refused:?}");
-
-            client
-                .emit(
-                    "order.shipped",
-                    RpcData::from_serialize(&serde_json::json!({
-                        "order_id": 1001
-                    }))?,
-                )
-                .await?;
-            println!("order.shipped emitted");
-
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            server.abort();
-            Ok::<_, anyhow::Error>(())
+    let server = {
+        let endpoint = endpoint.clone();
+        tokio::spawn(async move {
+            let mut app = UloFactory::create(AppModule).await.unwrap();
+            app.use_rpc_adapter(RedisAdapter::new(endpoint.clone()))
+                .unwrap();
+            app.bind().await.unwrap();
+            println!("serving order.* over Redis");
+            app.run().await;
         })
+    };
+
+    // Give the server its subscriptions before the first call.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    let client = RpcClient::new(RedisClientTransport::new(endpoint.clone()));
+
+    let created = client
+        .send(
+            "order.create",
+            RpcData::from_serialize(&serde_json::json!({
+                "item": "keyboard",
+                "qty": 3
+            }))?,
+        )
         .await?;
+    println!("order.create -> {:?}", created.as_json());
+
+    // An error from the handler comes back inside a successful frame,
+    // as the canonical envelope rather than a transport failure.
+    let refused = client
+        .send(
+            "order.create",
+            RpcData::from_serialize(&serde_json::json!({
+                "item": "keyboard",
+                "qty": 0
+            }))?,
+        )
+        .await;
+    println!("order.create (qty 0) -> {refused:?}");
+
+    client
+        .emit(
+            "order.shipped",
+            RpcData::from_serialize(&serde_json::json!({
+                "order_id": 1001
+            }))?,
+        )
+        .await?;
+    println!("order.shipped emitted");
+
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    server.abort();
     Ok(())
 }

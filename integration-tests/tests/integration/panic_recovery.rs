@@ -58,8 +58,7 @@ macro_rules! recording_handler {
 async fn start_app(module: impl ulo::di::ModuleMetadata + 'static) -> std::net::SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
 
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let factory = UloFactory::new();
         let mut app = factory.create_with(module).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
@@ -69,16 +68,12 @@ async fn start_app(module: impl ulo::di::ModuleMetadata + 'static) -> std::net::
         app.run().await;
     });
 
-    tokio::task::spawn_local(async move {
-        local.await;
-    });
-
     addr_rx.await.unwrap()
 }
 
 recording_handler!(HandlerSegmentRecorder, HANDLER_SEGMENTS);
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn panicking_handler_renders_500_via_panic_recovered() {
     #[controller("/api")]
     pub struct PanicController {}
@@ -136,7 +131,7 @@ recording_handler!(GuardSegmentRecorder, GUARD_SEGMENTS);
 /// A panicking guard surfaces as 500 via the standard `PanicRecovered`
 /// envelope. The chain sees the typed event tagged `PipelineSegment::Guard`,
 /// so a handler can distinguish a guard panic from a handler panic.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn panicking_guard_renders_500_via_panic_recovered() {
     #[controller("/api")]
     pub struct PanicGuardController {}
@@ -193,7 +188,7 @@ recording_handler!(InterceptorSegmentRecorder, INTERCEPTOR_SEGMENTS);
 
 /// A panicking interceptor surfaces as 500 via the standard
 /// `PanicRecovered` envelope, tagged `PipelineSegment::Interceptor`.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn panicking_interceptor_renders_500_via_panic_recovered() {
     #[controller("/api")]
     pub struct PanicInterceptorController {}
@@ -268,7 +263,7 @@ impl ErrorHandler<HttpContext, HttpHandlerResult> for ChainSurvivor {
 /// treat it as a `None` claim, continue to the next handler. Neither handler
 /// claims here, so the fallback `HttpError::to_response` renders the original
 /// error — 500, since the handler ran against a `HandlerBody` panic.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn panicking_error_handler_continues_chain() {
     #[controller("/api")]
     pub struct PanicEhController {}
@@ -338,7 +333,7 @@ impl ulo::Error for RenderBomb {
 /// is to log it and substitute a hardcoded 500. The envelope is a literal, so
 /// none of the user code that just panicked runs again, and it keeps the
 /// canonical shape a client decodes on every other path.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn panicking_renderer_falls_back_to_safe_envelope() {
     #[controller("/api")]
     pub struct RenderPanicController {}

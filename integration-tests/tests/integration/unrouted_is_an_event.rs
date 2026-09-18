@@ -86,8 +86,7 @@ where
     F: FnOnce(&mut UloFactory) + Send + 'static,
 {
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut factory = UloFactory::new();
         configure(&mut factory);
         let mut app = factory.create_with(UnroutedRpcModule).await.unwrap();
@@ -97,7 +96,6 @@ where
         let _ = port_tx.send(bound.rpc.expect("rpc must bind").port());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     port_rx.await.expect("RPC server failed to bind")
 }
 
@@ -123,7 +121,7 @@ async fn call(port: u16, pattern: &str) -> serde_json::Value {
 
 /// A handler can claim the miss, which means the chain was reached.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_unrouted_rpc_pattern_is_claimable() {
     let port = boot_rpc(|f| {
         f.use_global_rpc_error_handler(Arc::new(rpc_unrouted));
@@ -144,7 +142,7 @@ async fn an_unrouted_rpc_pattern_is_claimable() {
 
 /// Unclaimed, the miss answers in the wire-`err` lane, naming the kind it is: nothing routed.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_unclaimed_rpc_miss_names_its_kind() {
     let port = boot_rpc(|_| {}).await;
     let reply = call(port, "nobody.claims.this").await;
@@ -193,7 +191,7 @@ async fn ask_ws(factory: UloFactory, event: &str) -> String {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_unrouted_ws_event_is_claimable() {
     let mut factory = UloFactory::new();
     factory.use_global_ws_error_handler(Arc::new(ws_unrouted));
@@ -208,7 +206,7 @@ async fn an_unrouted_ws_event_is_claimable() {
 
 /// Unclaimed, the envelope is the one it always was.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_unclaimed_ws_miss_renders_as_before() {
     let reply = ask_ws(UloFactory::new(), "nobody-claims-this").await;
     let reply: serde_json::Value = serde_json::from_str(&reply).expect("an error envelope");

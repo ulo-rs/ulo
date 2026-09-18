@@ -105,7 +105,7 @@ impl AttributeController {
 )]
 impl AttributeModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_body_attribute() {
     let server = TestServer::start(AttributeModule).await;
 
@@ -127,7 +127,7 @@ async fn test_body_attribute() {
     assert_eq!(body, "Created user: Alice <alice@example.com>");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_query_attribute() {
     let server = TestServer::start(AttributeModule).await;
 
@@ -143,7 +143,7 @@ async fn test_query_attribute() {
     assert_eq!(body, "Searching for 'rust' with limit 20");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_param_attribute() {
     let server = TestServer::start(AttributeModule).await;
 
@@ -159,7 +159,7 @@ async fn test_param_attribute() {
     assert_eq!(body, "User ID: 42");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_query_struct_attribute() {
     let server = TestServer::start(AttributeModule).await;
 
@@ -175,7 +175,7 @@ async fn test_query_struct_attribute() {
     assert_eq!(body, "Advanced search: 'typescript' (limit: 50)");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_default_values() {
     let server = TestServer::start(AttributeModule).await;
 
@@ -216,7 +216,7 @@ async fn test_default_values() {
     assert_eq!(body3, "Products page 5 (size: 50)");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_mixed_attributes() {
     let server = TestServer::start(AttributeModule).await;
 
@@ -238,7 +238,7 @@ async fn test_mixed_attributes() {
     assert_eq!(body, "Updated user 99: Bob <bob@example.com>");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_binary_upload() {
     let server = TestServer::start(AttributeModule).await;
 
@@ -259,7 +259,7 @@ async fn test_binary_upload() {
     assert_eq!(body, format!("Uploaded {} bytes", binary_data.len()));
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_path_qualified_marker_attributes() {
     let server = TestServer::start(AttributeModule).await;
 

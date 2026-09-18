@@ -208,8 +208,7 @@ where
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut factory = UloFactory::new();
         configure(&mut factory);
         let mut app = factory.create_with(ReplyGrpcModule).await.unwrap();
@@ -219,7 +218,6 @@ where
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -248,7 +246,7 @@ async fn stop(shutdown: ulo::ShutdownHandle) {
 // ── tests ──────────────────────────────────────────────────────────────────
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_interceptor_reads_the_reply() {
     SEEN.lock().unwrap().clear();
 
@@ -271,7 +269,7 @@ async fn an_interceptor_reads_the_reply() {
 
 /// Two methods, two reply types, one interceptor: the header seam names neither.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn one_interceptor_stamps_the_reply_of_every_method() {
     SEEN.lock().unwrap().clear();
 
@@ -308,7 +306,7 @@ async fn one_interceptor_stamps_the_reply_of_every_method() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_interceptor_answers_without_running_the_handler() {
     SEEN.lock().unwrap().clear();
 
@@ -333,7 +331,7 @@ async fn an_interceptor_answers_without_running_the_handler() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_error_handler_recovers_the_call_with_a_reply() {
     SEEN.lock().unwrap().clear();
 
@@ -360,7 +358,7 @@ async fn an_error_handler_recovers_the_call_with_a_reply() {
 /// so the reply travels erased and the wrapper downcasts it. Nothing below the wrapper can render
 /// a value of another method's type, and this is where that is said.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_enhancer_answering_another_methods_reply_fails_the_call() {
     SEEN.lock().unwrap().clear();
 

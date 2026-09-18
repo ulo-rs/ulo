@@ -120,44 +120,40 @@ async fn full_integration() {
 
     let app_port: u16 = 19084;
 
-    tokio::task::LocalSet::new()
-        .run_until(async move {
-            tokio::task::spawn_local(async move {
-                let mut app = UloFactory::new().create_with(TestModule).await.unwrap();
-                app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", app_port))
-                    .unwrap();
-                app.start().await.unwrap();
-            });
+    tokio::spawn(async move {
+        let mut app = UloFactory::new().create_with(TestModule).await.unwrap();
+        app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", app_port))
+            .unwrap();
+        app.start().await.unwrap();
+    });
 
-            let base = format!("http://127.0.0.1:{app_port}/items");
-            let client = reqwest::Client::new();
-            for _ in 0..20u8 {
-                if client.get(format!("{base}/health")).send().await.is_ok() {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(300)).await;
-            }
+    let base = format!("http://127.0.0.1:{app_port}/items");
+    let client = reqwest::Client::new();
+    for _ in 0..20u8 {
+        if client.get(format!("{base}/health")).send().await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
 
-            // Create table
-            let r = client.post(format!("{base}/setup")).send().await.unwrap();
-            assert_eq!(r.status().as_u16(), 200);
+    // Create table
+    let r = client.post(format!("{base}/setup")).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 200);
 
-            // Write a row
-            let r = client.post(&base).body("hello").send().await.unwrap();
-            assert_eq!(r.status().as_u16(), 200);
+    // Write a row
+    let r = client.post(&base).body("hello").send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 200);
 
-            // Read it back
-            let r = client.get(&base).send().await.unwrap();
-            assert_eq!(r.status().as_u16(), 200);
-            let items: Vec<String> = r.json().await.unwrap();
-            assert_eq!(items, vec!["hello"]);
+    // Read it back
+    let r = client.get(&base).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let items: Vec<String> = r.json().await.unwrap();
+    assert_eq!(items, vec!["hello"]);
 
-            // Health check
-            let r = client.get(format!("{base}/health")).send().await.unwrap();
-            assert_eq!(r.status().as_u16(), 200);
-            let body: serde_json::Value = r.json().await.unwrap();
-            assert_eq!(body["status"], "ok");
-            assert_eq!(body["info"]["database"]["status"], "up");
-        })
-        .await;
+    // Health check
+    let r = client.get(format!("{base}/health")).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let body: serde_json::Value = r.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["info"]["database"]["status"], "up");
 }

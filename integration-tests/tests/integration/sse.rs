@@ -166,7 +166,7 @@ impl SseModule {}
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_sse_headers() {
     let server = TestServer::start(SseModule).await;
     let resp = server
@@ -205,7 +205,7 @@ async fn test_sse_headers() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_sse_basic_wire_format() {
     let server = TestServer::start(SseModule).await;
     let body = server
@@ -221,7 +221,7 @@ async fn test_sse_basic_wire_format() {
     assert_eq!(body, "data: hello\n\ndata: world\n\n");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_sse_event_fields() {
     let server = TestServer::start(SseModule).await;
     let body = server
@@ -240,7 +240,7 @@ async fn test_sse_event_fields() {
     assert!(body.contains("data: payload\n"), "missing data line");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_sse_multiline_data() {
     let server = TestServer::start(SseModule).await;
     let body = server
@@ -257,7 +257,7 @@ async fn test_sse_multiline_data() {
     assert_eq!(body, "data: line1\ndata: line2\ndata: line3\n\n");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_sse_fallible_stream() {
     let server = TestServer::start(SseModule).await;
     let body = server
@@ -273,7 +273,7 @@ async fn test_sse_fallible_stream() {
     assert_eq!(body, "data: ok-event\n\n");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_sse_broadcaster_delivers_to_subscriber() {
     let server = TestServer::start(SseModule).await;
 
@@ -308,7 +308,7 @@ async fn test_sse_broadcaster_delivers_to_subscriber() {
     assert_eq!(body, "data: hello\n\ndata: world\n\n");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_sse_attr_macro_infallible() {
     let server = TestServer::start(SseModule).await;
     let resp = server
@@ -330,7 +330,7 @@ async fn test_sse_attr_macro_infallible() {
     assert_eq!(body, "data: hello\n\ndata: world\n\n");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_sse_attr_macro_fallible() {
     let server = TestServer::start(SseModule).await;
     let body = server
@@ -347,7 +347,7 @@ async fn test_sse_attr_macro_fallible() {
 }
 
 /// A boxed stream behind an item alias streams like any other fallible stream.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_aliased_boxed_stream_streams() {
     let server = TestServer::start(SseModule).await;
     let resp = server
@@ -362,7 +362,7 @@ async fn an_aliased_boxed_stream_streams() {
 }
 
 /// Setup that succeeds streams the events, with the headers and body of a bare stream.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn fallible_setup_that_succeeds_streams() {
     let server = TestServer::start(SseModule).await;
     let resp = server
@@ -382,7 +382,7 @@ async fn fallible_setup_that_succeeds_streams() {
 
 /// Setup that fails answers the error, not an empty event stream: the `Err` reaches the transport's
 /// renderer and carries the domain error's own kind.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn fallible_setup_that_fails_answers_the_error() {
     let server = TestServer::start(SseModule).await;
     let resp = server

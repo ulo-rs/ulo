@@ -48,7 +48,7 @@ impl CacheService {
     }
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn provide_macro_patterns() {
     #[injectable]
     pub struct AppService {

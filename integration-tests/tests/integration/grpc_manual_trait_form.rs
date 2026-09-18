@@ -105,8 +105,7 @@ async fn boot() -> u16 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::new()
             .create_with(ManualWatcherModule)
             .await
@@ -116,14 +115,13 @@ async fn boot() -> u16 {
         let _ = port_tx.send(bound.grpc.expect("grpc must bind").port());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     port_rx.await.unwrap()
 }
 
 /// Serving the route at all says the named associated type matched the trait's;
 /// the abandoned tail says the wrapper still recognised the reply as streaming.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_named_associated_type_serves_a_manual_trait() {
     SAW_CANCEL.store(false, Ordering::SeqCst);
     let port = boot().await;

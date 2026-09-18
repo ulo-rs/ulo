@@ -203,25 +203,23 @@ async fn main() -> anyhow::Result<()> {
     println!("      127.0.0.1:5000 ulo_examples.orders.Orders/Create");
     println!();
 
-    // UloFactory is `!Send`. A `LocalSet` lets all three apps share this
-    // thread; in a real deployment you'd typically pick one transport.
-    let local = tokio::task::LocalSet::new();
-
-    local.spawn_local(async {
+    // A real deployment would pick one transport; this runs all three so the spans can
+    // be compared side by side.
+    let tcp = tokio::spawn(async {
         let mut app = UloFactory::new().create_with(PatternModule).await.unwrap();
         app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 4000))
             .unwrap();
         app.start().await.unwrap();
     });
 
-    local.spawn_local(async {
+    let udp = tokio::spawn(async {
         let mut app = UloFactory::new().create_with(PatternModule).await.unwrap();
         app.use_rpc_adapter(ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 4001))
             .unwrap();
         app.start().await.unwrap();
     });
 
-    local.spawn_local(async {
+    let grpc = tokio::spawn(async {
         let addr: std::net::SocketAddr = "127.0.0.1:5000".parse().unwrap();
         let mut app = UloFactory::new().create_with(GrpcModule).await.unwrap();
         app.use_grpc_adapter(ulo_grpc::GrpcAdapter::new(addr))
@@ -229,6 +227,7 @@ async fn main() -> anyhow::Result<()> {
         app.start().await.unwrap();
     });
 
-    local.await;
+    // Serve until interrupted: none of the three returns on its own.
+    let _ = tokio::join!(tcp, udp, grpc);
     Ok(())
 }

@@ -37,8 +37,7 @@ async fn start_generation(listener: TcpListener) -> (std::net::SocketAddr, ulo::
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
 
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(HandoffModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), listener).unwrap();
         let bound = app.bind().await.unwrap();
@@ -46,13 +45,12 @@ async fn start_generation(listener: TcpListener) -> (std::net::SocketAddr, ulo::
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
 
     (addr_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_connection_made_between_generations_is_answered() {
     // The supervisor's socket, held open across both generations.
     let supervisor = TcpListener::bind("127.0.0.1:0").unwrap();

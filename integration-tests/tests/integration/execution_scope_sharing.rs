@@ -64,7 +64,7 @@ impl ScopeController {
 #[module(controllers: [ScopeController], providers: [RequestId, RecordingGuard])]
 impl ScopeModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn request_scoped_provider_is_built_once_per_request() {
     let server = TestServer::start(ScopeModule).await;
 

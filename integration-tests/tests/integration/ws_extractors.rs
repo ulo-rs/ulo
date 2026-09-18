@@ -96,21 +96,21 @@ async fn roundtrip(port: u16, frame: &str) -> String {
         .to_string()
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_takes_only_the_payload() {
     let server = TestServer::start(ExtractorModule).await;
     let reply = roundtrip(server.port, r#"{"event":"place","item":"boots","qty":2}"#).await;
     assert_eq!(reply, "bootsx2");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn extractors_compose_in_any_order() {
     let server = TestServer::start(ExtractorModule).await;
     let reply = roundtrip(server.port, r#"{"event":"whoami"}"#).await;
     assert_eq!(reply, "erin/true/true");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_can_take_nothing() {
     let server = TestServer::start(ExtractorModule).await;
     let reply = roundtrip(server.port, r#"{"event":"ping"}"#).await;

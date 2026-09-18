@@ -17,7 +17,7 @@ trait Plugin: Send + Sync {
 
 // ── Test 1: type-path variant ────────────────────────────────────────────────
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn multi_type_path_collects_all_contributions() {
     #[injectable]
     pub struct PluginA {}
@@ -91,7 +91,7 @@ async fn multi_type_path_collects_all_contributions() {
 
 // ── Test 2: factory-closure variant ─────────────────────────────────────────
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn multi_factory_closure_collects_contributions() {
     struct Greeter {
         greeting: &'static str,
@@ -151,7 +151,7 @@ async fn multi_factory_closure_collects_contributions() {
 
 // ── Test 3: empty collection — no contributions registered ───────────────────
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn multi_empty_when_no_contributions() {
     #[injectable]
     pub struct EmptyRegistry {
@@ -185,7 +185,7 @@ async fn multi_empty_when_no_contributions() {
 
 // ── Test 4: single contribution behaves like a Vec of one ───────────────────
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn multi_single_contribution_is_vec_of_one() {
     struct Solo;
     impl Plugin for Solo {
@@ -241,7 +241,7 @@ async fn multi_single_contribution_is_vec_of_one() {
 
 // ── Test 5: raw-value variant (expression, not closure) ─────────────────────
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn multi_raw_value_contributes_to_collection() {
     struct Named {
         label: &'static str,
@@ -300,7 +300,7 @@ async fn multi_raw_value_contributes_to_collection() {
 
 // ── Test 6: existing(Type) variant — reuse a registered singleton ────────────
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn multi_existing_reuses_registered_singleton() {
     #[injectable]
     pub struct Alpha {}
@@ -375,7 +375,7 @@ async fn multi_existing_reuses_registered_singleton() {
 
 // ── Test 7: existing("STRING", ConcreteType) — string token with explicit type ─
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn multi_existing_string_token_with_explicit_type() {
     #[injectable]
     pub struct Gamma {}
@@ -448,7 +448,7 @@ async fn multi_existing_string_token_with_explicit_type() {
 
 // ── Test 8: provider(Type) variant — useClass + multi ───────────────────────
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn multi_provider_useclass_collects_contributions() {
     #[injectable]
     pub struct Echo {}

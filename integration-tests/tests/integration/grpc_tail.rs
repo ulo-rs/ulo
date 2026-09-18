@@ -169,8 +169,7 @@ where
     let adapter = configure(ulo_grpc::GrpcAdapter::new(addr));
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(module).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -179,7 +178,6 @@ where
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -209,7 +207,7 @@ async fn saw_cancel_within(limit: Duration) -> bool {
 /// The producer stops when the caller goes, rather than at whatever it was
 /// going to do next.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_abandoned_grpc_stream_cancels_the_work_feeding_it() {
     SAW_CANCEL.store(false, Ordering::SeqCst);
     PRODUCED.store(0, Ordering::SeqCst);
@@ -243,7 +241,7 @@ async fn an_abandoned_grpc_stream_cancels_the_work_feeding_it() {
 /// The other half, and what makes the first mean anything: a reply read to its
 /// last item is not an abandoned one.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_drained_grpc_stream_is_not_cancelled() {
     *TOKEN.lock().unwrap() = None;
 
@@ -282,7 +280,7 @@ async fn a_drained_grpc_stream_is_not_cancelled() {
 /// what it finds there names the call the way the wire does — with the package,
 /// and with the route's own casing rather than the Rust method name's.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_reads_its_context_off_the_request() {
     *METHOD.lock().unwrap() = None;
 
@@ -312,7 +310,7 @@ async fn a_handler_reads_its_context_off_the_request() {
 /// that never finishes would otherwise outlive the shutdown that reported
 /// itself complete.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn the_drain_deadline_ends_a_reply_it_cannot_wait_for() {
     SAW_CANCEL.store(false, Ordering::SeqCst);
     PRODUCED.store(0, Ordering::SeqCst);
@@ -371,7 +369,7 @@ async fn the_drain_deadline_ends_a_reply_it_cannot_wait_for() {
 /// rebuild does nothing, and is therefore the one where losing something would
 /// go unnoticed.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn metadata_a_handler_sets_on_its_reply_reaches_the_caller() {
     let (port, shutdown) = boot(TailGrpcModule).await;
     let mut client = connect(port).await;

@@ -53,12 +53,12 @@ async fn case_method_mismatch_on_param_path(server: TestServer) {
 macro_rules! param_syntax_suite {
     ($adapter_mod:ident, $adapter:expr) => {
         mod $adapter_mod {
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn param_is_extracted() {
                 super::case_param_extracted(super::boot($adapter).await).await;
             }
 
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn method_mismatch_on_param_path_is_405() {
                 super::case_method_mismatch_on_param_path(super::boot($adapter).await).await;
             }

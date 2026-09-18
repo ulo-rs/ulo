@@ -82,7 +82,7 @@ impl ApiController {
 struct MarkerFreeModule {}
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn marker_free_guard_blocks_and_admits_over_http() {
     let server = TestServer::start(MarkerFreeModule).await;
 
@@ -108,7 +108,7 @@ async fn marker_free_guard_blocks_and_admits_over_http() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn marker_free_request_scoped_guard_blocks_and_admits() {
     let server = TestServer::start(MarkerFreeModule).await;
 

@@ -287,15 +287,13 @@ async fn boot() -> u16 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::new().create_with(GreeterModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.grpc.expect("grpc must bind").port());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     port_rx.await.unwrap()
 }
 
@@ -310,7 +308,7 @@ async fn client(port: u16) -> GreeterClient<tonic::transport::Channel> {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_answers_with_its_own_reply_type() {
     let mut client = client(boot().await).await;
 
@@ -327,7 +325,7 @@ async fn a_handler_answers_with_its_own_reply_type() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_streaming_handler_answers_with_its_own_item_type() {
     use futures_util::StreamExt;
 
@@ -350,7 +348,7 @@ async fn a_streaming_handler_answers_with_its_own_item_type() {
 /// A stream that fails before it opens is an ordinary handler error, so the
 /// chain claims it the way it claims a unary one.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_streaming_handler_that_fails_to_open_reaches_the_chain() {
     let mut client = client(boot().await).await;
 
@@ -369,7 +367,7 @@ async fn a_streaming_handler_that_fails_to_open_reaches_the_chain() {
 /// abandons tells the work behind it — the guarantee ADR-0033 pins for a
 /// hand-written trait impl, reached here without one.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_abandoned_stream_cancels_the_work_feeding_it() {
     use futures_util::StreamExt;
 
@@ -409,7 +407,7 @@ async fn an_abandoned_stream_cancels_the_work_feeding_it() {
 /// The macro reads tokens, so `Aliased` tells it nothing about which message
 /// the wire carries. A reply means the projection resolved it.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_names_its_request_through_an_alias() {
     let mut client = client(boot().await).await;
 
@@ -425,7 +423,7 @@ async fn a_handler_names_its_request_through_an_alias() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_takes_the_execution_s_bag_beside_its_request() {
     let mut client = client(boot().await).await;
 
@@ -441,7 +439,7 @@ async fn a_handler_takes_the_execution_s_bag_beside_its_request() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_guard_reads_the_message_and_the_handler_still_takes_it() {
     let mut client = client(boot().await).await;
 
@@ -466,7 +464,7 @@ async fn a_guard_reads_the_message_and_the_handler_still_takes_it() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_can_take_the_request_whole() {
     let mut client = client(boot().await).await;
 
@@ -484,7 +482,7 @@ async fn a_handler_can_take_the_request_whole() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_reads_the_caller_s_stream() {
     let mut client = client(boot().await).await;
 
@@ -504,7 +502,7 @@ async fn a_handler_reads_the_caller_s_stream() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_guard_cannot_copy_a_stream_and_the_handler_still_reads_it() {
     PEEK_REFUSED_ON_STREAM.store(false, Ordering::SeqCst);
     let mut client = client(boot().await).await;
@@ -526,7 +524,7 @@ async fn a_guard_cannot_copy_a_stream_and_the_handler_still_reads_it() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_answers_each_message_as_it_arrives() {
     use futures_util::StreamExt;
 
@@ -549,7 +547,7 @@ async fn a_handler_answers_each_message_as_it_arrives() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_error_reaches_the_chain_with_its_type() {
     let mut client = client(boot().await).await;
 
