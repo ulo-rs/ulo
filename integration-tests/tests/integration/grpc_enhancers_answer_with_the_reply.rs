@@ -1,10 +1,9 @@
-//! A gRPC enhancer reads the reply, replaces it, or answers with one of its own.
+//! A gRPC enhancer reads the reply, stamps it, replaces it, or answers with one of its own.
 //!
-//! The reply travels in the answer the interceptor chain and the error chain share, erased, so an
-//! interceptor downcasts it to the method's own type and an error handler claiming a failure
-//! recovers the call with one. Each of those is ordinary on the other three transports; here the
-//! reply left the handler by a side-channel the enhancers could not see, so `next.run(ctx)`
-//! answered `Ok(())` whether the handler had replied or failed.
+//! The reply travels in the answer the interceptor chain and the error chain share, and splits in
+//! two there. Its headers name no method, so one interceptor stamps every reply of a service. Its
+//! message is the method's own, so an interceptor reading or replacing one names that type, and an
+//! error handler claiming a failure recovers the call with one.
 
 #![allow(dead_code)]
 
@@ -80,7 +79,25 @@ impl Interceptor<GrpcContext, GrpcHandlerResult> for AnswersInstead {
         _ctx: &GrpcContext,
         _next: Box<dyn InterceptorNext<GrpcContext, GrpcHandlerResult>>,
     ) -> GrpcHandlerResult {
-        Ok(GrpcReply::new(created(7, "cached")))
+        Ok(ulo_grpc::reply(created(7, "cached")))
+    }
+}
+
+/// Stamps a header on whatever came back, naming no method's reply type.
+struct StampsTheEnvelope;
+
+#[async_trait]
+impl Interceptor<GrpcContext, GrpcHandlerResult> for StampsTheEnvelope {
+    async fn intercept(
+        &self,
+        ctx: &GrpcContext,
+        next: Box<dyn InterceptorNext<GrpcContext, GrpcHandlerResult>>,
+    ) -> GrpcHandlerResult {
+        let mut reply = next.run(ctx).await?;
+        reply
+            .set_header("x-served-by", "ulo")
+            .expect("`x-served-by: ulo` is a header the wire carries");
+        Ok(reply)
     }
 }
 
@@ -94,7 +111,7 @@ impl Interceptor<GrpcContext, GrpcHandlerResult> for AnswersTheWrongType {
         _ctx: &GrpcContext,
         _next: Box<dyn InterceptorNext<GrpcContext, GrpcHandlerResult>>,
     ) -> GrpcHandlerResult {
-        Ok(GrpcReply::new(tonic::Response::new(
+        Ok(ulo_grpc::reply(tonic::Response::new(
             reply_pb::ChatMessage {
                 text: "not this method's reply".to_string(),
                 id: 1,
@@ -113,7 +130,7 @@ impl ErrorHandler<GrpcContext, GrpcHandlerResult> for RecoversWithAReply {
         _error: ChainError<'_>,
         _ctx: &GrpcContext,
     ) -> Option<GrpcHandlerResult> {
-        Some(Ok(GrpcReply::new(created(9, "recovered"))))
+        Some(Ok(ulo_grpc::reply(created(9, "recovered"))))
     }
 }
 
@@ -249,6 +266,44 @@ async fn an_interceptor_reads_the_reply() {
         "the interceptor read the reply the handler produced, got {:?}",
         seen()
     );
+    stop(shutdown).await;
+}
+
+/// Two methods, two reply types, one interceptor: the header seam names neither.
+#[serial]
+#[tokio_localset_test::localset_test]
+async fn one_interceptor_stamps_the_reply_of_every_method() {
+    SEEN.lock().unwrap().clear();
+
+    let (port, shutdown) = boot(|f| {
+        f.use_global_grpc_interceptors(Arc::new(StampsTheEnvelope));
+    })
+    .await;
+    let mut client = connect(port).await;
+
+    let unary = client.create(order(1)).await.expect("the handler replied");
+    assert_eq!(
+        unary
+            .metadata()
+            .get("x-served-by")
+            .and_then(|v| v.to_str().ok()),
+        Some("ulo"),
+        "a unary reply carries what the interceptor set"
+    );
+
+    let streaming = client
+        .watch_progress(reply_pb::WatchRequest { id: 1 })
+        .await
+        .expect("the stream opened");
+    assert_eq!(
+        streaming
+            .metadata()
+            .get("x-served-by")
+            .and_then(|v| v.to_str().ok()),
+        Some("ulo"),
+        "so does a streaming reply of a different type, from the same interceptor"
+    );
+
     stop(shutdown).await;
 }
 

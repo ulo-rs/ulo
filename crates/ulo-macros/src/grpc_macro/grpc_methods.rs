@@ -1146,11 +1146,12 @@ fn build_wrapper_method(
                         #self_ident::#run(&__inner, &__run_ctx).await
                     }).await;
                     match __caught {
-                        // Erased here and downcast below: the guards, interceptors and error
+                        // Carried here and downcast below: the guards, interceptors and error
                         // handlers between the two are one list for the whole service, and this
-                        // reply's type is this method's.
+                        // reply's type is this method's. The headers on it are not — they reach
+                        // those enhancers through `ReplyEnvelope` without this type in hand.
                         ::std::result::Result::Ok(::std::result::Result::Ok(__reply)) => {
-                            ::std::result::Result::Ok(::ulo::grpc::GrpcReply::new(__reply))
+                            ::std::result::Result::Ok(::ulo_grpc::reply(__reply))
                         }
                         ::std::result::Result::Ok(::std::result::Result::Err(__status)) => {
                             ::std::result::Result::Err(__status)

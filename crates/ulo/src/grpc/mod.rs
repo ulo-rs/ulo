@@ -16,7 +16,9 @@ mod status;
 pub use adapter::{GrpcAdapter, GrpcMethodPath};
 pub use context::GrpcContext;
 pub use lifecycle::GrpcLifecycleHandle;
-pub use runtime::{GrpcFailure, GrpcReply, RequestCarrier, RequestError};
+pub use runtime::{
+    GrpcFailure, GrpcReply, InvalidHeader, ReplyEnvelope, RequestCarrier, RequestError,
+};
 pub use service_source::{
     GrpcEnhancers, GrpcHandlerEnhancers, GrpcServiceSource, ResolvedGrpcEnhancers,
 };
