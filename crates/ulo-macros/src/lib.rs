@@ -583,12 +583,12 @@ pub fn provide(input: TokenStream) -> TokenStream {
 /// (so the chain advances to the next handler).
 ///
 /// ```ignore
-/// use ulo::{http::HttpContext, http::HttpError, HttpResponse};
+/// use ulo::http::{HttpContext, HttpError, HttpHandlerResult};
 ///
 /// #[catch(HttpError)]
-/// async fn render_4xx(err: &HttpError, _ctx: &HttpContext) -> HttpResponse {
+/// async fn render_4xx(err: &HttpError, _ctx: &HttpContext) -> HttpHandlerResult {
 ///     // custom envelope for HttpError 4xx/5xx in this scope
-///     err.to_response()
+///     Ok(err.to_response())
 /// }
 ///
 /// // Register on a controller / method:

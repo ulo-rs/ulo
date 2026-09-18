@@ -196,6 +196,18 @@ impl HttpError {
     /// For [`AppError`](Self::AppError), reads `kind` / `message` / `details`
     /// from the wrapped error; the named variants use their fixed status
     /// and reason phrase.
+    ///
+    /// What it returns is an answer, not a failure. A handler that returns it
+    /// answers with the envelope, and the error chain is never offered the
+    /// error — a `#[catch]` handler registered for it does not run. A handler
+    /// that means to fail returns `Err`.
+    ///
+    /// The response is the one an unclaimed failure produces, down to the
+    /// status and the headers, so nothing on the wire says which path wrote it.
+    ///
+    /// An error handler reaches this by catching [`HttpError`] itself. For
+    /// [`AppError`](Self::AppError) the chain is handed the unwrapped domain
+    /// error, which carries no renderer.
     pub fn to_response(&self) -> HttpResponse {
         match self {
             Self::AppError(e) => render_error(e.as_ref()),

@@ -60,6 +60,20 @@ impl WsError {
     /// [`AppError`](Self::AppError), reads `kind` / `message` / `details`
     /// from the wrapped error; the named variants use a fixed `kind`
     /// per variant.
+    ///
+    /// What it returns is an answer, not a failure. A handler that returns it
+    /// answers with the envelope, and the error chain is never offered the
+    /// error — a `#[catch]` handler registered for it does not run. A handler
+    /// that means to fail returns `Err`.
+    ///
+    /// The frame is the one an unclaimed message failure produces, so nothing
+    /// on the wire says which path wrote it. A refused connection is answered
+    /// by `refusal_frames` instead, which adds a close frame and sends no
+    /// envelope for [`Refused`](Self::Refused).
+    ///
+    /// An error handler reaches this by catching [`WsError`] itself. For
+    /// [`AppError`](Self::AppError) the chain is handed the unwrapped domain
+    /// error, which carries no renderer.
     pub fn to_message(&self) -> WsMessage {
         match self {
             Self::AppError(e) => render_error(e.as_ref()),
