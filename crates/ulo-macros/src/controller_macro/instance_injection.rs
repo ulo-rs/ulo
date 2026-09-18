@@ -12,7 +12,7 @@
 //! bridge fns. A missing `#[controller]` struct surfaces as "no associated function `__ulo_build_from_deps`".
 
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{quote, quote_spanned};
 use std::collections::HashMap;
 use syn::{Attribute, Error, Ident, ImplItemFn, ItemImpl, LitStr, Result, spanned::Spanned};
 
@@ -233,12 +233,11 @@ fn generate_controller_wrapper(
         (method_call, extractions)
     };
 
+    // One constructor covers both item shapes; the return type is not read. Spanned at that
+    // return type: a stream neither shape accepts is reported there rather than at `#[routes]`.
     let method_call = if is_sse {
-        if sse_stream_is_fallible(&method.sig.output) {
-            quote! { ::ulo::http::Sse::new(#method_call) }
-        } else {
-            quote! { ::ulo::http::sse(#method_call) }
-        }
+        let at = method.sig.output.span();
+        quote_spanned! { at => ::ulo::http::Sse::new(#method_call) }
     } else {
         method_call
     };
@@ -492,44 +491,6 @@ fn exec_body_for(method_call: &TokenStream) -> TokenStream {
             ::std::result::Result::Err(__e) => ::ulo::dispatch::ExecutionResult::Err(__e),
         }
     }
-}
-
-/// `true` when the return type is `impl Stream<Item = Result<_, _>>` — the per-event fallible
-/// shape that maps to `Sse::new(stream)` rather than `sse(stream)`.
-fn sse_stream_is_fallible(output: &syn::ReturnType) -> bool {
-    let syn::ReturnType::Type(_, ty) = output else {
-        return false;
-    };
-    let syn::Type::ImplTrait(impl_trait) = ty.as_ref() else {
-        return false;
-    };
-    for bound in &impl_trait.bounds {
-        let syn::TypeParamBound::Trait(tb) = bound else {
-            continue;
-        };
-        let Some(last) = tb.path.segments.last() else {
-            continue;
-        };
-        if last.ident != "Stream" {
-            continue;
-        }
-        let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
-            continue;
-        };
-        for arg in &args.args {
-            if let syn::GenericArgument::AssocType(assoc) = arg
-                && assoc.ident == "Item"
-                && let syn::Type::Path(item_ty) = &assoc.ty
-            {
-                return item_ty
-                    .path
-                    .segments
-                    .last()
-                    .is_some_and(|s| s.ident == "Result");
-            }
-        }
-    }
-    false
 }
 
 fn capitalize_first(s: String) -> String {

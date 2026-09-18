@@ -30,7 +30,7 @@ use futures::stream;
 use tokio::sync::broadcast;
 use ulo::dispatch::{Http, IntoOutput};
 use ulo::http::extract::Bytes;
-use ulo::http::{HttpResponse, SseEvent, sse};
+use ulo::http::{HttpResponse, Sse, SseEvent};
 use ulo::prelude::*;
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{injectable, new};
@@ -92,7 +92,7 @@ impl SseController {
                 n + 1,
             ))
         });
-        sse(s)
+        Sse::new(s)
     }
 
     /// Emits events with distinct names — clients can listen selectively:
@@ -109,7 +109,7 @@ impl SseController {
             };
             Some((event, n + 1))
         });
-        sse(s)
+        Sse::new(s)
     }
 
     /// Push (per-request): a background task drives this specific connection.
@@ -133,14 +133,14 @@ impl SseController {
                 rx.recv().await.map(|event| (event, rx))
             },
         );
-        sse(s)
+        Sse::new(s)
     }
 
     /// Live: service-level broadcaster — every connected client receives every emitted message.
     /// POST /sse/emit to push a message.
     #[get("/live")]
     async fn live(&self) -> impl IntoOutput<Http> {
-        sse(self.events.subscribe())
+        Sse::new(self.events.subscribe())
     }
 
     /// Emit: push a message to all current /sse/live subscribers.

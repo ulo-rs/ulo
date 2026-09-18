@@ -1,4 +1,4 @@
-//! The wire format `#[sse]` and `sse(stream)` produce: the headers a client
+//! The wire format `#[sse]` and `Sse::new(stream)` produce: the headers a client
 //! needs to keep the connection open, and the `data:`/`event:`/`id:` framing of
 //! each event.
 //!
@@ -7,13 +7,15 @@
 //! handler, so the bytes on the socket are the contract. Both stream item types
 //! are covered — infallible and per-event fallible — along with multiline data,
 //! which is the case that must be re-prefixed rather than sent as one line.
+//!
+//! The routes below spell the stream differently: an `impl Stream`, and a boxed stream behind an
+//! item alias. A handler's answer is read from its type, not from how the type is written.
 use std::pin::Pin;
 use std::time::Duration;
 
 use crate::common::TestServer;
 use futures_util::{StreamExt, stream};
 use tokio::sync::broadcast;
-use ulo::http::sse;
 use ulo::http::{HttpResponse, Sse, SseEvent};
 use ulo::sse;
 use ulo::{controller, get, http::extract::Bytes, module, post, routes};
@@ -52,6 +54,9 @@ impl EventsService {
     }
 }
 
+/// A fallible item behind an alias: the item type is not spelled `Result` at the handler.
+type AliasedEvent = Result<SseEvent, std::io::Error>;
+
 // ── Controller ───────────────────────────────────────────────────────────────
 
 #[controller("/sse")]
@@ -64,7 +69,7 @@ pub struct SseController {
 impl SseController {
     #[get("/basic")]
     async fn basic(&self) -> impl ulo::dispatch::IntoOutput<ulo::dispatch::Http> {
-        sse(stream::iter([
+        Sse::new(stream::iter([
             SseEvent::data("hello"),
             SseEvent::data("world"),
         ]))
@@ -72,7 +77,7 @@ impl SseController {
 
     #[get("/fields")]
     async fn fields(&self) -> impl ulo::dispatch::IntoOutput<ulo::dispatch::Http> {
-        sse(stream::iter([SseEvent::data("payload")
+        Sse::new(stream::iter([SseEvent::data("payload")
             .event("update")
             .id("42")
             .retry_ms(3000)]))
@@ -80,7 +85,7 @@ impl SseController {
 
     #[get("/multiline")]
     async fn multiline(&self) -> impl ulo::dispatch::IntoOutput<ulo::dispatch::Http> {
-        sse(stream::iter([SseEvent::data("line1\nline2\nline3")]))
+        Sse::new(stream::iter([SseEvent::data("line1\nline2\nline3")]))
     }
 
     #[get("/fallible")]
@@ -93,7 +98,7 @@ impl SseController {
     // Bounded to 2 events so the test connection closes after receiving them
     #[get("/live")]
     async fn live(&self) -> impl ulo::dispatch::IntoOutput<ulo::dispatch::Http> {
-        sse(self.events.subscribe().take(2))
+        Sse::new(self.events.subscribe().take(2))
     }
 
     // `use<>` because Rust 2024 has `impl Trait` capture `&self`'s lifetime by
@@ -108,6 +113,12 @@ impl SseController {
         &self,
     ) -> impl futures_util::Stream<Item = Result<SseEvent, std::io::Error>> + use<> {
         stream::iter([Ok(SseEvent::data("ok-event"))])
+    }
+
+    // A boxed stream whose item is an alias: neither is spelled `impl Stream<Item = Result<..>>`.
+    #[sse("/attr-boxed")]
+    async fn attr_boxed(&self) -> Pin<Box<dyn futures_util::Stream<Item = AliasedEvent> + Send>> {
+        Box::pin(stream::iter([Ok(SseEvent::data("boxed-event"))]))
     }
 
     #[post("/emit")]
@@ -304,4 +315,19 @@ async fn test_sse_attr_macro_fallible() {
         .unwrap();
 
     assert_eq!(body, "data: ok-event\n\n");
+}
+
+/// A boxed stream behind an item alias streams like any other fallible stream.
+#[tokio_localset_test::localset_test]
+async fn an_aliased_boxed_stream_streams() {
+    let server = TestServer::start(SseModule).await;
+    let resp = server
+        .client()
+        .get(server.url("/sse/attr-boxed"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "data: boxed-event\n\n");
 }
