@@ -68,3 +68,57 @@ pub trait RpcHandlersBridge {
 }
 
 impl<T: ?Sized + Sync> RpcHandlersBridge for T {}
+
+/// How `#[patterns]` picks between [`IntoOutput<Rpc>`](crate::dispatch::IntoOutput) and serde.
+///
+/// `RpcData` is `Serialize` and so is `Result`, so the two cannot be told apart by trait bounds: a
+/// blanket `impl<S: Serialize> IntoOutput<Rpc> for S` conflicts with the impl for either. Method
+/// resolution can tell them apart, because it tries the shallower reference first. The macro emits
+/// `(&&Answers::new(value)).ulo_answer()`, which reaches [`Answered`](answer::Answered) when the value implements
+/// `IntoOutput<Rpc>` and [`Serialized`](answer::Serialized) only when it does not.
+///
+/// A handler's type decides what its value means, at this seam, and a handler names none of this.
+pub mod answer {
+    use crate::dispatch::{Answer, IntoOutput, Items, Rpc};
+    use crate::rpc::{RpcData, RpcError};
+
+    /// Carries a handler's value to the two impls below.
+    pub struct Answers<T>(pub std::cell::Cell<Option<T>>);
+
+    impl<T> Answers<T> {
+        pub fn new(value: T) -> Self {
+            Self(std::cell::Cell::new(Some(value)))
+        }
+
+        fn take(&self) -> T {
+            self.0
+                .take()
+                .expect("a handler's value is taken once, by the one call the macro emits")
+        }
+    }
+
+    /// Reached first: the value says what it is.
+    pub trait Answered {
+        fn ulo_answer(self) -> Answer<Rpc>;
+    }
+
+    impl<T: IntoOutput<Rpc>> Answered for &&Answers<T> {
+        fn ulo_answer(self) -> Answer<Rpc> {
+            Answers::take(self).into_output()
+        }
+    }
+
+    /// Reached when the value implements no `IntoOutput<Rpc>`: serde decides.
+    pub trait Serialized {
+        fn ulo_answer(self) -> Answer<Rpc>;
+    }
+
+    impl<T: serde::Serialize> Serialized for &Answers<T> {
+        fn ulo_answer(self) -> Answer<Rpc> {
+            match RpcData::from_serialize(&Answers::take(self)) {
+                Ok(data) => Ok(Items::One(data)),
+                Err(e) => Err(RpcError::Internal(e.to_string())),
+            }
+        }
+    }
+}
