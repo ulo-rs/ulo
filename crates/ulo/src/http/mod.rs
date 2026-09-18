@@ -53,8 +53,7 @@ pub use self::http_request::{HttpRequest, RequestPart};
 mod http_method;
 pub use self::http_method::HttpMethod;
 
-mod into_response;
-pub use self::into_response::IntoResponse;
+mod into_output;
 
 mod sse;
 pub use self::sse::{Sse, SseEvent, sse};

@@ -32,7 +32,7 @@ pub struct UsersController {
 #[routes]                            // on the IMPL — scans the handlers
 impl UsersController {
     #[new] fn new(svc: UserService) -> Self { /* optional, as with #[injectable] */ }
-    #[get("/")] async fn list(&self) -> impl IntoResponse { /* … */ }
+    #[get("/")] async fn list(&self) -> impl IntoOutput<Http> { /* … */ }
 }
 ```
 

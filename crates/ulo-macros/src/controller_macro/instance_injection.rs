@@ -391,7 +391,6 @@ fn generate_route_wrapper(
 
                 #(#marker_params_extraction)*
 
-                use ::ulo::http::IntoResponse;
                 #exec_body
             }
 

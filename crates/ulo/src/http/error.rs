@@ -28,7 +28,7 @@ use std::{borrow::Cow, fmt};
 use serde_json::{Value, json};
 
 use crate::errors::{Error, ErrorKind};
-use crate::http::{Body, HttpResponse, IntoResponse};
+use crate::http::{Body, HttpResponse};
 
 /// HTTP status code for an [`ErrorKind`]. The HTTP transport owns this
 /// mapping — `ErrorKind` itself is transport-independent.
@@ -256,12 +256,6 @@ impl std::error::Error for HttpError {
 impl From<serde_json::Error> for HttpError {
     fn from(e: serde_json::Error) -> Self {
         Self::InternalServerError(e.to_string())
-    }
-}
-
-impl IntoResponse for HttpError {
-    fn into_response(self) -> HttpResponse {
-        self.to_response()
     }
 }
 

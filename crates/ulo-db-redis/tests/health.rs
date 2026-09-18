@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::redis::Redis;
+use ulo::dispatch::{Http, IntoOutput};
+use ulo::http::Body;
 use ulo::http::extract::{Bytes, Path};
-use ulo::http::{Body, IntoResponse};
 use ulo::prelude::*;
 use ulo_db_redis::{AsyncCommands, ConnectionManager, RedisHealthIndicator, RedisModule};
 use ulo_health::{HealthCheckService, HealthIndicator, TerminusModule};
@@ -59,7 +60,7 @@ impl CacheController {
     }
 
     #[get("/health")]
-    async fn health(&self) -> impl IntoResponse {
+    async fn health(&self) -> impl IntoOutput<Http> {
         self.health.check(vec![self.indicator.check("redis")]).await
     }
 }

@@ -82,7 +82,7 @@ pub fn injectable(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// #[routes]
 /// impl UsersController {
-///     #[get("/")] async fn list(&self) -> impl IntoResponse { /* … */ }
+///     #[get("/")] async fn list(&self) -> impl IntoOutput<Http> { /* … */ }
 /// }
 /// ```
 #[proc_macro_attribute]
@@ -133,7 +133,7 @@ pub fn delete(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 ///
 /// For setup that can fail before streaming starts (e.g. validating a subscription token), use a
-/// guard or `#[get]` returning `Result<impl IntoResponse, E>` with an explicit `sse(stream)` call.
+/// guard or `#[get]` returning `Result<impl IntoOutput<Http>, E>` with an explicit `sse(stream)` call.
 #[proc_macro_attribute]
 pub fn sse(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item

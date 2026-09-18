@@ -5,7 +5,8 @@ use bytes::Bytes;
 use futures::Stream;
 use futures::StreamExt;
 
-use super::{Body, HttpResponse, IntoResponse};
+use super::{Body, HttpResponse};
+use crate::dispatch::{Answer, Http, IntoOutput};
 
 /// A single Server-Sent Event.
 ///
@@ -96,7 +97,7 @@ impl<S> Sse<S> {
 /// use ulo::http::{SseEvent, sse};
 ///
 /// #[get("/events")]
-/// async fn events(&self) -> impl IntoResponse {
+/// async fn events(&self) -> impl IntoOutput<Http> {
 ///     sse(stream::iter([
 ///         SseEvent::data("hello").event("greet"),
 ///         SseEvent::data("world").id("2"),
@@ -112,14 +113,14 @@ where
     Sse::new(stream.map(Ok))
 }
 
-impl<S, E> IntoResponse for Sse<S>
+impl<S, E> IntoOutput<Http> for Sse<S>
 where
     S: Stream<Item = Result<SseEvent, E>> + Send + 'static,
     E: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
 {
-    fn into_response(self) -> HttpResponse {
+    fn into_output(self) -> Answer<Http> {
         let encoded = self.0.map(|r| r.map(SseEvent::encode));
-        HttpResponse {
+        Ok(HttpResponse {
             status: 200,
             headers: vec![
                 ("Content-Type".into(), "text/event-stream".into()),
@@ -128,6 +129,6 @@ where
                 ("X-Accel-Buffering".into(), "no".into()),
             ],
             body: Some(Body::stream(encoded)),
-        }
+        })
     }
 }
