@@ -226,5 +226,5 @@ async fn a_panicking_grpc_interceptor_is_answered_by_the_chain() {
         .expect_err("a panicking interceptor must fail the call");
 
     assert_eq!(err.code(), tonic::Code::Unauthenticated);
-    assert_eq!(err.message(), "caught:middleware");
+    assert_eq!(err.message(), "caught:interceptor");
 }

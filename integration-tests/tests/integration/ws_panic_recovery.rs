@@ -276,7 +276,10 @@ async fn ws_interceptor_panic_renders_envelope_and_keeps_connection_alive() {
     let json: serde_json::Value = serde_json::from_str(reply.to_text().unwrap()).unwrap();
     assert_eq!(json["status"], "error");
     assert_eq!(json["kind"], "Internal");
-    assert_eq!(*captured.lock().unwrap(), Some(PipelineSegment::Middleware));
+    assert_eq!(
+        *captured.lock().unwrap(),
+        Some(PipelineSegment::Interceptor)
+    );
 
     ws.send(Message::Text(r#"{"event":"safe"}"#.to_string().into()))
         .await

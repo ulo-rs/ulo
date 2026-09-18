@@ -144,8 +144,11 @@ pub enum PipelineSegment {
     HandlerBody,
     /// Inside the active transport rendering an error to its wire shape.
     ResponseRendering,
-    /// Inside an interceptor / middleware chain step.
+    /// Inside an HTTP middleware's `handle`, which runs before the guards and
+    /// interceptors on the matched route.
     Middleware,
+    /// Inside an interceptor's `intercept`, on any transport.
+    Interceptor,
     /// Inside a guard's `can_activate`.
     Guard,
     /// Inside a registered chain handler.
@@ -160,6 +163,7 @@ impl PipelineSegment {
             Self::HandlerBody => "handler",
             Self::ResponseRendering => "response_rendering",
             Self::Middleware => "middleware",
+            Self::Interceptor => "interceptor",
             Self::Guard => "guard",
             Self::ErrorHandler => "error_handler",
             Self::Other => "other",
