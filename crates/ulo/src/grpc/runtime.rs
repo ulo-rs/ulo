@@ -5,7 +5,7 @@
 //! per-method shim that builds a [`GrpcContext`], hands this module the user's
 //! handler as a delegate, and maps whatever comes back to tonic's types.
 
-use crate::dispatch::transport::{Grpc, Transport};
+use crate::dispatch::transport::Grpc;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
@@ -142,7 +142,7 @@ where
     .await
     {
         Ok(answer) => answer,
-        Err(event) => Grpc::interceptor_panicked(event),
+        Err(event) => Err(GrpcStatus::from(event)),
     }
 }
 
@@ -199,7 +199,7 @@ where
         let next = build_next(&this.rest, this.delegate);
         match catch_async(PipelineSegment::Interceptor, this.head.intercept(ctx, next)).await {
             Ok(answer) => answer,
-            Err(event) => Grpc::interceptor_panicked(event),
+            Err(event) => Err(GrpcStatus::from(event)),
         }
     }
 }

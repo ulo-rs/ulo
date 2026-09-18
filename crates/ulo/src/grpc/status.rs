@@ -192,6 +192,17 @@ impl Error for GrpcStatus {
     }
 }
 
+/// The blanket `From<E: Error>` ADR-0039 removed would collide with the
+/// reflexive `From<T> for T`, so a conversion the framework needs is written
+/// out. This one lets a walk that caught a panic build the failure from the
+/// event without naming gRPC.
+impl From<crate::errors::PanicRecovered> for GrpcStatus {
+    fn from(event: crate::errors::PanicRecovered) -> Self {
+        let message = event.to_string();
+        Self::internal(message).caused_by(event)
+    }
+}
+
 impl GrpcStatus {
     /// The status a domain error maps to, keeping the error itself.
     ///

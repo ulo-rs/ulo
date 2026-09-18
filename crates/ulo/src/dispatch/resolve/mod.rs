@@ -20,7 +20,7 @@ pub(crate) use self::ws::GatewayResolver;
 use std::sync::Arc;
 
 use crate::dispatch::transport::{
-    EnhancerRegistry, EnhancerSet, ErrorHandlerArc, GuardEntry, InterceptorEntry, Transport,
+    Answer, EnhancerRegistry, EnhancerSet, ErrorHandlerArc, GuardEntry, InterceptorEntry, Transport,
 };
 use crate::enhancer::{Guard, Interceptor};
 use crate::error::SetupResult;
@@ -30,7 +30,7 @@ pub(crate) struct Declared<T: Transport> {
     pub guard_tokens: Vec<String>,
     pub guards: Vec<Arc<dyn Guard<T::Context>>>,
     pub interceptor_tokens: Vec<String>,
-    pub interceptors: Vec<Arc<dyn Interceptor<T::Context, T::Answer>>>,
+    pub interceptors: Vec<Arc<dyn Interceptor<T::Context, Answer<T>>>>,
     pub error_handler_tokens: Vec<String>,
     pub error_handlers: Vec<ErrorHandlerArc<T>>,
 }

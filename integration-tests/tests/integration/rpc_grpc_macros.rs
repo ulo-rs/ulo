@@ -1605,10 +1605,10 @@ async fn grpc_panic_in_interceptor_surfaces_as_internal() {
         .expect_err("interceptor panic must produce an Err — not a connection drop");
 
     assert_eq!(err.code(), tonic::Code::Internal);
-    assert!(
-        err.message().contains("interceptor panicked"),
-        "wire message should mention the panic; got {:?}",
-        err.message()
+    assert_eq!(
+        err.message(),
+        "panic recovered in interceptor: interceptor kaboom",
+        "the segment and the panic payload both reach the wire"
     );
 
     shutdown.shutdown();
