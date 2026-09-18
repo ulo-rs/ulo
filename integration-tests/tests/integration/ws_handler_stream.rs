@@ -1,11 +1,11 @@
-//! Verifies that Cardinality::Many is driven by the framework.
+//! Verifies that Items::Many is driven by the framework.
 //!
 //! A handler returns a finite stream of messages. The test connects, sends one
 //! trigger message, then reads until the stream is exhausted and confirms every
 //! item arrived in order.
 
 use std::time::Duration;
-use ulo::dispatch::Cardinality;
+use ulo::dispatch::Items;
 
 use futures_util::{SinkExt, StreamExt};
 use ulo::module;
@@ -31,7 +31,7 @@ impl CountGateway {
                 .into_iter()
                 .map(|s| WsMessage::text(s.to_string())),
         );
-        Ok(Cardinality::stream(items))
+        Ok(Items::stream(items))
     }
 }
 

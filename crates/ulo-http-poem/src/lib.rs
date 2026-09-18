@@ -76,7 +76,7 @@
 //!   assign a distinct listener.
 //! - Outbound messages are buffered through a 32-slot mpsc channel per
 //!   connection, then written to the poem socket from a dedicated write
-//!   task. Streaming handler outputs (`Cardinality::Many`) run as
+//!   task. Streaming handler outputs (`Items::Many`) run as
 //!   spawned tasks that are aborted when the read loop ends.
 //!
 //! ## Graceful shutdown

@@ -2,7 +2,7 @@
 //
 // This example demonstrates:
 // 1. A #[message_pattern] handler answering with a stream — declare
-//    `-> RpcHandlerResult` and construct Cardinality::Many
+//    `-> RpcHandlerResult` and construct Items::Many
 // 2. Consuming the reply with RpcClient::stream — items until the end marker
 // 3. Cancellation by dropping the reply stream — the server aborts the call
 //    and the producer hears `ctx.cancellation()`
@@ -14,7 +14,7 @@
 // Run: cargo run --example rpc_streaming
 
 use std::time::Duration;
-use ulo::dispatch::Cardinality;
+use ulo::dispatch::Items;
 
 use futures::StreamExt;
 use ulo::UloFactory;
@@ -36,7 +36,7 @@ impl FeedController {
     // A bounded stream: three items, then the end marker.
     #[message_pattern("feed.count")]
     async fn count(&self, _d: RpcData) -> RpcHandlerResult {
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             futures::stream::iter((1..=3).map(|n| Ok(RpcData::json(serde_json::json!(n))))).boxed(),
         ))
     }
@@ -65,7 +65,7 @@ impl FeedController {
                 }
             }
         });
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             tokio_stream::wrappers::ReceiverStream::new(rx).boxed(),
         ))
     }

@@ -7,18 +7,18 @@
 //! resolver and one pipeline serve four of them. What stays per transport is the part with no
 //! shared shape — the leaf that calls the handler, and the render that turns an answer into bytes.
 
-mod cardinality;
 mod controller;
 mod execution_result;
+mod items;
 pub(crate) mod registry;
 pub(crate) mod resolve;
 mod scoped_stream;
 pub(crate) mod source;
 pub(crate) mod transport;
 
-pub use self::cardinality::Cardinality;
 pub use self::controller::{Controller, ControllerFactory, Targets};
 pub use self::execution_result::ExecutionResult;
+pub use self::items::Items;
 pub use self::scoped_stream::ScopedStream;
 
 pub(crate) use self::source::DispatchSource;

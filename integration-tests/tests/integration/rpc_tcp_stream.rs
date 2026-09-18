@@ -10,7 +10,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use ulo::dispatch::Cardinality;
+use ulo::dispatch::Items;
 
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
@@ -156,7 +156,7 @@ impl StreamController {
 
     #[message_pattern("count.stream")]
     async fn count(&self, _d: RpcData) -> RpcHandlerResult {
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             futures_util::stream::iter((1..=3).map(|n| Ok(RpcData::json(serde_json::json!(n)))))
                 .boxed(),
         ))
@@ -164,14 +164,14 @@ impl StreamController {
 
     #[message_pattern("bytes.stream")]
     async fn bytes(&self, _d: RpcData) -> RpcHandlerResult {
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             futures_util::stream::iter(vec![Ok(RpcData::binary(vec![0, 159, 146, 150]))]).boxed(),
         ))
     }
 
     #[message_pattern("apperr.stream")]
     async fn app_err(&self, _d: RpcData) -> RpcHandlerResult {
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             futures_util::stream::iter(vec![
                 Ok(RpcData::json(serde_json::json!(1))),
                 Err(Spilled.into()),
@@ -182,7 +182,7 @@ impl StreamController {
 
     #[message_pattern("interr.stream")]
     async fn internal_err(&self, _d: RpcData) -> RpcHandlerResult {
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             futures_util::stream::iter(vec![Err(RpcError::Internal("cursor died".into()))]).boxed(),
         ))
     }
@@ -191,7 +191,7 @@ impl StreamController {
     async fn bag(&self, _d: RpcData, ctx: &RpcContext) -> RpcHandlerResult {
         ctx.extensions().insert(Tag("alive"));
         let ctx = ctx.clone();
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             futures_util::stream::iter(0..3)
                 .map(move |n| {
                     let tag = ctx.extensions().get::<Tag>().map(|t| t.0).unwrap_or("gone");
@@ -203,17 +203,17 @@ impl StreamController {
 
     #[message_pattern("probe.cancel")]
     async fn probe_cancel(&self, _d: RpcData, ctx: &RpcContext) -> RpcHandlerResult {
-        Ok(Cardinality::Many(ticker(ctx, &CANCEL_FRAME_SEEN)))
+        Ok(Items::Many(ticker(ctx, &CANCEL_FRAME_SEEN)))
     }
 
     #[message_pattern("probe.disconnect")]
     async fn probe_disconnect(&self, _d: RpcData, ctx: &RpcContext) -> RpcHandlerResult {
-        Ok(Cardinality::Many(ticker(ctx, &DISCONNECT_SEEN)))
+        Ok(Items::Many(ticker(ctx, &DISCONNECT_SEEN)))
     }
 
     #[message_pattern("probe.client_drop")]
     async fn probe_client_drop(&self, _d: RpcData, ctx: &RpcContext) -> RpcHandlerResult {
-        Ok(Cardinality::Many(ticker(ctx, &CLIENT_DROP_SEEN)))
+        Ok(Items::Many(ticker(ctx, &CLIENT_DROP_SEEN)))
     }
 
     #[message_pattern("probe.slow")]
@@ -226,7 +226,7 @@ impl StreamController {
         }
         let _sentinel = Sentinel;
         tokio::time::sleep(Duration::from_secs(10)).await;
-        Ok(Cardinality::One(RpcData::text("too late")))
+        Ok(Items::One(RpcData::text("too late")))
     }
 
     /// A finite stream whose producer watches the token, so a test can tell a stream that ended
@@ -238,7 +238,7 @@ impl StreamController {
             token.cancelled().await;
             DRAINED_SAW_CANCEL.store(true, Ordering::SeqCst);
         });
-        Ok(Cardinality::Many(
+        Ok(Items::Many(
             futures_util::stream::iter((1..=2).map(|n| Ok(RpcData::json(serde_json::json!(n)))))
                 .boxed(),
         ))

@@ -30,7 +30,7 @@ use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
 use std::sync::atomic::{AtomicBool, Ordering};
 use ulo::UloFactory;
-use ulo::dispatch::Cardinality;
+use ulo::dispatch::Items;
 use ulo::ws::{
     BroadcastModule, BroadcastService, WsClient, WsError, WsHandlerOutput, WsHandlerResult,
     WsMessage,
@@ -136,7 +136,7 @@ impl RoomGateway {
             .send(WsMessage::text(text.to_string()))
             .await
             .ok();
-        Ok(Cardinality::Empty)
+        Ok(Items::Empty)
     }
 }
 

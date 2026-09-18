@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use ulo::dispatch::Cardinality;
+use ulo::dispatch::Items;
 
 use crate::common::NotServed;
 use serial_test::serial;
@@ -106,7 +106,7 @@ impl PanicGuardRpcController {
 
     #[message_pattern("guard.panic.echo")]
     async fn echo(&self) -> RpcHandlerResult {
-        Ok(Cardinality::One(RpcData::text("unreachable")))
+        Ok(Items::One(RpcData::text("unreachable")))
     }
 }
 

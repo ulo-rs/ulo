@@ -1,4 +1,4 @@
-use crate::dispatch::Cardinality;
+use crate::dispatch::Items;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -138,10 +138,8 @@ impl RpcControllerWrapper {
                     // canonical envelope. A wire-`err` frame is reserved for a call that reached
                     // no controller at all.
                     Some(Ok(output)) => Ok(output),
-                    Some(Err(reshaped)) => {
-                        Ok(Cardinality::One(Self::safe_render(|| reshaped.to_data())))
-                    }
-                    None => Ok(Cardinality::One(Self::safe_render(|| rpc_err.to_data()))),
+                    Some(Err(reshaped)) => Ok(Items::One(Self::safe_render(|| reshaped.to_data()))),
+                    None => Ok(Items::One(Self::safe_render(|| rpc_err.to_data()))),
                 }
             }
         };
@@ -149,7 +147,7 @@ impl RpcControllerWrapper {
         // The execution ends when the answer does. A stream has emitted nothing
         // at this point, so the context rides it rather than dying here.
         match answer {
-            Ok(Cardinality::Many(stream)) => Ok(Cardinality::Many(
+            Ok(Items::Many(stream)) => Ok(Items::Many(
                 crate::dispatch::ScopedStream::new(stream, ctx).boxed(),
             )),
             other => other,

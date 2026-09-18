@@ -19,7 +19,7 @@
 //! a handler's stream through a transport-supplied sender; [`Inflight`] keys
 //! the in-flight calls a `{"cancel": true}` notice can abort.
 
-use crate::dispatch::Cardinality;
+use crate::dispatch::Items;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
@@ -65,16 +65,16 @@ impl ResponseFrame {
 /// Frame a handler outcome into its reply.
 pub fn frame_response(outcome: RpcHandlerResult) -> ResponseFrame {
     match outcome {
-        Ok(Cardinality::One(RpcData::Binary(b))) => ResponseFrame::Raw(b),
-        Ok(Cardinality::One(RpcData::Json(v))) => ResponseFrame::Json(json!({ "response": v })),
-        Ok(Cardinality::One(RpcData::Text(s))) => ResponseFrame::Json(json!({ "response": s })),
+        Ok(Items::One(RpcData::Binary(b))) => ResponseFrame::Raw(b),
+        Ok(Items::One(RpcData::Json(v))) => ResponseFrame::Json(json!({ "response": v })),
+        Ok(Items::One(RpcData::Text(s))) => ResponseFrame::Json(json!({ "response": s })),
         // #[event_pattern] handler but the caller expects a reply — an ack
         // closes the pending request instead of timing it out.
-        Ok(Cardinality::Empty) => ResponseFrame::Json(json!({ "response": null })),
+        Ok(Items::Empty) => ResponseFrame::Json(json!({ "response": null })),
         // A transport without the stream grammar refuses honestly. Dropping
         // the scoped stream fires the execution's cancellation token, so the
         // producer feeding it stops.
-        Ok(Cardinality::Many(stream)) => {
+        Ok(Items::Many(stream)) => {
             drop(stream);
             ResponseFrame::Json(json!({
                 "err": {
@@ -370,29 +370,26 @@ mod tests {
 
     #[test]
     fn json_response_frames_into_the_response_envelope() {
-        let bytes = frame_response(Ok(Cardinality::One(RpcData::json(
-            serde_json::json!({"sum": 5}),
-        ))))
-        .into_bytes();
+        let bytes = frame_response(Ok(Items::One(RpcData::json(serde_json::json!({"sum": 5})))))
+            .into_bytes();
         assert_eq!(bytes, br#"{"response":{"sum":5}}"#);
     }
 
     #[test]
     fn text_response_frames_as_a_json_string() {
-        let bytes = frame_response(Ok(Cardinality::One(RpcData::text("hi")))).into_bytes();
+        let bytes = frame_response(Ok(Items::One(RpcData::text("hi")))).into_bytes();
         assert_eq!(bytes, br#"{"response":"hi"}"#);
     }
 
     #[test]
     fn binary_response_passes_through_raw() {
-        let bytes =
-            frame_response(Ok(Cardinality::One(RpcData::binary(vec![1, 2, 3])))).into_bytes();
+        let bytes = frame_response(Ok(Items::One(RpcData::binary(vec![1, 2, 3])))).into_bytes();
         assert_eq!(bytes, vec![1, 2, 3]);
     }
 
     #[test]
     fn event_ack_is_a_null_response() {
-        let bytes = frame_response(Ok(Cardinality::Empty)).into_bytes();
+        let bytes = frame_response(Ok(Items::Empty)).into_bytes();
         assert_eq!(bytes, br#"{"response":null}"#);
     }
 
@@ -401,7 +398,7 @@ mod tests {
     #[test]
     fn an_answered_failure_rides_the_response_lane() {
         let envelope = RpcError::AppError(Arc::new(Teapot)).to_data();
-        let v = frame_response(Ok(Cardinality::One(envelope))).into_json_value();
+        let v = frame_response(Ok(Items::One(envelope))).into_json_value();
         assert_eq!(v["response"]["status"], "error");
         assert_eq!(v["response"]["kind"], "Conflict");
         assert_eq!(v["response"]["message"], "teapot");
@@ -428,16 +425,14 @@ mod tests {
 
     #[test]
     fn raw_frame_degrades_to_a_null_response_as_json() {
-        let v = frame_response(Ok(Cardinality::One(RpcData::binary(vec![9])))).into_json_value();
+        let v = frame_response(Ok(Items::One(RpcData::binary(vec![9])))).into_json_value();
         assert_eq!(v, serde_json::json!({ "response": null }));
     }
 
     #[test]
     fn frame_then_parse_is_identity_for_json_response() {
-        let bytes = frame_response(Ok(Cardinality::One(RpcData::json(
-            serde_json::json!({"sum": 5}),
-        ))))
-        .into_bytes();
+        let bytes = frame_response(Ok(Items::One(RpcData::json(serde_json::json!({"sum": 5})))))
+            .into_bytes();
         let parsed = parse_response(&bytes).unwrap();
         assert_eq!(parsed.as_json(), Some(&serde_json::json!({"sum": 5})));
     }
@@ -468,7 +463,7 @@ mod tests {
     #[test]
     fn stream_refusal_names_the_unsupported_transport() {
         let stream = futures::stream::empty().boxed();
-        let v = frame_response(Ok(Cardinality::Many(stream))).into_json_value();
+        let v = frame_response(Ok(Items::Many(stream))).into_json_value();
         assert_eq!(v["err"]["status"], "unsupported");
     }
 

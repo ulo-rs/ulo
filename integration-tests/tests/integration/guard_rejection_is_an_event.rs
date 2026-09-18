@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use ulo::dispatch::Cardinality;
+use ulo::dispatch::Items;
 
 use crate::common::NotServed;
 use futures_util::{SinkExt, StreamExt};
@@ -173,7 +173,7 @@ impl RejectionRpcController {
 
     #[message_pattern("rejection.echo")]
     async fn echo(&self) -> RpcHandlerResult {
-        Ok(Cardinality::One(RpcData::text("unreachable")))
+        Ok(Items::One(RpcData::text("unreachable")))
     }
 }
 

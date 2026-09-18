@@ -79,7 +79,7 @@ impl ChatGateway {
             .send_event("message", &response)
             .await?;
 
-        Ok(ulo::dispatch::Cardinality::Empty)
+        Ok(ulo::dispatch::Items::Empty)
     }
 
     #[subscribe_message("ping")]

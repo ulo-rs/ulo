@@ -156,7 +156,7 @@ impl ChatGateway {
         let sent = self.broadcast.to_room(room).send(msg).await?;
         println!("📢 Notified {} clients in room '{}'", sent, room);
 
-        Ok(Cardinality::Empty)
+        Ok(Items::Empty)
     }
 
     #[subscribe_message("leave")]
@@ -185,7 +185,7 @@ impl ChatGateway {
 
         self.broadcast.to_room(room).send(msg).await?;
 
-        Ok(Cardinality::Empty)
+        Ok(Items::Empty)
     }
 
     #[subscribe_message("message")]
@@ -217,7 +217,7 @@ impl ChatGateway {
         let sent = self.broadcast.to_room(room).send(msg).await?;
         println!("📨 Delivered to {} clients", sent);
 
-        Ok(Cardinality::Empty)
+        Ok(Items::Empty)
     }
 
     #[subscribe_message("dm")]
@@ -249,7 +249,7 @@ impl ChatGateway {
 
         self.broadcast.to_client(to).send(msg).await?;
 
-        Ok(Cardinality::Empty)
+        Ok(Items::Empty)
     }
 
     #[subscribe_message("typing")]
@@ -286,7 +286,7 @@ impl ChatGateway {
             }
         }
 
-        Ok(Cardinality::Empty)
+        Ok(Items::Empty)
     }
 }
 

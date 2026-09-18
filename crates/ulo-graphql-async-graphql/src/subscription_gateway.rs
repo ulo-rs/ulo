@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use ulo::dispatch::Cardinality;
+use ulo::dispatch::Items;
 
 use futures::future::AbortHandle;
 use futures::stream::Abortable;
@@ -67,7 +67,7 @@ enum ServerMessage<'a> {
 ///
 /// Register it by calling `.with_subscription_path("/graphql/ws")` on `GraphQLModule`.
 /// The gateway handles the full graphql-ws handshake and drives `Schema::execute_stream`
-/// as a `Cardinality::Many`.
+/// as an `Items::Many`.
 pub struct GraphQLSubscriptionGateway<Q, M, S>
 where
     Q: ObjectType + 'static,
@@ -212,15 +212,15 @@ where
                         .insert(client.id.clone(), v);
                 }
                 let ack = serde_json::to_string(&ServerMessage::ConnectionAck).unwrap();
-                Ok(Cardinality::One(WsMessage::text(ack)))
+                Ok(Items::One(WsMessage::text(ack)))
             }
 
             ClientMessage::Ping { .. } => {
                 let pong = serde_json::to_string(&ServerMessage::Pong).unwrap();
-                Ok(Cardinality::One(WsMessage::text(pong)))
+                Ok(Items::One(WsMessage::text(pong)))
             }
 
-            ClientMessage::Pong { .. } => Ok(Cardinality::Empty),
+            ClientMessage::Pong { .. } => Ok(Items::Empty),
 
             ClientMessage::Complete { id } => {
                 if let Some(handle) = self
@@ -231,7 +231,7 @@ where
                 {
                     handle.abort();
                 }
-                Ok(Cardinality::Empty)
+                Ok(Items::Empty)
             }
 
             ClientMessage::Subscribe { id, payload } => {
@@ -304,7 +304,7 @@ where
 
         // Items cannot fail: a refusal is already a `graphql-transport-ws` error frame in the
         // stream, not a failed item, which is what this transport's `Infallible` says.
-        Ok(Cardinality::stream(Abortable::new(full_stream, abort_reg)))
+        Ok(Items::stream(Abortable::new(full_stream, abort_reg)))
     }
 }
 

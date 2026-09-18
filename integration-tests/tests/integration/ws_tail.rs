@@ -12,7 +12,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use ulo::dispatch::Cardinality;
+use ulo::dispatch::Items;
 
 use futures_util::{SinkExt, StreamExt};
 use ulo::context::ExecutionContext;
@@ -59,9 +59,9 @@ impl TailGateway {
                 }
             }
         });
-        Ok(Cardinality::stream(
-            tokio_stream::wrappers::ReceiverStream::new(rx),
-        ))
+        Ok(Items::stream(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 
     /// A finite stream, and a watcher that records a cancellation if one comes.
@@ -72,7 +72,7 @@ impl TailGateway {
             token.cancelled().await;
             DRAINED_SAW_CANCEL.store(true, Ordering::SeqCst);
         });
-        Ok(Cardinality::stream(futures_util::stream::iter(
+        Ok(Items::stream(futures_util::stream::iter(
             ["one", "two", "three"]
                 .into_iter()
                 .map(|s| WsMessage::text(s.to_string())),
