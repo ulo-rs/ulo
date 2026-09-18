@@ -13,54 +13,6 @@ use crate::enhancer::{Guard, Interceptor};
 use crate::rpc::RpcContext;
 use crate::spi::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};
 use futures::StreamExt;
-use futures::stream::BoxStream;
-
-/// Delegates to the handler's reply stream while owning the execution's
-/// context — cache, extensions, and token stay alive until the last item.
-///
-/// `BoxStream` is `Pin<Box<_>>` and therefore `Unpin`, so the projection
-/// needs no pin machinery.
-struct ScopedRpcStream {
-    inner: BoxStream<'static, Result<RpcData, RpcError>>,
-    context: RpcContext,
-    /// Set once the inner stream answers `None`. An error item does not set
-    /// it: the adapter stops the drain there and drops this un-drained, so
-    /// the producer behind an abnormal end hears the token too.
-    drained: bool,
-}
-
-impl futures::Stream for ScopedRpcStream {
-    type Item = Result<RpcData, RpcError>;
-
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-        let polled = std::pin::Pin::new(&mut this.inner).poll_next(cx);
-        if matches!(polled, std::task::Poll::Ready(None)) {
-            this.drained = true;
-        }
-        polled
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-/// A stream dropped with items still to come is the caller having gone —
-/// disconnect, cancel notice, or shutdown. Nothing else observes that: the
-/// handler returned when it had a stream, and whatever feeds it is not inside
-/// the future the adapter drops.
-impl Drop for ScopedRpcStream {
-    fn drop(&mut self) {
-        if !self.drained {
-            use crate::context::ExecutionContext as _;
-            self.context.cancellation().cancel();
-        }
-    }
-}
 
 /// The innermost step of the chain: the controller, resolved for this call, asked to handle it.
 struct ControllerLeaf(Arc<dyn RpcControllerSource>);
@@ -198,12 +150,7 @@ impl RpcControllerWrapper {
         // at this point, so the context rides it rather than dying here.
         match answer {
             Ok(Cardinality::Many(stream)) => Ok(Cardinality::Many(
-                ScopedRpcStream {
-                    inner: stream,
-                    context: ctx,
-                    drained: false,
-                }
-                .boxed(),
+                crate::dispatch::ScopedStream::new(stream, ctx).boxed(),
             )),
             other => other,
         }

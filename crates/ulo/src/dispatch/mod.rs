@@ -12,11 +12,13 @@ mod controller;
 mod execution_result;
 pub(crate) mod registry;
 pub(crate) mod resolve;
+mod scoped_stream;
 pub(crate) mod source;
 pub(crate) mod transport;
 
 pub use self::cardinality::Cardinality;
 pub use self::controller::{Controller, ControllerFactory, Targets};
 pub use self::execution_result::ExecutionResult;
+pub use self::scoped_stream::ScopedStream;
 
 pub(crate) use self::source::DispatchSource;

@@ -100,6 +100,7 @@ static CANCEL_FRAME_SEEN: AtomicBool = AtomicBool::new(false);
 static DISCONNECT_SEEN: AtomicBool = AtomicBool::new(false);
 static CLIENT_DROP_SEEN: AtomicBool = AtomicBool::new(false);
 static HANDLER_DROPPED: AtomicBool = AtomicBool::new(false);
+static DRAINED_SAW_CANCEL: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, ulo::Error)]
 #[error_kind(Conflict)]
@@ -226,6 +227,21 @@ impl StreamController {
         let _sentinel = Sentinel;
         tokio::time::sleep(Duration::from_secs(10)).await;
         Ok(Cardinality::One(RpcData::text("too late")))
+    }
+
+    /// A finite stream whose producer watches the token, so a test can tell a stream that ended
+    /// on its own from one the caller abandoned.
+    #[message_pattern("probe.drained")]
+    async fn probe_drained(&self, _d: RpcData, ctx: &RpcContext) -> RpcHandlerResult {
+        let token = ctx.cancellation().clone();
+        tokio::spawn(async move {
+            token.cancelled().await;
+            DRAINED_SAW_CANCEL.store(true, Ordering::SeqCst);
+        });
+        Ok(Cardinality::Many(
+            futures_util::stream::iter((1..=2).map(|n| Ok(RpcData::json(serde_json::json!(n)))))
+                .boxed(),
+        ))
     }
 
     #[message_pattern("single.echo")]
@@ -485,4 +501,35 @@ async fn a_send_to_a_streaming_handler_fails_loudly() {
         }
         other => panic!("expected a loud transport error, got {other:?}"),
     }
+}
+
+/// The other side of `a_cancel_frame_stops_the_producer`: a stream the caller reads to its end is
+/// completion, and the execution is not cancelled behind it.
+#[tokio_localset_test::localset_test]
+async fn a_drained_rpc_stream_is_not_cancelled() {
+    DRAINED_SAW_CANCEL.store(false, Ordering::SeqCst);
+
+    let port = start_rpc_server(StreamModule).await;
+    let frames = tcp_stream_frames(
+        port,
+        "probe.drained",
+        serde_json::Value::Null,
+        Duration::from_secs(2),
+    )
+    .await;
+
+    assert_eq!(
+        frames.len(),
+        3,
+        "two items and the end marker, got {frames:?}"
+    );
+    assert_eq!(frames[2]["end"], serde_json::json!(true));
+
+    // The token fires on a drop before the end, so a drained stream has to be given the same
+    // window a cancelled one gets before the absence means anything.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !DRAINED_SAW_CANCEL.load(Ordering::SeqCst),
+        "a stream the caller read to its end is completion, not cancellation"
+    );
 }
