@@ -77,10 +77,12 @@ impl<T: IntoOutput<Rpc>> Answered  for &&Answers<T>      // tried first
 impl<T: Serialize>       Serialized for &Answers<T>      // reached only if the first does not apply
 ```
 
-The macro emits `(&&Answers(value)).ulo_answer()`. A type that says what it is wins; anything else
-is serialized. This keeps a handler's freedom to return a plain DTO while `RpcData` still means
-`RpcData` — serializing an `RpcData` would wrap it in its own enum tag, since it is externally
-tagged, and produce `{"Text": "hi"}` where the handler said `Text("hi")`.
+The macro emits `(&&Answers::new(value)).ulo_answer()`. A type that says what it is wins; anything
+else is serialized. The pair is macro ABI rather than vocabulary: it lives in `ulo::__rpc::answer`
+beside the other bridges `#[patterns]` emits against, and a handler names none of it. This keeps a
+handler's freedom to return a plain DTO while `RpcData` still means `RpcData` — serializing an
+`RpcData` would wrap it in its own enum tag, since it is externally tagged, and produce
+`{"Text": "hi"}` where the handler said `Text("hi")`.
 
 **gRPC keeps the proto.** Its answer type is the method's, tonic's trait names it, and a handler
 that returned something else would be answering a different method. That is the fact every gRPC

@@ -52,10 +52,10 @@ pub fn handle_patterns(item: TokenStream) -> Result<TokenStream> {
             quote! {
                 #pattern => {
                     #(#extractions)*
-                    use ::ulo::rpc::fallback::{Answered as _, Serialized as _};
+                    use ::ulo::__rpc::answer::{Answered as _, Serialized as _};
                     match self.#method_name(#(#call_args),*).await {
                         Ok(__value) => {
-                            let __answers = ::ulo::rpc::fallback::Answers::new(__value);
+                            let __answers = ::ulo::__rpc::answer::Answers::new(__value);
                             match (&&__answers).ulo_answer() {
                                 Ok(__output) => ::ulo::dispatch::ExecutionResult::Ok(__output),
                                 Err(__err) => ::ulo::dispatch::ExecutionResult::Err(__err),
