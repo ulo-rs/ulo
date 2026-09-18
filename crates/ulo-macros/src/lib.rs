@@ -120,7 +120,7 @@ pub fn delete(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 /// Declares a Server-Sent Events handler. Always routes as GET.
 ///
-/// The handler must return a stream of events, not a response type directly:
+/// The handler returns a stream of events, not a response type directly:
 ///
 /// ```rust,ignore
 /// // Infallible — each event always produces a value
@@ -130,10 +130,16 @@ pub fn delete(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// // Per-event fallible — individual events may fail
 /// #[sse("/events")]
 /// async fn events(&self) -> impl Stream<Item = Result<SseEvent, MyError>> { ... }
+///
+/// // Setup that can fail before streaming starts — validating a subscription token, say
+/// #[sse("/events")]
+/// async fn events(&self) -> Result<impl Stream<Item = SseEvent>, MyError> { ... }
 /// ```
 ///
-/// For setup that can fail before streaming starts (e.g. validating a subscription token), use a
-/// guard or `#[get]` returning `Result<impl IntoOutput<Http>, E>` with an explicit `sse(stream)` call.
+/// Any stream type works — boxed, aliased, or written as `impl Stream`. An error from the third
+/// form reaches the error chain like any other handler's.
+///
+/// `#[get]` is the same route written out: return `Sse::new(stream)`, or a `Result` of it.
 #[proc_macro_attribute]
 pub fn sse(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item

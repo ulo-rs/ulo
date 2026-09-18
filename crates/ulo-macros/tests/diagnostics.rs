@@ -74,6 +74,10 @@ const DOCUMENTED: &[(&str, &str)] = &[
         "is not an extractor for `RpcContext`",
     ),
     (
+        "sse_answers_a_stream",
+        "an `#[sse]` handler must answer with a stream of events",
+    ),
+    (
         "scope_request_renamed",
         "scope = \"request\" is now scope = \"execution\"",
     ),

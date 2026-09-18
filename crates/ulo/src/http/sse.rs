@@ -76,50 +76,73 @@ impl SseEvent {
     }
 }
 
-/// An SSE response. Wraps a stream of events and sets the required headers.
+/// An item an SSE stream may yield.
 ///
-/// Use the [`sse`] free function for infallible streams, or [`Sse::new`] when
-/// the stream yields `Result<SseEvent, E>`.
-pub struct Sse<S>(S);
+/// Implemented for [`SseEvent`] and for `Result<SseEvent, E>`. A stream of either is an SSE body,
+/// so a handler chooses per-event fallibility by its item type and by nothing else.
+pub trait SseItem {
+    /// What a failed event carries — [`Infallible`] for a bare [`SseEvent`].
+    type Error: Into<Box<dyn std::error::Error + Send + Sync>> + 'static;
 
-impl<S> Sse<S> {
-    pub fn new(stream: S) -> Self {
-        Self(stream)
+    fn into_result(self) -> Result<SseEvent, Self::Error>;
+}
+
+impl SseItem for SseEvent {
+    type Error = Infallible;
+
+    fn into_result(self) -> Result<SseEvent, Infallible> {
+        Ok(self)
     }
 }
 
-/// Wraps an infallible stream of [`SseEvent`]s into an SSE response.
+impl<E> SseItem for Result<SseEvent, E>
+where
+    E: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
+{
+    type Error = E;
+
+    fn into_result(self) -> Result<SseEvent, E> {
+        self
+    }
+}
+
+/// An SSE response. Wraps a stream of events and sets the required headers.
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// use futures::stream;
-/// use ulo::http::{SseEvent, sse};
+/// use ulo::http::{Sse, SseEvent};
 ///
 /// #[get("/events")]
 /// async fn events(&self) -> impl IntoOutput<Http> {
-///     sse(stream::iter([
+///     Sse::new(stream::iter([
 ///         SseEvent::data("hello").event("greet"),
 ///         SseEvent::data("world").id("2"),
 ///     ]))
 /// }
 /// ```
-pub fn sse<S>(
-    stream: S,
-) -> Sse<futures::stream::Map<S, fn(SseEvent) -> Result<SseEvent, Infallible>>>
+///
+/// A stream of `Result<SseEvent, E>` goes through the same constructor.
+pub struct Sse<S>(S);
+
+impl<S> Sse<S>
 where
-    S: Stream<Item = SseEvent>,
+    S: Stream,
+    S::Item: SseItem,
 {
-    Sse::new(stream.map(Ok))
+    pub fn new(stream: S) -> Self {
+        Self(stream)
+    }
 }
 
-impl<S, E> IntoOutput<Http> for Sse<S>
+impl<S> IntoOutput<Http> for Sse<S>
 where
-    S: Stream<Item = Result<SseEvent, E>> + Send + 'static,
-    E: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
+    S: Stream + Send + 'static,
+    S::Item: SseItem,
 {
     fn into_output(self) -> Answer<Http> {
-        let encoded = self.0.map(|r| r.map(SseEvent::encode));
+        let encoded = self.0.map(|item| item.into_result().map(SseEvent::encode));
         Ok(HttpResponse {
             status: 200,
             headers: vec![

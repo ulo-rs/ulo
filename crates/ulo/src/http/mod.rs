@@ -56,7 +56,7 @@ pub use self::http_method::HttpMethod;
 mod into_output;
 
 mod sse;
-pub use self::sse::{Sse, SseEvent, sse};
+pub use self::sse::{Sse, SseEvent, SseItem};
 
 /// Join a controller's route prefix with a handler's sub-path, normalizing slashes.
 ///
