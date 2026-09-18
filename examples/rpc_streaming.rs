@@ -78,11 +78,10 @@ fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let local = tokio::task::LocalSet::new();
-    runtime.block_on(local.run_until(async {
+    runtime.block_on(async {
         // Server on an OS-assigned port; the bound address comes back from bind().
         let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-        tokio::task::spawn_local(async move {
+        tokio::spawn(async move {
             let mut app = UloFactory::new().create_with(FeedModule).await.unwrap();
             app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
                 .unwrap();
@@ -118,6 +117,6 @@ fn main() -> anyhow::Result<()> {
         // the producer's stop line prints.
         tokio::time::sleep(Duration::from_millis(300)).await;
         anyhow::Ok(())
-    }))?;
+    })?;
     Ok(())
 }

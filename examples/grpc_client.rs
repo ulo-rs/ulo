@@ -119,19 +119,14 @@ impl AppModule {}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async move {
-            let grpc_addr: SocketAddr = GRPC_ADDR.parse().unwrap();
-            let mut app = UloFactory::create(AppModule).await.unwrap();
-            app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
-                .unwrap();
-            app.use_grpc_adapter(ulo_grpc::GrpcAdapter::new(grpc_addr))
-                .unwrap();
+    let grpc_addr: SocketAddr = GRPC_ADDR.parse().unwrap();
+    let mut app = UloFactory::create(AppModule).await.unwrap();
+    app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000))
+        .unwrap();
+    app.use_grpc_adapter(ulo_grpc::GrpcAdapter::new(grpc_addr))
+        .unwrap();
 
-            println!("HTTP on http://127.0.0.1:3000, gRPC on {GRPC_ADDR}");
-            println!("try: curl localhost:3000/orders/place");
-            app.start().await.unwrap();
-        })
-        .await;
+    println!("HTTP on http://127.0.0.1:3000, gRPC on {GRPC_ADDR}");
+    println!("try: curl localhost:3000/orders/place");
+    app.start().await.unwrap();
 }

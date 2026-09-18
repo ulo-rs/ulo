@@ -244,16 +244,11 @@ struct GrpcExampleModule;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async move {
-            let addr: SocketAddr = "127.0.0.1:50051".parse().unwrap();
-            let adapter = ulo_grpc::GrpcAdapter::new(addr);
+    let addr: SocketAddr = "127.0.0.1:50051".parse().unwrap();
+    let adapter = ulo_grpc::GrpcAdapter::new(addr);
 
-            let mut app = UloFactory::create(GrpcExampleModule).await.unwrap();
-            app.use_grpc_adapter(adapter).unwrap();
-            tracing::info!("gRPC server listening on 127.0.0.1:50051");
-            app.start().await.expect("server failed to start");
-        })
-        .await;
+    let mut app = UloFactory::create(GrpcExampleModule).await.unwrap();
+    app.use_grpc_adapter(adapter).unwrap();
+    tracing::info!("gRPC server listening on 127.0.0.1:50051");
+    app.start().await.expect("server failed to start");
 }
