@@ -136,7 +136,7 @@ where
 
     let next = build_next(&interceptors[1..], delegate);
     match catch_async(
-        PipelineSegment::Middleware,
+        PipelineSegment::Interceptor,
         interceptors[0].intercept(ctx, next),
     )
     .await
@@ -197,7 +197,7 @@ where
     async fn run(self: Box<Self>, ctx: &GrpcContext) -> GrpcHandlerResult {
         let this = *self;
         let next = build_next(&this.rest, this.delegate);
-        match catch_async(PipelineSegment::Middleware, this.head.intercept(ctx, next)).await {
+        match catch_async(PipelineSegment::Interceptor, this.head.intercept(ctx, next)).await {
             Ok(answer) => answer,
             Err(event) => Grpc::interceptor_panicked(event),
         }

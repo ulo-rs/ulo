@@ -657,7 +657,10 @@ async fn rpc_interceptor_panic_surfaces_as_envelope_and_keeps_connection_alive()
     let payload = &resp["response"];
     assert_eq!(payload["status"], "error");
     assert_eq!(payload["kind"], "Internal");
-    assert_eq!(*captured.lock().unwrap(), Some(PipelineSegment::Middleware));
+    assert_eq!(
+        *captured.lock().unwrap(),
+        Some(PipelineSegment::Interceptor)
+    );
 
     let resp = tcp_rpc_timeout(
         port,

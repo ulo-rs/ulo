@@ -192,8 +192,7 @@ impl Interceptor<HttpContext, HttpHandlerResult> for PanickingInterceptor {
 recording_handler!(InterceptorSegmentRecorder, INTERCEPTOR_SEGMENTS);
 
 /// A panicking interceptor surfaces as 500 via the standard
-/// `PanicRecovered` envelope, tagged `PipelineSegment::Middleware` (the
-/// interceptor chain shares the middleware segment label).
+/// `PanicRecovered` envelope, tagged `PipelineSegment::Interceptor`.
 #[tokio_localset_test::localset_test]
 async fn panicking_interceptor_renders_500_via_panic_recovered() {
     #[controller("/api")]
@@ -221,7 +220,7 @@ async fn panicking_interceptor_renders_500_via_panic_recovered() {
     assert_eq!(resp.status().as_u16(), 500);
     assert_eq!(
         INTERCEPTOR_SEGMENTS.lock().unwrap().clone(),
-        vec![PipelineSegment::Middleware]
+        vec![PipelineSegment::Interceptor]
     );
 
     let body: serde_json::Value = resp.json().await.unwrap();

@@ -71,7 +71,7 @@ pub(crate) async fn through_interceptors<T: Transport>(
     };
 
     match crate::panic_recovery::catch_async(
-        PipelineSegment::Middleware,
+        PipelineSegment::Interceptor,
         first.intercept(ctx, Box::new(next)),
     )
     .await
