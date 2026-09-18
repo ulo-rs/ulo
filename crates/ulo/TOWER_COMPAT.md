@@ -42,7 +42,7 @@ Tower may have transformed the response body (e.g. `CompressionLayer`), so the o
 
 ### `!Send` futures
 
-`UloNextService::Future` is bound to `Send`. Ulo's integration tests run on a `LocalSet` (via `tokio_localset_test`), but the `Middleware` trait impl requires `Send` futures throughout. If a Tower layer wraps a `!Send` service (uncommon in tower-http, but possible with custom layers), it will fail to compile. There is no clean fix without a `LocalSet`-aware variant.
+`UloNextService::Future` is bound to `Send`, and the `Middleware` trait impl requires `Send` futures throughout. If a Tower layer wraps a `!Send` service (uncommon in tower-http, but possible with custom layers), it will fail to compile. There is no clean fix without a `LocalSet`-aware variant.
 
 ### Body type recovery on response
 

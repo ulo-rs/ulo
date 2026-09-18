@@ -47,7 +47,7 @@ pub struct AppModule;
 
 /// The route the dynamic module declared answers, and answers with the provider the same module
 /// declared — so both reached registration by the path their `#[module]` list counterparts do.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_dynamic_module_s_controller_serves() {
     let server = TestServer::start(AppModule).await;
 

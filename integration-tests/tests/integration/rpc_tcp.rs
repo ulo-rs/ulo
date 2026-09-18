@@ -43,8 +43,7 @@ async fn start_rpc_server_with_handlers(
 ) -> u16 {
     use ulo::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut factory = UloFactory::new();
         for h in handlers {
             factory.use_global_rpc_error_handler(h);
@@ -61,7 +60,6 @@ async fn start_rpc_server_with_handlers(
         );
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     port_rx.await.expect("RPC server failed to bind")
 }
 
@@ -145,7 +143,7 @@ impl RpcPanicModule {}
 ///
 /// Note: the test produces a "panicked at" line in stderr — that is the Rust
 /// panic hook firing before catch_unwind catches the unwind. It is expected.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn rpc_handler_panic_returns_error_and_keeps_connection_alive() {
     let port = start_rpc_server(RpcPanicModule).await;
 
@@ -194,15 +192,14 @@ impl ShutdownTcpModule {}
 /// `app.shutdown()` must drive the accept loop to exit; otherwise
 /// `shutdown.completed().await` would hang forever. After completion, new
 /// connections to the listener are refused.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tcp_app_shutdown_stops_the_accept_loop() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(ShutdownTcpModule).await.unwrap();
         app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
             .unwrap();
@@ -216,7 +213,6 @@ async fn tcp_app_shutdown_stops_the_accept_loop() {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
 
     let port = port_rx.await.unwrap();
     let shutdown = shutdown_rx.await.unwrap();
@@ -274,15 +270,14 @@ impl SlowTcpModule {}
 /// A request already running when shutdown fires must finish during the
 /// drain window, not be killed mid-flight. The default 10 s drain timeout
 /// comfortably covers a 300 ms handler.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tcp_in_flight_request_completes_during_drain() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(SlowTcpModule).await.unwrap();
         app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
             .unwrap();
@@ -296,7 +291,6 @@ async fn tcp_in_flight_request_completes_during_drain() {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     let port = port_rx.await.unwrap();
     let shutdown = shutdown_rx.await.unwrap();
 
@@ -330,15 +324,14 @@ async fn tcp_in_flight_request_completes_during_drain() {
 /// When a handler outruns the configured drain timeout, the framework aborts
 /// it instead of waiting forever. The caller doesn't get a reply (the task is
 /// killed mid-flight) but `shutdown.completed()` resolves promptly.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tcp_drain_aborts_after_timeout() {
     use tokio::io::AsyncWriteExt;
     use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(SlowTcpModule).await.unwrap();
         let adapter = ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0)
             .with_drain_timeout(Duration::from_millis(50));
@@ -353,7 +346,6 @@ async fn tcp_drain_aborts_after_timeout() {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     let port = port_rx.await.unwrap();
     let shutdown = shutdown_rx.await.unwrap();
 
@@ -379,14 +371,13 @@ async fn tcp_drain_aborts_after_timeout() {
 /// concurrent request on a second connection must be rejected immediately
 /// with an `"overloaded"` frame rather than queuing. After the slow handler
 /// completes the slot is released and a follow-up request succeeds.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tcp_backpressure_rejects_excess_and_releases_after_completion() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(SlowTcpModule).await.unwrap();
         let adapter = ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0).with_max_inflight(1);
         app.use_rpc_adapter(adapter).unwrap();
@@ -399,7 +390,6 @@ async fn tcp_backpressure_rejects_excess_and_releases_after_completion() {
         );
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     let port = port_rx.await.unwrap();
 
     // Connection 1: occupy the only slot with a slow handler.
@@ -498,7 +488,7 @@ impl TypedPayloadController {
 #[module(controllers: [TypedPayloadController])]
 impl TypedPayloadModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn typed_payload_round_trip_succeeds() {
     let port = start_rpc_server(TypedPayloadModule).await;
     let resp = tcp_rpc_timeout(
@@ -512,7 +502,7 @@ async fn typed_payload_round_trip_succeeds() {
     assert_eq!(resp["response"]["repeated"], "ababab");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn typed_payload_parse_failure_renders_canonical_envelope() {
     // Exercises the macro's typed-payload parse-error path: deserialise
     // failure renders through `RpcError::to_data` rather than
@@ -566,7 +556,7 @@ impl RpcGuardPanicController {
 #[module(controllers: [RpcGuardPanicController], providers: [PanickingRpcGuard])]
 impl RpcGuardPanicModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn rpc_guard_panic_surfaces_as_internal_and_keeps_connection_alive() {
     let port = start_rpc_server(RpcGuardPanicModule).await;
 
@@ -634,7 +624,7 @@ impl RpcInterceptorPanicController {
 #[module(controllers: [RpcInterceptorPanicController], providers: [PanickingRpcInterceptor])]
 impl RpcInterceptorPanicModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn rpc_interceptor_panic_surfaces_as_envelope_and_keeps_connection_alive() {
     let count = Arc::new(AtomicUsize::new(0));
     let captured = Arc::new(std::sync::Mutex::new(None));
@@ -707,7 +697,7 @@ impl RpcErrorHandlerPanicController {
 #[module(controllers: [RpcErrorHandlerPanicController], providers: [PanickingRpcErrorHandler])]
 impl RpcErrorHandlerPanicModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn rpc_error_handler_panic_continues_chain_to_default_rendering() {
     let count = Arc::new(AtomicUsize::new(0));
     let captured = Arc::new(std::sync::Mutex::new(None));
@@ -781,7 +771,7 @@ impl RpcRenderPanicController {
 #[module(controllers: [RpcRenderPanicController])]
 impl RpcRenderPanicModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn rpc_renderer_panic_falls_back_to_safe_envelope() {
     let port = start_rpc_server(RpcRenderPanicModule).await;
 
@@ -826,7 +816,7 @@ impl TcpMetaController {
 #[module(controllers: [TcpMetaController])]
 impl TcpMetaModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tcp_client_metadata_reaches_handler() {
     use ulo::rpc::RpcClient;
 
@@ -865,7 +855,7 @@ impl BareRpcModule {}
 /// The self-sufficiency guarantee: an empty `#[patterns]` impl is a valid RPC controller and
 /// handlers only add routes. An app whose only controller routes nothing still starts, and every
 /// pattern is unrouted — the empty pattern list leaves the dispatch index with nothing in it.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_empty_patterns_impl_registers_no_patterns() {
     let port = start_rpc_server(BareRpcModule).await;
 
@@ -928,7 +918,7 @@ impl RpcBusModule {}
 /// The RPC handler takes `&RpcContext`, so it reads the guard's write straight
 /// off the context. `extension_bus.rs` covers HTTP and WebSocket, whose handlers
 /// reach the same bag by other routes.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn rpc_guard_write_reaches_the_handler() {
     let port = start_rpc_server(RpcBusModule).await;
     let resp = tcp_rpc_timeout(
@@ -1028,13 +1018,13 @@ async fn shape_call(port: u16, pattern: &str) -> serde_json::Value {
         .clone()
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_takes_only_the_payload() {
     let port = start_rpc_server(ShapeModule).await;
     assert_eq!(shape_call(port, "shape.payload").await, "bootsx2");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn rpc_extractors_compose_in_any_order() {
     let port = start_rpc_server(ShapeModule).await;
     assert_eq!(
@@ -1043,7 +1033,7 @@ async fn rpc_extractors_compose_in_any_order() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_rpc_handler_can_take_nothing() {
     let port = start_rpc_server(ShapeModule).await;
     assert_eq!(shape_call(port, "shape.nothing").await, "ok");
@@ -1145,7 +1135,7 @@ impl ScopedRpcModule {}
 /// rejected a factory enhancer with execution-scoped dependencies on the grounds
 /// that "RPC has no HTTP request context". Every transport carries an execution
 /// now, and the cache that makes the scope mean anything lives on it.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_request_scoped_provider_is_shared_within_one_rpc_call() {
     SCOPED_BUILDS.store(0, Ordering::SeqCst);
     let port = start_rpc_server(ScopedRpcModule).await;
@@ -1280,7 +1270,7 @@ impl SingletonRpcModule {}
 /// `#[controller(scope = "execution")]` builds the controller inside the call it
 /// serves: a fresh one per message, and its execution-scoped dependency is the
 /// instance the call already holds rather than a second one.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_request_scoped_rpc_controller_is_built_per_call() {
     let port = start_rpc_server(PerCallRpcModule).await;
 
@@ -1325,7 +1315,7 @@ async fn a_request_scoped_rpc_controller_is_built_per_call() {
 
 /// The default is unchanged: a controller with no declared scope is built once at
 /// startup and every call is served by that one instance.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_singleton_rpc_controller_is_built_once() {
     let port = start_rpc_server(SingletonRpcModule).await;
 
@@ -1388,7 +1378,7 @@ impl ElevatedRpcModule {}
 /// A controller that declares no scope but depends on an execution-scoped provider is elevated rather
 /// than refused. Registering this used to abort at startup: a singleton cannot hold something that
 /// belongs to one call, and `#[controller]` had no other scope to offer.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_rpc_controller_elevates_to_request_scope() {
     let port = start_rpc_server(ElevatedRpcModule).await;
 
@@ -1472,7 +1462,7 @@ impl MetaRpcModule {}
 
 /// `#[set_metadata]` reaches a transport that populated nothing before: the controller's entries
 /// apply to every pattern, and a pattern that declares its own shadows the matching type.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn declared_metadata_reaches_an_rpc_handler() {
     let port = start_rpc_server(MetaRpcModule).await;
     assert_eq!(
@@ -1509,7 +1499,7 @@ impl RpcOutputModule {}
 
 /// A handler may declare `-> RpcHandlerResult` and construct the output enum
 /// itself; the generated arm passes it through untouched.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_explicit_single_output_round_trips() {
     let port = start_rpc_server(RpcOutputModule).await;
     let v = tcp_rpc_timeout(

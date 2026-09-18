@@ -25,8 +25,7 @@ use ulo_macros::{controller, new, patterns};
 async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16 {
     use ulo::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(module).await.unwrap();
         app.use_rpc_adapter(ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 0))
             .unwrap();
@@ -39,7 +38,6 @@ async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16
         );
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     port_rx.await.expect("RPC server failed to bind")
 }
 
@@ -111,7 +109,7 @@ impl UdpRpcController {
 #[module(controllers: [UdpRpcController])]
 impl UdpRpcModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn udp_request_response_round_trips() {
     let port = start_rpc_server(UdpRpcModule).await;
 
@@ -129,7 +127,7 @@ async fn udp_request_response_round_trips() {
     assert_eq!(resp["response"], serde_json::json!({"hello": "udp"}));
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn udp_unknown_pattern_returns_error_frame() {
     let port = start_rpc_server(UdpRpcModule).await;
 
@@ -155,7 +153,7 @@ async fn udp_unknown_pattern_returns_error_frame() {
 ///
 /// Note: the test produces a "panicked at" line in stderr — that is the Rust
 /// panic hook firing before catch_unwind catches the unwind. It is expected.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn udp_panicking_handler_returns_error_frame() {
     let port = start_rpc_server(UdpRpcModule).await;
 
@@ -194,7 +192,7 @@ async fn udp_panicking_handler_returns_error_frame() {
     assert_eq!(resp["response"], "ok");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn udp_fire_and_forget_produces_no_reply() {
     let port = start_rpc_server(UdpRpcModule).await;
 
@@ -213,14 +211,13 @@ async fn udp_fire_and_forget_produces_no_reply() {
 /// `app.shutdown()` must drive the UDP adapter's recv loop to exit, otherwise
 /// `shutdown.completed().await` would hang forever. After completion, the
 /// socket is closed and the next datagram gets no reply.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn udp_app_shutdown_stops_the_recv_loop() {
     use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(UdpRpcModule).await.unwrap();
         app.use_rpc_adapter(ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 0))
             .unwrap();
@@ -234,7 +231,6 @@ async fn udp_app_shutdown_stops_the_recv_loop() {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
 
     let port = port_rx.await.unwrap();
     let shutdown = shutdown_rx.await.unwrap();
@@ -301,7 +297,7 @@ async fn spawn_lossy_echo(drop_first: usize) -> u16 {
 
 /// `with_retries(1)` must produce a successful reply when the first datagram
 /// is dropped; without retries the same scenario times out.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn udp_client_retries_recover_from_packet_loss() {
     use ulo::rpc::{RpcClientTransport, RpcData};
     // No retries → the dropped first datagram is fatal.
@@ -338,7 +334,7 @@ async fn udp_client_retries_recover_from_packet_loss() {
     }
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn udp_client_transport_round_trips_and_rejects_oversized() {
     use ulo::rpc::{RpcClientTransport, RpcData};
     let port = start_rpc_server(UdpRpcModule).await;
@@ -392,14 +388,13 @@ impl SlowUdpModule {}
 
 /// A datagram handler already running when shutdown fires must finish
 /// during the drain window — its reply must arrive on the client socket.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn udp_in_flight_request_completes_during_drain() {
     use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(SlowUdpModule).await.unwrap();
         app.use_rpc_adapter(ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 0))
             .unwrap();
@@ -413,7 +408,6 @@ async fn udp_in_flight_request_completes_during_drain() {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     let port = port_rx.await.unwrap();
     let shutdown = shutdown_rx.await.unwrap();
 
@@ -442,14 +436,13 @@ async fn udp_in_flight_request_completes_during_drain() {
 /// A datagram handler that outruns the configured drain timeout is aborted.
 /// `shutdown.completed()` must resolve promptly even though the handler
 /// would otherwise have slept for 300 ms.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn udp_drain_aborts_after_timeout() {
     use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(SlowUdpModule).await.unwrap();
         let adapter = ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 0)
             .with_drain_timeout(Duration::from_millis(50));
@@ -464,7 +457,6 @@ async fn udp_drain_aborts_after_timeout() {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     let port = port_rx.await.unwrap();
     let shutdown = shutdown_rx.await.unwrap();
 
@@ -486,13 +478,12 @@ async fn udp_drain_aborts_after_timeout() {
 /// concurrent datagram must be rejected immediately with an `"overloaded"`
 /// frame. After the slow handler completes the slot is released and a
 /// follow-up datagram succeeds.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn udp_backpressure_rejects_excess_and_releases_after_completion() {
     use ulo::UloFactory;
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(SlowUdpModule).await.unwrap();
         let adapter = ulo_rpc_udp::UdpAdapter::new("127.0.0.1", 0).with_max_inflight(1);
         app.use_rpc_adapter(adapter).unwrap();
@@ -505,7 +496,6 @@ async fn udp_backpressure_rejects_excess_and_releases_after_completion() {
         );
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     let port = port_rx.await.unwrap();
 
     // Client 1: occupy the only slot with a slow handler.
@@ -582,7 +572,7 @@ impl UdpMetaController {
 #[module(controllers: [UdpMetaController])]
 impl UdpMetaModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn udp_client_metadata_reaches_handler() {
     use std::time::Duration;
     use ulo::rpc::RpcClient;

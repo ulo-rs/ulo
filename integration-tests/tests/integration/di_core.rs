@@ -31,7 +31,7 @@ impl SingletonService {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn singleton_providers_created_once_across_requests() {
     SINGLETON_COUNTER.store(0, Ordering::SeqCst);
 
@@ -85,7 +85,7 @@ impl TransientService {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn transient_providers_create_unique_instances_per_injection() {
     TRANSIENT_COUNTER.store(0, Ordering::SeqCst);
 
@@ -140,7 +140,7 @@ async fn transient_providers_create_unique_instances_per_injection() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn field_injection_with_inject_attribute() {
     #[injectable]
     pub struct DependencyService {}
@@ -190,7 +190,7 @@ async fn field_injection_with_inject_attribute() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn field_injection_with_default_fallback() {
     #[injectable]
     pub struct ServiceWithDefault {
@@ -232,7 +232,7 @@ async fn field_injection_with_default_fallback() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn config_service_injection_in_providers() {
     #[injectable]
     pub struct ServiceWithConfig {
@@ -278,7 +278,7 @@ async fn config_service_injection_in_providers() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn new_attribute_syntax() {
     #[injectable]
     pub struct NewSyntaxService {}
@@ -319,7 +319,7 @@ async fn new_attribute_syntax() {
 
 // A user-supplied Clone derive suppresses the one #[injectable] adds; the qualified
 // spelling must count too, or the two derives collide as conflicting implementations.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn injectable_accepts_path_qualified_clone_derive() {
     #[injectable]
     #[derive(std::clone::Clone)]

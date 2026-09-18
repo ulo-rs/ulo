@@ -108,14 +108,14 @@ async fn get(server: &TestServer, path: &str) -> String {
         .unwrap()
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_nested_service_reads_what_the_guard_attached() {
     let server = TestServer::start(OrderModule).await;
 
     assert_eq!(get(&server, "/orders/place").await, "order-by-alice");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn the_bag_injects_without_a_per_type_view() {
     let server = TestServer::start(OrderModule).await;
 
@@ -165,7 +165,7 @@ impl OnceController {
 #[module(controllers: [OnceController], providers: [Extension::<CurrentUser>, OnceGuard])]
 impl OnceModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn values_do_not_survive_into_the_next_request() {
     let server = TestServer::start(OnceModule).await;
 

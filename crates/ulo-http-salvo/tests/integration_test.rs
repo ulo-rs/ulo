@@ -100,8 +100,7 @@ struct Bound {
 
 async fn start(module: impl ulo::di::ModuleMetadata + 'static, with_ws_adapter: bool) -> Bound {
     let (tx, rx) = tokio::sync::oneshot::channel();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(module).await.unwrap();
         app.use_http_adapter(SalvoAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
@@ -117,128 +116,105 @@ async fn start(module: impl ulo::di::ModuleMetadata + 'static, with_ws_adapter: 
         });
         app.run().await;
     });
-    tokio::task::spawn_local(async move {
-        local.await;
-    });
     rx.await.unwrap()
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn http_get_path_param_query_route_through_salvo() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let bound = start(HttpOnlyModule, false).await;
-            let base = format!("http://{}", bound.http_addr);
-            let client = reqwest::Client::new();
+    let bound = start(HttpOnlyModule, false).await;
+    let base = format!("http://{}", bound.http_addr);
+    let client = reqwest::Client::new();
 
-            let r = client
-                .get(format!("{}/api/hello", base))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 200);
-            assert_eq!(r.text().await.unwrap(), "hello");
+    let r = client
+        .get(format!("{}/api/hello", base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "hello");
 
-            let r = client
-                .get(format!("{}/api/users/42", base))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 200);
-            assert_eq!(r.text().await.unwrap(), "user 42");
+    let r = client
+        .get(format!("{}/api/users/42", base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "user 42");
 
-            let r = client
-                .get(format!("{}/api/search?q=salvo", base))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 200);
-            assert_eq!(r.text().await.unwrap(), "q=salvo");
+    let r = client
+        .get(format!("{}/api/search?q=salvo", base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "q=salvo");
 
-            let r = client
-                .get(format!("{}/api/missing", base))
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 404);
-        })
-        .await;
+    let r = client
+        .get(format!("{}/api/missing", base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn http_post_buffered_and_streaming_bodies() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let bound = start(HttpOnlyModule, false).await;
-            let base = format!("http://{}", bound.http_addr);
-            let client = reqwest::Client::new();
+    let bound = start(HttpOnlyModule, false).await;
+    let base = format!("http://{}", bound.http_addr);
+    let client = reqwest::Client::new();
 
-            // Buffered (Bytes extractor → RequestBody::collect)
-            let r = client
-                .post(format!("{}/api/echo", base))
-                .body("hello world")
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 200);
-            assert_eq!(r.text().await.unwrap(), "echo:11");
+    // Buffered (Bytes extractor → RequestBody::collect)
+    let r = client
+        .post(format!("{}/api/echo", base))
+        .body("hello world")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "echo:11");
 
-            // Streaming (BodyStream extractor — chunked transfer, 1 MiB)
-            let payload = vec![0u8; 1024 * 1024];
-            let r = client
-                .post(format!("{}/api/count", base))
-                .body(payload)
-                .send()
-                .await
-                .unwrap();
-            assert_eq!(r.status(), 200);
-            assert_eq!(r.text().await.unwrap(), "count:1048576");
-        })
-        .await;
+    // Streaming (BodyStream extractor — chunked transfer, 1 MiB)
+    let payload = vec![0u8; 1024 * 1024];
+    let r = client
+        .post(format!("{}/api/count", base))
+        .body(payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "count:1048576");
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn ws_same_port_upgrade_and_echo() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let bound = start(HttpOnlyModule, false).await;
-            let url = format!("ws://{}/ws", bound.http_addr);
+    let bound = start(HttpOnlyModule, false).await;
+    let url = format!("ws://{}/ws", bound.http_addr);
 
-            let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
-            ws.send(tokio_tungstenite::tungstenite::Message::Text(
-                r#"{"event":"ping"}"#.to_string().into(),
-            ))
-            .await
-            .unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        r#"{"event":"ping"}"#.to_string().into(),
+    ))
+    .await
+    .unwrap();
 
-            let msg = ws.next().await.unwrap().unwrap();
-            let text = msg.to_text().unwrap();
-            assert_eq!(text, "pong");
-        })
-        .await;
+    let msg = ws.next().await.unwrap().unwrap();
+    let text = msg.to_text().unwrap();
+    assert_eq!(text, "pong");
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn ws_separate_port_upgrade_and_echo() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let bound = start(FullModule, true).await;
-            let ws_addr = bound.ws_addr.expect("WS adapter not bound");
-            let url = format!("ws://{}/separate", ws_addr);
+    let bound = start(FullModule, true).await;
+    let ws_addr = bound.ws_addr.expect("WS adapter not bound");
+    let url = format!("ws://{}/separate", ws_addr);
 
-            let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
-            ws.send(tokio_tungstenite::tungstenite::Message::Text(
-                r#"{"event":"ping"}"#.to_string().into(),
-            ))
-            .await
-            .unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        r#"{"event":"ping"}"#.to_string().into(),
+    ))
+    .await
+    .unwrap();
 
-            let msg = ws.next().await.unwrap().unwrap();
-            assert_eq!(msg.to_text().unwrap(), "separate-pong");
-        })
-        .await;
+    let msg = ws.next().await.unwrap().unwrap();
+    assert_eq!(msg.to_text().unwrap(), "separate-pong");
 }

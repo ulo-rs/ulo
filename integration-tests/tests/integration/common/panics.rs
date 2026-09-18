@@ -7,8 +7,9 @@ use std::future::Future;
 use std::panic::{self, AssertUnwindSafe};
 
 /// Drives `f` to completion on a current-thread runtime and returns the message
-/// of the panic it raised. The application is `!Send`, so the future runs on the
-/// calling thread.
+/// of the panic it raised. The runtime is current-thread so the panic unwinds on
+/// the calling thread, where `catch_unwind` sees it; a multi-thread runtime would
+/// carry it out on a worker and deliver it as a join error instead.
 ///
 /// # Panics
 ///

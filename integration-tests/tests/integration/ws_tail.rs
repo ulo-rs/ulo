@@ -85,7 +85,7 @@ struct TailModule;
 
 /// Closing the socket with items still to come cancels the execution behind
 /// the stream.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_abandoned_ws_stream_cancels_the_work_feeding_it() {
     use tokio_tungstenite::tungstenite::Message;
 
@@ -124,7 +124,7 @@ async fn an_abandoned_ws_stream_cancels_the_work_feeding_it() {
 
 /// The other direction: a stream read to its end is not a cancellation. Without
 /// this, a token fired on every completed stream would pass the test above.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_drained_ws_stream_is_not_cancelled() {
     use tokio_tungstenite::tungstenite::Message;
 

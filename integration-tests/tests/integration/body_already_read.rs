@@ -55,7 +55,7 @@ impl QuietModule {}
 
 /// One uncounted reader is fine, which is what makes the two-reader case below
 /// a second-read failure rather than the extractor being broken.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn one_uncounted_reader_gets_the_body() {
     let server = TestServer::start(QuietModule).await;
 
@@ -73,7 +73,7 @@ async fn one_uncounted_reader_gets_the_body() {
 
 /// The second reader finds the body gone, and the answer says which extractor
 /// asked.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_second_uncounted_reader_is_told_the_body_is_gone() {
     let server = TestServer::start(QuietModule).await;
 

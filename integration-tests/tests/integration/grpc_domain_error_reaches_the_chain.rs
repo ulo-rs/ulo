@@ -191,15 +191,13 @@ async fn boot(module: impl ulo::di::ModuleMetadata + 'static) -> u16 {
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::new().create_with(module).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = port_tx.send(bound.grpc.expect("grpc must bind").port());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     port_rx.await.unwrap()
 }
 
@@ -222,7 +220,7 @@ async fn create_order(port: u16) -> tonic::Status {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_claims_the_domain_type() {
     let err = create_order(boot(ClaimedGrpcModule).await).await;
 
@@ -233,7 +231,7 @@ async fn a_handler_claims_the_domain_type() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_unclaimed_failure_keeps_the_status_its_kind_maps_to() {
     let err = create_order(boot(UnclaimedGrpcModule).await).await;
 

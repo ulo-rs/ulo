@@ -166,7 +166,7 @@ impl ExplicitSingletonModule {}
 // ---- tests ------------------------------------------------------------------
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn singleton_controller_with_singleton_provider() {
     let server = TestServer::start(OkModule).await;
     let resp = server
@@ -180,7 +180,7 @@ async fn singleton_controller_with_singleton_provider() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn singleton_controller_promoted_to_request_scope_when_dep_is_request() {
     // The framework detects the scope mismatch and silently promotes the controller to
     // execution-scoped rather than panicking. The endpoint must still be reachable and
@@ -200,7 +200,7 @@ async fn singleton_controller_promoted_to_request_scope_when_dep_is_request() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn request_controller_with_request_provider() {
     let server = TestServer::start(CorrectModule).await;
     let resp = server
@@ -214,7 +214,7 @@ async fn request_controller_with_request_provider() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn mixed_scope_deps_promote_controller_to_request() {
     let server = TestServer::start(MixedModule).await;
     let resp = server
@@ -228,7 +228,7 @@ async fn mixed_scope_deps_promote_controller_to_request() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn explicit_singleton_with_request_dep_still_promotes() {
     let server = TestServer::start(ExplicitSingletonModule).await;
     let resp = server

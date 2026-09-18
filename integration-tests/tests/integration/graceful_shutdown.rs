@@ -45,15 +45,14 @@ struct CloseModule;
 
 /// Shutdown via ShutdownHandle sends WS close frames, stops HTTP, and fires on_module_destroy.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn app_close_disconnects_ws_clients_and_stops_http() {
     DESTROY_HOOK_RAN.store(false, Ordering::SeqCst);
 
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
 
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(CloseModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
@@ -63,7 +62,6 @@ async fn app_close_disconnects_ws_clients_and_stops_http() {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
 
     let addr = addr_rx.await.unwrap();
     let shutdown = shutdown_rx.await.unwrap();

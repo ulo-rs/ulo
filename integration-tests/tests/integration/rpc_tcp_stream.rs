@@ -22,8 +22,7 @@ use ulo_macros::{controller, module, new, patterns};
 async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16 {
     use ulo::UloFactory;
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let factory = UloFactory::new();
         let mut app = factory.create_with(module).await.unwrap();
         app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
@@ -37,7 +36,6 @@ async fn start_rpc_server(module: impl ulo::di::ModuleMetadata + 'static) -> u16
         );
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     port_rx.await.expect("RPC server failed to bind")
 }
 
@@ -253,7 +251,7 @@ impl StreamController {
 #[module(controllers: [StreamController])]
 impl StreamModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn stream_frames_arrive_in_order_then_the_end_marker() {
     let port = start_rpc_server(StreamModule).await;
     let frames = tcp_stream_frames(
@@ -276,7 +274,7 @@ async fn stream_frames_arrive_in_order_then_the_end_marker() {
     assert!(frames[3].get("err").is_none());
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_binary_item_travels_base64_and_decodes_back() {
     let port = start_rpc_server(StreamModule).await;
     let frames = tcp_stream_frames(
@@ -300,7 +298,7 @@ async fn a_binary_item_travels_base64_and_decodes_back() {
     assert!(stream.next().await.is_none());
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_app_error_mid_stream_is_a_final_envelope_item_then_a_clean_end() {
     let port = start_rpc_server(StreamModule).await;
     let frames = tcp_stream_frames(
@@ -319,7 +317,7 @@ async fn an_app_error_mid_stream_is_a_final_envelope_item_then_a_clean_end() {
     assert!(frames[2].get("err").is_none());
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_framework_error_mid_stream_is_an_error_end() {
     let port = start_rpc_server(StreamModule).await;
     let frames = tcp_stream_frames(
@@ -347,7 +345,7 @@ async fn a_framework_error_mid_stream_is_an_error_end() {
     assert!(stream.next().await.is_none());
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn the_bag_stays_readable_across_the_drain() {
     let port = start_rpc_server(StreamModule).await;
     let client = ulo::rpc::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
@@ -362,7 +360,7 @@ async fn the_bag_stays_readable_across_the_drain() {
     assert_eq!(items, vec!["0:alive", "1:alive", "2:alive"]);
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_cancel_frame_stops_the_producer() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -395,7 +393,7 @@ async fn a_cancel_frame_stops_the_producer() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_dropped_connection_stops_the_producer() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -426,7 +424,7 @@ async fn a_dropped_connection_stops_the_producer() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_cancel_before_the_first_item_drops_the_handler_future() {
     use tokio::io::AsyncWriteExt;
 
@@ -456,7 +454,7 @@ async fn a_cancel_before_the_first_item_drops_the_handler_future() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_early_client_drop_sends_the_cancel_notice() {
     let port = start_rpc_server(StreamModule).await;
     let client = ulo::rpc::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
@@ -473,7 +471,7 @@ async fn an_early_client_drop_sends_the_cancel_notice() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_stream_call_to_a_single_handler_is_one_item_then_the_end() {
     let port = start_rpc_server(StreamModule).await;
     let client = ulo::rpc::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
@@ -488,7 +486,7 @@ async fn a_stream_call_to_a_single_handler_is_one_item_then_the_end() {
     assert!(stream.next().await.is_none());
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_send_to_a_streaming_handler_fails_loudly() {
     let port = start_rpc_server(StreamModule).await;
     let client = ulo::rpc::RpcClient::new(ulo_rpc_tcp::TcpClientTransport::new("127.0.0.1", port));
@@ -505,7 +503,7 @@ async fn a_send_to_a_streaming_handler_fails_loudly() {
 
 /// The other side of `a_cancel_frame_stops_the_producer`: a stream the caller reads to its end is
 /// completion, and the execution is not cancelled behind it.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_drained_rpc_stream_is_not_cancelled() {
     DRAINED_SAW_CANCEL.store(false, Ordering::SeqCst);
 

@@ -171,7 +171,7 @@ struct PingModule;
 
 /// Full path: TCP upgrade → AxumWsSocket → GatewayWrapper → echo handler → response.
 /// Uses the simple `handle_connection()` path (no BroadcastModule).
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn websocket_echo_end_to_end() {
     let server = TestServer::start(EchoModule).await;
     let ws_url = format!("ws://127.0.0.1:{}/echo", server.port);
@@ -194,7 +194,7 @@ async fn websocket_echo_end_to_end() {
 /// A gateway declared with no `#[subscriptions]` impl still registers its path and accepts
 /// connections — the `WsHandlersBridge` defaults stand in for every behavior method. This is the
 /// self-sufficiency guarantee: `#[websocket_gateway]` alone is a valid gateway.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn websocket_bare_gateway_accepts_connection() {
     let server = TestServer::start(BareModule).await;
     let ws_url = format!("ws://127.0.0.1:{}/bare", server.port);
@@ -206,7 +206,7 @@ async fn websocket_bare_gateway_accepts_connection() {
 
 /// A `#[on_connect]` hook with no `#[subscriptions]` impl is wired in and fires on connect —
 /// the connection-hook macros stand on their own, separate from the subscription router.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn websocket_on_connect_without_subscriptions_fires() {
     let server = TestServer::start(HookOnlyModule).await;
     let ws_url = format!("ws://127.0.0.1:{}/hook-only", server.port);
@@ -231,7 +231,7 @@ async fn websocket_on_connect_without_subscriptions_fires() {
 /// Full path: two real TCP clients, `handle_connection_with_broadcast()` path.
 /// Race-free: each client handshakes with ping/pong before the broadcast is sent,
 /// proving it has passed `complete_connect()` and is registered in `ConnectionManager`.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn websocket_broadcast_end_to_end() {
     let server = TestServer::start(RoomModule).await;
     let ws_url = format!("ws://127.0.0.1:{}/room", server.port);
@@ -334,7 +334,7 @@ struct GatewayInjectionModule;
 ///   2. HTTP client POSTs to `/trigger` — controller calls `gateway.push("server_push")`.
 ///   3. WS client receives `"server_push"` — proves the injected gateway shares the same
 ///      `ConnectionManager` as the live gateway.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn gateway_injected_into_rest_controller() {
     let server = TestServer::start(GatewayInjectionModule).await;
     let ws_url = format!("ws://127.0.0.1:{}/events", server.port);
@@ -374,13 +374,12 @@ async fn gateway_injected_into_rest_controller() {
 /// `PingGateway` hardcodes `port = 19001` in the macro, so this test and any other
 /// using `PingModule` must be serialized to avoid binding the same port concurrently.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn websocket_separate_port_end_to_end() {
     // HTTP server on OS-assigned port; WS gateway listens separately on 19001.
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
 
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(PingModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
@@ -394,9 +393,6 @@ async fn websocket_separate_port_end_to_end() {
             .expect("WS adapter not bound");
         let _ = addr_tx.send(ws_addr);
         app.run().await;
-    });
-    tokio::task::spawn_local(async move {
-        local.await;
     });
 
     let ws_addr = addr_rx.await.unwrap();
@@ -421,14 +417,13 @@ async fn websocket_separate_port_end_to_end() {
 /// Shares `PingModule` (port 19001) with `websocket_separate_port_end_to_end`,
 /// so it must be serialized.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn separate_port_close_stops_ws_server() {
     let (addr_tx, addr_rx) =
         tokio::sync::oneshot::channel::<(std::net::SocketAddr, std::net::SocketAddr)>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
 
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(PingModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
@@ -445,7 +440,6 @@ async fn separate_port_close_stops_ws_server() {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
 
     let (http_addr, ws_addr) = addr_rx.await.unwrap();
     let shutdown = shutdown_rx.await.unwrap();
@@ -507,13 +501,12 @@ impl ZeroPortGateway {
 #[module(providers: [ZeroPortGateway])]
 struct ZeroPortModule;
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn gateway_port_zero_binds_separately_from_http_port_zero() {
     let (addr_tx, addr_rx) =
         tokio::sync::oneshot::channel::<(std::net::SocketAddr, std::net::SocketAddr)>();
 
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(ZeroPortModule).await.unwrap();
         app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
             .unwrap();
@@ -528,9 +521,6 @@ async fn gateway_port_zero_binds_separately_from_http_port_zero() {
             .expect("WS adapter not bound — gateway with port=0 was misrouted as same-port");
         let _ = addr_tx.send((http_addr, ws_addr));
         app.run().await;
-    });
-    tokio::task::spawn_local(async move {
-        local.await;
     });
 
     let (http_addr, ws_addr) = addr_rx.await.unwrap();
@@ -556,7 +546,7 @@ async fn gateway_port_zero_binds_separately_from_http_port_zero() {
 /// A keepalive is not a call. Axum hands Ping and Pong frames up to the gateway alongside
 /// text, so the gateway has to recognise that neither one is asking for an answer — a client
 /// that pings must not get an error frame back for it.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_keepalive_ping_is_not_answered_with_an_error_frame() {
     let server = TestServer::start(EchoModule).await;
     let ws_url = format!("ws://127.0.0.1:{}/echo", server.port);
@@ -594,7 +584,7 @@ async fn a_keepalive_ping_is_not_answered_with_an_error_frame() {
 /// A frame that names no event fails to route, exactly as an event nothing handles does,
 /// and both are answered in the one vocabulary this gateway speaks: the canonical envelope
 /// carrying the kind that tells them apart.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_unroutable_frame_renders_the_canonical_envelope() {
     let server = TestServer::start(EchoModule).await;
     let ws_url = format!("ws://127.0.0.1:{}/echo", server.port);

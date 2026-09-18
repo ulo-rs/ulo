@@ -173,7 +173,7 @@ impl WsGuardModule {}
 
 // ---- tests -------------------------------------------------------------------
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn request_scoped_guard_activates() {
     let server = TestServer::start(RequestGuardModule).await;
 
@@ -198,7 +198,7 @@ async fn request_scoped_guard_activates() {
     assert_eq!(resp.text().await.unwrap(), "passed");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn request_scoped_guard_injects_request() {
     let server = TestServer::start(HeaderGuardModule).await;
 
@@ -224,7 +224,7 @@ async fn request_scoped_guard_injects_request() {
     assert_eq!(resp.text().await.unwrap(), "unlocked");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn transient_scoped_interceptor() {
     let server = TestServer::start(TransientInterceptorModule).await;
 
@@ -244,7 +244,7 @@ async fn transient_scoped_interceptor() {
 /// The guard injects `Request` (built from the upgrade `RequestPart`) and checks
 /// `x-auth-token`. This exercises the full path:
 /// Axum upgrade parts → WsConnectionCallbacks → begin_connect → DynGuardFactory::create(Some(parts))
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn ws_execution_scoped_guard_uses_handshake_header() {
     use futures_util::{SinkExt, StreamExt};
 

@@ -169,7 +169,7 @@ async fn collect_n(
 // ---- Tests ---------------------------------------------------------------
 
 /// A `connection_init` is acknowledged with `connection_ack`.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn graphql_ws_connection_ack() {
     let server = TestServer::start(GqlModule).await;
     let mut ws = connect_ws(server.port).await;
@@ -183,7 +183,7 @@ async fn graphql_ws_connection_ack() {
 }
 
 /// A subscription emits all `next` frames followed by a `complete` frame.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn graphql_ws_subscription_delivers_items_and_complete() {
     let server = TestServer::start(GqlModule).await;
     let mut ws = connect_ws(server.port).await;
@@ -221,7 +221,7 @@ async fn graphql_ws_subscription_delivers_items_and_complete() {
 }
 
 /// A ping is answered with a pong.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn graphql_ws_ping_pong() {
     let server = TestServer::start(GqlModule).await;
     let mut ws = connect_ws(server.port).await;
@@ -238,7 +238,7 @@ async fn graphql_ws_ping_pong() {
 }
 
 /// Connections without `Sec-WebSocket-Protocol: graphql-transport-ws` are rejected.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn graphql_ws_rejects_missing_subprotocol() {
     let server = TestServer::start(GqlModule).await;
     let mut ws = connect_ws_with_protocol(server.port, None).await;
@@ -253,7 +253,7 @@ async fn graphql_ws_rejects_missing_subprotocol() {
 /// The refusal carries 4406, the code graphql-transport-ws reserves for a
 /// subprotocol it cannot speak, and no envelope: a client that has not agreed
 /// on the grammar has nothing to parse one with.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn graphql_ws_refusal_closes_with_4406() {
     let server = TestServer::start(GqlModule).await;
     let mut ws = connect_ws_with_protocol(server.port, None).await;
@@ -271,7 +271,7 @@ async fn graphql_ws_refusal_closes_with_4406() {
 }
 
 /// Connections with a wrong sub-protocol value are also rejected.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn graphql_ws_rejects_wrong_subprotocol() {
     let server = TestServer::start(GqlModule).await;
     let mut ws = connect_ws_with_protocol(server.port, Some("graphql-ws")).await;
@@ -286,7 +286,7 @@ async fn graphql_ws_rejects_wrong_subprotocol() {
 ///
 /// Uses `ticker` (50 ms between items) so at most a handful of items can arrive before
 /// the cancel propagates — far fewer than the "never-ending" default.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn graphql_ws_per_subscription_cancel_stops_stream() {
     let server = TestServer::start(GqlModule).await;
     let mut ws = connect_ws(server.port).await;
@@ -331,7 +331,7 @@ async fn graphql_ws_per_subscription_cancel_stops_stream() {
 }
 
 /// Cancelling one subscription leaves other subscriptions on the same connection intact.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn graphql_ws_cancel_is_per_subscription_not_per_connection() {
     let server = TestServer::start(GqlModule).await;
     let mut ws = connect_ws(server.port).await;
@@ -387,7 +387,7 @@ async fn graphql_ws_cancel_is_per_subscription_not_per_connection() {
 
 /// The `connection_init` payload is forwarded to the context builder and available
 /// in subscription resolvers via `ctx.data::<T>()`.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn graphql_ws_connection_init_payload_reaches_resolver() {
     let server = TestServer::start(AuthModule).await;
     let mut ws = connect_ws(server.port).await;

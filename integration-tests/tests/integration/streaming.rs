@@ -41,7 +41,7 @@ impl StreamingModule {}
 
 /// The axum adapter streams the request body via UnsyncBoxBody rather than buffering it.
 /// This test sends the body as a stream of chunks to verify end-to-end collection works.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_streaming_body_reaches_controller() {
     let server = TestServer::start(StreamingModule).await;
 
@@ -65,7 +65,7 @@ async fn test_streaming_body_reaches_controller() {
     assert_eq!(resp.text().await.unwrap(), "hello streaming world");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn test_body_stream_into_stream() {
     let server = TestServer::start(StreamingModule).await;
 

@@ -228,7 +228,7 @@ impl ReqController {
 )]
 struct NewCtorModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn new_ctor_injects_without_storing() {
     let app = UloFactory::create_application_context(NewCtorModule)
         .await
@@ -243,7 +243,7 @@ async fn new_ctor_injects_without_storing() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn new_ctor_built_guard_still_auto_detects_role() {
     let server = TestServer::start(NewCtorModule).await;
 
@@ -270,7 +270,7 @@ async fn new_ctor_built_guard_still_auto_detects_role() {
     assert_eq!(resp.text().await.unwrap(), "ok");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn new_ctor_transient_scope_resolves() {
     let app = UloFactory::create_application_context(NewCtorModule)
         .await
@@ -284,7 +284,7 @@ async fn new_ctor_transient_scope_resolves() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn new_ctor_request_scope_resolves_per_request() {
     let server = TestServer::start(NewCtorModule).await;
     let resp = server
@@ -302,7 +302,7 @@ async fn new_ctor_request_scope_resolves_per_request() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn new_ctor_can_inject_request_scoped_dependency() {
     let server = TestServer::start(NewCtorModule).await;
     // ReqFacade's #[new] injects the execution-scoped ReqServer — resolves only because the
@@ -317,7 +317,7 @@ async fn new_ctor_can_inject_request_scoped_dependency() {
     assert_eq!(resp.text().await.unwrap(), "8080");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn new_ctor_builds_non_default_field() {
     let app = UloFactory::create_application_context(NewCtorModule)
         .await
@@ -331,7 +331,7 @@ async fn new_ctor_builds_non_default_field() {
     assert_eq!(holder.handle(), "conn:8080");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn new_ctor_strips_inject_attr_from_params() {
     let app = UloFactory::create_application_context(NewCtorModule)
         .await
@@ -349,7 +349,7 @@ fn _arc_marker(_: Arc<()>) {}
 
 // The path-qualified spelling of `#[inject]` on a `#[new]` parameter must be read and
 // stripped like the bare one — unmatched it is neither token-routed nor removed.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn new_ctor_path_qualified_inject_token() {
     #[injectable]
     pub struct Greeter {

@@ -66,7 +66,7 @@ fn free_port() -> u16 {
     probe.local_addr().unwrap().port()
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_rpc_adapter_that_cannot_bind_fails_the_bind() {
     let occupied = TcpListener::bind("127.0.0.1:0").unwrap();
     let taken = occupied.local_addr().unwrap().port();
@@ -94,7 +94,7 @@ async fn an_rpc_adapter_that_cannot_bind_fails_the_bind() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_failed_bind_releases_the_sockets_it_already_took() {
     let rpc_port = free_port();
     let occupied = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -126,7 +126,7 @@ async fn a_failed_bind_releases_the_sockets_it_already_took() {
         .expect("the RPC socket bound before the failure should have been released");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn rpc_patterns_with_no_rpc_adapter_are_refused() {
     let mut app = UloFactory::create(RpcModule).await.unwrap();
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
@@ -144,7 +144,7 @@ async fn rpc_patterns_with_no_rpc_adapter_are_refused() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_separate_port_gateway_with_no_websocket_adapter_is_refused() {
     let mut app = UloFactory::create(SeparatePortModule).await.unwrap();
     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
@@ -162,7 +162,7 @@ async fn a_separate_port_gateway_with_no_websocket_adapter_is_refused() {
     );
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_websocket_listener_no_gateway_declares_is_refused() {
     let orphan = TcpListener::bind("127.0.0.1:0").unwrap();
 

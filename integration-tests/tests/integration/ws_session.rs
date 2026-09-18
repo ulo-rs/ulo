@@ -120,7 +120,7 @@ async fn ask(
         .to_string()
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_connect_guards_write_is_read_by_every_later_message() {
     let server = TestServer::start(SessionModule).await;
     let url = format!("ws://127.0.0.1:{}/ws-session", server.port);
@@ -145,7 +145,7 @@ async fn a_connect_guards_write_is_read_by_every_later_message() {
 
 /// Each connection gets its own store. Sharing one across connections, or keying it anywhere but the
 /// connection, would hand the second client the first one's principal.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn each_connection_gets_its_own_session() {
     let server = TestServer::start(SessionModule).await;
     let url = format!("ws://127.0.0.1:{}/ws-session", server.port);
@@ -173,7 +173,7 @@ async fn each_connection_gets_its_own_session() {
 
 /// Teardown reads the session through the disconnect's own context — the last execution on the
 /// connection, and the only chance to see what it held.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn teardown_reads_the_session_it_is_closing() {
     *teardown().lock().unwrap() = None;
 
@@ -200,7 +200,7 @@ async fn teardown_reads_the_session_it_is_closing() {
 
 /// A `WsClient` is cloned into every execution and handed to handlers. Each clone is the same
 /// connection, so each reads the one session — the property that lets the client own it at all.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn every_clone_of_a_client_reads_the_one_session() {
     let server = TestServer::start(SessionModule).await;
     let url = format!("ws://127.0.0.1:{}/ws-session", server.port);
@@ -267,7 +267,7 @@ impl MetaGatewayModule {}
 
 /// `#[set_metadata]` reaches a transport that populated nothing before. A universal guard reading
 /// this on WebSocket used to find an empty map and admit every message.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn declared_metadata_reaches_a_ws_handler() {
     let server = TestServer::start(MetaGatewayModule).await;
     let url = format!("ws://127.0.0.1:{}/ws-metadata", server.port);

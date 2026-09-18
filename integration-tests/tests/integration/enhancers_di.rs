@@ -286,7 +286,7 @@ impl EnhancerDITestModule {
 // ---- tests -------------------------------------------------------------------
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn di_guard_with_injected_deps() {
     TRACKER.set(ExecutionTracker::new()).ok();
     let tracker = get_tracker();
@@ -329,7 +329,7 @@ async fn di_guard_with_injected_deps() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn di_interceptor_execution_order() {
     TRACKER.set(ExecutionTracker::new()).ok();
     let tracker = get_tracker();
@@ -382,7 +382,7 @@ async fn di_interceptor_execution_order() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn di_middleware_with_injected_deps() {
     TRACKER.set(ExecutionTracker::new()).ok();
     let tracker = get_tracker();

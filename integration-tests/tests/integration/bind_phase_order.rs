@@ -79,7 +79,7 @@ impl RpcAdapter for RefusingRpcAdapter {
     }
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_refused_registration_fails_before_any_socket_is_taken() {
     let seen = Arc::new(AtomicBool::new(false));
 

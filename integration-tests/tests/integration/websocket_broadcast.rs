@@ -150,7 +150,7 @@ mod di_tests {
     #[module(imports: [BroadcastModule::new()])]
     struct WsTestModule;
 
-    #[tokio_localset_test::localset_test]
+    #[tokio::test]
     async fn broadcast_module_provides_broadcast_service() {
         let app = UloFactory::create(WsTestModule).await.unwrap();
         let result = app.get::<BroadcastService>().await;
@@ -161,7 +161,7 @@ mod di_tests {
         );
     }
 
-    #[tokio_localset_test::localset_test]
+    #[tokio::test]
     async fn broadcast_service_can_send_to_connected_client() {
         let app = UloFactory::create(WsTestModule).await.unwrap();
         let bs = app

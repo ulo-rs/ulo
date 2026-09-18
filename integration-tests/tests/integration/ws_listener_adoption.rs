@@ -46,8 +46,7 @@ async fn case_serves_on_caller_socket(adapter: impl ulo::ws::WsAdapter) {
     let expected = listener.local_addr().unwrap();
 
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(AdoptedModule).await.unwrap();
         app.use_websocket_adapter(adapter).unwrap();
         app.use_websocket_listener(DECLARED_PORT, listener).unwrap();
@@ -61,7 +60,6 @@ async fn case_serves_on_caller_socket(adapter: impl ulo::ws::WsAdapter) {
         );
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
 
     let reported = addr_rx.await.expect("WebSocket server failed to start");
     assert_eq!(
@@ -91,7 +89,7 @@ async fn case_serves_on_caller_socket(adapter: impl ulo::ws::WsAdapter) {
 macro_rules! ws_adoption_suite {
     ($adapter_mod:ident, $adapter:expr) => {
         mod $adapter_mod {
-            #[tokio_localset_test::localset_test]
+            #[tokio::test]
             async fn serves_on_caller_supplied_listener() {
                 super::case_serves_on_caller_socket($adapter).await;
             }

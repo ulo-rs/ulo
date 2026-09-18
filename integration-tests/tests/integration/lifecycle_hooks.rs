@@ -58,7 +58,7 @@ impl HookModule {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn startup_hooks_fire_in_order() {
     get_log().lock().unwrap().clear();
 
@@ -83,7 +83,7 @@ async fn startup_hooks_fire_in_order() {
 // Module-impl hooks are collected by an attribute scan (provider hooks expand through
 // the standalone macros, which resolve by path on their own). The scan must accept the
 // path-qualified spelling too.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn path_qualified_module_hook_attr_fires() {
     static LOG: OnceLock<Arc<Mutex<Vec<&'static str>>>> = OnceLock::new();
     fn qualified_log() -> Arc<Mutex<Vec<&'static str>>> {
@@ -128,7 +128,7 @@ impl RpcHookModule {}
 /// startup hooks still reach it. The map excluding it is the same one the hook loops read, so
 /// dropping it there without a second home would have silenced these hooks and nothing else.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_rpc_controller_still_gets_its_startup_hooks() {
     get_log().lock().unwrap().clear();
 
@@ -227,7 +227,7 @@ impl GrpcHookModule {}
 /// by name, because a service built per call has no `Provider` of its own to hang them on — this
 /// fails if that rewiring drops them.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_grpc_service_still_gets_its_startup_hooks() {
     get_log().lock().unwrap().clear();
 
@@ -267,7 +267,7 @@ impl ContextHookModule {}
 /// the controller pass lived on `UloApplication`. Every dispatch target is a controller now, so a
 /// worker built with `create_application_context` would otherwise close without running any of them.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_application_context_runs_its_controllers_shutdown_hooks() {
     get_log().lock().unwrap().clear();
 
@@ -288,7 +288,7 @@ async fn an_application_context_runs_its_controllers_shutdown_hooks() {
 /// of its own. Each hook must therefore appear once, not twice — a second pass anywhere above the
 /// context would show up here as a duplicate.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_application_runs_its_controllers_teardown_hooks_once() {
     get_log().lock().unwrap().clear();
 

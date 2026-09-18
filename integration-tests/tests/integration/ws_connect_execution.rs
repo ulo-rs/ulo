@@ -77,7 +77,7 @@ impl ConnectExecutionGateway {
 #[module(providers: [AdmitAndStamp, ConnectExecutionGateway])]
 impl ConnectExecutionModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_connect_guards_write_reaches_the_connect_hook() {
     *seen().lock().unwrap() = None;
 

@@ -62,7 +62,7 @@ impl ScopeGateway {
 #[module(providers: [CallId, StampCallId, ScopeGateway])]
 impl ScopeModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_request_scoped_provider_is_rebuilt_for_every_message() {
     let server = TestServer::start(ScopeModule).await;
     let url = format!("ws://127.0.0.1:{}/ws-execution-scope", server.port);

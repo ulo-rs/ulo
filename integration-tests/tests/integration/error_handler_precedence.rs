@@ -136,7 +136,7 @@ impl AllModule {}
 
 /// The most specific handler claims, and the wider ones are never consulted.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn the_method_handler_claims_before_the_controllers() {
     ran().lock().unwrap().clear();
 
@@ -186,7 +186,7 @@ impl DeclineModule {}
 /// next one out answered. Without this, a chain that stopped at the first
 /// handler regardless of its return would still pass the test above.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_that_declines_observes_and_the_next_one_answers() {
     ran().lock().unwrap().clear();
 

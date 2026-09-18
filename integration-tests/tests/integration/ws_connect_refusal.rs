@@ -110,7 +110,7 @@ async fn refusal_of(url: &str) -> (serde_json::Value, u16) {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_refused_connection_is_told_the_policy() {
     let server = TestServer::start(RefusedConnectModule).await;
     let (envelope, code) = refusal_of(&format!("ws://127.0.0.1:{}/ws-refused", server.port)).await;
@@ -122,7 +122,7 @@ async fn a_refused_connection_is_told_the_policy() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_panicking_connect_guard_closes_as_a_server_fault() {
     let server = TestServer::start(PanicConnectModule).await;
     let (envelope, code) =
@@ -218,7 +218,7 @@ struct SkipModule;
 /// opening it. The same enhancers do run on the message that follows, which is
 /// what makes the absence a decision rather than a registration that failed.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_connect_runs_guards_and_not_interceptors() {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;

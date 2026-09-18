@@ -68,7 +68,7 @@ impl GuardedController {
 struct ProviderMacroModule {}
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn provider_value_guard_autodetected() {
     let server = TestServer::start(ProviderMacroModule).await;
 
@@ -92,7 +92,7 @@ async fn provider_value_guard_autodetected() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn provider_factory_request_scoped_guard_autodetected() {
     let server = TestServer::start(ProviderMacroModule).await;
 

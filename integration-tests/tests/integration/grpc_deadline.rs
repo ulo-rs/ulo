@@ -103,8 +103,7 @@ async fn boot() -> (u16, ulo::ShutdownHandle) {
     let adapter = ulo_grpc::GrpcAdapter::new(addr);
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(DeadlineModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -113,7 +112,6 @@ async fn boot() -> (u16, ulo::ShutdownHandle) {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     (port_rx.await.unwrap(), shutdown_rx.await.unwrap())
 }
 
@@ -136,7 +134,7 @@ fn order() -> deadline_pb::CreateOrderRequest {
 
 /// The handler sees the budget the caller sent, not one of its own.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_reads_the_callers_timeout() {
     *REMAINING.lock().unwrap() = None;
 
@@ -163,7 +161,7 @@ async fn a_handler_reads_the_callers_timeout() {
 
 /// A caller that sends none has none, rather than one the server invented.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_call_without_a_timeout_has_no_deadline() {
     *REMAINING.lock().unwrap() = None;
 

@@ -256,9 +256,7 @@ async fn test_three_level_enhancer_hierarchy() {
     tracker.clear();
     let port = 29095;
 
-    let local = tokio::task::LocalSet::new();
-
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         // Create factory and register GLOBAL enhancers
         let mut factory = UloFactory::new();
         factory
@@ -272,106 +270,102 @@ async fn test_three_level_enhancer_hierarchy() {
         app.start().await.unwrap();
     });
 
-    local
-        .run_until(async move {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-            let client = reqwest::Client::new();
+    let client = reqwest::Client::new();
 
-            // ================================================================
-            // TEST 1: Three-level hierarchy (global + controller + method)
-            // ================================================================
-            tracker.clear();
+    // ================================================================
+    // TEST 1: Three-level hierarchy (global + controller + method)
+    // ================================================================
+    tracker.clear();
 
-            let response = client
-                .get(format!("http://127.0.0.1:{}/api/three-level", port))
-                .send()
-                .await
-                .expect("Failed to call three-level endpoint");
+    let response = client
+        .get(format!("http://127.0.0.1:{}/api/three-level", port))
+        .send()
+        .await
+        .expect("Failed to call three-level endpoint");
 
-            assert_eq!(response.status(), 200);
+    assert_eq!(response.status(), 200);
 
-            let order = tracker.get_events();
-            println!("Three-level execution order: {:?}", order);
+    let order = tracker.get_events();
+    println!("Three-level execution order: {:?}", order);
 
-            // Verify execution order: middleware wraps global → controller → method
-            // Global middleware is the outermost layer, entering before any enhancer
-            assert_eq!(order[0], "middleware:global:before");
+    // Verify execution order: middleware wraps global → controller → method
+    // Global middleware is the outermost layer, entering before any enhancer
+    assert_eq!(order[0], "middleware:global:before");
 
-            // Guards execute in order
-            assert_eq!(order[1], "guard:global");
-            assert_eq!(order[2], "guard:controller");
-            assert_eq!(order[3], "guard:method");
+    // Guards execute in order
+    assert_eq!(order[1], "guard:global");
+    assert_eq!(order[2], "guard:controller");
+    assert_eq!(order[3], "guard:method");
 
-            // Interceptors execute: global:before → controller:before → method:before → handler → method:after → controller:after → global:after
-            assert_eq!(order[4], "interceptor:global:before");
-            assert_eq!(order[5], "interceptor:controller:before");
-            assert_eq!(order[6], "interceptor:method:before");
+    // Interceptors execute: global:before → controller:before → method:before → handler → method:after → controller:after → global:after
+    assert_eq!(order[4], "interceptor:global:before");
+    assert_eq!(order[5], "interceptor:controller:before");
+    assert_eq!(order[6], "interceptor:method:before");
 
-            // Controller
-            assert_eq!(order[7], "controller:three_level");
+    // Controller
+    assert_eq!(order[7], "controller:three_level");
 
-            // Interceptors after (reverse order)
-            assert_eq!(order[8], "interceptor:method:after");
-            assert_eq!(order[9], "interceptor:controller:after");
-            assert_eq!(order[10], "interceptor:global:after");
+    // Interceptors after (reverse order)
+    assert_eq!(order[8], "interceptor:method:after");
+    assert_eq!(order[9], "interceptor:controller:after");
+    assert_eq!(order[10], "interceptor:global:after");
 
-            // Global middleware closes last, after the whole pipeline unwinds
-            assert_eq!(order[11], "middleware:global:after");
+    // Global middleware closes last, after the whole pipeline unwinds
+    assert_eq!(order[11], "middleware:global:after");
 
-            // ================================================================
-            // TEST 2: Two-level hierarchy (global + controller only)
-            // ================================================================
-            tracker.clear();
+    // ================================================================
+    // TEST 2: Two-level hierarchy (global + controller only)
+    // ================================================================
+    tracker.clear();
 
-            let response = client
-                .get(format!("http://127.0.0.1:{}/api/two-level", port))
-                .send()
-                .await
-                .expect("Failed to call two-level endpoint");
+    let response = client
+        .get(format!("http://127.0.0.1:{}/api/two-level", port))
+        .send()
+        .await
+        .expect("Failed to call two-level endpoint");
 
-            assert_eq!(response.status(), 200);
+    assert_eq!(response.status(), 200);
 
-            let order = tracker.get_events();
-            println!("Two-level execution order: {:?}", order);
+    let order = tracker.get_events();
+    println!("Two-level execution order: {:?}", order);
 
-            // Should only have global and controller enhancers, no method-level;
-            // global middleware still wraps the outside
-            assert_eq!(order[0], "middleware:global:before");
-            assert_eq!(order[1], "guard:global");
-            assert_eq!(order[2], "guard:controller");
-            assert_eq!(order[3], "interceptor:global:before");
-            assert_eq!(order[4], "interceptor:controller:before");
-            assert_eq!(order[5], "controller:two_level");
-            assert_eq!(order[6], "interceptor:controller:after");
-            assert_eq!(order[7], "interceptor:global:after");
-            assert_eq!(order[8], "middleware:global:after");
+    // Should only have global and controller enhancers, no method-level;
+    // global middleware still wraps the outside
+    assert_eq!(order[0], "middleware:global:before");
+    assert_eq!(order[1], "guard:global");
+    assert_eq!(order[2], "guard:controller");
+    assert_eq!(order[3], "interceptor:global:before");
+    assert_eq!(order[4], "interceptor:controller:before");
+    assert_eq!(order[5], "controller:two_level");
+    assert_eq!(order[6], "interceptor:controller:after");
+    assert_eq!(order[7], "interceptor:global:after");
+    assert_eq!(order[8], "middleware:global:after");
 
-            // ================================================================
-            // TEST 3: Duplicate enhancers (GlobalGuard appears twice)
-            // ================================================================
-            tracker.clear();
+    // ================================================================
+    // TEST 3: Duplicate enhancers (GlobalGuard appears twice)
+    // ================================================================
+    tracker.clear();
 
-            let response = client
-                .get(format!("http://127.0.0.1:{}/api/duplicate", port))
-                .send()
-                .await
-                .expect("Failed to call duplicate endpoint");
+    let response = client
+        .get(format!("http://127.0.0.1:{}/api/duplicate", port))
+        .send()
+        .await
+        .expect("Failed to call duplicate endpoint");
 
-            assert_eq!(response.status(), 200);
+    assert_eq!(response.status(), 200);
 
-            let order = tracker.get_events();
-            println!("Duplicate execution order: {:?}", order);
+    let order = tracker.get_events();
+    println!("Duplicate execution order: {:?}", order);
 
-            // GlobalGuard should execute TWICE: once from global, once from method
-            let global_guard_count = order.iter().filter(|e| *e == "guard:global").count();
-            assert_eq!(global_guard_count, 2, "GlobalGuard should execute twice");
+    // GlobalGuard should execute TWICE: once from global, once from method
+    let global_guard_count = order.iter().filter(|e| *e == "guard:global").count();
+    assert_eq!(global_guard_count, 2, "GlobalGuard should execute twice");
 
-            // Verify order: middleware → global (factory) → controller → method (also global)
-            assert_eq!(order[0], "middleware:global:before"); // Outermost
-            assert_eq!(order[1], "guard:global"); // From factory
-            assert_eq!(order[2], "guard:controller"); // From controller
-            assert_eq!(order[3], "guard:global"); // From method (duplicate)
-        })
-        .await;
+    // Verify order: middleware → global (factory) → controller → method (also global)
+    assert_eq!(order[0], "middleware:global:before"); // Outermost
+    assert_eq!(order[1], "guard:global"); // From factory
+    assert_eq!(order[2], "guard:controller"); // From controller
+    assert_eq!(order[3], "guard:global"); // From method (duplicate)
 }

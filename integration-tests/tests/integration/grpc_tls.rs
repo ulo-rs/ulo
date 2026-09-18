@@ -107,7 +107,7 @@ impl TlsModule {}
 /// A caller that trusts the server's certificate completes the handshake and
 /// the call, over the same adapter every other test uses in the clear.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_client_that_trusts_the_certificate_is_served() {
     let issued = self_signed();
     let identity = Identity::from_pem(&issued.cert_pem, &issued.key_pem);
@@ -118,8 +118,7 @@ async fn a_client_that_trusts_the_certificate_is_served() {
 
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(TlsModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
@@ -127,7 +126,6 @@ async fn a_client_that_trusts_the_certificate_is_served() {
         let _ = shutdown_tx.send(app.shutdown_handle());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     let port = port_rx.await.unwrap();
     let shutdown = shutdown_rx.await.unwrap();
 
@@ -164,7 +162,7 @@ async fn a_client_that_trusts_the_certificate_is_served() {
 /// never opened and the serve task never starts, which is what ADR-0024 asks of
 /// every declared transport.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_certificate_that_cannot_be_read_fails_bind() {
     let adapter = ulo_grpc::GrpcAdapter::new("127.0.0.1:0".parse().unwrap()).with_tls(
         ServerTlsConfig::new().identity(Identity::from_pem("not a certificate", "not a key")),

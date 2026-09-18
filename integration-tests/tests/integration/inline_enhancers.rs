@@ -141,8 +141,7 @@ impl InlineRpcModule {}
 
 async fn boot() -> u16 {
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(InlineRpcModule).await.unwrap();
         app.use_rpc_adapter(ulo_rpc_tcp::TcpAdapter::new("127.0.0.1", 0))
             .unwrap();
@@ -150,7 +149,6 @@ async fn boot() -> u16 {
         let _ = port_tx.send(bound.rpc.expect("rpc must bind").port());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     port_rx.await.expect("RPC server failed to bind")
 }
 
@@ -176,7 +174,7 @@ async fn call(port: u16, pattern: &str) -> serde_json::Value {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_rpc_controller_s_inline_guard_and_interceptor_run() {
     SEEN.lock().unwrap().clear();
     let port = boot().await;
@@ -190,7 +188,7 @@ async fn an_rpc_controller_s_inline_guard_and_interceptor_run() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_rpc_handler_s_inline_guard_rejects_the_call() {
     SEEN.lock().unwrap().clear();
     let port = boot().await;
@@ -202,7 +200,7 @@ async fn an_rpc_handler_s_inline_guard_rejects_the_call() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_rpc_controller_s_inline_error_handler_claims_the_error() {
     SEEN.lock().unwrap().clear();
     let port = boot().await;
@@ -334,17 +332,13 @@ mod ws {
         use ulo_http_axum::AxumAdapter;
 
         let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-        let local = tokio::task::LocalSet::new();
-        local.spawn_local(async move {
+        tokio::spawn(async move {
             let mut app = UloFactory::create(InlineWsModule).await.unwrap();
             app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 0))
                 .unwrap();
             let bound = app.bind().await.unwrap();
             let _ = port_tx.send(bound.http.expect("HTTP must bind").port());
             app.run().await;
-        });
-        tokio::task::spawn_local(async move {
-            local.await;
         });
         port_rx.await.unwrap()
     }
@@ -372,7 +366,7 @@ mod ws {
 /// The guard appears twice because a gateway-level guard gates the upgrade and then every message
 /// on it. The interceptor appears once: a connect has no call to wrap.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_gateway_s_inline_guard_and_interceptor_run() {
     ws::clear();
     let port = ws::boot().await;
@@ -391,7 +385,7 @@ async fn a_gateway_s_inline_guard_and_interceptor_run() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_ws_handler_s_inline_guard_rejects_the_message() {
     ws::clear();
     let port = ws::boot().await;
@@ -406,7 +400,7 @@ async fn a_ws_handler_s_inline_guard_rejects_the_message() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_gateway_s_inline_error_handler_claims_the_error() {
     ws::clear();
     let port = ws::boot().await;
@@ -561,8 +555,7 @@ mod grpc {
         let adapter = ulo_grpc::GrpcAdapter::new(addr);
         let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
         let (sd_tx, sd_rx) = tokio::sync::oneshot::channel::<ulo::ShutdownHandle>();
-        let local = tokio::task::LocalSet::new();
-        local.spawn_local(async move {
+        tokio::spawn(async move {
             let mut app = UloFactory::create(InlineGrpcModule).await.unwrap();
             app.use_grpc_adapter(adapter).unwrap();
             let bound = app.bind().await.unwrap();
@@ -570,7 +563,6 @@ mod grpc {
             let _ = sd_tx.send(app.shutdown_handle());
             app.run().await;
         });
-        tokio::task::spawn_local(async move { local.await });
         (port_rx.await.unwrap(), sd_rx.await.unwrap())
     }
 
@@ -590,7 +582,7 @@ mod grpc {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_grpc_service_s_inline_guard_and_interceptor_run() {
     grpc::clear();
     let (port, shutdown) = grpc::boot().await;
@@ -612,7 +604,7 @@ async fn a_grpc_service_s_inline_guard_and_interceptor_run() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_grpc_method_s_inline_guard_rejects_the_call() {
     grpc::clear();
     let (port, shutdown) = grpc::boot().await;

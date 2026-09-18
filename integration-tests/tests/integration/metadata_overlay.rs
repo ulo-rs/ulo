@@ -64,13 +64,13 @@ async fn fetch(server: &TestServer, path: &str) -> String {
         .unwrap()
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_inherits_what_the_impl_block_declares() {
     let server = TestServer::start(MetaModule).await;
     assert_eq!(fetch(&server, "/meta/inherited").await, "standard/internal");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_overrides_one_entry_and_keeps_the_rest() {
     let server = TestServer::start(MetaModule).await;
     assert_eq!(fetch(&server, "/meta/overridden").await, "premium/internal");
@@ -114,7 +114,7 @@ pub struct Roles(pub Vec<&'static str>);
 #[module(controllers: [AccumulateController])]
 impl AccumulateModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_declaration_does_not_erase_the_blocks() {
     let server = TestServer::start(AccumulateModule).await;
     assert_eq!(

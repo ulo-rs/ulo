@@ -158,7 +158,7 @@ where
 /// A guard the gateway never names runs on the connection and on every message,
 /// ahead of the gateway's own.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_ws_guard_runs_ahead_of_the_gateway_s_own() {
     SEEN.lock().unwrap().clear();
 
@@ -183,7 +183,7 @@ async fn a_global_ws_guard_runs_ahead_of_the_gateway_s_own() {
 /// Refusing a message stops it before the gateway's own guard is asked, and
 /// answers the caller with the canonical envelope.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_ws_guard_rejecting_stops_the_message() {
     SEEN.lock().unwrap().clear();
 
@@ -208,7 +208,7 @@ async fn a_global_ws_guard_rejecting_stops_the_message() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_ws_interceptor_wraps_every_handler() {
     SEEN.lock().unwrap().clear();
 
@@ -233,7 +233,7 @@ async fn a_global_ws_interceptor_wraps_every_handler() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_ws_error_handler_claims_what_the_gateway_leaves() {
     SEEN.lock().unwrap().clear();
 

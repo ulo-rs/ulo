@@ -19,7 +19,7 @@ struct AppConfig {
     pub env: String,
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn async_controller_methods_with_http_server() {
     #[injectable]
     pub struct AsyncService {}
@@ -62,7 +62,7 @@ async fn async_controller_methods_with_http_server() {
     assert_eq!(body, "processed");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn config_service_injection_in_controllers() {
     #[controller("/api")]
     pub struct TestController {
@@ -95,7 +95,7 @@ async fn config_service_injection_in_controllers() {
     assert_eq!(body, "test");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn singleton_controllers_share_state() {
     static INSTANCE_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -136,7 +136,7 @@ async fn singleton_controllers_share_state() {
     }
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn request_scoped_controllers_create_per_request() {
     static REQUEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -184,7 +184,7 @@ async fn request_scoped_controllers_create_per_request() {
     assert_ne!(body1, body2);
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn optional_request_extractor() {
     #[controller("/api")]
     pub struct TestController {}
@@ -213,7 +213,7 @@ async fn optional_request_extractor() {
     assert_eq!(body, "true");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn json_body_and_request_extraction() {
     #[derive(Serialize, Deserialize)]
     struct CreateUser {
@@ -256,7 +256,7 @@ async fn json_body_and_request_extraction() {
     assert!(body.contains("application/json"));
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn request_extensions_pattern() {
     use ulo::async_trait;
     use ulo::di::MiddlewareConsumer;
@@ -312,7 +312,7 @@ async fn request_extensions_pattern() {
 
 // A controller is a controller without any routes: `#[controller]` alone builds and registers it
 // (routes come from `#[routes]`, and its absence means zero routes), matching NestJS.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn controller_without_routes_is_valid() {
     #[controller("/empty")]
     pub struct EmptyController;

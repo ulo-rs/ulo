@@ -130,8 +130,7 @@ where
     F: FnOnce(&mut UloFactory) + Send + 'static,
 {
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut factory = UloFactory::new();
         configure(&mut factory);
         let mut app = factory.create_with(GlobalsRpcModule).await.unwrap();
@@ -141,7 +140,6 @@ where
         let _ = port_tx.send(bound.rpc.expect("rpc must bind").port());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     port_rx.await.expect("RPC server failed to bind")
 }
 
@@ -168,7 +166,7 @@ async fn call(port: u16, pattern: &str) -> serde_json::Value {
 
 /// A guard the controller never names still runs, and runs first.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_rpc_guard_runs_ahead_of_the_controller_s_own() {
     SEEN.lock().unwrap().clear();
 
@@ -183,7 +181,7 @@ async fn a_global_rpc_guard_runs_ahead_of_the_controller_s_own() {
 
 /// Rejecting from there answers the caller and never reaches the controller.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_rpc_guard_rejecting_stops_the_call() {
     SEEN.lock().unwrap().clear();
 
@@ -198,7 +196,7 @@ async fn a_global_rpc_guard_rejecting_stops_the_call() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_rpc_interceptor_wraps_every_handler() {
     SEEN.lock().unwrap().clear();
 
@@ -221,7 +219,7 @@ async fn a_global_rpc_interceptor_wraps_every_handler() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_global_rpc_error_handler_claims_what_the_controller_leaves() {
     SEEN.lock().unwrap().clear();
 

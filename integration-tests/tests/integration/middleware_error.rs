@@ -27,7 +27,7 @@ impl Middleware for RejectWith {
     }
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn middleware_http_error_preserves_status() {
     #[controller("/")]
     pub struct PingController {}
@@ -69,7 +69,7 @@ async fn middleware_http_error_preserves_status() {
 
 // ── Test 2: named variant (Unauthorized) ─────────────────────────────────────
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn middleware_http_error_unauthorized() {
     #[controller("/")]
     pub struct AuthController {}

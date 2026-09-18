@@ -124,13 +124,12 @@ static PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0)
 impl ProbeClientModule {}
 
 #[serial_test::serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_injected_tonic_client_reaches_a_ulo_server() {
     // Server first, so the port is known before the client factory runs.
     let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(ProbeServerModule).await.unwrap();
         app.use_grpc_adapter(ulo_grpc::GrpcAdapter::new(addr))
             .unwrap();
@@ -138,7 +137,6 @@ async fn an_injected_tonic_client_reaches_a_ulo_server() {
         let _ = port_tx.send(bound.grpc.expect("grpc must bind").port());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     PORT.store(port_rx.await.unwrap(), std::sync::atomic::Ordering::SeqCst);
 
     let server = crate::common::TestServer::start(ProbeClientModule).await;

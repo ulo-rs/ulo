@@ -82,8 +82,7 @@ where
     F: FnOnce(&mut UloFactory) + Send + 'static,
 {
     let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut factory = UloFactory::new();
         configure(&mut factory);
         let mut app = factory.create_with(ClaimsModule).await.unwrap();
@@ -93,7 +92,6 @@ where
         let _ = port_tx.send(bound.rpc.expect("rpc must bind").port());
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     port_rx.await.expect("RPC server failed to bind")
 }
 
@@ -124,7 +122,7 @@ async fn call(port: u16, pattern: &str) -> serde_json::Value {
 /// a guard that refused. Both are the same event to a caller — the call did not succeed — and this
 /// records which frame each arrives in.
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_unclaimed_failure_names_its_kind() {
     let port = boot(|_| {}).await;
 
@@ -148,7 +146,7 @@ async fn an_unclaimed_failure_names_its_kind() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_claim_can_answer_with_no_data() {
     let port = boot(|f| {
         f.use_global_rpc_error_handler(Arc::new(ClaimsWithNothing));
@@ -165,7 +163,7 @@ async fn a_claim_can_answer_with_no_data() {
 }
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_claim_can_answer_with_an_error_of_its_own() {
     let port = boot(|f| {
         f.use_global_rpc_error_handler(Arc::new(ClaimsWithAnError));

@@ -30,7 +30,7 @@ use ulo::{controller, get, module, post, routes};
 // Verifies that a Tower layer runs and its response-side effect (a header) is
 // visible on the other side of the conversion round-trip.
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tower_layer_adds_response_header() {
     #[controller("/")]
     pub struct PingController {}
@@ -78,7 +78,7 @@ async fn tower_layer_adds_response_header() {
 // Verifies that a real-world tower-http layer (CorsLayer::permissive) works
 // and adds the expected CORS headers.
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tower_layer_cors_permissive() {
     #[controller("/api")]
     pub struct ApiController {}
@@ -123,7 +123,7 @@ async fn tower_layer_cors_permissive() {
 // → HttpRequest conversion intact, and the controller receives the original data.
 // The Tower layer also adds a header to prove it ran.
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tower_layer_request_body_round_trip() {
     #[controller("/echo")]
     pub struct EchoController {}
@@ -251,7 +251,7 @@ impl Middleware for StampRequestIdMiddleware {
     }
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tower_layer_reads_ulo_extensions() {
     #[controller("/")]
     pub struct ExtController {}
@@ -299,7 +299,7 @@ async fn tower_layer_reads_ulo_extensions() {
 // Two Tower layers stacked via ServiceBuilder and applied as a single TowerLayer.
 // Verifies the documented "idiomatic way to compose multiple Tower middlewares".
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tower_service_builder_composition() {
     #[controller("/")]
     pub struct ComposedController {}
@@ -351,7 +351,7 @@ async fn tower_service_builder_composition() {
 // Confirms that ulo middleware and Tower layers can be applied in the same
 // configure_middleware and that both run in declaration order.
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tower_and_ulo_middleware_interleaved() {
     struct AddUloHeader;
 
@@ -412,7 +412,7 @@ async fn tower_and_ulo_middleware_interleaved() {
 // asserted body is the original plaintext. The Content-Encoding header confirms
 // compression actually fired.
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tower_compression_layer_transforms_body() {
     // Large enough that gzip will actually compress (small strings may not be
     // worth compressing and some implementations skip them).

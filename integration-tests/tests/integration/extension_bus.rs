@@ -75,7 +75,7 @@ impl BusController {
 #[module(controllers: [BusController], providers: [AuthGuard])]
 impl HttpBusModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn http_guard_and_middleware_writes_reach_the_handler() {
     let mut factory = UloFactory::new();
     factory.use_global_middleware(std::sync::Arc::new(TracingMiddleware));
@@ -94,7 +94,7 @@ async fn http_guard_and_middleware_writes_reach_the_handler() {
     assert_eq!(body, "alice/t-42");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn http_bag_does_not_leak_between_requests() {
     let server = TestServer::start(HttpBusModule).await;
 
@@ -154,7 +154,7 @@ impl BusGateway {
 #[module(providers: [WsAuthGuard, BusGateway])]
 impl WsBusModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn ws_guard_write_reaches_the_handler() {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
@@ -227,7 +227,7 @@ impl CtxController {
 #[module(controllers: [CtxController], providers: [StampGuard])]
 impl CtxModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_can_take_the_context() {
     let server = TestServer::start(CtxModule).await;
 
@@ -244,7 +244,7 @@ async fn a_handler_can_take_the_context() {
     assert_eq!(body, "dana/reader");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn the_context_coexists_with_extractors() {
     let server = TestServer::start(CtxModule).await;
 
@@ -309,7 +309,7 @@ impl BodyController {
 #[module(controllers: [BodyController], providers: [BodyReadingGuard])]
 impl BodyModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn an_enhancer_reads_the_body_once_and_sees_it_gone() {
     let server = TestServer::start(BodyModule).await;
 
@@ -327,7 +327,7 @@ async fn an_enhancer_reads_the_body_once_and_sees_it_gone() {
     assert_eq!(body, "true/false");
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_handler_whose_body_was_taken_is_told_which_extractor_lost() {
     let server = TestServer::start(BodyModule).await;
 
@@ -424,7 +424,7 @@ impl TailModule {}
 
 /// A stream that captures the context reads the bag through its own `Arc`. This
 /// holds because a context is a handle, with no help from the dispatcher.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn a_capturing_stream_reads_the_bag() {
     let server = TestServer::start(TailModule).await;
 
@@ -444,7 +444,7 @@ async fn a_capturing_stream_reads_the_bag() {
 /// The execution's state is still there while the body streams, even though
 /// nothing in the stream holds the context. The response body carries it, so
 /// the execution ends with the answer rather than with the handler.
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn execution_state_survives_until_the_body_is_drained() {
     let server = TestServer::start(TailModule).await;
 

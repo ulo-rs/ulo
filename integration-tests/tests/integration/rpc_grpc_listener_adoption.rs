@@ -42,19 +42,17 @@ impl AdoptionModule {}
 /// return the address `bind()` reports for it.
 async fn start_rpc_on(adapter: impl ulo::rpc::RpcAdapter) -> SocketAddr {
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(AdoptionModule).await.unwrap();
         app.use_rpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = addr_tx.send(bound.rpc.expect("RPC adapter must report its address"));
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
     addr_rx.await.expect("RPC server failed to start")
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn tcp_serves_on_caller_supplied_listener() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let expected = listener.local_addr().unwrap();
@@ -86,7 +84,7 @@ async fn tcp_serves_on_caller_supplied_listener() {
     assert_eq!(resp["response"], serde_json::json!({"hello": "tcp"}));
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn udp_serves_on_caller_supplied_socket() {
     let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let expected = socket.local_addr().unwrap();
@@ -114,7 +112,7 @@ async fn udp_serves_on_caller_supplied_socket() {
     assert_eq!(resp["response"], serde_json::json!({"hello": "udp"}));
 }
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn grpc_serves_on_caller_supplied_listener() {
     use tonic_health::ServingStatus;
     use tonic_health::pb::HealthCheckRequest;
@@ -134,15 +132,13 @@ async fn grpc_serves_on_caller_supplied_listener() {
     let adapter = ulo_grpc::GrpcAdapter::from_listener(listener).add_service(health_service);
 
     let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<SocketAddr>();
-    let local = tokio::task::LocalSet::new();
-    local.spawn_local(async move {
+    tokio::spawn(async move {
         let mut app = UloFactory::create(EmptyModule).await.unwrap();
         app.use_grpc_adapter(adapter).unwrap();
         let bound = app.bind().await.unwrap();
         let _ = addr_tx.send(bound.grpc.expect("gRPC adapter must report its address"));
         app.run().await;
     });
-    tokio::task::spawn_local(async move { local.await });
 
     let reported = addr_rx.await.expect("gRPC server failed to start");
     assert_eq!(

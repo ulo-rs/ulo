@@ -159,7 +159,7 @@ impl OrderModule {}
 impl AppModule {}
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn global_module_providers_accessible_across_feature_modules() {
     // SAFETY: `#[serial]` runs this test alone, so nothing else reads the
     // environment while it is written.
@@ -276,7 +276,7 @@ impl ProductModule {}
 impl BuilderAppModule {}
 
 #[serial]
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn global_module_via_builder_method() {
     let server = TestServer::start(BuilderAppModule).await;
 

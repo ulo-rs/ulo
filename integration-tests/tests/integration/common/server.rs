@@ -53,18 +53,13 @@ impl TestServer {
         let target = target.into();
         let (addr_tx, addr_rx) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
 
-        let local = tokio::task::LocalSet::new();
-        local.spawn_local(async move {
+        tokio::spawn(async move {
             let mut app = factory.create_with(module).await.unwrap();
             app.use_http_adapter(adapter, target).unwrap();
             let bound = app.bind().await.unwrap();
             let addr = bound.http.expect("HTTP adapter not bound");
             let _ = addr_tx.send(addr);
             app.run().await;
-        });
-
-        tokio::task::spawn_local(async move {
-            local.await;
         });
 
         let addr = addr_rx.await.unwrap();

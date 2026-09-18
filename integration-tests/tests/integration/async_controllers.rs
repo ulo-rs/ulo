@@ -55,7 +55,7 @@ impl AsyncController {
 #[module(controllers: [AsyncController], providers: [AsyncService])]
 impl AsyncModule {}
 
-#[tokio_localset_test::localset_test]
+#[tokio::test]
 async fn async_controller_methods() {
     let server = TestServer::start(AsyncModule).await;
 
