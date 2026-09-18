@@ -427,7 +427,7 @@ async fn handle_datagram(
                 tracing::error!("RPC handler panicked; returning error to caller");
                 wire::frame_panic().into_json_value()
             }
-            Ok(Ok(ulo::rpc::RpcHandlerOutput::Stream(stream))) => {
+            Ok(Ok(ulo::dispatch::Cardinality::Many(stream))) => {
                 wire::drive_reply_stream(stream, |mut frame| {
                     let socket = socket.clone();
                     let id = id.clone();

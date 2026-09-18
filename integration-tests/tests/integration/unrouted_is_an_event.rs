@@ -13,6 +13,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use ulo::dispatch::Cardinality;
 
 use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
@@ -73,7 +74,7 @@ impl SomethingController {
 
     #[message_pattern("routed.echo")]
     async fn echo(&self) -> RpcHandlerResult {
-        Ok(RpcHandlerOutput::Single(RpcData::text("routed")))
+        Ok(Cardinality::One(RpcData::text("routed")))
     }
 }
 

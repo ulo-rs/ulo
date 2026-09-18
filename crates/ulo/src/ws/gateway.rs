@@ -106,7 +106,7 @@ pub trait Gateway: Send + Sync {
 
     /// Route message to appropriate handler based on event name.
     ///
-    /// `Ok(WsHandlerOutput)` for the success path (Empty / Single / Stream);
+    /// `Ok(WsHandlerOutput)` for the success path (Empty / One / Many);
     /// `Err` carries the user's typed error so the dispatcher can run the
     /// chain on it before falling back to `WsError::to_message`.
     async fn handle_event(&self, ctx: &WsContext) -> ExecutionResult<WsHandlerOutput, WsError>;

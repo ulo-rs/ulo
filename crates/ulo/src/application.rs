@@ -1,3 +1,4 @@
+use crate::dispatch::Cardinality;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -26,7 +27,7 @@ use crate::{
     spi::BindTarget,
     ws::{
         BroadcastService, DisconnectReason, GatewayWrapper, MessageCallbackResult, WsAdapter,
-        WsClientMap, WsConnectionCallbacks, WsHandlerOutput, helpers::create_client_from_parts,
+        WsClientMap, WsConnectionCallbacks, helpers::create_client_from_parts,
     },
 };
 
@@ -954,12 +955,25 @@ fn make_ws_callbacks(
             let handle = h_message.clone();
             Box::pin(async move {
                 match gateway.handle_message(client_id.clone(), msg).await {
-                    Ok(WsHandlerOutput::Empty) => MessageCallbackResult::Continue,
-                    Ok(WsHandlerOutput::Single(response)) => {
+                    Ok(Cardinality::Empty) => MessageCallbackResult::Continue,
+                    Ok(Cardinality::One(response)) => {
                         handle.send_to(&client_id, response).await;
                         MessageCallbackResult::Continue
                     }
-                    Ok(WsHandlerOutput::Stream(stream)) => MessageCallbackResult::Stream(stream),
+                    // The adapter SPI carries what the wire carries. A WebSocket item's error
+                    // type is `Infallible`, so unwrapping one here is total: there is no value of
+                    // that type for the `Err` arm to be given.
+                    Ok(Cardinality::Many(stream)) => {
+                        use futures::StreamExt as _;
+                        MessageCallbackResult::Stream(
+                            stream
+                                .map(|item| match item {
+                                    Ok(message) => message,
+                                    Err(never) => match never {},
+                                })
+                                .boxed(),
+                        )
+                    }
                     // The gateway answers every failure it can answer, frame included, so what
                     // reaches here is the one case with nothing left to answer on: the client
                     // is gone. Stop reading from it.

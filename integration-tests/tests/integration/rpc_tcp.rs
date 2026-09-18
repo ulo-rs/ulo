@@ -13,6 +13,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use ulo::dispatch::Cardinality;
 use ulo::rpc::{RpcHandlerOutput, RpcHandlerResult};
 
 use serde::{Deserialize, Serialize};
@@ -1494,7 +1495,7 @@ impl RpcOutputController {
 
     #[message_pattern("output.single")]
     async fn single(&self, _d: RpcData) -> RpcHandlerResult {
-        Ok(RpcHandlerOutput::Single(RpcData::json(serde_json::json!(
+        Ok(Cardinality::One(RpcData::json(serde_json::json!(
             "explicit-single"
         ))))
     }

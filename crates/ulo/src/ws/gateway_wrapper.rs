@@ -1,3 +1,4 @@
+use crate::dispatch::Cardinality;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -23,14 +24,14 @@ use futures::stream::BoxStream;
 /// `BoxStream` is a `Pin<Box<_>>` and therefore `Unpin`, so the projection needs
 /// no pin machinery. The HTTP side does the same for response bodies.
 struct ScopedStream {
-    inner: BoxStream<'static, WsMessage>,
+    inner: BoxStream<'static, Result<WsMessage, std::convert::Infallible>>,
     context: WsContext,
     /// Set once the inner stream answers `None`, which is the end of it.
     drained: bool,
 }
 
 impl futures::Stream for ScopedStream {
-    type Item = WsMessage;
+    type Item = Result<WsMessage, std::convert::Infallible>;
 
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
@@ -218,7 +219,7 @@ impl GatewayWrapper {
             message,
             WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Close(_)
         ) {
-            return Ok(WsHandlerOutput::Empty);
+            return Ok(Cardinality::Empty);
         }
 
         // A frame naming no event fails to route with the socket still open, so the caller is
@@ -298,12 +299,10 @@ impl GatewayWrapper {
                 .await
                 {
                     Some(Ok(output)) => Ok(output),
-                    Some(Err(reshaped)) => Ok(WsHandlerOutput::Single(Self::safe_render(|| {
+                    Some(Err(reshaped)) => Ok(Cardinality::One(Self::safe_render(|| {
                         reshaped.to_message()
                     }))),
-                    None => Ok(WsHandlerOutput::Single(Self::safe_render(|| {
-                        ws_err.to_message()
-                    }))),
+                    None => Ok(Cardinality::One(Self::safe_render(|| ws_err.to_message()))),
                 }
             }
         };
@@ -311,7 +310,7 @@ impl GatewayWrapper {
         // The execution ends when the answer does. A stream has emitted nothing
         // at this point, so the context rides it rather than dying here.
         match answer {
-            Ok(WsHandlerOutput::Stream(stream)) => Ok(WsHandlerOutput::Stream(
+            Ok(Cardinality::Many(stream)) => Ok(Cardinality::Many(
                 ScopedStream {
                     inner: stream,
                     context,
@@ -487,7 +486,7 @@ mod tests {
                 &self,
                 _ctx: &WsContext,
             ) -> ExecutionResult<WsHandlerOutput, WsError> {
-                ExecutionResult::Ok(WsHandlerOutput::Empty)
+                ExecutionResult::Ok(Cardinality::Empty)
             }
         }
 

@@ -9,6 +9,7 @@
 
 use std::sync::Mutex;
 use std::time::Duration;
+use ulo::dispatch::Cardinality;
 
 use serial_test::serial;
 use ulo::UloFactory;
@@ -104,7 +105,7 @@ impl InlineRpcController {
     #[message_pattern("inline.echo")]
     async fn echo(&self) -> RpcHandlerResult {
         record("handler");
-        Ok(RpcHandlerOutput::Single(
+        Ok(Cardinality::One(
             RpcData::from_serialize(&serde_json::json!({"ok": true})).unwrap(),
         ))
     }
@@ -131,9 +132,7 @@ impl InlineRpcStrictController {
     #[use_guards(DenyingGuard {})]
     async fn denied(&self) -> RpcHandlerResult {
         record("handler:denied");
-        Ok(RpcHandlerOutput::Single(RpcData::json(serde_json::json!(
-            {}
-        ))))
+        Ok(Cardinality::One(RpcData::json(serde_json::json!({}))))
     }
 }
 
