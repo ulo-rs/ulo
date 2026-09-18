@@ -64,3 +64,4 @@ the history is part of the value.
 - [0046 — The unit a scope names is an execution](0046-the-unit-a-scope-names-is-an-execution.md)
 - [0047 — The context family names the execution](0047-the-context-family-names-the-execution.md)
 - [0048 — A gRPC reply travels through the pipeline](0048-a-grpc-reply-travels-through-the-pipeline.md)
+- [0049 — An answer is an envelope and a cardinality](0049-an-answer-is-an-envelope-and-a-cardinality.md)
