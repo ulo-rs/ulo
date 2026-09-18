@@ -1,4 +1,3 @@
-use crate::dispatch::transport::Ws;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -7,17 +6,17 @@ use parking_lot::RwLock;
 
 use crate::context::Metadata;
 use crate::dispatch::ExecutionResult;
-use crate::enhancer::{Guard, Interceptor, InterceptorNext};
-use crate::errors::{PanicRecovered, PipelineSegment};
+use crate::dispatch::transport::Ws;
+use crate::enhancer::pipeline::{Leaf, through_interceptors};
+use crate::enhancer::{Guard, Interceptor};
 use crate::spi::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
 use crate::ws::WsContext;
 
 use super::{
     DisconnectReason, Gateway, WsClient, WsError, WsHandlerOutput, WsHandlerResult, WsMessage,
 };
+use futures::StreamExt;
 use futures::stream::BoxStream;
-use futures::{FutureExt, StreamExt};
-use std::panic::AssertUnwindSafe;
 
 /// Delegates to an inner stream while holding something alive alongside it.
 ///
@@ -61,15 +60,22 @@ impl Drop for ScopedStream {
     }
 }
 
-struct WsChainNext {
-    interceptors: Vec<Arc<dyn Interceptor<WsContext, WsHandlerResult>>>,
-    gateway: Arc<Box<dyn Gateway>>,
-}
+/// The innermost step of the chain: the gateway asked to handle this event.
+struct GatewayLeaf(Arc<Box<dyn Gateway>>);
 
 #[async_trait]
-impl InterceptorNext<WsContext, WsHandlerResult> for WsChainNext {
-    async fn run(self: Box<Self>, context: &WsContext) -> WsHandlerResult {
-        GatewayWrapper::execute_with_interceptors(context, &self.interceptors, &self.gateway).await
+impl Leaf<Ws> for GatewayLeaf {
+    async fn call(&self, context: &WsContext) -> WsHandlerResult {
+        match crate::panic_recovery::catch_async(
+            crate::errors::PipelineSegment::HandlerBody,
+            self.0.handle_event(context),
+        )
+        .await
+        {
+            Ok(ExecutionResult::Ok(output)) => Ok(output),
+            Ok(ExecutionResult::Err(ws_err)) => Err(ws_err),
+            Err(event) => Err(WsError::from(event)),
+        }
     }
 }
 
@@ -348,34 +354,12 @@ impl GatewayWrapper {
             }
         }
 
-        Self::execute_with_interceptors(context, interceptors, gateway).await
-    }
-
-    async fn execute_with_interceptors(
-        context: &WsContext,
-        interceptors: &[Arc<dyn Interceptor<WsContext, WsHandlerResult>>],
-        gateway: &Arc<Box<dyn Gateway>>,
-    ) -> WsHandlerResult {
-        if interceptors.is_empty() {
-            return Self::execute_handler(context, gateway).await;
-        }
-
-        let (first, rest) = interceptors.split_first().unwrap();
-
-        let next = WsChainNext {
-            interceptors: rest.to_vec(),
-            gateway: gateway.clone(),
-        };
-
-        match crate::panic_recovery::catch_async(
-            crate::errors::PipelineSegment::Middleware,
-            first.intercept(context, Box::new(next)),
+        through_interceptors::<Ws>(
+            context,
+            interceptors,
+            Arc::new(GatewayLeaf(gateway.clone())),
         )
         .await
-        {
-            Ok(answer) => answer,
-            Err(event) => Err(WsError::from(event)),
-        }
     }
 
     /// Drive `WsError::to_message` with panic recovery — a panic in the
@@ -406,26 +390,6 @@ impl GatewayWrapper {
     /// every other error frame is an object.
     fn fallback_internal_message() -> WsMessage {
         WsMessage::text(r#"{"status":"error","kind":"Internal","message":"Internal Server Error"}"#)
-    }
-
-    /// Call the handler. A panic in it is caught here and becomes `PanicRecovered`,
-    /// so user code cannot unwind into the adapter's read loop and take the
-    /// connection down with it.
-    async fn execute_handler(
-        context: &WsContext,
-        gateway: &Arc<Box<dyn Gateway>>,
-    ) -> WsHandlerResult {
-        let result = AssertUnwindSafe(gateway.handle_event(context))
-            .catch_unwind()
-            .await;
-        match result {
-            Ok(ExecutionResult::Ok(output)) => Ok(output),
-            Ok(ExecutionResult::Err(ws_err)) => Err(ws_err),
-            Err(payload) => Err(WsError::from(PanicRecovered::from_panic_payload(
-                PipelineSegment::HandlerBody,
-                payload,
-            ))),
-        }
     }
 
     pub(crate) async fn handle_disconnect(&self, client_id: String, reason: DisconnectReason) {

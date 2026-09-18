@@ -11,6 +11,7 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use crate::context::ExecutionContext;
 use crate::enhancer::{Guard, Interceptor};
+use crate::errors::PanicRecovered;
 use crate::{grpc::GrpcContext, http::HttpContext, rpc::RpcContext, ws::WsContext};
 
 /// One transport, as a type.
@@ -27,10 +28,16 @@ pub trait Transport: 'static {
     /// Fallible on every transport: a guard's rejection, an interceptor's refusal and a panic
     /// anywhere below all arrive as the `Err` side, so the error chain runs once above the
     /// interceptors rather than at each level that could produce one.
-    type Answer;
+    type Answer: Send;
 
     /// How a diagnostic names this transport.
     const NAME: &'static str;
+
+    /// The answer a panicking interceptor produces, carrying the event the chain above is offered.
+    ///
+    /// Each transport lifts a `PanicRecovered` into its own error type, and the walk over the
+    /// interceptors is otherwise the same on all of them — this is the one step in it that is not.
+    fn interceptor_panicked(event: PanicRecovered) -> Self::Answer;
 }
 
 /// HTTP, served by an `HttpAdapter`.
@@ -39,6 +46,10 @@ impl Transport for Http {
     type Context = HttpContext;
     type Answer = crate::http::HttpHandlerResult;
     const NAME: &'static str = "HTTP";
+
+    fn interceptor_panicked(event: PanicRecovered) -> Self::Answer {
+        Err(crate::http::HttpError::from(event))
+    }
 }
 
 /// Pattern-addressed RPC, served by an `RpcAdapter`.
@@ -47,6 +58,10 @@ impl Transport for Rpc {
     type Context = RpcContext;
     type Answer = crate::rpc::RpcHandlerResult;
     const NAME: &'static str = "RPC";
+
+    fn interceptor_panicked(event: PanicRecovered) -> Self::Answer {
+        Err(crate::rpc::RpcError::from(event))
+    }
 }
 
 /// WebSocket, served by a same-port `HttpAdapter` or a separate-port `WsAdapter`.
@@ -55,6 +70,10 @@ impl Transport for Ws {
     type Context = WsContext;
     type Answer = crate::ws::WsHandlerResult;
     const NAME: &'static str = "WS";
+
+    fn interceptor_panicked(event: PanicRecovered) -> Self::Answer {
+        Err(crate::ws::WsError::from(event))
+    }
 }
 
 /// gRPC, served by a `GrpcAdapter`.
@@ -63,6 +82,11 @@ impl Transport for Grpc {
     type Context = GrpcContext;
     type Answer = crate::grpc::GrpcHandlerResult;
     const NAME: &'static str = "gRPC";
+
+    fn interceptor_panicked(event: PanicRecovered) -> Self::Answer {
+        let message = format!("interceptor panicked: {}", event.message);
+        Err(crate::grpc::GrpcStatus::internal(message).caused_by(event))
+    }
 }
 
 /// Builds a guard inside the execution being served.

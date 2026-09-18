@@ -5,7 +5,7 @@
 //! per-method shim that builds a [`GrpcContext`], hands this module the user's
 //! handler as a delegate, and maps whatever comes back to tonic's types.
 
-use crate::dispatch::transport::Grpc;
+use crate::dispatch::transport::{Grpc, Transport};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
@@ -23,9 +23,8 @@ use crate::panic_recovery::catch_async;
 /// Run guards, then the interceptor chain, then the error chain over whatever failed.
 ///
 /// `delegate` is the user's handler, packaged by the macro as a closure answering this transport's
-/// [`GrpcHandlerResult`]: `Ok(())` once the typed reply is in the macro's side-channel — the user's
-/// `Result<Response<_>, Status>` is method-specific and cannot fit a generic chain-runner signature
-/// — and `Err` for anything that failed below the chain.
+/// [`GrpcHandlerResult`]: the reply inside a [`GrpcReply`], or `Err` for anything that failed below
+/// the chain.
 ///
 /// Every way a call can fail leaves as `Err(GrpcStatus)` carrying its own cause: a refusal carries
 /// its [`GuardRejection`], a panic anywhere below carries its `PanicRecovered`, a handler's failure
@@ -118,10 +117,10 @@ async fn run_grpc_guards(
     Ok(())
 }
 
-/// Linked chain of interceptors wrapping a final delegate. Mirrors
-/// `RpcControllerWrapper::execute_with_interceptors_impl` — each `Box<Self>`
-/// move on `InterceptorNext::run` enforces the once-only invocation
-/// contract.
+/// Linked chain of interceptors wrapping a final delegate, and this transport's own: the other
+/// three share [`through_interceptors`](crate::enhancer::pipeline), which holds what the chain
+/// wraps as a `Leaf` rather than as a closure the reply type escapes through. Each `Box<Self>` move
+/// on `InterceptorNext::run` enforces the once-only invocation contract.
 async fn execute_with_interceptors<D, Fut>(
     ctx: &GrpcContext,
     interceptors: &[Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>],
@@ -143,7 +142,7 @@ where
     .await
     {
         Ok(answer) => answer,
-        Err(event) => Err(interceptor_panicked(event)),
+        Err(event) => Grpc::interceptor_panicked(event),
     }
 }
 
@@ -164,15 +163,6 @@ where
             delegate,
         })
     }
-}
-
-/// The status a panicking interceptor answers with, carrying the event the chain above is offered.
-fn interceptor_panicked(event: crate::errors::PanicRecovered) -> GrpcStatus {
-    GrpcStatus::new(
-        crate::grpc::GrpcCode::Internal,
-        format!("interceptor panicked: {}", event.message),
-    )
-    .caused_by(event)
 }
 
 /// Innermost link: invokes the user delegate.
@@ -209,7 +199,7 @@ where
         let next = build_next(&this.rest, this.delegate);
         match catch_async(PipelineSegment::Middleware, this.head.intercept(ctx, next)).await {
             Ok(answer) => answer,
-            Err(event) => Err(interceptor_panicked(event)),
+            Err(event) => Grpc::interceptor_panicked(event),
         }
     }
 }

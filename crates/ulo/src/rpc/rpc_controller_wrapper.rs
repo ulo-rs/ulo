@@ -1,4 +1,3 @@
-use crate::dispatch::transport::Rpc;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -9,7 +8,9 @@ use super::{
 };
 use crate::context::Metadata;
 use crate::dispatch::ExecutionResult;
-use crate::enhancer::{Guard, Interceptor, InterceptorNext};
+use crate::dispatch::transport::Rpc;
+use crate::enhancer::pipeline::{Leaf, through_interceptors};
+use crate::enhancer::{Guard, Interceptor};
 use crate::rpc::RpcContext;
 use crate::spi::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};
 use futures::StreamExt;
@@ -62,16 +63,23 @@ impl Drop for ScopedRpcStream {
     }
 }
 
-struct RpcChainNext {
-    interceptors: Vec<Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>>,
-    source: Arc<dyn RpcControllerSource>,
-}
+/// The innermost step of the chain: the controller, resolved for this call, asked to handle it.
+struct ControllerLeaf(Arc<dyn RpcControllerSource>);
 
 #[async_trait]
-impl InterceptorNext<RpcContext, RpcHandlerResult> for RpcChainNext {
-    async fn run(self: Box<Self>, context: &RpcContext) -> RpcHandlerResult {
-        RpcControllerWrapper::execute_with_interceptors(context, &self.interceptors, &self.source)
-            .await
+impl Leaf<Rpc> for ControllerLeaf {
+    async fn call(&self, context: &RpcContext) -> RpcHandlerResult {
+        let controller = self.0.resolve(context).await;
+        match crate::panic_recovery::catch_async(
+            crate::errors::PipelineSegment::HandlerBody,
+            controller.handle_message(context),
+        )
+        .await
+        {
+            Ok(ExecutionResult::Ok(output)) => Ok(output),
+            Ok(ExecutionResult::Err(rpc_err)) => Err(rpc_err),
+            Err(event) => Err(RpcError::from(event)),
+        }
     }
 }
 
@@ -233,7 +241,8 @@ impl RpcControllerWrapper {
             }
         }
 
-        Self::execute_with_interceptors(ctx, interceptors, source).await
+        through_interceptors::<Rpc>(ctx, interceptors, Arc::new(ControllerLeaf(source.clone())))
+            .await
     }
 
     /// Drive `RpcError::to_data` with panic recovery — a panic in the
@@ -267,53 +276,5 @@ impl RpcControllerWrapper {
             "kind": "Internal",
             "message": "Internal Server Error",
         }))
-    }
-
-    /// Walk the interceptor chain, innermost link last. A panic in any
-    /// interceptor is caught here and leaves as `Err`, so user code cannot
-    /// unwind past the dispatcher.
-    async fn execute_with_interceptors(
-        context: &RpcContext,
-        interceptors: &[Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>],
-        source: &Arc<dyn RpcControllerSource>,
-    ) -> RpcHandlerResult {
-        if interceptors.is_empty() {
-            return Self::execute_handler(context, source).await;
-        }
-
-        let (first, rest) = interceptors.split_first().unwrap();
-
-        let next = RpcChainNext {
-            interceptors: rest.to_vec(),
-            source: source.clone(),
-        };
-
-        match crate::panic_recovery::catch_async(
-            crate::errors::PipelineSegment::Middleware,
-            first.intercept(context, Box::new(next)),
-        )
-        .await
-        {
-            Ok(answer) => answer,
-            Err(event) => Err(RpcError::from(event)),
-        }
-    }
-
-    /// Run the user handler. A panic below is a `PanicRecovered` on the `Err` side.
-    async fn execute_handler(
-        context: &RpcContext,
-        source: &Arc<dyn RpcControllerSource>,
-    ) -> RpcHandlerResult {
-        let controller = source.resolve(context).await;
-        let exec_result = crate::panic_recovery::catch_async(
-            crate::errors::PipelineSegment::HandlerBody,
-            controller.handle_message(context),
-        )
-        .await;
-        match exec_result {
-            Ok(ExecutionResult::Ok(output)) => Ok(output),
-            Ok(ExecutionResult::Err(rpc_err)) => Err(rpc_err),
-            Err(event) => Err(RpcError::from(event)),
-        }
     }
 }
