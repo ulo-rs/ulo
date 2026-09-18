@@ -2,6 +2,10 @@
 
 Status: accepted
 
+[ADR-0049](0049-an-answer-is-an-envelope-and-a-cardinality.md) refines what ends a tail below: an
+answer ends when its stream yields `None`, and an item or frame carrying an error ends the answer
+without ending it cleanly, so it signals here too.
+
 ## Context
 
 `CancellationToken` is complete. It carries `cancel`, `is_cancelled`, and an async `cancelled` that

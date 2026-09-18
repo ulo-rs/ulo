@@ -101,6 +101,8 @@ async fn a_live_connection_does_not_drop_the_handler() {
 static PRODUCER_SAW_CANCEL: AtomicBool = AtomicBool::new(false);
 /// How many expensive units the producer completed after the client left.
 static WORK_AFTER_DISCONNECT: AtomicUsize = AtomicUsize::new(0);
+/// Whether the producer behind a body that failed mid-stream learned the answer was over.
+static ERRORED_SAW_CANCEL: AtomicBool = AtomicBool::new(false);
 
 #[controller("/tail")]
 pub struct TailController {}
@@ -136,6 +138,42 @@ impl TailController {
 
         Body::stream(tokio_stream::wrappers::ReceiverStream::new(rx))
     }
+
+    /// The same shape, ending abnormally: the second frame is an error rather than data, while the
+    /// task feeding it is still running.
+    #[get("/fails")]
+    async fn fails(&self, ctx: &HttpContext) -> Body {
+        let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(1);
+        let cancelled = ctx.cancellation().clone();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = cancelled.cancelled() => {
+                        ERRORED_SAW_CANCEL.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                        if tx.send(Bytes::from_static(b"tick")).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        use futures_util::StreamExt as _;
+        let frames = tokio_stream::wrappers::ReceiverStream::new(rx)
+            .enumerate()
+            .map(|(i, chunk)| {
+                if i == 0 {
+                    Ok(chunk)
+                } else {
+                    Err(std::io::Error::other("the cursor died"))
+                }
+            });
+        Body::stream(frames)
+    }
 }
 
 #[module(controllers: [TailController])]
@@ -164,5 +202,33 @@ async fn a_dropped_body_cancels_the_work_feeding_it() {
     assert!(
         PRODUCER_SAW_CANCEL.load(Ordering::SeqCst),
         "the task feeding the body must learn the client went away"
+    );
+}
+
+/// An error ends a body, and ending is not the same as finishing: the task feeding it is told, the
+/// way it is told behind an RPC reply stream or a gRPC streaming reply that ends the same way.
+#[serial]
+#[tokio_localset_test::localset_test]
+async fn a_body_that_fails_mid_stream_cancels_the_work_feeding_it() {
+    ERRORED_SAW_CANCEL.store(false, Ordering::SeqCst);
+
+    let server = TestServer::start(TailModule).await;
+    let response = server
+        .client()
+        .get(server.url("/tail/fails"))
+        .send()
+        .await
+        .expect("headers arrive before the body");
+
+    // Read until the body fails. The error is the point: it is what the client sees instead of an
+    // end, and what the producer behind it has no other way to learn.
+    let read = response.bytes().await;
+    assert!(read.is_err(), "the body is meant to fail mid-stream");
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    assert!(
+        ERRORED_SAW_CANCEL.load(Ordering::SeqCst),
+        "a body that ended in an error is over, and the task feeding it must learn that"
     );
 }
