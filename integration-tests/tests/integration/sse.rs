@@ -8,8 +8,10 @@
 //! are covered — infallible and per-event fallible — along with multiline data,
 //! which is the case that must be re-prefixed rather than sent as one line.
 //!
-//! The routes below spell the stream differently: an `impl Stream`, and a boxed stream behind an
-//! item alias. A handler's answer is read from its type, not from how the type is written.
+//! `#[sse]` accepts three shapes, and the routes below spell each one differently: an `impl
+//! Stream`, a boxed stream behind an item alias, and a `Result` whose `Err` fails the call before
+//! any event is written. A handler's answer is read from its type, not from how the type is
+//! written.
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -53,6 +55,19 @@ impl EventsService {
         }))
     }
 }
+
+/// Fails an `#[sse]` handler's setup, before the first event.
+#[derive(ulo::Error, Debug)]
+#[error_kind(Forbidden)]
+struct NoSubscription;
+
+impl std::fmt::Display for NoSubscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("no subscription")
+    }
+}
+
+impl std::error::Error for NoSubscription {}
 
 /// A fallible item behind an alias: the item type is not spelled `Result` at the handler.
 type AliasedEvent = Result<SseEvent, std::io::Error>;
@@ -119,6 +134,20 @@ impl SseController {
     #[sse("/attr-boxed")]
     async fn attr_boxed(&self) -> Pin<Box<dyn futures_util::Stream<Item = AliasedEvent> + Send>> {
         Box::pin(stream::iter([Ok(SseEvent::data("boxed-event"))]))
+    }
+
+    #[sse("/attr-setup-ok")]
+    async fn attr_setup_ok(
+        &self,
+    ) -> Result<impl futures_util::Stream<Item = SseEvent> + use<>, NoSubscription> {
+        Ok(stream::iter([SseEvent::data("subscribed")]))
+    }
+
+    // The stream type is named rather than opaque: this handler never builds an `Ok`, and
+    // `impl Trait` has nothing to infer from.
+    #[sse("/attr-setup-err")]
+    async fn attr_setup_err(&self) -> Result<stream::Empty<SseEvent>, NoSubscription> {
+        Err(NoSubscription)
     }
 
     #[post("/emit")]
@@ -330,4 +359,41 @@ async fn an_aliased_boxed_stream_streams() {
 
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.text().await.unwrap(), "data: boxed-event\n\n");
+}
+
+/// Setup that succeeds streams the events, with the headers and body of a bare stream.
+#[tokio_localset_test::localset_test]
+async fn fallible_setup_that_succeeds_streams() {
+    let server = TestServer::start(SseModule).await;
+    let resp = server
+        .client()
+        .get(server.url("/sse/attr-setup-ok"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "text/event-stream"
+    );
+    assert_eq!(resp.text().await.unwrap(), "data: subscribed\n\n");
+}
+
+/// Setup that fails answers the error, not an empty event stream: the `Err` reaches the transport's
+/// renderer and carries the domain error's own kind.
+#[tokio_localset_test::localset_test]
+async fn fallible_setup_that_fails_answers_the_error() {
+    let server = TestServer::start(SseModule).await;
+    let resp = server
+        .client()
+        .get(server.url("/sse/attr-setup-err"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["statusCode"], 403);
+    assert_eq!(body["message"], "no subscription");
 }

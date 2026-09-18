@@ -130,12 +130,16 @@ pub fn delete(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// // Per-event fallible — individual events may fail
 /// #[sse("/events")]
 /// async fn events(&self) -> impl Stream<Item = Result<SseEvent, MyError>> { ... }
+///
+/// // Setup that can fail before streaming starts — validating a subscription token, say
+/// #[sse("/events")]
+/// async fn events(&self) -> Result<impl Stream<Item = SseEvent>, MyError> { ... }
 /// ```
 ///
-/// Any stream type works — boxed, aliased, or written as `impl Stream`.
+/// Any stream type works — boxed, aliased, or written as `impl Stream`. An error from the third
+/// form reaches the error chain like any other handler's.
 ///
-/// For setup that can fail before streaming starts, use `#[get]` returning `Result<Sse<_>, E>`
-/// with an explicit `Sse::new(stream)`.
+/// `#[get]` is the same route written out: return `Sse::new(stream)`, or a `Result` of it.
 #[proc_macro_attribute]
 pub fn sse(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item

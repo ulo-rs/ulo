@@ -233,11 +233,12 @@ fn generate_controller_wrapper(
         (method_call, extractions)
     };
 
-    // One constructor covers both item shapes; the return type is not read. Spanned at that
-    // return type: a stream neither shape accepts is reported there rather than at `#[routes]`.
+    // One call covers a stream, a stream of `Result`, and a `Result` of either; the return type
+    // is not read. Spanned at that return type: a value none of the three accepts is reported
+    // there rather than at `#[routes]`.
     let method_call = if is_sse {
         let at = method.sig.output.span();
-        quote_spanned! { at => ::ulo::http::Sse::new(#method_call) }
+        quote_spanned! { at => ::ulo::__http::into_sse(#method_call) }
     } else {
         method_call
     };

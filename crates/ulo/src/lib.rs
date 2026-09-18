@@ -14,6 +14,8 @@ pub mod __enhancer;
 #[doc(hidden)]
 pub mod __grpc;
 #[doc(hidden)]
+pub mod __http;
+#[doc(hidden)]
 pub mod __lifecycle;
 #[doc(hidden)]
 pub mod __rpc;
