@@ -28,8 +28,9 @@ use std::time::Duration;
 use futures::Stream;
 use futures::stream;
 use tokio::sync::broadcast;
+use ulo::dispatch::{Http, IntoOutput};
 use ulo::http::extract::Bytes;
-use ulo::http::{HttpResponse, IntoResponse, SseEvent, sse};
+use ulo::http::{HttpResponse, SseEvent, sse};
 use ulo::prelude::*;
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{injectable, new};
@@ -83,7 +84,7 @@ pub struct SseController {
 impl SseController {
     /// Emits a count every second, forever.
     #[get("/counter")]
-    async fn counter(&self) -> impl IntoResponse {
+    async fn counter(&self) -> impl IntoOutput<Http> {
         let s = stream::unfold(0u32, |n: u32| async move {
             tokio::time::sleep(Duration::from_secs(1)).await;
             Some((
@@ -98,7 +99,7 @@ impl SseController {
     ///   es.addEventListener("ping", (e) => ...)
     ///   es.addEventListener("status", (e) => ...)
     #[get("/events")]
-    async fn events(&self) -> impl IntoResponse {
+    async fn events(&self) -> impl IntoOutput<Http> {
         let s = stream::unfold(0u32, |n: u32| async move {
             tokio::time::sleep(Duration::from_millis(500)).await;
             let event = if n % 3 == 0 {
@@ -113,7 +114,7 @@ impl SseController {
 
     /// Push (per-request): a background task drives this specific connection.
     #[get("/push")]
-    async fn push(&self) -> impl IntoResponse {
+    async fn push(&self) -> impl IntoOutput<Http> {
         let (tx, rx) = tokio::sync::mpsc::channel::<SseEvent>(16);
 
         tokio::spawn(async move {
@@ -138,13 +139,13 @@ impl SseController {
     /// Live: service-level broadcaster — every connected client receives every emitted message.
     /// POST /sse/emit to push a message.
     #[get("/live")]
-    async fn live(&self) -> impl IntoResponse {
+    async fn live(&self) -> impl IntoOutput<Http> {
         sse(self.events.subscribe())
     }
 
     /// Emit: push a message to all current /sse/live subscribers.
     #[post("/emit")]
-    async fn emit_event(&self, Bytes(data): Bytes) -> impl IntoResponse {
+    async fn emit_event(&self, Bytes(data): Bytes) -> impl IntoOutput<Http> {
         self.events
             .emit(String::from_utf8_lossy(&data).into_owned());
         HttpResponse::no_content().build()

@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use futures::future::BoxFuture;
 use serde_json::json;
-use ulo::http::IntoResponse;
+use ulo::dispatch::{Http, IntoOutput};
 use ulo::prelude::*;
 use ulo_health::{
     DiskHealthIndicator, HealthCheckService, HealthEntry, HealthIndicator, HealthIndicatorResult,
@@ -73,7 +73,7 @@ impl HealthController {
     ///
     /// No network calls. Kubernetes restarts the pod when this 503s.
     #[get("/live")]
-    async fn liveness(&self) -> impl IntoResponse {
+    async fn liveness(&self) -> impl IntoOutput<Http> {
         self.health
             .check(vec![
                 self.memory.check_rss("memory_rss", 512 * 1024 * 1024),
@@ -90,7 +90,7 @@ impl HealthController {
     /// Uses a 5-second per-check timeout so a hung external call never blocks
     /// the probe indefinitely (requires the `timeout` feature).
     #[get("/ready")]
-    async fn readiness(&self) -> impl IntoResponse {
+    async fn readiness(&self) -> impl IntoOutput<Http> {
         self.health
             .check(vec![
                 // ping_check: passes on any 2xx or 3xx response

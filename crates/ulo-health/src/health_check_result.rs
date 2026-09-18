@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
-use ulo::http::{Body, HttpResponse, IntoResponse};
+use ulo::dispatch::{Answer, Http, IntoOutput};
+use ulo::http::{Body, HttpResponse};
 /// A single indicator's result, carried by both the healthy (`Ok`) and
 /// unhealthy (`Err`) arms of [`HealthIndicatorResult`].
 pub struct HealthEntry {
@@ -62,7 +63,7 @@ pub type HealthIndicatorResult = Result<HealthEntry, HealthEntry>;
 
 /// Aggregated result of all health checks run by [`HealthCheckService::check`](crate::HealthCheckService::check).
 ///
-/// Implements [`IntoResponse`]: returns **HTTP 200** when all checks pass,
+/// Implements [`IntoOutput<Http>`](ulo::dispatch::IntoOutput): returns **HTTP 200** when all checks pass,
 /// **HTTP 503** when any check fails. The JSON shape matches NestJS Terminus:
 ///
 /// ```json
@@ -108,8 +109,8 @@ impl HealthCheckResult {
     }
 }
 
-impl IntoResponse for HealthCheckResult {
-    fn into_response(self) -> HttpResponse {
+impl IntoOutput<Http> for HealthCheckResult {
+    fn into_output(self) -> Answer<Http> {
         let http_status: u16 = if self.status == "ok" { 200 } else { 503 };
 
         let mut info_map = serde_json::Map::new();
@@ -134,11 +135,11 @@ impl IntoResponse for HealthCheckResult {
             "details": Value::Object(details_map),
         });
 
-        HttpResponse {
+        Ok(HttpResponse {
             status: http_status,
             body: Some(Body::json(body)),
             headers: vec![],
-        }
+        })
     }
 }
 
@@ -190,19 +191,19 @@ mod tests {
     #[test]
     fn http_200_when_all_pass() {
         let result = HealthCheckResult::from_results(vec![Ok(HealthEntry::up("db"))]);
-        assert_eq!(result.into_response().status, 200);
+        assert_eq!(result.into_output().unwrap().status, 200);
     }
 
     #[test]
     fn http_503_when_any_fail() {
         let result = HealthCheckResult::from_results(vec![Err(HealthEntry::down("db"))]);
-        assert_eq!(result.into_response().status, 503);
+        assert_eq!(result.into_output().unwrap().status, 503);
     }
 
     #[test]
     fn json_shape_all_passing() {
         let result = HealthCheckResult::from_results(vec![Ok(HealthEntry::up("db"))]);
-        let body = parse_body(result.into_response());
+        let body = parse_body(result.into_output().unwrap());
 
         assert_eq!(body["status"], "ok");
         assert_eq!(body["info"]["db"]["status"], "up");
@@ -219,7 +220,7 @@ mod tests {
                 json!({ "message": "connection refused" }),
             )),
         ]);
-        let body = parse_body(result.into_response());
+        let body = parse_body(result.into_output().unwrap());
 
         assert_eq!(body["status"], "error");
         assert_eq!(body["info"]["db"]["status"], "up");
@@ -235,7 +236,7 @@ mod tests {
             "memory",
             json!({ "rss": 1024, "threshold": 2048 }),
         ))]);
-        let body = parse_body(result.into_response());
+        let body = parse_body(result.into_output().unwrap());
 
         assert_eq!(body["info"]["memory"]["status"], "up");
         assert_eq!(body["info"]["memory"]["rss"], 1024);

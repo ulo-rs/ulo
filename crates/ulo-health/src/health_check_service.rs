@@ -20,7 +20,7 @@ use crate::health_check_result::HealthEntry;
 ///
 /// ```ignore
 /// #[get("/live")]
-/// async fn liveness(&self) -> impl IntoResponse {
+/// async fn liveness(&self) -> impl IntoOutput<Http> {
 ///     self.health.check(vec![
 ///         self.http.ping_check("api", "https://api.example.com"),
 ///         self.memory.check_rss("memory", 300 * 1024 * 1024),

@@ -51,7 +51,7 @@ impl TerminusModule {
     /// #[routes]
     /// impl HealthController {
     ///     #[get("/live")]
-    ///     async fn liveness(&self) -> impl IntoResponse {
+    ///     async fn liveness(&self) -> impl IntoOutput<Http> {
     ///         self.health.check(vec![
     ///             self.http.ping_check("api", "https://api.example.com"),
     ///         ]).await

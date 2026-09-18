@@ -7,8 +7,9 @@ use futures::TryStreamExt;
 use mongodb::bson::{Document, doc};
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::mongo::Mongo;
+use ulo::dispatch::{Http, IntoOutput};
+use ulo::http::Body;
 use ulo::http::extract::Bytes;
-use ulo::http::{Body, IntoResponse};
 use ulo::prelude::*;
 use ulo_db_mongodb::{Database, MongoHealthIndicator, MongoModule};
 use ulo_health::{HealthCheckService, HealthIndicator, TerminusModule};
@@ -70,7 +71,7 @@ impl ItemController {
     }
 
     #[get("/health")]
-    async fn health(&self) -> impl IntoResponse {
+    async fn health(&self) -> impl IntoOutput<Http> {
         self.health
             .check(vec![self.indicator.check("mongodb")])
             .await
