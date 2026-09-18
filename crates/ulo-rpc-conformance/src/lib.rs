@@ -198,9 +198,6 @@ impl ConformanceModule {}
 // ---------------------------------------------------------------------------
 
 /// Boot an application on `broker`, run `body` against a client, tear down.
-///
-/// The application is `!Send` (its container is `Rc<RefCell<_>>`), so it lives
-/// on a `LocalSet` for the duration of the case.
 async fn with_server<B, F, Fut>(broker: &B, body: F)
 where
     B: Broker,
@@ -210,22 +207,18 @@ where
     let adapter = broker.adapter();
     let client = RpcClient::new(broker.transport());
 
-    tokio::task::LocalSet::new()
-        .run_until(async move {
-            tokio::task::spawn_local(async move {
-                let mut app = UloFactory::new()
-                    .create_with(ConformanceModule)
-                    .await
-                    .expect("the conformance module builds");
-                app.use_rpc_adapter(adapter)
-                    .expect("the adapter is accepted while configuring");
-                app.bind().await.expect("the transport binds");
-                app.run().await;
-            });
+    tokio::spawn(async move {
+        let mut app = UloFactory::new()
+            .create_with(ConformanceModule)
+            .await
+            .expect("the conformance module builds");
+        app.use_rpc_adapter(adapter)
+            .expect("the adapter is accepted while configuring");
+        app.bind().await.expect("the transport binds");
+        app.run().await;
+    });
 
-            body(client).await;
-        })
-        .await;
+    body(client).await;
 }
 
 /// Poll `f` until it yields a value or `budget` runs out.
@@ -448,32 +441,28 @@ pub async fn traffic_recovers_after_a_disruption<B: Broker>() {
     let adapter = broker.adapter();
     let client = RpcClient::new(broker.transport());
 
-    tokio::task::LocalSet::new()
-        .run_until(async {
-            tokio::task::spawn_local(async move {
-                let mut app = UloFactory::new()
-                    .create_with(ConformanceModule)
-                    .await
-                    .expect("the conformance module builds");
-                app.use_rpc_adapter(adapter)
-                    .expect("the adapter is accepted while configuring");
-                app.bind().await.expect("the transport binds");
-                app.run().await;
-            });
+    tokio::spawn(async move {
+        let mut app = UloFactory::new()
+            .create_with(ConformanceModule)
+            .await
+            .expect("the conformance module builds");
+        app.use_rpc_adapter(adapter)
+            .expect("the adapter is accepted while configuring");
+        app.bind().await.expect("the transport binds");
+        app.run().await;
+    });
 
-            assert!(
-                echoes(client.clone(), budget.boot).await,
-                "echo must round-trip before the disruption, or the case proves nothing"
-            );
+    assert!(
+        echoes(client.clone(), budget.boot).await,
+        "echo must round-trip before the disruption, or the case proves nothing"
+    );
 
-            broker.disrupt().await;
+    broker.disrupt().await;
 
-            assert!(
-                echoes(client.clone(), budget.recovery).await,
-                "echo must round-trip again after the connection is severed"
-            );
-        })
-        .await;
+    assert!(
+        echoes(client.clone(), budget.recovery).await,
+        "echo must round-trip again after the connection is severed"
+    );
 }
 
 /// Stamp one `#[tokio::test]` per case for a [`Broker`] implementation.

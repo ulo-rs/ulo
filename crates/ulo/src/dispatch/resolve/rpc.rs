@@ -1,6 +1,5 @@
-use std::cell::RefCell;
+use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::dispatch::transport::Rpc;
@@ -14,11 +13,11 @@ use crate::di::internal::Container;
 /// `RpcControllerWrapper`. Called by the instance loader while controllers are stored, so a
 /// misdeclared token fails `create()`; bind hands the stored wrapper to the adapter.
 pub(crate) struct RpcControllerResolver {
-    container: Rc<RefCell<Container>>,
+    container: Arc<RwLock<Container>>,
 }
 
 impl RpcControllerResolver {
-    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Arc<RwLock<Container>>) -> Self {
         Self { container }
     }
 
@@ -31,7 +30,7 @@ impl RpcControllerResolver {
         let handler_metadata: HashMap<String, Arc<crate::context::Metadata>> =
             source.handler_metadata().into_iter().collect();
 
-        let container = self.container.borrow();
+        let container = self.container.read();
         let registry = &container.role_registry().rpc;
 
         let controller = resolve_target::<Rpc>(

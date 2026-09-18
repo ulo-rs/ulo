@@ -1,12 +1,8 @@
+use crate::dispatch::ControllerFactory;
 use crate::dispatch::transport::{EnhancerSet, Http};
 use crate::error::SetupResult;
 use rustc_hash::FxHashMap;
-use std::{
-    any::Any,
-    cell::{RefCell, RefMut},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{any::Any, sync::Arc};
 
 use parking_lot::RwLock;
 
@@ -60,16 +56,16 @@ use crate::{
 };
 
 pub(crate) struct InstanceLoader {
-    container: Rc<RefCell<Container>>,
+    container: Arc<RwLock<Container>>,
 }
 
 impl InstanceLoader {
-    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Arc<RwLock<Container>>) -> Self {
         Self { container }
     }
 
     pub(crate) async fn create_instances_of_dependencies(&self) -> SetupResult {
-        let modules_order = self.container.borrow().ordered_module_tokens();
+        let modules_order = self.container.read().ordered_module_tokens();
 
         // PRE-PHASE 1: Register one ModuleRefProvider per module, all sharing the same
         // store Arc. The store is empty now; it gets written after Phase 1 completes.
@@ -83,7 +79,7 @@ impl InstanceLoader {
                 ),
             ));
             self.container
-                .borrow_mut()
+                .write()
                 .add_provider_instance(module_token, provider, vec![])?;
         }
 
@@ -112,7 +108,7 @@ impl InstanceLoader {
                     Ok(_) => {
                         // Module providers created successfully - register its global providers
                         self.container
-                            .borrow_mut()
+                            .write()
                             .register_global_providers(module_token)?;
                         successfully_created.push(module_token.clone());
                     }
@@ -155,7 +151,7 @@ impl InstanceLoader {
         // PHASE 1.6: Populate the shared store now that all providers exist.
         // One write into store_arc; every ModuleRef in the app sees it immediately.
         {
-            let container = self.container.borrow();
+            let container = self.container.read();
             let mut store = store_arc.write();
             for module_token in &modules_order {
                 if let Ok(instances) = container.get_provider_instances(module_token) {
@@ -191,13 +187,13 @@ impl InstanceLoader {
     /// as_multi_item() on each built contribution, and stores the resulting collection
     /// in the container so it can be resolved like any other provider dependency.
     fn collect_multi_providers(&self) -> SetupResult {
-        let multi_map = self.container.borrow().multi_providers().clone();
+        let multi_map = self.container.read().multi_providers().clone();
 
         for (base_token, contributions) in multi_map {
             let mut items: Vec<Arc<dyn Any + Send + Sync>> = Vec::new();
 
             for (module_token, provider_token) in &contributions {
-                let container = self.container.borrow();
+                let container = self.container.read();
                 let provider = container
                     .get_provider_instance_by_token(module_token, provider_token)?
                     .ok_or_else(|| {
@@ -222,7 +218,7 @@ impl InstanceLoader {
                 items,
             }));
             self.container
-                .borrow_mut()
+                .write()
                 .add_multi_collection_provider(base_token, collection);
         }
 
@@ -231,7 +227,7 @@ impl InstanceLoader {
 
     /// Resolve APP_* token providers to global enhancers
     fn resolve_app_token_enhancers(&self) -> SetupResult {
-        let container = self.container.borrow();
+        let container = self.container.read();
         let app_guard_providers = container.app_guard_providers().to_vec();
         let app_interceptor_providers = container.app_interceptor_providers().to_vec();
         drop(container);
@@ -239,7 +235,7 @@ impl InstanceLoader {
         for (_, provider_token) in app_guard_providers {
             let guard = self
                 .container
-                .borrow()
+                .read()
                 .role_registry()
                 .http
                 .guards
@@ -251,13 +247,13 @@ impl InstanceLoader {
                         provider_token
                     )
                 })?;
-            self.container.borrow_mut().global_http.guards.push(guard);
+            self.container.write().global_http.guards.push(guard);
         }
 
         for (_, provider_token) in app_interceptor_providers {
             let interceptor = self
                 .container
-                .borrow()
+                .read()
                 .role_registry()
                 .http.interceptors
                 .get(&provider_token)
@@ -269,7 +265,7 @@ impl InstanceLoader {
                     )
                 })?;
             self.container
-                .borrow_mut()
+                .write()
                 .global_http
                 .interceptors
                 .push(interceptor);
@@ -282,7 +278,7 @@ impl InstanceLoader {
     fn resolve_middleware_tokens(&self, modules_order: &[String]) -> SetupResult {
         for module_token in modules_order {
             self.container
-                .borrow_mut()
+                .write()
                 .resolve_module_middleware(module_token)?;
         }
         Ok(())
@@ -292,11 +288,15 @@ impl InstanceLoader {
         let dependency_graph = DependencyGraph::new(self.container.clone(), module_token.clone());
         let ordered_providers_token = dependency_graph.ordered_provider_tokens()?;
         let provider_instances = {
-            let container = self.container.borrow();
             let mut instances: FxHashMap<String, Injectable> = FxHashMap::default();
 
             for provider_token in ordered_providers_token {
-                let provider_factory = container
+                // The factory is taken as a handle and the lock released: `build` is
+                // awaited, and a provider's constructor may itself resolve from the
+                // container.
+                let provider_factory = self
+                    .container
+                    .read()
                     .get_provider_by_token(&module_token, &provider_token)?
                     .ok_or_else(|| format!("Provider not found: {}", provider_token))?;
 
@@ -324,7 +324,7 @@ impl InstanceLoader {
     fn build_provider_dependency_graph(
         &self,
     ) -> (FxHashMap<String, Vec<String>>, FxHashMap<String, String>) {
-        let container = self.container.borrow();
+        let container = self.container.read();
         let multi = container.multi_providers();
         let mut adjacency: FxHashMap<String, Vec<String>> = FxHashMap::default();
         let mut token_module: FxHashMap<String, String> = FxHashMap::default();
@@ -398,7 +398,7 @@ impl InstanceLoader {
         module_token: &String,
         providers_instances: FxHashMap<String, Injectable>,
     ) -> SetupResult {
-        let mut container = self.container.borrow_mut();
+        let mut container = self.container.write();
         let mut providers_tokens = Vec::new();
         for (provider_instance_token, injectable) in providers_instances {
             let token = injectable.instance.token().clone();
@@ -414,7 +414,7 @@ impl InstanceLoader {
         &self,
         module_token: &String,
         providers_tokens: Vec<(String, String)>,
-        container: RefMut<'_, Container>,
+        container: parking_lot::RwLockWriteGuard<'_, Container>,
     ) -> SetupResult {
         let exports = container.exported_tokens_of(module_token)?;
         self.add_export_instances_tokens(module_token, providers_tokens, exports, container)?;
@@ -426,7 +426,7 @@ impl InstanceLoader {
         module_token: &String,
         providers_tokens: Vec<(String, String)>,
         exports: Vec<String>,
-        mut container: RefMut<'_, Container>,
+        mut container: parking_lot::RwLockWriteGuard<'_, Container>,
     ) -> SetupResult {
         for (provider_factory_token, provider_instance_token) in providers_tokens {
             if exports.contains(&provider_factory_token) {
@@ -437,23 +437,27 @@ impl InstanceLoader {
     }
 
     async fn create_instances_of_controllers(&self, module_token: String) -> SetupResult {
-        let controllers_instances = {
-            let container = self.container.borrow();
-            let mut instances = Vec::new();
-            let controllers_factory = container.controller_factories(&module_token)?;
-
-            for controller_factory in controllers_factory.values() {
-                let dependencies = controller_factory.dependency_tokens();
-                let resolved_dependencies = self
-                    .resolve_dependencies(&module_token, dependencies, None)?
-                    .into_iter()
-                    .map(|(k, inj)| (k, inj.instance))
-                    .collect();
-                let built = controller_factory.build(resolved_dependencies).await;
-                instances.push(built);
-            }
-            instances
+        // Taken as handles and the lock released: `build` is awaited, and a controller's
+        // constructor may itself resolve from the container.
+        let factories: Vec<Arc<dyn ControllerFactory>> = {
+            let container = self.container.read();
+            container
+                .controller_factories(&module_token)?
+                .values()
+                .map(Arc::clone)
+                .collect()
         };
+
+        let mut controllers_instances = Vec::new();
+        for controller_factory in factories {
+            let dependencies = controller_factory.dependency_tokens();
+            let resolved_dependencies = self
+                .resolve_dependencies(&module_token, dependencies, None)?
+                .into_iter()
+                .map(|(k, inj)| (k, inj.instance))
+                .collect();
+            controllers_instances.push(controller_factory.build(resolved_dependencies).await);
+        }
         self.add_controllers_instances(module_token, controllers_instances)?;
         Ok(())
     }
@@ -498,7 +502,7 @@ impl InstanceLoader {
 
         // Phase B: store the controller (for lifecycle) and its dispatch units under a mutable
         // borrow.
-        let mut container_mut = self.container.borrow_mut();
+        let mut container_mut = self.container.write();
         for (controller, dispatch) in resolved {
             let token = controller.token();
             container_mut.add_controller_object(&module_token, controller)?;
@@ -533,7 +537,7 @@ impl InstanceLoader {
         route: &Arc<dyn Route>,
     ) -> SetupResult<EnhancerSet<Http>> {
         let declared = route.enhancers();
-        let container = self.container.borrow();
+        let container = self.container.read();
         crate::dispatch::resolve::resolve_target::<Http>(
             &container.role_registry().http,
             &container.global_http,
@@ -554,7 +558,7 @@ impl InstanceLoader {
         dependencies: Vec<String>,
         providers_instances: Option<&FxHashMap<String, Injectable>>,
     ) -> LoadResult<FxHashMap<String, Injectable>> {
-        let container = self.container.borrow();
+        let container = self.container.read();
         let mut resolved_dependencies = FxHashMap::default();
 
         for dependency in dependencies {
@@ -646,7 +650,7 @@ impl InstanceLoader {
         module_token: &String,
         dependency: &String,
     ) -> LoadResult<Option<Arc<Box<dyn Provider>>>> {
-        let container = self.container.borrow();
+        let container = self.container.read();
         let imported_modules = container.imported_modules(module_token)?;
 
         for imported_module in imported_modules {

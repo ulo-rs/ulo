@@ -6,8 +6,8 @@ use crate::spi::ProviderFactory;
 use async_trait::async_trait;
 use std::sync::Arc;
 
-#[async_trait(?Send)]
-pub trait ModuleMetadata {
+#[async_trait]
+pub trait ModuleMetadata: Send + Sync {
     /// The module's one identity: registry key, display string, and the value
     /// `get_module_by_id` matches. See [`ModuleIdentity`].
     fn identity(&self) -> ModuleIdentity;
@@ -71,7 +71,7 @@ pub struct GlobalModuleWrapper<T: ModuleMetadata> {
     inner: T,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<T: ModuleMetadata> ModuleMetadata for GlobalModuleWrapper<T> {
     fn identity(&self) -> ModuleIdentity {
         self.inner.identity()

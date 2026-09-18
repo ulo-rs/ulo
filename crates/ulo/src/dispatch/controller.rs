@@ -44,7 +44,7 @@ pub trait Controller: Send + Sync {
 }
 
 #[async_trait]
-pub trait ControllerFactory {
+pub trait ControllerFactory: Send + Sync {
     fn token(&self) -> String;
     fn dependency_tokens(&self) -> Vec<String> {
         vec![]

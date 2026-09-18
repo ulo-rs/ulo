@@ -3,6 +3,7 @@ mod cancellation;
 mod common;
 
 mod adapter_error_contract;
+mod an_application_is_send;
 mod app_token_enhancers;
 mod async_controllers;
 mod attribute_extractors;

@@ -1,10 +1,11 @@
 use super::Container;
 use crate::error::SetupResult;
+use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
-use std::{cell::RefCell, rc::Rc};
+use std::sync::Arc;
 
 pub(crate) struct DependencyGraph {
-    container: Rc<RefCell<Container>>,
+    container: Arc<RwLock<Container>>,
     module_token: String,
     visited: FxHashMap<String, bool>,
     temp_mark: FxHashMap<String, bool>,
@@ -12,7 +13,7 @@ pub(crate) struct DependencyGraph {
 }
 
 impl DependencyGraph {
-    pub(crate) fn new(container: Rc<RefCell<Container>>, module_token: String) -> Self {
+    pub(crate) fn new(container: Arc<RwLock<Container>>, module_token: String) -> Self {
         Self {
             container,
             module_token,
@@ -24,7 +25,7 @@ impl DependencyGraph {
 
     pub(crate) fn ordered_provider_tokens(mut self) -> SetupResult<Vec<String>> {
         let (providers, multi_providers) = {
-            let container = self.container.borrow();
+            let container = self.container.read();
             let providers_map = container.provider_factories(&self.module_token)?;
             let providers = providers_map
                 .iter()

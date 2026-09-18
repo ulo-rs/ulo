@@ -1,5 +1,6 @@
 use crate::error::SetupResult;
-use std::{cell::RefCell, pin::Pin, rc::Rc, sync::Arc};
+use parking_lot::RwLock;
+use std::{pin::Pin, sync::Arc};
 
 use crate::{
     di::internal::Container,
@@ -25,12 +26,12 @@ impl RequestHandler for MountedRoute {
 }
 
 pub(crate) struct RouteMount {
-    container: Rc<RefCell<Container>>,
+    container: Arc<RwLock<Container>>,
     global_chain: Option<MiddlewareChain>,
 }
 
 impl RouteMount {
-    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Arc<RwLock<Container>>) -> Self {
         Self {
             container,
             global_chain: None,
@@ -40,14 +41,14 @@ impl RouteMount {
     /// Register every route with the adapter, and keep the global chain for
     /// `take_global_chain` to hand to `start()` later.
     pub(crate) fn mount(&mut self, http_adapter: &mut dyn HttpAdapter) -> SetupResult {
-        let modules_token = self.container.borrow().module_tokens();
+        let modules_token = self.container.read().module_tokens();
 
         for module_token in modules_token {
             self.register_routes(module_token, http_adapter)?;
         }
 
         self.global_chain = Some({
-            let container = self.container.borrow();
+            let container = self.container.read();
             let mut chain = MiddlewareChain::new();
             if let Some(mm) = container.middleware_manager() {
                 for mw in mm.global_middleware() {
@@ -72,7 +73,7 @@ impl RouteMount {
         http_adapter: &mut dyn HttpAdapter,
     ) -> SetupResult {
         let controllers_vec: Vec<_> = {
-            let mut container = self.container.borrow_mut();
+            let mut container = self.container.write();
             let controllers = container.get_controller_instances(&module_token)?;
             controllers.collect()
         };
@@ -82,7 +83,7 @@ impl RouteMount {
             let route_method = wrapper.method();
 
             let route_middleware = {
-                let container = self.container.borrow();
+                let container = self.container.read();
                 if let Some(mm) = container.middleware_manager() {
                     mm.get_middleware_for_route(&module_token, &route_path, route_method.as_str())
                 } else {

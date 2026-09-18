@@ -1,11 +1,10 @@
 use crate::dispatch::Items;
+use parking_lot::RwLock;
 use std::{
-    cell::RefCell,
     collections::{HashMap, HashSet},
     future::Future,
     net::SocketAddr,
     pin::Pin,
-    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -163,7 +162,7 @@ pub struct UloApplication {
     // `None` and `servers` holds the live handles.
     http_adapter: Option<Box<dyn HttpAdapter>>,
     http_target: Option<BindTarget>,
-    container: Rc<RefCell<Container>>,
+    container: Arc<RwLock<Container>>,
     routes: RouteMount,
     context: UloApplicationContext,
     ws_gateways: HashMap<String, Arc<GatewayWrapper>>,
@@ -186,7 +185,7 @@ pub struct UloApplication {
 }
 
 impl UloApplication {
-    pub fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub fn new(container: Arc<RwLock<Container>>) -> Self {
         Self {
             http_adapter: None,
             http_target: None,
@@ -325,7 +324,7 @@ impl UloApplication {
         // Wrappers are stored fully resolved at create; this only collects them for the adapter.
         self.rpc_controllers = self
             .container
-            .borrow()
+            .read()
             .rpc_controllers()
             .values()
             .cloned()
@@ -485,7 +484,12 @@ impl UloApplication {
 
         // One shared WsClientMap + ConnectionManager when BroadcastService is in DI;
         // otherwise a fresh WsClientMap per gateway (no CM needed).
-        let broadcast_service = self.get::<BroadcastService>().await.ok().map(Arc::new);
+        let broadcast_service = self
+            .context
+            .get::<BroadcastService>()
+            .await
+            .ok()
+            .map(Arc::new);
 
         // Same-port vs separate-port is a property of how the gateway was declared,
         // not of the port number. A gateway with no `port` shares the HTTP listener;
@@ -646,7 +650,7 @@ impl UloApplication {
                     tracing::debug!(pattern = %pattern, "RPC pattern registered");
                 }
 
-                let rpc_global_handlers = self.container.borrow().global_rpc.error_handlers.clone();
+                let rpc_global_handlers = self.container.read().global_rpc.error_handlers.clone();
                 let callbacks = Arc::new(make_rpc_callbacks(
                     self.rpc_controllers.clone(),
                     rpc_global_handlers,
@@ -669,7 +673,7 @@ impl UloApplication {
             // Bundles are stored fully resolved at create; this only hands them to the adapter.
             let grpc_services: Vec<_> = self
                 .container
-                .borrow()
+                .read()
                 .grpc_services()
                 .values()
                 .cloned()
@@ -876,13 +880,13 @@ impl UloApplication {
     }
 
     async fn close_hooks(&mut self) {
-        self.call_module_destroy_hooks().await;
-        self.call_before_shutdown_hooks(None).await;
-        self.call_shutdown_hooks(None).await;
+        self.context.call_module_destroy_hooks().await;
+        self.context.call_before_shutdown_hooks(None).await;
+        self.context.call_shutdown_hooks(None).await;
     }
 
     async fn close_adapters(&mut self) {
-        if let Ok(bs) = self.get::<BroadcastService>().await {
+        if let Ok(bs) = self.context.get::<BroadcastService>().await {
             bs.close_all().await;
         }
 
@@ -895,20 +899,6 @@ impl UloApplication {
                 tracing::warn!(server = name, error = %e, "adapter close error");
             }
         }
-    }
-
-    async fn call_before_shutdown_hooks(&self, signal: Option<String>) {
-        self.context
-            .call_before_shutdown_hooks(signal.clone())
-            .await;
-    }
-
-    async fn call_module_destroy_hooks(&self) {
-        self.context.call_module_destroy_hooks().await;
-    }
-
-    async fn call_shutdown_hooks(&self, signal: Option<String>) {
-        self.context.call_shutdown_hooks(signal.clone()).await;
     }
 }
 
@@ -1054,4 +1044,24 @@ fn make_rpc_callbacks(
             Err(RpcError::PatternNotFound(info.pattern))
         })
     })
+}
+
+#[cfg(test)]
+mod send_invariant {
+    use super::*;
+
+    fn assert_send<T: Send>() {}
+    fn assert_send_future<F: Future + Send>(_: F) {}
+
+    #[test]
+    fn an_application_and_its_context_are_send() {
+        assert_send::<UloApplication>();
+        assert_send::<UloApplicationContext>();
+    }
+
+    #[allow(dead_code)]
+    fn serving_futures_are_send(app: UloApplication, mut ctx: UloApplicationContext) {
+        assert_send_future(app.start());
+        assert_send_future(async move { ctx.close().await });
+    }
 }

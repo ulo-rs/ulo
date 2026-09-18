@@ -12,8 +12,8 @@ use crate::{
     spi::{Provider, ProviderFactory},
 };
 pub struct Module {
-    controllers: FxHashMap<String, Box<dyn ControllerFactory>>,
-    providers: FxHashMap<String, Box<dyn ProviderFactory>>,
+    controllers: FxHashMap<String, Arc<dyn ControllerFactory>>,
+    providers: FxHashMap<String, Arc<dyn ProviderFactory>>,
     imports: FxHashSet<String>,
     exports: FxHashSet<String>,
     /// One per route, the dispatch units the router registers with the adapter.
@@ -22,11 +22,12 @@ pub struct Module {
     controller_objects: Vec<Arc<dyn Controller>>,
     providers_instances: FxHashMap<String, Arc<Box<dyn Provider>>>,
     exports_instances: FxHashSet<String>,
-    metadata: Box<dyn ModuleMetadata>,
+    metadata: Arc<dyn ModuleMetadata>,
 }
 
 impl Module {
     pub fn new(metadata: Box<dyn ModuleMetadata>) -> Self {
+        let metadata: Arc<dyn ModuleMetadata> = Arc::from(metadata);
         Self {
             controllers: FxHashMap::default(),
             providers: FxHashMap::default(),
@@ -42,11 +43,12 @@ impl Module {
 }
 impl Module {
     pub fn add_controller(&mut self, controller: Box<dyn ControllerFactory>) {
-        self.controllers.insert(controller.token(), controller);
+        self.controllers
+            .insert(controller.token(), Arc::from(controller));
     }
 
     pub fn add_provider(&mut self, provider: Box<dyn ProviderFactory>) {
-        self.providers.insert(provider.token(), provider);
+        self.providers.insert(provider.token(), Arc::from(provider));
     }
 
     pub fn add_import(&mut self, module_token: String) {
@@ -88,7 +90,7 @@ impl Module {
         self.exports_instances.insert(provider_token);
     }
 
-    pub fn provider_factories(&self) -> &FxHashMap<String, Box<dyn ProviderFactory>> {
+    pub fn provider_factories(&self) -> &FxHashMap<String, Arc<dyn ProviderFactory>> {
         &self.providers
     }
 
@@ -96,10 +98,15 @@ impl Module {
         &self.providers_instances
     }
 
-    pub fn get_provider_by_token(&self, provider_token: &String) -> Option<&dyn ProviderFactory> {
-        self.providers
-            .get(provider_token)
-            .map(|provider| provider.as_ref())
+    /// The factory for `provider_token`, as a handle rather than a borrow.
+    ///
+    /// Cloned out so a caller can await [`ProviderFactory::build`] without holding the
+    /// container lock across it.
+    pub fn get_provider_by_token(
+        &self,
+        provider_token: &String,
+    ) -> Option<Arc<dyn ProviderFactory>> {
+        self.providers.get(provider_token).map(Arc::clone)
     }
 
     pub fn get_provider_instance_by_token(
@@ -109,7 +116,7 @@ impl Module {
         self.providers_instances.get(provider_token)
     }
 
-    pub fn controller_factories(&self) -> &FxHashMap<String, Box<dyn ControllerFactory>> {
+    pub fn controller_factories(&self) -> &FxHashMap<String, Arc<dyn ControllerFactory>> {
         &self.controllers
     }
 
@@ -129,8 +136,12 @@ impl Module {
         &self.exports
     }
 
-    pub fn metadata(&self) -> &dyn ModuleMetadata {
-        &*self.metadata
+    /// The module's metadata, as a handle rather than a borrow.
+    ///
+    /// Cloned out so a caller can await one of its lifecycle hooks without holding the
+    /// container lock across the await.
+    pub fn metadata(&self) -> Arc<dyn ModuleMetadata> {
+        Arc::clone(&self.metadata)
     }
 
     pub fn _get_controller_by_token(

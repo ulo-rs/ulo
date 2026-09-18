@@ -4,24 +4,25 @@
 //! the lifecycle hooks run, and no transport is bound. An application that serves is
 //! [`UloApplication`](crate::UloApplication) instead.
 
-use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
+use parking_lot::RwLock;
+use std::{any::Any, sync::Arc};
 
 use crate::error::ResolutionError;
 
 use crate::{
     di::Execution,
-    di::internal::{Container, IntoToken, ModuleRef},
+    di::internal::{Container, IntoToken, ModuleLifecycle, ModuleRef},
     di::module::ModuleIdentity,
     spi::Provider,
 };
 
 /// The module graph, resolvable, with no transport bound.
 pub struct UloApplicationContext {
-    container: Rc<RefCell<Container>>,
+    container: Arc<RwLock<Container>>,
 }
 
 impl UloApplicationContext {
-    pub(crate) fn new(container: Rc<RefCell<Container>>) -> Self {
+    pub(crate) fn new(container: Arc<RwLock<Container>>) -> Self {
         Self { container }
     }
 
@@ -33,7 +34,7 @@ impl UloApplicationContext {
         &self,
         token: &str,
     ) -> Result<Arc<Box<dyn Provider>>, ResolutionError> {
-        let container = self.container.borrow();
+        let container = self.container.read();
         let token = token.to_string();
 
         container
@@ -58,7 +59,7 @@ impl UloApplicationContext {
         module_token: &str,
         token: &str,
     ) -> Result<Arc<Box<dyn Provider>>, ResolutionError> {
-        let container = self.container.borrow();
+        let container = self.container.read();
 
         container
             .get_provider_instance_by_token(&module_token.to_string(), &token.to_string())
@@ -114,7 +115,7 @@ impl UloApplicationContext {
     pub async fn get_module_by_id(&self, id: &str) -> Result<ModuleRef, ResolutionError> {
         let exact = self
             .container
-            .borrow()
+            .read()
             .module_tokens()
             .into_iter()
             .find(|key| key == id);
@@ -127,7 +128,7 @@ impl UloApplicationContext {
 
     /// The key of the one module whose identity base is `base`.
     fn module_key_for_base(&self, base: &str) -> Result<String, ResolutionError> {
-        let container = self.container.borrow();
+        let container = self.container.read();
         let keys = container.module_tokens();
 
         let matches: Vec<&String> = keys
@@ -225,89 +226,72 @@ impl UloApplicationContext {
         self.call_shutdown_hooks(None).await;
     }
 
-    pub(crate) async fn call_before_shutdown_hooks(&self, signal: Option<String>) {
-        let container = self.container.borrow();
-        let modules = container.module_tokens();
+    /// Every module's hook-carrying handles, taken in one pass under the container lock.
+    ///
+    /// The shutdown hooks below are awaited, so the handles are detached from the container
+    /// first rather than held across each await. See [`Container::module_lifecycle`].
+    fn module_lifecycles(&self) -> Vec<ModuleLifecycle> {
+        let container = self.container.read();
+        container
+            .module_tokens()
+            .iter()
+            .filter_map(|token| container.module_lifecycle(token))
+            .collect()
+    }
 
-        for module_token in modules.clone() {
-            if let Some(module_ref) = container.get_module_by_token(&module_token) {
-                module_ref
-                    .metadata()
-                    .before_application_shutdown(signal.clone())
-                    .await;
-            }
+    pub(crate) async fn call_before_shutdown_hooks(&self, signal: Option<String>) {
+        let lifecycles = self.module_lifecycles();
+
+        for lifecycle in &lifecycles {
+            lifecycle
+                .metadata
+                .before_application_shutdown(signal.clone())
+                .await;
         }
 
-        for module_token in modules {
-            if let Ok(providers) = container.lifecycle_instances(&module_token) {
-                for provider in providers {
-                    if provider.scope() == crate::di::ProviderScope::Execution {
-                        continue;
-                    }
-                    provider.before_application_shutdown(signal.clone()).await;
-                }
+        for lifecycle in lifecycles {
+            for provider in lifecycle.providers {
+                provider.before_application_shutdown(signal.clone()).await;
             }
-            if let Some(module) = container.get_module_by_token(&module_token) {
-                for controller in module.controller_objects() {
-                    controller.before_application_shutdown(signal.clone()).await;
-                }
+            for controller in lifecycle.controllers {
+                controller.before_application_shutdown(signal.clone()).await;
             }
         }
     }
 
     pub(crate) async fn call_module_destroy_hooks(&self) {
-        let container = self.container.borrow();
-        let modules = container.module_tokens();
+        let lifecycles = self.module_lifecycles();
 
-        for module_token in modules.clone() {
-            if let Some(module_ref) = container.get_module_by_token(&module_token) {
-                module_ref.metadata().on_module_destroy().await;
-            }
+        for lifecycle in &lifecycles {
+            lifecycle.metadata.on_module_destroy().await;
         }
 
-        for module_token in modules {
-            if let Ok(providers) = container.lifecycle_instances(&module_token) {
-                for provider in providers {
-                    if provider.scope() == crate::di::ProviderScope::Execution {
-                        continue;
-                    }
-                    provider.on_module_destroy().await;
-                }
+        for lifecycle in lifecycles {
+            for provider in lifecycle.providers {
+                provider.on_module_destroy().await;
             }
-            if let Some(module) = container.get_module_by_token(&module_token) {
-                for controller in module.controller_objects() {
-                    controller.on_module_destroy().await;
-                }
+            for controller in lifecycle.controllers {
+                controller.on_module_destroy().await;
             }
         }
     }
 
     pub(crate) async fn call_shutdown_hooks(&self, signal: Option<String>) {
-        let container = self.container.borrow();
-        let modules = container.module_tokens();
+        let lifecycles = self.module_lifecycles();
 
-        for module_token in modules.clone() {
-            if let Some(module_ref) = container.get_module_by_token(&module_token) {
-                module_ref
-                    .metadata()
-                    .on_application_shutdown(signal.clone())
-                    .await;
-            }
+        for lifecycle in &lifecycles {
+            lifecycle
+                .metadata
+                .on_application_shutdown(signal.clone())
+                .await;
         }
 
-        for module_token in modules {
-            if let Ok(providers) = container.lifecycle_instances(&module_token) {
-                for provider in providers {
-                    if provider.scope() == crate::di::ProviderScope::Execution {
-                        continue;
-                    }
-                    provider.on_application_shutdown(signal.clone()).await;
-                }
+        for lifecycle in lifecycles {
+            for provider in lifecycle.providers {
+                provider.on_application_shutdown(signal.clone()).await;
             }
-            if let Some(module) = container.get_module_by_token(&module_token) {
-                for controller in module.controller_objects() {
-                    controller.on_application_shutdown(signal.clone()).await;
-                }
+            for controller in lifecycle.controllers {
+                controller.on_application_shutdown(signal.clone()).await;
             }
         }
     }
