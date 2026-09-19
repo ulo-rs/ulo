@@ -201,6 +201,24 @@ impl SseController {
         Sse::new(stream::iter([SseEvent::data(seen).id("7")])).into()
     }
 
+    // Nothing builds the tick stream for a caller: a keepalive needs a clock, and core depends on
+    // no runtime. Interleaving one is the whole of it, and this route is the shape a caller writes.
+    #[sse("/kept-alive")]
+    async fn kept_alive(&self) -> impl futures_util::Stream<Item = SseEvent> + use<> {
+        let late = stream::unfold(false, |sent| async move {
+            if sent {
+                return None;
+            }
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            Some((SseEvent::data("late"), true))
+        });
+        let ticks = stream::unfold((), |_| async {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            Some((SseEvent::comment("keep-alive"), ()))
+        });
+        futures_util::stream::select(late, ticks).take(6)
+    }
+
     #[post("/emit")]
     async fn emit_event(
         &self,
@@ -560,4 +578,32 @@ async fn last_event_id_reaches_the_handler() {
         .await
         .unwrap();
     assert_eq!(resumed.text().await.unwrap(), "id: 7\ndata: 42\n\n");
+}
+
+/// Comment frames hold an idle stream open and raise nothing, so the data that eventually arrives
+/// is the only event a client sees. The framework supplies the frame; the clock is the caller's.
+#[tokio::test]
+async fn comments_interleave_with_events_to_hold_a_stream_open() {
+    let server = TestServer::start(SseModule).await;
+
+    let body = server
+        .client()
+        .get(server.url("/sse/kept-alive"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        body.contains(": keep-alive\n"),
+        "expected a comment frame, got {body:?}"
+    );
+    assert!(
+        body.contains("data: late\n"),
+        "expected the data frame, got {body:?}"
+    );
+    // The comments carry no data, so nothing but `late` is an event.
+    assert_eq!(body.matches("data: ").count(), 1, "body was {body:?}");
 }

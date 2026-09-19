@@ -63,6 +63,26 @@ impl SseEvent {
     /// — it holds the connection open through an intermediary's idle timeout without delivering an
     /// event.
     ///
+    /// # Holding an idle stream open
+    ///
+    /// Nothing on [`Sse`] or `SseEvent` builds the tick stream for you: a keepalive needs a clock,
+    /// and this crate depends on no runtime. The application has one, and interleaving is the
+    /// whole of it:
+    ///
+    /// ```rust,ignore
+    /// use futures::stream;
+    /// use std::time::Duration;
+    ///
+    /// let ticks = stream::unfold((), |_| async {
+    ///     tokio::time::sleep(Duration::from_secs(15)).await;
+    ///     Some((SseEvent::comment("keep-alive"), ()))
+    /// });
+    ///
+    /// Sse::new(stream::select(events, ticks))
+    /// ```
+    ///
+    /// A tick stream that never ends makes the response never end, which is what an SSE route
+    /// usually wants; bound it if the route should finish on its own.
     pub fn comment(text: impl Into<String>) -> Self {
         let mut event = Self::data("");
         event.data = None;
