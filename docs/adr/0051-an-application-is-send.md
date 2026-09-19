@@ -20,8 +20,9 @@ application is thread-local: the four adapter traits, `ServerLifecycle`, `Provid
 
 What that costs is composition. No bound on the serve path is involved, and how many requests run at
 once is decided by the runtime flavor and the adapter's own per-connection spawning — neither of
-which this changes. The cost is that the application cannot be *moved* into a task, so it must be
-the outermost future or sit inside a `LocalSet`. Three shapes pay for that:
+which this changes. The cost is that the application cannot cross a thread boundary: no
+`tokio::spawn`, no `Send` struct, no channel to a worker. It is awaited where it was built, or a
+`LocalSet` carries it. Three shapes pay for that:
 
 - **A server and a client in one process.** Reachable today at the price of scaffolding: seven
   examples, the five HTTP adapter integration test suites, the five database health suites, the core

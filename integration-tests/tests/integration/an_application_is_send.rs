@@ -2,10 +2,10 @@
 //! resolves from a worker that did not build it.
 //!
 //! Neither is a claim about throughput. No bound on the serve path changed, and how many
-//! requests run at once is the runtime's business. What was blocked was composition: an
-//! application had to be the outermost future or sit inside a `LocalSet`, so a server and a
-//! client shared a process only with scaffolding, and a job could not resolve a provider off
-//! the thread that built the container.
+//! requests run at once is the runtime's business. What was blocked was composition: the
+//! application could not cross a thread boundary, so a server and a client shared a process
+//! only with scaffolding, and a job could not resolve a provider off the thread that built
+//! the container.
 //!
 //! Every test here runs on a multi-thread runtime and spawns with `tokio::spawn`. A
 //! `LocalSet` anywhere in this file would defeat its purpose.
