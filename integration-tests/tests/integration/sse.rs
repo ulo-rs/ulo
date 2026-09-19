@@ -20,7 +20,11 @@ use futures_util::{StreamExt, stream};
 use tokio::sync::broadcast;
 use ulo::http::{HttpResponse, Sse, SseEvent};
 use ulo::sse;
-use ulo::{controller, get, http::extract::Bytes, module, post, routes};
+use ulo::{
+    controller, get,
+    http::extract::{Bytes, Path},
+    module, post, routes,
+};
 use ulo_macros::{injectable, new};
 
 // ── Service ──────────────────────────────────────────────────────────────────
@@ -148,6 +152,27 @@ impl SseController {
     #[sse("/attr-setup-err")]
     async fn attr_setup_err(&self) -> Result<stream::Empty<SseEvent>, NoSubscription> {
         Err(NoSubscription)
+    }
+
+    // A header beside the three an SSE response carries, and a status that is not a stream at
+    // all. Both go through `HttpResponse::from`, which names the conversion these need.
+    #[get("/tagged")]
+    async fn tagged(&self) -> HttpResponse {
+        let mut response = HttpResponse::from(Sse::new(stream::iter([SseEvent::data("tagged")])));
+        response
+            .headers
+            .push(("X-Stream".to_string(), "orders".to_string()));
+        response
+    }
+
+    // One handler, either answer: a stream for a client with more to read, `204` for one that is
+    // finished. 204 is the code the spec names for telling a client not to come back.
+    #[get("/resume/{caught_up}")]
+    async fn resume(&self, Path(caught_up): Path<String>) -> HttpResponse {
+        if caught_up == "yes" {
+            return HttpResponse::no_content().build();
+        }
+        Sse::new(stream::iter([SseEvent::data("more")])).into()
     }
 
     #[post("/emit")]
@@ -396,4 +421,53 @@ async fn fallible_setup_that_fails_answers_the_error() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["statusCode"], 403);
     assert_eq!(body["message"], "no subscription");
+}
+
+/// An SSE response is an `HttpResponse`, so a handler adds a header without rebuilding the frame.
+#[tokio::test]
+async fn a_header_can_be_set_beside_the_sse_headers() {
+    let server = TestServer::start(SseModule).await;
+    let resp = server
+        .client()
+        .get(server.url("/sse/tagged"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "text/event-stream"
+    );
+    assert_eq!(resp.headers().get("x-stream").unwrap(), "orders");
+    assert_eq!(resp.text().await.unwrap(), "data: tagged\n\n");
+}
+
+/// One handler answers either a stream or a `204`. Both come back from the same return type,
+/// which is what lets one route decide per request.
+#[tokio::test]
+async fn one_handler_answers_either_a_stream_or_204() {
+    let server = TestServer::start(SseModule).await;
+
+    let streaming = server
+        .client()
+        .get(server.url("/sse/resume/no"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(streaming.status(), 200);
+    assert_eq!(
+        streaming.headers().get("content-type").unwrap(),
+        "text/event-stream"
+    );
+    assert_eq!(streaming.text().await.unwrap(), "data: more\n\n");
+
+    let finished = server
+        .client()
+        .get(server.url("/sse/resume/yes"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(finished.status(), 204);
+    assert!(finished.headers().get("content-type").is_none());
 }
