@@ -44,11 +44,25 @@ impl SseEvent {
         }
     }
 
+    /// An event whose data is `value` serialized as JSON.
+    ///
+    /// The same as [`SseEvent::data`] with the string written out. Fails only where `serde_json`
+    /// does: a map key that is not a string, number or bool, or a type whose `Serialize` returns
+    /// an error.
+    ///
+    /// ```rust,ignore
+    /// SseEvent::json(&Reading { celsius: 21.5 })?.event("reading")
+    /// ```
+    pub fn json<T: serde::Serialize + ?Sized>(value: &T) -> Result<Self, serde_json::Error> {
+        Ok(Self::data(serde_json::to_string(value)?))
+    }
+
     /// A comment-only event: the `: text` line clients ignore.
     ///
     /// Carries no data, so a client dispatches nothing for it. That is what makes it the keepalive
     /// — it holds the connection open through an intermediary's idle timeout without delivering an
     /// event.
+    ///
     pub fn comment(text: impl Into<String>) -> Self {
         let mut event = Self::data("");
         event.data = None;
@@ -372,6 +386,13 @@ mod tests {
         let frame = encode(SseEvent::data("").event("refresh"));
         assert_eq!(frame, "event: refresh\ndata: \n\n");
         assert_eq!(dispatched(&frame).as_deref(), Some(""));
+    }
+
+    /// A JSON payload is the data line, serialized.
+    #[test]
+    fn json_serializes_into_the_data_field() {
+        let frame = encode(SseEvent::json(&serde_json::json!({"celsius": 21.5})).unwrap());
+        assert_eq!(dispatched(&frame).as_deref(), Some(r#"{"celsius":21.5}"#));
     }
 
     /// A comment carries no data, so it holds the connection open without raising an event.
