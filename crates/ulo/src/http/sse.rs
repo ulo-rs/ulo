@@ -199,6 +199,28 @@ where
 /// Answering this from `#[get]`, as above, declares nothing about the answer: an adapter that
 /// collects a response body accepts the route and then never answers a stream that does not
 /// end. `#[sse]` declares it and is refused on such an adapter at startup.
+///
+/// # Setting a header, or answering something else
+///
+/// The response this becomes carries `200` and three headers, and its fields are public:
+///
+/// ```rust,ignore
+/// #[get("/events")]
+/// async fn events(&self) -> HttpResponse {
+///     // 204 is the code the spec names for telling a client not to reconnect. Any failed
+///     // connection stops it — a non-200 status, or a body that is not `text/event-stream`.
+///     if self.caught_up() {
+///         return HttpResponse::no_content().build();
+///     }
+///     let mut response = HttpResponse::from(Sse::new(self.pending()));
+///     response.headers.push(("X-Stream".into(), "orders".into()));
+///     response
+/// }
+/// ```
+///
+/// Shaping the response means `#[get]`: `#[sse]` takes a stream, not a response. That trade is
+/// real — a `#[get]` route declares nothing about its answer, so it registers on an adapter that
+/// collects response bodies instead of being refused at startup.
 pub struct Sse<S>(S);
 
 impl<S> Sse<S>
@@ -211,14 +233,14 @@ where
     }
 }
 
-impl<S> IntoOutput<Http> for Sse<S>
+impl<S> From<Sse<S>> for HttpResponse
 where
     S: Stream + Send + 'static,
     S::Item: SseItem,
 {
-    fn into_output(self) -> Answer<Http> {
-        let encoded = self.0.map(|item| item.into_result().map(SseEvent::encode));
-        Ok(HttpResponse {
+    fn from(sse: Sse<S>) -> Self {
+        let encoded = sse.0.map(|item| item.into_result().map(SseEvent::encode));
+        HttpResponse {
             status: 200,
             headers: vec![
                 ("Content-Type".into(), "text/event-stream".into()),
@@ -227,7 +249,17 @@ where
                 ("X-Accel-Buffering".into(), "no".into()),
             ],
             body: Some(Body::stream(encoded)),
-        })
+        }
+    }
+}
+
+impl<S> IntoOutput<Http> for Sse<S>
+where
+    S: Stream + Send + 'static,
+    S::Item: SseItem,
+{
+    fn into_output(self) -> Answer<Http> {
+        Ok(self.into())
     }
 }
 
