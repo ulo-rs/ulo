@@ -57,6 +57,7 @@ pub fn generate_routes_system(impl_block: &ItemImpl) -> Result<TokenStream> {
             crate::markers_params::remove_marker_controller_fn::remove_marker_in_controller_fn_args(
                 method,
             );
+            capture_nothing_in_sse_return(method);
         }
     }
 
@@ -496,7 +497,8 @@ fn route_common_methods(
 
 /// One shape for every handler.
 ///
-/// No return type is read. What the value converts to is decided by `IntoOutput<Http>`, which a
+/// No return type is read to decide the conversion. What the value converts to is decided by
+/// `IntoOutput<Http>`, which a
 /// `Result` satisfies through its own impl, so a handler's `Err` reaches the error side whatever
 /// its return type is spelled as.
 fn exec_body_for(method_call: &TokenStream) -> TokenStream {
@@ -504,6 +506,61 @@ fn exec_body_for(method_call: &TokenStream) -> TokenStream {
         match ::ulo::dispatch::IntoOutput::<::ulo::__enhancer::Http>::into_output(#method_call) {
             ::std::result::Result::Ok(__out) => ::ulo::dispatch::ExecutionResult::Ok(__out),
             ::std::result::Result::Err(__e) => ::ulo::dispatch::ExecutionResult::Err(__e),
+        }
+    }
+}
+
+/// Appends `+ use<>` to every `impl Trait` in an `#[sse]` handler's return type.
+///
+/// Rust 2024 has an `impl Trait` in return position capture every lifetime in scope, `&self`
+/// among them, so the stream a handler returns is not `'static`. The route wrapper needs it to
+/// be: the stream outlives the call, and `Body::stream` says so in its bounds. Without the
+/// capture bound the expansion fails with E0716 pointed at `#[routes]`, naming neither the
+/// handler nor the remedy.
+///
+/// Capturing nothing is always right here. A stream that borrowed from the handler could not be
+/// returned from the route whatever the author wrote, so the bound removes an error rather than
+/// a capability — and the error that remains lands on the handler's own signature.
+///
+/// Every opaque type in the return position is reached, not the outermost one: `#[sse]` also
+/// takes `Result<impl Stream<..>, E>`, where the stream is nested. Walking the type is what
+/// finds it, rather than matching the return type against a shape.
+///
+/// Left alone where the author has said something the bound would contradict: a method with a
+/// type or const parameter, which `use<>` would have to name, and an opaque type that already
+/// carries a `use<..>` or names a lifetime. A lifetime parameter on the method is not a reason
+/// to stop — `use<>` need not name lifetimes.
+fn capture_nothing_in_sse_return(method: &mut ImplItemFn) {
+    if !method.attrs.iter().any(|attr| attr_is(attr, "sse")) {
+        return;
+    }
+    let names_a_param = method.sig.generics.params.iter().any(|param| {
+        matches!(
+            param,
+            syn::GenericParam::Type(_) | syn::GenericParam::Const(_)
+        )
+    });
+    if names_a_param {
+        return;
+    }
+    syn::visit_mut::VisitMut::visit_return_type_mut(&mut CaptureNothing, &mut method.sig.output);
+}
+
+struct CaptureNothing;
+
+impl syn::visit_mut::VisitMut for CaptureNothing {
+    fn visit_type_impl_trait_mut(&mut self, opaque: &mut syn::TypeImplTrait) {
+        syn::visit_mut::visit_type_impl_trait_mut(self, opaque);
+        // A lifetime bound is the author capturing on purpose. Appending `use<>` beside it does
+        // not make such a handler compile — it never did — and turns one error into two.
+        let author_said_something = opaque.bounds.iter().any(|bound| {
+            matches!(
+                bound,
+                syn::TypeParamBound::PreciseCapture(_) | syn::TypeParamBound::Lifetime(_)
+            )
+        });
+        if !author_said_something {
+            opaque.bounds.push(syn::parse_quote!(use<>));
         }
     }
 }

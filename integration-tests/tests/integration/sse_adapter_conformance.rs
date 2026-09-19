@@ -22,7 +22,7 @@ impl FeedController {
     }
 
     #[sse("/events")]
-    async fn events(&self) -> impl futures_util::Stream<Item = SseEvent> + use<> {
+    async fn events(&self) -> impl futures_util::Stream<Item = SseEvent> {
         stream::iter([SseEvent::data("one"), SseEvent::data("two")])
     }
 }
