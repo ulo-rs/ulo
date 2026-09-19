@@ -56,6 +56,17 @@ pub trait Route: Send + Sync {
         RouteEnhancers::default()
     }
 
+    /// Whether this route answers with a body the client reads as it is produced.
+    ///
+    /// `#[sse]` sets it, and an adapter that collects a body before sending refuses such a route
+    /// at registration rather than accepting one it can never answer.
+    ///
+    /// Read once, at registration, so it covers what a route *declares*. A `#[get]` handler that
+    /// returns `Body::stream` decides that per call and is not covered.
+    fn streams(&self) -> bool {
+        false
+    }
+
     /// What this route declares — roles, permissions, anything a guard or interceptor reads
     /// off the context before the handler runs.
     fn metadata(&self) -> Arc<Metadata> {

@@ -253,6 +253,7 @@ fn generate_controller_wrapper(
         &marker_params_extraction,
         &metadata_exprs,
         is_static_method,
+        is_sse,
     );
 
     Ok((
@@ -340,6 +341,7 @@ fn generate_route_wrapper(
     marker_params_extraction: &[TokenStream],
     metadata_exprs: &[TokenStream],
     is_static_method: bool,
+    is_sse: bool,
 ) -> TokenStream {
     let (struct_fields, resolve_instance) = if is_static_method {
         (quote! {}, quote! {})
@@ -366,6 +368,7 @@ fn generate_route_wrapper(
         http_method,
         enhancer_infos,
         metadata_exprs,
+        is_sse,
     );
 
     quote! {
@@ -459,10 +462,21 @@ fn route_common_methods(
     http_method: &str,
     enhancer_infos: &HashMap<String, Vec<EnhancerInfo>>,
     metadata_exprs: &[TokenStream],
+    is_sse: bool,
 ) -> TokenStream {
     let enhancers = enhancers_method(enhancer_infos);
     let path = get_path_method(struct_name, route_path);
+    // Only emitted for `#[sse]`; the trait's default answers for every other route.
+    let streams = is_sse.then(|| {
+        quote! {
+            fn streams(&self) -> bool {
+                true
+            }
+        }
+    });
     quote! {
+        #streams
+
         fn method(&self) -> ::ulo::http::HttpMethod {
             ::ulo::http::HttpMethod::from_string(#http_method).unwrap()
         }

@@ -102,6 +102,17 @@ impl RouteMount {
                 w.set_middleware(route_middleware);
             }
 
+            if wrapper.streams() && !http_adapter.streams_responses() {
+                return Err(format!(
+                    "route {} {route_path} answers with a stream, and this HTTP adapter collects a \
+                     response body before sending it. A stream that does not end would never \
+                     finish collecting, so the route would register and never answer. Serve it \
+                     with an adapter that streams.",
+                    route_method.as_str(),
+                )
+                .into());
+            }
+
             let handler: Arc<dyn RequestHandler> = Arc::new(MountedRoute(wrapper));
             http_adapter.register_route(route_method, &route_path, handler)?;
         }

@@ -74,6 +74,16 @@ pub trait HttpAdapter: Send + Sync + 'static {
         Err("This HTTP adapter does not support WebSocket upgrades".into())
     }
 
+    /// Whether this adapter writes a response body as it is produced.
+    ///
+    /// Default: `true`. An adapter that collects the body first returns `false`, and a route
+    /// declaring a streamed answer is then refused at registration. Without that refusal such a
+    /// route registers and never answers: an SSE stream that does not end never finishes
+    /// collecting, so no response head is written at all.
+    fn streams_responses(&self) -> bool {
+        true
+    }
+
     /// Consume the adapter, acquire the listening socket, and return a fully
     /// self-contained [`HttpLifecycleHandle`] the orchestrator can drive.
     ///
