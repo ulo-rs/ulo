@@ -112,6 +112,14 @@ impl ActixAdapter {
 
         let actix_response = match response.body {
             Some(ulo_body) => {
+                if ulo_body.is_streaming() {
+                    // The route declared nothing, so `Route::streams` did not refuse it at mount.
+                    // It is collected below, which answers a stream that ends and answers nothing
+                    // at all for one that does not.
+                    tracing::warn!(
+                        "this adapter collects a response body, and a streaming one was returned;                          a stream that does not end will never answer. Declare the route with                          `#[sse]` to have it refused at startup, or serve it with an adapter that                          streams."
+                    );
+                }
                 let ct = ulo_body
                     .content_type()
                     .unwrap_or("application/octet-stream")
@@ -501,5 +509,84 @@ fn to_actix_method(method: HttpMethod) -> actix_web::http::Method {
         HttpMethod::OPTIONS => actix_web::http::Method::OPTIONS,
         HttpMethod::TRACE => actix_web::http::Method::TRACE,
         HttpMethod::CONNECT => actix_web::http::Method::CONNECT,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use ulo::http::Body;
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A streaming body reaches this adapter only from a route that declared nothing, since a
+    /// declared one is refused at mount. It is collected, which answers a stream that ends and
+    /// hangs on one that does not, so the conversion says so.
+    ///
+    /// Asserted here rather than through a served request: the warning is emitted on whichever
+    /// worker thread handles the response, where a thread-local subscriber cannot see it.
+    #[tokio::test]
+    async fn collecting_a_streaming_body_is_reported() {
+        let captured = Captured::default();
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_max_level(ulo::tracing::Level::WARN)
+            .finish();
+
+        {
+            let _guard = ulo::tracing::subscriber::set_default(subscriber);
+            let streaming = HttpResponse {
+                status: 200,
+                headers: vec![],
+                body: Some(Body::stream(futures_util::stream::iter([
+                    Ok::<_, io::Error>(Bytes::from_static(b"chunk")),
+                ]))),
+            };
+            ActixAdapter::adapt_response(streaming).await.unwrap();
+        }
+
+        let logged = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+        assert!(
+            logged.contains("a stream that does not end will never answer"),
+            "expected the collected-stream warning, got: {logged:?}"
+        );
+    }
+
+    /// A buffered body is what this adapter is for, and says nothing.
+    #[tokio::test]
+    async fn collecting_a_buffered_body_is_silent() {
+        let captured = Captured::default();
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_max_level(ulo::tracing::Level::WARN)
+            .finish();
+
+        {
+            let _guard = ulo::tracing::subscriber::set_default(subscriber);
+            let buffered = HttpResponse {
+                status: 200,
+                headers: vec![],
+                body: Some(Body::text("chunk")),
+            };
+            ActixAdapter::adapt_response(buffered).await.unwrap();
+        }
+
+        assert!(captured.0.lock().unwrap().is_empty());
     }
 }
