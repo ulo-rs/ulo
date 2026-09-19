@@ -22,7 +22,7 @@ use ulo::http::{HttpResponse, Sse, SseEvent};
 use ulo::sse;
 use ulo::{
     controller, get,
-    http::extract::{Bytes, Path},
+    http::extract::{Bytes, LastEventId, Path},
     module, post, routes,
 };
 use ulo_macros::{injectable, new};
@@ -191,6 +191,14 @@ impl SseController {
                 _ => None,
             }
         })
+    }
+
+    // What a reconnecting client sent back, echoed so a test can see it arrive. A real handler
+    // would resume from it; this one only proves it is readable.
+    #[get("/resumed")]
+    async fn resumed(&self, LastEventId(last): LastEventId) -> HttpResponse {
+        let seen = last.unwrap_or_else(|| "none".to_string());
+        Sse::new(stream::iter([SseEvent::data(seen).id("7")])).into()
     }
 
     #[post("/emit")]
@@ -529,4 +537,27 @@ async fn a_failed_item_truncates_the_response_after_the_events_before_it() {
         transport_error.is_some(),
         "expected the body to end abnormally, got a clean end after {seen:?}"
     );
+}
+
+/// The header a reconnecting client sends reaches the handler, and is absent on a first request.
+#[tokio::test]
+async fn last_event_id_reaches_the_handler() {
+    let server = TestServer::start(SseModule).await;
+
+    let first = server
+        .client()
+        .get(server.url("/sse/resumed"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.text().await.unwrap(), "id: 7\ndata: none\n\n");
+
+    let resumed = server
+        .client()
+        .get(server.url("/sse/resumed"))
+        .header("Last-Event-ID", "42")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resumed.text().await.unwrap(), "id: 7\ndata: 42\n\n");
 }
