@@ -137,7 +137,9 @@ pub fn delete(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 ///
 /// Any stream type works — boxed, aliased, or written as `impl Stream`. An error from the third
-/// form reaches the error chain like any other handler's.
+/// form reaches the error chain like any other handler's: it is raised before the answer is a
+/// stream. An error from a *per-event* stream is not, and ends the transfer instead, which a
+/// client reconnects after. `SseItem`'s docs say what that costs.
 ///
 /// `#[get]` is the same route written out: return `Sse::new(stream)`, or a `Result` of it. The
 /// one difference is what the route declares: only `#[sse]` marks the answer as streamed, so

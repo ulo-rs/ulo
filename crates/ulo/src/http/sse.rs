@@ -151,6 +151,26 @@ fn reject_untransmittable(field: &str, value: String, reject_nul: bool) -> Optio
 ///
 /// Implemented for [`SseEvent`] and for `Result<SseEvent, E>`. A stream of either is an SSE body,
 /// so a handler chooses per-event fallibility by its item type and by nothing else.
+///
+/// # What an `Err` does on the wire
+///
+/// It ends the response as a failed transfer. Once a frame has been flushed the client has
+/// accepted a `200`, so there is no status left to change and no envelope to write; before that,
+/// the request fails with no head readable at all. SSE defines no frame for a failure either way.
+///
+/// Neither is distinguishable from a dropped connection, so the client reconnects after the
+/// reconnection time, carrying `Last-Event-ID` if an event set one. Nothing here resumes on its
+/// behalf: what it gets is whatever the route answers that new request. **An `Err` is not a way
+/// to say "stop"** — it says one event could not be produced, and the caller comes back.
+///
+/// Stopping a client is that next request's business:
+///
+/// - answer `204`, the code the spec names for telling it not to return — built from
+///   [`HttpResponse`] on a `#[get]` route, as [`Sse`] shows;
+/// - or fail the connection another way, since any non-200 status, or a `Content-Type` that is
+///   not `text/event-stream`, is not retried either.
+///
+/// [`SseEvent::retry_ms`] on an event sent *before* the failure sets how long it waits.
 pub trait SseItem {
     /// What a failed event carries — [`Infallible`] for a bare [`SseEvent`].
     type Error: Into<Box<dyn std::error::Error + Send + Sync>> + 'static;
@@ -208,7 +228,8 @@ where
 /// #[get("/events")]
 /// async fn events(&self) -> HttpResponse {
 ///     // 204 is the code the spec names for telling a client not to reconnect. Any failed
-///     // connection stops it — a non-200 status, or a body that is not `text/event-stream`.
+///     // connection stops it — a non-200 status, or a `Content-Type` that is not
+///     // `text/event-stream`.
 ///     if self.caught_up() {
 ///         return HttpResponse::no_content().build();
 ///     }
