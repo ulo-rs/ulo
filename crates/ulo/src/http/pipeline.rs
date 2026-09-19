@@ -45,6 +45,11 @@ pub(crate) struct RoutePipeline {
 }
 
 impl RoutePipeline {
+    /// What the wrapped route declares about its answer — see [`Route::streams`].
+    pub(crate) fn streams(&self) -> bool {
+        self.instance.streams()
+    }
+
     /// `enhancers` is final: the resolver folded this transport's globals in ahead of what the
     /// route declared, which is the order they run.
     pub(crate) fn new(instance: Arc<dyn Route>, enhancers: EnhancerSet<Http>) -> Self {

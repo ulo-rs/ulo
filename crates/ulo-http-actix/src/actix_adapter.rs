@@ -367,6 +367,13 @@ where
 
 #[ulo::async_trait]
 impl HttpAdapter for ActixAdapter {
+    /// This adapter collects a response body before sending it, so a route that answers with a
+    /// stream would register and never answer: an SSE stream that does not end never finishes
+    /// collecting, and no response head is written.
+    fn streams_responses(&self) -> bool {
+        false
+    }
+
     fn register_route(
         &mut self,
         method: HttpMethod,

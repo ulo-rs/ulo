@@ -195,6 +195,10 @@ where
 /// ```
 ///
 /// A stream of `Result<SseEvent, E>` goes through the same constructor.
+///
+/// Answering this from `#[get]`, as above, declares nothing about the answer: an adapter that
+/// collects a response body accepts the route and then never answers a stream that does not
+/// end. `#[sse]` declares it and is refused on such an adapter at startup.
 pub struct Sse<S>(S);
 
 impl<S> Sse<S>

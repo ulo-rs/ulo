@@ -101,6 +101,7 @@ mod scope_bubbling;
 mod scoped_enhancers;
 mod serve_loop_death;
 mod sse;
+mod sse_adapter_conformance;
 mod static_methods;
 mod streaming;
 mod token_format;

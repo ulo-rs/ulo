@@ -139,7 +139,11 @@ pub fn delete(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Any stream type works — boxed, aliased, or written as `impl Stream`. An error from the third
 /// form reaches the error chain like any other handler's.
 ///
-/// `#[get]` is the same route written out: return `Sse::new(stream)`, or a `Result` of it.
+/// `#[get]` is the same route written out: return `Sse::new(stream)`, or a `Result` of it. The
+/// one difference is what the route declares: only `#[sse]` marks the answer as streamed, so
+/// only `#[sse]` is refused at startup on an adapter that collects a response body before
+/// sending it. The `#[get]` form registers there and answers whole, or not at all if the
+/// stream never ends.
 #[proc_macro_attribute]
 pub fn sse(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
