@@ -120,13 +120,13 @@ impl SseController {
         Sse::new(self.events.subscribe().take(2))
     }
 
-    // `use<>` because Rust 2024 has `impl Trait` capture `&self`'s lifetime by
-    // default, and the stream a route returns has to outlive the borrow.
     #[sse("/attr-basic")]
-    async fn attr_basic(&self) -> impl futures_util::Stream<Item = SseEvent> + use<> {
+    async fn attr_basic(&self) -> impl futures_util::Stream<Item = SseEvent> {
         stream::iter([SseEvent::data("hello"), SseEvent::data("world")])
     }
 
+    // `use<>` written out: the macro leaves an opaque type that already captures alone, so this
+    // is the one handler here proving the carve-out rather than the bound.
     #[sse("/attr-fallible")]
     async fn attr_fallible(
         &self,
@@ -143,7 +143,7 @@ impl SseController {
     #[sse("/attr-setup-ok")]
     async fn attr_setup_ok(
         &self,
-    ) -> Result<impl futures_util::Stream<Item = SseEvent> + use<>, NoSubscription> {
+    ) -> Result<impl futures_util::Stream<Item = SseEvent>, NoSubscription> {
         Ok(stream::iter([SseEvent::data("subscribed")]))
     }
 
@@ -180,7 +180,7 @@ impl SseController {
     #[sse("/mid-stream-failure")]
     async fn mid_stream_failure(
         &self,
-    ) -> impl futures_util::Stream<Item = Result<SseEvent, std::io::Error>> + use<> {
+    ) -> impl futures_util::Stream<Item = Result<SseEvent, std::io::Error>> {
         stream::unfold(0u32, |n| async move {
             match n {
                 0 => Some((Ok(SseEvent::data("before")), 1)),
@@ -204,7 +204,7 @@ impl SseController {
     // Nothing builds the tick stream for a caller: a keepalive needs a clock, and core depends on
     // no runtime. Interleaving one is the whole of it, and this route is the shape a caller writes.
     #[sse("/kept-alive")]
-    async fn kept_alive(&self) -> impl futures_util::Stream<Item = SseEvent> + use<> {
+    async fn kept_alive(&self) -> impl futures_util::Stream<Item = SseEvent> {
         let late = stream::unfold(false, |sent| async move {
             if sent {
                 return None;

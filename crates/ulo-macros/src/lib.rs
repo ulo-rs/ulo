@@ -136,6 +136,10 @@ pub fn delete(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// async fn events(&self) -> Result<impl Stream<Item = SseEvent>, MyError> { ... }
 /// ```
 ///
+/// The stream outlives the call, so it may not borrow from the handler — `impl Stream<..>` in
+/// these signatures captures nothing, which is what lets them be written as shown. A stream
+/// that does borrow fails on the handler's own signature.
+///
 /// Any stream type works — boxed, aliased, or written as `impl Stream`. An error from the third
 /// form reaches the error chain like any other handler's: it is raised before the answer is a
 /// stream. An error from a *per-event* stream is not, and ends the transfer instead, which a
