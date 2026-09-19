@@ -8,8 +8,8 @@
 
 use crate::common::TestServer;
 use futures_util::stream;
-use ulo::http::SseEvent;
-use ulo::{UloFactory, controller, module, new, routes, sse};
+use ulo::http::{HttpResponse, Sse, SseEvent};
+use ulo::{UloFactory, controller, get, module, new, routes, sse};
 
 #[controller("/feed")]
 pub struct FeedController {}
@@ -29,6 +29,27 @@ impl FeedController {
 
 #[module(controllers: [FeedController])]
 impl FeedModule {}
+
+/// The same answer with nothing declared, which is the form `Route::streams` cannot see. It needs
+/// its own module: a module carrying the `#[sse]` route above does not mount on actix at all.
+#[controller("/undeclared")]
+pub struct UndeclaredController {}
+
+#[routes]
+impl UndeclaredController {
+    #[new]
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    #[get("/events")]
+    async fn events(&self) -> HttpResponse {
+        Sse::new(stream::iter([SseEvent::data("one"), SseEvent::data("two")])).into()
+    }
+}
+
+#[module(controllers: [UndeclaredController])]
+impl UndeclaredModule {}
 
 async fn case_streams_the_events(adapter: impl ulo::http::HttpAdapter + 'static) {
     let server = TestServer::start_adapter(UloFactory::new(), FeedModule, adapter).await;
@@ -80,4 +101,27 @@ async fn actix_refuses_an_sse_route() {
         msg.contains("answers with a stream") && msg.contains("/feed/events"),
         "expected a refusal naming the route and the limitation, got: {msg}"
     );
+}
+
+/// A route that declares nothing is not refused, and on actix it is collected: this stream ends,
+/// so it answers. One that does not end would not, which is the gap `Route::streams` cannot see
+/// and the adapter warns about when it is handed one.
+#[tokio::test]
+async fn an_undeclared_streaming_body_is_served_on_actix() {
+    let server = TestServer::start_adapter(
+        UloFactory::new(),
+        UndeclaredModule,
+        ulo_http_actix::ActixAdapter::new(),
+    )
+    .await;
+
+    let resp = server
+        .client()
+        .get(server.url("/undeclared/events"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "data: one\n\ndata: two\n\n");
 }
