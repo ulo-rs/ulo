@@ -23,20 +23,37 @@ use crate::dispatch::{Answer, Http, IntoOutput};
 /// A value that the wire cannot carry is omitted rather than sent altered, and the omission is
 /// logged at `warn`. See [`SseEvent::id`] and [`SseEvent::event`].
 pub struct SseEvent {
-    data: String,
+    /// `None` is no `data:` line at all, which a reader dispatches nothing for. `Some("")` is a
+    /// `data:` line carrying nothing, which it dispatches. The spec distinguishes them and so
+    /// must this.
+    data: Option<String>,
     id: Option<String>,
     event: Option<String>,
     retry: Option<u64>,
+    comment: Option<String>,
 }
 
 impl SseEvent {
     pub fn data(data: impl Into<String>) -> Self {
         Self {
-            data: data.into(),
+            data: Some(data.into()),
             id: None,
             event: None,
             retry: None,
+            comment: None,
         }
+    }
+
+    /// A comment-only event: the `: text` line clients ignore.
+    ///
+    /// Carries no data, so a client dispatches nothing for it. That is what makes it the keepalive
+    /// — it holds the connection open through an intermediary's idle timeout without delivering an
+    /// event.
+    pub fn comment(text: impl Into<String>) -> Self {
+        let mut event = Self::data("");
+        event.data = None;
+        event.comment = reject_untransmittable("comment", text.into(), false);
+        event
     }
 
     /// Sets the event's `id` field. The browser sends it back as `Last-Event-ID` on reconnect.
@@ -66,6 +83,9 @@ impl SseEvent {
 
     fn encode(self) -> Bytes {
         let mut buf = String::new();
+        if let Some(comment) = self.comment {
+            writeln!(buf, ": {comment}").unwrap();
+        }
         if let Some(id) = self.id {
             writeln!(buf, "id: {id}").unwrap();
         }
@@ -79,7 +99,9 @@ impl SseEvent {
         // trailing LF, so one line here per line break there. Empty data still writes a `data: `
         // line: the reader checks its buffer for emptiness before dropping that LF, so the buffer
         // reads as "\n" and the event dispatches carrying "".
-        write_data_lines(&mut buf, &self.data);
+        if let Some(data) = &self.data {
+            write_data_lines(&mut buf, data);
+        }
         buf.push('\n'); // blank line terminates the event
         Bytes::from(buf)
     }
@@ -220,6 +242,10 @@ mod tests {
             .split_inclusive(['\n', '\r'])
             .map(|l| l.trim_end_matches(['\n', '\r']))
         {
+            // A line beginning with a colon is a comment and contributes nothing.
+            if line.starts_with(':') {
+                continue;
+            }
             if let Some(value) = line.strip_prefix("data:") {
                 data.push_str(value.strip_prefix(' ').unwrap_or(value));
                 data.push('\n');
@@ -289,6 +315,14 @@ mod tests {
         let frame = encode(SseEvent::data("").event("refresh"));
         assert_eq!(frame, "event: refresh\ndata: \n\n");
         assert_eq!(dispatched(&frame).as_deref(), Some(""));
+    }
+
+    /// A comment carries no data, so it holds the connection open without raising an event.
+    #[test]
+    fn a_comment_holds_the_connection_without_dispatching() {
+        let frame = encode(SseEvent::comment("keepalive"));
+        assert_eq!(frame, ": keepalive\n\n");
+        assert_eq!(dispatched(&frame), None);
     }
 
     /// A newline in `id` or `event` would add fields to the frame. The field is dropped, so the
