@@ -175,6 +175,24 @@ impl SseController {
         Sse::new(stream::iter([SseEvent::data("more")])).into()
     }
 
+    // One event, then an item that failed. The pause lets the head and the first frame reach the
+    // client, so the abort is observed mid-stream rather than before the response starts.
+    #[sse("/mid-stream-failure")]
+    async fn mid_stream_failure(
+        &self,
+    ) -> impl futures_util::Stream<Item = Result<SseEvent, std::io::Error>> + use<> {
+        stream::unfold(0u32, |n| async move {
+            match n {
+                0 => Some((Ok(SseEvent::data("before")), 1)),
+                1 => {
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                    Some((Err(std::io::Error::other("the source went away")), 2))
+                }
+                _ => None,
+            }
+        })
+    }
+
     #[post("/emit")]
     async fn emit_event(
         &self,
@@ -470,4 +488,45 @@ async fn one_handler_answers_either_a_stream_or_204() {
         .unwrap();
     assert_eq!(finished.status(), 204);
     assert!(finished.headers().get("content-type").is_none());
+}
+
+/// A failed item ends the body abnormally: the events before it arrive, and the client is left
+/// with a truncated response rather than anything the SSE protocol defines. Pinned because it is
+/// what `SseItem`'s docs promise, and because it reads like a way to report a failure and is not.
+#[tokio::test]
+async fn a_failed_item_truncates_the_response_after_the_events_before_it() {
+    let server = TestServer::start(SseModule).await;
+
+    let resp = server
+        .client()
+        .get(server.url("/sse/mid-stream-failure"))
+        .send()
+        .await
+        .expect("the head goes out with the first event");
+
+    // Nothing in the head says anything failed.
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "text/event-stream"
+    );
+
+    let mut body = resp.bytes_stream();
+    let mut seen = Vec::new();
+    let mut transport_error = None;
+    while let Some(chunk) = body.next().await {
+        match chunk {
+            Ok(bytes) => seen.push(String::from_utf8_lossy(&bytes).into_owned()),
+            Err(e) => {
+                transport_error = Some(e);
+                break;
+            }
+        }
+    }
+
+    assert_eq!(seen.concat(), "data: before\n\n");
+    assert!(
+        transport_error.is_some(),
+        "expected the body to end abnormally, got a clean end after {seen:?}"
+    );
 }
