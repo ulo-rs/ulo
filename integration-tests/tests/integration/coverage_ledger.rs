@@ -75,7 +75,7 @@ const LEDGER: &[(&str, Proof)] = &[
     ("ulo-graphql-juniper", p(true, false, false)),
     ("ulo-grpc", p(true, false, false)),
     ("ulo-health", p(false, false, true)),
-    ("ulo-http-actix", p(true, true, false)),
+    ("ulo-http-actix", p(true, true, true)),
     ("ulo-http-axum", p(true, true, false)),
     ("ulo-http-poem", p(true, true, false)),
     ("ulo-http-rocket", p(true, true, false)),

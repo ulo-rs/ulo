@@ -23,4 +23,5 @@ tokio = { workspace = true, features = ["sync"] }
 [dev-dependencies]
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 ulo-macros = { path = "../ulo-macros" }
