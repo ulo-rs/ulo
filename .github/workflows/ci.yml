@@ -77,7 +77,7 @@ jobs:
       # line existed the `check` job compiled these and nothing ran them, so they
       # could stop being true but never start failing. The adapter suites are the
       # only proof that WebSocket upgrade works on poem, salvo and rocket, and
-      # that actix collects bodies rather than streaming them.
+      # that actix collects a request body rather than streaming it.
       - run: >
           cargo test --locked --lib --tests
           -p ulo-config -p ulo-health -p ulo-cli

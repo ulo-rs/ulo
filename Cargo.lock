@@ -8544,7 +8544,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "ulo",
  "ulo-macros",
 ]

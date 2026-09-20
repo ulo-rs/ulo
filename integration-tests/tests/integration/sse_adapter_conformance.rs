@@ -1,17 +1,24 @@
-//! Which adapters can serve an SSE route, and what happens on one that cannot.
+//! Every adapter serves an SSE route. What an adapter that could not is told instead.
 //!
 //! An adapter that collects a response body before sending it cannot serve a stream that does not
 //! end: it never finishes collecting, so no response head is written and the request hangs. A
 //! bounded stream does arrive, whole, once it ends — which is what makes the mismatch worth
 //! refusing rather than leaving to be discovered, since the route registers and looks served
-//! either way. The refusal is raised where routes mount, at `use_http_adapter`.
+//! either way. `HttpAdapter::streams_responses` is how an adapter says which it is, and the
+//! refusal is raised where routes mount, at `use_http_adapter`. None of the five answers `false`;
+//! the one that exercises the refusal is written here.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::common::TestServer;
 use futures_util::stream;
-use ulo::http::{HttpResponse, Sse, SseEvent};
-use ulo::{UloFactory, controller, get, module, new, routes, sse};
+use ulo::http::{
+    HttpAdapter, HttpLifecycleHandle, HttpMethod, HttpResponse, RequestHandler, ServeContext, Sse,
+    SseEvent,
+};
+use ulo::spi::{AdapterResult, BindTarget};
+use ulo::{UloFactory, async_trait, controller, get, module, new, routes, sse};
 
 #[controller("/feed")]
 pub struct FeedController {}
@@ -42,8 +49,8 @@ impl FeedController {
 #[module(controllers: [FeedController])]
 impl FeedModule {}
 
-/// The same answer with nothing declared, which is the form `Route::streams` cannot see. It needs
-/// its own module: a module carrying the `#[sse]` route above does not mount on actix at all.
+/// The same answer written as a plain `#[get]`, the form `Route::streams` cannot see. Its own
+/// module keeps it out of the five servers the suite above starts.
 #[controller("/undeclared")]
 pub struct UndeclaredController {}
 
@@ -139,17 +146,46 @@ sse_suite!(axum, ulo_http_axum::AxumAdapter::new());
 sse_suite!(poem, ulo_http_poem::PoemAdapter::new());
 sse_suite!(salvo, ulo_http_salvo::SalvoAdapter::new());
 sse_suite!(rocket, ulo_http_rocket::RocketAdapter::new());
+sse_suite!(actix, ulo_http_actix::ActixAdapter::new());
 
-/// Actix buffers a response body, so it is refused the route rather than given one it would
-/// register and never answer.
+/// An adapter that collects. Being refused is all that is asked of it, and registration is as
+/// far as it goes.
+struct CollectingAdapter;
+
+#[async_trait]
+impl HttpAdapter for CollectingAdapter {
+    fn streams_responses(&self) -> bool {
+        false
+    }
+
+    fn register_route(
+        &mut self,
+        _method: HttpMethod,
+        _path: &str,
+        _handler: Arc<dyn RequestHandler>,
+    ) -> AdapterResult {
+        Ok(())
+    }
+
+    async fn into_lifecycle(
+        self: Box<Self>,
+        _target: BindTarget,
+        _ctx: ServeContext,
+    ) -> AdapterResult<HttpLifecycleHandle> {
+        unreachable!("the route is refused before a socket is asked for")
+    }
+}
+
+/// An adapter that collects is refused the route rather than given one it would register and
+/// never answer.
 ///
 /// The refusal is raised at `use_http_adapter`, where routes are mounted, rather than at `bind()`.
 #[tokio::test]
-async fn actix_refuses_an_sse_route() {
+async fn an_adapter_that_collects_is_refused_an_sse_route() {
     let mut app = UloFactory::new().create_with(FeedModule).await.unwrap();
 
-    let msg = match app.use_http_adapter(ulo_http_actix::ActixAdapter::new(), ("127.0.0.1", 0)) {
-        Ok(_) => panic!("actix collects a response body and cannot serve an SSE route"),
+    let msg = match app.use_http_adapter(CollectingAdapter, ("127.0.0.1", 0)) {
+        Ok(_) => panic!("an adapter that collects cannot serve an SSE route"),
         Err(e) => e.to_string(),
     };
     // Either SSE route may be reached first — mount order is not a promise — so what is asserted
@@ -160,9 +196,8 @@ async fn actix_refuses_an_sse_route() {
     );
 }
 
-/// A route that declares nothing is not refused, and on actix it is collected: this stream ends,
-/// so it answers. One that does not end would not, which is the gap `Route::streams` cannot see
-/// and the adapter warns about when it is handed one.
+/// A route that declares nothing streams on actix too. What decides is the body the adapter is
+/// handed, not what the route declared.
 #[tokio::test]
 async fn an_undeclared_streaming_body_is_served_on_actix() {
     let server = TestServer::start_adapter(

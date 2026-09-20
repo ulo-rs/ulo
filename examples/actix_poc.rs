@@ -1,11 +1,11 @@
 //! ulo-http-actix proof-of-concept
 //!
-//! What this adapter does that the other four do not: it collects request and
-//! response bodies in full before either side sees them. A `BodyStream`
-//! handler still works and receives the whole body as one chunk, streaming
-//! responses do not, and actix-web's `PayloadConfig` caps a request at 256 KiB
-//! — over that is a 413 before any handler runs, and the adapter surfaces no
-//! knob to raise it.
+//! What this adapter does that the other four do not: it collects the request
+//! body in full before a handler sees it. A `BodyStream` handler still works
+//! and receives the whole body as one chunk, and actix-web's `PayloadConfig`
+//! caps a request at 256 KiB — over that is a 413 before any handler runs, and
+//! the adapter surfaces no knob to raise it. Responses stream, as they do on
+//! the other four.
 //!
 //! Actix serves no WebSocket, so unlike the salvo, poem and rocket
 //! proof-of-concepts there is no gateway here.
