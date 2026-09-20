@@ -6,6 +6,8 @@
 //! refusing rather than leaving to be discovered, since the route registers and looks served
 //! either way. The refusal is raised where routes mount, at `use_http_adapter`.
 
+use std::time::Duration;
+
 use crate::common::TestServer;
 use futures_util::stream;
 use ulo::http::{HttpResponse, Sse, SseEvent};
@@ -24,6 +26,16 @@ impl FeedController {
     #[sse("/events")]
     async fn events(&self) -> impl futures_util::Stream<Item = SseEvent> {
         stream::iter([SseEvent::data("one"), SseEvent::data("two")])
+    }
+
+    /// Never ends, which is the shape a live feed has and the one a collecting adapter cannot
+    /// answer at all. The gap between events is what lets a reader see them arrive separately.
+    #[sse("/ticks")]
+    async fn ticks(&self) -> impl futures_util::Stream<Item = SseEvent> {
+        stream::unfold((), |()| async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            Some((SseEvent::data("tick"), ()))
+        })
     }
 }
 
@@ -69,12 +81,55 @@ async fn case_streams_the_events(adapter: impl ulo::http::HttpAdapter + 'static)
     assert_eq!(resp.text().await.unwrap(), "data: one\n\ndata: two\n\n");
 }
 
+/// The head is written before the body is known, so a stream with no end still answers.
+///
+/// A bounded stream cannot show this: an adapter that collects one answers too, only late. Here
+/// there is nothing to collect, so a collecting adapter writes no head and the request hangs —
+/// which is why every wait below is bounded. The reader takes two events and leaves, which is all
+/// an endless feed ever offers.
+async fn case_answers_an_endless_stream(adapter: impl ulo::http::HttpAdapter + 'static) {
+    let server = TestServer::start_adapter(UloFactory::new(), FeedModule, adapter).await;
+
+    let mut resp = tokio::time::timeout(
+        Duration::from_secs(5),
+        server.client().get(server.url("/feed/ticks")).send(),
+    )
+    .await
+    .expect("no response head while the body was still open")
+    .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "text/event-stream"
+    );
+
+    let mut seen = String::new();
+    while seen.matches("\n\n").count() < 2 {
+        let chunk = tokio::time::timeout(Duration::from_secs(5), resp.chunk())
+            .await
+            .expect("the stream stalled")
+            .unwrap()
+            .expect("the stream ended, and this one does not");
+        seen.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    assert!(
+        seen.starts_with("data: tick\n\ndata: tick\n\n"),
+        "expected two events, got: {seen:?}"
+    );
+}
+
 macro_rules! sse_suite {
     ($adapter_mod:ident, $adapter:expr) => {
         mod $adapter_mod {
             #[tokio::test]
             async fn serves_an_sse_route() {
                 super::case_streams_the_events($adapter).await;
+            }
+
+            #[tokio::test]
+            async fn answers_an_endless_sse_route() {
+                super::case_answers_an_endless_stream($adapter).await;
             }
         }
     };
@@ -97,8 +152,10 @@ async fn actix_refuses_an_sse_route() {
         Ok(_) => panic!("actix collects a response body and cannot serve an SSE route"),
         Err(e) => e.to_string(),
     };
+    // Either SSE route may be reached first — mount order is not a promise — so what is asserted
+    // is that the refusal names the one it stopped at.
     assert!(
-        msg.contains("answers with a stream") && msg.contains("/feed/events"),
+        msg.contains("answers with a stream") && msg.contains("/feed/"),
         "expected a refusal naming the route and the limitation, got: {msg}"
     );
 }
