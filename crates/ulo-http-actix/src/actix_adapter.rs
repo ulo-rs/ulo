@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 use ulo::spi::AdapterResult;
 
-use actix_web::body::BoxBody;
+use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::{
     Payload, Service as ActixService, ServiceRequest, ServiceResponse, Transform, forward_ready,
 };
@@ -11,7 +12,9 @@ use actix_web::{
     App, Error as ActixError, FromRequest, HttpMessage, HttpRequest as ActixHttpRequest,
     HttpResponse as ActixHttpResponse, HttpServer, ResponseError, web, web::Bytes,
 };
-use futures_util::future::LocalBoxFuture;
+use futures_util::TryStreamExt;
+use futures_util::future::{Either, LocalBoxFuture};
+use http_body_util::BodyDataStream;
 use ulo::http::ServeContext;
 use ulo::http::{
     Body as UloBody, HttpAdapter, HttpLifecycleHandle, HttpMethod, HttpRequest, HttpResponse,
@@ -112,31 +115,27 @@ impl ActixAdapter {
 
         let actix_response = match response.body {
             Some(ulo_body) => {
-                if ulo_body.is_streaming() {
-                    // The route declared nothing, so `Route::streams` did not refuse it at mount.
-                    // It is collected below, which answers a stream that ends and answers nothing
-                    // at all for one that does not.
-                    tracing::warn!(
-                        "this adapter collects a response body, and a streaming one was \
-                         returned; a stream that does not end will never answer. Declare the \
-                         route with `#[sse]` to have it refused at startup, or serve it with an \
-                         adapter that streams."
-                    );
-                }
                 let ct = ulo_body
                     .content_type()
                     .unwrap_or("application/octet-stream")
                     .to_string();
-                let bytes = {
-                    use http_body_util::BodyExt;
-                    ulo_body
-                        .into_box_body()
-                        .collect()
-                        .await
-                        .map(|c| c.to_bytes())
-                        .unwrap_or_default()
-                };
-                builder.content_type(ct.as_str()).body(bytes.to_vec())
+                builder.content_type(ct.as_str());
+                if ulo_body.is_streaming() {
+                    let frames = BodyDataStream::new(ulo_body.into_box_body())
+                        .map_err(|e| -> Box<dyn std::error::Error> { e });
+                    builder.streaming(frames)
+                } else {
+                    let bytes = {
+                        use http_body_util::BodyExt;
+                        ulo_body
+                            .into_box_body()
+                            .collect()
+                            .await
+                            .map(|c| c.to_bytes())
+                            .unwrap_or_default()
+                    };
+                    builder.body(bytes.to_vec())
+                }
             }
             None => builder.finish(),
         };
@@ -200,16 +199,14 @@ fn bytes_to_payload(bytes: Bytes) -> Payload {
 }
 
 /// Wraps whatever the router produced back into ulo's response type for the
-/// chain to observe. Bodies are collected — this adapter buffers in both
-/// directions by design.
+/// chain to observe.
 ///
-/// The collect is what carries a body across a `Send` boundary. The global chain observes every
-/// response, and `ServeContext::execute` requires a `Send` routing closure, while actix's
-/// `BoxBody` carries no `Send` bound and ulo's `Body::stream` requires one. Collecting to `Bytes`
-/// is the cheapest thing that crosses it, not the only one: the frames could be pumped off the
-/// worker-local body through a channel, the way the routing closure below already crosses the
-/// same boundary. That buys streaming on this adapter and costs a task and a queue per response.
-async fn actix_response_to_ulo(res: ActixHttpResponse<BoxBody>) -> HttpResponse {
+/// A body actix already holds whole is taken as bytes; one that streams crosses on a channel.
+/// The global chain observes every response and `ServeContext::execute` requires a `Send` routing
+/// closure, while actix's `BoxBody` carries no `Send` bound and ulo's `Body::stream` requires one,
+/// so for a stream the frames move rather than the value — the bridge the routing closure below
+/// already uses to cross the same boundary.
+fn actix_response_to_ulo(res: ActixHttpResponse<BoxBody>) -> HttpResponse {
     let status = res.status().as_u16();
     let headers = res
         .headers()
@@ -220,18 +217,55 @@ async fn actix_response_to_ulo(res: ActixHttpResponse<BoxBody>) -> HttpResponse 
                 .map(|v| (k.as_str().to_owned(), v.to_owned()))
         })
         .collect();
-    let bytes = actix_web::body::to_bytes(res.into_body())
-        .await
-        .unwrap_or_else(|_| Bytes::new());
+    let body = match res.into_body().try_into_bytes() {
+        Ok(bytes) => (!bytes.is_empty()).then(|| UloBody::from(bytes)),
+        Err(streaming) => Some(pump_worker_local_body(streaming)),
+    };
     HttpResponse {
         status,
         headers,
-        body: if bytes.is_empty() {
-            None
-        } else {
-            Some(UloBody::from(bytes))
-        },
+        body,
     }
+}
+
+/// Carries a worker-local body onto a `Send` stream.
+///
+/// The task polls the body where it lives, and ulo holds the receiving end. An actix worker
+/// runtime owns a `LocalSet`, so `spawn` here is `spawn_local`. The queue holds one frame, which
+/// is how far ahead of the socket the producer may run.
+///
+/// The pump waits on the receiver going away as well as on the next frame, and stops at whichever
+/// comes first. A receiver goes away when the response body is dropped: actix drops it when a
+/// write to a departed client fails, and an interceptor answering with a different response drops
+/// it outright. Waiting on the frame alone would hold the body being pumped past that moment, and
+/// its drop is what fires the execution's cancellation.
+fn pump_worker_local_body(mut body: BoxBody) -> UloBody {
+    type Chunk = Result<Bytes, Box<dyn std::error::Error + Send + Sync>>;
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Chunk>(1);
+
+    actix_web::rt::spawn(async move {
+        let mut abandoned = std::pin::pin!(tx.closed());
+        loop {
+            let frame =
+                std::pin::pin!(std::future::poll_fn(|cx| Pin::new(&mut body).poll_next(cx)));
+            match futures_util::future::select(abandoned.as_mut(), frame).await {
+                Either::Left(_) | Either::Right((None, _)) => break,
+                Either::Right((Some(Ok(chunk)), _)) => {
+                    if tx.send(Ok(chunk)).await.is_err() {
+                        break;
+                    }
+                }
+                Either::Right((Some(Err(e)), _)) => {
+                    // actix's body error is a `Box<dyn Error>`, which is not `Send`; the message
+                    // is what crosses. Nothing downstream reads the type — the error ends the body.
+                    let _ = tx.send(Err(e.to_string().into())).await;
+                    break;
+                }
+            }
+        }
+    });
+
+    UloBody::stream(futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx)))
 }
 
 /// App-level middleware factory: the global chain runs once per request,
@@ -356,9 +390,9 @@ where
                 let (ret_req, ulo_res) = match srv.call(req).await {
                     Ok(sr) => {
                         let (r, res) = sr.into_parts();
-                        (Some(r), actix_response_to_ulo(res).await)
+                        (Some(r), actix_response_to_ulo(res))
                     }
-                    Err(e) => (None, actix_response_to_ulo(e.error_response()).await),
+                    Err(e) => (None, actix_response_to_ulo(e.error_response())),
                 };
                 let _ = res_tx.send(ulo_res);
                 ret_req
@@ -385,13 +419,6 @@ where
 
 #[ulo::async_trait]
 impl HttpAdapter for ActixAdapter {
-    /// This adapter collects a response body before sending it, so a route that answers with a
-    /// stream would register and never answer: an SSE stream that does not end never finishes
-    /// collecting, and no response head is written.
-    fn streams_responses(&self) -> bool {
-        false
-    }
-
     fn register_route(
         &mut self,
         method: HttpMethod,
@@ -525,78 +552,140 @@ fn to_actix_method(method: HttpMethod) -> actix_web::http::Method {
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
+    use actix_web::body::BodySize;
+    use futures_util::StreamExt;
     use ulo::http::Body;
 
-    #[derive(Clone, Default)]
-    struct Captured(Arc<Mutex<Vec<u8>>>);
-
-    impl io::Write for Captured {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
+    /// `spawn` inside the pump is `spawn_local`, which a worker runtime provides for in
+    /// production. A test provides its own.
+    async fn on_a_local_set<F: std::future::Future>(f: F) -> F::Output {
+        tokio::task::LocalSet::new().run_until(f).await
     }
 
-    /// A streaming body reaches this adapter only from a route that declared nothing, since a
-    /// declared one is refused at mount. It is collected, which answers a stream that ends and
-    /// hangs on one that does not, so the conversion says so.
-    ///
-    /// Asserted here rather than through a served request: the warning is emitted on whichever
-    /// worker thread handles the response, where a thread-local subscriber cannot see it.
+    /// A streaming body reaches actix as a stream. The size is where the two branches differ:
+    /// a collected body would arrive `Sized`, with the whole answer already in hand.
     #[tokio::test]
-    async fn collecting_a_streaming_body_is_reported() {
-        let captured = Captured::default();
-        let writer = captured.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_max_level(ulo::tracing::Level::WARN)
-            .finish();
+    async fn a_streaming_body_is_handed_over_as_a_stream() {
+        let res = ActixAdapter::adapt_response(HttpResponse {
+            status: 200,
+            headers: vec![],
+            body: Some(Body::stream(futures_util::stream::iter([
+                Ok::<_, io::Error>(Bytes::from_static(b"chunk")),
+            ]))),
+        })
+        .await
+        .unwrap();
 
-        {
-            let _guard = ulo::tracing::subscriber::set_default(subscriber);
-            let streaming = HttpResponse {
-                status: 200,
-                headers: vec![],
-                body: Some(Body::stream(futures_util::stream::iter([
-                    Ok::<_, io::Error>(Bytes::from_static(b"chunk")),
-                ]))),
-            };
-            ActixAdapter::adapt_response(streaming).await.unwrap();
-        }
-
-        let logged = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
         assert!(
-            logged.contains("a stream that does not end will never answer"),
-            "expected the collected-stream warning, got: {logged:?}"
+            matches!(res.body().size(), BodySize::Stream),
+            "expected a streamed body, got {:?}",
+            res.body().size()
         );
     }
 
-    /// A buffered body is what this adapter is for, and says nothing.
+    /// A buffered body still arrives whole, with its length known before the head is written.
     #[tokio::test]
-    async fn collecting_a_buffered_body_is_silent() {
-        let captured = Captured::default();
-        let writer = captured.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_max_level(ulo::tracing::Level::WARN)
-            .finish();
+    async fn a_buffered_body_is_handed_over_whole() {
+        let res = ActixAdapter::adapt_response(HttpResponse {
+            status: 200,
+            headers: vec![],
+            body: Some(Body::text("chunk")),
+        })
+        .await
+        .unwrap();
 
-        {
-            let _guard = ulo::tracing::subscriber::set_default(subscriber);
-            let buffered = HttpResponse {
-                status: 200,
-                headers: vec![],
-                body: Some(Body::text("chunk")),
-            };
-            ActixAdapter::adapt_response(buffered).await.unwrap();
+        assert!(
+            matches!(res.body().size(), BodySize::Sized(5)),
+            "expected five bytes in hand, got {:?}",
+            res.body().size()
+        );
+    }
+
+    /// The frames of a `!Send` actix body reach a ulo body, which is `Send`.
+    #[tokio::test]
+    async fn a_worker_local_stream_crosses_onto_a_send_body() {
+        let collected = on_a_local_set(async {
+            let res = ActixHttpResponse::Ok().streaming(futures_util::stream::iter([
+                Ok::<_, io::Error>(Bytes::from_static(b"one ")),
+                Ok(Bytes::from_static(b"two")),
+            ]));
+
+            let body = actix_response_to_ulo(res).body.expect("a body");
+            assert!(body.is_streaming(), "the body was collected, not carried");
+
+            use http_body_util::BodyExt;
+            body.into_box_body().collect().await.unwrap().to_bytes()
+        })
+        .await;
+
+        assert_eq!(collected, Bytes::from_static(b"one two"));
+    }
+
+    /// A response actix already holds whole is taken as bytes rather than pumped, and an empty
+    /// one is no body at all — `adapt_response` writes a head and nothing else for that.
+    #[tokio::test]
+    async fn a_body_actix_holds_whole_is_taken_as_bytes() {
+        let res = actix_response_to_ulo(ActixHttpResponse::Ok().body("whole"));
+        let body = res.body.expect("a body");
+        assert_eq!(body.try_bytes().map(|b| b.as_ref()), Some(&b"whole"[..]));
+
+        assert!(
+            actix_response_to_ulo(ActixHttpResponse::NoContent().finish())
+                .body
+                .is_none()
+        );
+    }
+
+    struct Sentinel(Arc<AtomicBool>);
+
+    impl Drop for Sentinel {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
         }
+    }
 
-        assert!(captured.0.lock().unwrap().is_empty());
+    /// A consumer that goes away stops the pump at once, rather than at the stream's next frame.
+    ///
+    /// The stream here has no next frame, which is the case that separates the two: an event feed
+    /// sitting idle between events. What proves the stop is the pumped body being dropped. That
+    /// drop is what runs a ulo body's `on_abandoned` and fires the execution's cancellation.
+    #[tokio::test]
+    async fn an_abandoned_stream_drops_the_body_it_was_pumping() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let observed = dropped.clone();
+
+        on_a_local_set(async move {
+            let sentinel = Sentinel(dropped);
+            let stream = futures_util::stream::once(std::future::ready(Ok::<_, io::Error>(
+                Bytes::from_static(b"one"),
+            )))
+            .chain(futures_util::stream::pending())
+            .map(move |item| {
+                let _held_by_the_stream = &sentinel;
+                item
+            });
+
+            let body = actix_response_to_ulo(ActixHttpResponse::Ok().streaming(stream))
+                .body
+                .expect("a body");
+            let mut frames = BodyDataStream::new(body.into_box_body());
+
+            // Taking the first frame leaves the pump waiting on a second that never comes.
+            assert_eq!(frames.next().await.unwrap().unwrap(), b"one"[..]);
+            drop(frames);
+
+            for _ in 0..100 {
+                if observed.load(Ordering::SeqCst) {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+            panic!("the pump held the body open after its consumer went away");
+        })
+        .await;
     }
 }

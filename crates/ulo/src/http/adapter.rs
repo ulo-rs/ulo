@@ -80,6 +80,10 @@ pub trait HttpAdapter: Send + Sync + 'static {
     /// declaring a streamed answer is then refused at registration. Without that refusal such a
     /// route registers and never answers: an SSE stream that does not end never finishes
     /// collecting, so no response head is written at all.
+    ///
+    /// The refusal reads what a route *declared*, once, at mount. A handler that picks a
+    /// streaming body per call — `#[get]` answering `Body::stream(..)` — declares nothing, so an
+    /// adapter answering `false` is still handed one and still collects it.
     fn streams_responses(&self) -> bool {
         true
     }

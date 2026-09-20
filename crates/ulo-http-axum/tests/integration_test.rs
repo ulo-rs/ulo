@@ -167,8 +167,8 @@ async fn http_get_path_param_query_route_through_axum() {
 }
 
 /// A megabyte arriving in more than one chunk is the observable difference
-/// between streaming and the buffering the actix adapter does: byte count alone
-/// cannot tell the two apart.
+/// between streaming and the request buffering the actix adapter does: byte
+/// count alone cannot tell the two apart.
 #[tokio::test(flavor = "current_thread")]
 async fn http_post_buffered_and_streaming_bodies() {
     let bound = start(HttpOnlyModule, false).await;
