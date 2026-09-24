@@ -5,7 +5,7 @@
 //! [`ulo::Error`](crate::errors::Error) from their function body — the
 //! [`From<E: Error>`] blanket lifts it into [`WsError::AppError`] at the
 //! macro boundary, and [`WsError::to_message`] renders the canonical
-//! text-frame envelope.
+//! text-frame envelope, or the close frame a [`WsError::Refused`] names.
 //!
 //! `WsError` does not implement [`ulo::Error`](crate::errors::Error); the `From` blanket requires
 //! source and target to be distinct types.
@@ -40,7 +40,8 @@ pub enum WsError {
     /// Forwarded from the broadcast subsystem.
     BroadcastError(String),
 
-    /// Refuse the connection with a close code and nothing else on the wire.
+    /// Refuse the connection, or end it from a message handler, with a close
+    /// code and nothing else on the wire.
     ///
     /// For subprotocols that define their own refusal codes — graphql-ws
     /// closes with 4406 when `Sec-WebSocket-Protocol` is unacceptable — where
@@ -59,42 +60,39 @@ impl WsError {
     /// `{"status":"error","kind":"...","message":...}`. For
     /// [`AppError`](Self::AppError), reads `kind` / `message` / `details`
     /// from the wrapped error; the named variants use a fixed `kind`
-    /// per variant.
+    /// per variant. [`Refused`](Self::Refused) is the exception: it renders
+    /// as the close frame carrying its code and reason, and no envelope.
     ///
     /// What it returns is an answer, not a failure. A handler that returns it
-    /// answers with the envelope, and the error chain is never offered the
+    /// answers with that frame, and the error chain is never offered the
     /// error — a `#[catch]` handler registered for it does not run. A handler
     /// that means to fail returns `Err`.
     ///
     /// The frame is the one an unclaimed message failure produces, so nothing
     /// on the wire says which path wrote it. A refused connection is answered
-    /// by `refusal_frames` instead, which adds a close frame and sends no
-    /// envelope for [`Refused`](Self::Refused).
+    /// by `refusal_frames` instead, which adds a close frame after the
+    /// envelope; a [`Refused`](Self::Refused) is one close frame on either
+    /// path.
     ///
     /// An error handler reaches this by catching [`WsError`] itself. For
     /// [`AppError`](Self::AppError) the chain is handed the unwrapped domain
     /// error, which carries no renderer.
     pub fn to_message(&self) -> WsMessage {
-        match self {
-            Self::AppError(e) => render_error(e.as_ref()),
-            other => {
-                let (kind_name, message) = match other {
-                    Self::ConnectionClosed(m) => ("Unavailable", m.as_str()),
-                    Self::InvalidMessage(m) => ("BadRequest", m.as_str()),
-                    Self::AuthFailed(m) => ("Unauthorized", m.as_str()),
-                    Self::EventNotFound(m) => ("NotFound", m.as_str()),
-                    Self::Internal(m) | Self::BroadcastError(m) => ("Internal", m.as_str()),
-                    Self::Refused { reason, .. } => ("BadRequest", reason.as_str()),
-                    Self::AppError(_) => unreachable!(),
-                };
-                let payload = json!({
-                    "status": "error",
-                    "kind": kind_name,
-                    "message": message,
-                });
-                WsMessage::text(payload.to_string())
-            }
-        }
+        let (kind_name, message) = match self {
+            Self::AppError(e) => return render_error(e.as_ref()),
+            Self::Refused { code, reason } => return WsMessage::close_with(*code, reason.clone()),
+            Self::ConnectionClosed(m) => ("Unavailable", m.as_str()),
+            Self::InvalidMessage(m) => ("BadRequest", m.as_str()),
+            Self::AuthFailed(m) => ("Unauthorized", m.as_str()),
+            Self::EventNotFound(m) => ("NotFound", m.as_str()),
+            Self::Internal(m) | Self::BroadcastError(m) => ("Internal", m.as_str()),
+        };
+        let payload = json!({
+            "status": "error",
+            "kind": kind_name,
+            "message": message,
+        });
+        WsMessage::text(payload.to_string())
     }
 }
 

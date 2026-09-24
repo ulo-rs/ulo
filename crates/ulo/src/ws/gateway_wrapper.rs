@@ -237,10 +237,11 @@ impl GatewayWrapper {
 
         // The one place the chain runs. A guard's refusal, a panic from any segment and the
         // handler's own error all arrive as `Err`, so a `#[catch]` handler is offered every one of
-        // them and an unclaimed one renders the same envelope whichever produced it.
+        // them and an unclaimed one renders the same envelope whichever produced it — except a
+        // `Refused`, which renders as the close it names.
         //
-        // A refused message renders rather than failing the call: the socket stays open and the
-        // client learns its message went nowhere, which is what the read loop needs.
+        // A message a guard refused renders rather than failing the call: the socket stays open
+        // and the client learns its message went nowhere, which is what the read loop needs.
         let answer = match answer {
             Ok(output) => Ok(output),
             Err(ws_err) => {
