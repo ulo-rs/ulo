@@ -41,6 +41,11 @@ impl Frame {
             String::new()
         }
     }
+
+    /// The payload read as UTF-8, lossily.
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.payload).into_owned()
+    }
 }
 
 /// Why a read produced no frame. A peer that hung up and a peer that said nothing look the same
@@ -96,8 +101,15 @@ impl Raw {
         self.response_head.lines().next().unwrap_or("")
     }
 
-    /// Write one frame. A client frame is masked; `masked: false` writes the violation.
-    pub async fn send(&mut self, fin: bool, opcode: u8, payload: &[u8], masked: bool) {
+    /// Write one frame. A client frame is masked; `masked: false` writes the violation. A failed
+    /// write is handed back: after a Close the peer may already have hung up.
+    pub async fn send(
+        &mut self,
+        fin: bool,
+        opcode: u8,
+        payload: &[u8],
+        masked: bool,
+    ) -> std::io::Result<()> {
         let mut out = vec![if fin { 0x80 | opcode } else { opcode }];
         let mask_bit = if masked { 0x80u8 } else { 0x00 };
         let len = payload.len();
@@ -117,8 +129,13 @@ impl Raw {
         } else {
             out.extend_from_slice(payload);
         }
-        self.stream.write_all(&out).await.unwrap();
-        self.stream.flush().await.unwrap();
+        self.stream.write_all(&out).await?;
+        self.stream.flush().await
+    }
+
+    /// One masked text frame carrying `s`.
+    pub async fn send_text(&mut self, s: &str) -> std::io::Result<()> {
+        self.send(true, 0x1, s.as_bytes(), true).await
     }
 
     /// The next frame, or what ended the read instead.
