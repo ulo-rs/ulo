@@ -117,7 +117,7 @@ async fn a_refused_connection_is_told_the_policy() {
 
     assert_eq!(envelope["status"], "error");
     assert_eq!(envelope["kind"], "Unauthorized", "envelope: {envelope}");
-    // 1008 Policy Violation — RFC 6455 has no auth-specific code.
+    // 1008 Policy Violation, in place of the registry's 3000 Unauthorized.
     assert_eq!(code, 1008);
 }
 

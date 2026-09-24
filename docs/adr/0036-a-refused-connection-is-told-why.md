@@ -30,8 +30,9 @@ reaches a JS caller as a bare error event with nothing in it.
 canonical envelope as text, then a close carrying an RFC 6455 code.
 
 - 1008 Policy Violation for a refusal the caller caused — a guard saying no, an unauthorized
-  connect. RFC 6455 has no auth-specific code, and 1008 is the one it reserves for "you broke a
-  rule".
+  connect. RFC 6455's own code list has no auth-specific entry, and 1008 is the one it reserves
+  for "you broke a rule"; the registry its §11.7 creates carries 3000 Unauthorized and 3003
+  Forbidden in the range reserved for libraries, frameworks and applications.
 - 1013 Try Again Later when the kind is `TooManyRequests`.
 - 1011 Internal Error for a refusal the server caused, which is what a panicking connect guard now
   produces: the event stays typed as `PanicRecovered` through the refusal, so its kind decides the
