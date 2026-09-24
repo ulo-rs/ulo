@@ -3,7 +3,7 @@
 //! before a handler sees it. Responses stream, as they do everywhere else.
 //!
 //! Route matching, the pre-routing chain and SSE are proved for every adapter
-//! at once in `integration-tests` (the five `*_conformance` suites). What is
+//! at once in `integration-tests` (the `*_conformance` suites). What is
 //! left to this file is the collected request, which no conformance case can
 //! express — passing it is what the other adapters do, and actix must fail it.
 

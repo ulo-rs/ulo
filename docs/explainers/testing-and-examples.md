@@ -84,7 +84,7 @@ nothing a user could observe. They were deleted; `marker_free_enhancers.rs` pins
 **A trait with more than one implementor gets one suite instantiated per implementor, not one suite
 per implementor.**
 
-The HTTP side is built this way. Four files in `integration-tests/` hold the contract once and a
+The HTTP side is built this way. Five files in `integration-tests/` hold the contract once and a
 `macro_rules!` stamps it out per adapter:
 
 ```rust
@@ -95,12 +95,19 @@ conformance_suite!(actix, ulo_http_actix::ActixAdapter::new());
 conformance_suite!(rocket, ulo_http_rocket::RocketAdapter::new());
 ```
 
-Seventy tests come out of those four files: thirty from the global chain, twenty-five from trailing
-slashes, ten from `{param}` syntax, five from listener adoption. A sixth adapter is one line each,
-and it either passes or it is not an adapter. Where an implementor cannot satisfy the
-contract, the exception is written into the suite rather than omitted from it — rocket cannot adopt a
-pre-bound listener, so `bind_target_conformance.rs` requires it to refuse at `bind()` rather than
-binding somewhere else.
+Eighty-two tests come out of those five files: thirty from the global chain, twenty-five from
+trailing slashes, ten from `{param}` syntax, five from listener adoption, twelve from SSE. A sixth
+adapter is one line each, and it either passes or it is not an adapter. Where an implementor cannot
+satisfy the contract, the exception is written into the suite rather than omitted from it — rocket
+cannot adopt a pre-bound listener, so `bind_target_conformance.rs` requires it to refuse at `bind()`
+rather than binding somewhere else.
+
+The WebSocket wire is proved the same way. `ws_adapter_conformance.rs` reads frames off the socket
+by hand and stamps its cases per adapter. Five adapters serve WebSocket, and what separates them is
+where each listens: four upgrade on the HTTP port and `ulo-ws-tungstenite` serves a port of its own,
+and each is stamped with the boot it has. Every case is stamped once more against a server that
+completes the upgrade and writes nothing, as a `should_panic` test, which catches a case that could
+not fail.
 
 ### When the suite needs a live service
 

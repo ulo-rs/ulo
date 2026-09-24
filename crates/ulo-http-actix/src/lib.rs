@@ -1,6 +1,6 @@
 // Tests: conformance with the HTTP adapter SPI is proved once for all five
-// adapters in `integration-tests` — the five `*_conformance` suites, each
-// instantiated per adapter. This crate's `tests/` covers only what is
+// adapters in `integration-tests` — the `*_conformance` suites, each
+// instantiated per adapter, the WebSocket one aside. This crate's `tests/` covers only what is
 // actix's: the collected request body and the 256 KiB ceiling that comes
 // with it. actix serves no WebSocket at all.
 
