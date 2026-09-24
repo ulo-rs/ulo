@@ -1,7 +1,8 @@
 //! Every WebSocket adapter speaks RFC 6455 the same way on the wire: the closing handshake a
 //! peer starts is completed, a Ping is answered with a Pong, a fragmented message is reassembled
-//! with a control frame allowed between its fragments, and a handler's own Close ends the
-//! connection with no data frame after it.
+//! with a control frame allowed between its fragments, a handler's own Close ends the
+//! connection with no data frame after it, and a handler's `WsError::Refused` reaches the peer as
+//! the Close it names.
 //!
 //! One contract, stamped once per adapter (`docs/explainers/testing-and-examples.md`). Five
 //! adapters serve WebSocket, and what separates them is where each listens: axum, salvo, poem and
@@ -17,7 +18,7 @@ use std::time::Duration;
 
 use ulo::UloFactory;
 use ulo::module;
-use ulo::ws::{WsHandlerResult, WsMessage};
+use ulo::ws::{WsError, WsHandlerResult, WsMessage};
 use ulo_macros::{new, subscriptions, websocket_gateway};
 
 use crate::common::TestServer;
@@ -47,6 +48,16 @@ impl SamePortGateway {
     async fn bye(&self, _msg: WsMessage) -> WsHandlerResult {
         Ok(WsMessage::close_with(1000, "server done").into())
     }
+
+    /// Refuses with a subprotocol's own code, the way graphql-ws answers an unacceptable
+    /// subprotocol with 4406.
+    #[subscribe_message("refused")]
+    async fn refused(&self, _msg: WsMessage) -> WsHandlerResult {
+        Err(WsError::Refused {
+            code: 4406,
+            reason: "subprotocol not acceptable".into(),
+        })
+    }
 }
 
 #[module(providers: [SamePortGateway])]
@@ -72,6 +83,16 @@ impl SeparatePortGateway {
     #[subscribe_message("bye")]
     async fn bye(&self, _msg: WsMessage) -> WsHandlerResult {
         Ok(WsMessage::close_with(1000, "server done").into())
+    }
+
+    /// Refuses with a subprotocol's own code, the way graphql-ws answers an unacceptable
+    /// subprotocol with 4406.
+    #[subscribe_message("refused")]
+    async fn refused(&self, _msg: WsMessage) -> WsHandlerResult {
+        Err(WsError::Refused {
+            code: 4406,
+            reason: "subprotocol not acceptable".into(),
+        })
     }
 }
 
@@ -256,6 +277,44 @@ async fn case_sends_no_data_frame_after_its_own_close(addr: SocketAddr) {
     }
 }
 
+/// A message handler's `WsError::Refused` reaches the peer as a Close carrying its code and
+/// reason, with no envelope before it. The peer answers the Close, and the server then closes the
+/// TCP connection.
+async fn case_a_refused_message_closes_with_its_code(addr: SocketAddr) {
+    let mut c = upgraded(addr).await;
+    c.send_text(r#"{"event":"refused"}"#).await.unwrap();
+
+    let frame = frame_or_panic(
+        c.read_frame(Duration::from_secs(3)).await,
+        "the refusal's Close",
+    );
+    assert_eq!(
+        frame.opcode,
+        0x8,
+        "the refusal reached the peer as opcode {:#x} with payload {:?}, not as a Close",
+        frame.opcode,
+        String::from_utf8_lossy(&frame.payload)
+    );
+    assert_eq!(
+        frame.close_code(),
+        Some(4406),
+        "the Close carries another code"
+    );
+    assert_eq!(
+        frame.close_reason(),
+        "subprotocol not acceptable",
+        "the Close carries another reason"
+    );
+
+    c.send(true, 0x8, &4406u16.to_be_bytes(), true)
+        .await
+        .unwrap();
+    assert!(
+        c.eof(Duration::from_secs(3)).await,
+        "the closing handshake completed and the TCP connection was then held open"
+    );
+}
+
 macro_rules! ws_adapter_suite {
     ($adapter_mod:ident, $boot:expr) => {
         mod $adapter_mod {
@@ -282,6 +341,11 @@ macro_rules! ws_adapter_suite {
             #[tokio::test]
             async fn sends_no_data_frame_after_its_own_close() {
                 super::case_sends_no_data_frame_after_its_own_close($boot.await).await;
+            }
+
+            #[tokio::test]
+            async fn a_refused_message_closes_with_its_code() {
+                super::case_a_refused_message_closes_with_its_code($boot.await).await;
             }
         }
     };
@@ -357,5 +421,11 @@ mod silent {
     #[should_panic(expected = "did not arrive within the bound")]
     async fn sends_no_data_frame_after_its_own_close() {
         super::case_sends_no_data_frame_after_its_own_close(boot().await).await;
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "did not arrive within the bound")]
+    async fn a_refused_message_closes_with_its_code() {
+        super::case_a_refused_message_closes_with_its_code(boot().await).await;
     }
 }
