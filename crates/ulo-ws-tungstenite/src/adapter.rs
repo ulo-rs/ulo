@@ -243,7 +243,15 @@ async fn run_ws_connection(
                         }
                     }
                 }
-                Ok(Message::Close(_)) | Err(_) => break,
+                // tungstenite composes the reply to a peer's Close when it reads the
+                // frame and writes it at the head of its next read. Polling once more is
+                // what puts that reply on the wire; leaving the loop here keeps it queued,
+                // and the peer sees the connection drop instead (RFC 6455 §5.5.1).
+                Ok(Message::Close(_)) => {
+                    let _ = read.next().await;
+                    break;
+                }
+                Err(_) => break,
                 Ok(Message::Ping(_)) | Ok(Message::Pong(_)) | Ok(Message::Frame(_)) => {}
             }
         }
