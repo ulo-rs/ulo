@@ -1,11 +1,24 @@
 //! Reply framing shared by every RPC transport.
 //!
-//! One reply convention crosses all seven transports: a handler's answer is
-//! wrapped in `{"response":…}`, and a dispatch failure travels as
-//! `{"err":{"message","status"}}`. [`RpcError::AppError`] renders through
-//! [`RpcError::to_data`] into the canonical error envelope and rides the
-//! `response` lane — the wire-err lane carries only
-//! `PatternNotFound`/`Forbidden`/`Internal`.
+//! One reply convention crosses every RPC transport, and the `Result` picks
+//! the lane: `Ok` answers on `response`, `{"response":…}`, and `Err` on `err`,
+//! `{"err":{"message","status"}}`. A call that reached a controller's chain is
+//! always `Ok`: its value, or the canonical error envelope an [`RpcError`]
+//! renders through [`RpcError::to_data`] — a guard's refusal, a recovered
+//! panic and a `#[catch]` handler's reshaping included. A message that reaches
+//! the dispatcher for a pattern nothing declares is `Err`, `status`
+//! `NotFound`, unless a global `#[catch(Unrouted)]` handler claims it, and
+//! then the handler's answer picks the lane like any other. A panic the chain
+//! did not recover — in routing, or in building a per-call controller or
+//! enhancer — is framed by the adapters with [`frame_panic`], `status`
+//! `Internal`.
+//!
+//! Every `status` this module frames on `err` or in an error end is the
+//! failure's [`ErrorKind`](crate::errors::ErrorKind) name, but one. A stream is
+//! on neither lane: an adapter that speaks the stream grammar sends it through
+//! [`drive_reply_stream`] as item frames. Handed a stream, [`frame_response`]
+//! refuses it on `err` with `status` `unsupported`, and that refusal is what an
+//! adapter without the grammar answers.
 //!
 //! Byte-oriented transports (the brokers) send a frame's bytes as-is and pass
 //! [`RpcData::Binary`] through raw — [`ResponseFrame::into_bytes`]. The
@@ -92,8 +105,11 @@ pub fn frame_response(outcome: RpcHandlerResult) -> ResponseFrame {
     }
 }
 
-/// The reply for a panicked handler. The panic is logged at the call site; the
-/// caller sees a generic internal error.
+/// The reply for a panic nothing inside the dispatcher recovered: one raised
+/// while routing, or while building this call's per-call controller, guards or
+/// interceptors. A panic in a guard, interceptor, handler or error handler as it
+/// runs is recovered inside the chain and answers on `response`. The panic is
+/// logged at the call site; the caller sees a generic internal error.
 pub fn frame_panic() -> ResponseFrame {
     ResponseFrame::Json(json!({
         "err": { "message": "internal server error", "status": crate::errors::ErrorKind::Internal.name() }
