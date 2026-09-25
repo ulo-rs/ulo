@@ -16,3 +16,6 @@ tokio = { workspace = true, features = ["full"] }
 serde_json.workspace = true
 tracing.workspace = true
 futures-util.workspace = true
+
+[dev-dependencies]
+ulo-rpc-conformance = { path = "../ulo-rpc-conformance" }

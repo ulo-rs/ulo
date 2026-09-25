@@ -111,10 +111,11 @@ not fail.
 
 ### When the suite needs a live service
 
-The RPC transports are built the same way, with one difference: their cases need a broker, and the
-shared suite is hermetic. So the cases live in `ulo-rpc-conformance` as generic functions over a
-`Broker` trait, and each transport crate implements that trait against its own testcontainer and
-stamps out the tests:
+The RPC transports are built the same way, with one difference: five of the seven need a broker,
+and the shared suite is hermetic. So the cases live in `ulo-rpc-conformance` as generic functions
+over a `Broker` trait, and each transport crate implements that trait — the broker crates against
+their own testcontainer, tcp and udp against a proxy the test owns, which is what a disruption
+cuts — and stamps out the tests:
 
 ```rust
 impl Broker for RedisBroker {
@@ -129,10 +130,11 @@ impl Broker for RedisBroker {
 ulo_rpc_conformance::conformance_suite!(RedisBroker);
 ```
 
-Six cases across five brokers, from one definition. What each transport supplies is what only it
-knows: how to start a broker, how to address it, and how to break the connection — `CLIENT KILL` on
-Redis, whose Pub/Sub carries no heartbeat and so never notices a frozen container; pausing the
-container everywhere else.
+Six cases across seven transports, from one definition. What each transport supplies is what only
+it knows: how to start a broker, how to address it, and how to break the connection — `CLIENT KILL`
+on Redis, whose Pub/Sub carries no heartbeat and so never notices a frozen container; pausing the
+container on the other brokers; dropping the proxied connections on tcp and dropping datagrams on
+udp.
 
 The budgets are a transport's to raise. Kafka boots slowly and waits out a consumer-group rebalance
 before the first request is consumed, so it overrides all three.

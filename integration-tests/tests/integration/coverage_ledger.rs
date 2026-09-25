@@ -30,7 +30,8 @@ struct Proof {
     /// their contracts do not exist until an application is running.
     suite: bool,
     /// The crate's own `tests/` directory: behaviour observable without any
-    /// other crate present, and the service-backed suites behind `integration`.
+    /// other crate present, the service-backed suites behind `integration`, and
+    /// the socket transports' conformance suites, which need neither.
     own: bool,
     /// `#[cfg(test)]` modules under `src/`.
     unit: bool,
@@ -49,7 +50,7 @@ const fn p(suite: bool, own: bool, unit: bool) -> Proof {
 /// own suite, or stops being used, fails this test.
 const SUPPORT: &[(&str, &str)] = &[(
     "ulo-rpc-conformance",
-    "holds the RPC conformance cases the five broker crates instantiate",
+    "holds the RPC conformance cases every RPC transport crate instantiates",
 )];
 
 /// Reason a crate is proved nowhere. Paired with an entry in [`LEDGER`] whose
@@ -87,8 +88,8 @@ const LEDGER: &[(&str, Proof)] = &[
     ("ulo-rpc-rabbitmq", p(false, true, true)),
     ("ulo-rpc-conformance", p(false, false, false)),
     ("ulo-rpc-redis", p(false, true, true)),
-    ("ulo-rpc-tcp", p(true, false, true)),
-    ("ulo-rpc-udp", p(true, false, true)),
+    ("ulo-rpc-tcp", p(true, true, true)),
+    ("ulo-rpc-udp", p(true, true, true)),
     ("ulo-ws-redis", p(false, true, true)),
     ("ulo-ws-tungstenite", p(true, false, false)),
 ];

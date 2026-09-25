@@ -34,8 +34,8 @@
 //! ulo_rpc_conformance::conformance_suite!(RedisBroker);
 //! ```
 //!
-//! The service-backed half stays in each transport's crate rather than moving
-//! into `integration-tests`: these need Docker, and that suite is hermetic.
+//! Each transport's stamp stays in its own crate rather than moving into
+//! `integration-tests`: five of the seven need Docker, and that suite is hermetic.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
@@ -77,8 +77,8 @@ impl Default for Budget {
 /// A live broker, and the two halves of ulo that talk to it.
 ///
 /// One implementation per transport crate, in that crate's `tests/`. The
-/// implementor owns the container: holding `Self` keeps the broker alive, and
-/// dropping it tears the broker down.
+/// implementor owns whatever the cases talk to — a container, or a socket and
+/// the proxy in front of it: holding `Self` keeps it alive.
 pub trait Broker: Sized + 'static {
     /// The server-side adapter under test.
     type Adapter: ulo::rpc::RpcAdapter;

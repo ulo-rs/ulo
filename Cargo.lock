@@ -8751,6 +8751,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ulo",
+ "ulo-rpc-conformance",
 ]
 
 [[package]]
@@ -8762,6 +8763,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ulo",
+ "ulo-rpc-conformance",
 ]
 
 [[package]]
