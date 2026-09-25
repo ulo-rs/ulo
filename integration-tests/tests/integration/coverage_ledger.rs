@@ -89,7 +89,7 @@ const LEDGER: &[(&str, Proof)] = &[
     ("ulo-rpc-redis", p(false, true, true)),
     ("ulo-rpc-tcp", p(true, false, true)),
     ("ulo-rpc-udp", p(true, false, true)),
-    ("ulo-ws-redis", p(false, true, false)),
+    ("ulo-ws-redis", p(false, true, true)),
     ("ulo-ws-tungstenite", p(true, false, false)),
 ];
 
