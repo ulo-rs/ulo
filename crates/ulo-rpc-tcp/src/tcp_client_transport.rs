@@ -264,12 +264,16 @@ async fn cancel_loop(mut rx: mpsc::UnboundedReceiver<String>, weak: std::sync::W
     }
 }
 
-fn data_to_json(data: RpcData) -> serde_json::Value {
+/// The wire carries JSON, and a `Binary` payload has no JSON to become.
+/// Every verb converts before `get_or_connect`, and a refused payload
+/// touches no socket.
+fn data_to_json(data: RpcData) -> Result<serde_json::Value, RpcClientError> {
     match data {
-        RpcData::Json(v) => v,
-        RpcData::Text(s) => serde_json::Value::String(s),
-        // TCP wire format is JSON; binary payloads are not supported.
-        RpcData::Binary(_) => serde_json::Value::Null,
+        RpcData::Json(v) => Ok(v),
+        RpcData::Text(s) => Ok(serde_json::Value::String(s)),
+        RpcData::Binary(_) => Err(RpcClientError::Transport(
+            "a binary payload cannot travel on the tcp wire, which carries JSON".into(),
+        )),
     }
 }
 
@@ -286,6 +290,7 @@ impl RpcClientTransport for TcpClientTransport {
         data: RpcData,
         metadata: HashMap<String, String>,
     ) -> Result<RpcData, RpcClientError> {
+        let data = data_to_json(data)?;
         let inner = self.get_or_connect().await?;
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed).to_string();
         let (tx, rx) = oneshot::channel();
@@ -298,7 +303,7 @@ impl RpcClientTransport for TcpClientTransport {
 
         let mut msg = serde_json::json!({
             "pattern": pattern,
-            "data": data_to_json(data),
+            "data": data,
             "id": id,
         });
         if !metadata.is_empty() {
@@ -331,6 +336,7 @@ impl RpcClientTransport for TcpClientTransport {
         data: RpcData,
         metadata: HashMap<String, String>,
     ) -> Result<RpcReplyStream, RpcClientError> {
+        let data = data_to_json(data)?;
         let inner = self.get_or_connect().await?;
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed).to_string();
 
@@ -358,7 +364,7 @@ impl RpcClientTransport for TcpClientTransport {
         // the handler's return type, not by the request.
         let mut msg = serde_json::json!({
             "pattern": pattern,
-            "data": data_to_json(data),
+            "data": data,
             "id": id,
         });
         if !metadata.is_empty() {
@@ -382,12 +388,13 @@ impl RpcClientTransport for TcpClientTransport {
         data: RpcData,
         metadata: HashMap<String, String>,
     ) -> Result<(), RpcClientError> {
+        let data = data_to_json(data)?;
         let inner = self.get_or_connect().await?;
 
         // No id field — server sends no reply.
         let mut msg = serde_json::json!({
             "pattern": pattern,
-            "data": data_to_json(data),
+            "data": data,
         });
         if !metadata.is_empty() {
             msg["metadata"] = serde_json::json!(metadata);
