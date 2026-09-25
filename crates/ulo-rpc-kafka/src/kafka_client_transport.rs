@@ -52,6 +52,8 @@ type Pending = Arc<Mutex<HashMap<String, PendingSlot>>>;
 pub struct KafkaClientTransport {
     brokers: String,
     timeout: Duration,
+    reply_topic: Option<String>,
+    topic_shape: crate::wire::TopicShape,
     shared: OnceCell<Shared>,
 }
 
@@ -60,6 +62,9 @@ struct Shared {
     pending: Pending,
     counter: AtomicU64,
     reply_topic: String,
+    /// Prefixes every correlation id. Per transport instance even when the reply topic is named,
+    /// so a restarted client never reuses a dead one's ids.
+    client_id: String,
     router: tokio::task::AbortHandle,
 }
 
@@ -74,6 +79,8 @@ impl KafkaClientTransport {
         Self {
             brokers: brokers.into(),
             timeout: Duration::from_secs(5),
+            reply_topic: None,
+            topic_shape: crate::wire::TopicShape::default(),
             shared: OnceCell::new(),
         }
     }
@@ -84,20 +91,49 @@ impl KafkaClientTransport {
         self
     }
 
+    /// Name the reply topic, and the consumer group that reads it, so a
+    /// restarted client reuses one topic on the cluster instead of leaving one
+    /// behind per start. Unset, each transport names both after its process id
+    /// and the time it first connects. Correlation ids stay per transport
+    /// either way. One live transport per name: transports sharing it share one
+    /// consumer group, which gives each reply partition to only one of them,
+    /// and a call whose reply reaches another times out.
+    pub fn with_reply_topic(mut self, name: impl Into<String>) -> Self {
+        self.reply_topic = Some(name.into());
+        self
+    }
+
+    /// Partitions for the reply topic this client creates (default 1). A topic
+    /// that already exists keeps its shape.
+    pub fn with_topic_partitions(mut self, partitions: i32) -> Self {
+        self.topic_shape.partitions = partitions;
+        self
+    }
+
+    /// Replication factor for the reply topic this client creates (default 1).
+    /// A topic that already exists keeps its shape.
+    pub fn with_replication_factor(mut self, replication: i32) -> Self {
+        self.topic_shape.replication = replication;
+        self
+    }
+
     async fn shared(&self) -> Result<&Shared, RpcClientError> {
         self.shared
             .get_or_try_init(|| async {
-                let id = client_id();
-                let reply_topic = format!("ulo.rpc.reply.{id}");
+                let client_id = client_id();
+                let (id, reply_topic) = match &self.reply_topic {
+                    Some(name) => (name.clone(), name.clone()),
+                    None => (client_id.clone(), format!("ulo.rpc.reply.{client_id}")),
+                };
 
                 let producer: FutureProducer = ClientConfig::new()
                     .set("bootstrap.servers", &self.brokers)
                     .create()
                     .map_err(|e| RpcClientError::Transport(e.to_string()))?;
 
-                // A unique group per transport instance so it reads every reply
+                // One group per reply topic, so this transport reads every reply
                 // on its private topic; `earliest` avoids losing a reply that
-                // lands before partition assignment finishes.
+                // arrives before partition assignment finishes.
                 let consumer: StreamConsumer = ClientConfig::new()
                     .set("bootstrap.servers", &self.brokers)
                     .set("group.id", &id)
@@ -107,7 +143,12 @@ impl KafkaClientTransport {
                     .map_err(|e| RpcClientError::Transport(e.to_string()))?;
                 // Create the reply topic up front so the consumer assigns its
                 // partition immediately and no reply is missed at startup.
-                crate::wire::ensure_topics(&self.brokers, std::slice::from_ref(&reply_topic)).await;
+                crate::wire::ensure_topics(
+                    &self.brokers,
+                    std::slice::from_ref(&reply_topic),
+                    self.topic_shape,
+                )
+                .await;
                 consumer
                     .subscribe(&[reply_topic.as_str()])
                     .map_err(|e| RpcClientError::Transport(e.to_string()))?;
@@ -158,6 +199,7 @@ impl KafkaClientTransport {
                     pending,
                     counter: AtomicU64::new(0),
                     reply_topic,
+                    client_id,
                     router: router.abort_handle(),
                 })
             })
@@ -180,12 +222,12 @@ impl RpcClientTransport for KafkaClientTransport {
     ) -> Result<RpcData, RpcClientError> {
         let shared = self.shared().await?;
 
-        // The reply topic is unique to this client, so prefixing the counter
-        // with it keeps correlation ids globally unique — the server's cancel
-        // registry is shared by every caller.
+        // The client id is unique to this transport instance, so prefixing the
+        // counter with it keeps correlation ids globally unique — the server's
+        // cancel registry is shared by every caller.
         let corr_id = format!(
             "{}:{}",
-            shared.reply_topic,
+            shared.client_id,
             shared.counter.fetch_add(1, Ordering::Relaxed)
         );
         let (tx, rx) = oneshot::channel();
@@ -240,7 +282,7 @@ impl RpcClientTransport for KafkaClientTransport {
 
         let corr_id = format!(
             "{}:{}",
-            shared.reply_topic,
+            shared.client_id,
             shared.counter.fetch_add(1, Ordering::Relaxed)
         );
         let (raw_tx, raw_rx) = mpsc::unbounded_channel();

@@ -35,6 +35,7 @@ use ulo::spi::AdapterResult;
 pub struct KafkaAdapter {
     brokers: String,
     group_id: String,
+    topic_shape: crate::wire::TopicShape,
     patterns: Vec<String>,
     callbacks: Option<Arc<RpcMessageCallbacks>>,
 }
@@ -44,6 +45,7 @@ impl KafkaAdapter {
         Self {
             brokers: brokers.into(),
             group_id: "ulo-rpc-server".to_string(),
+            topic_shape: crate::wire::TopicShape::default(),
             patterns: Vec::new(),
             callbacks: None,
         }
@@ -53,6 +55,23 @@ impl KafkaAdapter {
     /// sharing a group load-balance the pattern topics' partitions.
     pub fn with_group_id(mut self, group_id: impl Into<String>) -> Self {
         self.group_id = group_id.into();
+        self
+    }
+
+    /// Partitions for the topics this adapter creates: each pattern's topic and
+    /// `ulo.rpc.cancel` (default 1). Instances sharing a group divide a pattern
+    /// topic's partitions between them. A topic that already exists keeps its
+    /// shape.
+    pub fn with_topic_partitions(mut self, partitions: i32) -> Self {
+        self.topic_shape.partitions = partitions;
+        self
+    }
+
+    /// Replication factor for the topics this adapter creates, each pattern's
+    /// topic and `ulo.rpc.cancel` (default 1). A topic that already exists
+    /// keeps its shape.
+    pub fn with_replication_factor(mut self, replication: i32) -> Self {
+        self.topic_shape.replication = replication;
         self
     }
 }
@@ -72,6 +91,7 @@ impl RpcAdapter for KafkaAdapter {
     async fn into_lifecycle(mut self: Box<Self>) -> AdapterResult<ulo::rpc::RpcLifecycleHandle> {
         let brokers = self.brokers.clone();
         let group_id = self.group_id.clone();
+        let topic_shape = self.topic_shape;
         let patterns = std::mem::take(&mut self.patterns);
         let callbacks = self
             .callbacks
@@ -98,7 +118,7 @@ impl RpcAdapter for KafkaAdapter {
             // their partitions immediately rather than after a metadata refresh.
             let mut created = patterns.clone();
             created.push(crate::wire::CANCEL_TOPIC.to_string());
-            crate::wire::ensure_topics(&brokers, &created).await;
+            crate::wire::ensure_topics(&brokers, &created, topic_shape).await;
 
             let topics: Vec<&str> = patterns.iter().map(String::as_str).collect();
             consumer

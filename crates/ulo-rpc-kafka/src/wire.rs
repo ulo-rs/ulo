@@ -25,11 +25,27 @@ pub(crate) const HEADER_REPLY_TO: &str = "ulo-reply-to";
 /// Header correlating a reply with its request.
 pub(crate) const HEADER_CORRELATION_ID: &str = "ulo-correlation-id";
 
-/// Pre-create the given topics (1 partition, RF 1) so consumers assign their
-/// partitions at join time instead of waiting for a metadata refresh to notice
-/// an auto-created topic. Best-effort: an already-existing topic is fine, and a
-/// failure here just falls back to broker auto-create.
-pub(crate) async fn ensure_topics(brokers: &str, topics: &[String]) {
+/// How a topic this crate creates is shaped on the cluster.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TopicShape {
+    pub partitions: i32,
+    pub replication: i32,
+}
+
+impl Default for TopicShape {
+    fn default() -> Self {
+        Self {
+            partitions: 1,
+            replication: 1,
+        }
+    }
+}
+
+/// Pre-create the given topics so consumers assign their partitions at join
+/// time instead of waiting for a metadata refresh to notice an auto-created
+/// topic. Best-effort: an already-existing topic is fine, and a failure here
+/// falls back to broker auto-create.
+pub(crate) async fn ensure_topics(brokers: &str, topics: &[String], shape: TopicShape) {
     if topics.is_empty() {
         return;
     }
@@ -45,7 +61,13 @@ pub(crate) async fn ensure_topics(brokers: &str, topics: &[String]) {
     };
     let new_topics: Vec<NewTopic> = topics
         .iter()
-        .map(|t| NewTopic::new(t, 1, TopicReplication::Fixed(1)))
+        .map(|t| {
+            NewTopic::new(
+                t,
+                shape.partitions,
+                TopicReplication::Fixed(shape.replication),
+            )
+        })
         .collect();
     if let Err(e) = admin.create_topics(&new_topics, &AdminOptions::new()).await {
         tracing::warn!(error = %e, "ensure_topics: create_topics failed");
