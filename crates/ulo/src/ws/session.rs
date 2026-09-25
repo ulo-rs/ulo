@@ -25,13 +25,24 @@ use crate::ws::WsContext;
 ///
 /// Distinct from [`Extensions`] on purpose. The two hold the same kind of thing at different
 /// lifetimes, and a bare `Extensions` in a signature says nothing about which one it is.
-#[derive(Clone, Default)]
+///
+/// A store attached to no connection is read by nothing, and `Session` has no public constructor:
+/// there is no `Default`, and `new` is the framework's.
+///
+/// ```compile_fail
+/// let detached = ulo::ws::Session::default();
+/// ```
+///
+/// ```compile_fail
+/// let detached = ulo::ws::Session::new();
+/// ```
+#[derive(Clone)]
 pub struct Session {
     bag: Extensions,
 }
 
 impl Session {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             bag: Extensions::new(),
         }
