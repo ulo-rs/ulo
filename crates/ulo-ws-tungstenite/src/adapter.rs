@@ -282,5 +282,6 @@ fn ws_message_to_tungstenite(msg: WsMessage) -> AdapterResult<Message> {
                 reason: f.reason.into(),
             }
         }))),
+        _ => Err("an outbound frame type this adapter does not carry".into()),
     }
 }

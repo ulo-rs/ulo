@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-/// WebSocket message data
+/// WebSocket message data.
+///
+/// RFC 6455 §5.2 reserves opcodes `0x3`–`0x7` for further non-control frames and
+/// `0xB`–`0xF` for further control frames, and a variant may join this enum when the
+/// protocol defines one.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WsMessage {
     /// Text message (JSON, plain text, etc.)
