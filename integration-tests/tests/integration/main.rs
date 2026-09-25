@@ -88,6 +88,7 @@ mod provider_startup_check;
 mod request_extractor;
 mod request_provider;
 mod resolve_by_hand;
+mod rpc_binary_payload_is_refused;
 mod rpc_controller_injection;
 mod rpc_global_enhancers;
 mod rpc_grpc;
