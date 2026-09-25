@@ -130,7 +130,7 @@ impl Broker for RedisBroker {
 ulo_rpc_conformance::conformance_suite!(RedisBroker);
 ```
 
-Six cases across seven transports, from one definition. What each transport supplies is what only
+Nine cases across seven transports, from one definition. What each transport supplies is what only
 it knows: how to start a broker, how to address it, and how to break the connection — `CLIENT KILL`
 on Redis, whose Pub/Sub carries no heartbeat and so never notices a frozen container; pausing the
 container on the other brokers; dropping the proxied connections on tcp and dropping datagrams on

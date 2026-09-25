@@ -13,7 +13,7 @@ use ulo_rpc_conformance::Broker;
 use ulo_rpc_tcp::{TcpAdapter, TcpClientTransport};
 
 struct TcpBroker {
-    /// The socket the adapter serves on, handed over once by `adapter`.
+    /// The socket the adapter serves on, handed over by the first `adapter` call.
     server: Mutex<Option<std::net::TcpListener>>,
     proxy_port: u16,
     /// One task per proxied connection, holding both of its sockets.
@@ -57,13 +57,16 @@ impl Broker for TcpBroker {
         }
     }
 
+    /// The first instance serves on the socket the proxy forwards to. A second instance on one
+    /// broker gets a socket of its own that nothing is connected to: a socket transport has no
+    /// fan-out, and a client talks to one server.
     fn adapter(&self) -> Self::Adapter {
         let listener = self
             .server
             .lock()
             .unwrap()
             .take()
-            .expect("one adapter per broker: the socket is handed over once");
+            .unwrap_or_else(|| std::net::TcpListener::bind("127.0.0.1:0").unwrap());
         TcpAdapter::from_listener(listener)
     }
 

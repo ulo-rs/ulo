@@ -1,8 +1,7 @@
 // Tests: `tests/conformance.rs` implements `ulo_rpc_conformance::Broker`
-// and stamps out the shared RPC case set — the same six cases every
-// transport answers. It needs a live NATS from testcontainers, so it
-// is gated behind the `integration` feature; without it the file compiles
-// to nothing and cargo reports a clean run of none:
+// and stamps out the shared RPC case set. It needs a live NATS from
+// testcontainers, so it is gated behind the `integration` feature; without
+// it the file compiles to nothing and cargo reports a clean run of none:
 //
 //     cargo test -p ulo-rpc-nats --features integration
 //

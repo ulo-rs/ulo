@@ -16,7 +16,7 @@ use ulo_rpc_conformance::Broker;
 use ulo_rpc_udp::{UdpAdapter, UdpClientTransport};
 
 struct UdpBroker {
-    /// The socket the adapter serves on, handed over once by `adapter`.
+    /// The socket the adapter serves on, handed over by the first `adapter` call.
     server: Mutex<Option<std::net::UdpSocket>>,
     proxy_port: u16,
     severed: Arc<AtomicBool>,
@@ -65,13 +65,16 @@ impl Broker for UdpBroker {
         }
     }
 
+    /// The first instance serves on the socket the proxy forwards to. A second instance on one
+    /// broker gets a socket of its own that nothing sends to: a socket transport has no fan-out,
+    /// and a client sends to one server.
     fn adapter(&self) -> Self::Adapter {
         let socket = self
             .server
             .lock()
             .unwrap()
             .take()
-            .expect("one adapter per broker: the socket is handed over once");
+            .unwrap_or_else(|| std::net::UdpSocket::bind("127.0.0.1:0").unwrap());
         UdpAdapter::from_socket(socket)
     }
 
