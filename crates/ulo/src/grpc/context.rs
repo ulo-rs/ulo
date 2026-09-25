@@ -207,7 +207,7 @@ impl ExecutionContext for GrpcContext {
 ///
 /// [spec]: https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md
 fn parse_grpc_timeout(value: &str) -> Option<Duration> {
-    let (digits, unit) = value.split_at(value.len().checked_sub(1)?);
+    let (digits, unit) = value.split_at_checked(value.len().checked_sub(1)?)?;
     if digits.is_empty() || digits.len() > 8 {
         return None;
     }
@@ -245,6 +245,11 @@ mod tests {
         assert_eq!(parse_grpc_timeout("5X"), None, "unknown unit");
         assert_eq!(parse_grpc_timeout("-1S"), None, "not a count");
         assert_eq!(parse_grpc_timeout("123456789S"), None, "over eight digits");
+        assert_eq!(
+            parse_grpc_timeout("5\u{20AC}"),
+            None,
+            "last byte inside a multi-byte char"
+        );
     }
 
     #[test]
