@@ -39,11 +39,11 @@ where
 ///
 /// # Example
 ///
-/// Register via `provide_factory!` with the `lifecycle` flag inside a module's
+/// Register via `provider_factory!` with the `lifecycle` flag inside a module's
 /// `providers` list:
 ///
 /// ```ignore
-/// provide_factory!("INVENTORY_CLIENT", |config: ConfigService| {
+/// provider_factory!("INVENTORY_CLIENT", |config: ConfigService| {
 ///     RpcClient::new(NatsClientTransport::new(config.get("NATS_URL")))
 /// }, lifecycle)
 /// ```
@@ -53,7 +53,7 @@ where
 /// ```ignore
 /// #[injectable]
 /// pub struct InventoryService {
-///     #[inject(token = "INVENTORY_CLIENT")] client: RpcClient,
+///     #[inject("INVENTORY_CLIENT")] client: RpcClient,
 /// }
 /// impl InventoryService {
 ///     async fn notify_restock(&self, payload: serde_json::Value) -> Result<RpcData, RpcClientError> {
@@ -185,21 +185,27 @@ impl RpcClient {
         Ok(parse_items(stream))
     }
 
-    /// Establish the connection to the remote service eagerly.
+    /// Open the connection ahead of the first call.
     ///
-    /// Transports are lazy by default — they connect on the first `send` or `emit`.
-    /// Call this explicitly (e.g. in an `#[on_application_bootstrap]` hook) when
-    /// you want to surface connection failures at startup rather than on the first
-    /// request.
+    /// A transport that opens its connection on demand does so on the first
+    /// `send`, `emit` or `stream`; this opens it ahead of that. For a client the
+    /// container holds as its own [`Provider`](crate::spi::Provider), which
+    /// `RpcClient` implements, the framework calls this at application
+    /// bootstrap, and a failure it reports then surfaces at startup rather than
+    /// on the first call. For any other client, whoever holds it calls this.
+    /// Whether an unreachable peer is reported here, on the first call, or not
+    /// at all is the transport's.
     pub async fn connect(&self) -> Result<(), RpcClientError> {
         self.transport.connect().await
     }
 
-    /// Gracefully close the connection to the remote service.
+    /// Run the transport's shutdown step.
     ///
-    /// Flushes any pending messages before closing. Call this in an
-    /// `#[on_application_shutdown]` hook to ensure in-flight data is not lost
-    /// before the process exits.
+    /// For a client the container holds as its own
+    /// [`Provider`](crate::spi::Provider) the framework calls this at
+    /// application shutdown; for any other client, whoever holds it calls this.
+    /// What it does is the transport's: the default does nothing, and an
+    /// override is where a transport flushes what it buffers.
     pub async fn close(&self) -> Result<(), RpcClientError> {
         self.transport.close().await
     }
