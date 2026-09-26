@@ -19,6 +19,7 @@ tls-aws-lc = ["tonic/tls-aws-lc"]
 [dependencies]
 ulo = { path = "../ulo", default-features = false }
 tonic = "0.14"
+bytes.workspace = true
 tower = { workspace = true, features = ["util", "limit"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
 tokio-stream = { workspace = true, features = ["net"] }

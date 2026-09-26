@@ -153,12 +153,15 @@
 
 mod drain_layer;
 mod grpc_adapter;
+mod metadata;
 mod method_path_layer;
 mod reply;
 pub mod shape;
 mod tracing_layer;
 
 pub use grpc_adapter::GrpcAdapter;
+#[doc(hidden)]
+pub use metadata::read_metadata;
 pub use reply::{Envelope, reply};
 pub use shape::{GrpcRequest, MethodShape};
 

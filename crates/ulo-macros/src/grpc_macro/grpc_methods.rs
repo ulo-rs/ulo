@@ -1025,13 +1025,7 @@ fn build_wrapper_method(
 
     Ok(quote! {
         #asyncness fn #method_ident #generics (#inputs) #output {
-            let __metadata = #req_ident.metadata().iter().filter_map(|kv| match kv {
-                ::tonic::metadata::KeyAndValueRef::Ascii(k, v) => v
-                    .to_str()
-                    .ok()
-                    .map(|s| (k.as_str().to_string(), s.to_string())),
-                ::tonic::metadata::KeyAndValueRef::Binary(_, _) => None,
-            }).collect::<::std::collections::HashMap<::std::string::String, ::std::string::String>>();
+            let (__ascii, __binary) = ::ulo_grpc::read_metadata(#req_ident.metadata());
             #declared_metadata
             // The path the caller dialled, which only the wire carries: an impl
             // block shows Rust names, no package, and a route casing that holds
@@ -1043,9 +1037,10 @@ fn build_wrapper_method(
                 .get::<::ulo::grpc::GrpcMethodPath>()
                 .map(|__p| __p.as_str().to_string())
                 .unwrap_or_else(|| #method_path_lit.to_string());
-            let __ctx = ::ulo::grpc::GrpcContext::new(
+            let __ctx = ::ulo::grpc::GrpcContext::from_wire(
                 __method,
-                __metadata,
+                __ascii,
+                __binary,
                 #req_ident.remote_addr(),
                 __declared,
             );

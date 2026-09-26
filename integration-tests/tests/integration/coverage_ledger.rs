@@ -74,7 +74,7 @@ const LEDGER: &[(&str, Proof)] = &[
     ("ulo-db-sqlx", p(false, true, true)),
     ("ulo-graphql-async-graphql", p(true, false, false)),
     ("ulo-graphql-juniper", p(true, false, false)),
-    ("ulo-grpc", p(true, false, false)),
+    ("ulo-grpc", p(true, false, true)),
     ("ulo-health", p(false, false, true)),
     ("ulo-http-actix", p(true, true, true)),
     ("ulo-http-axum", p(true, true, false)),

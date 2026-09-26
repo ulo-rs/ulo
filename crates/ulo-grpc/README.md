@@ -154,6 +154,8 @@ impl ulo::enhancer::Guard<ulo::grpc::GrpcContext> for AuthGuard {
 }
 ```
 
+`header(k)` answers an ASCII key's last value. `headers_all(k)` answers every value of a key the caller repeated, in order, and `header_bin(k)` answers a `-bin` key's bytes, decoded from the base64 the wire carries, the last value when the caller repeated it.
+
 ### Interceptors
 
 An interceptor is a provider that implements `Interceptor<GrpcContext, GrpcHandlerResult>`. The chain wraps the handler — `next.run(ctx).await` proceeds and answers with the reply or the failure; returning without calling it short-circuits.
