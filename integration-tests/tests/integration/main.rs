@@ -48,6 +48,7 @@ mod graphql_service_injection;
 mod graphql_subscriptions;
 mod grpc_client_injection;
 mod grpc_deadline;
+mod grpc_deadline_fires_the_token;
 mod grpc_domain_error_reaches_the_chain;
 mod grpc_enhancers_answer_with_the_reply;
 mod grpc_error_lift;
