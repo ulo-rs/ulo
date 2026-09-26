@@ -1,5 +1,6 @@
 //! The caller's `grpc-timeout` fires the execution's cancellation token when it passes, for as
-//! long as the execution lasts.
+//! long as the execution lasts; so does a call dropped before it answers, by its caller or at its
+//! deadline.
 //!
 //! tonic races the call against the deadline until the handler returns its response, which for
 //! a streaming method is the moment it has a stream; the body is then outside the race. ulo fires
@@ -293,6 +294,73 @@ async fn a_call_dropped_before_its_request_was_taken_is_freed() {
     assert!(
         EXECUTION_FREED.load(Ordering::SeqCst),
         "a call dropped at its deadline before its request was taken was never freed"
+    );
+    stop(shutdown).await;
+}
+
+/// A unary call past its deadline is dropped by tonic, and the work its handler detached sees the
+/// token fire and stops.
+#[serial]
+#[tokio::test]
+async fn detached_work_stops_at_a_unary_calls_deadline() {
+    reset();
+    let (port, shutdown) = boot().await;
+    let mut client = connect(port).await;
+
+    let mut request = tonic::Request::new(deadline_pb::CreateOrderRequest {
+        item: "keyboard".to_string(),
+        qty: 1500,
+    });
+    request.set_timeout(Duration::from_millis(300));
+    let outcome = client.create(request).await;
+    assert!(
+        outcome.is_err(),
+        "the caller's 300 ms deadline must end a 1.5 s call"
+    );
+
+    // Past the detached work's own 1.2 s, so a token that never fired shows as a completed run.
+    tokio::time::sleep(Duration::from_millis(1400)).await;
+    assert!(
+        TOKEN_FIRED.load(Ordering::SeqCst),
+        "the token did not fire when the deadline passed"
+    );
+    assert_eq!(
+        DETACHED_RAN_ON.load(Ordering::SeqCst),
+        1,
+        "detached work holding a clone of the token ran on past the deadline"
+    );
+    stop(shutdown).await;
+}
+
+/// A unary call the caller drops mid-flight, with no deadline, fires the token too.
+#[serial]
+#[tokio::test]
+async fn detached_work_stops_when_the_caller_abandons_a_unary_call() {
+    reset();
+    let (port, shutdown) = boot().await;
+    let mut client = connect(port).await;
+
+    let call = tokio::spawn(async move {
+        client
+            .create(tonic::Request::new(deadline_pb::CreateOrderRequest {
+                item: "keyboard".to_string(),
+                qty: 1500,
+            }))
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    call.abort();
+    let _ = call.await;
+
+    tokio::time::sleep(Duration::from_millis(1400)).await;
+    assert!(
+        TOKEN_FIRED.load(Ordering::SeqCst),
+        "the token did not fire when the caller abandoned the call"
+    );
+    assert_eq!(
+        DETACHED_RAN_ON.load(Ordering::SeqCst),
+        1,
+        "detached work holding a clone of the token ran on after the caller left"
     );
     stop(shutdown).await;
 }
