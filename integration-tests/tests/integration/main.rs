@@ -44,6 +44,7 @@ mod global_modules;
 mod graceful_shutdown;
 mod graphql_juniper_mount;
 mod graphql_module_identity;
+mod graphql_playground_is_html;
 mod graphql_service_injection;
 mod graphql_subscriptions;
 mod grpc_add_service_warns;
