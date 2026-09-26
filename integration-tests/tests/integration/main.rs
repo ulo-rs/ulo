@@ -69,6 +69,7 @@ mod grpc_tls;
 mod guard_mut_context;
 mod guard_panic_is_an_event;
 mod guard_rejection_is_an_event;
+mod guards_build_in_order;
 mod handler_return_is_a_type;
 mod http_e2e;
 mod import_cycle;
