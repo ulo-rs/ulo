@@ -6,7 +6,7 @@ use crate::dispatch::transport::Ws;
 use crate::error::SetupResult;
 use crate::ws::{Gateway, GatewayWrapper};
 
-use super::{Declared, resolve_handler, resolve_target};
+use super::{Declared, resolve};
 use crate::di::internal::Container;
 
 pub(crate) struct GatewayResolver {
@@ -37,7 +37,7 @@ impl GatewayResolver {
         let container = self.container.read();
         let registry = &container.role_registry().ws;
 
-        let gateway_level = resolve_target::<Ws>(
+        let resolved = resolve::<Ws>(
             registry,
             &container.global_ws,
             Declared {
@@ -45,36 +45,23 @@ impl GatewayResolver {
                 interceptors: declared.interceptors,
                 error_handlers: declared.error_handlers,
             },
+            declared.handlers.into_iter().map(|handler| {
+                (
+                    handler.event,
+                    Declared {
+                        guards: handler.guards,
+                        interceptors: handler.interceptors,
+                        error_handlers: handler.error_handlers,
+                    },
+                )
+            }),
         )?;
-
-        let mut handler_guards = HashMap::new();
-        let mut handler_interceptors = HashMap::new();
-        let mut handler_error_handlers = HashMap::new();
-        for handler in declared.handlers {
-            let event = handler.event.clone();
-            let set = resolve_handler::<Ws>(
-                registry,
-                Declared {
-                    guards: handler.guards,
-                    interceptors: handler.interceptors,
-                    error_handlers: handler.error_handlers,
-                },
-            )?;
-            handler_guards.insert(event.clone(), set.guards);
-            handler_interceptors.insert(event.clone(), set.interceptors);
-            handler_error_handlers.insert(event, set.error_handlers);
-        }
 
         Ok(GatewayWrapper::new(
             gateway,
-            gateway_level.guards,
-            gateway_level.interceptors,
-            gateway_level.error_handlers,
+            resolved,
             metadata,
             handler_metadata,
-            handler_guards,
-            handler_interceptors,
-            handler_error_handlers,
         ))
     }
 }

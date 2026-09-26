@@ -19,31 +19,15 @@ use std::sync::Arc;
 
 use crate::dispatch::Grpc;
 use crate::enhancer::{ErrorHandlerDeclaration, GuardDeclaration, InterceptorDeclaration};
-use crate::spi::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
 /// Per-service bundle of resolved enhancer instances. Built by the framework
 /// at create from [`GrpcServiceSource::enhancers`] and handed to
 /// [`GrpcServiceSource::register_with`] so the macro-generated wrapper can
 /// invoke them per call without touching the DI container at request time.
+/// Each method's set is merged with the service's at create.
 #[derive(Default, Clone)]
-pub struct ResolvedGrpcEnhancers {
-    /// Service-level guards; run on every method.
-    pub(crate) guards: Vec<GrpcGuardEntry>,
-    /// Method-level guards keyed by the handler's Rust method name, which is what
-    /// [`GrpcHandlerEnhancers::method`] carries and what the generated wrapper looks up with.
-    pub(crate) handler_guards: std::collections::HashMap<String, Vec<GrpcGuardEntry>>,
-    /// Service-level interceptors; wrap every method's user delegation.
-    pub(crate) interceptors: Vec<GrpcInterceptorEntry>,
-    /// Method-level interceptors. Stack on top of service-level (controller-
-    /// level entries run first, method-level entries run inside).
-    pub(crate) handler_interceptors: std::collections::HashMap<String, Vec<GrpcInterceptorEntry>>,
-    /// Service-level error handlers; fire on user-returned `Err` or caught
-    /// handler panic. First handler to claim wins (chain runs in reverse
-    /// registration order, matching the RPC/HTTP convention).
-    pub(crate) error_handlers: Vec<GrpcErrorHandlerArc>,
-    /// Method-level error handlers. Composed with service-level into one
-    /// reverse-order chain per call.
-    pub(crate) handler_error_handlers: std::collections::HashMap<String, Vec<GrpcErrorHandlerArc>>,
-}
+pub struct ResolvedGrpcEnhancers(
+    pub(crate) crate::dispatch::resolve::Resolved<crate::dispatch::Grpc>,
+);
 
 /// What a gRPC service declares, read once at create. Service-level entries apply to every method;
 /// each `handlers` entry adds to one method. A flat descriptor instead of seven accessor methods —

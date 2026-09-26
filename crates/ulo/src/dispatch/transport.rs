@@ -3,9 +3,6 @@
 //! A guard, an interceptor and an error handler differ across HTTP, RPC, WebSocket and gRPC in two
 //! ways: the context a handler is given, and the type an interceptor answers with. [`Transport`]
 //! names both, so one generic type carries any of them between `create` and dispatch.
-//!
-//! `HttpGuardEntry` and its seven siblings are aliases of those generic types. A macro expansion
-//! names one of them rather than a type and its parameter.
 
 use std::{future::Future, pin::Pin, sync::Arc};
 
@@ -245,16 +242,3 @@ impl<T: Transport> Default for EnhancerSet<T> {
         }
     }
 }
-
-pub type HttpGuardEntry = GuardEntry<Http>;
-pub type HttpInterceptorEntry = InterceptorEntry<Http>;
-pub type RpcGuardEntry = GuardEntry<Rpc>;
-pub type RpcInterceptorEntry = InterceptorEntry<Rpc>;
-pub type WsGuardEntry = GuardEntry<Ws>;
-pub type WsInterceptorEntry = InterceptorEntry<Ws>;
-pub type GrpcGuardEntry = GuardEntry<Grpc>;
-pub type GrpcInterceptorEntry = InterceptorEntry<Grpc>;
-pub(crate) type HttpErrorHandlerArc = ErrorHandlerArc<Http>;
-pub(crate) type RpcErrorHandlerArc = ErrorHandlerArc<Rpc>;
-pub(crate) type WsErrorHandlerArc = ErrorHandlerArc<Ws>;
-pub(crate) type GrpcErrorHandlerArc = ErrorHandlerArc<Grpc>;

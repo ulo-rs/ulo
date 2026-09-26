@@ -76,6 +76,57 @@ pub(crate) trait Leaf<T: Transport>: Send + Sync {
     async fn call(&self, ctx: &T::Context) -> Answer<T>;
 }
 
+/// Run an error renderer under panic recovery, answering with `fallback` if it panics.
+///
+/// The renderer is the last thing between the framework and the wire, so a panic in it has nothing
+/// left to be remapped by. It is logged, and the transport's fallback answers instead: a literal
+/// built from static values that calls no user code.
+pub(crate) fn safe_render<R>(render: impl FnOnce() -> R, fallback: fn() -> R) -> R {
+    match crate::panic_recovery::catch_sync(PipelineSegment::ResponseRendering, render) {
+        Ok(rendered) => rendered,
+        Err(panic_event) => {
+            tracing::error!(panic = %panic_event.message, "error renderer panicked; answering with the transport's fallback");
+            fallback()
+        }
+    }
+}
+
+/// A leaf made of a closure, called at most once: gRPC's handler, packaged by the macro as a
+/// delegate the chain hands the call to. `ClosureLeaf` stays private; this is the one way to build
+/// it.
+pub(crate) fn closure_leaf<T, D, Fut>(delegate: D) -> Arc<dyn Leaf<T>>
+where
+    T: Transport,
+    D: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Answer<T>> + Send + 'static,
+{
+    Arc::new(ClosureLeaf(parking_lot::Mutex::new(Some(delegate))))
+}
+
+struct ClosureLeaf<D>(parking_lot::Mutex<Option<D>>);
+
+#[async_trait::async_trait]
+impl<T, D, Fut> Leaf<T> for ClosureLeaf<D>
+where
+    T: Transport,
+    D: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Answer<T>> + Send + 'static,
+{
+    async fn call(&self, _ctx: &T::Context) -> Answer<T> {
+        // `InterceptorNext::run` consumes its box, so the leaf is called at most once and the
+        // delegate is present; a second call is a framework bug and answers as a recovered panic
+        // would.
+        let delegate = self.0.lock().take();
+        match delegate {
+            Some(delegate) => delegate().await,
+            None => Err(T::Error::from(PanicRecovered::with_message(
+                PipelineSegment::HandlerBody,
+                "the handler was called a second time",
+            ))),
+        }
+    }
+}
+
 /// Run `leaf` with `interceptors` wrapped around it, outermost first.
 ///
 /// Each interceptor is handed the rest of the chain and may decline to call it, which is how a

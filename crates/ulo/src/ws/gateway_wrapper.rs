@@ -7,10 +7,10 @@ use parking_lot::RwLock;
 
 use crate::context::Metadata;
 use crate::dispatch::ExecutionResult;
+use crate::dispatch::resolve::Resolved;
 use crate::dispatch::transport::Ws;
 use crate::enhancer::Interceptor;
 use crate::enhancer::pipeline::{GuardFailure, Leaf, through_interceptors};
-use crate::spi::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
 use crate::ws::WsContext;
 
 use super::{
@@ -41,16 +41,13 @@ impl Leaf<Ws> for GatewayLeaf {
 /// guard/interceptor pipeline and tracks its own connected clients.
 pub(crate) struct GatewayWrapper {
     gateway: Arc<Box<dyn Gateway>>,
-    guards: Vec<WsGuardEntry>,
-    interceptors: Vec<WsInterceptorEntry>,
-    error_handlers: Vec<WsErrorHandlerArc>,
+    /// The gateway's enhancers, each event's merged over them at create. A connect runs the
+    /// gateway's set.
+    enhancers: Resolved<Ws>,
     metadata: Arc<Metadata>,
     /// Per-event metadata, already merged over `metadata` at expansion. An event absent here
     /// declared nothing of its own and reads the gateway's.
     handler_metadata: HashMap<String, Arc<Metadata>>,
-    handler_guards: HashMap<String, Vec<WsGuardEntry>>,
-    handler_interceptors: HashMap<String, Vec<WsInterceptorEntry>>,
-    handler_error_handlers: HashMap<String, Vec<WsErrorHandlerArc>>,
     /// Active client connections (client_id => WsClient). A client carries the session scoped to
     /// its connection, so there is nothing to keep beside it.
     clients: Arc<RwLock<HashMap<String, WsClient>>>,
@@ -59,25 +56,15 @@ pub(crate) struct GatewayWrapper {
 impl GatewayWrapper {
     pub(crate) fn new(
         gateway: Arc<Box<dyn Gateway>>,
-        guards: Vec<WsGuardEntry>,
-        interceptors: Vec<WsInterceptorEntry>,
-        error_handlers: Vec<WsErrorHandlerArc>,
+        enhancers: Resolved<Ws>,
         metadata: Arc<Metadata>,
         handler_metadata: HashMap<String, Arc<Metadata>>,
-        handler_guards: HashMap<String, Vec<WsGuardEntry>>,
-        handler_interceptors: HashMap<String, Vec<WsInterceptorEntry>>,
-        handler_error_handlers: HashMap<String, Vec<WsErrorHandlerArc>>,
     ) -> Self {
         Self {
             gateway,
-            guards,
-            interceptors,
-            error_handlers,
+            enhancers,
             metadata,
             handler_metadata,
-            handler_guards,
-            handler_interceptors,
-            handler_error_handlers,
             clients: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -111,7 +98,9 @@ impl GatewayWrapper {
 
         // One guard at a time, and a guard after a refusing one is never built. A connect has no
         // chain to route a refusal through: there is no answer to shape on a refused upgrade.
-        match crate::enhancer::pipeline::run_guards::<Ws>(&self.guards, &context).await {
+        match crate::enhancer::pipeline::run_guards::<Ws>(&self.enhancers.target().guards, &context)
+            .await
+        {
             Ok(()) => {}
             Err(GuardFailure::Panicked { index, event }) => {
                 // The refusal reaches the caller as a close frame, so the panic is narrated
@@ -195,10 +184,7 @@ impl GatewayWrapper {
             ),
         );
 
-        let mut all_error_handlers = self.error_handlers.clone();
-        if let Some(h) = self.handler_error_handlers.get(&event) {
-            all_error_handlers.extend_from_slice(h);
-        }
+        let enhancers = self.enhancers.for_key(&event);
 
         let answer = match unroutable {
             // Resolving guards and interceptors is what constructs them, execution-scoped ones
@@ -206,21 +192,13 @@ impl GatewayWrapper {
             // otherwise build a pipeline per frame and run none of it.
             Some(e) => Err(e),
             None => {
-                let mut all_guards = self.guards.clone();
-                if let Some(h) = self.handler_guards.get(&event) {
-                    all_guards.extend_from_slice(h);
-                }
-                let mut all_interceptors = self.interceptors.clone();
-                if let Some(h) = self.handler_interceptors.get(&event) {
-                    all_interceptors.extend_from_slice(h);
-                }
-
                 // Guards first, one at a time, and no interceptor built until every one has
                 // passed.
-                match crate::enhancer::pipeline::run_guards::<Ws>(&all_guards, &context).await {
+                match crate::enhancer::pipeline::run_guards::<Ws>(&enhancers.guards, &context).await
+                {
                     Ok(()) => {
                         let interceptors = crate::enhancer::pipeline::interceptors_for::<Ws>(
-                            &all_interceptors,
+                            &enhancers.interceptors,
                             &context,
                         )
                         .await;
@@ -256,7 +234,7 @@ impl GatewayWrapper {
                     other => other,
                 };
                 match crate::enhancer::pipeline::claim::<Ws>(
-                    &all_error_handlers,
+                    &enhancers.error_handlers,
                     observed,
                     &context,
                 )
@@ -295,24 +273,12 @@ impl GatewayWrapper {
         .await
     }
 
-    /// Drive `WsError::to_message` with panic recovery — a panic in the
-    /// renderer would close the connection without ever framing an outbound
-    /// error message. Policy: log the panic and substitute a hardcoded text
-    /// frame.
+    /// Drive a renderer with the shared recovery, falling back to the canonical envelope.
     fn safe_render<F>(render: F) -> WsMessage
     where
         F: FnOnce() -> WsMessage,
     {
-        match crate::panic_recovery::catch_sync(
-            crate::errors::PipelineSegment::ResponseRendering,
-            render,
-        ) {
-            Ok(msg) => msg,
-            Err(panic_event) => {
-                tracing::error!(panic = %panic_event.message, "error renderer panicked; falling back to a bare text frame");
-                Self::fallback_internal_message()
-            }
-        }
+        crate::enhancer::pipeline::safe_render(render, Self::fallback_internal_message)
     }
 
     /// Hardcoded fallback frame when the regular renderer panics.
@@ -426,13 +392,8 @@ mod tests {
 
         GatewayWrapper::new(
             Arc::new(Box::new(TestGateway)),
-            vec![],
-            vec![],
-            vec![],
+            Resolved::default(),
             Arc::new(Metadata::new()),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
             HashMap::new(),
         )
     }

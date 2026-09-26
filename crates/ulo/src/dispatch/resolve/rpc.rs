@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use crate::dispatch::transport::Rpc;
 use crate::error::SetupResult;
-use crate::rpc::{RpcControllerSource, RpcControllerWrapper, RpcHandlerEnhancers};
+use crate::rpc::{RpcControllerSource, RpcControllerWrapper};
 
-use super::{Declared, resolve_handler, resolve_target};
+use super::{Declared, resolve};
 use crate::di::internal::Container;
 
 /// Resolves one RPC controller's enhancer tokens into a ready-to-serve
@@ -33,7 +33,7 @@ impl RpcControllerResolver {
         let container = self.container.read();
         let registry = &container.role_registry().rpc;
 
-        let controller = resolve_target::<Rpc>(
+        let resolved = resolve::<Rpc>(
             registry,
             &container.global_rpc,
             Declared {
@@ -41,37 +41,23 @@ impl RpcControllerResolver {
                 interceptors: declared.interceptors,
                 error_handlers: declared.error_handlers,
             },
+            declared.handlers.into_iter().map(|handler| {
+                (
+                    handler.pattern,
+                    Declared {
+                        guards: handler.guards,
+                        interceptors: handler.interceptors,
+                        error_handlers: handler.error_handlers,
+                    },
+                )
+            }),
         )?;
-
-        let mut handler_guards = HashMap::new();
-        let mut handler_interceptors = HashMap::new();
-        let mut handler_error_handlers = HashMap::new();
-        for handler in declared.handlers {
-            let RpcHandlerEnhancers { pattern, .. } = &handler;
-            let pattern = pattern.clone();
-            let set = resolve_handler::<Rpc>(
-                registry,
-                Declared {
-                    guards: handler.guards,
-                    interceptors: handler.interceptors,
-                    error_handlers: handler.error_handlers,
-                },
-            )?;
-            handler_guards.insert(pattern.clone(), set.guards);
-            handler_interceptors.insert(pattern.clone(), set.interceptors);
-            handler_error_handlers.insert(pattern, set.error_handlers);
-        }
 
         Ok(RpcControllerWrapper::new(
             source,
-            controller.guards,
-            controller.interceptors,
-            controller.error_handlers,
+            resolved,
             metadata,
             handler_metadata,
-            handler_guards,
-            handler_interceptors,
-            handler_error_handlers,
         ))
     }
 }

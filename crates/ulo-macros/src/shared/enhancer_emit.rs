@@ -36,7 +36,7 @@ pub enum ErrorHandlerKind {
 pub struct EnhancerSpec {
     /// `::ulo::spi::ProviderRole::HttpGuard` etc.
     pub role_variant: TokenStream,
-    /// `::ulo::__enhancer::HttpGuardEntry` etc.
+    /// `::ulo::__enhancer::GuardEntry::<::ulo::__enhancer::Http>` etc.
     pub entry_path: TokenStream,
     /// `::ulo::enhancer::Guard<::ulo::http::HttpContext>` etc.
     pub trait_path: TokenStream,
@@ -75,7 +75,7 @@ impl EnhancerKind {
         match self {
             EnhancerKind::HttpGuard => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::HttpGuard },
-                entry_path: quote! { ::ulo::__enhancer::HttpGuardEntry },
+                entry_path: quote! { ::ulo::__enhancer::GuardEntry::<::ulo::__enhancer::Http> },
                 trait_path: quote! { ::ulo::enhancer::Guard<::ulo::http::HttpContext> },
                 factory_trait: quote! { ::ulo::__enhancer::GuardFactory<::ulo::__enhancer::Http> },
                 factory_suffix: "HttpGuard",
@@ -84,7 +84,7 @@ impl EnhancerKind {
             },
             EnhancerKind::HttpInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::HttpInterceptor },
-                entry_path: quote! { ::ulo::__enhancer::HttpInterceptorEntry },
+                entry_path: quote! { ::ulo::__enhancer::InterceptorEntry::<::ulo::__enhancer::Http> },
                 trait_path: quote! { ::ulo::enhancer::Interceptor<::ulo::http::HttpContext, ::ulo::http::HttpHandlerResult> },
                 factory_trait: quote! { ::ulo::__enhancer::InterceptorFactory<::ulo::__enhancer::Http> },
                 factory_suffix: "HttpInterceptor",
@@ -93,7 +93,7 @@ impl EnhancerKind {
             },
             EnhancerKind::RpcGuard => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::RpcGuard },
-                entry_path: quote! { ::ulo::__enhancer::RpcGuardEntry },
+                entry_path: quote! { ::ulo::__enhancer::GuardEntry::<::ulo::__enhancer::Rpc> },
                 trait_path: quote! { ::ulo::enhancer::Guard<::ulo::rpc::RpcContext> },
                 factory_trait: quote! { ::ulo::__enhancer::GuardFactory<::ulo::__enhancer::Rpc> },
                 factory_suffix: "RpcGuard",
@@ -102,7 +102,7 @@ impl EnhancerKind {
             },
             EnhancerKind::RpcInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::RpcInterceptor },
-                entry_path: quote! { ::ulo::__enhancer::RpcInterceptorEntry },
+                entry_path: quote! { ::ulo::__enhancer::InterceptorEntry::<::ulo::__enhancer::Rpc> },
                 trait_path: quote! { ::ulo::enhancer::Interceptor<::ulo::rpc::RpcContext, ::ulo::rpc::RpcHandlerResult> },
                 factory_trait: quote! { ::ulo::__enhancer::InterceptorFactory<::ulo::__enhancer::Rpc> },
                 factory_suffix: "RpcInterceptor",
@@ -111,7 +111,7 @@ impl EnhancerKind {
             },
             EnhancerKind::WsGuard => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::WsGuard },
-                entry_path: quote! { ::ulo::__enhancer::WsGuardEntry },
+                entry_path: quote! { ::ulo::__enhancer::GuardEntry::<::ulo::__enhancer::Ws> },
                 trait_path: quote! { ::ulo::enhancer::Guard<::ulo::ws::WsContext> },
                 factory_trait: quote! { ::ulo::__enhancer::GuardFactory<::ulo::__enhancer::Ws> },
                 factory_suffix: "WsGuard",
@@ -120,7 +120,7 @@ impl EnhancerKind {
             },
             EnhancerKind::WsInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::WsInterceptor },
-                entry_path: quote! { ::ulo::__enhancer::WsInterceptorEntry },
+                entry_path: quote! { ::ulo::__enhancer::InterceptorEntry::<::ulo::__enhancer::Ws> },
                 trait_path: quote! { ::ulo::enhancer::Interceptor<::ulo::ws::WsContext, ::ulo::ws::WsHandlerResult> },
                 factory_trait: quote! { ::ulo::__enhancer::InterceptorFactory<::ulo::__enhancer::Ws> },
                 factory_suffix: "WsInterceptor",
@@ -129,7 +129,7 @@ impl EnhancerKind {
             },
             EnhancerKind::GrpcGuard => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::GrpcGuard },
-                entry_path: quote! { ::ulo::__enhancer::GrpcGuardEntry },
+                entry_path: quote! { ::ulo::__enhancer::GuardEntry::<::ulo::__enhancer::Grpc> },
                 trait_path: quote! { ::ulo::enhancer::Guard<::ulo::grpc::GrpcContext> },
                 factory_trait: quote! { ::ulo::__enhancer::GuardFactory<::ulo::__enhancer::Grpc> },
                 factory_suffix: "GrpcGuard",
@@ -138,7 +138,7 @@ impl EnhancerKind {
             },
             EnhancerKind::GrpcInterceptor => EnhancerSpec {
                 role_variant: quote! { ::ulo::spi::ProviderRole::GrpcInterceptor },
-                entry_path: quote! { ::ulo::__enhancer::GrpcInterceptorEntry },
+                entry_path: quote! { ::ulo::__enhancer::InterceptorEntry::<::ulo::__enhancer::Grpc> },
                 trait_path: quote! { ::ulo::enhancer::Interceptor<::ulo::grpc::GrpcContext, ::ulo::grpc::GrpcHandlerResult> },
                 factory_trait: quote! { ::ulo::__enhancer::InterceptorFactory<::ulo::__enhancer::Grpc> },
                 factory_suffix: "GrpcInterceptor",

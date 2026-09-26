@@ -6,20 +6,14 @@
 //! handler as a delegate, and maps whatever comes back to tonic's types.
 
 use crate::dispatch::transport::Grpc;
-use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 
-use async_trait::async_trait;
-
 use crate::enhancer::pipeline::GuardFailure;
-use crate::enhancer::{Interceptor, InterceptorNext};
-use crate::errors::PipelineSegment;
 use crate::grpc::GrpcContext;
 use crate::grpc::GrpcHandlerResult;
 use crate::grpc::GrpcStatus;
 use crate::grpc::ResolvedGrpcEnhancers;
-use crate::panic_recovery::catch_async;
 
 /// Run guards, then the interceptor chain, then the error chain over whatever failed.
 ///
@@ -48,13 +42,17 @@ where
     let abandonment = Abandonment::arm(crate::context::ExecutionContext::cancellation(ctx).clone());
     let answer = match run_grpc_guards(ctx, enhancers, method).await {
         Ok(()) => {
-            let mut all_interceptors = enhancers.interceptors.clone();
-            if let Some(per_method) = enhancers.handler_interceptors.get(method) {
-                all_interceptors.extend_from_slice(per_method);
-            }
-            let interceptors =
-                crate::enhancer::pipeline::interceptors_for::<Grpc>(&all_interceptors, ctx).await;
-            execute_with_interceptors(ctx, &interceptors, delegate).await
+            let interceptors = crate::enhancer::pipeline::interceptors_for::<Grpc>(
+                &enhancers.0.for_key(method).interceptors,
+                ctx,
+            )
+            .await;
+            crate::enhancer::pipeline::through_interceptors::<Grpc>(
+                ctx,
+                &interceptors,
+                crate::enhancer::pipeline::closure_leaf::<Grpc, _, _>(delegate),
+            )
+            .await
         }
         Err(refused) => Err(refused),
     };
@@ -68,16 +66,13 @@ where
     // what the handler raised and `#[catch(GuardRejection)]` the refusal, rather than the status
     // each of them flattened into. Bound to a local: the borrow has to end before the `Err` below
     // takes the status back.
-    let mut handlers = enhancers.error_handlers.clone();
-    if let Some(per_method) = enhancers.handler_error_handlers.get(method) {
-        handlers.extend_from_slice(per_method);
-    }
+    let handlers = &enhancers.0.for_key(method).error_handlers;
     let claimed = {
         let observed: &(dyn std::error::Error + Send + Sync + 'static) = match status.source() {
             Some(cause) => cause,
             None => &status,
         };
-        crate::enhancer::pipeline::claim::<Grpc>(&handlers, observed, ctx).await
+        crate::enhancer::pipeline::claim::<Grpc>(handlers, observed, ctx).await
     };
     // A claim answers what an interceptor answers: `Ok` recovers the call with a reply of its own,
     // `Err` reshapes the failure. Unclaimed, the status the call failed with is the answer.
@@ -122,14 +117,11 @@ async fn run_grpc_guards(
     enhancers: &ResolvedGrpcEnhancers,
     method: &str,
 ) -> Result<(), GrpcStatus> {
-    let mut all_guards = enhancers.guards.clone();
-    if let Some(per_method) = enhancers.handler_guards.get(method) {
-        all_guards.extend_from_slice(per_method);
-    }
-
     // One guard at a time: a `Factory` entry is an execution-scoped provider's own resolution,
     // and a guard that refuses means the ones after it are never built.
-    match crate::enhancer::pipeline::run_guards::<Grpc>(&all_guards, ctx).await {
+    match crate::enhancer::pipeline::run_guards::<Grpc>(&enhancers.0.for_key(method).guards, ctx)
+        .await
+    {
         Ok(()) => Ok(()),
         // A panicking guard is a bug, not a verdict: it carries `PanicRecovered` rather than a
         // rejection, so an unclaimed one renders `Internal` rather than telling the caller its
@@ -147,93 +139,6 @@ async fn run_grpc_guards(
             rejection.guard_index
         ))
         .caused_by(rejection)),
-    }
-}
-
-/// Linked chain of interceptors wrapping a final delegate, and this transport's own: the other
-/// three share [`through_interceptors`](crate::enhancer::pipeline), which holds what the chain
-/// wraps as a `Leaf` rather than as a closure the reply type escapes through. Each `Box<Self>` move
-/// on `InterceptorNext::run` enforces the once-only invocation contract.
-async fn execute_with_interceptors<D, Fut>(
-    ctx: &GrpcContext,
-    interceptors: &[Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>],
-    delegate: D,
-) -> GrpcHandlerResult
-where
-    D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
-{
-    if interceptors.is_empty() {
-        return delegate().await;
-    }
-
-    let next = build_next(&interceptors[1..], delegate);
-    match catch_async(
-        PipelineSegment::Interceptor,
-        interceptors[0].intercept(ctx, next),
-    )
-    .await
-    {
-        Ok(answer) => answer,
-        Err(event) => Err(GrpcStatus::from(event)),
-    }
-}
-
-fn build_next<D, Fut>(
-    rest: &[Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>],
-    delegate: D,
-) -> Box<dyn InterceptorNext<GrpcContext, GrpcHandlerResult>>
-where
-    D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
-{
-    if rest.is_empty() {
-        Box::new(LeafNext { delegate })
-    } else {
-        Box::new(LinkNext {
-            head: rest[0].clone(),
-            rest: rest[1..].to_vec(),
-            delegate,
-        })
-    }
-}
-
-/// Innermost link: invokes the user delegate.
-struct LeafNext<D> {
-    delegate: D,
-}
-
-#[async_trait]
-impl<D, Fut> InterceptorNext<GrpcContext, GrpcHandlerResult> for LeafNext<D>
-where
-    D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
-{
-    async fn run(self: Box<Self>, _ctx: &GrpcContext) -> GrpcHandlerResult {
-        (self.delegate)().await
-    }
-}
-
-/// Outer link: hands off to the next interceptor in line.
-struct LinkNext<D> {
-    head: Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>,
-    rest: Vec<Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>>,
-    delegate: D,
-}
-
-#[async_trait]
-impl<D, Fut> InterceptorNext<GrpcContext, GrpcHandlerResult> for LinkNext<D>
-where
-    D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
-{
-    async fn run(self: Box<Self>, ctx: &GrpcContext) -> GrpcHandlerResult {
-        let this = *self;
-        let next = build_next(&this.rest, this.delegate);
-        match catch_async(PipelineSegment::Interceptor, this.head.intercept(ctx, next)).await {
-            Ok(answer) => answer,
-            Err(event) => Err(GrpcStatus::from(event)),
-        }
     }
 }
 
@@ -422,14 +327,7 @@ where
 /// `add_service` on the adapter), and by tests.
 #[doc(hidden)]
 pub fn empty_enhancers() -> Arc<ResolvedGrpcEnhancers> {
-    Arc::new(ResolvedGrpcEnhancers {
-        guards: Vec::new(),
-        handler_guards: HashMap::new(),
-        interceptors: Vec::new(),
-        handler_interceptors: HashMap::new(),
-        error_handlers: Vec::new(),
-        handler_error_handlers: HashMap::new(),
-    })
+    Arc::new(ResolvedGrpcEnhancers::default())
 }
 /// gRPC's [`ScopedStream`](crate::dispatch::ScopedStream), named for the generated code that
 /// declares it as a method's associated stream type.

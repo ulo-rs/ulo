@@ -1017,7 +1017,9 @@ fn make_ws_callbacks(
 /// would otherwise never see the one call an operator most wants to hear about.
 fn make_rpc_callbacks(
     wrappers: Vec<Arc<RpcControllerWrapper>>,
-    global_error_handlers: Vec<crate::spi::RpcErrorHandlerArc>,
+    global_error_handlers: Vec<
+        crate::dispatch::transport::ErrorHandlerArc<crate::dispatch::transport::Rpc>,
+    >,
 ) -> RpcMessageCallbacks {
     let mut pattern_map: HashMap<String, Arc<RpcControllerWrapper>> = HashMap::new();
     for wrapper in &wrappers {

@@ -19,6 +19,8 @@ pub(crate) use self::grpc::GrpcServiceResolver;
 pub(crate) use self::rpc::RpcControllerResolver;
 pub(crate) use self::ws::GatewayResolver;
 
+use std::collections::HashMap;
+
 use crate::dispatch::transport::{
     EnhancerRegistry, EnhancerSet, GuardEntry, InterceptorEntry, Transport,
 };
@@ -46,9 +48,71 @@ pub(crate) fn resolve_target<T: Transport>(
     Ok(set)
 }
 
+/// What a dispatch target serves with, each key's set already merged.
+///
+/// `target` is what every key runs: the transport's globals, then the target's own declarations.
+/// A key — an RPC pattern, a WebSocket event, a gRPC handler's Rust method name — whose handler
+/// declares entries of its own is in `per_key`, holding the target's set with its own entries after
+/// it; a key absent there declared nothing and runs `target`. Dispatch borrows the key's set;
+/// nothing is merged per call.
+pub(crate) struct Resolved<T: Transport> {
+    target: EnhancerSet<T>,
+    per_key: HashMap<String, EnhancerSet<T>>,
+}
+
+impl<T: Transport> Resolved<T> {
+    /// The globals, then the target's own declarations. A key with nothing of its own runs this,
+    /// and so does a WebSocket connect.
+    pub(crate) fn target(&self) -> &EnhancerSet<T> {
+        &self.target
+    }
+
+    /// The set `key` runs.
+    pub(crate) fn for_key(&self, key: &str) -> &EnhancerSet<T> {
+        self.per_key.get(key).unwrap_or(&self.target)
+    }
+}
+
+// Manual, like `Default` below: a derive would bound the marker `T`.
+impl<T: Transport> Clone for Resolved<T> {
+    fn clone(&self) -> Self {
+        Self {
+            target: self.target.clone(),
+            per_key: self.per_key.clone(),
+        }
+    }
+}
+
+impl<T: Transport> Default for Resolved<T> {
+    fn default() -> Self {
+        Self {
+            target: EnhancerSet::default(),
+            per_key: HashMap::new(),
+        }
+    }
+}
+
+/// Resolve a dispatch target's declarations and each of its handlers', with the transport's
+/// globals ahead of both.
+pub(crate) fn resolve<T: Transport>(
+    registry: &EnhancerRegistry<T>,
+    globals: &EnhancerSet<T>,
+    target: Declared<T>,
+    handlers: impl IntoIterator<Item = (String, Declared<T>)>,
+) -> SetupResult<Resolved<T>> {
+    let target = resolve_target(registry, globals, target)?;
+    let mut per_key = HashMap::new();
+    for (key, declared) in handlers {
+        let mut merged = target.clone();
+        merged.extend_from(&resolve_handler(registry, declared)?);
+        per_key.insert(key, merged);
+    }
+    Ok(Resolved { target, per_key })
+}
+
 /// Resolve what one handler declares on top of its target's. No globals: they are already in the
 /// target-level set this stacks on.
-pub(crate) fn resolve_handler<T: Transport>(
+fn resolve_handler<T: Transport>(
     registry: &EnhancerRegistry<T>,
     declared: Declared<T>,
 ) -> SetupResult<EnhancerSet<T>> {

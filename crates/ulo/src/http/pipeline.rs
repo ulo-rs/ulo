@@ -1,4 +1,6 @@
-use crate::dispatch::transport::{EnhancerSet, Http};
+use crate::dispatch::transport::{
+    EnhancerSet, ErrorHandlerArc, GuardEntry, Http, InterceptorEntry,
+};
 use std::sync::Arc;
 
 use crate::{
@@ -12,7 +14,6 @@ use crate::{
     http::Route,
     http::middleware::{Middleware, MiddlewareChain},
     http::{HttpContext, HttpError, HttpMethod, HttpRequest, HttpResponse},
-    spi::{HttpErrorHandlerArc, HttpGuardEntry, HttpInterceptorEntry},
 };
 
 /// The innermost step of the chain: the matched route's own handler.
@@ -37,10 +38,10 @@ impl Leaf<Http> for RouteLeaf {
 
 pub(crate) struct RoutePipeline {
     instance: Arc<dyn Route>,
-    guards: Vec<HttpGuardEntry>,
-    interceptors: Vec<HttpInterceptorEntry>,
+    guards: Vec<GuardEntry<Http>>,
+    interceptors: Vec<InterceptorEntry<Http>>,
     middleware_chain: MiddlewareChain,
-    error_handlers: Vec<HttpErrorHandlerArc>,
+    error_handlers: Vec<ErrorHandlerArc<Http>>,
     metadata: Arc<Metadata>,
 }
 
@@ -166,9 +167,9 @@ impl RoutePipeline {
     async fn execute_controller_logic(
         req: HttpRequest,
         instance: Arc<dyn Route>,
-        guards: Vec<HttpGuardEntry>,
-        interceptors: Vec<HttpInterceptorEntry>,
-        error_handlers: Vec<HttpErrorHandlerArc>,
+        guards: Vec<GuardEntry<Http>>,
+        interceptors: Vec<InterceptorEntry<Http>>,
+        error_handlers: Vec<ErrorHandlerArc<Http>>,
         metadata: Arc<Metadata>,
     ) -> HttpResponse {
         // The context comes first now: it owns the execution's cache, so a
@@ -261,7 +262,7 @@ impl RoutePipeline {
     /// rejection with `#[catch(GuardRejection)]`.
     async fn handle_framework_event<E>(
         event: E,
-        error_handlers: &[HttpErrorHandlerArc],
+        error_handlers: &[ErrorHandlerArc<Http>],
         ctx: &HttpContext,
     ) -> HttpResponse
     where
@@ -274,24 +275,12 @@ impl RoutePipeline {
         }
     }
 
-    /// Drive the transport's error renderer with panic recovery. A panic
-    /// inside `HttpError::to_response` (or the free-function
-    /// `render_error`) would otherwise tear the dispatcher down — the
-    /// renderer is the last thing standing between the framework and the
-    /// wire, so there's nothing left to remap if it fails. Policy: log the
-    /// panic and substitute a minimal hardcoded 500 envelope so the client
-    /// still gets a structured reply.
+    /// Drive a renderer with the shared recovery, falling back to a literal 500.
     fn safe_render<F>(render: F) -> HttpResponse
     where
         F: FnOnce() -> HttpResponse,
     {
-        match crate::panic_recovery::catch_sync(PipelineSegment::ResponseRendering, render) {
-            Ok(resp) => resp,
-            Err(panic_event) => {
-                tracing::error!(panic = %panic_event.message, "error renderer panicked; falling back to a bare 500");
-                Self::fallback_500_response()
-            }
-        }
+        crate::enhancer::pipeline::safe_render(render, Self::fallback_500_response)
     }
 
     /// Minimal hardcoded 500 used when the regular renderer panics.
