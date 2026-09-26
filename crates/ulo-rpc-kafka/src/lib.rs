@@ -1,10 +1,11 @@
 // Tests: `tests/conformance.rs` implements `ulo_rpc_conformance::Broker`
-// and stamps out the shared RPC case set — the same six cases every
-// transport answers. It needs a live Kafka from testcontainers, so it
-// is gated behind the `integration` feature; without it the file compiles
-// to nothing and cargo reports a clean run of none:
+// and stamps out the shared RPC case set. It needs a live Kafka from
+// testcontainers, so it is gated behind the `integration` feature; without
+// it the file compiles to nothing and cargo reports a clean run of none. CI
+// does not run it: minutes for one transport where the other brokers take
+// seconds. It runs by hand:
 //
-//     cargo test -p ulo-rpc-kafka --features integration
+//     make conformance-kafka
 //
 // A case belongs in `ulo-rpc-conformance` when every transport owes it,
 // and here only when it is specific to this one.

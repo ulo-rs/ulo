@@ -13,7 +13,8 @@ use quote::quote;
 use syn::{Attribute, ImplItem, ItemImpl, LitStr, Result, parse2};
 
 use crate::enhancer::enhancer::{
-    create_enhancer_infos, enhancer_vecs, get_enhancers_attr, has_enhancer_attribute,
+    create_enhancer_infos, declares_anything, enhancer_entries, get_enhancers_attr,
+    has_enhancer_attribute,
 };
 use crate::shared::attr_is;
 use crate::shared::set_metadata::{get_metadata_exprs, merged_metadata_exprs, metadata_ctor};
@@ -199,14 +200,12 @@ fn build_enhancers_fn(
     impl_block: &ItemImpl,
     message_handlers: &[(String, syn::ImplItemFn)],
 ) -> Result<TokenStream> {
+    let transport = quote! { ::ulo::dispatch::Ws };
     let gateway_enhancers_attr = get_enhancers_attr(&impl_block.attrs)?;
     let enhancer_infos = create_enhancer_infos(gateway_enhancers_attr, Vec::new())?;
-
-    let (guard_tokens, guard_instances) = enhancer_vecs(&enhancer_infos, "guards");
-    let (interceptor_tokens, interceptor_instances) =
-        enhancer_vecs(&enhancer_infos, "interceptors");
-    let (error_handler_tokens, error_handler_instances) =
-        enhancer_vecs(&enhancer_infos, "error_handlers");
+    let guards = enhancer_entries(&enhancer_infos, "guards", &transport);
+    let interceptors = enhancer_entries(&enhancer_infos, "interceptors", &transport);
+    let error_handlers = enhancer_entries(&enhancer_infos, "error_handlers", &transport);
 
     let mut handler_entries: Vec<TokenStream> = Vec::new();
     for (event, method) in message_handlers {
@@ -215,27 +214,18 @@ fn build_enhancers_fn(
             continue;
         }
         let handler_infos = create_enhancer_infos(method_enhancers_attr, Vec::new())?;
-        let (hg, hgi) = enhancer_vecs(&handler_infos, "guards");
-        let (hi, hii) = enhancer_vecs(&handler_infos, "interceptors");
-        let (he, hei) = enhancer_vecs(&handler_infos, "error_handlers");
-        if hg.is_empty()
-            && hi.is_empty()
-            && he.is_empty()
-            && hgi.is_empty()
-            && hii.is_empty()
-            && hei.is_empty()
-        {
+        if !declares_anything(&handler_infos) {
             continue;
         }
+        let hg = enhancer_entries(&handler_infos, "guards", &transport);
+        let hi = enhancer_entries(&handler_infos, "interceptors", &transport);
+        let he = enhancer_entries(&handler_infos, "error_handlers", &transport);
         handler_entries.push(quote! {
             ::ulo::ws::GatewayHandlerEnhancers {
                 event: #event.to_string(),
-                guard_tokens: vec![#(#hg),*],
-                interceptor_tokens: vec![#(#hi),*],
-                error_handler_tokens: vec![#(#he),*],
-                guards: vec![#(::std::sync::Arc::new(#hgi)),*],
-                interceptors: vec![#(::std::sync::Arc::new(#hii)),*],
-                error_handlers: vec![#(::std::sync::Arc::new(#hei)),*],
+                guards: vec![#(#hg),*],
+                interceptors: vec![#(#hi),*],
+                error_handlers: vec![#(#he),*],
             }
         });
     }
@@ -245,12 +235,9 @@ fn build_enhancers_fn(
         #[allow(non_snake_case, clippy::all)]
         fn __ulo_ws_enhancers(&self) -> ::ulo::ws::GatewayEnhancers {
             ::ulo::ws::GatewayEnhancers {
-                guard_tokens: vec![#(#guard_tokens),*],
-                interceptor_tokens: vec![#(#interceptor_tokens),*],
-                error_handler_tokens: vec![#(#error_handler_tokens),*],
-                guards: vec![#(::std::sync::Arc::new(#guard_instances)),*],
-                interceptors: vec![#(::std::sync::Arc::new(#interceptor_instances)),*],
-                error_handlers: vec![#(::std::sync::Arc::new(#error_handler_instances)),*],
+                guards: vec![#(#guards),*],
+                interceptors: vec![#(#interceptors),*],
+                error_handlers: vec![#(#error_handlers),*],
                 handlers: vec![#(#handler_entries),*],
             }
         }

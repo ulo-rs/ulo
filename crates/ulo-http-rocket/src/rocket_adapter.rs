@@ -397,6 +397,14 @@ async fn run_ws_connection(
 
     while let Some(result) = read.next().await {
         match result {
+            // tungstenite composes the reply to a peer's Close when it reads the frame and
+            // writes it at the head of its next read. Polling once more is what puts that
+            // reply on the wire; leaving the loop here keeps it queued, and the peer sees
+            // the connection drop instead (RFC 6455 §5.5.1).
+            Ok(rocket_ws::Message::Close(_)) => {
+                let _ = read.next().await;
+                break;
+            }
             Ok(rocket_msg) => match rocket_to_ws_message(rocket_msg) {
                 Ok(ws_msg) => match callbacks.message(client_id.clone(), ws_msg).await {
                     MessageCallbackResult::Continue => {}

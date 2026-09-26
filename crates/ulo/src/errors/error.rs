@@ -120,6 +120,12 @@ pub trait Error: std::error::Error + Send + Sync + 'static {
     /// Structured payload merged into the response envelope under
     /// `details`. Use for field-level validation results, retry hints,
     /// trace ids, or anything the client needs beyond the message.
+    ///
+    /// Rendered on HTTP, RPC and WebSocket. On gRPC it travels in
+    /// `grpc-status-details-bin`, the trailer the specification names for
+    /// detail, as a `google.rpc.Status` carrying it as one `Any`: a JSON object
+    /// as a `google.protobuf.Struct`, any other value as a
+    /// `google.protobuf.Value`.
     fn details(&self) -> Option<Value> {
         None
     }

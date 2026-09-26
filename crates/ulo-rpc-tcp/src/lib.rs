@@ -1,7 +1,10 @@
-// Tests: this crate has no `tests/` of its own. Nothing it does is
-// observable without an application dispatching through it, so its
-// behaviour is proved in `integration-tests`:
-// `rpc_tcp.rs` and `rpc_tcp_stream.rs`.
+// Tests: `tests/conformance.rs` stamps the shared RPC conformance suite
+// against this adapter, through a proxy the test owns so a disruption can be
+// made; it needs no broker and runs under a plain `cargo test -p ulo-rpc-tcp`.
+// A case belongs in `ulo-rpc-conformance` when every transport owes it. What
+// is this transport's alone — a panicking handler on the wire, drain,
+// backpressure, the stream grammar frame by frame, the binary refusal — is
+// proved in `integration-tests`.
 
 mod tcp_adapter;
 mod tcp_client_transport;

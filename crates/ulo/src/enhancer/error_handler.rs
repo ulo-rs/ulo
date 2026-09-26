@@ -21,7 +21,8 @@ pub type ChainError<'a> = &'a (dyn Error + Send + Sync + 'static);
 /// it reads `kind()`, `message()` and `details()` off [`Error`](crate::errors::Error), and this
 /// trait is handed the `std::error::Error` supertrait, which those do not reach. A handler that
 /// catches the transport's own error type holds the renderer: `HttpError::to_response`,
-/// `RpcError::to_data` and `WsError::to_message` each build the same envelope.
+/// `RpcError::to_data` and `WsError::to_message` each build the same envelope, `to_message`
+/// answering a `WsError::Refused` with its Close instead.
 #[async_trait]
 pub trait ErrorHandler<C: ?Sized + ExecutionContext, R>: Send + Sync {
     async fn handle_error(&self, error: ChainError<'_>, ctx: &C) -> Option<R>;

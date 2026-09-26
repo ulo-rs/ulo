@@ -58,7 +58,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Hermetic suites only — everything here runs against localhost with no
       # external services. Broker and DB crates keep their service-dependent
-      # tests behind feature gates and are compile-checked in the check job.
+      # tests behind feature gates and are compile-checked in the check job;
+      # the four broker conformance suites that take seconds run in the
+      # `conformance` job on push to master.
       - run: cargo test -p ulo --lib --locked
       - run: cargo test -p integration-tests --locked
       # The build-script companion: pure functions over tonic's generated text.
@@ -94,6 +96,24 @@ jobs:
       # docs job renders without running them. Only examples not marked `ignore`
       # are covered.
       - run: cargo test --workspace --all-features --doc --locked
+
+  conformance:
+    name: rpc conformance (brokers)
+    # On push to master, not on pull requests: the four suites start their
+    # brokers under Docker, and their harness time is about a minute together,
+    # with the compile of four `integration` test targets and four image pulls
+    # on top. Kafka is not here: its suite takes minutes where these take
+    # seconds. `make conformance-kafka` runs it and carries the figures.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p ulo-rpc-nats --features integration --test conformance --locked
+      - run: cargo test -p ulo-rpc-redis --features integration --test conformance --locked
+      - run: cargo test -p ulo-rpc-mqtt --features integration --test conformance --locked
+      - run: cargo test -p ulo-rpc-rabbitmq --features integration --test conformance --locked
 
   msrv-matrix:
     name: msrv matrix

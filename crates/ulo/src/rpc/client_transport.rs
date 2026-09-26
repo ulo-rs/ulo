@@ -21,22 +21,27 @@ use crate::rpc::{RpcClientError, RpcData, RpcReplyStream};
 /// [`emit`]: RpcClientTransport::emit
 #[async_trait]
 pub trait RpcClientTransport: Send + Sync + 'static {
-    /// Establish the connection to the remote service.
+    /// Open the connection ahead of the first call.
     ///
-    /// Called automatically by [`RpcClient`](crate::rpc::RpcClient) at
-    /// application bootstrap so that connection failures surface at startup
-    /// rather than on the first request. Implementations that use lazy
-    /// connections (e.g. reconnect on demand) may leave this as the default
-    /// no-op.
+    /// [`RpcClient::connect`](crate::rpc::RpcClient::connect) forwards to it, and
+    /// the framework calls that at application bootstrap for a client the
+    /// container holds as its own [`Provider`](crate::spi::Provider); a failure
+    /// this reports then surfaces at startup rather than on the first call. For
+    /// any other client nothing calls it until the caller does. The default does
+    /// nothing, and a transport that opens its connection on demand overrides
+    /// it to open that connection here. Whether an unreachable peer is reported
+    /// here, on the first call, or not at all is that transport's.
     async fn connect(&self) -> Result<(), RpcClientError> {
         Ok(())
     }
 
-    /// Flush pending messages and close the connection.
+    /// The transport's shutdown step.
     ///
-    /// Called by [`RpcClient::close`] when the caller wants an explicit graceful
-    /// shutdown. The default is a no-op; transports that buffer outbound data
-    /// (e.g. NATS flush) should override this.
+    /// Called by [`RpcClient::close`], which the framework calls at application
+    /// shutdown for a client the container holds as its own
+    /// [`Provider`](crate::spi::Provider). The default does nothing. An override
+    /// is where a transport flushes what it buffers; one that buffers and keeps
+    /// the default loses what is still queued when the process exits.
     ///
     /// [`RpcClient::close`]: crate::rpc::RpcClient::close
     async fn close(&self) -> Result<(), RpcClientError> {

@@ -178,8 +178,8 @@ the `integration` feature:
 cargo test -p ulo-ws-redis --features integration
 ```
 
-Without the feature the file compiles to nothing and cargo reports `0 passed; ok` — a clean run
-that proved nothing.
+Without the feature the file compiles to nothing, and a plain `cargo test -p ulo-ws-redis` runs
+only the wire-format pin in `src/message.rs`.
 
 On Rancher Desktop the Docker socket is not at the default path, so testcontainers has to be told
 where it is:

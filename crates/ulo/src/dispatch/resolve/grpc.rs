@@ -1,12 +1,11 @@
 use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::dispatch::transport::Grpc;
 use crate::error::SetupResult;
 use crate::grpc::{GrpcServiceSource, ResolvedGrpcEnhancers};
 
-use super::{Declared, resolve_handler, resolve_target};
+use super::{Declared, resolve};
 use crate::di::internal::Container;
 
 /// Resolves one gRPC service's enhancer bundle from the role registry by token.
@@ -31,47 +30,26 @@ impl GrpcServiceResolver {
         let container = self.container.read();
         let registry = &container.role_registry().grpc;
 
-        let service = resolve_target::<Grpc>(
+        let resolved = resolve::<Grpc>(
             registry,
             &container.global_grpc,
             Declared {
-                guard_tokens: declared.guard_tokens,
                 guards: declared.guards,
-                interceptor_tokens: declared.interceptor_tokens,
                 interceptors: declared.interceptors,
-                error_handler_tokens: declared.error_handler_tokens,
                 error_handlers: declared.error_handlers,
             },
+            declared.handlers.into_iter().map(|handler| {
+                (
+                    handler.method,
+                    Declared {
+                        guards: handler.guards,
+                        interceptors: handler.interceptors,
+                        error_handlers: handler.error_handlers,
+                    },
+                )
+            }),
         )?;
 
-        let mut handler_guards = HashMap::new();
-        let mut handler_interceptors = HashMap::new();
-        let mut handler_error_handlers = HashMap::new();
-        for handler in declared.handlers {
-            let method = handler.method.clone();
-            let set = resolve_handler::<Grpc>(
-                registry,
-                Declared {
-                    guard_tokens: handler.guard_tokens,
-                    guards: handler.guards,
-                    interceptor_tokens: handler.interceptor_tokens,
-                    interceptors: handler.interceptors,
-                    error_handler_tokens: handler.error_handler_tokens,
-                    error_handlers: handler.error_handlers,
-                },
-            )?;
-            handler_guards.insert(method.clone(), set.guards);
-            handler_interceptors.insert(method.clone(), set.interceptors);
-            handler_error_handlers.insert(method, set.error_handlers);
-        }
-
-        Ok(ResolvedGrpcEnhancers {
-            guards: service.guards,
-            handler_guards,
-            interceptors: service.interceptors,
-            handler_interceptors,
-            error_handlers: service.error_handlers,
-            handler_error_handlers,
-        })
+        Ok(ResolvedGrpcEnhancers(resolved))
     }
 }

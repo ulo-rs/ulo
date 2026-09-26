@@ -484,6 +484,14 @@ async fn run_ws_connection(
     let mut read = read;
     while let Some(result) = read.next().await {
         match result {
+            // tungstenite composes the reply to a peer's Close when it reads the frame and
+            // writes it at the head of its next read. Polling once more is what puts that
+            // reply on the wire; leaving the loop here keeps it queued, and the peer sees
+            // the connection drop instead (RFC 6455 §5.5.1).
+            Ok(salvo_msg) if salvo_msg.is_close() => {
+                let _ = read.next().await;
+                break;
+            }
             Ok(salvo_msg) => match salvo_to_ws_message(salvo_msg) {
                 Ok(ws_msg) => match callbacks.message(client_id.clone(), ws_msg).await {
                     MessageCallbackResult::Continue => {}
@@ -505,7 +513,6 @@ async fn run_ws_connection(
                         stream_tasks_inner.lock().unwrap().push(handle);
                     }
                 },
-                // Close frames return ConnectionClosed — log at debug, not warn.
                 Err(e) => {
                     tracing::debug!(client_id = %client_id, error = %e, "ending read loop");
                     break;

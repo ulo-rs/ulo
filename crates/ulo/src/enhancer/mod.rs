@@ -7,12 +7,20 @@
 //! Each answers by returning. A guard answers `bool`, an interceptor answers the transport's
 //! response type and short-circuits by not calling `next`, and an error handler answers
 //! `Option<R>`, claiming the error or passing it along.
+//!
+//! How a declaration names one — a DI token, a value built once, or a constructor run per
+//! execution — is [`GuardDeclaration`] and its two siblings.
 
+mod declaration;
 mod error_handler;
 mod guard;
 mod interceptor;
 pub(crate) mod pipeline;
 
+pub use declaration::{
+    ErrorHandlerDeclaration, GuardConstructor, GuardDeclaration, InterceptorConstructor,
+    InterceptorDeclaration,
+};
 pub use error_handler::{ChainError, ErrorHandler};
 pub use guard::Guard;
 pub use interceptor::{Interceptor, InterceptorNext};

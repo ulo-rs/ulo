@@ -542,11 +542,8 @@ impl InstanceLoader {
             &container.role_registry().http,
             &container.global_http,
             crate::dispatch::resolve::Declared {
-                guard_tokens: declared.guard_tokens,
                 guards: declared.guards,
-                interceptor_tokens: declared.interceptor_tokens,
                 interceptors: declared.interceptors,
-                error_handler_tokens: declared.error_handler_tokens,
                 error_handlers: declared.error_handlers,
             },
         )

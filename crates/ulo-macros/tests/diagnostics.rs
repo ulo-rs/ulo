@@ -81,6 +81,10 @@ const DOCUMENTED: &[(&str, &str)] = &[
         "scope_request_renamed",
         "scope = \"request\" is now scope = \"execution\"",
     ),
+    (
+        "error_handler_takes_no_closure",
+        "an error handler is built once and shared, so the closure form has nothing to build per execution",
+    ),
 ];
 
 #[test]

@@ -10,22 +10,45 @@ use std::sync::Arc;
 use crate::dispatch::transport::{
     Answer, ErrorHandlerArc, GuardEntry, InterceptorEntry, Transport,
 };
-use crate::enhancer::{Guard, Interceptor};
-use crate::errors::PipelineSegment;
+use crate::enhancer::Interceptor;
+use crate::errors::{GuardRejection, PanicRecovered, PipelineSegment};
 
-/// The guards this call runs, in declaration order.
-pub(crate) async fn guards_for<T: Transport>(
+/// Why [`run_guards`] stopped.
+pub(crate) enum GuardFailure {
+    /// A guard answered `false`.
+    Rejected(GuardRejection),
+    /// A guard panicked; `index` is its position in the chain.
+    Panicked { index: usize, event: PanicRecovered },
+}
+
+/// Build each guard and ask it, one at a time, stopping at the first refusal.
+///
+/// An entry on the `Factory` arm is an execution-scoped provider's own resolution, with its
+/// dependencies constructed with it, so a guard is built only once every guard before it has
+/// admitted the call. Nothing below the guards — no interceptor — is built until this returns
+/// `Ok`; keeping that is the caller's job.
+///
+/// A panic in `can_activate` is caught here rather than tearing the call down, and leaves as
+/// `Panicked` so the chain above is offered `PanicRecovered` where a refusal gives it
+/// `GuardRejection`.
+pub(crate) async fn run_guards<T: Transport>(
     entries: &[GuardEntry<T>],
     ctx: &T::Context,
-) -> Vec<Arc<dyn Guard<T::Context>>> {
-    let mut out = Vec::with_capacity(entries.len());
-    for entry in entries {
-        out.push(match entry {
+) -> Result<(), GuardFailure> {
+    for (index, entry) in entries.iter().enumerate() {
+        let guard = match entry {
             GuardEntry::Ready(guard) => guard.clone(),
             GuardEntry::Factory(factory) => factory.create(ctx).await,
-        });
+        };
+        match crate::panic_recovery::catch_async(PipelineSegment::Guard, guard.can_activate(ctx))
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return Err(GuardFailure::Rejected(GuardRejection::new(index))),
+            Err(event) => return Err(GuardFailure::Panicked { index, event }),
+        }
     }
-    out
+    Ok(())
 }
 
 /// The interceptors this call runs, outermost first.
@@ -51,6 +74,57 @@ pub(crate) async fn interceptors_for<T: Transport>(
 #[async_trait::async_trait]
 pub(crate) trait Leaf<T: Transport>: Send + Sync {
     async fn call(&self, ctx: &T::Context) -> Answer<T>;
+}
+
+/// Run an error renderer under panic recovery, answering with `fallback` if it panics.
+///
+/// The renderer is the last thing between the framework and the wire, so a panic in it has nothing
+/// left to be remapped by. It is logged, and the transport's fallback answers instead: a literal
+/// built from static values that calls no user code.
+pub(crate) fn safe_render<R>(render: impl FnOnce() -> R, fallback: fn() -> R) -> R {
+    match crate::panic_recovery::catch_sync(PipelineSegment::ResponseRendering, render) {
+        Ok(rendered) => rendered,
+        Err(panic_event) => {
+            tracing::error!(panic = %panic_event.message, "error renderer panicked; answering with the transport's fallback");
+            fallback()
+        }
+    }
+}
+
+/// A leaf made of a closure, called at most once: gRPC's handler, packaged by the macro as a
+/// delegate the chain hands the call to. `ClosureLeaf` stays private; this is the one way to build
+/// it.
+pub(crate) fn closure_leaf<T, D, Fut>(delegate: D) -> Arc<dyn Leaf<T>>
+where
+    T: Transport,
+    D: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Answer<T>> + Send + 'static,
+{
+    Arc::new(ClosureLeaf(parking_lot::Mutex::new(Some(delegate))))
+}
+
+struct ClosureLeaf<D>(parking_lot::Mutex<Option<D>>);
+
+#[async_trait::async_trait]
+impl<T, D, Fut> Leaf<T> for ClosureLeaf<D>
+where
+    T: Transport,
+    D: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Answer<T>> + Send + 'static,
+{
+    async fn call(&self, _ctx: &T::Context) -> Answer<T> {
+        // `InterceptorNext::run` consumes its box, so the leaf is called at most once and the
+        // delegate is present; a second call is a framework bug and answers as a recovered panic
+        // would.
+        let delegate = self.0.lock().take();
+        match delegate {
+            Some(delegate) => delegate().await,
+            None => Err(T::Error::from(PanicRecovered::with_message(
+                PipelineSegment::HandlerBody,
+                "the handler was called a second time",
+            ))),
+        }
+    }
 }
 
 /// Run `leaf` with `interceptors` wrapped around it, outermost first.

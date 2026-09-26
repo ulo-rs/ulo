@@ -58,7 +58,8 @@ use quote::{format_ident, quote};
 use syn::{ItemImpl, Path, Result, Token, parse2};
 
 use crate::enhancer::enhancer::{
-    create_enhancer_infos, enhancer_vecs, get_enhancers_attr, has_enhancer_attribute,
+    create_enhancer_infos, declares_anything, enhancer_entries, get_enhancers_attr,
+    has_enhancer_attribute,
 };
 use crate::shared::attr_is;
 use crate::shared::set_metadata::{merged_metadata_exprs, metadata_ctor};
@@ -196,42 +197,17 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
     let wrapper_ident = format_ident!("__{}Enhanced", self_ident);
     let source_ident = grpc_source_ident(&self_ident);
 
-    /// One method's enhancer declarations, both ways in: `*_tokens` resolve against the DI container,
-    /// the rest are values built at the declaration site.
-    struct HandlerEnhancers {
-        method: String,
-        guard_tokens: Vec<TokenStream>,
-        interceptor_tokens: Vec<TokenStream>,
-        error_handler_tokens: Vec<TokenStream>,
-        guards: Vec<TokenStream>,
-        interceptors: Vec<TokenStream>,
-        error_handlers: Vec<TokenStream>,
-    }
-
-    impl HandlerEnhancers {
-        /// A method carrying an enhancer attribute that named nothing this generator reads.
-        fn is_empty(&self) -> bool {
-            self.guard_tokens.is_empty()
-                && self.interceptor_tokens.is_empty()
-                && self.error_handler_tokens.is_empty()
-                && self.guards.is_empty()
-                && self.interceptors.is_empty()
-                && self.error_handlers.is_empty()
-        }
-    }
-
     // ── parse enhancer attrs (block-level + per-method) ─────────────────────
+    let transport = quote! { ::ulo::dispatch::Grpc };
     let ctrl_enhancers_attr = get_enhancers_attr(&impl_block.attrs)?;
     let ctrl_enhancer_infos = create_enhancer_infos(ctrl_enhancers_attr, Vec::new())?;
-    let (ctrl_guard_tokens, ctrl_guard_instances) = enhancer_vecs(&ctrl_enhancer_infos, "guards");
-    let (ctrl_interceptor_tokens, ctrl_interceptor_instances) =
-        enhancer_vecs(&ctrl_enhancer_infos, "interceptors");
-    let (ctrl_error_handler_tokens, ctrl_error_handler_instances) =
-        enhancer_vecs(&ctrl_enhancer_infos, "error_handlers");
+    let ctrl_guards = enhancer_entries(&ctrl_enhancer_infos, "guards", &transport);
+    let ctrl_interceptors = enhancer_entries(&ctrl_enhancer_infos, "interceptors", &transport);
+    let ctrl_error_handlers = enhancer_entries(&ctrl_enhancer_infos, "error_handlers", &transport);
 
     // One entry per method that carries any per-method enhancer attribute; each becomes a
     // `GrpcHandlerEnhancers` in the descriptor, keyed by the method's Rust name.
-    let mut handler_enhancer_entries: Vec<HandlerEnhancers> = Vec::new();
+    let mut handler_entries: Vec<TokenStream> = Vec::new();
     let mut method_idents: Vec<&syn::Ident> = Vec::new();
     let mut method_sigs_for_wrapper: Vec<&syn::ImplItemFn> = Vec::new();
     let mut assoc_types: Vec<&syn::ImplItemType> = Vec::new();
@@ -246,21 +222,18 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
                 let method_attr = get_enhancers_attr(&method.attrs)?;
                 if !method_attr.is_empty() {
                     let infos = create_enhancer_infos(method_attr, Vec::new())?;
-                    let (guard_tokens, guards) = enhancer_vecs(&infos, "guards");
-                    let (interceptor_tokens, interceptors) = enhancer_vecs(&infos, "interceptors");
-                    let (error_handler_tokens, error_handlers) =
-                        enhancer_vecs(&infos, "error_handlers");
-                    let entry = HandlerEnhancers {
-                        method: method_name,
-                        guard_tokens,
-                        interceptor_tokens,
-                        error_handler_tokens,
-                        guards,
-                        interceptors,
-                        error_handlers,
-                    };
-                    if !entry.is_empty() {
-                        handler_enhancer_entries.push(entry);
+                    if declares_anything(&infos) {
+                        let guards = enhancer_entries(&infos, "guards", &transport);
+                        let interceptors = enhancer_entries(&infos, "interceptors", &transport);
+                        let error_handlers = enhancer_entries(&infos, "error_handlers", &transport);
+                        handler_entries.push(quote! {
+                            ::ulo::grpc::GrpcHandlerEnhancers {
+                                method: #method_name.to_string(),
+                                guards: vec![#(#guards),*],
+                                interceptors: vec![#(#interceptors),*],
+                                error_handlers: vec![#(#error_handlers),*],
+                            }
+                        });
                     }
                 }
             }
@@ -285,49 +258,15 @@ pub fn handle_grpc_methods(attr: TokenStream, item: TokenStream) -> Result<Token
     }
 
     // ── one descriptor, emitted only when the service declares something ───
-    let handler_entries: Vec<TokenStream> = handler_enhancer_entries
-        .iter()
-        .map(|e| {
-            let (method, gt, it, et) = (
-                &e.method,
-                &e.guard_tokens,
-                &e.interceptor_tokens,
-                &e.error_handler_tokens,
-            );
-            let (gi, ii, ei) = (&e.guards, &e.interceptors, &e.error_handlers);
-            quote! {
-                ::ulo::grpc::GrpcHandlerEnhancers {
-                    method: #method.to_string(),
-                    guard_tokens: vec![#(#gt),*],
-                    interceptor_tokens: vec![#(#it),*],
-                    error_handler_tokens: vec![#(#et),*],
-                    guards: vec![#(::std::sync::Arc::new(#gi)),*],
-                    interceptors: vec![#(::std::sync::Arc::new(#ii)),*],
-                    error_handlers: vec![#(::std::sync::Arc::new(#ei)),*],
-                }
-            }
-        })
-        .collect();
-
-    let enhancers_impl = if ctrl_guard_tokens.is_empty()
-        && ctrl_interceptor_tokens.is_empty()
-        && ctrl_error_handler_tokens.is_empty()
-        && ctrl_guard_instances.is_empty()
-        && ctrl_interceptor_instances.is_empty()
-        && ctrl_error_handler_instances.is_empty()
-        && handler_entries.is_empty()
-    {
+    let enhancers_impl = if !declares_anything(&ctrl_enhancer_infos) && handler_entries.is_empty() {
         quote! {}
     } else {
         quote! {
             fn enhancers(&self) -> ::ulo::grpc::GrpcEnhancers {
                 ::ulo::grpc::GrpcEnhancers {
-                    guard_tokens: vec![#(#ctrl_guard_tokens),*],
-                    interceptor_tokens: vec![#(#ctrl_interceptor_tokens),*],
-                    error_handler_tokens: vec![#(#ctrl_error_handler_tokens),*],
-                    guards: vec![#(::std::sync::Arc::new(#ctrl_guard_instances)),*],
-                    interceptors: vec![#(::std::sync::Arc::new(#ctrl_interceptor_instances)),*],
-                    error_handlers: vec![#(::std::sync::Arc::new(#ctrl_error_handler_instances)),*],
+                    guards: vec![#(#ctrl_guards),*],
+                    interceptors: vec![#(#ctrl_interceptors),*],
+                    error_handlers: vec![#(#ctrl_error_handlers),*],
                     handlers: vec![#(#handler_entries),*],
                 }
             }
@@ -851,17 +790,11 @@ fn lower_handler(
             > {
                 #bind_params
                 // Each item carries the caller's own error type, which reaches
-                // the wire as the code its kind means. Only the reply that opens
-                // the stream reaches the chain — an item failing arrives after
-                // the answer has begun.
+                // the wire as the code its kind means, with its detail. Only the
+                // reply that opens the stream reaches the chain — an item failing
+                // arrives after the answer has begun.
                 let __map_item = |__item| {
-                    ::std::result::Result::map_err(__item, |__err| {
-                        let __status = ::ulo::grpc::GrpcStatus::of(__err);
-                        ::tonic::Status::new(
-                            ::tonic::Code::from_i32(__status.code as i32),
-                            __status.message,
-                        )
-                    })
+                    ::std::result::Result::map_err(__item, ::ulo_grpc::to_status)
                 };
                 #call_stream
             }
@@ -1086,13 +1019,7 @@ fn build_wrapper_method(
 
     Ok(quote! {
         #asyncness fn #method_ident #generics (#inputs) #output {
-            let __metadata = #req_ident.metadata().iter().filter_map(|kv| match kv {
-                ::tonic::metadata::KeyAndValueRef::Ascii(k, v) => v
-                    .to_str()
-                    .ok()
-                    .map(|s| (k.as_str().to_string(), s.to_string())),
-                ::tonic::metadata::KeyAndValueRef::Binary(_, _) => None,
-            }).collect::<::std::collections::HashMap<::std::string::String, ::std::string::String>>();
+            let (__ascii, __binary) = ::ulo_grpc::read_metadata(#req_ident.metadata());
             #declared_metadata
             // The path the caller dialled, which only the wire carries: an impl
             // block shows Rust names, no package, and a route casing that holds
@@ -1104,12 +1031,14 @@ fn build_wrapper_method(
                 .get::<::ulo::grpc::GrpcMethodPath>()
                 .map(|__p| __p.as_str().to_string())
                 .unwrap_or_else(|| #method_path_lit.to_string());
-            let __ctx = ::ulo::grpc::GrpcContext::new(
+            let __ctx = ::ulo::grpc::GrpcContext::from_wire(
                 __method,
-                __metadata,
+                __ascii,
+                __binary,
                 #req_ident.remote_addr(),
                 __declared,
             );
+            ::ulo_grpc::arm_deadline(&__ctx);
 
             // The handler receives the tonic request, never the context, so the
             // context's extension bag rides the request to reach it. A handle,
@@ -1125,6 +1054,9 @@ fn build_wrapper_method(
             // Installed before the guards run, so a guard reads a copy of the
             // message and the handler's extractor still takes the original.
             <#shape as ::ulo_grpc::MethodShape>::install(#req_ident, &__ctx);
+            // Released when this future ends, returned or dropped: the installed request holds
+            // this context, and nothing else breaks that cycle for a request nothing took.
+            let __release = ::ulo::__grpc::ReleaseRequest(__ctx.clone());
 
             let __source = self.source.clone();
             let __build_ctx = __ctx.clone();

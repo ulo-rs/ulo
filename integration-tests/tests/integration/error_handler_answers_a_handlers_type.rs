@@ -1,9 +1,9 @@
 //! A claimed error answers with everything a handler can answer with.
 //!
 //! An error handler is instantiated at the same type its transport's interceptor is, so claiming an
-//! error and answering `Empty`, a stream, or an `Err` are all reachable. The two pinned here are the
-//! ones no reply frame could express while the chain answered the bare payload: a claim that sends
-//! no data, and a claim that answers an error of a different kind from the one raised.
+//! error and answering `Empty`, a stream, or an `Err` are all reachable. Two are pinned here: a
+//! claim that sends no data, and a claim that answers an error of a different kind from the one
+//! raised.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,9 +31,8 @@ impl ErrorHandler<RpcContext, RpcHandlerResult> for ClaimsWithNothing {
 
 /// Claims by answering an error of its own, replacing the one the handler raised.
 ///
-/// `Forbidden` is one of the variants the adapters classify as a dispatch failure, so it reaches the
-/// caller as a wire-`err` frame — a shape a claim could not produce at all while the chain answered
-/// an `RpcData`.
+/// The call reached a controller, so the reshaped `Forbidden` rides the `response` lane as the
+/// canonical envelope, with its own kind.
 pub struct ClaimsWithAnError;
 
 #[async_trait]

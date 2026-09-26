@@ -17,66 +17,43 @@
 
 use std::sync::Arc;
 
-use crate::enhancer::{ErrorHandler, Guard, Interceptor};
-use crate::grpc::{GrpcContext, GrpcHandlerResult};
-use crate::spi::{GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry};
+use crate::dispatch::Grpc;
+use crate::enhancer::{ErrorHandlerDeclaration, GuardDeclaration, InterceptorDeclaration};
 /// Per-service bundle of resolved enhancer instances. Built by the framework
 /// at create from [`GrpcServiceSource::enhancers`] and handed to
 /// [`GrpcServiceSource::register_with`] so the macro-generated wrapper can
 /// invoke them per call without touching the DI container at request time.
+/// Each method's set is merged with the service's at create.
 #[derive(Default, Clone)]
-pub struct ResolvedGrpcEnhancers {
-    /// Service-level guards; run on every method.
-    pub(crate) guards: Vec<GrpcGuardEntry>,
-    /// Method-level guards keyed by the handler's Rust method name, which is what
-    /// [`GrpcHandlerEnhancers::method`] carries and what the generated wrapper looks up with.
-    pub(crate) handler_guards: std::collections::HashMap<String, Vec<GrpcGuardEntry>>,
-    /// Service-level interceptors; wrap every method's user delegation.
-    pub(crate) interceptors: Vec<GrpcInterceptorEntry>,
-    /// Method-level interceptors. Stack on top of service-level (controller-
-    /// level entries run first, method-level entries run inside).
-    pub(crate) handler_interceptors: std::collections::HashMap<String, Vec<GrpcInterceptorEntry>>,
-    /// Service-level error handlers; fire on user-returned `Err` or caught
-    /// handler panic. First handler to claim wins (chain runs in reverse
-    /// registration order, matching the RPC/HTTP convention).
-    pub(crate) error_handlers: Vec<GrpcErrorHandlerArc>,
-    /// Method-level error handlers. Composed with service-level into one
-    /// reverse-order chain per call.
-    pub(crate) handler_error_handlers: std::collections::HashMap<String, Vec<GrpcErrorHandlerArc>>,
-}
+pub struct ResolvedGrpcEnhancers(
+    pub(crate) crate::dispatch::resolve::Resolved<crate::dispatch::Grpc>,
+);
 
 /// What a gRPC service declares, read once at create. Service-level entries apply to every method;
 /// each `handlers` entry adds to one method. A flat descriptor instead of seven accessor methods —
 /// the macro builds it, the resolver reads it once.
 ///
-/// Each role arrives two ways. `*_tokens` come from `#[use_guards(MyGuard)]` and resolve against
-/// the DI container, so the enhancer may hold injected dependencies. `guards` / `interceptors` /
-/// `error_handlers` come from `#[use_guards(MyGuard{})]`, which builds the value at the
-/// declaration site and never consults the container. The resolver runs the DI-resolved ones
-/// first.
+/// Each role is one vector in the order written, and the resolver keeps that order. A guard or
+/// interceptor entry is a token, a value or a constructor (see
+/// [`GuardDeclaration`](crate::enhancer::GuardDeclaration)); an error-handler entry is a token or a
+/// value.
 #[derive(Default)]
 pub struct GrpcEnhancers {
-    pub guard_tokens: Vec<String>,
-    pub interceptor_tokens: Vec<String>,
-    pub error_handler_tokens: Vec<String>,
-    pub guards: Vec<Arc<dyn Guard<GrpcContext>>>,
-    pub interceptors: Vec<Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>>,
-    pub error_handlers: Vec<Arc<dyn ErrorHandler<GrpcContext, GrpcHandlerResult>>>,
+    pub guards: Vec<GuardDeclaration<Grpc>>,
+    pub interceptors: Vec<InterceptorDeclaration<Grpc>>,
+    pub error_handlers: Vec<ErrorHandlerDeclaration<Grpc>>,
     pub handlers: Vec<GrpcHandlerEnhancers>,
 }
 
-/// What one handler declares on top of its service's, keyed by method. Same two ways in as
+/// What one handler declares on top of its service's, keyed by method. The same spellings as
 /// [`GrpcEnhancers`].
 #[derive(Default)]
 pub struct GrpcHandlerEnhancers {
     /// The handler's Rust method name, which is the key the generated wrapper resolves by.
     pub method: String,
-    pub guard_tokens: Vec<String>,
-    pub interceptor_tokens: Vec<String>,
-    pub error_handler_tokens: Vec<String>,
-    pub guards: Vec<Arc<dyn Guard<GrpcContext>>>,
-    pub interceptors: Vec<Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>>,
-    pub error_handlers: Vec<Arc<dyn ErrorHandler<GrpcContext, GrpcHandlerResult>>>,
+    pub guards: Vec<GuardDeclaration<Grpc>>,
+    pub interceptors: Vec<InterceptorDeclaration<Grpc>>,
+    pub error_handlers: Vec<ErrorHandlerDeclaration<Grpc>>,
 }
 
 /// A gRPC service's declarations plus its registration hook — implemented by `#[grpc_methods]` on

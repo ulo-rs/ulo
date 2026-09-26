@@ -7,10 +7,10 @@ use parking_lot::RwLock;
 
 use crate::context::Metadata;
 use crate::dispatch::ExecutionResult;
+use crate::dispatch::resolve::Resolved;
 use crate::dispatch::transport::Ws;
-use crate::enhancer::pipeline::{Leaf, through_interceptors};
-use crate::enhancer::{Guard, Interceptor};
-use crate::spi::{WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry};
+use crate::enhancer::Interceptor;
+use crate::enhancer::pipeline::{GuardFailure, Leaf, through_interceptors};
 use crate::ws::WsContext;
 
 use super::{
@@ -41,16 +41,13 @@ impl Leaf<Ws> for GatewayLeaf {
 /// guard/interceptor pipeline and tracks its own connected clients.
 pub(crate) struct GatewayWrapper {
     gateway: Arc<Box<dyn Gateway>>,
-    guards: Vec<WsGuardEntry>,
-    interceptors: Vec<WsInterceptorEntry>,
-    error_handlers: Vec<WsErrorHandlerArc>,
+    /// The gateway's enhancers, each event's merged over them at create. A connect runs the
+    /// gateway's set.
+    enhancers: Resolved<Ws>,
     metadata: Arc<Metadata>,
     /// Per-event metadata, already merged over `metadata` at expansion. An event absent here
     /// declared nothing of its own and reads the gateway's.
     handler_metadata: HashMap<String, Arc<Metadata>>,
-    handler_guards: HashMap<String, Vec<WsGuardEntry>>,
-    handler_interceptors: HashMap<String, Vec<WsInterceptorEntry>>,
-    handler_error_handlers: HashMap<String, Vec<WsErrorHandlerArc>>,
     /// Active client connections (client_id => WsClient). A client carries the session scoped to
     /// its connection, so there is nothing to keep beside it.
     clients: Arc<RwLock<HashMap<String, WsClient>>>,
@@ -59,25 +56,15 @@ pub(crate) struct GatewayWrapper {
 impl GatewayWrapper {
     pub(crate) fn new(
         gateway: Arc<Box<dyn Gateway>>,
-        guards: Vec<WsGuardEntry>,
-        interceptors: Vec<WsInterceptorEntry>,
-        error_handlers: Vec<WsErrorHandlerArc>,
+        enhancers: Resolved<Ws>,
         metadata: Arc<Metadata>,
         handler_metadata: HashMap<String, Arc<Metadata>>,
-        handler_guards: HashMap<String, Vec<WsGuardEntry>>,
-        handler_interceptors: HashMap<String, Vec<WsInterceptorEntry>>,
-        handler_error_handlers: HashMap<String, Vec<WsErrorHandlerArc>>,
     ) -> Self {
         Self {
             gateway,
-            guards,
-            interceptors,
-            error_handlers,
+            enhancers,
             metadata,
             handler_metadata,
-            handler_guards,
-            handler_interceptors,
-            handler_error_handlers,
             clients: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -109,30 +96,21 @@ impl GatewayWrapper {
             Some(self.metadata.clone()),
         );
 
-        let guards = crate::enhancer::pipeline::guards_for::<Ws>(&self.guards, &context).await;
-        for (i, guard) in guards.iter().enumerate() {
-            // A panic in `can_activate` is treated as a hard rejection so the
-            // dispatcher doesn't tear down: the panic is logged and the
-            // connection is refused. A connect has no chain to route it
-            // through — there is no answer to shape on a refused upgrade.
-            let activated = match crate::panic_recovery::catch_async(
-                crate::errors::PipelineSegment::Guard,
-                guard.can_activate(&context),
-            )
+        // One guard at a time, and a guard after a refusing one is never built. A connect has no
+        // chain to route a refusal through: there is no answer to shape on a refused upgrade.
+        match crate::enhancer::pipeline::run_guards::<Ws>(&self.enhancers.target().guards, &context)
             .await
-            {
-                Ok(b) => b,
-                Err(event) => {
-                    // The refusal reaches the caller as a close frame, so the
-                    // panic is narrated rather than reported. Keeping the event
-                    // typed is what puts an internal-error close code on the
-                    // wire instead of a policy one.
-                    tracing::debug!(client_id = %client.id, guard_index = i, panic = %event.message, "connect guard panicked");
-                    return Err(WsError::from(event));
-                }
-            };
-            if !activated {
-                tracing::debug!(client_id = %client.id, guard_index = i, "guard rejected WebSocket connection");
+        {
+            Ok(()) => {}
+            Err(GuardFailure::Panicked { index, event }) => {
+                // The refusal reaches the caller as a close frame, so the panic is narrated
+                // rather than reported. Keeping the event typed is what puts an internal-error
+                // close code on the wire instead of a policy one.
+                tracing::debug!(client_id = %client.id, guard_index = index, panic = %event.message, "connect guard panicked");
+                return Err(WsError::from(event));
+            }
+            Err(GuardFailure::Rejected(rejection)) => {
+                tracing::debug!(client_id = %client.id, guard_index = rejection.guard_index, "guard rejected WebSocket connection");
                 return Err(WsError::AuthFailed("Guard rejected connection".into()));
             }
         }
@@ -206,10 +184,7 @@ impl GatewayWrapper {
             ),
         );
 
-        let mut all_error_handlers = self.error_handlers.clone();
-        if let Some(h) = self.handler_error_handlers.get(&event) {
-            all_error_handlers.extend_from_slice(h);
-        }
+        let enhancers = self.enhancers.for_key(&event);
 
         let answer = match unroutable {
             // Resolving guards and interceptors is what constructs them, execution-scoped ones
@@ -217,30 +192,40 @@ impl GatewayWrapper {
             // otherwise build a pipeline per frame and run none of it.
             Some(e) => Err(e),
             None => {
-                let mut all_guards = self.guards.clone();
-                if let Some(h) = self.handler_guards.get(&event) {
-                    all_guards.extend_from_slice(h);
-                }
-                let mut all_interceptors = self.interceptors.clone();
-                if let Some(h) = self.handler_interceptors.get(&event) {
-                    all_interceptors.extend_from_slice(h);
-                }
-
-                let guards =
-                    crate::enhancer::pipeline::guards_for::<Ws>(&all_guards, &context).await;
-                let interceptors =
-                    crate::enhancer::pipeline::interceptors_for::<Ws>(&all_interceptors, &context)
+                // Guards first, one at a time, and no interceptor built until every one has
+                // passed.
+                match crate::enhancer::pipeline::run_guards::<Ws>(&enhancers.guards, &context).await
+                {
+                    Ok(()) => {
+                        let interceptors = crate::enhancer::pipeline::interceptors_for::<Ws>(
+                            &enhancers.interceptors,
+                            &context,
+                        )
                         .await;
-                Self::run_chain(&context, &self.gateway, &guards, &interceptors).await
+                        Self::run_chain(&context, &self.gateway, &interceptors).await
+                    }
+                    Err(GuardFailure::Rejected(rejection)) => {
+                        tracing::debug!(
+                            guard_index = rejection.guard_index,
+                            "guard rejected message"
+                        );
+                        Err(WsError::from(rejection))
+                    }
+                    Err(GuardFailure::Panicked { index, event }) => {
+                        tracing::debug!(guard_index = index, panic = %event.message, "guard panicked");
+                        Err(WsError::from(event))
+                    }
+                }
             }
         };
 
         // The one place the chain runs. A guard's refusal, a panic from any segment and the
         // handler's own error all arrive as `Err`, so a `#[catch]` handler is offered every one of
-        // them and an unclaimed one renders the same envelope whichever produced it.
+        // them and an unclaimed one renders the same envelope whichever produced it — except a
+        // `Refused`, which renders as the close it names.
         //
-        // A refused message renders rather than failing the call: the socket stays open and the
-        // client learns its message went nowhere, which is what the read loop needs.
+        // A message a guard refused renders rather than failing the call: the socket stays open
+        // and the client learns its message went nowhere, which is what the read loop needs.
         let answer = match answer {
             Ok(output) => Ok(output),
             Err(ws_err) => {
@@ -249,7 +234,7 @@ impl GatewayWrapper {
                     other => other,
                 };
                 match crate::enhancer::pipeline::claim::<Ws>(
-                    &all_error_handlers,
+                    &enhancers.error_handlers,
                     observed,
                     &context,
                 )
@@ -274,37 +259,12 @@ impl GatewayWrapper {
         }
     }
 
-    /// Guards, then the interceptor chain. Every way this can fail leaves as `Err`.
+    /// The interceptor chain around the handler. Every way this can fail leaves as `Err`.
     async fn run_chain(
         context: &WsContext,
         gateway: &Arc<Box<dyn Gateway>>,
-        guards: &[Arc<dyn Guard<WsContext>>],
         interceptors: &[Arc<dyn Interceptor<WsContext, WsHandlerResult>>],
     ) -> WsHandlerResult {
-        for (guard_index, guard) in guards.iter().enumerate() {
-            // A guard's panic is a developer error, not a verdict: it takes the same route as any
-            // other pipeline panic, so the chain sees `PanicRecovered` where a refusal gives it
-            // `GuardRejection`.
-            match crate::panic_recovery::catch_async(
-                crate::errors::PipelineSegment::Guard,
-                guard.can_activate(context),
-            )
-            .await
-            {
-                Ok(true) => {}
-                Ok(false) => {
-                    tracing::debug!(guard_index = guard_index, "guard rejected message");
-                    return Err(WsError::from(crate::errors::GuardRejection::new(
-                        guard_index,
-                    )));
-                }
-                Err(event) => {
-                    tracing::debug!(guard_index = guard_index, panic = %event.message, "guard panicked");
-                    return Err(WsError::from(event));
-                }
-            }
-        }
-
         through_interceptors::<Ws>(
             context,
             interceptors,
@@ -313,24 +273,12 @@ impl GatewayWrapper {
         .await
     }
 
-    /// Drive `WsError::to_message` with panic recovery — a panic in the
-    /// renderer would close the connection without ever framing an outbound
-    /// error message. Policy: log the panic and substitute a hardcoded text
-    /// frame.
+    /// Drive a renderer with the shared recovery, falling back to the canonical envelope.
     fn safe_render<F>(render: F) -> WsMessage
     where
         F: FnOnce() -> WsMessage,
     {
-        match crate::panic_recovery::catch_sync(
-            crate::errors::PipelineSegment::ResponseRendering,
-            render,
-        ) {
-            Ok(msg) => msg,
-            Err(panic_event) => {
-                tracing::error!(panic = %panic_event.message, "error renderer panicked; falling back to a bare text frame");
-                Self::fallback_internal_message()
-            }
-        }
+        crate::enhancer::pipeline::safe_render(render, Self::fallback_internal_message)
     }
 
     /// Hardcoded fallback frame when the regular renderer panics.
@@ -444,13 +392,8 @@ mod tests {
 
         GatewayWrapper::new(
             Arc::new(Box::new(TestGateway)),
-            vec![],
-            vec![],
-            vec![],
+            Resolved::default(),
             Arc::new(Metadata::new()),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
             HashMap::new(),
         )
     }

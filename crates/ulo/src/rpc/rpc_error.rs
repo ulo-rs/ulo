@@ -20,18 +20,24 @@ use crate::rpc::RpcData;
 
 /// Variants the RPC dispatcher returns.
 ///
-/// [`PatternNotFound`](Self::PatternNotFound), [`Forbidden`](Self::Forbidden),
-/// and [`Internal`](Self::Internal) are emitted by the framework and reach
-/// the adapter as wire-Err frames (`{"err":{"status":..., "message":...}}`).
-/// [`AppError`](Self::AppError) carries a user-domain error and reaches the
-/// adapter as a wire-Ok frame carrying the canonical envelope
-/// (`{"response":{"status":"error","kind":..., "message":...}}`).
+/// The `Result` a variant leaves the dispatcher in picks its lane, not the
+/// variant. Leaving a controller — returned by its handler, or standing for a
+/// guard's refusal or a recovered panic — any of them that reaches the wire
+/// renders through [`to_data`](Self::to_data) into the canonical envelope on
+/// the `response` lane
+/// (`{"response":{"status":"error","kind":..., "message":...}}`). Leaving the
+/// dispatcher with no controller reached — a pattern nothing declares, or what
+/// a global `#[catch(Unrouted)]` handler reshaped that miss into — it travels
+/// the `err` lane as a wire-Err frame (`{"err":{"status":..., "message":...}}`),
+/// `status` being its [`ErrorKind`](crate::errors::ErrorKind) name.
 #[derive(Debug, Clone)]
 pub enum RpcError {
     /// No registered handler matched the inbound pattern.
     PatternNotFound(String),
 
-    /// A guard rejected the message before the handler ran.
+    /// Kind `Forbidden`, for a handler that names it by hand. A guard's refusal
+    /// does not build it: that travels as [`AppError`](Self::AppError) carrying
+    /// `GuardRejection`, whose kind is `Forbidden`.
     Forbidden(String),
 
     /// Generic server-side failure.
@@ -71,10 +77,10 @@ impl RpcError {
     /// `Err`.
     ///
     /// The frame is the one an unclaimed failure from a controller produces, so
-    /// nothing on the wire says which path wrote it. A dispatch failure is not:
-    /// [`PatternNotFound`](Self::PatternNotFound) and
-    /// [`Forbidden`](Self::Forbidden) leaving the dispatcher travel the
-    /// `{"err":…}` lane.
+    /// nothing on the wire says which path wrote it. A miss answers differently:
+    /// unclaimed, or reshaped into an `Err` by a global `#[catch(Unrouted)]`
+    /// handler, it leaves the dispatcher as `Err` and travels the `{"err":…}`
+    /// lane.
     ///
     /// An error handler reaches this by catching [`RpcError`] itself. For
     /// [`AppError`](Self::AppError) the chain is handed the unwrapped domain

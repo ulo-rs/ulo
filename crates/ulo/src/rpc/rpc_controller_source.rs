@@ -3,8 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::context::Metadata;
-use crate::enhancer::{ErrorHandler, Guard, Interceptor};
-use crate::rpc::{RpcContext, RpcHandlerResult};
+use crate::dispatch::Rpc;
+use crate::enhancer::{ErrorHandlerDeclaration, GuardDeclaration, InterceptorDeclaration};
+use crate::rpc::RpcContext;
 
 use super::RpcController;
 
@@ -12,33 +13,26 @@ use super::RpcController;
 /// handler; each `handlers` entry adds to one pattern. A flat descriptor instead of a dozen
 /// accessor methods — the macro builds it, the resolver reads it once.
 ///
-/// Each role arrives two ways. `*_tokens` come from `#[use_guards(MyGuard)]` and resolve against
-/// the DI container, so the enhancer may hold injected dependencies. `guards` / `interceptors` /
-/// `error_handlers` come from `#[use_guards(MyGuard{})]`, which builds the value at the
-/// declaration site and never consults the container. The resolver runs the DI-resolved ones
-/// first.
+/// Each role is one vector in the order written, and the resolver keeps that order. A guard or
+/// interceptor entry is a token, a value or a constructor (see
+/// [`GuardDeclaration`](crate::enhancer::GuardDeclaration)); an error-handler entry is a token or a
+/// value.
 #[derive(Default)]
 pub struct RpcEnhancers {
-    pub guard_tokens: Vec<String>,
-    pub interceptor_tokens: Vec<String>,
-    pub error_handler_tokens: Vec<String>,
-    pub guards: Vec<Arc<dyn Guard<RpcContext>>>,
-    pub interceptors: Vec<Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>>,
-    pub error_handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcHandlerResult>>>,
+    pub guards: Vec<GuardDeclaration<Rpc>>,
+    pub interceptors: Vec<InterceptorDeclaration<Rpc>>,
+    pub error_handlers: Vec<ErrorHandlerDeclaration<Rpc>>,
     pub handlers: Vec<RpcHandlerEnhancers>,
 }
 
-/// What one handler declares on top of its controller's, keyed by pattern. Same two ways in as
+/// What one handler declares on top of its controller's, keyed by pattern. The same spellings as
 /// [`RpcEnhancers`].
 #[derive(Default)]
 pub struct RpcHandlerEnhancers {
     pub pattern: String,
-    pub guard_tokens: Vec<String>,
-    pub interceptor_tokens: Vec<String>,
-    pub error_handler_tokens: Vec<String>,
-    pub guards: Vec<Arc<dyn Guard<RpcContext>>>,
-    pub interceptors: Vec<Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>>,
-    pub error_handlers: Vec<Arc<dyn ErrorHandler<RpcContext, RpcHandlerResult>>>,
+    pub guards: Vec<GuardDeclaration<Rpc>>,
+    pub interceptors: Vec<InterceptorDeclaration<Rpc>>,
+    pub error_handlers: Vec<ErrorHandlerDeclaration<Rpc>>,
 }
 
 /// What an RPC controller declares, and where its instances come from.

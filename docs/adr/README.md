@@ -67,3 +67,5 @@ the history is part of the value.
 - [0049 — An answer is an envelope and a cardinality](0049-an-answer-is-an-envelope-and-a-cardinality.md)
 - [0050 — What a handler may return is a type](0050-what-a-handler-may-return-is-a-type.md)
 - [0051 — An application is Send](0051-an-application-is-send.md)
+- [0055 — The pipeline's order is the order that was written](0055-the-pipelines-order.md)
+- [0056 — One role per position: the pre-dispatch role reaches every transport](0056-the-pre-dispatch-role.md)

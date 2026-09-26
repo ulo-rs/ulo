@@ -24,5 +24,8 @@ pub(crate) fn ws_message_to_rocket(msg: WsMessage) -> Result<Message, WsError> {
                 reason: f.reason.into(),
             }
         }))),
+        _ => Err(WsError::Internal(
+            "an outbound frame type this adapter does not carry".into(),
+        )),
     }
 }

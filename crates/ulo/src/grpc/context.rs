@@ -13,8 +13,8 @@ use crate::context::{CancellationToken, ExecutionContext, Extensions};
 ///
 /// gRPC payloads are method-typed protobuf messages and can't sit in a
 /// non-generic struct, so what every enhancer can name without a type
-/// parameter is held typed: the method path, the inbound metadata (ASCII
-/// headers), and the optional peer address. The message itself rides erased,
+/// parameter is held typed: the method path, the inbound metadata (ASCII and
+/// binary headers), and the optional peer address. The message itself rides erased,
 /// in a slot a handler parameter takes once — `Payload<T>`, `Inbound<T>`, or
 /// `ulo_grpc::GrpcRequest<T>` — which is how a `#[grpc_methods]` handler's
 /// parameters are all extractors.
@@ -31,7 +31,12 @@ pub struct GrpcContext {
 struct GrpcInner {
     shared: SharedState,
     method: String,
+    /// Each ASCII key's last value, which is what `headers()` and `header(k)` answer.
     headers: HashMap<String, String>,
+    /// Each ASCII key's every value, in arrival order.
+    headers_all: HashMap<String, Vec<String>>,
+    /// Each `-bin` key's last value, decoded from the base64 the wire carries.
+    binary: HashMap<String, Vec<u8>>,
     peer: Option<SocketAddr>,
     /// Read from `grpc-timeout` at construction, so every reader sees one
     /// deadline rather than each recomputing from a clock that has moved.
@@ -48,14 +53,38 @@ enum RequestSlot {
 }
 
 impl GrpcContext {
+    /// A context over one value per ASCII key and no binary keys. [`from_wire`](Self::from_wire)
+    /// takes what a call carries whole.
     pub fn new(
         method: impl Into<String>,
         headers: HashMap<String, String>,
         peer: Option<SocketAddr>,
         metadata: Option<Arc<Metadata>>,
     ) -> Self {
-        let deadline = headers
+        Self::from_wire(method, headers, std::iter::empty(), peer, metadata)
+    }
+
+    /// A context over the metadata a call carries: `ascii` in arrival order, a repeated key
+    /// once per value, and `binary` with each `-bin` value already decoded from base64.
+    pub fn from_wire(
+        method: impl Into<String>,
+        ascii: impl IntoIterator<Item = (String, String)>,
+        binary: impl IntoIterator<Item = (String, Vec<u8>)>,
+        peer: Option<SocketAddr>,
+        metadata: Option<Arc<Metadata>>,
+    ) -> Self {
+        let mut headers_all: HashMap<String, Vec<String>> = HashMap::new();
+        for (key, value) in ascii {
+            headers_all.entry(key).or_default().push(value);
+        }
+        let headers: HashMap<String, String> = headers_all
+            .iter()
+            .filter_map(|(key, values)| Some((key.clone(), values.last()?.clone())))
+            .collect();
+        // The first value, which is the one tonic's own timeout reads, so both race one deadline.
+        let deadline = headers_all
             .get("grpc-timeout")
+            .and_then(|values| values.first())
             .and_then(|value| parse_grpc_timeout(value))
             .map(|budget| Instant::now() + budget);
         Self {
@@ -63,6 +92,8 @@ impl GrpcContext {
                 shared: SharedState::new(metadata),
                 method: method.into(),
                 headers,
+                headers_all,
+                binary: binary.into_iter().collect(),
                 peer,
                 deadline,
                 request: Mutex::new(RequestSlot::Empty),
@@ -136,19 +167,40 @@ impl GrpcContext {
         &self.inner.method
     }
 
-    /// The wire fields that arrived with this call.
+    /// The ASCII wire fields that arrived with this call, each key with its last value.
     ///
     /// gRPC's specification calls these metadata; `headers` is the one name this framework uses for all of them, leaving `metadata`
-    /// to mean what `#[set_metadata]` declared.
+    /// to mean what `#[set_metadata]` declared. A key the caller repeated has every value in
+    /// [`headers_all`](Self::headers_all), and a `-bin` key is read through
+    /// [`header_bin`](Self::header_bin).
     #[doc(alias = "metadata")]
     pub fn headers(&self) -> &HashMap<String, String> {
         &self.inner.headers
     }
 
-    /// One wire field by key.
+    /// One ASCII wire field by key: its last value when the caller repeated it.
     #[doc(alias = "metadata")]
     pub fn header(&self, key: &str) -> Option<&str> {
         self.inner.headers.get(key).map(|s| s.as_str())
+    }
+
+    /// Every value of one ASCII wire field, in the order the caller sent them. Empty when the
+    /// call did not carry the key.
+    #[doc(alias = "metadata")]
+    pub fn headers_all(&self, key: &str) -> impl Iterator<Item = &str> {
+        self.inner
+            .headers_all
+            .get(key)
+            .into_iter()
+            .flatten()
+            .map(|s| s.as_str())
+    }
+
+    /// One binary wire field by its full key, `-bin` suffix included: its last value, decoded
+    /// from the base64 the wire carries.
+    #[doc(alias = "metadata")]
+    pub fn header_bin(&self, key: &str) -> Option<&[u8]> {
+        self.inner.binary.get(key).map(|v| v.as_slice())
     }
 
     pub fn peer(&self) -> Option<SocketAddr> {
@@ -207,7 +259,7 @@ impl ExecutionContext for GrpcContext {
 ///
 /// [spec]: https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md
 fn parse_grpc_timeout(value: &str) -> Option<Duration> {
-    let (digits, unit) = value.split_at(value.len().checked_sub(1)?);
+    let (digits, unit) = value.split_at_checked(value.len().checked_sub(1)?)?;
     if digits.is_empty() || digits.len() > 8 {
         return None;
     }
@@ -245,6 +297,11 @@ mod tests {
         assert_eq!(parse_grpc_timeout("5X"), None, "unknown unit");
         assert_eq!(parse_grpc_timeout("-1S"), None, "not a count");
         assert_eq!(parse_grpc_timeout("123456789S"), None, "over eight digits");
+        assert_eq!(
+            parse_grpc_timeout("5\u{20AC}"),
+            None,
+            "last byte inside a multi-byte char"
+        );
     }
 
     #[test]
@@ -261,6 +318,29 @@ mod tests {
             remaining > Duration::from_secs(4) && remaining <= Duration::from_secs(5),
             "remaining: {remaining:?}"
         );
+    }
+
+    #[test]
+    fn a_repeated_key_keeps_every_value_and_header_answers_the_last() {
+        let ctx = GrpcContext::from_wire(
+            "pkg.Svc/Method",
+            [
+                ("x-tag".to_string(), "first".to_string()),
+                ("x-tag".to_string(), "second".to_string()),
+            ],
+            [("x-trace-bin".to_string(), vec![0, 159, 255])],
+            None,
+            None,
+        );
+
+        assert_eq!(
+            ctx.headers_all("x-tag").collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+        assert_eq!(ctx.header("x-tag"), Some("second"));
+        assert_eq!(ctx.header_bin("x-trace-bin"), Some(&[0u8, 159, 255][..]));
+        assert_eq!(ctx.headers_all("x-absent").count(), 0);
+        assert_eq!(ctx.header_bin("x-absent-bin"), None);
     }
 
     #[test]

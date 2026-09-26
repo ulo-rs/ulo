@@ -3,7 +3,7 @@
 //! both the shared port and a separate one.
 //!
 //! Route matching and the pre-routing chain are proved for every adapter at
-//! once in `integration-tests` (the four `*_conformance` suites). What is left
+//! once in `integration-tests` (the `*_conformance` suites). What is left
 //! to this file is what only axum does: it is the reference adapter for body
 //! streaming, and the only one carrying both WebSocket port modes through its
 //! own router.

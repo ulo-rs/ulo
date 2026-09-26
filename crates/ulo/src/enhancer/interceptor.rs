@@ -18,9 +18,10 @@ pub trait InterceptorNext<C: ?Sized + ExecutionContext, R>: Send {
 /// short-circuit responses. Whatever is returned is the answer, whether it came
 /// from downstream or from the interceptor itself.
 ///
-/// `R` is what the transport answers with: `HttpResponse` on HTTP,
-/// `Result<RpcHandlerOutput, RpcError>` on RPC, `Result<WsHandlerOutput,
-/// WsError>` on WebSocket, `Result<GrpcReply, GrpcStatus>` on gRPC.
+/// `R` is what the transport answers with: `HttpHandlerResult`,
+/// `RpcHandlerResult`, `WsHandlerResult` or `GrpcHandlerResult`, each a
+/// `Result` of the transport's reply and its error. An interceptor answers the
+/// call, or fails it, by returning.
 #[async_trait]
 pub trait Interceptor<C: ?Sized + ExecutionContext, R>: Send + Sync {
     async fn intercept(&self, context: &C, next: Box<dyn InterceptorNext<C, R>>) -> R;

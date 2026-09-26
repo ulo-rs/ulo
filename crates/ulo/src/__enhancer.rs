@@ -15,7 +15,5 @@
 
 pub use crate::dispatch::source::{DispatchSource, execution_scoped_dependencies};
 pub use crate::dispatch::transport::{
-    Grpc, GrpcGuardEntry, GrpcInterceptorEntry, GuardEntry, GuardFactory, Http, HttpGuardEntry,
-    HttpInterceptorEntry, InterceptorEntry, InterceptorFactory, Rpc, RpcGuardEntry,
-    RpcInterceptorEntry, Transport, Ws, WsGuardEntry, WsInterceptorEntry,
+    Grpc, GuardEntry, GuardFactory, Http, InterceptorEntry, InterceptorFactory, Rpc, Transport, Ws,
 };

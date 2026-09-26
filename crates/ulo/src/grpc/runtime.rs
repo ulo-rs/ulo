@@ -6,19 +6,14 @@
 //! handler as a delegate, and maps whatever comes back to tonic's types.
 
 use crate::dispatch::transport::Grpc;
-use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 
-use async_trait::async_trait;
-
-use crate::enhancer::{Interceptor, InterceptorNext};
-use crate::errors::{GuardRejection, PipelineSegment};
+use crate::enhancer::pipeline::GuardFailure;
 use crate::grpc::GrpcContext;
 use crate::grpc::GrpcHandlerResult;
 use crate::grpc::GrpcStatus;
 use crate::grpc::ResolvedGrpcEnhancers;
-use crate::panic_recovery::catch_async;
 
 /// Run guards, then the interceptor chain, then the error chain over whatever failed.
 ///
@@ -27,7 +22,7 @@ use crate::panic_recovery::catch_async;
 /// the chain.
 ///
 /// Every way a call can fail leaves as `Err(GrpcStatus)` carrying its own cause: a refusal carries
-/// its [`GuardRejection`], a panic anywhere below carries its `PanicRecovered`, a handler's failure
+/// its [`GuardRejection`](crate::errors::GuardRejection), a panic anywhere below carries its `PanicRecovered`, a handler's failure
 /// carries the domain error it raised. So the chain runs here, once, over all of them, rather than
 /// at each level that can produce one.
 pub async fn run_grpc_pipeline<D, Fut>(
@@ -40,20 +35,30 @@ where
     D: FnOnce() -> Fut + Send + 'static,
     Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
 {
+    // This future is what the server drops when a call is abandoned before it answers — by its
+    // caller, or at its deadline — and a dropped future fires nothing on its own. The drop guard
+    // fires the token on that drop and is disarmed at every return, an `Err` included: the call
+    // answered. A streaming reply's token is then the stream's to fire (ADR-0033).
+    let abandonment = Abandonment::arm(crate::context::ExecutionContext::cancellation(ctx).clone());
     let answer = match run_grpc_guards(ctx, enhancers, method).await {
         Ok(()) => {
-            let mut all_interceptors = enhancers.interceptors.clone();
-            if let Some(per_method) = enhancers.handler_interceptors.get(method) {
-                all_interceptors.extend_from_slice(per_method);
-            }
-            let interceptors =
-                crate::enhancer::pipeline::interceptors_for::<Grpc>(&all_interceptors, ctx).await;
-            execute_with_interceptors(ctx, &interceptors, delegate).await
+            let interceptors = crate::enhancer::pipeline::interceptors_for::<Grpc>(
+                &enhancers.0.for_key(method).interceptors,
+                ctx,
+            )
+            .await;
+            crate::enhancer::pipeline::through_interceptors::<Grpc>(
+                ctx,
+                &interceptors,
+                crate::enhancer::pipeline::closure_leaf::<Grpc, _, _>(delegate),
+            )
+            .await
         }
         Err(refused) => Err(refused),
     };
 
     let Err(status) = answer else {
+        abandonment.disarm();
         return answer;
     };
 
@@ -61,20 +66,46 @@ where
     // what the handler raised and `#[catch(GuardRejection)]` the refusal, rather than the status
     // each of them flattened into. Bound to a local: the borrow has to end before the `Err` below
     // takes the status back.
-    let mut handlers = enhancers.error_handlers.clone();
-    if let Some(per_method) = enhancers.handler_error_handlers.get(method) {
-        handlers.extend_from_slice(per_method);
-    }
+    let handlers = &enhancers.0.for_key(method).error_handlers;
     let claimed = {
         let observed: &(dyn std::error::Error + Send + Sync + 'static) = match status.source() {
             Some(cause) => cause,
             None => &status,
         };
-        crate::enhancer::pipeline::claim::<Grpc>(&handlers, observed, ctx).await
+        crate::enhancer::pipeline::claim::<Grpc>(handlers, observed, ctx).await
     };
     // A claim answers what an interceptor answers: `Ok` recovers the call with a reply of its own,
     // `Err` reshapes the failure. Unclaimed, the status the call failed with is the answer.
-    claimed.unwrap_or(Err(status))
+    let answer = claimed.unwrap_or(Err(status));
+    abandonment.disarm();
+    answer
+}
+
+/// Fires an execution's token if the pipeline's future is dropped before it returns.
+///
+/// Armed at the top of [`run_grpc_pipeline`] and disarmed at each of its returns, so the token
+/// fires from here only when the future ends without returning: dropped mid-flight, which is what
+/// an abandoned call looks like from the server, or unwound by a panic nothing below caught.
+struct Abandonment {
+    token: Option<crate::context::CancellationToken>,
+}
+
+impl Abandonment {
+    fn arm(token: crate::context::CancellationToken) -> Self {
+        Self { token: Some(token) }
+    }
+
+    fn disarm(mut self) {
+        self.token = None;
+    }
+}
+
+impl Drop for Abandonment {
+    fn drop(&mut self) {
+        if let Some(token) = self.token.take() {
+            token.cancel();
+        }
+    }
 }
 
 /// The guards this call runs, in declaration order.
@@ -86,121 +117,28 @@ async fn run_grpc_guards(
     enhancers: &ResolvedGrpcEnhancers,
     method: &str,
 ) -> Result<(), GrpcStatus> {
-    let mut all_guards = enhancers.guards.clone();
-    if let Some(per_method) = enhancers.handler_guards.get(method) {
-        all_guards.extend_from_slice(per_method);
-    }
-
-    let guards = crate::enhancer::pipeline::guards_for::<Grpc>(&all_guards, ctx).await;
-    for (index, guard) in guards.iter().enumerate() {
+    // One guard at a time: a `Factory` entry is an execution-scoped provider's own resolution,
+    // and a guard that refuses means the ones after it are never built.
+    match crate::enhancer::pipeline::run_guards::<Grpc>(&enhancers.0.for_key(method).guards, ctx)
+        .await
+    {
+        Ok(()) => Ok(()),
         // A panicking guard is a bug, not a verdict: it carries `PanicRecovered` rather than a
         // rejection, so an unclaimed one renders `Internal` rather than telling the caller its
         // credentials were refused.
-        let activated = match catch_async(PipelineSegment::Guard, guard.can_activate(ctx)).await {
-            Ok(b) => b,
-            Err(event) => {
-                tracing::debug!(guard_index = index, panic = %event.message, "guard panicked");
-                return Err(GrpcStatus::new(
-                    crate::grpc::GrpcCode::Internal,
-                    format!("guard {} panicked: {}", index, event.message),
-                )
-                .caused_by(event));
-            }
-        };
-        if !activated {
-            return Err(
-                GrpcStatus::permission_denied(format!("guard {} rejected request", index))
-                    .caused_by(GuardRejection::new(index)),
-            );
+        Err(GuardFailure::Panicked { index, event }) => {
+            tracing::debug!(guard_index = index, panic = %event.message, "guard panicked");
+            Err(GrpcStatus::new(
+                crate::grpc::GrpcCode::Internal,
+                format!("guard {} panicked: {}", index, event.message),
+            )
+            .caused_by(event))
         }
-    }
-    Ok(())
-}
-
-/// Linked chain of interceptors wrapping a final delegate, and this transport's own: the other
-/// three share [`through_interceptors`](crate::enhancer::pipeline), which holds what the chain
-/// wraps as a `Leaf` rather than as a closure the reply type escapes through. Each `Box<Self>` move
-/// on `InterceptorNext::run` enforces the once-only invocation contract.
-async fn execute_with_interceptors<D, Fut>(
-    ctx: &GrpcContext,
-    interceptors: &[Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>],
-    delegate: D,
-) -> GrpcHandlerResult
-where
-    D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
-{
-    if interceptors.is_empty() {
-        return delegate().await;
-    }
-
-    let next = build_next(&interceptors[1..], delegate);
-    match catch_async(
-        PipelineSegment::Interceptor,
-        interceptors[0].intercept(ctx, next),
-    )
-    .await
-    {
-        Ok(answer) => answer,
-        Err(event) => Err(GrpcStatus::from(event)),
-    }
-}
-
-fn build_next<D, Fut>(
-    rest: &[Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>],
-    delegate: D,
-) -> Box<dyn InterceptorNext<GrpcContext, GrpcHandlerResult>>
-where
-    D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
-{
-    if rest.is_empty() {
-        Box::new(LeafNext { delegate })
-    } else {
-        Box::new(LinkNext {
-            head: rest[0].clone(),
-            rest: rest[1..].to_vec(),
-            delegate,
-        })
-    }
-}
-
-/// Innermost link: invokes the user delegate.
-struct LeafNext<D> {
-    delegate: D,
-}
-
-#[async_trait]
-impl<D, Fut> InterceptorNext<GrpcContext, GrpcHandlerResult> for LeafNext<D>
-where
-    D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
-{
-    async fn run(self: Box<Self>, _ctx: &GrpcContext) -> GrpcHandlerResult {
-        (self.delegate)().await
-    }
-}
-
-/// Outer link: hands off to the next interceptor in line.
-struct LinkNext<D> {
-    head: Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>,
-    rest: Vec<Arc<dyn Interceptor<GrpcContext, GrpcHandlerResult>>>,
-    delegate: D,
-}
-
-#[async_trait]
-impl<D, Fut> InterceptorNext<GrpcContext, GrpcHandlerResult> for LinkNext<D>
-where
-    D: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
-{
-    async fn run(self: Box<Self>, ctx: &GrpcContext) -> GrpcHandlerResult {
-        let this = *self;
-        let next = build_next(&this.rest, this.delegate);
-        match catch_async(PipelineSegment::Interceptor, this.head.intercept(ctx, next)).await {
-            Ok(answer) => answer,
-            Err(event) => Err(GrpcStatus::from(event)),
-        }
+        Err(GuardFailure::Rejected(rejection)) => Err(GrpcStatus::permission_denied(format!(
+            "guard {} rejected request",
+            rejection.guard_index
+        ))
+        .caused_by(rejection)),
     }
 }
 
@@ -389,14 +327,7 @@ where
 /// `add_service` on the adapter), and by tests.
 #[doc(hidden)]
 pub fn empty_enhancers() -> Arc<ResolvedGrpcEnhancers> {
-    Arc::new(ResolvedGrpcEnhancers {
-        guards: Vec::new(),
-        handler_guards: HashMap::new(),
-        interceptors: Vec::new(),
-        handler_interceptors: HashMap::new(),
-        error_handlers: Vec::new(),
-        handler_error_handlers: HashMap::new(),
-    })
+    Arc::new(ResolvedGrpcEnhancers::default())
 }
 /// gRPC's [`ScopedStream`](crate::dispatch::ScopedStream), named for the generated code that
 /// declares it as a method's associated stream type.
@@ -462,8 +393,10 @@ pub trait RequestCarrier: Send + 'static {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RequestError {
-    /// A parameter before this one took it. The macro rejects two takers at
-    /// compile time; this is what an extractor written around that sees.
+    /// A parameter before this one took it, or the call's future has ended and
+    /// released it. The macro rejects two takers at compile time; this is what
+    /// an extractor written around that sees, and what a stream or detached
+    /// work reading the request after the call sees.
     Taken,
     /// Nothing was installed: the method was reached outside ulo's dispatch.
     Missing,

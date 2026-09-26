@@ -19,6 +19,13 @@ tls-aws-lc = ["tonic/tls-aws-lc"]
 [dependencies]
 ulo = { path = "../ulo", default-features = false }
 tonic = "0.14"
+# `grpc-status-details-bin` carries a `google.rpc.Status`, whose `details` ulo packs as
+# `google.protobuf` well-known types.
+tonic-types = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+serde_json.workspace = true
+bytes.workspace = true
 tower = { workspace = true, features = ["util", "limit"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
 tokio-stream = { workspace = true, features = ["net"] }

@@ -159,6 +159,10 @@ async fn run_ws_connection(
                             stream_tasks_inner.lock().unwrap().push(handle);
                         }
                     },
+                    // A peer's Close converts to an error and the loop goes on, which is
+                    // what answers it: tungstenite composes the reply when it reads the
+                    // frame and writes it at the head of the next read, and that read then
+                    // ends the stream (RFC 6455 §5.5.1).
                     Err(_) => {}
                 },
                 Err(_) => break,

@@ -154,6 +154,8 @@ impl ulo::enhancer::Guard<ulo::grpc::GrpcContext> for AuthGuard {
 }
 ```
 
+`header(k)` answers an ASCII key's last value. `headers_all(k)` answers every value of a key the caller repeated, in order, and `header_bin(k)` answers a `-bin` key's bytes, decoded from the base64 the wire carries, the last value when the caller repeated it.
+
 ### Interceptors
 
 An interceptor is a provider that implements `Interceptor<GrpcContext, GrpcHandlerResult>`. The chain wraps the handler — `next.run(ctx).await` proceeds and answers with the reply or the failure; returning without calling it short-circuits.
@@ -238,6 +240,10 @@ async fn reserve(&self, Payload(req): Payload<ReserveRequest>)
 Err(GrpcStatus::new(GrpcCode::OutOfRange, "past the last slot").caused_by(WindowClosed))
 ```
 
+### Detail
+
+An error's `details()` travels in the `grpc-status-details-bin` trailer as a `google.rpc.Status`, the message gRPC's protobuf mapping names for that trailer. The status repeats the code and message and carries the detail as one `Any`: a JSON object as a `google.protobuf.Struct`, any other JSON value as a `google.protobuf.Value`. An error with no detail writes no trailer. The trailer counts against a client's trailer-size limit, which the specification suggests defaults to 8 KiB.
+
 ## Streaming
 
 All four call modes work through `#[grpc_methods]`. Which one a method serves is read from its own signature: `Inbound<T>` for a request the caller streams, `#[grpc_stream]` for a reply the handler streams, both together for bidirectional. The associated stream type the tonic-generated trait declares is written for you.
@@ -294,7 +300,7 @@ let adapter = ulo_grpc::GrpcAdapter::new(addr)
 app.use_grpc_adapter(adapter)?;
 ```
 
-Manually-registered services don't get enhancer support — they're a passthrough to tonic.
+Manually-registered services don't get enhancer support — they're a passthrough to tonic. `bind()` logs a `warn` naming each one; filter the `ulo_grpc` target to silence it.
 
 ## Example
 

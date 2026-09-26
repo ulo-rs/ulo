@@ -6,9 +6,7 @@ use rustc_hash::FxHashMap;
 use crate::di::Execution;
 use crate::di::ProviderScope;
 use crate::dispatch::transport::{
-    GrpcErrorHandlerArc, GrpcGuardEntry, GrpcInterceptorEntry, HttpErrorHandlerArc, HttpGuardEntry,
-    HttpInterceptorEntry, RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry,
-    WsErrorHandlerArc, WsGuardEntry, WsInterceptorEntry,
+    ErrorHandlerArc, Grpc, GuardEntry, Http, InterceptorEntry, Rpc, Ws,
 };
 use crate::http::middleware::Middleware;
 
@@ -54,21 +52,21 @@ pub trait Provider: Send + Sync {
 /// provider token (or, for gateways, by WS path).
 #[derive(Clone)]
 pub enum ProviderRole {
-    HttpGuard(HttpGuardEntry),
-    HttpInterceptor(HttpInterceptorEntry),
-    HttpErrorHandler(HttpErrorHandlerArc),
+    HttpGuard(GuardEntry<Http>),
+    HttpInterceptor(InterceptorEntry<Http>),
+    HttpErrorHandler(ErrorHandlerArc<Http>),
 
-    RpcGuard(RpcGuardEntry),
-    RpcInterceptor(RpcInterceptorEntry),
-    RpcErrorHandler(RpcErrorHandlerArc),
+    RpcGuard(GuardEntry<Rpc>),
+    RpcInterceptor(InterceptorEntry<Rpc>),
+    RpcErrorHandler(ErrorHandlerArc<Rpc>),
 
-    WsGuard(WsGuardEntry),
-    WsInterceptor(WsInterceptorEntry),
-    WsErrorHandler(WsErrorHandlerArc),
+    WsGuard(GuardEntry<Ws>),
+    WsInterceptor(InterceptorEntry<Ws>),
+    WsErrorHandler(ErrorHandlerArc<Ws>),
 
-    GrpcGuard(GrpcGuardEntry),
-    GrpcInterceptor(GrpcInterceptorEntry),
-    GrpcErrorHandler(GrpcErrorHandlerArc),
+    GrpcGuard(GuardEntry<Grpc>),
+    GrpcInterceptor(InterceptorEntry<Grpc>),
+    GrpcErrorHandler(ErrorHandlerArc<Grpc>),
 
     Middleware(Arc<dyn Middleware>),
     Gateway(Arc<Box<dyn crate::ws::Gateway>>),

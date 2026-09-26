@@ -289,12 +289,16 @@ async fn cancel_loop(mut rx: mpsc::UnboundedReceiver<String>, weak: std::sync::W
     }
 }
 
-fn data_to_json(data: RpcData) -> serde_json::Value {
+/// The wire carries JSON, and a `Binary` payload has no JSON to become.
+/// Every verb converts before `get_or_connect`, and a refused payload
+/// touches no socket.
+fn data_to_json(data: RpcData) -> Result<serde_json::Value, RpcClientError> {
     match data {
-        RpcData::Json(v) => v,
-        RpcData::Text(s) => serde_json::Value::String(s),
-        // UDP wire format is JSON; binary payloads are not supported.
-        RpcData::Binary(_) => serde_json::Value::Null,
+        RpcData::Json(v) => Ok(v),
+        RpcData::Text(s) => Ok(serde_json::Value::String(s)),
+        RpcData::Binary(_) => Err(RpcClientError::Transport(
+            "a binary payload cannot travel on the udp wire, which carries JSON".into(),
+        )),
     }
 }
 
@@ -314,7 +318,7 @@ impl RpcClientTransport for UdpClientTransport {
         // Pre-serialize the data once. Each attempt rewraps it with a fresh
         // correlation id so a late reply for an earlier attempt is dropped by
         // the reader loop instead of satisfying a later one.
-        let data_json = data_to_json(data);
+        let data_json = data_to_json(data)?;
 
         let attempts = self.retries.saturating_add(1);
         let mut last_timeout: Option<RpcClientError> = None;
@@ -380,6 +384,7 @@ impl RpcClientTransport for UdpClientTransport {
         data: RpcData,
         metadata: HashMap<String, String>,
     ) -> Result<RpcReplyStream, RpcClientError> {
+        let data = data_to_json(data)?;
         let inner = self.get_or_connect().await?;
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed).to_string();
 
@@ -388,7 +393,7 @@ impl RpcClientTransport for UdpClientTransport {
         // timeout.
         let mut msg = serde_json::json!({
             "pattern": pattern,
-            "data": data_to_json(data),
+            "data": data,
             "id": id,
         });
         if !metadata.is_empty() {
@@ -438,12 +443,13 @@ impl RpcClientTransport for UdpClientTransport {
         data: RpcData,
         metadata: HashMap<String, String>,
     ) -> Result<(), RpcClientError> {
+        let data = data_to_json(data)?;
         let inner = self.get_or_connect().await?;
 
         // No id field — server sends no reply.
         let mut msg = serde_json::json!({
             "pattern": pattern,
-            "data": data_to_json(data),
+            "data": data,
         });
         if !metadata.is_empty() {
             msg["metadata"] = serde_json::json!(metadata);

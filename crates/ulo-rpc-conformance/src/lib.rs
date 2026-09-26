@@ -3,10 +3,12 @@
 //! Seven transports speak ulo's wire grammar, and the behaviour a caller
 //! depends on is the same across all of them: a request comes back, an emit
 //! reaches its handler without one, headers survive the trip, a stream arrives
-//! in order, abandoning a stream cancels the producer, and traffic resumes
-//! after the connection breaks. Written per transport, that contract was seven
-//! copies which drifted — `ulo-rpc-nats` was missing three cases outright and
-//! nothing failed, because there was no suite for them to be missing from.
+//! in order, abandoning a stream cancels the producer, traffic resumes after
+//! the connection breaks, a miss is never answered with success, a JSON
+//! payload reaches the handler as JSON, and an emitted event reaches at least
+//! one of two instances. Written per transport, that contract was seven copies
+//! which drifted — `ulo-rpc-nats` was missing three cases outright and nothing
+//! failed, because there was no suite for them to be missing from.
 //!
 //! Here the cases are generic functions over [`Broker`], and
 //! [`conformance_suite!`] stamps one `#[tokio::test]` per case in the
@@ -34,8 +36,8 @@
 //! ulo_rpc_conformance::conformance_suite!(RedisBroker);
 //! ```
 //!
-//! The service-backed half stays in each transport's crate rather than moving
-//! into `integration-tests`: these need Docker, and that suite is hermetic.
+//! Each transport's stamp stays in its own crate rather than moving into
+//! `integration-tests`: five of the seven need Docker, and that suite is hermetic.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
@@ -77,8 +79,8 @@ impl Default for Budget {
 /// A live broker, and the two halves of ulo that talk to it.
 ///
 /// One implementation per transport crate, in that crate's `tests/`. The
-/// implementor owns the container: holding `Self` keeps the broker alive, and
-/// dropping it tears the broker down.
+/// implementor owns whatever the cases talk to — a container, or a socket and
+/// the proxy in front of it: holding `Self` keeps it alive.
 pub trait Broker: Sized + 'static {
     /// The server-side adapter under test.
     type Adapter: ulo::rpc::RpcAdapter;
@@ -89,7 +91,8 @@ pub trait Broker: Sized + 'static {
     /// never leaks between them.
     fn start() -> impl Future<Output = Self>;
 
-    /// A server adapter pointed at this broker.
+    /// A server adapter pointed at this broker. Called once per application
+    /// instance a case starts; a case that starts two instances calls it twice.
     fn adapter(&self) -> Self::Adapter;
 
     /// A client transport pointed at this broker, with its call timeout
@@ -111,12 +114,14 @@ pub trait Broker: Sized + 'static {
 // ---------------------------------------------------------------------------
 // Handlers the cases dispatch to.
 //
-// Each case starts its own application, so these counters are read only by the
-// case that just reset them.
+// Each case starts its own application, or two, so these counters are read only
+// by the case that just reset them.
 // ---------------------------------------------------------------------------
 
 static EMITS: AtomicUsize = AtomicUsize::new(0);
 static PRODUCER_SAW_CANCEL: AtomicBool = AtomicBool::new(false);
+/// Every delivery of `probe.fanout`, across every application instance in this process.
+static FANOUT: AtomicUsize = AtomicUsize::new(0);
 
 #[controller]
 pub struct ConformanceController {}
@@ -158,6 +163,24 @@ impl ConformanceController {
         Ok(Items::Many(
             futures::stream::iter((1..=3).map(|n| Ok(RpcData::json(serde_json::json!(n))))).boxed(),
         ))
+    }
+
+    /// Names the `RpcData` variant it was handed, so a caller can see what its payload became in
+    /// transit.
+    #[message_pattern("probe.variant")]
+    async fn variant(&self, data: RpcData) -> Result<RpcData, RpcError> {
+        let name = match &data {
+            RpcData::Json(v) => format!("Json({v})"),
+            RpcData::Text(s) => format!("Text({s})"),
+            RpcData::Binary(b) => format!("Binary({})", String::from_utf8_lossy(b)),
+        };
+        Ok(RpcData::json(serde_json::json!({ "saw": name })))
+    }
+
+    #[event_pattern("probe.fanout")]
+    async fn fanout(&self, _d: RpcData) -> Result<(), RpcError> {
+        FANOUT.fetch_add(1, Ordering::SeqCst);
+        Ok(())
     }
 
     /// Emits until the execution is cancelled, then records that it noticed.
@@ -465,6 +488,118 @@ pub async fn traffic_recovers_after_a_disruption<B: Broker>() {
     );
 }
 
+/// A pattern no controller declares is not answered with success.
+///
+/// What the failure is — a `NotFound` status, the broker's own refusal, a timeout — is the
+/// transport's, and this pins only that none of them answers a miss as if a handler had run.
+pub async fn a_miss_is_not_answered_with_success<B: Broker>() {
+    let broker = B::start().await;
+    let budget = B::budget();
+
+    with_server(&broker, |client| async move {
+        within(budget.boot, || async {
+            client
+                .send("echo", RpcData::json(serde_json::json!(1)))
+                .await
+                .ok()
+        })
+        .await
+        .expect("the transport must be carrying calls before a miss means anything");
+
+        let outcome = client
+            .send(
+                "nothing.declares.this",
+                RpcData::json(serde_json::json!({})),
+            )
+            .await;
+        assert!(
+            outcome.is_err(),
+            "a pattern nothing declares was answered with success: {outcome:?}"
+        );
+    })
+    .await;
+}
+
+/// A `Json` payload reaches the handler as `Json`.
+///
+/// The one variant that means the same thing on every transport. What `Text` and `Binary` become
+/// in transit is decided per transport and is not pinned here.
+pub async fn a_json_payload_reaches_the_handler_as_json<B: Broker>() {
+    let broker = B::start().await;
+    let budget = B::budget();
+
+    with_server(&broker, |client| async move {
+        let saw = within(budget.boot, || async {
+            client
+                .send("probe.variant", RpcData::json(serde_json::json!("hello")))
+                .await
+                .ok()
+                .and_then(|d| {
+                    d.as_json()
+                        .and_then(|v| v["saw"].as_str().map(String::from))
+                })
+        })
+        .await;
+
+        assert_eq!(
+            saw.as_deref(),
+            Some("Json(\"hello\")"),
+            "a JSON payload must reach the handler as the JSON it was"
+        );
+    })
+    .await;
+}
+
+/// One emit with two application instances on one broker reaches at least one of them and at
+/// most both.
+///
+/// How many times the handler runs is the transport's delivery mode, which nothing declares —
+/// every instance, one of a competing set, or on a socket transport the one the client
+/// addresses. This pins the bounds.
+pub async fn an_emit_reaches_at_least_one_of_two_instances<B: Broker>() {
+    let broker = B::start().await;
+    let budget = B::budget();
+
+    let client = RpcClient::new(broker.transport());
+    for _ in 0..2 {
+        let adapter = broker.adapter();
+        tokio::spawn(async move {
+            let mut app = UloFactory::new()
+                .create_with(ConformanceModule)
+                .await
+                .expect("the conformance module builds");
+            app.use_rpc_adapter(adapter)
+                .expect("the adapter is accepted while configuring");
+            app.bind().await.expect("the transport binds");
+            app.run().await;
+        });
+    }
+
+    within(budget.boot, || async {
+        client
+            .send("echo", RpcData::json(serde_json::json!(1)))
+            .await
+            .ok()
+    })
+    .await
+    .expect("at least one instance must be reachable");
+    // Both instances subscribe asynchronously and the first reply proves only one of them.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    FANOUT.store(0, Ordering::SeqCst);
+    client
+        .emit("probe.fanout", RpcData::json(serde_json::json!({})))
+        .await
+        .expect("emit must be accepted");
+    tokio::time::sleep(budget.settle).await;
+
+    let runs = FANOUT.load(Ordering::SeqCst);
+    assert!(
+        (1..=2).contains(&runs),
+        "one emit across two instances ran the handler {runs} times"
+    );
+}
+
 /// Stamp one `#[tokio::test]` per case for a [`Broker`] implementation.
 ///
 /// A case added to this crate reaches every transport through this macro,
@@ -479,6 +614,9 @@ macro_rules! conformance_suite {
             a_stream_arrives_in_order_and_ends,
             dropping_the_reply_stream_cancels_the_producer,
             traffic_recovers_after_a_disruption,
+            a_miss_is_not_answered_with_success,
+            a_json_payload_reaches_the_handler_as_json,
+            an_emit_reaches_at_least_one_of_two_instances,
         ]);
     };
     ($broker:ty, cases: [$($case:ident),* $(,)?]) => {

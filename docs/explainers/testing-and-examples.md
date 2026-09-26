@@ -84,7 +84,7 @@ nothing a user could observe. They were deleted; `marker_free_enhancers.rs` pins
 **A trait with more than one implementor gets one suite instantiated per implementor, not one suite
 per implementor.**
 
-The HTTP side is built this way. Four files in `integration-tests/` hold the contract once and a
+The HTTP side is built this way. Five files in `integration-tests/` hold the contract once and a
 `macro_rules!` stamps it out per adapter:
 
 ```rust
@@ -95,19 +95,27 @@ conformance_suite!(actix, ulo_http_actix::ActixAdapter::new());
 conformance_suite!(rocket, ulo_http_rocket::RocketAdapter::new());
 ```
 
-Seventy tests come out of those four files: thirty from the global chain, twenty-five from trailing
-slashes, ten from `{param}` syntax, five from listener adoption. A sixth adapter is one line each,
-and it either passes or it is not an adapter. Where an implementor cannot satisfy the
-contract, the exception is written into the suite rather than omitted from it — rocket cannot adopt a
-pre-bound listener, so `bind_target_conformance.rs` requires it to refuse at `bind()` rather than
-binding somewhere else.
+Eighty-two tests come out of those five files: thirty from the global chain, twenty-five from
+trailing slashes, ten from `{param}` syntax, five from listener adoption, twelve from SSE. A sixth
+adapter is one line each, and it either passes or it is not an adapter. Where an implementor cannot
+satisfy the contract, the exception is written into the suite rather than omitted from it — rocket
+cannot adopt a pre-bound listener, so `bind_target_conformance.rs` requires it to refuse at `bind()`
+rather than binding somewhere else.
+
+The WebSocket wire is proved the same way. `ws_adapter_conformance.rs` reads frames off the socket
+by hand and stamps its cases per adapter. Five adapters serve WebSocket, and what separates them is
+where each listens: four upgrade on the HTTP port and `ulo-ws-tungstenite` serves a port of its own,
+and each is stamped with the boot it has. Every case is stamped once more against a server that
+completes the upgrade and writes nothing, as a `should_panic` test, which catches a case that could
+not fail.
 
 ### When the suite needs a live service
 
-The RPC transports are built the same way, with one difference: their cases need a broker, and the
-shared suite is hermetic. So the cases live in `ulo-rpc-conformance` as generic functions over a
-`Broker` trait, and each transport crate implements that trait against its own testcontainer and
-stamps out the tests:
+The RPC transports are built the same way, with one difference: five of the seven need a broker,
+and the shared suite is hermetic. So the cases live in `ulo-rpc-conformance` as generic functions
+over a `Broker` trait, and each transport crate implements that trait — the broker crates against
+their own testcontainer, tcp and udp against a proxy the test owns, which is what a disruption
+cuts — and stamps out the tests:
 
 ```rust
 impl Broker for RedisBroker {
@@ -122,10 +130,11 @@ impl Broker for RedisBroker {
 ulo_rpc_conformance::conformance_suite!(RedisBroker);
 ```
 
-Six cases across five brokers, from one definition. What each transport supplies is what only it
-knows: how to start a broker, how to address it, and how to break the connection — `CLIENT KILL` on
-Redis, whose Pub/Sub carries no heartbeat and so never notices a frozen container; pausing the
-container everywhere else.
+Nine cases across seven transports, from one definition. What each transport supplies is what only
+it knows: how to start a broker, how to address it, and how to break the connection — `CLIENT KILL`
+on Redis, whose Pub/Sub carries no heartbeat and so never notices a frozen container; pausing the
+container on the other brokers; dropping the proxied connections on tcp and dropping datagrams on
+udp.
 
 The budgets are a transport's to raise. Kafka boots slowly and waits out a consumer-group rebalance
 before the first request is consumed, so it overrides all three.

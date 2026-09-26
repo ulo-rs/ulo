@@ -6,17 +6,13 @@ use crate::application_context::UloApplicationContext;
 use crate::di::ModuleMetadata;
 use crate::di::internal::scanner::DependencyScanner;
 use crate::di::internal::{Container, InstanceLoader};
-use crate::dispatch::transport::{EnhancerSet, Grpc, Http, Rpc, Ws};
+use crate::dispatch::transport::{EnhancerSet, Grpc, GuardEntry, Http, InterceptorEntry, Rpc, Ws};
 use crate::enhancer::{ErrorHandler, Guard, Interceptor};
 use crate::error::StartupError;
 use crate::grpc::GrpcContext;
 use crate::http::HttpContext;
 use crate::http::middleware::Middleware;
 use crate::rpc::RpcContext;
-use crate::spi::{
-    GrpcGuardEntry, GrpcInterceptorEntry, HttpGuardEntry, HttpInterceptorEntry, RpcGuardEntry,
-    RpcInterceptorEntry, WsGuardEntry, WsInterceptorEntry,
-};
 use crate::ws::WsContext;
 
 /// Entry point for building a ulo application: registers global middleware
@@ -54,7 +50,9 @@ impl UloFactory {
 
     /// Register a global guard that runs on every HTTP route.
     pub fn use_global_http_guards(&mut self, guard: Arc<dyn Guard<HttpContext>>) -> &mut Self {
-        self.global_http.guards.push(HttpGuardEntry::Ready(guard));
+        self.global_http
+            .guards
+            .push(GuardEntry::<Http>::Ready(guard));
         self
     }
 
@@ -65,7 +63,7 @@ impl UloFactory {
     ) -> &mut Self {
         self.global_http
             .interceptors
-            .push(HttpInterceptorEntry::Ready(interceptor));
+            .push(InterceptorEntry::<Http>::Ready(interceptor));
         self
     }
 
@@ -80,7 +78,7 @@ impl UloFactory {
     }
 
     pub fn use_global_rpc_guards(&mut self, guard: Arc<dyn Guard<RpcContext>>) -> &mut Self {
-        self.global_rpc.guards.push(RpcGuardEntry::Ready(guard));
+        self.global_rpc.guards.push(GuardEntry::<Rpc>::Ready(guard));
         self
     }
 
@@ -90,7 +88,7 @@ impl UloFactory {
     ) -> &mut Self {
         self.global_rpc
             .interceptors
-            .push(RpcInterceptorEntry::Ready(interceptor));
+            .push(InterceptorEntry::<Rpc>::Ready(interceptor));
         self
     }
 
@@ -103,7 +101,7 @@ impl UloFactory {
     }
 
     pub fn use_global_ws_guards(&mut self, guard: Arc<dyn Guard<WsContext>>) -> &mut Self {
-        self.global_ws.guards.push(WsGuardEntry::Ready(guard));
+        self.global_ws.guards.push(GuardEntry::<Ws>::Ready(guard));
         self
     }
 
@@ -113,7 +111,7 @@ impl UloFactory {
     ) -> &mut Self {
         self.global_ws
             .interceptors
-            .push(WsInterceptorEntry::Ready(interceptor));
+            .push(InterceptorEntry::<Ws>::Ready(interceptor));
         self
     }
 
@@ -128,7 +126,9 @@ impl UloFactory {
     /// Register a global guard that runs on every gRPC method, ahead of the
     /// service's own and its methods'.
     pub fn use_global_grpc_guards(&mut self, guard: Arc<dyn Guard<GrpcContext>>) -> &mut Self {
-        self.global_grpc.guards.push(GrpcGuardEntry::Ready(guard));
+        self.global_grpc
+            .guards
+            .push(GuardEntry::<Grpc>::Ready(guard));
         self
     }
 
@@ -139,7 +139,7 @@ impl UloFactory {
     ) -> &mut Self {
         self.global_grpc
             .interceptors
-            .push(GrpcInterceptorEntry::Ready(interceptor));
+            .push(InterceptorEntry::<Grpc>::Ready(interceptor));
         self
     }
 

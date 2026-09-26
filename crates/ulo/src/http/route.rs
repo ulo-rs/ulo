@@ -9,28 +9,23 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::context::Metadata;
-use crate::dispatch::ExecutionResult;
-use crate::enhancer::{Guard, Interceptor};
+use crate::dispatch::{ExecutionResult, Http};
+use crate::enhancer::{ErrorHandlerDeclaration, GuardDeclaration, InterceptorDeclaration};
 use crate::http::{HttpContext, HttpError, HttpMethod, HttpResponse};
-use crate::spi::HttpErrorHandlerArc;
 
 /// What one route declares. A `#[controller]` yields one [`Route`] per handler method, so this is
 /// the whole manifest for that method — what the other transports split across a target-level
 /// descriptor and a per-handler one.
 ///
-/// Each role arrives two ways. `*_tokens` come from `#[use_guards(MyGuard)]` and resolve against
-/// the DI container, so the enhancer may hold injected dependencies. `guards` / `interceptors` /
-/// `error_handlers` come from `#[use_guards(MyGuard{})]`, which builds the value at the
-/// declaration site and never consults the container. The resolver runs the DI-resolved ones
-/// first.
+/// Each role is one vector in the order written, and the resolver keeps that order. A guard or
+/// interceptor entry is a token, a value or a constructor (see
+/// [`GuardDeclaration`](crate::enhancer::GuardDeclaration)); an error-handler entry is a token or a
+/// value.
 #[derive(Default)]
 pub struct RouteEnhancers {
-    pub guard_tokens: Vec<String>,
-    pub interceptor_tokens: Vec<String>,
-    pub error_handler_tokens: Vec<String>,
-    pub guards: Vec<Arc<dyn Guard<HttpContext>>>,
-    pub interceptors: Vec<Arc<dyn Interceptor<HttpContext, crate::http::HttpHandlerResult>>>,
-    pub error_handlers: Vec<HttpErrorHandlerArc>,
+    pub guards: Vec<GuardDeclaration<Http>>,
+    pub interceptors: Vec<InterceptorDeclaration<Http>>,
+    pub error_handlers: Vec<ErrorHandlerDeclaration<Http>>,
 }
 
 /// One dispatchable route: the handler plus the routing facts and enhancers the

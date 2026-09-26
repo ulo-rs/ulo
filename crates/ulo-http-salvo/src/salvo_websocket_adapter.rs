@@ -28,5 +28,8 @@ pub(crate) fn ws_message_to_salvo(msg: WsMessage) -> Result<Message, WsError> {
             Some(f) => Message::close_with(f.code, f.reason),
             None => Message::close(),
         }),
+        _ => Err(WsError::Internal(
+            "an outbound frame type this adapter does not carry".into(),
+        )),
     }
 }

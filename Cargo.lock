@@ -3634,6 +3634,7 @@ dependencies = [
  "http 1.4.2",
  "juniper",
  "prost",
+ "prost-types",
  "rand 0.8.7",
  "rcgen",
  "reqwest",
@@ -3648,6 +3649,7 @@ dependencies = [
  "tonic-health",
  "tonic-prost",
  "tonic-reflection",
+ "tonic-types",
  "tower",
  "tower-http",
  "tracing-subscriber",
@@ -7977,6 +7979,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tonic-types"
+version = "0.14.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73ab1b02061f83d519bba3caa167f88f261ef05720ab8ebc954ade70de3348e8"
+dependencies = [
+ "prost",
+ "prost-types",
+ "tonic",
+]
+
+[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8508,12 +8521,17 @@ name = "ulo-grpc"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "futures-util",
  "http 1.4.2",
  "http-body 1.0.1",
+ "prost",
+ "prost-types",
+ "serde_json",
  "tokio",
  "tokio-stream",
  "tonic",
+ "tonic-types",
  "tower",
  "tracing",
  "ulo",
@@ -8751,6 +8769,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ulo",
+ "ulo-rpc-conformance",
 ]
 
 [[package]]
@@ -8762,6 +8781,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ulo",
+ "ulo-rpc-conformance",
 ]
 
 [[package]]
