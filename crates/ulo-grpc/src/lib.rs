@@ -192,6 +192,42 @@ pub fn to_status<E: ulo::Error>(error: E) -> tonic::Status {
     to_tonic(ulo::grpc::GrpcStatus::of(error))
 }
 
+/// Fire the execution's cancellation token when the caller's deadline passes,
+/// for as long as the execution lasts.
+///
+/// The `#[grpc_methods]` expansion calls this once per call, after building
+/// the context. tonic 0.14 races the service call against `grpc-timeout`, and
+/// that call resolves when the handler returns its response; for a streaming
+/// method the body runs after that, outside the race. The timer runs past that
+/// point: it fires the token at the deadline, which a producer feeding a
+/// stream, or detached work holding a clone of the token, observes and stops
+/// on. The timer ends with the execution's extensions, which drop with the
+/// last clone of the context or of its `Extensions`: a unary call reaches that
+/// when it returns, a stream when it ends. Work that keeps either clone past
+/// the answer keeps the timer armed, and the token fires at the deadline. A
+/// call with no deadline arms nothing.
+pub fn arm_deadline(ctx: &ulo::grpc::GrpcContext) {
+    use ulo::context::ExecutionContext;
+
+    let Some(deadline) = ctx.deadline() else {
+        return;
+    };
+    let token = ctx.cancellation().clone();
+    let (alive, ended) = tokio::sync::oneshot::channel::<()>();
+    // Dropped with the execution's extensions, which is what wakes `ended`.
+    ctx.extensions().insert(ExecutionAlive(alive));
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => token.cancel(),
+            _ = ended => {}
+        }
+    });
+}
+
+/// Held in an execution's extensions for as long as the execution lasts; its
+/// drop ends the deadline timer [`arm_deadline`] spawned.
+struct ExecutionAlive(#[allow(dead_code)] tokio::sync::oneshot::Sender<()>);
+
 /// The status a `GrpcStatus` renders as, keeping any error it carries on the
 /// answer's source slot.
 fn to_tonic(status: ulo::grpc::GrpcStatus) -> tonic::Status {

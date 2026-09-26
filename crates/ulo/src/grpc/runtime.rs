@@ -462,8 +462,10 @@ pub trait RequestCarrier: Send + 'static {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RequestError {
-    /// A parameter before this one took it. The macro rejects two takers at
-    /// compile time; this is what an extractor written around that sees.
+    /// A parameter before this one took it, or the call's future has ended and
+    /// released it. The macro rejects two takers at compile time; this is what
+    /// an extractor written around that sees, and what a stream or detached
+    /// work reading the request after the call sees.
     Taken,
     /// Nothing was installed: the method was reached outside ulo's dispatch.
     Missing,

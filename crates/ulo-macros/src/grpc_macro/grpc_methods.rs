@@ -1110,6 +1110,7 @@ fn build_wrapper_method(
                 #req_ident.remote_addr(),
                 __declared,
             );
+            ::ulo_grpc::arm_deadline(&__ctx);
 
             // The handler receives the tonic request, never the context, so the
             // context's extension bag rides the request to reach it. A handle,
@@ -1125,6 +1126,9 @@ fn build_wrapper_method(
             // Installed before the guards run, so a guard reads a copy of the
             // message and the handler's extractor still takes the original.
             <#shape as ::ulo_grpc::MethodShape>::install(#req_ident, &__ctx);
+            // Released when this future ends, returned or dropped: the installed request holds
+            // this context, and nothing else breaks that cycle for a request nothing took.
+            let __release = ::ulo::__grpc::ReleaseRequest(__ctx.clone());
 
             let __source = self.source.clone();
             let __build_ctx = __ctx.clone();
