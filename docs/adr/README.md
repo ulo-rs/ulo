@@ -69,3 +69,5 @@ the history is part of the value.
 - [0051 — An application is Send](0051-an-application-is-send.md)
 - [0055 — The pipeline's order is the order that was written](0055-the-pipelines-order.md)
 - [0056 — One role per position: the pre-dispatch role reaches every transport](0056-the-pre-dispatch-role.md)
+- [0057 — The container answers an ambiguous question, or refuses it](0057-the-container-answers-or-refuses.md)
+- [0058 — A provider declaration is a value](0058-a-provider-declaration-is-a-value.md)
