@@ -46,6 +46,7 @@ mod graphql_juniper_mount;
 mod graphql_module_identity;
 mod graphql_service_injection;
 mod graphql_subscriptions;
+mod grpc_add_service_warns;
 mod grpc_client_injection;
 mod grpc_deadline;
 mod grpc_deadline_fires_the_token;
