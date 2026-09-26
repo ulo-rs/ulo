@@ -1,13 +1,10 @@
 //! An `HttpError` returned from a middleware renders with the status it names.
 //!
-//! Middleware runs before the error chain has a matched route to scope handlers
-//! against, so the failure mode is a 500 that erases the status the middleware
-//! chose. Both a custom status and a named kind are covered.
-// Verifies that HttpError returned from Middleware::handle maps to the correct
-// HTTP status code rather than collapsing to 500.
-//
-// Before the fix, Err(e) in the middleware chain was re-boxed as io::Error,
-// losing type information, and always produced 500.
+//! Module middleware runs on the matched route. An `HttpError` it returns is
+//! rendered as it stands, without passing through the error chain; any other
+//! failure reaches the chain as `MiddlewareFailure`. The failure mode is a 500
+//! that erases the status the middleware chose. Both a custom status and a
+//! named kind are covered.
 
 use crate::common::TestServer;
 use ulo::async_trait;

@@ -70,7 +70,7 @@ fn extend_with<T: Transport>(
                 .guards
                 .get(&token)
                 .cloned()
-                .ok_or_else(|| not_found::<T>("Guard", &token, "Guard<Context>"))?,
+                .ok_or_else(|| not_found::<T>(Role::Guard, &token))?,
             GuardDeclaration::Value(guard) => GuardEntry::Ready(guard),
             GuardDeclaration::Constructor(build) => GuardEntry::Factory(build.0),
         });
@@ -82,7 +82,7 @@ fn extend_with<T: Transport>(
                 .interceptors
                 .get(&token)
                 .cloned()
-                .ok_or_else(|| not_found::<T>("Interceptor", &token, "Interceptor<Context>"))?,
+                .ok_or_else(|| not_found::<T>(Role::Interceptor, &token))?,
             InterceptorDeclaration::Value(interceptor) => InterceptorEntry::Ready(interceptor),
             InterceptorDeclaration::Constructor(build) => InterceptorEntry::Factory(build.0),
         });
@@ -90,13 +90,13 @@ fn extend_with<T: Transport>(
 
     for handler in declared.error_handlers {
         set.error_handlers.push(match handler {
-            ErrorHandlerDeclaration::Token(token) => registry
-                .error_handlers
-                .get(&token)
-                .cloned()
-                .ok_or_else(|| {
-                not_found::<T>("ErrorHandler", &token, "ErrorHandler<Context, Answer>")
-            })?,
+            ErrorHandlerDeclaration::Token(token) => {
+                registry
+                    .error_handlers
+                    .get(&token)
+                    .cloned()
+                    .ok_or_else(|| not_found::<T>(Role::ErrorHandler, &token))?
+            }
             ErrorHandlerDeclaration::Value(handler) => handler,
         });
     }
@@ -104,24 +104,87 @@ fn extend_with<T: Transport>(
     Ok(())
 }
 
+/// The role a token failed to resolve for, with the words the diagnostic needs: the role as the
+/// registry names it, the role with its article, and the trait a provider implements to register.
+#[derive(Clone, Copy)]
+enum Role {
+    Guard,
+    Interceptor,
+    ErrorHandler,
+}
+
+impl Role {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Guard => "Guard",
+            Self::Interceptor => "Interceptor",
+            Self::ErrorHandler => "ErrorHandler",
+        }
+    }
+
+    fn with_article(self) -> &'static str {
+        match self {
+            Self::Guard => "A guard",
+            Self::Interceptor => "An interceptor",
+            Self::ErrorHandler => "An error handler",
+        }
+    }
+
+    fn trait_shape(self) -> &'static str {
+        match self {
+            Self::Guard => "Guard<Context>",
+            Self::Interceptor => "Interceptor<Context>",
+            Self::ErrorHandler => "ErrorHandler<Context, Answer>",
+        }
+    }
+}
+
 /// The one diagnostic a token that resolves against nothing produces.
 ///
 /// A role is registered by the trait impl a provider carries, so a token missing from the registry
 /// means either the provider is absent from `providers` or it does not implement the role at all.
 /// Both are worth naming, because the second compiles.
-fn not_found<T: Transport>(
-    role: &str,
-    token: &str,
-    trait_shape: &str,
-) -> Box<dyn std::error::Error + Send + Sync> {
+fn not_found<T: Transport>(role: Role, token: &str) -> Box<dyn std::error::Error + Send + Sync> {
     format!(
-        "{transport} {role} '{token}' not found in registry. A {lower} registers automatically by \
+        "{transport} {role} '{token}' not found in registry. {subject} registers automatically by \
          implementing {trait_shape} for this transport's context; make sure the provider is in the \
          module's `providers` list. For `provider_factory!` under a string/const token, name the \
          produced type so it can be detected — annotate the closure's return type or pass a type \
          hint.",
         transport = T::NAME,
-        lower = role.to_lowercase(),
+        role = role.name(),
+        subject = role.with_article(),
+        trait_shape = role.trait_shape(),
     )
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dispatch::transport::Http;
+
+    /// The article is carried with the role rather than derived from its name: lowercasing the
+    /// name gives "A interceptor" and "A errorhandler".
+    #[test]
+    fn the_diagnostic_names_the_role_with_its_article() {
+        let cases = [
+            (Role::Guard, "HTTP Guard 'X' not found", "A guard registers"),
+            (
+                Role::Interceptor,
+                "HTTP Interceptor 'X' not found",
+                "An interceptor registers",
+            ),
+            (
+                Role::ErrorHandler,
+                "HTTP ErrorHandler 'X' not found",
+                "An error handler registers",
+            ),
+        ];
+        for (role, opening, subject) in cases {
+            let message = not_found::<Http>(role, "X").to_string();
+            assert!(message.starts_with(opening), "{message}");
+            assert!(message.contains(subject), "{message}");
+        }
+    }
 }
