@@ -61,6 +61,7 @@ mod grpc_global_enhancers;
 mod grpc_handler_form;
 mod grpc_interceptor_refusal_reaches_the_chain;
 mod grpc_manual_trait_form;
+mod grpc_metadata_and_status_details;
 mod grpc_reflection;
 mod grpc_service_injection;
 mod grpc_status_names_its_code;
