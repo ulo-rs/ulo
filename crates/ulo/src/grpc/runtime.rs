@@ -40,6 +40,11 @@ where
     D: FnOnce() -> Fut + Send + 'static,
     Fut: Future<Output = GrpcHandlerResult> + Send + 'static,
 {
+    // This future is what the server drops when a call is abandoned before it answers — by its
+    // caller, or at its deadline — and a dropped future fires nothing on its own. The drop guard
+    // fires the token on that drop and is disarmed at every return, an `Err` included: the call
+    // answered. A streaming reply's token is then the stream's to fire (ADR-0033).
+    let abandonment = Abandonment::arm(crate::context::ExecutionContext::cancellation(ctx).clone());
     let answer = match run_grpc_guards(ctx, enhancers, method).await {
         Ok(()) => {
             let mut all_interceptors = enhancers.interceptors.clone();
@@ -54,6 +59,7 @@ where
     };
 
     let Err(status) = answer else {
+        abandonment.disarm();
         return answer;
     };
 
@@ -74,7 +80,36 @@ where
     };
     // A claim answers what an interceptor answers: `Ok` recovers the call with a reply of its own,
     // `Err` reshapes the failure. Unclaimed, the status the call failed with is the answer.
-    claimed.unwrap_or(Err(status))
+    let answer = claimed.unwrap_or(Err(status));
+    abandonment.disarm();
+    answer
+}
+
+/// Fires an execution's token if the pipeline's future is dropped before it returns.
+///
+/// Armed at the top of [`run_grpc_pipeline`] and disarmed at each of its returns, so the token
+/// fires from here only when the future ends without returning: dropped mid-flight, which is what
+/// an abandoned call looks like from the server, or unwound by a panic nothing below caught.
+struct Abandonment {
+    token: Option<crate::context::CancellationToken>,
+}
+
+impl Abandonment {
+    fn arm(token: crate::context::CancellationToken) -> Self {
+        Self { token: Some(token) }
+    }
+
+    fn disarm(mut self) {
+        self.token = None;
+    }
+}
+
+impl Drop for Abandonment {
+    fn drop(&mut self) {
+        if let Some(token) = self.token.take() {
+            token.cancel();
+        }
+    }
 }
 
 /// The guards this call runs, in declaration order.

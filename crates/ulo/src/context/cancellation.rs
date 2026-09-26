@@ -13,9 +13,10 @@ use event_listener::Event;
 /// when its stream yields `None`; an item or frame carrying an error ends the
 /// answer without ending it cleanly, and fires this too. On a `#[grpc_methods]`
 /// service it also fires when the caller's `grpc-timeout` passes while the
-/// execution lasts, whatever the answer's shape. A caller leaving while a
-/// handler is still computing a buffered answer fires nothing else: work
-/// holding a clone of the token runs on.
+/// execution lasts, whatever the answer's shape, and when a call is dropped
+/// before it answers, by its caller going away or at its deadline. On HTTP, RPC
+/// and WebSocket a caller leaving while a handler is still computing a
+/// buffered answer fires nothing: work holding a clone of the token runs on.
 ///
 /// Ulo-native and runtime-agnostic on purpose: ulo core does not depend on
 /// any specific async runtime. Adapters that want to bridge into
