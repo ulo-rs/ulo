@@ -85,7 +85,13 @@ impl KafkaClientTransport {
         }
     }
 
-    /// Override the request-response timeout (default: 5 s).
+    /// Bound each publish and each wait for a reply (default: 5 s). A `send` publishes and waits
+    /// for its reply within this; an `emit`, a stream's opening publish and its cancel notice are
+    /// each bounded by it. A stream also takes it as the longest gap between frames.
+    ///
+    /// A publish that runs out stays in rdkafka's queue and may still be delivered, so a call that
+    /// answered `Timeout` can still reach the server. The topic setup on a client's first use,
+    /// when [`connect`](RpcClientTransport::connect) was not called first, is not bounded by this.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
@@ -244,16 +250,27 @@ impl RpcClientTransport for KafkaClientTransport {
             .payload(&payload)
             .headers(headers);
 
-        if let Err((e, _)) = shared
-            .producer
-            .send(record, Timeout::After(Duration::from_secs(5)))
-            .await
+        // One deadline for the whole call: the publish and the reply share `self.timeout`, so a
+        // slow publish shortens the wait for the reply rather than adding to it.
+        let deadline = tokio::time::Instant::now() + self.timeout;
+        match tokio::time::timeout_at(
+            deadline,
+            shared.producer.send(record, Timeout::After(self.timeout)),
+        )
+        .await
         {
-            shared.pending.lock().unwrap().remove(&corr_id);
-            return Err(RpcClientError::Transport(e.to_string()));
+            Ok(Ok(_)) => {}
+            Ok(Err((e, _))) => {
+                shared.pending.lock().unwrap().remove(&corr_id);
+                return Err(RpcClientError::Transport(e.to_string()));
+            }
+            Err(_) => {
+                shared.pending.lock().unwrap().remove(&corr_id);
+                return Err(RpcClientError::Timeout);
+            }
         }
 
-        match tokio::time::timeout(self.timeout, rx).await {
+        match tokio::time::timeout_at(deadline, rx).await {
             Ok(Ok(bytes)) => match wire::parse_reply_frame(&bytes) {
                 ReplyFrame::Single(result) => result,
                 ReplyFrame::Item(_) | ReplyFrame::End | ReplyFrame::EndErr { .. } => {
@@ -313,16 +330,13 @@ impl RpcClientTransport for KafkaClientTransport {
             .payload(&payload)
             .headers(headers);
 
-        if let Err((e, _)) = shared
-            .producer
-            .send(record, Timeout::After(Duration::from_secs(5)))
-            .await
-        {
-            shared.pending.lock().unwrap().remove(&corr_id);
-            return Err(RpcClientError::Transport(e.to_string()));
+        match publish(&shared.producer, record, self.timeout).await {
+            Ok(()) => Ok(stream),
+            Err(e) => {
+                shared.pending.lock().unwrap().remove(&corr_id);
+                Err(e)
+            }
         }
-
-        Ok(stream)
     }
 
     async fn emit(
@@ -341,12 +355,28 @@ impl RpcClientTransport for KafkaClientTransport {
             .payload(&payload)
             .headers(headers);
 
-        shared
-            .producer
-            .send(record, Timeout::After(Duration::from_secs(5)))
-            .await
-            .map(|_| ())
-            .map_err(|(e, _)| RpcClientError::Transport(e.to_string()))
+        publish(&shared.producer, record, self.timeout).await
+    }
+}
+
+/// Publish `record`, the delivery wait included, within `bound`.
+///
+/// rdkafka's own timeout covers only queueing: with the broker gone, the delivery future waits on
+/// `message.timeout.ms`, far past any bound a caller set. So the whole future runs under `bound`,
+/// and running out of it answers `Timeout`.
+async fn publish<K, P>(
+    producer: &FutureProducer,
+    record: FutureRecord<'_, K, P>,
+    bound: Duration,
+) -> Result<(), RpcClientError>
+where
+    K: rdkafka::message::ToBytes + ?Sized,
+    P: rdkafka::message::ToBytes + ?Sized,
+{
+    match tokio::time::timeout(bound, producer.send(record, Timeout::After(bound))).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err((e, _))) => Err(RpcClientError::Transport(e.to_string())),
+        Err(_) => Err(RpcClientError::Timeout),
     }
 }
 
@@ -368,10 +398,7 @@ async fn forward_stream(
         let record = FutureRecord::to(crate::wire::CANCEL_TOPIC)
             .key(&corr_id)
             .payload(&notice);
-        if let Err((e, _)) = producer
-            .send(record, Timeout::After(Duration::from_secs(5)))
-            .await
-        {
+        if let Err(e) = publish(&producer, record, gap).await {
             tracing::debug!(error = %e, "KafkaClientTransport cancel publish failed");
         }
     };
