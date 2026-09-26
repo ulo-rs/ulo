@@ -49,6 +49,17 @@ pub use tracing;
 // without declaring their own dependency.
 pub use serde_json;
 
+// Re-exported because public signatures name their types: `multer::Field`
+// and `multer::Error` through `Multipart`, `validator::ValidationErrors` and
+// `Validate` through `Validated`'s error and `ValidatableExtractor`, and
+// `bytes::Bytes` through `BodyStream` and the HTTP body. `Field` is also
+// `ulo::http::extract::Field`, the path to write for it. Deriving `Validate`
+// still needs `validator` as a direct dependency, since the derive names
+// `::validator`.
+pub use bytes;
+pub use multer;
+pub use validator;
+
 // Re-exports for adapter crates
 
 // Re-export built-in providers
