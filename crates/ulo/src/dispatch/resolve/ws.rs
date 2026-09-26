@@ -41,11 +41,8 @@ impl GatewayResolver {
             registry,
             &container.global_ws,
             Declared {
-                guard_tokens: declared.guard_tokens,
                 guards: declared.guards,
-                interceptor_tokens: declared.interceptor_tokens,
                 interceptors: declared.interceptors,
-                error_handler_tokens: declared.error_handler_tokens,
                 error_handlers: declared.error_handlers,
             },
         )?;
@@ -58,11 +55,8 @@ impl GatewayResolver {
             let set = resolve_handler::<Ws>(
                 registry,
                 Declared {
-                    guard_tokens: handler.guard_tokens,
                     guards: handler.guards,
-                    interceptor_tokens: handler.interceptor_tokens,
                     interceptors: handler.interceptors,
-                    error_handler_tokens: handler.error_handler_tokens,
                     error_handlers: handler.error_handlers,
                 },
             )?;

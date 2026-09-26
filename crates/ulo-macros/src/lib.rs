@@ -178,6 +178,16 @@ pub fn sse(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///   #[use_guards(RoleGuard::new("admin"))]
 ///   ```
 ///
+/// - **Closure** - Builds the guard once per execution, from that execution's context:
+///   ```rust,ignore
+///   #[use_guards(|ctx| AuditGuard::for_call(ctx))]
+///   ```
+///
+/// The spelling decides the lifecycle: a type name resolves from DI with whatever scope it
+/// declares, a struct literal or constructor call is built once at startup and shared by every
+/// execution, and a closure runs per execution. Entries run in the order written, whichever
+/// spellings they mix.
+///
 /// # Examples
 ///
 /// **Method-level guards:**
@@ -247,6 +257,15 @@ pub fn use_guards(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///   #[use_interceptors(CacheInterceptor::new(Duration::from_secs(60)))]
 ///   ```
 ///
+/// - **Closure** - Builds the interceptor once per execution, from that execution's context:
+///   ```rust,ignore
+///   #[use_interceptors(|ctx| TimingInterceptor::for_call(ctx))]
+///   ```
+///
+/// The spelling decides the lifecycle, as for [`macro@use_guards`]: a type name resolves from DI,
+/// a struct literal or constructor call is built once and shared, a closure runs per execution.
+/// Entries run in the order written, whichever spellings they mix.
+///
 /// # Examples
 ///
 /// **Method-level interceptors:**
@@ -311,6 +330,10 @@ pub fn use_interceptors(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///   ```rust,ignore
 ///   #[use_error_handlers(TracingErrorHandler::new(level))]
 ///   ```
+///
+/// An error handler has no per-execution arm, and `#[use_error_handlers(|ctx| ..)]` is refused
+/// where it is written. Entries are consulted last-written first, whichever spellings they mix: a
+/// method's entries before its controller's, and both before the globals.
 ///
 /// # Examples
 ///

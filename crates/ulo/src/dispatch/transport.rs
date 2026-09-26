@@ -105,6 +105,52 @@ pub trait InterceptorFactory<T: Transport>: Send + Sync {
     >;
 }
 
+/// The closure spelling of a declaration, as the factory the per-execution arm runs.
+///
+/// `#[use_guards(|ctx| Audit::for_call(ctx))]` lands here: the closure is called with the
+/// execution's context, and what it returns serves that execution and no other.
+pub(crate) struct ConstructedGuard<F>(pub(crate) F);
+
+impl<T, F, G> GuardFactory<T> for ConstructedGuard<F>
+where
+    T: Transport,
+    F: Fn(&T::Context) -> G + Send + Sync,
+    G: Guard<T::Context> + 'static,
+{
+    fn create<'a>(
+        &'a self,
+        ctx: &'a T::Context,
+    ) -> Pin<Box<dyn Future<Output = Arc<dyn Guard<T::Context> + Send + Sync>> + Send + 'a>> {
+        let guard: Arc<dyn Guard<T::Context> + Send + Sync> = Arc::new((self.0)(ctx));
+        Box::pin(std::future::ready(guard))
+    }
+}
+
+/// See [`ConstructedGuard`].
+pub(crate) struct ConstructedInterceptor<F>(pub(crate) F);
+
+impl<T, F, I> InterceptorFactory<T> for ConstructedInterceptor<F>
+where
+    T: Transport,
+    F: Fn(&T::Context) -> I + Send + Sync,
+    I: Interceptor<T::Context, Answer<T>> + 'static,
+{
+    fn create<'a>(
+        &'a self,
+        ctx: &'a T::Context,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Arc<dyn Interceptor<T::Context, Answer<T>> + Send + Sync>>
+                + Send
+                + 'a,
+        >,
+    > {
+        let interceptor: Arc<dyn Interceptor<T::Context, Answer<T>> + Send + Sync> =
+            Arc::new((self.0)(ctx));
+        Box::pin(std::future::ready(interceptor))
+    }
+}
+
 /// A guard as the framework stores it: one instance shared by every call, or a factory asked per
 /// call.
 pub enum GuardEntry<T: Transport> {

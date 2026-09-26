@@ -37,11 +37,8 @@ impl RpcControllerResolver {
             registry,
             &container.global_rpc,
             Declared {
-                guard_tokens: declared.guard_tokens,
                 guards: declared.guards,
-                interceptor_tokens: declared.interceptor_tokens,
                 interceptors: declared.interceptors,
-                error_handler_tokens: declared.error_handler_tokens,
                 error_handlers: declared.error_handlers,
             },
         )?;
@@ -55,11 +52,8 @@ impl RpcControllerResolver {
             let set = resolve_handler::<Rpc>(
                 registry,
                 Declared {
-                    guard_tokens: handler.guard_tokens,
                     guards: handler.guards,
-                    interceptor_tokens: handler.interceptor_tokens,
                     interceptors: handler.interceptors,
-                    error_handler_tokens: handler.error_handler_tokens,
                     error_handlers: handler.error_handlers,
                 },
             )?;

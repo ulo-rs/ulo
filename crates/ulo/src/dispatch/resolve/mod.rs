@@ -1,10 +1,12 @@
 //! Turning an enhancer declaration into the entries a dispatch target serves with.
 //!
-//! A declaration names its enhancers two ways, and both arrive here. `#[use_guards(MyGuard)]` gives
-//! a token that resolves against the role registry, so the enhancer may hold injected dependencies;
-//! `#[use_guards(MyGuard{})]` gives a value built where it was written. A token that resolves
-//! against nothing fails `create`, which is what turns a misspelling into a startup refusal rather
-//! than a target serving without the guard it declared.
+//! A declaration names its enhancers three ways (two for an error handler), and all arrive here in
+//! the order written.
+//! `#[use_guards(MyGuard)]` gives a token that resolves against the role registry, so the enhancer
+//! may hold injected dependencies; `#[use_guards(MyGuard{})]` gives a value built where it was
+//! written; `#[use_guards(|ctx| ..)]` gives a constructor the framework runs once per execution.
+//! A token that resolves against nothing fails `create`, which is what turns a misspelling into a
+//! startup refusal rather than a target serving without the guard it declared.
 //!
 //! One copy, parameterised by the transport. What differs between them is the noun in the
 //! diagnostic.
@@ -17,22 +19,17 @@ pub(crate) use self::grpc::GrpcServiceResolver;
 pub(crate) use self::rpc::RpcControllerResolver;
 pub(crate) use self::ws::GatewayResolver;
 
-use std::sync::Arc;
-
 use crate::dispatch::transport::{
-    Answer, EnhancerRegistry, EnhancerSet, ErrorHandlerArc, GuardEntry, InterceptorEntry, Transport,
+    EnhancerRegistry, EnhancerSet, GuardEntry, InterceptorEntry, Transport,
 };
-use crate::enhancer::{Guard, Interceptor};
+use crate::enhancer::{ErrorHandlerDeclaration, GuardDeclaration, InterceptorDeclaration};
 use crate::error::SetupResult;
 
-/// What one declaration names, before any of it is resolved.
+/// What one declaration names, before any of it is resolved: each role in the order written.
 pub(crate) struct Declared<T: Transport> {
-    pub guard_tokens: Vec<String>,
-    pub guards: Vec<Arc<dyn Guard<T::Context>>>,
-    pub interceptor_tokens: Vec<String>,
-    pub interceptors: Vec<Arc<dyn Interceptor<T::Context, Answer<T>>>>,
-    pub error_handler_tokens: Vec<String>,
-    pub error_handlers: Vec<ErrorHandlerArc<T>>,
+    pub guards: Vec<GuardDeclaration<T>>,
+    pub interceptors: Vec<InterceptorDeclaration<T>>,
+    pub error_handlers: Vec<ErrorHandlerDeclaration<T>>,
 }
 
 /// Resolve what a dispatch target declares, with the transport's globals ahead of it.
@@ -60,52 +57,49 @@ pub(crate) fn resolve_handler<T: Transport>(
     Ok(set)
 }
 
-/// DI-resolved entries first, then the ones built at the declaration site.
+/// Every entry in the order it was written: a token looked up in the registry, a value as the
+/// shared entry it already is, a constructor as the per-execution arm.
 fn extend_with<T: Transport>(
     registry: &EnhancerRegistry<T>,
     set: &mut EnhancerSet<T>,
     declared: Declared<T>,
 ) -> SetupResult {
-    for token in declared.guard_tokens {
-        set.guards.push(
-            registry
+    for guard in declared.guards {
+        set.guards.push(match guard {
+            GuardDeclaration::Token(token) => registry
                 .guards
                 .get(&token)
                 .cloned()
                 .ok_or_else(|| not_found::<T>("Guard", &token, "Guard<Context>"))?,
-        );
+            GuardDeclaration::Value(guard) => GuardEntry::Ready(guard),
+            GuardDeclaration::Constructor(build) => GuardEntry::Factory(build.0),
+        });
     }
-    set.guards
-        .extend(declared.guards.into_iter().map(GuardEntry::Ready));
 
-    for token in declared.interceptor_tokens {
-        set.interceptors.push(
-            registry
+    for interceptor in declared.interceptors {
+        set.interceptors.push(match interceptor {
+            InterceptorDeclaration::Token(token) => registry
                 .interceptors
                 .get(&token)
                 .cloned()
                 .ok_or_else(|| not_found::<T>("Interceptor", &token, "Interceptor<Context>"))?,
-        );
+            InterceptorDeclaration::Value(interceptor) => InterceptorEntry::Ready(interceptor),
+            InterceptorDeclaration::Constructor(build) => InterceptorEntry::Factory(build.0),
+        });
     }
-    set.interceptors.extend(
-        declared
-            .interceptors
-            .into_iter()
-            .map(InterceptorEntry::Ready),
-    );
 
-    for token in declared.error_handler_tokens {
-        set.error_handlers.push(
-            registry
+    for handler in declared.error_handlers {
+        set.error_handlers.push(match handler {
+            ErrorHandlerDeclaration::Token(token) => registry
                 .error_handlers
                 .get(&token)
                 .cloned()
                 .ok_or_else(|| {
-                    not_found::<T>("ErrorHandler", &token, "ErrorHandler<Context, Answer>")
-                })?,
-        );
+                not_found::<T>("ErrorHandler", &token, "ErrorHandler<Context, Answer>")
+            })?,
+            ErrorHandlerDeclaration::Value(handler) => handler,
+        });
     }
-    set.error_handlers.extend(declared.error_handlers);
 
     Ok(())
 }

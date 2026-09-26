@@ -22,7 +22,7 @@ use crate::{
         generate_extractor_static_method_call, get_extractor_params, has_self_receiver,
         one_body_assertion,
     },
-    enhancer::enhancer::{EnhancerInfo, create_enhancer_infos},
+    enhancer::enhancer::{EnhancerInfo, create_enhancer_infos, enhancer_entries},
     markers_params::{
         extracts_marker_params::{
             extract_body_from_param, extract_path_param_from_param, extract_query_from_param,
@@ -403,46 +403,18 @@ fn generate_route_wrapper(
     }
 }
 
-/// Pull a role's DI tokens and direct-instantiation expressions out of the manifest.
-fn enhancer_vecs(
-    enhancer_infos: &HashMap<String, Vec<EnhancerInfo>>,
-    key: &str,
-) -> (Vec<TokenStream>, Vec<TokenStream>) {
-    let infos = enhancer_infos.get(key);
-    let tokens = infos
-        .map(|v| {
-            v.iter()
-                .filter(|i| !i.token_expr.is_empty())
-                .map(|i| i.token_expr.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    let instances = infos
-        .map(|v| {
-            v.iter()
-                .filter(|i| !i.instance_expr.is_empty())
-                .map(|i| i.instance_expr.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    (tokens, instances)
-}
-
 fn enhancers_method(enhancer_infos: &HashMap<String, Vec<EnhancerInfo>>) -> TokenStream {
-    let (guard_tokens, guard_instances) = enhancer_vecs(enhancer_infos, "guards");
-    let (interceptor_tokens, interceptor_instances) = enhancer_vecs(enhancer_infos, "interceptors");
-    let (error_handler_tokens, error_handler_instances) =
-        enhancer_vecs(enhancer_infos, "error_handlers");
+    let transport = quote! { ::ulo::dispatch::Http };
+    let guards = enhancer_entries(enhancer_infos, "guards", &transport);
+    let interceptors = enhancer_entries(enhancer_infos, "interceptors", &transport);
+    let error_handlers = enhancer_entries(enhancer_infos, "error_handlers", &transport);
 
     quote! {
         fn enhancers(&self) -> ::ulo::http::RouteEnhancers {
             ::ulo::http::RouteEnhancers {
-                guard_tokens: vec![#(#guard_tokens),*],
-                interceptor_tokens: vec![#(#interceptor_tokens),*],
-                error_handler_tokens: vec![#(#error_handler_tokens),*],
-                guards: vec![#(::std::sync::Arc::new(#guard_instances)),*],
-                interceptors: vec![#(::std::sync::Arc::new(#interceptor_instances)),*],
-                error_handlers: vec![#(::std::sync::Arc::new(#error_handler_instances)),*],
+                guards: vec![#(#guards),*],
+                interceptors: vec![#(#interceptors),*],
+                error_handlers: vec![#(#error_handlers),*],
             }
         }
     }

@@ -13,7 +13,8 @@ use quote::quote;
 use syn::{Attribute, ImplItem, ItemImpl, LitStr, Result, parse2};
 
 use crate::enhancer::enhancer::{
-    create_enhancer_infos, enhancer_vecs, get_enhancers_attr, has_enhancer_attribute,
+    create_enhancer_infos, declares_anything, enhancer_entries, get_enhancers_attr,
+    has_enhancer_attribute,
 };
 use crate::shared::attr_is;
 use crate::shared::set_metadata::{get_metadata_exprs, merged_metadata_exprs, metadata_ctor};
@@ -253,13 +254,12 @@ fn build_enhancers_fn(
     message_handlers: &[(String, syn::ImplItemFn)],
     event_handlers: &[(String, syn::ImplItemFn)],
 ) -> Result<TokenStream> {
+    let transport = quote! { ::ulo::dispatch::Rpc };
     let ctrl_enhancers_attr = get_enhancers_attr(&impl_block.attrs)?;
     let ctrl_infos = create_enhancer_infos(ctrl_enhancers_attr, Vec::new())?;
-
-    let (guard_tokens, guard_instances) = enhancer_vecs(&ctrl_infos, "guards");
-    let (interceptor_tokens, interceptor_instances) = enhancer_vecs(&ctrl_infos, "interceptors");
-    let (error_handler_tokens, error_handler_instances) =
-        enhancer_vecs(&ctrl_infos, "error_handlers");
+    let guards = enhancer_entries(&ctrl_infos, "guards", &transport);
+    let interceptors = enhancer_entries(&ctrl_infos, "interceptors", &transport);
+    let error_handlers = enhancer_entries(&ctrl_infos, "error_handlers", &transport);
 
     let mut handler_entries: Vec<TokenStream> = Vec::new();
     for (pattern, method) in message_handlers.iter().chain(event_handlers.iter()) {
@@ -268,27 +268,18 @@ fn build_enhancers_fn(
             continue;
         }
         let infos = create_enhancer_infos(method_enhancers_attr, Vec::new())?;
-        let (hg, hgi) = enhancer_vecs(&infos, "guards");
-        let (hi, hii) = enhancer_vecs(&infos, "interceptors");
-        let (he, hei) = enhancer_vecs(&infos, "error_handlers");
-        if hg.is_empty()
-            && hi.is_empty()
-            && he.is_empty()
-            && hgi.is_empty()
-            && hii.is_empty()
-            && hei.is_empty()
-        {
+        if !declares_anything(&infos) {
             continue;
         }
+        let hg = enhancer_entries(&infos, "guards", &transport);
+        let hi = enhancer_entries(&infos, "interceptors", &transport);
+        let he = enhancer_entries(&infos, "error_handlers", &transport);
         handler_entries.push(quote! {
             ::ulo::rpc::RpcHandlerEnhancers {
                 pattern: #pattern.to_string(),
-                guard_tokens: vec![#(#hg),*],
-                interceptor_tokens: vec![#(#hi),*],
-                error_handler_tokens: vec![#(#he),*],
-                guards: vec![#(::std::sync::Arc::new(#hgi)),*],
-                interceptors: vec![#(::std::sync::Arc::new(#hii)),*],
-                error_handlers: vec![#(::std::sync::Arc::new(#hei)),*],
+                guards: vec![#(#hg),*],
+                interceptors: vec![#(#hi),*],
+                error_handlers: vec![#(#he),*],
             }
         });
     }
@@ -298,12 +289,9 @@ fn build_enhancers_fn(
         #[allow(non_snake_case, clippy::all)]
         fn __ulo_rpc_enhancers() -> ::ulo::rpc::RpcEnhancers {
             ::ulo::rpc::RpcEnhancers {
-                guard_tokens: vec![#(#guard_tokens),*],
-                interceptor_tokens: vec![#(#interceptor_tokens),*],
-                error_handler_tokens: vec![#(#error_handler_tokens),*],
-                guards: vec![#(::std::sync::Arc::new(#guard_instances)),*],
-                interceptors: vec![#(::std::sync::Arc::new(#interceptor_instances)),*],
-                error_handlers: vec![#(::std::sync::Arc::new(#error_handler_instances)),*],
+                guards: vec![#(#guards),*],
+                interceptors: vec![#(#interceptors),*],
+                error_handlers: vec![#(#error_handlers),*],
                 handlers: vec![#(#handler_entries),*],
             }
         }

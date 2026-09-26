@@ -20,64 +20,52 @@ pub fn has_enhancer_attribute(attr: &Attribute) -> bool {
         .is_some_and(|segment| is_enhancer(&segment.ident))
 }
 
-/// Represents an enhancer that can be resolved from DI or directly instantiated
+/// One argument of `#[use_guards(…)]`, `#[use_interceptors(…)]` or `#[use_error_handlers(…)]`,
+/// classified by its grammar. The spelling decides the lifecycle — `ulo::enhancer::GuardDeclaration`
+/// or its sibling is the type each becomes — and [`enhancer_entries`] emits it.
 #[derive(Clone)]
-pub struct EnhancerInfo {
-    /// The type identifier of the enhancer (for token-based DI resolution)
-    pub type_ident: Ident,
-    /// The token used for DI resolution
-    pub token_expr: TokenStream,
-    /// The full instantiation expression (for direct instantiation fallback)
-    /// E.g., `MyGuard` or `MyGuard::new()` or `MyGuard::new("admin")`
-    pub instance_expr: TokenStream,
+pub enum EnhancerInfo {
+    /// `MyGuard` or `"AUTH_GUARD"`: a DI token, resolved at `create`. Carries the expression that
+    /// produces the token string.
+    Token(TokenStream),
+    /// `MyGuard {}` or `MyGuard::new(..)`: a value, built at startup and shared.
+    Value(TokenStream),
+    /// `|ctx| ..`: a constructor, run once per execution.
+    Constructor(TokenStream),
 }
 
-/// Create enhancer infos from attributes for DI resolution
-/// Returns a map of enhancer type -> list of EnhancerInfo
+/// Read every enhancer attribute into one ordered list per role.
+///
+/// Controller-level entries come first and method-level ones append after them, each in the order
+/// written, so the list is the order written. The key is the attribute name without
+/// `use_`: `guards`, `interceptors`, `error_handlers`.
 pub fn create_enhancer_infos(
     controller_enhancers_attr: Vec<(&Ident, &Attribute)>,
     method_enhancers_attr: Vec<(&Ident, &Attribute)>,
 ) -> Result<HashMap<String, Vec<EnhancerInfo>>> {
     let mut enhancers: HashMap<String, Vec<EnhancerInfo>> = HashMap::new();
 
-    // Controller-level first; method-level appends to the same key, it does not replace.
     for (ident, attr) in controller_enhancers_attr
         .into_iter()
         .chain(method_enhancers_attr)
     {
-        // Parse as expressions to support both `MyGuard` and `MyGuard::new()`
         let arg_exprs = attr
             .parse_args_with(Punctuated::<syn::Expr, Token![,]>::parse_terminated)
             .map_err(|_| Error::new(attr.span(), "Invalid attribute format"))?;
 
-        // Normalize attribute names: strip "use_" prefix
         let key = ident.to_string().replace("use_", "");
 
         for arg_expr in arg_exprs {
-            // Extract the type identifier and optionally the instance expression
-            let (type_ident, instance_expr_opt) = extract_enhancer_info(&arg_expr)?;
-
-            // Generate token based on the type of enhancer
-            let (token_expr, instance_expr) = if let Some(expr) = instance_expr_opt {
-                // Check if this is a string token (dummy ident __StringToken)
-                if type_ident == "__StringToken" {
-                    // String literal: use the expression as token
-                    (expr, quote! {})
-                } else {
-                    // Direct instantiation: no token, use expression for instance
-                    (quote! {}, expr)
-                }
-            } else {
-                // Type-name syntax: generate type token
-                (quote! { ::ulo::di::token_of::<#type_ident>() }, quote! {})
-            };
-
-            let info = EnhancerInfo {
-                type_ident,
-                token_expr,
-                instance_expr,
-            };
-
+            let info = extract_enhancer_info(&arg_expr)?;
+            // An error handler has no per-execution arm to land on, so the refusal is here, at
+            // the argument, rather than at startup.
+            if key == "error_handlers" && matches!(info, EnhancerInfo::Constructor(_)) {
+                return Err(Error::new(
+                    arg_expr.span(),
+                    "an error handler is built once and shared, so the closure form has nothing \
+                     to build per execution; write a type name or a value",
+                ));
+            }
             enhancers.entry(key.clone()).or_default().push(info);
         }
     }
@@ -85,93 +73,87 @@ pub fn create_enhancer_infos(
     Ok(enhancers)
 }
 
-/// Split one role's manifest entries into the DI tokens and the values built at the declaration
-/// site. `#[use_guards(MyGuard)]` fills the first, `#[use_guards(MyGuard{})]` the second, and an
-/// entry never fills both. Every transport's generator reads its descriptor through this, so a
-/// role that reaches one transport reaches all four.
-pub fn enhancer_vecs(
-    infos: &HashMap<String, Vec<EnhancerInfo>>,
-    key: &str,
-) -> (Vec<TokenStream>, Vec<TokenStream>) {
-    let empty = Vec::new();
-    let entries = infos.get(key).unwrap_or(&empty);
-    let tokens = entries
-        .iter()
-        .filter(|i| !i.token_expr.is_empty())
-        .map(|i| i.token_expr.clone())
-        .collect();
-    let instances = entries
-        .iter()
-        .filter(|i| !i.instance_expr.is_empty())
-        .map(|i| i.instance_expr.clone())
-        .collect();
-    (tokens, instances)
+/// Whether any role has an entry. A generator that emits a descriptor only when something is
+/// declared reads this.
+pub fn declares_anything(infos: &HashMap<String, Vec<EnhancerInfo>>) -> bool {
+    infos.values().any(|entries| !entries.is_empty())
 }
 
-/// Extract enhancer information from an expression
-/// Returns: (type_ident, optional_instance_expr)
+/// The declaration type one role's entries are emitted as.
+fn declaration_path(key: &str) -> TokenStream {
+    match key {
+        "guards" => quote! { ::ulo::enhancer::GuardDeclaration },
+        "interceptors" => quote! { ::ulo::enhancer::InterceptorDeclaration },
+        "error_handlers" => quote! { ::ulo::enhancer::ErrorHandlerDeclaration },
+        other => panic!("no declaration type for enhancer role `{other}`"),
+    }
+}
+
+/// One role's entries as the declaration values the descriptor carries, in the order written.
 ///
-/// Supports:
-/// - `MyGuard` → (`MyGuard`, None) - DI resolution only (generates type token)
-/// - `"AUTH_GUARD"` → (`__StringToken`, None) - DI resolution with string token
-/// - `APP_GUARD` → (`__ConstToken`, None) - DI resolution with const token
-/// - `MyGuard{}` → (`MyGuard`, Some(`MyGuard`)) - Direct instantiation (generates instance)
-/// - `MyGuard::new()` → (`MyGuard`, Some(`MyGuard::new()`)) - Direct instantiation via constructor (generates instance)
-/// - `MyGuard::new("admin")` → (`MyGuard`, Some(`MyGuard::new("admin")`)) - Direct instantiation with args (generates instance)
-fn extract_enhancer_info(expr: &syn::Expr) -> Result<(Ident, Option<TokenStream>)> {
+/// `transport` is the `ulo::dispatch` marker the generator serves — `::ulo::dispatch::Http` and
+/// its three siblings. Every entry names it, so a value has a role trait object to coerce to and
+/// a closure has a context type to infer its parameter from.
+pub fn enhancer_entries(
+    infos: &HashMap<String, Vec<EnhancerInfo>>,
+    key: &str,
+    transport: &TokenStream,
+) -> Vec<TokenStream> {
+    let declaration = declaration_path(key);
+    infos
+        .get(key)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|info| match info {
+                    EnhancerInfo::Token(token) => {
+                        quote! { #declaration::<#transport>::Token(#token) }
+                    }
+                    EnhancerInfo::Value(value) => {
+                        quote! { #declaration::<#transport>::value(#value) }
+                    }
+                    EnhancerInfo::Constructor(build) => {
+                        quote! { #declaration::<#transport>::constructor(#build) }
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Classify one attribute argument by its grammar.
+///
+/// - `MyGuard` — a bare path: a DI token, `token_of::<MyGuard>()`
+/// - `"AUTH_GUARD"` — a string literal: a DI token, the string itself
+/// - `MyGuard {}`, `MyGuard { role: "admin" }` — a struct literal: a value
+/// - `MyGuard::new()`, `MyGuard::new("admin")` — a call: a value
+/// - `|ctx| MyGuard::for_call(ctx)` — a closure: a constructor
+fn extract_enhancer_info(expr: &syn::Expr) -> Result<EnhancerInfo> {
     match expr {
-        // String literal: "AUTH_GUARD"
-        // Generates: token from string → DI resolution
         syn::Expr::Lit(syn::ExprLit {
             lit: syn::Lit::Str(lit_str),
             ..
-        }) => {
-            let token_string = lit_str.clone();
-            // Create a dummy ident for tracking
-            let type_ident = Ident::new("__StringToken", lit_str.span());
-            // Generate token expression that returns the string
-            let token_expr = quote! { #token_string.to_string() };
-            // Return as "instance_expr" to override token generation
-            Ok((type_ident, Some(token_expr)))
-        }
-        // Simple path (just type name): MyGuard or APP_GUARD (const)
-        // Generates: token only → DI resolution required
+        }) => Ok(EnhancerInfo::Token(quote! { #lit_str.to_string() })),
         syn::Expr::Path(expr_path) if expr_path.path.segments.len() == 1 => {
-            let type_ident = expr_path.path.segments[0].ident.clone();
-            Ok((type_ident, None))
-        }
-        // Struct instantiation: MyGuard{} or MyGuard { field: value }
-        // Generates: instance expression → direct instantiation
-        syn::Expr::Struct(expr_struct) => {
-            if let Some(first_segment) = expr_struct.path.segments.first() {
-                let type_ident = first_segment.ident.clone();
-                let instance_expr = quote! { #expr };
-                return Ok((type_ident, Some(instance_expr)));
-            }
-            Err(Error::new(
-                expr.span(),
-                "Expected valid struct path in struct expression",
+            let type_ident = &expr_path.path.segments[0].ident;
+            Ok(EnhancerInfo::Token(
+                quote! { ::ulo::di::token_of::<#type_ident>() },
             ))
         }
-        // Constructor call: MyGuard::new() or MyGuard::new("args")
-        // Generates: instance expression → direct instantiation
+        syn::Expr::Struct(_) => Ok(EnhancerInfo::Value(quote! { #expr })),
         syn::Expr::Call(expr_call) => {
-            if let syn::Expr::Path(path_expr) = &*expr_call.func {
-                // Get the first segment (the type name before ::)
-                if let Some(first_segment) = path_expr.path.segments.first() {
-                    let type_ident = first_segment.ident.clone();
-                    let instance_expr = quote! { #expr };
-                    return Ok((type_ident, Some(instance_expr)));
-                }
+            if let syn::Expr::Path(_) = &*expr_call.func {
+                return Ok(EnhancerInfo::Value(quote! { #expr }));
             }
             Err(Error::new(
                 expr.span(),
                 "Expected type identifier or Type::new() expression",
             ))
         }
+        syn::Expr::Closure(_) => Ok(EnhancerInfo::Constructor(quote! { #expr })),
         _ => Err(Error::new(
             expr.span(),
-            "Expected type identifier (MyGuard), string literal (\"AUTH_GUARD\"), struct literal (MyGuard{}), or constructor call (MyGuard::new())",
+            "Expected a type name (MyGuard), a string token (\"AUTH_GUARD\"), a struct literal (MyGuard{}), a constructor call (MyGuard::new()) or a closure (|ctx| MyGuard::new(ctx))",
         )),
     }
 }
