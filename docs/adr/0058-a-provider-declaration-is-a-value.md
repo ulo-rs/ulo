@@ -4,8 +4,9 @@ Status: proposed
 
 A provider is declared by an expression: three constructors, a type's own declaration, and two
 modifiers that compose over all of them. A token in a declaration is a value implementing
-`IntoToken`, never a spelling a macro reads. A provider factory is always async. `#[new]` is the one
-constructor. What `build` returns is a `Registration`.
+`IntoToken`, never a spelling a macro reads. An enhancer role comes from the enhancer's own type or
+from the token's. A provider factory is always async. `#[new]` is the one constructor. What `build`
+returns is a `Registration`.
 
 ## Context
 
@@ -42,6 +43,12 @@ Building it by hand has two shapes and both fail: a marker type parameter is amb
 site for an async closure (`E0282`), and two entry points accept the async form through the sync
 door as a provider of futures.
 
+**A role is detected where the value's type is concrete.** `provider_value!` and
+`provider_factory!` emit autoref probes that register a middleware, guard, interceptor or
+error-handler role when the produced value's type implements one. A value surface is a generic
+function, which sees its value only through its bounds, so the probe has nothing to resolve against
+there.
+
 ## Decision
 
 **The surface is values.**
@@ -69,6 +76,23 @@ const, a runtime `String`. Nothing classifies a path; the compiler rejects a val
 `Token<T>` nor a `&str`, and `#[diagnostic::on_unimplemented]` carries the message. A typed token is
 load-bearing: `Provide::value(tokens::API_KEY, 42u32)` where `API_KEY: Token<String>` fails to
 compile, and the string form accepts it.
+
+**A role comes from a type: the enhancer's own, or the token's.** An `#[injectable]` enhancer
+registers its roles, and `.under(token)` forwards them. A token typed with a role trait,
+`Token<dyn Guard<HttpContext>>`, makes whatever is provided under it take that role, and the
+constructor's bound refuses a value that does not implement it. `APP_GUARD` and `APP_INTERCEPTOR`
+are role tokens: `APP_GUARD` is a `Token<dyn Guard<HttpContext>>`. A string token, or a token typed with a data type, carries data and registers no
+role.
+
+```rust
+pub const AUTH: Token<dyn Guard<HttpContext>> = Token::new("AUTH_GUARD");
+
+providers: [
+    Provide::value(AUTH, HeaderGuard("x-auth")),       // a guard, checked
+    Provide::value(APP_GUARD, RateLimit::new(100)),    // a global guard, checked
+    Provide::value("PORT", 3000u16),                   // data
+]
+```
 
 **`#[module]` and the builder take the same expressions.** All four keys parse expressions, and
 `exports:` takes both forms the builder's export methods have. The builder has one
@@ -118,6 +142,10 @@ beta. The macros are deleted rather than deprecated, `init = "…"` is deleted w
   and declare a path-qualified controller.
 - A sync factory gains one word, `async`.
 - A struct's dependencies have one source, its `#[new]` signature.
+- A value becomes an enhancer only where a type says so. A plain guard value provided under a
+  string token registers no role, and a `#[use_guards]` naming that token fails startup with the
+  registry's not-found diagnostic. A value that does not implement `Guard` fails to compile under a
+  guard token.
 
 ## Roads not taken
 
@@ -137,3 +165,9 @@ closure, and **two entry points**, which compiled a provider of futures until an
 bound was added and still leaves two doors for one act.
 
 **`init = "…"` kept beside `#[new]`**, which keeps two sources of dependencies for one struct.
+
+**Detecting a value's role inside the constructor.** Stable Rust cannot ask a generic value
+whether it implements a trait. **Naming the role at each declaration** (`.guard::<Http>()`) adds a
+modifier per role where the token already says it. **A `#[module]` syntax of its own**, emitting the
+same probes, would work in one of the two places a declaration is written and leave the builder
+without roles.
