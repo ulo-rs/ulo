@@ -164,6 +164,12 @@ pub use shape::{GrpcRequest, MethodShape};
 /// [`kind`](ulo::Error::kind), the way every transport renders one, and
 /// attaches the error to the status's source slot.
 ///
+/// [`details`](ulo::Error::details) reaches HTTP, RPC and WebSocket and does
+/// not travel here: the status carries a code and `grpc-message`, which the
+/// specification defines as a text description of the error, and ulo writes
+/// nothing to `grpc-status-details-bin`, the trailer it names for structured
+/// detail.
+///
 /// A `#[grpc_methods]` handler returns its error and the generated method does
 /// this. What is left for a caller is a service written against tonic's own
 /// trait and registered through [`GrpcAdapter::add_service`], outside ulo's

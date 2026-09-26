@@ -120,6 +120,11 @@ pub trait Error: std::error::Error + Send + Sync + 'static {
     /// Structured payload merged into the response envelope under
     /// `details`. Use for field-level validation results, retry hints,
     /// trace ids, or anything the client needs beyond the message.
+    ///
+    /// Rendered on HTTP, RPC and WebSocket. Dropped on gRPC: ulo builds a status
+    /// from the code and message alone and writes nothing to
+    /// `grpc-status-details-bin`, the trailer the specification names for
+    /// detail.
     fn details(&self) -> Option<Value> {
         None
     }
