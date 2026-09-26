@@ -240,6 +240,10 @@ async fn reserve(&self, Payload(req): Payload<ReserveRequest>)
 Err(GrpcStatus::new(GrpcCode::OutOfRange, "past the last slot").caused_by(WindowClosed))
 ```
 
+### Detail
+
+An error's `details()` travels in the `grpc-status-details-bin` trailer as a `google.rpc.Status`, the message gRPC's protobuf mapping names for that trailer. The status repeats the code and message and carries the detail as one `Any`: a JSON object as a `google.protobuf.Struct`, any other JSON value as a `google.protobuf.Value`. An error with no detail writes no trailer. The trailer counts against a client's trailer-size limit, which the specification suggests defaults to 8 KiB.
+
 ## Streaming
 
 All four call modes work through `#[grpc_methods]`. Which one a method serves is read from its own signature: `Inbound<T>` for a request the caller streams, `#[grpc_stream]` for a reply the handler streams, both together for bidirectional. The associated stream type the tonic-generated trait declares is written for you.

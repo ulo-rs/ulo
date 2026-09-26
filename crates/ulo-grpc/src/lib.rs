@@ -169,11 +169,16 @@ pub use shape::{GrpcRequest, MethodShape};
 /// [`kind`](ulo::Error::kind), the way every transport renders one, and
 /// attaches the error to the status's source slot.
 ///
-/// [`details`](ulo::Error::details) reaches HTTP, RPC and WebSocket and does
-/// not travel here: the status carries a code and `grpc-message`, which the
-/// specification defines as a text description of the error, and ulo writes
-/// nothing to `grpc-status-details-bin`, the trailer it names for structured
-/// detail.
+/// [`details`](ulo::Error::details) travels in `grpc-status-details-bin`, the
+/// trailer the specification names for structured detail, as a
+/// `google.rpc.Status` repeating the code and message and carrying the detail
+/// as one `Any`: a JSON object packs as a `google.protobuf.Struct`, any other
+/// JSON value as a `google.protobuf.Value`. An error with no detail writes no
+/// trailer, and neither does a status whose code is `Ok`, which the
+/// specification forbids the trailer on. `grpc-message` stays the text
+/// description the specification defines it as. The trailer counts against a
+/// client's trailer-size limit, which the specification suggests defaults to
+/// 8 KiB.
 ///
 /// A `#[grpc_methods]` handler returns its error and the generated method does
 /// this. What is left for a caller is a service written against tonic's own
@@ -242,12 +247,125 @@ struct ExecutionAlive(#[allow(dead_code)] tokio::sync::oneshot::Sender<()>);
 /// The status a `GrpcStatus` renders as, keeping any error it carries on the
 /// answer's source slot.
 fn to_tonic(status: ulo::grpc::GrpcStatus) -> tonic::Status {
-    let mut answer = tonic::Status::new(
-        tonic::Code::from_i32(status.code as i32),
-        status.message.clone(),
-    );
-    if let Some(source) = status.into_source() {
+    let code = status.code as i32;
+    let message = status.message.clone();
+    let source = status.into_source();
+    let details = source
+        .as_ref()
+        .filter(|_| code != 0)
+        .and_then(|source| source.details());
+    let mut answer = match details {
+        Some(details) => tonic::Status::with_details(
+            tonic::Code::from_i32(code),
+            message.clone(),
+            details_trailer(code, message, &details).into(),
+        ),
+        None => tonic::Status::new(tonic::Code::from_i32(code), message),
+    };
+    if let Some(source) = source {
         answer.set_source(std::sync::Arc::new(ulo::grpc::GrpcFailure::new(source)));
     }
     answer
+}
+
+/// The `google.rpc.Status` that `grpc-status-details-bin` carries, encoded.
+///
+/// The specification forbids the trailer's code to contradict `grpc-status`,
+/// and has the consumer check it. The message repeats `grpc-message` for a
+/// reader that takes both from the trailer.
+fn details_trailer(code: i32, message: String, details: &serde_json::Value) -> Vec<u8> {
+    use prost::Message;
+
+    let detail = match details {
+        serde_json::Value::Object(fields) => prost_types::Any {
+            type_url: "type.googleapis.com/google.protobuf.Struct".to_string(),
+            value: proto_struct(fields).encode_to_vec(),
+        },
+        other => prost_types::Any {
+            type_url: "type.googleapis.com/google.protobuf.Value".to_string(),
+            value: proto_value(other).encode_to_vec(),
+        },
+    };
+    tonic_types::Status {
+        code,
+        message,
+        details: vec![detail],
+    }
+    .encode_to_vec()
+}
+
+fn proto_struct(fields: &serde_json::Map<String, serde_json::Value>) -> prost_types::Struct {
+    prost_types::Struct {
+        fields: fields
+            .iter()
+            .map(|(key, value)| (key.clone(), proto_value(value)))
+            .collect(),
+    }
+}
+
+/// JSON's mapping onto `google.protobuf.Value`, which is the mapping protobuf's
+/// own JSON form defines: every number becomes a double. A number outside a
+/// double's range, which serde_json holds only under its `arbitrary_precision`
+/// feature, travels as its decimal string, since protobuf's JSON form has no
+/// non-finite number.
+fn proto_value(value: &serde_json::Value) -> prost_types::Value {
+    use prost_types::value::Kind;
+
+    let kind = match value {
+        serde_json::Value::Null => Kind::NullValue(prost_types::NullValue::NullValue as i32),
+        serde_json::Value::Bool(b) => Kind::BoolValue(*b),
+        serde_json::Value::Number(n) => n
+            .as_f64()
+            .filter(|f| f.is_finite())
+            .map(Kind::NumberValue)
+            .unwrap_or_else(|| Kind::StringValue(n.to_string())),
+        serde_json::Value::String(s) => Kind::StringValue(s.clone()),
+        serde_json::Value::Array(items) => Kind::ListValue(prost_types::ListValue {
+            values: items.iter().map(proto_value).collect(),
+        }),
+        serde_json::Value::Object(fields) => Kind::StructValue(proto_struct(fields)),
+    };
+    prost_types::Value { kind: Some(kind) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ulo::grpc::{GrpcCode, GrpcStatus};
+
+    #[derive(Debug)]
+    struct Detailed;
+
+    impl std::fmt::Display for Detailed {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("detailed")
+        }
+    }
+
+    impl std::error::Error for Detailed {}
+
+    impl ulo::Error for Detailed {
+        fn kind(&self) -> ulo::ErrorKind {
+            ulo::ErrorKind::BadRequest
+        }
+
+        fn details(&self) -> Option<serde_json::Value> {
+            Some(serde_json::json!({"field": "qty"}))
+        }
+    }
+
+    #[test]
+    fn a_status_whose_code_is_ok_writes_no_trailer() {
+        let ok = to_tonic(GrpcStatus::new(GrpcCode::Ok, "").caused_by(Detailed));
+        assert!(ok.details().is_empty());
+
+        let failed = to_tonic(GrpcStatus::new(GrpcCode::Aborted, "").caused_by(Detailed));
+        assert!(!failed.details().is_empty());
+    }
+
+    #[test]
+    fn a_finite_number_travels_as_a_double() {
+        let value = proto_value(&serde_json::json!(1.5));
+        assert_eq!(value.kind, Some(prost_types::value::Kind::NumberValue(1.5)));
+    }
 }

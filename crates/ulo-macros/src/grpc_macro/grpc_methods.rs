@@ -790,17 +790,11 @@ fn lower_handler(
             > {
                 #bind_params
                 // Each item carries the caller's own error type, which reaches
-                // the wire as the code its kind means. Only the reply that opens
-                // the stream reaches the chain — an item failing arrives after
-                // the answer has begun.
+                // the wire as the code its kind means, with its detail. Only the
+                // reply that opens the stream reaches the chain — an item failing
+                // arrives after the answer has begun.
                 let __map_item = |__item| {
-                    ::std::result::Result::map_err(__item, |__err| {
-                        let __status = ::ulo::grpc::GrpcStatus::of(__err);
-                        ::tonic::Status::new(
-                            ::tonic::Code::from_i32(__status.code as i32),
-                            __status.message,
-                        )
-                    })
+                    ::std::result::Result::map_err(__item, ::ulo_grpc::to_status)
                 };
                 #call_stream
             }

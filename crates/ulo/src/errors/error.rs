@@ -121,10 +121,11 @@ pub trait Error: std::error::Error + Send + Sync + 'static {
     /// `details`. Use for field-level validation results, retry hints,
     /// trace ids, or anything the client needs beyond the message.
     ///
-    /// Rendered on HTTP, RPC and WebSocket. Dropped on gRPC: ulo builds a status
-    /// from the code and message alone and writes nothing to
+    /// Rendered on HTTP, RPC and WebSocket. On gRPC it travels in
     /// `grpc-status-details-bin`, the trailer the specification names for
-    /// detail.
+    /// detail, as a `google.rpc.Status` carrying it as one `Any`: a JSON object
+    /// as a `google.protobuf.Struct`, any other value as a
+    /// `google.protobuf.Value`.
     fn details(&self) -> Option<Value> {
         None
     }
