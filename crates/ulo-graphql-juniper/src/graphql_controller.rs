@@ -352,7 +352,10 @@ impl Route for GraphQLPlaygroundController {
     ) -> ulo::dispatch::ExecutionResult<HttpResponse, ulo::http::HttpError> {
         HttpResponse {
             status: 200,
-            body: Some(Body::text(self.playground_html.clone())),
+            body: Some(
+                Body::text(self.playground_html.clone())
+                    .with_content_type("text/html; charset=utf-8"),
+            ),
             headers: vec![],
         }
         .into()
