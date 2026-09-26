@@ -294,7 +294,7 @@ let adapter = ulo_grpc::GrpcAdapter::new(addr)
 app.use_grpc_adapter(adapter)?;
 ```
 
-Manually-registered services don't get enhancer support — they're a passthrough to tonic.
+Manually-registered services don't get enhancer support — they're a passthrough to tonic. `bind()` logs a `warn` naming each one; filter the `ulo_grpc` target to silence it.
 
 ## Example
 

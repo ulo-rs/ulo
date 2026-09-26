@@ -71,7 +71,9 @@
 //!
 //! Services added this way do not get the enhancer pipeline — they pass
 //! straight through to tonic. Services registered via DI go through guards,
-//! interceptors, error handlers, and the panic catcher.
+//! interceptors, error handlers, and the panic catcher. `bind()` logs a `warn`
+//! naming each service added this way; filter the `ulo_grpc` target to silence
+//! it.
 //!
 //! # Reflection and health
 //!

@@ -103,6 +103,8 @@ pub struct GrpcAdapter {
     /// it begins natural drain), and the drain-timeout guard (so the deadline
     /// timer starts only *after* shutdown is signalled, not at startup).
     shutdown_tx: Arc<watch::Sender<bool>>,
+    /// The services `add_service` took, by name, for the startup warning.
+    bypassing: Vec<&'static str>,
 }
 
 impl GrpcAdapter {
@@ -135,13 +137,17 @@ impl GrpcAdapter {
             #[cfg(any(feature = "tls-ring", feature = "tls-aws-lc"))]
             tls: None,
             shutdown_tx: Arc::new(tx),
+            bypassing: Vec::new(),
         }
     }
 
     /// Register a tonic-generated service with the gRPC server.
     ///
     /// Accepts anything that satisfies tonic's service contract — typically
-    /// a `*Server::new(impl_struct)` value produced by `tonic-build`.
+    /// a `*Server::new(impl_struct)` value produced by `tonic-build`. tonic
+    /// dispatches it directly, outside ulo's guards, interceptors, error
+    /// handlers and panic recovery, and `bind()` logs a `warn` naming each
+    /// service registered this way; filter the `ulo_grpc` target to silence it.
     pub fn add_service<S>(mut self, svc: S) -> Self
     where
         S: Service<
@@ -155,6 +161,7 @@ impl GrpcAdapter {
             + 'static,
         S::Future: Send + 'static,
     {
+        self.bypassing.push(S::NAME);
         self.routes_builder.add_service(svc);
         self
     }
@@ -308,6 +315,16 @@ impl ulo::grpc::GrpcAdapter for GrpcAdapter {
             builder = builder.tls_config(tls).map_err(|e| {
                 format!("GrpcAdapter: TLS configuration could not be accepted: {e}")
             })?;
+        }
+
+        // After the last step that can fail `bind`, so an app that never serves prints nothing.
+        // tonic dispatches these directly; naming each one lets an operator see which services
+        // ulo's dispatch does not reach.
+        for service in &self.bypassing {
+            tracing::warn!(
+                service,
+                "registered through add_service: ulo's guards, interceptors, error handlers and panic recovery do not run for it"
+            );
         }
 
         let serve = Box::pin(async move {
