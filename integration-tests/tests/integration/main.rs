@@ -19,6 +19,7 @@ mod config_injection;
 mod constructor_patterns;
 mod cors;
 mod coverage_ledger;
+mod crate_root_reexports;
 mod deferred_instantiation;
 mod derive_lifecycle_hooks;
 mod di_core;
