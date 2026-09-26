@@ -8,8 +8,8 @@ use super::{RpcCallInfo, RpcControllerSource, RpcData, RpcError, RpcHandlerResul
 use crate::context::Metadata;
 use crate::dispatch::ExecutionResult;
 use crate::dispatch::transport::Rpc;
-use crate::enhancer::pipeline::{Leaf, through_interceptors};
-use crate::enhancer::{Guard, Interceptor};
+use crate::enhancer::Interceptor;
+use crate::enhancer::pipeline::{GuardFailure, Leaf, through_interceptors};
 use crate::rpc::RpcContext;
 use crate::spi::{RpcErrorHandlerArc, RpcGuardEntry, RpcInterceptorEntry};
 use futures::StreamExt;
@@ -113,11 +113,26 @@ impl RpcControllerWrapper {
         if let Some(h) = self.handler_error_handlers.get(&pattern) {
             all_error_handlers.extend_from_slice(h);
         }
-        let guards = crate::enhancer::pipeline::guards_for::<Rpc>(&all_guards, &ctx).await;
-        let interceptors =
-            crate::enhancer::pipeline::interceptors_for::<Rpc>(&all_interceptors, &ctx).await;
-
-        let answer = Self::run_chain(&ctx, &self.source, &guards, &interceptors).await;
+        // Guards first, one at a time, and no interceptor built until every one has passed.
+        let answer = match crate::enhancer::pipeline::run_guards::<Rpc>(&all_guards, &ctx).await {
+            Ok(()) => {
+                let interceptors =
+                    crate::enhancer::pipeline::interceptors_for::<Rpc>(&all_interceptors, &ctx)
+                        .await;
+                Self::run_chain(&ctx, &self.source, &interceptors).await
+            }
+            Err(GuardFailure::Rejected(rejection)) => {
+                tracing::debug!(
+                    guard_index = rejection.guard_index,
+                    "guard rejected message"
+                );
+                Err(RpcError::from(rejection))
+            }
+            Err(GuardFailure::Panicked { index, event }) => {
+                tracing::debug!(guard_index = index, panic = %event.message, "guard panicked");
+                Err(RpcError::from(event))
+            }
+        };
 
         // The one place the chain runs. A guard's refusal, a panic from any segment and the
         // handler's own error all arrive as `Err`, so a `#[catch]` handler is offered every one
@@ -154,35 +169,12 @@ impl RpcControllerWrapper {
         }
     }
 
-    /// Guards, then the interceptor chain. Every way this can fail leaves as `Err`.
+    /// The interceptor chain around the handler. Every way this can fail leaves as `Err`.
     async fn run_chain(
         ctx: &RpcContext,
         source: &Arc<dyn RpcControllerSource>,
-        guards: &[Arc<dyn Guard<RpcContext>>],
         interceptors: &[Arc<dyn Interceptor<RpcContext, RpcHandlerResult>>],
     ) -> RpcHandlerResult {
-        for (index, guard) in guards.iter().enumerate() {
-            // A panicking guard is a bug, not a verdict: it takes the same route as any other
-            // pipeline panic, so `#[catch(PanicRecovered)]` sees it and a refusal gives the chain
-            // `GuardRejection` instead.
-            match crate::panic_recovery::catch_async(
-                crate::errors::PipelineSegment::Guard,
-                guard.can_activate(ctx),
-            )
-            .await
-            {
-                Ok(true) => {}
-                Ok(false) => {
-                    tracing::debug!(guard_index = index, "guard rejected message");
-                    return Err(RpcError::from(crate::errors::GuardRejection::new(index)));
-                }
-                Err(event) => {
-                    tracing::debug!(guard_index = index, panic = %event.message, "guard panicked");
-                    return Err(RpcError::from(event));
-                }
-            }
-        }
-
         through_interceptors::<Rpc>(ctx, interceptors, Arc::new(ControllerLeaf(source.clone())))
             .await
     }

@@ -12,8 +12,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use crate::enhancer::pipeline::GuardFailure;
 use crate::enhancer::{Interceptor, InterceptorNext};
-use crate::errors::{GuardRejection, PipelineSegment};
+use crate::errors::PipelineSegment;
 use crate::grpc::GrpcContext;
 use crate::grpc::GrpcHandlerResult;
 use crate::grpc::GrpcStatus;
@@ -27,7 +28,7 @@ use crate::panic_recovery::catch_async;
 /// the chain.
 ///
 /// Every way a call can fail leaves as `Err(GrpcStatus)` carrying its own cause: a refusal carries
-/// its [`GuardRejection`], a panic anywhere below carries its `PanicRecovered`, a handler's failure
+/// its [`GuardRejection`](crate::errors::GuardRejection), a panic anywhere below carries its `PanicRecovered`, a handler's failure
 /// carries the domain error it raised. So the chain runs here, once, over all of them, rather than
 /// at each level that can produce one.
 pub async fn run_grpc_pipeline<D, Fut>(
@@ -126,30 +127,27 @@ async fn run_grpc_guards(
         all_guards.extend_from_slice(per_method);
     }
 
-    let guards = crate::enhancer::pipeline::guards_for::<Grpc>(&all_guards, ctx).await;
-    for (index, guard) in guards.iter().enumerate() {
+    // One guard at a time: a `Factory` entry is an execution-scoped provider's own resolution,
+    // and a guard that refuses means the ones after it are never built.
+    match crate::enhancer::pipeline::run_guards::<Grpc>(&all_guards, ctx).await {
+        Ok(()) => Ok(()),
         // A panicking guard is a bug, not a verdict: it carries `PanicRecovered` rather than a
         // rejection, so an unclaimed one renders `Internal` rather than telling the caller its
         // credentials were refused.
-        let activated = match catch_async(PipelineSegment::Guard, guard.can_activate(ctx)).await {
-            Ok(b) => b,
-            Err(event) => {
-                tracing::debug!(guard_index = index, panic = %event.message, "guard panicked");
-                return Err(GrpcStatus::new(
-                    crate::grpc::GrpcCode::Internal,
-                    format!("guard {} panicked: {}", index, event.message),
-                )
-                .caused_by(event));
-            }
-        };
-        if !activated {
-            return Err(
-                GrpcStatus::permission_denied(format!("guard {} rejected request", index))
-                    .caused_by(GuardRejection::new(index)),
-            );
+        Err(GuardFailure::Panicked { index, event }) => {
+            tracing::debug!(guard_index = index, panic = %event.message, "guard panicked");
+            Err(GrpcStatus::new(
+                crate::grpc::GrpcCode::Internal,
+                format!("guard {} panicked: {}", index, event.message),
+            )
+            .caused_by(event))
         }
+        Err(GuardFailure::Rejected(rejection)) => Err(GrpcStatus::permission_denied(format!(
+            "guard {} rejected request",
+            rejection.guard_index
+        ))
+        .caused_by(rejection)),
     }
-    Ok(())
 }
 
 /// Linked chain of interceptors wrapping a final delegate, and this transport's own: the other

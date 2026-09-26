@@ -10,22 +10,45 @@ use std::sync::Arc;
 use crate::dispatch::transport::{
     Answer, ErrorHandlerArc, GuardEntry, InterceptorEntry, Transport,
 };
-use crate::enhancer::{Guard, Interceptor};
-use crate::errors::PipelineSegment;
+use crate::enhancer::Interceptor;
+use crate::errors::{GuardRejection, PanicRecovered, PipelineSegment};
 
-/// The guards this call runs, in declaration order.
-pub(crate) async fn guards_for<T: Transport>(
+/// Why [`run_guards`] stopped.
+pub(crate) enum GuardFailure {
+    /// A guard answered `false`.
+    Rejected(GuardRejection),
+    /// A guard panicked; `index` is its position in the chain.
+    Panicked { index: usize, event: PanicRecovered },
+}
+
+/// Build each guard and ask it, one at a time, stopping at the first refusal.
+///
+/// An entry on the `Factory` arm is an execution-scoped provider's own resolution, with its
+/// dependencies constructed with it, so a guard is built only once every guard before it has
+/// admitted the call. Nothing below the guards — no interceptor — is built until this returns
+/// `Ok`; keeping that is the caller's job.
+///
+/// A panic in `can_activate` is caught here rather than tearing the call down, and leaves as
+/// `Panicked` so the chain above is offered `PanicRecovered` where a refusal gives it
+/// `GuardRejection`.
+pub(crate) async fn run_guards<T: Transport>(
     entries: &[GuardEntry<T>],
     ctx: &T::Context,
-) -> Vec<Arc<dyn Guard<T::Context>>> {
-    let mut out = Vec::with_capacity(entries.len());
-    for entry in entries {
-        out.push(match entry {
+) -> Result<(), GuardFailure> {
+    for (index, entry) in entries.iter().enumerate() {
+        let guard = match entry {
             GuardEntry::Ready(guard) => guard.clone(),
             GuardEntry::Factory(factory) => factory.create(ctx).await,
-        });
+        };
+        match crate::panic_recovery::catch_async(PipelineSegment::Guard, guard.can_activate(ctx))
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return Err(GuardFailure::Rejected(GuardRejection::new(index))),
+            Err(event) => return Err(GuardFailure::Panicked { index, event }),
+        }
     }
-    out
+    Ok(())
 }
 
 /// The interceptors this call runs, outermost first.

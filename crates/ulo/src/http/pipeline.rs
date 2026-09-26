@@ -7,8 +7,8 @@ use crate::{
     context::Metadata,
     dispatch::ExecutionResult,
     enhancer::pipeline::{Leaf, through_interceptors},
-    enhancer::{Guard, Interceptor},
-    errors::{Error, GuardRejection, MiddlewareFailure, PanicRecovered, PipelineSegment},
+    enhancer::{Interceptor, pipeline::GuardFailure},
+    errors::{Error, MiddlewareFailure, PanicRecovered, PipelineSegment},
     http::Route,
     http::middleware::{Middleware, MiddlewareChain},
     http::{HttpContext, HttpError, HttpMethod, HttpRequest, HttpResponse},
@@ -176,11 +176,28 @@ impl RoutePipeline {
         // is constructed once only if both resolve against the same one.
         let context = HttpContext::new(req, metadata.clone());
 
-        let guards = crate::enhancer::pipeline::guards_for::<Http>(&guards, &context).await;
-        let interceptors =
-            crate::enhancer::pipeline::interceptors_for::<Http>(&interceptors, &context).await;
-
-        let answer = Self::run_chain(&context, instance, guards, interceptors).await;
+        // Guards first, one at a time, and nothing below them built until every one has passed:
+        // a `Factory` entry is an execution-scoped provider's own resolution, dependencies
+        // included, which is the work a refusal exists to avoid.
+        let answer = match crate::enhancer::pipeline::run_guards::<Http>(&guards, &context).await {
+            Ok(()) => {
+                let interceptors =
+                    crate::enhancer::pipeline::interceptors_for::<Http>(&interceptors, &context)
+                        .await;
+                Self::run_chain(&context, instance, interceptors).await
+            }
+            Err(GuardFailure::Rejected(rejection)) => {
+                tracing::debug!(
+                    guard_index = rejection.guard_index,
+                    "guard rejected request"
+                );
+                Err(HttpError::from(rejection))
+            }
+            Err(GuardFailure::Panicked { index, event }) => {
+                tracing::debug!(guard_index = index, panic = %event.message, "guard panicked");
+                Err(HttpError::from(event))
+            }
+        };
 
         // The one place the error chain runs. A guard's rejection, an interceptor's refusal, a
         // handler's own error and a panic from any of them all arrive here as `Err`, so a
@@ -226,36 +243,13 @@ impl RoutePipeline {
         }
     }
 
-    /// Guards, then the interceptor chain. Every way this can fail leaves as `Err`, and the one
-    /// place that consults the error chain is the caller.
+    /// The interceptor chain around the handler. Every way this can fail leaves as `Err`, and the
+    /// one place that consults the error chain is the caller.
     async fn run_chain(
         context: &HttpContext,
         instance: Arc<dyn Route>,
-        guards: Vec<Arc<dyn Guard<HttpContext>>>,
         interceptors: Vec<Arc<dyn Interceptor<HttpContext, crate::http::HttpHandlerResult>>>,
     ) -> crate::http::HttpHandlerResult {
-        for (i, guard) in guards.iter().enumerate() {
-            // `can_activate` is user code — catch panics so the request doesn't tear down. A
-            // panicking guard is a hard rejection, and the chain sees `PanicRecovered` where a
-            // refusal gives it `GuardRejection`.
-            let activated = match crate::panic_recovery::catch_async(
-                PipelineSegment::Guard,
-                guard.can_activate(&context),
-            )
-            .await
-            {
-                Ok(b) => b,
-                Err(event) => {
-                    tracing::debug!(guard_index = i, panic = %event.message, "guard panicked");
-                    return Err(HttpError::from(event));
-                }
-            };
-            if !activated {
-                tracing::debug!(guard_index = i, "guard rejected request");
-                return Err(HttpError::from(GuardRejection::new(i)));
-            }
-        }
-
         if !interceptors.is_empty() {
             tracing::trace!(count = interceptors.len(), "entering interceptor chain");
         }
