@@ -26,13 +26,15 @@ classifier whose answer the handler it forwards to discards.
 expression; `controllers:` and `exports:` take a bare identifier. A module cannot export a
 string-token provider, a generic provider or a provider from a submodule, and cannot declare a
 path-qualified controller. `DynamicModule`'s builder accepts what the attribute refuses, and splits
-each list into a by-type method and a by-factory method.
+each list into a by-type method and a by-factory method. `Extension<T>` is declared in `providers:`
+through a factory registered per payload type, and `exports:` cannot name it without a type alias.
 
 **Construction has two mechanisms that read different places.** `#[new]` reads a method's
 parameters. `init = "…"` reads the struct's `#[inject]` fields and passes them positionally, so the
-same struct moved between the two forms resolves different dependencies. `#[controller]` refuses
-`init = "…"` already, in a message saying "as with `#[injectable]`", which is false while
-`#[injectable]` accepts it. An init method named `from_request` changes what the macro emits.
+same struct moved between the two forms resolves different dependencies. `#[default(expr)]` is inert
+whenever `#[new]` is present, with no warning. `#[controller]` refuses `init = "…"` already, in a
+message saying "as with `#[injectable]`", which is false while `#[injectable]` accepts it. An init
+method named `from_request` changes what the macro emits.
 
 **A factory is sync or async, and the duality is copied.** Nest's `useFactory` accepts a value or a
 promise because JavaScript's `await` on a non-promise is a no-op. Rust has no such affordance.
@@ -71,7 +73,8 @@ compile, and the string form accepts it.
 **`#[module]` and the builder take the same expressions.** All four keys parse expressions, and
 `exports:` takes both forms the builder's export methods have. The builder has one
 `.provider(value)` and one `.controller(value)`. The attribute and the builder are two syntaxes for
-one list.
+one list. An `Extension<T>` needs no declaration, as `Extensions` needs none: the container answers
+any `Extension<T>` token from the execution's bag.
 
 **A provider factory is always async.** The bound is `F: Fn(A..) -> Fut, Fut: Future<Output = R> +
 Send`, which accepts every async spelling and refuses a sync closure. `AsyncFn` accepts the same set,
@@ -84,7 +87,8 @@ tolerance by hand.
 
 **`#[new]` is the only constructor.** It reads dependencies from the signature, where a Rust reader
 looks, and needs no attribute on the fields. `init = "…"` is removed from `#[injectable]`, and
-`#[controller]`'s refusal message goes with the key.
+`#[controller]`'s refusal message goes with the key. `#[default]` beside `#[new]` is refused naming
+both, since the constructor decides every field.
 
 **One word means one thing, and a type is named for what its consumer does with it.**
 

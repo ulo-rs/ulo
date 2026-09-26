@@ -43,10 +43,10 @@ hooks and is not reused.
 ## Decision
 
 **A token is single-bound unless declared multi.** A second single binding under one token fails
-`create`, naming both declarations. A multi token collects its contributions in declaration order and
-injects them as `Vec<Arc<dyn Trait>>`. `APP_GUARD` is a multi token, so two registrations both run.
-Any registration surface that takes a token obeys the same rule, including a per-transport global
-surface once it takes one.
+`create`, naming both declarations. A multi token collects its contributions in declaration order
+and injects them as `Vec<Arc<dyn Trait>>`. `APP_GUARD` and `APP_INTERCEPTOR` are multi tokens, so
+two registrations of either both run. Any registration surface that takes a token obeys the same
+rule, including a per-transport global surface once it takes one.
 
 **A widening lookup is a fallback into the global registry.** `ModuleRef`'s `.global()` becomes
 `.or_global()`: the current module first, then exported and global tokens, and nothing a module kept
@@ -72,7 +72,8 @@ rule above.
 ## Consequences
 
 - Two providers under one token, in one module or across two imports, fail `create` naming both.
-- Two `APP_GUARD` registrations, in one module or in two, both run in declaration order.
+- Two `APP_GUARD` registrations, in one module or in two, both run in declaration order, and so do
+  two `APP_INTERCEPTOR` registrations.
 - A provider in a module that exports nothing is unreachable from outside it, `.or_global()`
   included.
 - A provider's `on_module_init` runs after the init of every provider it injects, and its shutdown
