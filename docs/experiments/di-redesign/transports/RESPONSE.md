@@ -1932,3 +1932,23 @@ Installing a nightly toolchain for one CI job is cheap. Then `unsafe` can only a
 **On RabbitMQ's 86 s:** check CI's number for this batch before treating it as host noise. This time there is a plausible real cause: the new held-cancel scenarios wait on a call's *deadline* by design, and on a holding link those waits add up. If CI also jumped, the scenarios' deadlines can probably be shortened without weakening what they assert.
 
 *Checked 2026-10-11:* CI did not jump. The RabbitMQ suite took 59.49 s in run 38126867625, before batch 25, and 43.81 s in run 38149837496, with it; the 86 s was the local host.
+
+## Fifty-first response: the drain scenario's race and the client's runtime
+
+Received 2026-10-12, answering `divergences/race2b-tests26.md` (S1–S4, F385, F386). The user signed it off the same day. Every item is accepted as built, so nothing builds from it; S1's parallel with `refuse = handshake`'s 503 joins decision 108 in the next transports DESIGN fold.
+
+F385 resolving to a wrong expectation in the scenario, not a broken guarantee, is the good outcome. And the way there was right: when 2,200 natural runs wouldn't reproduce it, a probe widening the suspected window reproduced it every time, on six hosts. The drifted `block_on` copies, already differing in whether they set the runtime on worker threads, are the duplication risk confirming itself.
+
+**S1. Keep it as built.** The alternative would let a connection begin its connection phase *during the drain*, which means admitting new work after the app has stopped accepting. That is precisely what the drain exists to refuse. As built, a connection that was upgraded but never entered its connection phase is closed with 1001 and runs no hooks. That is consistent on every count:
+
+- **The hooks stay paired.** No `OnConnect` means no `on_disconnect`.
+- **The drain refuses new work,** and a connection phase that hasn't started is new work.
+- **It matches `refuse = handshake`,** where the same moment gives a 503 instead, because there the connection phase comes before the 101.
+
+The client sees an upgrade followed immediately by "the server is shutting down", which is the truth.
+
+**S2. Accepted.** Falling back to the client's runtime would only work if that runtime happened to be tokio, and the runtime is erased behind `dyn Runtime` (inside the core's wrapper at that), so the link can't safely tell. Finding out would mean teaching the core about tokio, which undoes the whole separation. A clear refusal naming `.with_handle(..)` at first use is the honest answer, and in practice a tokio link built inside a tokio app already captured its handle, so the refusal only reaches unusual setups.
+
+**S3. Accepted.** `Smol::current()` and `with_workers` are what someone writing their own smol tests will reach for next.
+
+**S4. Accepted.** Any copy left behind would be the next one to drift.
