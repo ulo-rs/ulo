@@ -1876,3 +1876,27 @@ One note on the h2 detail: if h2 pulls `io-util` into the HTTP/2 path of the ser
 **F384. Fix it before release, since it breaks a promise.** The design says every handler parameter that implements `FromContainer` works, and `Dep<dyn Timer>` is exactly the kind of parameter people will write. "Send is not general enough" is a known compiler limitation with references held across awaits in generated futures: typically, the generated code borrows something through a lifetime that the compiler can't prove `Send` for all lifetimes. The usual fix is in the generated code's shape (take the value out before the await, rather than holding a borrow across it). Add a handler taking `Dep<dyn Timer>` to the macro lint crate's coverage, so the case stays compiled.
 
 The plan's order is right: e3 for the smol TCP link and the RPC suite on smol, then stage f with the check worded as above.
+
+## Forty-ninth response: the smol TCP link and the client's runtime
+
+Received 2026-10-11, answering `divergences/runtime-e3.md` (S1–S6, F385, F386). The user signed it off the same day; it builds as test batch 26 after batch 25, F385's hunt first, before runtime stage f.
+
+The TCP link now runs on smol with nothing marked not applicable to make it pass, and the interop test between the two links is a nice touch: it proves "the same wire" rather than assuming it. On F386, there is a simpler source for the runtime than the app.
+
+**F386. Yes, change the SPI, and the runtime comes from the client.** `RpcClient` already holds a runtime: `RpcClient::new(link, runtime)` requires one, and the module path builds the client from the app's. So the client can hand its runtime to the link itself: `Link::connect(&self, runtime: &Arc<dyn Runtime>)`. Then a smol client link inside an app works with no extra configuration, outside an app it works with the runtime the client was given, and `.with_runtime(..)` becomes an override rather than a requirement users forget. The tokio links ignore the argument, since they carry their own handle. It is an SPI change on every link, but nothing is published, and it removes a whole class of "works on the server, refused on the client" surprises.
+
+**S3. Accepted.** A whole connection layer deserves its own crate, and `-core` names it honestly. Mark it in its crate docs as an implementation crate for link authors, not something application code depends on.
+
+**S4. Accepted.** Same wire, same name. The collision rule works on marker types, not `NAME`, so two TCP links in one app still print distinctly where it matters.
+
+**S5.** Covered by F386.
+
+**S1. Accepted.** It is the same shape as the HTTP suite, which keeps the suites learnable as a set.
+
+**S2. Consolidate it now.** Three copies of a helper is how a fix applied to one stays missing from the other two, exactly what F364 and F380 were, in production code. Put a single `Smol::block_on(fut)` on `ulo-smol` (driving the caller's executor alongside the future), and have all three suites use it. It is also useful to users testing their own smol apps, so it can be public.
+
+**S6. Accepted.** Threads over std sockets make the relay runtime-free, so it serves every suite on every runtime. And porting it found a real bug, which tends to happen when code gets examined closely enough to move.
+
+**F385. Hunt it with priority.** A missing `on_disconnect` is the paired-hook guarantee failing, the same class as F371, where a cut-off `OnConnect` left a connection in its rooms. Once in more than two hundred runs is the same rarity F364 had, and that one turned out to be a real race. Keep the full output, and loop the scenario specifically on the pipe host until it reproduces.
+
+**On the removed premise: agreed.** "No tokio runtime is current" can't be asked without depending on tokio, and a fresh thread can't have one anyway, so the scenario was asserting something already guaranteed.
