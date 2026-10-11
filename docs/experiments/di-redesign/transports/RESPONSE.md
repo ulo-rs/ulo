@@ -1816,3 +1816,33 @@ F380 is a good catch, and an instructive one: batch 22 fixed a frame's place in 
 **S5. Accepted.** The widened-window probe proved the ordering matters, and the dispatcher's comment records why. Pinning it permanently would need a test-only hook inside the dispatcher, which isn't worth its cost for a two-line ordering that is now explained where it lives.
 
 **F379. Fix it soon.** It is the same class as F376: a call's held entry outliving the call. The call already has a timeout, so tie the entry's lifetime to the call. When the call times out or is dropped, remove the entry, and if a `cancel` is warranted, hold it in case `opened` arrives late, as F376's fix does. Then nothing waits on a broker that never answers until the link closes.
+
+## Forty-seventh response: the redacting runtime, the embed hosts and the held cancel's deadline
+
+Received 2026-10-11, answering `divergences/race2b-tests24.md` (S1–S12, F381, F382). The user signed it off the same day and chose S9's first branch: `messages_read()` exists for the suite alone, so it goes behind the same conformance-only feature as `ClientProbe`. It builds as test batch 25, after runtime stage e3 and before stage f.
+
+Most of these are accepted as built. On S11 there is a way to carry the call's own timeout without a new field, and S12 and S9 should both go behind a feature.
+
+**S1. Accepted.** Always wrapping means one code path, and the redactor is always present. The one thing users lose is downcasting `Dep<dyn Runtime>` back to their own runtime type. That is rarely needed, but say so in a sentence: "the app's runtime is the core's wrapper around the one you gave".
+
+**S2. Accepted.** An explicit carrier is right. The thread-local version would rely on every runtime adapter calling `launch` synchronously inside `spawn`, an invisible requirement that nothing checks, which is the kind of assumption that breaks with the first community adapter.
+
+**S11. Carry the call's timeout, using the grammar's existing `deadline-ms` header.** The frame grammar already has a field for exactly this. The client knows each call's timeout when it builds the `open` frame, so stamp `deadline-ms` from that timeout, and the link reads it when it holds an entry. The fixed 5 seconds stays only as a fallback for a frame that somehow arrives without one.
+
+There is a side benefit: the server then enforces the client's real deadline, which is what gRPC does with `grpc-timeout` and what `.within(&exec)` already does on RPC. A call the client will give up on at 2 seconds stops costing the server work after 2 seconds, instead of running on. One behaviour change follows: every call now carries a deadline, not only calls made inside an execution. Since the client abandons the call at that moment anyway, the server stopping too is the consistent outcome.
+
+**S12. Put it behind a feature.** A doc-hidden probe is still compiled into every production build, along with the paths that withhold and delay `opened`. The precedent is `conformance-http2`: a test-only feature, documented as "for the conformance suite, not an application feature". Gate `ClientProbe` the same way, so production builds don't contain code whose job is to delay protocol messages.
+
+**S9. The same question.** If `messages_read()` exists only for the suite, it belongs behind the same feature as S12's probe. If it is a real operational metric, keep it public and document it as one. Either is defensible, but pick one deliberately, since a public method becomes API people depend on.
+
+**S3. Accepted.** The redactor following the graph through every load and rollback is what keeps "the app's secrets" accurate.
+
+**S4. Accepted.**
+
+**S5. Accepted.** The suite covers both now.
+
+**S6. Accepted, and record F382 as a rocket limit.** WebSocket requires HTTP/1.1, so a 101 answered to an HTTP/1.0 request is a protocol violation, but rocket doesn't keep the request's version, so the adapter can't detect it. Note it in rocket's row of the limits table.
+
+**S7. Accepted.** A close-delimited body is legal HTTP and the client must read it to the close, so F381 was the suite's bug, fixed against the right section of the spec.
+
+**S8 and S10. Accepted.** S10's extra requirement, that a connection opened while the gateway is saturated reads nothing, is what makes the saturated state observable instead of inferred.
