@@ -1900,3 +1900,35 @@ The TCP link now runs on smol with nothing marked not applicable to make it pass
 **F385. Hunt it with priority.** A missing `on_disconnect` is the paired-hook guarantee failing, the same class as F371, where a cut-off `OnConnect` left a connection in its rooms. Once in more than two hundred runs is the same rarity F364 had, and that one turned out to be a real race. Keep the full output, and loop the scenario specifically on the pipe host until it reproduces.
 
 **On the removed premise: agreed.** "No tokio runtime is current" can't be asked without depending on tokio, and a fresh thread can't have one anyway, so the scenario was asserting something already guaranteed.
+
+## Fiftieth response: one meaning per timeout, and unsafe only where listed
+
+Received 2026-10-11, answering `divergences/race2b-tests25.md` (S1–S5, F384, F387). The user signed it off the same day; S1 and S4 build as test batch 27 after batch 26, before runtime stage f.
+
+F384's real cause is more interesting than my guess, and the fix is better for it. An `async fn` that silently drops `Send` from its future, forcing the compiler to prove `Send` through every lifetime underneath, explains why `Dep<dyn Timer>` failed and `Dep<Probe>` didn't. Writing the `Send` bound explicitly is the right fix, and covering it on every transport in the lint crate keeps it fixed. F387 falling out of the same change confirms the diagnosis.
+
+**S1. Accept the reasoning, but don't let `.timeout` mean two different things.** A stream's per-frame wait isn't a deadline for the whole call, and stamping it as one would cut long streams off. But the underlying problem is the name: on `request`, `.timeout` bounds the whole call, while on `stream` and `duplex` it bounds the gap between frames. One word with two meanings is the inconsistency removed everywhere else. So:
+
+- **On `stream` and `duplex`,** rename the per-frame wait to `.idle_timeout(..)`. That is what it is: the longest silence the client tolerates between frames.
+- **Add `.deadline(d)` to those calls** for an optional whole-call bound. It stamps `deadline-ms` like everything else, and by default there is none, because a stream legitimately may run indefinitely.
+- **`request` and `send_stream` keep `.timeout`** as the whole-call bound. And `emit`'s timeout covering only the publish is fine, since nothing comes back.
+
+Then each name means one thing on every call shape, and a user who wants a long stream bounded says so explicitly.
+
+**S2. Accepted.** A caller's own shorter deadline surviving is the right outcome. Overwriting it was quietly loosening a limit someone chose.
+
+**S4. Yes, the same treatment for `FuturesIo`.** Remove them if it is cheap. The first-read fix showed a copy often costs less than it seems. If either has to stay, it needs a written safety argument next to it and a Miri run. Make that structural so it holds in future too:
+
+- `#![forbid(unsafe_code)]` across the workspace by default, as just done for one file;
+- an explicit, short list of modules allowed to opt out;
+- a CI job that runs Miri over exactly those modules.
+
+Installing a nightly toolchain for one CI job is cheap. Then `unsafe` can only appear where someone deliberately lists it, and wherever it appears, it is checked.
+
+**S3. Accepted.** A zero-sized private type keeps the production code free of `cfg` noise without shipping the probe.
+
+**S5. Accepted.** It is the natural consequence of F384 being fixed. The suite using the parameter form is also what keeps it working.
+
+**On RabbitMQ's 86 s:** check CI's number for this batch before treating it as host noise. This time there is a plausible real cause: the new held-cancel scenarios wait on a call's *deadline* by design, and on a holding link those waits add up. If CI also jumped, the scenarios' deadlines can probably be shortened without weakening what they assert.
+
+*Checked 2026-10-11:* CI did not jump. The RabbitMQ suite took 59.49 s in run 38126867625, before batch 25, and 43.81 s in run 38149837496, with it; the 86 s was the local host.
