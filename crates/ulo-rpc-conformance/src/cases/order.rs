@@ -88,7 +88,9 @@ impl<B: Broker> Linked<B> {
             .await
             .unwrap_or_else(|error| crate::startup_failed!("the server's link did not listen: {error}"));
         let client = broker.client_link(&server.bound());
-        let outbound = client.connect().await.unwrap_or_else(|error| crate::startup_failed!("the client's link did not connect: {error}"));
+        let handle = app.handle();
+        let runtime = handle.runtime().unwrap_or_else(|| crate::startup_failed!("the ordering scenario's app has no runtime"));
+        let outbound = client.connect(runtime).await.unwrap_or_else(|error| crate::startup_failed!("the client's link did not connect: {error}"));
         Linked { _broker: broker, app, server, inbound, client, outbound }
     }
 

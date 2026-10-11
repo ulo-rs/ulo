@@ -21,7 +21,7 @@ use tokio::sync::Notify;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event as TraceEvent, Level, Metadata};
-use ulo::{App, Bound, BoxError, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, RuntimeMissing, StartupError, WiringError};
+use ulo::{App, Bound, BoxError, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, Runtime, RuntimeMissing, StartupError, WiringError};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Capabilities, DeliveryMode, Link, Outbound, Pattern, RpcClient, RpcClientModule, UnusableLink, ZeroTimeout};
 use ulo_transport::ErrorKind;
@@ -55,7 +55,7 @@ impl Link for Observed {
         Ok(Box::pin(futures_util::stream::pending()))
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
+    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let held = Released(Arc::clone(&self.0));
         Ok(Outbound {
             send: Box::new(move |_pattern, _frame, _reply_to| {
@@ -240,7 +240,7 @@ impl Link for Unusable {
         Err("this link has no server side".into())
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
+    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         self.0.fetch_add(1, Ordering::SeqCst);
         Err(UNUSABLE.into())
     }

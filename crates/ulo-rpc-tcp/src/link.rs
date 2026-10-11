@@ -106,7 +106,7 @@ impl Link for Tcp {
         self.core.listen(Arc::new(runtime) as Arc<dyn Runtime>, move |listener, tls| TokioListener::adopt(&handle, listener, tls))
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
+    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let addr = self.core.client_addr()?;
         let runtime = self.runtime()?;
         let stream = runtime.run(TcpStream::connect(addr)).await??;

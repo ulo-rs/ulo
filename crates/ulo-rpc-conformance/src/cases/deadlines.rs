@@ -1,11 +1,12 @@
 //! Scenarios: deadlines.
 
 use std::future::Future;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 
-use ulo::{AppHandle, BoundAddr, BoxError, CancelReason};
+use ulo::{AppHandle, BoundAddr, BoxError, CancelReason, Runtime};
 use ulo_rpc::{Capabilities, Frame, Link, Outbound, Pattern};
 use ulo_rpc::link::Inbound;
 use ulo_transport::{Count, ErrorKind};
@@ -103,8 +104,8 @@ impl<L: Link> Link for MutedCancel<L> {
         self.0.listen(patterns)
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
-        let Outbound { send, replies } = self.0.connect().await?;
+    async fn connect(&self, runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+        let Outbound { send, replies } = self.0.connect(runtime).await?;
         Ok(Outbound {
             send: Box::new(move |pattern, frame, reply_to| match frame {
                 Frame::Cancel { .. } => Box::pin(async { Ok(()) }),

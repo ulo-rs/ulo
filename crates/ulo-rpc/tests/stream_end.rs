@@ -12,15 +12,15 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use futures_util::{Stream, stream};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use ulo::{
-    App, AppHandle, BoxError, CancelReason, ErrorHandler, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, Signal,
-    StreamOutcome, injectable, routes,
+    App, AppHandle, BoxError, CancelReason, ErrorHandler, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, Runtime,
+    Signal, StreamOutcome, injectable, routes,
 };
 use ulo_rpc::link::{Inbound, UNARY_ONLY};
 use ulo_rpc::{Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, Reply, ReplyPath, Rpc, RpcCx};
@@ -188,7 +188,7 @@ impl Link for Scripted {
         self.inbound.lock().unwrap_or_else(PoisonError::into_inner).take().ok_or_else(|| "the scripted link listened twice".into())
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
+    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         Err("the scripted link has no client side".into())
     }
 

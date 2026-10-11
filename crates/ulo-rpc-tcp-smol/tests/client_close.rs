@@ -49,7 +49,7 @@ fn closing_the_client_app_ends_its_connection_cleanly() {
         // A peer that reads the call and never answers it.
         let peer = TcpListener::bind("127.0.0.1:0").await.expect("a loopback port");
         let addr = peer.local_addr().expect("the peer's address");
-        let app = App::builder(ClientRoot { link: Mutex::new(Some(Tcp::new(addr).with_runtime(OnSmol::runtime()))) })
+        let app = App::builder(ClientRoot { link: Mutex::new(Some(Tcp::new(addr))) })
             .runtime(OnSmol::runtime())
             .wire()
             .expect("the client app wires")

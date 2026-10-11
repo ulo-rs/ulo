@@ -10,6 +10,12 @@
 //! the client, which need not be the runtime the link's I/O belongs to: a link tied to one runs
 //! its I/O and its tasks on that runtime itself and hands the results back. The conformance suite
 //! calls a client from a plain thread that no runtime runs.
+//!
+//! Each side is handed the runtime it runs under: a server's link reads its app's from
+//! [`Link::prepare`] (`AppHandle::runtime`), and a client's link receives its client's in
+//! [`Link::connect`], the app's inside an app and the one given to
+//! [`RpcClient::new`](crate::RpcClient::new) outside one. A link whose sockets belong to no runtime
+//! spawns its tasks there; a link carrying a runtime of its own, as the tokio links do, ignores it.
 
 use std::error::Error;
 use std::fmt;
@@ -18,7 +24,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use futures_core::stream::BoxStream;
-use ulo::{AppHandle, BoundAddr, BoxError, BoxFuture, Shape};
+use ulo::{AppHandle, BoundAddr, BoxError, BoxFuture, Runtime, Shape};
 use ulo_transport::Count;
 
 use crate::codec::Codec;
@@ -66,8 +72,12 @@ pub trait Link: Send + Sync + 'static {
     /// `Server::bind`, all-or-nothing: a failure leaves nothing subscribed.
     fn listen(&self, patterns: &[Pattern]) -> impl Future<Output = Result<Inbound, BoxError>> + Send;
 
-    /// Client side: connect. `RpcClient` calls it lazily, on its first call.
-    fn connect(&self) -> impl Future<Output = Result<Outbound, BoxError>> + Send;
+    /// Client side: connect. `RpcClient` calls it lazily, on its first call and again after the
+    /// connection is lost, passing `runtime`, the runtime the client was built on: its app's inside
+    /// an app, the one given to [`RpcClient::new`](crate::RpcClient::new) outside one. A link that
+    /// needs a runtime for its client side's tasks spawns them there unless it was given one of its
+    /// own; a link that carries its own runtime ignores it.
+    fn connect(&self, runtime: &Arc<dyn Runtime>) -> impl Future<Output = Result<Outbound, BoxError>> + Send;
 
     /// The link's own close signal, from `Server::drain`: TCP sends `goaway` on every connection,
     /// NATS drains, AMQP cancels its consumers, MQTT unsubscribes, Kafka pauses and commits. The

@@ -186,7 +186,8 @@ async fn close_commits_off_the_runtime_thread_polling_it() {
     server.prepare(&app.handle()).await.expect("the server's link prepares");
     let mut inbound = server.listen(&[Pattern::from(PATTERN)]).await.expect("the server's link listens");
     let client = broker.client_link(&[]);
-    let outbound = client.connect().await.expect("the client's link connects");
+    let handle = app.handle();
+    let outbound = client.connect(handle.runtime().expect("the app has a runtime")).await.expect("the client's link connects");
     let request = Frame::Req { id: 1, pattern: PATTERN.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
     (outbound.send)(Pattern::from(PATTERN), request, Some(ReplyTo { id: 1 })).await.expect("the request is produced");
     let delivery = tokio::time::timeout(Duration::from_secs(60), inbound.next())

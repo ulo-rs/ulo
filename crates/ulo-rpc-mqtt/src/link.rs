@@ -14,7 +14,7 @@ use rumqttc::{Outgoing, Transport};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::{AbortHandle, JoinHandle};
-use ulo::{AppHandle, BoxError, BoxFuture};
+use ulo::{AppHandle, BoxError, BoxFuture, Runtime};
 use ulo_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -236,7 +236,7 @@ impl Link for Mqtt {
         Ok(receiver_stream(inbound))
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
+    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let runtime = self.runtime()?;
         let target = Target::parse(&self.url)?;
         let id = client_id();

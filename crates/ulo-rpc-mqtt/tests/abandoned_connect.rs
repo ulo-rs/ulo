@@ -3,13 +3,19 @@
 //! answers CONNACK: a loop left running would go on to SUBSCRIBE, and an ended one has closed the
 //! connection.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use ulo::BoxError;
+use ulo::{BoxError, Runtime};
 use ulo_rpc::{Link, Pattern};
 use ulo_rpc_mqtt::Mqtt;
+
+/// The runtime a client hands its link: the test's tokio runtime, which a tokio link ignores.
+fn client_runtime() -> Arc<dyn Runtime> {
+    Arc::new(ulo_tokio::Tokio::current())
+}
 
 /// How long the broker waits for each step of the client.
 const PATIENCE: Duration = Duration::from_secs(5);
@@ -57,7 +63,7 @@ async fn ended_unanswered(mut stream: TcpStream, what: &str) {
 async fn a_connect_dropped_before_the_broker_answers_ends_its_event_loop() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("the broker's socket binds");
     let link = Mqtt::url(format!("mqtt://{}", listener.local_addr().expect("the broker's socket has an address")));
-    let connecting = tokio::spawn(async move { link.connect().await.map(drop) });
+    let connecting = tokio::spawn(async move { link.connect(&client_runtime()).await.map(drop) });
     let stream = handshake_begun(&listener).await;
     connecting.abort();
     let dropped: Result<Result<(), BoxError>, _> = connecting.await;

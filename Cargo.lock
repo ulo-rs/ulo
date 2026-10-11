@@ -6355,7 +6355,6 @@ dependencies = [
 name = "ulo-http-conformance"
 version = "0.1.0"
 dependencies = [
- "async-io",
  "async-net",
  "bytes",
  "futures-channel",
@@ -6594,7 +6593,6 @@ dependencies = [
 name = "ulo-rpc-conformance"
 version = "0.1.0"
 dependencies = [
- "async-io",
  "bytes",
  "futures-channel",
  "futures-executor",
@@ -6810,7 +6808,7 @@ version = "0.1.0"
 dependencies = [
  "async-executor",
  "async-io",
- "futures",
+ "event-listener 5.4.1",
  "ulo",
  "ulo-runtime-conformance",
 ]

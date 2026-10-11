@@ -20,7 +20,7 @@ use rdkafka::util::Timeout;
 use rdkafka::{Offset, TopicPartitionList};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
-use ulo::{AppHandle, BoxError, BoxFuture, Timer};
+use ulo::{AppHandle, BoxError, BoxFuture, Runtime, Timer};
 use ulo_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -281,7 +281,7 @@ impl Link for Kafka {
         Ok(receiver_stream(inbound))
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
+    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let runtime = self.runtime()?;
         let base = Brokers::parse(&self.brokers)?.config();
         let id = uuid::Uuid::new_v4().simple().to_string();

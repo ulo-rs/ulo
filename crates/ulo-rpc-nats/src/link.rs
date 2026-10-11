@@ -9,7 +9,7 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
-use ulo::{AppHandle, BoxError, BoxFuture};
+use ulo::{AppHandle, BoxError, BoxFuture, Runtime};
 use ulo_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -197,7 +197,7 @@ impl Link for Nats {
         Ok(receiver_stream(inbound))
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
+    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         // async-nats reconnects by itself and resubscribes the inbox, but what was published to
         // the inbox while the connection was down is gone, so a disconnect ends the reply lane:
         // `RpcClient` fails the calls waiting on it `Unavailable` and connects again for the next.

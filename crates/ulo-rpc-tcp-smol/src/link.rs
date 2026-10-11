@@ -28,9 +28,9 @@ use ulo_rpc_tcp_core::{Accept, Core, Incoming};
 /// The sockets need no runtime of their own: `async-io` drives them from its reactor thread, so the
 /// link's futures and streams may be polled on any executor or on a plain thread. Its tasks, a
 /// connection's writer and reader and a server's accept loop, run on a runtime: the one
-/// [`with_runtime`](Self::with_runtime) names, or, for a server given none, its app's, taken in
-/// `prepare`. A client given none is refused in `usable`, where the client takes the link, and in
-/// `connect`.
+/// [`with_runtime`](Self::with_runtime) names, or else the one the link runs under, a server's app's,
+/// taken in `prepare`, and a client's own, which `RpcClient` hands to `connect`: the app's inside an
+/// app, the one given to `RpcClient::new` outside one.
 pub struct Tcp {
     core: Core,
     runtime: Option<Arc<dyn Runtime>>,
@@ -64,20 +64,19 @@ impl Tcp {
         self
     }
 
-    /// The runtime the link's tasks run on: `ulo_smol::Smol`, or any other. A server given none
-    /// takes its app's; a client needs one.
+    /// The runtime the link's tasks run on in place of the one it runs under: `ulo_smol::Smol`, or
+    /// any other. Unset, a server's tasks run on its app's runtime and a client's on its client's.
     pub fn with_runtime(mut self, runtime: impl Runtime) -> Self {
         self.runtime = Some(Arc::new(runtime));
         self
     }
 
-    fn runtime(&self) -> Result<Arc<dyn Runtime>, BoxError> {
+    fn server_runtime(&self) -> Result<Arc<dyn Runtime>, BoxError> {
         self.runtime.clone().ok_or_else(|| NO_RUNTIME.into())
     }
 }
 
-const NO_RUNTIME: &str =
-    "the smol TCP link has no runtime for its tasks: give it one with `.with_runtime(..)`; a server given none takes its app's";
+const NO_RUNTIME: &str = "the smol TCP link's server has no runtime for its tasks: its app has none and the link was given none with `.with_runtime(..)`";
 
 impl Link for Tcp {
     const NAME: &'static str = "tcp";
@@ -86,27 +85,23 @@ impl Link for Tcp {
         self.core.capabilities()
     }
 
-    fn usable(&self) -> Result<(), BoxError> {
-        self.runtime().map(drop)
-    }
-
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
         if self.runtime.is_none() {
             self.runtime = app.runtime().cloned();
         }
-        let usable = self.usable();
+        let usable = self.server_runtime().map(drop);
         self.core.prepare(usable)
     }
 
     async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
         // The server routes by the `p` each frame carries; the socket takes every pattern.
         let _ = patterns;
-        self.core.listen(self.runtime()?, SmolListener::adopt)
+        self.core.listen(self.server_runtime()?, SmolListener::adopt)
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
+    async fn connect(&self, runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let addr = self.core.client_addr()?;
-        let runtime = self.runtime()?;
+        let runtime = self.runtime.clone().unwrap_or_else(|| Arc::clone(runtime));
         let stream = TcpStream::connect(addr).await?;
         let _ = stream.set_nodelay(true);
         Ok(self.core.connect(&runtime, Box::pin(stream.clone()), Box::pin(stream)))

@@ -1,7 +1,8 @@
 //! The tokio runtime a TCP link holds: one built on a thread with no runtime current takes the one
 //! `with_handle` names and works from that thread, and one given none refuses, naming
-//! `.with_handle(..)` before any I/O: in `connect`, as a server in `prepare`, as a client where
-//! `RpcClient::new` builds it, and in a client module's init hook, failing the app's `connect`.
+//! `.with_handle(..)` before any I/O: in `connect`, whatever runtime the client hands it, as a
+//! server in `prepare`, as a client where `RpcClient::new` builds it, and in a client module's init
+//! hook, failing the app's `connect`.
 
 use std::error::Error;
 use std::fmt;
@@ -12,7 +13,7 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use std::sync::Mutex;
 
-use ulo::{App, Bound, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, Signal, StartupError, injectable, routes};
+use ulo::{App, Bound, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, Runtime, Signal, StartupError, injectable, routes};
 use ulo_rpc::{Link, Payload, RpcClient, RpcClientModule};
 use ulo_rpc_tcp::Tcp;
 use ulo_tokio::Tokio;
@@ -62,7 +63,10 @@ impl Module for ServerRoot {
 fn a_link_built_outside_a_runtime_and_given_none_refuses_to_connect() {
     assert!(Handle::try_current().is_err(), "the test's thread has a tokio runtime current");
     let link = Tcp::new("127.0.0.1:7000");
-    match futures_executor::block_on(link.connect()) {
+    // A tokio link spawns on its own handle and ignores the client's runtime, a tokio one included.
+    let runtime = tokio::runtime::Builder::new_current_thread().build().expect("a tokio runtime for the client");
+    let client_runtime: Arc<dyn Runtime> = Arc::new(Tokio::from_handle(runtime.handle().clone()));
+    match futures_executor::block_on(link.connect(&client_runtime)) {
         Ok(_) => panic!("a link with no tokio runtime connected"),
         Err(refused) => assert!(refused.to_string().contains("`.with_handle(..)`"), "the refusal names `.with_handle(..)`: {refused}"),
     }

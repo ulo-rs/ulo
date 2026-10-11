@@ -232,9 +232,10 @@ impl RpcClient {
 
     fn build<L: Link>(link: Arc<L>, timeout: Bound, runtime: Arc<dyn Runtime>, close: Option<Close>) -> Self {
         let codec = Codec::of(&link.capabilities());
+        let handed = Arc::clone(&runtime);
         let connect: Connect = Box::new(move || {
-            let link = Arc::clone(&link);
-            Box::pin(async move { link.connect().await })
+            let (link, runtime) = (Arc::clone(&link), Arc::clone(&handed));
+            Box::pin(async move { link.connect(&runtime).await })
         });
         RpcClient {
             inner: Arc::new(ClientInner {
@@ -926,7 +927,7 @@ mod tests {
             Err("this link has no server side".into())
         }
 
-        async fn connect(&self) -> Result<Outbound, BoxError> {
+        async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
             Ok(Outbound {
                 send: Box::new(|_pattern, frame, _reply_to| {
                     Box::pin(async move { Codec::Cbor.encode_frame(&frame).map(drop).map_err(BoxError::from) })
@@ -957,7 +958,7 @@ mod tests {
             Err("this link has no server side".into())
         }
 
-        async fn connect(&self) -> Result<Outbound, BoxError> {
+        async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
             let first = self.0.fetch_add(1, Ordering::Relaxed) == 0;
             let replies: BoxStream<'static, Frame> =
                 if first { Box::pin(futures_util::stream::empty()) } else { Box::pin(futures_util::stream::pending()) };

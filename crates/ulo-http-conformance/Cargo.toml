@@ -16,7 +16,7 @@ publish = false
 tokio = ["dep:ulo-tokio", "dep:ulo-listen-tokio", "dep:tokio"]
 # `OnSmol`, the runtime half of a host on smol: an `async-executor` `Executor` per scenario,
 # `ulo-listen-smol`'s listener and `async-net`'s sockets.
-smol = ["dep:ulo-smol", "dep:ulo-listen-smol", "dep:async-io", "dep:async-net"]
+smol = ["dep:ulo-smol", "dep:ulo-listen-smol", "dep:async-net"]
 # The test fairing through which the suite reads `Routing` from rocket's request-local cache.
 rocket = ["dep:rocket"]
 
@@ -33,7 +33,6 @@ ulo-listen-tokio = { path = "../ulo-listen-tokio", optional = true }
 ulo-smol = { path = "../ulo-smol", optional = true }
 ulo-tokio = { path = "../ulo-tokio", optional = true }
 ulo-transport = { path = "../ulo-transport" }
-async-io = { workspace = true, optional = true }
 async-net = { workspace = true, optional = true }
 bytes.workspace = true
 futures-channel.workspace = true

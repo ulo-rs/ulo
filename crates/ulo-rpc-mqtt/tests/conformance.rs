@@ -22,7 +22,7 @@ use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event as TraceEvent, Level, Metadata};
-use ulo::BoundAddr;
+use ulo::{BoundAddr, Runtime};
 use ulo_rpc::__private::ClientProbe;
 use ulo_rpc_conformance::{Broker, report, startup_failed};
 use ulo_rpc_conformance::relay::{Relay, reachable, unshadowed};
@@ -30,6 +30,11 @@ use ulo_rpc::link::Inbound;
 use ulo_rpc::{CallHeaders, Data, Frame, Link, Pattern};
 use ulo_rpc_mqtt::Mqtt;
 use ulo_transport::{Detail, ErrorKind};
+
+/// The runtime a client hands its link: the test's tokio runtime, which a tokio link ignores.
+fn client_runtime() -> Arc<dyn Runtime> {
+    Arc::new(ulo_tokio::Tokio::current())
+}
 
 const PORT: u16 = 1883;
 
@@ -105,7 +110,7 @@ async fn client_close_writes_what_was_queued_before_it() {
     let server = broker.link().group("client_close");
     let mut inbound = server.listen(&[Pattern::from(EVENT)]).await.expect("the server's link listens");
     let client = broker.link();
-    let outbound = client.connect().await.expect("the client's link connects");
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
 
     let event = Frame::Evt { pattern: EVENT.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"7")) };
     let mut send = (outbound.send)(Pattern::from(EVENT), event, None);
@@ -134,7 +139,7 @@ async fn drain_delivers_the_cancel_that_releases_the_last_call() {
     let server = broker.link().group("drain_cancel");
     let mut inbound = server.listen(&[Pattern::from(HELD)]).await.expect("the server's link listens");
     let client = broker.link();
-    let outbound = client.connect().await.expect("the client's link connects");
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
 
     let request = Frame::Req { id: 1, pattern: HELD.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
     (outbound.send)(Pattern::from(HELD), request, None).await.expect("the request is published");
@@ -165,7 +170,7 @@ async fn drain_returns_once_the_broker_stops_routing_to_the_server() {
     let server = broker.link().group("drain_confirmed");
     let mut inbound = server.listen(&[Pattern::from(DRAINED)]).await.expect("the server's link listens");
     let client = broker.link();
-    let outbound = client.connect().await.expect("the client's link connects");
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
 
     tokio::time::timeout(PATIENCE, server.drain()).await.expect("the drain returns once the broker has confirmed it");
@@ -225,7 +230,7 @@ async fn the_broker_holds_back_no_request_for_flow_control() {
     let mut inbound = server.listen(&[Pattern::from(FLOODED)]).await.expect("the server's link listens");
     relay.mute();
     let client = broker.link();
-    let outbound = client.connect().await.expect("the client's link connects");
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
 
     for id in 1..=SENT as u64 {
         let request = Frame::Req { id, pattern: FLOODED.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };

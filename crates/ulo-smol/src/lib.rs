@@ -3,21 +3,29 @@
 //! with `async-io`'s timers. No tokio in its tree.
 //!
 //! ```ignore
-//! let executor = Arc::new(async_executor::Executor::new());
-//! let app = App::builder(AppModule).runtime(ulo_smol::Smol::new(Arc::clone(&executor))).wire()?;
+//! let smol = ulo_smol::Smol::new(Arc::new(ulo_smol::Executor::new()));
+//! let app = App::builder(AppModule).runtime(smol.clone()).wire()?;
 //! // `serve` runs inside the executor, which runs every task the app spawns while it waits.
-//! async_io::block_on(executor.run(async { app.connect().await?.bind(server).listen().await?.serve(signal).await }))?;
+//! smol.block_on(async { app.connect().await?.bind(server).listen().await?.serve(signal).await })?;
 //! ```
+//!
+//! [`Smol::block_on`] is also how a test drives a smol app: with
+//! [`with_workers`](Smol::with_workers), the executor runs on threads beside the test's, so a task
+//! may be polled on another thread than the one that spawned it, and [`Smol::current`] answers the
+//! runtime on each of them.
 
+use std::cell::RefCell;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
 pub use async_executor::Executor;
 use async_executor::FallibleTask;
+use event_listener::Event;
 use ulo::{BoxFuture, RuntimeTask, TaskHandle};
 
 /// The app's runtime on one `async-executor` [`Executor`]: tasks are spawned on it from whichever
@@ -33,15 +41,132 @@ use ulo::{BoxFuture, RuntimeTask, TaskHandle};
 #[derive(Clone)]
 pub struct Smol {
     executor: Arc<Executor<'static>>,
+    workers: usize,
+}
+
+thread_local! {
+    /// The runtime whose `block_on` runs on this thread, as its caller or as one of its workers.
+    static CURRENT: RefCell<Option<Smol>> = const { RefCell::new(None) };
 }
 
 impl Smol {
     pub fn new(executor: Arc<Executor<'static>>) -> Smol {
-        Smol { executor }
+        Smol { executor, workers: 0 }
     }
 
     pub fn executor(&self) -> &Arc<Executor<'static>> {
         &self.executor
+    }
+
+    /// The threads [`block_on`](Self::block_on) runs the executor on beside its caller; none
+    /// unset. Spawning and timing are unaffected.
+    pub fn with_workers(self, workers: usize) -> Smol {
+        Smol { workers, ..self }
+    }
+
+    /// Blocks the calling thread until `fut` completes, running the executor there while it waits,
+    /// and on the [`with_workers`](Self::with_workers) threads, which start here and are joined
+    /// before it returns, `fut` panicking included. A task spawned on the runtime makes progress
+    /// while `fut` runs; one still pending when `fut` completes stays on the executor, polled
+    /// again by whatever runs it next.
+    ///
+    /// Inside it, [`current`](Self::current) answers this runtime on the calling thread and on
+    /// every worker, so code that finds its runtime by thread reaches it from a spawned task too.
+    /// For an application's `main`, and for a test driving a smol app:
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use ulo::Spawn;
+    /// use ulo_smol::{Executor, Smol};
+    ///
+    /// let smol = Smol::new(Arc::new(Executor::new())).with_workers(3);
+    /// let answer = smol.block_on(async {
+    ///     let runtime = Smol::current().expect("inside `block_on`");
+    ///     ulo::spawn_with(&runtime, async { 41 + 1 }).await
+    /// });
+    /// assert_eq!(answer.ok(), Some(42));
+    /// ```
+    ///
+    /// A worker whose task panicked panics this call once `fut` has completed, unless `fut`
+    /// itself is panicking.
+    pub fn block_on<F: Future>(&self, fut: F) -> F::Output {
+        let stop = Arc::new(Stop { stopped: AtomicBool::new(false), event: Event::new() });
+        let workers = (0..self.workers)
+            .map(|_| {
+                let (smol, stop) = (self.clone(), Arc::clone(&stop));
+                std::thread::spawn(move || {
+                    let _current = Current::enter(smol.clone());
+                    async_io::block_on(smol.executor.run(stop.wait()));
+                })
+            })
+            .collect();
+        let _running = Running { stop, workers };
+        let _current = Current::enter(self.clone());
+        async_io::block_on(self.executor.run(fut))
+    }
+
+    /// The runtime whose [`block_on`](Self::block_on) runs on this thread, as its caller or as
+    /// one of its workers; `None` outside one.
+    pub fn current() -> Option<Smol> {
+        CURRENT.with(|current| current.borrow().clone())
+    }
+}
+
+/// This thread's [`Smol::current`] for as long as it lives, the one it replaced restored after.
+struct Current(Option<Smol>);
+
+impl Current {
+    fn enter(smol: Smol) -> Current {
+        Current(CURRENT.with(|current| current.borrow_mut().replace(smol)))
+    }
+}
+
+impl Drop for Current {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        CURRENT.with(|current| *current.borrow_mut() = previous);
+    }
+}
+
+/// The signal that ends `block_on`'s workers.
+struct Stop {
+    stopped: AtomicBool,
+    event: Event,
+}
+
+impl Stop {
+    async fn wait(&self) {
+        loop {
+            if self.stopped.load(Ordering::Acquire) {
+                return;
+            }
+            // Registered before the flag is read again, so a stop raised in between still wakes it.
+            let listener = self.event.listen();
+            if self.stopped.load(Ordering::Acquire) {
+                return;
+            }
+            listener.await;
+        }
+    }
+}
+
+/// `block_on`'s workers, stopped and joined when it returns or unwinds.
+struct Running {
+    stop: Arc<Stop>,
+    workers: Vec<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.stop.stopped.store(true, Ordering::Release);
+        self.stop.event.notify(usize::MAX);
+        let mut panicked = false;
+        for worker in self.workers.drain(..) {
+            panicked |= worker.join().is_err();
+        }
+        if panicked && !std::thread::panicking() {
+            panic!("a thread running the executor for `Smol::block_on` panicked");
+        }
     }
 }
 

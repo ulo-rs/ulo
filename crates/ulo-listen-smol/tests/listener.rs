@@ -10,7 +10,6 @@ use std::task::Poll;
 use std::time::Duration;
 
 use async_net::TcpStream;
-use futures::FutureExt;
 use futures_rustls::TlsConnector;
 use ulo::{Runtime, Timer};
 use ulo_http::ConnInfo;
@@ -30,16 +29,8 @@ where
     F: FnOnce(Arc<dyn Runtime>) -> Fut,
     Fut: Future,
 {
-    let executor = Arc::new(Executor::new());
-    let (stop, stopped) = futures::channel::oneshot::channel::<()>();
-    let worker = {
-        let executor = Arc::clone(&executor);
-        std::thread::spawn(move || async_io::block_on(executor.run(stopped.map(|_| ()))))
-    };
-    let output = async_io::block_on(executor.run(test(Arc::new(Smol::new(Arc::clone(&executor))))));
-    drop(stop);
-    worker.join().expect("the executor's second thread panicked");
-    output
+    let smol = Smol::new(Arc::new(Executor::new())).with_workers(1);
+    smol.block_on(test(Arc::new(smol.clone())))
 }
 
 async fn within<F: Future>(timer: &dyn Timer, what: &str, fut: F) -> F::Output {

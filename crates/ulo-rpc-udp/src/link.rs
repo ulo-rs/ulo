@@ -9,7 +9,7 @@ use tokio::net::UdpSocket;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
-use ulo::{AppHandle, BoundAddr, BoxError, BoxFuture};
+use ulo::{AppHandle, BoundAddr, BoxError, BoxFuture, Runtime};
 use ulo_tokio::Tokio;
 use ulo_net::{Endpoint, EndpointSpec};
 use ulo_rpc::link::{Inbound, UNARY_ONLY};
@@ -190,7 +190,7 @@ impl Link for Udp {
         Ok(Box::pin(inbound))
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
+    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let addr = self.address()?;
         let runtime = self.runtime()?;
         let local: SocketAddr = if addr.is_ipv4() { (Ipv4Addr::UNSPECIFIED, 0).into() } else { (Ipv6Addr::UNSPECIFIED, 0).into() };

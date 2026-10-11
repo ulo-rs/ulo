@@ -21,7 +21,7 @@ use tokio::task::JoinHandle;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event as TraceEvent, Level, Metadata};
-use ulo::{App, AppHandle, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, AppHandle, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Signal, injectable, routes};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, Payload, ReplyPath};
 use ulo_transport::{Classify, ErrorKind};
@@ -98,7 +98,7 @@ impl Link for Scripted {
         lock(&self.0.inbound).take().ok_or_else(|| "the scripted link listened twice".into())
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
+    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         Err("the scripted link has no client side".into())
     }
 

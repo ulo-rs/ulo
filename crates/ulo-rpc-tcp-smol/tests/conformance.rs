@@ -1,12 +1,13 @@
 //! The RPC conformance suite over the smol TCP link, on smol: each scenario on an executor of its
 //! own, against a server on a port of its own, the client reaching it through a relay that
-//! `disrupt` cuts. The server's link takes its app's runtime; the client's is given the scenario's.
+//! `disrupt` cuts. Neither link is given a runtime: the server's takes its app's and the client's
+//! its client's, the scenario's either way.
 
 use std::net::{Ipv4Addr, SocketAddr};
 
 use ulo::BoundAddr;
 use ulo_rpc_conformance::relay::Relay;
-use ulo_rpc_conformance::{Broker, Harness, OnSmol, startup_failed};
+use ulo_rpc_conformance::{Broker, OnSmol, startup_failed};
 use ulo_rpc_tcp_smol::Tcp;
 
 struct Loopback {
@@ -32,7 +33,7 @@ impl Broker for Loopback {
     fn client_link(&self, server: &[BoundAddr]) -> Tcp {
         let [bound] = server else { startup_failed!("expected one bound server address, got {server:?}") };
         self.relay.forward_to(bound.addr);
-        Tcp::new(self.relay.addr()).with_runtime(OnSmol::runtime())
+        Tcp::new(self.relay.addr())
     }
 
     async fn disrupt(&self) {

@@ -1,9 +1,10 @@
 //! A link built on a thread with no tokio runtime current, and given none with `with_handle`,
-//! refuses to connect, and a client built on it is refused where it is built, each naming
-//! `.with_handle(..)`, before any I/O.
+//! refuses to connect, whatever runtime the client hands it, and a client built on it is refused
+//! where it is built, each naming `.with_handle(..)`, before any I/O.
 
 use std::sync::Arc;
 
+use ulo::Runtime;
 use ulo_rpc::{Link, RpcClient};
 use ulo_rpc_kafka::Kafka;
 
@@ -11,7 +12,10 @@ use ulo_rpc_kafka::Kafka;
 fn a_link_built_outside_a_runtime_and_given_none_refuses_to_connect() {
     assert!(tokio::runtime::Handle::try_current().is_err(), "the test's thread has a tokio runtime current");
     let link = Kafka::brokers("127.0.0.1:9092");
-    match futures_executor::block_on(link.connect()) {
+    // A tokio link spawns on its own handle and ignores the client's runtime, a tokio one included.
+    let runtime = tokio::runtime::Builder::new_current_thread().build().expect("a tokio runtime for the client");
+    let client_runtime: Arc<dyn Runtime> = Arc::new(ulo_tokio::Tokio::from_handle(runtime.handle().clone()));
+    match futures_executor::block_on(link.connect(&client_runtime)) {
         Ok(_) => panic!("a link with no tokio runtime connected"),
         Err(refused) => assert!(refused.to_string().contains("`.with_handle(..)`"), "the refusal names `.with_handle(..)`: {refused}"),
     }

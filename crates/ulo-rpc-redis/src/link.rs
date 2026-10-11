@@ -9,7 +9,7 @@ use redis::aio::{ConnectionManager, PubSubSink, PubSubStream};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, BoxError, BoxFuture};
+use ulo::{AppHandle, BoxError, BoxFuture, Runtime};
 use ulo_tokio::Tokio;
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
@@ -140,7 +140,7 @@ impl Link for Redis {
         Ok(receiver_stream(inbound))
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
+    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let runtime = self.runtime()?;
         let client = client(&self.url)?;
         let channel = format!("ulo:rpc:reply:{}", uuid::Uuid::new_v4().simple());

@@ -1,6 +1,7 @@
 //! The tokio and smol TCP links speak one wire: a client of either is answered by a server of the
 //! other, a unary call and a streamed reply alike. The smol link's tasks run on the tokio runtime
-//! here, `async-io` driving its sockets from its own thread.
+//! here, its app's as a server and its client's as a client, `async-io` driving its sockets from its
+//! own thread.
 
 use std::error::Error;
 use std::fmt;
@@ -97,7 +98,7 @@ async fn exchange<S: Link, C: Link>(server: S, client: impl FnOnce(std::net::Soc
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_smol_client_is_answered_by_a_tokio_server() {
-    exchange(ulo_rpc_tcp::Tcp::new("127.0.0.1:0"), |addr| ulo_rpc_tcp_smol::Tcp::new(addr).with_runtime(Tokio::current())).await;
+    exchange(ulo_rpc_tcp::Tcp::new("127.0.0.1:0"), ulo_rpc_tcp_smol::Tcp::new).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

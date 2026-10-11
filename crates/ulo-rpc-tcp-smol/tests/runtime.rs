@@ -1,16 +1,13 @@
-//! The runtime a smol TCP link's tasks run on: a client's link given none refuses, naming
-//! `.with_runtime(..)`, before any I/O: in `connect`, where `RpcClient::new` builds the client, and
-//! in a client module's init hook, failing the app's `connect`. A server's link given none takes
-//! its app's runtime in `prepare`, and one given a runtime keeps it.
+//! The runtime a smol TCP link's tasks run on. Given none, a client's link runs them on the runtime
+//! its client hands `connect`: the one given to `RpcClient::new` outside an app, the app's inside
+//! one, so a client module needs no extra configuration. A server's link given none takes its app's
+//! runtime in `prepare`. A link given a runtime with `.with_runtime(..)` keeps it on either side.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use ulo::{
-    App, BoxFuture, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, Signal, Spawn, StartupError, TaskHandle, Timer,
-    injectable, routes,
-};
+use ulo::{App, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Spawn, TaskHandle, Timer, injectable, routes};
 use ulo_rpc::{Link, Payload, RpcClient, RpcClientModule};
 use ulo_rpc_conformance::{Harness, OnSmol};
 use ulo_rpc_tcp_smol::Tcp;
@@ -106,51 +103,91 @@ impl Spawn for Counting {
     }
 }
 
-fn refusal_names_with_runtime(refused: &dyn std::fmt::Display) {
-    assert!(refused.to_string().contains("`.with_runtime(..)`"), "the refusal names `.with_runtime(..)`: {refused}");
-}
+/// The tasks the link starts for one client connection: its writer and its reply reader.
+const LINK_TASKS: usize = 2;
+/// The client's own over that connection: the router of the reply lane.
+const ROUTER: usize = 1;
+/// The link's close, which a client built with `RpcClient::new` spawns once dropped; a module's
+/// client is closed by the module's destroy hook instead.
+const CLOSE: usize = 1;
 
 #[test]
-fn a_client_link_given_no_runtime_refuses_to_connect() {
-    match futures_executor::block_on(Tcp::new("127.0.0.1:7000").connect()) {
-        Ok(_) => panic!("a link with no runtime connected"),
-        Err(refused) => refusal_names_with_runtime(&refused),
-    }
-}
-
-#[test]
-fn a_client_on_a_link_given_no_runtime_is_refused_where_it_is_built() {
+fn a_client_link_given_no_runtime_runs_its_tasks_on_its_client_s() {
     OnSmol::block_on(async {
-        match RpcClient::new(Tcp::new("127.0.0.1:7000"), Arc::new(OnSmol::runtime())) {
-            Ok(_) => panic!("a client was built on a link with no runtime"),
-            Err(refused) => refusal_names_with_runtime(&refused),
-        }
+        let client = Counting::new();
+        let calls = client.clone();
+        serve_and_call(Tcp::new("127.0.0.1:0"), Counting::new(), move |addr| async move {
+            let rpc = RpcClient::new(Tcp::new(addr), Arc::new(calls)).expect("a client link given no runtime is usable");
+            assert_eq!(rpc.request::<_, u32>("runtime.add", &41u32).await.expect("the call is answered"), 42);
+        })
+        .await;
+        assert_eq!(client.spawned(), LINK_TASKS + ROUTER + CLOSE, "the client's runtime was handed {} tasks", client.spawned());
     });
 }
 
 #[test]
-fn a_client_module_on_a_link_given_no_runtime_fails_connect() {
+fn a_client_module_on_a_link_given_no_runtime_runs_its_tasks_on_its_app_s() {
     OnSmol::block_on(async {
-        let wired = App::builder(ClientRoot(Mutex::new(Some(Tcp::new("127.0.0.1:7000")))))
-            .runtime(OnSmol::runtime())
-            .wire()
-            .expect("the client wires");
-        match wired.connect().await {
-            Err(StartupError::Connect(ConnectError::Hook { reason: FailureReason::Errored(refused), .. })) => {
-                refusal_names_with_runtime(&refused);
-            }
-            Err(other) => panic!("expected the client module's init hook to fail `connect`, got: {other}"),
-            Ok(app) => {
-                let _ = app.close(Signal::new("runtime")).await;
-                panic!("a client module over a link with no runtime connected");
-            }
-        }
+        let client = Counting::new();
+        let calls = client.clone();
+        serve_and_call(Tcp::new("127.0.0.1:0"), Counting::new(), move |addr| async move {
+            let app = App::builder(ClientRoot(Mutex::new(Some(Tcp::new(addr)))))
+                .runtime(calls)
+                .wire()
+                .expect("the client wires")
+                .connect()
+                .await
+                .expect("a client module over a link given no runtime connects");
+            let rpc = (*app.get::<RpcClient>().await.expect("the client app holds an `RpcClient`")).clone();
+            assert_eq!(rpc.request::<_, u32>("runtime.add", &41u32).await.expect("the call is answered"), 42);
+            drop(rpc);
+            let _ = app.close(Signal::new("runtime")).await;
+        })
+        .await;
+        assert!(
+            client.spawned() >= LINK_TASKS + ROUTER,
+            "the client app's runtime was handed {} tasks, fewer than one connection starts",
+            client.spawned()
+        );
     });
 }
 
-/// Serves `link` on an app whose runtime is `app_runtime`, answers one call from a client given
-/// its own runtime, and stops.
-async fn serve_one_call(link: Tcp, app_runtime: Counting) {
+#[test]
+fn a_client_link_given_a_runtime_runs_its_tasks_there() {
+    OnSmol::block_on(async {
+        let (link, client) = (Counting::new(), Counting::new());
+        let (on_link, calls) = (link.clone(), client.clone());
+        serve_and_call(Tcp::new("127.0.0.1:0"), Counting::new(), move |addr| async move {
+            let rpc = RpcClient::new(Tcp::new(addr).with_runtime(on_link), Arc::new(calls)).expect("the client's link is usable");
+            assert_eq!(rpc.request::<_, u32>("runtime.add", &41u32).await.expect("the call is answered"), 42);
+        })
+        .await;
+        assert_eq!(link.spawned(), LINK_TASKS, "the link's runtime was handed {} tasks", link.spawned());
+        assert_eq!(client.spawned(), ROUTER + CLOSE, "the client's runtime was handed {} tasks", client.spawned());
+    });
+}
+
+#[test]
+fn a_client_link_connects_on_the_runtime_it_is_handed() {
+    OnSmol::block_on(async {
+        let client = Counting::new();
+        let handed: Arc<dyn Runtime> = Arc::new(client.clone());
+        serve_and_call(Tcp::new("127.0.0.1:0"), Counting::new(), move |addr| async move {
+            let outbound = Tcp::new(addr).connect(&handed).await.expect("a link given no runtime connects on the one handed to it");
+            drop(outbound);
+        })
+        .await;
+        assert_eq!(client.spawned(), LINK_TASKS, "the handed runtime was given {} tasks", client.spawned());
+    });
+}
+
+/// Serves `link` on an app whose runtime is `app_runtime`, runs `client` against its address, and
+/// stops.
+async fn serve_and_call<C, F>(link: Tcp, app_runtime: Counting, client: C)
+where
+    C: FnOnce(std::net::SocketAddr) -> F,
+    F: std::future::Future<Output = ()>,
+{
     let server = App::builder(ServerRoot)
         .runtime(app_runtime)
         .wire()
@@ -165,18 +202,22 @@ async fn serve_one_call(link: Tcp, app_runtime: Counting) {
     let addr = server.addresses()[0].addr;
     let handle = server.handle();
     let serving = ulo::spawn_with(&OnSmol::runtime(), server.serve(std::future::pending::<Signal>()));
-    let client = RpcClient::new(Tcp::new(addr).with_runtime(OnSmol::runtime()), Arc::new(OnSmol::runtime())).expect("the client's link is usable");
-    assert_eq!(client.request::<_, u32>("runtime.add", &41u32).await.expect("the call is answered"), 42);
-    drop(client);
+    client(addr).await;
     let _ = handle.close(Signal::new("runtime")).await;
     let _ = serving.await;
+}
+
+/// One call from a client given its own runtime.
+async fn one_call(addr: std::net::SocketAddr) {
+    let client = RpcClient::new(Tcp::new(addr), Arc::new(OnSmol::runtime())).expect("the client's link is usable");
+    assert_eq!(client.request::<_, u32>("runtime.add", &41u32).await.expect("the call is answered"), 42);
 }
 
 #[test]
 fn a_server_link_given_no_runtime_runs_its_tasks_on_its_app_s() {
     OnSmol::block_on(async {
         let app = Counting::new();
-        serve_one_call(Tcp::new("127.0.0.1:0"), app.clone()).await;
+        serve_and_call(Tcp::new("127.0.0.1:0"), app.clone(), one_call).await;
         // The accept loop, the forwarder, the connection, and its writer, beside the server's own.
         assert!(app.spawned() >= 4, "the app's runtime was handed {} tasks", app.spawned());
     });
@@ -186,7 +227,7 @@ fn a_server_link_given_no_runtime_runs_its_tasks_on_its_app_s() {
 fn a_server_link_given_a_runtime_runs_its_tasks_there() {
     OnSmol::block_on(async {
         let (link, app) = (Counting::new(), Counting::new());
-        serve_one_call(Tcp::new("127.0.0.1:0").with_runtime(link.clone()), app).await;
+        serve_and_call(Tcp::new("127.0.0.1:0").with_runtime(link.clone()), app, one_call).await;
         // The accept loop, the forwarder, the connection, and its writer.
         assert_eq!(link.spawned(), 4, "the link's runtime was handed {} tasks", link.spawned());
     });

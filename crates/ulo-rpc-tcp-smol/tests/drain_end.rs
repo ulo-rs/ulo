@@ -92,7 +92,7 @@ fn a_server_holding_no_call_stops_without_waiting_out_its_drain() {
         let handle = server.handle();
         let serving = ulo::spawn_with(&OnSmol::runtime(), server.serve(std::future::pending::<Signal>()));
 
-        let client = App::builder(ClientRoot { link: Mutex::new(Some(Tcp::new(addr).with_runtime(OnSmol::runtime()))) })
+        let client = App::builder(ClientRoot { link: Mutex::new(Some(Tcp::new(addr))) })
             .runtime(OnSmol::runtime())
             .wire()
             .expect("the client wires")

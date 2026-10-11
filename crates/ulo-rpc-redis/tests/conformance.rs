@@ -8,18 +8,24 @@
 #![cfg(feature = "integration")]
 
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage};
-use ulo::BoundAddr;
+use ulo::{BoundAddr, Runtime};
 use ulo_rpc_conformance::{Broker, report, startup_failed};
 use ulo_rpc_conformance::relay::{Relay, reachable, unshadowed};
 use ulo_rpc::{CallHeaders, Data, Frame, Link, Pattern};
 use ulo_rpc_redis::Redis;
 use ulo_transport::ErrorKind;
+
+/// The runtime a client hands its link: the test's tokio runtime, which a tokio link ignores.
+fn client_runtime() -> Arc<dyn Runtime> {
+    Arc::new(ulo_tokio::Tokio::current())
+}
 
 const PORT: u16 = 6379;
 
@@ -88,7 +94,7 @@ async fn a_request_read_after_the_drain_ended_the_inbound_stream_is_refused() {
     let server = broker.link();
     let mut inbound = server.listen(&[Pattern::from(DRAINED)]).await.expect("the server's link listens");
     let client = broker.link();
-    let outbound = client.connect().await.expect("the client's link connects");
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
 
     let request = Frame::Req { id: 1, pattern: DRAINED.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };

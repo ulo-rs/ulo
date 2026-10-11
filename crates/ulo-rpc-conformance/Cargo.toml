@@ -15,7 +15,7 @@ publish = false
 # `OnTokio`, the runtime half of every link built on tokio.
 tokio = ["dep:ulo-tokio", "dep:tokio"]
 # `OnSmol`, the runtime half of a link on smol: an `async-executor` `Executor` per scenario.
-smol = ["dep:ulo-smol", "dep:async-io"]
+smol = ["dep:ulo-smol"]
 
 [dependencies]
 ulo = { path = "../ulo" }
@@ -24,7 +24,6 @@ ulo-rpc = { path = "../ulo-rpc", features = ["conformance-probe"] }
 ulo-smol = { path = "../ulo-smol", optional = true }
 ulo-tokio = { path = "../ulo-tokio", optional = true }
 ulo-transport = { path = "../ulo-transport" }
-async-io = { workspace = true, optional = true }
 # `serde` lets the binary scenario send and receive `Bytes` as raw bytes.
 bytes = { workspace = true, features = ["serde"] }
 # The relay's threads signal their ends through its oneshot, which needs no runtime.

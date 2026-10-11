@@ -17,7 +17,7 @@ use lapin::uri::AMQPUri;
 use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, Consumer, ExchangeKind, PublisherConfirm};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
-use ulo::{AppHandle, BoxError, BoxFuture};
+use ulo::{AppHandle, BoxError, BoxFuture, Runtime};
 use ulo_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -204,7 +204,7 @@ impl Link for RabbitMq {
         Ok(receiver_stream(inbound))
     }
 
-    async fn connect(&self) -> Result<Outbound, BoxError> {
+    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         // Not recovered by lapin: a direct reply-to address lives as long as its channel, so the
         // replies a recovered connection's new channel would wait for are gone. A lost connection
         // ends the reply lane instead, and `RpcClient` connects again for the next call.

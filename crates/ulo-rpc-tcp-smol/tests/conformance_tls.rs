@@ -48,7 +48,7 @@ impl Broker for TlsLoopback {
         assert!(bound.tls, "the server's bound address reports TLS");
         self.bridge.forward_to(bound.addr);
         self.relay.forward_to(self.bridge.addr);
-        Tcp::new(self.relay.addr()).with_runtime(OnSmol::runtime())
+        Tcp::new(self.relay.addr())
     }
 
     async fn disrupt(&self) {

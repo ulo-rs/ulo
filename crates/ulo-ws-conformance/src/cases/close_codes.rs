@@ -2,6 +2,7 @@
 //! guard, 1013 for `TooManyRequests`, 1011 for a fault or a panic, a code `OnConnect` sets itself,
 //! and the drain's 1001. A refused connect is answered with the Close frame alone.
 
+use serde_json::json;
 use ulo_ws::DisconnectReason;
 
 use super::Served;
@@ -44,6 +45,10 @@ pub async fn own_code<H: Host>() {
 pub async fn drain<H: Host>() {
     let app = Served::<H>::start().await;
     let mut conn = app.connect("/echo", &[]).await;
+    // The 101 is written before `/echo`'s connection phase runs, and a drain that begins first
+    // refuses the connection with 1001 and runs no hook, `on_disconnect` included (F385). An
+    // answered message shows the phase admitted it, so the drain meets an admitted, idle connection.
+    assert_eq!(conn.exchange(json!({ "event": "echo", "id": 1, "data": "admitted" })).await, json!({ "id": 1, "data": "admitted" }));
     let closing = app.close_in_background();
     assert_eq!(conn.close_frame().await, Some((1001, "the server is shutting down".to_owned())), "an idle connection at the drain");
     conn.hang_up().await;

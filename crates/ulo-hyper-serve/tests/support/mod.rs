@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use futures::FutureExt;
 use ulo::{BoxFuture, Spawn, TaskHandle, Timer};
 use ulo_smol::{Executor, Smol};
 
@@ -23,16 +22,8 @@ where
     F: FnOnce(Smol) -> Fut,
     Fut: Future,
 {
-    let executor = Arc::new(Executor::new());
-    let (stop, stopped) = futures::channel::oneshot::channel::<()>();
-    let worker = {
-        let executor = Arc::clone(&executor);
-        std::thread::spawn(move || async_io::block_on(executor.run(stopped.map(|_| ()))))
-    };
-    let output = async_io::block_on(executor.run(test(Smol::new(Arc::clone(&executor)))));
-    drop(stop);
-    worker.join().expect("the executor's second thread panicked");
-    output
+    let smol = Smol::new(Arc::new(Executor::new())).with_workers(1);
+    smol.block_on(test(smol.clone()))
 }
 
 /// `fut`'s output, or a failure naming `what` once [`PATIENCE`] has passed.

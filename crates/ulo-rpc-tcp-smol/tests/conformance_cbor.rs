@@ -6,7 +6,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use ulo::BoundAddr;
 use ulo_rpc::Codec;
 use ulo_rpc_conformance::relay::Relay;
-use ulo_rpc_conformance::{Broker, Harness, OnSmol, startup_failed};
+use ulo_rpc_conformance::{Broker, OnSmol, startup_failed};
 use ulo_rpc_tcp_smol::Tcp;
 
 struct Loopback {
@@ -32,7 +32,7 @@ impl Broker for Loopback {
     fn client_link(&self, server: &[BoundAddr]) -> Tcp {
         let [bound] = server else { startup_failed!("expected one bound server address, got {server:?}") };
         self.relay.forward_to(bound.addr);
-        Tcp::new(self.relay.addr()).codec(Codec::Cbor).with_runtime(OnSmol::runtime())
+        Tcp::new(self.relay.addr()).codec(Codec::Cbor)
     }
 
     async fn disrupt(&self) {
