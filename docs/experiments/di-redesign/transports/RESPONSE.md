@@ -1846,3 +1846,33 @@ There is a side benefit: the server then enforces the client's real deadline, wh
 **S7. Accepted.** A close-delimited body is legal HTTP and the client must read it to the close, so F381 was the suite's bug, fixed against the right section of the spec.
 
 **S8 and S10. Accepted.** S10's extra requirement, that a connection opened while the gateway is saturated reads nothing, is what makes the saturated state observable instead of inferred.
+
+## Forty-eighth response: two levels of runtime independence
+
+Received 2026-10-11, answering `divergences/runtime-e2.md` (S1–S11, F383, F384). The user signed it off the same day, settling the h2 note from the tree: `ulo-listen-smol` and `ulo-ws-hyper` carry tokio with `sync` alone, and `ulo-http-hyper`'s HTTP/2 path adds `io-util` and `bytes` through h2, neither a runtime. The runtime-neutral level therefore allows `sync`, plus `io-util` and `bytes` on the HTTP/2 path, and the documentation sentence names both. F384 and S9 build in test batch 25 with the forty-seventh response; the two-level check is stage f.
+
+HTTP and WebSocket passing the full suites on smol, with smol sockets, is the proof this work set out to produce. S1 is the one real decision here, so here is its wording first.
+
+**S1. (a), with the rule written as two precise levels instead of one blurred one.** Answer 4 was strict for a reason that holds: our own crates shouldn't use even `tokio::sync`, because we can always choose `async-channel` and friends instead. hyper's dependency is different. It is outside our control, it compiles no reactor, executor or timer, and nothing in it runs on tokio. Option (b) would move hyper out of one crate without changing anything users experience, since hyper is still the server.
+
+So the design states two levels, each exactly testable:
+
+- **Runtime-free:** the core, `ulo-transport`, the hubs (`ulo-http`, `ulo-rpc`, `ulo-ws`, the GraphQL hubs), and every plug-point trait and type. *No `tokio` crate anywhere in the dependency tree.* This is the level that lets anyone implement a plug point without tokio.
+- **Runtime-neutral:** the server layer (`ulo-hyper-serve`, the hyper backends, the standalone WebSocket server, the smol listener). *Runs entirely on whatever runtime the app is given; may depend on tokio only for its runtime-free `sync` primitives, which hyper brings.*
+
+The documentation wording: "Hyper-based servers run on any runtime. hyper itself depends on tokio's synchronization types, which contain no runtime, so `tokio` appears in their dependency tree with only its `sync` feature."
+
+That gives stage f a precise CI check. For the runtime-free set, fail if `tokio` appears at all. For the runtime-neutral set, fail if any tokio feature beyond `sync` is enabled (`rt`, `net`, `time`, `io-util`, `io-std`, `macros`), which `cargo tree -e features` shows directly. Then a future change that quietly pulls a tokio reactor into the server layer fails CI, while hyper's harmless dependency doesn't.
+
+One note on the h2 detail: if h2 pulls `io-util` into the HTTP/2 path of the server layer, then the second level needs `io-util` in its allowed list, or the claim needs one more word. Check which features actually appear before writing the check, so the documented rule and the CI check match exactly.
+
+**The rest:**
+
+- **S2. Accepted.** Aliases plus a default `tokio` feature keep tokio code unchanged, and the alternative was proven not to work.
+- **S3 through S8. Accepted.** S8's per-connection handshake is a real improvement in its own right: one slow TLS client no longer stalls the accept loop.
+- **S9. Accepted, if the two `unsafe` calls hold up to scrutiny.** Each needs its safety argument written next to it (which invariant makes it sound), and ideally a test running the first-read path under Miri or a sanitizer. If either can be avoided at a small cost, avoid it.
+- **S10 and S11. Accepted.** S11 replaces a panic with an error naming the fix, which is the same principle as everywhere else.
+
+**F384. Fix it before release, since it breaks a promise.** The design says every handler parameter that implements `FromContainer` works, and `Dep<dyn Timer>` is exactly the kind of parameter people will write. "Send is not general enough" is a known compiler limitation with references held across awaits in generated futures: typically, the generated code borrows something through a lifetime that the compiler can't prove `Send` for all lifetimes. The usual fix is in the generated code's shape (take the value out before the await, rather than holding a borrow across it). Add a handler taking `Dep<dyn Timer>` to the macro lint crate's coverage, so the case stays compiled.
+
+The plan's order is right: e3 for the smol TCP link and the RPC suite on smol, then stage f with the check worded as above.
