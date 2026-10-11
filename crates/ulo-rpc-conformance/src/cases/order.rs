@@ -4,8 +4,9 @@
 //! and then the `cancel`, so the server holds nothing for it.
 //!
 //! On a link that holds the `cancel`, the held `cancel` goes out when an `opened` arrives late,
-//! after the call ended, and is dropped with its entry once the link's hold runs out, so a call
-//! whose `opened` never comes holds nothing until the link closes.
+//! after the call ended, and is dropped with its entry at the deadline its `open` carried, or once
+//! the link's hold runs out for an `open` carrying none, so a call whose `opened` never comes
+//! holds nothing until the link closes.
 //!
 //! On a link without `ordered_control` a request's control frames travel a lane of their own and
 //! the broker can deliver a `cancel` ahead of its request, so there the first scenario's order is
@@ -39,6 +40,9 @@ const PATIENCE: Duration = Duration::from_secs(5);
 /// The hold `hold_runs_out` gives a held `cancel`, in place of the link's own, and how late
 /// `late_opened`'s `opened` arrives.
 const SHORT_HOLD: Duration = Duration::from_millis(300);
+
+/// The deadline `held_until_deadline`'s `open` carries.
+const CALL_DEADLINE: Duration = Duration::from_millis(600);
 
 /// How often a scenario reads the client probe while it waits on it.
 const PROBE_POLL: Duration = Duration::from_millis(10);
@@ -198,13 +202,14 @@ async fn probe_until<B: Broker>(probe: &ClientProbe, what: &str, done: impl Fn(&
 }
 
 impl<B: Broker> Linked<B> {
-    /// Opens streamed request `id` with the server's `opened` withheld from the client's link,
-    /// waits until the server holds the call and its `opened` has reached the client, and cancels
-    /// the call, as a call's timeout or drop does: the client's table then holds the `cancel` alone.
-    async fn cancel_with_opened_withheld(&mut self, id: u64) {
+    /// Opens streamed request `id` carrying `headers` with the server's `opened` withheld from
+    /// the client's link, waits until the server holds the call and its `opened` has reached the
+    /// client, and cancels the call, as a call's timeout or drop does: the client's table then
+    /// holds the `cancel` alone.
+    async fn cancel_with_opened_withheld(&mut self, id: u64, headers: CallHeaders) {
         probe(self).withhold();
         let pattern = Pattern::from(ORDERED);
-        let open = Frame::Open { id, pattern: ORDERED.to_owned(), headers: CallHeaders::new() };
+        let open = Frame::Open { id, pattern: ORDERED.to_owned(), headers };
         (self.outbound.send)(pattern.clone(), open, Some(ReplyTo { id }))
             .await
             .unwrap_or_else(|error| panic!("the open of call {id} was not sent: {error}"));
@@ -225,7 +230,7 @@ impl<B: Broker> Linked<B> {
 /// link's hold, sends it, and the server receives it for the call it holds. The client's table is then empty.
 pub async fn late_opened<B: Broker>() {
     let mut linked = Linked::<B>::start().await;
-    linked.cancel_with_opened_withheld(1).await;
+    linked.cancel_with_opened_withheld(1, CallHeaders::new()).await;
     // Late by the short hold, and well inside the link's own.
     sleep::<B>(SHORT_HOLD).await;
     probe(&linked).release();
@@ -239,14 +244,30 @@ pub async fn late_opened<B: Broker>() {
 }
 
 /// A streamed request cancelled before its `opened` reached the client, whose `opened` never
-/// comes, leaves no entry in the client's table once the link's hold runs out, shortened here to
-/// 300 ms.
+/// comes and whose `open` carried no deadline, leaves no entry in the client's table once the
+/// link's hold runs out, shortened here to 300 ms.
 pub async fn hold_runs_out<B: Broker>() {
     let mut linked = Linked::<B>::start().await;
     probe(&linked).set_hold(SHORT_HOLD);
     let cancelled = Instant::now();
-    linked.cancel_with_opened_withheld(1).await;
+    linked.cancel_with_opened_withheld(1, CallHeaders::new()).await;
     probe_until::<B>(probe(&linked), "the held cancel's entry dropped", |probe| probe.calls() == Some(0)).await;
     assert!(cancelled.elapsed() >= SHORT_HOLD, "the held cancel was dropped before its hold ran out");
+    linked.stop().await;
+}
+
+/// A held `cancel` whose call's `open` carried `deadline-ms: 600` is dropped with its entry once
+/// that deadline passes, the server ending the call there itself. The link's hold for an `open`
+/// with no deadline is set to 30 s, longer than the scenario waits, so only the deadline can drop
+/// it in time.
+pub async fn held_until_deadline<B: Broker>() {
+    let mut linked = Linked::<B>::start().await;
+    probe(&linked).set_hold(Duration::from_secs(30));
+    let mut headers = CallHeaders::new();
+    headers.insert("deadline-ms", CALL_DEADLINE.as_millis().to_string());
+    let opened = Instant::now();
+    linked.cancel_with_opened_withheld(1, headers).await;
+    probe_until::<B>(probe(&linked), "the held cancel's entry dropped at its call's deadline", |probe| probe.calls() == Some(0)).await;
+    assert!(opened.elapsed() >= CALL_DEADLINE, "the held cancel was dropped {:?} after its `open`, before the call's deadline", opened.elapsed());
     linked.stop().await;
 }

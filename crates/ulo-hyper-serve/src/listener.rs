@@ -1,9 +1,10 @@
 //! The plug point a runtime crate implements, what it hands over per connection, and a
 //! connection's I/O counted at its first read.
 
+#![forbid(unsafe_code)]
+
 use std::future::Future;
 use std::io;
-use std::mem::MaybeUninit;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -103,6 +104,10 @@ impl ReadCount {
     }
 }
 
+/// The most a connection's first counted read takes: hyper's initial read buffer, 8 KiB
+/// (`hyper-1.11.1`, `proto/h1/io.rs:15`).
+const FIRST_READ: usize = 8 * 1024;
+
 /// An accepted connection's I/O, as hyper's I/O traits, counted into the server's [`ReadCount`] at
 /// its first read that yields bytes. Hand it to hyper's connection builders as it is.
 pub struct Io<T> {
@@ -129,27 +134,24 @@ impl<T: Read + Unpin> Read for Io<T> {
             return Pin::new(&mut this.inner).poll_read(cx, buf);
         }
         // The cursor is moved into the read it is handed to, so it cannot report afterwards how
-        // far it was filled; the unfilled memory goes to the inner read under a buffer of its own,
-        // as hyper-util's `TokioIo` reads through tokio's, until the first read is counted.
-        //
-        // SAFETY: `as_mut` hands out the unfilled memory, of which this initializes nothing
-        // itself; the inner read writes initialized bytes into it through `ReadBuf`, which reports
-        // how many, and `advance` moves the cursor past exactly those.
-        let filled = unsafe {
-            let unfilled: &mut [MaybeUninit<u8>] = buf.as_mut();
-            let mut probe = ReadBuf::uninit(unfilled);
-            match Pin::new(&mut this.inner).poll_read(cx, probe.unfilled()) {
-                Poll::Ready(Ok(())) => probe.filled().len(),
-                other => return other,
-            }
-        };
-        if filled > 0
+        // far it was filled. Until the first read is counted the inner read fills a buffer of
+        // this one's own instead, at most what the cursor has room for, and the bytes are copied
+        // into the cursor: one copy of a connection's first bytes, every later read passing
+        // straight through.
+        let mut first = [0u8; FIRST_READ];
+        let room = buf.remaining().min(FIRST_READ);
+        let mut probe = ReadBuf::new(&mut first[..room]);
+        match Pin::new(&mut this.inner).poll_read(cx, probe.unfilled()) {
+            Poll::Ready(Ok(())) => {}
+            other => return other,
+        }
+        let filled = probe.filled();
+        if !filled.is_empty()
             && let Some(reads) = this.unread.take()
         {
             reads.0.fetch_add(1, Ordering::AcqRel);
         }
-        // SAFETY: the inner read initialized `filled` bytes at the start of the unfilled memory.
-        unsafe { buf.advance(filled) };
+        buf.put_slice(filled);
         Poll::Ready(Ok(()))
     }
 }

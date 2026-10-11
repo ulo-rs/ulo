@@ -10,6 +10,13 @@ homepage.workspace = true
 keywords = ["ulo", "websocket", "gateway", "framework"]
 categories = ["web-programming::websocket", "asynchronous"]
 
+[features]
+# For the conformance tests; not an application feature. It exports `MessagesRead` and
+# `GatewayDefaults::messages_read`, the count of data messages a server's connections read off
+# their sockets, which `ulo-ws-hyper`'s load-shedding test holds to its bound; without it the read
+# loop counts nothing.
+conformance-probe = []
+
 [dependencies]
 ulo = { path = "../ulo" }
 ulo-http = { path = "../ulo-http" }

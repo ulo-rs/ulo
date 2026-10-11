@@ -5,7 +5,10 @@
 //!
 //! Each transport's handlers cover the forms its attribute expands differently: sync and `async`,
 //! a plain value, a `Result` and a stream, the body-consuming parameters, `self: Arc<Self>`, the
-//! three enhancer spellings at both tiers, `#[meta]`, and a generic controller.
+//! three enhancer spellings at both tiers, `#[meta]`, and a generic controller. Each transport has
+//! a handler taking `Dep<dyn Timer>` and `Dep<dyn Runtime>`, and HTTP one taking
+//! `Json<Cow<'static, str>>`: parameter types carrying a lifetime, whose handler futures are `Send`
+//! only through the `+ Send` each `ulo_transport::__private::Param` impl writes on `extract`.
 
 pub mod derives;
 pub mod di;

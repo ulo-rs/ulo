@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use ulo::{BoxError, Dep, OnModuleInit, injectable};
+use ulo::{BoxError, Dep, OnModuleInit, Runtime, Timer, injectable};
 
 /// A struct-form injectable with no dependency.
 #[injectable(singleton)]
@@ -25,7 +25,8 @@ pub struct Named {
 
 #[injectable(execution, timeout = Duration::from_secs(1))]
 impl Named {
-    pub async fn new(clock: Dep<Clock>) -> Result<Self, BoxError> {
+    pub async fn new(clock: Dep<Clock>, timer: Dep<dyn Timer>) -> Result<Self, BoxError> {
+        timer.sleep(Duration::ZERO).await;
         let _ = clock;
         Ok(Named { name: "named".to_owned() })
     }
@@ -39,7 +40,8 @@ pub struct Defaulted {
 #[injectable(transient)]
 impl Defaulted {
     #[construct]
-    pub fn build(store: Dep<Store>) -> Self {
+    pub fn build(store: Dep<Store>, runtime: Dep<dyn Runtime>) -> Self {
+        let _ = runtime;
         Defaulted { store }
     }
 }

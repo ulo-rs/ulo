@@ -6623,6 +6623,7 @@ dependencies = [
  "ulo",
  "ulo-rpc",
  "ulo-rpc-conformance",
+ "ulo-rpc-kafka",
  "ulo-tokio",
  "ulo-transport",
  "uuid",
@@ -6653,6 +6654,7 @@ dependencies = [
  "ulo",
  "ulo-rpc",
  "ulo-rpc-conformance",
+ "ulo-rpc-mqtt",
  "ulo-tokio",
  "ulo-transport",
  "uuid",
@@ -6673,6 +6675,7 @@ dependencies = [
  "ulo",
  "ulo-rpc",
  "ulo-rpc-conformance",
+ "ulo-rpc-nats",
  "ulo-tokio",
  "ulo-transport",
 ]
@@ -6692,6 +6695,7 @@ dependencies = [
  "ulo",
  "ulo-rpc",
  "ulo-rpc-conformance",
+ "ulo-rpc-rabbitmq",
  "ulo-tokio",
  "ulo-transport",
  "uuid",
@@ -6932,6 +6936,7 @@ dependencies = [
  "ulo-transport",
  "ulo-ws",
  "ulo-ws-conformance",
+ "ulo-ws-hyper",
 ]
 
 [[package]]

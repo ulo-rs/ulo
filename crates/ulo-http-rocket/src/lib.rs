@@ -32,6 +32,12 @@
 //! whole window, and no longer. An idle keep-alive connection is closed when the drain begins, as
 //! on the other hosts.
 //!
+//! The upgrade carries one limit no declaration states. WebSocket requires HTTP/1.1 (RFC 6455
+//! §4.2.1), and rocket 0.5 keeps no request's protocol version, so the adapter hands the app every
+//! request as HTTP/1.1: a gateway on the HTTP port answers an HTTP/1.0 upgrade request with 101,
+//! which the adapter cannot detect, where every other host refuses it with 400. A version-dependent
+//! rule in the app, such as HTTP/1.0 closing the connection by default, reads HTTP/1.1 here too.
+//!
 //! Built-in forwards: `OriginalPath`, from `req.uri().path()`.
 
 mod convert;

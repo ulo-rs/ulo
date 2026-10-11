@@ -147,7 +147,9 @@ impl AppBuilder {
     ///
     /// The object both resolve to is the app's wrapper around `runtime`: it spawns on `runtime`
     /// and times with its clock, and a task spawned through it that panics ends `Panicked` with
-    /// every secret the app registered replaced in its message.
+    /// every secret the app registered replaced in its message. The app's runtime is the core's
+    /// wrapper around the one given, not that object, so code holding `Dep<dyn Runtime>` cannot
+    /// reach `runtime`'s own type through it, a downcast included.
     ///
     /// It sets both the spawning and the clock, so it replaces a [`timer`](Self::timer) set
     /// before it: `.timer(t).runtime(r)` spawns and times on `r`.

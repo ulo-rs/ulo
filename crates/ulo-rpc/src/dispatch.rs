@@ -197,7 +197,7 @@ fn start(shared: &Arc<Shared>, incoming: Incoming, reply: Option<ReplyPath>, ack
         }
         return;
     };
-    let deadline = deadline_of(&incoming.headers);
+    let deadline = incoming.headers.deadline();
     let opts = match deadline {
         Some(after) => ExecOptions::new().deadline(shared.timer.now() + after),
         None => ExecOptions::new(),
@@ -618,11 +618,6 @@ fn timeout_error() -> CallError {
 /// The `ErrorInfo` detail carrying `reason`, under this transport's domain.
 pub(crate) fn reason(reason: &str) -> Detail {
     Detail::ErrorInfo { reason: reason.to_owned(), domain: DOMAIN.to_owned(), metadata: Default::default() }
-}
-
-/// `deadline-ms`, the remaining time in milliseconds. A value that does not parse sets none.
-fn deadline_of(headers: &CallHeaders) -> Option<Duration> {
-    headers.get("deadline-ms")?.trim().parse::<u64>().ok().map(Duration::from_millis)
 }
 
 fn call_span(shared: &Shared, pattern: &str, handler: Option<&MountedHandler<Rpc>>) -> Span {

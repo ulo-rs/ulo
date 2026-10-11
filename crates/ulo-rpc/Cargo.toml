@@ -28,6 +28,13 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 tracing.workspace = true
 
+[features]
+# For the conformance suite; not an application feature. It builds `__private::ClientProbe`, which
+# a broker link holds under its own `conformance-probe` so the suite's held-`cancel` scenarios can
+# withhold a server's `opened` and shorten the link's hold. Without it no link compiles the paths
+# that withhold or delay an `opened`.
+conformance-probe = []
+
 [dev-dependencies]
 ulo-tokio = { path = "../ulo-tokio" }
 # `test-util`: the client timeout tests run on a paused clock.

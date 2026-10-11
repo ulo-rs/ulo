@@ -1,6 +1,7 @@
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_core::Stream;
@@ -236,6 +237,11 @@ impl CallHeaders {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// `deadline-ms`, the remaining time in milliseconds. A value that does not parse sets none.
+    pub(crate) fn deadline(&self) -> Option<Duration> {
+        self.get("deadline-ms")?.trim().parse::<u64>().ok().map(Duration::from_millis)
     }
 }
 

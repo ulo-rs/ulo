@@ -252,12 +252,11 @@ impl Guard<Rpc> for Deny {
     }
 }
 
-/// The handlers' waits are on the app's clock, the scenario's runtime, injected as a field: as a
-/// handler parameter `Dep<dyn Timer>` does not compile (F384).
+/// The handlers wait on the app's clock, the scenario's runtime, taken as a `Dep<dyn Timer>`
+/// parameter.
 #[injectable]
 pub(crate) struct CoreController {
     probe: Dep<Probe>,
-    timer: Dep<dyn Timer>,
 }
 
 #[routes]
@@ -327,9 +326,9 @@ impl CoreController {
 
     /// Waits until its execution is cancelled, by `deadline-ms` or the caller's `cancel`.
     #[ulo_rpc::message("conformance.stall")]
-    async fn stall(&self, exec: ExecutionRef) -> Result<(), Refusal> {
+    async fn stall(&self, exec: ExecutionRef, timer: Dep<dyn Timer>) -> Result<(), Refusal> {
         let _recorder = Recorder { exec: exec.clone(), probe: (*self.probe).clone(), stream: false };
-        select(pin!(exec.cancelled()), self.timer.sleep(Duration::from_secs(30))).await;
+        select(pin!(exec.cancelled()), timer.sleep(Duration::from_secs(30))).await;
         Ok(())
     }
 
@@ -343,8 +342,8 @@ impl CoreController {
     }
 
     #[ulo_rpc::message("conformance.hold")]
-    async fn hold(&self, millis: Payload<u64>) -> Result<u64, Refusal> {
-        self.timer.sleep(Duration::from_millis(millis.0)).await;
+    async fn hold(&self, millis: Payload<u64>, timer: Dep<dyn Timer>) -> Result<u64, Refusal> {
+        timer.sleep(Duration::from_millis(millis.0)).await;
         *lock(&self.probe.0.held_answered) = Some(Instant::now());
         Ok(millis.0)
     }
@@ -352,20 +351,19 @@ impl CoreController {
     /// Holds for the given milliseconds, counted with [`bounded_too`](Self::bounded_too) for the
     /// in-flight scenario: two patterns, so a window kept per pattern shows.
     #[ulo_rpc::message("conformance.bounded")]
-    async fn bounded(&self, millis: Payload<u64>) -> Result<u64, Refusal> {
-        Ok(self.probe.bounded(&*self.timer, millis.0).await)
+    async fn bounded(&self, millis: Payload<u64>, timer: Dep<dyn Timer>) -> Result<u64, Refusal> {
+        Ok(self.probe.bounded(&*timer, millis.0).await)
     }
 
     #[ulo_rpc::message("conformance.bounded_too")]
-    async fn bounded_too(&self, millis: Payload<u64>) -> Result<u64, Refusal> {
-        Ok(self.probe.bounded(&*self.timer, millis.0).await)
+    async fn bounded_too(&self, millis: Payload<u64>, timer: Dep<dyn Timer>) -> Result<u64, Refusal> {
+        Ok(self.probe.bounded(&*timer, millis.0).await)
     }
 }
 
 #[injectable]
 pub(crate) struct StreamController {
     probe: Dep<Probe>,
-    timer: Dep<dyn Timer>,
 }
 
 #[routes]
@@ -418,9 +416,9 @@ impl StreamController {
 
     /// Ticks until the stream is dropped, recording the reason when it is.
     #[ulo_rpc::message("conformance.ticks")]
-    async fn ticks(&self, exec: ExecutionRef) -> impl Stream<Item = Result<u64, Refusal>> {
+    async fn ticks(&self, exec: ExecutionRef, timer: Dep<dyn Timer>) -> impl Stream<Item = Result<u64, Refusal>> {
         let recorder = Recorder { exec, probe: (*self.probe).clone(), stream: true };
-        stream::unfold((0u64, recorder, self.timer.clone()), |(n, recorder, timer)| async move {
+        stream::unfold((0u64, recorder, timer), |(n, recorder, timer)| async move {
             timer.sleep(Duration::from_millis(20)).await;
             Some((Ok(n), (n + 1, recorder, timer)))
         })
@@ -428,8 +426,8 @@ impl StreamController {
 
     /// Ticks until the server drains, then ends cleanly.
     #[ulo_rpc::message("conformance.until_drain")]
-    async fn until_drain(&self, exec: ExecutionRef) -> impl Stream<Item = Result<u64, Refusal>> {
-        stream::unfold((0u64, exec, self.timer.clone()), |(n, exec, timer)| async move {
+    async fn until_drain(&self, exec: ExecutionRef, timer: Dep<dyn Timer>) -> impl Stream<Item = Result<u64, Refusal>> {
+        stream::unfold((0u64, exec, timer), |(n, exec, timer)| async move {
             if exec.is_draining() {
                 return None;
             }
@@ -603,8 +601,17 @@ impl Client {
 /// A client over the broker's client link, built once `servers` are bound so it can reach the
 /// addresses they report.
 pub(crate) async fn client<B: Broker>(broker: &B, servers: &[&Server]) -> Client {
-    let addresses: Vec<BoundAddr> = servers.iter().flat_map(|server| server.addresses.iter().cloned()).collect();
-    let app = App::builder(ClientRoot { link: Mutex::new(Some(broker.client_link(&addresses))) })
+    client_over::<B, _>(broker.client_link(&addresses(servers))).await
+}
+
+/// Every address `servers` bound, in the order they started.
+pub(crate) fn addresses(servers: &[&Server]) -> Vec<BoundAddr> {
+    servers.iter().flat_map(|server| server.addresses.iter().cloned()).collect()
+}
+
+/// A client over `link`, on the harness's runtime.
+pub(crate) async fn client_over<B: Broker, L: Link>(link: L) -> Client {
+    let app = App::builder(ClientRoot { link: Mutex::new(Some(link)) })
         .runtime(<B::Harness as Harness>::runtime())
         .wire()
         .unwrap_or_else(|error| crate::startup_failed!("the conformance client did not wire: {}", report(&error)))

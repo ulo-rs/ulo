@@ -2,7 +2,9 @@
 
 use futures_util::{Stream, stream};
 use serde::{Deserialize, Serialize};
-use ulo::{Dep, injectable, routes};
+use std::time::Duration;
+
+use ulo::{Dep, Runtime, Timer, injectable, routes};
 use ulo_ws::{Frame, Payload, Rooms, WsCx};
 
 use crate::derives::Refusal;
@@ -43,6 +45,13 @@ impl Chat {
     #[guards(with = || Allow)]
     fn count(&self, up_to: Payload<u32>) -> impl Stream<Item = Result<u32, Refusal>> {
         stream::iter((1..=up_to.0).map(Ok))
+    }
+
+    #[ulo_ws::message("clock")]
+    async fn clock(&self, timer: Dep<dyn Timer>, runtime: Dep<dyn Runtime>) -> Result<(), Refusal> {
+        timer.sleep(Duration::ZERO).await;
+        let _ = runtime;
+        Ok(())
     }
 
     #[ulo_ws::message("raw")]

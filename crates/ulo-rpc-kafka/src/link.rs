@@ -22,7 +22,9 @@ use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use ulo::{AppHandle, BoxError, BoxFuture, Timer};
 use ulo_tokio::Tokio;
+#[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
+use ulo_rpc::__private::HoldUntil;
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Link, NoDestination,
@@ -92,6 +94,7 @@ pub struct Kafka {
     /// The app's clock, from `prepare`, which times the anchor's retries.
     pub(crate) timer: Option<Arc<dyn Timer>>,
     pub(crate) state: Mutex<State>,
+    #[cfg(feature = "conformance-probe")]
     pub(crate) probe: Arc<ClientProbe>,
 }
 
@@ -118,12 +121,15 @@ impl Kafka {
             max_inflight: Count::Default.max_inflight(),
             timer: None,
             state: Mutex::new(State::default()),
+            #[cfg(feature = "conformance-probe")]
             probe: Arc::default(),
         }
     }
 
-    /// The client side as the RPC conformance suite reads it.
+    /// The client side as the RPC conformance suite reads it. Built by the `conformance-probe`
+    /// feature, which is for the conformance suite, not an application feature.
     #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
     pub fn probe(&self) -> &ClientProbe {
         &self.probe
     }
@@ -308,15 +314,19 @@ impl Link for Kafka {
             closed: Mutex::new(Some(closed)),
             routing: Mutex::new(None),
             runtime: runtime.clone(),
+            #[cfg(feature = "conformance-probe")]
             probe: Arc::clone(&self.probe),
         });
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
-        let late = writes.clone();
-        let counted = Arc::downgrade(&side);
-        self.probe.attach(
-            move |call| drop(late.send(Job::Opened(call))),
-            move || counted.upgrade().map_or(0, |side| lock(&side.calls).len()),
-        );
+        #[cfg(feature = "conformance-probe")]
+        {
+            let late = writes.clone();
+            let counted = Arc::downgrade(&side);
+            self.probe.attach(
+                move |call| drop(late.send(Job::Opened(call))),
+                move || counted.upgrade().map_or(0, |side| lock(&side.calls).len()),
+            );
+        }
         runtime.handle().spawn(client_writer(Arc::clone(&side), queued));
         let (frames, replies_out) = mpsc::unbounded_channel();
         let routing = runtime.handle().spawn(route_replies(Arc::clone(&side), replies, frames, closing, writes.clone()));
@@ -972,6 +982,7 @@ struct ClientSide {
     routing: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// The link's runtime, on which a held `cancel`'s hold runs out.
     runtime: Tokio,
+    #[cfg(feature = "conformance-probe")]
     probe: Arc<ClientProbe>,
 }
 
@@ -979,10 +990,12 @@ enum ClientCall {
     Unary,
     /// A streamed request: until the server acknowledges the `open`, its `in` and `in_end` frames
     /// wait in `held`, and the writer produces them in order once it does.
-    Streaming { opened: bool, held: VecDeque<Frame> },
+    /// `until` is the deadline its `open` carried.
+    Streaming { opened: bool, held: VecDeque<Frame>, until: HoldUntil },
     /// A streamed request cancelled before the server acknowledged its `open`: the `cancel` waits
     /// for the acknowledgment and is produced alone, the frames held before it dropped. The entry
-    /// stays until then, or until the hold (`CANCEL_HOLD`) runs out, when it is dropped.
+    /// stays until then, or until the hold runs out, the call's deadline or `CANCEL_HOLD` after
+    /// the `cancel` for an `open` carrying none, when it is dropped.
     Cancelled,
 }
 
@@ -1037,7 +1050,7 @@ impl ClientSide {
                 self.settle(queued, None, answer, delivering);
             }
             Frame::Open { id, headers, .. } => {
-                lock(&self.calls).insert(id, ClientCall::Streaming { opened: false, held: VecDeque::new() });
+                lock(&self.calls).insert(id, ClientCall::Streaming { opened: false, held: VecDeque::new(), until: HoldUntil::at_open(&headers) });
                 let queued = self.produce_request(&pattern, id, &headers, Some(OPEN), &[]).await;
                 self.settle(queued, Some(id), answer, delivering);
             }
@@ -1066,9 +1079,9 @@ impl ClientSide {
                     }
                         // The server takes the `open` and holds the call, so the `cancel` follows once it
                     // acknowledges it.
-                    Some(ClientCall::Streaming { opened: false, .. }) => {
+                    Some(ClientCall::Streaming { opened: false, until, .. }) => {
                         lock(&self.calls).insert(id, ClientCall::Cancelled);
-                        self.expire_cancelled(id);
+                        self.expire_cancelled(id, until);
                         let _ = answer.send(Ok(()));
                     }
                     Some(ClientCall::Cancelled) | None => {
@@ -1107,9 +1120,9 @@ impl ClientSide {
     }
 
     /// Drops call `id`'s held `cancel` once the hold runs out, if no `opened` released it first.
-    fn expire_cancelled(self: &Arc<Self>, id: u64) {
+    fn expire_cancelled(self: &Arc<Self>, id: u64, until: HoldUntil) {
         let side = Arc::downgrade(self);
-        let hold = self.probe.hold();
+        let hold = until.remaining(self.fallback_hold());
         self.runtime.handle().spawn(async move {
             tokio::time::sleep(hold).await;
             if let Some(side) = side.upgrade() {
@@ -1121,13 +1134,21 @@ impl ClientSide {
         });
     }
 
+    /// How long a held `cancel` whose `open` carried no deadline is kept.
+    fn fallback_hold(&self) -> Duration {
+        #[cfg(feature = "conformance-probe")]
+        return self.probe.hold();
+        #[cfg(not(feature = "conformance-probe"))]
+        ulo_rpc::__private::CANCEL_HOLD
+    }
+
     /// A streamed request's `in` or `in_end`: produced once the server has acknowledged the
     /// `open`, held until then, and dropped for a call that has ended.
     async fn control(&self, id: u64, frame: Frame, delivering: &mut Delivering) {
         let held = {
             let mut calls = lock(&self.calls);
             match calls.get_mut(&id) {
-                Some(ClientCall::Streaming { opened: false, held }) => {
+                Some(ClientCall::Streaming { opened: false, held, .. }) => {
                     held.push_back(frame);
                     return;
                 }
@@ -1143,7 +1164,7 @@ impl ClientSide {
     fn opened(&self, id: u64) -> VecDeque<Frame> {
         let mut calls = lock(&self.calls);
         match calls.get_mut(&id) {
-            Some(ClientCall::Streaming { opened, held }) if !*opened => {
+            Some(ClientCall::Streaming { opened, held, .. }) if !*opened => {
                 *opened = true;
                 std::mem::take(held)
             }
@@ -1254,6 +1275,7 @@ async fn route_replies(
         let headers = record.headers();
         let Some(call) = header(headers, CORRELATION).and_then(|correlation| side.call_of(&correlation)) else { continue };
         if header(headers, KIND).as_deref() == Some(OPENED) {
+            #[cfg(feature = "conformance-probe")]
             if side.probe.withholds(call) {
                 continue;
             }

@@ -114,9 +114,7 @@ impl ErrorHandler<Http> for Substitute {
 }
 
 #[injectable]
-pub struct Suite {
-    timer: Dep<dyn Timer>,
-}
+pub struct Suite;
 
 #[routes]
 impl Suite {
@@ -163,8 +161,7 @@ impl Suite {
     }
 
     #[ulo_http::get("/endless")]
-    fn endless(&self, cx: HttpCx, probe: Dep<Probe>) -> Sse<BoxStream<'static, Event>> {
-        let timer = self.timer.clone();
+    fn endless(&self, cx: HttpCx, probe: Dep<Probe>, timer: Dep<dyn Timer>) -> Sse<BoxStream<'static, Event>> {
         let probe = Probe::clone(&probe);
         let exec = cx.exec().clone();
         cx.exec().on_stream_end(move |outcome| probe.record(outcome, exec.cancel_reason()));

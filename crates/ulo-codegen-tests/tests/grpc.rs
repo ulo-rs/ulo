@@ -6,11 +6,12 @@ use std::error::Error;
 use std::fmt;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
 use futures_util::{Stream, StreamExt, stream};
 use tonic::transport::{Channel, Endpoint};
 use ulo::app::Bound as Serving;
-use ulo::{App, AppHandle, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, AppHandle, Dep, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Timer, injectable, routes};
 use ulo_codegen_tests::pb::counter_client::CounterClient;
 use ulo_codegen_tests::pb::scale_client::ScaleClient;
 use ulo_codegen_tests::pb::{self, AddRequest, CountRequest, Number, Sum};
@@ -66,6 +67,14 @@ impl CounterService {
     #[ulo_grpc::method(pb::counter::Double)]
     fn double(&self, items: Streaming<Number>) -> impl Stream<Item = Result<Number, Refusal>> {
         items.map(|item| item.map(|n| Number { value: n.value * 2 }).map_err(|_| Refusal))
+    }
+
+    /// Sleeps the given milliseconds on the app's clock, then answers `1` when the clock and the
+    /// runtime it was handed are one object, as the app binds them, and `0` otherwise.
+    #[ulo_grpc::method(pb::counter::Pause)]
+    async fn pause(&self, millis: Message<Number>, timer: Dep<dyn Timer>, runtime: Dep<dyn Runtime>) -> Number {
+        timer.sleep(Duration::from_millis(u64::try_from(millis.0.value).unwrap_or(0))).await;
+        Number { value: i64::from(std::ptr::addr_eq(&*timer, &*runtime)) }
     }
 }
 
@@ -219,6 +228,17 @@ async fn bidi_answers_each_message_as_it_arrives() {
         .collect()
         .await;
     assert_eq!(values, vec![2, 4, 6]);
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn trait_object_dep_parameters_are_the_app_s_one_runtime() {
+    let app = Running::start().await;
+    let mut client: CounterClient<Channel> = app.client().await;
+    let started = Instant::now();
+    let reply = client.pause(Number { value: 50 }).await.unwrap_or_else(|status| panic!("Pause failed: {status:?}"));
+    assert!(started.elapsed() >= Duration::from_millis(50), "the handler slept {:?} of 50ms", started.elapsed());
+    assert_eq!(reply.into_inner(), Number { value: 1 }, "the clock and the runtime are two objects");
     app.stop().await;
 }
 

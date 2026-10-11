@@ -40,4 +40,5 @@ ulo_rpc_conformance::conformance_suite!(Loopback; not_applicable {
     cancel_before_opened: "UDP carries no streamed request",
     a_late_opened_releases_the_held_cancel: "UDP carries no streamed request",
     a_held_cancel_is_dropped_when_its_hold_runs_out: "UDP carries no streamed request",
+    a_held_cancel_lasts_until_its_call_s_deadline: "UDP carries no streamed request",
 });

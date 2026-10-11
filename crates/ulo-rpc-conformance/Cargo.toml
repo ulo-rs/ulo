@@ -19,7 +19,8 @@ smol = ["dep:ulo-smol", "dep:async-io"]
 
 [dependencies]
 ulo = { path = "../ulo" }
-ulo-rpc = { path = "../ulo-rpc" }
+# `conformance-probe`: `Broker::probe` names the broker links' `ClientProbe`.
+ulo-rpc = { path = "../ulo-rpc", features = ["conformance-probe"] }
 ulo-smol = { path = "../ulo-smol", optional = true }
 ulo-tokio = { path = "../ulo-tokio", optional = true }
 ulo-transport = { path = "../ulo-transport" }

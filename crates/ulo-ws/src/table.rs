@@ -24,6 +24,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+#[cfg(feature = "conformance-probe")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use http::StatusCode;
@@ -58,15 +59,20 @@ pub struct GatewayDefaults {
 /// message counted as it is read, before it is handled or waits for a place. Every clone reads the
 /// same count. Under `server_max_inflight` it shows the connections stop reading: once every place
 /// is taken it rises by at most one message per connection.
+///
+/// Exported and counting under the `conformance-probe` feature, which is for the conformance
+/// tests, not an application feature; without it the read loop counts nothing.
 #[derive(Clone, Debug, Default)]
-pub struct MessagesRead(Arc<AtomicUsize>);
+pub struct MessagesRead(#[cfg(feature = "conformance-probe")] Arc<AtomicUsize>);
 
 impl MessagesRead {
+    #[cfg(feature = "conformance-probe")]
     pub fn get(&self) -> usize {
         self.0.load(Ordering::Acquire)
     }
 
     pub(crate) fn add(&self) {
+        #[cfg(feature = "conformance-probe")]
         self.0.fetch_add(1, Ordering::AcqRel);
     }
 }
@@ -75,6 +81,7 @@ impl GatewayDefaults {
     /// The count of data messages read by the connections of the table these defaults build,
     /// shared with every clone of them. A server holding them hands it out before it moves into
     /// the app.
+    #[cfg(feature = "conformance-probe")]
     pub fn messages_read(&self) -> MessagesRead {
         self.messages_read.clone()
     }

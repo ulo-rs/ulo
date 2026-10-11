@@ -28,8 +28,15 @@ uuid = { workspace = true, features = ["v4"] }
 # Builds `tests/conformance.rs`, which starts a RabbitMQ broker in a container per scenario and so needs
 # a running Docker daemon.
 integration = []
+# For the conformance suite; not an application feature. It builds the link's `probe()`, through
+# which the suite's held-`cancel` scenarios read the client's table, withhold the server's
+# `opened` and shorten the link's hold, and turns on `ulo-rpc`'s `conformance-probe`. The tests
+# enable it through this crate's dev-dependency on itself.
+conformance-probe = ["ulo-rpc/conformance-probe"]
 
 [dev-dependencies]
+# Itself with `conformance-probe`, for `tests/conformance.rs`.
+ulo-rpc-rabbitmq = { path = ".", features = ["conformance-probe"] }
 futures-executor.workspace = true
 testcontainers.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }

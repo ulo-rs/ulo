@@ -291,6 +291,8 @@ macro_rules! conformance_suite {
             cancel_mid_stream => cancel::mid_stream,
             deadline_ms_fires_deadline => deadlines::deadline_ms,
             client_timeout_is_timeout => deadlines::client_timeout,
+            a_call_s_timeout_is_the_server_s_deadline => deadlines::timeout_is_the_server_s_deadline,
+            a_stream_s_timeout_is_per_frame => deadlines::stream_timeout_is_per_frame,
             binary_payload => payloads::binary,
             oversized_payload => payloads::oversized,
             drain => drain::drain,
@@ -304,6 +306,7 @@ macro_rules! conformance_suite {
             cancel_before_opened => order::cancel_before_opened,
             a_late_opened_releases_the_held_cancel => order::late_opened,
             a_held_cancel_is_dropped_when_its_hold_runs_out => order::hold_runs_out,
+            a_held_cancel_lasts_until_its_call_s_deadline => order::held_until_deadline,
         );
     };
     (@cases $broker:ty; $($name:ident => $module:ident :: $case:ident),* $(,)?) => {

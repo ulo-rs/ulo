@@ -2,12 +2,13 @@ syntax = "proto3";
 
 package lints.v1;
 
-// One method per call shape.
+// One method per call shape, and one taking the app's clock.
 service Lints {
   rpc Unary(Number) returns (Number);
   rpc Server(Number) returns (stream Number);
   rpc Client(stream Number) returns (Number);
   rpc Bidi(stream Number) returns (stream Number);
+  rpc Clock(Number) returns (Number);
 }
 
 message Number {

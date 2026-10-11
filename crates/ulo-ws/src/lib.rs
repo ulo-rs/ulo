@@ -48,6 +48,8 @@ pub use gateway::{
 pub use module::WsModule;
 pub use rooms::{Broadcast, BroadcastError, Rooms, RoomsIn};
 pub use session::{Session, SessionFactory, SessionHandle};
-pub use table::{GatewayDefaults, GatewayTable, MessagesRead};
+#[cfg(feature = "conformance-probe")]
+pub use table::MessagesRead;
+pub use table::{GatewayDefaults, GatewayTable};
 pub use transport::{ConnectCx, ConnectReply, ConnectionInfo, NoHandler, Reply, UpgradeHead, Ws, WsConnect, WsCx};
 pub use ulo_ws_macros::{gateway, message};

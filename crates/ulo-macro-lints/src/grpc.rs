@@ -3,7 +3,9 @@
 
 use futures_util::{Stream, StreamExt, stream};
 use tonic::Status;
-use ulo::{injectable, routes};
+use std::time::Duration;
+
+use ulo::{Dep, Runtime, Timer, injectable, routes};
 use ulo_grpc::{GrpcCx, GrpcMetadata, Message, Request, Response, Streaming};
 
 use crate::derives::Refusal;
@@ -45,5 +47,12 @@ impl LintsService {
     #[ulo_grpc::method(lints::lints::Bidi)]
     async fn bidi(&self, items: Streaming<Number>) -> Result<impl Stream<Item = Result<Number, Refusal>>, Refusal> {
         Ok(items.map(|item| item.map(|n| Number { value: n.value * 2 }).map_err(|_| Refusal)))
+    }
+
+    #[ulo_grpc::method(lints::lints::Clock)]
+    async fn clock(&self, req: Message<Number>, timer: Dep<dyn Timer>, runtime: Dep<dyn Runtime>) -> Number {
+        timer.sleep(Duration::ZERO).await;
+        let _ = runtime;
+        req.0
     }
 }

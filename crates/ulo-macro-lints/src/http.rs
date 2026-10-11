@@ -1,12 +1,15 @@
 //! `#[routes]` over every HTTP verb attribute, with the extractors, the reply forms, the enhancer
 //! spellings at both tiers, `#[meta]`, a generic controller and `self: Arc<Self>`.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::stream::{self, BoxStream};
 use serde::Deserialize;
-use ulo::{Dep, injectable, routes};
+use ulo::{Dep, Runtime, Timer, injectable, routes};
 use ulo_http::{Event, HttpCx, Json, Path, Query, Sse, Timeout};
 use ulo_transport::Valid;
 
@@ -71,6 +74,18 @@ impl Pages {
     #[ulo_http::options("/items")]
     fn allowed(&self) -> &'static str {
         "GET, POST"
+    }
+
+    #[ulo_http::get("/clock")]
+    async fn clock(&self, timer: Dep<dyn Timer>, runtime: Dep<dyn Runtime>) -> &'static str {
+        timer.sleep(Duration::ZERO).await;
+        let _ = runtime;
+        "tick"
+    }
+
+    #[ulo_http::post("/borrowed")]
+    fn borrowed(&self, body: Json<Cow<'static, str>>, query: Query<HashMap<Cow<'static, str>, String>>) -> String {
+        format!("{} {}", body.0, query.0.len())
     }
 
     #[ulo_http::get("/events")]

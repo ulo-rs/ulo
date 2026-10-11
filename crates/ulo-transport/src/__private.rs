@@ -51,6 +51,14 @@ pub trait Param<T: Transport, M>: Sized + Send + 'static {
     fn extract(cx: &T::Cx) -> impl Future<Output = Result<Self, BoxError>> + Send;
 }
 
+// Both impls write `extract`'s `+ Send` in their own signature rather than as an `async fn`.
+// rustc then proves the generated handler future `Send` from that bound. An `async fn` here
+// declares none, so rustc reads through to every future it awaits, with the lifetimes in their
+// types taken as any lifetime, and a parameter type carrying a lifetime fails the bounds of the
+// impl it reaches: `Dep<dyn Timer>`, whose object is `'static`, with "implementation of `Send` is
+// not general enough", and `Json<Cow<'static, str>>` with "implementation of `Deserialize` is
+// not general enough", at the handler attribute.
+
 impl<T: Transport, P: FromCall<T>> Param<T, ViaCall> for P {
     const CONSUMES_BODY: bool = P::CONSUMES_BODY;
 
@@ -58,8 +66,10 @@ impl<T: Transport, P: FromCall<T>> Param<T, ViaCall> for P {
         handler_param(d, param, P::dependencies);
     }
 
-    async fn extract(cx: &T::Cx) -> Result<Self, BoxError> {
-        P::from_call(cx).await.map_err(boxed)
+    // `manual_async_fn` asks for the `async fn` the comment above rules out.
+    #[allow(clippy::manual_async_fn)]
+    fn extract(cx: &T::Cx) -> impl Future<Output = Result<Self, BoxError>> + Send {
+        async move { P::from_call(cx).await.map_err(boxed) }
     }
 }
 
@@ -77,8 +87,10 @@ where
         });
     }
 
-    async fn extract(cx: &T::Cx) -> Result<Self, BoxError> {
-        <Injected<S> as FromCall<T>>::from_call(cx).await.map(|injected| injected.0).map_err(boxed)
+    // `manual_async_fn` asks for the `async fn` the comment above rules out.
+    #[allow(clippy::manual_async_fn)]
+    fn extract(cx: &T::Cx) -> impl Future<Output = Result<Self, BoxError>> + Send {
+        async move { <Injected<S> as FromCall<T>>::from_call(cx).await.map(|injected| injected.0).map_err(boxed) }
     }
 }
 

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use async_nats::connection::State as Connection;
 use async_nats::{Client, ConnectOptions, Event, HeaderMap, Message, ServerAddr, StatusCode, Subscriber};
@@ -10,7 +11,9 @@ use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use ulo::{AppHandle, BoxError, BoxFuture};
 use ulo_tokio::Tokio;
+#[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
+use ulo_rpc::__private::HoldUntil;
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link,
@@ -57,6 +60,7 @@ pub struct Nats {
     /// The server's `max_payload` from its `INFO`, zero until a connection reads it.
     pub(crate) max_payload: Arc<AtomicU64>,
     pub(crate) state: Mutex<State>,
+    #[cfg(feature = "conformance-probe")]
     pub(crate) probe: Arc<ClientProbe>,
 }
 
@@ -79,12 +83,15 @@ impl Nats {
             default_group: None,
             max_payload: Arc::new(AtomicU64::new(0)),
             state: Mutex::new(State::default()),
+            #[cfg(feature = "conformance-probe")]
             probe: Arc::default(),
         }
     }
 
-    /// The client side as the RPC conformance suite reads it.
+    /// The client side as the RPC conformance suite reads it. Built by the `conformance-probe`
+    /// feature, which is for the conformance suite, not an application feature.
     #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
     pub fn probe(&self) -> &ClientProbe {
         &self.probe
     }
@@ -217,17 +224,21 @@ impl Link for Nats {
             prefix,
             max_payload: Arc::clone(&self.max_payload),
             calls: Mutex::new(HashMap::new()),
+            #[cfg(feature = "conformance-probe")]
             probe: Arc::clone(&self.probe),
         });
-        let (late, counted) = (Arc::downgrade(&side), Arc::downgrade(&side));
-        self.probe.attach(
-            move |call| {
-                if let Some(side) = late.upgrade() {
-                    side.open_gate(call);
-                }
-            },
-            move || counted.upgrade().map_or(0, |side| lock(&side.calls).len()),
-        );
+        #[cfg(feature = "conformance-probe")]
+        {
+            let (late, counted) = (Arc::downgrade(&side), Arc::downgrade(&side));
+            self.probe.attach(
+                move |call| {
+                    if let Some(side) = late.upgrade() {
+                        side.open_gate(call);
+                    }
+                },
+                move || counted.upgrade().map_or(0, |side| lock(&side.calls).len()),
+            );
+        }
         lock(&self.state).client = Some(client);
         let (frames, replies_out) = mpsc::unbounded_channel();
         runtime.handle().spawn(route_replies(Arc::clone(&side), replies, frames, disconnected));
@@ -486,6 +497,7 @@ struct ClientSide {
     prefix: String,
     max_payload: Arc<AtomicU64>,
     calls: Mutex<HashMap<u64, ClientCall>>,
+    #[cfg(feature = "conformance-probe")]
     probe: Arc<ClientProbe>,
 }
 
@@ -493,11 +505,13 @@ enum ClientCall {
     Unary { pattern: Pattern },
     /// A streamed request: its `in`, `in_end` and `cancel` frames wait in `queue` until the server
     /// acknowledges the `open`, then go out in order.
-    Streaming { pattern: Pattern, gate: Option<oneshot::Sender<()>>, queue: mpsc::UnboundedSender<Frame> },
+    /// `until` is the deadline its `open` carried.
+    Streaming { pattern: Pattern, gate: Option<oneshot::Sender<()>>, queue: mpsc::UnboundedSender<Frame>, until: HoldUntil },
     /// A streamed request cancelled before the server acknowledged its `open`: its `cancel` waits
     /// in the pump's queue and goes out alone once the acknowledgment opens `gate`, the frames
-    /// queued before it dropped. The entry stays until then, or until the hold (`CANCEL_HOLD`)
-    /// runs out, when dropping it closes `gate` and the pump ends.
+    /// queued before it dropped. The entry stays until then, or until the hold runs out, the
+    /// call's deadline or `CANCEL_HOLD` after the `cancel` for an `open` carrying none, when
+    /// dropping it closes `gate` and the pump ends.
     Cancelled { pattern: Pattern, gate: oneshot::Sender<()> },
 }
 
@@ -528,7 +542,7 @@ impl ClientSide {
             Frame::Open { id, headers, .. } => {
                 let (gate, opened) = oneshot::channel();
                 let (queue, queued) = mpsc::unbounded_channel();
-                lock(&self.calls).insert(id, ClientCall::Streaming { pattern: pattern.clone(), gate: Some(gate), queue });
+                lock(&self.calls).insert(id, ClientCall::Streaming { pattern: pattern.clone(), gate: Some(gate), queue, until: HoldUntil::at_open(&headers) });
                 self.runtime.handle().spawn(pump(self.client.clone(), self.reply_subject(id), opened, queued));
                 let sent = publish(&self.client, pattern.to_string(), Some(self.reply_subject(id)), &headers, Some(OPEN), Bytes::new()).await;
                 if sent.is_err() {
@@ -552,10 +566,10 @@ impl ClientSide {
                         Some(ClientCall::Unary { .. }) => true,
                         // The server takes the `open` and holds the call, so the `cancel` follows
                         // once it acknowledges it.
-                        Some(ClientCall::Streaming { pattern, gate: Some(gate), queue }) => {
+                        Some(ClientCall::Streaming { pattern, gate: Some(gate), queue, until }) => {
                             let _ = queue.send(Frame::Cancel { id });
                             calls.insert(id, ClientCall::Cancelled { pattern, gate });
-                            self.expire_cancelled(id);
+                            self.expire_cancelled(id, until);
                             false
                         }
                         Some(ClientCall::Streaming { gate: None, queue, .. }) => {
@@ -576,9 +590,9 @@ impl ClientSide {
     }
 
     /// Drops call `id`'s held `cancel` once the hold runs out, if no `opened` released it first.
-    fn expire_cancelled(self: &Arc<Self>, id: u64) {
+    fn expire_cancelled(self: &Arc<Self>, id: u64, until: HoldUntil) {
         let side = Arc::downgrade(self);
-        let hold = self.probe.hold();
+        let hold = until.remaining(self.fallback_hold());
         self.runtime.handle().spawn(async move {
             tokio::time::sleep(hold).await;
             if let Some(side) = side.upgrade() {
@@ -610,6 +624,14 @@ impl ClientSide {
         if let Some(ClientCall::Streaming { queue, .. }) = lock(&self.calls).get(&id) {
             let _ = queue.send(frame);
         }
+    }
+
+    /// How long a held `cancel` whose `open` carried no deadline is kept.
+    fn fallback_hold(&self) -> Duration {
+        #[cfg(feature = "conformance-probe")]
+        return self.probe.hold();
+        #[cfg(not(feature = "conformance-probe"))]
+        ulo_rpc::__private::CANCEL_HOLD
     }
 
     fn open_gate(&self, id: u64) {
@@ -662,9 +684,11 @@ async fn route_replies(
             continue;
         }
         if kind_of(message.headers.as_ref()).as_deref() == Some(OPENED) {
-            if !side.probe.withholds(id) {
-                side.open_gate(id);
+            #[cfg(feature = "conformance-probe")]
+            if side.probe.withholds(id) {
+                continue;
             }
+            side.open_gate(id);
             continue;
         }
         let frame = match side.codec.decode_frame(&message.payload) {

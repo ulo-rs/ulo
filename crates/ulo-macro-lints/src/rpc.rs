@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use futures_util::{Stream, StreamExt, stream};
 use serde::{Deserialize, Serialize};
-use ulo::{ExecutionRef, injectable, routes};
+use std::time::Duration;
+
+use ulo::{Dep, ExecutionRef, Runtime, Timer, injectable, routes};
 use ulo_rpc::{CallHeaders, Inbound, Payload, RpcCx};
 
 use crate::derives::Refusal;
@@ -60,6 +62,13 @@ impl Orders {
     async fn held(self: Arc<Self>, exec: ExecutionRef) -> Result<(), Refusal> {
         exec.cancelled().await;
         Ok(())
+    }
+
+    #[ulo_rpc::message("orders.clock")]
+    async fn clock(&self, timer: Dep<dyn Timer>, runtime: Dep<dyn Runtime>) -> u64 {
+        timer.sleep(Duration::ZERO).await;
+        let _ = runtime;
+        0
     }
 
     #[ulo_rpc::event("orders.placed")]

@@ -121,8 +121,10 @@ impl Error for UnusableLink {
 /// A client of one link, bound by `RpcClientModule` as `Dep<RpcClient, Billing>` under the
 /// module's qualifier, or built outside an app with [`RpcClient::new`]. Cheap to clone. Its tasks
 /// and every timeout run on the runtime it was given, the app's inside an app; dropping a pending
-/// request or a stream sends `cancel`, spawned on that runtime. There is no ambient execution: a
-/// call made inside one forwards its deadline and cancellation with [`Call::within`].
+/// request or a stream sends `cancel`, spawned on that runtime. A call answered by one reply
+/// carries its timeout to the server as `deadline-ms`, so the server stops the call when the
+/// client gives up on it. There is no ambient execution: a call made inside one forwards its
+/// deadline and cancellation with [`Call::within`].
 #[derive(Clone)]
 pub struct RpcClient {
     pub(crate) inner: Arc<ClientInner>,
@@ -356,22 +358,36 @@ impl Spec {
     }
 
     /// The wait the call is bounded by: its own timeout or the client's, and the calling
-    /// execution's remaining time when that is shorter. Stamps `deadline-ms` with that remaining
-    /// time; refuses a call whose execution's deadline has passed, before any I/O.
-    fn limit(&mut self) -> Result<Option<Duration>, RpcError> {
+    /// execution's remaining time when that is shorter. Refuses a call whose execution's deadline
+    /// has passed, before any I/O.
+    ///
+    /// Stamps `deadline-ms`, the deadline the server enforces, with the shortest of the calling
+    /// execution's remaining time, a `deadline-ms` the caller set, and, where `whole` says the
+    /// timeout bounds the whole call, the timeout. A call answered by one reply is abandoned at its
+    /// timeout, so the server stops there too; a stream's timeout bounds the wait for each frame
+    /// and an event's the publish, neither the work the server does.
+    fn limit(&mut self, whole: bool) -> Result<Option<Duration>, RpcError> {
         let inner = &self.client.inner;
         let own = self.timeout.or(self.client.timeout);
-        let Some(deadline) = self.within.as_ref().and_then(ExecutionRef::deadline) else {
-            return Ok(own);
+        let remaining = match self.within.as_ref().and_then(ExecutionRef::deadline) {
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(inner.runtime.now());
+                if remaining.is_zero() {
+                    return Err(RpcError::new(ErrorKind::Timeout, "the calling execution's deadline has passed"));
+                }
+                Some(remaining)
+            }
+            None => None,
         };
-        let remaining = deadline.saturating_duration_since(inner.runtime.now());
-        if remaining.is_zero() {
-            return Err(RpcError::new(ErrorKind::Timeout, "the calling execution's deadline has passed"));
+        let stamped = [remaining, own.filter(|_| whole), self.headers.deadline()].into_iter().flatten().min();
+        if let Some(stamped) = stamped {
+            self.headers.entries.retain(|(name, _)| name != "deadline-ms");
+            self.headers.insert("deadline-ms", stamped.as_millis().max(1).to_string());
         }
-        self.headers.entries.retain(|(name, _)| name != "deadline-ms");
-        let millis = remaining.as_millis().max(1);
-        self.headers.insert("deadline-ms", millis.to_string());
-        Ok(Some(own.map_or(remaining, |own| own.min(remaining))))
+        Ok(match (own, remaining) {
+            (Some(own), Some(remaining)) => Some(own.min(remaining)),
+            (own, remaining) => own.or(remaining),
+        })
     }
 
     /// Connects, registers the call, and sends its opening frame; a streamed request's items follow
@@ -661,7 +677,8 @@ impl<Res> Call<Res> {
         self
     }
 
-    /// This call's timeout in place of the client's.
+    /// This call's timeout in place of the client's, and the deadline the server is given in
+    /// `deadline-ms` unless a shorter one applies.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.spec.timeout = Some(timeout);
         self
@@ -682,7 +699,7 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for Call<Res> {
     fn into_future(self) -> Self::IntoFuture {
         let mut spec = self.spec;
         Box::pin(async move {
-            let limit = spec.limit()?;
+            let limit = spec.limit(true)?;
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
             bounded(&*runtime, limit, within.as_ref(), async move { spec.open().await?.single::<Res>().await }).await
@@ -715,7 +732,7 @@ impl IntoFuture for Emit {
     fn into_future(self) -> Self::IntoFuture {
         let mut spec = self.spec;
         Box::pin(async move {
-            let limit = spec.limit()?;
+            let limit = spec.limit(false)?;
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
             bounded(&*runtime, limit, within.as_ref(), async move {
@@ -765,7 +782,7 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for StreamCall<Res> {
     fn into_future(self) -> Self::IntoFuture {
         let mut spec = self.spec;
         Box::pin(async move {
-            let limit = spec.limit()?;
+            let limit = spec.limit(false)?;
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
             let exchange = bounded(&*runtime, limit, within.as_ref(), spec.open()).await?;

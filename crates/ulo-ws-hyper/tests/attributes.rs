@@ -19,7 +19,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use ulo::app::Bound as Serving;
-use ulo::{App, BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Timer, injectable, routes};
 use ulo_transport::Classify;
 use ulo_ws::{ConnectCx, ConnectRefused, Frame, OnConnect, Payload, Reply, Session, UpgradeHead, WsConnect};
 
@@ -147,6 +147,14 @@ impl Chat {
             return Err(Taken);
         }
         Ok(stream::iter((1..=up_to.0).map(Ok).chain([Err(Taken)])))
+    }
+
+    /// Sleeps a millisecond on the app's clock and answers whether the clock and the runtime it
+    /// was handed are one object, as the app binds them.
+    #[ulo_ws::message("clock")]
+    async fn clock(&self, timer: Dep<dyn Timer>, runtime: Dep<dyn Runtime>) -> bool {
+        timer.sleep(Duration::from_millis(1)).await;
+        std::ptr::addr_eq(&*timer, &*runtime)
     }
 
     #[ulo_ws::message("visit")]
@@ -458,6 +466,15 @@ async fn on_connect_refusal_closes_with_its_own_code() {
     let app = Running::start().await;
     let mut socket = app.connect(&[(TOKEN_HEADER, TOKEN), (USER_HEADER, BANNED)]).await;
     assert_eq!(closed_with(&mut socket).await, Some(CloseCode::from(BANNED_CODE)));
+    hang_up(socket).await;
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn trait_object_dep_parameters_are_the_app_s_one_runtime() {
+    let app = Running::start().await;
+    let mut socket = app.admitted().await;
+    assert_eq!(single(&mut socket, "clock", None).await, json!({ "id": 1, "data": true }));
     hang_up(socket).await;
     app.stop().await;
 }

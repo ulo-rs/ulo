@@ -131,4 +131,5 @@ async fn pipe(from: impl futures_util::AsyncRead + Unpin, mut to: impl futures_u
 ulo_rpc_conformance::conformance_suite!(TlsLoopback; not_applicable {
     a_late_opened_releases_the_held_cancel: "U17: a request and its control frames share one ordered lane, so the link holds no `cancel` for an `opened`",
     a_held_cancel_is_dropped_when_its_hold_runs_out: "U17: a request and its control frames share one ordered lane, so the link holds no `cancel` for an `opened`",
+    a_held_cancel_lasts_until_its_call_s_deadline: "U17: a request and its control frames share one ordered lane, so the link holds no `cancel` for an `opened`",
 });

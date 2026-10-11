@@ -34,7 +34,9 @@ use ulo_net::rustls::ServerConfig;
 use ulo_net::{Activation, ActivationError, Endpoint, EndpointSpec, ListenerName, Tls};
 use ulo_transport::Count;
 use ulo_transport::prepare::{Failures, zero_bound};
-use ulo_ws::{GatewayDefaults, GatewayTable, Handshake, MessagesRead, Ws};
+#[cfg(feature = "conformance-probe")]
+use ulo_ws::MessagesRead;
+use ulo_ws::{GatewayDefaults, GatewayTable, Handshake, Ws};
 
 /// The name a refusal in `prepare` gives the server.
 const NAME: &str = "ulo_ws_hyper::Server";
@@ -114,7 +116,9 @@ impl<L: Listener> ServerOn<L> {
     /// How many data messages the server's connections have read off their sockets, through a
     /// clone taken before the server moves into the app. Once every place under
     /// [`server_max_inflight`](Self::server_max_inflight) is taken it rises by at most one message
-    /// per connection, the connections having stopped reading.
+    /// per connection, the connections having stopped reading. Built by the `conformance-probe`
+    /// feature, which is for the conformance tests, not an application feature.
+    #[cfg(feature = "conformance-probe")]
     pub fn messages_read(&self) -> MessagesRead {
         self.defaults.messages_read()
     }
