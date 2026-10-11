@@ -15,7 +15,7 @@ pub async fn deadline_ms<B: Broker>() {
     failed(outcome, ErrorKind::Timeout);
     let probe = fixture.server.probe.clone();
     let settle = fixture.broker.budget().settle;
-    assert!(eventually(settle, || probe.stalled().is_some()).await, "the stalled handler was not ended");
+    assert!(eventually::<B>(settle, || probe.stalled().is_some()).await, "the stalled handler was not ended");
     assert_eq!(probe.stalled(), Some(Some(CancelReason::Deadline)));
     fixture.stop().await;
 }

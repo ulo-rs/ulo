@@ -6594,13 +6594,16 @@ dependencies = [
 name = "ulo-rpc-conformance"
 version = "0.1.0"
 dependencies = [
+ "async-io",
  "bytes",
+ "futures-channel",
  "futures-executor",
  "futures-util",
  "serde",
  "tokio",
  "ulo",
  "ulo-rpc",
+ "ulo-smol",
  "ulo-tokio",
  "ulo-transport",
 ]
@@ -6718,19 +6721,53 @@ dependencies = [
 name = "ulo-rpc-tcp"
 version = "0.1.0"
 dependencies = [
- "bytes",
- "futures-core",
  "futures-executor",
  "futures-util",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tracing",
  "ulo",
  "ulo-net",
  "ulo-rpc",
  "ulo-rpc-conformance",
+ "ulo-rpc-tcp-core",
+ "ulo-rpc-tcp-smol",
  "ulo-test-certs",
  "ulo-tokio",
+ "ulo-transport",
+]
+
+[[package]]
+name = "ulo-rpc-tcp-core"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-channel",
+ "futures-io",
+ "futures-util",
+ "tracing",
+ "ulo",
+ "ulo-net",
+ "ulo-rpc",
+ "ulo-transport",
+]
+
+[[package]]
+name = "ulo-rpc-tcp-smol"
+version = "0.1.0"
+dependencies = [
+ "async-net",
+ "futures-executor",
+ "futures-rustls",
+ "futures-util",
+ "ulo",
+ "ulo-net",
+ "ulo-rpc",
+ "ulo-rpc-conformance",
+ "ulo-rpc-tcp-core",
+ "ulo-smol",
+ "ulo-test-certs",
  "ulo-transport",
 ]
 

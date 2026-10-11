@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 use ulo_transport::ErrorKind;
 
 use crate::Broker;
-use crate::cases::app::{ADD, Add, Fixture, HOLD, Sum, within};
+use crate::cases::app::{ADD, Add, Fixture, HOLD, Sum, joined, within};
+use crate::rt::{sleep, spawn};
 
 /// How long after `Broker::disrupt` the held call's handler answers, were its connection kept.
 const HELD_AFTER_DISRUPT: Duration = Duration::from_secs(3);
@@ -30,13 +31,11 @@ pub async fn after_disrupt<B: Broker>() {
     // however long the environment settles.
     let held_for = budget.settle + HELD_AFTER_DISRUPT;
     let held_ms = u64::try_from(held_for.as_millis()).unwrap_or(u64::MAX);
-    let held = tokio::spawn(async move { rpc.request::<_, u64>(HOLD, &held_ms).timeout(Duration::from_secs(60)).await });
+    let held = spawn::<B, _, _>(async move { rpc.request::<_, u64>(HOLD, &held_ms).timeout(Duration::from_secs(60)).await });
     // The held call reaches its handler before the connection is severed.
-    tokio::time::sleep(budget.settle).await;
-    within(budget.recovery, "`Broker::disrupt`", fixture.broker.disrupt()).await;
-    let ended = within(held_for + budget.recovery, "the call waiting on the severed connection", held)
-        .await
-        .expect("the held call's task completes");
+    sleep::<B>(budget.settle).await;
+    within::<B, _>(budget.recovery, "`Broker::disrupt`", fixture.broker.disrupt()).await;
+    let ended = joined(within::<B, _>(held_for + budget.recovery, "the call waiting on the severed connection", held).await, "the held call's task");
     match (ended, durable) {
         (Err(error), false) if error.kind() == ErrorKind::Unavailable => {}
         (other, false) => panic!("a call waiting on a severed connection fails `Unavailable`, got: {other:?}"),
@@ -69,7 +68,7 @@ pub async fn after_disrupt<B: Broker>() {
                 break;
             }
             outcome if Instant::now() >= deadline => panic!("calls did not recover within the budget: {outcome:?}"),
-            _ => tokio::time::sleep(Duration::from_millis(200)).await,
+            _ => sleep::<B>(Duration::from_millis(200)).await,
         }
     }
     fixture.stop().await;

@@ -5,6 +5,7 @@ use std::time::Duration;
 use ulo_transport::ErrorKind;
 
 use crate::Broker;
+use crate::rt::sleep;
 use crate::cases::app::{ADD, Add, Fixture, NOBODY, NOBODY_EVENT, Sum, failed, miss_wait};
 
 /// A pattern nothing handles: `Unavailable` where the link declares `miss_signal`, the client's `Timeout` where it does not; either reason accepted.
@@ -31,7 +32,7 @@ pub async fn unhandled_event<B: Broker>() {
         Ok(()) => {}
         Err(error) => assert_eq!(error.kind(), ErrorKind::Unavailable, "an unhandled event fails only as `Unavailable`"),
     }
-    tokio::time::sleep(fixture.broker.budget().settle).await;
+    sleep::<B>(fixture.broker.budget().settle).await;
     let sum = fixture.rpc().request::<_, Sum>(ADD, &Add { a: 1, b: 1 }).timeout(Duration::from_secs(5)).await;
     assert_eq!(sum.expect("the server still answers after an unhandled event"), Sum { sum: 2 });
     fixture.stop().await;

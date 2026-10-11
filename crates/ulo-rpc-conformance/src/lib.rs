@@ -7,6 +7,7 @@
 //! struct NatsBroker { url: String }
 //!
 //! impl ulo_rpc_conformance::Broker for NatsBroker {
+//!     type Harness = ulo_rpc_conformance::OnTokio;
 //!     type Link = ulo_rpc_nats::Nats;
 //!     async fn start() -> Self { /* a fresh broker or subject space */ }
 //!     fn link(&self) -> ulo_rpc_nats::Nats { ulo_rpc_nats::Nats::url(&self.url) }
@@ -32,6 +33,13 @@
 //! confirmed drain. A scenario that cannot apply to a link is declared not applicable
 //! in [`conformance_suite!`] and reported as ignored; run on that link, it fails.
 //!
+//! The suite names no runtime. A broker's [`Harness`] is its runtime half, as the HTTP and runtime
+//! suites' are: the app's runtime, which every server and client in a scenario runs on and every
+//! wait and task of the scenario's own goes through, and a `block_on` each scenario runs inside.
+//! `OnTokio`, behind the `tokio` feature, is the harness of every link built on tokio; `OnSmol`,
+//! behind `smol`, runs the scenarios on an `async-executor` `Executor`. The [`relay`] runs on
+//! threads of its own, on `std` sockets, so it carries a link on either.
+//!
 //! A host short of memory bounds how many scenarios hold an environment at once by setting
 //! [`PARALLEL_VAR`], `ULO_CONFORMANCE_PARALLEL`, to a positive integer: the bound is the smaller of
 //! it and the broker's own [`Broker::PARALLEL`], or it alone when the broker declares none. Unset
@@ -46,7 +54,7 @@ use std::future::Future;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
-use ulo::BoundAddr;
+use ulo::{BoundAddr, Runtime};
 use ulo_rpc::Link;
 use ulo_rpc::__private::ClientProbe;
 
@@ -55,8 +63,17 @@ use crate::relay::Outage;
 pub mod cases;
 mod failures;
 pub mod relay;
+mod rt;
+#[cfg(feature = "smol")]
+mod smol_harness;
+#[cfg(feature = "tokio")]
+mod tokio_harness;
 
 pub use failures::failures_dir;
+#[cfg(feature = "smol")]
+pub use smol_harness::OnSmol;
+#[cfg(feature = "tokio")]
+pub use tokio_harness::OnTokio;
 
 /// The environment variable through which a host bounds how many scenarios of one suite hold an
 /// environment at once. A value that is not a positive integer fails every scenario through
@@ -91,9 +108,29 @@ macro_rules! startup_failed {
     };
 }
 
+/// The runtime a broker's scenarios run on, as the suite drives it: the app's runtime and the
+/// executor each scenario is run to its end on.
+pub trait Harness: Send + Sync + 'static {
+    /// The app's runtime: every server and client a scenario starts runs on it, and the scenario's
+    /// own sleeps, timeouts and tasks go through it.
+    type Runtime: Runtime;
+
+    /// A runtime value, taken wherever a scenario needs one: on the thread `block_on` runs and on
+    /// every thread running the tasks the runtime spawns while it does.
+    fn runtime() -> Self::Runtime;
+
+    /// Runs `fut` to its end from a plain `#[test]` thread, on an executor that runs the tasks the
+    /// runtime spawns while `fut` waits. Each scenario calls it once.
+    fn block_on<F: Future>(fut: F) -> F::Output;
+}
+
 /// One link's environment for the suite: a broker, or, for TCP and UDP, the server's own socket,
 /// bound at port 0 and read back.
 pub trait Broker: Sized + Send + Sync + 'static {
+    /// The runtime the scenarios run on: `OnTokio`, behind the `tokio` feature, for a link built on
+    /// tokio.
+    type Harness: Harness;
+
     type Link: Link;
 
     /// How many scenarios hold an environment at once; `None`, the default, leaves the scenarios
@@ -194,8 +231,8 @@ impl Default for Budget {
     }
 }
 
-/// Stamps every scenario as a `#[tokio::test]` for the broker type `$broker`. The invoking crate
-/// depends on `tokio` with `macros` and `rt-multi-thread`, which `#[tokio::test]` names.
+/// Stamps every scenario as a `#[test]` for the broker type `$broker`, each running its scenario
+/// through the broker's [`Harness::block_on`].
 ///
 /// A scenario that cannot apply to a link is declared with its reason, and stamped
 /// `#[ignore = "not applicable: <reason>"]`, so the test report counts it as ignored rather than
@@ -222,13 +259,13 @@ macro_rules! conformance_suite {
         macro_rules! __ulo_rpc_conformance_stamp {
             $(
                 ($skip, $d($d test:tt)*) => {
-                    #[::tokio::test(flavor = "multi_thread")]
+                    #[test]
                     #[ignore = concat!("not applicable: ", $why)]
                     $d($d test)*
                 };
             )*
             ($d other:ident, $d($d test:tt)*) => {
-                #[::tokio::test(flavor = "multi_thread")]
+                #[test]
                 $d($d test)*
             };
         }
@@ -272,9 +309,11 @@ macro_rules! conformance_suite {
     (@cases $broker:ty; $($name:ident => $module:ident :: $case:ident),* $(,)?) => {
         static __ULO_RPC_CONFORMANCE_SLOTS: $crate::__private::Slots = $crate::__private::Slots::new();
         $(
-            __ulo_rpc_conformance_stamp!($name, async fn $name() {
-                let _slot = __ULO_RPC_CONFORMANCE_SLOTS.hold(<$broker as $crate::Broker>::PARALLEL).await;
-                $crate::cases::$module::$case::<$broker>().await;
+            __ulo_rpc_conformance_stamp!($name, fn $name() {
+                let _slot = __ULO_RPC_CONFORMANCE_SLOTS.hold(<$broker as $crate::Broker>::PARALLEL);
+                <<$broker as $crate::Broker>::Harness as $crate::Harness>::block_on(
+                    $crate::cases::$module::$case::<$broker>(),
+                );
             });
         )*
     };
@@ -285,27 +324,48 @@ pub mod __private {
     use std::num::NonZeroUsize;
 
     pub use crate::failures::startup_failed;
-    use std::sync::OnceLock;
-
-    use tokio::sync::{Semaphore, SemaphorePermit};
+    use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
 
     use crate::PARALLEL_VAR;
 
-    /// The slots one stamped suite's scenarios share. Each `#[tokio::test]` runs its own runtime;
-    /// tokio's `Semaphore` needs none, so a permit released on one wakes a waiter on another.
-    pub struct Slots(OnceLock<Semaphore>);
+    /// The slots one stamped suite's scenarios share. Each scenario runs on its own test thread,
+    /// so a slot is waited for by blocking that thread before the scenario's runtime starts.
+    pub struct Slots {
+        held: Mutex<usize>,
+        freed: Condvar,
+    }
 
     impl Slots {
         pub const fn new() -> Self {
-            Slots(OnceLock::new())
+            Slots { held: Mutex::new(0), freed: Condvar::new() }
         }
 
         /// A slot when the broker's `declared` bound or the host's [`PARALLEL_VAR`] bounds the
-        /// suite, the smaller when both do, held until the permit drops; `None` otherwise.
-        pub async fn hold(&'static self, declared: Option<NonZeroUsize>) -> Option<SemaphorePermit<'static>> {
+        /// suite, the smaller when both do, held until the guard drops; `None` otherwise.
+        pub fn hold(&'static self, declared: Option<NonZeroUsize>) -> Option<Slot> {
             let parallel = bound(declared, host_parallel())?;
-            let slots = self.0.get_or_init(|| Semaphore::new(parallel.get()));
-            Some(slots.acquire().await.expect("the suite's slots are never closed"))
+            let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+            while *held >= parallel.get() {
+                held = self.freed.wait(held).unwrap_or_else(PoisonError::into_inner);
+            }
+            *held += 1;
+            Some(Slot(self))
+        }
+    }
+
+    impl Default for Slots {
+        fn default() -> Self {
+            Slots::new()
+        }
+    }
+
+    /// One held slot, given back on drop, a scenario's panic included.
+    pub struct Slot(&'static Slots);
+
+    impl Drop for Slot {
+        fn drop(&mut self) {
+            *self.0.held.lock().unwrap_or_else(PoisonError::into_inner) -= 1;
+            self.0.freed.notify_one();
         }
     }
 

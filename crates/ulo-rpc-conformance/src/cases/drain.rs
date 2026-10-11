@@ -1,14 +1,17 @@
 //! Scenarios: drain.
 
+use std::pin::pin;
 use std::time::Duration;
 
+use futures_util::future::{Either, select};
 use futures_util::StreamExt;
 use ulo::Signal;
 use ulo_rpc::{Capabilities, RpcError};
 use ulo_transport::ErrorKind;
 
 use crate::Broker;
-use crate::cases::app::{ADD, Add, EVENT, Fixture, HOLD, Sum, UNTIL_DRAIN, eventually, miss_wait, server, streams, within};
+use crate::cases::app::{ADD, Add, EVENT, Fixture, HOLD, Sum, UNTIL_DRAIN, eventually, joined, miss_wait, server, streams, within};
+use crate::rt::{sleep, spawn, yield_now};
 
 /// How long the drain-window scenario waits between its calls, so a link that answers at once is
 /// not flooded for the length of the drain.
@@ -27,23 +30,23 @@ pub async fn drain<B: Broker>() {
     let held_for = u64::try_from((settle * 2 + Duration::from_millis(300)).as_millis()).unwrap_or(u64::MAX);
 
     let rpc = fixture.rpc().clone();
-    let held = tokio::spawn(async move { rpc.request::<_, u64>(HOLD, &held_for).timeout(Duration::from_secs(30)).await });
+    let held = spawn::<B, _, _>(async move { rpc.request::<_, u64>(HOLD, &held_for).timeout(Duration::from_secs(30)).await });
     let mut ticking = if streams(&capabilities) {
         let mut ticks = fixture.rpc().stream::<_, u64>(UNTIL_DRAIN, &()).timeout(Duration::from_secs(10)).await.expect("the stream opens");
-        within(Duration::from_secs(10), "a tick", ticks.next()).await.expect("the stream yields").expect("a tick arrives");
+        within::<B, _>(Duration::from_secs(10), "a tick", ticks.next()).await.expect("the stream yields").expect("a tick arrives");
         Some(ticks)
     } else {
         None
     };
     // The held call reaches its handler before the drain starts.
-    tokio::time::sleep(settle).await;
+    sleep::<B>(settle).await;
 
     let handle = fixture.server.handle.clone();
-    let closing = tokio::spawn(async move { handle.close(Signal::new("conformance drain")).await });
+    let closing = spawn::<B, _, _>(async move { handle.close(Signal::new("conformance drain")).await });
     let draining = fixture.server.handle.clone();
-    assert!(eventually(Duration::from_secs(5), || draining.is_draining()).await, "the server did not start draining");
+    assert!(eventually::<B>(Duration::from_secs(5), || draining.is_draining()).await, "the server did not start draining");
     // The link's own close signal takes effect at the broker before the new call is sent.
-    tokio::time::sleep(settle / 2).await;
+    sleep::<B>(settle / 2).await;
 
     let refused = fixture.rpc().request::<_, Sum>(ADD, &Add { a: 1, b: 1 }).timeout(miss_wait(&fixture.broker)).await;
     match refused {
@@ -58,10 +61,10 @@ pub async fn drain<B: Broker>() {
         fixture.rpc().emit(EVENT, &HELD_EVENT).await.expect("an event during the drain is published");
     }
 
-    let held = within(Duration::from_secs(30), "the in-flight call", held).await.expect("the held call's task completes");
+    let held = joined(within::<B, _>(Duration::from_secs(30), "the in-flight call", held).await, "the held call's task");
     assert_eq!(held.expect("the in-flight call finishes during the drain"), held_for);
     if let Some(ticks) = ticking.take() {
-        let rest: Vec<_> = within(Duration::from_secs(10), "the draining stream", ticks.collect()).await;
+        let rest: Vec<_> = within::<B, _>(Duration::from_secs(10), "the draining stream", ticks.collect()).await;
         assert!(rest.iter().all(Result::is_ok), "the stream ended on an error rather than cleanly: {rest:?}");
     }
     let _ = closing.await;
@@ -69,7 +72,7 @@ pub async fn drain<B: Broker>() {
         let budget = fixture.broker.budget();
         let next = server(&fixture.broker).await;
         let probe = next.probe.clone();
-        let held = eventually(budget.boot + budget.settle, || probe.events() > 0).await;
+        let held = eventually::<B>(budget.boot + budget.settle, || probe.events() > 0).await;
         next.stop().await;
         assert!(held, "the event emitted during the drain did not reach the next instance, though the link declares `holds_unserved`");
         assert_eq!(probe.last_event(), Some(HELD_EVENT));
@@ -90,25 +93,24 @@ pub async fn window<B: Broker>() {
     let wait = miss_wait(&fixture.broker);
 
     let handle = fixture.server.handle.clone();
-    let mut closing = tokio::spawn(async move { handle.close(Signal::new("conformance drain window")).await });
+    let mut closing = spawn::<B, _, _>(async move { handle.close(Signal::new("conformance drain window")).await });
     let draining = fixture.server.handle.clone();
     // Polled without a sleep, so the first call leaves as close to the drain's start as it can.
-    let started = within(Duration::from_secs(5), "the server's drain", async {
+    let started = within::<B, _>(Duration::from_secs(5), "the server's drain", async {
         while !draining.is_draining() {
-            tokio::task::yield_now().await;
+            yield_now().await;
         }
     });
     started.await;
 
     let mut during = Vec::new();
-    within(Duration::from_secs(30), "the server's close", async {
+    within::<B, _>(Duration::from_secs(30), "the server's close", async {
         loop {
             let answer = fixture.rpc().request::<_, Sum>(ADD, &Add { a: 1, b: 1 }).timeout(wait).await;
             during.push(answer.map_err(|error| error.kind()));
-            tokio::select! {
-                biased;
-                _ = &mut closing => return,
-                () = tokio::time::sleep(PACE) => {}
+            // `select` polls its left side first: a close that has ended ends the loop.
+            if let Either::Left(_) = select(&mut closing, pin!(sleep::<B>(PACE))).await {
+                return;
             }
         }
     })

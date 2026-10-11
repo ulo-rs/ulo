@@ -12,20 +12,24 @@ categories = ["network-programming"]
 
 [dependencies]
 ulo = { path = "../ulo" }
-ulo-rpc = { path = "../ulo-rpc" }
-ulo-tokio = { path = "../ulo-tokio" }
-bytes.workspace = true
-futures-core.workspace = true
-futures-util.workspace = true
 ulo-net = { path = "../ulo-net" }
-ulo-transport = { path = "../ulo-transport" }
-tokio = { workspace = true, features = ["net", "io-util", "sync", "rt", "macros", "time"] }
+ulo-rpc = { path = "../ulo-rpc" }
+# The wire, shared with ulo-rpc-tcp-smol; this crate supplies tokio's sockets and runtime.
+ulo-rpc-tcp-core = { path = "../ulo-rpc-tcp-core" }
+ulo-tokio = { path = "../ulo-tokio" }
+tokio = { workspace = true, features = ["net", "io-util", "rt"] }
 tokio-rustls.workspace = true
-tracing.workspace = true
+# `compat`: tokio's sockets on `futures-io`'s traits, the ones the shared wire reads and writes.
+tokio-util = { workspace = true, features = ["compat"] }
 
 [dev-dependencies]
+# The interop test: a client of either TCP link against a server of the other.
+ulo-rpc-tcp-smol = { path = "../ulo-rpc-tcp-smol" }
+ulo-transport = { path = "../ulo-transport" }
+futures-util.workspace = true
+tracing.workspace = true
 futures-executor.workspace = true
-ulo-rpc-conformance = { path = "../ulo-rpc-conformance" }
+ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
 # The certificate the TLS suites serve, made when they run.
 ulo-test-certs = { path = "../ulo-test-certs" }
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync"] }

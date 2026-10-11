@@ -1,0 +1,25 @@
+[package]
+name = "ulo-rpc-tcp-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Internal: the runtime-free half of Ulo's TCP RPC links, shared by ulo-rpc-tcp and ulo-rpc-tcp-smol"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "rpc", "tcp"]
+categories = ["network-programming"]
+
+[dependencies]
+ulo = { path = "../ulo" }
+ulo-net = { path = "../ulo-net" }
+ulo-rpc = { path = "../ulo-rpc" }
+ulo-transport = { path = "../ulo-transport" }
+bytes.workspace = true
+# A client connection's reply lane, the server's deliveries, and the signal that a reply lane was
+# dropped: channels that need no runtime.
+futures-channel = { workspace = true, features = ["sink"] }
+futures-io.workspace = true
+# `io`: reading and writing frames over `futures-io`'s traits; `sink`: sending into the channels.
+futures-util = { workspace = true, features = ["io", "sink"] }
+tracing.workspace = true

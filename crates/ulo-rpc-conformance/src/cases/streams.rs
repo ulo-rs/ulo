@@ -25,7 +25,7 @@ pub async fn server_stream<B: Broker>() {
         return fixture.stop().await;
     }
     let replies = fixture.rpc().stream::<_, u32>(COUNT, &3u32).timeout(WAIT).await.expect("the stream opens");
-    let items: Vec<_> = within(WAIT, "the server stream", replies.collect()).await;
+    let items: Vec<_> = within::<B, _>(WAIT, "the server stream", replies.collect()).await;
     let items: Vec<u32> = items.into_iter().map(|item| item.expect("every item arrives")).collect();
     assert_eq!(items, vec![1, 2, 3]);
     fixture.stop().await;
@@ -74,7 +74,7 @@ pub async fn bidi_stream<B: Broker>() {
         return fixture.stop().await;
     }
     let replies = fixture.rpc().duplex::<_, i64>(DOUBLE, stream::iter(vec![1i64, 2, 3])).timeout(WAIT).await.expect("the stream opens");
-    let items: Vec<_> = within(WAIT, "the bidirectional stream", replies.collect()).await;
+    let items: Vec<_> = within::<B, _>(WAIT, "the bidirectional stream", replies.collect()).await;
     let items: Vec<i64> = items.into_iter().map(|item| item.expect("every item arrives")).collect();
     assert_eq!(items, vec![2, 4, 6]);
     fixture.stop().await;

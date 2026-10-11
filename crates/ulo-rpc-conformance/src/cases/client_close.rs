@@ -4,8 +4,11 @@ use std::time::{Duration, Instant};
 
 use ulo_transport::ErrorKind;
 
+use futures_util::FutureExt;
+
 use crate::Broker;
-use crate::cases::app::{ADD, Add, Fixture, NEVER, Sum, eventually, failed, within};
+use crate::cases::app::{ADD, Add, Fixture, NEVER, Sum, eventually, failed, joined, within};
+use crate::rt::{sleep, spawn};
 
 /// The waiting call's own timeout: longer than every bound below, so a call that fails within them
 /// failed for the close.
@@ -34,10 +37,10 @@ pub async fn client_close<B: Broker>() {
     let rpc = client.rpc.clone();
 
     let caller = rpc.clone();
-    let waiting = tokio::spawn(async move { caller.request::<_, ()>(NEVER, &()).timeout(CALL_TIMEOUT).await });
+    let mut waiting = spawn::<B, _, _>(async move { caller.request::<_, ()>(NEVER, &()).timeout(CALL_TIMEOUT).await });
     let probe = server.probe.clone();
     assert!(
-        eventually(budget.settle + PATIENCE, || probe.unanswered() > 0).await,
+        eventually::<B>(budget.settle + PATIENCE, || probe.unanswered() > 0).await,
         "the call did not reach its handler within {:?}",
         budget.settle + PATIENCE,
     );
@@ -45,13 +48,15 @@ pub async fn client_close<B: Broker>() {
     if let Some(open) = held {
         assert!(open > 0, "the environment counts no connection of the client's while its call waits");
     }
-    assert!(!waiting.is_finished(), "the call ended before its client closed: {:?}", waiting.await);
+    if let Some(ended) = (&mut waiting).now_or_never() {
+        panic!("the call ended before its client closed: {ended:?}");
+    }
 
-    let closed = within(CLOSE_BOUND, "the client app's close", client.closed()).await;
+    let closed = within::<B, _>(CLOSE_BOUND, "the client app's close", client.closed()).await;
     if let Err(error) = closed {
         panic!("the client app's close reported a failure: {error}");
     }
-    let ended = within(PATIENCE, "the call waiting when its client closed", waiting).await.expect("the waiting call's task completes");
+    let ended = joined(within::<B, _>(PATIENCE, "the call waiting when its client closed", waiting).await, "the waiting call's task");
     failed(ended, ErrorKind::Unavailable);
 
     if held.is_some() {
@@ -62,11 +67,11 @@ pub async fn client_close<B: Broker>() {
                 open if Instant::now() >= deadline => {
                     panic!("the client's connections were still open {PATIENCE:?} after its app closed: {open:?}")
                 }
-                _ => tokio::time::sleep(Duration::from_millis(50)).await,
+                _ => sleep::<B>(Duration::from_millis(50)).await,
             }
         }
         // A link reconnecting behind a closed client shows here: nothing has called since.
-        tokio::time::sleep(budget.settle).await;
+        sleep::<B>(budget.settle).await;
         let reopened = broker.client_connections().await;
         assert_eq!(reopened, Some(0), "the closed client opened a connection with no call made");
     }
@@ -84,7 +89,7 @@ pub async fn client_close<B: Broker>() {
             outcome if Instant::now() >= deadline => {
                 panic!("a call after the client's close was not answered within the boot budget: {outcome:?}")
             }
-            _ => tokio::time::sleep(Duration::from_millis(100)).await,
+            _ => sleep::<B>(Duration::from_millis(100)).await,
         }
     }
     if held.is_some() {

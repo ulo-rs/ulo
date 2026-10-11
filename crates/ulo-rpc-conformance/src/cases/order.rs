@@ -12,7 +12,7 @@
 //! not observable and the link declares it not applicable.
 
 use std::collections::HashSet;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
@@ -21,7 +21,8 @@ use ulo::app::Connected;
 use ulo_rpc::__private::ClientProbe;
 use ulo_rpc::{CallHeaders, Codec, Delivery, Frame, Link, Outbound, Pattern, ReplyTo};
 
-use crate::{Broker, report};
+use crate::rt::{sleep, timeout};
+use crate::{Broker, Harness, report};
 
 /// The pattern the requests name; the server's link listens on it and nothing handles it.
 const ORDERED: &str = "conformance.ordered";
@@ -70,7 +71,7 @@ impl<B: Broker> Linked<B> {
     async fn start() -> Self {
         let broker = B::start().await;
         let app = App::builder(Empty)
-            .runtime(ulo_tokio::Tokio::current())
+            .runtime(<B::Harness as Harness>::runtime())
             .wire()
             .unwrap_or_else(|error| crate::startup_failed!("the ordering scenario's app did not wire: {}", report(&error)))
             .connect()
@@ -95,7 +96,7 @@ impl<B: Broker> Linked<B> {
         let (mut opened, mut cancels) = (0u64, 0u64);
         let mut held = HashSet::new();
         while opened + cancels < 2 * rounds {
-            let Ok(delivered) = tokio::time::timeout(PATIENCE, self.inbound.next()).await else {
+            let Some(delivered) = timeout::<B, _>(PATIENCE, self.inbound.next()).await else {
                 panic!(
                     "{opened} {opens} and {cancels} cancels of {rounds} each reached the server within {PATIENCE:?} of the last; the \
                      server holds {held:?}"
@@ -186,14 +187,14 @@ fn probe<B: Broker>(linked: &Linked<B>) -> &ClientProbe {
 }
 
 /// Waits until `done` holds of the probe, read every 10 ms, failing after [`PATIENCE`].
-async fn probe_until(probe: &ClientProbe, what: &str, done: impl Fn(&ClientProbe) -> bool) {
-    let waited = tokio::time::timeout(PATIENCE, async {
+async fn probe_until<B: Broker>(probe: &ClientProbe, what: &str, done: impl Fn(&ClientProbe) -> bool) {
+    let waited = timeout::<B, _>(PATIENCE, async {
         while !done(probe) {
-            tokio::time::sleep(PROBE_POLL).await;
+            sleep::<B>(PROBE_POLL).await;
         }
     })
     .await;
-    assert!(waited.is_ok(), "{what} did not happen within {PATIENCE:?}");
+    assert!(waited.is_some(), "{what} did not happen within {PATIENCE:?}");
 }
 
 impl<B: Broker> Linked<B> {
@@ -207,11 +208,11 @@ impl<B: Broker> Linked<B> {
         (self.outbound.send)(pattern.clone(), open, Some(ReplyTo { id }))
             .await
             .unwrap_or_else(|error| panic!("the open of call {id} was not sent: {error}"));
-        let delivered = tokio::time::timeout(PATIENCE, self.inbound.next()).await.expect("the open did not reach the server");
+        let delivered = timeout::<B, _>(PATIENCE, self.inbound.next()).await.expect("the open did not reach the server");
         let frame = delivered.expect("the server's inbound stream ended").frame;
         assert!(matches!(frame, Frame::Open { .. }), "the server received {frame:?} where the open was due");
         let probe = probe(self);
-        probe_until(probe, "the server's `opened` reaching the client", |probe| probe.withheld() == 1).await;
+        probe_until::<B>(probe, "the server's `opened` reaching the client", |probe| probe.withheld() == 1).await;
         (self.outbound.send)(pattern, Frame::Cancel { id }, None)
             .await
             .unwrap_or_else(|error| panic!("the cancel of call {id} was not sent: {error}"));
@@ -226,9 +227,9 @@ pub async fn late_opened<B: Broker>() {
     let mut linked = Linked::<B>::start().await;
     linked.cancel_with_opened_withheld(1).await;
     // Late by the short hold, and well inside the link's own.
-    tokio::time::sleep(SHORT_HOLD).await;
+    sleep::<B>(SHORT_HOLD).await;
     probe(&linked).release();
-    let delivered = tokio::time::timeout(PATIENCE, linked.inbound.next()).await.unwrap_or_else(|_| {
+    let delivered = timeout::<B, _>(PATIENCE, linked.inbound.next()).await.unwrap_or_else(|| {
         panic!("the held cancel did not reach the server within {PATIENCE:?} of the late `opened`")
     });
     let frame = delivered.expect("the server's inbound stream ended").frame;
@@ -243,9 +244,9 @@ pub async fn late_opened<B: Broker>() {
 pub async fn hold_runs_out<B: Broker>() {
     let mut linked = Linked::<B>::start().await;
     probe(&linked).set_hold(SHORT_HOLD);
-    let cancelled = tokio::time::Instant::now();
+    let cancelled = Instant::now();
     linked.cancel_with_opened_withheld(1).await;
-    probe_until(probe(&linked), "the held cancel's entry dropped", |probe| probe.calls() == Some(0)).await;
+    probe_until::<B>(probe(&linked), "the held cancel's entry dropped", |probe| probe.calls() == Some(0)).await;
     assert!(cancelled.elapsed() >= SHORT_HOLD, "the held cancel was dropped before its hold ran out");
     linked.stop().await;
 }

@@ -1,0 +1,30 @@
+[package]
+name = "ulo-rpc-tcp-smol"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "The TCP link for Ulo RPC on smol's sockets: ulo-rpc-tcp's wire over async-net, with futures-rustls for TLS"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "rpc", "tcp", "smol"]
+categories = ["network-programming"]
+
+[dependencies]
+ulo = { path = "../ulo" }
+ulo-net = { path = "../ulo-net" }
+ulo-rpc = { path = "../ulo-rpc" }
+# The wire, shared with ulo-rpc-tcp; this crate supplies `async-io`'s sockets.
+ulo-rpc-tcp-core = { path = "../ulo-rpc-tcp-core" }
+async-net.workspace = true
+futures-rustls.workspace = true
+# `io`: a TLS connection split into its two halves.
+futures-util = { workspace = true, features = ["io"] }
+
+[dev-dependencies]
+ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["smol"] }
+ulo-smol = { path = "../ulo-smol" }
+# The certificate the TLS suite serves, made when it runs.
+ulo-test-certs = { path = "../ulo-test-certs" }
+ulo-transport = { path = "../ulo-transport" }
+futures-executor.workspace = true

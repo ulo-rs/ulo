@@ -25,5 +25,5 @@ tracing.workspace = true
 
 [dev-dependencies]
 futures-executor.workspace = true
-ulo-rpc-conformance = { path = "../ulo-rpc-conformance" }
+ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }

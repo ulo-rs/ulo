@@ -30,6 +30,7 @@ struct RedisServer {
 }
 
 impl Broker for RedisServer {
+    type Harness = ulo_rpc_conformance::OnTokio;
     type Link = Redis;
 
     async fn start() -> Self {

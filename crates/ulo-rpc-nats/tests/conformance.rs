@@ -24,6 +24,7 @@ struct NatsServer {
 }
 
 impl Broker for NatsServer {
+    type Harness = ulo_rpc_conformance::OnTokio;
     type Link = Nats;
 
     fn probe(link: &Nats) -> Option<&ClientProbe> {

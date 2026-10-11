@@ -48,6 +48,7 @@ struct KraftBroker {
 }
 
 impl Broker for KraftBroker {
+    type Harness = ulo_rpc_conformance::OnTokio;
     type Link = Kafka;
 
     fn probe(link: &Kafka) -> Option<&ClientProbe> {

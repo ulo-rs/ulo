@@ -24,6 +24,7 @@ struct RabbitMqBroker {
 }
 
 impl Broker for RabbitMqBroker {
+    type Harness = ulo_rpc_conformance::OnTokio;
     type Link = RabbitMq;
 
     fn probe(link: &RabbitMq) -> Option<&ClientProbe> {

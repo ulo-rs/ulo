@@ -12,6 +12,7 @@ use ulo_rpc_udp::Udp;
 struct Loopback;
 
 impl Broker for Loopback {
+    type Harness = ulo_rpc_conformance::OnTokio;
     type Link = Udp;
 
     async fn start() -> Self {

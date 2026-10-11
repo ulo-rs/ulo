@@ -9,7 +9,8 @@ use ulo::Runtime;
 use ulo_rpc::{Link, RpcClient, RpcError};
 
 use crate::Broker;
-use crate::cases::app::{ADD, Add, COUNT, EVENT, Fixture, SUM, Sum, eventually, streams, within};
+use crate::cases::app::{ADD, Add, COUNT, EVENT, Fixture, SUM, Sum, eventually, streams};
+use crate::rt::{runtime, sleep, timeout};
 
 /// Each call's own timeout.
 const WAIT: Duration = Duration::from_secs(10);
@@ -26,7 +27,7 @@ struct Answers {
     summed: Option<Result<i64, RpcError>>,
 }
 
-/// A client built with `RpcClient::new` and called from a plain `std::thread` with no tokio
+/// A client built with `RpcClient::new` and called from a plain `std::thread`, which starts with no
 /// runtime current, driven by `futures::executor::block_on`: a unary call is answered, an event
 /// reaches its handler, and on a link carrying the streamed shapes a streamed reply and a streamed
 /// request are answered. The link is built where the scenario runs, so it holds the scenario's
@@ -39,10 +40,9 @@ pub async fn plain_thread<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     let link = fixture.broker.client_link(&fixture.server.addresses);
     let carries_streams = streams(&link.capabilities());
-    let runtime: Arc<dyn Runtime> = Arc::new(ulo_tokio::Tokio::current());
+    let runtime: Arc<dyn Runtime> = runtime::<B>();
 
     let thread = std::thread::spawn(move || {
-        assert!(tokio::runtime::Handle::try_current().is_err(), "the client's thread has a tokio runtime current");
         let client = RpcClient::new(link, runtime).expect("the scenario's link holds the scenario's runtime");
         let answers = futures_executor::block_on(async {
             let sum = client.request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).timeout(WAIT).await;
@@ -62,16 +62,21 @@ pub async fn plain_thread<B: Broker>() {
         drop(client);
         answers
     });
-    let joined = within(PATIENCE, "the client's thread", tokio::task::spawn_blocking(move || thread.join()))
-        .await
-        .expect("the join of the client's thread completes");
-    let answers = joined.unwrap_or_else(|panic| panic!("the client's thread panicked: {}", message(&*panic)));
+    // Joined once it has finished, so the join does not block a thread the scenario's runtime runs.
+    let finished = timeout::<B, _>(PATIENCE, async {
+        while !thread.is_finished() {
+            sleep::<B>(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(finished.is_some(), "the client's thread did not finish within {PATIENCE:?}");
+    let answers = thread.join().unwrap_or_else(|panic| panic!("the client's thread panicked: {}", message(&*panic)));
 
     assert_eq!(answers.sum.expect("the unary call from the thread is answered"), Sum { sum: 5 });
     answers.emitted.expect("the event from the thread is published");
     let settle = fixture.broker.budget().settle;
     let probe = fixture.server.probe.clone();
-    assert!(eventually(settle, || probe.last_event() == Some(11)).await, "the event from the thread did not reach its handler within {settle:?}");
+    assert!(eventually::<B>(settle, || probe.last_event() == Some(11)).await, "the event from the thread did not reach its handler within {settle:?}");
     if let Some(counted) = answers.counted {
         let items: Vec<u32> =
             counted.expect("the stream from the thread opens").into_iter().map(|item| item.expect("every item arrives")).collect();

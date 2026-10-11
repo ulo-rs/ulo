@@ -50,8 +50,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Hermetic suites only: everything here runs against localhost. That covers
       # the HTTP conformance suites against hyper and the five adapters, the RPC
-      # suites on TCP and UDP, the WebSocket and gRPC tests, and ulo-codegen-tests,
-      # whose build script runs ulo-build with the vendored protoc. Two targets
+      # suites on both TCP links and on UDP, the WebSocket and gRPC tests, and
+      # ulo-codegen-tests, whose build script runs ulo-build with the vendored
+      # protoc. Two targets
       # compile to nothing here: the broker conformance suites carry
       # `#![cfg(feature = "integration")]` and run in `broker integration`,
       # and `compile_fail` reports itself ignored off rustc 1.98.1 and runs in
@@ -76,6 +77,43 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: conformance-failures-test
+          path: target/conformance-failures/
+          if-no-files-found: ignore
+
+  smol:
+    name: smol
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The suites on smol, with smol's sockets and no tokio runtime. `test` runs them too, inside
+      # `cargo test --workspace`; this job names each one, so the smol runs are visible as their own
+      # result. The runtime suite on `ulo_smol::Smol`, its executor run by four threads.
+      - run: cargo test -p ulo-smol --test conformance --locked
+      # The HTTP suite against the hyper backend on `ulo-listen-smol`.
+      - run: cargo test -p ulo-http-hyper --test conformance_smol --locked
+      # The WebSocket suite against the standalone server on smol, the HTTP port of the hyper
+      # backend on smol, and the pipe host, which has no socket and no hyper.
+      - run: cargo test -p ulo-ws-hyper --test conformance_smol --locked
+      - run: cargo test -p ulo-ws --test conformance_smol --test conformance_pipe --locked
+      # The RPC suite against the smol TCP link, plain, CBOR and TLS.
+      - run: cargo test -p ulo-rpc-tcp-smol --test conformance --test conformance_cbor --test conformance_tls --locked
+      # A conformance suite writes each startup failure, its full error chain included, to a file
+      # under target/conformance-failures/ before the test panics with it. The files are printed
+      # here, so the cause is in the job log whatever else the log keeps, and kept as an artifact.
+      - name: print conformance startup failures
+        if: failure()
+        run: |
+          shopt -s nullglob
+          files=(target/conformance-failures/*)
+          if [ ${#files[@]} -eq 0 ]; then echo "no startup failure was written"; fi
+          for file in "${files[@]}"; do echo "==> $file"; cat "$file"; echo; done
+      - name: upload conformance startup failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-failures-smol
           path: target/conformance-failures/
           if-no-files-found: ignore
 

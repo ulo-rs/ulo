@@ -18,11 +18,11 @@ pub async fn mid_stream<B: Broker>() {
     let settle = fixture.broker.budget().settle;
     let mut ticks = fixture.rpc().stream::<_, u64>(TICKS, &()).timeout(Duration::from_secs(10)).await.expect("the stream opens");
     for _ in 0..2 {
-        within(Duration::from_secs(10), "a tick", ticks.next()).await.expect("the stream yields").expect("a tick arrives");
+        within::<B, _>(Duration::from_secs(10), "a tick", ticks.next()).await.expect("the stream yields").expect("a tick arrives");
     }
     drop(ticks);
     let probe = fixture.server.probe.clone();
-    assert!(eventually(settle.max(Duration::from_secs(2)), || probe.stopped()).await, "the producer kept running after `cancel`");
+    assert!(eventually::<B>(settle.max(Duration::from_secs(2)), || probe.stopped()).await, "the producer kept running after `cancel`");
     assert_eq!(probe.cancelled(), Some(Some(CancelReason::ClientCancelled)));
     fixture.stop().await;
 }

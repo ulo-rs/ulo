@@ -13,6 +13,7 @@ struct Loopback {
 }
 
 impl Broker for Loopback {
+    type Harness = ulo_rpc_conformance::OnTokio;
     type Link = Tcp;
 
     /// The relay, listening on a port of its own; it learns the server's address from

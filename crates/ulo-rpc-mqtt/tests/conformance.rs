@@ -40,6 +40,7 @@ struct Mosquitto {
 }
 
 impl Broker for Mosquitto {
+    type Harness = ulo_rpc_conformance::OnTokio;
     type Link = Mqtt;
 
     fn probe(link: &Mqtt) -> Option<&ClientProbe> {

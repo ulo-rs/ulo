@@ -8,25 +8,28 @@
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
+use std::pin::pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use futures_util::future::select;
 use futures_util::stream::BoxStream;
 use futures_util::{Stream, StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use ulo::app::{Bound as Serving, Connected};
 use ulo::{
     App, AppHandle, BoundAddr, BoxError, Bound, CancelReason, Dep, ErrorHandler, ExecutionRef, Guard, Module, ModuleDef,
-    ModuleIdentity, Shape, Shutdown, ShutdownError, Signal, StartupError, injectable, routes,
+    ModuleIdentity, Shape, Shutdown, ShutdownError, Signal, StartupError, TaskEnd, Timer, ValueHandle, injectable, routes,
 };
 use ulo_rpc::{
     CallHeaders, Capabilities, Data, Inbound, Link, Payload, Reply, Rpc, RpcClient, RpcClientModule, RpcCx, RpcError,
 };
 use ulo_transport::{CallError, Classify, Count, ErrorKind};
 
-use crate::{Broker, report};
+use crate::rt::{sleep, spawn, timeout};
+use crate::{Broker, Harness, report};
 
 pub(crate) const ADD: &str = "conformance.add";
 pub(crate) const ECHO: &str = "conformance.echo";
@@ -148,11 +151,11 @@ impl Probe {
         self.0.bounded_peak.load(Ordering::SeqCst)
     }
 
-    /// Counts one bounded call running for `millis`.
-    async fn bounded(&self, millis: u64) -> u64 {
+    /// Counts one bounded call running for `millis` on `timer`.
+    async fn bounded(&self, timer: &dyn Timer, millis: u64) -> u64 {
         let now = self.0.bounded.fetch_add(1, Ordering::SeqCst) + 1;
         self.0.bounded_peak.fetch_max(now, Ordering::SeqCst);
-        tokio::time::sleep(Duration::from_millis(millis)).await;
+        timer.sleep(Duration::from_millis(millis)).await;
         self.0.bounded.fetch_sub(1, Ordering::SeqCst);
         millis
     }
@@ -249,9 +252,12 @@ impl Guard<Rpc> for Deny {
     }
 }
 
+/// The handlers' waits are on the app's clock, the scenario's runtime, injected as a field: as a
+/// handler parameter `Dep<dyn Timer>` does not compile (F384).
 #[injectable]
 pub(crate) struct CoreController {
     probe: Dep<Probe>,
+    timer: Dep<dyn Timer>,
 }
 
 #[routes]
@@ -323,10 +329,7 @@ impl CoreController {
     #[ulo_rpc::message("conformance.stall")]
     async fn stall(&self, exec: ExecutionRef) -> Result<(), Refusal> {
         let _recorder = Recorder { exec: exec.clone(), probe: (*self.probe).clone(), stream: false };
-        tokio::select! {
-            () = exec.cancelled() => {}
-            () = tokio::time::sleep(Duration::from_secs(30)) => {}
-        }
+        select(pin!(exec.cancelled()), self.timer.sleep(Duration::from_secs(30))).await;
         Ok(())
     }
 
@@ -335,16 +338,13 @@ impl CoreController {
     #[ulo_rpc::message("conformance.never")]
     async fn never(&self, exec: ExecutionRef) -> Result<(), Refusal> {
         self.probe.0.unanswered.fetch_add(1, Ordering::SeqCst);
-        tokio::select! {
-            () = exec.cancelled() => {}
-            () = exec.draining() => {}
-        }
+        select(pin!(exec.cancelled()), pin!(exec.draining())).await;
         Ok(())
     }
 
     #[ulo_rpc::message("conformance.hold")]
     async fn hold(&self, millis: Payload<u64>) -> Result<u64, Refusal> {
-        tokio::time::sleep(Duration::from_millis(millis.0)).await;
+        self.timer.sleep(Duration::from_millis(millis.0)).await;
         *lock(&self.probe.0.held_answered) = Some(Instant::now());
         Ok(millis.0)
     }
@@ -353,18 +353,19 @@ impl CoreController {
     /// in-flight scenario: two patterns, so a window kept per pattern shows.
     #[ulo_rpc::message("conformance.bounded")]
     async fn bounded(&self, millis: Payload<u64>) -> Result<u64, Refusal> {
-        Ok(self.probe.bounded(millis.0).await)
+        Ok(self.probe.bounded(&*self.timer, millis.0).await)
     }
 
     #[ulo_rpc::message("conformance.bounded_too")]
     async fn bounded_too(&self, millis: Payload<u64>) -> Result<u64, Refusal> {
-        Ok(self.probe.bounded(millis.0).await)
+        Ok(self.probe.bounded(&*self.timer, millis.0).await)
     }
 }
 
 #[injectable]
 pub(crate) struct StreamController {
     probe: Dep<Probe>,
+    timer: Dep<dyn Timer>,
 }
 
 #[routes]
@@ -419,21 +420,21 @@ impl StreamController {
     #[ulo_rpc::message("conformance.ticks")]
     async fn ticks(&self, exec: ExecutionRef) -> impl Stream<Item = Result<u64, Refusal>> {
         let recorder = Recorder { exec, probe: (*self.probe).clone(), stream: true };
-        stream::unfold((0u64, recorder), |(n, recorder)| async move {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            Some((Ok(n), (n + 1, recorder)))
+        stream::unfold((0u64, recorder, self.timer.clone()), |(n, recorder, timer)| async move {
+            timer.sleep(Duration::from_millis(20)).await;
+            Some((Ok(n), (n + 1, recorder, timer)))
         })
     }
 
     /// Ticks until the server drains, then ends cleanly.
     #[ulo_rpc::message("conformance.until_drain")]
     async fn until_drain(&self, exec: ExecutionRef) -> impl Stream<Item = Result<u64, Refusal>> {
-        stream::unfold((0u64, exec), |(n, exec)| async move {
+        stream::unfold((0u64, exec, self.timer.clone()), |(n, exec, timer)| async move {
             if exec.is_draining() {
                 return None;
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            if exec.is_draining() { None } else { Some((Ok(n), (n + 1, exec))) }
+            timer.sleep(Duration::from_millis(20)).await;
+            if exec.is_draining() { None } else { Some((Ok(n), (n + 1, exec, timer))) }
         })
     }
 }
@@ -496,7 +497,7 @@ pub(crate) struct Server {
     pub(crate) probe: Probe,
     /// What the app reported bound once it listened, for `Broker::client_link`.
     pub(crate) addresses: Vec<BoundAddr>,
-    serving: tokio::task::JoinHandle<()>,
+    serving: ValueHandle<()>,
     /// How `serve` returned, once it has: a server whose link failed after `listen` stops serving
     /// here, and [`ready`] reports it.
     ended: Arc<Mutex<Option<String>>>,
@@ -511,7 +512,7 @@ impl Server {
 
 async fn bound<B: Broker>(broker: &B, probe: Probe, mounts: Mounts, max_inflight: Count) -> Result<App<Serving>, StartupError> {
     App::builder(ServerRoot { probe, mounts })
-        .runtime(ulo_tokio::Tokio::current())
+        .runtime(<B::Harness as Harness>::runtime())
         .drain_timeout(DRAIN)
         .wire()?
         .connect()
@@ -536,7 +537,7 @@ pub(crate) async fn server_bounded<B: Broker>(broker: &B, max_inflight: Count) -
     let handle = app.handle();
     let addresses = app.addresses();
     let ended = Arc::new(Mutex::new(None));
-    let serving = tokio::spawn({
+    let serving = spawn::<B, _, _>({
         let ended = Arc::clone(&ended);
         async move {
             let outcome = match app.serve(std::future::pending::<Signal>()).await {
@@ -604,7 +605,7 @@ impl Client {
 pub(crate) async fn client<B: Broker>(broker: &B, servers: &[&Server]) -> Client {
     let addresses: Vec<BoundAddr> = servers.iter().flat_map(|server| server.addresses.iter().cloned()).collect();
     let app = App::builder(ClientRoot { link: Mutex::new(Some(broker.client_link(&addresses))) })
-        .runtime(ulo_tokio::Tokio::current())
+        .runtime(<B::Harness as Harness>::runtime())
         .wire()
         .unwrap_or_else(|error| crate::startup_failed!("the conformance client did not wire: {}", report(&error)))
         .connect()
@@ -669,13 +670,13 @@ pub(crate) async fn ready<B: Broker>(broker: &B, rpc: &RpcClient, servers: &[&Se
                 };
                 crate::startup_failed!("the server did not answer within the boot budget: {outcome:?}, {stopped}")
             }
-            _ => tokio::time::sleep(Duration::from_millis(100)).await,
+            _ => sleep::<B>(Duration::from_millis(100)).await,
         }
     }
 }
 
 /// Polls `done` until it holds or `within` passes; answers whether it held.
-pub(crate) async fn eventually(within: Duration, mut done: impl FnMut() -> bool) -> bool {
+pub(crate) async fn eventually<B: Broker>(within: Duration, mut done: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + within;
     loop {
         if done() {
@@ -684,7 +685,7 @@ pub(crate) async fn eventually(within: Duration, mut done: impl FnMut() -> bool)
         if Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        sleep::<B>(Duration::from_millis(20)).await;
     }
 }
 
@@ -702,8 +703,13 @@ pub(crate) fn failed<T: fmt::Debug>(outcome: Result<T, RpcError>, kind: ErrorKin
 }
 
 /// Runs `call` to completion within `within`, failing the scenario when it does not.
-pub(crate) async fn within<T>(within: Duration, what: &str, call: impl Future<Output = T>) -> T {
-    tokio::time::timeout(within, call).await.unwrap_or_else(|_| panic!("{what} did not finish within {within:?}"))
+pub(crate) async fn within<B: Broker, T>(within: Duration, what: &str, call: impl Future<Output = T>) -> T {
+    timeout::<B, T>(within, call).await.unwrap_or_else(|| panic!("{what} did not finish within {within:?}"))
+}
+
+/// A spawned task's value, or a failure naming how the task ended instead.
+pub(crate) fn joined<T>(ended: Result<T, TaskEnd>, what: &str) -> T {
+    ended.unwrap_or_else(|end| panic!("{what} did not return a value: it ended {end:?}"))
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

@@ -25,6 +25,7 @@ struct TlsLoopback {
 }
 
 impl Broker for TlsLoopback {
+    type Harness = ulo_rpc_conformance::OnTokio;
     type Link = Tcp;
 
     /// The relay and the bridge, each on a port of its own; they learn where to forward from
