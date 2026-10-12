@@ -1952,3 +1952,27 @@ The client sees an upgrade followed immediately by "the server is shutting down"
 **S3. Accepted.** `Smol::current()` and `with_workers` are what someone writing their own smol tests will reach for next.
 
 **S4. Accepted.** Any copy left behind would be the next one to drift.
+
+## Fifty-second response: a plug point inherits its layer's level
+
+Received 2026-10-12, answering `divergences/runtime-f.md` (S1–S6). The user signed it off the same day; S4's path rule builds as test batch 28, and S5's and S6's wording join the transports DESIGN fold of runtime stage f.
+
+The check is solid, especially the error handling: a misspelled member making cargo silently widen to the whole workspace and exit 0 is exactly the trap that would have made the check pass while checking nothing. Sixteen deliberate breaks, each caught, is the right evidence.
+
+**S6. Neither. State it as a rule about levels, not an exception.** Look at what implementing `Listener` means: writing the socket side *of a hyper-based server*. Its stream has to speak hyper's I/O traits because hyper consumes it. A listener implementer is building on the hyper server layer, so their crate naturally sits at that layer's level. So the design's sentence should be:
+
+> Plug points of the runtime-free crates (the hubs' traits and types) are runtime-free. Plug points of the hyper server layer (`Listener`, `Incoming`) are runtime-neutral, like the layer itself.
+
+That isn't an exception to the principle but its accurate statement: a plug point inherits the level of the layer it plugs into. The promise that matters still holds at both levels. Anyone can implement any plug point without a tokio *runtime*: a listener implementer gets tokio's `sync` through hyper, and nothing that runs.
+
+Option (b) has a cost paid on all traffic. Moving `Listener` out would mean its stream speaks `futures-io`, with `ulo-hyper-serve` adapting it back to hyper's traits. The tokio listener's connections would then go through tokio's traits, then a compat layer, then hyper's, adding an adapter and a buffer initialisation to every read on every tokio HTTP connection. That is the same cost S2 of stage b rejected for TLS, here on the main data path, to save a listener author a dependency that runs nothing.
+
+**S4. Yes, add the path rule.** Without it, the check's wording ("which hyper brings") isn't actually enforced: one of our own crates could add `tokio = { features = ["sync"] }` directly, pass every check, and quietly break answer 4's principle that our own code chooses `async-channel` and friends instead. The rule: in the runtime-neutral set, tokio may only arrive *through* hyper, h2 or tokio-util. A direct dependency from any of our crates fails. The script already prints the path, so judging it is a small step.
+
+**S5. Accepted, and update §8 to match.** Two sets is more precise than one set with a note, and a precise rule shouldn't be described loosely. Word §8 the way the check reads.
+
+**S1. Accepted.** A verdict that depends on the machine running it isn't a verdict.
+
+**S2. Accepted.** Holding a tokio-free crate at runtime-free is the right default: it is checked, so it stays that way, and anything stricter than needed costs nothing.
+
+**S3. Accepted.** Reading with all features means a future feature is checked without anyone remembering to update the list. The two exceptions are crates whose own feature brings tokio on purpose, and they are listed with their reason, which is the honest way to handle them.
