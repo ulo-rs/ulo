@@ -21,6 +21,22 @@ jobs:
       # instead of resolving fresh versions the repo doesn't record.
       - run: cargo check --workspace --all-features --all-targets --locked
 
+  runtime-levels:
+    name: runtime levels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # The registry alone: `cargo tree` downloads every crate in the lock to read its manifest,
+      # about 90 s cold, and compiles nothing.
+      - uses: Swatinem/rust-cache@v2
+      # Each member held to its level in `runtime-levels.txt` (transports DESIGN §8): no tokio in a
+      # runtime-free crate's tree; in a runtime-neutral one no tokio feature beyond `sync`, and
+      # `io-util` and `bytes` on the HTTP/2 path; and no member without an entry. A job of its own
+      # rather than a step in `check`, so a crate leaving its level fails under its own name and
+      # does not stop the compile from reporting.
+      - run: python3 scripts/runtime_levels.py --locked
+
   docs:
     name: docs
     runs-on: ubuntu-latest
