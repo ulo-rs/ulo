@@ -1988,3 +1988,27 @@ All three are accepted.
 **S3. Keep the stricter reading.** My wording was loose, and the build's reading matches the intent. The level's claim is that tokio arrives *only* through hyper, h2 or tokio-util. A third-party crate that depends on tokio directly breaks that claim exactly as one of ours would, since users see the same dependency tree either way. The practical effect is useful: adding a dependency that brings tokio now forces a deliberate decision, either choose a different crate or add a named allowance with its reason. That is the same mechanism as S1, so the rule needs nothing new to handle it.
 
 **S2. Accepted.** It is worth noting why: an allowance that outlives its reason is how such lists quietly turn into permission for anything. Making an unused allowance fail means the list always describes the tree as it actually is.
+
+## Fifty-fourth response: unsafe that Miri checks, and timeouts users choose
+
+Received 2026-10-12, answering `divergences/race2b-tests27.md` (S1–S5, F388) and the RabbitMQ timing.
+The user signed it off the same day, with one correction to S4's premise: both `pre_exec` sites handle the equal-descriptor case, but no test ever covered it, so the build writes those tests first, runs them against the current code, and switches to `command-fds` only if the crate passes them. It builds as test batch 29.
+
+Five answers, and S3 and S5 turn out to be connected: restoring the old `unsafe` gives the Miri job something real to check.
+
+**S3. Restore the old `unsafe` version and put it under Miri.** The S4 answer last time was "remove if cheap, otherwise write the safety argument and run Miri". The measurements say removing it isn't cheap: up to 1.8 times slower on a common pattern (reads with a pending poll between them), and 1.2 times on full 64 KiB reads, on every HTTP connection. The build also showed that Miri *can* check that code: it passed the old version and caught a planted uninitialised byte that the plain test missed. So the `unsafe` version is both faster and verifiable. List it, write its safety argument next to it, and Miri checks it in CI. That is the policy working as intended, not an exception to it. It also removes S3's other question, the 64 KiB per readable connection, since the old version needed no extra buffer.
+
+**S5 and F388. (a), but the job must never pass while checking nothing.** A job named "miri" that runs nothing and passes is the pass-on-silence pattern in CI form. Two changes:
+
+- **Mark each listed entry by kind** in `unsafe-allowed.txt`: pure Rust (Miri-checked) or system call (Miri can't execute it).
+- **Make the Miri step fail** if a pure-Rust entry has no test Miri runs. It should also say plainly which entries it skipped as system calls, and why.
+
+With `FuturesIo` restored, the job has real work. The three system-call entries rest on their safety comments and their ordinary tests, and the policy check still guarantees nothing new slips in unlisted. Not AddressSanitizer: it finds memory errors, while the risks in those entries are about descriptor ownership (double closes, leaks), which it doesn't detect, so it would add a nightly job with little to show for it.
+
+**S4. Move onto `command-fds`, if it handles the equal-descriptor case.** `pre_exec` code is genuinely subtle, since it runs between `fork` and `exec`, where almost nothing is safe to call. A maintained crate that does descriptor placement takes two entries off the list. The condition: the old code had tests for placing a descriptor that's already at its target number (the `dup2`-to-itself case), so port those tests and confirm the crate passes them before switching.
+
+**S1. Keep no idle default, but offer a client-wide setting.** The reason it is safe: a *lost connection* already fails waiting calls with `Unavailable`, through the reply lane, so an idle timeout isn't what protects against dead peers. It only catches a live server that has gone quiet. A default would cut off legitimate quiet streams, such as subscriptions that only produce occasional events. Add `.idle_timeout(Bound)` on the client and the module, defaulting to `Unbounded`, for apps that want one bound everywhere, with the per-call setting overriding it. Document in one sentence that connection loss is detected regardless.
+
+**S2. Accepted.** Before the first frame, the caller is waiting either way. Excluding the connect would leave a stream that can never connect hanging forever.
+
+**RabbitMQ. Yes, shorten them.** CI rising too confirms the cause. What these scenarios assert is the *order* of events (the deadline fires and the server enforces it), not that a deadline is long. Scale them from the suite's `Budget` rather than using fixed seconds, so they stay robust on slow hosts while costing milliseconds on fast ones.
