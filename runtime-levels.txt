@@ -10,6 +10,11 @@
 #   runtime-neutral+http2  the same, plus `io-util` and `bytes`, which h2 brings on the HTTP/2 path.
 #   tokio-bound            runs on tokio; listed so no member goes unclassified, and not checked.
 #
+# In both runtime-neutral sets tokio arrives only through hyper, h2 or tokio-util: a package that
+# depends on tokio directly fails the entry unless it is one of those three, and a workspace member
+# that depends on tokio-util directly fails it unless a line `<crate> direct-tokio-util <reason>`
+# names the member. A `direct-tokio-util` line no runtime-neutral tree uses fails too.
+#
 # A runtime-free crate is read with `--all-features` unless a feature of its own brings tokio, so a
 # feature added later is checked without this file changing.
 
@@ -121,6 +126,11 @@ ulo-http-conformance          runtime-neutral+http2
 
 # The HTTP suite with its smol harness, as the smol CI job runs it.
 ulo-http-conformance          runtime-neutral+http2  --features smol
+
+# The suite's GOAWAY scenario drives `h2`'s client over the host's `futures-io` stream, and h2 reads
+# tokio's I/O traits; the adapter between them is tokio-util's or one implementing tokio's traits,
+# which would name tokio directly.
+ulo-http-conformance          direct-tokio-util      `compat`, the host's stream as the tokio I/O h2's client reads
 
 # The tokio runtime.
 ulo-tokio                     tokio-bound
