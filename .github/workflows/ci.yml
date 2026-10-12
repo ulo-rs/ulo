@@ -166,8 +166,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Pinned on purpose, one of the two pins in this file that are not read from
-      # a manifest; `generated code lints` holds the other. `tests/ui/*.stderr` records rustc's rendering as well as the
+      # Pinned on purpose, one of the three pins in this file that are not read from
+      # a manifest; `generated code lints` and `miri` hold the others. `tests/ui/*.stderr` records rustc's rendering as well as the
       # attributes' own text, and rustc rewords its half roughly once every three
       # minor versions: on `stable` that arrives as a red build on a pull request
       # that changed nothing related. ulo-codegen-tests' build script sets
@@ -200,6 +200,29 @@ jobs:
       # here names generated code. --no-deps lints that crate alone: the framework's own crates
       # are compiled, not linted.
       - run: cargo clippy -p ulo-macro-lints --all-targets --no-deps --locked -- -D warnings
+
+  miri:
+    name: miri
+    runs-on: ubuntu-latest
+    env:
+      MIRI_TOOLCHAIN: nightly-2026-10-11
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned to one nightly, so a Miri change cannot turn this job red on a change unrelated to
+      # `unsafe`; the pin is bumped in a commit of its own.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-11
+          components: miri, rust-src
+      # `unsafe` only where `unsafe-allowed.txt` lists it: the workspace denies `unsafe_code`, a
+      # listed module opts out with `#![allow(unsafe_code)]`, and this fails on `unsafe` or a
+      # relaxed `unsafe_code` anywhere else, on a member that does not inherit the workspace's
+      # lints, and on a listed file that does not opt out. Before the cache, so it fails fast.
+      - run: python3 scripts/unsafe_allowed.py check
+      - uses: Swatinem/rust-cache@v2
+      # Miri over exactly the listed modules' tests: a module's own tests by its path, a listed
+      # test target whole. With nothing listed, nothing runs.
+      - run: python3 scripts/unsafe_allowed.py miri
 
   brokers:
     name: broker integration

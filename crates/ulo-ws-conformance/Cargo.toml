@@ -24,3 +24,6 @@ futures-io.workspace = true
 # `io`: the upgrade request written and its response read over the host's stream.
 futures-util = { workspace = true, features = ["io"] }
 serde_json.workspace = true
+
+[lints]
+workspace = true

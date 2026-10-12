@@ -27,3 +27,6 @@ ulo-tokio = { path = "../ulo-tokio" }
 ulo-test-certs = { path = "../ulo-test-certs" }
 http.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[lints]
+workspace = true

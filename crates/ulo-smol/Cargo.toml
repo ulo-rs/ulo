@@ -18,3 +18,6 @@ event-listener.workspace = true
 
 [dev-dependencies]
 ulo-runtime-conformance = { path = "../ulo-runtime-conformance" }
+
+[lints]
+workspace = true

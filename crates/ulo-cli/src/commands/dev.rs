@@ -17,6 +17,10 @@
 //! platforms `--listen` is ignored with a warning and a client can see a refused connection during
 //! a restart.
 
+// Listed in `unsafe-allowed.txt`: placing the held socket at descriptor 3 runs between fork and
+// exec, through `pre_exec`.
+#![allow(unsafe_code)]
+
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;

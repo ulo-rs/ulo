@@ -47,6 +47,7 @@ pub(crate) const SUM: &str = "conformance.sum";
 pub(crate) const COLLECT: &str = "conformance.collect";
 pub(crate) const DOUBLE: &str = "conformance.double";
 pub(crate) const TICKS: &str = "conformance.ticks";
+pub(crate) const PAUSE: &str = "conformance.pause";
 pub(crate) const UNTIL_DRAIN: &str = "conformance.until_drain";
 pub(crate) const BYTES: &str = "conformance.bytes";
 pub(crate) const NOBODY: &str = "conformance.nobody";
@@ -75,7 +76,7 @@ pub(crate) const HEADER: &str = "x-conformance";
 /// The server's drain window: longer than any call a scenario holds in flight across it.
 const DRAIN: Duration = Duration::from_secs(5);
 
-/// The client module's timeout, which a scenario's own `.timeout(..)` replaces.
+/// The client module's timeout, which a request's own `.timeout(..)` replaces; a stream has none.
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -421,6 +422,22 @@ impl StreamController {
         stream::unfold((0u64, recorder, timer), |(n, recorder, timer)| async move {
             timer.sleep(Duration::from_millis(20)).await;
             Some((Ok(n), (n + 1, recorder, timer)))
+        })
+    }
+
+    /// Yields `0`, falls silent for the given milliseconds, yields `1`, and ends.
+    #[ulo_rpc::message("conformance.pause")]
+    async fn pause(&self, millis: Payload<u64>, timer: Dep<dyn Timer>) -> impl Stream<Item = Result<u64, Refusal>> {
+        let silence = Duration::from_millis(millis.0);
+        stream::unfold((0u64, timer), move |(n, timer)| async move {
+            match n {
+                0 => Some((Ok(0), (1, timer))),
+                1 => {
+                    timer.sleep(silence).await;
+                    Some((Ok(1), (2, timer)))
+                }
+                _ => None,
+            }
         })
     }
 

@@ -47,3 +47,6 @@ ulo-tokio = { path = "../ulo-tokio" }
 futures.workspace = true
 # `io-util`: tokio's extension traits, for the same tests' `tokio-io` cases.
 tokio = { workspace = true, features = ["macros", "rt", "time", "sync", "io-util"] }
+
+[lints]
+workspace = true

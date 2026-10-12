@@ -1,0 +1,17 @@
+# The modules allowed to opt out of the workspace's `unsafe_code = "deny"`, one source file per
+# line, each opting out with `#![allow(unsafe_code)]` at its top. `scripts/unsafe_allowed.py check`
+# fails CI on `unsafe` or a relaxed `unsafe_code` level in any other file, and on a listed file
+# that does not opt out; the `miri` job runs Miri over the listed modules' tests. Keep it short:
+# an entry is a module whose `unsafe` has no safe equivalent.
+
+# Adopting the descriptors a supervisor hands down (`BorrowedFd::borrow_raw`,
+# `OwnedFd::from_raw_fd`) and reading a socket's listen state through `getsockopt` where socket2
+# does not.
+crates/ulo-net/src/activation.rs
+
+# `ulo dev --listen`: placing the held socket at descriptor 3 between fork and exec, through
+# `pre_exec`, `dup2` and `fcntl`.
+crates/ulo-cli/src/commands/dev.rs
+
+# The socket-activation test's child, its descriptor 3 placed the same way.
+crates/ulo-http-hyper/tests/listeners.rs

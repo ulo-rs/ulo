@@ -28,3 +28,6 @@ ulo-smol = { path = "../ulo-smol" }
 ulo-test-certs = { path = "../ulo-test-certs" }
 ulo-transport = { path = "../ulo-transport" }
 futures-executor.workspace = true
+
+[lints]
+workspace = true

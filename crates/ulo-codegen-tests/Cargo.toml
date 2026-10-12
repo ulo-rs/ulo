@@ -42,3 +42,6 @@ trybuild.workspace = true
 
 [build-dependencies]
 ulo-build = { path = "../ulo-build" }
+
+[lints]
+workspace = true

@@ -66,6 +66,13 @@ exclude = [
     "examples",
 ]
 
+# `unsafe` is refused in every member but in the modules `unsafe-allowed.txt` lists, each of which
+# opts out with `#![allow(unsafe_code)]` at its top. `deny` rather than `forbid`, since `forbid`
+# cannot be relaxed for one module; `scripts/unsafe_allowed.py` fails CI on an opt-out the list
+# does not name, and on a member that does not inherit this table.
+[workspace.lints.rust]
+unsafe_code = "deny"
+
 [workspace.package]
 edition = "2024"
 rust-version = "1.88"

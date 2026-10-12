@@ -40,3 +40,6 @@ tokio = { workspace = true, features = ["full"] }
 watchexec = { workspace = true, optional = true }
 watchexec-filterer-globset = { workspace = true, optional = true }
 watchexec-signals = { workspace = true, optional = true }
+
+[lints]
+workspace = true

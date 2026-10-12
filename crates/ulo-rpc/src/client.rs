@@ -23,7 +23,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::task::{Context, Poll};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use futures_core::Stream;
@@ -121,10 +121,18 @@ impl Error for UnusableLink {
 /// A client of one link, bound by `RpcClientModule` as `Dep<RpcClient, Billing>` under the
 /// module's qualifier, or built outside an app with [`RpcClient::new`]. Cheap to clone. Its tasks
 /// and every timeout run on the runtime it was given, the app's inside an app; dropping a pending
-/// request or a stream sends `cancel`, spawned on that runtime. A call answered by one reply
-/// carries its timeout to the server as `deadline-ms`, so the server stops the call when the
-/// client gives up on it. There is no ambient execution: a call made inside one forwards its
-/// deadline and cancellation with [`Call::within`].
+/// request or a stream sends `cancel`, spawned on that runtime. There is no ambient execution: a
+/// call made inside one forwards its deadline and cancellation with [`Call::within`].
+///
+/// Each bound has one meaning on every call shape. A `timeout` bounds the whole call: on a
+/// [`request`](Self::request) or a [`send_stream`](Self::send_stream) it is carried to the server
+/// as `deadline-ms`, so the server stops the call when the client gives up on it, and on an
+/// [`emit`](Self::emit) it bounds the publish, since nothing comes back. A
+/// [`stream`](Self::stream) or a [`duplex`](Self::duplex) call has no `timeout`: its
+/// [`idle_timeout`](StreamCall::idle_timeout) is the longest silence the client tolerates between
+/// reply frames and is not sent, and its [`deadline`](StreamCall::deadline) bounds the whole call
+/// and is sent as `deadline-ms`. A stream has neither unless the call sets it, since a stream may
+/// run indefinitely.
 #[derive(Clone)]
 pub struct RpcClient {
     pub(crate) inner: Arc<ClientInner>,
@@ -196,7 +204,8 @@ impl Conn {
 
 impl RpcClient {
     /// A client of `link` outside an app, its tasks spawned on `runtime`, which also times its
-    /// calls: five seconds each unless [`timeout`](Self::timeout) or the call sets another.
+    /// calls: five seconds for each `request`, `send_stream` and `emit` unless
+    /// [`timeout`](Self::timeout) or the call sets another.
     ///
     /// ```ignore
     /// let billing = RpcClient::new(ulo_rpc_tcp::Tcp::new("billing:7000"), Arc::new(ulo_tokio::Tokio::current()))?
@@ -251,10 +260,13 @@ impl RpcClient {
         }
     }
 
-    /// Every call's timeout unless the call sets its own, as `RpcClientModule::timeout` sets it
-    /// for a module's client: five seconds at `Bound::Default`, `Bound::Unbounded` for none. This
-    /// handle and the clones made from it after carry it; clones made before keep theirs, sharing
-    /// the connection all the same.
+    /// The timeout of every `request` and `send_stream` that sets none of its own, the whole
+    /// call's bound and its `deadline-ms`, and the bound on every `emit`'s publish, as
+    /// `RpcClientModule::timeout` sets it for a module's client: five seconds at `Bound::Default`,
+    /// `Bound::Unbounded` for none. A `stream` or `duplex` call is bounded only by its own
+    /// [`idle_timeout`](StreamCall::idle_timeout) and [`deadline`](StreamCall::deadline), so this
+    /// leaves it unbounded. This handle and the clones made from it after carry it; clones made
+    /// before keep theirs, sharing the connection all the same.
     ///
     /// `Bound::After(Duration::ZERO)`, which would time out every call, is refused as
     /// [`ZeroTimeout`], and the handle with it, so `RpcClient::new(link, runtime)?.timeout(b)?`
@@ -290,7 +302,7 @@ impl RpcClient {
         Res: DeserializeOwned + Send + 'static,
     {
         let payload = encode(self.inner.codec, req);
-        StreamCall { _res: PhantomData, spec: Spec::new(self, pattern, Request::One(payload)) }
+        StreamCall::new(Spec::new(self, pattern, Request::One(payload)))
     }
 
     /// A streamed request answered by one reply.
@@ -310,7 +322,7 @@ impl RpcClient {
         S::Item: Serialize,
         Res: DeserializeOwned + Send + 'static,
     {
-        StreamCall { _res: PhantomData, spec: Spec::new(self, pattern, self.items(items)) }
+        StreamCall::new(Spec::new(self, pattern, self.items(items)))
     }
 
     fn items<S>(&self, items: S) -> Request
@@ -348,6 +360,19 @@ pub(crate) struct Spec {
     within: Option<ExecutionRef>,
 }
 
+/// What bounds a call as a whole, and whether the bound is sent as `deadline-ms`.
+#[derive(Clone, Copy)]
+enum Whole {
+    /// A call answered by one reply: its own timeout or the client's, sent. The client abandons
+    /// the call there, so the server stops there too.
+    Reply,
+    /// An event: the client's timeout, covering the publish and not sent, since the handler runs
+    /// with no caller waiting.
+    Publish,
+    /// A stream: its own deadline, sent, or none.
+    Stream(Option<Duration>),
+}
+
 enum Request {
     One(Result<Data, RpcError>),
     Stream(BoxStream<'static, Result<Data, RpcError>>),
@@ -358,18 +383,20 @@ impl Spec {
         Spec { client: client.clone(), pattern: Pattern::from(pattern), request, headers: CallHeaders::new(), timeout: None, within: None }
     }
 
-    /// The wait the call is bounded by: its own timeout or the client's, and the calling
-    /// execution's remaining time when that is shorter. Refuses a call whose execution's deadline
-    /// has passed, before any I/O.
+    /// The wait the whole call is bounded by, `whole`'s bound and the calling execution's
+    /// remaining time when that is shorter. Refuses a call whose execution's deadline has passed,
+    /// before any I/O.
     ///
     /// Stamps `deadline-ms`, the deadline the server enforces, with the shortest of the calling
-    /// execution's remaining time, a `deadline-ms` the caller set, and, where `whole` says the
-    /// timeout bounds the whole call, the timeout. A call answered by one reply is abandoned at its
-    /// timeout, so the server stops there too; a stream's timeout bounds the wait for each frame
-    /// and an event's the publish, neither the work the server does.
-    fn limit(&mut self, whole: bool) -> Result<Option<Duration>, RpcError> {
+    /// execution's remaining time, a `deadline-ms` the caller set, and `whole`'s bound unless it
+    /// covers only an event's publish.
+    fn limit(&mut self, whole: Whole) -> Result<Option<Duration>, RpcError> {
         let inner = &self.client.inner;
-        let own = self.timeout.or(self.client.timeout);
+        let own = match whole {
+            Whole::Reply | Whole::Publish => self.timeout.or(self.client.timeout),
+            Whole::Stream(deadline) => deadline,
+        };
+        let sent = !matches!(whole, Whole::Publish);
         let remaining = match self.within.as_ref().and_then(ExecutionRef::deadline) {
             Some(deadline) => {
                 let remaining = deadline.saturating_duration_since(inner.runtime.now());
@@ -380,7 +407,7 @@ impl Spec {
             }
             None => None,
         };
-        let stamped = [remaining, own.filter(|_| whole), self.headers.deadline()].into_iter().flatten().min();
+        let stamped = [remaining, own.filter(|_| sent), self.headers.deadline()].into_iter().flatten().min();
         if let Some(stamped) = stamped {
             self.headers.entries.retain(|(name, _)| name != "deadline-ms");
             self.headers.insert("deadline-ms", stamped.as_millis().max(1).to_string());
@@ -631,16 +658,44 @@ fn send_error(err: BoxError) -> RpcError {
     }
 }
 
+/// One wait's bound, and what the caller is told when it passes.
+#[derive(Clone, Copy)]
+struct Limit {
+    after: Duration,
+    passed: &'static str,
+}
+
+impl Limit {
+    /// A call's whole bound, its timeout or its execution's remaining time.
+    fn call(after: Option<Duration>) -> Option<Limit> {
+        after.map(|after| Limit { after, passed: "the call timed out" })
+    }
+
+    /// A stream's wait for its next reply frame: its idle timeout, or the time left to its
+    /// deadline when that is shorter.
+    fn frame(idle: Option<Duration>, left: Option<Duration>) -> Option<Limit> {
+        const IDLE: &str = "no reply frame arrived within the stream's idle timeout";
+        const DEADLINE: &str = "the stream's deadline passed";
+        match (idle, left) {
+            (Some(idle), Some(left)) if left < idle => Some(Limit { after: left, passed: DEADLINE }),
+            (Some(idle), _) => Some(Limit { after: idle, passed: IDLE }),
+            (None, Some(left)) => Some(Limit { after: left, passed: DEADLINE }),
+            (None, None) => None,
+        }
+    }
+}
+
 /// `work` bounded by `limit` on the client's runtime and by the calling execution's cancellation.
 async fn bounded<T>(
     timer: &dyn Timer,
-    limit: Option<Duration>,
+    limit: Option<Limit>,
     within: Option<&ExecutionRef>,
     work: impl Future<Output = Result<T, RpcError>>,
 ) -> Result<T, RpcError> {
+    let passed = limit.map_or("the call timed out", |limit| limit.passed);
     let expired = async {
         match limit {
-            Some(after) => timer.sleep(after).await,
+            Some(limit) => timer.sleep(limit.after).await,
             None => std::future::pending().await,
         }
     };
@@ -656,7 +711,7 @@ async fn bounded<T>(
     // Unbiased: when more than one is ready, one is picked at random.
     futures_util::select! {
         out = work.fuse() => out,
-        () = expired.fuse() => Err(RpcError::new(ErrorKind::Timeout, "the call timed out")),
+        () = expired.fuse() => Err(RpcError::new(ErrorKind::Timeout, passed)),
         reason = cancelled.fuse() => Err(match reason {
             Some(CancelReason::Deadline) => RpcError::new(ErrorKind::Timeout, "the calling execution's deadline passed"),
             _ => RpcError::new(ErrorKind::Unavailable, "the calling execution was cancelled"),
@@ -700,7 +755,7 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for Call<Res> {
     fn into_future(self) -> Self::IntoFuture {
         let mut spec = self.spec;
         Box::pin(async move {
-            let limit = spec.limit(true)?;
+            let limit = Limit::call(spec.limit(Whole::Reply)?);
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
             bounded(&*runtime, limit, within.as_ref(), async move { spec.open().await?.single::<Res>().await }).await
@@ -733,7 +788,7 @@ impl IntoFuture for Emit {
     fn into_future(self) -> Self::IntoFuture {
         let mut spec = self.spec;
         Box::pin(async move {
-            let limit = spec.limit(false)?;
+            let limit = Limit::call(spec.limit(Whole::Publish)?);
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
             bounded(&*runtime, limit, within.as_ref(), async move {
@@ -751,22 +806,56 @@ impl IntoFuture for Emit {
     }
 }
 
-/// A call answered by a stream, opened when awaited.
+/// A call answered by a stream, opened when awaited: a [`stream`](RpcClient::stream) or a
+/// [`duplex`](RpcClient::duplex) call. It has no `timeout`, which on a request bounds the whole
+/// call: [`idle_timeout`](Self::idle_timeout) bounds each silence and
+/// [`deadline`](Self::deadline) the whole call, and neither applies unless set.
+///
+/// ```compile_fail,E0599
+/// # use std::time::Duration;
+/// fn ticks(client: &ulo_rpc::RpcClient) -> ulo_rpc::StreamCall<u64> {
+///     client.stream::<_, u64>("clock.ticks", &()).timeout(Duration::from_secs(1))
+/// }
+/// ```
+///
+/// ```
+/// # use std::time::Duration;
+/// fn ticks(client: &ulo_rpc::RpcClient) -> ulo_rpc::StreamCall<u64> {
+///     client.stream::<_, u64>("clock.ticks", &()).idle_timeout(Duration::from_secs(1)).deadline(Duration::from_secs(60))
+/// }
+/// ```
 #[must_use = "a call is sent when awaited"]
 pub struct StreamCall<Res> {
     pub(crate) _res: PhantomData<fn() -> Res>,
     pub(crate) spec: Spec,
+    idle: Option<Duration>,
+    deadline: Option<Duration>,
 }
 
 impl<Res> StreamCall<Res> {
+    fn new(spec: Spec) -> Self {
+        StreamCall { _res: PhantomData, spec, idle: None, deadline: None }
+    }
+
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.spec.headers.insert(name, value);
         self
     }
 
-    /// The longest wait for each reply frame, the client's timeout unset.
-    pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.spec.timeout = Some(timeout);
+    /// The longest silence the client tolerates between reply frames, the first counted from when
+    /// the call is awaited. A frame not arriving within it ends the stream with `Timeout`, and
+    /// dropping the stream then sends `cancel`. It is not sent to the server. None unless set: the
+    /// client's timeout does not apply to a stream.
+    pub fn idle_timeout(mut self, idle: Duration) -> Self {
+        self.idle = Some(idle);
+        self
+    }
+
+    /// A bound on the whole call, counted from when it is awaited: the stream ends with `Timeout`
+    /// when it passes, and the server is given it in `deadline-ms` unless a shorter one applies and
+    /// cancels the handler there. None unless set, since a stream may run indefinitely.
+    pub fn deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
         self
     }
 
@@ -781,26 +870,33 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for StreamCall<Res> {
     type IntoFuture = BoxFuture<'static, Result<RpcStream<Res>, RpcError>>;
 
     fn into_future(self) -> Self::IntoFuture {
-        let mut spec = self.spec;
+        let StreamCall { mut spec, idle, deadline, .. } = self;
         Box::pin(async move {
-            let limit = spec.limit(false)?;
+            let whole = spec.limit(Whole::Stream(deadline))?;
             let runtime = Arc::clone(&spec.client.inner.runtime);
+            let ends = whole.map(|whole| runtime.now() + whole);
             let within = spec.within.clone();
-            let exchange = bounded(&*runtime, limit, within.as_ref(), spec.open()).await?;
-            Ok(RpcStream { items: replies::<Res>(exchange, limit) })
+            let exchange = bounded(&*runtime, Limit::frame(idle, whole), within.as_ref(), spec.open()).await?;
+            Ok(RpcStream { items: replies::<Res>(exchange, idle, ends) })
         })
     }
 }
 
-/// The reply frames as items, each awaited under `per_frame`. The exchange is dropped with the
-/// stream, which sends `cancel` unless an `end`, an `err` or a single `res` settled it.
-fn replies<Res: DeserializeOwned + Send + 'static>(exchange: Exchange, per_frame: Option<Duration>) -> BoxStream<'static, Result<Res, RpcError>> {
+/// The reply frames as items, each awaited under `idle` and what is left to `ends`. The exchange
+/// is dropped with the stream, which sends `cancel` unless an `end`, an `err` or a single `res`
+/// settled it.
+fn replies<Res: DeserializeOwned + Send + 'static>(
+    exchange: Exchange,
+    idle: Option<Duration>,
+    ends: Option<Instant>,
+) -> BoxStream<'static, Result<Res, RpcError>> {
     let items = futures_util::stream::unfold(Some(exchange), move |exchange| async move {
         let mut exchange = exchange?;
         let timer = Arc::clone(&exchange.timer);
         let within = exchange.within.clone();
         let codec = exchange.codec;
-        let next = bounded(&*timer, per_frame, within.as_ref(), async { Ok(exchange.replies.next().await) }).await;
+        let left = ends.map(|ends| ends.saturating_duration_since(timer.now()));
+        let next = bounded(&*timer, Limit::frame(idle, left), within.as_ref(), async { Ok(exchange.replies.next().await) }).await;
         match next {
             Ok(Some(Ok(Frame::Item { data, .. }))) => Some((decode(codec, &data), Some(exchange))),
             // A server whose handler answered one value: the stream is that value.
@@ -970,6 +1066,131 @@ mod tests {
         async fn close(&self) -> Result<(), BoxError> {
             Ok(())
         }
+    }
+
+    /// A link whose server never answers, recording the `deadline-ms` of each opening frame it
+    /// sends, `req` or `open`, and `None` for one carrying none.
+    #[derive(Clone, Default)]
+    struct SilentLink(Arc<Mutex<Vec<Opening>>>);
+
+    /// An opening frame's kind and its `deadline-ms`.
+    type Opening = (&'static str, Option<String>);
+
+    impl SilentLink {
+        fn sent(&self) -> Vec<Opening> {
+            self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        }
+    }
+
+    impl Link for SilentLink {
+        const NAME: &'static str = "silent";
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::new(DeliveryMode::Addressed)
+        }
+
+        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+            Err("this link has no server side".into())
+        }
+
+        async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+            let sent = Arc::clone(&self.0);
+            Ok(Outbound {
+                send: Box::new(move |_pattern, frame, _reply_to| {
+                    let opening = match &frame {
+                        Frame::Req { headers, .. } | Frame::Open { headers, .. } => Some((frame.kind(), headers.get("deadline-ms").map(str::to_owned))),
+                        _ => None,
+                    };
+                    if let Some(opening) = opening {
+                        sent.lock().unwrap_or_else(PoisonError::into_inner).push(opening);
+                    }
+                    Box::pin(async { Ok(()) })
+                }),
+                replies: Box::pin(futures_util::stream::pending()),
+            })
+        }
+
+        async fn drain(&self) {}
+
+        async fn close(&self) -> Result<(), BoxError> {
+            Ok(())
+        }
+    }
+
+    fn silent_client(link: &SilentLink, timeout: Duration) -> RpcClient {
+        RpcClient::of_module(Arc::new(link.clone()), Bound::After(timeout), Arc::new(ulo_tokio::Tokio::current()))
+    }
+
+    /// The stream's next item, failing the test after five seconds rather than hanging it.
+    async fn next_within_5s(stream: &mut RpcStream<u32>, what: &str) -> Option<Result<u32, RpcError>> {
+        tokio::time::timeout(Duration::from_secs(5), stream.next()).await.unwrap_or_else(|_| panic!("{what} did not happen within 5s"))
+    }
+
+    /// A stream's deadline is sent as `deadline-ms` on `stream` and `duplex` alike; its idle
+    /// timeout is not, and the client's timeout, which a request sends, does not reach a stream.
+    #[tokio::test]
+    async fn a_stream_sends_its_deadline_and_neither_its_idle_timeout_nor_the_client_s_timeout() {
+        let link = SilentLink::default();
+        let client = silent_client(&link, Duration::from_millis(300));
+        let items = || futures_util::stream::iter([1u32]);
+        let timed_out = client.request::<_, ()>("silent.request", &()).await.expect_err("nothing answers the request");
+        assert_eq!(timed_out.kind(), ErrorKind::Timeout);
+        drop(client.stream::<_, u32>("silent.stream", &()).deadline(Duration::from_secs(2)).await.expect("the stream opens"));
+        drop(client.duplex::<_, u32>("silent.duplex", items()).deadline(Duration::from_millis(1500)).await.expect("the duplex opens"));
+        drop(client.stream::<_, u32>("silent.stream", &()).idle_timeout(Duration::from_secs(1)).await.expect("the stream opens"));
+        drop(client.stream::<_, u32>("silent.stream", &()).await.expect("the stream opens"));
+        drop(client.duplex::<_, u32>("silent.duplex", items()).await.expect("the duplex opens"));
+        assert_eq!(
+            link.sent(),
+            vec![
+                ("req", Some("300".to_owned())),
+                ("req", Some("2000".to_owned())),
+                ("open", Some("1500".to_owned())),
+                ("req", None),
+                ("req", None),
+                ("open", None),
+            ],
+            "each opening frame's `deadline-ms`: the request's timeout, two streams' deadlines, then three streams with none"
+        );
+    }
+
+    /// A stream whose server goes silent ends at its idle timeout, as `Timeout`.
+    #[tokio::test]
+    async fn a_silent_stream_ends_at_its_idle_timeout() {
+        let client = silent_client(&SilentLink::default(), Duration::from_secs(30));
+        let started = std::time::Instant::now();
+        let mut stream = client.stream::<_, u32>("silent.stream", &()).idle_timeout(Duration::from_millis(100)).await.expect("the stream opens");
+        let ended = next_within_5s(&mut stream, "the idle timeout").await.expect("the stream yields its timeout").expect_err("nothing arrived");
+        assert_eq!(ended.kind(), ErrorKind::Timeout);
+        assert!(ended.message().contains("idle timeout"), "the stream did not end on its idle timeout: {ended:?}");
+        assert!(started.elapsed() < Duration::from_secs(5), "the idle timeout took {:?}", started.elapsed());
+        assert!(next_within_5s(&mut stream, "the stream's end").await.is_none(), "the stream yielded after its idle timeout");
+    }
+
+    /// A stream ends at its deadline, as `Timeout`, however long its idle timeout.
+    #[tokio::test]
+    async fn a_stream_ends_at_its_deadline_before_a_longer_idle_timeout() {
+        let client = silent_client(&SilentLink::default(), Duration::from_secs(30));
+        let started = std::time::Instant::now();
+        let mut stream = client
+            .stream::<_, u32>("silent.stream", &())
+            .idle_timeout(Duration::from_secs(30))
+            .deadline(Duration::from_millis(100))
+            .await
+            .expect("the stream opens");
+        let ended = next_within_5s(&mut stream, "the deadline").await.expect("the stream yields its deadline").expect_err("nothing arrived");
+        assert_eq!(ended.kind(), ErrorKind::Timeout);
+        assert!(ended.message().contains("deadline"), "the stream did not end at its deadline: {ended:?}");
+        assert!(started.elapsed() < Duration::from_secs(5), "the deadline took {:?}", started.elapsed());
+    }
+
+    /// A stream given neither bound is not ended by the client's timeout.
+    #[tokio::test]
+    async fn a_stream_with_neither_bound_outlives_the_client_s_timeout() {
+        let client = silent_client(&SilentLink::default(), Duration::from_millis(50));
+        let mut stream = client.stream::<_, u32>("silent.stream", &()).await.expect("the stream opens");
+        let waited = tokio::time::timeout(Duration::from_millis(500), stream.next()).await;
+        assert!(waited.is_err(), "a stream with neither bound ended within ten times the client's timeout: {:?}", waited.ok());
     }
 
     /// F364: a call handed a connection whose reply lane then ended, before the call registered,

@@ -24,3 +24,6 @@ libc = { workspace = true }
 [dev-dependencies]
 # The certificate `tests/tls.rs` serves, made when the tests run.
 ulo-test-certs = { path = "../ulo-test-certs" }
+
+[lints]
+workspace = true

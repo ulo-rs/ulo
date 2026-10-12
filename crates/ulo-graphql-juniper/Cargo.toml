@@ -17,3 +17,6 @@ futures.workspace = true
 juniper = { workspace = true, features = ["schema-language"] }
 serde_json.workspace = true
 tracing.workspace = true
+
+[lints]
+workspace = true

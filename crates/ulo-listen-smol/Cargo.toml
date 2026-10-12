@@ -25,3 +25,6 @@ ulo-test-certs = { path = "../ulo-test-certs" }
 http.workspace = true
 async-io.workspace = true
 futures.workspace = true
+
+[lints]
+workspace = true

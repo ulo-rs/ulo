@@ -27,3 +27,6 @@ ulo-ws-conformance = { path = "../ulo-ws-conformance" }
 ulo-tokio = { path = "../ulo-tokio" }
 ulo-ws = { path = "../ulo-ws" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync"] }
+
+[lints]
+workspace = true

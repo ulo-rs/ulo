@@ -50,7 +50,7 @@ pub async fn substituted<B: Broker>() {
     let answer = fixture.rpc().request::<_, Sum>(SUBSTITUTED, &()).timeout(WAIT).await;
     assert_eq!(answer.expect("the error handler's value answers the call"), SUBSTITUTE);
     if streams(&fixture.capabilities()) {
-        let replies = fixture.rpc().stream::<_, u32>(SUBSTITUTED_STREAM, &()).timeout(WAIT).await.expect("the stream opens");
+        let replies = fixture.rpc().stream::<_, u32>(SUBSTITUTED_STREAM, &()).idle_timeout(WAIT).await.expect("the stream opens");
         let items: Vec<_> = within::<B, _>(WAIT, "the error handler's stream", replies.collect()).await;
         let items: Vec<u32> = items.into_iter().map(|item| item.expect("every item arrives")).collect();
         assert_eq!(items, SUBSTITUTE_ITEMS);
@@ -69,7 +69,7 @@ pub async fn unencodable_reply<B: Broker>() {
     let outcome = within::<B, _>(WAIT * 2, "the unencodable call", call.into_future()).await;
     failed(outcome, ErrorKind::Internal);
     if streams(&fixture.capabilities()) {
-        let replies = fixture.rpc().stream::<_, u32>(UNENCODABLE_STREAM, &()).timeout(WAIT).await.expect("the stream opens");
+        let replies = fixture.rpc().stream::<_, u32>(UNENCODABLE_STREAM, &()).idle_timeout(WAIT).await.expect("the stream opens");
         let items: Vec<_> = within::<B, _>(WAIT * 2, "the unencodable stream", replies.collect()).await;
         match items.as_slice() {
             [Ok(1), Err(error)] if error.kind() == ErrorKind::Internal => {}

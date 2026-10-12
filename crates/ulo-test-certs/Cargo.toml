@@ -17,3 +17,6 @@ publish = false
 rcgen.workspace = true
 # The root store a client trusts the certificates through, from the same rustls as `ulo-net`'s.
 rustls.workspace = true
+
+[lints]
+workspace = true

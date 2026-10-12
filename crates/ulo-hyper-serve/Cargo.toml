@@ -35,3 +35,6 @@ futures.workspace = true
 http-body-util.workspace = true
 # The HTTP/1.1 and HTTP/2 connections the tests serve and the client that reads them.
 hyper = { workspace = true, features = ["server", "client", "http1", "http2"] }
+
+[lints]
+workspace = true

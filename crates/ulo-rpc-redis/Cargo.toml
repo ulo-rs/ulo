@@ -35,3 +35,6 @@ futures-executor.workspace = true
 testcontainers.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
+
+[lints]
+workspace = true

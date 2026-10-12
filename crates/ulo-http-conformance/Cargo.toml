@@ -51,3 +51,6 @@ serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time"], optional = true }
 # `compat`: the host's `futures-io` stream as tokio's I/O traits, the ones `h2` reads.
 tokio-util = { workspace = true, features = ["compat"] }
+
+[lints]
+workspace = true

@@ -33,3 +33,6 @@ ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
 # The certificate the TLS suites serve, made when they run.
 ulo-test-certs = { path = "../ulo-test-certs" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync"] }
+
+[lints]
+workspace = true

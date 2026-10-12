@@ -21,3 +21,6 @@ syn = { workspace = true, features = ["full", "visit-mut"] }
 # The `__handler` grammar and the key and shared-value emission `#[routes]` writes, defined once
 # for `#[routes]` and every transport attribute.
 ulo-handler-codegen = { path = "../ulo-handler-codegen" }
+
+[lints]
+workspace = true

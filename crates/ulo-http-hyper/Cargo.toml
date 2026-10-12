@@ -50,3 +50,6 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-
 # The TLS client `tests/tls.rs` connects with, and the certificate it trusts.
 tokio-rustls.workspace = true
 ulo-test-certs = { path = "../ulo-test-certs" }
+
+[lints]
+workspace = true

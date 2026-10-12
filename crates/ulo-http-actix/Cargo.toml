@@ -44,3 +44,5 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "syn
 name = "conformance_http2"
 required-features = ["conformance-http2"]
 
+[lints]
+workspace = true

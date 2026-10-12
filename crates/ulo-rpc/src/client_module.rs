@@ -47,9 +47,12 @@ impl<L: Link> RpcClientModule<L> {
         RpcClientModule { link: Arc::new(link), timeout: Bound::Default, instance: INSTANCES.fetch_add(1, Ordering::Relaxed) }
     }
 
-    /// Every call's timeout unless the call sets its own: five seconds at `Bound::Default`,
-    /// `Bound::Unbounded` for none. `Bound::After(Duration::ZERO)` is refused when the app wires, as
-    /// [`ZeroTimeout`].
+    /// The client's timeout, as [`RpcClient::timeout`] sets it: the whole-call bound of every
+    /// `request` and `send_stream` that sets none of its own, sent as `deadline-ms`, and the bound
+    /// on every `emit`'s publish. Five seconds at `Bound::Default`, `Bound::Unbounded` for none.
+    /// It does not apply to a `stream` or `duplex` call, which is bounded only by its own
+    /// `idle_timeout` and `deadline`. `Bound::After(Duration::ZERO)` is refused when the app wires,
+    /// as [`ZeroTimeout`].
     pub fn timeout(mut self, timeout: Bound) -> Self {
         self.timeout = timeout;
         self

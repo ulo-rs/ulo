@@ -16,7 +16,7 @@ pub async fn mid_stream<B: Broker>() {
         return fixture.stop().await;
     }
     let settle = fixture.broker.budget().settle;
-    let mut ticks = fixture.rpc().stream::<_, u64>(TICKS, &()).timeout(Duration::from_secs(10)).await.expect("the stream opens");
+    let mut ticks = fixture.rpc().stream::<_, u64>(TICKS, &()).idle_timeout(Duration::from_secs(10)).await.expect("the stream opens");
     for _ in 0..2 {
         within::<B, _>(Duration::from_secs(10), "a tick", ticks.next()).await.expect("the stream yields").expect("a tick arrives");
     }

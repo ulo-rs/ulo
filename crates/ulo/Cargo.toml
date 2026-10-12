@@ -18,3 +18,6 @@ ulo-macros = { path = "../ulo-macros" }
 # The `warn` for a panic raised while a spawned task's future is dropped, which no caller is
 # waiting to receive.
 tracing.workspace = true
+
+[lints]
+workspace = true

@@ -19,3 +19,6 @@ ulo-transport = { path = "../ulo-transport" }
 futures.workspace = true
 # The recording subscriber the scenario reading the core's `warn` installs.
 tracing.workspace = true
+
+[lints]
+workspace = true

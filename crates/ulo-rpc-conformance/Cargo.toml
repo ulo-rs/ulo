@@ -40,3 +40,6 @@ tokio = { workspace = true, features = ["rt-multi-thread", "time", "net"], optio
 [[test]]
 name = "harness"
 required-features = ["tokio", "smol"]
+
+[lints]
+workspace = true

@@ -19,3 +19,6 @@ futures-executor.workspace = true
 # `tests/own_subscriber.rs` installs a global subscriber before the suite's.
 tracing.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[lints]
+workspace = true

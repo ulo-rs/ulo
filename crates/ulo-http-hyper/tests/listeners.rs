@@ -5,6 +5,10 @@
 //! `child_serves_an_inherited_socket`, which finds it as descriptor 3, `LISTEN_PID` set to its own
 //! process ID by the shell it is started through.
 
+// Listed in `unsafe-allowed.txt`: the child's descriptor 3 is placed between fork and exec, through
+// `pre_exec`.
+#![allow(unsafe_code)]
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
@@ -68,11 +72,13 @@ async fn port_zero(app: App<Connected>, listener: &str) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "Miri refuses `socket` under isolation, and `kqueue` on macOS")]
 fn port_0_on_the_tokio_listener_reports_and_serves_the_port_the_os_chose() {
     OnTokio::block_on(async { port_zero(ulo_http_conformance::app(OnTokio::runtime()).await, "tokio").await });
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "Miri refuses `socket` under isolation, and `kqueue` on macOS")]
 fn port_0_on_the_smol_listener_reports_and_serves_the_port_the_os_chose() {
     OnSmol::block_on(async { port_zero(ulo_http_conformance::app(OnSmol::runtime()).await, "smol").await });
 }
@@ -181,11 +187,13 @@ impl Drop for Killed {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "Miri refuses `socket` under isolation")]
 fn an_inherited_socket_is_served_on_the_tokio_listener() {
     activated("tokio");
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "Miri refuses `socket` under isolation")]
 fn an_inherited_socket_is_served_on_the_smol_listener() {
     activated("smol");
 }

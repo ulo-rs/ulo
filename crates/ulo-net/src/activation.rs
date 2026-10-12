@@ -9,6 +9,10 @@
 //! `#[tokio::main]` the runtime's threads exist before user code runs. A child spawned later reads
 //! a `LISTEN_PID` that is not its own and ignores them.
 
+// Listed in `unsafe-allowed.txt`: adopting an inherited descriptor and reading a socket's listen
+// state have no safe API.
+#![allow(unsafe_code)]
+
 use std::error::Error;
 use std::fmt;
 use std::io;
@@ -354,11 +358,13 @@ mod unix {
             target_vendor = "apple",
         ))]
         #[test]
+        #[cfg_attr(miri, ignore = "Miri refuses `socket` under isolation")]
         fn a_socket_only_bound_is_refused() {
             assert!(!vet(0, bound().as_fd()), "a bound socket that never called `listen` passed the check");
         }
 
         #[test]
+        #[cfg_attr(miri, ignore = "Miri refuses `socket` under isolation")]
         fn a_listening_socket_is_accepted() {
             let socket = bound();
             socket.listen(16).expect("listening");
