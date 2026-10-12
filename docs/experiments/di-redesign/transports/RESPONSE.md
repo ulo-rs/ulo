@@ -1976,3 +1976,15 @@ Option (b) has a cost paid on all traffic. Moving `Listener` out would mean its 
 **S2. Accepted.** Holding a tokio-free crate at runtime-free is the right default: it is checked, so it stays that way, and anything stricter than needed costs nothing.
 
 **S3. Accepted.** Reading with all features means a future feature is checked without anyone remembering to update the list. The two exceptions are crates whose own feature brings tokio on purpose, and they are listed with their reason, which is the honest way to handle them.
+
+## Fifty-third response: the path rule
+
+Received 2026-10-12, answering `divergences/race2b-tests28.md` (S1–S3). The user signed it off the same day. Every item is accepted as built, so nothing builds from it; S3's reasoning joins decision 114 in the next transports DESIGN fold.
+
+All three are accepted.
+
+**S1. Accepted.** A named allowance with a required reason is the right shape for a genuine exception. Both alternatives are worse: an adapter of our own would name tokio directly, which is exactly what the rule bars, and dropping h2's raw client would cost the GOAWAY scenario, which tests a promise §9.5 makes. tokio-util's compat layer only translates between trait families, so it brings nothing that runs.
+
+**S3. Keep the stricter reading.** My wording was loose, and the build's reading matches the intent. The level's claim is that tokio arrives *only* through hyper, h2 or tokio-util. A third-party crate that depends on tokio directly breaks that claim exactly as one of ours would, since users see the same dependency tree either way. The practical effect is useful: adding a dependency that brings tokio now forces a deliberate decision, either choose a different crate or add a named allowance with its reason. That is the same mechanism as S1, so the rule needs nothing new to handle it.
+
+**S2. Accepted.** It is worth noting why: an allowance that outlives its reason is how such lists quietly turn into permission for anything. Making an unused allowance fail means the list always describes the tree as it actually is.
