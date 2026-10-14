@@ -1,6 +1,6 @@
 [package]
 name = "ulo-macro-lints"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Every attribute and derive macro the framework exports, expanded in one crate for CI to lint as a user's crate"
@@ -11,12 +11,12 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-grpc = { path = "../ulo-grpc" }
-ulo-http = { path = "../ulo-http" }
-ulo-rpc = { path = "../ulo-rpc" }
-ulo-transport = { path = "../ulo-transport" }
-ulo-ws = { path = "../ulo-ws" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-grpc = { path = "../ulo-grpc", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.1" }
 futures-util.workspace = true
 # What the code `ulo-build` writes names.
 prost.workspace = true
@@ -25,7 +25,7 @@ tonic = { workspace = true, features = ["channel", "codegen"] }
 tonic-prost.workspace = true
 
 [build-dependencies]
-ulo-build = { path = "../ulo-build" }
+ulo-build = { path = "../ulo-build", version = "=0.1.0-alpha.1" }
 
 [lints]
 workspace = true

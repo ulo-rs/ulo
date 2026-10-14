@@ -1,6 +1,6 @@
 [package]
 name = "ulo-ws-redis"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The Redis broadcast adapter for Ulo's WebSocket transport, carrying broadcasts across processes"
@@ -11,15 +11,15 @@ keywords = ["ulo", "websocket", "redis", "broadcast"]
 categories = ["web-programming::websocket"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-ws = { path = "../ulo-ws" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.1" }
 bytes.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true
 # `tokio-rustls-comp`: `rediss://` connects over TLS.
 redis = { workspace = true, features = ["tokio-rustls-comp"] }
 serde_json.workspace = true
-ulo-tokio = { path = "../ulo-tokio" }
+ulo-tokio = { path = "../ulo-tokio", version = "=0.1.0-alpha.1" }
 # `time`: the reconnect delay of a lost subscription.
 tokio = { workspace = true, features = ["sync", "rt", "time"] }
 tracing.workspace = true

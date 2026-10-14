@@ -1,6 +1,6 @@
 [package]
 name = "ulo-smol"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The smol runtime for Ulo: the core's Runtime on an async-executor Executor and async-io's timers"
@@ -10,7 +10,7 @@ homepage.workspace = true
 categories = ["asynchronous"]
 
 [dependencies]
-ulo = { path = "../ulo" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 async-executor.workspace = true
 async-io.workspace = true
 # `block_on`'s stop signal to its workers; already in the tree through async-lock.

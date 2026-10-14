@@ -1,6 +1,6 @@
 [package]
 name = "ulo-rpc-rabbitmq"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The RabbitMQ (AMQP 0-9-1) link for Ulo RPC: queues, reply_to and correlation_id, confirms"
@@ -11,10 +11,10 @@ keywords = ["ulo", "rpc", "rabbitmq"]
 categories = ["network-programming"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-rpc = { path = "../ulo-rpc" }
-ulo-tokio = { path = "../ulo-tokio" }
-ulo-transport = { path = "../ulo-transport" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
+ulo-tokio = { path = "../ulo-tokio", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 bytes.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true

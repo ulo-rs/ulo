@@ -1,6 +1,6 @@
 [package]
 name = "ulo-http-conformance"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The embedding conformance suite every Ulo HTTP host runs, the hyper backend as the reference"
@@ -21,18 +21,18 @@ smol = ["dep:ulo-smol", "dep:ulo-listen-smol", "dep:async-net"]
 rocket = ["dep:rocket"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-http = { path = "../ulo-http" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
 # The reference host, on the listener a host's runtime half names.
-ulo-http-hyper = { path = "../ulo-http-hyper", default-features = false }
+ulo-http-hyper = { path = "../ulo-http-hyper", version = "=0.1.0-alpha.1", default-features = false }
 # `FuturesIo` and `RuntimeExecutor`: the suite's client over a host's `futures-io` stream, its
 # HTTP/2 tasks on the app's runtime.
-ulo-hyper-serve = { path = "../ulo-hyper-serve" }
-ulo-listen-smol = { path = "../ulo-listen-smol", optional = true }
-ulo-listen-tokio = { path = "../ulo-listen-tokio", optional = true }
-ulo-smol = { path = "../ulo-smol", optional = true }
-ulo-tokio = { path = "../ulo-tokio", optional = true }
-ulo-transport = { path = "../ulo-transport" }
+ulo-hyper-serve = { path = "../ulo-hyper-serve", version = "=0.1.0-alpha.1" }
+ulo-listen-smol = { path = "../ulo-listen-smol", version = "=0.1.0-alpha.1", optional = true }
+ulo-listen-tokio = { path = "../ulo-listen-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo-smol = { path = "../ulo-smol", version = "=0.1.0-alpha.1", optional = true }
+ulo-tokio = { path = "../ulo-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 async-net = { workspace = true, optional = true }
 bytes.workspace = true
 futures-channel.workspace = true

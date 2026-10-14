@@ -1,6 +1,6 @@
 [package]
 name = "ulo-rpc-tcp"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The TCP link for Ulo RPC: length-prefixed frames multiplexed by id over one connection"
@@ -11,12 +11,12 @@ keywords = ["ulo", "rpc", "tcp"]
 categories = ["network-programming"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-net = { path = "../ulo-net" }
-ulo-rpc = { path = "../ulo-rpc" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
 # The wire, shared with ulo-rpc-tcp-smol; this crate supplies tokio's sockets and runtime.
-ulo-rpc-tcp-core = { path = "../ulo-rpc-tcp-core" }
-ulo-tokio = { path = "../ulo-tokio" }
+ulo-rpc-tcp-core = { path = "../ulo-rpc-tcp-core", version = "=0.1.0-alpha.1" }
+ulo-tokio = { path = "../ulo-tokio", version = "=0.1.0-alpha.1" }
 tokio = { workspace = true, features = ["net", "io-util", "rt"] }
 tokio-rustls.workspace = true
 # `compat`: tokio's sockets on `futures-io`'s traits, the ones the shared wire reads and writes.

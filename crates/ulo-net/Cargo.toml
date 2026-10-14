@@ -1,6 +1,6 @@
 [package]
 name = "ulo-net"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Endpoints, socket activation, TLS loading and bound addresses for Ulo transports"
@@ -10,7 +10,7 @@ homepage.workspace = true
 categories = ["network-programming"]
 
 [dependencies]
-ulo = { path = "../ulo" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 rustls = { workspace = true }
 rustls-pki-types = { workspace = true, features = ["std"] }
 # `FD_CLOEXEC` on an inherited socket and the socket's type check, which std does not expose.

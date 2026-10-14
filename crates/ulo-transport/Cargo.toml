@@ -1,6 +1,6 @@
 [package]
 name = "ulo-transport"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Transport-neutral extraction, replies, errors, validation and load shedding for Ulo transports"
@@ -14,8 +14,8 @@ categories = ["asynchronous", "network-programming", "web-programming"]
 validator = ["dep:validator"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-transport-macros = { path = "../ulo-transport-macros" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-transport-macros = { path = "../ulo-transport-macros", version = "=0.1.0-alpha.1" }
 # The runtime-free semaphore behind `Admission`, the one the core already uses.
 async-lock.workspace = true
 # `Watch`'s wake-up, without a runtime.

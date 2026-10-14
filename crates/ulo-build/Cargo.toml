@@ -1,6 +1,6 @@
 [package]
 name = "ulo-build"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Build-script code generation for ulo-grpc: messages, clients and the method markers handlers bind to, over a vendored protoc"

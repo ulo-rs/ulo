@@ -1,6 +1,6 @@
 [package]
 name = "ulo-http-hyper"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The hyper backend for Ulo's HTTP transport, the reference server"
@@ -17,14 +17,14 @@ default = ["tokio"]
 tokio = ["dep:ulo-listen-tokio"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-http = { path = "../ulo-http" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
 # The accept loop, the handshake timeout and the drain, shared with the gRPC and WebSocket servers,
 # and hyper's executor, timer and I/O over the app's runtime.
-ulo-hyper-serve = { path = "../ulo-hyper-serve" }
-ulo-listen-tokio = { path = "../ulo-listen-tokio", optional = true }
-ulo-net = { path = "../ulo-net" }
-ulo-transport = { path = "../ulo-transport" }
+ulo-hyper-serve = { path = "../ulo-hyper-serve", version = "=0.1.0-alpha.1" }
+ulo-listen-tokio = { path = "../ulo-listen-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 futures-util.workspace = true
 http.workspace = true
 # The connection builders, configured from the server's settings, and the per-request upgrade

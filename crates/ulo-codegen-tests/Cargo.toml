@@ -1,6 +1,6 @@
 [package]
 name = "ulo-codegen-tests"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The generated code of ulo-build and #[ulo_grpc::method], compiled and served, and the compile-fail checks the attributes emit"
@@ -11,7 +11,7 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
-ulo-grpc = { path = "../ulo-grpc" }
+ulo-grpc = { path = "../ulo-grpc", version = "=0.1.0-alpha.1" }
 # What the code `ulo-build` writes names: tonic's client over a channel, the prost messages and
 # their codec.
 prost.workspace = true
@@ -41,7 +41,7 @@ tonic-reflection.workspace = true
 trybuild.workspace = true
 
 [build-dependencies]
-ulo-build = { path = "../ulo-build" }
+ulo-build = { path = "../ulo-build", version = "=0.1.0-alpha.1" }
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "ulo-ws-hyper"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The standalone WebSocket server for Ulo: gateways declared `port = own`, on hyper and the listener of the app's runtime"
@@ -22,14 +22,14 @@ tokio = ["dep:ulo-listen-tokio"]
 conformance-probe = ["ulo-ws/conformance-probe"]
 
 [dependencies]
-ulo = { path = "../ulo" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 # `Upgraded`, the `futures-io` stream `ulo-ws`'s driver serves.
-ulo-http = { path = "../ulo-http" }
-ulo-hyper-serve = { path = "../ulo-hyper-serve" }
-ulo-listen-tokio = { path = "../ulo-listen-tokio", optional = true }
-ulo-net = { path = "../ulo-net" }
-ulo-transport = { path = "../ulo-transport" }
-ulo-ws = { path = "../ulo-ws" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo-hyper-serve = { path = "../ulo-hyper-serve", version = "=0.1.0-alpha.1" }
+ulo-listen-tokio = { path = "../ulo-listen-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.1" }
 bytes.workspace = true
 futures-util.workspace = true
 http.workspace = true

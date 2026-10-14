@@ -1,6 +1,6 @@
 [package]
 name = "ulo-graphql-http"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "GraphQL over HTTP for Ulo: the endpoint controller, its status rules and the playground"
@@ -11,11 +11,11 @@ keywords = ["ulo", "graphql", "http", "framework"]
 categories = ["web-programming::http-server"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-graphql = { path = "../ulo-graphql" }
-ulo-graphql-ws = { path = "../ulo-graphql-ws" }
-ulo-http = { path = "../ulo-http" }
-ulo-transport = { path = "../ulo-transport" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-graphql = { path = "../ulo-graphql", version = "=0.1.0-alpha.1" }
+ulo-graphql-ws = { path = "../ulo-graphql-ws", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 http.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

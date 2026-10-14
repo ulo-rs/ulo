@@ -1,6 +1,6 @@
 [package]
 name = "ulo-http-salvo"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 description = "Runs a Ulo application inside a salvo server, nested under a path or as the catch-all"
 license.workspace = true
@@ -11,9 +11,9 @@ categories = ["web-programming::http-server"]
 rust-version = "1.92"
 
 [dependencies]
-ulo = { path = "../ulo" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 # `tokio-io`: hyper's upgraded I/O reaches `Upgraded` through tokio's traits.
-ulo-http = { path = "../ulo-http", features = ["tokio-io"] }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1", features = ["tokio-io"] }
 bytes.workspace = true
 http.workspace = true
 http-body.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "ulo-hyper-serve"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The accept loop Ulo's hyper servers share: one task per connection, the handshake timeout and the drain, over a listener a runtime crate supplies"
@@ -11,13 +11,13 @@ keywords = ["ulo", "hyper", "server", "tls"]
 categories = ["network-programming", "web-programming::http-server"]
 
 [dependencies]
-ulo = { path = "../ulo" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 # `ConnInfo` and `TlsInfo`, what each accepted connection reports.
-ulo-http = { path = "../ulo-http" }
-ulo-net = { path = "../ulo-net" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
 # `TaskSet`, the connection tasks spawned through the app's runtime, and `Watch`, the drain's
 # signal, neither needing a runtime of its own.
-ulo-transport = { path = "../ulo-transport" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 futures-io.workspace = true
 http.workspace = true
 # The I/O, executor and timer traits a connection is served through. No features: the protocol

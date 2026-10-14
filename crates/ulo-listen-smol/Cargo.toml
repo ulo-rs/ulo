@@ -1,6 +1,6 @@
 [package]
 name = "ulo-listen-smol"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The smol listener for Ulo's hyper servers: async-net sockets, futures-rustls, and hyper's I/O traits over them"
@@ -11,9 +11,9 @@ keywords = ["ulo", "hyper", "smol", "server", "tls"]
 categories = ["network-programming", "web-programming::http-server"]
 
 [dependencies]
-ulo-http = { path = "../ulo-http" }
-ulo-hyper-serve = { path = "../ulo-hyper-serve" }
-ulo-net = { path = "../ulo-net" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo-hyper-serve = { path = "../ulo-hyper-serve", version = "=0.1.0-alpha.1" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
 async-net.workspace = true
 futures-io.workspace = true
 futures-rustls.workspace = true

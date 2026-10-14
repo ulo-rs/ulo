@@ -1,6 +1,6 @@
 [package]
 name = "ulo-http-axum"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Runs a Ulo application inside an axum server, nested under a path or as the fallback"
@@ -11,9 +11,9 @@ keywords = ["ulo", "axum", "embedding", "web"]
 categories = ["web-programming::http-server"]
 
 [dependencies]
-ulo = { path = "../ulo" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 # `tokio-io`: hyper's upgraded I/O reaches `Upgraded` through tokio's traits.
-ulo-http = { path = "../ulo-http", features = ["tokio-io"] }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1", features = ["tokio-io"] }
 axum = { workspace = true, features = ["tokio", "http1", "http2", "original-uri"] }
 http.workspace = true
 # The upgrade future axum's server leaves in the request's extensions, and its I/O as tokio's traits.

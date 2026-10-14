@@ -1,6 +1,6 @@
 [package]
 name = "ulo-runtime-conformance"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The conformance suite every Ulo runtime runs"
@@ -12,8 +12,8 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-transport = { path = "../ulo-transport" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 # The runtime-free oneshot and unbounded channels the scenarios signal through. The suite names no
 # runtime: each runtime crate's `Harness` brings its own executor.
 futures.workspace = true

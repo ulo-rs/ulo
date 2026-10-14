@@ -1,6 +1,6 @@
 [package]
 name = "ulo-tokio"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The tokio runtime for Ulo: the core's Runtime and Timer, OS shutdown signals and spawn helpers"
@@ -10,7 +10,7 @@ homepage.workspace = true
 categories = ["asynchronous"]
 
 [dependencies]
-ulo = { path = "../ulo" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 tokio = { workspace = true, features = ["rt", "time", "signal", "macros"] }
 
 [dev-dependencies]

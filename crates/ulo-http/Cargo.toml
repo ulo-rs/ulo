@@ -1,6 +1,6 @@
 [package]
 name = "ulo-http"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The HTTP transport for Ulo: routing, extractors, responses, SSE, pre-dispatch middleware, the backend SPI and the embedding surface"
@@ -16,10 +16,10 @@ categories = ["web-programming::http-server", "asynchronous"]
 tokio-io = ["dep:tokio", "dep:tokio-util"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-http-macros = { path = "../ulo-http-macros" }
-ulo-net = { path = "../ulo-net" }
-ulo-transport = { path = "../ulo-transport" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-http-macros = { path = "../ulo-http-macros", version = "=0.1.0-alpha.1" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 bytes.workspace = true
 futures-core.workspace = true
 # The I/O traits an upgraded connection implements.

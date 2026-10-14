@@ -1,6 +1,6 @@
 [package]
 name = "ulo-http-poem"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Runs a Ulo application inside a poem server, nested under a path or as the fallback"
@@ -11,9 +11,9 @@ keywords = ["ulo", "poem", "embedding", "web"]
 categories = ["web-programming::http-server"]
 
 [dependencies]
-ulo = { path = "../ulo" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 # `tokio-io`: poem's upgraded I/O implements tokio's traits.
-ulo-http = { path = "../ulo-http", features = ["tokio-io"] }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1", features = ["tokio-io"] }
 bytes.workspace = true
 http.workspace = true
 http-body.workspace = true

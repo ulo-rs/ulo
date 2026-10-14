@@ -1,6 +1,6 @@
 [package]
 name = "ulo-graphql-ws"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "GraphQL subscriptions for Ulo over graphql-transport-ws, a WebSocket gateway over any engine"
@@ -11,10 +11,10 @@ keywords = ["ulo", "graphql", "websocket", "subscriptions"]
 categories = ["web-programming::websocket"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-graphql = { path = "../ulo-graphql" }
-ulo-transport = { path = "../ulo-transport" }
-ulo-ws = { path = "../ulo-ws" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-graphql = { path = "../ulo-graphql", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.1" }
 futures-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "ulo-graphql"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Transport-neutral GraphQL for Ulo: the Engine SPI, requests and responses"
@@ -11,7 +11,7 @@ keywords = ["ulo", "graphql", "framework"]
 categories = ["web-programming"]
 
 [dependencies]
-ulo = { path = "../ulo" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 futures-core.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

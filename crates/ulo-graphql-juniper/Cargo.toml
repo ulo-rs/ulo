@@ -1,6 +1,6 @@
 [package]
 name = "ulo-graphql-juniper"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The juniper engine for Ulo's GraphQL bindings"
@@ -11,8 +11,8 @@ keywords = ["ulo", "graphql", "juniper"]
 categories = ["web-programming"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-graphql = { path = "../ulo-graphql" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-graphql = { path = "../ulo-graphql", version = "=0.1.0-alpha.1" }
 futures.workspace = true
 juniper = { workspace = true, features = ["schema-language"] }
 serde_json.workspace = true

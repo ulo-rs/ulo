@@ -1,6 +1,6 @@
 [package]
 name = "ulo-ws-conformance"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The conformance suite every Ulo WebSocket server runs, ulo-ws-hyper's standalone server as the reference"
@@ -12,9 +12,9 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-transport = { path = "../ulo-transport" }
-ulo-ws = { path = "../ulo-ws" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.1" }
 # The suite's client: `handshake` for the key and the accept value it derives. No runtime feature:
 # the client runs over the host's `futures-io` stream.
 async-tungstenite = { workspace = true, features = ["handshake"] }

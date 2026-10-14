@@ -1,6 +1,6 @@
 [package]
 name = "ulo-rpc"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The RPC transport for Ulo: one frame grammar over TCP, UDP and message brokers, the four call shapes, and the client"
@@ -11,9 +11,9 @@ keywords = ["ulo", "rpc", "microservices", "framework"]
 categories = ["network-programming", "asynchronous"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-rpc-macros = { path = "../ulo-rpc-macros" }
-ulo-transport = { path = "../ulo-transport" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-rpc-macros = { path = "../ulo-rpc-macros", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 # `serde` so `Bytes` and `Payload<Bytes>` travel as a CBOR byte string.
 bytes = { workspace = true, features = ["serde"] }
 ciborium.workspace = true

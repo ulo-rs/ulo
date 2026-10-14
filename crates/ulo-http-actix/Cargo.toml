@@ -1,6 +1,6 @@
 [package]
 name = "ulo-http-actix"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Runs a Ulo application inside an actix-web server, as a scope or the default service"
@@ -18,8 +18,8 @@ categories = ["web-programming::http-server"]
 conformance-http2 = ["actix-web/http2"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-http = { path = "../ulo-http" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
 actix-http.workspace = true
 actix-service.workspace = true
 actix-web.workspace = true

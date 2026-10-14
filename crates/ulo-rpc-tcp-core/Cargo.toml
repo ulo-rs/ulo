@@ -1,6 +1,6 @@
 [package]
 name = "ulo-rpc-tcp-core"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "For link authors, not applications: the runtime-free half of Ulo's TCP RPC links, shared by ulo-rpc-tcp and ulo-rpc-tcp-smol"
@@ -11,10 +11,10 @@ keywords = ["ulo", "rpc", "tcp"]
 categories = ["network-programming"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-net = { path = "../ulo-net" }
-ulo-rpc = { path = "../ulo-rpc" }
-ulo-transport = { path = "../ulo-transport" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 bytes.workspace = true
 # A client connection's reply lane, the server's deliveries, and the signal that a reply lane was
 # dropped: channels that need no runtime.

@@ -1,6 +1,6 @@
 [package]
 name = "ulo-macros"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "Macros for Ulo"
@@ -20,7 +20,7 @@ quote.workspace = true
 syn = { workspace = true, features = ["full", "visit-mut"] }
 # The `__handler` grammar and the key and shared-value emission `#[routes]` writes, defined once
 # for `#[routes]` and every transport attribute.
-ulo-handler-codegen = { path = "../ulo-handler-codegen" }
+ulo-handler-codegen = { path = "../ulo-handler-codegen", version = "=0.1.0-alpha.1" }
 
 [lints]
 workspace = true

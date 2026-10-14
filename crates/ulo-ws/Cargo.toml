@@ -1,6 +1,6 @@
 [package]
 name = "ulo-ws"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The WebSocket transport for Ulo: gateways, sessions, rooms and broadcast, on the HTTP server's port or its own"
@@ -18,10 +18,10 @@ categories = ["web-programming::websocket", "asynchronous"]
 conformance-probe = []
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-http = { path = "../ulo-http" }
-ulo-transport = { path = "../ulo-transport" }
-ulo-ws-macros = { path = "../ulo-ws-macros" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo-ws-macros = { path = "../ulo-ws-macros", version = "=0.1.0-alpha.1" }
 # The in-memory adapter's channel: a sender that never waits and a subscriber that falls behind
 # skipping the oldest, without a runtime.
 async-broadcast.workspace = true

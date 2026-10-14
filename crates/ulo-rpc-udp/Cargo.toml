@@ -1,6 +1,6 @@
 [package]
 name = "ulo-rpc-udp"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The UDP link for Ulo RPC: one frame per datagram, unary calls and events"
@@ -11,14 +11,14 @@ keywords = ["ulo", "rpc", "udp"]
 categories = ["network-programming"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-rpc = { path = "../ulo-rpc" }
-ulo-tokio = { path = "../ulo-tokio" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
+ulo-tokio = { path = "../ulo-tokio", version = "=0.1.0-alpha.1" }
 bytes.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true
-ulo-net = { path = "../ulo-net" }
-ulo-transport = { path = "../ulo-transport" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 socket2.workspace = true
 tokio = { workspace = true, features = ["net", "sync", "rt", "macros", "time"] }
 tracing.workspace = true

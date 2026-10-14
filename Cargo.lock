@@ -6118,7 +6118,7 @@ checksum = "2896d95c02a80c6d6a5d6e953d479f5ddf2dfdb6a244441010e373ac0fb88971"
 
 [[package]]
 name = "ulo"
-version = "0.2.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-lock",
  "tracing",
@@ -6127,7 +6127,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-build"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "prost-build",
  "protoc-bin-vendored",
@@ -6136,7 +6136,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-cli"
-version = "0.1.2"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -6154,7 +6154,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-codegen-tests"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "futures-util",
  "http 1.5.0",
@@ -6180,7 +6180,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-graphql"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "futures-core",
  "serde",
@@ -6190,7 +6190,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-graphql-async-graphql"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-graphql",
  "futures-util",
@@ -6202,7 +6202,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-graphql-http"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "http 1.5.0",
  "serde",
@@ -6216,7 +6216,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-graphql-juniper"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "futures",
  "juniper",
@@ -6228,7 +6228,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-graphql-ws"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "futures-util",
  "serde",
@@ -6246,7 +6246,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-grpc"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "futures-core",
@@ -6277,7 +6277,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-grpc-macros"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6287,7 +6287,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-handler-codegen"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6296,7 +6296,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-http"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "futures",
@@ -6325,7 +6325,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-http-actix"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "actix-http",
  "actix-service",
@@ -6345,7 +6345,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-http-axum"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "axum",
  "http 1.5.0",
@@ -6363,7 +6363,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-http-conformance"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-net",
  "bytes",
@@ -6391,7 +6391,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-http-hyper"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-io",
  "async-net",
@@ -6420,7 +6420,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-http-macros"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6430,7 +6430,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-http-poem"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "http 1.5.0",
@@ -6448,7 +6448,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-http-rocket"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "http 1.5.0",
@@ -6467,7 +6467,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-http-salvo"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "http 1.5.0",
@@ -6486,7 +6486,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-hyper-serve"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-io",
  "async-net",
@@ -6506,7 +6506,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-listen-smol"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-io",
  "async-net",
@@ -6524,7 +6524,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-listen-tokio"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "http 1.5.0",
  "hyper-util",
@@ -6540,7 +6540,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-macro-lints"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "futures-util",
  "prost",
@@ -6558,7 +6558,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-macros"
-version = "0.2.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6568,7 +6568,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-net"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "libc",
  "rustls",
@@ -6581,7 +6581,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-rpc"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-lock",
  "bytes",
@@ -6601,7 +6601,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-rpc-conformance"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -6618,7 +6618,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-rpc-kafka"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "futures-core",
@@ -6639,7 +6639,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-rpc-macros"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6649,7 +6649,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-rpc-mqtt"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "futures-core",
@@ -6670,7 +6670,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-rpc-nats"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-nats",
  "bytes",
@@ -6690,7 +6690,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-rpc-rabbitmq"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "futures-core",
@@ -6711,7 +6711,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-rpc-redis"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "futures-core",
@@ -6731,7 +6731,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-rpc-tcp"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "futures-executor",
  "futures-util",
@@ -6752,7 +6752,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-rpc-tcp-core"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -6767,7 +6767,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-rpc-tcp-smol"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-net",
  "futures-executor",
@@ -6785,7 +6785,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-rpc-udp"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "futures-core",
@@ -6804,7 +6804,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-runtime-conformance"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "futures",
  "tracing",
@@ -6814,7 +6814,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-smol"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-executor",
  "async-io",
@@ -6825,7 +6825,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-test-certs"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "rcgen",
  "rustls",
@@ -6833,7 +6833,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-tokio"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "futures-executor",
  "tokio",
@@ -6844,7 +6844,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-transport"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-lock",
  "event-listener 5.4.1",
@@ -6861,7 +6861,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-transport-macros"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6870,7 +6870,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-ws"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-broadcast",
  "async-net",
@@ -6904,7 +6904,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-ws-conformance"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-tungstenite",
  "event-listener 5.4.1",
@@ -6918,7 +6918,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-ws-hyper"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-net",
  "bytes",
@@ -6949,7 +6949,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-ws-macros"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6959,7 +6959,7 @@ dependencies = [
 
 [[package]]
 name = "ulo-ws-redis"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "futures-core",

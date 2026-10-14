@@ -1,6 +1,6 @@
 [package]
 name = "ulo-rpc-nats"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The NATS link for Ulo RPC: queue-group subscriptions, inbox replies, no-responders"
@@ -11,10 +11,10 @@ keywords = ["ulo", "rpc", "nats"]
 categories = ["network-programming"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-rpc = { path = "../ulo-rpc" }
-ulo-tokio = { path = "../ulo-tokio" }
-ulo-transport = { path = "../ulo-transport" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
+ulo-tokio = { path = "../ulo-tokio", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 bytes.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true

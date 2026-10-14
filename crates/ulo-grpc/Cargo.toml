@@ -1,6 +1,6 @@
 [package]
 name = "ulo-grpc"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The gRPC transport for Ulo: handlers bound to generated method markers, an HTTP/2 server, status details, health, reflection and clients"
@@ -11,14 +11,14 @@ keywords = ["ulo", "grpc", "tonic", "framework"]
 categories = ["network-programming", "web-programming"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-grpc-macros = { path = "../ulo-grpc-macros" }
-ulo-http = { path = "../ulo-http" }
-ulo-hyper-serve = { path = "../ulo-hyper-serve" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-grpc-macros = { path = "../ulo-grpc-macros", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo-hyper-serve = { path = "../ulo-hyper-serve", version = "=0.1.0-alpha.1" }
 # The accept loop's listener: tonic is tokio-only, so the server is too.
-ulo-listen-tokio = { path = "../ulo-listen-tokio" }
-ulo-net = { path = "../ulo-net" }
-ulo-transport = { path = "../ulo-transport" }
+ulo-listen-tokio = { path = "../ulo-listen-tokio", version = "=0.1.0-alpha.1" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 bytes.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true

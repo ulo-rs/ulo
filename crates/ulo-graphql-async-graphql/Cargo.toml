@@ -1,6 +1,6 @@
 [package]
 name = "ulo-graphql-async-graphql"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version = "1.89"
 description = "The async-graphql engine for Ulo's GraphQL bindings"
@@ -11,8 +11,8 @@ keywords = ["ulo", "graphql", "async-graphql"]
 categories = ["web-programming"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-graphql = { path = "../ulo-graphql" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-graphql = { path = "../ulo-graphql", version = "=0.1.0-alpha.1" }
 async-graphql = { workspace = true, features = ["graphiql"] }
 futures-util.workspace = true
 serde_json.workspace = true

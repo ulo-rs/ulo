@@ -1,6 +1,6 @@
 [package]
 name = "ulo-rpc-tcp-smol"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "The TCP link for Ulo RPC on smol's sockets: ulo-rpc-tcp's wire over async-net, with futures-rustls for TLS"
@@ -11,11 +11,11 @@ keywords = ["ulo", "rpc", "tcp", "smol"]
 categories = ["network-programming"]
 
 [dependencies]
-ulo = { path = "../ulo" }
-ulo-net = { path = "../ulo-net" }
-ulo-rpc = { path = "../ulo-rpc" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
 # The wire, shared with ulo-rpc-tcp; this crate supplies `async-io`'s sockets.
-ulo-rpc-tcp-core = { path = "../ulo-rpc-tcp-core" }
+ulo-rpc-tcp-core = { path = "../ulo-rpc-tcp-core", version = "=0.1.0-alpha.1" }
 async-net.workspace = true
 futures-rustls.workspace = true
 # `io`: a TLS connection split into its two halves.
