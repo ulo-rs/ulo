@@ -25,7 +25,7 @@ tower.workspace = true
 ulo-http-conformance = { path = "../ulo-http-conformance", features = ["tokio"] }
 # `tests/ws_conformance.rs`: the WebSocket suite against `WsModule`'s hand-off inside axum.
 ulo-ws-conformance = { path = "../ulo-ws-conformance" }
-ulo-tokio = { path = "../ulo-tokio" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 ulo-ws = { path = "../ulo-ws" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync"] }
 

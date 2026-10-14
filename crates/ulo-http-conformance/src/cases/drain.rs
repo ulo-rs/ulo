@@ -10,7 +10,7 @@ use http_body_util::Empty;
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use ulo::{Signal, TaskHandle};
 use ulo_http::embed::{DrainAbandoned, DrainHttp2, DrainPending};
-use ulo_hyper_serve::{FuturesIo, RuntimeExecutor};
+use ulo_server_hyper::{FuturesIo, RuntimeExecutor};
 
 use crate::wire::{Failure, PATIENCE, Running, has_header, not_a_timeout, start, status_of, within};
 use crate::{Host, Mode};

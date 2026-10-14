@@ -12,7 +12,7 @@ use ulo::{App, BoundAddr};
 use ulo_http::Upgraded;
 use ulo_http::embed::Embed;
 use ulo_http_actix::{Actix, Embedded};
-use ulo_tokio::Tokio;
+use ulo_runtime_tokio::Tokio;
 use ulo_ws::Port;
 use ulo_ws_conformance::{Host, startup_failed, ws_conformance_suite};
 

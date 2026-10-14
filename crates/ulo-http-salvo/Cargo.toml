@@ -26,7 +26,7 @@ salvo = { workspace = true, features = ["server", "server-handle", "http1", "htt
 ulo-http-conformance = { path = "../ulo-http-conformance", features = ["tokio"] }
 # `tests/ws_conformance.rs`: the WebSocket suite against `WsModule`'s hand-off inside salvo.
 ulo-ws-conformance = { path = "../ulo-ws-conformance" }
-ulo-tokio = { path = "../ulo-tokio" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 ulo-ws = { path = "../ulo-ws" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
 

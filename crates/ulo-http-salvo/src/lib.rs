@@ -4,12 +4,12 @@
 //! ```ignore
 //! let server = ulo_http_salvo::Embedded::new().nested_at("/api");
 //! let embedded = server.handle();
-//! let app = App::builder(AppModule).runtime(ulo_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
+//! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
 //!
 //! let router = salvo::Router::new().push(salvo::Router::with_path("api/{**rest}").goal(ulo_http_salvo::handler(&embedded)));
 //! let acceptor = salvo::conn::TcpListener::new("0.0.0.0:8080").bind().await;
 //! let server = salvo::Server::new(ulo_http_salvo::Closing::new(&embedded, acceptor));
-//! ulo_http_salvo::run(app, &embedded, server, salvo::Service::new(router), ulo_tokio::shutdown_signal()).await?;
+//! ulo_http_salvo::run(app, &embedded, server, salvo::Service::new(router), ulo_runtime_tokio::shutdown_signal()).await?;
 //! ```
 //!
 //! The server is built over [`Closing`], which drops the acceptor it wraps when the drain begins

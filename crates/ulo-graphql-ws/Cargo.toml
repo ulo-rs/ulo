@@ -23,7 +23,7 @@ tracing.workspace = true
 [dev-dependencies]
 # The HTTP server whose port the gateway is reached on, through `WsModule`'s hand-off.
 ulo-http-hyper = { path = "../ulo-http-hyper" }
-ulo-tokio = { path = "../ulo-tokio" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 # `connect`: the tests speak graphql-transport-ws through a real WebSocket client.
 tokio-tungstenite = { workspace = true, features = ["connect"] }

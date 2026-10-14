@@ -24,7 +24,7 @@ tonic-prost.workspace = true
 ulo = { path = "../ulo" }
 ulo-http = { path = "../ulo-http" }
 ulo-rpc = { path = "../ulo-rpc" }
-ulo-tokio = { path = "../ulo-tokio" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 ulo-transport = { path = "../ulo-transport" }
 # The WebSocket handler the X24 fixture puts HTTP metadata on.
 ulo-ws = { path = "../ulo-ws" }

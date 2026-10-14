@@ -20,7 +20,7 @@ integration = []
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
-ulo-tokio = { path = "../ulo-tokio", version = "=0.1.0-alpha.1" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1" }
 ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 bytes.workspace = true
 futures-core.workspace = true

@@ -14,7 +14,7 @@ fn a_link_built_outside_a_runtime_and_given_none_refuses_to_connect() {
     let link = Mqtt::url("mqtt://127.0.0.1:1883");
     // A tokio link spawns on its own handle and ignores the client's runtime, a tokio one included.
     let runtime = tokio::runtime::Builder::new_current_thread().build().expect("a tokio runtime for the client");
-    let client_runtime: Arc<dyn Runtime> = Arc::new(ulo_tokio::Tokio::from_handle(runtime.handle().clone()));
+    let client_runtime: Arc<dyn Runtime> = Arc::new(ulo_runtime_tokio::Tokio::from_handle(runtime.handle().clone()));
     match futures_executor::block_on(link.connect(&client_runtime)) {
         Ok(_) => panic!("a link with no tokio runtime connected"),
         Err(refused) => assert!(refused.to_string().contains("`.with_handle(..)`"), "the refusal names `.with_handle(..)`: {refused}"),
@@ -25,7 +25,7 @@ fn a_link_built_outside_a_runtime_and_given_none_refuses_to_connect() {
 fn a_client_on_a_link_built_outside_a_runtime_and_given_none_is_refused_where_it_is_built() {
     assert!(tokio::runtime::Handle::try_current().is_err(), "the test's thread has a tokio runtime current");
     let runtime = tokio::runtime::Builder::new_current_thread().build().expect("a tokio runtime for the client");
-    let built = RpcClient::new(Mqtt::url("mqtt://127.0.0.1:1883"), Arc::new(ulo_tokio::Tokio::from_handle(runtime.handle().clone())));
+    let built = RpcClient::new(Mqtt::url("mqtt://127.0.0.1:1883"), Arc::new(ulo_runtime_tokio::Tokio::from_handle(runtime.handle().clone())));
     match built {
         Ok(_) => panic!("a client was built on a link with no tokio runtime"),
         Err(refused) => assert!(refused.to_string().contains("`.with_handle(..)`"), "the refusal names `.with_handle(..)`: {refused}"),

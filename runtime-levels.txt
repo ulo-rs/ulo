@@ -37,7 +37,7 @@ ulo-transport-macros          runtime-free           --all-features
 ulo-net                       runtime-free           --all-features
 
 # The second runtime, on `async-executor` and `async-io`.
-ulo-smol                      runtime-free           --all-features
+ulo-runtime-smol                      runtime-free           --all-features
 
 # The runtime suite, which any `Runtime` implementation runs.
 ulo-runtime-conformance       runtime-free           --all-features
@@ -101,19 +101,19 @@ ulo-grpc-macros               runtime-free           --all-features
 ulo-build                     runtime-free           --all-features
 
 # The accept loop and the `Listener` plug point, on hyper with no features: tokio with `sync`.
-ulo-hyper-serve               runtime-neutral        --all-features
+ulo-server-hyper               runtime-neutral        --all-features
 
-# The smol listener, adopting `ulo-net`'s sockets behind `ulo-hyper-serve`.
-ulo-listen-smol               runtime-neutral        --all-features
+# The smol listener, adopting `ulo-net`'s sockets behind `ulo-server-hyper`.
+ulo-listener-smol               runtime-neutral        --all-features
 
-# The WebSocket server without its default `tokio` feature, which brings `ulo-listen-tokio`;
-# HTTP/1.1 alone, so it reads as `ulo-hyper-serve` does.
+# The WebSocket server without its default `tokio` feature, which brings `ulo-listener-tokio`;
+# HTTP/1.1 alone, so it reads as `ulo-server-hyper` does.
 ulo-ws-hyper                  runtime-neutral        --no-default-features
 
 # The same crate at its default features, on the tokio listener.
 ulo-ws-hyper                  tokio-bound
 
-# The HTTP backend without its default `tokio` feature, which brings `ulo-listen-tokio`; it serves
+# The HTTP backend without its default `tokio` feature, which brings `ulo-listener-tokio`; it serves
 # HTTP/2, so h2 brings `io-util` and `bytes`.
 ulo-http-hyper                runtime-neutral+http2  --no-default-features
 
@@ -133,10 +133,10 @@ ulo-http-conformance          runtime-neutral+http2  --features smol
 ulo-http-conformance          direct-tokio-util      `compat`, the host's stream as the tokio I/O h2's client reads
 
 # The tokio runtime.
-ulo-tokio                     tokio-bound
+ulo-runtime-tokio                     tokio-bound
 
 # The tokio listener, adopting into tokio's reactor through `TcpListener::from_std`.
-ulo-listen-tokio              tokio-bound
+ulo-listener-tokio              tokio-bound
 
 # The axum embedding: axum runs on tokio.
 ulo-http-axum                 tokio-bound
@@ -177,7 +177,7 @@ ulo-rpc-kafka                 tokio-bound
 # The WebSocket broadcast adapter over Redis, holding a tokio runtime of its own.
 ulo-ws-redis                  tokio-bound
 
-# gRPC, on tonic, which depends on tokio, and on `ulo-listen-tokio`.
+# gRPC, on tonic, which depends on tokio, and on `ulo-listener-tokio`.
 ulo-grpc                      tokio-bound
 
 # The generated gRPC code compiled and served, on `ulo-grpc`.

@@ -33,7 +33,7 @@ use ulo_transport::{Detail, ErrorKind};
 
 /// The runtime a client hands its link: the test's tokio runtime, which a tokio link ignores.
 fn client_runtime() -> Arc<dyn Runtime> {
-    Arc::new(ulo_tokio::Tokio::current())
+    Arc::new(ulo_runtime_tokio::Tokio::current())
 }
 
 const PORT: u16 = 1883;

@@ -15,7 +15,7 @@ use ulo::{App, BoundAddr, Signal};
 use ulo_http::Upgraded;
 use ulo_http::embed::Embed;
 use ulo_http_rocket::{Embedded, Handle, Rocket, routes};
-use ulo_tokio::Tokio;
+use ulo_runtime_tokio::Tokio;
 use ulo_ws::Port;
 use ulo_ws_conformance::{Host, Serving, report, startup_failed, ws_conformance_suite};
 

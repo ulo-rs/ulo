@@ -10,12 +10,12 @@
 //! struct Standalone { read_count: ulo_ws_hyper::ReadCount }
 //!
 //! impl ulo_ws_conformance::Host for Standalone {
-//!     type Runtime = ulo_tokio::Tokio;
+//!     type Runtime = ulo_runtime_tokio::Tokio;
 //!     type Stream = ulo_http::Upgraded;
 //!     const PORT: ulo_ws::Port = ulo_ws::Port::Own;
 //!     const CLOSES_IDLE_AT_DRAIN: bool = true; // hyper's graceful shutdown
 //!     fn upgrades() -> bool { true }
-//!     fn runtime() -> ulo_tokio::Tokio { ulo_tokio::Tokio::current() }
+//!     fn runtime() -> ulo_runtime_tokio::Tokio { ulo_runtime_tokio::Tokio::current() }
 //!     fn block_on<F: Future>(fut: F) -> F::Output { /* a runtime of its own per scenario */ }
 //!     fn bind(app: App<Connected>) -> (App<Connected>, Self) {
 //!         let server = ulo_ws_hyper::Server::new("127.0.0.1:0");

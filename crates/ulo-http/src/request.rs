@@ -151,7 +151,7 @@ impl<T: AsyncRead + AsyncWrite + Send + 'static> Io for T {}
 
 impl Upgraded {
     /// An upgraded connection whose I/O implements `futures-io`'s traits, as smol's does, and
-    /// hyper's through `ulo-hyper-serve`'s `FuturesIo`, which both hyper servers build theirs with.
+    /// hyper's through `ulo-server-hyper`'s `FuturesIo`, which both hyper servers build theirs with.
     pub fn from_futures(io: impl AsyncRead + AsyncWrite + Send + Unpin + 'static) -> Self {
         Upgraded { io: Box::pin(io) }
     }

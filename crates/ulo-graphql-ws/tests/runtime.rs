@@ -24,7 +24,7 @@ use ulo::{
 use ulo_graphql::{BoxStream, Engine, GqlRequest, GqlResponse};
 use ulo_graphql_ws::GraphqlWs;
 use ulo_graphql_ws::__private::InitTimeout;
-use ulo_tokio::Tokio;
+use ulo_runtime_tokio::Tokio;
 use ulo_ws::WsModule;
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;

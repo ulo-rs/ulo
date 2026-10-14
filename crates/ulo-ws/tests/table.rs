@@ -281,7 +281,7 @@ async fn start() -> Running {
     let joined = Joined::default();
     let hooks = Hooks::default();
     let app: App<Serving> = App::builder(Root { joined: joined.clone(), hooks: hooks.clone() })
-        .runtime(ulo_tokio::Tokio::current())
+        .runtime(ulo_runtime_tokio::Tokio::current())
         .drain_timeout(Duration::from_secs(2))
         .wire()
         .unwrap_or_else(|error| panic!("the app did not wire: {error}"))

@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use ulo::app::Connected;
 use ulo::{App, BoundAddr};
 use ulo_http::Upgraded;
-use ulo_tokio::Tokio;
+use ulo_runtime_tokio::Tokio;
 use ulo_ws::Port;
 use ulo_ws_conformance::{Host, ws_conformance_suite};
 use ulo_ws_hyper::ReadCount;
@@ -22,7 +22,7 @@ impl Host for Standalone {
     type Stream = Upgraded;
 
     const PORT: Port = Port::Own;
-    // `ulo-hyper-serve` starts hyper's graceful shutdown on every connection at the drain, which closes one idle between requests.
+    // `ulo-server-hyper` starts hyper's graceful shutdown on every connection at the drain, which closes one idle between requests.
     const CLOSES_IDLE_AT_DRAIN: bool = true;
 
     fn upgrades() -> bool {

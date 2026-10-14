@@ -19,7 +19,7 @@ futures-util.workspace = true
 # `tokio-rustls-comp`: `rediss://` connects over TLS.
 redis = { workspace = true, features = ["tokio-rustls-comp"] }
 serde_json.workspace = true
-ulo-tokio = { path = "../ulo-tokio", version = "=0.1.0-alpha.1" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1" }
 # `time`: the reconnect delay of a lost subscription.
 tokio = { workspace = true, features = ["sync", "rt", "time"] }
 tracing.workspace = true

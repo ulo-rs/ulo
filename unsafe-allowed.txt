@@ -14,7 +14,7 @@
 
 # `FuturesIo`: handing hyper's uninitialized read buffer to a `futures-io` reader, through
 # `ReadBufCursor::as_mut` and `advance`.
-crates/ulo-hyper-serve/src/compat.rs pure-rust
+crates/ulo-server-hyper/src/compat.rs pure-rust
 
 # Adopting the descriptors a supervisor hands down (`BorrowedFd::borrow_raw`,
 # `OwnedFd::from_raw_fd`) and reading a socket's listen state through `getsockopt` where socket2

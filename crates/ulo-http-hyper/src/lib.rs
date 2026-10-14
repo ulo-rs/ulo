@@ -1,5 +1,5 @@
 //! The hyper backend for `ulo-http` (transports DESIGN §3.7), the reference server and the
-//! default: one `ulo_http::Backend` that owns the listeners. `ulo-hyper-serve`'s accept loop
+//! default: one `ulo_http::Backend` that owns the listeners. `ulo-server-hyper`'s accept loop
 //! accepts and performs the TLS handshake; each connection is served by hyper's connection
 //! builders, configured from the server's settings, and each request is converted into a
 //! `ulo_http::Request` and answered by the `AppService`. `ulo-http` owns routing.
@@ -8,12 +8,12 @@
 //! let app = app.bind(ulo_http_hyper::Server::new("0.0.0.0:8080")).listen().await?;
 //! ```
 //!
-//! The runtime is the listener's: [`Server`] serves on tokio's sockets through `ulo-listen-tokio`,
+//! The runtime is the listener's: [`Server`] serves on tokio's sockets through `ulo-listener-tokio`,
 //! the default `tokio` feature, and [`ServerOn`] on any other listener, smol's through
-//! `ulo-listen-smol`:
+//! `ulo-listener-smol`:
 //!
 //! ```ignore
-//! let server = ulo_http_hyper::ServerOn::<ulo_listen_smol::SmolListener>::new("0.0.0.0:8080");
+//! let server = ulo_http_hyper::ServerOn::<ulo_listener_smol::SmolListener>::new("0.0.0.0:8080");
 //! ```
 //!
 //! Either way the connections, HTTP/2's stream tasks and the header-read clock run on the app's
@@ -34,16 +34,16 @@ mod backend;
 mod convert;
 
 pub use backend::HyperOn;
-pub use ulo_hyper_serve::ReadCount;
+pub use ulo_server_hyper::ReadCount;
 
-/// The hyper backend on tokio's sockets, `ulo-listen-tokio`'s listener: the default.
+/// The hyper backend on tokio's sockets, `ulo-listener-tokio`'s listener: the default.
 #[cfg(feature = "tokio")]
-pub type Hyper = HyperOn<ulo_listen_tokio::TokioListener>;
+pub type Hyper = HyperOn<ulo_listener_tokio::TokioListener>;
 
 /// `ulo_http::Server` over hyper on tokio: `ulo_http_hyper::Server::new("0.0.0.0:8080")`.
 #[cfg(feature = "tokio")]
 pub type Server = ulo_http::Server<Hyper>;
 
 /// `ulo_http::Server` over hyper on listener `L`, the runtime's sockets:
-/// `ulo_http_hyper::ServerOn::<ulo_listen_smol::SmolListener>::new("0.0.0.0:8080")` on smol.
+/// `ulo_http_hyper::ServerOn::<ulo_listener_smol::SmolListener>::new("0.0.0.0:8080")` on smol.
 pub type ServerOn<L> = ulo_http::Server<HyperOn<L>>;

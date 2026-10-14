@@ -11,7 +11,7 @@ use std::time::Duration;
 use futures_util::{Stream, StreamExt, stream};
 use ulo::{App, Bound, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
 use ulo_rpc::{Link, Payload, RpcClient};
-use ulo_tokio::Tokio;
+use ulo_runtime_tokio::Tokio;
 use ulo_transport::{Classify, ErrorKind};
 
 #[derive(Debug)]

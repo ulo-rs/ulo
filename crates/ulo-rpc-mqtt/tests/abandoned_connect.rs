@@ -14,7 +14,7 @@ use ulo_rpc_mqtt::Mqtt;
 
 /// The runtime a client hands its link: the test's tokio runtime, which a tokio link ignores.
 fn client_runtime() -> Arc<dyn Runtime> {
-    Arc::new(ulo_tokio::Tokio::current())
+    Arc::new(ulo_runtime_tokio::Tokio::current())
 }
 
 /// How long the broker waits for each step of the client.

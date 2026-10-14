@@ -224,7 +224,7 @@ impl RpcClient {
     /// [`timeout`](Self::timeout) or the call sets another.
     ///
     /// ```ignore
-    /// let billing = RpcClient::new(ulo_rpc_tcp::Tcp::new("billing:7000"), Arc::new(ulo_tokio::Tokio::current()))?
+    /// let billing = RpcClient::new(ulo_rpc_tcp::Tcp::new("billing:7000"), Arc::new(ulo_runtime_tokio::Tokio::current()))?
     ///     .timeout(Bound::After(Duration::from_secs(2)))?;
     /// ```
     ///
@@ -1157,12 +1157,12 @@ mod tests {
     }
 
     fn silent_client(link: &SilentLink, timeout: Duration) -> RpcClient {
-        RpcClient::of_module(Arc::new(link.clone()), Bound::After(timeout), Bound::Default, Arc::new(ulo_tokio::Tokio::current()))
+        RpcClient::of_module(Arc::new(link.clone()), Bound::After(timeout), Bound::Default, Arc::new(ulo_runtime_tokio::Tokio::current()))
     }
 
     /// A client over a link whose server never answers, every stream's idle timeout `idle`.
     fn idle_client(idle: Bound) -> RpcClient {
-        RpcClient::of_module(Arc::new(SilentLink::default()), Bound::Default, idle, Arc::new(ulo_tokio::Tokio::current()))
+        RpcClient::of_module(Arc::new(SilentLink::default()), Bound::Default, idle, Arc::new(ulo_runtime_tokio::Tokio::current()))
     }
 
     /// The stream's next item, failing the test after five seconds rather than hanging it.
@@ -1274,7 +1274,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_default_idle_timeout_never_ends_a_quiet_stream() {
         let module = idle_client(Bound::Default);
-        let built = RpcClient::new(SilentLink::default(), Arc::new(ulo_tokio::Tokio::current())).expect("the link is usable");
+        let built = RpcClient::new(SilentLink::default(), Arc::new(ulo_runtime_tokio::Tokio::current())).expect("the link is usable");
         for (client, which) in [(module, "a module's client"), (built, "a client from `RpcClient::new`")] {
             let mut stream = client.stream::<_, u32>("silent.stream", &()).await.expect("the stream opens");
             let waited = tokio::time::timeout(Duration::from_secs(3600), stream.next()).await;
@@ -1321,7 +1321,7 @@ mod tests {
     #[tokio::test]
     async fn a_lost_connection_fails_a_stream_with_no_idle_timeout() {
         let link = SeveredLink::default();
-        let client = RpcClient::of_module(Arc::new(link.clone()), Bound::Default, Bound::Unbounded, Arc::new(ulo_tokio::Tokio::current()));
+        let client = RpcClient::of_module(Arc::new(link.clone()), Bound::Default, Bound::Unbounded, Arc::new(ulo_runtime_tokio::Tokio::current()));
         let mut stream = client.stream::<_, u32>("severed.stream", &()).await.expect("the stream opens");
         link.sever();
         let ended = next_within_5s(&mut stream, "the lost connection's failure").await.expect("the stream yields the loss").expect_err("nothing arrived");
@@ -1334,7 +1334,7 @@ mod tests {
     async fn a_call_is_not_registered_on_a_connection_whose_reply_lane_ended() {
         let connects = Arc::new(AtomicU64::new(0));
         let link = EndingLink(Arc::clone(&connects));
-        let client = RpcClient::of_module(Arc::new(link), Bound::Unbounded, Bound::Default, Arc::new(ulo_tokio::Tokio::current()));
+        let client = RpcClient::of_module(Arc::new(link), Bound::Unbounded, Bound::Default, Arc::new(ulo_runtime_tokio::Tokio::current()));
         let handed = client.inner.connection().await.expect("the first connection opens");
         // The reply lane's task runs once this task yields, and ends with its empty stream.
         for _ in 0..100 {
@@ -1356,7 +1356,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_request_frame_the_link_cannot_encode_is_internal() {
-        let client = RpcClient::of_module(Arc::new(MisencodingLink), Bound::Unbounded, Bound::Default, Arc::new(ulo_tokio::Tokio::current()));
+        let client = RpcClient::of_module(Arc::new(MisencodingLink), Bound::Unbounded, Bound::Default, Arc::new(ulo_runtime_tokio::Tokio::current()));
         let answer = client.request::<_, serde_json::Value>("orders.create", &serde_json::json!({ "id": 1 })).await;
         let err = answer.expect_err("the link refused to encode the request, so the call must fail");
         assert_eq!(err.kind(), ErrorKind::Internal, "expected `Internal` for an unencodable request frame, got: {err:?}");

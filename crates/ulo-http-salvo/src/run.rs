@@ -65,7 +65,7 @@ where
 /// let acceptor = salvo::conn::TcpListener::new("0.0.0.0:8080").bind().await;
 /// let mut server = salvo::Server::new(ulo_http_salvo::Closing::new(&embedded, acceptor));
 /// server.http1_mut().max_buf_size(64 * 1024);
-/// ulo_http_salvo::run(app, &embedded, server, salvo::Service::new(router), ulo_tokio::shutdown_signal()).await?;
+/// ulo_http_salvo::run(app, &embedded, server, salvo::Service::new(router), ulo_runtime_tokio::shutdown_signal()).await?;
 /// ```
 pub struct Closing<A> {
     holdings: Vec<Holding>,

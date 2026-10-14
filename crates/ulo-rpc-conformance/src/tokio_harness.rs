@@ -2,7 +2,7 @@
 
 use std::future::Future;
 
-use ulo_tokio::Tokio;
+use ulo_runtime_tokio::Tokio;
 
 use crate::Harness;
 

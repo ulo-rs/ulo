@@ -1,6 +1,6 @@
 //! The WebSocket conformance suite against the upgrade hand-off on the HTTP server's port, served
-//! by `ulo-http-hyper` on smol: the server on `ulo-listen-smol`'s listener, the app on
-//! `ulo_smol::Smol`, a client reaching the HTTP server over `async-net`. No tokio runtime runs.
+//! by `ulo-http-hyper` on smol: the server on `ulo-listener-smol`'s listener, the app on
+//! `ulo_runtime_smol::Smol`, a client reaching the HTTP server over `async-net`. No tokio runtime runs.
 
 use std::future::Future;
 use std::io;
@@ -10,8 +10,8 @@ use ulo::app::Connected;
 use ulo::{App, BoundAddr};
 use ulo_http_conformance::{Harness, OnSmol};
 use ulo_http_hyper::{HyperOn, ReadCount, ServerOn};
-use ulo_listen_smol::SmolListener;
-use ulo_smol::Smol;
+use ulo_listener_smol::SmolListener;
+use ulo_runtime_smol::Smol;
 use ulo_ws::Port;
 use ulo_ws_conformance::{Host, ws_conformance_suite};
 

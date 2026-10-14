@@ -7,12 +7,12 @@
 //!
 //! let server = ulo_http_axum::Embedded::new().nested_at("/api").peer_addr(true);
 //! let embedded = server.handle();
-//! let app = App::builder(AppModule).runtime(ulo_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
+//! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
 //!
 //! let router = axum::Router::new()
 //!     .nest_service("/api", ulo_http_axum::HostLayer.layer(embedded.service()))
 //!     .into_make_service_with_connect_info::<SocketAddr>();
-//! ulo_http_axum::run(app, &embedded, axum::serve(listener, router), ulo_tokio::shutdown_signal()).await?;
+//! ulo_http_axum::run(app, &embedded, axum::serve(listener, router), ulo_runtime_tokio::shutdown_signal()).await?;
 //! ```
 //!
 //! `nest_service` strips the prefix before the app sees the path. [`HostLayer`], wrapped around

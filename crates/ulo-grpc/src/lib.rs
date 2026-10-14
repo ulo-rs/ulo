@@ -1,6 +1,6 @@
 //! The gRPC transport (transports DESIGN §6): handlers bound to the method markers `ulo-build`
 //! generates, one `:path` dispatcher over tonic's `server::Grpc`, an HTTP/2 [`Server`] over
-//! `ulo-hyper-serve`, the pre-dispatch stage as [`PreDispatch`], status and details mapping,
+//! `ulo-server-hyper`, the pre-dispatch stage as [`PreDispatch`], status and details mapping,
 //! health, reflection, and client modules.
 //!
 //! ```ignore

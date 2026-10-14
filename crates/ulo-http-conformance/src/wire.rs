@@ -17,7 +17,7 @@ use http::header::{ACCEPT, HOST};
 use http::{HeaderMap, Method};
 use http_body_util::{BodyExt, Full};
 use ulo::{AppHandle, Dep, Runtime, Timer};
-use ulo_hyper_serve::FuturesIo;
+use ulo_server_hyper::FuturesIo;
 
 use crate::app::Probe;
 use crate::{Harness, Host, HyperHost, Mode, PREFIX, ROUTING_HEADER, app_for};

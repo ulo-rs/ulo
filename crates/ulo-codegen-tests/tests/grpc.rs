@@ -128,7 +128,7 @@ impl Running {
     async fn start() -> Running {
         let server = ulo_grpc::Server::new("127.0.0.1:0").file_descriptor_set(pb::FILE_DESCRIPTOR_SET);
         let app: App<Serving> = App::builder(Root)
-            .runtime(ulo_tokio::Tokio::current())
+            .runtime(ulo_runtime_tokio::Tokio::current())
             .wire()
             .unwrap_or_else(|error| panic!("the gRPC app did not wire: {error}"))
             .connect()

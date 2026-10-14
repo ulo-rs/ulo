@@ -95,7 +95,7 @@ struct Instance {
 impl Instance {
     async fn start(url: &str) -> Instance {
         let app: App<Serving> = App::builder(Root { url: url.to_owned() })
-            .runtime(ulo_tokio::Tokio::current())
+            .runtime(ulo_runtime_tokio::Tokio::current())
             .drain_timeout(Duration::from_secs(2))
             .wire()
             .unwrap_or_else(|error| panic!("the instance did not wire: {}", report(&error)))

@@ -14,7 +14,7 @@ categories = ["web-programming::websocket", "network-programming"]
 default = ["tokio"]
 # The tokio listener and the `Server` alias over it. Off, the server takes the listener a caller
 # names, `ServerOn<L>`, and no tokio runtime crate is built.
-tokio = ["dep:ulo-listen-tokio"]
+tokio = ["dep:ulo-listener-tokio"]
 # For the conformance tests; not an application feature. It builds `Server::messages_read`, which
 # `tests/limits.rs` reads to hold a saturated server's connections to reading nothing more, and
 # turns on `ulo-ws`'s `conformance-probe`. The tests enable it through this crate's dev-dependency
@@ -25,8 +25,8 @@ conformance-probe = ["ulo-ws/conformance-probe"]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 # `Upgraded`, the `futures-io` stream `ulo-ws`'s driver serves.
 ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
-ulo-hyper-serve = { path = "../ulo-hyper-serve", version = "=0.1.0-alpha.1" }
-ulo-listen-tokio = { path = "../ulo-listen-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.1" }
+ulo-listener-tokio = { path = "../ulo-listener-tokio", version = "=0.1.0-alpha.1", optional = true }
 ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
 ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.1" }
@@ -47,9 +47,9 @@ ulo-ws-conformance = { path = "../ulo-ws-conformance" }
 ulo-http = { path = "../ulo-http", features = ["tokio-io"] }
 # `smol`: `OnSmol`, the runtime half `conformance_smol.rs` runs its scenarios on.
 ulo-http-conformance = { path = "../ulo-http-conformance", features = ["smol"] }
-ulo-listen-smol = { path = "../ulo-listen-smol" }
-ulo-smol = { path = "../ulo-smol" }
-ulo-tokio = { path = "../ulo-tokio" }
+ulo-listener-smol = { path = "../ulo-listener-smol" }
+ulo-runtime-smol = { path = "../ulo-runtime-smol" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 async-net.workspace = true
 # `sink`: the tests write through `SinkExt` on the client's socket.
 futures-util = { workspace = true, features = ["sink"] }

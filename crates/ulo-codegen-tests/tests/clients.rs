@@ -119,7 +119,7 @@ impl Module for ClientRoot {
 /// The client app, connected; it binds no server.
 async fn client_app(imports: Vec<Import>) -> App<ulo::Connected> {
     App::builder(ClientRoot { imports })
-        .timer(ulo_tokio::Timer)
+        .timer(ulo_runtime_tokio::Timer)
         .wire()
         .unwrap_or_else(|error| panic!("the client app did not wire: {error}"))
         .connect()
@@ -168,7 +168,7 @@ async fn connect_does_no_network_io_and_the_first_call_finds_the_endpoint_down()
 
 #[tokio::test]
 async fn a_uri_that_does_not_parse_fails_wiring() {
-    let wired = App::builder(ClientRoot { imports: vec![Import::Plain("not a uri".to_owned())] }).timer(ulo_tokio::Timer).wire();
+    let wired = App::builder(ClientRoot { imports: vec![Import::Plain("not a uri".to_owned())] }).timer(ulo_runtime_tokio::Timer).wire();
     let error = match wired {
         Err(error) => error.to_string(),
         Ok(_) => panic!("an endpoint URI that does not parse wired"),

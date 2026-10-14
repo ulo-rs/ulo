@@ -1,18 +1,18 @@
 //! The standalone WebSocket server for gateways declared `port = own` (transports DESIGN §3.5),
 //! as `ulo-http-hyper` is the HTTP server for `ulo-http`: `ulo-ws` knows the protocol, and this
-//! crate the sockets. An HTTP/1.1 server over hyper and `ulo-hyper-serve`'s accept loop, which
+//! crate the sockets. An HTTP/1.1 server over hyper and `ulo-server-hyper`'s accept loop, which
 //! answers each upgrade request with `ulo-ws`'s handshake decision and hands each upgraded
 //! connection to its driver, which runs it on the app's runtime.
 //!
 //! ```ignore
-//! let app = App::builder(AppModule).runtime(ulo_tokio::Tokio::current()).wire()?.connect().await?
+//! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?
 //!     .bind(ulo_ws_hyper::Server::new("0.0.0.0:9001"))
 //!     .listen().await?;
 //! ```
 //!
 //! The runtime is the listener's: [`Server`] accepts on tokio's sockets through
-//! `ulo-listen-tokio`, the default `tokio` feature, and [`ServerOn`] on any other listener, smol's
-//! through `ulo-listen-smol`: `ulo_ws_hyper::ServerOn::<ulo_listen_smol::SmolListener>::new(..)`.
+//! `ulo-listener-tokio`, the default `tokio` feature, and [`ServerOn`] on any other listener, smol's
+//! through `ulo-listener-smol`: `ulo_ws_hyper::ServerOn::<ulo_listener_smol::SmolListener>::new(..)`.
 
 use std::convert::Infallible;
 use std::marker::PhantomData;
@@ -28,8 +28,8 @@ use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use ulo::{Bound, BoundAddr, BoxError, DrainToken, Mounted, Transport};
 use ulo_http::Upgraded;
-use ulo_hyper_serve::{Accepted, FuturesIo, Listener, RuntimeTimer, Serve, ServeConfig};
-pub use ulo_hyper_serve::ReadCount;
+use ulo_server_hyper::{Accepted, FuturesIo, Listener, RuntimeTimer, Serve, ServeConfig};
+pub use ulo_server_hyper::ReadCount;
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{Activation, ActivationError, Endpoint, EndpointSpec, ListenerName, Tls};
 use ulo_transport::Count;
@@ -44,13 +44,13 @@ const NAME: &str = "ulo_ws_hyper::Server";
 /// 30 seconds, the HTTP server's own default for both connection clocks.
 const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The standalone server on tokio's sockets, `ulo-listen-tokio`'s listener: the default.
+/// The standalone server on tokio's sockets, `ulo-listener-tokio`'s listener: the default.
 #[cfg(feature = "tokio")]
-pub type Server = ServerOn<ulo_listen_tokio::TokioListener>;
+pub type Server = ServerOn<ulo_listener_tokio::TokioListener>;
 
 /// The core's `Server` for [`Ws`] on its own port, accepting through listener `L`, the runtime's
 /// sockets: `app.bind(ulo_ws_hyper::Server::new("0.0.0.0:9001"))` on tokio,
-/// `ulo_ws_hyper::ServerOn::<ulo_listen_smol::SmolListener>::new(..)` on smol.
+/// `ulo_ws_hyper::ServerOn::<ulo_listener_smol::SmolListener>::new(..)` on smol.
 ///
 /// `prepare` builds the [`GatewayTable`] of the gateways declared `port = own`, refusing what the
 /// table refuses, a server with no such gateway among it, and every zero limit; it resolves the

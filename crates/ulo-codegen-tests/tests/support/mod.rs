@@ -42,7 +42,7 @@ pub struct Running {
 impl Running {
     pub async fn start(root: impl Module, server: ulo_grpc::Server) -> Running {
         let app = App::builder(root)
-            .runtime(ulo_tokio::Tokio::current())
+            .runtime(ulo_runtime_tokio::Tokio::current())
             .drain_timeout(Duration::from_secs(4))
             .wire()
             .unwrap_or_else(|error| panic!("the gRPC app did not wire: {error}"))

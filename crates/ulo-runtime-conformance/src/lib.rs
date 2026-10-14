@@ -6,12 +6,12 @@
 //! `tests/`.
 //!
 //! ```ignore
-//! // crates/ulo-tokio/tests/conformance.rs
+//! // crates/ulo-runtime-tokio/tests/conformance.rs
 //! struct OnTokio;
 //!
 //! impl ulo_runtime_conformance::Harness for OnTokio {
-//!     type Runtime = ulo_tokio::Tokio;
-//!     fn runtime() -> ulo_tokio::Tokio { ulo_tokio::Tokio::current() }
+//!     type Runtime = ulo_runtime_tokio::Tokio;
+//!     fn runtime() -> ulo_runtime_tokio::Tokio { ulo_runtime_tokio::Tokio::current() }
 //!     fn block_on<F: Future>(fut: F) -> F::Output { /* a runtime of its own per test */ }
 //! }
 //!

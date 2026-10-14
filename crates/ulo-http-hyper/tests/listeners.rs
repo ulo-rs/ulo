@@ -21,7 +21,7 @@ use ulo::app::{Bound, Connected};
 use ulo::App;
 use ulo_http_conformance::{Harness, OnSmol, OnTokio};
 use ulo_http_hyper::ServerOn;
-use ulo_listen_smol::SmolListener;
+use ulo_listener_smol::SmolListener;
 use ulo_net::Endpoint;
 
 /// How long any one step may take.

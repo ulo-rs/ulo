@@ -122,7 +122,7 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R, what: &str) -> Option<
 #[tokio::test(flavor = "multi_thread")]
 async fn a_connection_registered_after_the_drain_began_receives_goaway() {
     let server = App::builder(Root)
-        .runtime(ulo_tokio::Tokio::current())
+        .runtime(ulo_runtime_tokio::Tokio::current())
         .wire()
         .expect("the server wires")
         .connect()

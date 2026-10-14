@@ -104,7 +104,7 @@ impl ClientTls {
 /// `request` with `grpc-timeout` set from `exec`'s remaining deadline. There is no ambient
 /// execution, so nothing forwards a deadline on its own. A deadline already passed is sent as one
 /// nanosecond, the shortest `grpc-timeout`, so the callee fails it at once. The remaining time is
-/// read on tokio's clock, which `ulo-tokio`'s `Timer` reads too.
+/// read on tokio's clock, which `ulo-runtime-tokio`'s `Timer` reads too.
 pub fn outgoing<T>(exec: &ExecutionRef, mut request: tonic::Request<T>) -> tonic::Request<T> {
     if let Some(deadline) = exec.deadline() {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now().into_std());

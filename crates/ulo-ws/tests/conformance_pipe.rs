@@ -23,7 +23,7 @@ use ulo::app::Connected;
 use ulo::{App, BoundAddr, BoxError, DrainToken, Mounted, Runtime, Transport};
 use ulo_http::Upgraded;
 use ulo_http_conformance::{Harness, OnSmol};
-use ulo_smol::Smol;
+use ulo_runtime_smol::Smol;
 use ulo_transport::TaskSet;
 use ulo_transport::__private::Watch;
 use ulo_transport::prepare::Failures;

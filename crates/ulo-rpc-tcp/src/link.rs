@@ -13,7 +13,7 @@ use ulo_net::{BoundListener, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Capabilities, Codec, Link, Outbound, Pattern};
 use ulo_rpc_tcp_core::{Accept, Core, Incoming, Reader, Writer};
-use ulo_tokio::Tokio;
+use ulo_runtime_tokio::Tokio;
 
 /// The TCP link: a server binds its endpoint, a client connects to it.
 ///

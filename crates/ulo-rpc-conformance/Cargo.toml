@@ -13,16 +13,16 @@ publish = false
 
 [features]
 # `OnTokio`, the runtime half of every link built on tokio.
-tokio = ["dep:ulo-tokio", "dep:tokio"]
+tokio = ["dep:ulo-runtime-tokio", "dep:tokio"]
 # `OnSmol`, the runtime half of a link on smol: an `async-executor` `Executor` per scenario.
-smol = ["dep:ulo-smol"]
+smol = ["dep:ulo-runtime-smol"]
 
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 # `conformance-probe`: `Broker::probe` names the broker links' `ClientProbe`.
 ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1", features = ["conformance-probe"] }
-ulo-smol = { path = "../ulo-smol", version = "=0.1.0-alpha.1", optional = true }
-ulo-tokio = { path = "../ulo-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo-runtime-smol = { path = "../ulo-runtime-smol", version = "=0.1.0-alpha.1", optional = true }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1", optional = true }
 ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 # `serde` lets the binary scenario send and receive `Bytes` as raw bytes.
 bytes = { workspace = true, features = ["serde"] }

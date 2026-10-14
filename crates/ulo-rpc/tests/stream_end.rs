@@ -215,7 +215,7 @@ impl Running {
         let (deliveries, mut receiver) = mpsc::unbounded_channel::<Delivery>();
         let inbound: Inbound = Box::pin(stream::poll_fn(move |cx| receiver.poll_recv(cx)));
         let app = App::builder(Root { unary })
-            .runtime(ulo_tokio::Tokio::current())
+            .runtime(ulo_runtime_tokio::Tokio::current())
             .wire()
             .expect("the app wires")
             .connect()

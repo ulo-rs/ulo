@@ -3,7 +3,7 @@
 use hyper::body::Incoming;
 use ulo::BoxError;
 use ulo_http::{ConnInfo, HttpBody, OnUpgrade, Request, Upgraded};
-use ulo_hyper_serve::FuturesIo;
+use ulo_server_hyper::FuturesIo;
 
 /// The request as `ulo-http` reads it: parts, body, the connection as the accept loop reported
 /// it with the request's own HTTP version, and the upgrade future hyper stores on a request that

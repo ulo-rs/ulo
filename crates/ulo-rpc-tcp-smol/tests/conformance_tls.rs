@@ -18,7 +18,7 @@ use ulo_net::rustls::{self, ClientConfig};
 use ulo_rpc_conformance::relay::Relay;
 use ulo_rpc_conformance::{Broker, Harness, OnSmol, startup_failed};
 use ulo_rpc_tcp_smol::Tcp;
-use ulo_smol::Smol;
+use ulo_runtime_smol::Smol;
 use ulo_test_certs::localhost;
 
 struct TlsLoopback {

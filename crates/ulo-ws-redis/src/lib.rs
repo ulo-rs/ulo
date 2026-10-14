@@ -34,7 +34,7 @@ use redis::aio::MultiplexedConnection;
 use tokio::runtime::Handle;
 use tokio::sync::{Mutex, mpsc};
 use ulo::{BoxError, BoxFuture};
-use ulo_tokio::Tokio;
+use ulo_runtime_tokio::Tokio;
 use ulo_ws::{Audience, BroadcastAdapter, NodeId, Target};
 
 /// How long a lost subscription waits before connecting again.

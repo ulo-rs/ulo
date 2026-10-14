@@ -1,5 +1,5 @@
 //! The hyper backend serving TLS on smol, as `tls.rs` does on tokio: the configuration `Tls::load`
-//! builds reaches `ulo-listen-smol`, which wraps each connection with `futures-rustls`; ALPN
+//! builds reaches `ulo-listener-smol`, which wraps each connection with `futures-rustls`; ALPN
 //! settles HTTP/2 or HTTP/1.1 as the client offers; and an upgrade on a TLS connection reaches the
 //! app's handler as an `Upgraded` that carries bytes both ways. The client is `futures-rustls` over
 //! `async-net`, and no tokio runtime runs.
@@ -18,7 +18,7 @@ use futures::{AsyncReadExt, AsyncWriteExt};
 use ulo::{Runtime, Signal, TaskHandle, Timer};
 use ulo_http_conformance::{Harness, OnSmol};
 use ulo_http_hyper::ServerOn;
-use ulo_listen_smol::SmolListener;
+use ulo_listener_smol::SmolListener;
 use ulo_net::Tls;
 use ulo_net::rustls::pki_types::ServerName;
 use ulo_net::rustls::{self, ClientConfig};

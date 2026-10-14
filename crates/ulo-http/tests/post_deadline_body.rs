@@ -198,7 +198,7 @@ impl Running {
         let ended = Ended::default();
         let server = ulo_http::Server::with_backend("127.0.0.1:0", keeper.clone()).timeout_grace(Bound::After(GRACE));
         let app = App::builder(Root(ended.clone()))
-            .runtime(ulo_tokio::Tokio::current())
+            .runtime(ulo_runtime_tokio::Tokio::current())
             .wire()
             .expect("the app wires")
             .connect()

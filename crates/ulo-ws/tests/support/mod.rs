@@ -48,7 +48,7 @@ pub struct Running {
 impl Running {
     /// `root` wired, connected and bound to `server`, which must listen on one address.
     pub async fn start(root: impl Module, server: impl Server) -> Running {
-        Running::start_on(root, server, ulo_tokio::Tokio::current()).await
+        Running::start_on(root, server, ulo_runtime_tokio::Tokio::current()).await
     }
 
     /// [`start`](Self::start) with `runtime` as the app's runtime.

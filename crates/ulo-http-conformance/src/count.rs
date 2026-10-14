@@ -1,6 +1,6 @@
 //! A count of the connections a host's server has read from, for [`Host::connections_read`]: an
 //! embedding host wraps each stream its listener accepts with `ReadCount::wrap` before handing
-//! it to the host framework, as `ulo-hyper-serve` counts for the hyper backend. The wrapper reads
+//! it to the host framework, as `ulo-server-hyper` counts for the hyper backend. The wrapper reads
 //! through tokio's I/O traits, behind the `tokio` feature, since every embedding host's framework
 //! runs on tokio.
 //!

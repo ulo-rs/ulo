@@ -64,7 +64,7 @@ impl Tcp {
         self
     }
 
-    /// The runtime the link's tasks run on in place of the one it runs under: `ulo_smol::Smol`, or
+    /// The runtime the link's tasks run on in place of the one it runs under: `ulo_runtime_smol::Smol`, or
     /// any other. Unset, a server's tasks run on its app's runtime and a client's on its client's.
     pub fn with_runtime(mut self, runtime: impl Runtime) -> Self {
         self.runtime = Some(Arc::new(runtime));

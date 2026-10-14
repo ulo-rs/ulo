@@ -105,9 +105,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # The suites on smol, with smol's sockets and no tokio runtime. `test` runs them too, inside
       # `cargo test --workspace`; this job names each one, so the smol runs are visible as their own
-      # result. The runtime suite on `ulo_smol::Smol`, its executor run by four threads.
-      - run: cargo test -p ulo-smol --test conformance --locked
-      # The HTTP suite against the hyper backend on `ulo-listen-smol`.
+      # result. The runtime suite on `ulo_runtime_smol::Smol`, its executor run by four threads.
+      - run: cargo test -p ulo-runtime-smol --test conformance --locked
+      # The HTTP suite against the hyper backend on `ulo-listener-smol`.
       - run: cargo test -p ulo-http-hyper --test conformance_smol --locked
       # The WebSocket suite against the standalone server on smol, the HTTP port of the hyper
       # backend on smol, and the pipe host, which has no socket and no hyper.

@@ -42,7 +42,7 @@ tower.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-ulo-tokio = { path = "../ulo-tokio" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 # `futures-io`'s extension traits, through which `tests/upgraded.rs` drives an `Upgraded`.
 futures.workspace = true
 # `io-util`: tokio's extension traits, for the same tests' `tokio-io` cases.

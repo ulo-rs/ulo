@@ -14,15 +14,15 @@ categories = ["web-programming::http-server"]
 default = ["tokio"]
 # The tokio listener and the `Hyper` and `Server` aliases over it. Off, the backend serves on the
 # listener a caller names, `HyperOn<L>` and `ServerOn<L>`, and no tokio runtime crate is built.
-tokio = ["dep:ulo-listen-tokio"]
+tokio = ["dep:ulo-listener-tokio"]
 
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
 # The accept loop, the handshake timeout and the drain, shared with the gRPC and WebSocket servers,
 # and hyper's executor, timer and I/O over the app's runtime.
-ulo-hyper-serve = { path = "../ulo-hyper-serve", version = "=0.1.0-alpha.1" }
-ulo-listen-tokio = { path = "../ulo-listen-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.1" }
+ulo-listener-tokio = { path = "../ulo-listener-tokio", version = "=0.1.0-alpha.1", optional = true }
 ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
 ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 futures-util.workspace = true
@@ -35,9 +35,9 @@ tracing.workspace = true
 
 [dev-dependencies]
 ulo-http-conformance = { path = "../ulo-http-conformance", features = ["tokio", "smol"] }
-ulo-listen-smol = { path = "../ulo-listen-smol" }
-ulo-smol = { path = "../ulo-smol" }
-ulo-tokio = { path = "../ulo-tokio" }
+ulo-listener-smol = { path = "../ulo-listener-smol" }
+ulo-runtime-smol = { path = "../ulo-runtime-smol" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 async-io.workspace = true
 async-net.workspace = true
 futures.workspace = true

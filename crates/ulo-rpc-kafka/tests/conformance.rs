@@ -176,7 +176,7 @@ async fn close_commits_off_the_runtime_thread_polling_it() {
     const PATTERN: &str = "f370.call";
     let broker = KraftBroker::start().await;
     let app = App::builder(Empty)
-        .runtime(ulo_tokio::Tokio::current())
+        .runtime(ulo_runtime_tokio::Tokio::current())
         .wire()
         .expect("the app wires")
         .connect()

@@ -6,14 +6,14 @@
 //! ```ignore
 //! let server = ulo_http_actix::Embedded::new().nested_at("/api");
 //! let embedded = server.handle();
-//! let app = App::builder(AppModule).runtime(ulo_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
+//! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
 //!
 //! let host = {
 //!     let embedded = embedded.clone();
 //!     actix_web::HttpServer::new(move || actix_web::App::new().service(ulo_http_actix::scope("/api", &embedded)))
 //!         .bind(("0.0.0.0", 8080))?
 //! };
-//! ulo_http_actix::run(app, &embedded, host, ulo_tokio::shutdown_signal()).await?;
+//! ulo_http_actix::run(app, &embedded, host, ulo_runtime_tokio::shutdown_signal()).await?;
 //! ```
 //!
 //! actix's request payload is `!Send` while the app's body is `Send`, so the payload is pumped

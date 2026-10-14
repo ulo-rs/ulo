@@ -11,7 +11,7 @@ use ulo::{App, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Sp
 use ulo_rpc::{Link, Payload, RpcClient, RpcClientModule};
 use ulo_rpc_conformance::{Harness, OnSmol};
 use ulo_rpc_tcp_smol::Tcp;
-use ulo_smol::Smol;
+use ulo_runtime_smol::Smol;
 use ulo_transport::{Classify, ErrorKind};
 
 #[derive(Debug)]

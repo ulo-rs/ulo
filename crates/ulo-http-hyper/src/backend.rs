@@ -10,18 +10,18 @@ use hyper::server::conn::http1;
 use hyper_util::server::conn::auto;
 use ulo::BoxError;
 use ulo_http::{AppService, Backend, BackendLimits, HttpConfig};
-use ulo_hyper_serve::{Accepted, Listener, ReadCount, RuntimeExecutor, RuntimeTimer, Serve, ServeConfig};
+use ulo_server_hyper::{Accepted, Listener, ReadCount, RuntimeExecutor, RuntimeTimer, Serve, ServeConfig};
 use ulo_net::BoundListener;
 use ulo_net::rustls::ServerConfig;
 use ulo_transport::Count;
 
 use crate::convert;
 
-/// The hyper backend on listener `L`, the runtime's sockets: `ulo_listen_tokio::TokioListener`
-/// for [`Hyper`](crate::Hyper), `ulo_listen_smol::SmolListener` on smol. `Default`, so
+/// The hyper backend on listener `L`, the runtime's sockets: `ulo_listener_tokio::TokioListener`
+/// for [`Hyper`](crate::Hyper), `ulo_listener_smol::SmolListener` on smol. `Default`, so
 /// `ulo_http::Server::<HyperOn<L>>::new(endpoint)` builds it.
 ///
-/// `ulo-hyper-serve` accepts on every listener, one task per connection spawned through the app's
+/// `ulo-server-hyper` accepts on every listener, one task per connection spawned through the app's
 /// runtime, and hands each connection here after its TLS handshake, where hyper's connection
 /// builders serve it with the server's settings applied, their executor and timer the app's
 /// runtime and clock.

@@ -13,10 +13,10 @@ publish = false
 [features]
 # `OnTokio`, the runtime half every tokio host names, and `Counted` over tokio's I/O traits, which
 # an embedding host wraps its listener's streams in.
-tokio = ["dep:ulo-tokio", "dep:ulo-listen-tokio", "dep:tokio"]
+tokio = ["dep:ulo-runtime-tokio", "dep:ulo-listener-tokio", "dep:tokio"]
 # `OnSmol`, the runtime half of a host on smol: an `async-executor` `Executor` per scenario,
-# `ulo-listen-smol`'s listener and `async-net`'s sockets.
-smol = ["dep:ulo-smol", "dep:ulo-listen-smol", "dep:async-net"]
+# `ulo-listener-smol`'s listener and `async-net`'s sockets.
+smol = ["dep:ulo-runtime-smol", "dep:ulo-listener-smol", "dep:async-net"]
 # The test fairing through which the suite reads `Routing` from rocket's request-local cache.
 rocket = ["dep:rocket"]
 
@@ -27,11 +27,11 @@ ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
 ulo-http-hyper = { path = "../ulo-http-hyper", version = "=0.1.0-alpha.1", default-features = false }
 # `FuturesIo` and `RuntimeExecutor`: the suite's client over a host's `futures-io` stream, its
 # HTTP/2 tasks on the app's runtime.
-ulo-hyper-serve = { path = "../ulo-hyper-serve", version = "=0.1.0-alpha.1" }
-ulo-listen-smol = { path = "../ulo-listen-smol", version = "=0.1.0-alpha.1", optional = true }
-ulo-listen-tokio = { path = "../ulo-listen-tokio", version = "=0.1.0-alpha.1", optional = true }
-ulo-smol = { path = "../ulo-smol", version = "=0.1.0-alpha.1", optional = true }
-ulo-tokio = { path = "../ulo-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.1" }
+ulo-listener-smol = { path = "../ulo-listener-smol", version = "=0.1.0-alpha.1", optional = true }
+ulo-listener-tokio = { path = "../ulo-listener-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo-runtime-smol = { path = "../ulo-runtime-smol", version = "=0.1.0-alpha.1", optional = true }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1", optional = true }
 ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 async-net = { workspace = true, optional = true }
 bytes.workspace = true

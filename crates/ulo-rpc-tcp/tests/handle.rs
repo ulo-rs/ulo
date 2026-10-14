@@ -16,7 +16,7 @@ use std::sync::Mutex;
 use ulo::{App, Bound, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, Runtime, Signal, StartupError, injectable, routes};
 use ulo_rpc::{Link, Payload, RpcClient, RpcClientModule};
 use ulo_rpc_tcp::Tcp;
-use ulo_tokio::Tokio;
+use ulo_runtime_tokio::Tokio;
 use ulo_transport::{Classify, ErrorKind};
 
 #[derive(Debug)]

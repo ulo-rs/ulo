@@ -4,10 +4,10 @@
 //! ```ignore
 //! let server = ulo_http_poem::Embedded::new().nested_at("/api");
 //! let embedded = server.handle();
-//! let app = App::builder(AppModule).runtime(ulo_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
+//! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
 //!
 //! let route = poem::Route::new().nest("/api", ulo_http_poem::endpoint(&embedded));
-//! ulo_http_poem::run(app, &embedded, poem::Server::new(TcpListener::bind("0.0.0.0:3000")), route, ulo_tokio::shutdown_signal()).await?;
+//! ulo_http_poem::run(app, &embedded, poem::Server::new(TcpListener::bind("0.0.0.0:3000")), route, ulo_runtime_tokio::shutdown_signal()).await?;
 //! ```
 //!
 //! `Route::nest` strips the prefix, so the adapter declares `STRIPS_PREFIX: true`; mounting the

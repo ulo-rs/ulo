@@ -6173,7 +6173,7 @@ dependencies = [
  "ulo-grpc",
  "ulo-http",
  "ulo-rpc",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-transport",
  "ulo-ws",
 ]
@@ -6239,7 +6239,7 @@ dependencies = [
  "ulo",
  "ulo-graphql",
  "ulo-http-hyper",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-transport",
  "ulo-ws",
 ]
@@ -6269,9 +6269,9 @@ dependencies = [
  "ulo",
  "ulo-grpc-macros",
  "ulo-http",
- "ulo-hyper-serve",
- "ulo-listen-tokio",
+ "ulo-listener-tokio",
  "ulo-net",
+ "ulo-server-hyper",
  "ulo-transport",
 ]
 
@@ -6319,7 +6319,7 @@ dependencies = [
  "ulo",
  "ulo-http-macros",
  "ulo-net",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-transport",
 ]
 
@@ -6338,7 +6338,7 @@ dependencies = [
  "ulo",
  "ulo-http",
  "ulo-http-conformance",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-ws",
  "ulo-ws-conformance",
 ]
@@ -6356,7 +6356,7 @@ dependencies = [
  "ulo",
  "ulo-http",
  "ulo-http-conformance",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-ws",
  "ulo-ws-conformance",
 ]
@@ -6381,11 +6381,11 @@ dependencies = [
  "ulo",
  "ulo-http",
  "ulo-http-hyper",
- "ulo-hyper-serve",
- "ulo-listen-smol",
- "ulo-listen-tokio",
- "ulo-smol",
- "ulo-tokio",
+ "ulo-listener-smol",
+ "ulo-listener-tokio",
+ "ulo-runtime-smol",
+ "ulo-runtime-tokio",
+ "ulo-server-hyper",
  "ulo-transport",
 ]
 
@@ -6408,13 +6408,13 @@ dependencies = [
  "ulo",
  "ulo-http",
  "ulo-http-conformance",
- "ulo-hyper-serve",
- "ulo-listen-smol",
- "ulo-listen-tokio",
+ "ulo-listener-smol",
+ "ulo-listener-tokio",
  "ulo-net",
- "ulo-smol",
+ "ulo-runtime-smol",
+ "ulo-runtime-tokio",
+ "ulo-server-hyper",
  "ulo-test-certs",
- "ulo-tokio",
  "ulo-transport",
 ]
 
@@ -6441,7 +6441,7 @@ dependencies = [
  "ulo",
  "ulo-http",
  "ulo-http-conformance",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-ws",
  "ulo-ws-conformance",
 ]
@@ -6460,7 +6460,7 @@ dependencies = [
  "ulo",
  "ulo-http",
  "ulo-http-conformance",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-ws",
  "ulo-ws-conformance",
 ]
@@ -6479,33 +6479,13 @@ dependencies = [
  "ulo",
  "ulo-http",
  "ulo-http-conformance",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-ws",
  "ulo-ws-conformance",
 ]
 
 [[package]]
-name = "ulo-hyper-serve"
-version = "0.1.0-alpha.1"
-dependencies = [
- "async-io",
- "async-net",
- "bytes",
- "futures",
- "futures-io",
- "http 1.5.0",
- "http-body-util",
- "hyper 1.11.1",
- "tracing",
- "ulo",
- "ulo-http",
- "ulo-net",
- "ulo-smol",
- "ulo-transport",
-]
-
-[[package]]
-name = "ulo-listen-smol"
+name = "ulo-listener-smol"
 version = "0.1.0-alpha.1"
 dependencies = [
  "async-io",
@@ -6516,14 +6496,14 @@ dependencies = [
  "http 1.5.0",
  "ulo",
  "ulo-http",
- "ulo-hyper-serve",
  "ulo-net",
- "ulo-smol",
+ "ulo-runtime-smol",
+ "ulo-server-hyper",
  "ulo-test-certs",
 ]
 
 [[package]]
-name = "ulo-listen-tokio"
+name = "ulo-listener-tokio"
 version = "0.1.0-alpha.1"
 dependencies = [
  "http 1.5.0",
@@ -6532,10 +6512,10 @@ dependencies = [
  "tokio-rustls",
  "ulo",
  "ulo-http",
- "ulo-hyper-serve",
  "ulo-net",
+ "ulo-runtime-tokio",
+ "ulo-server-hyper",
  "ulo-test-certs",
- "ulo-tokio",
 ]
 
 [[package]]
@@ -6595,7 +6575,7 @@ dependencies = [
  "tracing",
  "ulo",
  "ulo-rpc-macros",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-transport",
 ]
 
@@ -6611,8 +6591,8 @@ dependencies = [
  "tokio",
  "ulo",
  "ulo-rpc",
- "ulo-smol",
- "ulo-tokio",
+ "ulo-runtime-smol",
+ "ulo-runtime-tokio",
  "ulo-transport",
 ]
 
@@ -6632,7 +6612,7 @@ dependencies = [
  "ulo-rpc",
  "ulo-rpc-conformance",
  "ulo-rpc-kafka",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-transport",
  "uuid",
 ]
@@ -6663,7 +6643,7 @@ dependencies = [
  "ulo-rpc",
  "ulo-rpc-conformance",
  "ulo-rpc-mqtt",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-transport",
  "uuid",
 ]
@@ -6684,7 +6664,7 @@ dependencies = [
  "ulo-rpc",
  "ulo-rpc-conformance",
  "ulo-rpc-nats",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-transport",
 ]
 
@@ -6704,7 +6684,7 @@ dependencies = [
  "ulo-rpc",
  "ulo-rpc-conformance",
  "ulo-rpc-rabbitmq",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-transport",
  "uuid",
 ]
@@ -6724,7 +6704,7 @@ dependencies = [
  "ulo",
  "ulo-rpc",
  "ulo-rpc-conformance",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-transport",
  "uuid",
 ]
@@ -6745,8 +6725,8 @@ dependencies = [
  "ulo-rpc-conformance",
  "ulo-rpc-tcp-core",
  "ulo-rpc-tcp-smol",
+ "ulo-runtime-tokio",
  "ulo-test-certs",
- "ulo-tokio",
  "ulo-transport",
 ]
 
@@ -6778,7 +6758,7 @@ dependencies = [
  "ulo-rpc",
  "ulo-rpc-conformance",
  "ulo-rpc-tcp-core",
- "ulo-smol",
+ "ulo-runtime-smol",
  "ulo-test-certs",
  "ulo-transport",
 ]
@@ -6798,7 +6778,7 @@ dependencies = [
  "ulo-net",
  "ulo-rpc",
  "ulo-rpc-conformance",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-transport",
 ]
 
@@ -6813,7 +6793,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ulo-smol"
+name = "ulo-runtime-smol"
 version = "0.1.0-alpha.1"
 dependencies = [
  "async-executor",
@@ -6824,15 +6804,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ulo-test-certs"
-version = "0.1.0-alpha.1"
-dependencies = [
- "rcgen",
- "rustls",
-]
-
-[[package]]
-name = "ulo-tokio"
+name = "ulo-runtime-tokio"
 version = "0.1.0-alpha.1"
 dependencies = [
  "futures-executor",
@@ -6840,6 +6812,34 @@ dependencies = [
  "tracing",
  "ulo",
  "ulo-runtime-conformance",
+]
+
+[[package]]
+name = "ulo-server-hyper"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "async-io",
+ "async-net",
+ "bytes",
+ "futures",
+ "futures-io",
+ "http 1.5.0",
+ "http-body-util",
+ "hyper 1.11.1",
+ "tracing",
+ "ulo",
+ "ulo-http",
+ "ulo-net",
+ "ulo-runtime-smol",
+ "ulo-transport",
+]
+
+[[package]]
+name = "ulo-test-certs"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "rcgen",
+ "rustls",
 ]
 
 [[package]]
@@ -6894,9 +6894,9 @@ dependencies = [
  "ulo-http",
  "ulo-http-conformance",
  "ulo-http-hyper",
- "ulo-listen-smol",
- "ulo-smol",
- "ulo-tokio",
+ "ulo-listener-smol",
+ "ulo-runtime-smol",
+ "ulo-runtime-tokio",
  "ulo-transport",
  "ulo-ws-conformance",
  "ulo-ws-macros",
@@ -6935,12 +6935,12 @@ dependencies = [
  "ulo",
  "ulo-http",
  "ulo-http-conformance",
- "ulo-hyper-serve",
- "ulo-listen-smol",
- "ulo-listen-tokio",
+ "ulo-listener-smol",
+ "ulo-listener-tokio",
  "ulo-net",
- "ulo-smol",
- "ulo-tokio",
+ "ulo-runtime-smol",
+ "ulo-runtime-tokio",
+ "ulo-server-hyper",
  "ulo-transport",
  "ulo-ws",
  "ulo-ws-conformance",
@@ -6973,7 +6973,7 @@ dependencies = [
  "tracing",
  "ulo",
  "ulo-rpc-conformance",
- "ulo-tokio",
+ "ulo-runtime-tokio",
  "ulo-ws",
  "ulo-ws-hyper",
 ]

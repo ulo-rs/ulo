@@ -28,7 +28,7 @@ async fn the_server_s_timeouts_come_before_the_table_s_failures_and_the_endpoint
         .handshake_timeout(zero)
         .max_inflight(Count::Max(0));
     let bound = App::builder(Empty)
-        .runtime(ulo_tokio::Tokio::current())
+        .runtime(ulo_runtime_tokio::Tokio::current())
         .wire()
         .expect("the app wires")
         .connect()
@@ -61,7 +61,7 @@ async fn the_server_s_timeouts_come_before_the_table_s_failures_and_the_endpoint
 async fn a_zero_server_wide_in_flight_bound_is_refused() {
     let server = ulo_ws_hyper::Server::new("127.0.0.1:0").server_max_inflight(Count::Max(0));
     let bound = App::builder(Empty)
-        .runtime(ulo_tokio::Tokio::current())
+        .runtime(ulo_runtime_tokio::Tokio::current())
         .wire()
         .expect("the app wires")
         .connect()

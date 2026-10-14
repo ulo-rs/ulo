@@ -111,7 +111,7 @@ pub trait Harness: Send + Sync + 'static {
 
     /// The listener the reference host, the hyper backend, accepts on: this runtime's sockets,
     /// so a host is compared with the reference on the runtime it runs on.
-    type Listener: ulo_hyper_serve::Listener;
+    type Listener: ulo_server_hyper::Listener;
 
     /// The client end of one connection to a host, on `futures-io`'s traits.
     type Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static;

@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use ulo::{BoxFuture, Dep, Module, ModuleDef, ModuleIdentity, Spawn, TaskHandle, Timer, injectable, routes};
-use ulo_tokio::Tokio;
+use ulo_runtime_tokio::Tokio;
 use ulo_ws::{AfterInit, GatewayRef, WsModule};
 
 use support::{Record, Running, hang_up, next_json, send_json, within};

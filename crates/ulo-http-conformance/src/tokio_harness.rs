@@ -6,13 +6,13 @@ use std::net::SocketAddr;
 
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
-use ulo_listen_tokio::TokioListener;
-use ulo_tokio::Tokio;
+use ulo_listener_tokio::TokioListener;
+use ulo_runtime_tokio::Tokio;
 
 use crate::Harness;
 
 /// Tokio as a host's [`Harness`]: each scenario on a multi-thread runtime of its own, the
-/// reference host on `ulo-listen-tokio`'s listener, a client over tokio's `TcpStream`.
+/// reference host on `ulo-listener-tokio`'s listener, a client over tokio's `TcpStream`.
 pub struct OnTokio;
 
 impl Harness for OnTokio {

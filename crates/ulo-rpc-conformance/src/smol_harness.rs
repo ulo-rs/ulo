@@ -3,7 +3,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use ulo_smol::{Executor, Smol};
+use ulo_runtime_smol::{Executor, Smol};
 
 use crate::Harness;
 

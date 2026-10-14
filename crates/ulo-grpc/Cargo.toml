@@ -14,9 +14,9 @@ categories = ["network-programming", "web-programming"]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 ulo-grpc-macros = { path = "../ulo-grpc-macros", version = "=0.1.0-alpha.1" }
 ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
-ulo-hyper-serve = { path = "../ulo-hyper-serve", version = "=0.1.0-alpha.1" }
+ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.1" }
 # The accept loop's listener: tonic is tokio-only, so the server is too.
-ulo-listen-tokio = { path = "../ulo-listen-tokio", version = "=0.1.0-alpha.1" }
+ulo-listener-tokio = { path = "../ulo-listener-tokio", version = "=0.1.0-alpha.1" }
 ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
 ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 bytes.workspace = true

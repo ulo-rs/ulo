@@ -52,8 +52,8 @@ tracing.workspace = true
 ulo-ws-conformance = { path = "../ulo-ws-conformance" }
 # `smol`: `OnSmol`, the runtime half both smol hosts run their scenarios on.
 ulo-http-conformance = { path = "../ulo-http-conformance", features = ["smol"] }
-ulo-listen-smol = { path = "../ulo-listen-smol" }
-ulo-smol = { path = "../ulo-smol" }
+ulo-listener-smol = { path = "../ulo-listener-smol" }
+ulo-runtime-smol = { path = "../ulo-runtime-smol" }
 async-net.workspace = true
 # The pipe host's request heads, and the in-memory pipe it serves a connection over.
 httparse.workspace = true
@@ -62,7 +62,7 @@ piper.workspace = true
 ulo-http = { path = "../ulo-http", features = ["tokio-io"] }
 # The HTTP server a gateway on the HTTP port is reached through.
 ulo-http-hyper = { path = "../ulo-http-hyper" }
-ulo-tokio = { path = "../ulo-tokio" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 # `io-util`: the in-memory pipe `tests/table.rs` serves a connection over.
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros", "sync", "io-util"] }
 # `connect`: the tests drive each gateway through a real WebSocket client.

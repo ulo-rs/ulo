@@ -154,7 +154,7 @@ impl Running {
         let keeper = Keeper::default();
         let ended = Ended::default();
         let app = App::builder(Root(ended.clone()))
-            .runtime(ulo_tokio::Tokio::current())
+            .runtime(ulo_runtime_tokio::Tokio::current())
             .wire()
             .expect("the app wires")
             .connect()

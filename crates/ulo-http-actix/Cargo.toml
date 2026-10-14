@@ -36,7 +36,7 @@ ulo-http-conformance = { path = "../ulo-http-conformance", features = ["tokio"] 
 ulo-ws-conformance = { path = "../ulo-ws-conformance" }
 # `tokio-io`: the suite's client stream, `Upgraded::from_tokio` over a `TcpStream`.
 ulo-http = { path = "../ulo-http", features = ["tokio-io"] }
-ulo-tokio = { path = "../ulo-tokio" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 ulo-ws = { path = "../ulo-ws" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync"] }
 

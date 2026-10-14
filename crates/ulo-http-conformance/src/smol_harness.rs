@@ -6,8 +6,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_net::TcpStream;
-use ulo_listen_smol::SmolListener;
-use ulo_smol::{Executor, Smol};
+use ulo_listener_smol::SmolListener;
+use ulo_runtime_smol::{Executor, Smol};
 
 use crate::Harness;
 
@@ -16,7 +16,7 @@ const WORKERS: usize = 3;
 
 /// smol as a host's [`Harness`]: each scenario on an `async-executor` `Executor` of its own, run by
 /// the test's thread and three more through `Smol::block_on`, so a task may be polled on another
-/// thread than the one that spawned it; the reference host on `ulo-listen-smol`'s listener; a
+/// thread than the one that spawned it; the reference host on `ulo-listener-smol`'s listener; a
 /// client over `async-net`'s `TcpStream`. No tokio runtime runs.
 pub struct OnSmol;
 

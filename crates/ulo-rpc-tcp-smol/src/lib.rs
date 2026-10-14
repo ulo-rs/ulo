@@ -5,7 +5,7 @@
 //! `ulo_net::Tls` with no ALPN; `goaway` on every connection at the drain.
 //!
 //! No tokio is involved: the sockets are `async-io`'s, whose reactor runs on a thread of its own,
-//! and the link's tasks run on the runtime it runs under, `ulo_smol::Smol` on a smol app: a server's
+//! and the link's tasks run on the runtime it runs under, `ulo_runtime_smol::Smol` on a smol app: a server's
 //! app's, and a client's own, which `RpcClient` hands it. `Tcp::with_runtime` puts them on another.
 //!
 //! ```ignore

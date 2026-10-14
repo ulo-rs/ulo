@@ -1,4 +1,4 @@
-//! The gRPC server (transports DESIGN §6.2): HTTP/2 over `ulo-hyper-serve`, so endpoints, inherited
+//! The gRPC server (transports DESIGN §6.2): HTTP/2 over `ulo-server-hyper`, so endpoints, inherited
 //! sockets and TLS have one story with HTTP's. tonic's own `transport::Server` is not used.
 
 use std::collections::HashMap;
@@ -13,8 +13,8 @@ use hyper_util::rt::{TokioExecutor, TokioTimer};
 use tonic_health::ServingStatus;
 use ulo::{Bound, BoundAddr, BoxError, DrainToken, Mounted, Transport, TypeName};
 use ulo_http::stage::Stage;
-use ulo_hyper_serve::{Accepted, Serve, ServeConfig};
-use ulo_listen_tokio::TokioListener;
+use ulo_server_hyper::{Accepted, Serve, ServeConfig};
+use ulo_listener_tokio::TokioListener;
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec, ListenerName, Tls};
 use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
@@ -398,7 +398,7 @@ impl ulo::Server for Server {
         running.serve.run(move |accepted| connection(accepted, Arc::clone(&dispatcher), Arc::clone(&connections))).await
     }
 
-    /// GOAWAY through `ulo-hyper-serve`'s drain; health switches to NOT_SERVING first, the overall
+    /// GOAWAY through `ulo-server-hyper`'s drain; health switches to NOT_SERVING first, the overall
     /// status `""` included, so a client polling health stops sending before the GOAWAY arrives.
     async fn drain(&self, token: DrainToken) {
         let _ = token;

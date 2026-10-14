@@ -1,5 +1,5 @@
 //! The WebSocket conformance suite against the standalone server on smol: the server on
-//! `ulo-listen-smol`'s listener, the app on `ulo_smol::Smol`, a client over `async-net`. No tokio
+//! `ulo-listener-smol`'s listener, the app on `ulo_runtime_smol::Smol`, a client over `async-net`. No tokio
 //! runtime runs.
 
 use std::future::Future;
@@ -9,8 +9,8 @@ use async_net::TcpStream;
 use ulo::app::Connected;
 use ulo::{App, BoundAddr};
 use ulo_http_conformance::{Harness, OnSmol};
-use ulo_listen_smol::SmolListener;
-use ulo_smol::Smol;
+use ulo_listener_smol::SmolListener;
+use ulo_runtime_smol::Smol;
 use ulo_ws::Port;
 use ulo_ws_conformance::{Host, ws_conformance_suite};
 use ulo_ws_hyper::{ReadCount, ServerOn};
@@ -24,7 +24,7 @@ impl Host for StandaloneOnSmol {
     type Stream = TcpStream;
 
     const PORT: Port = Port::Own;
-    // `ulo-hyper-serve` starts hyper's graceful shutdown on every connection at the drain, which closes one idle between requests.
+    // `ulo-server-hyper` starts hyper's graceful shutdown on every connection at the drain, which closes one idle between requests.
     const CLOSES_IDLE_AT_DRAIN: bool = true;
 
     fn upgrades() -> bool {

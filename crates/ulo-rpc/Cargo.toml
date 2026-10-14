@@ -36,7 +36,7 @@ tracing.workspace = true
 conformance-probe = []
 
 [dev-dependencies]
-ulo-tokio = { path = "../ulo-tokio" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 # `test-util`: the client timeout tests run on a paused clock.
 tokio = { workspace = true, features = ["rt", "macros", "time", "sync", "test-util"] }
 
