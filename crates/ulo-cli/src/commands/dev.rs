@@ -17,10 +17,6 @@
 //! platforms `--listen` is ignored with a warning and a client can see a refused connection during
 //! a restart.
 
-// Listed in `unsafe-allowed.txt`: placing the held socket at descriptor 3 runs between fork and
-// exec, through `pre_exec`.
-#![allow(unsafe_code)]
-
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -51,29 +47,18 @@ const DEV_VAR: &str = "ULO_DEV";
 #[cfg(unix)]
 const LISTEN_FD: std::os::fd::RawFd = 3;
 
-/// Put `source_fd` at [`LISTEN_FD`] so it survives the coming exec.
-///
-/// Runs between fork and exec, so everything it calls must be async-signal-safe; `dup2` and
-/// `fcntl` are.
-///
-/// # Safety
-///
-/// Call only in that window, where the process is single-threaded and no allocation or locking
-/// may happen.
+/// Has the child `command` spawns find `source` at descriptor `target`, without `FD_CLOEXEC`, so
+/// it survives the child's exec and the trampoline's. The command owns `source` until it is
+/// dropped, so the descriptor is open when the child forks. `command-fds` does the placement
+/// between fork and exec: `dup2` from another descriptor, and clearing `FD_CLOEXEC` when `source`
+/// already is `target`, where `dup2` onto itself would leave the flag set.
 #[cfg(unix)]
-unsafe fn place_listen_fd(source_fd: std::os::fd::RawFd) -> std::io::Result<()> {
-    if source_fd == LISTEN_FD {
-        // dup2 does nothing when both descriptors are equal, and in particular leaves FD_CLOEXEC
-        // set, which would close the socket at exec. Clear it directly instead.
-        let flags = unsafe { libc::fcntl(LISTEN_FD, libc::F_GETFD) };
-        if flags == -1 || unsafe { libc::fcntl(LISTEN_FD, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } == -1 {
-            return Err(std::io::Error::last_os_error());
-        }
-    } else if unsafe { libc::dup2(source_fd, LISTEN_FD) } == -1 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // The descriptor now carries no FD_CLOEXEC, so it survives this exec and the trampoline's.
-    Ok(())
+fn place_fd(command: &mut std::process::Command, source: std::os::fd::OwnedFd, target: std::os::fd::RawFd) {
+    use command_fds::{CommandFdExt, FdMapping};
+
+    command
+        .fd_mappings(vec![FdMapping { parent_fd: source, child_fd: target }])
+        .expect("one mapping cannot collide with another");
 }
 
 #[derive(clap::Args)]
@@ -579,17 +564,13 @@ fn install_spawn_hook(job: &Job, held: Option<Arc<Held>>) {
         match &held {
             Some(held) => {
                 command.env("LISTEN_FDS", "1").env("LISTEN_FDNAMES", &held.name);
+                // The child gets a duplicate, which the command closes once it has spawned; the
+                // original outlives every restart.
                 #[cfg(unix)]
-                {
-                    use std::os::fd::AsRawFd;
-
-                    // The closure keeps the listener owned: the child inherits a duplicate, and
-                    // the original outlives every restart.
-                    let source_fd = held.listener.as_raw_fd();
-                    // SAFETY: pre_exec runs its closure in exactly the window place_listen_fd
-                    // requires.
-                    unsafe {
-                        command.pre_exec(move || place_listen_fd(source_fd));
+                match held.listener.try_clone() {
+                    Ok(duplicate) => place_fd(command.as_std_mut(), duplicate.into(), LISTEN_FD),
+                    Err(error) => {
+                        eprintln!("{}", format!("[ulo dev] cannot pass the held socket to the application: {error}").yellow());
                     }
                 }
             }
@@ -598,4 +579,99 @@ fn install_spawn_hook(job: &Job, held: Option<Arc<Held>>) {
             }
         }
     });
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::net::TcpListener;
+    use std::os::fd::{AsRawFd, OwnedFd, RawFd};
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    use std::process::{Command, Stdio};
+
+    use super::{LISTEN_FD, place_fd};
+
+    /// The descriptor the child checks.
+    const CHILD_FD: &str = "ULO_DEV_PLACEMENT_FD";
+    /// The inode the socket at that descriptor must carry.
+    const CHILD_INO: &str = "ULO_DEV_PLACEMENT_INO";
+    /// What the child prints when the descriptor is the socket.
+    const PLACED: &str = "ulo-placement: placed";
+
+    /// The inode of the file open at `fd` in this process, read through `/dev/fd`.
+    fn inode(fd: RawFd) -> u64 {
+        std::fs::metadata(format!("/dev/fd/{fd}")).expect("the socket's own descriptor").ino()
+    }
+
+    /// A listening socket at a descriptor other than [`LISTEN_FD`], the others bound on the way
+    /// to it left open until it is.
+    fn socket_not_at_listen_fd() -> TcpListener {
+        let mut skipped = Vec::new();
+        loop {
+            let socket = TcpListener::bind("127.0.0.1:0").expect("a port");
+            if socket.as_raw_fd() != LISTEN_FD {
+                return socket;
+            }
+            skipped.push(socket);
+        }
+    }
+
+    /// This test binary run again as `placement_child`, checking descriptor `target` against
+    /// `socket`, with `place` given the command: what the child printed.
+    fn child_sees(socket: TcpListener, target: RawFd, place: impl FnOnce(&mut Command, OwnedFd)) -> String {
+        let ino = inode(socket.as_raw_fd());
+        let mut command = Command::new(std::env::current_exe().expect("the test binary's path"));
+        command
+            .args(["--exact", "commands::dev::tests::placement_child", "--ignored", "--nocapture", "--test-threads=1"])
+            .env(CHILD_FD, target.to_string())
+            .env(CHILD_INO, ino.to_string())
+            .stdin(Stdio::null())
+            .stderr(Stdio::inherit());
+        place(&mut command, OwnedFd::from(socket));
+        let output = command.output().expect("the child runs");
+        assert!(output.status.success(), "the child exited with {}", output.status);
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    /// The socket placed at descriptor 3 from another descriptor, the `dup2` case.
+    #[test]
+    fn a_socket_is_placed_at_descriptor_3() {
+        let seen = child_sees(socket_not_at_listen_fd(), LISTEN_FD, |command, socket| place_fd(command, socket, LISTEN_FD));
+        assert!(seen.contains(PLACED), "the child's descriptor 3: {seen}");
+    }
+
+    /// The socket placed at the descriptor it already is in this process: std opened it with
+    /// `FD_CLOEXEC`, which `dup2` onto itself leaves set, so only a placement that clears the flag
+    /// keeps it across the exec.
+    #[test]
+    fn a_socket_already_at_its_target_survives_the_exec() {
+        let socket = socket_not_at_listen_fd();
+        let fd = socket.as_raw_fd();
+        let seen = child_sees(socket, fd, |command, socket| place_fd(command, socket, fd));
+        assert!(seen.contains(PLACED), "the child's descriptor {fd}, the socket's own number: {seen}");
+    }
+
+    /// The check's control: a duplicate held open in this process across the spawn, and not
+    /// placed, is closed at the exec by its `FD_CLOEXEC`, and the child does not find it.
+    #[test]
+    fn without_a_placement_the_child_does_not_find_the_socket() {
+        let socket = socket_not_at_listen_fd();
+        let held = socket.try_clone().expect("a duplicate of the socket");
+        let fd = held.as_raw_fd();
+        let seen = child_sees(socket, fd, |_, socket| drop(socket));
+        assert!(seen.contains("ulo-placement:") && !seen.contains(PLACED), "the child's descriptor {fd}, never placed: {seen}");
+        drop(held);
+    }
+
+    /// The child: reports whether the descriptor `ULO_DEV_PLACEMENT_FD` names is the socket whose
+    /// inode `ULO_DEV_PLACEMENT_INO` gives.
+    #[test]
+    #[ignore = "the child process of the placement tests; does nothing unless they start it"]
+    fn placement_child() {
+        let (Ok(fd), Ok(ino)) = (std::env::var(CHILD_FD), std::env::var(CHILD_INO)) else { return };
+        match std::fs::metadata(format!("/dev/fd/{fd}")) {
+            Ok(meta) if meta.file_type().is_socket() && meta.ino().to_string() == ino => println!("{PLACED}"),
+            Ok(meta) => println!("ulo-placement: descriptor {fd} is another file, inode {}", meta.ino()),
+            Err(error) => println!("ulo-placement: descriptor {fd} is closed: {error}"),
+        }
+    }
 }

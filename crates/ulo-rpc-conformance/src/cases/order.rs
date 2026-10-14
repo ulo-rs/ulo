@@ -23,7 +23,7 @@ use ulo_rpc::__private::ClientProbe;
 use ulo_rpc::{CallHeaders, Codec, Delivery, Frame, Link, Outbound, Pattern, ReplyTo};
 
 use crate::rt::{sleep, timeout};
-use crate::{Broker, Harness, report};
+use crate::{Broker, Budget, Harness, report};
 
 /// The pattern the requests name; the server's link listens on it and nothing handles it.
 const ORDERED: &str = "conformance.ordered";
@@ -38,11 +38,19 @@ const OPENS: u64 = 20;
 const PATIENCE: Duration = Duration::from_secs(5);
 
 /// The hold `hold_runs_out` gives a held `cancel`, in place of the link's own, and how late
-/// `late_opened`'s `opened` arrives.
-const SHORT_HOLD: Duration = Duration::from_millis(300);
+/// `late_opened`'s `opened` arrives: half the broker's settle budget, 250 ms by default. Each
+/// scenario asserts the order of its events, not their spacing, so the bound grows with the
+/// broker's latency and is otherwise short.
+fn short_hold(budget: Budget) -> Duration {
+    budget.settle / 2
+}
 
-/// The deadline `held_until_deadline`'s `open` carries.
-const CALL_DEADLINE: Duration = Duration::from_millis(600);
+/// The deadline `held_until_deadline`'s `open` carries: the broker's settle budget and a fifth,
+/// 600 ms by default, so the `open` reaches the server and its `opened` the client before it
+/// passes and the `cancel` is held.
+fn call_deadline(budget: Budget) -> Duration {
+    budget.settle + budget.settle / 5
+}
 
 /// How often a scenario reads the client probe while it waits on it.
 const PROBE_POLL: Duration = Duration::from_millis(10);
@@ -63,7 +71,7 @@ impl Module for Empty {
 /// A server's link listening on [`ORDERED`] and a client's link connected to it, with no server
 /// or client above them.
 struct Linked<B: Broker> {
-    _broker: B,
+    broker: B,
     app: App<Connected>,
     server: B::Link,
     inbound: BoxStream<'static, Delivery>,
@@ -91,7 +99,7 @@ impl<B: Broker> Linked<B> {
         let handle = app.handle();
         let runtime = handle.runtime().unwrap_or_else(|| crate::startup_failed!("the ordering scenario's app has no runtime"));
         let outbound = client.connect(runtime).await.unwrap_or_else(|error| crate::startup_failed!("the client's link did not connect: {error}"));
-        Linked { _broker: broker, app, server, inbound, client, outbound }
+        Linked { broker, app, server, inbound, client, outbound }
     }
 
     /// Reads `rounds` calls opened by `opens` frames, each followed by its `cancel`, from the
@@ -228,13 +236,14 @@ impl<B: Broker> Linked<B> {
 }
 
 /// A streamed request cancelled before its `opened` reached the client, as a timeout or a drop
-/// cancels it, keeps its `cancel`; the `opened` arriving 300 ms afterwards, within the
+/// cancels it, keeps its `cancel`; the `opened` arriving half a settle budget afterwards, within the
 /// link's hold, sends it, and the server receives it for the call it holds. The client's table is then empty.
 pub async fn late_opened<B: Broker>() {
     let mut linked = Linked::<B>::start().await;
+    let late = short_hold(linked.broker.budget());
     linked.cancel_with_opened_withheld(1, CallHeaders::new()).await;
     // Late by the short hold, and well inside the link's own.
-    sleep::<B>(SHORT_HOLD).await;
+    sleep::<B>(late).await;
     probe(&linked).release();
     let delivered = timeout::<B, _>(PATIENCE, linked.inbound.next()).await.unwrap_or_else(|| {
         panic!("the held cancel did not reach the server within {PATIENCE:?} of the late `opened`")
@@ -247,29 +256,31 @@ pub async fn late_opened<B: Broker>() {
 
 /// A streamed request cancelled before its `opened` reached the client, whose `opened` never
 /// comes and whose `open` carried no deadline, leaves no entry in the client's table once the
-/// link's hold runs out, shortened here to 300 ms.
+/// link's hold runs out, shortened here to half the broker's settle budget.
 pub async fn hold_runs_out<B: Broker>() {
     let mut linked = Linked::<B>::start().await;
-    probe(&linked).set_hold(SHORT_HOLD);
+    let hold = short_hold(linked.broker.budget());
+    probe(&linked).set_hold(hold);
     let cancelled = Instant::now();
     linked.cancel_with_opened_withheld(1, CallHeaders::new()).await;
     probe_until::<B>(probe(&linked), "the held cancel's entry dropped", |probe| probe.calls() == Some(0)).await;
-    assert!(cancelled.elapsed() >= SHORT_HOLD, "the held cancel was dropped before its hold ran out");
+    assert!(cancelled.elapsed() >= hold, "the held cancel was dropped before its hold ran out");
     linked.stop().await;
 }
 
-/// A held `cancel` whose call's `open` carried `deadline-ms: 600` is dropped with its entry once
-/// that deadline passes, the server ending the call there itself. The link's hold for an `open`
-/// with no deadline is set to 30 s, longer than the scenario waits, so only the deadline can drop
-/// it in time.
+/// A held `cancel` whose call's `open` carried a `deadline-ms` of the broker's settle budget and a
+/// fifth is dropped with its entry once that deadline passes, the server ending the call there
+/// itself. The link's hold for an `open` with no deadline is set to 30 s, longer than the scenario
+/// waits, so only the deadline can drop it in time.
 pub async fn held_until_deadline<B: Broker>() {
     let mut linked = Linked::<B>::start().await;
+    let deadline = call_deadline(linked.broker.budget());
     probe(&linked).set_hold(Duration::from_secs(30));
     let mut headers = CallHeaders::new();
-    headers.insert("deadline-ms", CALL_DEADLINE.as_millis().to_string());
+    headers.insert("deadline-ms", deadline.as_millis().to_string());
     let opened = Instant::now();
     linked.cancel_with_opened_withheld(1, headers).await;
     probe_until::<B>(probe(&linked), "the held cancel's entry dropped at its call's deadline", |probe| probe.calls() == Some(0)).await;
-    assert!(opened.elapsed() >= CALL_DEADLINE, "the held cancel was dropped {:?} after its `open`, before the call's deadline", opened.elapsed());
+    assert!(opened.elapsed() >= deadline, "the held cancel was dropped {:?} after its `open`, before the call's {deadline:?} deadline", opened.elapsed());
     linked.stop().await;
 }

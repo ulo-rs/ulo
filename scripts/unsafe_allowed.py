@@ -2,19 +2,23 @@
 """`unsafe` only where `unsafe-allowed.txt` lists it.
 
     python3 scripts/unsafe_allowed.py check        # fails on `unsafe` outside the list
-    python3 scripts/unsafe_allowed.py miri         # runs Miri over the listed modules' tests
+    python3 scripts/unsafe_allowed.py miri         # runs Miri over the pure-Rust entries' tests
     python3 scripts/unsafe_allowed.py miri --dry-run
 
 The workspace denies `unsafe_code` through `[workspace.lints.rust]`, so the compiler refuses
 `unsafe` in any member that inherits the table, unless a module relaxes the lint. `check` fails
 when a member does not inherit the table, when the table no longer denies or forbids the lint,
-when a file the list does not name relaxes `unsafe_code` or contains `unsafe`, and when a listed
-file does not exist or does not opt out with `#![allow(unsafe_code)]`. Comments, string literals
-and character literals are not read, so prose mentioning `unsafe` is not a finding.
+when a file the list does not name relaxes `unsafe_code` or contains `unsafe`, when a listed
+file does not exist or does not opt out with `#![allow(unsafe_code)]`, and when an entry's kind is
+missing or unknown, a `syscall` entry gives no reason, a `pure-rust` entry gives one, or a path is
+listed twice. Comments, string literals and character literals are not read, so prose mentioning
+`unsafe` is not a finding.
 
-`miri` runs `cargo miri test` once per listed module: a module of a library or binary target as
-that target's tests filtered to the module's path, a file that is a test target as the whole
-target. The toolchain is `$MIRI_TOOLCHAIN`, `nightly` when unset.
+`miri` runs `cargo miri test` once per `pure-rust` entry: a module of a library or binary target
+as that target's tests filtered to the module's path, a file that is a test target as the whole
+target. It counts the entry's tests Miri executed, from libtest's per-test lines, and fails when
+Miri fails or executes none of them, ignored tests not counting. It prints each `syscall` entry
+with its reason and runs nothing for it. The toolchain is `$MIRI_TOOLCHAIN`, `nightly` when unset.
 
 Standard library only, and Python 3.9, so it runs on a stock runner and a stock macOS.
 """
@@ -36,13 +40,48 @@ LINT = re.compile(r"(?<![A-Za-z0-9_])unsafe_code(?![A-Za-z0-9_])")
 STRICT = re.compile(r"(?:deny|forbid)\s*\(\s*$")
 
 
+# Miri executes the entry's `unsafe`; the entry takes no reason.
+PURE = "pure-rust"
+# The entry's `unsafe` calls into the operating system, which Miri cannot execute; the rest of the
+# line says what Miri stops at.
+SYSCALL = "syscall"
+
+
+class Entry:
+    def __init__(self, number, path, kind, reason):
+        self.number, self.path, self.kind, self.reason = number, path, kind, reason
+
+
 def listed():
+    """Every entry as written, each `kind` and `reason` as found, which `entry_findings` judges."""
     entries = []
     for number, line in enumerate(LIST.read_text().splitlines(), 1):
         line = line.strip()
         if line and not line.startswith("#"):
-            entries.append((number, line))
+            fields = line.split(None, 2)
+            kind = fields[1] if len(fields) > 1 else None
+            reason = fields[2].strip() if len(fields) > 2 else ""
+            entries.append(Entry(number, fields[0], kind, reason))
     return entries
+
+
+def entry_findings(entries):
+    findings = []
+    seen = {}
+    for entry in entries:
+        where = f"unsafe-allowed.txt:{entry.number}"
+        if entry.path in seen:
+            findings.append(f"{where}: `{entry.path}` is listed again, first at line {seen[entry.path]}")
+        seen.setdefault(entry.path, entry.number)
+        if entry.kind is None:
+            findings.append(f"{where}: `{entry.path}` has no kind; write `{PURE}`, or `{SYSCALL}` and what Miri stops at")
+        elif entry.kind == PURE and entry.reason:
+            findings.append(f"{where}: a `{PURE}` entry takes no reason, since Miri runs its tests: `{entry.reason}`")
+        elif entry.kind == SYSCALL and not entry.reason:
+            findings.append(f"{where}: a `{SYSCALL}` entry gives the reason Miri cannot execute it after the kind")
+        elif entry.kind not in (PURE, SYSCALL):
+            findings.append(f"{where}: `{entry.kind}` is no kind; write `{PURE}` or `{SYSCALL}`")
+    return findings
 
 
 def metadata():
@@ -138,16 +177,17 @@ def workspace_denies():
 
 
 def check():
-    findings = []
+    entries = listed()
+    findings = entry_findings(entries)
     allowed = set()
-    for number, entry in listed():
-        path = ROOT / entry
+    for entry in entries:
+        path = ROOT / entry.path
         if not path.is_file():
-            findings.append(f"unsafe-allowed.txt:{number}: `{entry}` is no file")
+            findings.append(f"unsafe-allowed.txt:{entry.number}: `{entry.path}` is no file")
             continue
         allowed.add(path.resolve())
         if not OPT_OUT.search(code_only(path.read_text())):
-            findings.append(f"{entry}: listed, but does not opt out with `#![allow(unsafe_code)]`")
+            findings.append(f"{entry.path}: listed, but does not opt out with `#![allow(unsafe_code)]`")
 
     if not workspace_denies():
         findings.append("Cargo.toml: `[workspace.lints.rust]` does not set `unsafe_code` to \"deny\" or \"forbid\"")
@@ -178,47 +218,79 @@ def check():
     return 1 if findings else 0
 
 
-def miri_commands():
-    meta = metadata()
-    toolchain = os.environ.get("MIRI_TOOLCHAIN", "nightly")
-    commands = []
-    for _, entry in listed():
-        path = (ROOT / entry).resolve()
-        package = max(
-            (p for p in meta["packages"] if path.is_relative_to(Path(p["manifest_path"]).parent)),
-            key=lambda p: len(Path(p["manifest_path"]).parent.parts),
-        )
-        targets = package["targets"]
-        exact = [t for t in targets if Path(t["src_path"]).resolve() == path]
-        if exact and "test" in exact[0]["kind"]:
-            selector, filter_ = ["--test", exact[0]["name"]], []
-        else:
-            roots = [t for t in targets if t["kind"][0] in ("lib", "bin") and path.is_relative_to(Path(t["src_path"]).resolve().parent)]
-            roots.sort(key=lambda t: t["kind"][0] != "lib")
-            if not roots:
-                raise SystemExit(f"{entry}: under no library or binary target of {package['name']}")
-            root = roots[0]
-            selector = ["--lib"] if root["kind"][0] == "lib" else ["--bin", root["name"]]
-            module = path.relative_to(Path(root["src_path"]).resolve().parent).with_suffix("")
-            parts = list(module.parts)
-            if parts[-1] == "mod":
-                parts.pop()
-            filter_ = ["::".join(parts) + "::"] if parts and path != Path(root["src_path"]).resolve() else []
-        commands.append(["cargo", f"+{toolchain}", "miri", "test", "--locked", "-p", package["name"], *selector, "--", *filter_])
-    return commands
+def miri_command(meta, toolchain, entry):
+    """The `cargo miri test` command for `entry`, and the prefix its tests' names carry, `None`
+    for a test target, whose every test is the entry's."""
+    path = (ROOT / entry.path).resolve()
+    package = max(
+        (p for p in meta["packages"] if path.is_relative_to(Path(p["manifest_path"]).parent)),
+        key=lambda p: len(Path(p["manifest_path"]).parent.parts),
+    )
+    targets = package["targets"]
+    exact = [t for t in targets if Path(t["src_path"]).resolve() == path]
+    if exact and "test" in exact[0]["kind"]:
+        selector, prefix = ["--test", exact[0]["name"]], None
+    else:
+        roots = [t for t in targets if t["kind"][0] in ("lib", "bin") and path.is_relative_to(Path(t["src_path"]).resolve().parent)]
+        roots.sort(key=lambda t: t["kind"][0] != "lib")
+        if not roots:
+            raise SystemExit(f"{entry.path}: under no library or binary target of {package['name']}")
+        root = roots[0]
+        selector = ["--lib"] if root["kind"][0] == "lib" else ["--bin", root["name"]]
+        module = path.relative_to(Path(root["src_path"]).resolve().parent).with_suffix("")
+        parts = list(module.parts)
+        if parts[-1] == "mod":
+            parts.pop()
+        prefix = "::".join(parts) + "::" if parts and path != Path(root["src_path"]).resolve() else None
+    command = ["cargo", f"+{toolchain}", "miri", "test", "--locked", "-p", package["name"], *selector, "--"]
+    if prefix:
+        command.append(prefix)
+    return command, prefix
+
+
+# libtest's line for a test it ran: `test <name> ... ok`, `FAILED`, or `ignored` for one it did not.
+RAN = re.compile(r"^test (\S+)(?: - should panic)? \.\.\. (ok|FAILED)\s*$")
 
 
 def miri(dry_run):
-    commands = miri_commands()
-    if not commands:
-        print("unsafe-allowed.txt lists no module: Miri has nothing to run")
+    entries = listed()
+    findings = entry_findings(entries)
+    if findings:
+        for finding in findings:
+            print(finding)
+        return 1
+    meta = metadata()
+    toolchain = os.environ.get("MIRI_TOOLCHAIN", "nightly")
+    for entry in entries:
+        if entry.kind == SYSCALL:
+            print(f"skipped, a system call Miri cannot execute: {entry.path}: {entry.reason}")
+    pure = [entry for entry in entries if entry.kind == PURE]
+    if not pure:
+        print("unsafe-allowed.txt lists no pure-Rust entry: Miri has nothing to run")
         return 0
-    failed = 0
-    for command in commands:
+    failures = []
+    for entry in pure:
+        command, prefix = miri_command(meta, toolchain, entry)
         print("$ " + " ".join(command), flush=True)
-        if not dry_run:
-            failed |= subprocess.run(command, cwd=ROOT).returncode != 0
-    return 1 if failed else 0
+        if dry_run:
+            continue
+        ran = 0
+        process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in process.stdout:
+            sys.stdout.write(line)
+            m = RAN.match(line)
+            if m and (prefix is None or m.group(1).startswith(prefix)):
+                ran += 1
+        sys.stdout.flush()
+        code = process.wait()
+        print(f"{entry.path}: Miri executed {ran} of its tests, exit {code}", flush=True)
+        if code != 0:
+            failures.append(f"{entry.path}: Miri failed, exit {code}")
+        elif ran == 0:
+            failures.append(f"{entry.path}: Miri executed none of its tests; a pure-Rust entry needs at least one that runs under Miri")
+    for failure in failures:
+        print(failure)
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

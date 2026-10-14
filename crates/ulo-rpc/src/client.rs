@@ -51,19 +51,31 @@ fn timeout_of(timeout: Bound) -> Option<Duration> {
     }
 }
 
-/// A zero timeout given to an RPC client, which would time out every call:
-/// `Bound::After(Duration::ZERO)` refused by [`RpcClient::timeout`] where it is written, and by
-/// `RpcClientModule::timeout` when the app wires. `Bound::Unbounded` is the spelling of no
+/// A client's idle timeout: none unless one is given, since a stream may be quiet for as long as
+/// it runs.
+fn idle_of(idle: Bound) -> Option<Duration> {
+    match idle {
+        Bound::After(after) => Some(after),
+        Bound::Default | Bound::Unbounded => None,
+    }
+}
+
+/// A zero timeout given to an RPC client, which would time out every call it applies to:
+/// `Bound::After(Duration::ZERO)` refused by [`RpcClient::timeout`] and
+/// [`RpcClient::idle_timeout`] where it is written, and by `RpcClientModule::timeout` and
+/// `RpcClientModule::idle_timeout` when the app wires. `Bound::Unbounded` is the spelling of no
 /// timeout.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ZeroTimeout {
     setter: &'static str,
     link: &'static str,
+    /// What the timeout would end at once: `"call"` for a timeout, `"stream"` for an idle timeout.
+    ends: &'static str,
 }
 
 impl ZeroTimeout {
-    pub(crate) fn of_module(link: &'static str) -> Self {
-        ZeroTimeout { setter: "RpcClientModule::timeout", link }
+    pub(crate) fn of_module(setter: &'static str, link: &'static str, ends: &'static str) -> Self {
+        ZeroTimeout { setter, link, ends }
     }
 
     /// The link's name, `Link::NAME`.
@@ -76,9 +88,9 @@ impl fmt::Display for ZeroTimeout {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "`{}(Bound::After(Duration::ZERO))` on the {} link would time out every call; write `Bound::Unbounded` to turn the \
+            "`{}(Bound::After(Duration::ZERO))` on the {} link would time out every {}; write `Bound::Unbounded` to turn the \
              timeout off",
-            self.setter, self.link
+            self.setter, self.link, self.ends
         )
     }
 }
@@ -131,14 +143,18 @@ impl Error for UnusableLink {
 /// [`stream`](Self::stream) or a [`duplex`](Self::duplex) call has no `timeout`: its
 /// [`idle_timeout`](StreamCall::idle_timeout) is the longest silence the client tolerates between
 /// reply frames and is not sent, and its [`deadline`](StreamCall::deadline) bounds the whole call
-/// and is sent as `deadline-ms`. A stream has neither unless the call sets it, since a stream may
-/// run indefinitely.
+/// and is sent as `deadline-ms`. A stream has no deadline unless the call sets one, since a stream
+/// may run indefinitely, and no idle timeout unless the call or the client's
+/// [`idle_timeout`](Self::idle_timeout) sets one.
 #[derive(Clone)]
 pub struct RpcClient {
     pub(crate) inner: Arc<ClientInner>,
     /// Every call's timeout unless the call sets its own; `None` for `Bound::Unbounded`. Held by
     /// the handle, so [`timeout`](Self::timeout) on one clone leaves the others' as they were.
     timeout: Option<Duration>,
+    /// Every stream's idle timeout unless the call sets its own; `None` for `Bound::Unbounded`
+    /// and `Bound::Default`. Held by the handle, as `timeout` is.
+    idle: Option<Duration>,
 }
 
 type Connect = Box<dyn Fn() -> BoxFuture<'static, Result<Outbound, BoxError>> + Send + Sync>;
@@ -231,15 +247,15 @@ impl RpcClient {
             let link = Arc::clone(&closing);
             Box::pin(async move { link.close().await })
         });
-        Ok(RpcClient::build(link, Bound::Default, runtime, Some(close)))
+        Ok(RpcClient::build(link, Bound::Default, Bound::Default, runtime, Some(close)))
     }
 
     /// `RpcClientModule`'s client, whose link the module's destroy hook closes.
-    pub(crate) fn of_module<L: Link>(link: Arc<L>, timeout: Bound, runtime: Arc<dyn Runtime>) -> Self {
-        RpcClient::build(link, timeout, runtime, None)
+    pub(crate) fn of_module<L: Link>(link: Arc<L>, timeout: Bound, idle: Bound, runtime: Arc<dyn Runtime>) -> Self {
+        RpcClient::build(link, timeout, idle, runtime, None)
     }
 
-    fn build<L: Link>(link: Arc<L>, timeout: Bound, runtime: Arc<dyn Runtime>, close: Option<Close>) -> Self {
+    fn build<L: Link>(link: Arc<L>, timeout: Bound, idle: Bound, runtime: Arc<dyn Runtime>, close: Option<Close>) -> Self {
         let codec = Codec::of(&link.capabilities());
         let handed = Arc::clone(&runtime);
         let connect: Connect = Box::new(move || {
@@ -257,6 +273,7 @@ impl RpcClient {
                 next_id: AtomicU64::new(1),
             }),
             timeout: timeout_of(timeout),
+            idle: idle_of(idle),
         }
     }
 
@@ -273,9 +290,28 @@ impl RpcClient {
     /// fails on the line that wrote the zero. `RpcClientModule` refuses it when the app wires.
     pub fn timeout(mut self, timeout: Bound) -> Result<Self, ZeroTimeout> {
         if timeout == Bound::After(Duration::ZERO) {
-            return Err(ZeroTimeout { setter: "RpcClient::timeout", link: self.inner.link });
+            return Err(ZeroTimeout { setter: "RpcClient::timeout", link: self.inner.link, ends: "call" });
         }
         self.timeout = timeout_of(timeout);
+        Ok(self)
+    }
+
+    /// The idle timeout of every `stream` and `duplex` call that sets none of its own, as
+    /// `RpcClientModule::idle_timeout` sets it for a module's client: the longest silence the
+    /// client tolerates between reply frames, as [`StreamCall::idle_timeout`] describes, and not
+    /// sent. None at `Bound::Default`, as at `Bound::Unbounded`, so a quiet stream, a subscription
+    /// yielding now and then, runs until it ends. A lost connection fails a waiting stream
+    /// `Unavailable` through the reply lane whatever the idle timeout, so the idle timeout catches
+    /// only a server that is still connected and has gone silent. This handle and the clones made
+    /// from it after carry it, as [`timeout`](Self::timeout)'s do.
+    ///
+    /// `Bound::After(Duration::ZERO)`, which would end every stream before its first frame, is
+    /// refused as [`ZeroTimeout`].
+    pub fn idle_timeout(mut self, idle: Bound) -> Result<Self, ZeroTimeout> {
+        if idle == Bound::After(Duration::ZERO) {
+            return Err(ZeroTimeout { setter: "RpcClient::idle_timeout", link: self.inner.link, ends: "stream" });
+        }
+        self.idle = idle_of(idle);
         Ok(self)
     }
 
@@ -809,7 +845,8 @@ impl IntoFuture for Emit {
 /// A call answered by a stream, opened when awaited: a [`stream`](RpcClient::stream) or a
 /// [`duplex`](RpcClient::duplex) call. It has no `timeout`, which on a request bounds the whole
 /// call: [`idle_timeout`](Self::idle_timeout) bounds each silence and
-/// [`deadline`](Self::deadline) the whole call, and neither applies unless set.
+/// [`deadline`](Self::deadline) the whole call. Neither applies unless set, the idle timeout on the
+/// call or, for every stream, on the client.
 ///
 /// ```compile_fail,E0599
 /// # use std::time::Duration;
@@ -844,7 +881,8 @@ impl<Res> StreamCall<Res> {
 
     /// The longest silence the client tolerates between reply frames, the first counted from when
     /// the call is awaited. A frame not arriving within it ends the stream with `Timeout`, and
-    /// dropping the stream then sends `cancel`. It is not sent to the server. None unless set: the
+    /// dropping the stream then sends `cancel`. It is not sent to the server. In place of the
+    /// client's [`idle_timeout`](RpcClient::idle_timeout), and none when neither is set: the
     /// client's timeout does not apply to a stream.
     pub fn idle_timeout(mut self, idle: Duration) -> Self {
         self.idle = Some(idle);
@@ -871,6 +909,7 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for StreamCall<Res> {
 
     fn into_future(self) -> Self::IntoFuture {
         let StreamCall { mut spec, idle, deadline, .. } = self;
+        let idle = idle.or(spec.client.idle);
         Box::pin(async move {
             let whole = spec.limit(Whole::Stream(deadline))?;
             let runtime = Arc::clone(&spec.client.inner.runtime);
@@ -1118,7 +1157,12 @@ mod tests {
     }
 
     fn silent_client(link: &SilentLink, timeout: Duration) -> RpcClient {
-        RpcClient::of_module(Arc::new(link.clone()), Bound::After(timeout), Arc::new(ulo_tokio::Tokio::current()))
+        RpcClient::of_module(Arc::new(link.clone()), Bound::After(timeout), Bound::Default, Arc::new(ulo_tokio::Tokio::current()))
+    }
+
+    /// A client over a link whose server never answers, every stream's idle timeout `idle`.
+    fn idle_client(idle: Bound) -> RpcClient {
+        RpcClient::of_module(Arc::new(SilentLink::default()), Bound::Default, idle, Arc::new(ulo_tokio::Tokio::current()))
     }
 
     /// The stream's next item, failing the test after five seconds rather than hanging it.
@@ -1193,13 +1237,104 @@ mod tests {
         assert!(waited.is_err(), "a stream with neither bound ended within ten times the client's timeout: {:?}", waited.ok());
     }
 
+    /// The client's idle timeout ends a silent stream that sets none of its own.
+    #[tokio::test]
+    async fn a_client_wide_idle_timeout_ends_a_silent_stream() {
+        let client = idle_client(Bound::After(Duration::from_millis(100)));
+        let started = std::time::Instant::now();
+        let mut stream = client.stream::<_, u32>("silent.stream", &()).await.expect("the stream opens");
+        let ended = next_within_5s(&mut stream, "the client's idle timeout").await.expect("the stream yields its timeout").expect_err("nothing arrived");
+        assert_eq!(ended.kind(), ErrorKind::Timeout);
+        assert!(ended.message().contains("idle timeout"), "the stream did not end on its idle timeout: {ended:?}");
+        assert!(started.elapsed() >= Duration::from_millis(100), "the stream ended {:?} after it opened", started.elapsed());
+        let mut duplex = client.duplex::<_, u32>("silent.duplex", futures_util::stream::pending::<u32>()).await.expect("the duplex opens");
+        let ended = next_within_5s(&mut duplex, "the client's idle timeout on a duplex").await.expect("the duplex yields its timeout");
+        assert_eq!(ended.expect_err("nothing arrived").kind(), ErrorKind::Timeout);
+    }
+
+    /// A call's idle timeout replaces the client's, longer or shorter.
+    #[tokio::test]
+    async fn a_call_s_idle_timeout_overrides_the_client_s() {
+        let short = idle_client(Bound::After(Duration::from_millis(50)));
+        let mut longer = short.stream::<_, u32>("silent.stream", &()).idle_timeout(Duration::from_secs(30)).await.expect("the stream opens");
+        let waited = tokio::time::timeout(Duration::from_millis(500), longer.next()).await;
+        assert!(waited.is_err(), "a stream given a 30 s idle timeout ended within 500 ms, at the client's 50 ms: {:?}", waited.ok());
+
+        let long = idle_client(Bound::After(Duration::from_secs(30)));
+        let started = std::time::Instant::now();
+        let mut shorter = long.stream::<_, u32>("silent.stream", &()).idle_timeout(Duration::from_millis(100)).await.expect("the stream opens");
+        let ended = next_within_5s(&mut shorter, "the call's idle timeout").await.expect("the stream yields its timeout").expect_err("nothing arrived");
+        assert_eq!(ended.kind(), ErrorKind::Timeout);
+        assert!(started.elapsed() < Duration::from_secs(5), "the call's idle timeout took {:?}", started.elapsed());
+    }
+
+    /// With no idle timeout given, at `Bound::Default` as from `RpcClient::new`, a stream waits
+    /// out an hour of silence on the paused clock, where any timer the client armed would fire
+    /// first.
+    #[tokio::test(start_paused = true)]
+    async fn the_default_idle_timeout_never_ends_a_quiet_stream() {
+        let module = idle_client(Bound::Default);
+        let built = RpcClient::new(SilentLink::default(), Arc::new(ulo_tokio::Tokio::current())).expect("the link is usable");
+        for (client, which) in [(module, "a module's client"), (built, "a client from `RpcClient::new`")] {
+            let mut stream = client.stream::<_, u32>("silent.stream", &()).await.expect("the stream opens");
+            let waited = tokio::time::timeout(Duration::from_secs(3600), stream.next()).await;
+            assert!(waited.is_err(), "{which}'s quiet stream ended within an hour: {:?}", waited.ok());
+        }
+    }
+
+    /// A link whose reply lane ends when the test says, as a lost connection's does.
+    #[derive(Clone, Default)]
+    struct SeveredLink(Arc<Mutex<Option<UnboundedSender<Frame>>>>);
+
+    impl SeveredLink {
+        fn sever(&self) {
+            self.0.lock().unwrap_or_else(PoisonError::into_inner).take();
+        }
+    }
+
+    impl Link for SeveredLink {
+        const NAME: &'static str = "severed";
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::new(DeliveryMode::Addressed)
+        }
+
+        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+            Err("this link has no server side".into())
+        }
+
+        async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+            let (lane, replies) = mpsc::unbounded();
+            *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(lane);
+            Ok(Outbound { send: Box::new(|_pattern, _frame, _reply_to| Box::pin(async { Ok(()) })), replies: Box::pin(replies) })
+        }
+
+        async fn drain(&self) {}
+
+        async fn close(&self) -> Result<(), BoxError> {
+            Ok(())
+        }
+    }
+
+    /// A lost connection fails a waiting stream `Unavailable` through the reply lane, with no idle
+    /// timeout to end it.
+    #[tokio::test]
+    async fn a_lost_connection_fails_a_stream_with_no_idle_timeout() {
+        let link = SeveredLink::default();
+        let client = RpcClient::of_module(Arc::new(link.clone()), Bound::Default, Bound::Unbounded, Arc::new(ulo_tokio::Tokio::current()));
+        let mut stream = client.stream::<_, u32>("severed.stream", &()).await.expect("the stream opens");
+        link.sever();
+        let ended = next_within_5s(&mut stream, "the lost connection's failure").await.expect("the stream yields the loss").expect_err("nothing arrived");
+        assert_eq!(ended.kind(), ErrorKind::Unavailable, "what a lost connection fails a stream with: {ended:?}");
+    }
+
     /// F364: a call handed a connection whose reply lane then ended, before the call registered,
     /// waited for its own timeout, since the lane had already failed every call registered on it.
     #[tokio::test(flavor = "current_thread")]
     async fn a_call_is_not_registered_on_a_connection_whose_reply_lane_ended() {
         let connects = Arc::new(AtomicU64::new(0));
         let link = EndingLink(Arc::clone(&connects));
-        let client = RpcClient::of_module(Arc::new(link), Bound::Unbounded, Arc::new(ulo_tokio::Tokio::current()));
+        let client = RpcClient::of_module(Arc::new(link), Bound::Unbounded, Bound::Default, Arc::new(ulo_tokio::Tokio::current()));
         let handed = client.inner.connection().await.expect("the first connection opens");
         // The reply lane's task runs once this task yields, and ends with its empty stream.
         for _ in 0..100 {
@@ -1221,7 +1356,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_request_frame_the_link_cannot_encode_is_internal() {
-        let client = RpcClient::of_module(Arc::new(MisencodingLink), Bound::Unbounded, Arc::new(ulo_tokio::Tokio::current()));
+        let client = RpcClient::of_module(Arc::new(MisencodingLink), Bound::Unbounded, Bound::Default, Arc::new(ulo_tokio::Tokio::current()));
         let answer = client.request::<_, serde_json::Value>("orders.create", &serde_json::json!({ "id": 1 })).await;
         let err = answer.expect_err("the link refused to encode the request, so the call must fail");
         assert_eq!(err.kind(), ErrorKind::Internal, "expected `Internal` for an unencodable request frame, got: {err:?}");

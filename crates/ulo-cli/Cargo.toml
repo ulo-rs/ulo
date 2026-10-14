@@ -21,12 +21,12 @@ dev = [
     "dep:watchexec-filterer-globset",
     "dep:watchexec-signals",
     "dep:ignore-files",
-    "dep:libc",
+    "dep:command-fds",
 ]
 
 # Placing the held socket at descriptor 3 between fork and exec.
 [target.'cfg(unix)'.dependencies]
-libc = { workspace = true, optional = true }
+command-fds = { workspace = true, optional = true }
 
 [dependencies]
 anyhow.workspace = true

@@ -32,10 +32,12 @@
 //! for a channel inside its upgrade future, so tokio's synchronisation primitives are in every
 //! hyper server's tree, this crate's included; its executor, reactor and timers are not.
 
+mod compat;
 mod listener;
 mod rt;
 mod serve;
 
+pub use compat::FuturesIo;
 pub use listener::{Incoming, Io, Listener, ReadCount, tls_info};
-pub use rt::{FuturesIo, RuntimeExecutor, RuntimeTimer};
+pub use rt::{RuntimeExecutor, RuntimeTimer};
 pub use serve::{Accepted, Draining, Serve, ServeConfig};

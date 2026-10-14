@@ -3,20 +3,19 @@
 //! protocol (`LISTEN_FDS`, `LISTEN_FDNAMES`, `LISTEN_PID`) is adopted by name and served. The
 //! inherited socket goes to a child process, the test binary run again as the ignored test
 //! `child_serves_an_inherited_socket`, which finds it as descriptor 3, `LISTEN_PID` set to its own
-//! process ID by the shell it is started through.
-
-// Listed in `unsafe-allowed.txt`: the child's descriptor 3 is placed between fork and exec, through
-// `pre_exec`.
-#![allow(unsafe_code)]
+//! process ID by the shell it is started through. The placement that hands the child its socket is
+//! tested alone, through `placement_child`: from another descriptor, and at the descriptor the
+//! socket already is.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::os::fd::AsRawFd;
-use std::os::unix::process::CommandExt;
+use std::os::fd::{AsRawFd, OwnedFd, RawFd};
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use command_fds::{CommandFdExt, FdMapping};
 use ulo::Signal;
 use ulo::app::{Bound, Connected};
 use ulo::App;
@@ -86,7 +85,6 @@ fn port_0_on_the_smol_listener_reports_and_serves_the_port_the_os_chose() {
 /// The test binary started again as `child_serves_an_inherited_socket` on `listener`, `socket` its
 /// descriptor 3, through a shell that sets `LISTEN_PID` to the process ID the binary then runs as.
 fn spawn_child(listener: &str, socket: &TcpListener) -> Child {
-    let fd = socket.as_raw_fd();
     let mut command = Command::new("/bin/sh");
     command
         .arg("-c")
@@ -100,17 +98,15 @@ fn spawn_child(listener: &str, socket: &TcpListener) -> Child {
         .env_remove("ULO_DEV")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    // SAFETY: the closure runs between fork and exec and calls only `dup2` and `fcntl`, both
-    // async-signal-safe.
-    unsafe {
-        command.pre_exec(move || {
-            // `dup2` onto the descriptor it already is changes nothing, `FD_CLOEXEC` included, so
-            // that case clears the flag itself.
-            let placed = if fd == 3 { libc::fcntl(3, libc::F_SETFD, 0) } else { libc::dup2(fd, 3) };
-            if placed == -1 { Err(std::io::Error::last_os_error()) } else { Ok(()) }
-        });
-    }
+    place_fd(&mut command, socket.try_clone().expect("a duplicate of the socket").into(), 3);
     command.spawn().expect("the child starts")
+}
+
+/// Has the child `command` spawns find `source` at descriptor `target`, which survives its exec,
+/// through `command-fds`. The command owns `source` until it is dropped, so the descriptor is open
+/// when the child forks.
+fn place_fd(command: &mut Command, source: OwnedFd, target: RawFd) {
+    command.fd_mappings(vec![FdMapping { parent_fd: source, child_fd: target }]).expect("one mapping cannot collide with another");
 }
 
 /// The child's stdout read until it reports it is serving, within [`PATIENCE`].
@@ -235,5 +231,94 @@ fn child_serves_an_inherited_socket() {
     match std::env::var(CHILD).as_deref() {
         Ok("tokio") => OnTokio::block_on(async { serve(ulo_http_conformance::app(OnTokio::runtime()).await).await }),
         _ => OnSmol::block_on(async { serve(ulo_http_conformance::app(OnSmol::runtime()).await).await }),
+    }
+}
+
+/// The descriptor `placement_child` checks.
+const PLACEMENT_FD: &str = "ULO_PLACEMENT_FD";
+/// The inode the socket at that descriptor must carry.
+const PLACEMENT_INO: &str = "ULO_PLACEMENT_INO";
+/// What `placement_child` prints when the descriptor is the socket.
+const PLACED: &str = "ulo-placement: placed";
+
+/// The inode of the file open at `fd` in this process, read through `/dev/fd`.
+fn inode(fd: RawFd) -> u64 {
+    std::fs::metadata(format!("/dev/fd/{fd}")).expect("the socket's own descriptor").ino()
+}
+
+/// A listening socket at a descriptor other than 3, the others bound on the way to it left open
+/// until it is.
+fn socket_not_at_3() -> TcpListener {
+    let mut skipped = Vec::new();
+    loop {
+        let socket = TcpListener::bind("127.0.0.1:0").expect("a port");
+        if socket.as_raw_fd() != 3 {
+            return socket;
+        }
+        skipped.push(socket);
+    }
+}
+
+/// This test binary run again as `placement_child`, checking descriptor `target` against
+/// `socket`, with `place` given the command: what the child printed.
+fn child_sees(socket: TcpListener, target: RawFd, place: impl FnOnce(&mut Command, OwnedFd)) -> String {
+    let ino = inode(socket.as_raw_fd());
+    let mut command = Command::new(std::env::current_exe().expect("the test binary's path"));
+    command
+        .args(["--exact", "placement_child", "--ignored", "--nocapture", "--test-threads=1"])
+        .env(PLACEMENT_FD, target.to_string())
+        .env(PLACEMENT_INO, ino.to_string())
+        .env_remove(CHILD)
+        .stdin(Stdio::null())
+        .stderr(Stdio::inherit());
+    place(&mut command, OwnedFd::from(socket));
+    let output = command.output().expect("the child runs");
+    assert!(output.status.success(), "the child exited with {}", output.status);
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// The child's socket placed at descriptor 3 from another descriptor, the `dup2` case.
+#[test]
+#[cfg_attr(miri, ignore = "Miri refuses `socket` under isolation")]
+fn the_child_s_socket_is_placed_at_descriptor_3() {
+    let seen = child_sees(socket_not_at_3(), 3, |command, socket| place_fd(command, socket, 3));
+    assert!(seen.contains(PLACED), "the child's descriptor 3: {seen}");
+}
+
+/// The child's socket placed at the descriptor it already is in this process: std opened it with
+/// `FD_CLOEXEC`, which `dup2` onto itself leaves set, so only a placement that clears the flag
+/// keeps it across the exec.
+#[test]
+#[cfg_attr(miri, ignore = "Miri refuses `socket` under isolation")]
+fn the_child_s_socket_already_at_its_target_survives_the_exec() {
+    let socket = socket_not_at_3();
+    let fd = socket.as_raw_fd();
+    let seen = child_sees(socket, fd, |command, socket| place_fd(command, socket, fd));
+    assert!(seen.contains(PLACED), "the child's descriptor {fd}, the socket's own number: {seen}");
+}
+
+/// The check's control: a duplicate held open in this process across the spawn, and not placed,
+/// is closed at the exec by its `FD_CLOEXEC`, and the child does not find it.
+#[test]
+#[cfg_attr(miri, ignore = "Miri refuses `socket` under isolation")]
+fn without_a_placement_the_child_does_not_find_the_socket() {
+    let socket = socket_not_at_3();
+    let held = socket.try_clone().expect("a duplicate of the socket");
+    let fd = held.as_raw_fd();
+    let seen = child_sees(socket, fd, |_, socket| drop(socket));
+    assert!(seen.contains("ulo-placement:") && !seen.contains(PLACED), "the child's descriptor {fd}, never placed: {seen}");
+    drop(held);
+}
+
+/// The placement tests' child: reports whether the descriptor `ULO_PLACEMENT_FD` names is the
+/// socket whose inode `ULO_PLACEMENT_INO` gives.
+#[test]
+#[ignore = "the child process of the placement tests; does nothing unless they start it"]
+fn placement_child() {
+    let (Ok(fd), Ok(ino)) = (std::env::var(PLACEMENT_FD), std::env::var(PLACEMENT_INO)) else { return };
+    match std::fs::metadata(format!("/dev/fd/{fd}")) {
+        Ok(meta) if meta.file_type().is_socket() && meta.ino().to_string() == ino => println!("{PLACED}"),
+        Ok(meta) => println!("ulo-placement: descriptor {fd} is another file, inode {}", meta.ino()),
+        Err(error) => println!("ulo-placement: descriptor {fd} is closed: {error}"),
     }
 }

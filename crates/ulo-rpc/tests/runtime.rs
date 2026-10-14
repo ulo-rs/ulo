@@ -3,7 +3,9 @@
 //! built outside an app closes its link from a task on the runtime it holds when it is dropped,
 //! or, when that runtime drops the task unrun, releases its connection and warns. A client built
 //! outside an app takes its default timeout from `RpcClient::timeout`, as a module's takes it from
-//! `RpcClientModule::timeout`, and both refuse a zero as `ZeroTimeout`. A link that can never
+//! `RpcClientModule::timeout`, and its streams' idle timeout from `RpcClient::idle_timeout`, as a
+//! module's from `RpcClientModule::idle_timeout`, none by default; each refuses a zero as
+//! `ZeroTimeout`. A link that can never
 //! connect is refused as `UnusableLink`, by `RpcClient::new` where the client is built and by
 //! `RpcClientModule` when the app connects.
 //!
@@ -213,6 +215,69 @@ async fn a_zero_module_timeout_fails_wiring_as_the_same_refusal() {
     assert_eq!(
         refused.to_string(),
         "`RpcClientModule::timeout(Bound::After(Duration::ZERO))` on the observed link would time out every call; write \
+         `Bound::Unbounded` to turn the timeout off"
+    );
+}
+
+/// Imports one `RpcClientModule` over a link that never replies, its idle timeout `idle`.
+struct WithIdle(Bound);
+
+impl Module for WithIdle {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.import(RpcClientModule::for_root(Observed(Arc::default())).idle_timeout(self.0));
+    }
+}
+
+/// How long a stream from `module`'s client, over a link that never replies, waited on the paused
+/// clock before it failed `Timeout`; `None` if it had not ended after an hour.
+async fn stream_ended_after(module: WithIdle) -> Option<Duration> {
+    let app = App::builder(module).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
+    let client = (*app.get::<RpcClient>().await.expect("the app holds an `RpcClient`")).clone();
+    let started = tokio::time::Instant::now();
+    let mut stream = client.stream::<_, u32>("runtime.stream", &1u32).await.expect("the stream opens");
+    let ended = tokio::time::timeout(Duration::from_secs(3600), futures_util::StreamExt::next(&mut stream)).await.ok()?;
+    let error = ended.expect("the stream yields its end").expect_err("a link that never replies yielded an item");
+    assert_eq!(error.kind(), ErrorKind::Timeout, "the stream failed other than by its idle timeout: {error}");
+    Some(started.elapsed())
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_module_s_idle_timeout_reaches_its_client_s_streams() {
+    let set = stream_ended_after(WithIdle(Bound::After(Duration::from_millis(250)))).await;
+    assert_eq!(set, Some(Duration::from_millis(250)), "a stream on a client from `RpcClientModule::idle_timeout(Bound::After(250 ms))`");
+    let default = stream_ended_after(WithIdle(Bound::Default)).await;
+    assert_eq!(default, None, "a stream on a client from `RpcClientModule::idle_timeout(Bound::Default)` ended within an hour");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_zero_idle_timeout_is_refused_on_the_client_and_the_module() {
+    let client = RpcClient::new(Observed(Arc::default()), Arc::new(Tokio::current())).expect("the link is usable");
+    let Err(refused) = client.idle_timeout(Bound::After(Duration::ZERO)) else {
+        panic!("`RpcClient::idle_timeout(Bound::After(Duration::ZERO))` was taken");
+    };
+    assert_eq!(
+        refused.to_string(),
+        "`RpcClient::idle_timeout(Bound::After(Duration::ZERO))` on the observed link would time out every stream; write \
+         `Bound::Unbounded` to turn the timeout off"
+    );
+    let wired = App::builder(WithIdle(Bound::After(Duration::ZERO))).runtime(Tokio::current()).wire();
+    let Err(StartupError::Wiring(errors)) = wired else {
+        panic!("an `RpcClientModule` with a zero idle timeout wired");
+    };
+    let refused = errors
+        .iter()
+        .find_map(|error| match error {
+            WiringError::ValueFailed { error, .. } => error.downcast_ref::<ZeroTimeout>(),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no wiring error carries a `ZeroTimeout`: {errors}"));
+    assert_eq!(
+        refused.to_string(),
+        "`RpcClientModule::idle_timeout(Bound::After(Duration::ZERO))` on the observed link would time out every stream; write \
          `Bound::Unbounded` to turn the timeout off"
     );
 }

@@ -33,6 +33,7 @@ use crate::link::Link;
 pub struct RpcClientModule<L: Link> {
     pub(crate) link: Arc<L>,
     pub(crate) timeout: Bound,
+    pub(crate) idle: Bound,
     pub(crate) instance: u64,
 }
 
@@ -44,7 +45,12 @@ static INSTANCES: AtomicU64 = AtomicU64::new(0);
 
 impl<L: Link> RpcClientModule<L> {
     pub fn for_root(link: L) -> Self {
-        RpcClientModule { link: Arc::new(link), timeout: Bound::Default, instance: INSTANCES.fetch_add(1, Ordering::Relaxed) }
+        RpcClientModule {
+            link: Arc::new(link),
+            timeout: Bound::Default,
+            idle: Bound::Default,
+            instance: INSTANCES.fetch_add(1, Ordering::Relaxed),
+        }
     }
 
     /// The client's timeout, as [`RpcClient::timeout`] sets it: the whole-call bound of every
@@ -57,6 +63,16 @@ impl<L: Link> RpcClientModule<L> {
         self.timeout = timeout;
         self
     }
+
+    /// The client's idle timeout, as [`RpcClient::idle_timeout`] sets it: the longest silence
+    /// between reply frames of every `stream` and `duplex` call that sets none of its own. None at
+    /// `Bound::Default` and `Bound::Unbounded`. A lost connection fails a waiting stream
+    /// `Unavailable` whatever the idle timeout. `Bound::After(Duration::ZERO)` is refused when the
+    /// app wires, as [`ZeroTimeout`].
+    pub fn idle_timeout(mut self, idle: Bound) -> Self {
+        self.idle = idle;
+        self
+    }
 }
 
 impl<L: Link> Module for RpcClientModule<L> {
@@ -65,18 +81,26 @@ impl<L: Link> Module for RpcClientModule<L> {
     }
 
     fn register(&self, m: &mut ModuleDef<'_>) {
-        if self.timeout == Bound::After(Duration::ZERO) {
+        let zero = Bound::After(Duration::ZERO);
+        let refused = if self.timeout == zero {
+            Some(("RpcClientModule::timeout", "call"))
+        } else if self.idle == zero {
+            Some(("RpcClientModule::idle_timeout", "stream"))
+        } else {
+            None
+        };
+        if let Some((setter, ends)) = refused {
             // A module has no `prepare`; the refusal is recorded for `wire()` to report beside every
             // other wiring error.
-            m.try_value::<RpcClient, _>(Err(ZeroTimeout::of_module(L::NAME)));
+            m.try_value::<RpcClient, _>(Err(ZeroTimeout::of_module(setter, L::NAME, ends)));
         } else {
             let link = Arc::clone(&self.link);
             let closing = Arc::clone(&self.link);
-            let timeout = self.timeout;
+            let (timeout, idle) = (self.timeout, self.idle);
             let checked = Arc::clone(&self.link);
             m.singleton(move |runtime: Dep<dyn Runtime>| {
                 let link = Arc::clone(&link);
-                async move { RpcClient::of_module(link, timeout, runtime.into_arc()) }
+                async move { RpcClient::of_module(link, timeout, idle, runtime.into_arc()) }
             })
             .on_destroy(move || {
                 let link = Arc::clone(&closing);
