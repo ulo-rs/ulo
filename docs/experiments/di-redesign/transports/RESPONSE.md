@@ -2242,3 +2242,36 @@ For RPC, that means the client measures the remaining time after connecting, at 
 For gRPC, the question is where a stamp can sit after tonic's lazy connect: inside the channel's stack, or by making the connection ready before `outgoing` builds the request. Premise to check: whether a ready `Channel` actually implies an established connection, or only a free buffer slot. If tonic offers no point after the connect, report that as an S-item, with what was found.
 
 The test is the probe, kept: the server's deadline is no later than the caller's, within one encoding unit.
+
+## Sixty-first response: a standing limit on gRPC, and a late timer
+
+Received 2026-10-17, answering `divergences/race2b-tests35.md` (S1–S5, F410, F411, F412). The user signed it off the same day; F411 and the pin on the gRPC limit build as test batch 36.
+
+**S1. (a) for now, recorded as a standing limit, with the real fix written down as deferred. Not (b).** Option (b) would be code that looks like a fix and isn't: past the buffer, its readiness still proves nothing about a connection. A wrapper that leaves the defect in place is worse than a documented limit, because it suggests the problem is solved.
+
+The fix that does work is narrower than (c) as written, and it is the real fork. Two premises to check:
+
+1. tonic's generated clients take any `T: GrpcService` in place of `Channel`, so tonic's codegen and codecs stay, and only the transport service changes.
+2. hyper's `http2::SendRequest::ready()` resolves only when the connection is established and has room for a stream.
+
+If both hold, the fix is a ulo transport service under tonic's clients. It owns its connection, reconnects itself, and calls `written` after `ready()`, exactly as the RPC links now do. grpc-go stamps after it picks an established transport, so this matches the reference behaviour, not just our own rule.
+
+The cost is real: the service takes over the connection lifecycle, TLS, HTTP/2 settings and keep-alive from tonic's `Channel`. So record it as F410's gRPC fix, deferred, with that cost as the reason, and keep F410 open on gRPC. In the meantime:
+
+- The design states the limit precisely: on a new or re-established connection, a gRPC callee can outlive its caller by the duration of the connect.
+- The probe stays as a test that pins the limit: the server's deadline is no later than the caller's plus the connect hold plus measured transit. If tonic or our own code makes it worse, that test fails.
+- Filing upstream is the user's call. tonic's `GrpcTimeout` sits after the connect and could rewrite the header there. If tonic took that change, the custom service wouldn't be needed.
+
+**S2. Accepted.** Transit can't be avoided without synchronised clocks, so a bound that fails whatever the client does proves nothing. Measured transit plus 1 ms is the honest limit, and "within one unit" was wrong for this test.
+
+**S3. Accepted.** Mark the half that only waits, in the test itself, as a pin of existing behaviour, not proof of the fix. Under §3.1, only the blocking half counts as evidence for `written`.
+
+**S4. Accepted.** The scenario couldn't pass on CBOR without the fix, and leaving a header-dropping codec in place to keep a batch in scope would have been the wrong trade.
+
+**S5. Accepted.**
+
+**F411. A defect. A caller's `Timeout` is late by however long anything blocked the thread.** It has two parts.
+
+1. **The timer anchors to the instant the call's bound ends**, the one `limit` already keeps, not to `bounded`'s first poll. A block can still delay the moment the timer fires. But it fires on the first poll after the block, not a full timeout later. The test is the probe's: of 16 calls with a 100 ms timeout over a connect that blocks, each times out at no more than the block's end plus one poll, not 100 ms past it.
+2. **Premise to check: does any shipped link actually block a thread while it connects?** The likeliest place is name resolution. std's `ToSocketAddrs` resolves synchronously, so a link that turns a hostname into a socket address through it blocks the runtime worker, whatever its socket does. That would stall every task on that thread, not only the caller's timer, which makes it the larger defect.
+   - If some link does block, report which ones and where. Then check whether the `Runtime` trait offers a way to run blocking work off the worker. If it does, use it. If it doesn't, adding one is a design question: send it back as an S-item, and don't add it in the batch.
