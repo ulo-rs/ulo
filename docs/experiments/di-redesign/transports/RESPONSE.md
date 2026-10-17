@@ -2173,3 +2173,38 @@ RPC's zero stays as ruled in S1, with the handler run. Whether RPC should also s
 **S4. Accepted.** `Stamped` is a suite aid that writes beneath the client, so it belongs in the suite crate. The deeper point it touches: §3.9 calls the suites the public contract for community implementations, but none of them is published. Deciding what a community link depends on (the suites published, with `Stamped` doc-hidden, or the suites vendored) belongs to the switch. Record it, deferred, with that reason.
 
 **F400. Drop "reserved" for `traceparent`.** Don't refuse it. Until ulo propagates trace context itself, a caller setting `traceparent` with `.header` is how trace context gets propagated at all, and refusing it would break that. The design should describe the header as it stands, with no claim of reservation. Built-in trace propagation, with `traceparent` reserved as `deadline-ms` now is, is a design for later, most likely alongside the OpenTelemetry integration in race 3. Record it there.
+
+## Fifty-ninth response: truncation stays, a passed deadline sends nothing, and an event borrows no budget
+
+Received 2026-10-17, answering `divergences/race2b-tests33.md` (S1–S3), with a follow-up ruling on the correction to batch 32's S1 (an event sent `.within(&exec)` carries the calling execution's remaining time as `deadline-ms`). The user signed it off the same day; the passed-deadline check and the `emit` probe build as test batch 34, each premise-first.
+
+**S2. Keep truncating.** Rounding down is the conservative direction for a propagated deadline: the callee gives up no later than the caller, so the callee's timeout can reach the caller while the caller is still waiting. Rounding up lets the callee keep working, by up to one unit, after the caller has given up. Interoperability doesn't decide this one, because every value on the grammar is accepted by grpc-go and by us alike, and only a receiver's behaviour was ever at issue. The error is also negligible: tonic picks the unit that fits eight digits, so the most truncation can cost is about one part in ten million of the remaining time, or 1 ns below 100 ms. No wrapper.
+
+That raises a premise, and it may be a defect. grpc-go writes `0n` for a deadline that has already passed, and `timed` holds the remainder to at least 1 ns. So what does ulo's client do when the call's deadline, its own or forwarded through `.within`, has already passed when the call is sent? To be checked, on RPC and on gRPC.
+
+- **If it sends the call** (with `1n`, or `deadline-ms: 1`), the server can admit it and start the handler while the caller reports a timeout. That is F392's class: work executed while the caller is told it timed out. It is a defect. The fix is to fail the call locally with the timeout error, before connecting, with nothing sent.
+- **If it already fails locally**, there is no defect. Add a test that pins it.
+
+The test for either case: a call made from inside an execution whose deadline has passed. Assert the timeout error, and that the server's recording link received nothing.
+
+**S1. Accepted.** Holding the value to the grammar's maximum keeps it a bound. Sending no header would silently turn the longest deadline into no deadline at all, which is the very mistake F391 and F406 were.
+
+**S3. Accepted.** It is the same line as F394 and the off-grammar refusal: nothing was admitted, so no handler has a claim to it. The change in what an error handler can see belongs in the batch log, and the design states the line once for all three refusals.
+
+### On the correction: what `.within` puts on an event
+
+My ruling still holds as written: an event has no deadline *of its own*, and a caller can't set one through a header. But the correction raises a question not ruled on: should `.within(&exec)` put the calling execution's remaining time on an event at all?
+
+**Ruling: no. On `emit`, `.within` forwards cancellation up to the send, and no `deadline-ms`.**
+
+The reason is what the value would mean on an event. On a request, the forwarded remainder bounds the callee by the time the caller is still waiting. Nobody waits on an event. The request that emitted it usually finishes long before the event is handled, and an event outliving its emitter is the point of emitting one. So the forwarded remainder bounds the event's handler by a budget that belonged to someone else's wait.
+
+Premise to check: does the server read `deadline-ms` as time remaining measured from receipt? If so, on a link where a broker holds the event, the bound is counted from delivery, not from emission. That makes it neither the emitter's budget nor a staleness bound, but a number neither side chose. The practical failure is that an event emitted near the end of a request is given a few milliseconds, and its handler times out with nobody there to see the error.
+
+That makes it a defect, not a refinement, if the probe shows it. Probe and test, on a link that holds work and on one that doesn't:
+
+1. Emit with `.within(&exec)` from an execution that has 50 ms left (scaled from `Budget`), to a handler that takes longer than that. Today, the handler is expected to time out. After the fix, it completes, and the server receives no `deadline-ms`.
+2. Cancel the execution before the emit is awaited. The event isn't sent, and the recording link receives nothing.
+3. Cancel the execution after the send. The event is handled anyway, because cancellation stops at the send.
+
+A staleness bound for events stays the deferred feature from batch 32's S1 (F402).
