@@ -2325,3 +2325,41 @@ Premise to check: does async-nats re-read the file on each connect and reconnect
 **F418 and F419** are defects of classes already decided. UDP refuses a host name in `usable`, as F415 does. Kafka's error path drops through `Detached`, as F413 does. Each gets F415's or F413's test form, and both can go in the next batch.
 
 **F420:** treat it as a defect until shown otherwise. A rerun that passes hides the failure, and §3.1 does not allow passing on a rerun any more than on silence. Run that WebSocket scenario repeatedly on smol until it reproduces, or until enough runs make a pass rate meaningful, and report the rate and what failed.
+
+## Sixty-fourth response: NATS roots for every link, a seam for the tests, a probe hook for F420
+
+Received 2026-10-17, answering `divergences/race2b-tests38.md` (S1–S9, F422–F423). The user signed it off the same day; the answers build as test batch 39.
+
+**S1: yes, cover `nats://` too, after one probe.** F423 is F417's class: the platform store read on the thread polling the connection, 74–116 ms, at a moment the application didn't choose. The link can't know before connecting whether the server will require TLS, so roots would be loaded once per link for every NATS link, off the worker, at the same points as `tls://`.
+
+The probe first: against a plaintext server, does passing `add_root_certificates` on a `nats://` URL leave the connection plain? async-nats might read certificates as a request for TLS.
+- If it stays plain: build it. The cost is one store read per link on the blocking pool, and a temp file, even for a link that never uses TLS.
+- If it forces TLS: report it as an S-item, and F423 stays open with the measured stall stated in the crate's documentation.
+
+**S2: accepted.** The file lives as long as anything holds it, and an unlink is a metadata operation, so doing it synchronously in `Drop` is fine. Keeping a failed write as a failed load is right: no retry mends either. Add one sentence to the documentation: a process killed before the drop leaves the file in the temp directory. The roots are public data and the name is unique, so a leftover file costs nothing but space.
+
+**S3: changed. Use the loader seam MQTT's tests use (decision 137), not the host's store.** Tests that read the host's store depend on whatever store the runner has. A runner whose store is empty or unreadable gives a stall measurement of a load that did nothing: the test passes and proves nothing. With the seam, the test supplies the test certificate as the store's one root, from a loader that blocks twice the bound, as a slow store does. It counts the loads, which shows the roots are loaded once per link and reused on reconnect. The planted per-connect load must still fail it.
+
+**S4: accepted.** Cutting the relay sends async-nats down the same reconnect path a broker restart does. It's deterministic and costs no container time.
+
+**S5: a probe hook under `fw-ws`'s existing `conformance-probe` feature.** A stress loop passes on silence most of the time, and reading the code proves nothing on the next change. Put the hook at the point where a completed message's answer is queued, letting a test delay that queueing. The test sets `max_inflight` to one, sends two messages, delays the first answer's queueing, and requires the answers in order:
+- With the fix: the place is held until the answer is queued, so the second handler can't run first.
+- With the old order: the place is given back first, so the second answer overtakes the first on every run.
+
+The hook compiles out without the feature, like the other probes (decision 105).
+
+**S6: accepted, if the field is the one production uses.** If `client_producer` is the slot the link reads at runtime, and the test only puts a failing value there, it's a seam that exists anyway. If it exists only for the plant, gate it under `#[cfg(test)]`. Claude Code to check which it is.
+
+**S7: refuse at startup, naming the fix. Don't install a provider from the link.**
+- Installing a provider from the link would make a library choose the process-wide provider, which is global state the application owns.
+- Building the configuration with an explicit provider, as MQTT does, is closed to NATS: under route (b), handing async-nats a `ClientConfig` triggers the per-connect root load F417 removed.
+
+So when the link loads its roots, on the blocking pool, it also runs rustls's own provider resolution inside `catch_unwind`. A panic there becomes `Misconfigured`: "this process links more than one rustls crypto provider and installs none; install one with `CryptoProvider::install_default` before the app starts". A server sees it at `bind`, a client at its first call. `catch_unwind` is sound here: it covers a one-shot configuration build that holds no shared state.
+
+The real fix is upstream: async-nats's root-loading condition changed so that a `ClientConfig` can be handed over without the native load. That also opens route (a) for F417. Filing it is the user's call.
+
+**S8: accepted. Document it rather than holding the place for a stream.** If a message held its place until its stream completed, then under the default of 64, a client with 64 open streams would stop being read, including its `cancel` frames, and could never close one. That's a deadlock built into the bound. Each answer carries its message's id, so interleaving between messages is part of the protocol. The documentation of `max_inflight` says so: answers to different messages, a stream's items among them, may interleave by id, and only unary answers under a bound of one come back in the order their messages arrived.
+
+**S9: accepted.** Neither adds a package to the lock.
+
+The new entries: F422 is answered by S7 and F423 by S1.

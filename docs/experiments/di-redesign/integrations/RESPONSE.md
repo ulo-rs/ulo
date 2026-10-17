@@ -390,7 +390,7 @@ Withdrawn: extensions 1, 4, 5, 6 and 7 from the first response's design.
 
 ## Third response: answers to QUESTIONS_1
 
-Received 2026-10-17, answering `QUESTIONS_1.md`. Answers Q1 to Q10 and the review's corrections. Sign-off: pending the user's word. Questions answered separately by the designer are recorded when they arrive.
+Received 2026-10-17, answering `QUESTIONS_1.md`. Answers Q1 to Q10 and the review's corrections. The user signed it off the same day; the build waits until the transport batches are done. Questions answered separately by the designer are recorded when they arrive.
 
 ### Q1: drop the probe. `Spawn` gains `fn name(&self) -> &'static str`, answering `"unknown"` by default; the core's wrapper forwards it, and a store refuses any name but `"tokio"`
 
