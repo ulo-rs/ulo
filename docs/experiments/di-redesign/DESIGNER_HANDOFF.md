@@ -29,6 +29,7 @@ The work runs as a loop with four parties:
 
 You receive a block from each batch. It says what was built and what departs from your answer, and
 it lists the S-items. Answer each S-item with one of three:
+
 - accepted;
 - changed, saying to what;
 - a question back.
@@ -49,6 +50,7 @@ fork.
 **Your premises get checked.** Before anything is built, each factual claim in your answer is
 checked against the code, the dependency tree or the library's source. Several of the previous
 designer's premises were wrong, and the build said so:
+
 - a compile failure's cause, guessed as a borrow held across an await, was an `async fn` future
   that declared no `Send`;
 - `async-nats`'s `flush` sends no PING, so "unsubscribe then flush" couldn't confirm a NATS drain;
@@ -70,6 +72,7 @@ crates.io at `0.1.0-alpha.1`, tagged `v0.1.0-alpha.1`. Every crate inherits one 
 and internal dependencies are pinned exactly, so a release is a one-line version bump.
 
 CI runs 14 jobs on every push:
+
 - **check, test, docs;**
 - **MSRV:** 1.88 for most crates, 1.89 and 1.92 where async-graphql and salvo need them;
 - **macro diagnostics and generated-code lints,** both pinned to rustc 1.98.1;
@@ -125,6 +128,7 @@ settled. Apply them, or say plainly when one should change.
 
 A test that passes on a timeout, a no-op, or an empty run proves nothing, and the same goes for a
 CI job. So:
+
 - every scenario asserts an observable answer;
 - every check is shown failing against a planted violation before it is trusted;
 - a job that runs no tests fails. The Miri job fails if a pure-Rust `unsafe` entry runs no test
@@ -134,6 +138,7 @@ CI job. So:
 
 The framework doesn't panic at runtime for a configuration error. A mistake is refused where it is
 written, or at the first startup phase that can see it:
+
 - at construction, returning a `Result`: `RpcClient::new` returns `Result<_, UnusableLink>`, and
   `.timeout(Bound::After(ZERO))` returns `ZeroTimeout`;
 - at `wire()` or `connect()`;
@@ -162,6 +167,7 @@ runtime-neutral, because their stream has to speak hyper's I/O traits.
 ### 3.4 One name, one meaning
 
 A word means the same thing on every call shape:
+
 - `.timeout` on `request` and `send_stream` bounds the whole call;
 - on `stream` and `duplex`, the gap between frames is `.idle_timeout`, and the whole call is an
   optional `.deadline`. There is no `.timeout` there; writing one is a compile error;
@@ -178,6 +184,7 @@ the drain begins counts as new work, and is refused with 1001 and no hook.
 
 `max_inflight` defaults to 1,024 on every transport, and `Unlimited` is the explicit opt-out.
 WebSocket also has 64 per connection, plus a server-wide 1,024. Over the bound:
+
 - **links whose broker can hold work stop pulling:** AMQP through a channel-wide prefetch, Kafka
   by pausing partitions;
 - **the others refuse with `RetryAfter`:** TCP, UDP, NATS, Redis and MQTT. Mosquitto drops held
@@ -221,6 +228,7 @@ design, the build probes that system before committing.
 | The ledger (`FRAMEWORK_GAPS.md`, outside the repo) | Every gap, deferral and found bug, numbered F1…F389, with dated notes when fixed | "F383" |
 
 Two rules of the record:
+
 - The design documents describe the design as it stands, in the present tense, with no history.
   History lives in the responses and the logs.
 - Where a build departs from your answer, the build is what the design states. The departure is
@@ -229,6 +237,7 @@ Two rules of the record:
 ## 5. Where the work goes next
 
 The order:
+
 1. **Batch 30 closes the current round.** After it, a batch is opened only for a real defect: a
    suite failure, a probe finding, or a bug found by reading.
 2. **Refinement is deferred, not abandoned.** Better names, tighter grammar and polish are listed
@@ -278,6 +287,7 @@ The order:
 
 These are F300–F323. Some may be stale, so ask Claude Code to check one against the code before
 deciding anything on it:
+
 - F300–F304: wiring errors' advice, an enhancer module tier, mount shaping, core test coverage,
   and the integrations' capability brief;
 - F305–F310: `ulo dev` on Unix only, socket activation failing on one bad descriptor, TLS client
@@ -290,6 +300,7 @@ deciding anything on it:
 ## 7. The first decisions waiting for you: batch 29
 
 Batch 29 built the fifty-fourth response, the previous designer's last answer. That response:
+
 - restored `FuturesIo`'s faster `unsafe` read in a module of its own, checked by Miri;
 - required the Miri job to fail when it checks nothing;
 - moved the two `pre_exec` sites onto `command-fds`;
@@ -298,6 +309,7 @@ Batch 29 built the fifty-fourth response, the previous designer's last answer. T
   RabbitMQ suite's time.
 
 All of it is built, tested and green in CI:
+
 - **`FuturesIo`:** its `unsafe` read is restored in `ulo-server-hyper/src/compat.rs`, with written
   safety arguments, listed `pure-rust`, and Miri runs its socket-free tests. Miri caught a planted
   uninitialised read.
