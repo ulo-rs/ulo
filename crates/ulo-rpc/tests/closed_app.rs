@@ -66,20 +66,24 @@ impl Link for Watched {
     }
 }
 
-struct Root;
+/// A module whose one singleton sets its flag when it drops.
+struct Root(Arc<AtomicBool>);
 
 impl Module for Root {
     fn identity(&self) -> ModuleIdentity {
         ModuleIdentity::of_type::<Self>()
     }
 
-    fn register(&self, _m: &mut ModuleDef<'_>) {}
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.value(DropFlag(Arc::clone(&self.0)));
+    }
 }
 
 #[tokio::test]
 async fn a_closed_app_drops_its_server_s_link() {
     let dropped = Arc::new(AtomicBool::new(false));
-    let app = App::builder(Root)
+    let singleton = Arc::new(AtomicBool::new(false));
+    let app = App::builder(Root(Arc::clone(&singleton)))
         .runtime(Tokio::current())
         .wire()
         .expect("the app wires")
@@ -93,5 +97,7 @@ async fn a_closed_app_drops_its_server_s_link() {
     let handle = app.handle();
     app.serve(async { Signal::new("test") }).await.expect("the app shuts down");
     assert!(dropped.load(Ordering::SeqCst), "the server's link outlived the closed app's `serve`");
+    assert!(!singleton.load(Ordering::SeqCst), "the app's singletons dropped while a handle was held");
     drop(handle);
+    assert!(singleton.load(Ordering::SeqCst), "the app's singletons outlived its last handle");
 }

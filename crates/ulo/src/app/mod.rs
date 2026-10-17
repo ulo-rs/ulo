@@ -327,8 +327,9 @@ impl App<Bound> {
     }
 
     /// Every address the bound transports listen on, in bind order: port 0 reports the port the
-    /// OS chose (transports DESIGN §2.7, X6). Empty once a `close` on a handle has closed the
-    /// transports.
+    /// OS chose (transports DESIGN §2.7, X6). Empty once the shutdown's close step has run, whatever
+    /// each server's `close` returned: a close that timed out, errored or panicked releases its
+    /// server too.
     pub fn addresses(&self) -> Vec<BoundAddr> {
         let servers = self.shared.servers.lock().unwrap_or_else(PoisonError::into_inner);
         servers.iter().flat_map(|server| server.bound()).collect()

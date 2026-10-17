@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use ulo::app::Bound as Serving;
 use ulo::testing::TestApp;
 use ulo::{
-    App, AppBuilder, AppHandle, BoxError, BoxFuture, ConnectError, Connected, DrainToken, FailureReason, LookupError, Module,
+    App, AppBuilder, AppHandle, BoundAddr, BoxError, BoxFuture, ConnectError, Connected, DrainToken, FailureReason, LookupError, Module,
     ModuleDef, ModuleIdentity, Mounted, Runtime, RuntimeMissing, Secret, Server, Signal, StartupError, TaskEnd, Timer,
     Transport, WiringError,
 };
@@ -373,6 +373,10 @@ impl Server for Holding {
     async fn close(&self) -> Result<(), BoxError> {
         Ok(())
     }
+
+    fn bound(&self) -> Vec<BoundAddr> {
+        vec![BoundAddr::new("bare", "127.0.0.1:7000".parse().expect("an address"))]
+    }
 }
 
 /// A module whose one singleton sets its flag when it drops.
@@ -404,6 +408,45 @@ async fn a_closed_app_drops_a_server_holding_its_handle() {
     app.serve(async { Signal::new("test") }).await.expect("the app did not shut down");
     assert!(server.load(Ordering::SeqCst), "the server outlived the closed app's `serve`");
     assert!(!singleton.load(Ordering::SeqCst), "the app's singletons dropped while a handle was held");
+    drop(handle);
+    assert!(singleton.load(Ordering::SeqCst), "the app's singletons outlived its last handle");
+}
+
+/// `App<Bound>::addresses()` lists the server's address until the close step has run, then
+/// nothing, though the app is still held.
+#[tokio::test]
+async fn a_closed_app_lists_no_addresses() {
+    let app = connect(App::builder(Flagged(Arc::new(AtomicBool::new(false)))).runtime(Tokio::current()))
+        .await
+        .bind(Holding { app: None, _dropped: DropFlag(Arc::new(AtomicBool::new(false))) })
+        .listen()
+        .await
+        .unwrap_or_else(|error| panic!("the app did not bind: {error}"));
+    assert_eq!(app.addresses().len(), 1, "the bound server's address is missing before the close");
+    let handle = app.handle();
+    handle.close(Signal::new("test")).await.expect("the app did not shut down");
+    assert!(app.addresses().is_empty(), "the closed app still lists {:?}", app.addresses());
+}
+
+/// A `close` on a handle of an app that was bound and never served drops its server inside the
+/// close sequence, and a later `serve` returns at once.
+#[tokio::test]
+async fn a_close_on_an_unserved_app_drops_its_server() {
+    let (server, singleton) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let app = connect(App::builder(Flagged(Arc::clone(&singleton))).runtime(Tokio::current()))
+        .await
+        .bind(Holding { app: None, _dropped: DropFlag(Arc::clone(&server)) })
+        .listen()
+        .await
+        .unwrap_or_else(|error| panic!("the app did not bind: {error}"));
+    let handle = app.handle();
+    assert!(!server.load(Ordering::SeqCst), "the server dropped before the close");
+    handle.close(Signal::new("test")).await.expect("the app did not shut down");
+    assert!(server.load(Ordering::SeqCst), "the server outlived the close sequence");
+    tokio::time::timeout(PATIENCE, app.serve(std::future::pending::<Signal>()))
+        .await
+        .expect("`serve` on a closed app did not return")
+        .expect("`serve` on a closed app failed");
     drop(handle);
     assert!(singleton.load(Ordering::SeqCst), "the app's singletons outlived its last handle");
 }
