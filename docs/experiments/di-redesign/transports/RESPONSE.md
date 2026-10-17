@@ -2012,3 +2012,79 @@ With `FuturesIo` restored, the job has real work. The three system-call entries 
 **S2. Accepted.** Before the first frame, the caller is waiting either way. Excluding the connect would leave a stream that can never connect hanging forever.
 
 **RabbitMQ. Yes, shorten them.** CI rising too confirms the cause. What these scenarios assert is the *order* of events (the deadline fires and the server enforces it), not that a deadline is long. Scale them from the suite's `Budget` rather than using fixed seconds, so they stay robust on slow hosts while costing milliseconds on fast ones.
+
+## Fifty-fifth response: the new designer's first answer
+
+Received 2026-10-17, answering `divergences/race2b-tests29.md` (S1–S6). The first answer from the
+designer that took over through `DESIGNER_HANDOFF.md`. The user signed it off the same day; it
+builds as test batch 30.
+
+**S1. Accepted, and the check is required.** The assert isn't an optional tightening. `futures_io::AsyncRead` is a safe trait, so a reader can return any `n` without writing `unsafe`. If `advance(n)` relies on `n <= slice.len()` and that assumption is false, safe code has caused undefined behaviour. That is unsound by definition, whatever we believe about the readers people actually use. The old code's argument was wrong, not just loose.
+
+A panic is the right response. A reader that reports more bytes than it was given has a bug, the call can't recover from it, and std takes the same stance: `default_read_to_end` asserts that a reader didn't return more than the buffer's capacity. That is a premise to confirm against the std source. Keep the message that names both numbers.
+
+The test should plant a reader that returns `len + 1`, assert the panic and its message, and run under Miri with the other socket-free tests.
+
+There is one related premise to check while the module is open. The slice handed to `poll_read` must cover only initialised memory, because the reader receives a `&mut [u8]`, and a `&mut [u8]` over uninitialised bytes is undefined behaviour before the reader does anything. If the faster path zeroes once and tracks the initialised region, its safety comment should say so. If the slice reaches past that region, report it as an S-item; don't fix it silently.
+
+**S2. Accepted, with three refusals in the check.** A word for the kind and the rest of the line as the reason is the right split. The reason for a `syscall` entry is the only thing that stands behind it, so it belongs where the check can see it. A `pure-rust` entry is backed by Miri, so its prose can stay in the comment.
+
+The parser must fail on:
+
+- a `syscall` entry with an empty or whitespace-only reason;
+- a `pure-rust` entry with anything after the word, so that a reason someone thought they recorded isn't silently dropped;
+- an unknown kind word.
+
+Each failure needs a planted line in the check's own test, shown failing.
+
+**S3. Accepted.** `Default` means the agreed default, and the agreed default is no idle timeout. A zero is refused as `ZeroTimeout`, where it is written or at `wire()`, as the build has it. Accepting a zero would produce a client that fails every stream with nothing reported until the first one, which is exactly the kind of permanent misconfiguration §3.2 says to refuse early.
+
+The per-call setting must refuse zero the same way. S4 changes the per-call type, so this applies to the new signature: a call given `After(Duration::ZERO)` fails with `ZeroTimeout` before any frame is sent. It should fail at the same point a per-call `.timeout(Bound::After(ZERO))` fails today. Check where that is and match it, not choose a new point.
+
+**S4. Changed. `StreamCall::idle_timeout` takes a `Bound`.**
+
+```rust
+impl StreamCall<..> {
+    pub fn idle_timeout(self, bound: Bound) -> Self;
+}
+```
+
+On a call, the three values mean:
+
+- `Bound::Default` inherits the client's setting. This is also what happens when the method isn't called.
+- `Bound::Unbounded` turns the idle timeout off for this call, even on a client that has one.
+- `Bound::After(d)` replaces the client's setting with `d`, and a zero is refused as in S3.
+
+There are two reasons for the change. The first is §3.4: the same word takes a `Bound` on the client and a `Duration` on the call, which is two shapes for one name. The second is a premise to probe. With only a `Duration`, someone who needs one quiet subscription on a client with a 30 s idle timeout will write `Duration::MAX` or `Duration::from_secs(u64::MAX)`. If the timer computes the expiry as `Instant + Duration`, std panics on overflow. So, probe first: on the current build, does a stream call with `idle_timeout(Duration::MAX)` panic?
+
+Whatever the probe shows, the rule: anywhere a `Bound::After(d)` turns into an expiry (`.timeout`, `.idle_timeout`, `.deadline`), compute it with `checked_add`. An overflow behaves as `Unbounded`, and a test shows it. If the probe confirms the panic, that is a found bug, and it gets a ledger number of its own. The signature change is acceptable at alpha.
+
+Tests:
+
+1. A client with an idle timeout scaled from `Budget`, and a call with `Unbounded` that receives a frame after a gap longer than that timeout.
+2. A call with `Default` on the same client that fails at the client's idle timeout.
+3. A call with a shorter `After(d)` that fails at `d`.
+4. A per-call zero that is refused before any frame is sent.
+5. A call with `After(Duration::MAX)` that doesn't panic.
+
+Also check whether the per-call `.deadline` already takes a `Bound`. If it takes a `Duration`, list it as an S-item for the same reason; don't change it in this batch.
+
+**S5. Accepted, no cap.** The bounds scale with `Budget` so that a slow host widens them and nothing flakes. A `settle.min(..)` cap brings back the fixed number that scaling removed, and it would bite on exactly the slow hosts the scaling exists for. The cost on Kafka is time, not correctness, so take the 37.6 s.
+
+The RabbitMQ finding should become a ledger entry next to F341, not part of this batch. The other suites share one broker across their scenarios, and RabbitMQ starts one per scenario. A vhost per scenario on one container would give each scenario its own queues and exchanges without a new broker. Before anyone designs that, probe which RabbitMQ scenarios actually need a fresh broker, for example any that restart or kill it to test connection loss. Those keep their own container, and the rest are candidates to share. Record the probe's answer with the ledger entry.
+
+**S6. Changed. A child is never told `LISTEN_FDS=1` without a descriptor behind it.** The build's fallback depends on a premise not accepted: that descriptor 3 is empty in the child. It is whatever the child happens to inherit there. Rust opens its own descriptors with `CLOEXEC`, but nothing guarantees that every descriptor in the `ulo dev` process was opened that way. So the fallback's safety rests entirely on activation's validation of descriptor 3, on a path nobody has probed.
+
+What to build:
+
+1. **Make the duplicate before the spawn hook runs**, at the point where `ulo dev` decides to restart, where a failure can still stop the restart. If it fails, the restart fails. `ulo dev` reports it in red, naming the OS error, doesn't start the child, and tries again on the next change. Hand the duplicate into the hook through a slot the hook takes once. Premise to check: in command-fds 0.3.3, `FdMapping` takes an owned descriptor at configuration time. If so, the duplicate can be made outside the hook. If the watcher's API can't decline a start at all, report that as an S-item with the API's actual shape. The fallback would then be to start the child with `LISTEN_FDS` and `LISTEN_PID` removed from its environment, and with the red report. It must not set `LISTEN_FDS=1`.
+2. **Test for a leak.** Running out of descriptors inside `ulo dev` most plausibly means `ulo dev` leaked them, so the more valuable test is the one that shows it doesn't. Restart the child N times, then assert that the parent's open-descriptor count, read from `/proc/self/fd` on Linux or `/dev/fd` on macOS, is the same after the restarts as before. Show it failing against a planted leak, such as a duplicate that is never closed.
+3. **Test the failure path.** Inject a failing duplicate through a seam in the restart code. Don't exhaust real descriptors. Assert that no child starts and that the report names the error.
+
+Summary for sign-off:
+
+- S1, S2, S3 and S5 are accepted, with the added refusals and tests above.
+- S4 changes to a per-call `Bound`, with `checked_add` for every expiry and a probe for the `Duration::MAX` panic.
+- S6 changes to failing the restart, with the duplicate made before the hook.
+
+New ledger entries: shared-broker isolation for the RabbitMQ suite, and the overflow bug if the probe confirms it.
