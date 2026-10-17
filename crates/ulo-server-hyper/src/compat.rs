@@ -44,8 +44,10 @@ impl<T: futures_io::AsyncRead + Unpin> Read for FuturesIo<T> {
         // SAFETY: `as_mut` requires that no byte that may already be initialized is
         // uninitialized; the loop only writes, so every byte stays or becomes initialized. The
         // cast from `[MaybeUninit<u8>]` to `[u8]` keeps the length and the layout, which the two
-        // element types share, and is valid because the loop has just initialized every element.
-        // The reader receives a `&mut [u8]`, through which safe code cannot uninitialize a byte.
+        // element types share, and is valid because the loop has just initialized every element:
+        // the slice is exactly the region `as_mut` returned, zeroed whole on every poll, since
+        // `ReadBufCursor` does not expose how much of it hyper already holds initialized. The
+        // reader receives a `&mut [u8]`, through which safe code cannot uninitialize a byte.
         let unfilled: &mut [u8] = unsafe {
             let unfilled: &mut [MaybeUninit<u8>] = buf.as_mut();
             for byte in unfilled.iter_mut() {
@@ -234,9 +236,10 @@ mod tests {
     }
 
     /// The count a reader reports is checked before hyper is told of it, so a reader claiming
-    /// more than it was offered panics rather than marking bytes past the slice filled.
+    /// more than it was offered panics, naming both numbers, rather than marking bytes past the
+    /// slice filled.
     #[test]
-    #[should_panic(expected = "bytes read into a 16-byte buffer")]
+    #[should_panic(expected = "a futures-io reader reported 17 bytes read into a 16-byte buffer")]
     fn a_reader_counting_past_its_slice_panics() {
         let mut memory = vec![MaybeUninit::<u8>::uninit(); 16];
         let _ = read_into(&mut FuturesIo::new(Overcounts), &mut memory, 0);

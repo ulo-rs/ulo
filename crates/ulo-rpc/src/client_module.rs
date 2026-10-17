@@ -65,10 +65,10 @@ impl<L: Link> RpcClientModule<L> {
     }
 
     /// The client's idle timeout, as [`RpcClient::idle_timeout`] sets it: the longest silence
-    /// between reply frames of every `stream` and `duplex` call that sets none of its own. None at
-    /// `Bound::Default` and `Bound::Unbounded`. A lost connection fails a waiting stream
-    /// `Unavailable` whatever the idle timeout. `Bound::After(Duration::ZERO)` is refused when the
-    /// app wires, as [`ZeroTimeout`].
+    /// between reply frames of every `stream` and `duplex` call that leaves its own at
+    /// `Bound::Default`. None at `Bound::Default` and `Bound::Unbounded`. A lost connection fails
+    /// a waiting stream `Unavailable` whatever the idle timeout. `Bound::After(Duration::ZERO)` is
+    /// refused when the app wires, as [`ZeroTimeout`].
     pub fn idle_timeout(mut self, idle: Bound) -> Self {
         self.idle = idle;
         self
@@ -83,9 +83,9 @@ impl<L: Link> Module for RpcClientModule<L> {
     fn register(&self, m: &mut ModuleDef<'_>) {
         let zero = Bound::After(Duration::ZERO);
         let refused = if self.timeout == zero {
-            Some(("RpcClientModule::timeout", "call"))
+            Some(("RpcClientModule::timeout", "every call"))
         } else if self.idle == zero {
-            Some(("RpcClientModule::idle_timeout", "stream"))
+            Some(("RpcClientModule::idle_timeout", "every stream"))
         } else {
             None
         };

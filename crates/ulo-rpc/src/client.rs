@@ -63,13 +63,16 @@ fn idle_of(idle: Bound) -> Option<Duration> {
 /// A zero timeout given to an RPC client, which would time out every call it applies to:
 /// `Bound::After(Duration::ZERO)` refused by [`RpcClient::timeout`] and
 /// [`RpcClient::idle_timeout`] where it is written, and by `RpcClientModule::timeout` and
-/// `RpcClientModule::idle_timeout` when the app wires. `Bound::Unbounded` is the spelling of no
-/// timeout.
+/// `RpcClientModule::idle_timeout` when the app wires. A stream's own
+/// [`idle_timeout`](StreamCall::idle_timeout) of zero is refused when the call is awaited, before
+/// it connects, as the source of a `BadRequest` [`RpcError`] whose reason is `"zero_timeout"`.
+/// `Bound::Unbounded` is the spelling of no timeout.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ZeroTimeout {
     setter: &'static str,
     link: &'static str,
-    /// What the timeout would end at once: `"call"` for a timeout, `"stream"` for an idle timeout.
+    /// What the timeout would end at once: `"every call"` for a timeout, `"every stream"` for a
+    /// client's idle timeout, `"the stream"` for a call's.
     ends: &'static str,
 }
 
@@ -88,7 +91,7 @@ impl fmt::Display for ZeroTimeout {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "`{}(Bound::After(Duration::ZERO))` on the {} link would time out every {}; write `Bound::Unbounded` to turn the \
+            "`{}(Bound::After(Duration::ZERO))` on the {} link would time out {}; write `Bound::Unbounded` to turn the \
              timeout off",
             self.setter, self.link, self.ends
         )
@@ -146,6 +149,9 @@ impl Error for UnusableLink {
 /// and is sent as `deadline-ms`. A stream has no deadline unless the call sets one, since a stream
 /// may run indefinitely, and no idle timeout unless the call or the client's
 /// [`idle_timeout`](Self::idle_timeout) sets one.
+///
+/// A bound too long for the runtime's clock to reach, `Duration::MAX` among them, is no bound, as
+/// `Bound::Unbounded` is: no timer is armed for it and no `deadline-ms` is sent.
 #[derive(Clone)]
 pub struct RpcClient {
     pub(crate) inner: Arc<ClientInner>,
@@ -290,26 +296,26 @@ impl RpcClient {
     /// fails on the line that wrote the zero. `RpcClientModule` refuses it when the app wires.
     pub fn timeout(mut self, timeout: Bound) -> Result<Self, ZeroTimeout> {
         if timeout == Bound::After(Duration::ZERO) {
-            return Err(ZeroTimeout { setter: "RpcClient::timeout", link: self.inner.link, ends: "call" });
+            return Err(ZeroTimeout { setter: "RpcClient::timeout", link: self.inner.link, ends: "every call" });
         }
         self.timeout = timeout_of(timeout);
         Ok(self)
     }
 
-    /// The idle timeout of every `stream` and `duplex` call that sets none of its own, as
-    /// `RpcClientModule::idle_timeout` sets it for a module's client: the longest silence the
-    /// client tolerates between reply frames, as [`StreamCall::idle_timeout`] describes, and not
-    /// sent. None at `Bound::Default`, as at `Bound::Unbounded`, so a quiet stream, a subscription
-    /// yielding now and then, runs until it ends. A lost connection fails a waiting stream
-    /// `Unavailable` through the reply lane whatever the idle timeout, so the idle timeout catches
-    /// only a server that is still connected and has gone silent. This handle and the clones made
-    /// from it after carry it, as [`timeout`](Self::timeout)'s do.
+    /// The idle timeout of every `stream` and `duplex` call that leaves its own at
+    /// `Bound::Default`, as `RpcClientModule::idle_timeout` sets it for a module's client: the
+    /// longest silence the client tolerates between reply frames, as [`StreamCall::idle_timeout`]
+    /// describes, and not sent. None at `Bound::Default`, as at `Bound::Unbounded`, so a quiet
+    /// stream, a subscription yielding now and then, runs until it ends. A lost connection fails a
+    /// waiting stream `Unavailable` through the reply lane whatever the idle timeout, so the idle
+    /// timeout catches only a server that is still connected and has gone silent. This handle and
+    /// the clones made from it after carry it, as [`timeout`](Self::timeout)'s do.
     ///
     /// `Bound::After(Duration::ZERO)`, which would end every stream before its first frame, is
     /// refused as [`ZeroTimeout`].
     pub fn idle_timeout(mut self, idle: Bound) -> Result<Self, ZeroTimeout> {
         if idle == Bound::After(Duration::ZERO) {
-            return Err(ZeroTimeout { setter: "RpcClient::idle_timeout", link: self.inner.link, ends: "stream" });
+            return Err(ZeroTimeout { setter: "RpcClient::idle_timeout", link: self.inner.link, ends: "every stream" });
         }
         self.idle = idle_of(idle);
         Ok(self)
@@ -420,22 +426,26 @@ impl Spec {
     }
 
     /// The wait the whole call is bounded by, `whole`'s bound and the calling execution's
-    /// remaining time when that is shorter. Refuses a call whose execution's deadline has passed,
-    /// before any I/O.
+    /// remaining time when that is shorter, and the instant it ends. Refuses a call whose
+    /// execution's deadline has passed, before any I/O.
     ///
     /// Stamps `deadline-ms`, the deadline the server enforces, with the shortest of the calling
     /// execution's remaining time, a `deadline-ms` the caller set, and `whole`'s bound unless it
     /// covers only an event's publish.
-    fn limit(&mut self, whole: Whole) -> Result<Option<Duration>, RpcError> {
+    fn limit(&mut self, whole: Whole) -> Result<(Option<Duration>, Option<Instant>), RpcError> {
         let inner = &self.client.inner;
+        let now = inner.runtime.now();
         let own = match whole {
             Whole::Reply | Whole::Publish => self.timeout.or(self.client.timeout),
             Whole::Stream(deadline) => deadline,
         };
+        // A bound whose end an `Instant` cannot hold is none, as `Bound::Unbounded` is: `now +
+        // own` would panic, and a timer handed it computes the same sum.
+        let own = own.filter(|own| now.checked_add(*own).is_some());
         let sent = !matches!(whole, Whole::Publish);
         let remaining = match self.within.as_ref().and_then(ExecutionRef::deadline) {
             Some(deadline) => {
-                let remaining = deadline.saturating_duration_since(inner.runtime.now());
+                let remaining = deadline.saturating_duration_since(now);
                 if remaining.is_zero() {
                     return Err(RpcError::new(ErrorKind::Timeout, "the calling execution's deadline has passed"));
                 }
@@ -448,10 +458,11 @@ impl Spec {
             self.headers.entries.retain(|(name, _)| name != "deadline-ms");
             self.headers.insert("deadline-ms", stamped.as_millis().max(1).to_string());
         }
-        Ok(match (own, remaining) {
+        let after = match (own, remaining) {
             (Some(own), Some(remaining)) => Some(own.min(remaining)),
             (own, remaining) => own.or(remaining),
-        })
+        };
+        Ok((after, after.and_then(|after| now.checked_add(after))))
     }
 
     /// Connects, registers the call, and sends its opening frame; a streamed request's items follow
@@ -707,11 +718,14 @@ impl Limit {
         after.map(|after| Limit { after, passed: "the call timed out" })
     }
 
-    /// A stream's wait for its next reply frame: its idle timeout, or the time left to its
-    /// deadline when that is shorter.
-    fn frame(idle: Option<Duration>, left: Option<Duration>) -> Option<Limit> {
+    /// A stream's wait, from `now`, for its next reply frame: its idle timeout, or the time left
+    /// to its deadline at `ends` when that is shorter. An idle timeout whose end an `Instant`
+    /// cannot hold is none, as `Bound::Unbounded` is, since the timer would compute `now + idle`.
+    fn frame(idle: Option<Duration>, ends: Option<Instant>, now: Instant) -> Option<Limit> {
         const IDLE: &str = "no reply frame arrived within the stream's idle timeout";
         const DEADLINE: &str = "the stream's deadline passed";
+        let idle = idle.filter(|idle| now.checked_add(*idle).is_some());
+        let left = ends.map(|ends| ends.saturating_duration_since(now));
         match (idle, left) {
             (Some(idle), Some(left)) if left < idle => Some(Limit { after: left, passed: DEADLINE }),
             (Some(idle), _) => Some(Limit { after: idle, passed: IDLE }),
@@ -791,7 +805,7 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for Call<Res> {
     fn into_future(self) -> Self::IntoFuture {
         let mut spec = self.spec;
         Box::pin(async move {
-            let limit = Limit::call(spec.limit(Whole::Reply)?);
+            let limit = Limit::call(spec.limit(Whole::Reply)?.0);
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
             bounded(&*runtime, limit, within.as_ref(), async move { spec.open().await?.single::<Res>().await }).await
@@ -824,7 +838,7 @@ impl IntoFuture for Emit {
     fn into_future(self) -> Self::IntoFuture {
         let mut spec = self.spec;
         Box::pin(async move {
-            let limit = Limit::call(spec.limit(Whole::Publish)?);
+            let limit = Limit::call(spec.limit(Whole::Publish)?.0);
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
             bounded(&*runtime, limit, within.as_ref(), async move {
@@ -846,7 +860,7 @@ impl IntoFuture for Emit {
 /// [`duplex`](RpcClient::duplex) call. It has no `timeout`, which on a request bounds the whole
 /// call: [`idle_timeout`](Self::idle_timeout) bounds each silence and
 /// [`deadline`](Self::deadline) the whole call. Neither applies unless set, the idle timeout on the
-/// call or, for every stream, on the client.
+/// call or, for every stream that leaves its own at `Bound::Default`, on the client.
 ///
 /// ```compile_fail,E0599
 /// # use std::time::Duration;
@@ -857,21 +871,22 @@ impl IntoFuture for Emit {
 ///
 /// ```
 /// # use std::time::Duration;
+/// # use ulo::Bound;
 /// fn ticks(client: &ulo_rpc::RpcClient) -> ulo_rpc::StreamCall<u64> {
-///     client.stream::<_, u64>("clock.ticks", &()).idle_timeout(Duration::from_secs(1)).deadline(Duration::from_secs(60))
+///     client.stream::<_, u64>("clock.ticks", &()).idle_timeout(Bound::After(Duration::from_secs(1))).deadline(Duration::from_secs(60))
 /// }
 /// ```
 #[must_use = "a call is sent when awaited"]
 pub struct StreamCall<Res> {
     pub(crate) _res: PhantomData<fn() -> Res>,
     pub(crate) spec: Spec,
-    idle: Option<Duration>,
+    idle: Bound,
     deadline: Option<Duration>,
 }
 
 impl<Res> StreamCall<Res> {
     fn new(spec: Spec) -> Self {
-        StreamCall { _res: PhantomData, spec, idle: None, deadline: None }
+        StreamCall { _res: PhantomData, spec, idle: Bound::Default, deadline: None }
     }
 
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
@@ -881,11 +896,17 @@ impl<Res> StreamCall<Res> {
 
     /// The longest silence the client tolerates between reply frames, the first counted from when
     /// the call is awaited. A frame not arriving within it ends the stream with `Timeout`, and
-    /// dropping the stream then sends `cancel`. It is not sent to the server. In place of the
-    /// client's [`idle_timeout`](RpcClient::idle_timeout), and none when neither is set: the
-    /// client's timeout does not apply to a stream.
-    pub fn idle_timeout(mut self, idle: Duration) -> Self {
-        self.idle = Some(idle);
+    /// dropping the stream then sends `cancel`. It is not sent to the server, and the client's
+    /// timeout does not apply to a stream.
+    ///
+    /// `Bound::Default`, which a call that never sets it has, takes the client's
+    /// [`idle_timeout`](RpcClient::idle_timeout), none unless the client set one;
+    /// `Bound::Unbounded` is none for this call whatever the client's; `Bound::After(d)` is `d` in
+    /// place of the client's. `Bound::After(Duration::ZERO)`, which would end the stream before its
+    /// first frame, fails the call when it is awaited, before it connects, `BadRequest` with the
+    /// reason `"zero_timeout"` and a [`ZeroTimeout`] as its source.
+    pub fn idle_timeout(mut self, idle: Bound) -> Self {
+        self.idle = idle;
         self
     }
 
@@ -909,13 +930,22 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for StreamCall<Res> {
 
     fn into_future(self) -> Self::IntoFuture {
         let StreamCall { mut spec, idle, deadline, .. } = self;
-        let idle = idle.or(spec.client.idle);
         Box::pin(async move {
-            let whole = spec.limit(Whole::Stream(deadline))?;
+            let idle = match idle {
+                Bound::Default => spec.client.idle,
+                Bound::Unbounded => None,
+                // The builder answers `Self`, so the await is the first point a zero can fail:
+                // before the call connects, as a binary payload on a JSON link is refused.
+                Bound::After(Duration::ZERO) => {
+                    let zero = ZeroTimeout { setter: "StreamCall::idle_timeout", link: spec.client.inner.link, ends: "the stream" };
+                    return Err(RpcError::new(ErrorKind::BadRequest, zero.to_string()).with_reason("zero_timeout").with_source(zero));
+                }
+                Bound::After(idle) => Some(idle),
+            };
+            let (_, ends) = spec.limit(Whole::Stream(deadline))?;
             let runtime = Arc::clone(&spec.client.inner.runtime);
-            let ends = whole.map(|whole| runtime.now() + whole);
             let within = spec.within.clone();
-            let exchange = bounded(&*runtime, Limit::frame(idle, whole), within.as_ref(), spec.open()).await?;
+            let exchange = bounded(&*runtime, Limit::frame(idle, ends, runtime.now()), within.as_ref(), spec.open()).await?;
             Ok(RpcStream { items: replies::<Res>(exchange, idle, ends) })
         })
     }
@@ -934,8 +964,7 @@ fn replies<Res: DeserializeOwned + Send + 'static>(
         let timer = Arc::clone(&exchange.timer);
         let within = exchange.within.clone();
         let codec = exchange.codec;
-        let left = ends.map(|ends| ends.saturating_duration_since(timer.now()));
-        let next = bounded(&*timer, Limit::frame(idle, left), within.as_ref(), async { Ok(exchange.replies.next().await) }).await;
+        let next = bounded(&*timer, Limit::frame(idle, ends, timer.now()), within.as_ref(), async { Ok(exchange.replies.next().await) }).await;
         match next {
             Ok(Some(Ok(Frame::Item { data, .. }))) => Some((decode(codec, &data), Some(exchange))),
             // A server whose handler answered one value: the stream is that value.
@@ -986,11 +1015,14 @@ pub struct RpcError {
     pub(crate) kind: ErrorKind,
     pub(crate) message: String,
     pub(crate) details: Details,
+    /// The client's own refusal, where it has a type: a [`ZeroTimeout`] for a stream's zero idle
+    /// timeout.
+    source: Option<Box<dyn Error + Send + Sync>>,
 }
 
 impl RpcError {
     pub(crate) fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
-        RpcError { kind, message: message.into(), details: Details::new() }
+        RpcError { kind, message: message.into(), details: Details::new(), source: None }
     }
 
     pub(crate) fn with_reason(mut self, why: &str) -> Self {
@@ -998,8 +1030,13 @@ impl RpcError {
         self
     }
 
+    fn with_source(mut self, source: impl Error + Send + Sync + 'static) -> Self {
+        self.source = Some(Box::new(source));
+        self
+    }
+
     pub(crate) fn from_body(body: ErrorBody) -> Self {
-        RpcError { kind: body.kind, message: body.message, details: body.details }
+        RpcError { kind: body.kind, message: body.message, details: body.details, source: None }
     }
 
     pub fn kind(&self) -> ErrorKind {
@@ -1015,7 +1052,7 @@ impl RpcError {
     }
 
     /// The `ErrorInfo` detail's `reason`, when one is present: `"no_destination"`,
-    /// `"pattern_unhandled"`, `"payload_too_large"`, `"binary_unsupported"`.
+    /// `"pattern_unhandled"`, `"payload_too_large"`, `"binary_unsupported"`, `"zero_timeout"`.
     pub fn reason(&self) -> Option<&str> {
         self.details.iter().find_map(|detail| match detail {
             Detail::ErrorInfo { reason, .. } => Some(reason.as_str()),
@@ -1030,7 +1067,11 @@ impl fmt::Display for RpcError {
     }
 }
 
-impl Error for RpcError {}
+impl Error for RpcError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.source.as_deref().map(|source| source as &(dyn Error + 'static))
+    }
+}
 
 impl Classify for RpcError {
     fn classify(&self) -> ErrorKind {
@@ -1181,7 +1222,7 @@ mod tests {
         assert_eq!(timed_out.kind(), ErrorKind::Timeout);
         drop(client.stream::<_, u32>("silent.stream", &()).deadline(Duration::from_secs(2)).await.expect("the stream opens"));
         drop(client.duplex::<_, u32>("silent.duplex", items()).deadline(Duration::from_millis(1500)).await.expect("the duplex opens"));
-        drop(client.stream::<_, u32>("silent.stream", &()).idle_timeout(Duration::from_secs(1)).await.expect("the stream opens"));
+        drop(client.stream::<_, u32>("silent.stream", &()).idle_timeout(Bound::After(Duration::from_secs(1))).await.expect("the stream opens"));
         drop(client.stream::<_, u32>("silent.stream", &()).await.expect("the stream opens"));
         drop(client.duplex::<_, u32>("silent.duplex", items()).await.expect("the duplex opens"));
         assert_eq!(
@@ -1203,7 +1244,7 @@ mod tests {
     async fn a_silent_stream_ends_at_its_idle_timeout() {
         let client = silent_client(&SilentLink::default(), Duration::from_secs(30));
         let started = std::time::Instant::now();
-        let mut stream = client.stream::<_, u32>("silent.stream", &()).idle_timeout(Duration::from_millis(100)).await.expect("the stream opens");
+        let mut stream = client.stream::<_, u32>("silent.stream", &()).idle_timeout(Bound::After(Duration::from_millis(100))).await.expect("the stream opens");
         let ended = next_within_5s(&mut stream, "the idle timeout").await.expect("the stream yields its timeout").expect_err("nothing arrived");
         assert_eq!(ended.kind(), ErrorKind::Timeout);
         assert!(ended.message().contains("idle timeout"), "the stream did not end on its idle timeout: {ended:?}");
@@ -1218,7 +1259,7 @@ mod tests {
         let started = std::time::Instant::now();
         let mut stream = client
             .stream::<_, u32>("silent.stream", &())
-            .idle_timeout(Duration::from_secs(30))
+            .idle_timeout(Bound::After(Duration::from_secs(30)))
             .deadline(Duration::from_millis(100))
             .await
             .expect("the stream opens");
@@ -1256,13 +1297,13 @@ mod tests {
     #[tokio::test]
     async fn a_call_s_idle_timeout_overrides_the_client_s() {
         let short = idle_client(Bound::After(Duration::from_millis(50)));
-        let mut longer = short.stream::<_, u32>("silent.stream", &()).idle_timeout(Duration::from_secs(30)).await.expect("the stream opens");
+        let mut longer = short.stream::<_, u32>("silent.stream", &()).idle_timeout(Bound::After(Duration::from_secs(30))).await.expect("the stream opens");
         let waited = tokio::time::timeout(Duration::from_millis(500), longer.next()).await;
         assert!(waited.is_err(), "a stream given a 30 s idle timeout ended within 500 ms, at the client's 50 ms: {:?}", waited.ok());
 
         let long = idle_client(Bound::After(Duration::from_secs(30)));
         let started = std::time::Instant::now();
-        let mut shorter = long.stream::<_, u32>("silent.stream", &()).idle_timeout(Duration::from_millis(100)).await.expect("the stream opens");
+        let mut shorter = long.stream::<_, u32>("silent.stream", &()).idle_timeout(Bound::After(Duration::from_millis(100))).await.expect("the stream opens");
         let ended = next_within_5s(&mut shorter, "the call's idle timeout").await.expect("the stream yields its timeout").expect_err("nothing arrived");
         assert_eq!(ended.kind(), ErrorKind::Timeout);
         assert!(started.elapsed() < Duration::from_secs(5), "the call's idle timeout took {:?}", started.elapsed());
@@ -1280,6 +1321,116 @@ mod tests {
             let waited = tokio::time::timeout(Duration::from_secs(3600), stream.next()).await;
             assert!(waited.is_err(), "{which}'s quiet stream ended within an hour: {:?}", waited.ok());
         }
+    }
+
+    /// The tokio runtime, recording every sleep the client asks of it.
+    #[derive(Clone)]
+    struct Recording {
+        tokio: ulo_runtime_tokio::Tokio,
+        sleeps: Arc<Mutex<Vec<Duration>>>,
+    }
+
+    impl Recording {
+        fn new() -> Recording {
+            Recording { tokio: ulo_runtime_tokio::Tokio::current(), sleeps: Arc::default() }
+        }
+
+        fn sleeps(&self) -> Vec<Duration> {
+            self.sleeps.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        }
+    }
+
+    impl Timer for Recording {
+        fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+            self.sleeps.lock().unwrap_or_else(PoisonError::into_inner).push(d);
+            Timer::sleep(&self.tokio, d)
+        }
+
+        fn now(&self) -> Instant {
+            Timer::now(&self.tokio)
+        }
+    }
+
+    impl ulo::Spawn for Recording {
+        fn spawn(&self, fut: BoxFuture<'static, ()>) -> ulo::TaskHandle {
+            ulo::Spawn::spawn(&self.tokio, fut)
+        }
+    }
+
+    /// A client over a link whose server never answers, on a runtime recording its sleeps.
+    fn recorded_client(link: &SilentLink, timeout: Bound, idle: Bound) -> (RpcClient, Recording) {
+        let runtime = Recording::new();
+        (RpcClient::of_module(Arc::new(link.clone()), timeout, idle, Arc::new(runtime.clone())), runtime)
+    }
+
+    /// An hour of the paused clock, which any timer the client armed for a bound it can reach
+    /// would outlast.
+    const HOUR: Duration = Duration::from_secs(3600);
+
+    /// What a bound whose end an `Instant` cannot hold is held to: still waiting after an hour,
+    /// and no sleep asked of the runtime, whose own `now + d` would overflow.
+    fn behaves_as_unbounded<T: fmt::Debug>(waited: Result<T, tokio::time::error::Elapsed>, runtime: &Recording, what: &str) {
+        assert!(waited.is_err(), "{what} ended within an hour: {:?}", waited.ok());
+        assert_eq!(runtime.sleeps(), Vec::<Duration>::new(), "{what}: the sleeps the client asked of its runtime");
+    }
+
+    /// The stream `call` opens, waited on for an hour of silence.
+    async fn an_hour_on(call: StreamCall<u32>, what: &str) -> Result<Option<Result<u32, RpcError>>, tokio::time::error::Elapsed> {
+        let mut stream = call.await.unwrap_or_else(|error| panic!("{what}: the stream did not open: {error:?}"));
+        tokio::time::timeout(HOUR, stream.next()).await
+    }
+
+    /// A client timeout whose end an `Instant` cannot hold is no timeout, as `Bound::Unbounded`
+    /// is: no timer, and no `deadline-ms`.
+    #[tokio::test(start_paused = true)]
+    async fn an_overflowing_client_timeout_is_no_timeout() {
+        let link = SilentLink::default();
+        let (client, runtime) = recorded_client(&link, Bound::After(Duration::MAX), Bound::Default);
+        let waited = tokio::time::timeout(HOUR, client.request::<_, u32>("silent.request", &()).into_future()).await;
+        behaves_as_unbounded(waited, &runtime, "a request on a client timing out at `Duration::MAX`");
+        assert_eq!(link.sent(), vec![("req", None)], "the request's `deadline-ms`");
+    }
+
+    /// A call's own timeout whose end an `Instant` cannot hold is no timeout, the client's five
+    /// seconds included: no timer, and no `deadline-ms`.
+    #[tokio::test(start_paused = true)]
+    async fn an_overflowing_call_timeout_is_no_timeout() {
+        let link = SilentLink::default();
+        let (client, runtime) = recorded_client(&link, Bound::Default, Bound::Default);
+        let waited = tokio::time::timeout(HOUR, client.request::<_, u32>("silent.request", &()).timeout(Duration::MAX).into_future()).await;
+        behaves_as_unbounded(waited, &runtime, "a request given `.timeout(Duration::MAX)`");
+        assert_eq!(link.sent(), vec![("req", None)], "the request's `deadline-ms`");
+    }
+
+    /// F391: a stream's deadline whose end an `Instant` cannot hold panicked computing it. It is
+    /// no deadline: no timer, and no `deadline-ms`.
+    #[tokio::test(start_paused = true)]
+    async fn an_overflowing_stream_deadline_is_no_deadline() {
+        let link = SilentLink::default();
+        let (client, runtime) = recorded_client(&link, Bound::Default, Bound::Default);
+        let what = "a stream given `.deadline(Duration::MAX)`";
+        let waited = an_hour_on(client.stream::<_, u32>("silent.stream", &()).deadline(Duration::MAX), what).await;
+        behaves_as_unbounded(waited, &runtime, what);
+        assert_eq!(link.sent(), vec![("req", None)], "the stream's `deadline-ms`");
+    }
+
+    /// A client idle timeout whose end an `Instant` cannot hold is no idle timeout.
+    #[tokio::test(start_paused = true)]
+    async fn an_overflowing_client_idle_timeout_is_no_idle_timeout() {
+        let (client, runtime) = recorded_client(&SilentLink::default(), Bound::Default, Bound::After(Duration::MAX));
+        let what = "a stream on a client whose idle timeout is `Duration::MAX`";
+        let waited = an_hour_on(client.stream::<_, u32>("silent.stream", &()), what).await;
+        behaves_as_unbounded(waited, &runtime, what);
+    }
+
+    /// A call's idle timeout whose end an `Instant` cannot hold is no idle timeout, the client's
+    /// included.
+    #[tokio::test(start_paused = true)]
+    async fn an_overflowing_call_idle_timeout_is_no_idle_timeout() {
+        let (client, runtime) = recorded_client(&SilentLink::default(), Bound::Default, Bound::After(Duration::from_millis(100)));
+        let what = "a stream given `.idle_timeout(Bound::After(Duration::MAX))`";
+        let waited = an_hour_on(client.stream::<_, u32>("silent.stream", &()).idle_timeout(Bound::After(Duration::MAX)), what).await;
+        behaves_as_unbounded(waited, &runtime, what);
     }
 
     /// A link whose reply lane ends when the test says, as a lost connection's does.

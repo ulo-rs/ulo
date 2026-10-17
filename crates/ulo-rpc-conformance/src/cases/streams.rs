@@ -4,6 +4,7 @@
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
+use ulo::Bound;
 
 use crate::Broker;
 use crate::cases::app::{COLLECT, COUNT, DOUBLE, Fixture, Mounts, SUM, refused_at_startup, streams, within};
@@ -24,7 +25,7 @@ pub async fn server_stream<B: Broker>() {
         refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
         return fixture.stop().await;
     }
-    let replies = fixture.rpc().stream::<_, u32>(COUNT, &3u32).idle_timeout(WAIT).await.expect("the stream opens");
+    let replies = fixture.rpc().stream::<_, u32>(COUNT, &3u32).idle_timeout(Bound::After(WAIT)).await.expect("the stream opens");
     let items: Vec<_> = within::<B, _>(WAIT, "the server stream", replies.collect()).await;
     let items: Vec<u32> = items.into_iter().map(|item| item.expect("every item arrives")).collect();
     assert_eq!(items, vec![1, 2, 3]);
@@ -73,7 +74,7 @@ pub async fn bidi_stream<B: Broker>() {
         refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
         return fixture.stop().await;
     }
-    let replies = fixture.rpc().duplex::<_, i64>(DOUBLE, stream::iter(vec![1i64, 2, 3])).idle_timeout(WAIT).await.expect("the stream opens");
+    let replies = fixture.rpc().duplex::<_, i64>(DOUBLE, stream::iter(vec![1i64, 2, 3])).idle_timeout(Bound::After(WAIT)).await.expect("the stream opens");
     let items: Vec<_> = within::<B, _>(WAIT, "the bidirectional stream", replies.collect()).await;
     let items: Vec<i64> = items.into_iter().map(|item| item.expect("every item arrives")).collect();
     assert_eq!(items, vec![2, 4, 6]);

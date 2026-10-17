@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use futures_util::future::{Either, select};
 use futures_util::StreamExt;
-use ulo::Signal;
+use ulo::{Bound, Signal};
 use ulo_rpc::{Capabilities, RpcError};
 use ulo_transport::ErrorKind;
 
@@ -32,7 +32,7 @@ pub async fn drain<B: Broker>() {
     let rpc = fixture.rpc().clone();
     let held = spawn::<B, _, _>(async move { rpc.request::<_, u64>(HOLD, &held_for).timeout(Duration::from_secs(30)).await });
     let mut ticking = if streams(&capabilities) {
-        let mut ticks = fixture.rpc().stream::<_, u64>(UNTIL_DRAIN, &()).idle_timeout(Duration::from_secs(10)).await.expect("the stream opens");
+        let mut ticks = fixture.rpc().stream::<_, u64>(UNTIL_DRAIN, &()).idle_timeout(Bound::After(Duration::from_secs(10))).await.expect("the stream opens");
         within::<B, _>(Duration::from_secs(10), "a tick", ticks.next()).await.expect("the stream yields").expect("a tick arrives");
         Some(ticks)
     } else {

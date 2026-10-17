@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
-use ulo::Runtime;
+use ulo::{Bound, Runtime};
 use ulo_rpc::{Link, RpcClient, RpcError};
 
 use crate::Broker;
@@ -48,7 +48,7 @@ pub async fn plain_thread<B: Broker>() {
             let sum = client.request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).timeout(WAIT).await;
             let emitted = client.emit(EVENT, &11u32).await;
             let (counted, summed) = if carries_streams {
-                let counted = match client.stream::<_, u32>(COUNT, &3u32).idle_timeout(WAIT).await {
+                let counted = match client.stream::<_, u32>(COUNT, &3u32).idle_timeout(Bound::After(WAIT)).await {
                     Ok(replies) => Ok(replies.collect::<Vec<_>>().await),
                     Err(error) => Err(error),
                 };

@@ -234,7 +234,10 @@ jobs:
       # listed module opts out with `#![allow(unsafe_code)]`, and this fails on `unsafe` or a
       # relaxed `unsafe_code` anywhere else, on a member that does not inherit the workspace's
       # lints, on a listed file that does not opt out, and on an entry whose kind is missing or
-      # unknown. Before the cache, so it fails fast.
+      # unknown, a `syscall` entry with no reason or one of whitespace alone, or a `pure-rust`
+      # entry with anything after the word. It first runs those rules over the planted lines in
+      # `scripts/unsafe_allowed_selftest.txt` and fails unless each is refused. Before the cache,
+      # so it fails fast.
       - run: python3 scripts/unsafe_allowed.py check
       - uses: Swatinem/rust-cache@v2
       # Miri over each `pure-rust` entry's tests: a module's own tests by its path, a listed test

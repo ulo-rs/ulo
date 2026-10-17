@@ -11,6 +11,10 @@
 #                       the reason says what Miri stops at. The `miri` job prints the entry and
 #                       its reason and skips it, and the module rests on its safety comments and
 #                       its ordinary tests.
+#
+# The check refuses an entry with no kind or an unknown one, a `syscall` entry with no reason, and
+# a `pure-rust` entry with anything after the word; `scripts/unsafe_allowed_selftest.txt` plants
+# one line of each, which every run must refuse.
 
 # `FuturesIo`: handing hyper's uninitialized read buffer to a `futures-io` reader, through
 # `ReadBufCursor::as_mut` and `advance`.

@@ -10,9 +10,14 @@ The workspace denies `unsafe_code` through `[workspace.lints.rust]`, so the comp
 when a member does not inherit the table, when the table no longer denies or forbids the lint,
 when a file the list does not name relaxes `unsafe_code` or contains `unsafe`, when a listed
 file does not exist or does not opt out with `#![allow(unsafe_code)]`, and when an entry's kind is
-missing or unknown, a `syscall` entry gives no reason, a `pure-rust` entry gives one, or a path is
-listed twice. Comments, string literals and character literals are not read, so prose mentioning
-`unsafe` is not a finding.
+missing or unknown, a `syscall` entry gives no reason or one of whitespace alone, a `pure-rust`
+entry has anything after the word, or a path is listed twice. Comments, string literals and
+character literals are not read, so prose mentioning `unsafe` is not a finding.
+
+Both commands first run the list's rules over `scripts/unsafe_allowed_selftest.txt`, whose lines
+each break one rule, and fail unless every one of them is refused with that rule's finding and
+the file's valid lines pass. The check cannot then report a list clean under a rule it no longer
+enforces.
 
 `miri` runs `cargo miri test` once per `pure-rust` entry: a module of a library or binary target
 as that target's tests filtered to the module's path, a file that is a test target as the whole
@@ -32,6 +37,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LIST = ROOT / "unsafe-allowed.txt"
+SELFTEST = ROOT / "scripts" / "unsafe_allowed_selftest.txt"
 
 OPT_OUT = re.compile(r"#!\[\s*allow\s*\(\s*unsafe_code\s*\)\s*\]")
 UNSAFE = re.compile(r"(?<![A-Za-z0-9_])unsafe(?![A-Za-z0-9_])")
@@ -52,10 +58,11 @@ class Entry:
         self.number, self.path, self.kind, self.reason = number, path, kind, reason
 
 
-def listed():
-    """Every entry as written, each `kind` and `reason` as found, which `entry_findings` judges."""
+def parse(text):
+    """Every entry of a list in the list's grammar, each `kind` and `reason` as found, which
+    `entry_findings` judges. Whitespace is Python's, Unicode's included."""
     entries = []
-    for number, line in enumerate(LIST.read_text().splitlines(), 1):
+    for number, line in enumerate(text.splitlines(), 1):
         line = line.strip()
         if line and not line.startswith("#"):
             fields = line.split(None, 2)
@@ -65,23 +72,74 @@ def listed():
     return entries
 
 
+def listed():
+    return parse(LIST.read_text())
+
+
 def entry_findings(entries):
+    """Each entry that breaks the list's grammar, as `(line number, finding)`."""
     findings = []
     seen = {}
     for entry in entries:
-        where = f"unsafe-allowed.txt:{entry.number}"
         if entry.path in seen:
-            findings.append(f"{where}: `{entry.path}` is listed again, first at line {seen[entry.path]}")
+            findings.append((entry.number, f"`{entry.path}` is listed again, first at line {seen[entry.path]}"))
         seen.setdefault(entry.path, entry.number)
         if entry.kind is None:
-            findings.append(f"{where}: `{entry.path}` has no kind; write `{PURE}`, or `{SYSCALL}` and what Miri stops at")
+            findings.append((entry.number, f"`{entry.path}` has no kind; write `{PURE}`, or `{SYSCALL}` and what Miri stops at"))
         elif entry.kind == PURE and entry.reason:
-            findings.append(f"{where}: a `{PURE}` entry takes no reason, since Miri runs its tests: `{entry.reason}`")
+            findings.append((entry.number, f"a `{PURE}` entry takes no reason, since Miri runs its tests: `{entry.reason}`"))
         elif entry.kind == SYSCALL and not entry.reason:
-            findings.append(f"{where}: a `{SYSCALL}` entry gives the reason Miri cannot execute it after the kind")
+            findings.append((entry.number, f"a `{SYSCALL}` entry gives the reason Miri cannot execute it after the kind"))
         elif entry.kind not in (PURE, SYSCALL):
-            findings.append(f"{where}: `{entry.kind}` is no kind; write `{PURE}` or `{SYSCALL}`")
+            findings.append((entry.number, f"`{entry.kind}` is no kind; write `{PURE}` or `{SYSCALL}`"))
     return findings
+
+
+def located(findings, name="unsafe-allowed.txt"):
+    return [f"{name}:{number}: {finding}" for number, finding in findings]
+
+
+# In the self-test file: the finding the next entry must draw, and the token standing for the
+# whitespace of a plant, which an editor stripping trailing whitespace would otherwise remove.
+EXPECT = "# expect: "
+WHITESPACE = "<whitespace>"
+
+
+def selftest():
+    """The list's rules run over `SELFTEST`: a failure for each planted line not refused with the
+    finding its `# expect:` names, or refused with another as well, and for each valid line
+    refused at all. Prints how many of each it saw when nothing fails."""
+    lines = SELFTEST.read_text().replace(WHITESPACE, " \t\u00a0 ").splitlines()
+    expected = {}
+    pending = None
+    for number, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith(EXPECT):
+            pending = stripped[len(EXPECT):]
+        elif stripped and not stripped.startswith("#"):
+            if pending is not None:
+                expected[number] = pending
+            pending = None
+    entries = parse("\n".join(lines))
+    found = {}
+    for number, finding in entry_findings(entries):
+        found.setdefault(number, []).append(finding)
+    name = SELFTEST.relative_to(ROOT)
+    failures = []
+    for entry in entries:
+        drawn = found.get(entry.number, [])
+        want = expected.get(entry.number)
+        if want is None and drawn:
+            failures.append(f"self-test: {name}:{entry.number}: a valid line was refused: {'; '.join(drawn)}")
+        elif want is not None and not any(want in finding for finding in drawn):
+            failures.append(f"self-test: {name}:{entry.number}: a planted line was not refused with `{want}`; found: {'; '.join(drawn) or 'nothing'}")
+        elif want is not None and len(drawn) > 1:
+            failures.append(f"self-test: {name}:{entry.number}: a planted line drew more than its own finding: {'; '.join(drawn)}")
+    if not expected:
+        failures.append(f"self-test: {name} plants no line")
+    if not failures:
+        print(f"self-test: {len(expected)} planted lines refused, {len(entries) - len(expected)} valid lines accepted")
+    return failures
 
 
 def metadata():
@@ -177,8 +235,13 @@ def workspace_denies():
 
 
 def check():
+    failures = selftest()
+    if failures:
+        for failure in failures:
+            print(failure)
+        return 1
     entries = listed()
-    findings = entry_findings(entries)
+    findings = located(entry_findings(entries))
     allowed = set()
     for entry in entries:
         path = ROOT / entry.path
@@ -253,8 +316,13 @@ RAN = re.compile(r"^test (\S+)(?: - should panic)? \.\.\. (ok|FAILED)\s*$")
 
 
 def miri(dry_run):
+    failures = selftest()
+    if failures:
+        for failure in failures:
+            print(failure)
+        return 1
     entries = listed()
-    findings = entry_findings(entries)
+    findings = located(entry_findings(entries))
     if findings:
         for finding in findings:
             print(finding)
