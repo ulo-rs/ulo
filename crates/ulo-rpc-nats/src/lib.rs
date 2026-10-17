@@ -7,8 +7,9 @@
 //! to it meanwhile is gone; the drain is NATS's drain protocol, which async-nats ends without
 //! waiting for the server to stop routing, so a request routed to the draining instance in between
 //! can be lost and its caller sees its own `Timeout` (`confirms_drain` is `false`); `tls://` selects
-//! TLS, trusting the platform's root certificates, which the link reads once and writes to a PEM
-//! file of its own in the OS temp directory, removed when the link drops.
+//! TLS, and a `nats://` server requiring it upgrades the connection, either trusting the platform's
+//! root certificates, which every link reads once and writes to a PEM file of its own in the OS
+//! temp directory, removed when the link drops.
 //!
 //! ```ignore
 //! app.bind(ulo_rpc::Server::new(ulo_rpc_nats::Nats::url("nats://bus:4222")))

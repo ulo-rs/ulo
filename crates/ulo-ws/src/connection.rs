@@ -48,7 +48,7 @@ use crate::gateway::{
 };
 use crate::rooms::{BroadcastError, Hub};
 use crate::session::SessionHandle;
-use crate::table::MessagesRead;
+use crate::table::{AnswerHold, MessagesRead};
 use crate::transport::{ConnectCx, ConnectInner, ConnectReply, ConnectionInfo, CxInner, NoHandler, Reply, UpgradeHead, Ws, WsConnect, WsCx};
 
 /// A connection's id, unique across every process sharing a broadcast adapter: the process's
@@ -321,6 +321,7 @@ pub(crate) enum Phase {
 pub(crate) struct Tracker {
     pub(crate) places: Arc<Places>,
     messages_read: MessagesRead,
+    answer_hold: AnswerHold,
     phase: Watch<Phase>,
     token: Watch<Option<DrainToken>>,
     tasks: Mutex<HashMap<u64, TaskHandle>>,
@@ -330,11 +331,13 @@ pub(crate) struct Tracker {
 
 impl Tracker {
     /// `max_inflight` is the server's bound on the messages all its connections have in flight
-    /// together, `None` for no bound; `messages_read` counts every data message they read.
-    pub(crate) fn new(max_inflight: Option<usize>, messages_read: MessagesRead) -> Arc<Tracker> {
+    /// together, `None` for no bound; `messages_read` counts every data message they read, and
+    /// `answer_hold` is awaited before each answer is queued.
+    pub(crate) fn new(max_inflight: Option<usize>, messages_read: MessagesRead, answer_hold: AnswerHold) -> Arc<Tracker> {
         Arc::new(Tracker {
             places: Arc::new(Places::new(max_inflight)),
             messages_read,
+            answer_hold,
             phase: Watch::new(Phase::Serving),
             token: Watch::new(None),
             tasks: Mutex::new(HashMap::new()),
@@ -963,12 +966,15 @@ struct Flight {
     progress: Event,
     calls: Mutex<HashMap<u64, (Option<MessageId>, ExecutionRef)>>,
     next: AtomicU64,
+    /// The server's [`AnswerHold`].
+    answer_hold: AnswerHold,
 }
 
 impl Flight {
-    fn new(places: Arc<Places>) -> Flight {
+    fn new(places: Arc<Places>, answer_hold: AnswerHold) -> Flight {
         Flight {
             places,
+            answer_hold,
             handling: AtomicUsize::new(0),
             busy: AtomicUsize::new(0),
             progress: Event::new(),
@@ -1052,7 +1058,10 @@ impl Drop for Finished {
 }
 
 /// Counts one message out of `handling` once: when its answer is queued, a streamed answer once its
-/// stream is known, or when its task ends.
+/// stream is known, or when its task ends. Under `max_inflight = 1` a unary answer is queued
+/// before the next message is read; a stream's items are not held to that order, since a
+/// message holding its place until its stream ended would let a client with `max_inflight` open
+/// streams stop being read, its `cancel` frames among what goes unread.
 struct Handling(Option<Arc<Flight>>);
 
 impl Handling {
@@ -1084,7 +1093,7 @@ where
     let gateway = &accept.gateway;
     let limits = &gateway.limits;
     let outbound = Arc::clone(&conn.inner.outbound);
-    let flight = Arc::new(Flight::new(Arc::clone(&accept.tracker.places)));
+    let flight = Arc::new(Flight::new(Arc::clone(&accept.tracker.places), accept.tracker.answer_hold.clone()));
     let places = &accept.tracker.places;
     let mut tasks = TaskSet::new(Arc::clone(&accept.runtime) as Arc<dyn Spawn>);
     let inbox = match (&gateway.handler.messages, &admitted.instance) {
@@ -1406,6 +1415,7 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
     // the next message as this one leaves the count, cannot queue that message's answer first. A
     // streamed answer is counted out as its stream arrives: its items are written as the client
     // takes them, which the bound does not wait for.
+    flight.answer_hold.before_queueing(&name).await;
     match outcome {
         Err(err) => {
             let _ = outbound.push(envelope::error(codec, id.as_ref(), &CallError::from_boxed(err)));

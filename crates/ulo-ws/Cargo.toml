@@ -13,8 +13,10 @@ categories = ["web-programming::websocket", "asynchronous"]
 [features]
 # For the conformance tests; not an application feature. It exports `MessagesRead` and
 # `GatewayDefaults::messages_read`, the count of data messages a server's connections read off
-# their sockets, which `ulo-ws-hyper`'s load-shedding test holds to its bound; without it the read
-# loop counts nothing.
+# their sockets, which `ulo-ws-hyper`'s load-shedding test holds to its bound, and `AnswerHold` and
+# `GatewayDefaults::answer_hold`, a wait before each answer is queued, which `tests/table.rs`
+# holds open to order two answers under `max_inflight = 1`; without it the read loop counts
+# nothing and no answer waits. The tests enable it through this crate's dev-dependency on itself.
 conformance-probe = []
 
 [dependencies]
@@ -47,6 +49,8 @@ serde_json = { workspace = true, features = ["raw_value"] }
 tracing.workspace = true
 
 [dev-dependencies]
+# Itself with `conformance-probe`, for `tests/table.rs`.
+ulo-ws = { path = ".", features = ["conformance-probe"] }
 # The WebSocket conformance suite, which `tests/conformance.rs` runs against the hand-off, and
 # `conformance_smol.rs` and `conformance_pipe.rs` on smol.
 ulo-ws-conformance = { path = "../ulo-ws-conformance" }

@@ -8,7 +8,9 @@
 //! `on_disconnect` running once with `Lost` for a connection whose `OnConnect` ran in the
 //! handshake, and nothing running for one whose connection phase had not begun. A connection over
 //! `max_connections` runs no hook in either refusal mode, and a connect guard decides before the
-//! slot is taken.
+//! slot is taken. Under `max_inflight = 1` a connection's answers leave in the order their
+//! messages arrived, the first answer held before its queueing through `conformance-probe`'s
+//! `AnswerHold`.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -27,8 +29,8 @@ use ulo::{App, AppHandle, BoxError, DrainToken, Guard, Module, ModuleDef, Module
 use ulo_http::Upgraded;
 use ulo_transport::prepare::Failures;
 use ulo_ws::{
-    ConnId, ConnectCx, ConnectRefused, Connection, DisconnectReason, GatewayDefaults, GatewayTable, Handshake, OnConnect, OnDisconnect, Ws,
-    WsConnect,
+    AnswerHold, ConnId, ConnectCx, ConnectRefused, Connection, DisconnectReason, GatewayDefaults, GatewayTable, Handshake, OnConnect,
+    OnDisconnect, Ws, WsConnect,
 };
 
 const WAIT: Duration = Duration::from_secs(5);
@@ -200,6 +202,24 @@ impl OnDisconnect for Capped {
     }
 }
 
+/// One message in flight per connection.
+#[injectable]
+struct Serial;
+
+#[routes]
+#[ulo_ws::gateway(path = "/serial", port = own, max_inflight = 1)]
+impl Serial {
+    #[ulo_ws::message("first")]
+    fn first(&self) -> String {
+        "first".to_owned()
+    }
+
+    #[ulo_ws::message("second")]
+    fn second(&self) -> String {
+        "second".to_owned()
+    }
+}
+
 struct Root {
     joined: Joined,
     hooks: Hooks,
@@ -218,12 +238,14 @@ impl Module for Root {
         m.controller::<Paired>();
         m.controller::<Loose>();
         m.controller::<Capped>();
+        m.controller::<Serial>();
     }
 }
 
 /// A server with no socket: the table it builds in `prepare` is handed to the test.
 struct TableServer {
     table: Arc<Mutex<Option<GatewayTable>>>,
+    defaults: GatewayDefaults,
 }
 
 impl TableServer {
@@ -237,7 +259,7 @@ impl ulo::Server for TableServer {
 
     async fn prepare(&mut self, mounted: Mounted<'_, Ws>) -> Result<(), BoxError> {
         let mut failures = Failures::new();
-        let table = GatewayTable::own_port("TableServer", &mounted, &GatewayDefaults::default(), &mut failures);
+        let table = GatewayTable::own_port("TableServer", &mounted, &self.defaults, &mut failures);
         failures.into_result()?;
         *self.table.lock().unwrap_or_else(PoisonError::into_inner) = Some(table);
         Ok(())
@@ -277,6 +299,10 @@ struct Running {
 }
 
 async fn start() -> Running {
+    start_with(GatewayDefaults::default()).await
+}
+
+async fn start_with(defaults: GatewayDefaults) -> Running {
     let slot = Arc::new(Mutex::new(None));
     let joined = Joined::default();
     let hooks = Hooks::default();
@@ -288,7 +314,7 @@ async fn start() -> Running {
         .connect()
         .await
         .unwrap_or_else(|error| panic!("the app did not connect: {error}"))
-        .bind(TableServer { table: Arc::clone(&slot) })
+        .bind(TableServer { table: Arc::clone(&slot), defaults })
         .listen()
         .await
         .unwrap_or_else(|error| panic!("the app did not listen: {error}"));
@@ -580,4 +606,58 @@ async fn a_handshake_once_the_drain_has_begun_is_refused_503_before_the_connecti
         assert_eq!(refusal.reason(), "the server is shutting down", "{path}");
     }
     assert_eq!(hooks.all(), Vec::new(), "the connection phase ran once the drain had begun");
+}
+
+/// How long the probe holds `first`'s answer when `second` does not reach its own queueing.
+const HELD: Duration = Duration::from_millis(300);
+
+/// F420: under `max_inflight = 1` a connection's answers leave in the order their messages
+/// arrived. The client sends `first` and `second` at once; the probe holds `first`'s answer before
+/// its queueing until `second`'s answer is about to be queued, or for [`HELD`]. A place given back
+/// before the queueing lets the read loop read `second`, whose answer is then queued first on any
+/// executor; held until the queueing, `second` is not read while `first`'s answer waits, and the
+/// hold runs out.
+#[tokio::test]
+async fn under_a_bound_of_one_a_held_answer_is_not_overtaken() {
+    let second_reached = Arc::new(tokio::sync::Notify::new());
+    let held = Arc::new(Mutex::new(Vec::new()));
+    let hold = AnswerHold::new({
+        let (second_reached, held) = (Arc::clone(&second_reached), Arc::clone(&held));
+        move |event| {
+            let (second_reached, held, event) = (Arc::clone(&second_reached), Arc::clone(&held), event.to_owned());
+            Box::pin(async move {
+                if event == "first" {
+                    let overtaken = tokio::time::timeout(HELD, second_reached.notified()).await.is_ok();
+                    held.lock().unwrap_or_else(PoisonError::into_inner).push(format!("first, held until {}", if overtaken { "second reached its queueing" } else { "the hold ran out" }));
+                } else {
+                    held.lock().unwrap_or_else(PoisonError::into_inner).push(event.clone());
+                    second_reached.notify_one();
+                }
+            })
+        }
+    });
+    let app = start_with(GatewayDefaults::default().answer_hold(hold)).await;
+    let Handshake::Switch(switch) = app.table.handshake(head("/serial", |_| {}), None).await else {
+        panic!("a valid upgrade request to a gateway was refused");
+    };
+    let (server, mut client) = pipe().await;
+    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+    for (id, event) in [(1, "first"), (2, "second")] {
+        client.send(Message::text(json!({ "event": event, "id": id }).to_string())).await.expect("the message was sent");
+    }
+
+    let mut answers = Vec::new();
+    for _ in 0..2 {
+        let answer = within("an answer", client.next()).await.expect("the connection ended").expect("a read failed");
+        answers.push(serde_json::from_str::<Value>(answer.to_text().expect("a text answer")).expect("a JSON answer"));
+    }
+    assert_eq!(answers, vec![json!({ "id": 1, "data": "first" }), json!({ "id": 2, "data": "second" })], "the answers left out of order");
+    assert_eq!(
+        held.lock().unwrap_or_else(PoisonError::into_inner).clone(),
+        vec!["first, held until the hold ran out".to_owned(), "second".to_owned()],
+        "`second` reached its queueing while `first`'s answer was held"
+    );
+    let _ = client.close(None).await;
+    within("the server's end of the connection", async { while let Some(Ok(_)) = client.next().await {} }).await;
+    app.stop().await;
 }

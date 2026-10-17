@@ -22,10 +22,14 @@
 //! table.close().await;
 //! ```
 
+use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 #[cfg(feature = "conformance-probe")]
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(feature = "conformance-probe")]
+use futures_core::future::BoxFuture;
 
 use http::StatusCode;
 use http::request::Parts;
@@ -53,6 +57,7 @@ pub struct GatewayDefaults {
     pub(crate) ping_interval: Bound,
     pub(crate) pong_timeout: Bound,
     pub(crate) messages_read: MessagesRead,
+    pub(crate) answer_hold: AnswerHold,
 }
 
 /// How many data messages a table's connections have read off their sockets, a Text or Binary
@@ -77,7 +82,53 @@ impl MessagesRead {
     }
 }
 
+/// A wait between a message's answer and its queueing, for the conformance tests: called with the
+/// message's event as its answer, an error and a streamed answer's start included, is about to be
+/// pushed to the connection's outbound queue, and awaited before the push. It holds open the point
+/// where `max_inflight` counts a message out, which a test of the order of two answers under a
+/// bound of one delays.
+///
+/// Exported and holding under the `conformance-probe` feature, which is for the conformance tests,
+/// not an application feature; without it the connection awaits nothing there.
+#[derive(Clone, Default)]
+pub struct AnswerHold(#[cfg(feature = "conformance-probe")] Option<Arc<HoldFn>>);
+
+/// A test's wait, given the message's event.
+#[cfg(feature = "conformance-probe")]
+type HoldFn = dyn Fn(&str) -> BoxFuture<'static, ()> + Send + Sync;
+
+impl AnswerHold {
+    /// `hold(event)` is awaited before each answer is queued.
+    #[cfg(feature = "conformance-probe")]
+    pub fn new(hold: impl Fn(&str) -> BoxFuture<'static, ()> + Send + Sync + 'static) -> AnswerHold {
+        AnswerHold(Some(Arc::new(hold)))
+    }
+
+    pub(crate) async fn before_queueing(&self, event: &str) {
+        #[cfg(feature = "conformance-probe")]
+        if let Some(hold) = &self.0 {
+            hold(event).await;
+        }
+        #[cfg(not(feature = "conformance-probe"))]
+        let _ = event;
+    }
+}
+
+impl fmt::Debug for AnswerHold {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("AnswerHold")
+    }
+}
+
 impl GatewayDefaults {
+    /// The hold the connections of the table these defaults build await before queueing each
+    /// answer.
+    #[cfg(feature = "conformance-probe")]
+    pub fn answer_hold(mut self, hold: AnswerHold) -> Self {
+        self.answer_hold = hold;
+        self
+    }
+
     /// The count of data messages read by the connections of the table these defaults build,
     /// shared with every clone of them. A server holding them hands it out before it moves into
     /// the app.
@@ -101,6 +152,9 @@ impl GatewayDefaults {
 
     /// Messages in flight per connection, over which the connection stops reading: 64 at
     /// `Count::Default`, none at `Count::Unlimited`. `Count::Max(0)` is refused in `prepare`.
+    /// Answers to different messages, a stream's items among them, may interleave, each carrying
+    /// its message's `id`; only unary answers (one frame, a `complete` or an error) under a bound
+    /// of one come back in the order their messages arrived.
     pub fn max_inflight(mut self, messages: Count) -> Self {
         self.max_inflight = messages;
         self
@@ -186,7 +240,8 @@ impl GatewayTable {
         GatewayTable::new(gateways, hub, mounted.app().clone(), Arc::clone(mounted.runtime()), defaults)
     }
 
-    /// `defaults` gives the table its `server_max_inflight` and the count of messages read.
+    /// `defaults` gives the table its `server_max_inflight`, the count of messages read and the hold
+    /// before each answer is queued.
     pub(crate) fn new(
         gateways: Vec<Arc<GatewayRuntime>>,
         hub: Arc<Hub>,
@@ -195,7 +250,7 @@ impl GatewayTable {
         defaults: &GatewayDefaults,
     ) -> Self {
         hub.record_gateways(&gateways);
-        let tracker = Tracker::new(defaults.server_max_inflight.max_inflight(), defaults.messages_read.clone());
+        let tracker = Tracker::new(defaults.server_max_inflight.max_inflight(), defaults.messages_read.clone(), defaults.answer_hold.clone());
         GatewayTable { inner: Arc::new(Inner { gateways, hub, app, runtime, tracker }) }
     }
 

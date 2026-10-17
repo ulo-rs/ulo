@@ -162,6 +162,9 @@ impl<L: Listener> ServerOn<L> {
 
     /// Messages in flight per connection, over which the connection stops reading: 64 at
     /// `Count::Default`, none at `Count::Unlimited`.
+    /// Answers to different messages, a stream's items among them, may interleave, each carrying
+    /// its message's `id`; only unary answers (one frame, a `complete` or an error) under a bound
+    /// of one come back in the order their messages arrived.
     pub fn max_inflight(mut self, messages: Count) -> Self {
         self.defaults = self.defaults.max_inflight(messages);
         self

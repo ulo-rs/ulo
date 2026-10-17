@@ -49,7 +49,7 @@ pub use module::WsModule;
 pub use rooms::{Broadcast, BroadcastError, Rooms, RoomsIn};
 pub use session::{Session, SessionFactory, SessionHandle};
 #[cfg(feature = "conformance-probe")]
-pub use table::MessagesRead;
+pub use table::{AnswerHold, MessagesRead};
 pub use table::{GatewayDefaults, GatewayTable};
 pub use transport::{ConnectCx, ConnectReply, ConnectionInfo, NoHandler, Reply, UpgradeHead, Ws, WsConnect, WsCx};
 pub use ulo_ws_macros::{gateway, message};

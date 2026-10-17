@@ -121,6 +121,10 @@ pub struct GatewaySettings {
     /// Bytes per message after reassembly.
     pub message_limit: Option<u64>,
     pub max_connections: Count,
+    /// Messages in flight per connection, over which the connection stops reading.
+    /// Answers to different messages, a stream's items among them, may interleave, each carrying
+    /// its message's `id`; only unary answers (one frame, a `complete` or an error) under a bound
+    /// of one come back in the order their messages arrived.
     pub max_inflight: Count,
     pub max_outbound: Count,
     pub overflow: Overflow,

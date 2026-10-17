@@ -47,6 +47,10 @@ tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
 # The certificate a TLS NATS server serves in the link's own tests.
 ulo-test-certs = { path = "../ulo-test-certs" }
+# `aws-lc-rs` beside async-nats's `ring`, so every test build links both of rustls's crypto
+# providers, as an application linking this link and the MQTT one does: `tests/two_providers.rs`
+# installs neither and holds the link's refusal, and the link's own tests install `ring`.
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 
 [lints]
 workspace = true

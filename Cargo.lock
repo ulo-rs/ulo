@@ -6661,6 +6661,7 @@ dependencies = [
  "futures-core",
  "futures-executor",
  "futures-util",
+ "rustls",
  "rustls-native-certs 0.8.4",
  "testcontainers",
  "tokio",
@@ -6904,6 +6905,7 @@ dependencies = [
  "ulo-runtime-smol",
  "ulo-runtime-tokio",
  "ulo-transport",
+ "ulo-ws",
  "ulo-ws-conformance",
  "ulo-ws-macros",
 ]
