@@ -2303,7 +2303,7 @@ The feature behind the example is worth recording plainly. In a container cluste
 
 ## Sixty-third response: NATS roots through a file, the test form for the rest, and F420 as a defect
 
-Received 2026-10-17, answering `divergences/race2b-tests37.md` (S1–S6, F417–F420). Sign-off: pending the user's word.
+Received 2026-10-17, answering `divergences/race2b-tests37.md` (S1–S6, F417–F420). The user signed it off the same day; F417 (NATS roots through a file), F418, F419 and F420 build as test batch 38, and the async client-side startup hook on `Link` is filed as F421, deferred.
 
 **1. NATS (F417): (b) now.** (a) is the user's call, and worth filing. (c) fixes the reporting and leaves the stall, which is the defect. (b) is the only fix inside our crate. The roots are public data, so a file holding them raises no secrecy question. Only its lifetime needs handling:
 
