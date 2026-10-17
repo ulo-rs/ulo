@@ -2150,3 +2150,26 @@ The refusal runs before the handler, with no execution opened, as in S2. The tes
 - Kafka, which has no reject: the offset is committed past the event.
 
 A test should show a refused event isn't delivered a second time.
+
+## Fifty-eighth response: a spent gRPC budget, and encoding a timeout on the grammar
+
+Received 2026-10-17, answering `divergences/race2b-tests32.md` (S1–S4, F399, F400). The user signed it off the same day; F399, the encoder check and F400's wording build as test batch 33, and the four deferrals are filed as F401–F404.
+
+**S2 (F399). Answer `DEADLINE_EXCEEDED` without running the handler, as grpc-go does.** Interoperability decides gRPC, and the probe shows what grpc-go does. A zero isn't `INTERNAL` in spirit either: it is the S1 case again, a budget that has run out. The spec's "positive integer" doesn't change that. An encoder that rounds a sub-unit remainder down produces exactly this value. The refusal happens before admission, with no execution opened, on S3's line. The test sends `0S` and asserts `DEADLINE_EXCEEDED` and a handler that never ran.
+
+That raises the encoder premise, and it may be a defect. To be checked, what ulo's gRPC client writes for `grpc-timeout`:
+
+1. A positive remainder smaller than the unit must round up, never down to `0`.
+2. A large duration must move to a coarser unit so the value never exceeds eight digits. One hour in nanoseconds is thirteen digits, and grpc-go refuses a value like that as "too long".
+
+If either fails, our client is writing headers our own server and grpc-go both refuse. That is a defect, and it gets a ledger number. The test encodes a sweep of durations and checks that every one is on the grammar, and that a duration smaller than its unit never encodes as zero. RPC's `deadline-ms` needs the same check for sub-millisecond remainders: rounding up, never down to zero.
+
+RPC's zero stays as ruled in S1, with the handler run. Whether RPC should also stop running the handler when the deadline has already passed, to match gRPC, is a refinement. Defer it.
+
+**S1. An event with no deadline is the intent for now. A staleness bound is a deferred feature.** Nobody waits on an event, so a deadline there wouldn't bound a caller's wait. It would mean "stale after T": useful where a broker holds an event long enough for it to become pointless, which AMQP's per-message expiration and Kafka's retention handle natively in their own ways. That is a design question of its own, not a gap in this batch. The header path that carried a deadline on an event before was accidental, and nothing relied on it as a feature. Record it as deferred, with that reason.
+
+**S3. Accepted.** Same line as F394 and S2.
+
+**S4. Accepted.** `Stamped` is a suite aid that writes beneath the client, so it belongs in the suite crate. The deeper point it touches: §3.9 calls the suites the public contract for community implementations, but none of them is published. Deciding what a community link depends on (the suites published, with `Stamped` doc-hidden, or the suites vendored) belongs to the switch. Record it, deferred, with that reason.
+
+**F400. Drop "reserved" for `traceparent`.** Don't refuse it. Until ulo propagates trace context itself, a caller setting `traceparent` with `.header` is how trace context gets propagated at all, and refusing it would break that. The design should describe the header as it stands, with no claim of reservation. Built-in trace propagation, with `traceparent` reserved as `deadline-ms` now is, is a design for later, most likely alongside the OpenTelemetry integration in race 3. Record it there.
