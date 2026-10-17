@@ -1,0 +1,389 @@
+# Integration layer: designer responses
+
+## First response: the integration layer from the capability brief
+
+Received 2026-10-17, answering `CAPABILITIES.md`. The designer did not have `DESIGN.md` or `transports/DESIGN.md` (they were named in the brief but not pasted), so every dependency on the core is stated as a premise. The text below is the designer's design as received, trimmed of the conversational lead-in. It is a design awaiting review, not a signed-off decision.
+
+### 1. Crates, levels and core extensions
+
+Levels. The brief names two: runtime-free and runtime-neutral. These crates need a third, which the transport layer already has in its links: runtime-bound. A runtime-bound crate is built on one runtime's library. It holds the handle the application gives it, and refuses at `wire` an application on any other runtime. `runtime-levels.txt` needs this level named, with the runtime each such crate is bound to.
+
+| Crate | Level | Why |
+| --- | --- | --- |
+| `ulo-config` | runtime-free | serde and parsers only. Files are read at `wire`, before anything is served. |
+| `ulo-health` | runtime-free | Its bounds run on the core's `Timer`. |
+| `ulo-health-http` | runtime-free | Its routes sit on `ulo-http`, which is runtime-free. |
+| `ulo-health-grpc` | runtime-bound (tokio) | tonic and tonic-health. |
+| `ulo-db` | runtime-free | The shared policy, over the core's `Runtime` and `Timer`. |
+| `ulo-db-sqlx` | runtime-bound: `tokio` feature (default) or `smol` feature | SQLx 0.9 has a `runtime-smol` feature. Enabling both is a `compile_error!`. |
+| `ulo-db-seaorm` | runtime-bound (tokio), MSRV 1.94 | SeaORM supports only tokio. The 2.0.1 manifest declares `rust-version` 1.94.0. |
+| `ulo-db-diesel` | runtime-bound (tokio) | diesel-async is built on tokio-postgres and mysql_async. |
+| `ulo-db-mongo` | runtime-bound (tokio) | The driver supports only tokio from 3.0. |
+| `ulo-db-redis` | runtime-bound: `tokio` or `smol` feature | redis-rs has `tokio-comp` and `smol-comp`. |
+| `ulo-db-conformance` | runtime-bound per run, `publish = false` | The suite. |
+| `ulo-otel` | runtime-free (premise below) | Spans and sampling. The batch processor runs on a background thread of its own. |
+| `ulo-otel-otlp` | a named allowance | Its default HTTP client is reqwest's blocking client, which runs its own runtime on its own thread and never touches the application's. |
+| `ulo-cli` | a binary | Not a library, so it takes no level. |
+
+Extensions to the core's SPI. Each one is needed by a requirement named next to it. Claude Code checks whether the core already provides it before building it.
+
+1. Lifecycle as a value (requirements 6, 10, 15). The core exposes a `Lifecycle` binding with a watched state: `Wiring`, `Connecting`, `Listening`, `Draining`, `Closing`. Health reads it. The `Watch` primitive lives in `ulo-transport::__private`, and the core can't depend on that crate. So by §3.7, `Watch` moves into the core and `ulo-transport` re-exports it.
+2. Collecting several bindings of one kind (requirement 8). `Contribute<dyn HealthCheck>` from any module, collected at `wire` as `Contributions<dyn HealthCheck>`. If the core has no multi-binding, this is the extension health needs.
+3. Close order (requirement 15). Every transport drains before any module closes, and modules close in reverse dependency order. Premise to check: what the core does today.
+4. The given runtime is injectable and can be downcast (requirement 18). The runtime is a binding, `GivenRuntime`, that can be downcast to `ulo_runtime_tokio::Tokio` or `ulo_runtime_smol::Smol`. A runtime-bound module takes the handle from it at `wire`, or refuses.
+5. A drain delay (requirement 6). `App::builder().drain_delay(d)`, defaulting to zero. When the drain begins, readiness turns false at once, and the transports start refusing only after `d`. A zero here is meaningful (no delay), so it isn't refused. In Kubernetes, a load balancer keeps routing to a pod for a few seconds after its readiness turns false, and this absorbs that.
+6. Health routes are served through the drain (requirements 6 and 9). A route marked `serves_during_drain` isn't refused by the drain. It's refused only at `close`. Without this, liveness fails during every drain and the orchestrator may kill a pod that is shutting down cleanly. This is an addition to the HTTP hub's route options.
+7. Exit codes for startup failures. A misconfiguration exits with 78 and a retryable start failure with 75, following the BSD `sysexits.h` convention (`EX_CONFIG` and `EX_TEMPFAIL`). That's a convention, not a standard.
+8. Trace context in the core (requirement 26). A `TraceContext` value on `Execution`, forwarded by `.within`, and a `Tracer` SPI. Section 6 covers it.
+
+### 2. Configuration: `ulo-config`
+
+What decided it. figment records which provider produced each value, and its error's `Display` names the key path through that metadata. Its documentation shows a source name and path, but no line. Line numbers are the point of this crate, so it isn't built on figment. Claude Code can show otherwise with a probe: a type error in a TOML file, checking whether figment reports a line.
+
+The crate merges the sources into its own value tree, where every leaf carries its origin: a file with its line and column, an environment variable's name, an explicit value, or a default. Parsers per format:
+- TOML: the `toml` crate's spanned parsing.
+- JSON: `serde_json` exposes positions only for syntax errors, not for values. Probe a JSON parser that gives value spans. If none is maintained, JSON reports the file and the key path but no line, and the design says so.
+- YAML: `serde_yaml` was archived in March 2024. `serde_yml` carries an advisory as unsound and unmaintained, which recommends `serde_norway` as a maintained fork. `serde-saphyr` is maintained and contains no `unsafe` code. YAML goes behind a `yaml` feature on `serde-saphyr`, provided a probe shows its errors give locations. Otherwise, `serde_norway`.
+- `.env`: no specification exists for the format, so the design takes the common subset: `KEY=VALUE`, quotes, `#` comments, and no variable expansion. It's read into the layer and never into the process environment. Premise to check: `dotenvy`'s iterator API reads without setting the environment.
+
+API.
+```rust
+#[derive(Deserialize)]
+struct AppConfig { http: HttpOptions, database: SqlxOptions, api_key: Secret<String> }
+
+let config = ConfigModule::<AppConfig>::new()
+    .source(Defaults)                                   // from `Default`
+    .source(File::toml("config/app.toml"))              // required unless `.optional()`
+    .source(DotEnv::file(".env").optional())
+    .source(Env::process().prefix("APP_").separator("__"))  // or Env::from_map(map) in tests
+    .source(Values::new().set("http.port", 8080))
+    .validate(|c: &AppConfig, v: &mut Problems| {
+        if c.http.port == 1 { v.at("http.port", "must not be a privileged port") }
+    });
+```
+
+Sections without the application's type. `ConfigModule` also provides an untyped `ConfigTree`, with origins attached. An integration deserialises its own section from it: `SqlxModule::<Postgres>::new().options_from("database")`. Premise to check: a module's options can be resolved from a binding at `wire`. The core needs that for this, and for every integration that reads configuration.
+
+Refused at `wire`, all problems reported together:
+- missing, ill-typed or invalid values, each with its path, its origin and what was expected;
+- a required file that is missing or unreadable;
+- a key nobody reads. After every integration has taken its section, any leaf no deserialiser consumed is refused, with its origin. That includes an `APP_` variable that matches nothing. A typo in configuration is otherwise silent (§3.1). `.allow_unread()` is the opt-out.
+
+Secrets. `Secret<T>` deserialises transparently. Its `Debug` and `Display` go through the core's redaction, and `.expose()` is the only way to read the value. A refusal involving a secret names its path and what was expected, never the value.
+
+Deferred: reloading while running, because every binding resolved at `wire` would need a second, live way to be read. Remote sources (a secrets manager, a configuration service), because they're network reads at `wire`, and that phase's rules don't cover a network dependency yet.
+
+### 3. Health: `ulo-health`, `-http`, `-grpc`
+
+The check. No macros:
+```rust
+pub trait HealthCheck: Send + Sync + 'static {
+    fn name(&self) -> &str;
+    fn check(&self) -> BoxFuture<'_, Health>;      // Health::Up | Health::Down(Reason)
+    fn bound(&self) -> Bound { Bound::Default }    // Default = 2 s; After(ZERO) refused as ZeroTimeout; Unbounded opts out
+    fn probe(&self) -> Probe { Probe::Readiness }  // Liveness only when set explicitly
+}
+```
+A check that doesn't answer within its bound is down. Reasons go through redaction. A contributed check reaches readiness through extension 2, so it can't be left out by a forgotten registration.
+
+The probes:
+- Readiness is true only when the lifecycle is `Listening` and every readiness check is up. It turns false at the moment the drain begins, before the drain delay, and so before any refusal.
+- Liveness is true whenever the process answers, plus any liveness checks the user has added. Integrations never contribute to it.
+- Startup is true once the lifecycle reaches `Listening`.
+
+Checks run concurrently. Probe requests that arrive while a run is in flight share that run. Keeping results between runs is deferred, because a stale "up" is exactly what readiness exists to avoid.
+
+HTTP. `HealthHttp::new()` serves `/health/live`, `/health/ready` and `/health/started` (each path configurable), all marked `serves_during_drain`.
+- Status codes: 200 when the probe passes, 503 when it doesn't. Kubernetes counts any status from 200 to 399 as success.
+- The body takes its shape from the IETF draft, which expired in April 2022: the media type `application/health+json`, with `status` as `pass` or `fail`. The draft is a shape we follow, not a contract anyone holds us to.
+- Detail is off by default. `.detail(true)` adds the draft's optional `checks` object, with each check's redacted reason.
+
+gRPC. tonic-health pairs a `HealthReporter` with a `HealthServer`. Setting a service's status notifies anyone watching. tonic-health describes itself as following the official protocol closely, but not necessarily every feature, so a probe checks that `Watch` behaves as `grpc.health.v1` specifies.
+- The empty service name, and each registered service name, mirror readiness.
+- Changes in the lifecycle are pushed at once, so `NOT_SERVING` reaches a watcher as the drain begins.
+- Checks are re-evaluated on an interval (5 s by default; a zero is refused), because gRPC's `Check` reads a stored status, not a fresh evaluation.
+
+Scenarios, on every host that serves health:
+1. Readiness turns false at the drain, before the first refusal.
+2. Readiness is false before `listen` finishes.
+3. A check that hangs is down at its bound.
+4. The body has no detail by default.
+5. Liveness still answers during the drain.
+6. Over gRPC, `Watch` receives `NOT_SERVING` at the drain.
+
+### 4. Databases and stores
+
+Excluded: Prisma Client Rust, archived with its "no longer maintained" notice.
+
+The shared policy (`ulo-db`). A new store plugs in by implementing two traits, with no macros:
+```rust
+pub trait Store: Send + Sync + 'static {
+    type Options: DeserializeOwned + Send;     // its config section
+    type Client: Clone + Send + Sync + 'static;// the library's own pool or client
+    const RUNTIME: RuntimeKind;                // Tokio or Smol
+    fn validate(o: &Self::Options) -> Result<(), Problems>;            // wire: parses only, never connects
+    fn connect<'a>(o: &'a Self::Options, rt: &'a Given) -> BoxFuture<'a, Result<Self::Client, ConnectError>>;
+    fn ping(c: &Self::Client) -> BoxFuture<'_, Result<(), Reason>>;
+    fn close(c: Self::Client) -> BoxFuture<'static, ()>;
+}
+pub enum ConnectError { Unreachable(Reason), Misconfigured(Reason) } // only Unreachable is retried
+
+pub trait Migrations<S: Store> {             // optional; a store without it has no `.migrate`
+    fn lock<'a>(c: &'a S::Client) -> BoxFuture<'a, Result<LockGuard, Reason>>;
+    fn run<'a>(&'a self, c: &'a S::Client) -> BoxFuture<'a, Result<Applied, Reason>>;
+}
+```
+`StoreModule<S, Name = Primary>` implements the module, written once. It provides `Db<S, Name>`, which derefs to `S::Client`, contributes the health check, and runs the phases:
+
+- `wire`: the runtime check (`GivenRuntime` must downcast to `S::RUNTIME`, otherwise the start is refused, naming the module, the runtime it needs and the runtime it was given); `validate`, which parses the URL with the library's own parser. The refusal is written from the parse failure's category, with any userinfo in the URL replaced by the redaction marker, because a library's own error message may echo the password. Premise to check, per library: whether its parse error contains the URL.
+- `connect`: the client is created inside the given handle's `enter()`. SQLx, with more than one runtime feature, picks tokio when `Handle::try_current()` finds a context, so whatever a library spawns at creation lands on the application's runtime. Retries use exponential backoff with jitter (100 ms doubling, capped at 5 s), under a total `connect_within` bound: 30 s by default, a zero refused. `Misconfigured` (bad credentials, unknown database) stops retrying at once and fails the start as a misconfiguration. Each store's mapping from library errors to the two variants is a premise for that store. At the end of the bound, the start fails retryable.
+- `.lazy()` is offered only where the library can create a client without connecting: SQLx's `connect_lazy_with`, and Mongo's client. On other stores it doesn't exist, so the refusal happens at compile time. Readiness stays false until the first ping succeeds.
+- Migrations, if requested, run after connecting and under `lock`. A failed migration fails the start as a misconfiguration.
+- `close` runs after the transports have drained, under the close bound.
+
+Migration locks. Each migrator is checked for whether it guards against several replicas at once:
+- SQLx takes its own lock: one connection holds it through the lock, the migration and the unlock.
+- SeaORM Migration 2.0.1's `Migrator::up` takes no advisory lock, so two runners can apply the same pending list. A crate built on it found this and added its own lock.
+- `diesel_migrations` has no lock.
+
+So `ulo-db` provides the guard itself, written once, and doesn't depend on whether the migrator has one: Postgres `pg_advisory_lock` on a dedicated connection; MySQL `GET_LOCK`, with the name scoped to the database, because MySQL's locks are server-wide; a SQLite file an OS lock on a sidecar file (in-memory SQLite needs no guard). SQLx's own lock sits inside ours, which is harmless. Mongo and Redis have no migrator, so they have no `.migrate`. A migration that uses `CREATE INDEX CONCURRENTLY` can deadlock against a session waiting on an advisory lock, as golang-migrate's issue tracker records. The design documents that hazard, and the suite's lock scenario uses ordinary DDL.
+
+The stores:
+
+| Module | Client provided | URL schemes | Migrator | Lazy |
+| --- | --- | --- | --- | --- |
+| `ulo-db-sqlx` | `PgPool`, `MySqlPool`, `SqlitePool` | `postgres://` (libpq's connection URI), `mysql://` (convention), `sqlite:` | `sqlx::migrate::Migrator` | yes |
+| `ulo-db-seaorm` | `DatabaseConnection` | as SQLx | `sea-orm-migration` | premise to check |
+| `ulo-db-diesel` | a deadpool `Pool` of diesel-async connections (bb8 if deadpool proves unmaintained) | as SQLx | `diesel_migrations` through `AsyncConnectionWrapper` | no |
+| `ulo-db-mongo` | `mongodb::Client` | `mongodb://`, `mongodb+srv://` | none | yes |
+| `ulo-db-redis` | redis-rs `ConnectionManager` | `redis://`, `rediss://` | none | no |
+
+Example:
+```rust
+App::builder(AppModule)
+    .runtime(Tokio::new(handle))
+    .import(config)
+    .import(SqlxModule::<Postgres>::new().options_from("database").migrate(sqlx::migrate!("./migrations")))
+    .import(SqlxModule::<Postgres>::named::<Analytics>().options_from("analytics"));
+
+struct Users { db: Db<Postgres>, stats: Db<Postgres, Analytics> }
+// sqlx::query("select 1").execute(&*self.db).await?
+```
+Two instances of the same store are told apart by the marker type (requirement 16). Premise to check: how the DI core distinguishes two bindings of one type (F311), because this depends on it.
+
+Diesel (requirement 19): diesel-async. Its Postgres and MySQL connections are fully async, so no query blocks. SQLite goes through `SyncConnectionWrapper`, whose `SpawnBlocking` trait defaults to tokio's `spawn_blocking`. The trait's constructor, `get_runtime()`, takes no arguments, so a handle can't be passed in. The default spawns on the runtime the call is running on, which is the given runtime, because the module refuses any other at `wire` and queries run on its workers. Diesel's migrations run through `AsyncConnectionWrapper`, which blocks on futures and must not be called inside a tokio runtime, so the module runs it through the given handle's `spawn_blocking`, which is link-local. The alternatives: a blocking pool owned by the module would duplicate what diesel-async already does; a blocking-work method on the core's `Runtime` still has no runtime-free consumer.
+
+Library versions kept in step (requirement 18). SeaORM 2.0 moves onto SQLx 0.9, and SQLx 0.9 now declares `libsqlite3-sys` as a version range. `ulo-db-sqlx` and `ulo-db-seaorm` share one workspace entry for SQLx. `ulo-db-sqlx` re-exports `sqlx`. A CI job builds an application with both modules and fails if `cargo tree -d` shows two SQLx. An application that holds a second SQLx of its own is refused at compile time: Cargo refuses two copies that link the same native SQLite library if their ranges don't overlap; otherwise the second copy's types don't match `Db<_>`.
+
+The suite. `ulo-db-conformance` runs every scenario requirement 20 lists, against real containers, with a file for SQLite. Capabilities are named positively (`lazy`, `migrations`) and default to true by §3.9, so a store that lacks one declares `not_applicable` with its reason. Each scenario is shown failing against a planted break: a password echoed in a refusal; `Unreachable` treated as `Misconfigured`; readiness set true before the first ping; a pool closed before the drain; a client created on the worker without `enter`; the runtime check removed; two markers that resolve to one instance; the migration lock removed.
+
+Deferred, with reasons: transactions scoped to an execution (they need request-scoped providers); request-scoped providers (a core design of their own); per-test databases (they depend on the suite's container harness settling first).
+
+### 5. The command line
+
+- `ulo new <name> --transport <http|grpc|rpc-tcp|…> [--db <module>-<backend>]` generates a project from templates compiled into the binary, with no network fetch. The generated project depends on `ulo = "=<the CLI's version>"`, an exact pin.
+- CI builds every combination of transport and database, runs each generated project's tests, and reuses the existing check that fails a job running no tests (§3.7). Generated code passes the generated-code lints.
+- `ulo generate <module|provider|controller|gateway|resolver> <name>` writes new files and prints the line that registers each one. It doesn't edit existing source: a parser round trip loses formatting and comments. It refuses to overwrite an existing file, and refuses a name that isn't a valid identifier.
+- `ulo dev` is unchanged. Its Windows gap (F305) stays recorded.
+
+### 6. Observability: W3C Trace Context and OpenTelemetry
+
+The core. `TraceContext` is a value in the core, runtime-free, with no OpenTelemetry dependency: a trace ID, a span ID, flags and the trace state, which the core parses and formats per W3C Trace Context. Each `Execution` carries its own context, and `.within(&exec)` forwards it, as it forwards the deadline. The parent of an outgoing call is whatever `.within` names, never a span looked up from the thread. A child span opened inside a handler, and passed on explicitly, is a refinement: deferred.
+
+The `Tracer` SPI:
+```rust
+pub trait Tracer: Send + Sync + 'static {
+    fn start(&self, name: &str, kind: SpanKind, parent: Option<&TraceContext>, attrs: &[Attr]) -> Span;
+}
+```
+A `Span` has `context()` and `end(outcome)`.
+
+On by default: propagation. The default tracer passes incoming context through unchanged, so a ulo service doesn't break a trace that crosses it, even with nothing exported. Export is on only once `ulo-otel` is added.
+
+Turning it off: `App::builder().trace(TraceMode::Off)`. Nothing is read or written, and `traceparent` is the ordinary header F400 made it.
+
+`traceparent` and `tracestate` become reserved while tracing is on. A caller setting either with `.header` is refused at the await as `reserved_header`, as `deadline-ms` is. While tracing is off, they're ordinary headers.
+
+What the standard decides. An incoming context that can't be parsed is ignored, and a new trace starts. `tracestate` is discarded when `traceparent` is invalid. Unknown higher versions are parsed by the spec's forward-compatibility rules. `tracestate`'s limits on list members are as the spec sets them. Claude Code checks each rule against the spec text. This is deliberately the opposite of `deadline-ms`: the W3C specification tells a receiver to restart the trace, not to fail the request, and a trace context is advisory where a deadline is a bound.
+
+Carriers. The context travels in HTTP headers; gRPC metadata, written by `outgoing`; the RPC frame's `h` map, on every link (premise to check: every frame kind carries `h`, events included, after F412); the WebSocket handshake, each message's execution having the connection's span as its parent. Events carry the context even though they don't carry a deadline: an event's handler is a consumer of the producer's span, as OpenTelemetry's messaging conventions model it. Writing the context into a broker's own native headers, for consumers that aren't ulo, is deferred.
+
+Spans. Kinds and attributes follow OpenTelemetry's semantic conventions: HTTP `http.request.method`, `http.route`, the response status; RPC `rpc.system`, `rpc.service`, `rpc.method`; brokers the messaging conventions. A server span counts as an error on a 5xx, and not on a 4xx. Database spans are left to each library's own instrumentation.
+
+`ulo-otel` and `ulo-otel-otlp`:
+```rust
+.import(OtelModule::new()
+    .options_from("otel")                 // or OtelOptions::from_env(&env): the standard OTEL_* names, read from a given Env
+    .exporter(OtlpExporter::http()))      // http/protobuf, the exporter's default protocol
+```
+- The exporter. The OTLP exporter's default features are HTTP with protobuf and reqwest's blocking client, and its gRPC transport requires a tokio runtime. So HTTP is the default here, and gRPC export is deferred until it can run on the given runtime.
+- The batch processor exports from a dedicated background thread and needs no external runtime. Its `shutdown` blocks, and can deadlock if called on the main thread of a current-thread tokio runtime. So `close` flushes it from a thread of its own, joined under the close bound, after the transports have drained, so their last spans are included.
+- Sampling is parent-based by default.
+- Premise to check: `opentelemetry_sdk` without its `rt-*` features pulls no tokio into `ulo-otel`'s tree.
+
+Scenarios, on every transport suite, with a recording tracer: (1) one hop links parent to child; (2) an invalid `traceparent` starts a new trace and the request still succeeds; (3) with tracing off, the header passes through untouched; (4) a caller-set `traceparent` is refused while tracing is on; (5) an event's handler span has the emitter's span as its parent.
+
+### 7. Where standards decide
+
+| Standard | What the design takes from it |
+| --- | --- |
+| Kubernetes probes | The meanings of liveness, readiness and startup; 200–399 as success. |
+| `grpc.health.v1` | `Check`, `Watch`, the empty service name, `SERVING` and `NOT_SERVING`. |
+| IETF health-check draft, expired | The body's shape and media type only. |
+| W3C Trace Context | Header formats, the invalid-header rule, `tracestate`'s limits. |
+| OpenTelemetry | Semantic conventions, OTLP over HTTP/protobuf, the `OTEL_*` variable names. |
+| Database URLs | libpq's URI, MongoDB's connection-string specification, `redis`/`rediss`. Parsed by each library's own parser. |
+| TOML 1.0, JSON (RFC 8259), YAML 1.2 | The file formats. |
+| `.env` | No standard exists. The design takes the common subset and says so. |
+| `sysexits.h` | Exit codes 78 and 75. A convention, and named as one. |
+
+### 8. Build order
+
+1. The core extensions 1–7. 2. `ulo-config`. 3. `ulo-health` and `ulo-health-http`. 4. `ulo-db`, `ulo-db-sqlx` and `ulo-db-conformance`, together. 5. SeaORM, after SQLx; Diesel, Mongo and Redis after that. 6. `ulo-health-grpc`, any time after step 3. 7. `ulo-cli`'s templates. 8. Observability, last: core extension 8, the carriers in every hub and link, then `ulo-otel` and `ulo-otel-otlp`.
+
+### Premises Claude Code checks first, each returned as an S-item if it fails
+
+1. The core: multi-binding, close order, options resolved from a binding at `wire`, how two bindings of one type are distinguished (F311), and whether the core uses `tracing` today.
+2. figment: reports no line (the probe in section 2).
+3. JSON: a maintained parser with value spans.
+4. YAML: `serde-saphyr`'s errors give locations.
+5. `dotenvy`: reads a file without setting the process environment.
+6. The HTTP hub: can mark a route `serves_during_drain`.
+7. tonic-health: `Watch` conforms to `grpc.health.v1`.
+8. Each store: whether its parse errors echo the URL; how its errors divide into unreachable and misconfigured; what it spawns when its client is created; whether SeaORM supports a lazy connection.
+9. deadpool: whether it's maintained.
+10. Redis: which client `ulo-rpc-redis` and `ulo-ws-redis` use.
+11. W3C Trace Context: each rule above, read against the specification's text.
+12. OpenTelemetry: `opentelemetry_sdk` pulls no tokio without its `rt-*` features.
+13. RPC frames: every frame kind carries `h`.
+
+## Second response: the integration design corrected against the core and transport designs
+
+Received 2026-10-17. The designer was then given `DESIGN.md` and `transports/DESIGN.md`. This response corrects the first against both; anything it does not mention stands as the first response has it. It is a design awaiting review, not a signed-off decision.
+
+### 1. Premises the two designs answer
+
+| My premise or extension | What the designs say | Result |
+| --- | --- | --- |
+| Collecting several contributions of one kind (requirement 8) | Core §3.2 and §4: `contribute::<T>()` and `Many<T>` exist, collections are app-wide, and the core's own `DbModule` example contributes a health indicator. | No extension. Health reads `Many<dyn Check>`, and each database module contributes. |
+| Close order: pools after the transports drain (requirement 15) | Core §9.5: before-shutdown hooks, stop accepting, the drain, then `OnModuleDestroy` in reverse connect order, then sockets. A singleton is built before whatever depends on it, so it is destroyed after it. | No extension. A pool closes in its binding's `on_destroy`. |
+| Connect with retries and backoff under a total bound | Core §9.3: `.ready(..).retries(..).backoff(..).attempt_timeout(..).timeout(..)` on a singleton handle, failing as `ConnectError::Readiness`. | The shared policy uses it. `ulo-db` writes no retry loop of its own. |
+| Two databases of one kind, separately named (requirement 16) | Core §8.3: `Keyed<Q, M>` requalifies a module's exports as `T @ Q`, so consumers read `Dep<PgPool, Primary>`, and each keyed instance contributes its own health check. | `Db<S, Name>` is dropped. A module provides `Dep<sqlx::PgPool>`, and `.keyed::<Primary>()` names it. |
+| Secrets | Core §8.3, §9.3 and §13: `Secret<T>` exists, with `m.secret(&s)` registering it with the graph's redaction. | Used as is, plus one addition (extension E1). |
+| An injectable runtime that can be downcast (my extension 4) | Core decision 25: the injected runtime is the core's wrapper, `Runtime` has no `Any` supertrait, and a downcast reaches nothing. | Withdrawn. It contradicts a settled decision. Section 2.4 gives the replacement. |
+| Lifecycle as a watched value (my extension 1) | X13 `AppHandle::phase()`, the core's before-shutdown stage, and `fw-transport`'s doc-hidden `Watch`. | Withdrawn. Health turns readiness false in a before-shutdown hook of its own (section 2.2). |
+| Drain delay (my extension 5) | Core §9.5: the before-shutdown stage exists for exactly this, while traffic is still normal. | Withdrawn. It becomes health's own `lag` (section 2.2). |
+| Health routes served through the drain (my extension 6) | Transports §3.6: once `Execution::open` is refused, the HTTP server answers 503 before routing. | Withdrawn (section 2.2). |
+| Exit codes 78 and 75 (my extension 7) | The core maps no exit code, and `main` returns the error. | Deferred. The distinction is carried by type (section 2.4). |
+| Execution-scoped providers (requirement 21) | Core §3.3 and §6: `#[injectable(execution)]` and `.execution(..)` exist. | My "deferred" was wrong. What is deferred is narrower (section 2.6). |
+| A gRPC health service | Transports §6.2: `fw-grpc` already serves `grpc.health.v1` through tonic-health, with `GrpcHealth::module()`, writing SERVING after bind and NOT_SERVING at the drain. | `ulo-health-grpc` is dropped. `fw-grpc` follows readiness instead (section 2.2). |
+| `traceparent` | Transports §5.2: F400 made it an ordinary header, and F404 reserves it "as `deadline-ms` is" once propagation is built in, in this race. | Section 2.5 does that. |
+| Scaffolding and `dev` | Transports §9: `ulo new`, `ulo generate` and `ulo dev` exist in `ulo-cli`. | Section 4 of my brief is a change to that crate, not a new crate. |
+
+### 2. Changes, section by section
+
+#### 2.1 Configuration: loaded in `main`, refused at `wire`
+
+Core principle 4 and decision 4 say registration is synchronous, and that `wire()` does no I/O. So configuration cannot load inside `wire`, and the brief's "refused at `wire`" has to be reached another way.
+
+- Loading never fails. `let config = Config::builder().source(..)…load();` runs in `main` and reads every source. A source that cannot be read, or that does not parse, is recorded inside the `Config` value rather than returned.
+- Every problem is reported by `wire()`, in one report. `ConfigModule::new(&config)` registers through `m.try_value(..)`, which reports each recorded source failure and every problem in the typed `AppConfig`. An integration reads its section at its own registration: `SqlxModule::<Postgres>::from_config(&config, "database")` deserialises the section there and records a failure through `try_value`. So `wire()` reports source failures, deserialisation failures and the validation hook's findings together with every other wiring error, as `WiringErrors` entries naming the module.
+- Blocking file reads happen in `main`, before anything serves. That satisfies the rule against blocking a worker.
+- Unread keys: a warning by default, refusal opt-in. At `connect`, `ConfigModule`'s init hook logs at `warn` every key nothing read, with its origin. `.deny_unread()` refuses instead, at `connect`. It can't be a `wire()` refusal: the core has no hook that runs after every module has registered, and a lazily loaded module (core §8.6) may legitimately read a key later.
+- Secrets inside a typed configuration need extension E1, because `#[module]` registers only the `Secret` fields of the module's own type.
+
+#### 2.2 Health
+
+- Readiness turns false at `Stopping`. The health module implements `BeforeApplicationShutdown`: it turns readiness false, then waits `.lag(Duration)`, zero by default. This is a `Duration` and not a `Bound`, because zero means no lag rather than a refused value. Health reads `Many<dyn Check>`, so it is constructed after every check and its before-shutdown hook runs among the first. Every refusal comes later, at `Draining`, so requirement 10 holds without any core change.
+- "False until `listen` has finished" holds by construction. Nothing answers a request before `serve`, and every server has bound by then. An embedding answers 503 in its `Unbound` state (transports §3.8). The scenario stays, but as a unit test of health's own state, since nothing outside can observe a probe before `serve`.
+- During `Draining`, the HTTP server's own 503 answers every probe, liveness included. A pod that is already terminating loses nothing when its liveness probe fails, so serving probes through the drain isn't worth a change to the HTTP transport. That trade-off goes in the design.
+- gRPC: `fw-grpc` follows readiness when it is bound. By §3.7's one-writer rule, one component writes the health statuses. With `ulo_health::Readiness` bound, `fw-grpc` stops writing its own statuses at bind and at the drain, and `""` plus every known service mirror readiness: NOT_SERVING from `Stopping` on, and whenever a check is down. Without the health module, §6.2's behaviour is unchanged. `fw-grpc` gains a dependency on `ulo-health`, which is runtime-free and small. Because gRPC's `Check` reads a stored status, readiness is re-evaluated every 5 s by a task on the app's runtime, with a zero refused.
+- The trait is `ulo_health::Check`, with a `check` method, following core §0.3's naming rule.
+
+#### 2.3 The connect policy in `ulo-db`
+
+The core's readiness API becomes the connect policy:
+- `try_singleton(create the pool without connecting)` registers the pool;
+- `.ready(ping).retries(..).backoff(..).timeout(30 s)` is the bounded connect;
+- `.on_destroy(close)` is the close;
+- the health check is a contribution.
+
+`.lazy()` omits `.ready(..)`, so the start does not wait for the database, and the health check stays down until the first ping succeeds.
+
+Two gaps remain:
+- Backoff is constant, since that is what `.backoff(Duration)` offers. Exponential backoff is a deferred refinement.
+- Wrong credentials are retried until the bound, because a readiness check cannot stop its own retries. Extension E4 adds a way.
+
+Migrations run in the module's `on_init`, under `ulo-db`'s lock (unchanged from the design). A failed migration carries `ulo_db::MigrationFailed`.
+
+#### 2.4 Runtimes: run the work on the given runtime, and refuse at `connect`
+
+This replaces the withdrawn downcast.
+
+`connect()` is awaited in `main`, and `main` need not run on the app's runtime. So `ulo-db` runs every library call that might look up a runtime as a task on the given runtime, through the core's own `fw::spawn_with(&Dep<dyn Runtime>, ..)`: creating the pool, the readiness ping, the migrations and the close.
+
+The first of these tasks also checks whether the runtime it is running on is tokio's, with `tokio::runtime::Handle::try_current()` inside the task. That finds no runtime by ambient lookup: it reads the runtime the task was given to run on. Running the work on the application's runtime is exactly the "entered through the application's runtime" the brief allows.
+- A smol app is refused at `connect` with `ulo_db::UnsupportedRuntime`, naming the module.
+- A handler's own queries run on the app's workers, so they have tokio's context.
+
+The refusal is at `connect`, not `wire`, because `wire` builds nothing and cannot run a task. The error is permanent and says so by its type. The same holds for the other permanent failures discovered at `connect` (bad credentials under E4, a failed migration): a `StartupError::Connect` whose cause downcasts to a `ulo-db` type marked permanent.
+
+Smol variants of every store are deferred, with this reason: by reading, SQLx's and redis-rs's smol support spawns on smol's global executor, which is not the app's runtime. That is a premise to confirm.
+
+#### 2.5 Observability: built on the spans that already exist
+
+`fw_transport::span::call` already opens a `tracing` span per call, following OpenTelemetry's semantic conventions (transports §2.9). So `ulo-otel` exports those spans, and the design adds only the propagation:
+
+- The core (E2):
+  - a `TraceContext` value, W3C-parsed, runtime-free and with no OpenTelemetry dependency;
+  - `Execution::trace()`;
+  - forwarding through `.within`'s `Spec`;
+  - `AppBuilder::trace(TraceMode)`, where `On` is the default and `Off` turns propagation off.
+- Each transport extracts the trace context into the execution it opens, from:
+  - an HTTP request's headers;
+  - gRPC metadata;
+  - an RPC frame's `h`, which brokers already carry as their native headers (§5.2), so a consumer that isn't ulo sees the context too;
+  - a WebSocket connection's handshake headers, each message's execution taking the connection's as its parent.
+
+  It injects the context on calls made `.within` an execution: `outgoing` writes it into gRPC metadata, and `RpcClient` writes it into the frame's headers, events included, since an event carries no deadline but does carry its trace (F408).
+- `traceparent` and `tracestate` are reserved while tracing is on. A caller setting either with `.header` is refused `reserved_header` at the await, as `deadline-ms` is (F404, closing F400's deferral). With tracing off they are ordinary headers.
+- What is on by default: pass-through. With no exporter, an incoming context is forwarded unchanged. An invalid incoming context starts a new trace, as the W3C specification says.
+- With `ulo-otel` (E3): it binds a `dyn TraceSource`, which a transport reads to give the execution its own span's IDs, and it sets the transport span's parent from the execution's context.
+- Installation: `ulo_otel::Otel::new(options)` is built in `main`. Its `.layer()` goes into the `tracing` subscriber the application installs; the subscriber is the application's to set up. Its `.module()` flushes the batch processor in `OnApplicationShutdown`, step 7, after the sockets have closed. The flush runs on a thread of its own, joined under the hook's bound.
+- Levels: `ulo-otel-otlp` goes in `runtime-levels.txt` as tokio-bound. reqwest's blocking client brings tokio, on a thread of its own, and never touches the app's runtime.
+
+#### 2.6 Deferred: corrected list
+
+- Transactions scoped to an execution. The core has no asynchronous hook at an execution's end, so a commit or rollback cannot run there. That is the reason, and it is a core design of its own.
+- Per-test databases. They need the suite's container harness first.
+- Execution-scoped providers are not deferred: they exist.
+
+#### 2.7 The database suite reuses what exists
+
+`ulo-db-conformance` takes `Budget`, its `stall` field, `block_on_one_thread`, `startup_failed!`, `report`, `relay::unshadowed`, `reachable` and the `not_applicable` stamping rules from the RPC suite. Where it needs a piece that lives in that suite, §3.7's one-copy rule applies: the shared pieces move into a `publish = false` support crate both suites depend on, rather than being copied.
+
+### 3. Extensions, revised
+
+To the core:
+- E1: deserialising a `Secret` registers it. `Secret<T>: Deserialize` behind a `serde` feature. A deserialisation run under `fw::secret::collect(..)` hands back every `Secret` it produced, and `ConfigModule` and each section read register them with `m.secret(..)`. The collector is scoped to one synchronous deserialisation, so a thread-local is sound there.
+- E2: trace context on the execution. `TraceContext`, `Execution::trace()`, forwarding through `.within`, and `AppBuilder::trace(TraceMode)`.
+- E3: the trace source. `TraceSource`, an SPI a transport reads as `Option<Dep<dyn TraceSource>>`, and a parent field accepted by `span::call`.
+- E4: a readiness check can stop retrying. A check returning an error that downcasts to `fw::Permanent` ends at once, `Errored` with that error. Additive.
+
+To the transport layer:
+- `fw-grpc`'s health follows `ulo_health::Readiness` when it is bound;
+- trace extraction and injection in every hub and in `outgoing`;
+- `RpcClient` reserves the two trace headers while tracing is on.
+
+Withdrawn: extensions 1, 4, 5, 6 and 7 from the first response's design.
+
+### 4. Premises still open, for Claude Code to check
+
+1. Whether figment reports a line, whether a maintained JSON parser gives value spans, whether `serde-saphyr`'s errors give locations, and whether `dotenvy` reads without setting the environment (unchanged).
+2. Whether `try_value`'s `WiringErrors` entry can carry a configuration error's full list of problems with their origins, or whether redaction or truncation cuts it down.
+3. Whether the core's `Secret` already implements `Deserialize`. If it does, E1 shrinks to the collector.
+4. Whether SQLx 0.9's `runtime-smol` and redis-rs's `smol-comp` spawn on smol's global executor (the reason for section 2.4's deferral).
+5. Whether SeaORM's `ConnectOptions` can create a connection without connecting, the precondition for its `.lazy()`.
+6. Whether a tracing-opentelemetry layer can set a span's parent at creation from a recorded field (E3's mechanism). If not, `span::call` takes the parent directly from the source.
+7. Whether `sqlx::Pool::close` waits for a connection still held by an execution the drain abandoned. If it does, the destroy hook's bound contains the wait, and the design says so.
+8. The remaining store premises (lock behaviour per migrator, parse errors echoing the URL, deadpool's maintenance, the Redis client the existing crates use), unchanged.
