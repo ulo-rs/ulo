@@ -69,6 +69,7 @@ mod smol_harness;
 #[cfg(feature = "tokio")]
 mod tokio_harness;
 
+pub use cases::deadlines::Stamped;
 pub use failures::failures_dir;
 #[cfg(feature = "smol")]
 pub use smol_harness::OnSmol;
@@ -282,6 +283,7 @@ macro_rules! conformance_suite {
             undecodable_payload_is_bad_request => errors::undecodable_payload,
             headers_reach_call_headers => headers::reach_call_headers,
             event_reaches_its_handler => events::reaches_handler,
+            a_refused_event_is_never_redelivered => events::refused_event_is_not_redelivered,
             unhandled_pattern => misses::unhandled_pattern,
             unhandled_event_is_acknowledged => misses::unhandled_event,
             server_stream_in_order => streams::server_stream,

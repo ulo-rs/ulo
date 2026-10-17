@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 
 use ulo::{AppHandle, Bound, BoundAddr, BoxError, CancelReason, Runtime};
-use ulo_rpc::{Capabilities, Frame, Link, Outbound, Pattern, RpcClient, RpcError, RpcStream, ZeroTimeout};
+use ulo_rpc::{CallHeaders, Capabilities, Frame, Link, Outbound, Pattern, RpcClient, RpcError, RpcStream, ZeroTimeout};
 use ulo_rpc::link::Inbound;
 use ulo_transport::{Count, ErrorKind};
 
@@ -19,15 +19,22 @@ use crate::cases::app::{
     streams, within,
 };
 
-/// `deadline-ms` fires `Deadline` and renders `timeout`.
+/// `deadline-ms` fires `Deadline` and renders `timeout`: a call whose `req` carries 300 ms, written
+/// by a [`Stamped`] link below a client waiting ten seconds, is answered the server's `timeout`
+/// within five seconds, and its handler is ended `Deadline`.
 pub async fn deadline_ms<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
-    let outcome = fixture.rpc().request::<_, ()>(STALL, &()).header("deadline-ms", "300").timeout(Duration::from_secs(10)).await;
+    let link = Stamped { link: fixture.broker.client_link(&addresses(&[&fixture.server])), value: "300" };
+    let client = client_over::<B, _>(link).await;
+    let started = Instant::now();
+    let outcome = client.rpc.request::<_, ()>(STALL, &()).timeout(Duration::from_secs(10)).await;
     failed(outcome, ErrorKind::Timeout);
+    assert!(started.elapsed() < Duration::from_secs(5), "the call was answered after {:?}, at the client's timeout rather than the server's", started.elapsed());
     let probe = fixture.server.probe.clone();
     let settle = fixture.broker.budget().settle;
     assert!(eventually::<B>(settle, || probe.stalled().is_some()).await, "the stalled handler was not ended");
     assert_eq!(probe.stalled(), Some(Some(CancelReason::Deadline)));
+    client.close().await;
     fixture.stop().await;
 }
 
@@ -328,7 +335,7 @@ pub async fn longest_idle_timeout_does_not_panic<B: Broker>() {
 
 /// The header each call in the zero-bound scenarios below carries, which the server's [`Tapped`]
 /// link records for every opening frame it delivers.
-const MARK: &str = "x-conformance-mark";
+pub(crate) const MARK: &str = "x-conformance-mark";
 
 /// How many zero-bound calls each scenario below makes. A zero that is not refused times the call
 /// out at once, and whether its `req` is sent first is a race the client's `select!` decides at
@@ -398,19 +405,19 @@ pub async fn zero_stream_deadline_is_refused_before_the_server_sees_it<B: Broker
 
 /// The value of [`MARK`] on each opening frame a [`Tapped`] link delivered, in arrival order.
 #[derive(Clone, Default)]
-struct Tap(Arc<Mutex<Vec<String>>>);
+pub(crate) struct Tap(Arc<Mutex<Vec<String>>>);
 
 impl Tap {
-    fn marks(&self) -> Vec<String> {
+    pub(crate) fn marks(&self) -> Vec<String> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 }
 
 /// A server link recording, in its [`Tap`], every opening frame carrying [`MARK`] that it hands
 /// the server: a `req`, an `open` or an `evt`.
-struct Tapped<L> {
-    link: L,
-    tap: Tap,
+pub(crate) struct Tapped<L> {
+    pub(crate) link: L,
+    pub(crate) tap: Tap,
 }
 
 impl<L: Link> Link for Tapped<L> {
@@ -573,4 +580,76 @@ impl<L: Link> Link for MutedCancel<L> {
     fn bound(&self) -> Vec<BoundAddr> {
         self.0.bound()
     }
+}
+
+/// A client link writing `deadline-ms: value` on every `req`, `open` and `evt` it sends, in place
+/// of any the client stamped. The client refuses a `deadline-ms` its caller sets, so a value it
+/// would not send, a deadline shorter than the client's own wait or one the server cannot read,
+/// reaches a server only from below the client. Public for a link crate's own tests of the same.
+pub struct Stamped<L> {
+    pub link: L,
+    pub value: &'static str,
+}
+
+impl<L: Link> Link for Stamped<L> {
+    const NAME: &'static str = L::NAME;
+
+    fn capabilities(&self) -> Capabilities {
+        self.link.capabilities()
+    }
+
+    fn prepare(&mut self, app: &AppHandle) -> impl Future<Output = Result<(), BoxError>> + Send {
+        self.link.prepare(app)
+    }
+
+    fn usable(&self) -> Result<(), BoxError> {
+        self.link.usable()
+    }
+
+    fn max_inflight(&mut self, calls: Count) {
+        self.link.max_inflight(calls);
+    }
+
+    fn listen(&self, patterns: &[Pattern]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
+        self.link.listen(patterns)
+    }
+
+    async fn connect(&self, runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+        let Outbound { send, replies } = self.link.connect(runtime).await?;
+        let value = self.value;
+        Ok(Outbound {
+            send: Box::new(move |on, frame, reply_to| {
+                let frame = match frame {
+                    Frame::Req { id, pattern, headers, data } => Frame::Req { id, pattern, headers: stamped(&headers, value), data },
+                    Frame::Open { id, pattern, headers } => Frame::Open { id, pattern, headers: stamped(&headers, value) },
+                    Frame::Evt { pattern, headers, data } => Frame::Evt { pattern, headers: stamped(&headers, value), data },
+                    other => other,
+                };
+                send(on, frame, reply_to)
+            }),
+            replies,
+        })
+    }
+
+    fn drain(&self) -> impl Future<Output = ()> + Send {
+        self.link.drain()
+    }
+
+    fn close(&self) -> impl Future<Output = Result<(), BoxError>> + Send {
+        self.link.close()
+    }
+
+    fn bound(&self) -> Vec<BoundAddr> {
+        self.link.bound()
+    }
+}
+
+/// `headers` with every `deadline-ms` replaced by one carrying `value`.
+fn stamped(headers: &CallHeaders, value: &str) -> CallHeaders {
+    let mut out = CallHeaders::new();
+    for (name, kept) in headers.iter().filter(|(name, _)| *name != "deadline-ms") {
+        out.insert(name, kept);
+    }
+    out.insert("deadline-ms", value);
+    out
 }

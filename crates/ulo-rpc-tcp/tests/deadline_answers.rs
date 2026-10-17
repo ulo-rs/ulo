@@ -2,6 +2,10 @@
 //! single reply as the error handler wrote it, and a stream ended at once with `err` of kind
 //! `timeout`, its items never written, with a `warn` line telling the author why.
 //!
+//! The client's link is a [`Stamped`] TCP link writing the deadline on each opening frame, under a
+//! client waiting longer: the client refuses a `deadline-ms` its caller sets, and its own deadline
+//! would race the server's answer.
+//!
 //! The tests run on a current-thread runtime, so the server's tasks emit their events on the test's
 //! thread, where [`Capture`] is the default subscriber.
 
@@ -17,10 +21,14 @@ use tracing::{Event, Level, Metadata};
 use ulo::app::Connected;
 use ulo::{App, BoxError, Bound, ErrorHandler, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
 use ulo_rpc::{Reply, Rpc, RpcClient, RpcClientModule, RpcCx};
+use ulo_rpc_conformance::Stamped;
 use ulo_rpc_tcp::Tcp;
 use ulo_transport::{CallError, ErrorKind};
 
 const DEADLINE: Duration = Duration::from_millis(200);
+
+/// [`DEADLINE`] in milliseconds, as the client's link writes it.
+const DEADLINE_MS: &str = "200";
 const GRACE: Duration = Duration::from_millis(500);
 
 /// The longest any one wait below lasts before it fails the test.
@@ -90,7 +98,7 @@ impl Module for ServerRoot {
 }
 
 struct ClientRoot {
-    link: Mutex<Option<Tcp>>,
+    link: Mutex<Option<Stamped<Tcp>>>,
 }
 
 impl Module for ClientRoot {
@@ -134,7 +142,7 @@ impl Running {
         let serving = tokio::spawn(async move {
             let _ = server.serve(std::future::pending::<Signal>()).await;
         });
-        let client = App::builder(ClientRoot { link: Mutex::new(Some(Tcp::new(addr))) })
+        let client = App::builder(ClientRoot { link: Mutex::new(Some(Stamped { link: Tcp::new(addr), value: DEADLINE_MS })) })
             .runtime(ulo_runtime_tokio::Tokio::current())
             .wire()
             .expect("the client app wires")
@@ -159,7 +167,7 @@ async fn a_stream_answered_after_the_deadline_ends_at_once_with_timeout() {
     let running = Running::start().await;
 
     let began = Instant::now();
-    let opened = running.rpc.stream::<_, u64>("clock.stall_streamed", &()).header("deadline-ms", DEADLINE.as_millis().to_string());
+    let opened = running.rpc.stream::<_, u64>("clock.stall_streamed", &());
     let mut replies = within("the call's opening", opened).await.unwrap_or_else(|error| panic!("the call did not open: {error:?}"));
     let first = within("the call's first frame", replies.next()).await;
     let took = began.elapsed();
@@ -185,7 +193,7 @@ async fn a_single_reply_answered_after_the_deadline_is_the_reply() {
     let _default = tracing::subscriber::set_default(capture.clone());
     let running = Running::start().await;
 
-    let call = running.rpc.request::<_, String>("clock.stall_answered", &()).header("deadline-ms", DEADLINE.as_millis().to_string());
+    let call = running.rpc.request::<_, String>("clock.stall_answered", &());
     let reply = within("the call", call).await;
     assert_eq!(reply.map_err(|error| (error.kind(), error.message().to_owned())), Ok("claimed".to_owned()));
     let warned = capture.warnings();

@@ -206,9 +206,10 @@ impl fmt::Debug for Reply {
 }
 
 /// A call's headers, the frame's `h` or the broker's own headers, as an execution input and as a
-/// handler parameter. Reserved: `deadline-ms`, the remaining time, which becomes the execution's
-/// deadline, a call whose value the server cannot read being refused `BadRequest` before its
-/// handler runs, and `traceparent` (W3C Trace Context).
+/// handler parameter. Reserved: `deadline-ms`, the remaining time, which the client writes from a
+/// call's bound, refusing a call whose caller set it, and which becomes the execution's deadline,
+/// a call whose value the server cannot read being refused `BadRequest` before its handler runs;
+/// and `traceparent` (W3C Trace Context).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallHeaders {
     pub(crate) entries: Vec<(String, String)>,

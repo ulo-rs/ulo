@@ -608,12 +608,18 @@ fn refusal(message: &str) -> ErrorBody {
 /// How much of an unreadable `deadline-ms` a refusal quotes back.
 const QUOTED: usize = 64;
 
+/// A header value as a refusal quotes it back: in quotes, cut to [`QUOTED`] characters and marked
+/// `, cut short` past that. The server's `bad_deadline` and the client's `reserved_header` share it.
+pub(crate) fn quote(value: &str) -> String {
+    let quoted: String = value.chars().take(QUOTED).collect();
+    let cut = if quoted.len() < value.len() { ", cut short" } else { "" };
+    format!("{quoted:?}{cut}")
+}
+
 /// The refusal of a call whose `deadline-ms` the server cannot read. Running it with no deadline
 /// would run unbounded work for a caller that asked for a bound, so it does not run at all.
 fn bad_deadline(value: &str) -> ErrorBody {
-    let quoted: String = value.chars().take(QUOTED).collect();
-    let cut = if quoted.len() < value.len() { ", cut short" } else { "" };
-    let message = format!("the call's `deadline-ms` is {quoted:?}{cut}, which is not a whole number of milliseconds from 0 to {}", u64::MAX);
+    let message = format!("the call's `deadline-ms` is {}, which is not a whole number of milliseconds from 0 to {}", quote(value), u64::MAX);
     ErrorBody::new(ErrorKind::BadRequest, message, Details::new().with(reason("bad_deadline")))
 }
 

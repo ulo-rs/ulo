@@ -35,13 +35,18 @@ use ulo::{Bound, BoxError, BoxFuture, CancelReason, ExecutionRef, Runtime, Timer
 use ulo_transport::{Classify, Detail, Details, ErrorKind};
 
 use crate::codec::Codec;
-use crate::dispatch::reason;
+use crate::dispatch::{quote, reason};
 use crate::frame::{Data, ErrorBody, Frame};
 use crate::link::{FrameTooLarge, FrameUnencodable, Link, NoDestination, Outbound, Pattern, ReplyTo};
 use crate::transport::CallHeaders;
 
 /// A client's timeout at `Bound::Default`.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The header the client writes from a call's bound and the server reads as its deadline. No ulo
+/// path copies an incoming call's headers into an outgoing one, so a caller setting it with
+/// `.header` is a mistake, refused when the call is awaited.
+const DEADLINE_MS: &str = "deadline-ms";
 
 fn timeout_of(timeout: Bound) -> Option<Duration> {
     match timeout {
@@ -451,9 +456,8 @@ impl Spec {
     /// remaining time when that is shorter, and the instant it ends. Refuses a call whose
     /// execution's deadline has passed, before any I/O.
     ///
-    /// Stamps `deadline-ms`, the deadline the server enforces, with the shortest of the calling
-    /// execution's remaining time, a `deadline-ms` the caller set, and `whole`'s bound unless it
-    /// covers only an event's publish.
+    /// Stamps `deadline-ms`, the deadline the server enforces, with the shorter of the calling
+    /// execution's remaining time and `whole`'s bound unless it covers only an event's publish.
     fn limit(&mut self, whole: Whole) -> Result<(Option<Duration>, Option<Instant>), RpcError> {
         let inner = &self.client.inner;
         let now = inner.runtime.now();
@@ -475,16 +479,30 @@ impl Spec {
             }
             None => None,
         };
-        let stamped = [remaining, own.filter(|_| sent), self.headers.deadline().ok().flatten()].into_iter().flatten().min();
+        // A `deadline-ms` the caller set was refused by `reserved`, so the stamp is the only one.
+        let stamped = [remaining, own.filter(|_| sent)].into_iter().flatten().min();
         if let Some(stamped) = stamped {
-            self.headers.entries.retain(|(name, _)| name != "deadline-ms");
-            self.headers.insert("deadline-ms", stamped.as_millis().max(1).to_string());
+            self.headers.insert(DEADLINE_MS, stamped.as_millis().max(1).to_string());
         }
         let after = match (own, remaining) {
             (Some(own), Some(remaining)) => Some(own.min(remaining)),
             (own, remaining) => own.or(remaining),
         };
         Ok((after, after.and_then(|after| now.checked_add(after))))
+    }
+
+    /// Refuses a call whose caller set `deadline-ms` with `.header`, readable or not: the client
+    /// writes that header from the call's bound, so a caller's value either contradicts the bound
+    /// or, where the call has none, sets one the client does not enforce. `BadRequest`, reason
+    /// `"reserved_header"`, the first such value quoted as the server's `bad_deadline` quotes one;
+    /// `instead` says what to write in its place.
+    fn reserved(&self, instead: &str) -> Result<(), RpcError> {
+        let Some(value) = self.headers.get(DEADLINE_MS) else { return Ok(()) };
+        let message = format!(
+            "the call set `{DEADLINE_MS}` to {} with `.header`, and the client reserves that header, writing it from the call's bound; {instead}",
+            quote(value)
+        );
+        Err(RpcError::new(ErrorKind::BadRequest, message).with_reason("reserved_header"))
     }
 
     /// Connects, registers the call, and sends its opening frame; a streamed request's items follow
@@ -799,7 +817,10 @@ pub struct Call<Res> {
 }
 
 impl<Res> Call<Res> {
-    /// A header on the call, `h` or the broker's own headers.
+    /// A header on the call, `h` or the broker's own headers. `deadline-ms` is reserved: the
+    /// client writes it from [`timeout`](Self::timeout) or [`within`](Self::within), and a call
+    /// given it here fails when it is awaited, before it connects, `BadRequest` with the reason
+    /// `"reserved_header"`.
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.spec.headers.insert(name, value);
         self
@@ -832,6 +853,7 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for Call<Res> {
     fn into_future(self) -> Self::IntoFuture {
         let mut spec = self.spec;
         Box::pin(async move {
+            spec.reserved("bound the call with `.timeout`, or forward an execution's deadline with `.within`")?;
             // The builder answers `Self`, so the await is the first point a zero can fail, before
             // the call connects: timed out at once, its `req` would reach the server or not by
             // the race in `bounded`.
@@ -859,6 +881,9 @@ pub struct Emit {
 }
 
 impl Emit {
+    /// A header on the event. `deadline-ms` is reserved, as on [`Call::header`]: an event given it
+    /// fails when it is awaited, before it connects, `BadRequest` with the reason
+    /// `"reserved_header"`.
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.spec.headers.insert(name, value);
         self
@@ -877,6 +902,7 @@ impl IntoFuture for Emit {
     fn into_future(self) -> Self::IntoFuture {
         let mut spec = self.spec;
         Box::pin(async move {
+            spec.reserved("an event is sent with no deadline")?;
             let limit = Limit::call(spec.limit(Whole::Publish)?.0);
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
@@ -928,6 +954,10 @@ impl<Res> StreamCall<Res> {
         StreamCall { _res: PhantomData, spec, idle: Bound::Default, deadline: None }
     }
 
+    /// A header on the call. `deadline-ms` is reserved, as on [`Call::header`]: the client writes
+    /// it from [`deadline`](Self::deadline) or [`within`](Self::within), and a call given it here
+    /// fails when it is awaited, before it connects, `BadRequest` with the reason
+    /// `"reserved_header"`.
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.spec.headers.insert(name, value);
         self
@@ -974,6 +1004,7 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for StreamCall<Res> {
     fn into_future(self) -> Self::IntoFuture {
         let StreamCall { mut spec, idle, deadline, .. } = self;
         Box::pin(async move {
+            spec.reserved("bound the stream with `.deadline`, or forward an execution's deadline with `.within`")?;
             let idle = match idle {
                 Bound::Default => spec.client.idle,
                 Bound::Unbounded => None,
@@ -1052,7 +1083,9 @@ impl<Res> Stream for RpcStream<Res> {
 /// kind and details, or the link's own failure mapped one way everywhere. No responders, a lost
 /// link or a broker refusal is `Unavailable`; the client's timeout `Timeout`; an oversized payload
 /// `BadRequest` with `reason: "payload_too_large"`; a binary payload on a JSON link `BadRequest`
-/// with `reason: "binary_unsupported"`, before any I/O; a request frame the link cannot encode
+/// with `reason: "binary_unsupported"`, before any I/O; a `deadline-ms` the caller set with
+/// `.header` `BadRequest` with `reason: "reserved_header"`, before any I/O; a request frame the
+/// link cannot encode
 /// `Internal`. A pattern nothing handles is `Unavailable`
 /// with `reason: "pattern_unhandled"` or `"no_destination"` where the link signals it, and the
 /// client's `Timeout` where it cannot.
@@ -1098,8 +1131,9 @@ impl RpcError {
     }
 
     /// The `ErrorInfo` detail's `reason`, when one is present: `"no_destination"`,
-    /// `"pattern_unhandled"`, `"payload_too_large"`, `"binary_unsupported"`, `"zero_timeout"`, and
-    /// the server's `"bad_deadline"` for a `deadline-ms` header it cannot read.
+    /// `"pattern_unhandled"`, `"payload_too_large"`, `"binary_unsupported"`, `"zero_timeout"`,
+    /// `"reserved_header"` for a `deadline-ms` the caller set, and the server's `"bad_deadline"`
+    /// for a `deadline-ms` header it cannot read.
     pub fn reason(&self) -> Option<&str> {
         self.details.iter().find_map(|detail| match detail {
             Detail::ErrorInfo { reason, .. } => Some(reason.as_str()),
@@ -1582,6 +1616,60 @@ mod tests {
         assert_eq!((too_large.kind(), too_large.reason()), (ErrorKind::BadRequest, Some("payload_too_large")), "the link's refusal: {too_large:?}");
         tokio::time::sleep(HOUR).await;
         assert_eq!(link.counts(), (1, vec!["req"]), "the connects and frames of a request the link refused as too large");
+    }
+
+    /// The `deadline-ms` values a caller might set: the four the server cannot read, then two it
+    /// can.
+    const CALLER_DEADLINES: [&str; 6] = ["abc", "18446744073709551615999", "-5", "", "50", "0"];
+
+    /// Asserts `refused` is the client's refusal of a caller-set `deadline-ms`.
+    fn reserved_refused(refused: Result<(), RpcError>, what: &str) -> RpcError {
+        let refused = refused.expect_err(what);
+        assert_eq!((refused.kind(), refused.reason()), (ErrorKind::BadRequest, Some("reserved_header")), "{what}: {refused:?}");
+        refused
+    }
+
+    /// F395: a `deadline-ms` the caller sets with `.header` is refused when the call is awaited,
+    /// before it connects, readable or not, on every call shape: a request on a client whose
+    /// timeout the client stamps, one on a client with none, one with its own timeout, a streamed
+    /// request, a stream with and without a deadline, a duplex call and an event. The link has
+    /// made no connect and sent nothing an hour later.
+    #[tokio::test(start_paused = true)]
+    async fn a_caller_s_deadline_ms_is_refused_before_the_call_connects() {
+        let runtime = || -> Arc<dyn Runtime> { Arc::new(ulo_runtime_tokio::Tokio::current()) };
+        let link = Refusing::new(Refuses::Answer);
+        let stamping = RpcClient::of_module(Arc::new(link.clone()), Bound::Default, Bound::Default, runtime());
+        let unbounded = RpcClient::of_module(Arc::new(link.clone()), Bound::Unbounded, Bound::Default, runtime());
+        let items = || futures_util::stream::iter([1u32]);
+        for value in CALLER_DEADLINES {
+            let calls: [(&str, BoxFuture<'static, Result<(), RpcError>>); 8] = [
+                ("a request on a client stamping its timeout", stamping.request::<_, u32>("refusing.request", &()).header("deadline-ms", value).into_future().map(|r| r.map(drop)).boxed()),
+                ("a request on a client with no timeout", unbounded.request::<_, u32>("refusing.request", &()).header("deadline-ms", value).into_future().map(|r| r.map(drop)).boxed()),
+                ("a request with its own timeout", stamping.request::<_, u32>("refusing.request", &()).header("deadline-ms", value).timeout(Duration::from_secs(1)).into_future().map(|r| r.map(drop)).boxed()),
+                ("a streamed request", stamping.send_stream::<_, u32>("refusing.request", items()).header("deadline-ms", value).into_future().map(|r| r.map(drop)).boxed()),
+                ("a stream with no deadline", stamping.stream::<_, u32>("refusing.stream", &()).header("deadline-ms", value).into_future().map(|r| r.map(drop)).boxed()),
+                ("a stream with a deadline", stamping.stream::<_, u32>("refusing.stream", &()).header("deadline-ms", value).deadline(Duration::from_secs(2)).into_future().map(|r| r.map(drop)).boxed()),
+                ("a duplex call", stamping.duplex::<_, u32>("refusing.stream", items()).header("deadline-ms", value).into_future().map(|r| r.map(drop)).boxed()),
+                ("an event", stamping.emit("refusing.event", &()).header("deadline-ms", value).into_future().boxed()),
+            ];
+            for (what, call) in calls {
+                reserved_refused(call.await, &format!("{what} carrying `deadline-ms: {value:?}`"));
+            }
+        }
+        tokio::time::sleep(HOUR).await;
+        assert_eq!(link.counts(), (0, vec![]), "the connects and frames of calls refused before connecting");
+    }
+
+    /// The refusal quotes the caller's value as the server's `bad_deadline` does: whole up to 64
+    /// characters, cut to 64 and marked past that.
+    #[tokio::test]
+    async fn the_reserved_header_refusal_quotes_the_value_cut_short() {
+        let client = RpcClient::of_module(Arc::new(Refusing::new(Refuses::Answer)), Bound::Default, Bound::Default, Arc::new(ulo_runtime_tokio::Tokio::current()));
+        let short = reserved_refused(client.request::<_, u32>("refusing.request", &()).header("deadline-ms", "abc").await.map(drop), "`abc`");
+        assert!(short.message().contains(r#"to "abc" with"#), "the short value is not quoted whole: {short:?}");
+        let long = "9".repeat(100);
+        let cut = reserved_refused(client.request::<_, u32>("refusing.request", &()).header("deadline-ms", long.as_str()).await.map(drop), "a hundred nines");
+        assert!(cut.message().contains(&format!("to {:?}, cut short with", "9".repeat(64))), "the long value is not cut to 64: {cut:?}");
     }
 
     /// A link whose reply lane ends when the test says, as a lost connection's does.

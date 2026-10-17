@@ -3,18 +3,22 @@
 //! `grpc-timeout` is parsed here into the execution's deadline.
 //!
 //! Per call, in order:
-//! 1. Over the server's or the connection's in-flight bound: UNAVAILABLE.
-//! 2. `Execution::open` at the root module, its deadline the caller's `grpc-timeout`. Refused
+//! 1. A `grpc-timeout` off the specification's grammar: INTERNAL, as grpc-go answers it, the
+//!    message quoting up to 64 characters of the value. No execution opens and nothing of the
+//!    pipeline runs: running the call unbounded would lose the bound its caller asked for, and the
+//!    refusal is permanent, so it comes before a capacity refusal a caller would retry.
+//! 2. Over the server's or the connection's in-flight bound: UNAVAILABLE.
+//! 3. `Execution::open` at the root module, its deadline the caller's `grpc-timeout`. Refused
 //!    during the drain: UNAVAILABLE, answered directly, no pre-dispatch stage.
-//! 3. The inputs `GrpcMetadata` and `PeerAddr` seeded as the client sent them, and the
+//! 4. The inputs `GrpcMetadata` and `PeerAddr` seeded as the client sent them, and the
 //!    `ulo_transport::span::call` span entered, named `package.Service/Method`.
-//! 4. The unscoped pre-dispatch entries of `PreDispatch<Grpc>`, in order.
-//! 5. The path routed: a handler's path routes the execution to the controller's module and runs
+//! 5. The unscoped pre-dispatch entries of `PreDispatch<Grpc>`, in order.
+//! 6. The path routed: a handler's path routes the execution to the controller's module and runs
 //!    the scoped entries, then `ulo::dispatch`; the health and reflection services answer their
 //!    own paths; any other path answers UNIMPLEMENTED.
-//! 6. An error no handler claims rendered as a status: a `tonic::Status` as it stands,
+//! 7. An error no handler claims rendered as a status: a `tonic::Status` as it stands,
 //!    DEADLINE_EXCEEDED when the deadline cancelled the call, any other error by its kind.
-//! 7. A response a pre-dispatch entry answered with an HTTP status other than 200 translated by
+//! 8. A response a pre-dispatch entry answered with an HTTP status other than 200 translated by
 //!    the gRPC specification's HTTP-to-status table.
 //!
 //! The whole of it is raced against the deadline: when the deadline passes first, the pipeline is
@@ -134,10 +138,13 @@ impl Dispatcher {
 
     /// Answers one call; never fails, an error being answered as a status.
     pub(crate) async fn call(self: Arc<Self>, req: http::Request<Incoming>, conn: ConnInfo, admission: ConnectionAdmission) -> Response {
+        let timeout = match grpc_timeout(req.headers()) {
+            Ok(timeout) => timeout,
+            Err(refused) => return status_response(refused),
+        };
         let Some(permit) = admission.try_admit() else {
             return status_response(Status::unavailable("the server is at its in-flight limit"));
         };
-        let timeout = grpc_timeout(req.headers());
         let mut opts = ExecOptions::new();
         if let Some(deadline) = timeout.and_then(|after| self.timer.now().checked_add(after)) {
             opts = opts.deadline(deadline);
@@ -449,13 +456,27 @@ fn unsupported_encoding(headers: &HeaderMap) -> Option<Response> {
 /// The caller's `grpc-timeout`: a `TimeoutValue` of one to eight digits and a `TimeoutUnit` in
 /// `H`, `M`, `S`, `m`, `u` or `n`. A value off that grammar is ignored, logged at `debug`, and the
 /// call runs without a deadline.
-pub(crate) fn grpc_timeout(headers: &HeaderMap) -> Option<Duration> {
-    let value = headers.get(GRPC_TIMEOUT)?;
-    let parsed = value.to_str().ok().and_then(parse_timeout);
-    if parsed.is_none() {
-        tracing::debug!(value = ?value, "a `grpc-timeout` off the specification's grammar is ignored");
+/// How much of a `grpc-timeout` off the grammar the refusal quotes back, as RPC's `bad_deadline`
+/// quotes a `deadline-ms`.
+const QUOTED: usize = 64;
+
+/// The caller's `grpc-timeout`: `Ok(None)` when absent, and INTERNAL, grpc-go's code for the same
+/// value, when it is off the grammar of gRPC over HTTP/2, at most eight ASCII digits followed by one
+/// of `H`, `M`, `S`, `m`, `u` and `n`. A zero amount is on the grammar's digits and read as a
+/// deadline already passed.
+pub(crate) fn grpc_timeout(headers: &HeaderMap) -> Result<Option<Duration>, Status> {
+    let Some(value) = headers.get(GRPC_TIMEOUT) else { return Ok(None) };
+    match value.to_str().ok().and_then(parse_timeout) {
+        Some(timeout) => Ok(Some(timeout)),
+        None => {
+            let text = String::from_utf8_lossy(value.as_bytes());
+            let quoted: String = text.chars().take(QUOTED).collect();
+            let cut = if quoted.len() < text.len() { ", cut short" } else { "" };
+            Err(Status::internal(format!(
+                "the call's `grpc-timeout` is {quoted:?}{cut}, which is not at most eight ASCII digits followed by one of `H`, `M`, `S`, `m`, `u` and `n`"
+            )))
+        }
     }
-    parsed
 }
 
 fn parse_timeout(text: &str) -> Option<Duration> {
