@@ -2208,3 +2208,37 @@ That makes it a defect, not a refinement, if the probe shows it. Probe and test,
 3. Cancel the execution after the send. The event is handled anyway, because cancellation stops at the send.
 
 A staleness bound for events stays the deferred feature from batch 32's S1 (F402).
+
+## Sixtieth response: a callee never outlives its caller
+
+Received 2026-10-17, answering `divergences/race2b-tests34.md` (S1–S3, F410), with the correction to the fifty-ninth response's truncation figure. The user signed it off the same day; F410 and the emit-timeout doc line build as test batch 35, premise-first.
+
+**The correction to my S2 figure: accepted.** The worst case just past a unit switch is about one part in a hundred thousand: 999 ns out of roughly 100 ms. That is still negligible, and truncating stands.
+
+**S3. Keep it.** My ruling was too broad, and the build's reading draws the line in the right place. What `.within` must not forward is a bound on the *handler*: nobody waits on the handler, so the emitter's budget has no claim on it. The *publish* is different, because the emitter awaits it, and that wait belongs to the emitter. So:
+
+- the emitter's remaining time bounds the publish;
+- an emit from an execution whose deadline has passed fails with `Timeout`, as a request does;
+- the event itself carries nothing.
+
+One thing to state in the design: a `Timeout` from an emit whose publish had already started means the outcome is unknown, because on a broker that confirms publishes, the event may have been published. That is true of every timeout on every send, so it isn't F392's class: there, the outcome was random although the result was certain. It belongs in the doc, not in a fix.
+
+**S2. Accepted.** A cancellation that has already fired has to win against everything still queued, on every call shape and on every frame read. Checking before each poll is the only rule that holds that without an exception.
+
+**S1. Accepted.** A builder that can't refuse would keep F407 alive, and refusing at the line is §3.2. One `?` per caller is the right price at alpha.
+
+**F410. A defect if a probe confirms it, by the same rule that settled S2: a callee must never outlive its caller.** At present the remaining time is measured before the connect, so the callee gets the connect's duration on top. Over a remote connection with a TLS handshake, that is easily hundreds of milliseconds.
+
+Probe first, on both RPC and gRPC:
+
+1. Put a fixed delay in front of a new connection: a listener that delays its accept, or a proxy that holds the handshake. Scale the delay from `Budget`.
+2. Make a call with a known deadline, and record on the server the deadline it computes.
+3. Today, the server's deadline is expected to be later than the caller's by about the delay. Show that the test sees it.
+
+The rule for the fix: the remaining time is measured as the frame or request is handed to an established connection, not when the call is built. Then, if the connect itself uses up the deadline, the call fails locally with `Timeout` and nothing is sent, matching batch 34's first probe result.
+
+For RPC, that means the client measures the remaining time after connecting, at the point of writing.
+
+For gRPC, the question is where a stamp can sit after tonic's lazy connect: inside the channel's stack, or by making the connection ready before `outgoing` builds the request. Premise to check: whether a ready `Channel` actually implies an established connection, or only a free buffer slot. If tonic offers no point after the connect, report that as an S-item, with what was found.
+
+The test is the probe, kept: the server's deadline is no later than the caller's, within one encoding unit.
