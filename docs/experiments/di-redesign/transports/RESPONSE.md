@@ -2363,3 +2363,32 @@ The real fix is upstream: async-nats's root-loading condition changed so that a 
 **S9: accepted.** Neither adds a package to the lock.
 
 The new entries: F422 is answered by S7 and F423 by S1.
+
+## Sixty-fifth response: roots once per process, an app's drop releases its servers
+
+Received 2026-10-18, answering `divergences/race2b-tests39.md` and `race2b-tests40.md` (F426, F427, batch 40's S1–S5, batch 39's departure). The user signed it off the same day; F427 builds as test batch 41 and F426 as batch 42.
+
+**F427: once per process while any link holds it, and a `nats://` link doesn't wait for the load. A change to decision 139, recorded as one.** The platform's store is process-wide state, so reading it per link pays the same cost once per link: thirty links paid it thirty times, up to 2.55 s each. "Once per link" was there to rule out "once per connect", not to require a load per link.
+
+1. **The cache.** A process-wide slot holds a `Weak` to the loaded roots and their PEM file. Each link holds an `Arc`. While any link holds it, every new link reuses it. When the last holder drops, the file is unlinked, and a later link loads again. A strong process-wide cache would keep the file until the process exits, which brings back the leftover file S3 is about.
+2. **The load is a task, not part of a caller's future.** It is spawned on the link's blocking pool, and every caller awaits a shared answer. A call that gives up before the load ends drops its own wait and nothing else, so the load is never restarted.
+3. **A `nats://` link connects without waiting.** If the load has finished, the file is passed. If not, the link connects without it, and later connects and reconnects use the file once it exists. A plain connection needs no roots, so the boot budget no longer pays for a store it never reads. A server that upgrades a first connection made before the load ends sees async-nats read the store inline, which is F423 narrowed to that one connection, and the crate's documentation says so.
+4. **A `tls://` link still waits**, since the file is what its connection needs.
+
+**Tests:**
+- The loader seam set on a link bypasses the cache, so the existing tests keep their loads.
+- A new test builds thirty links at once against a slow loader in the cache, and requires one load, every link holding the same file, and the file gone once all thirty drop.
+- A `nats://` link whose loader blocks for twice the boot budget connects within the budget.
+
+**F426: fix it, in the core, by releasing the servers when the `App` value drops. No change to the server interface.** The cycle runs from the app's shared state, to the servers, to their `AppHandle`, back to the shared state. Batch 40 breaks it at `close`. The other ways an app ends all drop the `App` value itself: the `serve` future dropped by a panic or a timeout owns the app, and an app bound and dropped is that value too. So `App`'s `Drop` does what the end of `close` does, letting go of the servers held in the shared state. Without a `close`, that drop is the shutdown: listeners close with their sockets, and each server's `TaskSet` aborts on drop as designed (decision 47). Clones of `AppHandle` held elsewhere keep only the shared state, which no longer reaches the servers.
+
+The alternative, servers holding a weak handle, would touch all five servers to fix a cycle the core created. An `AppHandle::downgrade()` stays available for anyone who wants one, as an additive change, but nothing needs it. The tests are batch 40's five, plus the three paths F426 names, each showing the singleton store dropped.
+
+**Batch 40's S-items:**
+- **S1: accepted,** and extended by F426 to the `App`'s drop.
+- **S2: changed.** F426 is fixed, as above, not filed.
+- **S3: accepted, documented.** With the process-wide cache there is one file per process at most, removed with its last holder. A process killed before the drop leaves one behind, uniquely named and holding public data. Sweeping stale files at startup would risk deleting a live process's file, for no real gain.
+- **S4: accepted.** The unit test pins the stamp on a clock that moves only when the test moves it. The timer path, a deadline passing while the client connects, stays where it is shown failing, in the conformance scenario.
+- **S5: accepted.** The release is justified by the leak alone, and F427 explains the NATS failures. If the suite still fails after F427's fix, that's a finding of its own.
+
+**Batch 39's departure: accepted.** A plain link whose load fails logs it at `warn` once and connects without the file. Refusing a link that needs no roots would break it on a host with no store, which a `scratch` image is. The cost is that an upgraded connection on that host fails as async-nats's own load does, stated in the documentation beside F423. F422's remaining case, the panic on an upgraded `nats://` link, shares F417's upstream fix, and stays open until that lands or the user decides to file it.
