@@ -570,10 +570,18 @@ pub async fn measured_once_connected<B: Broker>() {
 /// returns, and its server sees nothing. For each shape the link carries, a request, a stream, a
 /// streamed request and an event, a client whose link holds its connect twice as long as the
 /// execution the call is made `.within` has left, a fifth of the broker's settle budget: once
-/// with a connect that waits, which the call's own timer cuts short, and once with one that
-/// blocks its thread, so the connect returns in the poll that finds the deadline passed. Then a
+/// with a connect that waits, which the call's own timer cuts short, and once with one that makes
+/// its connection and then blocks its thread, so the connect returns in the poll that finds the
+/// deadline passed, before the call's timer can be polled again. Then a
 /// request on a connection already made, answered, and the server has delivered that request
 /// alone, no event handled.
+///
+/// Only the blocking half is evidence that a frame is stamped and refused once the connection is
+/// in hand. The waiting half pins behaviour that predates that check: the call's timer ends a
+/// connect that waits at the deadline, so it passed against the client before the check existed.
+/// The block follows the connection rather than preceding it: a block ahead of a connect that still
+/// awaits ends in a poll that returns pending, and the call's timer, armed for what is left of the
+/// bound, answers at the next poll whether or not the check exists.
 pub async fn connect_past_the_deadline_is_refused_before_the_server_sees_it<B: Broker>() {
     let tap = Tap::default();
     let fixture = Fixture::<B>::start_over(Count::Default, |broker| Tapped { link: broker.link(), tap: tap.clone() }).await;
@@ -582,7 +590,8 @@ pub async fn connect_past_the_deadline_is_refused_before_the_server_sees_it<B: B
     let held = left * 2;
     let streaming = streams(&fixture.capabilities());
     let mut outcomes = Vec::new();
-    for hold in [Hold::Waits(held), Hold::Blocks(held)] {
+    // `Hold::Waits` is the pin, `Hold::BlocksConnected` the evidence; see the doc above.
+    for hold in [Hold::Waits(held), Hold::BlocksConnected(held)] {
         for shape in ["a request", "a stream", "a streamed request", "an event"] {
             if !streaming && matches!(shape, "a stream" | "a streamed request") {
                 continue;
@@ -624,6 +633,58 @@ pub async fn connect_past_the_deadline_is_refused_before_the_server_sees_it<B: B
     fixture.stop().await;
 }
 
+/// How many calls [`blocked_connect_s_timer_ends_with_its_bound`] makes. Its timer starts late
+/// only when the call's `select!` polls the work before the timer, an order it shuffles at random,
+/// so half the time; sixteen leave a chance of one in 65,536 that a timer started late is never
+/// seen.
+const BLOCKED_CALLS: usize = 16;
+
+/// The `deadline-ms` [`blocked_connect_s_timer_ends_with_its_bound`]'s server is given, ten
+/// seconds, past every bound the scenario sets: the client's `cancel` stops the handler.
+const UNANSWERED: &str = "10000";
+
+/// F411: a call's timer ends where its bound does, whatever blocked the call's first poll. Sixteen
+/// requests, each the first call of a fresh client whose link blocks its thread in the connect for
+/// half the call's timeout, two fifths of the broker's settle budget, to a handler that stalls. A
+/// [`Stamped`] link below the client writes the server a ten-second deadline, `UNANSWERED`, so the
+/// server's own `timeout` does not answer the call at its bound and only the client's timer can.
+/// Each fails `Timeout` no later than its timeout, the later of the bound's end and the block's,
+/// and a tenth of the settle budget, room for the poll that finds the timer due, after it was
+/// awaited. A timer counted from its own first poll, which the block delays, fires a full timeout
+/// after the block ends, half a timeout past the bound's end. The block leaves the link's own
+/// connect half the timeout to finish in, so the frame is sent and the timer alone ends the call:
+/// a connect returning past the bound is refused there instead, whatever the timer does.
+pub async fn blocked_connect_s_timer_ends_with_its_bound<B: Broker>() {
+    let fixture = Fixture::<B>::start().await;
+    let budget = fixture.broker.budget();
+    let timeout = budget.settle * 2 / 5;
+    let blocked = timeout / 2;
+    let margin = budget.settle / 10;
+    let mut outcomes = Vec::new();
+    for _ in 0..BLOCKED_CALLS {
+        let stamped = Stamped { link: fixture.broker.client_link(&addresses(&[&fixture.server])), value: UNANSWERED };
+        let client = client_over::<B, _>(SlowConnect::new(stamped, Hold::Blocks(blocked))).await;
+        let started = Instant::now();
+        let call = client.rpc.request::<_, ()>(STALL, &()).timeout(timeout).into_future();
+        let outcome = within::<B, _>(timeout + blocked + budget.boot, "the call", call).await;
+        outcomes.push((started.elapsed(), outcome));
+        client.close().await;
+    }
+    let report: Vec<String> = outcomes
+        .iter()
+        .map(|(took, outcome)| format!("{:.1} ms, {:?}", took.as_secs_f64() * 1e3, outcome.as_ref().map_err(RpcError::kind)))
+        .collect();
+    let latest = timeout.max(blocked) + margin;
+    for (took, outcome) in &outcomes {
+        assert!(
+            matches!(outcome, Err(error) if error.kind() == ErrorKind::Timeout) && *took <= latest,
+            "a call given {timeout:?} over a connect blocking {blocked:?} was answered later than {latest:?} or not `Timeout`; every call:\n{}",
+            report.join("\n")
+        );
+    }
+    fixture.stop().await;
+}
+
 /// `a - b` in milliseconds, negative when `a` is the earlier.
 fn signed_millis(a: Instant, b: Instant) -> f64 {
     match a.checked_duration_since(b) {
@@ -632,14 +693,19 @@ fn signed_millis(a: Instant, b: Instant) -> f64 {
     }
 }
 
-/// How a [`SlowConnect`] link holds each connect before it makes it.
+/// How a [`SlowConnect`] link holds each connect.
 #[derive(Clone, Copy, Debug)]
 enum Hold {
-    /// Waits on the client's runtime, as a connect waiting on its peer does.
+    /// Waits on the client's runtime before making the connection, as a connect waiting on its
+    /// peer does.
     Waits(Duration),
-    /// Blocks the thread polling the connect, as a connect doing blocking work does: the connect
-    /// returns inside one poll, the call's next step with it.
+    /// Blocks the thread polling the connect before making the connection, as a connect that does
+    /// blocking work first does: the connect's first poll lasts the block.
     Blocks(Duration),
+    /// Makes the connection, then blocks the thread polling the connect, as a connect finishing with
+    /// blocking work does: the connect returns in the poll that ends the block, the call's next step
+    /// with it.
+    BlocksConnected(Duration),
 }
 
 /// When a [`SlowConnect`] link was handed each opening frame or event carrying [`MARK`], with the
@@ -694,8 +760,12 @@ impl<L: Link> Link for SlowConnect<L> {
         match self.hold {
             Hold::Waits(held) => runtime.sleep(held).await,
             Hold::Blocks(held) => std::thread::sleep(held),
+            Hold::BlocksConnected(_) => {}
         }
         let Outbound { send, replies } = self.link.connect(runtime).await?;
+        if let Hold::BlocksConnected(held) = self.hold {
+            std::thread::sleep(held);
+        }
         let (handoffs, clock) = (self.handoffs.clone(), Arc::clone(runtime));
         Ok(Outbound {
             send: Box::new(move |pattern, frame, reply_to| {

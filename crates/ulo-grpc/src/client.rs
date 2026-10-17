@@ -113,6 +113,10 @@ impl ClientTls {
 /// is told it timed out. A deadline further off than `99999999H`, about 11,415 years and the
 /// longest the grammar holds, is sent as that. The remaining time is read on tokio's clock, which
 /// `ulo-runtime-tokio`'s `Timer` reads too.
+///
+/// The remaining time is read here, before the request reaches the client's `Channel`, and a
+/// `Channel` connects lazily, driven by the request it holds: on a new or re-established
+/// connection the callee is given up to the connect's length beyond the caller's deadline.
 pub fn outgoing<T>(exec: &ExecutionRef, request: tonic::Request<T>) -> Result<tonic::Request<T>, tonic::Status> {
     let Some(deadline) = exec.deadline() else { return Ok(request) };
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now().into_std());

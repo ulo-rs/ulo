@@ -435,7 +435,8 @@ pub(crate) struct Spec {
     timeout: Option<Duration>,
     within: Option<ExecutionRef>,
     /// Where the call's whole bound ends, set by [`limit`](Self::limit): what is left of it when the
-    /// frame is written is the call's `deadline-ms`, and a call it ends before then is not sent.
+    /// frame is written is the call's `deadline-ms`, a call it ends before then is not sent, and the
+    /// call's own timer fires there.
     ends: Option<Instant>,
     /// Whether the call carries `deadline-ms`: every shape but an event.
     stamps: bool,
@@ -480,15 +481,15 @@ impl Spec {
         }
     }
 
-    /// The wait the whole call is bounded by, `whole`'s bound and the calling execution's
-    /// remaining time when that is shorter, and the instant it ends. Refuses a call whose
-    /// execution's deadline has passed, before any I/O.
+    /// The instant the whole call's wait ends, `whole`'s bound or the calling execution's
+    /// remaining time when that is shorter, counted from now. Refuses a call whose execution's
+    /// deadline has passed, before any I/O.
     ///
     /// Every shape but an event carries what is left of that wait as `deadline-ms`, the deadline
     /// the server enforces, measured when the frame is written: [`written`] stamps it. An event's
     /// handler has no caller waiting on it, often runs after its emitter has ended, and on a
     /// broker that holds it would count the remainder from delivery, so it is given none.
-    fn limit(&mut self, whole: Whole) -> Result<(Option<Duration>, Option<Instant>), RpcError> {
+    fn limit(&mut self, whole: Whole) -> Result<Option<Instant>, RpcError> {
         let inner = &self.client.inner;
         let now = inner.runtime.now();
         let own = match whole {
@@ -515,7 +516,7 @@ impl Spec {
         let ends = after.and_then(|after| now.checked_add(after));
         self.ends = ends;
         self.stamps = !matches!(whole, Whole::Publish);
-        Ok((after, ends))
+        Ok(ends)
     }
 
     /// Refuses a call whose caller set `deadline-ms` with `.header`, readable or not: the client
@@ -797,31 +798,32 @@ fn send_error(err: BoxError) -> RpcError {
     }
 }
 
-/// One wait's bound, and what the caller is told when it passes.
+/// One wait's bound, the instant it ends on the client's runtime's clock, and what the caller is
+/// told when it passes.
 #[derive(Clone, Copy)]
 struct Limit {
-    after: Duration,
+    ends: Instant,
     passed: &'static str,
 }
 
 impl Limit {
-    /// A call's whole bound, its timeout or its execution's remaining time.
-    fn call(after: Option<Duration>) -> Option<Limit> {
-        after.map(|after| Limit { after, passed: "the call timed out" })
+    /// A call's whole bound, its timeout or its execution's remaining time, ending where
+    /// [`Spec::limit`] put it.
+    fn call(ends: Option<Instant>) -> Option<Limit> {
+        ends.map(|ends| Limit { ends, passed: "the call timed out" })
     }
 
-    /// A stream's wait, from `now`, for its next reply frame: its idle timeout, or the time left
-    /// to its deadline at `ends` when that is shorter. An idle timeout whose end an `Instant`
-    /// cannot hold is none, as `Bound::Unbounded` is, since the timer would compute `now + idle`.
+    /// A stream's wait, from `now`, for its next reply frame: its idle timeout, or its deadline at
+    /// `ends` when that comes first. An idle timeout whose end an `Instant` cannot hold is none, as
+    /// `Bound::Unbounded` is.
     fn frame(idle: Option<Duration>, ends: Option<Instant>, now: Instant) -> Option<Limit> {
         const IDLE: &str = "no reply frame arrived within the stream's idle timeout";
         const DEADLINE: &str = "the stream's deadline passed";
-        let idle = idle.filter(|idle| now.checked_add(*idle).is_some());
-        let left = ends.map(|ends| ends.saturating_duration_since(now));
-        match (idle, left) {
-            (Some(idle), Some(left)) if left < idle => Some(Limit { after: left, passed: DEADLINE }),
-            (Some(idle), _) => Some(Limit { after: idle, passed: IDLE }),
-            (None, Some(left)) => Some(Limit { after: left, passed: DEADLINE }),
+        let idle = idle.and_then(|idle| now.checked_add(idle));
+        match (idle, ends) {
+            (Some(idle), Some(ends)) if ends < idle => Some(Limit { ends, passed: DEADLINE }),
+            (Some(idle), _) => Some(Limit { ends: idle, passed: IDLE }),
+            (None, Some(ends)) => Some(Limit { ends, passed: DEADLINE }),
             (None, None) => None,
         }
     }
@@ -842,9 +844,18 @@ async fn bounded<T>(
         return Err(cancellation(exec.cancel_reason()));
     }
     let passed = limit.map_or("the call timed out", |limit| limit.passed);
+    // The timer is armed at this arm's first poll, which can follow `work`'s: work that blocked
+    // its thread there would push a wait counted from then a full bound past the block. Armed for
+    // what is left of the bound, it fires at the bound's end, or at the first poll after a block
+    // that outlasted it.
     let expired = async {
         match limit {
-            Some(limit) => timer.sleep(limit.after).await,
+            Some(limit) => {
+                let left = limit.ends.saturating_duration_since(timer.now());
+                if !left.is_zero() {
+                    timer.sleep(left).await;
+                }
+            }
             None => std::future::pending().await,
         }
     };
@@ -932,7 +943,7 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for Call<Res> {
                 )
                 .refusal());
             }
-            let limit = Limit::call(spec.limit(Whole::Reply)?.0);
+            let limit = Limit::call(spec.limit(Whole::Reply)?);
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
             bounded(&*runtime, limit, within.as_ref(), async move { spec.open().await?.single::<Res>().await }).await
@@ -978,7 +989,7 @@ impl IntoFuture for Emit {
         let mut spec = self.spec;
         Box::pin(async move {
             spec.reserved("an event is sent with no deadline")?;
-            let limit = Limit::call(spec.limit(Whole::Publish)?.0);
+            let limit = Limit::call(spec.limit(Whole::Publish)?);
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
             bounded(&*runtime, limit, within.as_ref(), async move {
@@ -1098,7 +1109,7 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for StreamCall<Res> {
                 let instead = "leave `.deadline` unset for no deadline";
                 return Err(ZeroTimeout::of_duration("StreamCall::deadline", spec.client.inner.link, "the stream", instead).refusal());
             }
-            let (_, ends) = spec.limit(Whole::Stream(deadline))?;
+            let ends = spec.limit(Whole::Stream(deadline))?;
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
             let exchange = bounded(&*runtime, Limit::frame(idle, ends, runtime.now()), within.as_ref(), spec.open()).await?;
