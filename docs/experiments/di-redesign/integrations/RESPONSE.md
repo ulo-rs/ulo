@@ -387,3 +387,115 @@ Withdrawn: extensions 1, 4, 5, 6 and 7 from the first response's design.
 6. Whether a tracing-opentelemetry layer can set a span's parent at creation from a recorded field (E3's mechanism). If not, `span::call` takes the parent directly from the source.
 7. Whether `sqlx::Pool::close` waits for a connection still held by an execution the drain abandoned. If it does, the destroy hook's bound contains the wait, and the design says so.
 8. The remaining store premises (lock behaviour per migrator, parse errors echoing the URL, deadpool's maintenance, the Redis client the existing crates use), unchanged.
+
+## Third response: answers to QUESTIONS_1
+
+Received 2026-10-17, answering `QUESTIONS_1.md`. Answers Q1 to Q10 and the review's corrections. Sign-off: pending the user's word. Questions answered separately by the designer are recorded when they arrive.
+
+### Q1: drop the probe. `Spawn` gains `fn name(&self) -> &'static str`, answering `"unknown"` by default; the core's wrapper forwards it, and a store refuses any name but `"tokio"`
+
+Capturing `Tokio::try_current()` where the module is built, the link pattern, doesn't answer the question. A link runs all its own I/O on its own runtime through `Tokio::run`, so the runtime the link holds is the only one its futures touch. A database client is called directly by the user's handler code, on whatever runtime the app was given. A store module holding a tokio handle of its own changes nothing about where those queries are polled: on a smol app they still panic on smol's workers. The question to answer is therefore "what runtime is this app on?", and only the given runtime can answer it.
+
+The name is a method, not `Link::NAME`'s associated constant, because `Runtime` has to stay dyn-compatible. It is a string rather than a closed enum, so a third-party runtime can declare itself. It sits on `Spawn` because `Runtime` is a blanket impl. Its default reads `"unknown"`, and a store refuses `"unknown"` too, so a runtime that declares nothing fails the check rather than loosening it (§3.9).
+- `fw_runtime_tokio::Tokio` answers `"tokio"` and `Smol` answers `"smol"`.
+- The core's `Clocked` forwards the spawner's name, so `.runtime(r).timer(t)` still answers `r`'s.
+
+The check is the first thing the pool's factory does, reading `Dep<dyn Runtime>`, before anything is built: a runtime-free comparison, no ambient lookup, and a smol app driven from a thread with a tokio context still answers `"smol"`. `spawn_with` stays for creating the pool, the readiness ping, migrations and the close. That isn't a probe: it runs the work on the runtime the app was given, which is how a library that spawns at pool creation spawns on the app's runtime.
+
+### Q2
+
+- (a) Yes: a decision change, recorded as one. With the health module imported, the overall status turns NOT_SERVING at `Stopping`. §6.2's "consistent with `is_draining()`" predates readiness, and its own reason, a client polling health stops sending before the GOAWAY, is served better by the earlier flip. Without the health module, §6.2 is unchanged.
+- (b) One writer per service name. `""` belongs to health when readiness is bound, and to the server otherwise. Named services keep today's writers, the server at bind and drain and the application through `GrpcHealth::set_named`. Kubernetes' gRPC probe reads `""` unless told otherwise. That named services have two writers today predates this race: a refinement, deferred, with that reason.
+- (c) No dependency from `ulo-grpc` on `ulo-health`. `ulo-health-grpc` comes back as a bridge crate, tokio-bound, depending on both:
+  - In its init hook, before `listen()`, it calls a new `GrpcHealth::delegate_overall()`. After that, the server's `bind` and `drain` stop writing `""`. That one method is the whole change to `ulo-grpc`.
+  - It then writes `""` from readiness through `Dep<GrpcHealth>`.
+
+  `Readiness` stays in `ulo-health`. Moving it into the core or `ulo-transport` would put an integration's concept below the transports, the same inversion in the other direction.
+
+### Q3: yes, E1 shrinks to a `serde` feature on `ulo`
+
+`Secret<T>: Deserialize` calls `deserialize_newtype_struct("Secret", ..)`. `ulo-config`'s deserializer recognises the name, records the leaf's value and path from its own origin-carrying tree, and deserialises the inner value. Any other deserializer sees a transparent newtype. `ConfigModule` and each section read call `m.secret(..)` for every leaf recorded. There is no thread-local and no `fw::secret::collect`.
+- Another crate's newtype also named `Secret` would be recorded too. The cost of that is extra redaction, which is harmless.
+- No `Serialize` impl: writing a secret out is the leak redaction exists to prevent.
+
+### Q4: the `Store` trait, restated
+
+```rust
+pub trait Store: Send + Sync + 'static {
+    const NAME: &'static str;                                          // "postgres", "mongodb": messages and check names
+    type Options: DeserializeOwned + Clone + Eq + Hash + Send + Sync;  // the module's identity is by value (core §8.3)
+    type Client: Clone + Send + Sync + 'static;
+    fn validate(o: &Self::Options) -> Result<(), ulo_config::Problems>;      // at registration, through `try_value`
+    fn create(o: &Self::Options) -> BoxFuture<'static, Result<Self::Client, BoxError>>;   // without connecting; run through `spawn_with`
+    fn ping(c: &Self::Client) -> BoxFuture<'static, Result<(), BoxError>>;   // the `.ready` attempt and the health check
+    fn close(c: Self::Client) -> BoxFuture<'static, ()>;
+}
+```
+
+There is no `Given` parameter, and no error type of the store's own, so no clash with `ulo::ConnectError` or `ulo_rpc::Misconfigured`.
+
+E4, in the core:
+- `#[non_exhaustive] pub struct Permanent(BoxError)`, built with `Permanent::new(e)`. Its `Display` is the inner error's, and `source()` answers the inner error.
+- A readiness attempt whose error downcasts to `Permanent` ends the check at once, as `ConnectError::Readiness { reason: Errored(..) }`.
+- `fw::is_permanent(&StartupError) -> bool` walks the chain as `is_panic` does, so `main` can tell a restart that cannot help from one that might.
+
+A store marks an error permanent by returning `Err(Permanent::new(e).into())` from `ping`. Which of each library's errors count as permanent, bad credentials or an unknown database, is a premise for each store.
+
+In `ulo-db`, both wrapped in `Permanent` where they are raised:
+- `UnsupportedRuntime { module: &'static str, required: &'static str, given: &'static str }`, from the factory;
+- `MigrationFailed { module: &'static str, source: BoxError }`, from the init hook.
+
+### Q5
+
+- A standalone `execute`: `ExecOptions::trace(TraceContext)` seeds the inbound context. Without it, a standalone execution starts a new trace when an exporter is bound, and carries none in pass-through.
+- A client outside an app has no mode of its own. It writes whatever trace context the execution named by `.within` carries. A call with no `.within` carries none, and so does an execution of an app with `TraceMode::Off`. The reservation follows the same rule, per call: `traceparent` is refused `reserved_header` exactly when the client writes it itself, and is an ordinary header otherwise. The client needs no mode, and a client outside any app behaves the same way.
+- `tracestate` is not reserved. A caller's `tracestate` is merged as W3C §3.3 describes: the caller's entries first, then the execution's, duplicates by key dropped, and the list cut to the specification's limits. That's how a vendor adds its own entry.
+
+### Q6
+
+- `.lag(d)` bounds its own hook. Health's before-shutdown hook takes `TIMEOUT = After(d + 1 s)`, so a lag isn't cut by the 10 s default. A lag reaching past `shutdown_timeout` is cut by the cap and recorded `TimedOut { limit: ShutdownCap }`. The builder's cap is invisible at registration, so the documentation says this rather than a refusal.
+- Ordering: corrected to "before every `Check`'s hooks", with lazily loaded modules' hooks running ahead of it, by the exact reverse of connect order.
+- The kubelet facts confirm 2.2 and add one line.
+  - They settle the earlier liveness concern: liveness and startup probes stop at termination, so a liveness probe failing during the drain can't kill a pod.
+  - Since Kubernetes marks a pod's endpoints terminating at the same time as SIGTERM, the readiness flip matters for other load balancers and for readers of readiness. Inside Kubernetes, `lag` is the `preStop` sleep's equivalent: the time kube-proxy and the load balancers need to see the endpoint change before the app refuses work.
+  - The default stays zero, and the documentation recommends a few seconds in Kubernetes.
+
+### Q7: the interval is a `Bound`
+
+`Default` is 5 s. `Unbounded` means statuses change only at lifecycle transitions, which is meaningful and so is the opt-out. A zero is refused, as `ping_interval`'s is. Under the vocabulary, a `Duration` is a time that is never off, and a zero `Duration` here would mean evaluating continuously.
+
+### Q8: a stated limit, with an explicit opt-out. No core request
+
+A lazily loaded store module contributing a `Check` isn't silently invisible to readiness: `load` refuses it with `LoadRefusal::Contribution`. Store modules gain `.without_health_check()`, which makes the module loadable lazily at the cost of a readiness that cannot see it, chosen by the application where it is written. Lifting the core's rule is a design for the core, not for this race.
+
+### Q9: confirmed
+
+The flush runs on a thread of its own. The thread signals its end through a `futures-channel` oneshot, and the hook awaits that oneshot under its bound. On expiry the thread is left running, detached, and the hook is recorded `TimedOut`. It's the same shape as Kafka's blocking helper, and no worker is ever blocked.
+
+### Q10: confirmed, with the level names corrected
+
+| Crate | Level |
+| --- | --- |
+| every `ulo-db-*` store crate | tokio-bound, smol deferred |
+| `ulo-db-conformance` | shaped like `ulo-rpc-conformance`: runtime-free at default features, with a `tokio` harness feature, `publish = false` |
+| `ulo-otel-otlp` | tokio-bound |
+| `ulo-health-grpc` | tokio-bound |
+| `ulo-config`, `ulo-health`, `ulo-health-http`, `ulo-db`, `ulo-otel` | runtime-free, `ulo-otel`'s subject to its premise |
+
+"`runtime-levels.txt` needs this level named" is withdrawn: tokio-bound is already the fourth name.
+
+### The review's corrections
+
+All four facts, and the staging, are accepted:
+- Destroy before sockets. `pool.close()` can run under an abandoned execution's query. The `sqlx::Pool::close` probe decides whether the destroy hook's bound is what contains the wait.
+- F404, not F400, is the deferral this race closes.
+- Only `Req`, `Evt` and `Open` carry `h`. That covers propagation on the request side, which is all propagation needs.
+- Configuration errors' `Display` carries every problem, one per line with its path and origin, since `Redacted` flattens `source()` into one string. A failing source yields one `ValueFailed` per module that read a section from it, each listing that section's problems.
+- Staging:
+  1. configuration and `ulo-health` with HTTP;
+  2. `ulo-db` over `.ready`, with SQLx and the suite;
+  3. the other stores;
+  4. the CLI's templates;
+  5. trace propagation and `ulo-otel`.
+
+  The probes come first, as proposed, with two added to the list: whether SeaORM can create a connection without connecting, and whether a tracing-opentelemetry layer can set a span's parent at creation from a recorded field.
