@@ -393,8 +393,9 @@ release history, `bench/` for the benchmark's source, `scripts/`. Every run belo
 hashed `7e2f5ba8..` by `brk.py`'s measure (`verify/final-tree-hash.txt`), `30628c03..` with
 `idle_of`'s doc comment reworded.
 The scenarios' doc comments were reworded once more after the docs run below found private
-intra-doc links in them; on that tree, hashed `be566e94..`, the docs, clippy, the unsafe check and
-{{AFTER-FIX}} ran again and passed (`verify/after-doc-fix/`).
+intra-doc links in them; on that tree, hashed `be566e94..`, the docs, clippy and the unsafe check
+ran again and passed. Which further runs followed them was not recorded before the session's
+temporary output was pruned.
 
 - **The RPC suites, once each,** one target at a time, `--locked`, libtest's time
   (`suites/summary.txt`): TCP, TCP CBOR and TCP TLS 35 passed and 3 ignored each (2.01 s, 2.01 s,
@@ -426,7 +427,8 @@ intra-doc links in them; on that tree, hashed `be566e94..`, the docs, clippy, th
 - `cargo +1.88 check --workspace --all-targets --exclude ulo-http-salvo --exclude
   ulo-graphql-async-graphql --locked`, in a target directory of its own: exit 0, the same 17 and no
   other, `command-fds` 0.3.3 among the crates checked (`verify/check-1.88.txt`).
-- {{WORKSPACE-TEST}}
+- `cargo test --workspace --no-fail-fast` with the OpenSSL flags: 172 results, 1,110 passed,
+  0 failed, 108 ignored (`verify/workspace-test.txt`).
 - **The runtime-levels check,** `/usr/bin/python3 scripts/runtime_levels.py --locked`: exit 0,
   50 members, 54 entries, 33 checked, no failure and no error (`verify/runtime-levels.txt`);
   `ulo-cli` is tokio-bound and `command-fds` reaches `ulo-http-hyper` as a dev-dependency only.
@@ -453,5 +455,5 @@ intra-doc links in them; on that tree, hashed `be566e94..`, the docs, clippy, th
   broker suites and after each, beside the same eight exited containers, and no other
   (`suites/docker-*.txt`, `rabbitmq-*.docker-after.txt`). Every container a suite started was
   removed by it. No permission check refused an action.
-- **Disk:** 34 GB free at the start; {{DISK}} at the end, after the pinned nightly, its Miri
+- **Disk:** 34 GB free at the start; the figure at the end was not recorded, after the pinned nightly, its Miri
   builds in a target directory of their own and the rebuilds the lock's change caused.
