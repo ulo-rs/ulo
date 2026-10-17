@@ -1,5 +1,6 @@
 //! Per-delivery execution (transports DESIGN §5.2): one execution per call, `deadline-ms` as its
-//! deadline, `cancel` as `ClientCancelled`, the four shapes, `dispatch_late` for an item's error,
+//! deadline, a `deadline-ms` the server cannot read refused before any execution opens,
+//! `cancel` as `ClientCancelled`, the four shapes, `dispatch_late` for an item's error,
 //! and the split per `Capabilities` between the whole frame and the payload with native
 //! correlation. `Server::serve` runs it for every delivery the link's inbound stream yields.
 //!
@@ -186,6 +187,25 @@ fn start(shared: &Arc<Shared>, incoming: Incoming, reply: Option<ReplyPath>, ack
         return unhandled(shared, incoming, link, reply, ack, tasks);
     };
     let answered = incoming.id.zip(reply);
+    // Before admission: the refusal is permanent, and a caller told `unavailable` first would
+    // retry a call the server will never run.
+    let deadline = match incoming.headers.deadline() {
+        Ok(deadline) => deadline,
+        Err(value) => {
+            let error = bad_deadline(value);
+            match answered {
+                Some((id, reply)) => {
+                    refuse(shared, tasks, reply, id, error);
+                    ack.ack();
+                }
+                None => {
+                    tracing::warn!(pattern = incoming.pattern.as_str(), link = shared.link, message = %error.message, "an event whose `deadline-ms` the server cannot read was rejected");
+                    ack.reject();
+                }
+            }
+            return;
+        }
+    };
     let Some(permit) = shared.admission.try_admit() else {
         match answered {
             Some((id, reply)) => {
@@ -197,7 +217,6 @@ fn start(shared: &Arc<Shared>, incoming: Incoming, reply: Option<ReplyPath>, ack
         }
         return;
     };
-    let deadline = incoming.headers.deadline();
     let opts = match deadline {
         Some(after) => ExecOptions::new().deadline(shared.timer.now() + after),
         None => ExecOptions::new(),
@@ -584,6 +603,18 @@ impl Drop for Refusing {
 
 fn refusal(message: &str) -> ErrorBody {
     ErrorBody::new(ErrorKind::Unavailable, message, Details::new())
+}
+
+/// How much of an unreadable `deadline-ms` a refusal quotes back.
+const QUOTED: usize = 64;
+
+/// The refusal of a call whose `deadline-ms` the server cannot read. Running it with no deadline
+/// would run unbounded work for a caller that asked for a bound, so it does not run at all.
+fn bad_deadline(value: &str) -> ErrorBody {
+    let quoted: String = value.chars().take(QUOTED).collect();
+    let cut = if quoted.len() < value.len() { ", cut short" } else { "" };
+    let message = format!("the call's `deadline-ms` is {quoted:?}{cut}, which is not a whole number of milliseconds from 0 to {}", u64::MAX);
+    ErrorBody::new(ErrorKind::BadRequest, message, Details::new().with(reason("bad_deadline")))
 }
 
 impl ErrorBody {

@@ -63,22 +63,49 @@ fn idle_of(idle: Bound) -> Option<Duration> {
 /// A zero timeout given to an RPC client, which would time out every call it applies to:
 /// `Bound::After(Duration::ZERO)` refused by [`RpcClient::timeout`] and
 /// [`RpcClient::idle_timeout`] where it is written, and by `RpcClientModule::timeout` and
-/// `RpcClientModule::idle_timeout` when the app wires. A stream's own
-/// [`idle_timeout`](StreamCall::idle_timeout) of zero is refused when the call is awaited, before
-/// it connects, as the source of a `BadRequest` [`RpcError`] whose reason is `"zero_timeout"`.
-/// `Bound::Unbounded` is the spelling of no timeout.
+/// `RpcClientModule::idle_timeout` when the app wires. A call's own zero, a stream's
+/// [`idle_timeout`](StreamCall::idle_timeout) of `Bound::After(Duration::ZERO)`, a
+/// [`Call::timeout`] or a [`StreamCall::deadline`] of `Duration::ZERO`, is refused when the call
+/// is awaited, before it connects, as the source of a `BadRequest` [`RpcError`] whose reason is
+/// `"zero_timeout"`. `Bound::Unbounded` is the spelling of no timeout.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ZeroTimeout {
     setter: &'static str,
+    /// The zero as the setter takes it: `Bound::After(Duration::ZERO)` or `Duration::ZERO`.
+    written: &'static str,
     link: &'static str,
     /// What the timeout would end at once: `"every call"` for a timeout, `"every stream"` for a
-    /// client's idle timeout, `"the stream"` for a call's.
+    /// client's idle timeout, `"the call"` or `"the stream"` for a call's own.
     ends: &'static str,
+    /// What to write instead.
+    instead: &'static str,
 }
 
 impl ZeroTimeout {
     pub(crate) fn of_module(setter: &'static str, link: &'static str, ends: &'static str) -> Self {
-        ZeroTimeout { setter, link, ends }
+        ZeroTimeout::of_bound(setter, link, ends)
+    }
+
+    /// A zero written as `Bound::After(Duration::ZERO)`, where `Bound::Unbounded` is the spelling
+    /// of none.
+    fn of_bound(setter: &'static str, link: &'static str, ends: &'static str) -> Self {
+        ZeroTimeout {
+            setter,
+            written: "Bound::After(Duration::ZERO)",
+            link,
+            ends,
+            instead: "write `Bound::Unbounded` to turn the timeout off",
+        }
+    }
+
+    /// A zero written as `Duration::ZERO` on a call, whose setter has no spelling of none.
+    fn of_duration(setter: &'static str, link: &'static str, ends: &'static str, instead: &'static str) -> Self {
+        ZeroTimeout { setter, written: "Duration::ZERO", link, ends, instead }
+    }
+
+    /// The `BadRequest` a call given this zero fails with when it is awaited, before it connects.
+    fn refusal(self) -> RpcError {
+        RpcError::new(ErrorKind::BadRequest, self.to_string()).with_reason("zero_timeout").with_source(self)
     }
 
     /// The link's name, `Link::NAME`.
@@ -89,12 +116,7 @@ impl ZeroTimeout {
 
 impl fmt::Display for ZeroTimeout {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "`{}(Bound::After(Duration::ZERO))` on the {} link would time out {}; write `Bound::Unbounded` to turn the \
-             timeout off",
-            self.setter, self.link, self.ends
-        )
+        write!(f, "`{}({})` on the {} link would time out {}; {}", self.setter, self.written, self.link, self.ends, self.instead)
     }
 }
 
@@ -296,7 +318,7 @@ impl RpcClient {
     /// fails on the line that wrote the zero. `RpcClientModule` refuses it when the app wires.
     pub fn timeout(mut self, timeout: Bound) -> Result<Self, ZeroTimeout> {
         if timeout == Bound::After(Duration::ZERO) {
-            return Err(ZeroTimeout { setter: "RpcClient::timeout", link: self.inner.link, ends: "every call" });
+            return Err(ZeroTimeout::of_bound("RpcClient::timeout", self.inner.link, "every call"));
         }
         self.timeout = timeout_of(timeout);
         Ok(self)
@@ -315,7 +337,7 @@ impl RpcClient {
     /// refused as [`ZeroTimeout`].
     pub fn idle_timeout(mut self, idle: Bound) -> Result<Self, ZeroTimeout> {
         if idle == Bound::After(Duration::ZERO) {
-            return Err(ZeroTimeout { setter: "RpcClient::idle_timeout", link: self.inner.link, ends: "every stream" });
+            return Err(ZeroTimeout::of_bound("RpcClient::idle_timeout", self.inner.link, "every stream"));
         }
         self.idle = idle_of(idle);
         Ok(self)
@@ -453,7 +475,7 @@ impl Spec {
             }
             None => None,
         };
-        let stamped = [remaining, own.filter(|_| sent), self.headers.deadline()].into_iter().flatten().min();
+        let stamped = [remaining, own.filter(|_| sent), self.headers.deadline().ok().flatten()].into_iter().flatten().min();
         if let Some(stamped) = stamped {
             self.headers.entries.retain(|(name, _)| name != "deadline-ms");
             self.headers.insert("deadline-ms", stamped.as_millis().max(1).to_string());
@@ -785,6 +807,11 @@ impl<Res> Call<Res> {
 
     /// This call's timeout in place of the client's, and the deadline the server is given in
     /// `deadline-ms` unless a shorter one applies.
+    ///
+    /// `Duration::ZERO`, which would time out the call at once, fails the call when it is awaited,
+    /// before it connects, `BadRequest` with the reason `"zero_timeout"` and a [`ZeroTimeout`] as
+    /// its source, so no request reaches the server. A call cannot turn the client's timeout off:
+    /// one with none is made on a client given [`RpcClient::timeout`]`(Bound::Unbounded)`.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.spec.timeout = Some(timeout);
         self
@@ -805,6 +832,18 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for Call<Res> {
     fn into_future(self) -> Self::IntoFuture {
         let mut spec = self.spec;
         Box::pin(async move {
+            // The builder answers `Self`, so the await is the first point a zero can fail, before
+            // the call connects: timed out at once, its `req` would reach the server or not by
+            // the race in `bounded`.
+            if spec.timeout == Some(Duration::ZERO) {
+                return Err(ZeroTimeout::of_duration(
+                    "Call::timeout",
+                    spec.client.inner.link,
+                    "the call",
+                    "leave `.timeout` unset for the client's timeout, or make the call on a client whose timeout is `Bound::Unbounded`",
+                )
+                .refusal());
+            }
             let limit = Limit::call(spec.limit(Whole::Reply)?.0);
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
@@ -913,6 +952,10 @@ impl<Res> StreamCall<Res> {
     /// A bound on the whole call, counted from when it is awaited: the stream ends with `Timeout`
     /// when it passes, and the server is given it in `deadline-ms` unless a shorter one applies and
     /// cancels the handler there. None unless set, since a stream may run indefinitely.
+    ///
+    /// `Duration::ZERO`, which would end the stream at once, fails the call when it is awaited,
+    /// before it connects, `BadRequest` with the reason `"zero_timeout"` and a [`ZeroTimeout`] as
+    /// its source, so no request reaches the server.
     pub fn deadline(mut self, deadline: Duration) -> Self {
         self.deadline = Some(deadline);
         self
@@ -937,11 +980,14 @@ impl<Res: DeserializeOwned + Send + 'static> IntoFuture for StreamCall<Res> {
                 // The builder answers `Self`, so the await is the first point a zero can fail:
                 // before the call connects, as a binary payload on a JSON link is refused.
                 Bound::After(Duration::ZERO) => {
-                    let zero = ZeroTimeout { setter: "StreamCall::idle_timeout", link: spec.client.inner.link, ends: "the stream" };
-                    return Err(RpcError::new(ErrorKind::BadRequest, zero.to_string()).with_reason("zero_timeout").with_source(zero));
+                    return Err(ZeroTimeout::of_bound("StreamCall::idle_timeout", spec.client.inner.link, "the stream").refusal());
                 }
                 Bound::After(idle) => Some(idle),
             };
+            if deadline == Some(Duration::ZERO) {
+                let instead = "leave `.deadline` unset for no deadline";
+                return Err(ZeroTimeout::of_duration("StreamCall::deadline", spec.client.inner.link, "the stream", instead).refusal());
+            }
             let (_, ends) = spec.limit(Whole::Stream(deadline))?;
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
@@ -1015,8 +1061,8 @@ pub struct RpcError {
     pub(crate) kind: ErrorKind,
     pub(crate) message: String,
     pub(crate) details: Details,
-    /// The client's own refusal, where it has a type: a [`ZeroTimeout`] for a stream's zero idle
-    /// timeout.
+    /// The client's own refusal, where it has a type: a [`ZeroTimeout`] for a call's zero timeout,
+    /// a stream's zero deadline or a stream's zero idle timeout.
     source: Option<Box<dyn Error + Send + Sync>>,
 }
 
@@ -1052,7 +1098,8 @@ impl RpcError {
     }
 
     /// The `ErrorInfo` detail's `reason`, when one is present: `"no_destination"`,
-    /// `"pattern_unhandled"`, `"payload_too_large"`, `"binary_unsupported"`, `"zero_timeout"`.
+    /// `"pattern_unhandled"`, `"payload_too_large"`, `"binary_unsupported"`, `"zero_timeout"`, and
+    /// the server's `"bad_deadline"` for a `deadline-ms` header it cannot read.
     pub fn reason(&self) -> Option<&str> {
         self.details.iter().find_map(|detail| match detail {
             Detail::ErrorInfo { reason, .. } => Some(reason.as_str()),
@@ -1431,6 +1478,110 @@ mod tests {
         let what = "a stream given `.idle_timeout(Bound::After(Duration::MAX))`";
         let waited = an_hour_on(client.stream::<_, u32>("silent.stream", &()).idle_timeout(Bound::After(Duration::MAX)), what).await;
         behaves_as_unbounded(waited, &runtime, what);
+    }
+
+    /// What a [`Refusing`] link's server does with each `req`.
+    #[derive(Clone, Copy)]
+    enum Refuses {
+        /// Answers it `err` of kind `bad_request`.
+        Answer,
+        /// Refuses to send it, as a frame over the link's limit.
+        Send,
+    }
+
+    /// A link counting its connects and every frame it is asked to send, whose server refuses
+    /// each `req` as [`Refuses`] says.
+    #[derive(Clone)]
+    struct Refusing {
+        refuses: Refuses,
+        connects: Arc<AtomicU64>,
+        sends: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl Refusing {
+        fn new(refuses: Refuses) -> Refusing {
+            Refusing { refuses, connects: Arc::default(), sends: Arc::default() }
+        }
+
+        /// Connects made and the kinds of the frames the client asked the link to send.
+        fn counts(&self) -> (u64, Vec<&'static str>) {
+            (self.connects.load(Ordering::SeqCst), self.sends.lock().unwrap_or_else(PoisonError::into_inner).clone())
+        }
+    }
+
+    impl Link for Refusing {
+        const NAME: &'static str = "refusing";
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::new(DeliveryMode::Addressed)
+        }
+
+        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+            Err("this link has no server side".into())
+        }
+
+        async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+            self.connects.fetch_add(1, Ordering::SeqCst);
+            let (lane, replies) = mpsc::unbounded();
+            let (refuses, sends) = (self.refuses, Arc::clone(&self.sends));
+            Ok(Outbound {
+                send: Box::new(move |_pattern, frame, _reply_to| {
+                    sends.lock().unwrap_or_else(PoisonError::into_inner).push(frame.kind());
+                    let refused = match (&frame, refuses) {
+                        (Frame::Req { id, .. }, Refuses::Answer) => {
+                            let error = ErrorBody::new(ErrorKind::BadRequest, "refused", Details::new());
+                            let _ = lane.unbounded_send(Frame::Err { id: *id, error });
+                            Ok(())
+                        }
+                        (Frame::Req { .. }, Refuses::Send) => Err(BoxError::from(FrameTooLarge { size: 2, limit: 1 })),
+                        _ => Ok(()),
+                    };
+                    Box::pin(async move { refused })
+                }),
+                replies: Box::pin(replies),
+            })
+        }
+
+        async fn drain(&self) {}
+
+        async fn close(&self) -> Result<(), BoxError> {
+            Ok(())
+        }
+    }
+
+    /// The client has no retry policy: every `BadRequest` is final, attempted once whatever made
+    /// it. A zero bound is refused before the client connects, a request the server answers
+    /// `bad_request` is sent once, and one the link refuses as too large is offered to the link
+    /// once; an hour of the paused clock later nothing more has been sent.
+    #[tokio::test(start_paused = true)]
+    async fn a_bad_request_is_attempted_once() {
+        let runtime = || -> Arc<dyn Runtime> { Arc::new(ulo_runtime_tokio::Tokio::current()) };
+        let idle = Bound::After(Duration::from_secs(1));
+        let link = Refusing::new(Refuses::Answer);
+        let client = RpcClient::of_module(Arc::new(link.clone()), Bound::Default, idle, runtime());
+        let zeros = [
+            ("`StreamCall::idle_timeout(Bound::After(Duration::ZERO))`", client.stream::<_, u32>("refusing.stream", &()).idle_timeout(Bound::After(Duration::ZERO)).await.map(drop)),
+            ("`StreamCall::deadline(Duration::ZERO)`", client.stream::<_, u32>("refusing.stream", &()).deadline(Duration::ZERO).await.map(drop)),
+            ("`Call::timeout(Duration::ZERO)`", client.request::<_, u32>("refusing.request", &()).timeout(Duration::ZERO).await.map(drop)),
+        ];
+        for (what, refused) in zeros {
+            let refused = refused.expect_err(what);
+            assert_eq!((refused.kind(), refused.reason()), (ErrorKind::BadRequest, Some("zero_timeout")), "{what}: {refused:?}");
+        }
+        tokio::time::sleep(HOUR).await;
+        assert_eq!(link.counts(), (0, vec![]), "the connects and frames of three calls refused before connecting");
+
+        let answered = client.request::<_, u32>("refusing.request", &()).await.expect_err("the server refuses the request");
+        assert_eq!(answered.kind(), ErrorKind::BadRequest, "the server's answer: {answered:?}");
+        tokio::time::sleep(HOUR).await;
+        assert_eq!(link.counts(), (1, vec!["req"]), "the connects and frames of a request the server answered `bad_request`");
+
+        let link = Refusing::new(Refuses::Send);
+        let client = RpcClient::of_module(Arc::new(link.clone()), Bound::Default, idle, runtime());
+        let too_large = client.request::<_, u32>("refusing.request", &()).await.expect_err("the link refuses the request");
+        assert_eq!((too_large.kind(), too_large.reason()), (ErrorKind::BadRequest, Some("payload_too_large")), "the link's refusal: {too_large:?}");
+        tokio::time::sleep(HOUR).await;
+        assert_eq!(link.counts(), (1, vec!["req"]), "the connects and frames of a request the link refused as too large");
     }
 
     /// A link whose reply lane ends when the test says, as a lost connection's does.

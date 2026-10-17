@@ -27,9 +27,11 @@ pub const CANCEL_HOLD: Duration = Duration::from_secs(5);
 pub struct HoldUntil(Option<Instant>);
 
 impl HoldUntil {
-    /// Read from the `open`'s headers as the link sends it: `deadline-ms` from now, or none.
+    /// Read from the `open`'s headers as the link sends it: `deadline-ms` from now, or none. A
+    /// value the server cannot read holds as none does, for the fallback: the server refuses that
+    /// call `bad_deadline` before its handler runs, so no deadline of its ends it.
     pub fn at_open(headers: &CallHeaders) -> HoldUntil {
-        HoldUntil(headers.deadline().map(|remaining| Instant::now() + remaining))
+        HoldUntil(headers.deadline().ok().flatten().map(|remaining| Instant::now() + remaining))
     }
 
     /// How much longer to keep the held `cancel`: until the deadline, or `fallback` for an `open`

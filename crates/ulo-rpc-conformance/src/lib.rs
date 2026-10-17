@@ -301,6 +301,8 @@ macro_rules! conformance_suite {
             a_stream_s_shorter_idle_timeout_replaces_the_client_s => deadlines::shorter_idle_timeout_replaces_the_client_s,
             a_stream_s_zero_idle_timeout_is_refused_before_any_frame => deadlines::zero_idle_timeout_is_refused_before_any_frame,
             a_stream_s_longest_idle_timeout_does_not_panic => deadlines::longest_idle_timeout_does_not_panic,
+            a_call_s_zero_timeout_is_refused_before_the_server_sees_it => deadlines::zero_call_timeout_is_refused_before_the_server_sees_it,
+            a_stream_s_zero_deadline_is_refused_before_the_server_sees_it => deadlines::zero_stream_deadline_is_refused_before_the_server_sees_it,
             binary_payload => payloads::binary,
             oversized_payload => payloads::oversized,
             drain => drain::drain,

@@ -207,7 +207,8 @@ impl fmt::Debug for Reply {
 
 /// A call's headers, the frame's `h` or the broker's own headers, as an execution input and as a
 /// handler parameter. Reserved: `deadline-ms`, the remaining time, which becomes the execution's
-/// deadline, and `traceparent` (W3C Trace Context).
+/// deadline, a call whose value the server cannot read being refused `BadRequest` before its
+/// handler runs, and `traceparent` (W3C Trace Context).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallHeaders {
     pub(crate) entries: Vec<(String, String)>,
@@ -239,9 +240,12 @@ impl CallHeaders {
         self.entries.is_empty()
     }
 
-    /// `deadline-ms`, the remaining time in milliseconds. A value that does not parse sets none.
-    pub(crate) fn deadline(&self) -> Option<Duration> {
-        self.get("deadline-ms")?.trim().parse::<u64>().ok().map(Duration::from_millis)
+    /// `deadline-ms`, the remaining time in milliseconds: `Ok(None)` when the header is absent,
+    /// and `Err` with the value as sent when it is not a whole number of milliseconds a `u64`
+    /// holds, an empty, negative or overflowing value among them.
+    pub(crate) fn deadline(&self) -> Result<Option<Duration>, &str> {
+        let Some(value) = self.get("deadline-ms") else { return Ok(None) };
+        value.trim().parse::<u64>().map(|millis| Some(Duration::from_millis(millis))).map_err(|_| value)
     }
 }
 

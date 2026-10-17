@@ -2,21 +2,21 @@
 
 use std::error::Error as _;
 use std::future::{Future, IntoFuture};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 
 use ulo::{AppHandle, Bound, BoundAddr, BoxError, CancelReason, Runtime};
-use ulo_rpc::{Capabilities, Frame, Link, Outbound, Pattern, RpcClient, RpcStream, ZeroTimeout};
+use ulo_rpc::{Capabilities, Frame, Link, Outbound, Pattern, RpcClient, RpcError, RpcStream, ZeroTimeout};
 use ulo_rpc::link::Inbound;
 use ulo_transport::{Count, ErrorKind};
 
 use crate::{Broker, Budget};
 use crate::cases::app::{
-    ADD, Add, Fixture, Mounts, PAUSE, STALL, Sum, TICKS, addresses, client_over, eventually, failed, refused_at_startup, streams,
-    within,
+    ADD, Add, COUNT, Fixture, Mounts, PAUSE, STALL, Sum, TICKS, addresses, client_over, eventually, failed, refused_at_startup,
+    streams, within,
 };
 
 /// `deadline-ms` fires `Deadline` and renders `timeout`.
@@ -324,6 +324,143 @@ pub async fn longest_idle_timeout_does_not_panic<B: Broker>() {
     let replies = paused::<B>(&client, silence_of(budget), Bound::After(Duration::MAX)).await;
     runs_through_the_silence::<B>(replies, silence_of(budget), "a stream at `Bound::After(Duration::MAX)`").await;
     fixture.stop().await;
+}
+
+/// The header each call in the zero-bound scenarios below carries, which the server's [`Tapped`]
+/// link records for every opening frame it delivers.
+const MARK: &str = "x-conformance-mark";
+
+/// How many zero-bound calls each scenario below makes. A zero that is not refused times the call
+/// out at once, and whether its `req` is sent first is a race the client's `select!` decides at
+/// random, so one call that reaches no server would not show the refusal; eight leave a chance
+/// of 1 in 256 that a client sending at random sends none of them.
+const ZERO_CALLS: usize = 8;
+
+/// Asserts `refused` is a zero bound's refusal: `BadRequest`, the reason `zero_timeout`, a
+/// `ZeroTimeout` as its source.
+fn zero_refused<T: std::fmt::Debug>(refused: Result<T, RpcError>, what: &str) {
+    let refused = failed(refused, ErrorKind::BadRequest);
+    assert_eq!(refused.reason(), Some("zero_timeout"), "{what}: the refusal's reason: {refused:?}");
+    assert!(
+        refused.source().is_some_and(|source| source.downcast_ref::<ZeroTimeout>().is_some()),
+        "{what}: the refusal's source is not a `ZeroTimeout`: {refused:?}"
+    );
+}
+
+/// F392: a call given `.timeout(Duration::ZERO)` fails when it is awaited, `BadRequest` with the
+/// reason `zero_timeout` and a `ZeroTimeout` as its source, and its server sees no request: the
+/// server's own link records the marked opening frames it delivers, and after eight refused calls
+/// and a ninth with a ten-second timeout, answered, it has delivered the ninth alone. Every call
+/// names one pattern over one connection, so a refused call's frame, had it been sent, would
+/// have reached the server before the ninth's.
+pub async fn zero_call_timeout_is_refused_before_the_server_sees_it<B: Broker>() {
+    let tap = Tap::default();
+    let fixture = Fixture::<B>::start_over(Count::Default, |broker| Tapped { link: broker.link(), tap: tap.clone() }).await;
+    for _ in 0..ZERO_CALLS {
+        let call = fixture.rpc().request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).header(MARK, "zero").timeout(Duration::ZERO);
+        zero_refused(within::<B, _>(Duration::from_secs(10), "the refusal", call.into_future()).await, "`Call::timeout(Duration::ZERO)`");
+    }
+    let sum = fixture.rpc().request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).header(MARK, "after").timeout(Duration::from_secs(10)).await;
+    assert_eq!(sum.expect("a call with a ten-second timeout is answered"), Sum { sum: 5 });
+    assert_eq!(tap.marks(), vec!["after"], "the marked calls the server received");
+    fixture.stop().await;
+}
+
+/// F392: a stream given `.deadline(Duration::ZERO)` fails when it is awaited, `BadRequest` with
+/// the reason `zero_timeout` and a `ZeroTimeout` as its source, and its server sees no request,
+/// as in [`zero_call_timeout_is_refused_before_the_server_sees_it`]: the ninth stream, given a
+/// ten-second deadline, is answered, its two items on a link carrying streamed replies and
+/// `pattern_unhandled` on UDP, which mounts no streaming handler, and the server has delivered
+/// it alone.
+pub async fn zero_stream_deadline_is_refused_before_the_server_sees_it<B: Broker>() {
+    let tap = Tap::default();
+    let fixture = Fixture::<B>::start_over(Count::Default, |broker| Tapped { link: broker.link(), tap: tap.clone() }).await;
+    for _ in 0..ZERO_CALLS {
+        let call = fixture.rpc().stream::<_, u32>(COUNT, &2u32).header(MARK, "zero").deadline(Duration::ZERO);
+        let refused = within::<B, _>(Duration::from_secs(10), "the refusal", call.into_future()).await;
+        zero_refused(refused.map(drop), "`StreamCall::deadline(Duration::ZERO)`");
+    }
+    let call = fixture.rpc().stream::<_, u32>(COUNT, &2u32).header(MARK, "after").deadline(Duration::from_secs(10));
+    let replies = within::<B, _>(Duration::from_secs(10), "the stream's opening", call.into_future()).await.expect("the stream opens");
+    let items: Vec<_> = within::<B, _>(Duration::from_secs(10), "the stream", replies.collect()).await;
+    if streams(&fixture.capabilities()) {
+        let items: Vec<u32> = items.into_iter().map(|item| item.expect("the stream yields")).collect();
+        assert_eq!(items, vec![1, 2], "the stream given a ten-second deadline");
+    } else {
+        match items.as_slice() {
+            [Err(error)] if error.reason() == Some("pattern_unhandled") => {}
+            other => panic!("a stream on a link carrying none was not answered `pattern_unhandled`: {other:?}"),
+        }
+    }
+    assert_eq!(tap.marks(), vec!["after"], "the marked calls the server received");
+    fixture.stop().await;
+}
+
+/// The value of [`MARK`] on each opening frame a [`Tapped`] link delivered, in arrival order.
+#[derive(Clone, Default)]
+struct Tap(Arc<Mutex<Vec<String>>>);
+
+impl Tap {
+    fn marks(&self) -> Vec<String> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+}
+
+/// A server link recording, in its [`Tap`], every opening frame carrying [`MARK`] that it hands
+/// the server: a `req`, an `open` or an `evt`.
+struct Tapped<L> {
+    link: L,
+    tap: Tap,
+}
+
+impl<L: Link> Link for Tapped<L> {
+    const NAME: &'static str = L::NAME;
+
+    fn capabilities(&self) -> Capabilities {
+        self.link.capabilities()
+    }
+
+    fn prepare(&mut self, app: &AppHandle) -> impl Future<Output = Result<(), BoxError>> + Send {
+        self.link.prepare(app)
+    }
+
+    fn usable(&self) -> Result<(), BoxError> {
+        self.link.usable()
+    }
+
+    fn max_inflight(&mut self, calls: Count) {
+        self.link.max_inflight(calls);
+    }
+
+    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+        let inbound = self.link.listen(patterns).await?;
+        let tap = self.tap.clone();
+        Ok(Box::pin(inbound.inspect(move |delivery| {
+            let headers = match &delivery.frame {
+                Frame::Req { headers, .. } | Frame::Open { headers, .. } | Frame::Evt { headers, .. } => headers,
+                _ => return,
+            };
+            if let Some(mark) = headers.get(MARK) {
+                tap.0.lock().unwrap_or_else(PoisonError::into_inner).push(mark.to_owned());
+            }
+        })))
+    }
+
+    fn connect(&self, runtime: &Arc<dyn Runtime>) -> impl Future<Output = Result<Outbound, BoxError>> + Send {
+        self.link.connect(runtime)
+    }
+
+    fn drain(&self) -> impl Future<Output = ()> + Send {
+        self.link.drain()
+    }
+
+    fn close(&self) -> impl Future<Output = Result<(), BoxError>> + Send {
+        self.link.close()
+    }
+
+    fn bound(&self) -> Vec<BoundAddr> {
+        self.link.bound()
+    }
 }
 
 /// How many times a [`Counted`] link connected and sent a frame.

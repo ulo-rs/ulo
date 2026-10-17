@@ -525,14 +525,14 @@ impl Server {
     }
 }
 
-async fn bound<B: Broker>(broker: &B, probe: Probe, mounts: Mounts, max_inflight: Count) -> Result<App<Serving>, StartupError> {
+async fn bound<B: Broker, L: Link>(link: L, probe: Probe, mounts: Mounts, max_inflight: Count) -> Result<App<Serving>, StartupError> {
     App::builder(ServerRoot { probe, mounts })
         .runtime(<B::Harness as Harness>::runtime())
         .drain_timeout(DRAIN)
         .wire()?
         .connect()
         .await?
-        .bind(ulo_rpc::Server::new(broker.link()).max_inflight(max_inflight))
+        .bind(ulo_rpc::Server::new(link).max_inflight(max_inflight))
         .listen()
         .await
 }
@@ -544,9 +544,14 @@ pub(crate) async fn server<B: Broker>(broker: &B) -> Server {
 
 /// [`server`] with its `max_inflight` set.
 pub(crate) async fn server_bounded<B: Broker>(broker: &B, max_inflight: Count) -> Server {
+    server_over(broker, broker.link(), max_inflight).await
+}
+
+/// [`server_bounded`] over `link`, a link built from the broker's [`Broker::link`].
+pub(crate) async fn server_over<B: Broker, L: Link>(broker: &B, link: L, max_inflight: Count) -> Server {
     let probe = Probe::default();
     let mounts = Mounts::carried(&broker.link().capabilities());
-    let app = bound(broker, probe.clone(), mounts, max_inflight)
+    let app = bound::<B, L>(link, probe.clone(), mounts, max_inflight)
         .await
         .unwrap_or_else(|error| crate::startup_failed!("the conformance server did not start: {}", report(&error)));
     let handle = app.handle();
@@ -568,7 +573,7 @@ pub(crate) async fn server_bounded<B: Broker>(broker: &B, max_inflight: Count) -
 /// Asserts that a server mounting `mounts` is refused at startup as a `Configure` error: what a
 /// link's capabilities exclude is refused in `prepare`, before anything binds.
 pub(crate) async fn refused_at_startup<B: Broker>(broker: &B, mounts: Mounts) {
-    match bound(broker, Probe::default(), mounts, Count::Default).await {
+    match bound::<B, _>(broker.link(), Probe::default(), mounts, Count::Default).await {
         Err(StartupError::Configure(_)) => {}
         Err(other) => crate::startup_failed!("expected a `Configure` refusal for {mounts:?}, got: {}", report(&other)),
         Ok(app) => {
@@ -654,8 +659,15 @@ impl<B: Broker> Fixture<B> {
 
     /// [`start`](Self::start) with the server's `max_inflight` set.
     pub(crate) async fn start_bounded(max_inflight: Count) -> Fixture<B> {
+        Fixture::start_over(max_inflight, B::link).await
+    }
+
+    /// [`start_bounded`](Self::start_bounded) with the server over the link `server_link` builds
+    /// from the broker, the broker's own link inside something that watches it.
+    pub(crate) async fn start_over<L: Link>(max_inflight: Count, server_link: impl FnOnce(&B) -> L) -> Fixture<B> {
         let broker = B::start().await;
-        let server = server_bounded(&broker, max_inflight).await;
+        let link = server_link(&broker);
+        let server = server_over(&broker, link, max_inflight).await;
         let client = client(&broker, &[&server]).await;
         ready(&broker, &client.rpc, &[&server]).await;
         Fixture { broker, server, client }
