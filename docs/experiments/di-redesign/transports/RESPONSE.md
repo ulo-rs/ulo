@@ -2111,3 +2111,42 @@ Changing both methods to take a `Bound`, as S4 did for `idle_timeout`, is a refi
 **S5. Accepted.** Keeping the old app serving while the red report stands is better than leaving nothing serving. The next change retries the restart.
 
 **Found by reading F391: a probe for the server side.** The client was sending a `deadline-ms` the server couldn't parse, and the server then set no deadline. That is a server accepting a malformed header in silence. Probe: with a hand-written frame, does every server that reads `deadline-ms` silently ignore a value it can't parse, whether it overflows, isn't a number, or is negative? If so, that is a defect and gets a ledger number. The fix: refuse the request as `BadRequest`, reason `bad_deadline`, before the handler runs. A malformed deadline means the caller's bound is lost, and running unbounded work for a caller that asked for a bound is the wrong default. It can go in batch 31 alongside F392, since both are refusals of a bad bound, at opposite ends of the wire.
+
+## Fifty-seventh response: a zero on the wire, reserved headers and gRPC's timeout grammar
+
+Received 2026-10-17, answering `divergences/race2b-tests31.md` (S1–S6, F395, F396). The user signed it off the same day; F395, F396 and S4's redelivery check build as test batch 32, the grpc-go probe in a temporary `golang` container, and S1's and S2's refinements are filed as F397 and F398, deferred.
+
+**S1. Accepted.** A zero coming off the wire isn't the mistake a zero in the client is. A server that passes its remaining budget down to another call can arrive at zero legitimately, and "already passed" is the honest reading of that value. Refusing it would turn an expired budget into a `bad_request`, which misreports what happened. So a zero set on the client is refused, and a zero received on the wire is honoured, because they mean different things. Accepting a leading `+` and surrounding whitespace is looser than it needs to be. Tightening that grammar is a refinement: defer it, with that reason.
+
+**S2. Accepted.** Error handlers observe executions, and this request never becomes one. It is the same line §3.5 draws for a capacity refusal, which runs no hook. The caller gets the refusal, and a refused event is logged at `warn`, so nothing passes in silence. Whether a refused request should also be logged on the server is a refinement. Defer it.
+
+**S5 (F395). Yes for the unreadable case, and one premise decides the readable case.** A caller's unreadable `deadline-ms` is refused at the await: `BadRequest`, reason `bad_deadline`, with the same quoting as F394, on every path, including the paths where the client stamps its own deadline. Silently replacing the value hides the caller's mistake, which is a defect, and §3.2 puts the refusal at the line that wrote the bad value.
+
+A *readable* caller-set value on a path where the client stamps its own deadline is also silently replaced today. Whether that is a defect depends on this premise: does any ulo path copy an incoming call's headers into an outgoing one, so a forwarded `deadline-ms` is the expected way to propagate a deadline? To be checked.
+
+- **If nothing forwards headers**, the header is reserved. Refuse any caller-set `deadline-ms`, readable or not, at the await, with reason `reserved_header`. The deadline is set through `.timeout` or `.deadline`, which is §3.4's one name, one meaning.
+- **If something forwards headers**, send it back as a question, with the forwarding path. That is a deadline-propagation design, not a refusal.
+
+**S6 (F396). Yes, refuse it, after a probe and a check of the spec.** Start from the spec. gRPC over HTTP/2 defines `grpc-timeout` as at most eight ASCII digits followed by one unit letter: `H`, `M`, `S`, `m`, `u` or `n`. Confirm that against the protocol document. A nine-digit value is malformed under that grammar, even if a parser accepts it.
+
+Then probe two implementations with hand-written frames: overflowing, non-numeric, missing unit, unknown unit, nine digits, empty.
+
+1. **tonic, as we run it.** The `debug` log suggests tonic itself discards the value, so the probe should show whether our code ever sees the header.
+2. **grpc-go**, to replace the claim from memory.
+
+What each outcome decides:
+
+- **If grpc-go refuses with a status code**, use that code. Interoperability decides it, not preference.
+- **If the implementations disagree, or neither refuses**, refuse with `INTERNAL` and a message quoting up to 64 characters of the value, matching F394. The spec leaves the code open. `INVALID_ARGUMENT` would point the caller at their message instead of the header.
+- **If tonic consumes the header before our code sees it**, the refusal goes in a layer in front of tonic's. Report where it sits as an S-item.
+
+The refusal runs before the handler, with no execution opened, as in S2. The tests are F394's set in gRPC form.
+
+**S3. Accepted.** When F393 lands, the message changes along with the setters.
+
+**S4. Accepted, given one premise.** A refused request has been answered, so acknowledging it is correct. A refused event must never be redelivered: it would be refused again on every delivery and become a poison message. To be checked, what "rejected" means on each broker that rejects:
+
+- AMQP: `basic.reject` or `basic.nack` with `requeue=false`.
+- Kafka, which has no reject: the offset is committed past the event.
+
+A test should show a refused event isn't delivered a second time.
