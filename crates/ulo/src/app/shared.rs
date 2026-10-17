@@ -42,7 +42,8 @@ pub(crate) struct AppShared {
     pub(crate) draining: Notify,
     pub(crate) live: Arc<LiveSet>,
     pub(crate) shutdown: ShutdownCell,
-    /// The bound transports, set by `listen`; the shutdown sequence drains and closes them.
+    /// The bound transports, set by `listen`; the shutdown sequence drains and closes them, then
+    /// empties it.
     pub(crate) servers: Mutex<Vec<Arc<dyn ErasedServer>>>,
     /// Serializes `load`: one lazy module wires against one graph at a time.
     pub(crate) load_lock: async_lock::Mutex<()>,

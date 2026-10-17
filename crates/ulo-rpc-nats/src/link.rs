@@ -1114,7 +1114,7 @@ mod tests {
     use super::*;
 
     /// Root certificates loaded per test, each test's loader counting in a slot of its own.
-    static LOADS: [AtomicUsize; 15] = [const { AtomicUsize::new(0) }; 15];
+    static LOADS: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
 
     /// A store that cannot be read: rustls-native-certs reading a file that is not there, as it
     /// reads one `SSL_CERT_FILE` names.
@@ -1449,6 +1449,23 @@ mod tests {
             assert!(!connz.contains("tls_version"), "a connection on a `nats://` url to a plain server uses TLS: {connz}");
             let _ = client.close().await;
             let _ = serving.close().await;
+        }
+
+        /// F425: a server's link bound through an app removes its roots once the app has closed and
+        /// `serve` has returned, the app having let go of its server.
+        #[tokio::test]
+        async fn a_closed_app_s_server_removes_its_roots() {
+            let (server, _monitor, _container) = plain_nats().await;
+            let here = dir::<15>();
+            fresh(&here);
+            let app = app().await.bind(Server::new(link(&format!("nats://{server}"), test_root::<15>, dir::<15>))).listen().await.expect("the server binds");
+            assert_eq!((LOADS[15].load(Ordering::SeqCst), files_in(&here).len()), (1, 1), "the server's link did not load and write its roots once");
+            let handle = app.handle();
+            let serving = tokio::spawn(async move { app.serve(std::future::pending::<ulo::Signal>()).await.map(drop).map_err(|error| error.to_string()) });
+            handle.close(ulo::Signal::new("test")).await.expect("the app closes");
+            serving.await.expect("the serving task completes").expect("`serve` returns `Ok`");
+            assert_eq!(emptied(&here).await, Vec::<PathBuf>::new(), "the roots outlived the closed app's server");
+            let _ = std::fs::remove_dir(&here);
         }
     }
 

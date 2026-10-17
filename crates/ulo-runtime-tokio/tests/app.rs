@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use ulo::app::Bound as Serving;
 use ulo::testing::TestApp;
 use ulo::{
-    App, AppBuilder, BoxError, BoxFuture, ConnectError, Connected, DrainToken, FailureReason, LookupError, Module,
+    App, AppBuilder, AppHandle, BoxError, BoxFuture, ConnectError, Connected, DrainToken, FailureReason, LookupError, Module,
     ModuleDef, ModuleIdentity, Mounted, Runtime, RuntimeMissing, Secret, Server, Signal, StartupError, TaskEnd, Timer,
     Transport, WiringError,
 };
@@ -334,4 +334,76 @@ async fn a_server_times_with_the_timer_set_after_the_runtime() {
     let clocks = *prepared.clocks.lock().unwrap_or_else(PoisonError::into_inner);
     assert_eq!(clocks, Some((at, at)), "`Mounted::timer` and `Mounted::runtime` read the timer set after the runtime");
     app.serve(async { Signal::new("test") }).await.expect("the app did not shut down");
+}
+
+/// Sets its flag when it drops.
+struct DropFlag(Arc<AtomicBool>);
+
+impl Drop for DropFlag {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// A server keeping the `AppHandle` its `prepare` is handed, as the shipped transports' servers
+/// do to open executions, so it holds the app.
+struct Holding {
+    app: Option<AppHandle>,
+    _dropped: DropFlag,
+}
+
+impl Server for Holding {
+    type Transport = Bare;
+
+    async fn prepare(&mut self, mounted: Mounted<'_, Bare>) -> Result<(), BoxError> {
+        self.app = Some(mounted.app().clone());
+        Ok(())
+    }
+
+    async fn bind(&mut self, _mounted: Mounted<'_, Bare>) -> Result<(), BoxError> {
+        Ok(())
+    }
+
+    async fn serve(&self) -> Result<(), BoxError> {
+        Ok(())
+    }
+
+    async fn drain(&self, _token: DrainToken) {}
+
+    async fn close(&self) -> Result<(), BoxError> {
+        Ok(())
+    }
+}
+
+/// A module whose one singleton sets its flag when it drops.
+struct Flagged(Arc<AtomicBool>);
+
+impl Module for Flagged {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.value(DropFlag(Arc::clone(&self.0)));
+    }
+}
+
+/// F425: the app holds its servers and a server holding the app's handle holds the app, so
+/// neither dropped. A closed app lets go of its servers: the server drops once `serve` has
+/// returned, a handle still held, and the app's singletons once the last handle drops.
+#[tokio::test]
+async fn a_closed_app_drops_a_server_holding_its_handle() {
+    let (server, singleton) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+    let app = connect(App::builder(Flagged(Arc::clone(&singleton))).runtime(Tokio::current()))
+        .await
+        .bind(Holding { app: None, _dropped: DropFlag(Arc::clone(&server)) })
+        .listen()
+        .await
+        .unwrap_or_else(|error| panic!("the app did not bind: {error}"));
+    let handle = app.handle();
+    app.serve(async { Signal::new("test") }).await.expect("the app did not shut down");
+    assert!(server.load(Ordering::SeqCst), "the server outlived the closed app's `serve`");
+    assert!(!singleton.load(Ordering::SeqCst), "the app's singletons dropped while a handle was held");
+    drop(handle);
+    assert!(singleton.load(Ordering::SeqCst), "the app's singletons outlived its last handle");
 }

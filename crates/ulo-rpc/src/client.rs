@@ -1503,13 +1503,82 @@ mod tests {
         assert!(failures.is_empty(), "{} of the sweep's durations failed, the first ten: {:#?}", failures.len(), &failures[..failures.len().min(10)]);
     }
 
-    /// A stream's deadline under a millisecond is sent as `1`, and one longer than `u64::MAX`
-    /// milliseconds as that, the longest value the server reads.
+    /// The tokio runtime's spawning on a clock that stands still until [`Stepped::advance`] moves
+    /// it, and whose sleeps never end, so no timer the client arms ends a call first.
+    #[derive(Clone)]
+    struct Stepped {
+        tokio: ulo_runtime_tokio::Tokio,
+        start: Instant,
+        moved: Arc<Mutex<Duration>>,
+    }
+
+    impl Stepped {
+        fn new() -> Stepped {
+            Stepped { tokio: ulo_runtime_tokio::Tokio::current(), start: Instant::now(), moved: Arc::default() }
+        }
+
+        fn advance(&self, by: Duration) {
+            *self.moved.lock().unwrap_or_else(PoisonError::into_inner) += by;
+        }
+    }
+
+    impl Timer for Stepped {
+        fn sleep(&self, _d: Duration) -> BoxFuture<'static, ()> {
+            Box::pin(std::future::pending())
+        }
+
+        fn now(&self) -> Instant {
+            self.start + *self.moved.lock().unwrap_or_else(PoisonError::into_inner)
+        }
+    }
+
+    impl ulo::Spawn for Stepped {
+        fn spawn(&self, fut: BoxFuture<'static, ()>) -> ulo::TaskHandle {
+            ulo::Spawn::spawn(&self.tokio, fut)
+        }
+    }
+
+    /// A [`SilentLink`] whose every connect takes `takes` of a [`Stepped`] clock.
+    struct SlowConnect {
+        link: SilentLink,
+        clock: Stepped,
+        takes: Duration,
+    }
+
+    impl Link for SlowConnect {
+        const NAME: &'static str = "slow-connect";
+
+        fn capabilities(&self) -> Capabilities {
+            self.link.capabilities()
+        }
+
+        async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+            self.link.listen(patterns).await
+        }
+
+        async fn connect(&self, runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+            self.clock.advance(self.takes);
+            self.link.connect(runtime).await
+        }
+
+        async fn drain(&self) {}
+
+        async fn close(&self) -> Result<(), BoxError> {
+            Ok(())
+        }
+    }
+
+    /// F424: `deadline-ms` is what is left of a stream's deadline once its connection is made, in
+    /// whole milliseconds. A connect taking 2 ms of a 2.5 ms deadline leaves 500 µs, sent as `1`,
+    /// the shortest deadline the server reads; one longer than `u64::MAX` milliseconds is sent as
+    /// that, the longest. The clock moves only while the client connects, so what is left is
+    /// exact.
     #[tokio::test]
     async fn a_deadline_is_sent_as_milliseconds_the_server_reads() {
-        let link = SilentLink::default();
-        let client = silent_client(&link, Duration::from_secs(30));
-        drop(client.stream::<_, u32>("silent.stream", &()).deadline(Duration::from_micros(500)).await.expect("the stream opens"));
+        let (link, clock) = (SilentLink::default(), Stepped::new());
+        let slow = SlowConnect { link: link.clone(), clock: clock.clone(), takes: Duration::from_millis(2) };
+        let client = RpcClient::of_module(Arc::new(slow), Bound::After(Duration::from_secs(30)), Bound::Default, Arc::new(clock));
+        drop(client.stream::<_, u32>("silent.stream", &()).deadline(Duration::from_micros(2_500)).await.expect("the stream opens"));
         drop(client.stream::<_, u32>("silent.stream", &()).deadline(Duration::from_secs(1 << 62)).await.expect("the stream opens"));
         assert_eq!(link.sent(), vec![("req", Some("1".to_owned())), ("req", Some(u64::MAX.to_string()))], "each stream's `deadline-ms`");
     }
