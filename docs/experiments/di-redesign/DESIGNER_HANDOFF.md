@@ -226,9 +226,26 @@ Two rules of the record:
 - Where a build departs from your answer, the build is what the design states. The departure is
   shown to you as an S-item.
 
-## 5. Open threads
+## 5. Where the work goes next
 
-### 5.1 Deferred by decision, unbuilt
+The order:
+1. **Batch 30 closes the current round.** After it, a batch is opened only for a real defect: a
+   suite failure, a probe finding, or a bug found by reading.
+2. **Refinement is deferred, not abandoned.** Better names, tighter grammar and polish are listed
+   with their reason instead of batched. They resume in full after the switch, with the same
+   thoroughness. When you see a refinement, say so and mark it deferred; don't drop it.
+3. **Race 3, the integrations:** configuration, health checks, the database modules (SeaORM, Redis,
+   Mongo, Sqlx, Diesel, Prisma) and the CLI's scaffolding for the new API. `master` has all of
+   these and the branch rebuilds none of them yet (F301). It starts from a design brief, so your
+   first work there is the brief.
+4. **The switch:** the examples and integration tests move to the new API (F335), the docs site
+   is rewritten, and the branch merges over `master` as a beta towards 1.0. The open pull requests
+   on `master` are merged into that transition rather than closed.
+5. **Then the deferred refinement resumes.**
+
+## 6. Open threads
+
+### 6.1 Deferred by decision, unbuilt
 
 - **The `async-tungstenite` 0.35 / tungstenite 0.30 bump.** A change of its own, with the
   WebSocket suite as its check.
@@ -244,7 +261,7 @@ Two rules of the record:
 - **F341:** RabbitMQ's local suite is slow on this host, and is owed one run on a quiet container
   engine.
 
-### 5.2 Standing limits, recorded rather than fixed
+### 6.2 Standing limits, recorded rather than fixed
 
 - **F383:** every hyper-based server carries tokio's `sync` primitives, which is the reason the
   runtime-neutral level exists.
@@ -257,7 +274,7 @@ Two rules of the record:
   announcing Receive Maximum 65,535.
 - **F331:** a NATS drain can't be confirmed, so NATS declares `confirms_drain(false)`.
 
-### 5.3 Older ledger entries without a fix note
+### 6.3 Older ledger entries without a fix note
 
 These are F300–F323. Some may be stale, so ask Claude Code to check one against the code before
 deciding anything on it:
@@ -270,7 +287,7 @@ deciding anything on it:
   axum's nest path, the TCP client's TLS and UDP retries, RPC per-call ordering keys, graphql-ws
   enhancers, an unserved `port = own` gateway.
 
-## 6. The first decisions waiting for you: batch 29
+## 7. The first decisions waiting for you: batch 29
 
 Batch 29 built the fifty-fourth response, the previous designer's last answer. That response:
 - restored `FuturesIo`'s faster `unsafe` read in a module of its own, checked by Miri;
