@@ -37,7 +37,7 @@ use ulo_transport::{Classify, Detail, Details, ErrorKind};
 use crate::codec::Codec;
 use crate::dispatch::{quote, reason};
 use crate::frame::{Data, ErrorBody, Frame};
-use crate::link::{FrameTooLarge, FrameUnencodable, Link, NoDestination, Outbound, Pattern, ReplyTo};
+use crate::link::{FrameTooLarge, FrameUnencodable, Link, Misconfigured, NoDestination, Outbound, Pattern, ReplyTo};
 use crate::transport::CallHeaders;
 
 /// A client's timeout at `Bound::Default`.
@@ -128,8 +128,8 @@ impl fmt::Display for ZeroTimeout {
 impl Error for ZeroTimeout {}
 
 /// A link a client cannot use, refused before any call: its [`Link::usable`] failed, a tokio-based
-/// link built outside a runtime and given none. [`RpcClient::new`] answers it, and
-/// `RpcClientModule`'s init hook fails the app's `connect` with it.
+/// link built outside a runtime and given none, or a TCP link given a host name. [`RpcClient::new`]
+/// answers it, and `RpcClientModule`'s init hook fails the app's `connect` with it.
 #[derive(Debug)]
 pub struct UnusableLink {
     site: &'static str,
@@ -263,15 +263,24 @@ impl RpcClient {
     /// calls: five seconds for each `request`, `send_stream` and `emit` unless
     /// [`timeout`](Self::timeout) or the call sets another.
     ///
-    /// ```ignore
-    /// let billing = RpcClient::new(ulo_rpc_tcp::Tcp::new("billing:7000"), Arc::new(ulo_runtime_tokio::Tokio::current()))?
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use std::time::Duration;
+    /// # use ulo::Bound;
+    /// # use ulo_rpc::RpcClient;
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let tokio = tokio::runtime::Builder::new_current_thread().build()?;
+    /// # let _entered = tokio.enter();
+    /// let billing = RpcClient::new(ulo_rpc_tcp::Tcp::new("10.0.0.5:7000"), Arc::new(ulo_runtime_tokio::Tokio::current()))?
     ///     .timeout(Bound::After(Duration::from_secs(2)))?;
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// A link that can never connect is refused here as [`UnusableLink`], where the mistake is
     /// made, rather than failing each call `Unavailable`: [`Link::usable`] decides, a tokio-based
-    /// link built outside a runtime and given none. Nothing else about the link is checked before
-    /// its first call.
+    /// link built outside a runtime and given none, or a TCP link given a host name, since it takes
+    /// IP addresses only. Nothing else about the link is checked before its first call.
     ///
     /// The client owns the link. Once its last clone and the last call it made are dropped, it
     /// releases its connection and spawns the link's `close` on `runtime`. A runtime that drops
@@ -616,9 +625,7 @@ impl ClientInner {
         if let Some(conn) = slot.as_ref().filter(|conn| conn.open.load(Ordering::Acquire)) {
             return Ok(Arc::clone(conn));
         }
-        let Outbound { send, replies } = (self.connect)().await.map_err(|err| {
-            RpcError::new(ErrorKind::Unavailable, format!("the {} link could not connect: {err}", self.link))
-        })?;
+        let Outbound { send, replies } = (self.connect)().await.map_err(|err| connect_error(self.link, err))?;
         let conn = Arc::new(Conn {
             send,
             pending: Mutex::new(HashMap::new()),
@@ -783,6 +790,16 @@ fn unexpected(frame: &Frame) -> RpcError {
 
 fn lost() -> RpcError {
     RpcError::new(ErrorKind::Unavailable, "the link closed before the reply arrived")
+}
+
+/// A link's failure to connect, mapped one way on every link: `Unavailable`, which the next call
+/// may not meet, unless the link answered it [`Misconfigured`], which every call meets.
+fn connect_error(link: &str, err: BoxError) -> RpcError {
+    if err.is::<Misconfigured>() {
+        RpcError::new(ErrorKind::Internal, format!("the {link} link cannot connect: {err}")).with_reason("misconfigured_link")
+    } else {
+        RpcError::new(ErrorKind::Unavailable, format!("the {link} link could not connect: {err}"))
+    }
 }
 
 /// A link's refusal of a frame, mapped one way on every link.
@@ -1175,8 +1192,8 @@ impl<Res> Stream for RpcStream<Res> {
 /// `BadRequest` with `reason: "payload_too_large"`; a binary payload on a JSON link `BadRequest`
 /// with `reason: "binary_unsupported"`, before any I/O; a `deadline-ms` the caller set with
 /// `.header` `BadRequest` with `reason: "reserved_header"`, before any I/O; a request frame the
-/// link cannot encode
-/// `Internal`. A pattern nothing handles is `Unavailable`
+/// link cannot encode `Internal`; a connect the link refuses as [`Misconfigured`] `Internal` with
+/// `reason: "misconfigured_link"`. A pattern nothing handles is `Unavailable`
 /// with `reason: "pattern_unhandled"` or `"no_destination"` where the link signals it, and the
 /// client's `Timeout` where it cannot.
 #[derive(Debug)]
@@ -1222,8 +1239,9 @@ impl RpcError {
 
     /// The `ErrorInfo` detail's `reason`, when one is present: `"no_destination"`,
     /// `"pattern_unhandled"`, `"payload_too_large"`, `"binary_unsupported"`, `"zero_timeout"`,
-    /// `"reserved_header"` for a `deadline-ms` the caller set, and the server's `"bad_deadline"`
-    /// for a `deadline-ms` header it cannot read.
+    /// `"reserved_header"` for a `deadline-ms` the caller set, `"misconfigured_link"` for a link
+    /// that refused to connect as [`Misconfigured`], and the server's `"bad_deadline"` for a
+    /// `deadline-ms` header it cannot read.
     pub fn reason(&self) -> Option<&str> {
         self.details.iter().find_map(|detail| match detail {
             Detail::ErrorInfo { reason, .. } => Some(reason.as_str()),
@@ -1940,5 +1958,57 @@ mod tests {
         let err = answer.expect_err("the link refused to encode the request, so the call must fail");
         assert_eq!(err.kind(), ErrorKind::Internal, "expected `Internal` for an unencodable request frame, got: {err:?}");
         assert!(err.message().contains("the Cbor codec cannot encode the frame"), "the message should name the codec's failure, got: {err:?}");
+    }
+
+    /// A link whose every connect fails: with a [`Misconfigured`] refusal, or with any other error.
+    struct FailsToConnect {
+        misconfigured: bool,
+        connects: Arc<AtomicU64>,
+    }
+
+    impl Link for FailsToConnect {
+        const NAME: &'static str = "failing";
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::new(DeliveryMode::Addressed)
+        }
+
+        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+            Err("this link has no server side".into())
+        }
+
+        async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+            self.connects.fetch_add(1, Ordering::SeqCst);
+            if self.misconfigured {
+                Err(Misconfigured { source: "no root certificate loaded".into() }.into())
+            } else {
+                Err("connection refused".into())
+            }
+        }
+
+        async fn drain(&self) {}
+
+        async fn close(&self) -> Result<(), BoxError> {
+            Ok(())
+        }
+    }
+
+    /// A connect the link refuses as `Misconfigured` fails each call `Internal` with
+    /// `reason: "misconfigured_link"`, the link's cause in its message, and any other failed
+    /// connect `Unavailable`. Each call asks the link again.
+    #[tokio::test]
+    async fn a_misconfigured_link_fails_every_call_internal() {
+        for (misconfigured, expected) in [(true, (ErrorKind::Internal, Some("misconfigured_link"))), (false, (ErrorKind::Unavailable, None))] {
+            let connects = Arc::new(AtomicU64::new(0));
+            let link = FailsToConnect { misconfigured, connects: Arc::clone(&connects) };
+            let client = RpcClient::new(link, Arc::new(ulo_runtime_tokio::Tokio::current())).expect("the link is usable");
+            for call in 0..2 {
+                let failed = client.request::<_, u32>("failing.request", &()).await.expect_err("the link never connects");
+                assert_eq!((failed.kind(), failed.reason()), expected, "call {call}, misconfigured {misconfigured}: {failed:?}");
+                let cause = if misconfigured { "no root certificate loaded" } else { "connection refused" };
+                assert!(failed.message().contains(cause), "call {call} does not name the link's cause: {failed:?}");
+            }
+            assert_eq!(connects.load(Ordering::SeqCst), 2, "each call asks the link to connect, misconfigured {misconfigured}");
+        }
     }
 }

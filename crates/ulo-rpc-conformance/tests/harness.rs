@@ -1,5 +1,6 @@
 //! The suite's own machinery, apart from any link: the smol harness's runtime on the threads that
-//! run a scenario's tasks, the slots a bounded suite's scenarios share, and the relay.
+//! run a scenario's tasks, each harness's one-thread runtime, the slots a bounded suite's scenarios
+//! share, and the relay.
 
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
@@ -64,6 +65,39 @@ fn the_tokio_harness_runs_the_scenario_on_a_tokio_runtime() {
         let answered = ulo::spawn_with(&runtime, async { 7 }).await;
         assert_eq!(answered.expect("the task returned"), 7);
     });
+}
+
+/// Sixteen tasks spawned at once on the harness's one-thread runtime, each blocking its thread
+/// briefly, every one polled on the scenario's thread.
+fn one_thread<H: Harness>() {
+    let found = H::block_on_one_thread(async {
+        let runtime = H::runtime();
+        let tasks: Vec<_> = (0..16)
+            .map(|_| {
+                ulo::spawn_with(&runtime, async {
+                    thread::sleep(Duration::from_millis(5));
+                    thread::current().id()
+                })
+            })
+            .collect();
+        let mut threads = Vec::new();
+        for task in tasks {
+            threads.push(task.await.expect("the task returned"));
+        }
+        threads
+    });
+    let here = thread::current().id();
+    assert!(found.iter().all(|id| *id == here), "a task ran off the scenario's thread: {found:?}, the scenario's {here:?}");
+}
+
+#[test]
+fn the_smol_harness_s_one_thread_runs_every_task_on_the_scenario_s_thread() {
+    one_thread::<OnSmol>();
+}
+
+#[test]
+fn the_tokio_harness_s_one_thread_runs_every_task_on_the_scenario_s_thread() {
+    one_thread::<OnTokio>();
 }
 
 #[test]

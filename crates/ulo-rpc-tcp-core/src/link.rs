@@ -235,9 +235,14 @@ impl Core {
 
     /// The address a client connects to, as written: under `ulo dev`, resolving would turn the
     /// address of the socket the command holds into that socket, which a client cannot connect
-    /// through. The client side speaks plain TCP: a link with `tls` set is refused.
+    /// through. Text is parsed as an IP address and port, and a host name is refused: the link
+    /// resolves none. The client side speaks plain TCP: a link with `tls` set is refused. Each
+    /// refusal is permanent, so a link's `usable` reports it where the client takes the link.
     pub fn client_addr(&self) -> Result<SocketAddr, BoxError> {
-        let endpoint = self.endpoint.resolve_as_written()?;
+        let endpoint = self
+            .endpoint
+            .resolve_as_written()
+            .map_err(|error| format!("the TCP link takes IP addresses only and resolves no host name: {error}"))?;
         let Endpoint::Addr(addr) = endpoint else {
             return Err(format!("a TCP client connects to an address; {endpoint} is a socket a server listens on").into());
         };

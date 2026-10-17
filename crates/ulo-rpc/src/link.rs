@@ -40,15 +40,17 @@ pub trait Link: Send + Sync + 'static {
     /// What can fail before any I/O: endpoint text, `Tls`, a broker URL. Called from
     /// `Server::prepare`, with the app, whose root module's full type path
     /// (`format!("{:#}", app.root().name())`) is the default competing-consumer group on NATS and
-    /// MQTT. It reports [`usable`](Self::usable)'s refusal beside its own. A client's link reports
-    /// that refusal where the client is built, and the rest from its first `connect`.
+    /// MQTT. It reports [`usable`](Self::usable)'s refusal beside its own, where that refusal
+    /// applies to a server. A client's link reports that refusal where the client is built, and the
+    /// rest from its first `connect`.
     fn prepare(&mut self, app: &AppHandle) -> impl Future<Output = Result<(), BoxError>> + Send {
         let _ = app;
         async { Ok(()) }
     }
 
     /// What the link refuses before any I/O and without an app: on a tokio-based link, being built
-    /// outside a runtime and given none. [`RpcClient::new`](crate::RpcClient::new) calls it and
+    /// outside a runtime and given none; on the TCP link, a client endpoint that is not an IP
+    /// address and port. [`RpcClient::new`](crate::RpcClient::new) calls it and
     /// refuses the client, and `RpcClientModule` calls it from its init hook, failing the app's
     /// `connect`, so a client's link that can never connect fails where it is set up rather than as
     /// each call's `Unavailable`. It runs when a client takes the link, not when the link is built,
@@ -424,6 +426,27 @@ impl fmt::Display for NoDestination {
 }
 
 impl Error for NoDestination {}
+
+/// A link's refusal to connect that no retry mends, a misconfiguration only its connect could see:
+/// an `mqtts://` link whose platform root certificates did not load. `RpcClient` answers it
+/// `Internal` with `reason: "misconfigured_link"`, not the `Unavailable` of a connect that failed,
+/// and asks again on the next call, which a link holding the cause answers at once.
+#[derive(Debug)]
+pub struct Misconfigured {
+    pub source: BoxError,
+}
+
+impl fmt::Display for Misconfigured {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.source, f)
+    }
+}
+
+impl Error for Misconfigured {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&*self.source)
+    }
+}
 
 /// A frame over the link's limit, refused before it is sent. `RpcClient` answers it `BadRequest`
 /// with `reason: "payload_too_large"`.

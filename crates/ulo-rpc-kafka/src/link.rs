@@ -443,9 +443,11 @@ impl Brokers {
     }
 }
 
-/// Creates `topics`, an existing one being no failure.
+/// Creates `topics`, an existing one being no failure. The admin client is [`Detached`]: its drop
+/// joins its polling thread, which polls with a 100 ms timeout, and on a runtime worker that drop
+/// stalls every task scheduled there for as long.
 async fn create_topics(base: &ClientConfig, topics: &[String], partitions: i32, replication: i32) -> Result<(), BoxError> {
-    let admin: AdminClient<DefaultClientContext> = base.create()?;
+    let admin: Detached<AdminClient<DefaultClientContext>> = Detached::new(base.create()?);
     let new: Vec<NewTopic<'_>> =
         topics.iter().map(|topic| NewTopic::new(topic, partitions, TopicReplication::Fixed(replication))).collect();
     for result in admin.create_topics(&new, &AdminOptions::new()).await? {
@@ -1422,10 +1424,11 @@ fn receiver_stream<T: Send + 'static>(receiver: mpsc::UnboundedReceiver<T>) -> f
     futures_util::stream::unfold(receiver, |mut receiver| async move { receiver.recv().await.map(|item| (item, receiver)) }).boxed()
 }
 
-/// A value whose drop runs on a thread of its own, for a librdkafka consumer: its drop leaves the
+/// A value whose drop runs on a thread of its own, for a librdkafka consumer, whose drop leaves the
 /// group and polls until librdkafka confirms, about a tenth of a second with the broker up and
-/// without bound once the broker is gone, and on a runtime worker that stalls every task
-/// scheduled there.
+/// without bound once the broker is gone, and for an admin client, whose drop joins its polling
+/// thread, about a tenth of a second. On a runtime worker either stalls every task scheduled
+/// there.
 struct Detached<T: Send + 'static>(Option<T>);
 
 impl<T: Send + 'static> Detached<T> {

@@ -6575,6 +6575,7 @@ dependencies = [
  "tracing",
  "ulo",
  "ulo-rpc-macros",
+ "ulo-rpc-tcp",
  "ulo-runtime-tokio",
  "ulo-transport",
 ]
@@ -6636,6 +6637,7 @@ dependencies = [
  "futures-executor",
  "futures-util",
  "rumqttc",
+ "rustls-native-certs 0.8.4",
  "testcontainers",
  "tokio",
  "tracing",
@@ -6644,6 +6646,7 @@ dependencies = [
  "ulo-rpc-conformance",
  "ulo-rpc-mqtt",
  "ulo-runtime-tokio",
+ "ulo-test-certs",
  "ulo-transport",
  "uuid",
 ]

@@ -7,6 +7,12 @@
 //! client's `Timeout`; a call waiting when the client's connection drops is `Unavailable`, since a
 //! clean session loses what reached the reply topic meanwhile; `mqtts://` selects TLS.
 //!
+//! Over `mqtts://` the link trusts the platform's root certificates, read once per link on its
+//! runtime's blocking pool, a server's in `prepare` and a client's at its first connect, and kept
+//! for every connection after. A store that cannot be read or holds no root is a misconfiguration
+//! no retry mends: it fails a server's `bind`, and each client call `Internal` with
+//! `reason: "misconfigured_link"`.
+//!
 //! The drain unsubscribes and returns once the broker has acknowledged each UNSUBSCRIBE, after
 //! every request it routed to the instance before. Both sides announce a Receive Maximum of
 //! 65,535, MQTT 5's largest, so the broker holds back no publish for its flow control until that

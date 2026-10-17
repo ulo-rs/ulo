@@ -1,16 +1,19 @@
-//! Scenarios: a client called from a thread no runtime runs.
+//! Scenarios: a client called from a thread no runtime runs, and a link's connect and bind
+//! polled on a thread that runs every other task too.
 
 use std::any::Any;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread::{self, ThreadId};
+use std::time::{Duration, Instant};
 
 use futures_util::{StreamExt, stream};
 use ulo::{Bound, Runtime};
 use ulo_rpc::{Link, RpcClient, RpcError};
 
 use crate::Broker;
-use crate::cases::app::{ADD, Add, COUNT, EVENT, Fixture, SUM, Sum, eventually, streams};
-use crate::rt::{runtime, sleep, timeout};
+use crate::cases::app::{ADD, Add, COUNT, EVENT, Fixture, SUM, Sum, client, eventually, joined, ready, server, streams};
+use crate::rt::{runtime, sleep, spawn, timeout};
 
 /// Each call's own timeout.
 const WAIT: Duration = Duration::from_secs(10);
@@ -94,4 +97,90 @@ fn message(panic: &(dyn Any + Send)) -> String {
         .cloned()
         .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
         .unwrap_or_else(|| "a payload that is not text".to_owned())
+}
+
+/// How many fresh clients [`connecting_does_not_stall_the_thread`] connects, each making a new
+/// connection and, on a broker, its own reply lane.
+const CONNECTS: usize = 3;
+
+/// What the ticker saw: the longest gap between two of its ticks, what the scenario was doing when
+/// that gap ended, how many ticks it made, and every thread that polled it. A window shorter than
+/// one tick still measures a stall inside it: the ticker's next poll comes after the stall, and the
+/// gap that ends there includes it.
+struct Ticks {
+    longest: Duration,
+    during: &'static str,
+    count: usize,
+    threads: Vec<ThreadId>,
+}
+
+/// Connecting doesn't stall the thread. Run through `Harness::block_on_one_thread`, so the
+/// scenario, the server, the clients and every task they spawn are polled on one thread: a ticker
+/// task sleeping a tenth of the bound between ticks records the longest gap between two of them
+/// while a server binds and three fresh clients each connect and are answered. The gap stays
+/// under the broker's [`Budget::stall`](crate::Budget::stall), 50 ms unless it sets another, and
+/// every tick ran on the scenario's own thread, so a harness polling the ticker elsewhere fails
+/// rather than hiding a stall. A link doing blocking work on the thread polling its connect or its
+/// `listen` stalls the ticker with it: a trust-store read, or a librdkafka handle whose drop joins a
+/// thread.
+pub async fn connecting_does_not_stall_the_thread<B: Broker>() {
+    let broker = B::start().await;
+    let bound = broker.budget().stall;
+    let doing: Arc<Mutex<&'static str>> = Arc::new(Mutex::new("starting the ticker"));
+    let stop = Arc::new(AtomicBool::new(false));
+    let ticker = spawn::<B, _, _>({
+        let (doing, stop) = (Arc::clone(&doing), Arc::clone(&stop));
+        async move {
+            let mut ticks = Ticks { longest: Duration::ZERO, during: "", count: 0, threads: Vec::new() };
+            let mut last = Instant::now();
+            while !stop.load(Ordering::Acquire) {
+                sleep::<B>(bound / 10).await;
+                let now = Instant::now();
+                if now - last > ticks.longest {
+                    ticks.longest = now - last;
+                    ticks.during = *doing.lock().unwrap_or_else(PoisonError::into_inner);
+                }
+                last = now;
+                ticks.count += 1;
+                let polled_on = thread::current().id();
+                if !ticks.threads.contains(&polled_on) {
+                    ticks.threads.push(polled_on);
+                }
+            }
+            ticks
+        }
+    });
+    let doing = |what: &'static str| *doing.lock().unwrap_or_else(PoisonError::into_inner) = what;
+
+    doing("binding the server");
+    let server = server(&broker).await;
+    let mut clients = Vec::with_capacity(CONNECTS);
+    for _ in 0..CONNECTS {
+        doing("connecting a client");
+        let client = client(&broker, &[&server]).await;
+        ready(&broker, &client.rpc, &[&server]).await;
+        clients.push(client);
+    }
+    doing("stopping the ticker");
+    stop.store(true, Ordering::Release);
+    let ticks = joined(ticker.await, "the ticker");
+    for client in clients {
+        client.close().await;
+    }
+    server.stop().await;
+
+    assert_eq!(
+        ticks.threads,
+        vec![thread::current().id()],
+        "the ticker was polled on a thread other than the scenario's: the harness's `block_on_one_thread` runs tasks elsewhere"
+    );
+    assert!(ticks.count >= 1, "the ticker never ticked while the server bound and {CONNECTS} clients connected");
+    assert!(
+        ticks.longest < bound,
+        "the scenario's thread went {:.1} ms without polling the ticker, which sleeps {:.1} ms between ticks, while {}; the bound is {:.1} ms",
+        ticks.longest.as_secs_f64() * 1e3,
+        (bound / 10).as_secs_f64() * 1e3,
+        ticks.during,
+        bound.as_secs_f64() * 1e3
+    );
 }

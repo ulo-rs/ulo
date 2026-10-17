@@ -9,10 +9,13 @@ use rumqttc::v5::mqttbytes::QoS as MqttQoS;
 use rumqttc::v5::mqttbytes::v5::{
     Filter, Packet, PubAckReason, PubRecReason, Publish, PublishProperties, SubscribeReasonCode, UnsubAck, UnsubAckReason,
 };
+use rumqttc::tokio_rustls::rustls::crypto::{CryptoProvider, aws_lc_rs};
+use rumqttc::tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use rumqttc::v5::{AsyncClient, Event, EventLoop, MqttOptions};
-use rumqttc::{Outgoing, Transport};
+use rumqttc::{Outgoing, TlsConfiguration, Transport};
+use rustls_native_certs::CertificateResult;
 use tokio::runtime::Handle;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{OnceCell, mpsc, oneshot, watch};
 use tokio::task::{AbortHandle, JoinHandle};
 use ulo::{AppHandle, BoxError, BoxFuture, Runtime};
 use ulo_runtime_tokio::Tokio;
@@ -21,7 +24,7 @@ use ulo_rpc::__private::ClientProbe;
 use ulo_rpc::__private::HoldUntil;
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link,
+    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured,
     Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
 };
 use ulo_transport::{Detail, Details, ErrorKind};
@@ -75,6 +78,8 @@ pub struct Mqtt {
     pub(crate) default_group: Option<String>,
     /// The CONNACK's Maximum Packet Size, zero until a connection reads one.
     pub(crate) max_packet: Arc<AtomicU64>,
+    /// The root certificates an `mqtts://` url connects with.
+    pub(crate) roots: Roots,
     pub(crate) state: Mutex<State>,
     #[cfg(feature = "conformance-probe")]
     pub(crate) probe: Arc<ClientProbe>,
@@ -98,6 +103,7 @@ impl Mqtt {
             runtime: Tokio::try_current(),
             default_group: None,
             max_packet: Arc::new(AtomicU64::new(0)),
+            roots: Roots::platform(),
             state: Mutex::new(State::default()),
             #[cfg(feature = "conformance-probe")]
             probe: Arc::default(),
@@ -141,6 +147,12 @@ impl Mqtt {
 
     fn runtime(&self) -> Result<Tokio, BoxError> {
         self.runtime.clone().ok_or_else(|| NO_RUNTIME.into())
+    }
+
+    /// The TLS configuration `target` connects with: the [`Roots`] for `mqtts://`, none for
+    /// `mqtt://`.
+    async fn tls(&self, target: &Target, runtime: &Tokio) -> Result<Option<TlsConfiguration>, BoxError> {
+        if target.tls { self.roots.load(runtime).await.map(Some) } else { Ok(None) }
     }
 }
 
@@ -186,11 +198,13 @@ impl Link for Mqtt {
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
         self.usable()?;
-        Target::parse(&self.url)?;
+        let target = Target::parse(&self.url)?;
         match &self.group {
             Some(group) => check_group(group)?,
             None => self.default_group = Some(share_name(&format!("{:#}", app.root().name()))),
         }
+        // A server loads its roots here, so a store that yields none fails `bind` before `listen`.
+        self.tls(&target, &self.runtime()?).await?;
         Ok(())
     }
 
@@ -202,7 +216,8 @@ impl Link for Mqtt {
             .ok_or("the MQTT link's group is unset: `listen` ran before `prepare`")?;
         let runtime = self.runtime()?;
         let target = Target::parse(&self.url)?;
-        let (client, eventloop) = AsyncClient::new(target.options(client_id()), 64);
+        let tls = self.tls(&target, &runtime).await?;
+        let (client, eventloop) = AsyncClient::new(target.options(client_id(), tls), 64);
         let shared: Vec<String> = patterns.iter().map(|pattern| format!("$share/{group}/{pattern}")).collect();
         let (phase, _) = watch::channel(Phase::Serving);
         let (deliveries, inbound) = mpsc::unbounded_channel();
@@ -239,9 +254,10 @@ impl Link for Mqtt {
     async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let runtime = self.runtime()?;
         let target = Target::parse(&self.url)?;
+        let tls = self.tls(&target, &runtime).await?;
         let id = client_id();
         let reply_topic = format!("ulo/rpc/reply/{id}");
-        let (client, eventloop) = AsyncClient::new(target.options(id.clone()), 64);
+        let (client, eventloop) = AsyncClient::new(target.options(id.clone(), tls), 64);
         let side = Arc::new(ClientSide {
             client,
             codec: self.codec,
@@ -453,7 +469,7 @@ impl Target {
         Ok(Target { host, port, tls, credentials })
     }
 
-    fn options(&self, client_id: String) -> MqttOptions {
+    fn options(&self, client_id: String, tls: Option<TlsConfiguration>) -> MqttOptions {
         let mut options = MqttOptions::new(client_id, self.host.clone(), self.port);
         options.set_keep_alive(Duration::from_secs(10));
         options.set_max_packet_size(Some(MAX_INCOMING));
@@ -461,11 +477,98 @@ impl Target {
         if let Some((user, password)) = &self.credentials {
             options.set_credentials(user.clone(), password.clone());
         }
-        if self.tls {
-            options.set_transport(Transport::tls_with_default_config());
+        if let Some(tls) = tls {
+            options.set_transport(Transport::tls_with_config(tls));
         }
         options
     }
+}
+
+/// The platform's root certificates, as the TLS configuration an `mqtts://` link connects with,
+/// loaded at the link's first need, a server's `prepare` or a client's first connect, and kept for
+/// every connection after. The load reads the platform's trust store, 71 ms warm and 2.3 s cold
+/// on macOS, so it runs on the link's runtime's blocking pool: on the thread polling the connect it
+/// would stall every task scheduled there, and rumqttc's own default configuration reads the store
+/// on every connection. A load that fails is kept too, since no retry mends a store that cannot be
+/// read or holds no root: a server's `prepare` refuses it, and every client call answers it as
+/// [`Misconfigured`].
+pub(crate) struct Roots {
+    /// `rustls_native_certs::load_native_certs`, which a test replaces.
+    load: fn() -> CertificateResult,
+    loaded: OnceCell<Result<TlsConfiguration, String>>,
+}
+
+impl Roots {
+    fn platform() -> Roots {
+        Roots { load: rustls_native_certs::load_native_certs, loaded: OnceCell::new() }
+    }
+
+    async fn load(&self, runtime: &Tokio) -> Result<TlsConfiguration, BoxError> {
+        let load = self.load;
+        let loaded = self
+            .loaded
+            .get_or_try_init(|| async move {
+                match runtime.handle().spawn_blocking(move || configure(load())).await {
+                    Ok(configured) => Ok(configured),
+                    Err(ended) if ended.is_panic() => Ok(Err(format!("loading them panicked: {}", panic_text(&*ended.into_panic())))),
+                    Err(ended) => Err(ended),
+                }
+            })
+            .await;
+        match loaded {
+            Ok(Ok(tls)) => Ok(tls.clone()),
+            Ok(Err(cause)) => Err(Misconfigured {
+                source: format!("the MQTT link could not load the platform's root certificates for `mqtts://`: {cause}").into(),
+            }
+            .into()),
+            // Not kept: the next connect, on a runtime still running, loads them again.
+            Err(_) => Err("the MQTT link's runtime shut down while it loaded the platform's root certificates".into()),
+        }
+    }
+}
+
+/// The TLS configuration trusting what `loaded` yielded, refused when it yielded no root: a store
+/// that cannot be read and one that holds none would each fail every handshake. A load yielding
+/// roots beside errors keeps the roots and logs the errors at `warn`. The crypto provider is the
+/// one the process installed, or `aws-lc-rs`, rumqttc's own, where none is: rustls's builder would
+/// panic in a build linking a second provider. Its random source is drawn on once here, which
+/// initialises the provider's library off the worker: left to the first handshake, aws-lc-rs's
+/// initialisation held the thread polling it for about 20 ms in a debug build.
+fn configure(loaded: CertificateResult) -> Result<TlsConfiguration, String> {
+    let mut roots = RootCertStore::empty();
+    let (added, unparsable) = roots.add_parsable_certificates(loaded.certs);
+    let errors: Vec<String> = loaded.errors.iter().map(ToString::to_string).collect();
+    if added == 0 {
+        return Err(match (errors.as_slice(), unparsable) {
+            ([], 0) => "the platform's store holds none".to_owned(),
+            ([], unparsable) => format!("none of the {unparsable} the platform's store holds parses"),
+            (errors, _) => errors.join("; "),
+        });
+    }
+    if !errors.is_empty() || unparsable > 0 {
+        tracing::warn!(
+            added,
+            unparsable,
+            errors = %errors.join("; "),
+            "the MQTT link loaded some of the platform's root certificates and could not load others"
+        );
+    }
+    let provider = CryptoProvider::get_default().cloned().unwrap_or_else(|| Arc::new(aws_lc_rs::default_provider()));
+    provider.secure_random.fill(&mut [0u8; 1]).map_err(|_| "the crypto provider's random source failed".to_owned())?;
+    let config = ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|error| format!("the crypto provider offers neither TLS 1.2 nor 1.3: {error}"))?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(TlsConfiguration::Rustls(Arc::new(config)))
+}
+
+fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
+    panic
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+        .unwrap_or_else(|| "a payload that is not text".to_owned())
 }
 
 /// The server side of a bound link. The event loop owns the connection; replies are queued on
@@ -1273,4 +1376,209 @@ fn receiver_stream<T: Send + 'static>(receiver: mpsc::UnboundedReceiver<T>) -> f
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::sync::atomic::AtomicUsize;
+
+    use ulo::{App, Module, ModuleDef, ModuleIdentity, StartupError};
+    use ulo_rpc::{RpcClient, Server};
+    use ulo_transport::ErrorKind;
+
+    use super::*;
+
+    /// Root certificates loaded per test, each test's loader counting in a slot of its own.
+    static LOADS: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];
+
+    /// A store that cannot be read: rustls-native-certs reading a file that is not there, as it
+    /// reads one `SSL_CERT_FILE` names.
+    fn unreadable<const SLOT: usize>() -> CertificateResult {
+        LOADS[SLOT].fetch_add(1, Ordering::SeqCst);
+        rustls_native_certs::load_certs_from_paths(Some(Path::new("/nonexistent/ulo-rpc-mqtt-roots.pem")), None)
+    }
+
+    /// A store holding no root, read without an error.
+    fn empty<const SLOT: usize>() -> CertificateResult {
+        LOADS[SLOT].fetch_add(1, Ordering::SeqCst);
+        CertificateResult::default()
+    }
+
+    /// An `mqtts://` link whose roots come from `load`. Nothing listens at the url: a link that
+    /// reached a socket would fail `Unavailable`, not with the load's refusal.
+    fn link(load: fn() -> CertificateResult) -> Mqtt {
+        let mut link = Mqtt::url("mqtts://localhost:1");
+        link.roots.load = load;
+        link
+    }
+
+    struct Root;
+
+    impl Module for Root {
+        fn identity(&self) -> ModuleIdentity {
+            ModuleIdentity::of_type::<Self>()
+        }
+
+        fn register(&self, _m: &mut ModuleDef<'_>) {}
+    }
+
+    async fn refused_at_bind(link: Mqtt) -> String {
+        let bound = App::builder(Root)
+            .runtime(Tokio::current())
+            .wire()
+            .expect("the app wires")
+            .connect()
+            .await
+            .expect("the app connects")
+            .bind(Server::new(link))
+            .listen()
+            .await;
+        match bound {
+            Err(error @ StartupError::Configure(_)) => error.to_string(),
+            Err(other) => panic!("the bind failed other than as a `Configure` refusal: {other:?}"),
+            Ok(_) => panic!("a server whose root certificates did not load listened"),
+        }
+    }
+
+    async fn refused_calls(link: Mqtt) -> Vec<(ErrorKind, Option<String>, String)> {
+        let client = RpcClient::new(link, Arc::new(Tokio::current())).expect("the link is usable");
+        let mut refused = Vec::new();
+        for _ in 0..2 {
+            let failed = client.request::<_, u32>("mqtt.roots", &()).await.expect_err("a call over a link whose roots did not load");
+            refused.push((failed.kind(), failed.reason().map(str::to_owned), failed.message().to_owned()));
+        }
+        refused
+    }
+
+    /// F414: a store that cannot be read refuses a server's bind in `prepare`, naming the store and
+    /// the cause, where the link before the fix panicked in `listen`, and the store is read once.
+    #[tokio::test]
+    async fn a_store_that_cannot_be_read_refuses_the_server_s_bind() {
+        let refused = refused_at_bind(link(unreadable::<0>)).await;
+        assert!(
+            refused.contains("could not load the platform's root certificates") && refused.contains("/nonexistent/ulo-rpc-mqtt-roots.pem"),
+            "the refusal does not name the store and its cause: {refused}"
+        );
+        assert_eq!(LOADS[0].load(Ordering::SeqCst), 1, "the server read the store other than once");
+    }
+
+    /// F414: a store that cannot be read fails every client call `Internal` with
+    /// `reason: "misconfigured_link"`, naming the cause, where the link before the fix panicked in
+    /// each call, and the store is read once for both calls.
+    #[tokio::test]
+    async fn a_store_that_cannot_be_read_fails_every_call_misconfigured() {
+        for (kind, reason, message) in refused_calls(link(unreadable::<1>)).await {
+            assert_eq!((kind, reason.as_deref()), (ErrorKind::Internal, Some("misconfigured_link")), "{message}");
+            assert!(message.contains("/nonexistent/ulo-rpc-mqtt-roots.pem"), "the call does not name the cause: {message}");
+        }
+        assert_eq!(LOADS[1].load(Ordering::SeqCst), 1, "the client read the store other than once for two calls");
+    }
+
+    /// F414: a store holding no root is refused as one that cannot be read, on both sides, where
+    /// the link before the fix connected with an empty trust store and failed every handshake
+    /// `Unavailable`.
+    #[tokio::test]
+    async fn a_store_holding_no_root_is_refused_as_misconfigured() {
+        let refused = refused_at_bind(link(empty::<2>)).await;
+        assert!(refused.contains("the platform's store holds none"), "the server's refusal does not say the store is empty: {refused}");
+        for (kind, reason, message) in refused_calls(link(empty::<3>)).await {
+            assert_eq!((kind, reason.as_deref()), (ErrorKind::Internal, Some("misconfigured_link")), "{message}");
+            assert!(message.contains("the platform's store holds none"), "the call does not say the store is empty: {message}");
+        }
+        assert_eq!((LOADS[2].load(Ordering::SeqCst), LOADS[3].load(Ordering::SeqCst)), (1, 1), "a side read the store other than once");
+    }
+
+    /// The RPC suite's stall scenario over `mqtts://`, the one url on which the link loads roots,
+    /// against a Mosquitto serving TLS, which the suite's own broker does not.
+    #[cfg(feature = "integration")]
+    mod over_tls {
+        use std::net::{Ipv4Addr, SocketAddr};
+
+        use testcontainers::core::{IntoContainerPort, WaitFor};
+        use testcontainers::runners::AsyncRunner;
+        use testcontainers::{ContainerAsync, GenericImage, ImageExt};
+        use ulo_rpc_conformance::relay::{reachable, unshadowed};
+        use ulo_rpc_conformance::{Broker, Budget, Harness, OnTokio, report, startup_failed};
+
+        use super::*;
+
+        const TLS_PORT: u16 = 8883;
+
+        /// The bound this test holds the thread to, half the suite's: the provider's one-time
+        /// initialisation, left to the first handshake, held the thread 35 to 43 ms of the suite's 50
+        /// in a debug build, and a handshake after it 9 to 13 ms.
+        const STALL: Duration = Duration::from_millis(25);
+
+        const CONFIG: &str = "listener 8883\nallow_anonymous true\ncafile /mosquitto/config/server.crt\ncertfile /mosquitto/config/server.crt\nkeyfile /mosquitto/config/server.key\n";
+
+        /// Roots loaded by [`slow_test_roots`], the server's link and each client's once.
+        static SLOW_LOADS: AtomicUsize = AtomicUsize::new(0);
+
+        /// The test certificate as the store's one root, after blocking twice the bound, as a trust
+        /// store slow to read does: 71 ms warm on macOS, past the bound already.
+        fn slow_test_roots() -> CertificateResult {
+            SLOW_LOADS.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(STALL * 2);
+            let mut loaded = CertificateResult::default();
+            loaded.certs.push(ulo_test_certs::localhost().cert_der().clone());
+            loaded
+        }
+
+        struct TlsMosquitto {
+            server: SocketAddr,
+            _container: ContainerAsync<GenericImage>,
+        }
+
+        impl Broker for TlsMosquitto {
+            type Harness = OnTokio;
+            type Link = Mqtt;
+
+            async fn start() -> Self {
+                let cert = ulo_test_certs::localhost();
+                let (container, addrs) = unshadowed("the TLS Mosquitto container", || async {
+                    let container = GenericImage::new("eclipse-mosquitto", "2.0.18")
+                        .with_exposed_port(TLS_PORT.tcp())
+                        .with_wait_for(WaitFor::message_on_stderr(" running"))
+                        .with_copy_to("/mosquitto/config/tls.conf", CONFIG.as_bytes().to_vec())
+                        .with_copy_to("/mosquitto/config/server.crt", cert.cert_pem().as_bytes().to_vec())
+                        .with_copy_to("/mosquitto/config/server.key", cert.key_pem().as_bytes().to_vec())
+                        .with_cmd(["mosquitto", "-c", "/mosquitto/config/tls.conf"])
+                        .start()
+                        .await
+                        .unwrap_or_else(|error| startup_failed!("the TLS Mosquitto container did not start: {}", report(&error)));
+                    let port = container
+                        .get_host_port_ipv4(TLS_PORT)
+                        .await
+                        .unwrap_or_else(|error| startup_failed!("the MQTT TLS port is not mapped: {}", report(&error)));
+                    (container, vec![SocketAddr::from((Ipv4Addr::LOCALHOST, port))])
+                })
+                .await;
+                reachable(addrs[0], Duration::from_secs(10)).await;
+                TlsMosquitto { server: addrs[0], _container: container }
+            }
+
+            fn link(&self) -> Mqtt {
+                let mut link = Mqtt::url(format!("mqtts://localhost:{}", self.server.port()));
+                link.roots.load = slow_test_roots;
+                link
+            }
+
+            async fn disrupt(&self) {}
+
+            fn budget(&self) -> Budget {
+                Budget::default().with_stall(STALL)
+            }
+        }
+
+        /// F414: connecting over `mqtts://` does not stall the thread polling the connect, the
+        /// suite's `connecting_does_not_stall_the_thread` against [`TlsMosquitto`] with a bound of
+        /// [`STALL`], each link's roots blocking twice the bound while they load. Each link loads
+        /// them once, the server's and each of the scenario's three clients'.
+        #[test]
+        fn connecting_over_tls_does_not_stall_the_thread() {
+            OnTokio::block_on_one_thread(ulo_rpc_conformance::cases::threads::connecting_does_not_stall_the_thread::<TlsMosquitto>());
+            assert_eq!(SLOW_LOADS.load(Ordering::SeqCst), 4, "the server's link and three clients' each loaded their roots other than once");
+        }
+    }
 }

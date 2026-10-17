@@ -33,7 +33,9 @@ use ulo_runtime_tokio::Tokio;
 /// built or the one [`with_handle`](Self::with_handle) names, so its futures and streams may be
 /// polled on any executor or on a plain thread. A link built outside a runtime and given none
 /// refuses in `usable`, so a client is refused where it takes the link and a server's `listen()`
-/// fails, and in `connect`.
+/// fails, and in `connect`. A client's link also refuses in `usable` what its `connect` would
+/// refuse on every call: an endpoint that is not an IP address and port, the link resolving no
+/// host name, and `tls` set.
 pub struct Tcp {
     core: Core,
     runtime: Option<Tokio>,
@@ -41,13 +43,14 @@ pub struct Tcp {
 
 impl Tcp {
     /// The link on `endpoint`: text parsed in `prepare`, an `Endpoint`, or a `SocketAddr`. A
-    /// server may listen on an inherited socket; a client connects to an address.
+    /// server may listen on an inherited socket; a client connects to an IP address and port, such
+    /// as `10.0.0.5:7000`, and is refused a host name where it takes the link.
     pub fn new(endpoint: impl Into<EndpointSpec>) -> Self {
         Tcp { core: Core::new(endpoint.into()), runtime: Tokio::try_current() }
     }
 
     /// TLS on the server's endpoint, loaded in `prepare`, with no ALPN. The client side speaks
-    /// plain TCP: a client link with it set refuses to connect.
+    /// plain TCP: a client is refused a link with it set where it takes the link.
     pub fn tls(mut self, tls: Tls) -> Self {
         self.core.set_tls(tls);
         self
@@ -89,12 +92,15 @@ impl Link for Tcp {
     }
 
     fn usable(&self) -> Result<(), BoxError> {
-        self.runtime().map(drop)
+        self.runtime()?;
+        self.core.client_addr().map(drop)
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
         let _ = app;
-        let usable = self.usable();
+        // A server reports `usable`'s runtime refusal alone: the rest is about what a client
+        // connects to, and `Core::prepare` reports the server's own endpoint.
+        let usable = self.runtime().map(drop);
         self.core.prepare(usable)
     }
 

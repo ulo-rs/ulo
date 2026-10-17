@@ -35,8 +35,9 @@
 //!
 //! The suite names no runtime. A broker's [`Harness`] is its runtime half, as the HTTP and runtime
 //! suites' are: the app's runtime, which every server and client in a scenario runs on and every
-//! wait and task of the scenario's own goes through, and a `block_on` each scenario runs inside.
-//! `OnTokio`, behind the `tokio` feature, is the harness of every link built on tokio; `OnSmol`,
+//! wait and task of the scenario's own goes through, and a `block_on` each scenario runs inside,
+//! beside a one-thread `block_on` for the scenario that shows a link's connect does not stall its
+//! thread. `OnTokio`, behind the `tokio` feature, is the harness of every link built on tokio; `OnSmol`,
 //! behind `smol`, runs the scenarios on an `async-executor` `Executor`. The [`relay`] runs on
 //! threads of its own, on `std` sockets, so it carries a link on either.
 //!
@@ -123,6 +124,12 @@ pub trait Harness: Send + Sync + 'static {
     /// Runs `fut` to its end from a plain `#[test]` thread, on an executor that runs the tasks the
     /// runtime spawns while `fut` waits. Each scenario calls it once.
     fn block_on<F: Future>(fut: F) -> F::Output;
+
+    /// [`block_on`](Self::block_on) on the calling thread alone: `fut` and every task the runtime
+    /// spawns while it waits are polled there and nowhere else, so work that blocks the thread
+    /// polling it stalls every one of them. The scenario that shows a link's connect and bind do
+    /// not stall that thread runs through it, and fails on a harness that polls a task elsewhere.
+    fn block_on_one_thread<F: Future>(fut: F) -> F::Output;
 }
 
 /// One link's environment for the suite: a broker, or, for TCP and UDP, the server's own socket,
@@ -218,11 +225,26 @@ pub struct Budget {
     pub settle: Duration,
     /// From `disrupt` until calls succeed again.
     pub recovery: Duration,
+    /// The longest the scenario's thread may go without polling a task that is due, while a link
+    /// binds and connects on a harness's one thread: 50 ms unless [`with_stall`](Self::with_stall)
+    /// sets another. [`new`](Self::new) leaves it at 50 ms whatever the other three are: a broker
+    /// slow to answer is waited on, not blocked on, so it gives the link no reason to stall the
+    /// thread, and a librdkafka handle's drop, about 100 ms, has to fail it on the slowest broker.
+    pub stall: Duration,
 }
+
+/// [`Budget::stall`] unless a broker sets another.
+const STALL: Duration = Duration::from_millis(50);
 
 impl Budget {
     pub const fn new(boot: Duration, settle: Duration, recovery: Duration) -> Self {
-        Budget { boot, settle, recovery }
+        Budget { boot, settle, recovery, stall: STALL }
+    }
+
+    /// The budget with its [`stall`](Self::stall) set, for a host whose thread is descheduled for
+    /// longer than 50 ms while it is busy.
+    pub const fn with_stall(self, stall: Duration) -> Self {
+        Budget { stall, ..self }
     }
 }
 
@@ -313,6 +335,7 @@ macro_rules! conformance_suite {
             a_call_s_deadline_is_measured_once_its_connection_is_made => deadlines::measured_once_connected,
             a_call_whose_connect_outlasts_its_deadline_is_refused_before_the_server_sees_it => deadlines::connect_past_the_deadline_is_refused_before_the_server_sees_it,
             a_call_s_timer_ends_with_its_bound_after_a_blocked_connect => deadlines::blocked_connect_s_timer_ends_with_its_bound,
+            connecting_does_not_stall_the_thread => threads::connecting_does_not_stall_the_thread [block_on_one_thread],
             binary_payload => payloads::binary,
             oversized_payload => payloads::oversized,
             drain => drain::drain,
@@ -329,16 +352,21 @@ macro_rules! conformance_suite {
             a_held_cancel_lasts_until_its_call_s_deadline => order::held_until_deadline,
         );
     };
-    (@cases $broker:ty; $($name:ident => $module:ident :: $case:ident),* $(,)?) => {
+    (@cases $broker:ty; $($name:ident => $module:ident :: $case:ident $([$runner:ident])?),* $(,)?) => {
         static __ULO_RPC_CONFORMANCE_SLOTS: $crate::__private::Slots = $crate::__private::Slots::new();
         $(
             __ulo_rpc_conformance_stamp!($name, fn $name() {
                 let _slot = __ULO_RPC_CONFORMANCE_SLOTS.hold(<$broker as $crate::Broker>::PARALLEL);
-                <<$broker as $crate::Broker>::Harness as $crate::Harness>::block_on(
-                    $crate::cases::$module::$case::<$broker>(),
-                );
+                $crate::conformance_suite!(@run $broker, $crate::cases::$module::$case::<$broker>() $(, $runner)?);
             });
         )*
+    };
+    // A case runs through `Harness::block_on` unless its entry names another runner.
+    (@run $broker:ty, $case:expr) => {
+        $crate::conformance_suite!(@run $broker, $case, block_on)
+    };
+    (@run $broker:ty, $case:expr, $runner:ident) => {
+        <<$broker as $crate::Broker>::Harness as $crate::Harness>::$runner($case)
     };
 }
 
