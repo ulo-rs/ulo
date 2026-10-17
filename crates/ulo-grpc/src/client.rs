@@ -102,15 +102,24 @@ impl ClientTls {
 }
 
 /// `request` with `grpc-timeout` set from `exec`'s remaining deadline. There is no ambient
-/// execution, so nothing forwards a deadline on its own. A deadline already passed is sent as one
-/// nanosecond, the shortest `grpc-timeout`, so the callee fails it at once; one further off than
-/// `99999999H`, about 11,415 years and the longest the grammar holds, is sent as that. The
-/// remaining time is read on tokio's clock, which `ulo-runtime-tokio`'s `Timer` reads too.
-pub fn outgoing<T>(exec: &ExecutionRef, request: tonic::Request<T>) -> tonic::Request<T> {
-    match exec.deadline() {
-        Some(deadline) => timed(request, deadline.saturating_duration_since(tokio::time::Instant::now().into_std())),
-        None => request,
+/// execution, so nothing forwards a deadline on its own.
+///
+/// ```ignore
+/// let user = users.get_user(ulo_grpc::outgoing(&exec, tonic::Request::new(query))?).await?;
+/// ```
+///
+/// A deadline already passed fails here, DEADLINE_EXCEEDED, so the call is never made: sent with
+/// the shortest `grpc-timeout`, it would reach a callee that can run its handler while the caller
+/// is told it timed out. A deadline further off than `99999999H`, about 11,415 years and the
+/// longest the grammar holds, is sent as that. The remaining time is read on tokio's clock, which
+/// `ulo-runtime-tokio`'s `Timer` reads too.
+pub fn outgoing<T>(exec: &ExecutionRef, request: tonic::Request<T>) -> Result<tonic::Request<T>, tonic::Status> {
+    let Some(deadline) = exec.deadline() else { return Ok(request) };
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now().into_std());
+    if remaining.is_zero() {
+        return Err(tonic::Status::deadline_exceeded("the calling execution's deadline has passed"));
     }
+    Ok(timed(request, remaining))
 }
 
 /// The longest `grpc-timeout`, `99999999H`.
@@ -261,8 +270,8 @@ mod tests {
 
     /// Every duration is written on the grammar, at most eight digits and one of `H M S m u n`,
     /// never as zero, and read back by the server no more than one unit away, or as the longest
-    /// value the grammar holds when it is longer than that. A zero remainder, a deadline already
-    /// passed, is written as the shortest positive value.
+    /// value the grammar holds when it is longer than that. A zero remainder is written as the
+    /// shortest positive value.
     #[test]
     fn every_remaining_time_is_written_on_the_grammar_and_never_as_zero() {
         let mut failures = Vec::new();
@@ -279,6 +288,6 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{} of the sweep's durations failed, the first ten: {:#?}", failures.len(), &failures[..failures.len().min(10)]);
-        assert_eq!(encode(Duration::ZERO).map(|(value, _)| value), Ok("1n".to_owned()), "a deadline already passed");
+        assert_eq!(encode(Duration::ZERO).map(|(value, _)| value), Ok("1n".to_owned()), "a zero remainder");
     }
 }

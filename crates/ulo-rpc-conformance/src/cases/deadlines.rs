@@ -8,14 +8,14 @@ use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 
-use ulo::{AppHandle, Bound, BoundAddr, BoxError, CancelReason, Runtime};
+use ulo::{AppHandle, Bound, BoundAddr, BoxError, CancelReason, ExecOptions, ExecutionRef, Runtime};
 use ulo_rpc::{CallHeaders, Capabilities, Frame, Link, Outbound, Pattern, RpcClient, RpcError, RpcStream, ZeroTimeout};
 use ulo_rpc::link::Inbound;
 use ulo_transport::{Count, ErrorKind};
 
 use crate::{Broker, Budget};
 use crate::cases::app::{
-    ADD, Add, COUNT, Fixture, Mounts, PAUSE, STALL, Sum, TICKS, addresses, client_over, eventually, failed, refused_at_startup,
+    ADD, Add, COUNT, EVENT, Fixture, Mounts, PAUSE, STALL, Sum, TICKS, addresses, client_over, eventually, failed, refused_at_startup,
     streams, within,
 };
 
@@ -403,18 +403,105 @@ pub async fn zero_stream_deadline_is_refused_before_the_server_sees_it<B: Broker
     fixture.stop().await;
 }
 
-/// The value of [`MARK`] on each opening frame a [`Tapped`] link delivered, in arrival order.
+/// A call made `.within` an execution whose deadline has passed fails `Timeout` when it is
+/// awaited, before it connects, and its server sees nothing. Two executions, each with a deadline
+/// of now: a standalone one, which the app cancels at its deadline, and one opened as a transport
+/// opens one, which nothing cancels, so its deadline alone refuses the calls. Inside each, a
+/// request, a stream and an event, eight of each, each refused; then a request outside both,
+/// answered, and the server has delivered that request alone. The event's frame names another
+/// pattern, so a settle budget after the answer passes before the server's link is read.
+pub async fn passed_deadline_is_refused_before_the_server_sees_it<B: Broker>() {
+    let tap = Tap::default();
+    let fixture = Fixture::<B>::start_over(Count::Default, |broker| Tapped { link: broker.link(), tap: tap.clone() }).await;
+    let passed = crate::rt::runtime::<B>().now();
+    let mut outcomes =
+        fixture.client.execute(ExecOptions::new().deadline(passed), async |exec| past_deadline::<B>(&fixture, &exec.handle()).await).await;
+    let opened = fixture.client.open(ExecOptions::new().deadline(passed));
+    outcomes.extend(past_deadline::<B>(&fixture, &opened.handle()).await);
+    assert!(!opened.is_cancelled(), "the opened execution was cancelled, so its deadline alone did not refuse the calls");
+    drop(opened);
+    let sum = fixture.rpc().request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).header(MARK, "after").timeout(Duration::from_secs(10)).await;
+    assert_eq!(sum.expect("a call outside the execution is answered"), Sum { sum: 5 });
+    crate::rt::sleep::<B>(fixture.broker.budget().settle).await;
+    assert_eq!(tap.marks(), vec!["after"], "the marked calls the server received; the calls' outcomes: {outcomes:?}");
+    assert_eq!(fixture.server.probe.events(), 0, "an event sent past its execution's deadline reached its handler");
+    for (what, outcome) in outcomes {
+        match outcome {
+            Err(error) if error.kind() == ErrorKind::Timeout => {}
+            other => panic!("{what} made inside an execution whose deadline has passed: expected `Timeout`, got: {other:?}"),
+        }
+    }
+    fixture.stop().await;
+}
+
+/// A request, a stream and an event made `.within` `exec`, eight of each, and how each ended.
+async fn past_deadline<B: Broker>(fixture: &Fixture<B>, exec: &ExecutionRef) -> Vec<(&'static str, Result<(), RpcError>)> {
+    let mut outcomes = Vec::new();
+    for _ in 0..ZERO_CALLS {
+        let call = fixture.rpc().request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).header(MARK, "passed").within(exec);
+        outcomes.push(("a request", within::<B, _>(Duration::from_secs(10), "the request", call.into_future()).await.map(drop)));
+        let stream = fixture.rpc().stream::<_, u32>(COUNT, &2u32).header(MARK, "passed").within(exec);
+        outcomes.push(("a stream", within::<B, _>(Duration::from_secs(10), "the stream", stream.into_future()).await.map(drop)));
+        let event = fixture.rpc().emit(EVENT, &1u32).header(MARK, "passed").within(exec);
+        outcomes.push(("an event", within::<B, _>(Duration::from_secs(10), "the event", event.into_future()).await));
+    }
+    outcomes
+}
+
+/// A call made `.within` an execution already cancelled fails `Unavailable` when it is awaited,
+/// before it connects, and its server sees nothing: a request and a stream, eight of each, each
+/// refused, then a request outside the execution, answered, and the server has delivered that
+/// request alone.
+pub async fn cancelled_execution_s_call_is_refused_before_the_server_sees_it<B: Broker>() {
+    let tap = Tap::default();
+    let fixture = Fixture::<B>::start_over(Count::Default, |broker| Tapped { link: broker.link(), tap: tap.clone() }).await;
+    let outcomes = fixture
+        .client
+        .execute(ExecOptions::new(), async |exec| {
+            exec.cancel();
+            let exec = exec.handle();
+            let mut outcomes = Vec::new();
+            for _ in 0..ZERO_CALLS {
+                let call = fixture.rpc().request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).header(MARK, "cancelled").within(&exec);
+                outcomes.push(("a request", within::<B, _>(Duration::from_secs(10), "the request", call.into_future()).await.map(drop)));
+                let stream = fixture.rpc().stream::<_, u32>(COUNT, &2u32).header(MARK, "cancelled").within(&exec);
+                outcomes.push(("a stream", within::<B, _>(Duration::from_secs(10), "the stream", stream.into_future()).await.map(drop)));
+            }
+            outcomes
+        })
+        .await;
+    let sum = fixture.rpc().request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).header(MARK, "after").timeout(Duration::from_secs(10)).await;
+    assert_eq!(sum.expect("a call outside the execution is answered"), Sum { sum: 5 });
+    assert_eq!(tap.marks(), vec!["after"], "the marked calls the server received; the calls' outcomes: {outcomes:?}");
+    for (what, outcome) in outcomes {
+        match outcome {
+            Err(error) if error.kind() == ErrorKind::Unavailable => {}
+            other => panic!("{what} made inside a cancelled execution: expected `Unavailable`, got: {other:?}"),
+        }
+    }
+    fixture.stop().await;
+}
+
+/// The value of [`MARK`] on each opening frame a [`Tapped`] link delivered, in arrival order, with
+/// the frame's `deadline-ms`.
 #[derive(Clone, Default)]
-pub(crate) struct Tap(Arc<Mutex<Vec<String>>>);
+pub(crate) struct Tap(Arc<Mutex<Vec<Stamp>>>);
+
+/// A delivered mark, and the `deadline-ms` its frame carried, `None` for none.
+pub(crate) type Stamp = (String, Option<String>);
 
 impl Tap {
     pub(crate) fn marks(&self) -> Vec<String> {
+        self.stamps().into_iter().map(|(mark, _)| mark).collect()
+    }
+
+    pub(crate) fn stamps(&self) -> Vec<Stamp> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 }
 
 /// A server link recording, in its [`Tap`], every opening frame carrying [`MARK`] that it hands
-/// the server: a `req`, an `open` or an `evt`.
+/// the server, a `req`, an `open` or an `evt`, and the frame's `deadline-ms`.
 pub(crate) struct Tapped<L> {
     pub(crate) link: L,
     pub(crate) tap: Tap,
@@ -448,7 +535,8 @@ impl<L: Link> Link for Tapped<L> {
                 _ => return,
             };
             if let Some(mark) = headers.get(MARK) {
-                tap.0.lock().unwrap_or_else(PoisonError::into_inner).push(mark.to_owned());
+                let deadline = headers.get("deadline-ms").map(str::to_owned);
+                tap.0.lock().unwrap_or_else(PoisonError::into_inner).push((mark.to_owned(), deadline));
             }
         })))
     }

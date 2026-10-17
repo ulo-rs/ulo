@@ -1,15 +1,17 @@
 //! `GrpcClientModule`: the generated client bound under its own type, built through the
 //! `GrpcClient` impl `ulo-build` wrote, keyed so two endpoints of one service coexist, its URI
 //! checked when the app wires and its channel connected lazily; and `outgoing`, which forwards an
-//! execution's deadline as `grpc-timeout`.
+//! execution's deadline as `grpc-timeout` and refuses one already passed.
 
 mod support;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use tonic::Code;
 use tonic::transport::Channel;
-use ulo::{App, Dep, ExecOptions, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use tonic::{Code, Status};
+use ulo::{App, Dep, ExecOptions, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
 use ulo_codegen_tests::probe::clock_client::ClockClient;
 use ulo_codegen_tests::probe::known_client::KnownClient;
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
@@ -33,29 +35,36 @@ impl Known {
     }
 }
 
+/// How many calls reached `Clock::quick`.
+#[derive(Clone, Default)]
+struct Ran(Arc<AtomicUsize>);
+
+impl Ran {
+    fn count(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
 #[injectable]
-struct Clock;
+struct Clock {
+    ran: Dep<Ran>,
+}
 
 #[routes]
 impl Clock {
     /// The time left before the call's deadline, in whole milliseconds rounded up; `0` for none.
     #[ulo_grpc::method(probe::clock::Quick)]
     fn quick(&self, _req: Message<Ticks>, exec: ulo::ExecutionRef) -> Tick {
+        self.ran.0.fetch_add(1, Ordering::SeqCst);
         let left = exec.deadline().map_or(0, |deadline| {
             let left = deadline.saturating_duration_since(tokio::time::Instant::now().into_std());
             u32::try_from(left.as_millis()).unwrap_or(u32::MAX).saturating_add(1)
         });
         Tick { n: left }
     }
-
-    #[ulo_grpc::method(probe::clock::Stall)]
-    async fn stall(&self, _req: Message<Ticks>) -> Tick {
-        tokio::time::sleep(Duration::from_secs(30)).await;
-        Tick { n: 0 }
-    }
 }
 
-struct ServerRoot(&'static str);
+struct ServerRoot(&'static str, Ran);
 
 impl Module for ServerRoot {
     fn identity(&self) -> ModuleIdentity {
@@ -64,13 +73,20 @@ impl Module for ServerRoot {
 
     fn register(&self, m: &mut ModuleDef<'_>) {
         m.value(ServerName(self.0));
+        m.value(self.1.clone());
         m.controller::<Known>();
         m.controller::<Clock>();
     }
 }
 
 async fn server(name: &'static str) -> Running {
-    Running::start(ServerRoot(name), ulo_grpc::Server::new("127.0.0.1:0")).await
+    counted(name).await.0
+}
+
+/// A server, and the count of calls that reached its `Clock` handlers.
+async fn counted(name: &'static str) -> (Running, Ran) {
+    let ran = Ran::default();
+    (Running::start(ServerRoot(name, ran.clone()), ulo_grpc::Server::new("127.0.0.1:0")).await, ran)
 }
 
 struct Primary;
@@ -186,26 +202,55 @@ async fn outgoing_forwards_the_execution_s_remaining_deadline() {
     let deadline = tokio::time::Instant::now().into_std() + Duration::from_secs(2);
     let left = app
         .execute(ExecOptions::new().deadline(deadline), async |exec| {
-            let request = ulo_grpc::outgoing(&exec.handle(), tonic::Request::new(Ticks::default()));
+            let request = forward(&exec.handle()).unwrap_or_else(|status| panic!("a deadline 2 s off was refused: {status:?}"));
             clock.quick(request).await.map(|reply| reply.into_inner().n)
         })
         .await
         .unwrap_or_else(|error| panic!("the execution was refused: {error}"))
         .unwrap_or_else(|status| panic!("Quick failed: {status:?}"));
     assert!((1..=2000).contains(&left), "{left} ms left of a 2 s deadline");
+    let _ = app.close(Signal::new("test")).await;
+    server.stop().await;
+}
 
-    // A deadline already passed is sent as the shortest `grpc-timeout`, and the callee fails it at
-    // once.
+/// A `Quick` request forwarding `exec`'s deadline, as a handler calling out writes it.
+fn forward(exec: &ExecutionRef) -> Result<tonic::Request<Ticks>, Status> {
+    ulo_grpc::outgoing(exec, tonic::Request::new(Ticks::default()))
+}
+
+/// A call forwarding the deadline of an execution whose deadline has passed fails before it is
+/// made, DEADLINE_EXCEEDED, and its server runs nothing: through a plain HTTP/2 client and through
+/// a tonic `Channel`, which enforces `grpc-timeout` itself, `Quick`, which answers without
+/// awaiting, has run once afterwards, for a call made outside the execution.
+#[tokio::test]
+async fn outgoing_refuses_a_passed_deadline_so_nothing_reaches_the_server() {
+    let (server, ran) = counted("a").await;
+    let app = client_app(Vec::new()).await;
+    let (http2, origin) = server.plain_http2();
+    let mut plain = ClockClient::with_origin(http2, origin);
+    let mut channel = ClockClient::new(server.channel().await);
     let passed = tokio::time::Instant::now().into_std();
-    let failed = app
+    let outcomes = app
         .execute(ExecOptions::new().deadline(passed), async |exec| {
-            let request = ulo_grpc::outgoing(&exec.handle(), tonic::Request::new(Ticks::default()));
-            within("the call past its deadline", clock.stall(request)).await.map(|reply| reply.into_inner().n)
+            let exec = exec.handle();
+            let through_plain = match forward(&exec) {
+                Ok(request) => within("the plain client's call", plain.quick(request)).await.map(|reply| reply.into_inner().n),
+                Err(status) => Err(status),
+            };
+            let through_channel = match forward(&exec) {
+                Ok(request) => within("the channel's call", channel.quick(request)).await.map(|reply| reply.into_inner().n),
+                Err(status) => Err(status),
+            };
+            [("a plain HTTP/2 client", through_plain), ("a tonic `Channel`", through_channel)]
         })
         .await
         .unwrap_or_else(|error| panic!("the execution was refused: {error}"));
-    assert_eq!(failed.map_err(|status| status.code()), Err(Code::DeadlineExceeded));
-
+    let outside = within("the call outside the execution", plain.quick(Ticks::default())).await;
+    assert_eq!(outside.map(|reply| reply.into_inner().n).map_err(|status| status.code()), Ok(0), "a call without a deadline");
+    assert_eq!(ran.count(), 1, "the calls that reached `Quick`: only the one outside the execution; the others answered {outcomes:?}");
+    for (via, outcome) in outcomes {
+        assert_eq!(outcome.map_err(|status| status.code()), Err(Code::DeadlineExceeded), "a call past its deadline through {via}");
+    }
     let _ = app.close(Signal::new("test")).await;
     server.stop().await;
 }
@@ -218,7 +263,7 @@ async fn outgoing_forwards_a_deadline_beyond_the_grammar_as_its_longest_value() 
     let far = tokio::time::Instant::now().into_std() + Duration::from_secs(400_000_000_000);
     let written = app
         .execute(ExecOptions::new().deadline(far), async |exec| {
-            let request = ulo_grpc::outgoing(&exec.handle(), tonic::Request::new(Ticks::default()));
+            let request = forward(&exec.handle()).unwrap_or_else(|status| panic!("a deadline 400 billion seconds off was refused: {status:?}"));
             request.metadata().get("grpc-timeout").map(|value| value.to_str().map(str::to_owned))
         })
         .await

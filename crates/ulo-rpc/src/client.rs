@@ -442,8 +442,8 @@ enum Whole {
     /// A call answered by one reply: its own timeout or the client's, sent. The client abandons
     /// the call there, so the server stops there too.
     Reply,
-    /// An event: the client's timeout, covering the publish and not sent, since the handler runs
-    /// with no caller waiting.
+    /// An event: the client's timeout, covering the publish. Nothing is sent, the calling
+    /// execution's remaining time included, since the handler runs with no caller waiting.
     Publish,
     /// A stream: its own deadline, sent, or none.
     Stream(Option<Duration>),
@@ -464,7 +464,9 @@ impl Spec {
     /// execution's deadline has passed, before any I/O.
     ///
     /// Stamps `deadline-ms`, the deadline the server enforces, with the shorter of the calling
-    /// execution's remaining time and `whole`'s bound unless it covers only an event's publish.
+    /// execution's remaining time and `whole`'s bound, on every shape but an event. An event's
+    /// handler has no caller waiting on it, often runs after its emitter has ended, and on a
+    /// broker that holds it would count the remainder from delivery, so it is given none.
     fn limit(&mut self, whole: Whole) -> Result<(Option<Duration>, Option<Instant>), RpcError> {
         let inner = &self.client.inner;
         let now = inner.runtime.now();
@@ -475,7 +477,7 @@ impl Spec {
         // A bound whose end an `Instant` cannot hold is none, as `Bound::Unbounded` is: `now +
         // own` would panic, and a timer handed it computes the same sum.
         let own = own.filter(|own| now.checked_add(*own).is_some());
-        let sent = !matches!(whole, Whole::Publish);
+        let stamps = !matches!(whole, Whole::Publish);
         let remaining = match self.within.as_ref().and_then(ExecutionRef::deadline) {
             Some(deadline) => {
                 let remaining = deadline.saturating_duration_since(now);
@@ -487,7 +489,7 @@ impl Spec {
             None => None,
         };
         // A `deadline-ms` the caller set was refused by `reserved`, so the stamp is the only one.
-        let stamped = [remaining, own.filter(|_| sent)].into_iter().flatten().min();
+        let stamped = if stamps { [remaining, own].into_iter().flatten().min() } else { None };
         if let Some(stamped) = stamped {
             self.headers.insert(DEADLINE_MS, deadline_ms(stamped));
         }
@@ -783,12 +785,19 @@ impl Limit {
 }
 
 /// `work` bounded by `limit` on the client's runtime and by the calling execution's cancellation.
+/// An execution already cancelled fails it before `work` is polled at all, so a call's frame is
+/// never sent for it.
 async fn bounded<T>(
     timer: &dyn Timer,
     limit: Option<Limit>,
     within: Option<&ExecutionRef>,
     work: impl Future<Output = Result<T, RpcError>>,
 ) -> Result<T, RpcError> {
+    // The `select!` below picks at random among the arms ready at once, so a cancellation that
+    // had already fired would race the first poll of `work`, which can send the call's frame.
+    if let Some(exec) = within.filter(|exec| exec.is_cancelled()) {
+        return Err(cancellation(exec.cancel_reason()));
+    }
     let passed = limit.map_or("the call timed out", |limit| limit.passed);
     let expired = async {
         match limit {
@@ -809,10 +818,15 @@ async fn bounded<T>(
     futures_util::select! {
         out = work.fuse() => out,
         () = expired.fuse() => Err(RpcError::new(ErrorKind::Timeout, passed)),
-        reason = cancelled.fuse() => Err(match reason {
-            Some(CancelReason::Deadline) => RpcError::new(ErrorKind::Timeout, "the calling execution's deadline passed"),
-            _ => RpcError::new(ErrorKind::Unavailable, "the calling execution was cancelled"),
-        }),
+        reason = cancelled.fuse() => Err(cancellation(reason)),
+    }
+}
+
+/// What a call fails with when its calling execution is cancelled for `reason`.
+fn cancellation(reason: Option<CancelReason>) -> RpcError {
+    match reason {
+        Some(CancelReason::Deadline) => RpcError::new(ErrorKind::Timeout, "the calling execution's deadline passed"),
+        _ => RpcError::new(ErrorKind::Unavailable, "the calling execution was cancelled"),
     }
 }
 
@@ -846,7 +860,9 @@ impl<Res> Call<Res> {
     }
 
     /// Forwards `exec`'s remaining deadline as `deadline-ms` and cancels the call when `exec` is
-    /// cancelled.
+    /// cancelled. A call made once `exec`'s deadline has passed, or once it is cancelled, fails
+    /// when it is awaited, before it connects, `Timeout` or `Unavailable`, so nothing reaches the
+    /// server.
     pub fn within(mut self, exec: &ExecutionRef) -> Self {
         self.spec.within = Some(exec.clone());
         self
@@ -896,6 +912,11 @@ impl Emit {
         self
     }
 
+    /// Cancels the publish when `exec` is cancelled, and bounds it by `exec`'s remaining time, up
+    /// to the send: an event emitted once `exec` is cancelled or its deadline has passed fails when
+    /// it is awaited, before it connects, and one sent before then is handled whatever becomes of
+    /// `exec`. The event carries none of `exec`'s deadline: nobody waits on it, so its handler runs
+    /// under no deadline.
     pub fn within(mut self, exec: &ExecutionRef) -> Self {
         self.spec.within = Some(exec.clone());
         self
@@ -998,6 +1019,8 @@ impl<Res> StreamCall<Res> {
         self
     }
 
+    /// Forwards `exec`'s remaining deadline as `deadline-ms` and cancels the stream when `exec` is
+    /// cancelled, as [`Call::within`] does.
     pub fn within(mut self, exec: &ExecutionRef) -> Self {
         self.spec.within = Some(exec.clone());
         self

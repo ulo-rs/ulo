@@ -20,8 +20,9 @@ use futures_util::{Stream, StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use ulo::app::{Bound as Serving, Connected};
 use ulo::{
-    App, AppHandle, BoundAddr, BoxError, Bound, CancelReason, Dep, ErrorHandler, ExecutionRef, Guard, Module, ModuleDef,
-    ModuleIdentity, Shape, Shutdown, ShutdownError, Signal, StartupError, TaskEnd, Timer, ValueHandle, injectable, routes,
+    App, AppHandle, BoundAddr, BoxError, Bound, CancelReason, Dep, ErrorHandler, ExecOptions, Execution, ExecutionRef, Guard,
+    Module, ModuleDef, ModuleIdentity, ModuleRef, Shape, Shutdown, ShutdownError, Signal, StartupError, TaskEnd, Timer,
+    ValueHandle, injectable, routes,
 };
 use ulo_rpc::{
     CallHeaders, Capabilities, Data, Inbound, Link, Payload, Reply, Rpc, RpcClient, RpcClientModule, RpcCx, RpcError,
@@ -39,6 +40,7 @@ pub(crate) const BOOM: &str = "conformance.boom";
 pub(crate) const HEADERS: &str = "conformance.headers";
 pub(crate) const EVENT: &str = "conformance.event";
 pub(crate) const TALLY: &str = "conformance.tally";
+pub(crate) const SLOW_EVENT: &str = "conformance.slow_event";
 pub(crate) const STALL: &str = "conformance.stall";
 pub(crate) const HOLD: &str = "conformance.hold";
 pub(crate) const NEVER: &str = "conformance.never";
@@ -112,6 +114,42 @@ pub(crate) struct ProbeState {
     /// The bounded handlers' calls running now, and the most that ran at once.
     bounded: AtomicUsize,
     bounded_peak: AtomicUsize,
+    /// Each run of the slow event's handler, in the order they began.
+    slow: Mutex<Vec<SlowRun>>,
+}
+
+/// One run of the slow event's handler: when it began, the time its execution's deadline left it
+/// then, `None` for an execution without one, and how it ended, `None` while it runs.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SlowRun {
+    pub(crate) began: Instant,
+    pub(crate) left: Option<Duration>,
+    pub(crate) ended: Option<SlowEnd>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SlowEnd {
+    Completed,
+    /// Its future was dropped before it completed, with its execution's cancel reason.
+    Dropped(Option<CancelReason>),
+}
+
+/// Ends the slow event's run it was made for when dropped: `Completed` once the handler marked it
+/// so, `Dropped` otherwise.
+struct SlowGuard {
+    exec: ExecutionRef,
+    probe: Probe,
+    run: usize,
+    completed: bool,
+}
+
+impl Drop for SlowGuard {
+    fn drop(&mut self) {
+        let ended = if self.completed { SlowEnd::Completed } else { SlowEnd::Dropped(self.exec.cancel_reason()) };
+        if let Some(run) = lock(&self.probe.0.slow).get_mut(self.run) {
+            run.ended = Some(ended);
+        }
+    }
 }
 
 impl Probe {
@@ -145,6 +183,11 @@ impl Probe {
 
     pub(crate) fn held_answered(&self) -> Option<Instant> {
         *lock(&self.0.held_answered)
+    }
+
+    /// Every run of the slow event's handler so far.
+    pub(crate) fn slow_runs(&self) -> Vec<SlowRun> {
+        lock(&self.0.slow).clone()
     }
 
     /// The most calls the two bounded handlers ran at once.
@@ -316,6 +359,22 @@ impl CoreController {
     async fn event(&self, value: Payload<u32>) -> Result<(), Refusal> {
         *lock(&self.probe.0.last_event) = Some(value.0);
         self.probe.0.events.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Runs for the given milliseconds, recording when it began, its deadline then, and whether it
+    /// completed or its future was dropped first.
+    #[ulo_rpc::event("conformance.slow_event")]
+    async fn slow_event(&self, millis: Payload<u64>, exec: ExecutionRef, timer: Dep<dyn Timer>) -> Result<(), Refusal> {
+        let left = exec.deadline().map(|deadline| deadline.saturating_duration_since(timer.now()));
+        let run = {
+            let mut runs = lock(&self.probe.0.slow);
+            runs.push(SlowRun { began: Instant::now(), left, ended: None });
+            runs.len() - 1
+        };
+        let mut guard = SlowGuard { exec, probe: (*self.probe).clone(), run, completed: false };
+        timer.sleep(Duration::from_millis(millis.0)).await;
+        guard.completed = true;
         Ok(())
     }
 
@@ -604,6 +663,7 @@ impl<L: Link> Module for ClientRoot<L> {
 pub(crate) struct Client {
     pub(crate) rpc: RpcClient,
     app: App<Connected>,
+    root: ModuleRef,
 }
 
 impl Client {
@@ -611,6 +671,18 @@ impl Client {
     /// there to answer it.
     pub(crate) async fn close(self) {
         let _ = self.closed().await;
+    }
+
+    /// Runs `f` in a standalone execution of the client's app opened with `opts`, as code calling
+    /// out from inside an execution does.
+    pub(crate) async fn execute<R>(&self, opts: ExecOptions, f: impl AsyncFnOnce(&Execution) -> R) -> R {
+        self.app.execute(opts, f).await.unwrap_or_else(|closed| panic!("the client's execution was refused: {closed}"))
+    }
+
+    /// An execution of the client's app opened with `opts`, as a transport opens one: nothing
+    /// fires its cancellation when its deadline passes.
+    pub(crate) fn open(&self, opts: ExecOptions) -> Execution {
+        Execution::open(&self.root, opts).unwrap_or_else(|closed| panic!("the client's execution was refused: {closed}"))
     }
 
     /// Closes the client's app as [`close`](Self::close) does, answering its report: a destroy hook
@@ -642,7 +714,8 @@ pub(crate) async fn client_over<B: Broker, L: Link>(link: L) -> Client {
         .unwrap_or_else(|error| crate::startup_failed!("the conformance client did not connect: {}", report(&error)));
     let rpc =
         app.get::<RpcClient>().await.unwrap_or_else(|error| crate::startup_failed!("the conformance client has no `RpcClient`: {}", report(&error)));
-    Client { rpc: (*rpc).clone(), app }
+    let root = app.module::<ClientRoot<L>>().unwrap_or_else(|error| crate::startup_failed!("the conformance client has no root module: {}", report(&error)));
+    Client { rpc: (*rpc).clone(), app, root }
 }
 
 /// One scenario's environment: a broker, one server and one client, the server answering.
