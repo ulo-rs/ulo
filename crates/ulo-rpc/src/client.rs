@@ -429,6 +429,13 @@ pub(crate) struct Spec {
     within: Option<ExecutionRef>,
 }
 
+/// `deadline-ms` for `remaining`: whole milliseconds, a positive remainder under one millisecond
+/// written as `1`, and a remainder longer than the server reads, `u64::MAX` milliseconds, about
+/// 584 million years, written as that.
+fn deadline_ms(remaining: Duration) -> String {
+    u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX).max(1).to_string()
+}
+
 /// What bounds a call as a whole, and whether the bound is sent as `deadline-ms`.
 #[derive(Clone, Copy)]
 enum Whole {
@@ -482,7 +489,7 @@ impl Spec {
         // A `deadline-ms` the caller set was refused by `reserved`, so the stamp is the only one.
         let stamped = [remaining, own.filter(|_| sent)].into_iter().flatten().min();
         if let Some(stamped) = stamped {
-            self.headers.insert(DEADLINE_MS, stamped.as_millis().max(1).to_string());
+            self.headers.insert(DEADLINE_MS, deadline_ms(stamped));
         }
         let after = match (own, remaining) {
             (Some(own), Some(remaining)) => Some(own.min(remaining)),
@@ -1229,15 +1236,26 @@ mod tests {
         }
     }
 
-    /// A link whose server never answers, recording the `deadline-ms` of each opening frame it
-    /// sends, `req` or `open`, and `None` for one carrying none.
-    #[derive(Clone, Default)]
-    struct SilentLink(Arc<Mutex<Vec<Opening>>>);
+    /// A link whose server never answers, recording one header of each opening frame it sends,
+    /// `req` or `open`, and `None` for one carrying none: `deadline-ms`, or the header named to
+    /// [`SilentLink::recording`].
+    #[derive(Clone)]
+    struct SilentLink(Arc<Mutex<Vec<Opening>>>, &'static str);
 
-    /// An opening frame's kind and its `deadline-ms`.
+    /// An opening frame's kind and the recorded header's value.
     type Opening = (&'static str, Option<String>);
 
+    impl Default for SilentLink {
+        fn default() -> Self {
+            SilentLink::recording(DEADLINE_MS)
+        }
+    }
+
     impl SilentLink {
+        fn recording(header: &'static str) -> Self {
+            SilentLink(Arc::default(), header)
+        }
+
         fn sent(&self) -> Vec<Opening> {
             self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
         }
@@ -1255,11 +1273,11 @@ mod tests {
         }
 
         async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
-            let sent = Arc::clone(&self.0);
+            let (sent, header) = (Arc::clone(&self.0), self.1);
             Ok(Outbound {
                 send: Box::new(move |_pattern, frame, _reply_to| {
                     let opening = match &frame {
-                        Frame::Req { headers, .. } | Frame::Open { headers, .. } => Some((frame.kind(), headers.get("deadline-ms").map(str::to_owned))),
+                        Frame::Req { headers, .. } | Frame::Open { headers, .. } => Some((frame.kind(), headers.get(header).map(str::to_owned))),
                         _ => None,
                     };
                     if let Some(opening) = opening {
@@ -1318,6 +1336,92 @@ mod tests {
             ],
             "each opening frame's `deadline-ms`: the request's timeout, two streams' deadlines, then three streams with none"
         );
+    }
+
+    /// The named durations, then a pseudo-random sample spread over every magnitude a `Duration`
+    /// holds, the same on every run.
+    fn remaining_times() -> Vec<Duration> {
+        let mut durations = vec![
+            Duration::from_nanos(1),
+            Duration::from_nanos(999),
+            Duration::from_micros(1) + Duration::from_nanos(1),
+            Duration::from_millis(1) - Duration::from_nanos(1),
+            Duration::from_millis(1),
+            Duration::from_millis(1) + Duration::from_nanos(1),
+            Duration::from_secs(1),
+            Duration::from_secs(60),
+            Duration::from_secs(3600),
+            Duration::from_secs(3600 * 24),
+            Duration::from_secs(3600 * 24 * 100),
+            Duration::from_millis(u64::MAX),
+            Duration::from_millis(u64::MAX) + Duration::from_nanos(999_999),
+            Duration::from_millis(u64::MAX) + Duration::from_millis(1),
+            Duration::from_secs(u64::MAX / 2),
+            Duration::MAX,
+        ];
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..2000 {
+            let nanos = next() >> (next() % 64);
+            durations.push(Duration::from_nanos(nanos.max(1)));
+            let secs = next() >> (next() % 64);
+            durations.push(Duration::new(secs, (next() % 1_000_000_000) as u32));
+        }
+        durations
+    }
+
+    /// Every remaining time is written as a whole number of milliseconds the server reads, never
+    /// as zero, and read back less than a millisecond away, or as the longest value the server
+    /// reads, `u64::MAX` milliseconds, when it is longer than that.
+    #[test]
+    fn every_remaining_time_is_written_as_milliseconds_the_server_reads_and_never_as_zero() {
+        let longest = Duration::from_millis(u64::MAX);
+        let mut failures = Vec::new();
+        for remaining in remaining_times() {
+            let value = deadline_ms(remaining);
+            let mut headers = CallHeaders::new();
+            headers.insert(DEADLINE_MS, value.clone());
+            match headers.deadline() {
+                Err(_) => failures.push(format!("{remaining:?}: written {value:?}, which the server cannot read")),
+                Ok(None) => failures.push(format!("{remaining:?}: written {value:?}, read back as no deadline")),
+                Ok(Some(decoded)) => {
+                    let close = if remaining > longest { decoded == longest } else { remaining.abs_diff(decoded) < Duration::from_millis(1) };
+                    if !value.bytes().all(|byte| byte.is_ascii_digit()) || decoded.is_zero() || !close {
+                        failures.push(format!("{remaining:?}: written {value:?}, read back as {decoded:?}"));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{} of the sweep's durations failed, the first ten: {:#?}", failures.len(), &failures[..failures.len().min(10)]);
+    }
+
+    /// A stream's deadline under a millisecond is sent as `1`, and one longer than `u64::MAX`
+    /// milliseconds as that, the longest value the server reads.
+    #[tokio::test]
+    async fn a_deadline_is_sent_as_milliseconds_the_server_reads() {
+        let link = SilentLink::default();
+        let client = silent_client(&link, Duration::from_secs(30));
+        drop(client.stream::<_, u32>("silent.stream", &()).deadline(Duration::from_micros(500)).await.expect("the stream opens"));
+        drop(client.stream::<_, u32>("silent.stream", &()).deadline(Duration::from_secs(1 << 62)).await.expect("the stream opens"));
+        assert_eq!(link.sent(), vec![("req", Some("1".to_owned())), ("req", Some(u64::MAX.to_string()))], "each stream's `deadline-ms`");
+    }
+
+    /// F400: `traceparent` is an ordinary header. A caller sets it with `.header` to propagate
+    /// trace context, and the client sends it as set on a request and a stream, refusing neither.
+    #[tokio::test]
+    async fn a_caller_s_traceparent_is_sent_as_set() {
+        const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        let link = SilentLink::recording("traceparent");
+        let client = silent_client(&link, Duration::from_millis(50));
+        let timed_out = client.request::<_, u32>("silent.request", &()).header("traceparent", TRACEPARENT).await.expect_err("nothing answers the request");
+        assert_eq!(timed_out.kind(), ErrorKind::Timeout, "the request was refused rather than sent: {timed_out:?}");
+        drop(client.stream::<_, u32>("silent.stream", &()).header("traceparent", TRACEPARENT).await.expect("the stream opens"));
+        assert_eq!(link.sent(), vec![("req", Some(TRACEPARENT.to_owned())), ("req", Some(TRACEPARENT.to_owned()))], "each opening frame's `traceparent`");
     }
 
     /// A stream whose server goes silent ends at its idle timeout, as `Timeout`.

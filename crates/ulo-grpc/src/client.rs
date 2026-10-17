@@ -103,13 +103,24 @@ impl ClientTls {
 
 /// `request` with `grpc-timeout` set from `exec`'s remaining deadline. There is no ambient
 /// execution, so nothing forwards a deadline on its own. A deadline already passed is sent as one
-/// nanosecond, the shortest `grpc-timeout`, so the callee fails it at once. The remaining time is
-/// read on tokio's clock, which `ulo-runtime-tokio`'s `Timer` reads too.
-pub fn outgoing<T>(exec: &ExecutionRef, mut request: tonic::Request<T>) -> tonic::Request<T> {
-    if let Some(deadline) = exec.deadline() {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now().into_std());
-        request.set_timeout(remaining.max(Duration::from_nanos(1)));
+/// nanosecond, the shortest `grpc-timeout`, so the callee fails it at once; one further off than
+/// `99999999H`, about 11,415 years and the longest the grammar holds, is sent as that. The
+/// remaining time is read on tokio's clock, which `ulo-runtime-tokio`'s `Timer` reads too.
+pub fn outgoing<T>(exec: &ExecutionRef, request: tonic::Request<T>) -> tonic::Request<T> {
+    match exec.deadline() {
+        Some(deadline) => timed(request, deadline.saturating_duration_since(tokio::time::Instant::now().into_std())),
+        None => request,
     }
+}
+
+/// The longest `grpc-timeout`, `99999999H`.
+const LONGEST: Duration = Duration::from_secs(99_999_999 * 3600);
+
+/// `request` with `grpc-timeout` written for `remaining`. tonic writes the finest unit whose
+/// amount fits eight digits, truncated, and panics for a duration longer than `99999999H`, so
+/// `remaining` is held to that first.
+fn timed<T>(mut request: tonic::Request<T>, remaining: Duration) -> tonic::Request<T> {
+    request.set_timeout(remaining.clamp(Duration::from_nanos(1), LONGEST));
     request
 }
 
@@ -166,5 +177,108 @@ impl<C: GrpcClient> ClientEndpoint<C> {
             None => self.endpoint.clone(),
         };
         Ok(C::from_channel(endpoint.connect_lazy()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::time::Duration;
+
+    use http::{HeaderMap, HeaderValue};
+
+    use super::{LONGEST, timed};
+    use crate::dispatch::grpc_timeout;
+
+    const HOUR: Duration = Duration::from_secs(3600);
+
+    /// What one unit of `unit` is.
+    fn unit_of(unit: &str) -> Duration {
+        match unit {
+            "H" => HOUR,
+            "M" => Duration::from_secs(60),
+            "S" => Duration::from_secs(1),
+            "m" => Duration::from_millis(1),
+            "u" => Duration::from_micros(1),
+            "n" => Duration::from_nanos(1),
+            other => panic!("not a unit: {other:?}"),
+        }
+    }
+
+    /// The named durations, then a pseudo-random sample spread over every magnitude a `Duration`
+    /// holds, the same on every run.
+    fn sweep() -> Vec<Duration> {
+        let mut durations = vec![
+            Duration::from_nanos(1),
+            Duration::from_nanos(999),
+            Duration::from_micros(1) + Duration::from_nanos(1),
+            Duration::from_millis(1) - Duration::from_nanos(1),
+            Duration::from_nanos(99_999_999),
+            Duration::from_nanos(100_000_001),
+            Duration::from_secs(1),
+            Duration::from_secs(60),
+            HOUR,
+            HOUR * 24,
+            HOUR * 24 * 100,
+            LONGEST,
+            LONGEST + Duration::from_nanos(1),
+            LONGEST + HOUR,
+            Duration::from_secs(u64::MAX / 1000),
+            Duration::MAX,
+        ];
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..2000 {
+            let nanos = next() >> (next() % 64);
+            durations.push(Duration::from_nanos(nanos.max(1)));
+            let secs = next() >> (next() % 64);
+            durations.push(Duration::new(secs, (next() % 1_000_000_000) as u32));
+        }
+        durations
+    }
+
+    /// What `outgoing` writes for `remaining`, decoded as the server reads it, or what went wrong.
+    fn encode(remaining: Duration) -> Result<(String, Duration), String> {
+        let request = catch_unwind(AssertUnwindSafe(|| timed(tonic::Request::new(()), remaining)))
+            .map_err(|panic| format!("panicked: {:?}", panic.downcast_ref::<&str>().copied().or(panic.downcast_ref::<String>().map(String::as_str))))?;
+        let value = request.metadata().get("grpc-timeout").ok_or("no `grpc-timeout` written")?.to_str().map_err(|error| error.to_string())?.to_owned();
+        let (digits, unit) = value.split_at(value.len().saturating_sub(1));
+        if digits.is_empty() || digits.len() > 8 || !digits.bytes().all(|byte| byte.is_ascii_digit()) || !"HMSmun".contains(unit) || unit.is_empty() {
+            return Err(format!("{value:?} is off the grammar"));
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert("grpc-timeout", HeaderValue::from_str(&value).map_err(|error| error.to_string())?);
+        match grpc_timeout(&headers) {
+            Ok(Some(decoded)) => Ok((value, decoded)),
+            other => Err(format!("{value:?} read back as {other:?}")),
+        }
+    }
+
+    /// Every duration is written on the grammar, at most eight digits and one of `H M S m u n`,
+    /// never as zero, and read back by the server no more than one unit away, or as the longest
+    /// value the grammar holds when it is longer than that. A zero remainder, a deadline already
+    /// passed, is written as the shortest positive value.
+    #[test]
+    fn every_remaining_time_is_written_on_the_grammar_and_never_as_zero() {
+        let mut failures = Vec::new();
+        for remaining in sweep() {
+            match encode(remaining) {
+                Err(why) => failures.push(format!("{remaining:?}: {why}")),
+                Ok((value, decoded)) => {
+                    let unit = unit_of(&value[value.len() - 1..]);
+                    let close = if remaining > LONGEST { decoded == LONGEST } else { remaining.abs_diff(decoded) < unit };
+                    if decoded.is_zero() || !close {
+                        failures.push(format!("{remaining:?}: written {value:?}, read back as {decoded:?}"));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{} of the sweep's durations failed, the first ten: {:#?}", failures.len(), &failures[..failures.len().min(10)]);
+        assert_eq!(encode(Duration::ZERO).map(|(value, _)| value), Ok("1n".to_owned()), "a deadline already passed");
     }
 }

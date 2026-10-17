@@ -208,8 +208,9 @@ impl fmt::Debug for Reply {
 /// A call's headers, the frame's `h` or the broker's own headers, as an execution input and as a
 /// handler parameter. Reserved: `deadline-ms`, the remaining time, which the client writes from a
 /// call's bound, refusing a call whose caller set it, and which becomes the execution's deadline,
-/// a call whose value the server cannot read being refused `BadRequest` before its handler runs;
-/// and `traceparent` (W3C Trace Context).
+/// a call whose value the server cannot read being refused `BadRequest` before its handler runs.
+/// `traceparent` (W3C Trace Context) is an ordinary header: a caller sets it with `.header` to
+/// propagate trace context, and nothing in ulo reserves, writes or refuses it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallHeaders {
     pub(crate) entries: Vec<(String, String)>,

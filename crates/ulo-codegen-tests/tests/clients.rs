@@ -209,3 +209,20 @@ async fn outgoing_forwards_the_execution_s_remaining_deadline() {
     let _ = app.close(Signal::new("test")).await;
     server.stop().await;
 }
+
+/// An execution whose deadline is further off than the longest `grpc-timeout`, `99999999H`, about
+/// 11,415 years, forwards that longest value, where tonic alone would panic on it.
+#[tokio::test]
+async fn outgoing_forwards_a_deadline_beyond_the_grammar_as_its_longest_value() {
+    let app = client_app(Vec::new()).await;
+    let far = tokio::time::Instant::now().into_std() + Duration::from_secs(400_000_000_000);
+    let written = app
+        .execute(ExecOptions::new().deadline(far), async |exec| {
+            let request = ulo_grpc::outgoing(&exec.handle(), tonic::Request::new(Ticks::default()));
+            request.metadata().get("grpc-timeout").map(|value| value.to_str().map(str::to_owned))
+        })
+        .await
+        .unwrap_or_else(|error| panic!("the execution was refused: {error}"));
+    assert_eq!(written.map(|value| value.map_err(|error| error.to_string())), Some(Ok("99999999H".to_owned())));
+    let _ = app.close(Signal::new("test")).await;
+}

@@ -3,8 +3,8 @@
 //! DEADLINE_EXCEEDED without them once the grace runs out; the handler's future dropped with the
 //! reason `Deadline`; an error handler's single reply delivered and its stream ended with
 //! DEADLINE_EXCEEDED, nothing of it written; a deadline passing during a streamed reply; and a
-//! `grpc-timeout` off the specification's grammar refused INTERNAL before any handler runs, as
-//! grpc-go refuses it.
+//! `grpc-timeout` off the specification's grammar refused INTERNAL, and a zero one answered
+//! DEADLINE_EXCEEDED, before any handler runs, as grpc-go answers each.
 //!
 //! The calls go through a plain HTTP/2 client: a tonic `Channel` enforces `grpc-timeout` itself
 //! and would answer CANCELLED before the server's answer arrived.
@@ -445,15 +445,35 @@ async fn a_grpc_timeout_on_the_grammar_still_sets_the_deadline() {
     app.stop().await;
 }
 
-/// A zero amount is on the grammar's digits: a deadline already passed. The handler is polled once,
-/// so one answering without awaiting is answered, and one that awaits is ended at the deadline.
-#[tokio::test]
-async fn a_zero_grpc_timeout_is_one_already_passed() {
+/// F399: calls whose `grpc-timeout` is `value`, a zero amount, are each answered DEADLINE_EXCEEDED
+/// before any handler runs, as grpc-go answers them: a unary handler that answers without awaiting,
+/// a streaming one, and one whose error handler would claim a `Timeout` with UNAVAILABLE, which
+/// shows no error handler is offered it.
+async fn spent_before_the_handler_runs(value: &str) {
     let (app, mut client, seen) = start().await;
-    let status = failed(support::within("the stalled call", client.stall(raw_timeout(tonic::Request::new(Ticks::default()), "0S"))).await);
-    assert_eq!(status.code(), Code::DeadlineExceeded, "{status:?}");
-    assert_eq!(seen.0.at_least(1, "the stalled handler's drop").await, vec!["handler dropped: Some(Deadline)".to_owned()]);
+    let unary = failed(support::within("the unary call", client.quick(raw_timeout(tonic::Request::new(Ticks::default()), value))).await);
+    assert_eq!(unary.code(), Code::DeadlineExceeded, "`grpc-timeout: {value:?}`: {unary:?}");
+    let streamed = stream_failed(support::within("the streaming call", client.drip(raw_timeout(tonic::Request::new(Ticks::default()), value))).await).await;
+    assert_eq!(streamed.code(), Code::DeadlineExceeded, "`grpc-timeout: {value:?}`: {streamed:?}");
+    let claimed = failed(support::within("the claimed call", client.stall_claimed(raw_timeout(tonic::Request::new(Ticks::default()), value))).await);
+    assert_eq!(claimed.code(), Code::DeadlineExceeded, "`grpc-timeout: {value:?}`: {claimed:?}");
+    // A call without the header, answered, shows the server had settled everything before it.
+    let reply = client.quick(Ticks::default()).await.unwrap_or_else(|status| panic!("Quick failed: {status:?}"));
+    assert_eq!(reply.into_inner().n, 0);
+    assert_eq!(seen.0.snapshot(), vec!["quick ran".to_owned()], "`grpc-timeout: {value:?}`: only the call without it ran a handler");
     app.stop().await;
+}
+
+#[tokio::test]
+async fn a_zero_grpc_timeout_is_answered_deadline_exceeded_before_the_handler_runs() {
+    spent_before_the_handler_runs("0S").await;
+}
+
+#[tokio::test]
+async fn a_zero_grpc_timeout_in_any_unit_is_answered_deadline_exceeded_before_the_handler_runs() {
+    for value in ["0H", "0M", "0m", "0u", "0n", "00000000S"] {
+        spent_before_the_handler_runs(value).await;
+    }
 }
 
 #[tokio::test]
