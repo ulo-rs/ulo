@@ -70,8 +70,10 @@ const DOMAIN: &str = "ulo.rpc";
 ///
 /// Over `tls://`, a store yielding no root, a file that cannot be written, or a process that links
 /// more than one rustls crypto provider and installs none fails a server's `bind` and every client
-/// call `Internal` with `reason: "misconfigured_link"`. Over `nats://` the same causes are logged
+/// call `Internal` with `reason: "misconfigured_link"`. Over `nats://` the first two are logged
 /// at `warn` once and the link connects without the file, since a plain server needs none of it.
+/// The provider is resolved for `tls://` alone, so a provider conflict is neither checked nor
+/// logged over `nats://`.
 pub struct Nats {
     pub(crate) url: String,
     pub(crate) group: Option<String>,
@@ -951,11 +953,11 @@ impl Roots {
                     if tls {
                         resolve()?;
                     }
-                    RootsFile::write(load(), &dir()).map_err(|cause| format!("{UNLOADED}: {cause}"))
+                    RootsFile::write(load(), &dir()).map_err(|cause| format!("{}: {cause}", unloaded(tls)))
                 });
                 match loaded.await {
                     Ok(written) => Ok(written.map(Arc::new)),
-                    Err(ended) if ended.is_panic() => Ok(Err(format!("{UNLOADED}: loading them panicked: {}", panic_text(&*ended.into_panic())))),
+                    Err(ended) if ended.is_panic() => Ok(Err(format!("{}: loading them panicked: {}", unloaded(tls), panic_text(&*ended.into_panic())))),
                     Err(ended) => Err(ended),
                 }
             })
@@ -975,7 +977,15 @@ impl Roots {
     }
 }
 
-const UNLOADED: &str = "the NATS link could not load the platform's root certificates for `tls://`";
+/// The scheme is named only for a link that requires TLS: a `nats://` link's text becomes the
+/// cause of its `warn`.
+fn unloaded(tls: bool) -> &'static str {
+    if tls {
+        "the NATS link could not load the platform's root certificates for `tls://`"
+    } else {
+        "the NATS link could not load the platform's root certificates"
+    }
+}
 
 /// The refusal of a process whose build links more than one of rustls's crypto providers and
 /// installs none.
@@ -1365,6 +1375,20 @@ mod tests {
             assert_eq!((kind, reason.as_deref()), (ErrorKind::Unavailable, None), "{message}");
         }
         assert_eq!((LOADS[10].load(Ordering::SeqCst), LOADS[11].load(Ordering::SeqCst)), (1, 1), "a side loaded its roots other than once");
+    }
+
+    /// F423: the refusal kept for a `nats://` link becomes the cause of its `warn`, so it does
+    /// not name `tls://`; a `tls://` link's refusal does.
+    #[tokio::test]
+    async fn a_plain_link_s_logged_cause_does_not_name_tls() {
+        fn missing() -> CertificateResult {
+            rustls_native_certs::load_certs_from_paths(Some(Path::new("/nonexistent/ulo-rpc-nats-roots.pem")), None)
+        }
+        let runtime = Tokio::current();
+        let plain = link("nats://localhost:1", missing, std::env::temp_dir).roots.load(&runtime, false).await.err().expect("the roots did not load");
+        assert!(!plain.to_string().contains("tls://"), "{plain}");
+        let tls = link("tls://localhost:1", missing, std::env::temp_dir).roots.load(&runtime, true).await.err().expect("the roots did not load");
+        assert!(tls.to_string().contains("`tls://`"), "{tls}");
     }
 
     /// F423: a `nats://` link to a plaintext NATS server stays plain though it hands every

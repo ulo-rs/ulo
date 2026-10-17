@@ -48,7 +48,7 @@ fn resolve_provider() -> Result<(), String>;                             // new
 const PROVIDERS: &str;                                                   // new: the refusal's text
 
 // crates/ulo-ws, under `conformance-probe`
-pub struct AnswerHold;                                                   // crate-private and empty without the feature
+pub struct AnswerHold;                                                   // `pub` in every build; unexported and empty without the feature
 impl AnswerHold { pub fn new(hold: impl Fn(&str) -> BoxFuture<'static, ()> + Send + Sync + 'static) -> AnswerHold; }
 impl GatewayDefaults { pub fn answer_hold(self, hold: AnswerHold) -> Self; }
 // crate-private: `AnswerHold::before_queueing(&self, event: &str)`, awaited in every build;
@@ -100,7 +100,7 @@ output is kept as `probes/superseded-p01-compile-error.txt`.
 `Nats::roots` (`crates/ulo-rpc-nats/src/link.rs:151`) loads for every url, at the points it loaded
 for `tls://`: a server's `prepare` and a client's first connect, the load and the write on the link's
 runtime's `spawn_blocking` inside the `OnceCell`, as batch 38 built them. What a failed load does
-depends on the url, which the response left open (S1): a url naming a `tls://` server is refused as
+depends on the url, which the response left open (batch S1): a url naming a `tls://` server is refused as
 before (`:155`); for one naming none, `Roots::warned` lets one `warn` through and the link connects
 without the file, async-nats then reading the store itself if a server upgrades the connection. A
 plain server needs none of the roots, and a host with no trust store, a `scratch` image among them,
@@ -119,8 +119,8 @@ panics when they name two or none. `ClientConfig::builder()` is the public entry
 `PROVIDERS` (`:982`), the response's text. It runs in the same blocking task, before the store is
 read, for a `tls://` url alone (`:951`): on a `nats://` url a successful resolution would have rustls
 install a process default for a link that may never use TLS, and a failed one would only be logged
-(S2). The link installs no provider of its own. Where the features name one, rustls installs it
-during the link's first load, which is where async-nats's first TLS connection installed it (S3).
+(batch S2). The link installs no provider of its own. Where the features name one, rustls installs it
+during the link's first load, which is where async-nats's first TLS connection installed it (batch S3).
 The panic hook still prints rustls's message once per refused link. `Roots::resolve` is the seam the
 unit tests replace.
 
@@ -133,12 +133,12 @@ names the dev-dependency alone, and `-e features,normal` names no `aws`). Every 
 crate then links both, as a workspace build already does through the MQTT link. A process with no
 installed provider is needed for the panic, and the unit tests' TLS connections need one installed,
 so the refusal lives in a binary of its own, `tests/two_providers.rs`, which installs none, and the
-unit tests install `ring` through `installed()` (S4). Each of its tests first asserts that no
+unit tests install `ring` through `installed()` (batch S4). Each of its tests first asserts that no
 provider is installed and that `ClientConfig::builder()` panics, so a build that stopped linking
 both would fail there rather than pass on silence. `cargo test -p ulo-rpc-nats --test
 two_providers` needs nothing else.
 
-### 5. The NATS TLS tests on the loader seam (S3)
+### 5. The NATS TLS tests on the loader seam (response S3)
 
 `over_tls::slow_test_roots<SLOT>` returns the test certificate as the store's one root after
 blocking `STALL * 2`, 50 ms, and counts its loads in `SLOT` of `TLS_LOADS`, MQTT's loader
@@ -152,7 +152,7 @@ read nothing of the host's store; they are unchanged. Three runs (`probes/p02-*.
   63 to 66 ticks, four loads.
 - `reconnecting_over_tls_does_not_stall_the_thread`: 2.9 to 7.4 ms in every phase, two loads, so the
   reconnect reused the roots. Two ticks ended while reconnecting in each run, where batch 38 saw 4 to
-  138: the file is one certificate, not the host's 158, and the reconnect is quicker (S8).
+  138: the file is one certificate, not the host's 158, and the reconnect is quicker (response S8).
 
 The planted loads, batch 38's two (`broken/b01-*.txt`, `broken/b02-*.txt`): with a `ClientConfig`
 handed to async-nats, which then reads the platform's store on every connection, the `tls://`
@@ -211,7 +211,7 @@ the conformance suite because it builds its own `GatewayDefaults`.
 reads at runtime: `connect` copies it (`:293`) and makes the client's producer through it (`:308`),
 and there is no other path to that producer. `Kafka::brokers` sets it to `producer` (`:126`), and
 the one other write is the failed-connect test's (`:1682`). The server's `listen` calls `producer`
-directly (`:262`). The response's condition holds and the field is left as it is (S5).
+directly (`:262`). The response's condition holds and the field is left as it is (batch S5).
 
 ### 10. S8: the order `max_inflight` gives
 
@@ -253,7 +253,7 @@ fixed: the cause is in `ulo`'s app or `ulo-rpc`'s server, outside the NATS link.
   `a_plain_link_is_not_refused_for_its_providers`; in the unit tests,
   `a_tls_link_whose_provider_does_not_resolve_is_refused_naming_the_fix` and
   `a_plain_link_resolves_no_provider`, decisions 3 and 4.
-- **S3:** `over_tls::connecting_over_tls_does_not_stall_the_thread` and
+- **Response S3:** `over_tls::connecting_over_tls_does_not_stall_the_thread` and
   `over_tls::reconnecting_over_tls_does_not_stall_the_thread` on the seam, decision 5. The unit tests
   install `ring` through `link()`.
 - **F420:** `crates/ulo-ws/tests/table.rs`, `under_a_bound_of_one_a_held_answer_is_not_overtaken`,
@@ -410,7 +410,7 @@ tests and gRPC's ran in the first pass alone; the alias is in `ulo-ws`, which no
   (12.29 s); Redis 53 and 3 (9.15 s); MQTT 59 and 1 (8.23 s); Kafka 55 and 1 (66.28 s); RabbitMQ with
   `ULO_CONFORMANCE_PARALLEL=6` 54 and 1 (28.10 s). Each count is batch 38's. NATS took 12.29 s against
   batch 38's 5.67 s, and 12.02 s in a run before the verification: every `nats://` link now reads the
-  host's store once, on the blocking pool (S6).
+  host's store once, on the blocking pool (batch S6).
 - **The link unit tests with `integration`** (`verify/first-pass/nats-lib-integration.txt`,
   `mqtt-lib-integration.txt`, `kafka-lib-integration.txt`): NATS 15 passed, the eleven unit tests, the
   three over TLS and the plain one, one thread at a time; MQTT 4 and Kafka 4, batch 38's. **NATS's tests

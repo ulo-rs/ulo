@@ -83,7 +83,7 @@ impl MessagesRead {
 }
 
 /// A wait between a message's answer and its queueing, for the conformance tests: called with the
-/// message's event as its answer, an error and a streamed answer's start included, is about to be
+/// message's event when its answer, an error or a streamed answer's start included, is about to be
 /// pushed to the connection's outbound queue, and awaited before the push. It holds open the point
 /// where `max_inflight` counts a message out, which a test of the order of two answers under a
 /// bound of one delays.
