@@ -6656,10 +6656,12 @@ name = "ulo-rpc-nats"
 version = "0.1.0-alpha.1"
 dependencies = [
  "async-nats",
+ "base64 0.22.1",
  "bytes",
  "futures-core",
  "futures-executor",
  "futures-util",
+ "rustls-native-certs 0.8.4",
  "testcontainers",
  "tokio",
  "tracing",
@@ -6668,6 +6670,7 @@ dependencies = [
  "ulo-rpc-conformance",
  "ulo-rpc-nats",
  "ulo-runtime-tokio",
+ "ulo-test-certs",
  "ulo-transport",
 ]
 

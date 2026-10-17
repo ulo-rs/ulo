@@ -15,12 +15,16 @@ ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1" }
 ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+# Encodes the platform's root certificates as the PEM file a `tls://` link hands async-nats.
+base64.workspace = true
 bytes.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true
 # `ring` is async-nats's TLS provider, which it refuses to compile without, so `tls://` works in
 # every build.
 async-nats = { workspace = true, features = ["ring"] }
+# The platform's root certificates for `tls://`, loaded once per link off the runtime's workers.
+rustls-native-certs.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "macros"] }
 tracing.workspace = true
 
@@ -39,8 +43,10 @@ conformance-probe = ["ulo-rpc/conformance-probe"]
 ulo-rpc-nats = { path = ".", features = ["conformance-probe"] }
 futures-executor.workspace = true
 testcontainers.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
+# The certificate a TLS NATS server serves in the link's own tests.
+ulo-test-certs = { path = "../ulo-test-certs" }
 
 [lints]
 workspace = true

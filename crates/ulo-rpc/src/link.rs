@@ -428,7 +428,8 @@ impl fmt::Display for NoDestination {
 impl Error for NoDestination {}
 
 /// A link's refusal to connect that no retry mends, a misconfiguration only its connect could see:
-/// an `mqtts://` link whose platform root certificates did not load. `RpcClient` answers it
+/// an `mqtts://` or `tls://` link whose platform root certificates did not load, or a NATS link
+/// that could not write them to its file. `RpcClient` answers it
 /// `Internal` with `reason: "misconfigured_link"`, not the `Unavailable` of a connect that failed,
 /// and asks again on the next call, which a link holding the cause answers at once.
 #[derive(Debug)]

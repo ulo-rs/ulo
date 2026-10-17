@@ -53,7 +53,8 @@ const WRITE_QUEUE: usize = 64;
 /// built or the one [`with_handle`](Self::with_handle) names, so its futures and streams may be
 /// polled on any executor or on a plain thread. A link built outside a runtime and given none
 /// refuses in `usable`, so a client is refused where it
-/// takes the link and a server's `listen()` fails, and in `connect`.
+/// takes the link and a server's `listen()` fails, and in `connect`. So does an endpoint that is
+/// not an IP address and port: the link resolves no host name.
 pub struct Udp {
     pub(crate) endpoint: EndpointSpec,
     pub(crate) codec: Codec,
@@ -84,8 +85,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Udp {
-    /// The link on `endpoint`: text parsed in `prepare`, or a `SocketAddr`. An inherited endpoint
-    /// is refused in `prepare`, since the activation adopts listening TCP sockets alone.
+    /// The link on `endpoint`: text parsed as an IP address and port in `usable`, where a client
+    /// takes the link, and in a server's `prepare`, or a `SocketAddr`. An inherited endpoint is
+    /// refused there too, since the activation adopts listening TCP sockets alone.
     pub fn new(endpoint: impl Into<EndpointSpec>) -> Self {
         Udp {
             endpoint: endpoint.into(),
@@ -123,9 +125,15 @@ impl Udp {
     }
 
     /// The endpoint as written on both sides: `resolve` would turn an address `ulo dev --listen`
-    /// holds as a TCP socket into that socket, which a datagram socket cannot be.
+    /// holds as a TCP socket into that socket, which a datagram socket cannot be. Text is parsed as
+    /// an IP address and port, and a host name is refused: the link resolves none. Each refusal is
+    /// permanent, so `usable` reports it where the client takes the link.
     fn address(&self) -> Result<SocketAddr, BoxError> {
-        match self.endpoint.resolve_as_written()? {
+        let endpoint = self
+            .endpoint
+            .resolve_as_written()
+            .map_err(|error| format!("the UDP link takes IP addresses only and resolves no host name: {error}"))?;
+        match endpoint {
             Endpoint::Addr(addr) => Ok(addr),
             endpoint => Err(format!(
                 "{endpoint}: the UDP link takes an address; the activation adopts listening TCP sockets alone"
@@ -154,12 +162,13 @@ impl Link for Udp {
     }
 
     fn usable(&self) -> Result<(), BoxError> {
-        self.runtime().map(drop)
+        self.runtime()?;
+        self.address().map(drop)
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
         let _ = app;
-        self.usable()?;
+        self.runtime()?;
         self.prepared = Some(self.address()?);
         Ok(())
     }

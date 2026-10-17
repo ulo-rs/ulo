@@ -93,6 +93,9 @@ pub struct Kafka {
     pub(crate) max_inflight: Option<usize>,
     /// The app's clock, from `prepare`, which times the anchor's retries.
     pub(crate) timer: Option<Arc<dyn Timer>>,
+    /// The client's producer, made in `connect` after its reply consumer: [`producer`], which a
+    /// test replaces.
+    pub(crate) client_producer: fn(&ClientConfig) -> Result<FutureProducer, BoxError>,
     pub(crate) state: Mutex<State>,
     #[cfg(feature = "conformance-probe")]
     pub(crate) probe: Arc<ClientProbe>,
@@ -120,6 +123,7 @@ impl Kafka {
             default_group: None,
             max_inflight: Count::Default.max_inflight(),
             timer: None,
+            client_producer: producer,
             state: Mutex::new(State::default()),
             #[cfg(feature = "conformance-probe")]
             probe: Arc::default(),
@@ -286,7 +290,7 @@ impl Link for Kafka {
         let base = Brokers::parse(&self.brokers)?.config();
         let id = uuid::Uuid::new_v4().simple().to_string();
         let reply_topic = self.reply_topic.clone().unwrap_or_else(|| format!("ulo.rpc.reply.{id}"));
-        let (partitions, replication) = (self.partitions, self.replication);
+        let (partitions, replication, client_producer) = (self.partitions, self.replication, self.client_producer);
         let (replies, producer) = {
             let reply_topic = reply_topic.clone();
             runtime
@@ -297,9 +301,11 @@ impl Link for Kafka {
                     // reply that lands before the group's first assignment.
                     let mut config = base.clone();
                     config.set("group.id", &reply_topic).set("enable.auto.commit", "true").set("auto.offset.reset", "earliest");
-                    let replies: StreamConsumer = config.create()?;
+                    // Detached from its creation, so a step after it that fails drops it on a
+                    // thread of its own rather than on the worker polling this.
+                    let replies: Detached<StreamConsumer> = Detached::new(config.create()?);
                     replies.subscribe(&[reply_topic.as_str()])?;
-                    Ok::<_, BoxError>((replies, producer(&base)?))
+                    Ok::<_, BoxError>((replies, client_producer(&base)?))
                 })
                 .await??
         };
@@ -1251,16 +1257,16 @@ impl ClientSide {
     }
 }
 
+/// Reads the client's replies. `replies` is [`Detached`], so a router dropped before it ends, its
+/// client never closed and the runtime shutting down, still drops the consumer on a thread of its
+/// own.
 async fn route_replies(
     side: Arc<ClientSide>,
-    replies: StreamConsumer,
+    replies: Detached<StreamConsumer>,
     frames: mpsc::UnboundedSender<Frame>,
     mut closing: oneshot::Receiver<()>,
     writes: ordered::Sender<Job>,
 ) {
-    // Held detached, so a router dropped before it ends, its client never closed and the runtime
-    // shutting down, still drops the consumer on a thread of its own.
-    let replies = Detached::new(replies);
     loop {
         let record = tokio::select! {
             _ = &mut closing => break,
@@ -1586,5 +1592,134 @@ mod tests {
         assert!(slept < ANCHOR_TIMEOUT, "the retries slept {slept:?}, past the {ANCHOR_TIMEOUT:?} timeout");
         assert_eq!(remaining.first(), Some(&ANCHOR_TIMEOUT), "the first attempt was not given the whole timeout");
         assert!(remaining.windows(2).all(|pair| pair[1] < pair[0]), "each attempt was not given what was left: {remaining:?}");
+    }
+
+    /// A client's `connect` failing after its reply consumer exists, against a broker in a
+    /// container of its own.
+    #[cfg(feature = "integration")]
+    mod failed_connect {
+        use std::net::{Ipv4Addr, SocketAddr};
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        use std::thread::{self, ThreadId};
+
+        use testcontainers::core::{IntoContainerPort, WaitFor};
+        use testcontainers::runners::AsyncRunner;
+        use testcontainers::{ContainerAsync, GenericImage, ImageExt};
+        use ulo_rpc_conformance::relay::{Relay, reachable, unshadowed};
+        use ulo_rpc_conformance::{Budget, Harness, OnTokio, report, startup_failed};
+
+        use super::*;
+
+        const PORT: u16 = 9092;
+
+        /// How many connects the test fails, each with a reply consumer of its own to drop.
+        const CONNECTS: usize = 3;
+
+        /// The planted producer failures, one per connect.
+        static FAILED: AtomicUsize = AtomicUsize::new(0);
+
+        /// The step after the reply consumer, failing.
+        fn failing_producer(_: &ClientConfig) -> Result<FutureProducer, BoxError> {
+            FAILED.fetch_add(1, Ordering::SeqCst);
+            Err("a producer the test refuses".into())
+        }
+
+        /// A single-node KRaft broker whose one client listener advertises a relay bound before the
+        /// container starts, since a Kafka client connects wherever the metadata says.
+        async fn kraft() -> (Relay, ContainerAsync<GenericImage>) {
+            let relay = Relay::bind().await;
+            let advertised = format!(
+                "CLIENT://{},BROKER://localhost:9094",
+                relay.local_addr().unwrap_or_else(|error| startup_failed!("the relay has no address: {}", report(&error)))
+            );
+            let (container, addrs) = unshadowed("the Kafka container", || {
+                let advertised = advertised.clone();
+                async move {
+                    let container = GenericImage::new("apache/kafka-native", "3.8.0")
+                        .with_exposed_port(PORT.tcp())
+                        .with_wait_for(WaitFor::message_on_stdout("Kafka Server started"))
+                        .with_env_var("CLUSTER_ID", "ulo-rpc-kafka-failed-connect")
+                        .with_env_var("KAFKA_NODE_ID", "1")
+                        .with_env_var("KAFKA_PROCESS_ROLES", "broker,controller")
+                        .with_env_var("KAFKA_CONTROLLER_QUORUM_VOTERS", "1@localhost:9093")
+                        .with_env_var("KAFKA_CONTROLLER_LISTENER_NAMES", "CONTROLLER")
+                        .with_env_var("KAFKA_LISTENERS", "CLIENT://:9092,CONTROLLER://:9093,BROKER://:9094")
+                        .with_env_var("KAFKA_ADVERTISED_LISTENERS", advertised)
+                        .with_env_var("KAFKA_LISTENER_SECURITY_PROTOCOL_MAP", "CLIENT:PLAINTEXT,CONTROLLER:PLAINTEXT,BROKER:PLAINTEXT")
+                        .with_env_var("KAFKA_INTER_BROKER_LISTENER_NAME", "BROKER")
+                        .with_env_var("KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR", "1")
+                        .with_env_var("KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS", "1")
+                        .with_env_var("KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR", "1")
+                        .with_env_var("KAFKA_TRANSACTION_STATE_LOG_MIN_ISR", "1")
+                        .with_env_var("KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS", "0")
+                        .start()
+                        .await
+                        .unwrap_or_else(|error| startup_failed!("the Kafka container did not start: {}", report(&error)));
+                    let port = container
+                        .get_host_port_ipv4(PORT)
+                        .await
+                        .unwrap_or_else(|error| startup_failed!("the Kafka listener is not mapped: {}", report(&error)));
+                    (container, vec![SocketAddr::from((Ipv4Addr::LOCALHOST, port))])
+                }
+            })
+            .await;
+            reachable(addrs[0], Duration::from_secs(10)).await;
+            (Relay::listen(relay, addrs[0]), container)
+        }
+
+        /// F419: a client's `connect` that fails after its reply consumer exists drops the consumer
+        /// on a thread of its own. Polled on one thread beside a task ticking every tenth of the
+        /// suite's [`Budget::stall`], three connects whose producer the test refuses each create
+        /// the reply topic, create and subscribe the consumer and fail; the longest gap between two
+        /// ticks stays under the bound. A consumer dropped on the thread polling the connect leaves
+        /// its group there, which librdkafka confirms only after polling.
+        #[test]
+        fn a_connect_failing_after_its_reply_consumer_does_not_stall_the_thread() {
+            OnTokio::block_on_one_thread(async {
+                let (relay, _container) = kraft().await;
+                let bound = Budget::default().stall;
+                let mut link = Kafka::brokers(relay.addr().to_string());
+                link.client_producer = failing_producer;
+                let runtime: Arc<dyn Runtime> = Arc::new(Tokio::current());
+
+                let stop = Arc::new(AtomicBool::new(false));
+                let ticker = tokio::spawn({
+                    let stop = Arc::clone(&stop);
+                    async move {
+                        let (mut longest, mut count, mut threads) = (Duration::ZERO, 0usize, Vec::<ThreadId>::new());
+                        let mut last = Instant::now();
+                        while !stop.load(Ordering::Acquire) {
+                            tokio::time::sleep(bound / 10).await;
+                            let now = Instant::now();
+                            longest = longest.max(now - last);
+                            last = now;
+                            count += 1;
+                            if !threads.contains(&thread::current().id()) {
+                                threads.push(thread::current().id());
+                            }
+                        }
+                        (longest, count, threads)
+                    }
+                });
+                for _ in 0..CONNECTS {
+                    match link.connect(&runtime).await {
+                        Ok(_) => panic!("a connect whose producer was refused succeeded"),
+                        Err(error) => assert!(error.to_string().contains("a producer the test refuses"), "the connect failed otherwise: {error}"),
+                    }
+                }
+                stop.store(true, Ordering::Release);
+                let (longest, count, threads) = ticker.await.expect("the ticker does not panic");
+
+                assert_eq!(FAILED.load(Ordering::SeqCst), CONNECTS, "a connect failed before it reached its producer");
+                assert_eq!(threads, vec![thread::current().id()], "the ticker was polled on a thread other than the test's");
+                assert!(count >= 1, "the ticker never ticked while {CONNECTS} connects failed");
+                assert!(
+                    longest < bound,
+                    "the test's thread went {:.1} ms without polling the ticker while {CONNECTS} connects failed after their reply consumer; the bound is {:.1} ms",
+                    longest.as_secs_f64() * 1e3,
+                    bound.as_secs_f64() * 1e3
+                );
+            });
+        }
     }
 }

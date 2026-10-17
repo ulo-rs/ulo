@@ -1051,7 +1051,8 @@ impl Drop for Finished {
     }
 }
 
-/// Counts one message out of `handling` once, when its answer is known or its task ends.
+/// Counts one message out of `handling` once: when its answer is queued, a streamed answer once its
+/// stream is known, or when its task ends.
 struct Handling(Option<Arc<Flight>>);
 
 impl Handling {
@@ -1401,7 +1402,10 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
             ulo::recover::<Ws>(None, &handle, &cx, Box::new(error)).instrument(call_span.clone()).await
         }
     };
-    handling.done();
+    // Counted out once its answer is queued, so under a bound of one the read loop, which takes
+    // the next message as this one leaves the count, cannot queue that message's answer first. A
+    // streamed answer is counted out as its stream arrives: its items are written as the client
+    // takes them, which the bound does not wait for.
     match outcome {
         Err(err) => {
             let _ = outbound.push(envelope::error(codec, id.as_ref(), &CallError::from_boxed(err)));
@@ -1424,6 +1428,7 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
             }
         }
         Ok(Reply::Many(stream)) => {
+            handling.done();
             // Tracked here, where it is written as the reply: a stream an interceptor discarded
             // never reaches this arm and reports nothing.
             let stream = Tracked::new(stream, handle.clone());
@@ -1431,6 +1436,7 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
             pump(stream, handler, &handle, &cx, id.as_ref(), &outbound, codec).instrument(call_span).await;
         }
     }
+    handling.done();
     flight.unregister(call);
 }
 
