@@ -262,7 +262,7 @@ fix, is kept in `before/superseded/tree-720e6eb4/` and `broken/superseded/tree-7
 | the same, Kafka | the two scenarios | both failed: 1,661.8 to 1,662.0 ms past with a 1.5 s hold; two delivered, both answered `Ok` (`before/before-rpc-6.txt`) |
 | before F412: the codec as it stood | `codec::tests` | failed: CBOR's `open` read back with no headers, every other kind in both codecs as written (`probes/f412-codec-round-trip.txt`) |
 | p01. the measurement scenario, its report printed | seven links | passed on each; the numbers in decision 1 |
-| p02. F411's probe | `ulo-rpc` unit | seven of sixteen `Timeout`s at 101 to 102 ms, nine at 165 to 167 ms |
+| p02. F411's probe | `ulo-rpc` unit | six of sixteen `Timeout`s at 101 to 102 ms, ten at 165 to 167 ms |
 | b01. the stamp written by `limit` again, `written` stamping nothing | TCP and NATS, the two scenarios | the measurement scenario failed on both, 251.5 to 251.7 and 256.5 to 256.6 ms past; the connect scenario passed |
 | b02. `written` without its refusal | TCP and NATS, the two scenarios | the connect scenario failed on both, three blocked calls delivered on TCP and one on NATS; the measurement scenario passed |
 | b03. `open` counted as `2 + d` again | `codec::tests`, TCP CBOR's measurement scenario | both failed, the CBOR `open` read back with no headers, the server given no deadline |
