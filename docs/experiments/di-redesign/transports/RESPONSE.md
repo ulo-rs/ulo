@@ -2300,3 +2300,28 @@ Received 2026-10-17, answering `divergences/race2b-tests36.md` (S1–S6, F413–
 **F415. The example is a defect, and host names are a deferred feature.** Change the doc example to an IP address. Make it a doctest that compiles, so it can't drift from what the link accepts again. To be checked, where the TCP link refuses a host name today: §3.2 puts that refusal in `RpcClient::new`'s `UnusableLink`, with a message saying that the TCP link takes IP addresses only.
 
 The feature behind the example is worth recording plainly. In a container cluster, `billing:7000` is how services find each other, and a TCP link that refuses host names will be among the first things a user runs into. The smol TCP link is runtime-free, so resolving names there needs either an async resolver or blocking work off the worker. That makes host-name support the likely first real consumer of S1's blocking-work method. Record it as deferred, linked to S1, with that reason.
+
+## Sixty-third response: NATS roots through a file, the test form for the rest, and F420 as a defect
+
+Received 2026-10-17, answering `divergences/race2b-tests37.md` (S1–S6, F417–F420). Sign-off: pending the user's word.
+
+**1. NATS (F417): (b) now.** (a) is the user's call, and worth filing. (c) fixes the reporting and leaves the stall, which is the defect. (b) is the only fix inside our crate. The roots are public data, so a file holding them raises no secrecy question. Only its lifetime needs handling:
+
+- The link writes the PEM once, on `spawn_blocking`, to a uniquely named file in the OS temp directory, and removes it when the link drops.
+- A failed write refuses the link as `Misconfigured`, at the same point as MQTT.
+
+Premise to check: does async-nats re-read the file on each connect and reconnect, and on which thread? A read of about 200 KB of PEM should be well under the stall bound, but the scenario has to show it, not an estimate. The test is a link-level NATS-over-TLS test with the stall bound, as for MQTT (decision 4), plus a reconnect forced mid-test. A planted per-connect native load must fail it.
+
+**2. `ulo_rpc::Misconfigured`: accepted,** mapped to `Internal` with `misconfigured_link`. `BadRequest` is wrong: the request is fine, and it is the link that is wrong. The async client-side startup hook on `Link` is the §3.2-complete form. A client wired through `RpcClientModule` could then fail the app at `connect()`, not at its first call. But it is an SPI change across every link. Defer it, with that reason, and keep `Misconfigured` as the call-level refusal that every path needs anyway: a standalone `RpcClient::new` has no startup phase.
+
+**3. `Budget::stall`: accepted as its own field.** A stall is a property of the thread, and Kafka's slow settle does not make a worker slower. If `Budget` carries a host-speed factor for slow CI machines, `stall` scales with that factor. It does not scale with `settle`.
+
+**4. The MQTT TLS test at link level with a 25 ms bound: accepted,** with the warm-up addition. The aws-lc-rs initialisation is the same class as the root load, so taking it off the worker is in scope. The link level is the right level, because the suite's broker uses a test CA, and a test CA never loads the platform roots. A margin of 14.6 ms is thin. If it flakes even once, that is a finding, not a reason to rerun.
+
+**5. All of `client_addr`'s refusals moving into `usable`: accepted.** That is §3.2 applied to the whole function, not just the case that was reported.
+
+**6. `block_on_one_thread` required, no default: accepted.** The strict reading is §3.9's. No outside harness exists while the suites are unpublished. A runtime that cannot run on one thread declares the scenario `not_applicable`, with its reason.
+
+**F418 and F419** are defects of classes already decided. UDP refuses a host name in `usable`, as F415 does. Kafka's error path drops through `Detached`, as F413 does. Each gets F415's or F413's test form, and both can go in the next batch.
+
+**F420:** treat it as a defect until shown otherwise. A rerun that passes hides the failure, and §3.1 does not allow passing on a rerun any more than on silence. Run that WebSocket scenario repeatedly on smol until it reproduces, or until enough runs make a pass rate meaningful, and report the rate and what failed.
