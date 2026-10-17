@@ -2275,3 +2275,28 @@ The cost is real: the service takes over the connection lifecycle, TLS, HTTP/2 s
 1. **The timer anchors to the instant the call's bound ends**, the one `limit` already keeps, not to `bounded`'s first poll. A block can still delay the moment the timer fires. But it fires on the first poll after the block, not a full timeout later. The test is the probe's: of 16 calls with a 100 ms timeout over a connect that blocks, each times out at no more than the block's end plus one poll, not 100 ms past it.
 2. **Premise to check: does any shipped link actually block a thread while it connects?** The likeliest place is name resolution. std's `ToSocketAddrs` resolves synchronously, so a link that turns a hostname into a socket address through it blocks the runtime worker, whatever its socket does. That would stall every task on that thread, not only the caller's timer, which makes it the larger defect.
    - If some link does block, report which ones and where. Then check whether the `Runtime` trait offers a way to run blocking work off the worker. If it does, use it. If it doesn't, adding one is a design question: send it back as an S-item, and don't add it in the batch.
+
+## Sixty-second response: link-local fixes for blocking connects, and an example that must compile
+
+Received 2026-10-17, answering `divergences/race2b-tests36.md` (S1–S6, F413–F415). The user signed it off the same day; F413, F414, the worker-stall scenario, F415 and S2's scaling build as test batch 37, and host-name support is filed as F416, deferred.
+
+**S1. Link-local fixes. `Runtime` gains nothing now.** The two blocking links are both tokio-based and each holds its own handle, so each already has a way to move blocking work off the worker without involving the trait. A blocking-work method on `Runtime` would change the core, the smol runtime and the runtime suite, all for a need no runtime-free or runtime-neutral crate has today. The trait grows when a crate at those levels needs blocking work, not before. F415 below points at the most likely first one. Record that condition with F413 and F414.
+
+- **F413 (Kafka):** the `AdminClient` is dropped through the link's existing `Detached`/`blocking` helpers. Under §3.7, the fix uses the copy that already exists. It doesn't add a second.
+- **F414 (MQTT, and NATS by the same cause):** the root certificates are loaded once per client, through the link's handle's `spawn_blocking`, and the result is cached for every later connect. If the load fails (no platform roots, or an unreadable store), that is a permanent misconfiguration: it is refused at the first startup phase that loads the roots, and never reported as a retryable `Unavailable` (§3.2). To be checked, what each link reports today when the load fails.
+
+**The test, as a scenario on every link, not two link tests:** "connecting doesn't stall the worker". On a single-threaded runtime, a ticker task records the longest gap between its ticks while the link connects and binds. The scenario asserts that the gap stays under a bound scaled from `Budget`. A planted direct drop on Kafka (about 100 ms) and a planted per-connect certificate load on MQTT must each fail it. Future links then prove this the same way, through the suite.
+
+**S5. Accepted.** That is the right repair: a scenario that passes without the change it guards has stopped being evidence, and `Hold::BlocksConnected` puts the refusal back where a test can see it.
+
+**S2. Accepted,** as long as the 200 ms is scaled from `Budget` like every other wait since batch 29. If it is a literal in the test, make it scale.
+
+**S3. Accepted.** "The later of the bound's end and the block's end" is the exact statement. "Plus one poll" was an informal version of it.
+
+**S4. Accepted.**
+
+**The gRPC pin: accepted.** The first premise of the deferred fix holds. The second (hyper's `ready()`) stays unread until that fix is taken up, and is recorded with F410.
+
+**F415. The example is a defect, and host names are a deferred feature.** Change the doc example to an IP address. Make it a doctest that compiles, so it can't drift from what the link accepts again. To be checked, where the TCP link refuses a host name today: §3.2 puts that refusal in `RpcClient::new`'s `UnusableLink`, with a message saying that the TCP link takes IP addresses only.
+
+The feature behind the example is worth recording plainly. In a container cluster, `billing:7000` is how services find each other, and a TCP link that refuses host names will be among the first things a user runs into. The smol TCP link is runtime-free, so resolving names there needs either an async resolver or blocking work off the worker. That makes host-name support the likely first real consumer of S1's blocking-work method. Record it as deferred, linked to S1, with that reason.
