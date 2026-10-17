@@ -2088,3 +2088,26 @@ Summary for sign-off:
 - S6 changes to failing the restart, with the duplicate made before the hook.
 
 New ledger entries: shared-broker isolation for the RabbitMQ suite, and the overflow bug if the probe confirms it.
+
+## Fifty-sixth response: refusing a bad bound at both ends
+
+Received 2026-10-17, answering `divergences/race2b-tests30.md` (S1–S5, the premise corrections and F391). The user signed it off the same day; F392, the retry check and the `deadline-ms` probe build as test batch 31, and the move to `Bound` is filed as F393, deferred.
+
+**Premise corrections: both accepted.** The std citation moves to `read_buf` and `BorrowedCursor::advance_checked`, and the conclusion stands. Zeroing the whole region on every poll is the right reading of a cursor that doesn't report how much of it is initialised. That cost is the price of the cursor's API, not a defect.
+
+**S2. Accepted, the point and the shape.** A builder method that returns `Self` can't refuse anything, so the first point that can is the await. Refusing there, before connecting, follows the precedent of a binary payload on a JSON link. `BadRequest` with the reason `zero_timeout` is right because the error is permanent, and §3.2 forbids reporting a permanent misconfiguration as retryable. One premise to check: every retry path in the client treats `BadRequest` as final. A test should show that a zero idle timeout under a retry policy is attempted exactly once. `Error::source` carrying the `ZeroTimeout` is good.
+
+**S1 (F392). Split: refuse zero now as a defect; defer the move to `Bound` as a refinement.** The zero itself is a defect, by the build's own finding. A `Call::timeout(Duration::ZERO)` always reports a timeout, but whether the request was sent first is a random race. So the same code sometimes executes on the server and sometimes doesn't, and the caller can't tell which. That justifies a batch of its own, batch 31, kept small:
+
+- `Call::timeout(Duration::ZERO)` and `StreamCall::deadline(Duration::ZERO)` are refused at the await, before connecting, with the S2 shape: `BadRequest`, reason `zero_timeout`, and the `ZeroTimeout` as the source.
+- One test for each method shows the refusal, and also that the server saw no request. Assert the second part on the server side, not just the client's error.
+
+Changing both methods to take a `Bound`, as S4 did for `idle_timeout`, is a refinement for §3.4's sake. Mark it deferred, with that reason. Weigh one cost when the refinement resumes: if it lands after the switch, the migrated examples and integration tests get touched a second time. If that is to be avoided, it is a one-signature change to fold into batch 31. Keep it deferred and pay the small second migration.
+
+**S3. Accepted.** A spawn function that returns `io::Result<Child>` is the place that can refuse a start, so the fallback was rightly dropped.
+
+**S4. Accepted.** Waiting for the spawn gives "latest change wins". A queue would replay restarts that a newer change has already made pointless. A spawn is a fork and exec, so the wait is bounded.
+
+**S5. Accepted.** Keeping the old app serving while the red report stands is better than leaving nothing serving. The next change retries the restart.
+
+**Found by reading F391: a probe for the server side.** The client was sending a `deadline-ms` the server couldn't parse, and the server then set no deadline. That is a server accepting a malformed header in silence. Probe: with a hand-written frame, does every server that reads `deadline-ms` silently ignore a value it can't parse, whether it overflows, isn't a number, or is negative? If so, that is a defect and gets a ledger number. The fix: refuse the request as `BadRequest`, reason `bad_deadline`, before the handler runs. A malformed deadline means the caller's bound is lost, and running unbounded work for a caller that asked for a bound is the wrong default. It can go in batch 31 alongside F392, since both are refusals of a bad bound, at opposite ends of the wire.
