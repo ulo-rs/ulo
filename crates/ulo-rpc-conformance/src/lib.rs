@@ -310,6 +310,8 @@ macro_rules! conformance_suite {
             a_stream_s_zero_deadline_is_refused_before_the_server_sees_it => deadlines::zero_stream_deadline_is_refused_before_the_server_sees_it,
             a_call_past_its_execution_s_deadline_is_refused_before_the_server_sees_it => deadlines::passed_deadline_is_refused_before_the_server_sees_it,
             a_call_in_a_cancelled_execution_is_refused_before_the_server_sees_it => deadlines::cancelled_execution_s_call_is_refused_before_the_server_sees_it,
+            a_call_s_deadline_is_measured_once_its_connection_is_made => deadlines::measured_once_connected,
+            a_call_whose_connect_outlasts_its_deadline_is_refused_before_the_server_sees_it => deadlines::connect_past_the_deadline_is_refused_before_the_server_sees_it,
             binary_payload => payloads::binary,
             oversized_payload => payloads::oversized,
             drain => drain::drain,

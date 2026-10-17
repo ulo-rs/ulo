@@ -161,8 +161,8 @@ impl<D: Serialize + ?Sized> Serialize for Wire<'_, D> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let d = usize::from(self.d.is_some());
         let len = 1 + match self.frame {
-            Frame::Req { .. } => 3 + d,
-            Frame::Evt { .. } | Frame::Open { .. } => 2 + d,
+            Frame::Req { .. } | Frame::Open { .. } => 3 + d,
+            Frame::Evt { .. } => 2 + d,
             Frame::Res { .. } | Frame::Item { .. } | Frame::In { .. } => 1 + d,
             Frame::Err { .. } | Frame::Credit { .. } => 2,
             Frame::End { .. } | Frame::InEnd { .. } | Frame::Cancel { .. } => 1,
@@ -380,5 +380,51 @@ fn detail_from(entry: serde_json::Value) -> Detail {
         Some("help") => Detail::Help(list(&entry, "links").iter().map(|l| Link::new(text(l, "description"), text(l, "url"))).collect()),
         Some("json") => Detail::Json(entry.get("value").cloned().unwrap_or(serde_json::Value::Null)),
         _ => Detail::Json(entry),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One frame of every kind, each carrying every field its kind has, headers on the three that
+    /// carry them and a payload on the five that carry one.
+    fn every_kind(codec: Codec) -> Vec<Frame> {
+        let mut headers = CallHeaders::new();
+        headers.insert("deadline-ms", "250");
+        headers.insert("x-mark", "one");
+        let data = codec.encode(&("payload", 7u32)).expect("a tuple encodes in every codec");
+        let error = ErrorBody::new(ErrorKind::Timeout, "the call timed out", Details::new());
+        vec![
+            Frame::Req { id: 1, pattern: "a.req".to_owned(), headers: headers.clone(), data: data.clone() },
+            Frame::Evt { pattern: "a.evt".to_owned(), headers: headers.clone(), data: data.clone() },
+            Frame::Res { id: 2, data: data.clone() },
+            Frame::Err { id: 3, error },
+            Frame::Item { id: 4, data: data.clone() },
+            Frame::End { id: 5 },
+            Frame::Open { id: 6, pattern: "a.open".to_owned(), headers },
+            Frame::In { id: 7, data },
+            Frame::InEnd { id: 8 },
+            Frame::Cancel { id: 9 },
+            Frame::Credit { id: 10, n: 11 },
+            Frame::Goaway,
+        ]
+    }
+
+    /// Every frame kind reads back as it was written, in both codecs: CBOR writes a map's length
+    /// before its entries, so a kind whose length miscounts its entries reads back without the
+    /// ones past the count.
+    #[test]
+    fn every_frame_kind_reads_back_as_written_in_both_codecs() {
+        let mut failures = Vec::new();
+        for codec in [Codec::Json, Codec::Cbor] {
+            for frame in every_kind(codec) {
+                let read = codec.encode_frame(&frame).map_err(|error| error.to_string()).and_then(|bytes| codec.decode_frame(&bytes).map_err(|error| error.to_string()));
+                if read.as_ref() != Ok(&frame) {
+                    failures.push(format!("{codec:?} `{}`: wrote {frame:?}, read {read:?}", frame.kind()));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "frames that did not read back as written:\n{}", failures.join("\n"));
     }
 }

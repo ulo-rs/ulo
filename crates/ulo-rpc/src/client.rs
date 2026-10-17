@@ -177,6 +177,13 @@ impl Error for UnusableLink {
 /// may run indefinitely, and no idle timeout unless the call or the client's
 /// [`idle_timeout`](Self::idle_timeout) sets one.
 ///
+/// `deadline-ms` is what is left of the call's bound when its frame is handed to a connection
+/// already made: a slow connect gives the server no longer than the caller waits, and a bound that
+/// passes while the client connects fails the call `Timeout` with nothing sent. A `Timeout` once
+/// the frame has been handed to the link leaves the call's outcome unknown, on every shape: the
+/// server may have run the request, and an emit's event may have been published on a broker that
+/// confirms publishes.
+///
 /// A bound too long for the runtime's clock to reach, `Duration::MAX` among them, is no bound, as
 /// `Bound::Unbounded` is: no timer is armed for it and no `deadline-ms` is sent.
 #[derive(Clone)]
@@ -427,6 +434,11 @@ pub(crate) struct Spec {
     /// The call's own timeout, in place of the client's.
     timeout: Option<Duration>,
     within: Option<ExecutionRef>,
+    /// Where the call's whole bound ends, set by [`limit`](Self::limit): what is left of it when the
+    /// frame is written is the call's `deadline-ms`, and a call it ends before then is not sent.
+    ends: Option<Instant>,
+    /// Whether the call carries `deadline-ms`: every shape but an event.
+    stamps: bool,
 }
 
 /// `deadline-ms` for `remaining`: whole milliseconds, a positive remainder under one millisecond
@@ -456,15 +468,24 @@ enum Request {
 
 impl Spec {
     fn new(client: &RpcClient, pattern: &str, request: Request) -> Self {
-        Spec { client: client.clone(), pattern: Pattern::from(pattern), request, headers: CallHeaders::new(), timeout: None, within: None }
+        Spec {
+            client: client.clone(),
+            pattern: Pattern::from(pattern),
+            request,
+            headers: CallHeaders::new(),
+            timeout: None,
+            within: None,
+            ends: None,
+            stamps: false,
+        }
     }
 
     /// The wait the whole call is bounded by, `whole`'s bound and the calling execution's
     /// remaining time when that is shorter, and the instant it ends. Refuses a call whose
     /// execution's deadline has passed, before any I/O.
     ///
-    /// Stamps `deadline-ms`, the deadline the server enforces, with the shorter of the calling
-    /// execution's remaining time and `whole`'s bound, on every shape but an event. An event's
+    /// Every shape but an event carries what is left of that wait as `deadline-ms`, the deadline
+    /// the server enforces, measured when the frame is written: [`written`] stamps it. An event's
     /// handler has no caller waiting on it, often runs after its emitter has ended, and on a
     /// broker that holds it would count the remainder from delivery, so it is given none.
     fn limit(&mut self, whole: Whole) -> Result<(Option<Duration>, Option<Instant>), RpcError> {
@@ -477,7 +498,6 @@ impl Spec {
         // A bound whose end an `Instant` cannot hold is none, as `Bound::Unbounded` is: `now +
         // own` would panic, and a timer handed it computes the same sum.
         let own = own.filter(|own| now.checked_add(*own).is_some());
-        let stamps = !matches!(whole, Whole::Publish);
         let remaining = match self.within.as_ref().and_then(ExecutionRef::deadline) {
             Some(deadline) => {
                 let remaining = deadline.saturating_duration_since(now);
@@ -488,16 +508,14 @@ impl Spec {
             }
             None => None,
         };
-        // A `deadline-ms` the caller set was refused by `reserved`, so the stamp is the only one.
-        let stamped = if stamps { [remaining, own].into_iter().flatten().min() } else { None };
-        if let Some(stamped) = stamped {
-            self.headers.insert(DEADLINE_MS, deadline_ms(stamped));
-        }
         let after = match (own, remaining) {
             (Some(own), Some(remaining)) => Some(own.min(remaining)),
             (own, remaining) => own.or(remaining),
         };
-        Ok((after, after.and_then(|after| now.checked_add(after))))
+        let ends = after.and_then(|after| now.checked_add(after));
+        self.ends = ends;
+        self.stamps = !matches!(whole, Whole::Publish);
+        Ok((after, ends))
     }
 
     /// Refuses a call whose caller set `deadline-ms` with `.header`, readable or not: the client
@@ -517,7 +535,7 @@ impl Spec {
     /// Connects, registers the call, and sends its opening frame; a streamed request's items follow
     /// from a task of their own.
     async fn open(self) -> Result<Exchange, RpcError> {
-        let Spec { client, pattern, request, headers, within, .. } = self;
+        let Spec { client, pattern, request, mut headers, within, ends, stamps, .. } = self;
         let inner = &client.inner;
         let request = match request {
             Request::One(payload) => Request::One(Ok(payload?)),
@@ -525,6 +543,11 @@ impl Spec {
         };
         let (conn, id, waiting, replies) = inner.register().await?;
         let mut pending = Pending { conn: Arc::clone(&conn), id, pattern: pattern.clone(), settled: false };
+        if let Err(err) = written(&mut headers, ends, stamps, inner.runtime.now()) {
+            // Nothing reached a server that a `cancel` would stop.
+            pending.settled = true;
+            return Err(err);
+        }
         let text = pattern.as_str().to_owned();
         let sent = match request {
             Request::One(payload) => {
@@ -548,6 +571,26 @@ impl Spec {
         let timer: Arc<dyn Timer> = inner.runtime.clone();
         Ok(Exchange { replies, pending, codec: inner.codec, timer, within, _client: client.clone() })
     }
+}
+
+/// What a call's frame carries of its bound when it is written at `now`, its connection in hand:
+/// `deadline-ms`, what is left of the bound ending at `ends`, when `stamps`. A bound that ended
+/// while the client connected fails the call `Timeout` and its frame is never sent: written then,
+/// it would reach a server that runs the call while its caller is told it timed out.
+///
+/// Measured with the connection in hand, a call on a new connection gives its server none of the
+/// connect's length beyond the caller's wait.
+fn written(headers: &mut CallHeaders, ends: Option<Instant>, stamps: bool, now: Instant) -> Result<(), RpcError> {
+    let Some(ends) = ends else { return Ok(()) };
+    let left = ends.saturating_duration_since(now);
+    if left.is_zero() {
+        return Err(RpcError::new(ErrorKind::Timeout, "the call's deadline passed while its client connected, so nothing was sent"));
+    }
+    // A `deadline-ms` the caller set was refused by `reserved`, so the stamp is the only one.
+    if stamps {
+        headers.insert(DEADLINE_MS, deadline_ms(left));
+    }
+    Ok(())
 }
 
 impl ClientInner {
@@ -917,6 +960,10 @@ impl Emit {
     /// it is awaited, before it connects, and one sent before then is handled whatever becomes of
     /// `exec`. The event carries none of `exec`'s deadline: nobody waits on it, so its handler runs
     /// under no deadline.
+    ///
+    /// A deadline that passes while the client connects fails the emit `Timeout` with nothing
+    /// sent. A `Timeout` once the publish has started leaves the event's fate unknown: on a broker
+    /// that confirms publishes, the event may have been published.
     pub fn within(mut self, exec: &ExecutionRef) -> Self {
         self.spec.within = Some(exec.clone());
         self
@@ -935,12 +982,13 @@ impl IntoFuture for Emit {
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
             bounded(&*runtime, limit, within.as_ref(), async move {
-                let Spec { client, pattern, request, headers, .. } = spec;
+                let Spec { client, pattern, request, mut headers, ends, stamps, .. } = spec;
                 let data = match request {
                     Request::One(payload) => payload?,
                     Request::Stream(_) => return Err(RpcError::new(ErrorKind::BadRequest, "an event carries one payload")),
                 };
                 let conn = client.inner.connection().await?;
+                written(&mut headers, ends, stamps, client.inner.runtime.now())?;
                 let frame = Frame::Evt { pattern: pattern.as_str().to_owned(), headers, data };
                 conn.send(&pattern, frame, None).await.map_err(send_error)
             })
@@ -1008,8 +1056,9 @@ impl<Res> StreamCall<Res> {
     }
 
     /// A bound on the whole call, counted from when it is awaited: the stream ends with `Timeout`
-    /// when it passes, and the server is given it in `deadline-ms` unless a shorter one applies and
-    /// cancels the handler there. None unless set, since a stream may run indefinitely.
+    /// when it passes, and the server is given what is left of it when the call's frame is written
+    /// in `deadline-ms`, unless a shorter one applies, and cancels the handler there. None unless
+    /// set, since a stream may run indefinitely.
     ///
     /// `Duration::ZERO`, which would end the stream at once, fails the call when it is awaited,
     /// before it connects, `BadRequest` with the reason `"zero_timeout"` and a [`ZeroTimeout`] as
@@ -1335,6 +1384,8 @@ mod tests {
 
     /// A stream's deadline is sent as `deadline-ms` on `stream` and `duplex` alike; its idle
     /// timeout is not, and the client's timeout, which a request sends, does not reach a stream.
+    /// Each value is what is left of its bound when the frame is written, so the bound itself or a
+    /// millisecond under it.
     #[tokio::test]
     async fn a_stream_sends_its_deadline_and_neither_its_idle_timeout_nor_the_client_s_timeout() {
         let link = SilentLink::default();
@@ -1347,17 +1398,17 @@ mod tests {
         drop(client.stream::<_, u32>("silent.stream", &()).idle_timeout(Bound::After(Duration::from_secs(1))).await.expect("the stream opens"));
         drop(client.stream::<_, u32>("silent.stream", &()).await.expect("the stream opens"));
         drop(client.duplex::<_, u32>("silent.duplex", items()).await.expect("the duplex opens"));
-        assert_eq!(
-            link.sent(),
-            vec![
-                ("req", Some("300".to_owned())),
-                ("req", Some("2000".to_owned())),
-                ("open", Some("1500".to_owned())),
-                ("req", None),
-                ("req", None),
-                ("open", None),
-            ],
-            "each opening frame's `deadline-ms`: the request's timeout, two streams' deadlines, then three streams with none"
+        let bounds = [("req", Some(300)), ("req", Some(2000)), ("open", Some(1500)), ("req", None), ("req", None), ("open", None)];
+        let sent = link.sent();
+        let within = sent.len() == bounds.len()
+            && sent.iter().zip(bounds).all(|((kind, value), (expected, bound))| {
+                let value = value.as_deref().map(|value| value.parse::<u64>().unwrap_or(u64::MAX));
+                *kind == expected && value.zip(bound).map_or(value.is_none() && bound.is_none(), |(value, bound)| (bound - 1..=bound).contains(&value))
+            });
+        assert!(
+            within,
+            "each opening frame's `deadline-ms`, the request's timeout, two streams' deadlines, then three streams with none, \
+             expected at or a millisecond under {bounds:?}: {sent:?}"
         );
     }
 

@@ -29,6 +29,7 @@ use ulo_rpc::{
 };
 use ulo_transport::{CallError, Classify, Count, ErrorKind};
 
+use crate::cases::deadlines::MARK;
 use crate::rt::{sleep, spawn, timeout};
 use crate::{Broker, Harness, report};
 
@@ -61,6 +62,9 @@ pub(crate) const UNENCODABLE_STREAM: &str = "conformance.unencodable_stream";
 pub(crate) const CONTEXT: &str = "conformance.context";
 pub(crate) const BOUNDED: &str = "conformance.bounded";
 pub(crate) const BOUNDED_TOO: &str = "conformance.bounded_too";
+pub(crate) const DEADLINE: &str = "conformance.deadline";
+pub(crate) const DEADLINE_STREAM: &str = "conformance.deadline_stream";
+pub(crate) const DEADLINE_SUM: &str = "conformance.deadline_sum";
 
 /// A payload no codec reads: not UTF-8, so no JSON text, and a lone CBOR break code, so no CBOR
 /// item. A reply carrying it fails the link's frame encoding.
@@ -116,6 +120,17 @@ pub(crate) struct ProbeState {
     bounded_peak: AtomicUsize,
     /// Each run of the slow event's handler, in the order they began.
     slow: Mutex<Vec<SlowRun>>,
+    /// Each call the deadline handlers took, in the order they took them.
+    seen: Mutex<Vec<Seen>>,
+}
+
+/// A call one of the deadline handlers took: its [`MARK`], the deadline its server computed for
+/// it, and the `deadline-ms` the server computed that from, `None` for none.
+#[derive(Clone, Debug)]
+pub(crate) struct Seen {
+    pub(crate) mark: Option<String>,
+    pub(crate) deadline: Option<Instant>,
+    pub(crate) header: Option<String>,
 }
 
 /// One run of the slow event's handler: when it began, the time its execution's deadline left it
@@ -188,6 +203,20 @@ impl Probe {
     /// Every run of the slow event's handler so far.
     pub(crate) fn slow_runs(&self) -> Vec<SlowRun> {
         lock(&self.0.slow).clone()
+    }
+
+    /// Every call the deadline handlers took so far.
+    pub(crate) fn seen(&self) -> Vec<Seen> {
+        lock(&self.0.seen).clone()
+    }
+
+    fn see(&self, exec: &ExecutionRef, headers: &CallHeaders) {
+        let seen = Seen {
+            mark: headers.get(MARK).map(str::to_owned),
+            deadline: exec.deadline(),
+            header: headers.get("deadline-ms").map(str::to_owned),
+        };
+        lock(&self.0.seen).push(seen);
     }
 
     /// The most calls the two bounded handlers ran at once.
@@ -419,6 +448,13 @@ impl CoreController {
     async fn bounded_too(&self, millis: Payload<u64>, timer: Dep<dyn Timer>) -> Result<u64, Refusal> {
         Ok(self.probe.bounded(&*timer, millis.0).await)
     }
+
+    /// Records the deadline its server computed for the call, and answers.
+    #[ulo_rpc::message("conformance.deadline")]
+    async fn deadline(&self, exec: ExecutionRef, headers: CallHeaders) -> Result<(), Refusal> {
+        self.probe.see(&exec, &headers);
+        Ok(())
+    }
 }
 
 #[injectable]
@@ -498,6 +534,26 @@ impl StreamController {
                 _ => None,
             }
         })
+    }
+
+    /// Records the deadline its server computed for the stream, and yields `1`.
+    #[ulo_rpc::message("conformance.deadline_stream")]
+    async fn deadline_stream(&self, exec: ExecutionRef, headers: CallHeaders) -> impl Stream<Item = Result<u32, Refusal>> {
+        self.probe.see(&exec, &headers);
+        stream::iter([Ok(1)])
+    }
+
+    /// Records the deadline its server computed for the streamed request, and answers its items'
+    /// sum.
+    #[ulo_rpc::message("conformance.deadline_sum")]
+    async fn deadline_sum(&self, items: Inbound<i64>, exec: ExecutionRef, headers: CallHeaders) -> Result<i64, Refusal> {
+        self.probe.see(&exec, &headers);
+        let mut items = items;
+        let mut total = 0;
+        while let Some(item) = items.next().await {
+            total += item.map_err(|_| Refusal::BadItem)?;
+        }
+        Ok(total)
     }
 
     /// Ticks until the server drains, then ends cleanly.

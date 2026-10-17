@@ -15,8 +15,8 @@ use ulo_transport::{Count, ErrorKind};
 
 use crate::{Broker, Budget};
 use crate::cases::app::{
-    ADD, Add, COUNT, EVENT, Fixture, Mounts, PAUSE, STALL, Sum, TICKS, addresses, client_over, eventually, failed, refused_at_startup,
-    streams, within,
+    ADD, Add, COUNT, DEADLINE, DEADLINE_STREAM, DEADLINE_SUM, EVENT, Fixture, Mounts, PAUSE, STALL, SUM, Sum, TICKS, addresses,
+    client_over, eventually, failed, refused_at_startup, streams, within,
 };
 
 /// `deadline-ms` fires `Deadline` and renders `timeout`: a call whose `req` carries 300 ms, written
@@ -480,6 +480,249 @@ pub async fn cancelled_execution_s_call_is_refused_before_the_server_sees_it<B: 
         }
     }
     fixture.stop().await;
+}
+
+/// The unit `deadline-ms` is written in, the most its truncation and its one-millisecond floor
+/// move a deadline.
+const DEADLINE_UNIT: Duration = Duration::from_millis(1);
+
+/// F410: a call's `deadline-ms` is what is left of its caller's deadline when its frame is handed
+/// to a connection already made, so the server's deadline is no later than the caller's, within
+/// one unit, past the time the frame takes to reach it. A request, a stream and a streamed
+/// request are made at once `.within` an execution, the first calls on a client whose link holds
+/// each new connection for half the broker's settle budget before making it, the request and the
+/// streamed request given a timeout longer than the execution has left, so the execution's
+/// deadline is each call's own; the server's
+/// handlers record the deadline they were given and the `deadline-ms` it came from, and the link
+/// records when it was handed each call's frame. The frame's transit, from that handoff to the
+/// server's reading of the header, is measured on the one clock the scenario's client and server
+/// share: no value written before the frame is sent can account for it.
+pub async fn measured_once_connected<B: Broker>() {
+    let fixture = Fixture::<B>::start().await;
+    let budget = fixture.broker.budget();
+    let held = budget.settle / 2;
+    let link = SlowConnect::new(fixture.broker.client_link(&addresses(&[&fixture.server])), Hold::Waits(held));
+    let handoffs = link.handoffs.clone();
+    let client = client_over::<B, _>(link).await;
+    let left = held + budget.boot;
+    let deadline = crate::rt::runtime::<B>().now() + left;
+    let opened = client.open(ExecOptions::new().deadline(deadline));
+    let exec = opened.handle();
+    let streaming = streams(&fixture.capabilities());
+    let request = async {
+        let call = client.rpc.request::<_, ()>(DEADLINE, &()).header(MARK, "request").timeout(left * 2).within(&exec);
+        ("request", call.await)
+    };
+    let stream = async {
+        let call = client.rpc.stream::<_, u32>(DEADLINE_STREAM, &()).header(MARK, "stream").within(&exec);
+        let outcome = match call.await {
+            Ok(replies) => replies.collect::<Vec<_>>().await.into_iter().collect::<Result<Vec<u32>, _>>().map(|items| assert_eq!(items, vec![1])),
+            Err(error) => Err(error),
+        };
+        ("stream", outcome)
+    };
+    let streamed = async {
+        let items = futures_util::stream::iter([1i64, 2]);
+        let call = client.rpc.send_stream::<_, i64>(DEADLINE_SUM, items).header(MARK, "streamed").timeout(left * 2).within(&exec);
+        ("streamed", call.await.map(|sum| assert_eq!(sum, 3)))
+    };
+    let calls = async {
+        if streaming {
+            let (request, stream, streamed) = futures_util::join!(request, stream, streamed);
+            vec![request, stream, streamed]
+        } else {
+            vec![request.await]
+        }
+    };
+    let outcomes = within::<B, _>(left + budget.settle, "the calls", calls).await;
+    // A handle to an execution still open holds the client's app at its close.
+    drop(exec);
+    drop(opened);
+    for (mark, outcome) in &outcomes {
+        if let Err(error) = outcome {
+            panic!("the {mark} made on a new connection failed: {error:?}");
+        }
+    }
+    let seen = fixture.server.probe.seen();
+    let handed = handoffs.all();
+    let mut report = Vec::new();
+    let mut late = false;
+    for (mark, _) in &outcomes {
+        let taken = seen.iter().find(|seen| seen.mark.as_deref() == Some(*mark)).unwrap_or_else(|| panic!("the server took no {mark}: {seen:?}"));
+        let server = taken.deadline.unwrap_or_else(|| panic!("the server gave the {mark} no deadline: {taken:?}"));
+        let millis: u64 = taken.header.as_deref().and_then(|value| value.parse().ok()).unwrap_or_else(|| panic!("the {mark} carried no readable `deadline-ms`: {taken:?}"));
+        let read = server - Duration::from_millis(millis);
+        let sent = handed.iter().find(|(handed, _)| handed == mark).map(|(_, at)| *at).unwrap_or_else(|| panic!("the link was handed no {mark}: {handed:?}"));
+        let transit = read.saturating_duration_since(sent);
+        late |= server > deadline + transit + DEADLINE_UNIT;
+        report.push(format!(
+            "the {mark}: `deadline-ms: {millis}`, the server's deadline {:+.3} ms from the caller's, its frame {:.3} ms in transit",
+            signed_millis(server, deadline),
+            transit.as_secs_f64() * 1e3
+        ));
+    }
+    assert!(!late, "a server's deadline was later than its caller's by more than the frame's transit and one unit, its connect held {held:?}:\n{}", report.join("\n"));
+    client.close().await;
+    fixture.stop().await;
+}
+
+/// F410: a call whose connect outlasts its caller's deadline fails `Timeout` once the connect
+/// returns, and its server sees nothing. For each shape the link carries, a request, a stream, a
+/// streamed request and an event, a client whose link holds its connect twice as long as the
+/// execution the call is made `.within` has left, a fifth of the broker's settle budget: once
+/// with a connect that waits, which the call's own timer cuts short, and once with one that
+/// blocks its thread, so the connect returns in the poll that finds the deadline passed. Then a
+/// request on a connection already made, answered, and the server has delivered that request
+/// alone, no event handled.
+pub async fn connect_past_the_deadline_is_refused_before_the_server_sees_it<B: Broker>() {
+    let tap = Tap::default();
+    let fixture = Fixture::<B>::start_over(Count::Default, |broker| Tapped { link: broker.link(), tap: tap.clone() }).await;
+    let budget = fixture.broker.budget();
+    let left = budget.settle / 5;
+    let held = left * 2;
+    let streaming = streams(&fixture.capabilities());
+    let mut outcomes = Vec::new();
+    for hold in [Hold::Waits(held), Hold::Blocks(held)] {
+        for shape in ["a request", "a stream", "a streamed request", "an event"] {
+            if !streaming && matches!(shape, "a stream" | "a streamed request") {
+                continue;
+            }
+            let link = SlowConnect::new(fixture.broker.client_link(&addresses(&[&fixture.server])), hold);
+            let client = client_over::<B, _>(link).await;
+            let opened = client.open(ExecOptions::new().deadline(crate::rt::runtime::<B>().now() + left));
+            let exec = opened.handle();
+            let call = async {
+                match shape {
+                    "a request" => client.rpc.request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).header(MARK, "slow").within(&exec).await.map(drop),
+                    "a stream" => client.rpc.stream::<_, u32>(COUNT, &2u32).header(MARK, "slow").within(&exec).await.map(drop),
+                    "a streamed request" => {
+                        let items = futures_util::stream::iter([1i64, 2]);
+                        client.rpc.send_stream::<_, i64>(SUM, items).header(MARK, "slow").within(&exec).await.map(drop)
+                    }
+                    _ => client.rpc.emit(EVENT, &1u32).header(MARK, "slow").within(&exec).await,
+                }
+            };
+            let outcome = within::<B, _>(held + budget.boot, "the call", call).await;
+            outcomes.push((hold, shape, outcome));
+            // A handle to an execution still open holds the client's app at its close.
+            drop(exec);
+            drop(opened);
+            client.close().await;
+        }
+    }
+    let sum = fixture.rpc().request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).header(MARK, "after").timeout(Duration::from_secs(10)).await;
+    assert_eq!(sum.expect("a call on a connection already made is answered"), Sum { sum: 5 });
+    crate::rt::sleep::<B>(budget.settle).await;
+    assert_eq!(tap.marks(), vec!["after"], "the marked calls the server received; the calls' outcomes: {outcomes:?}");
+    assert_eq!(fixture.server.probe.events(), 0, "an event whose connect outlasted its deadline reached its handler: {outcomes:?}");
+    for (hold, shape, outcome) in outcomes {
+        match outcome {
+            Err(error) if error.kind() == ErrorKind::Timeout => {}
+            other => panic!("{shape} whose connect {hold:?} past its deadline: expected `Timeout`, got: {other:?}"),
+        }
+    }
+    fixture.stop().await;
+}
+
+/// `a - b` in milliseconds, negative when `a` is the earlier.
+fn signed_millis(a: Instant, b: Instant) -> f64 {
+    match a.checked_duration_since(b) {
+        Some(later) => later.as_secs_f64() * 1e3,
+        None => -(b.duration_since(a).as_secs_f64() * 1e3),
+    }
+}
+
+/// How a [`SlowConnect`] link holds each connect before it makes it.
+#[derive(Clone, Copy, Debug)]
+enum Hold {
+    /// Waits on the client's runtime, as a connect waiting on its peer does.
+    Waits(Duration),
+    /// Blocks the thread polling the connect, as a connect doing blocking work does: the connect
+    /// returns inside one poll, the call's next step with it.
+    Blocks(Duration),
+}
+
+/// When a [`SlowConnect`] link was handed each opening frame or event carrying [`MARK`], with the
+/// mark, on the client's clock.
+#[derive(Clone, Default)]
+struct Handoffs(Arc<Mutex<Vec<(String, Instant)>>>);
+
+impl Handoffs {
+    fn all(&self) -> Vec<(String, Instant)> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+}
+
+/// A client link holding each connect for its [`Hold`] before making it, as a slow network or a
+/// handshake does, and recording its [`Handoffs`].
+struct SlowConnect<L> {
+    link: L,
+    hold: Hold,
+    handoffs: Handoffs,
+}
+
+impl<L> SlowConnect<L> {
+    fn new(link: L, hold: Hold) -> Self {
+        SlowConnect { link, hold, handoffs: Handoffs::default() }
+    }
+}
+
+impl<L: Link> Link for SlowConnect<L> {
+    const NAME: &'static str = L::NAME;
+
+    fn capabilities(&self) -> Capabilities {
+        self.link.capabilities()
+    }
+
+    fn prepare(&mut self, app: &AppHandle) -> impl Future<Output = Result<(), BoxError>> + Send {
+        self.link.prepare(app)
+    }
+
+    fn usable(&self) -> Result<(), BoxError> {
+        self.link.usable()
+    }
+
+    fn max_inflight(&mut self, calls: Count) {
+        self.link.max_inflight(calls);
+    }
+
+    fn listen(&self, patterns: &[Pattern]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
+        self.link.listen(patterns)
+    }
+
+    async fn connect(&self, runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+        match self.hold {
+            Hold::Waits(held) => runtime.sleep(held).await,
+            Hold::Blocks(held) => std::thread::sleep(held),
+        }
+        let Outbound { send, replies } = self.link.connect(runtime).await?;
+        let (handoffs, clock) = (self.handoffs.clone(), Arc::clone(runtime));
+        Ok(Outbound {
+            send: Box::new(move |pattern, frame, reply_to| {
+                let headers = match &frame {
+                    Frame::Req { headers, .. } | Frame::Open { headers, .. } | Frame::Evt { headers, .. } => headers.get(MARK),
+                    _ => None,
+                };
+                if let Some(mark) = headers {
+                    handoffs.0.lock().unwrap_or_else(PoisonError::into_inner).push((mark.to_owned(), clock.now()));
+                }
+                send(pattern, frame, reply_to)
+            }),
+            replies,
+        })
+    }
+
+    fn drain(&self) -> impl Future<Output = ()> + Send {
+        self.link.drain()
+    }
+
+    fn close(&self) -> impl Future<Output = Result<(), BoxError>> + Send {
+        self.link.close()
+    }
+
+    fn bound(&self) -> Vec<BoundAddr> {
+        self.link.bound()
+    }
 }
 
 /// The value of [`MARK`] on each opening frame a [`Tapped`] link delivered, in arrival order, with
