@@ -201,7 +201,7 @@ the unbiased `select!` (`client.rs:818`) can poll that arm after the work, so th
 the work's first poll returns. The blocked calls in the before-runs that were answered `Ok` after
 their deadline were this. A probe on the batch's tree (`broken/p02-f411-late-timer-0.txt`): sixteen
 requests with a 100 ms timeout, each on a fresh client whose link's connect blocks 60 ms, to a
-server that never answers; seven were answered `Timeout` after 101 to 102 ms and nine after 165 to
+server that never answers; six were answered `Timeout` after 101 to 102 ms and ten after 165 to
 167 ms. With F410's fix the server stops at the deadline the client stamped, so what is left is a
 caller told `Timeout` later than its bound, not a callee outliving it. The response did not ask for
 the timer, and the fix touches every runtime's `sleep`, so it is filed for the designer.
