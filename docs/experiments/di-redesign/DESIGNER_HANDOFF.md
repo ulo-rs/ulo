@@ -222,8 +222,8 @@ design, the build probes that system before committing.
 | Record | What it holds | How to refer to it |
 | --- | --- | --- |
 | Core design (`docs/experiments/di-redesign/DESIGN.md`) | The core as it stands; principles §0, decisions §14 | "core DESIGN §9.5", "core decision 25" |
-| Transports design (`…/transports/DESIGN.md`) | Every transport, the runtime levels (§8), the suites; decisions §13, numbered 1–149 | "transports §5.3", "decision 104" |
-| Responses (`…/transports/RESPONSE.md`) | Every designer answer verbatim, numbered (65 so far), each with the user's sign-off note | "the fifty-fourth response" |
+| Transports design (`…/transports/DESIGN.md`) | Every transport, the runtime levels (§8), the suites; decisions §13, numbered 1–153 | "transports §5.3", "decision 104" |
+| Responses (`…/transports/RESPONSE.md`) | Every designer answer verbatim, numbered (66 so far), each with the user's sign-off note | "the fifty-fourth response" |
 | Batch logs (`…/divergences/race2b-testsNN.md`, `runtime-*.md`) | Per batch: signatures, decisions, tests, the fold list, the S-items, verification | "batch 29's S4" |
 | The ledger (`FRAMEWORK_GAPS.md`, outside the repo) | Every gap, deferral and found bug, numbered F1…F428, with dated notes when fixed | "F383" |
 
