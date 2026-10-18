@@ -51,17 +51,25 @@ members = [
     "crates/ulo-graphql-async-graphql",
     "crates/ulo-graphql-juniper",
     "crates/ulo-cli",
-]
-# Crates not yet ported to the DI redesign; each moves to `members` once it is.
-exclude = [
     "crates/ulo-config",
+    "crates/ulo-health",
+    "crates/ulo-health-http",
+    "crates/ulo-health-grpc",
+    "crates/ulo-db",
+    "crates/ulo-db-sqlx",
+    "crates/ulo-db-seaorm",
     "crates/ulo-db-diesel",
     "crates/ulo-db-mongodb",
-    "crates/ulo-db-prisma",
     "crates/ulo-db-redis",
-    "crates/ulo-db-seaorm",
-    "crates/ulo-db-sqlx",
-    "crates/ulo-health",
+    "crates/ulo-db-conformance",
+    "crates/ulo-conformance-support",
+    "crates/ulo-otel",
+    "crates/ulo-otel-otlp",
+]
+# `ulo-db-prisma` is not ported (decision 42); the coordinator deletes it and its line here after
+# race 3.
+exclude = [
+    "crates/ulo-db-prisma",
     "integration-tests",
     "examples",
 ]
@@ -88,11 +96,11 @@ actix-web = { version = "4", default-features = false }
 anyhow = "1.0.95"
 async-broadcast = "0.7"
 async-executor = "1.14"
-async-io = "2.6"
 async-graphql = { version = "7", default-features = false }
+async-io = "2.6"
 async-lock = "3.4"
-async-net = "2"
 async-nats = { version = "0.46", default-features = false }
+async-net = "2"
 async-trait = "0.1.86"
 async-tungstenite = { version = "0.33", default-features = false }
 axum = { version = "0.8", default-features = false }
@@ -100,6 +108,11 @@ base64 = "0.22"
 bytes = "1"
 ciborium = "0.2"
 command-fds = "0.3.3"
+# `rt_tokio_1`, which `ulo-db-diesel` enables, is the only runtime feature it takes.
+deadpool = { version = "0.13", default-features = false, features = ["managed"] }
+diesel = { version = "2.3", default-features = false }
+diesel-async = { version = "0.9", default-features = false }
+diesel_migrations = "2.3"
 event-listener = "5.4"
 futures = { version = "0.3", default-features = false, features = ["std"] }
 futures-channel = "0.3"
@@ -119,10 +132,18 @@ httparse = "1"
 hyper = "1"
 hyper-util = "0.1"
 ignore-files = "3.0.5"
+jsonc-parser = "0.34"
 juniper = "0.16"
 lapin = "4"
 libc = "0.2"
+# The store crate enables the TLS and DNS features it needs.
+mongodb = { version = "3.9", default-features = false }
 multer = "3"
+# `trace` alone and no runtime feature, so the tree holds no tokio.
+opentelemetry = { version = "0.33.1", default-features = false }
+opentelemetry-http = { version = "0.33.1", default-features = false }
+opentelemetry-otlp = { version = "0.33.1", default-features = false }
+opentelemetry_sdk = { version = "0.33.1", default-features = false }
 parking_lot = "0.12"
 percent-encoding = "2"
 pin-project-lite = "0.2"
@@ -147,17 +168,25 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-native-certs = "0.8"
 rustls-pki-types = "1.9"
 salvo = { version = "0.92", default-features = false }
+# `saphyr-parser` is its own entry because `saphyr` re-exports none of its events.
+saphyr = "0.2"
+saphyr-parser = "0.2"
+sea-orm = { version = "2.0", default-features = false }
+sea-orm-migration = { version = "2.0", default-features = false }
 serde = "1.0.217"
 serde_json = "1.0.137"
 socket2 = "0.6"
+# One entry shared by `ulo-db-sqlx` and `ulo-db-seaorm`, so a build holds one SQLx.
+sqlx = { version = "0.9", default-features = false }
 syn = "2.0.94"
 testcontainers = "0.27.3"
 testcontainers-modules = "0.15.0"
 tokio = { version = "1.47", default-features = false }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 tokio-stream = "0.1"
-tokio-util = { version = "0.7", default-features = false }
 tokio-tungstenite = { version = "0.28", default-features = false }
+tokio-util = { version = "0.7", default-features = false }
+toml = { version = "1", default-features = false }
 tonic = { version = "0.14", default-features = false }
 tonic-health = "0.14"
 tonic-prost = "0.14"
@@ -166,7 +195,12 @@ tonic-reflection = "0.14"
 tonic-types = "0.14"
 tower = { version = "0.5", default-features = false }
 tracing = "0.1"
+tracing-opentelemetry = { version = "0.34.0", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false }
 trybuild = "1.0.110"
+# Pinned exactly: `ulo-otel-otlp` sets its rustls provider through `TlsConfig::unversioned_rustls_crypto_provider`,
+# outside ureq's semver guarantee, so a bump is a deliberate change.
+ureq = { version = "=3.4.2", default-features = false }
 uuid = "1.11"
 validator = "0.20.0"
 watchexec = "8.2"

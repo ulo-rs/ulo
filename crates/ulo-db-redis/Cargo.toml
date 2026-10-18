@@ -1,34 +1,27 @@
 [package]
 name = "ulo-db-redis"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Redis integration for the Ulo framework"
+description = "Redis store for Ulo: a ConnectionManager with the shared connect and health policy, tokio-comp alone"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+keywords = ["ulo", "redis", "database"]
+categories = ["database"]
 
 [features]
-health = ["dep:ulo-health", "dep:serde_json", "dep:futures"]
-integration = ["health"]
+# `rediss://`, through rustls with the webpki roots, as `ulo-rpc-redis`'s `tls` feature does.
+tls = ["redis/tokio-rustls-comp", "redis/tls-rustls-webpki-roots"]
 
 [dependencies]
-ulo = { path = "../ulo", default-features = false }
-# Timer for the startup check's retry delay. Executor-independent, so core stays free of a
-# runtime and this crate does not acquire one either.
-futures-timer.workspace = true
-redis = { workspace = true, features = ["tokio-comp", "connection-manager"] }
-async-trait.workspace = true
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
+ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
+ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.1" }
+# The workspace entry brings `aio` and `tokio-comp`, the one runtime feature this crate takes.
+redis = { workspace = true, features = ["connection-manager"] }
+serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
-ulo-health = { path = "../ulo-health", default-features = false, optional = true }
-serde_json = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
 
-[dev-dependencies]
-redis = { workspace = true, features = ["tokio-comp", "connection-manager"] }
-testcontainers.workspace = true
-testcontainers-modules = { workspace = true, features = ["redis"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-ulo-http-hyper = { path = "../ulo-http-hyper" }
-reqwest = { workspace = true, features = ["json"] }
-anyhow.workspace = true
+[lints]
+workspace = true

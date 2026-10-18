@@ -188,3 +188,53 @@ ulo-macro-lints               tokio-bound
 
 # The `ulo` command, whose `ulo dev` watches and restarts through `watchexec`, on tokio.
 ulo-cli                       tokio-bound
+
+# Configuration: serde and the file parsers, every file read in `main`.
+ulo-config                    runtime-free           --all-features
+
+# The check, the probes and the readiness state; its bounds run on the app's `Timer`.
+ulo-health                    runtime-free           --all-features
+
+# The three probe routes at `ulo-http`'s default features, without its `tokio-io` feature.
+ulo-health-http               runtime-free           --all-features
+
+# The `grpc.health.v1` bridge, on `ulo-grpc`, which is on tonic.
+ulo-health-grpc               tokio-bound
+
+# The store policy over the core's `Runtime` and `Timer`; it names no driver.
+ulo-db                        runtime-free           --all-features
+
+# The SQLx stores: SQLx with `runtime-tokio` alone.
+ulo-db-sqlx                   tokio-bound
+
+# The SeaORM store, on SQLx.
+ulo-db-seaorm                 tokio-bound
+
+# The Diesel store, on diesel-async and tokio's blocking pool.
+ulo-db-diesel                 tokio-bound
+
+# The MongoDB store: the driver supports tokio alone in 3.x.
+ulo-db-mongodb                tokio-bound
+
+# The Redis store, on `redis` with `tokio-comp`.
+ulo-db-redis                  tokio-bound
+
+# The database suite at default features: its `tokio` feature brings the tokio harness.
+ulo-db-conformance            runtime-free
+
+# The harness pieces both suites share, at default features: its `tokio` and `smol` features bring
+# the two harnesses.
+ulo-conformance-support       runtime-free
+
+# The shared harness with its smol half, as the smol CI job runs it.
+ulo-conformance-support       runtime-free           --features smol
+
+# The OpenTelemetry layer; `opentelemetry_sdk` with `trace` alone brings no tokio, and no feature of
+# this crate enables an `rt-*` feature.
+ulo-otel                      runtime-free           --all-features
+
+# The OTLP exporter at default features: the HTTP client over `ureq` brings no tokio.
+ulo-otel-otlp                 runtime-free
+
+# The same crate with reqwest's blocking client, which brings tokio on a thread of its own.
+ulo-otel-otlp                 tokio-bound            --features reqwest-blocking

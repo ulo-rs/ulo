@@ -1,90 +1,65 @@
-use ulo::di::DynamicModule;
+use std::error::Error;
+use std::fmt;
+use std::time::Duration;
 
-use crate::health_check_service::HealthCheckServiceFactory;
+use ulo::{Module, ModuleDef, ModuleIdentity};
 
-#[cfg(feature = "disk")]
-use crate::indicators::disk::DiskHealthIndicatorFactory;
-#[cfg(feature = "http")]
-use crate::indicators::http::HttpHealthIndicatorFactory;
-#[cfg(feature = "memory")]
-use crate::indicators::memory::MemoryHealthIndicatorFactory;
+/// The module that reads `Many<dyn Check>`, binds [`Readiness`](crate::Readiness) and exports it.
+///
+/// Its `BeforeApplicationShutdown` hook turns readiness false, then waits the [`lag`](Self::lag),
+/// bounded `After(lag + 1 s)` so the core's 10 s `hook_timeout` does not cut a longer lag.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct HealthModule {
+    lag: Duration,
+}
 
-#[cfg(feature = "disk")]
-use crate::indicators::DiskHealthIndicator;
-#[cfg(feature = "http")]
-use crate::indicators::HttpHealthIndicator;
-#[cfg(feature = "memory")]
-use crate::indicators::MemoryHealthIndicator;
+impl HealthModule {
+    pub fn new() -> Self {
+        HealthModule { lag: Duration::ZERO }
+    }
 
-use crate::health_check_service::HealthCheckService;
-
-pub struct TerminusModule;
-
-impl TerminusModule {
-    /// Register the health check infrastructure.
-    ///
-    /// Always provides [`HealthCheckService`]. Each feature flag adds its
-    /// indicator automatically:
-    ///
-    /// | Feature  | Indicator added               |
-    /// |----------|-------------------------------|
-    /// | `http`   | [`HttpHealthIndicator`]       |
-    /// | `memory` | [`MemoryHealthIndicator`]     |
-    /// | `disk`   | [`DiskHealthIndicator`]       |
-    ///
-    /// Import once in your root module:
-    ///
-    /// ```ignore
-    /// #[module(imports: [TerminusModule::new(), /* other modules */])]
-    /// pub struct AppModule;
-    /// ```
-    ///
-    /// Then inject any indicator you need:
-    ///
-    /// ```ignore
-    /// #[controller("/health")]
-    /// pub struct HealthController {
-    ///     #[inject] health: HealthCheckService,
-    ///     #[inject] http:   HttpHealthIndicator,
-    /// }
-    ///
-    /// #[routes]
-    /// impl HealthController {
-    ///     #[get("/live")]
-    ///     async fn liveness(&self) -> impl IntoOutput<Http> {
-    ///         self.health.check(vec![
-    ///             self.http.ping_check("api", "https://api.example.com"),
-    ///         ]).await
-    ///     }
-    /// }
-    /// ```
-    pub fn new() -> DynamicModule {
-        #[allow(unused_mut)]
-        let mut builder = DynamicModule::builder("TerminusModule")
-            .provider_factory(HealthCheckServiceFactory)
-            .export::<HealthCheckService>();
-
-        #[cfg(feature = "http")]
-        {
-            builder = builder
-                .provider_factory(HttpHealthIndicatorFactory)
-                .export::<HttpHealthIndicator>();
-        }
-
-        #[cfg(feature = "memory")]
-        {
-            builder = builder
-                .provider_factory(MemoryHealthIndicatorFactory)
-                .export::<MemoryHealthIndicator>();
-        }
-
-        #[cfg(feature = "disk")]
-        {
-            builder = builder
-                .provider_factory(DiskHealthIndicatorFactory)
-                .export::<DiskHealthIndicator>();
-        }
-
-        builder.global().build()
+    /// How long the before-shutdown hook waits after turning readiness false, zero by default.
+    pub fn lag(mut self, lag: Duration) -> Self {
+        self.lag = lag;
+        self
     }
 }
+
+impl Default for HealthModule {
+    fn default() -> Self {
+        HealthModule::new()
+    }
+}
+
+impl Module for HealthModule {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_value(self)
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        let _ = (m, self.lag);
+        todo!()
+    }
+}
+
+/// A check declared `Bound::After(Duration::ZERO)`, refused at `connect` where the health module
+/// reads the collection.
+#[derive(Debug)]
+pub struct ZeroBound {
+    pub(crate) check: String,
+}
+
+impl ZeroBound {
+    /// The name of the check that declared the zero bound.
+    pub fn check(&self) -> &str {
+        &self.check
+    }
+}
+
+impl fmt::Display for ZeroBound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the health check `{}` declares a zero bound, which would mark it down before it ran", self.check)
+    }
+}
+
+impl Error for ZeroBound {}

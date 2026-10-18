@@ -1,0 +1,37 @@
+[package]
+name = "ulo-otel-otlp"
+version.workspace = true
+edition.workspace = true
+# `opentelemetry-otlp` 0.33.1 declares 1.75 and `ureq` 3.4.2 1.85.
+rust-version.workspace = true
+description = "OTLP export over HTTP with protobuf for ulo-otel, on an HTTP client over ureq by default and reqwest's blocking client behind a feature"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "opentelemetry", "otlp", "tracing"]
+categories = ["development-tools::debugging"]
+
+[features]
+default = []
+# reqwest's blocking client, which brings tokio on a thread of its own and touches no app runtime.
+# With it the crate is tokio-bound; without it the tree holds no tokio.
+reqwest-blocking = ["opentelemetry-otlp/reqwest-blocking-client"]
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-otel = { path = "../ulo-otel", version = "=0.1.0-alpha.1" }
+async-trait.workspace = true
+bytes.workspace = true
+http.workspace = true
+# `http-proto` and `trace` alone: the exporter's gRPC transport needs tokio and is deferred.
+opentelemetry-otlp = { workspace = true, features = ["http-proto", "trace"] }
+opentelemetry-http.workspace = true
+# `ring`: the provider the workspace's `rustls` entry is built with, handed to ureq explicitly.
+rustls.workspace = true
+# Pinned exactly in the workspace (N2): the explicit provider is set through
+# `TlsConfig::unversioned_rustls_crypto_provider`, outside ureq's semver guarantee. The webpki roots
+# are the choice made here; the area may take the platform verifier instead.
+ureq = { workspace = true, features = ["rustls-no-provider", "rustls-webpki-roots"] }
+
+[lints]
+workspace = true

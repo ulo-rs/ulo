@@ -1,20 +1,31 @@
 [package]
 name = "ulo-config"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Configuration management for Ulo framework"
+description = "Layered configuration for Ulo: TOML, JSON, YAML, .env and the environment read into one tree whose every value knows its origin, and typed sections that report every problem at once"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+keywords = ["ulo", "config", "configuration", "toml", "dotenv"]
+categories = ["config"]
+
+[features]
+# YAML 1.2 files, read through `saphyr`'s `MarkedYaml` after a bound on alias expansion.
+yaml = ["dep:saphyr", "dep:saphyr-parser"]
 
 [dependencies]
-thiserror = "2.0.17"
+# `serde`: `Secret<T>: Deserialize` and the collector `ulo-config` installs around each section.
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
+jsonc-parser.workspace = true
+# The event stream of the pre-scan that bounds alias expansion; `saphyr` re-exports none of it.
+saphyr = { workspace = true, optional = true }
+saphyr-parser = { workspace = true, optional = true }
+serde.workspace = true
+# `parse`: the spanned reader; `std` and `serde` are what it needs beside it.
+toml = { workspace = true, features = ["std", "serde", "parse"] }
+# The warning for a key no section read.
 tracing.workspace = true
-dotenv = "0.15.0"
-ulo-macros = { path = "../ulo-macros" }
-ulo = { path = "../ulo", default-features = false }
 
-[dev-dependencies]
-serial_test = "3.2.0"
-validator = { workspace = true, features = ["derive"] }
+[lints]
+workspace = true

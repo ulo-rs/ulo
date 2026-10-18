@@ -1,37 +1,24 @@
 [package]
 name = "ulo-db-mongodb"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "MongoDB integration for the Ulo framework"
+description = "MongoDB store for Ulo: a Client with the shared connect and health policy, its mongodb+srv lookup retried under the connect bound"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-
-[features]
-health = ["dep:ulo-health", "dep:serde_json", "dep:futures"]
-integration = ["health"]
+keywords = ["ulo", "mongodb", "database"]
+categories = ["database"]
 
 [dependencies]
-ulo = { path = "../ulo", default-features = false }
-# Timer for the startup check's retry delay. Executor-independent, so core stays free of a
-# runtime and this crate does not acquire one either.
-futures-timer.workspace = true
-mongodb = { version = "3" }
-async-trait.workspace = true
-tracing.workspace = true
-ulo-health = { path = "../ulo-health", default-features = false, optional = true }
-serde_json = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
-
-[dev-dependencies]
-mongodb = { version = "3" }
-testcontainers.workspace = true
-testcontainers-modules = { workspace = true, features = ["mongo"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-ulo-http-hyper = { path = "../ulo-http-hyper" }
-reqwest = { workspace = true, features = ["json"] }
-futures = { workspace = true, features = ["async-await", "executor"] }
-anyhow.workspace = true
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
+ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
+ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.1" }
+# mongodb's default features: `rustls-tls` is rustls over ring, the workspace's provider, and
+# `dns-resolver` is what `mongodb+srv` needs. `compat-3-0-0` selects the driver's `bson` 2.
+mongodb = { workspace = true, features = ["compat-3-0-0", "rustls-tls", "dns-resolver"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

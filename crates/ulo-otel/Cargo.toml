@@ -1,0 +1,32 @@
+[package]
+name = "ulo-otel"
+version.workspace = true
+edition.workspace = true
+# `opentelemetry`, `opentelemetry_sdk` 0.33.1 and `tracing-opentelemetry` 0.34.0 declare 1.75.
+rust-version.workspace = true
+description = "OpenTelemetry export for Ulo: a tracing layer over the transports' spans, the TraceSource that parents them on the incoming trace, sampling and the flush at shutdown"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "opentelemetry", "tracing", "observability"]
+categories = ["development-tools::debugging"]
+
+# No feature of this crate enables an `rt-*`, `experimental_*` or `testing` feature of
+# `opentelemetry_sdk`: the tree holds no tokio, and `runtime-levels.txt` reads it with
+# `--all-features`.
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
+ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
+# The flush hook awaits a oneshot the flush thread completes; no runtime is involved.
+futures-channel.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk = { workspace = true, features = ["trace"] }
+serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
+tracing-opentelemetry.workspace = true
+# `registry`: `LookupSpan`, which the layer's subscriber must implement.
+tracing-subscriber = { workspace = true, features = ["std", "registry"] }
+
+[lints]
+workspace = true

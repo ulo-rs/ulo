@@ -1,0 +1,27 @@
+[package]
+name = "ulo-db-conformance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The conformance suite every Ulo database store runs"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# A dev-dependency of the store crates and of nothing else. Cargo strips dev-dependencies when
+# publishing them, so this never needs a crates.io release (F403).
+publish = false
+
+[features]
+# `OnTokio`, the runtime half of every store, all of which are built on tokio.
+tokio = ["ulo-conformance-support/tokio"]
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
+ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.1" }
+ulo-health = { path = "../ulo-health", version = "=0.1.0-alpha.1" }
+# The harness pieces shared with the RPC suite.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
+
+[lints]
+workspace = true
