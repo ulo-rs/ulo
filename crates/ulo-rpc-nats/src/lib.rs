@@ -8,8 +8,12 @@
 //! waiting for the server to stop routing, so a request routed to the draining instance in between
 //! can be lost and its caller sees its own `Timeout` (`confirms_drain` is `false`); `tls://` selects
 //! TLS, and a `nats://` server requiring it upgrades the connection, either trusting the platform's
-//! root certificates, which every link reads once and writes to a PEM file of its own in the OS
-//! temp directory, removed once the link and every connection it opened have dropped it.
+//! root certificates. The process reads them once while any link holds them and writes them to one
+//! PEM file in the OS temp directory, removed once the last link and connection holding it have
+//! dropped it; a process killed first leaves that one file, uniquely named and holding public
+//! data. A `tls://` link waits for the load. A `nats://` link does not: a connection made before
+//! the load ends gets no file, so if its server upgrades it, async-nats reads the platform's store
+//! on the thread polling it. A `nats://` link whose load fails connects without the file.
 //!
 //! ```ignore
 //! app.bind(ulo_rpc::Server::new(ulo_rpc_nats::Nats::url("nats://bus:4222")))

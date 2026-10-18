@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs::OpenOptions;
 use std::io::{self, Write as _};
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::Duration;
 
 use async_nats::connection::State as Connection;
@@ -15,7 +16,7 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use rustls_native_certs::CertificateResult;
 use tokio::runtime::Handle;
-use tokio::sync::{OnceCell, mpsc, oneshot, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use ulo::{AppHandle, BoxError, BoxFuture, Runtime};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
@@ -58,22 +59,31 @@ const DOMAIN: &str = "ulo.rpc";
 /// `usable`, so a client is refused where it takes the link and a server's `listen()` fails, and
 /// in `connect`.
 ///
-/// A connection over TLS trusts the platform's root certificates. Every link reads them once, off
-/// the runtime's workers, a server's in `prepare` and a client's at its first connect, and writes
-/// them as PEM to a file of its own in the OS temp directory, `ulo-rpc-nats-roots-<pid>-<n>.pem`,
-/// which it hands to every connection. async-nats reads the file on the runtime's blocking pool
-/// whenever a connection or a reconnect uses TLS: a `tls://` url requires it, and a `nats://`
-/// connection is upgraded when the server's `INFO` requires it. A connection that stays plain
-/// never reads it. The file is removed once the link and every connection it opened have dropped
-/// it. A process killed before the drop leaves the roots file in the temp directory; the roots
-/// are public data and the name is unique, so a leftover costs only space.
+/// A connection over TLS trusts the platform's root certificates. The process reads them once
+/// while any link holds them, off the runtime's workers, on the blocking pool of the link that
+/// first needs them, a server's in `prepare` or a client's at its first connect, and writes them
+/// as PEM to one file in the OS temp directory, `ulo-rpc-nats-roots-<pid>-<n>.pem`. A link that
+/// needs them while another link or a connection holds that file reuses it, and a process holds
+/// one load and one file at a time; the file is removed once its last holder drops it, and a link
+/// needing them after that loads again. A process killed before the drop leaves its one file in the
+/// temp directory; the roots are public data and the name is unique, so a leftover costs only
+/// space, and no link removes a file another process wrote.
+///
+/// async-nats reads the file on the runtime's blocking pool whenever a connection or a reconnect
+/// handed it uses TLS: a `tls://` url requires it, and a `nats://` connection is upgraded when the
+/// server's `INFO` requires it. A connection that stays plain never reads it. A `tls://` link waits
+/// for the load before it connects. A `nats://` link waits for nothing: a connection made once the
+/// load has ended is handed the file, and one made before is not. If the server upgrades a
+/// connection made without the file, async-nats reads the platform's store itself, on the thread
+/// polling the connection, at that connect and at each of its reconnects.
 ///
 /// Over `tls://`, a store yielding no root, a file that cannot be written, or a process that links
 /// more than one rustls crypto provider and installs none fails a server's `bind` and every client
 /// call `Internal` with `reason: "misconfigured_link"`. Over `nats://` the first two are logged
-/// at `warn` once and the link connects without the file, since a plain server needs none of it.
-/// The provider is resolved for `tls://` alone, so a provider conflict is neither checked nor
-/// logged over `nats://`.
+/// at `warn` once and the link connects without the file, since a plain server needs none of it;
+/// a connection the server upgrades then fails as async-nats's own read of the store does. The
+/// provider is resolved for `tls://` alone, so a provider conflict is neither checked nor logged
+/// over `nats://`.
 pub struct Nats {
     pub(crate) url: String,
     pub(crate) group: Option<String>,
@@ -145,25 +155,17 @@ impl Nats {
         self.runtime.clone().ok_or_else(|| NO_RUNTIME.into())
     }
 
-    /// The file of root certificates the servers in `url` connect with, loaded for every url:
+    /// The load of root certificates the servers in `url` connect with, started for every url:
     /// async-nats upgrades a `nats://` connection whose server requires TLS, and the link cannot
-    /// know before connecting whether one will. A load that failed refuses a url naming a
-    /// `tls://` server; for one naming none it is logged once and the connections get no file.
-    /// The crypto provider is resolved for a `tls://` url alone (see [`resolve_provider`]).
-    async fn roots(&self, servers: &[ServerAddr], runtime: &Tokio) -> Result<Option<Arc<RootsFile>>, BoxError> {
-        let tls = servers.iter().any(ServerAddr::tls_required);
-        match self.roots.load(runtime, tls).await {
-            Ok(file) => Ok(Some(file)),
-            Err(refused) if tls => Err(refused),
-            Err(unused) => {
-                if !self.roots.warned.swap(true, Ordering::Relaxed) {
-                    tracing::warn!(
-                        cause = %unused,
-                        "the NATS link connects to its `nats://` url without root certificates of its own; a server there that requires TLS fails the handshake or reads the platform's store on the thread polling the connection"
-                    );
-                }
-                Ok(None)
-            }
+    /// know before connecting whether one will. A url naming a `tls://` server resolves the crypto
+    /// provider (see [`resolve_provider`]), waits for the load and is refused if it failed. A url
+    /// naming none waits for nothing: `Some` once the file is written, `None` while the load runs
+    /// or after it failed.
+    async fn roots(&self, servers: &[ServerAddr], runtime: &Tokio) -> Result<Option<Arc<Load>>, BoxError> {
+        if servers.iter().any(ServerAddr::tls_required) {
+            self.roots.wait(runtime, true).await.map(Some)
+        } else {
+            Ok(self.roots.ready(runtime))
         }
     }
 }
@@ -194,8 +196,8 @@ impl Link for Nats {
             Some(group) => check_group(group)?,
             None => self.default_group = Some(queue_group(&format!("{:#}", app.root().name()))),
         }
-        // A server writes its roots here, so over `tls://` a store that yields none fails `bind`
-        // before `listen`.
+        // A server starts its roots' load here, so over `tls://` a store that yields none fails
+        // `bind` before `listen`; over `nats://` nothing waits for it.
         self.roots(&servers, &self.runtime()?).await?;
         Ok(())
     }
@@ -209,7 +211,7 @@ impl Link for Nats {
         let runtime = self.runtime()?;
         let servers = servers(&self.url)?;
         let roots = self.roots(&servers, &runtime).await?;
-        let client = runtime.run(open(servers, ConnectOptions::new(), roots.clone())).await??;
+        let client = runtime.run(open(servers, ConnectOptions::new(), roots.as_deref().and_then(Load::path))).await??;
         self.max_payload.store(client.server_info().max_payload as u64, Ordering::Relaxed);
 
         // Every subscription is made before any lane starts, so a failure leaves nothing
@@ -264,7 +266,7 @@ impl Link for Nats {
             }
             async {}
         });
-        let client = runtime.run(open(servers, options, roots.clone())).await??;
+        let client = runtime.run(open(servers, options, roots.as_deref().and_then(Load::path))).await??;
         self.max_payload.store(client.server_info().max_payload as u64, Ordering::Relaxed);
         let prefix = client.new_inbox();
         let replies = client.subscribe(format!("{prefix}.*")).await?;
@@ -375,8 +377,9 @@ struct ServerSide {
     codec: Codec,
     calls: Arc<Calls>,
     phase: watch::Sender<Phase>,
-    /// Held while the connection may reconnect, since each reconnect reads the file again.
-    _roots: Option<Arc<RootsFile>>,
+    /// The load whose file the connection was handed, held while the connection may reconnect,
+    /// since each reconnect reads the file again.
+    _roots: Option<Arc<Load>>,
 }
 
 impl ServerSide {
@@ -555,8 +558,9 @@ struct ClientSide {
     prefix: String,
     max_payload: Arc<AtomicU64>,
     calls: Mutex<HashMap<u64, ClientCall>>,
-    /// Held while the connection may reconnect, since each reconnect reads the file again.
-    _roots: Option<Arc<RootsFile>>,
+    /// The load whose file the connection was handed, held while the connection may reconnect,
+    /// since each reconnect reads the file again.
+    _roots: Option<Arc<Load>>,
     #[cfg(feature = "conformance-probe")]
     probe: Arc<ClientProbe>,
 }
@@ -899,81 +903,211 @@ fn servers(url: &str) -> Result<Vec<ServerAddr>, BoxError> {
 
 /// A connection opened, and its task started, on the runtime polling this: `Tokio::run` for the
 /// link. Given `roots`, async-nats trusts the certificates in that file alone and skips its own
-/// read of the platform's store, which it makes on the thread polling every connection and
+/// read of the platform's store, which it makes on the thread polling every TLS connection and
 /// reconnect otherwise; the file it reads on tokio's blocking pool.
-async fn open(servers: Vec<ServerAddr>, options: ConnectOptions, roots: Option<Arc<RootsFile>>) -> Result<Client, BoxError> {
+async fn open(servers: Vec<ServerAddr>, options: ConnectOptions, roots: Option<PathBuf>) -> Result<Client, BoxError> {
     let options = match roots {
-        Some(roots) => options.add_root_certificates(roots.path.clone()),
+        Some(path) => options.add_root_certificates(path),
         None => options,
     };
     Ok(options.connect(servers).await?)
 }
 
-/// The platform's root certificates as a PEM file, written at the link's first need, a server's
-/// `prepare` or a client's first connect, and kept for every connection after. The platform's
-/// store takes 71 ms warm and 2.3 s cold to read on macOS, so the load and the write run on the
-/// link's runtime's blocking pool: async-nats, left to itself, reads the store on the thread
-/// polling each connection and reconnect, stalling every task scheduled there. For a `tls://`
-/// url the same task resolves rustls's crypto provider first, as async-nats's TLS configuration
-/// will at the first connection (see [`resolve_provider`]). A load that fails is kept too, since
-/// no retry mends a store that cannot be read or holds no root, a directory that cannot be
-/// written, or a build's providers: over `tls://` a server's `prepare` refuses it, and every
-/// client call answers it as [`Misconfigured`].
+/// A link's root certificates: the process's load, or one of the link's own where a test sets a
+/// loader. The platform's store takes 71 ms warm and up to 3 s cold to read on macOS, and thirty
+/// reads at once up to 2.55 s each, so the process reads it once while any link holds the load,
+/// on the blocking pool of the link that started it. async-nats, left to itself, reads the store
+/// on the thread polling each TLS connection and reconnect, stalling every task scheduled there.
+/// For a `tls://` url the link first resolves rustls's crypto provider, as async-nats's TLS
+/// configuration will at the first connection (see [`resolve_provider`]), and keeps the outcome.
+/// A load that fails is kept while it is held, since no retry mends a store that cannot be read or
+/// holds no root, or a directory that cannot be written: over `tls://` a server's `prepare`
+/// refuses it, and every client call answers it as [`Misconfigured`].
 pub(crate) struct Roots {
+    /// The loader a test sets, which gives the link a load of its own in place of the process's.
+    pub(crate) own: Option<Loader>,
+    /// [`resolve_provider`], which a test replaces.
+    pub(crate) resolve: fn() -> Result<(), String>,
+    /// The provider's resolution, made at a `tls://` url's first need.
+    resolved: OnceLock<Result<(), String>>,
+    /// The load the link holds, from its first need until it drops.
+    held: Mutex<Option<Arc<Load>>>,
+}
+
+/// Where a load reads the roots and writes their file.
+#[derive(Clone, Copy)]
+pub(crate) struct Loader {
     /// `rustls_native_certs::load_native_certs`, which a test replaces.
     pub(crate) load: fn() -> CertificateResult,
     /// The directory the file is written in, `std::env::temp_dir`, which a test replaces.
     pub(crate) dir: fn() -> PathBuf,
-    /// [`resolve_provider`], which a test replaces.
-    pub(crate) resolve: fn() -> Result<(), String>,
-    /// The refusal kept in `written` has been logged, for a url that does not require TLS.
-    warned: AtomicBool,
-    /// The file, or the whole of the refusal's message.
-    written: OnceCell<Result<Arc<RootsFile>, String>>,
+}
+
+impl Loader {
+    pub(crate) const PLATFORM: Loader = Loader { load: rustls_native_certs::load_native_certs, dir: std::env::temp_dir };
+}
+
+/// The process's load, held weakly: every link that needs roots while another holds the load
+/// joins it, and once the last holder drops it the next link starts a new one. A strong slot would
+/// keep the file until the process exits.
+static PROCESS: Mutex<Weak<Load>> = Mutex::new(Weak::new());
+
+/// The loader the process's load uses, which a test replaces.
+#[cfg(test)]
+pub(crate) static PROCESS_LOADER: Mutex<Loader> = Mutex::new(Loader::PLATFORM);
+
+fn process_loader() -> Loader {
+    #[cfg(test)]
+    return *lock(&PROCESS_LOADER);
+    #[cfg(not(test))]
+    Loader::PLATFORM
 }
 
 impl Roots {
     fn platform() -> Roots {
-        Roots {
-            load: rustls_native_certs::load_native_certs,
-            dir: std::env::temp_dir,
-            resolve: resolve_provider,
-            warned: AtomicBool::new(false),
-            written: OnceCell::new(),
+        Roots { own: None, resolve: resolve_provider, resolved: OnceLock::new(), held: Mutex::new(None) }
+    }
+
+    /// The load this link holds, joined or started at its first need. A load whose task never ran,
+    /// its runtime having shut down first, is replaced, so the next need, on a runtime still
+    /// running, loads them again.
+    fn held(&self, runtime: &Tokio) -> Arc<Load> {
+        let mut held = lock(&self.held);
+        if let Some(load) = held.as_ref().filter(|load| !load.abandoned()) {
+            return Arc::clone(load);
+        }
+        let load = match self.own {
+            Some(loader) => Load::start(runtime, loader),
+            None => Load::shared(runtime),
+        };
+        *held = Some(Arc::clone(&load));
+        load
+    }
+
+    /// The load once its file is written, waited for. `tls` is whether the link's url names a
+    /// `tls://` server, constant for a link: it resolves the provider first and names `tls://` in
+    /// a refusal.
+    async fn wait(&self, runtime: &Tokio, tls: bool) -> Result<Arc<Load>, BoxError> {
+        if tls && let Err(refusal) = self.resolved.get_or_init(self.resolve) {
+            return Err(Misconfigured { source: refusal.clone().into() }.into());
+        }
+        let load = self.held(runtime);
+        match load.wait().await {
+            Some(Ok(_)) => Ok(load),
+            Some(Err(cause)) => Err(Misconfigured { source: format!("{}: {cause}", unloaded(tls)).into() }.into()),
+            None => Err("the NATS link's runtime shut down while it loaded the platform's root certificates".into()),
         }
     }
 
-    /// `tls` is whether the link's url names a `tls://` server, constant for a link.
-    async fn load(&self, runtime: &Tokio, tls: bool) -> Result<Arc<RootsFile>, BoxError> {
-        let (load, dir, resolve) = (self.load, self.dir, self.resolve);
-        let written = self
-            .written
-            .get_or_try_init(|| async move {
-                let loaded = runtime.handle().spawn_blocking(move || {
-                    if tls {
-                        resolve()?;
-                    }
-                    RootsFile::write(load(), &dir()).map_err(|cause| format!("{}: {cause}", unloaded(tls)))
-                });
-                match loaded.await {
-                    Ok(written) => Ok(written.map(Arc::new)),
-                    Err(ended) if ended.is_panic() => Ok(Err(format!("{}: loading them panicked: {}", unloaded(tls), panic_text(&*ended.into_panic())))),
-                    Err(ended) => Err(ended),
-                }
-            })
-            .await;
-        match written {
-            Ok(Ok(file)) => Ok(Arc::clone(file)),
-            Ok(Err(refusal)) => Err(Misconfigured { source: refusal.clone().into() }.into()),
-            // Not kept: the next connect, on a runtime still running, loads them again.
-            Err(_) => Err("the NATS link's runtime shut down while it loaded the platform's root certificates".into()),
+    /// The load if its file is written, or `None` at once, for a url naming no `tls://` server. A
+    /// failed load is logged at `warn` once, when this finds it failed or, if it still runs, when
+    /// it ends.
+    fn ready(&self, runtime: &Tokio) -> Option<Arc<Load>> {
+        let load = self.held(runtime);
+        let failed = load.answer.borrow().as_ref().map(|written| written.as_ref().err().cloned());
+        match failed {
+            Some(None) => Some(load),
+            Some(Some(cause)) => {
+                load.warn(&cause);
+                None
+            }
+            None => {
+                load.warn_when_failed(runtime);
+                None
+            }
         }
     }
 
     /// Where the link's roots were written, once they have been.
     #[cfg(test)]
     pub(crate) fn path(&self) -> Option<PathBuf> {
-        self.written.get().and_then(|written| written.as_ref().ok()).map(|file| file.path.clone())
+        lock(&self.held).as_ref()?.path()
+    }
+
+    /// The link's load once it has answered: its file, or `None` for a failed load or one the link
+    /// never started.
+    #[cfg(test)]
+    pub(crate) async fn settled(&self) -> Option<PathBuf> {
+        let load = lock(&self.held).clone()?;
+        load.wait().await?.ok()
+    }
+}
+
+/// One load of the roots, a task on a runtime's blocking pool whose answer every holder shares. A
+/// caller that stops waiting drops its own wait and nothing else, so the load is never restarted
+/// while anything holds it. The file goes once the last holder and the task have dropped it.
+pub(crate) struct Load {
+    /// `None` until the task answers: the file, or the whole of the refusal's cause.
+    answer: watch::Receiver<Option<Result<RootsFile, String>>>,
+    /// A task waits to log the load's failure for a `nats://` link.
+    watched: AtomicBool,
+    /// The failure has been logged for a `nats://` link.
+    warned: AtomicBool,
+}
+
+impl Load {
+    /// The process's load, joined while another holder keeps it, started otherwise.
+    fn shared(runtime: &Tokio) -> Arc<Load> {
+        let mut slot = lock(&PROCESS);
+        if let Some(load) = slot.upgrade().filter(|load| !load.abandoned()) {
+            return load;
+        }
+        let load = Load::start(runtime, process_loader());
+        *slot = Arc::downgrade(&load);
+        load
+    }
+
+    /// A load spawned on `runtime`'s blocking pool. A panic in it is kept as a refusal naming the
+    /// panic; a task the runtime drops unrun leaves the load abandoned.
+    fn start(runtime: &Tokio, loader: Loader) -> Arc<Load> {
+        let (answering, answer) = watch::channel(None);
+        drop(runtime.handle().spawn_blocking(move || {
+            let written = std::panic::catch_unwind(AssertUnwindSafe(|| RootsFile::write((loader.load)(), &(loader.dir)())))
+                .unwrap_or_else(|panic| Err(format!("loading them panicked: {}", panic_text(&*panic))));
+            // Refused once every holder has dropped the load, which drops the file here.
+            let _ = answering.send(Some(written));
+        }));
+        Arc::new(Load { answer, watched: AtomicBool::new(false), warned: AtomicBool::new(false) })
+    }
+
+    fn path(&self) -> Option<PathBuf> {
+        self.answer.borrow().as_ref()?.as_ref().ok().map(|file| file.path.clone())
+    }
+
+    /// The task ended without answering. Checked closed first: once closed the answer cannot
+    /// change.
+    fn abandoned(&self) -> bool {
+        self.answer.has_changed().is_err() && self.answer.borrow().is_none()
+    }
+
+    /// The task's answer, or `None` if it ended without one.
+    async fn wait(&self) -> Option<Result<PathBuf, String>> {
+        let mut answer = self.answer.clone();
+        let answered = answer.wait_for(Option::is_some).await.ok()?;
+        answered.as_ref().map(|written| written.as_ref().map(|file| file.path.clone()).map_err(Clone::clone))
+    }
+
+    fn warn(&self, cause: &str) {
+        if !self.warned.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                cause = %format!("{}: {cause}", unloaded(false)),
+                "the NATS link connects to its `nats://` url without root certificates of its own; a server there that requires TLS fails the handshake or reads the platform's store on the thread polling the connection"
+            );
+        }
+    }
+
+    /// Logs the failure once the load ends, if it fails, from a task on `runtime` that holds the
+    /// load until then.
+    fn warn_when_failed(self: &Arc<Self>, runtime: &Tokio) {
+        if self.watched.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let load = Arc::clone(self);
+        drop(runtime.handle().spawn(async move {
+            if let Some(Err(cause)) = load.wait().await {
+                load.warn(&cause);
+            }
+        }));
     }
 }
 
@@ -1005,8 +1139,9 @@ fn resolve_provider() -> Result<(), String> {
     std::panic::catch_unwind(|| drop(ClientConfig::builder())).map_err(|_| PROVIDERS.to_owned())
 }
 
-/// A file of root certificates the link wrote, removed when the link and every connection it
-/// opened have dropped it. A process killed before the drop leaves it in the temp directory.
+/// A file of root certificates a load wrote, removed when the load drops it: once every link and
+/// connection holding the load has. A process killed before the drop leaves it in the temp
+/// directory.
 pub(crate) struct RootsFile {
     path: PathBuf,
 }
@@ -1114,7 +1249,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Condvar;
     use std::sync::atomic::AtomicUsize;
+    use std::time::Instant;
 
     use async_nats::rustls::pki_types::CertificateDer;
     use async_nats::rustls::pki_types::pem::PemObject;
@@ -1124,7 +1261,7 @@ mod tests {
     use super::*;
 
     /// Root certificates loaded per test, each test's loader counting in a slot of its own.
-    static LOADS: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
+    static LOADS: [AtomicUsize; 19] = [const { AtomicUsize::new(0) }; 19];
 
     /// A store that cannot be read: rustls-native-certs reading a file that is not there, as it
     /// reads one `SSL_CERT_FILE` names.
@@ -1151,6 +1288,57 @@ mod tests {
     /// A store holding the test certificate alone.
     fn test_root<const SLOT: usize>() -> CertificateResult {
         LOADS[SLOT].fetch_add(1, Ordering::SeqCst);
+        let mut loaded = CertificateResult::default();
+        loaded.certs.push(ulo_test_certs::localhost().cert_der().clone());
+        loaded
+    }
+
+    /// The test certificate after 300 ms, as a store slow to read yields it.
+    fn slow_root<const SLOT: usize>() -> CertificateResult {
+        std::thread::sleep(Duration::from_millis(300));
+        test_root::<SLOT>()
+    }
+
+    /// How long a gated loader blocks unless its test opens the gate first: twice the RPC
+    /// conformance suite's boot budget.
+    const HELD: Duration = Duration::from_secs(10);
+
+    /// A loader's wait, which its test opens.
+    struct Gate {
+        open: Mutex<bool>,
+        opened: Condvar,
+    }
+
+    impl Gate {
+        const fn new() -> Gate {
+            Gate { open: Mutex::new(false), opened: Condvar::new() }
+        }
+
+        fn open(&self) {
+            *lock(&self.open) = true;
+            self.opened.notify_all();
+        }
+
+        /// Blocks until the gate opens or `HELD` passes.
+        fn wait(&self) {
+            let deadline = Instant::now() + HELD;
+            let mut open = lock(&self.open);
+            while !*open {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return;
+                }
+                open = self.opened.wait_timeout(open, left).unwrap_or_else(PoisonError::into_inner).0;
+            }
+        }
+    }
+
+    static GATES: [Gate; 2] = [const { Gate::new() }; 2];
+
+    /// The test certificate once gate `GATE` opens or `HELD` passes, counted in `SLOT`.
+    fn gated<const SLOT: usize, const GATE: usize>() -> CertificateResult {
+        LOADS[SLOT].fetch_add(1, Ordering::SeqCst);
+        GATES[GATE].wait();
         let mut loaded = CertificateResult::default();
         loaded.certs.push(ulo_test_certs::localhost().cert_der().clone());
         loaded
@@ -1183,6 +1371,74 @@ mod tests {
         }
     }
 
+    /// What `dir` holds once it holds anything, or after five seconds: a `nats://` link's load is
+    /// a task that nothing it connects waits for.
+    async fn written(dir: &Path) -> Vec<PathBuf> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let files = files_in(dir);
+            if !files.is_empty() || Instant::now() > deadline {
+                return files;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// `count` once it reaches `at_least`, or after five seconds.
+    async fn counted(count: &AtomicUsize, at_least: usize) -> usize {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let now = count.load(Ordering::SeqCst);
+            if now >= at_least || Instant::now() > deadline {
+                return now;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// The process's load is one per test binary, so the tests that use it take turns.
+    static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// A test's turn with the process's load, its loader set to the test's until the turn ends. A
+    /// turn starts with no load held, an earlier turn's holders given five seconds to drop theirs.
+    struct ProcessTurn {
+        _turn: tokio::sync::MutexGuard<'static, ()>,
+    }
+
+    impl ProcessTurn {
+        async fn take(loader: Loader) -> ProcessTurn {
+            let turn = TURN.lock().await;
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while lock(&PROCESS).strong_count() > 0 && Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            ProcessTurn::begin(turn, loader)
+        }
+
+        /// The turn for a test that runs outside a runtime.
+        #[cfg(feature = "integration")]
+        fn blocking(loader: Loader) -> ProcessTurn {
+            let turn = TURN.blocking_lock();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while lock(&PROCESS).strong_count() > 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            ProcessTurn::begin(turn, loader)
+        }
+
+        fn begin(turn: tokio::sync::MutexGuard<'static, ()>, loader: Loader) -> ProcessTurn {
+            assert_eq!(lock(&PROCESS).strong_count(), 0, "an earlier test's process load is still held");
+            *lock(&PROCESS_LOADER) = loader;
+            ProcessTurn { _turn: turn }
+        }
+    }
+
+    impl Drop for ProcessTurn {
+        fn drop(&mut self) {
+            *lock(&PROCESS_LOADER) = Loader::PLATFORM;
+        }
+    }
+
     /// `ring` installed as the process's crypto provider. The crate's tests link `aws-lc-rs` beside
     /// it, through the dev-dependency on rustls, and so does a workspace build through the MQTT
     /// link, so without an installed provider every `tls://` link here would be refused as
@@ -1191,14 +1447,14 @@ mod tests {
         let _ = async_nats::rustls::crypto::ring::default_provider().install_default();
     }
 
-    /// A link on `url` whose roots come from `load` and are written in `dir`. Nothing listens at
+    /// A link on `url` with a load of its own in place of the process's, its roots from `load`
+    /// written in `dir`. Nothing listens at
     /// the urls the tests use: a link that reached a socket would fail `Unavailable`, not with the
     /// load's refusal.
     fn link(url: &str, load: fn() -> CertificateResult, dir: fn() -> PathBuf) -> Nats {
         installed();
         let mut link = Nats::url(url);
-        link.roots.load = load;
-        link.roots.dir = dir;
+        link.roots.own = Some(Loader { load, dir });
         link
     }
 
@@ -1328,26 +1584,28 @@ mod tests {
         let _ = std::fs::remove_dir(&here);
     }
 
-    /// F417: two links in one process write files of their own, and each file goes with its link.
+    /// F417: two loads in one process write files of their own, and each file goes with its load,
+    /// here two links' own loads. The process's load is one at a time, but a load whose holders
+    /// have all dropped can still be writing its file when the next starts.
     #[tokio::test]
-    async fn two_links_write_files_of_their_own() {
+    async fn two_loads_write_files_of_their_own() {
         let here = dir::<8>();
         fresh(&here);
         let runtime = Tokio::current();
         let (first, second) = (link("tls://localhost:1", test_root::<8>, dir::<8>), link("tls://localhost:1", test_root::<8>, dir::<8>));
-        let (a, b) = (first.roots.load(&runtime, true).await.expect("the first loads"), second.roots.load(&runtime, true).await.expect("the second loads"));
-        assert_ne!(a.path, b.path, "two links share one file");
+        let (a, b) = (first.roots.wait(&runtime, true).await.expect("the first loads"), second.roots.wait(&runtime, true).await.expect("the second loads"));
+        assert_ne!(a.path(), b.path(), "two loads share one file");
         drop((a, b));
-        assert_eq!(files_in(&here).len(), 2, "the two links do not hold two files");
+        assert_eq!(files_in(&here).len(), 2, "the two loads do not hold two files");
         drop(first);
-        assert_eq!(files_in(&here), vec![second.roots.path().expect("the second wrote its roots")], "dropping one link removed other than its file");
+        assert_eq!(files_in(&here), vec![second.roots.path().expect("the second wrote its roots")], "dropping one link removed other than its load's file");
         drop(second);
         assert_eq!(files_in(&here), Vec::<PathBuf>::new(), "the second link's roots outlived it");
         let _ = std::fs::remove_dir(&here);
     }
 
     /// F423: a `nats://` link loads and writes its roots once as a `tls://` one does, since its
-    /// server may require TLS, and removes them when it drops.
+    /// server may require TLS, though no connect waits for them, and removes them when it drops.
     #[tokio::test]
     async fn a_plain_link_writes_its_roots_too() {
         let here = dir::<9>();
@@ -1356,8 +1614,8 @@ mod tests {
         for (kind, _, message) in failed_calls(&client).await {
             assert_eq!(kind, ErrorKind::Unavailable, "{message}");
         }
+        assert_eq!(written(&here).await.len(), 1, "a plain link wrote other than one file");
         assert_eq!(LOADS[9].load(Ordering::SeqCst), 1, "a plain link loaded its roots other than once for two calls");
-        assert_eq!(files_in(&here).len(), 1, "a plain link wrote other than one file");
         drop(client);
         assert_eq!(emptied(&here).await, Vec::<PathBuf>::new(), "the roots outlived the client");
         let _ = std::fs::remove_dir(&here);
@@ -1371,10 +1629,15 @@ mod tests {
         let app = app().await;
         let mut server = link("nats://localhost:1", unreadable::<10>, std::env::temp_dir);
         server.prepare(&app.handle()).await.expect("a plain server's link prepares though its roots did not load");
+        assert_eq!(server.roots.settled().await, None, "a store that cannot be read yielded a file");
         for (kind, reason, message) in refused_calls(link("nats://localhost:1", empty::<11>, std::env::temp_dir)).await {
             assert_eq!((kind, reason.as_deref()), (ErrorKind::Unavailable, None), "{message}");
         }
-        assert_eq!((LOADS[10].load(Ordering::SeqCst), LOADS[11].load(Ordering::SeqCst)), (1, 1), "a side loaded its roots other than once");
+        assert_eq!(
+            (LOADS[10].load(Ordering::SeqCst), counted(&LOADS[11], 1).await),
+            (1, 1),
+            "a side loaded its roots other than once"
+        );
     }
 
     /// F423: the refusal kept for a `nats://` link becomes the cause of its `warn`, so it does
@@ -1385,9 +1648,9 @@ mod tests {
             rustls_native_certs::load_certs_from_paths(Some(Path::new("/nonexistent/ulo-rpc-nats-roots.pem")), None)
         }
         let runtime = Tokio::current();
-        let plain = link("nats://localhost:1", missing, std::env::temp_dir).roots.load(&runtime, false).await.err().expect("the roots did not load");
+        let plain = link("nats://localhost:1", missing, std::env::temp_dir).roots.wait(&runtime, false).await.err().expect("the roots did not load");
         assert!(!plain.to_string().contains("tls://"), "{plain}");
-        let tls = link("tls://localhost:1", missing, std::env::temp_dir).roots.load(&runtime, true).await.err().expect("the roots did not load");
+        let tls = link("tls://localhost:1", missing, std::env::temp_dir).roots.wait(&runtime, true).await.err().expect("the roots did not load");
         assert!(tls.to_string().contains("`tls://`"), "{tls}");
     }
 
@@ -1465,7 +1728,7 @@ mod tests {
                 .await
                 .expect("the request did not reach the server within ten seconds")
                 .expect("the server's inbound stream ended");
-            assert!(serving.roots.path().is_some() && client.roots.path().is_some(), "a link connected without writing its roots");
+            assert!(serving.roots.settled().await.is_some() && client.roots.settled().await.is_some(), "a link's roots were not written");
             assert_eq!(LOADS[14].load(Ordering::SeqCst), 2, "the two links each loaded their roots other than once");
 
             let connz = connz(monitor).await;
@@ -1473,6 +1736,57 @@ mod tests {
             assert!(!connz.contains("tls_version"), "a connection on a `nats://` url to a plain server uses TLS: {connz}");
             let _ = client.close().await;
             let _ = serving.close().await;
+        }
+
+        /// F427: a `nats://` server's link and a client's connect, and a request reaches the
+        /// server, within the suite's boot budget while the process's load of their roots blocks
+        /// for twice that; once the load ends, the two links hold its one file and a later connect
+        /// is handed it.
+        #[tokio::test]
+        async fn a_plain_link_connects_within_the_boot_budget_while_its_roots_load() {
+            let boot = ulo_rpc_conformance::Budget::default().boot;
+            assert_eq!(HELD, boot * 2, "the gate does not hold the load for twice the boot budget");
+            let (server, _monitor, _container) = plain_nats().await;
+            let _turn = ProcessTurn::take(Loader { load: gated::<17, 1>, dir: dir::<17> }).await;
+            let here = dir::<17>();
+            fresh(&here);
+            let url = format!("nats://{server}");
+
+            let began = Instant::now();
+            let app = app().await;
+            let mut serving = Nats::url(&url);
+            serving.prepare(&app.handle()).await.expect("the server's link prepares");
+            let mut inbound = serving.listen(&[Pattern::from(PATTERN)]).await.expect("the server's link listens");
+            let client = Nats::url(&url);
+            let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
+            let outbound = client.connect(&runtime).await.expect("the client's link connects");
+            let request = Frame::Req { id: 1, pattern: PATTERN.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+            (outbound.send)(Pattern::from(PATTERN), request, Some(ReplyTo { id: 1 })).await.expect("the request is published");
+            tokio::time::timeout(boot, inbound.next())
+                .await
+                .expect("the request did not reach the server within the boot budget")
+                .expect("the server's inbound stream ended");
+            let took = began.elapsed();
+            assert!(took < boot, "binding, connecting and one request took {took:?}, past the boot budget of {boot:?}");
+            assert_eq!(
+                (LOADS[17].load(Ordering::SeqCst), serving.roots.path(), client.roots.path()),
+                (1, None, None),
+                "the links did not connect while the one load ran"
+            );
+
+            GATES[1].open();
+            let file = client.roots.settled().await.expect("the roots are written once the load ends");
+            assert_eq!(serving.roots.path().as_ref(), Some(&file), "the server's link holds another file than the client's");
+            let handed = client.roots(&servers(&url).expect("the url parses"), &Tokio::current()).await.expect("a plain link is not refused");
+            assert_eq!(handed.and_then(|load| load.path()).as_ref(), Some(&file), "a connect after the load ended is not handed its file");
+            client.connect(&runtime).await.expect("a later connect succeeds");
+            assert_eq!((LOADS[17].load(Ordering::SeqCst), files_in(&here)), (1, vec![file]), "the roots loaded other than once, or into other than one file");
+
+            let _ = client.close().await;
+            let _ = serving.close().await;
+            drop((client, serving, inbound, outbound));
+            assert_eq!(emptied(&here).await, Vec::<PathBuf>::new(), "the roots outlived the two links");
+            let _ = std::fs::remove_dir(&here);
         }
 
         /// F425: a server's link bound through an app removes its roots once the app has closed and
@@ -1483,7 +1797,8 @@ mod tests {
             let here = dir::<15>();
             fresh(&here);
             let app = app().await.bind(Server::new(link(&format!("nats://{server}"), test_root::<15>, dir::<15>))).listen().await.expect("the server binds");
-            assert_eq!((LOADS[15].load(Ordering::SeqCst), files_in(&here).len()), (1, 1), "the server's link did not load and write its roots once");
+            let files = written(&here).await.len();
+            assert_eq!((LOADS[15].load(Ordering::SeqCst), files), (1, 1), "the server's link did not load and write its roots once");
             let handle = app.handle();
             let serving = tokio::spawn(async move { app.serve(std::future::pending::<ulo::Signal>()).await.map(drop).map_err(|error| error.to_string()) });
             handle.close(ulo::Signal::new("test")).await.expect("the app closes");
@@ -1525,15 +1840,77 @@ mod tests {
             assert_eq!((kind, reason.as_deref()), (ErrorKind::Unavailable, None), "{message}");
         }
         assert_eq!(RESOLVES[1].load(Ordering::SeqCst), 0, "a plain link resolved a provider");
-        assert_eq!((LOADS[13].load(Ordering::SeqCst), files_in(&here).len()), (1, 1), "a plain link did not load and write its roots once");
+        let files = written(&here).await.len();
+        assert_eq!((LOADS[13].load(Ordering::SeqCst), files), (1, 1), "a plain link did not load and write its roots once");
+        drop(client);
+        assert_eq!(emptied(&here).await, Vec::<PathBuf>::new(), "the roots outlived the client");
+        let _ = std::fs::remove_dir(&here);
+    }
+
+    /// F427: thirty links needing their roots at once, the process's load reading a store that
+    /// takes 300 ms, run one load between them and hold one file, which goes once the thirty have
+    /// dropped; a link needing roots after that loads again.
+    #[tokio::test]
+    async fn thirty_links_at_once_share_one_load_and_one_file() {
+        let _turn = ProcessTurn::take(Loader { load: slow_root::<18>, dir: dir::<18> }).await;
+        let here = dir::<18>();
+        fresh(&here);
+        installed();
+        let app = app().await;
+        let handle = app.handle();
+        let mut links: Vec<Nats> = (0..30).map(|_| Nats::url("tls://localhost:1")).collect();
+        for prepared in futures_util::future::join_all(links.iter_mut().map(|link| link.prepare(&handle))).await {
+            prepared.expect("a server's link prepares");
+        }
+        assert_eq!(LOADS[18].load(Ordering::SeqCst), 1, "thirty links loaded their roots other than once");
+        let file = links[0].roots.path().expect("the first link holds a file");
+        assert!(links.iter().all(|link| link.roots.path().as_ref() == Some(&file)), "the thirty links hold other than one file");
+        assert_eq!(files_in(&here), vec![file.clone()], "the load wrote other than one file");
+        drop(links);
+        assert_eq!(emptied(&here).await, Vec::<PathBuf>::new(), "the file outlived the thirty links");
+
+        let mut later = Nats::url("tls://localhost:1");
+        later.prepare(&handle).await.expect("a later server's link prepares");
+        assert_eq!(LOADS[18].load(Ordering::SeqCst), 2, "a link after the thirty dropped did not load again");
+        let again = later.roots.path().expect("the later link holds a file");
+        assert_eq!(files_in(&here), vec![again], "the later load wrote other than one file");
+        drop(later);
+        assert_eq!(emptied(&here).await, Vec::<PathBuf>::new(), "the later file outlived its link");
+        let _ = std::fs::remove_dir(&here);
+    }
+
+    /// F427: a `tls://` call that gives up while its roots load, its timeout ending first, drops
+    /// its own wait and not the load: the next call waits for the same load, which runs once.
+    #[tokio::test]
+    async fn a_call_that_gives_up_while_the_roots_load_leaves_the_load_running() {
+        let here = dir::<16>();
+        fresh(&here);
+        let client = RpcClient::new(link("tls://localhost:1", gated::<16, 0>, dir::<16>), Arc::new(Tokio::current())).expect("the link is usable");
+        let first = client.request::<_, u32>("nats.roots", &()).timeout(Duration::from_millis(100)).await.expect_err("a call cut short by its timeout");
+        assert_eq!(first.kind(), ErrorKind::Timeout, "{}", first.message());
+        let second = tokio::spawn({
+            let client = client.clone();
+            async move {
+                let call = client.request::<_, u32>("nats.roots", &()).timeout(HELD).await.expect_err("a call to a server that is not there");
+                (call.kind(), call.message().to_owned())
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(LOADS[16].load(Ordering::SeqCst), 1, "a call after one that gave up started a load of its own");
+        assert!(!second.is_finished(), "the second call ended before the load did");
+        GATES[0].open();
+        let (kind, message) = second.await.expect("the second call's task completes");
+        assert_eq!(kind, ErrorKind::Unavailable, "{message}");
+        assert_eq!(LOADS[16].load(Ordering::SeqCst), 1, "the roots loaded other than once for the two calls");
+        assert_eq!(files_in(&here).len(), 1, "the load wrote other than one file");
         drop(client);
         assert_eq!(emptied(&here).await, Vec::<PathBuf>::new(), "the roots outlived the client");
         let _ = std::fs::remove_dir(&here);
     }
 
     /// The link against a NATS server serving TLS from the test certificate, which the suite's own
-    /// server does not, each link's roots the test certificate alone from a loader that blocks
-    /// twice the bound, as a trust store slow to read does.
+    /// server does not, the roots the test certificate alone from a loader that blocks twice the
+    /// bound, as a trust store slow to read does.
     #[cfg(feature = "integration")]
     mod over_tls {
         use std::net::{Ipv4Addr, SocketAddr};
@@ -1569,11 +1946,15 @@ mod tests {
         static TLS_LOADS: [AtomicUsize; 3] = [const { AtomicUsize::new(0) }; 3];
 
         /// A NATS server requiring TLS, reached directly by [`Broker::link`] and through `relay` by
-        /// [`TlsNats::relayed`], on a `tls://` url, or a `nats://` one when `PLAIN_URL` is set,
-        /// which async-nats upgrades on reading the server's `INFO`.
+        /// [`TlsNats::relayed`]. On a `tls://` url each link has a load of its own from
+        /// [`slow_test_roots`]. With `PLAIN_URL` set the links are on `nats://` urls, which
+        /// async-nats upgrades on reading the server's `INFO`, and join the process's load, which
+        /// `start` makes and holds: a `nats://` link waits for no load, so only a connection made
+        /// once one has ended is handed its file.
         struct TlsNats<const SLOT: usize, const PLAIN_URL: bool = false> {
             server: SocketAddr,
             relay: Relay,
+            _roots: Option<Arc<Load>>,
             _container: ContainerAsync<GenericImage>,
         }
 
@@ -1582,7 +1963,9 @@ mod tests {
                 installed();
                 let scheme = if PLAIN_URL { "nats" } else { "tls" };
                 let mut link = Nats::url(format!("{scheme}://localhost:{port}"));
-                link.roots.load = slow_test_roots::<SLOT>;
+                if !PLAIN_URL {
+                    link.roots.own = Some(Loader { load: slow_test_roots::<SLOT>, dir: std::env::temp_dir });
+                }
                 link
             }
 
@@ -1616,7 +1999,14 @@ mod tests {
                 })
                 .await;
                 reachable(addrs[0], Duration::from_secs(10)).await;
-                TlsNats { server: addrs[0], relay: Relay::start(addrs[0]).await, _container: container }
+                let roots = if PLAIN_URL {
+                    let load = Load::shared(&Tokio::current());
+                    assert!(matches!(load.wait().await, Some(Ok(_))), "the process's roots did not load");
+                    Some(load)
+                } else {
+                    None
+                };
+                TlsNats { server: addrs[0], relay: Relay::start(addrs[0]).await, _roots: roots, _container: container }
             }
 
             fn link(&self) -> Nats {
@@ -1643,13 +2033,15 @@ mod tests {
         }
 
         /// F423: connecting on a `nats://` url to a server requiring TLS, which async-nats upgrades,
-        /// does not stall the thread either: the scenario against [`TlsNats`] on `nats://` urls.
-        /// Each link loads its roots once, and the connections trust the test certificate through
-        /// them.
+        /// does not stall the thread either once the process's roots have loaded: the scenario
+        /// against [`TlsNats`] on `nats://` urls, every link joining the load the broker made
+        /// before the scenario. The four links load once between them, and their connections trust
+        /// the test certificate through its file.
         #[test]
         fn connecting_on_a_nats_url_to_a_server_requiring_tls_does_not_stall_the_thread() {
+            let _turn = ProcessTurn::blocking(Loader { load: slow_test_roots::<2>, dir: std::env::temp_dir });
             OnTokio::block_on_one_thread(ulo_rpc_conformance::cases::threads::connecting_does_not_stall_the_thread::<TlsNats<2, true>>());
-            assert_eq!(TLS_LOADS[2].load(Ordering::SeqCst), 4, "the server's link and three clients' each loaded their roots other than once");
+            assert_eq!(TLS_LOADS[2].load(Ordering::SeqCst), 1, "the server's link and three clients' did not share one load");
         }
 
         /// What [`Ticks::watch`] saw in each phase the test named: the longest gap that ended in

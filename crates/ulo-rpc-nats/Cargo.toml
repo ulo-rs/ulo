@@ -23,7 +23,7 @@ futures-util.workspace = true
 # `ring` is async-nats's TLS provider, which it refuses to compile without, so `tls://` works in
 # every build.
 async-nats = { workspace = true, features = ["ring"] }
-# The platform's root certificates for `tls://`, loaded once per link off the runtime's workers.
+# The platform's root certificates, loaded once per process off the runtime's workers.
 rustls-native-certs.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "macros"] }
 tracing.workspace = true
