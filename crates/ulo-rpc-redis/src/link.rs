@@ -45,6 +45,9 @@ const WRITE_QUEUE: usize = 64;
 /// be polled on any executor or on a plain thread. A link built outside a runtime and given none
 /// refuses in `usable`, so a client is refused where it
 /// takes the link and a server's `listen()` fails, and in `connect`.
+///
+/// A link dropped without `close`, as a server's is when its app drops before the close step,
+/// aborts the tasks reading its Pub/Sub connections, so its connections close.
 pub struct Redis {
     pub(crate) url: String,
     pub(crate) codec: Codec,
@@ -56,6 +59,20 @@ pub struct Redis {
 pub(crate) struct State {
     server: Option<(Arc<ServerSide>, AbortHandle)>,
     client: Option<(Arc<ClientSide>, AbortHandle)>,
+}
+
+/// A link dropped without `close` aborts the Pub/Sub readers `close` would have aborted: an
+/// `AbortHandle` dropped leaves its task running, and a reader holds its side, so the Pub/Sub
+/// connection, the side's writer and its publisher connection would stay until the process ends.
+impl Drop for State {
+    fn drop(&mut self) {
+        if let Some((_, task)) = &self.server {
+            task.abort();
+        }
+        if let Some((_, task)) = &self.client {
+            task.abort();
+        }
+    }
 }
 
 impl Redis {

@@ -12,6 +12,8 @@
 //!
 //! Beside the suite, one test drives the link through `Link` directly: the server's `close`
 //! commits the group's offsets on a thread of its own, so a frozen broker holds no runtime worker.
+//! Two more drop each side of the link without `close` and count, through its relay, the
+//! connections the broker still holds.
 
 #![cfg(feature = "integration")]
 
@@ -230,4 +232,62 @@ async fn close_commits_off_the_runtime_thread_polling_it() {
         "the runtime polling `close` ran its other task {ticked} times in {took:?} with the broker frozen: the commit held its thread"
     );
     let _ = app.close(Signal::new("conformance")).await;
+}
+
+/// How long a dropped link's connections have to close at the broker: each consumer leaves its
+/// group from a thread of its own before its connections close.
+const RELEASE: Duration = Duration::from_secs(30);
+
+/// Waits until `relay` carries no connection, the broker having closed each of its ends in turn,
+/// failing the test with `what` and the count left after [`RELEASE`].
+async fn released(relay: &Relay, what: &str) {
+    let dropped = Instant::now();
+    loop {
+        let open = relay.open().await;
+        if open == 0 {
+            return;
+        }
+        assert!(dropped.elapsed() < RELEASE, "{what}: {open} connections still open at the broker {RELEASE:?} after the link's drop");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// F428: a server's link dropped without `close`, as it is when its app drops before the close
+/// step, closes its connections: the tasks reading its two consumers hold its side, and a spawned
+/// task runs on with no handle, its consumers still members of their groups. The server's link
+/// reaches the broker through the relay its listener advertises, which counts the connections the
+/// broker still holds.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_link_dropped_without_close_closes_its_connections() {
+    let broker = KraftBroker::start().await;
+    let app = App::builder(Empty)
+        .runtime(ulo_runtime_tokio::Tokio::current())
+        .wire()
+        .expect("the app wires")
+        .connect()
+        .await
+        .expect("the app connects");
+    let mut server = broker.link().group("dropped");
+    server.prepare(&app.handle()).await.expect("the server's link prepares");
+    let inbound = server.listen(&[Pattern::from("link.dropped")]).await.expect("the server's link listens");
+    assert!(broker.server.open().await > 0, "the listening server's link holds no connection through its relay");
+    drop(inbound);
+    drop(server);
+    released(&broker.server, "the server's link dropped without `close`").await;
+    let _ = app.close(Signal::new("conformance")).await;
+}
+
+/// F428: a client's link dropped without `close`, with the outbound it answered, as a dropped
+/// `RpcClient` whose spawned close never ran drops them, closes its connections: the reply router
+/// holds the reply consumer and ends only at `close` or on a reply it cannot hand over.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_client_link_dropped_without_close_closes_its_connections() {
+    let broker = KraftBroker::start().await;
+    let client = broker.client_link(&[]);
+    let runtime: Arc<dyn ulo::Runtime> = Arc::new(ulo_runtime_tokio::Tokio::current());
+    let outbound = client.connect(&runtime).await.expect("the client's link connects");
+    assert!(broker.client.open().await > 0, "the connected client's link holds no connection through its relay");
+    drop(outbound);
+    drop(client);
+    released(&broker.client, "the client's link dropped without `close`").await;
 }

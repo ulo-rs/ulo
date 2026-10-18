@@ -78,6 +78,9 @@ impl Incoming {
 
 /// A TCP link's settings and running state. Each link holds one and adds its sockets and its
 /// runtime.
+///
+/// Dropped without `close`, it aborts the server's accept loop and forwarding task, so the
+/// listener closes, the connections the server accepted close, and the address can be bound again.
 pub struct Core {
     endpoint: EndpointSpec,
     tls: Option<Tls>,
@@ -86,6 +89,22 @@ pub struct Core {
     /// Set by `prepare`.
     prepared: Option<Prepared>,
     state: Arc<State>,
+    /// The accept loop, which holds the listener; set while the server listens. It is held here
+    /// and not in `State`, which the loop holds itself, so the link's drop reaches it.
+    accept: Mutex<Option<Owned>>,
+    /// The forwarding task, which `close` leaves running to hand over or refuse what is still
+    /// queued, and which ends once the accept loop and every connection task have.
+    forward: Mutex<Option<Owned>>,
+}
+
+/// A task only the link holds, aborted when dropped: a `TaskHandle` detaches on drop. `close`
+/// awaits the accept loop through it, and the abort then finds the task ended and does nothing.
+struct Owned(TaskHandle);
+
+impl Drop for Owned {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 struct Prepared {
@@ -98,8 +117,6 @@ struct State {
     bound: Mutex<Vec<BoundAddr>>,
     /// Each open connection's writer queue, for `goaway`.
     connections: Mutex<HashMap<u64, ordered::Sender<Bytes>>>,
-    /// The accept loop's task; set while the server listens.
-    accept: Mutex<Option<TaskHandle>>,
     phase: Watch<u8>,
     next_connection: AtomicU64,
     next_id: AtomicU64,
@@ -123,10 +140,11 @@ impl Core {
             codec: Codec::Json,
             max_frame: None,
             prepared: None,
+            accept: Mutex::new(None),
+            forward: Mutex::new(None),
             state: Arc::new(State {
                 bound: Mutex::new(Vec::new()),
                 connections: Mutex::new(HashMap::new()),
-                accept: Mutex::new(None),
                 phase: Watch::new(RUNNING),
                 next_connection: AtomicU64::new(0),
                 next_id: AtomicU64::new(1),
@@ -217,7 +235,7 @@ impl Core {
         let Some(prepared) = &self.prepared else {
             return Err("the TCP link listens once `prepare` has resolved its endpoint".into());
         };
-        let mut accept = lock(&self.state.accept);
+        let mut accept = lock(&self.accept);
         if accept.is_some() {
             return Err("the TCP link is already listening".into());
         }
@@ -228,8 +246,8 @@ impl Core {
         let (deliveries, received) = mpsc::channel(DELIVERY_QUEUE);
         let (forwarded, inbound) = mpsc::channel(DELIVERY_QUEUE);
         let server = Server { codec: self.codec, limit: self.limit(), state: Arc::clone(&self.state), runtime: Arc::clone(&runtime) };
-        *accept = Some(runtime.spawn(Box::pin(server.accept(listener, deliveries))));
-        drop(runtime.spawn(Box::pin(forward(Arc::clone(&self.state), received, forwarded, Arc::clone(&runtime)))));
+        *accept = Some(Owned(runtime.spawn(Box::pin(server.accept(listener, deliveries)))));
+        *lock(&self.forward) = Some(Owned(runtime.spawn(Box::pin(forward(Arc::clone(&self.state), received, forwarded, Arc::clone(&runtime))))));
         Ok(Box::pin(inbound))
     }
 
@@ -299,9 +317,9 @@ impl Core {
     pub async fn close(&self) {
         self.state.phase.modify(|phase| advance(phase, CLOSED));
         self.state.client_epoch.modify(|epoch| *epoch += 1);
-        let accept = lock(&self.state.accept).take();
-        if let Some(accept) = accept {
-            let _ = accept.await;
+        let accept = lock(&self.accept).take();
+        if let Some(mut accept) = accept {
+            let _ = (&mut accept.0).await;
         }
         // The connection tasks are gone; each writer ends, shutting its half of the socket, once
         // its queue's last sender drops, and this map holds one for every connection whose task

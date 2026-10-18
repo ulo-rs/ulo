@@ -3,7 +3,8 @@
 //! reaches it through a relay that `disrupt` cuts.
 //!
 //! Beside the suite, a test drives the link through `Link` directly, for an ordering no scenario
-//! reaches on its own: a request read after the drain ended the inbound stream.
+//! reaches on its own: a request read after the drain ended the inbound stream. Two more drop each
+//! side of the link without `close` and count, through a relay, the connections Redis still holds.
 
 #![cfg(feature = "integration")]
 
@@ -124,4 +125,51 @@ async fn a_request_read_after_the_drain_ended_the_inbound_stream_is_refused() {
     }
     client.close().await.expect("the client's link closes");
     server.close().await.expect("the server's link closes");
+}
+
+/// How long a dropped link's connections have to close at the broker.
+const RELEASE: Duration = Duration::from_secs(10);
+
+/// Waits until `relay` carries no connection, the broker having closed each of its ends in turn,
+/// failing the test with `what` and the count left after [`RELEASE`].
+async fn released(relay: &Relay, what: &str) {
+    let dropped = std::time::Instant::now();
+    loop {
+        let open = relay.open().await;
+        if open == 0 {
+            return;
+        }
+        assert!(dropped.elapsed() < RELEASE, "{what}: {open} connections still open at the broker {RELEASE:?} after the link's drop");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// F428: a server's link dropped without `close`, as it is when its app drops before the close
+/// step, closes its connections: the Pub/Sub reader `close` aborts holds its side, which holds the
+/// Pub/Sub sink and the writer's queue, and a dropped `AbortHandle` leaves it running. The link
+/// reaches Redis through a relay of its own, which counts the connections Redis still holds.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_link_dropped_without_close_closes_its_connections() {
+    let broker = RedisServer::start().await;
+    let relay = Relay::start(broker.server).await;
+    let server = Redis::url(format!("redis://{}", relay.addr()));
+    let inbound = server.listen(&[Pattern::from("link.dropped")]).await.expect("the server's link listens");
+    assert!(relay.open().await > 0, "the listening server's link holds no connection through its relay");
+    drop(inbound);
+    drop(server);
+    released(&relay, "the server's link dropped without `close`").await;
+}
+
+/// F428: a client's link dropped without `close`, with the outbound it answered, as a dropped
+/// `RpcClient` whose spawned close never ran drops them, closes its connections: the reply reader
+/// holds the reply subscription and ends only at `close` or on a reply it cannot hand over.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_client_link_dropped_without_close_closes_its_connections() {
+    let broker = RedisServer::start().await;
+    let client = broker.client_link(&[]);
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
+    assert!(broker.relay.open().await > 0, "the connected client's link holds no connection through its relay");
+    drop(outbound);
+    drop(client);
+    released(&broker.relay, "the client's link dropped without `close`").await;
 }

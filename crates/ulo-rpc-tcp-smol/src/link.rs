@@ -25,6 +25,10 @@ use ulo_rpc_tcp_core::{Accept, Core, Incoming};
 /// reply lane ends, so the calls waiting on it fail `Unavailable`. A call made afterwards connects
 /// again.
 ///
+/// A server's link dropped without `close`, as it is when its app drops before the close step,
+/// stops accepting: its listener and the connections it accepted close, and the address can be
+/// bound again.
+///
 /// The sockets need no runtime of their own: `async-io` drives them from its reactor thread, so the
 /// link's futures and streams may be polled on any executor or on a plain thread. Its tasks, a
 /// connection's writer and reader and a server's accept loop, run on a runtime: the one

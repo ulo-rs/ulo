@@ -4,7 +4,9 @@
 //! every interface and allows anonymous clients, which the default configuration does not.
 //!
 //! Beside the suite, five tests drive the link through `Link` directly, for orderings inside it
-//! that no scenario reaches on its own and for the flow-control window it announces.
+//! that no scenario reaches on its own and for the flow-control window it announces. Two more drop
+//! each side of the link without `close` and count, through a relay, the connections Mosquitto
+//! still holds.
 
 #![cfg(feature = "integration")]
 
@@ -353,4 +355,51 @@ impl Visit for Line {
             self.fields.push_str(&format!(" {}={value:?}", field.name()));
         }
     }
+}
+
+/// How long a dropped link's connections have to close at the broker.
+const RELEASE: Duration = Duration::from_secs(10);
+
+/// Waits until `relay` carries no connection, the broker having closed each of its ends in turn,
+/// failing the test with `what` and the count left after [`RELEASE`].
+async fn released(relay: &Relay, what: &str) {
+    let dropped = std::time::Instant::now();
+    loop {
+        let open = relay.open().await;
+        if open == 0 {
+            return;
+        }
+        assert!(dropped.elapsed() < RELEASE, "{what}: {open} connections still open at the broker {RELEASE:?} after the link's drop");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// F428: a server's link dropped without `close`, as it is when its app drops before the close
+/// step, closes its connection: the event loop owns it, and a dropped `JoinHandle` leaves the loop
+/// running, subscribed and reconnecting. The link reaches Mosquitto through a relay of its own,
+/// which counts the connections the broker still holds.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_link_dropped_without_close_closes_its_connection() {
+    let broker = Mosquitto::start().await;
+    let relay = Relay::start(broker.server).await;
+    let server = Mqtt::url(format!("mqtt://{}", relay.addr())).group("dropped");
+    let inbound = server.listen(&[Pattern::from("link/dropped")]).await.expect("the server's link listens");
+    assert!(relay.open().await > 0, "the listening server's link holds no connection through its relay");
+    drop(inbound);
+    drop(server);
+    released(&relay, "the server's link dropped without `close`").await;
+}
+
+/// F428: a client's link dropped without `close`, with the outbound it answered, as a dropped
+/// `RpcClient` whose spawned close never ran drops them, closes its connection: its event loop
+/// ends only at `close` or when the connection fails.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_client_link_dropped_without_close_closes_its_connection() {
+    let broker = Mosquitto::start().await;
+    let client = broker.client_link(&[]);
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
+    assert!(broker.relay.open().await > 0, "the connected client's link holds no connection through its relay");
+    drop(outbound);
+    drop(client);
+    released(&broker.relay, "the client's link dropped without `close`").await;
 }

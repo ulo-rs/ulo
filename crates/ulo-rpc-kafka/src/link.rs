@@ -20,6 +20,7 @@ use rdkafka::util::Timeout;
 use rdkafka::{Offset, TopicPartitionList};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
+use tokio::task::AbortHandle;
 use ulo::{AppHandle, BoxError, BoxFuture, Runtime, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
@@ -79,6 +80,10 @@ const WRITE_QUEUE: usize = 64;
 /// polled on any executor or on a plain thread. A link built outside a runtime and given none
 /// refuses in `usable`, so a client is refused where it
 /// takes the link and a server's `listen()` fails, and in `connect`.
+///
+/// A link dropped without `close`, as a server's is when its app drops before the close step,
+/// aborts the tasks reading its consumers, so each consumer leaves its group and its connections
+/// close, on a thread of its own as at `close`.
 pub struct Kafka {
     pub(crate) brokers: String,
     pub(crate) runtime: Option<Tokio>,
@@ -103,8 +108,30 @@ pub struct Kafka {
 
 #[derive(Default)]
 pub(crate) struct State {
-    server: Option<Arc<ServerSide>>,
+    /// The server side and the tasks reading its two consumers.
+    server: Option<(Arc<ServerSide>, [AbortHandle; 2])>,
     client: Option<Arc<ClientSide>>,
+}
+
+/// A link dropped without `close` aborts the tasks reading its consumers: an `AbortHandle` or a
+/// `JoinHandle` dropped leaves its task running, and each holds its side, so its consumers stay in
+/// their groups and its producers connected until the process ends. Each consumer is `Detached`,
+/// so its drop runs on a thread of its own; the client's producer is dropped on one too, as
+/// `close` drops it.
+impl Drop for State {
+    fn drop(&mut self) {
+        if let Some((_, tasks)) = &self.server {
+            tasks.iter().for_each(AbortHandle::abort);
+        }
+        if let Some(side) = &self.client {
+            if let Some(routing) = lock(&side.routing).take() {
+                routing.abort();
+            }
+            if let Some(producer) = lock(&side.producer).take() {
+                drop(drop_detached(producer));
+            }
+        }
+    }
 }
 
 impl Kafka {
@@ -279,9 +306,11 @@ impl Link for Kafka {
             inflight: Arc::new(watch::channel(0).0),
             limit: self.max_inflight,
         });
-        runtime.handle().spawn(request_lane(Arc::clone(&side)));
-        runtime.handle().spawn(control_lane(Arc::clone(&side), control));
-        lock(&self.state).server = Some(side);
+        let tasks = [
+            runtime.handle().spawn(request_lane(Arc::clone(&side))).abort_handle(),
+            runtime.handle().spawn(control_lane(Arc::clone(&side), control)).abort_handle(),
+        ];
+        lock(&self.state).server = Some((side, tasks));
         Ok(receiver_stream(inbound))
     }
 
@@ -354,7 +383,7 @@ impl Link for Kafka {
     }
 
     async fn drain(&self) {
-        let server = lock(&self.state).server.clone();
+        let server = lock(&self.state).server.as_ref().map(|(side, _)| Arc::clone(side));
         let Some(side) = server else { return };
         side.phase.send_replace(Phase::Draining);
         pause(&side.consumer);
@@ -374,7 +403,7 @@ impl Link for Kafka {
             let mut state = lock(&self.state);
             (state.server.take(), state.client.take())
         };
-        if let Some(side) = server {
+        if let Some((side, _)) = server {
             side.phase.send_replace(Phase::Closed);
             side.calls.clear();
             lock(&side.deliveries).take();

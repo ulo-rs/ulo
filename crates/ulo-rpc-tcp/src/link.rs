@@ -29,6 +29,10 @@ use ulo_runtime_tokio::Tokio;
 /// reply lane ends, so the calls waiting on it fail `Unavailable`. A call made afterwards connects
 /// again.
 ///
+/// A server's link dropped without `close`, as it is when its app drops before the close step,
+/// stops accepting: its listener and the connections it accepted close, and the address can be
+/// bound again.
+///
 /// The link's sockets and tasks live on the tokio runtime it holds, the one current where it was
 /// built or the one [`with_handle`](Self::with_handle) names, so its futures and streams may be
 /// polled on any executor or on a plain thread. A link built outside a runtime and given none

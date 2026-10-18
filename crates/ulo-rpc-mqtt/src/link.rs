@@ -68,6 +68,9 @@ const RECEIVE_MAXIMUM: u16 = u16::MAX;
 /// publish, an unsubscribe or a disconnect reaches it through rumqttc's request channel. A link
 /// built outside a runtime and given none refuses in `usable`, so a client is refused where it
 /// takes the link and a server's `listen()` fails, and in `connect`.
+///
+/// A link dropped without `close`, as a server's is when its app drops before the close step,
+/// aborts its event loops, so its connections close, without the DISCONNECT `close` writes.
 pub struct Mqtt {
     pub(crate) url: String,
     pub(crate) group: Option<String>,
@@ -89,6 +92,20 @@ pub struct Mqtt {
 pub(crate) struct State {
     server: Option<(Arc<ServerSide>, JoinHandle<()>)>,
     client: Option<(Arc<ClientSide>, JoinHandle<()>)>,
+}
+
+/// A link dropped without `close` aborts the event loops `close` would have shut, each of which
+/// owns its connection: a `JoinHandle` detaches on drop, and a detached loop keeps its connection,
+/// its subscriptions and its reconnects until the process ends.
+impl Drop for State {
+    fn drop(&mut self) {
+        if let Some((_, task)) = &self.server {
+            task.abort();
+        }
+        if let Some((_, task)) = &self.client {
+            task.abort();
+        }
+    }
 }
 
 impl Mqtt {

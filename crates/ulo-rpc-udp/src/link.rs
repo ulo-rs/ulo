@@ -49,6 +49,9 @@ const WRITE_QUEUE: usize = 64;
 /// Each socket has one writer task, fed in order by every send on it, so the datagrams one
 /// socket sends leave it in the order they were sent.
 ///
+/// A server's link dropped without `close`, as it is when its app drops before the close step,
+/// stops its receive and writer tasks, so its socket closes and the address can be bound again.
+///
 /// The link's sockets and tasks live on the tokio runtime it holds, the one current where it was
 /// built or the one [`with_handle`](Self::with_handle) names, so its futures and streams may be
 /// polled on any executor or on a plain thread. A link built outside a runtime and given none
@@ -62,6 +65,21 @@ pub struct Udp {
     /// Set by `prepare`.
     pub(crate) prepared: Option<SocketAddr>,
     pub(crate) state: Arc<State>,
+    /// The server's receive task; set while the server listens. It is held here and not in
+    /// `State`, which the task holds itself, so the link's drop reaches it.
+    receiving: Mutex<Option<Owned>>,
+    /// The server socket's writer, which `close` leaves running to send its refusals.
+    writing: Mutex<Option<Owned>>,
+}
+
+/// A task only the link holds, aborted when dropped: a tokio `JoinHandle` detaches on drop.
+/// `close` awaits the receive task through it, and the abort then finds the task ended.
+struct Owned(JoinHandle<()>);
+
+impl Drop for Owned {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 pub(crate) struct State {
@@ -70,7 +88,6 @@ pub(crate) struct State {
     socket: Mutex<Option<Arc<UdpSocket>>>,
     /// The server socket's writer queue, which `close` refuses what the socket still holds through.
     writes: Mutex<Option<ordered::Sender<Datagram>>>,
-    receiving: Mutex<Option<JoinHandle<()>>>,
     next_id: AtomicU64,
     /// Raised by `drain`.
     draining: watch::Sender<bool>,
@@ -94,11 +111,12 @@ impl Udp {
             codec: Codec::Json,
             runtime: Tokio::try_current(),
             prepared: None,
+            receiving: Mutex::new(None),
+            writing: Mutex::new(None),
             state: Arc::new(State {
                 bound: Mutex::new(Vec::new()),
                 socket: Mutex::new(None),
                 writes: Mutex::new(None),
-                receiving: Mutex::new(None),
                 next_id: AtomicU64::new(1),
                 draining: watch::Sender::new(false),
                 held: watch::Sender::new(0),
@@ -179,7 +197,7 @@ impl Link for Udp {
         let Some(addr) = self.prepared else {
             return Err("the UDP link listens once `prepare` has resolved its endpoint".into());
         };
-        if lock(&self.state.receiving).is_some() {
+        if lock(&self.receiving).is_some() {
             return Err("the UDP link is already listening".into());
         }
         let runtime = self.runtime()?;
@@ -187,11 +205,11 @@ impl Link for Udp {
         *lock(&self.state.bound) = vec![BoundAddr::new("rpc", socket.local_addr()?)];
         *lock(&self.state.socket) = Some(Arc::clone(&socket));
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
-        runtime.handle().spawn(write_datagrams(Arc::clone(&socket), queued, std::future::pending()));
+        *lock(&self.writing) = Some(Owned(runtime.handle().spawn(write_datagrams(Arc::clone(&socket), queued, std::future::pending()))));
         *lock(&self.state.writes) = Some(writes.clone());
         let (deliveries, inbound) = mpsc::channel(DELIVERY_QUEUE);
         let receiving = runtime.handle().spawn(receive(socket, self.codec, Arc::clone(&self.state), deliveries, writes));
-        *lock(&self.state.receiving) = Some(receiving);
+        *lock(&self.receiving) = Some(Owned(receiving));
         let inbound = futures_util::stream::unfold(inbound, |mut inbound| async move {
             let delivery = inbound.recv().await?;
             Some((delivery, inbound))
@@ -242,10 +260,10 @@ impl Link for Udp {
     /// arrived before the close is answered; one arriving after it is not.
     async fn close(&self) -> Result<(), BoxError> {
         self.state.client_epoch.send_modify(|epoch| *epoch += 1);
-        let receiving = lock(&self.state.receiving).take();
-        if let Some(receiving) = receiving {
-            receiving.abort();
-            let _ = receiving.await;
+        let receiving = lock(&self.receiving).take();
+        if let Some(mut receiving) = receiving {
+            receiving.0.abort();
+            let _ = (&mut receiving.0).await;
         }
         let socket = lock(&self.state.socket).take();
         let writes = lock(&self.state.writes).take();

@@ -17,6 +17,7 @@ use lapin::uri::AMQPUri;
 use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, Consumer, ExchangeKind, PublisherConfirm};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
+use tokio::task::AbortHandle;
 use ulo::{AppHandle, BoxError, BoxFuture, Runtime};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
@@ -70,6 +71,9 @@ const WRITE_QUEUE: usize = 64;
 /// be polled on any executor or on a plain thread. A link built outside a runtime and given none
 /// refuses in `usable`, so a client is refused where it
 /// takes the link and a server's `listen()` fails, and in `connect`.
+///
+/// A link dropped without `close`, as a server's is when its app drops before the close step,
+/// aborts the tasks holding its channels, so its connections close.
 pub struct RabbitMq {
     pub(crate) url: String,
     pub(crate) codec: Codec,
@@ -82,9 +86,25 @@ pub struct RabbitMq {
 
 #[derive(Default)]
 pub(crate) struct State {
-    server: Option<Arc<ServerSide>>,
-    /// The client side's connection, closed on the runtime it was opened on.
-    client: Option<(Connection, Tokio)>,
+    /// The server side and its consumers' tasks.
+    server: Option<(Arc<ServerSide>, Vec<AbortHandle>)>,
+    /// The client side's connection, closed on the runtime it was opened on, and the tasks of
+    /// its writer and its reply router.
+    client: Option<(Connection, Tokio, [AbortHandle; 2])>,
+}
+
+/// A link dropped without `close` aborts the tasks holding its channels: an `AbortHandle` dropped
+/// leaves its task running, and a channel keeps its connection open until the process ends.
+/// `close` closes the connections instead, and the tasks end with them.
+impl Drop for State {
+    fn drop(&mut self) {
+        if let Some((_, tasks)) = &self.server {
+            tasks.iter().for_each(AbortHandle::abort);
+        }
+        if let Some((_, _, tasks)) = &self.client {
+            tasks.iter().for_each(AbortHandle::abort);
+        }
+    }
 }
 
 impl RabbitMq {
@@ -196,11 +216,10 @@ impl Link for RabbitMq {
             deliveries: Mutex::new(Some(deliveries)),
         });
         let handle = runtime.handle();
-        for consumer in consumers {
-            handle.spawn(request_lane(Arc::clone(&side), consumer));
-        }
-        handle.spawn(control_lane(Arc::clone(&side), control));
-        lock(&self.state).server = Some(side);
+        let mut tasks: Vec<AbortHandle> =
+            consumers.into_iter().map(|consumer| handle.spawn(request_lane(Arc::clone(&side), consumer)).abort_handle()).collect();
+        tasks.push(handle.spawn(control_lane(Arc::clone(&side), control)).abort_handle());
+        lock(&self.state).server = Some((side, tasks));
         Ok(receiver_stream(inbound))
     }
 
@@ -241,7 +260,6 @@ impl Link for RabbitMq {
             #[cfg(feature = "conformance-probe")]
             probe: Arc::clone(&self.probe),
         });
-        lock(&self.state).client = Some((connection, runtime.clone()));
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
         #[cfg(feature = "conformance-probe")]
         {
@@ -252,9 +270,10 @@ impl Link for RabbitMq {
                 move || counted.upgrade().map_or(0, |side| lock(&side.calls).len()),
             );
         }
-        runtime.handle().spawn(client_writer(Arc::clone(&side), queued));
+        let writing = runtime.handle().spawn(client_writer(Arc::clone(&side), queued));
         let (frames, replies_out) = mpsc::unbounded_channel();
-        runtime.handle().spawn(route_replies(Arc::clone(&side), replies, frames, writes.clone()));
+        let routing = runtime.handle().spawn(route_replies(Arc::clone(&side), replies, frames, writes.clone()));
+        lock(&self.state).client = Some((connection, runtime.clone(), [writing.abort_handle(), routing.abort_handle()]));
 
         Ok(Outbound {
             // Queued at the call, so frames go out in the order their sends were called.
@@ -271,7 +290,7 @@ impl Link for RabbitMq {
     }
 
     async fn drain(&self) {
-        let server = lock(&self.state).server.clone();
+        let server = lock(&self.state).server.as_ref().map(|(side, _)| Arc::clone(side));
         let Some(side) = server else { return };
         side.phase.send_replace(Phase::Draining);
         let cancelling = Arc::clone(&side);
@@ -299,7 +318,7 @@ impl Link for RabbitMq {
             (state.server.take(), state.client.take())
         };
         let mut failure = None;
-        if let Some(side) = server {
+        if let Some((side, _)) = server {
             side.phase.send_replace(Phase::Closed);
             side.calls.clear();
             lock(&side.deliveries).take();
@@ -308,7 +327,7 @@ impl Link for RabbitMq {
                 failure = Some(error);
             }
         }
-        if let Some((connection, runtime)) = client
+        if let Some((connection, runtime, _)) = client
             && let Err(error) = close_on(&runtime, async move { connection.close(200, "close".into()).await }).await
         {
             failure = Some(error);
