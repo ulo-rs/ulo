@@ -597,7 +597,7 @@ Decision 133's condition, a runtime-free or runtime-neutral crate needing blocki
 
 ## Fifth response: answers to QUESTIONS_3
 
-Received 2026-10-19, answering `QUESTIONS_3.md` (rulings that did not hold as applied, and the signatures the spine freezes). Sign-off: pending the user's word.
+Received 2026-10-19, answering `QUESTIONS_3.md` (rulings that did not hold as applied, and the signatures the spine freezes). The user signed it off the same day.
 
 ### Rulings that do not hold as written
 
