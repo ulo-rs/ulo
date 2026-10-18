@@ -1,10 +1,10 @@
-//! A TCP relay a [`Broker`](crate::Broker) puts between a client link and what it reaches, so
-//! `disrupt` can sever the client's connections and nothing else: the server keeps its own, and
+//! A TCP relay a suite's environment puts between a client and what it reaches, so a `disrupt`
+//! can sever the client's connections and nothing else: the server keeps its own, and
 //! the relay keeps accepting, so the client's next connection goes through, at once or after an
 //! outage the environment chooses.
 //!
 //! The relay belongs to no runtime: it accepts and copies on threads of its own, over `std`
-//! sockets, so it carries a link whatever runtime the link and the scenario run on. Its waits are
+//! sockets, so it carries a client whatever runtime the client and the scenario run on. Its waits are
 //! `async`, a thread's end signalled through a channel that needs no runtime either.
 //!
 //! [`reachable`] and [`unshadowed`] serve a container's published port. On a VM-backed engine

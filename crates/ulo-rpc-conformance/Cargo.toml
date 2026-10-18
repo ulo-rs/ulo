@@ -13,27 +13,23 @@ publish = false
 
 [features]
 # `OnTokio`, the runtime half of every link built on tokio.
-tokio = ["dep:ulo-runtime-tokio", "dep:tokio"]
+tokio = ["ulo-conformance-support/tokio"]
 # `OnSmol`, the runtime half of a link on smol: an `async-executor` `Executor` per scenario.
-smol = ["dep:ulo-runtime-smol"]
+smol = ["ulo-conformance-support/smol"]
 
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 # `conformance-probe`: `Broker::probe` names the broker links' `ClientProbe`.
 ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1", features = ["conformance-probe"] }
-ulo-runtime-smol = { path = "../ulo-runtime-smol", version = "=0.1.0-alpha.1", optional = true }
-ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1", optional = true }
+# The harness pieces shared with the database suite; this crate re-exports them at their old paths.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
 ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 # `serde` lets the binary scenario send and receive `Bytes` as raw bytes.
 bytes = { workspace = true, features = ["serde"] }
-# The relay's threads signal their ends through its oneshot, which needs no runtime.
-futures-channel.workspace = true
 # The plain-thread scenario drives its client with `block_on`, which needs no runtime.
 futures-executor.workspace = true
 futures-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
-# `rt-multi-thread`: `OnTokio`'s runtime.
-tokio = { workspace = true, features = ["rt-multi-thread", "time", "net"], optional = true }
 
 # Runs where both harnesses are built: `--features tokio,smol`, or a workspace build, where the link
 # crates turn both on.
