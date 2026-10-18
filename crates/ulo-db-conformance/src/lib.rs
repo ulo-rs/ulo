@@ -22,6 +22,17 @@
 //! counts them as ignored, and run on a store they do not apply to they fail. Every scenario names
 //! the planted break it is shown failing against.
 //!
+//! | Scenario | Applies to |
+//! | --- | --- |
+//! | `a_connecting_create_is_retried_and_stops_on_permanent` | a store whose `CREATE_CONNECTS` is true |
+//! | `lazy_readiness_waits_for_the_first_ping` | a store offering `.lazy()`: `CREATE_CONNECTS` false |
+//! | `migrations_run_only_on_request`, `migrations_run_once_across_replicas` | a store offering `.migrate(..)` |
+//! | every other | every store |
+//!
+//! A scenario asserts kinds, reasons and the bounds it waits within. The one thing it reads in a
+//! message's text is the absence of [`PASSWORD`]. None passes on silence: a timeout is the answer
+//! only in the scenario about the connect bound.
+//!
 //! The suite names no runtime: a host's [`Harness`] is its runtime half, as the RPC suite's is. It
 //! shares that suite's pieces through `ulo-conformance-support`: [`Budget`] with its `stall`,
 //! `block_on_one_thread`, [`startup_failed!`], [`report`], [`relay`] and the `not_applicable`
@@ -87,7 +98,9 @@ impl MigrationProbe {
         MigrationProbe::default()
     }
 
-    /// Called by the host's migration body each time it runs.
+    /// Called by the host's migrations each time they are applied: once per run that finds them
+    /// pending, and not on a run that finds nothing pending, so a replica that waited on the lock
+    /// records nothing.
     pub fn record(&self) {
         self.runs.fetch_add(1, Ordering::SeqCst);
     }
@@ -120,16 +133,20 @@ pub trait Host: Sized + Send + Sync + 'static {
     /// not as refused credentials.
     fn unreachable_options(&self) -> <Self::Store as Store>::Options;
 
-    /// Options that reach the server with credentials it refuses.
+    /// Options that reach the server with credentials it refuses, [`PASSWORD`] as the refused
+    /// password, so a scenario can assert that the refusal does not print it.
     fn bad_credentials(&self) -> <Self::Store as Store>::Options;
 
     /// Options the store's `validate` refuses, with `password` as the URL's password.
     fn malformed_options(&self, password: &str) -> <Self::Store as Store>::Options;
 
-    /// Begins the outage: connections through [`options`](Self::options) fail until
-    /// [`restore`](Self::restore).
+    /// Begins the outage: the connections open through [`options`](Self::options) close, and every
+    /// new one fails, until [`restore`](Self::restore). `Relay::cut_for` with an outage longer than
+    /// any scenario does both.
     fn cut(&self) -> impl Future<Output = ()> + Send;
 
+    /// Ends the outage: connections through [`options`](Self::options) succeed again from when it
+    /// returns.
     fn restore(&self) -> impl Future<Output = ()> + Send;
 
     /// `module.lazy()` for a store that offers it; a store that does not returns `module` unchanged
@@ -137,8 +154,10 @@ pub trait Host: Sized + Send + Sync + 'static {
     /// only where `CREATE_CONNECTS` is false.
     fn lazily(&self, module: StoreModule<Self::Store>) -> StoreModule<Self::Store>;
 
-    /// `module.migrate(..)` with the migrations the lock scenario runs, whose body calls
-    /// `run.record()`; a store without a migrator returns `module` unchanged.
+    /// `module.migrate(..)` with the migrations the lock scenario runs, ordinary DDL that records
+    /// in `run` each time it is applied; a store without a migrator returns `module` unchanged.
+    /// Every call answers the same migrations, so two apps given them against one server race to
+    /// apply one set.
     fn migrating(&self, module: StoreModule<Self::Store>, run: MigrationProbe) -> StoreModule<Self::Store>;
 
     fn capabilities(&self) -> Capabilities {
