@@ -345,11 +345,13 @@ impl Link for Mqtt {
         let unconfirmed = Unconfirmed(Some(Arc::clone(&side)));
         let _ = side.unconfirmed.subscribe().wait_for(|filters| *filters == 0).await;
         unconfirmed.disarm();
-        let watched = Arc::clone(&side);
+        // The side is held weakly: its drop clears the table this waits on, and a watcher holding
+        // it would keep it and the table after the link's drop.
+        let (mut count, watched) = (side.calls.count.subscribe(), Arc::downgrade(&side));
         side.runtime.handle().spawn(async move {
-            let mut count = watched.calls.count.subscribe();
             while count.wait_for(|held| *held == 0).await.is_ok() {
-                if watched.end_if_idle() {
+                let Some(side) = watched.upgrade() else { return };
+                if side.end_if_idle() {
                     return;
                 }
             }
@@ -625,6 +627,15 @@ struct Unsubscribing {
 impl Unsubscribing {
     fn len(&self) -> usize {
         self.queued.len() + self.sent.len()
+    }
+}
+
+/// A held call's reply path holds the table it is held in and the event loop's request channel,
+/// so a side dropped with calls held, its link dropped without `close`, would keep them after the
+/// link's drop has aborted the event loop (F429).
+impl Drop for ServerSide {
+    fn drop(&mut self) {
+        self.calls.clear();
     }
 }
 
@@ -1504,6 +1515,56 @@ mod tests {
             assert!(message.contains("the platform's store holds none"), "the call does not say the store is empty: {message}");
         }
         assert_eq!((LOADS[2].load(Ordering::SeqCst), LOADS[3].load(Ordering::SeqCst)), (1, 1), "a side read the store other than once");
+    }
+
+    /// F429: a server's link dropped holding a call lets go of the table the call is held in,
+    /// undrained and drained. The held call's reply path holds the table and the table holds the
+    /// path; the link's drop aborts the event loop, so the connection closes whatever the table
+    /// holds, and the conformance suite's test counts it, but the table and the request channel
+    /// its paths hold stay without the side's drop clearing the table and without the drain's
+    /// watcher holding the side weakly. No broker is reached: the side's event loop is never
+    /// polled, a task that never ends standing in for it, and a server with no patterns drains
+    /// without waiting for an UNSUBACK.
+    #[tokio::test]
+    async fn a_server_link_dropped_holding_a_call_lets_go_of_its_table() {
+        for drained in [false, true] {
+            let link = Mqtt::url("mqtt://localhost:1");
+            let runtime = Tokio::current();
+            let (client, _eventloop) = AsyncClient::new(MqttOptions::new("held", "localhost", 1), 8);
+            let (deliveries, inbound) = mpsc::unbounded_channel();
+            let side = Arc::new(ServerSide {
+                client,
+                codec: Codec::Json,
+                qos: MqttQoS::AtLeastOnce,
+                runtime: runtime.clone(),
+                shared: Vec::new(),
+                calls: Arc::new(Calls::new()),
+                phase: watch::channel(Phase::Serving).0,
+                max_packet: Arc::new(AtomicU64::new(0)),
+                deliveries: Mutex::new(Some(deliveries)),
+                unsubscribing: Mutex::new(Unsubscribing::default()),
+                unconfirmed: watch::channel(0).0,
+            });
+            let (_, path) = side.hold("held".to_owned(), "ulo/rpc/reply/held".to_owned(), None);
+            drop(path);
+            let table = Arc::downgrade(&side.calls);
+            let event_loop = runtime.handle().spawn(std::future::pending::<()>());
+            lock(&link.state).server = Some((side, event_loop));
+            if drained {
+                link.drain().await;
+            }
+            drop(inbound);
+            drop(link);
+            let dropped = std::time::Instant::now();
+            while table.upgrade().is_some() {
+                assert!(
+                    dropped.elapsed() < Duration::from_secs(5),
+                    "the {}server's link dropped holding a call kept its table 5s after the drop",
+                    if drained { "drained " } else { "" }
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
     }
 
     /// The RPC suite's stall scenario over `mqtts://`, the one url on which the link loads roots,

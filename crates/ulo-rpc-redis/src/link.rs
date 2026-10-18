@@ -213,11 +213,13 @@ impl Link for Redis {
                 tracing::warn!(%error, "the Redis link could not unsubscribe its patterns");
             }
         }
-        let watched = Arc::clone(&side);
+        // The side is held weakly: its drop clears the table this waits on, and a watcher holding
+        // it would keep it and the table after the link's drop.
+        let (mut count, watched) = (side.calls.count.subscribe(), Arc::downgrade(&side));
         side.runtime.handle().spawn(async move {
-            let mut count = watched.calls.count.subscribe();
             while count.wait_for(|held| *held == 0).await.is_ok() {
-                if watched.end_if_idle() {
+                let Some(side) = watched.upgrade() else { return };
+                if side.end_if_idle() {
                     return;
                 }
             }
@@ -363,6 +365,15 @@ struct ServerSide {
     /// held while a call is held and handed over, and while the drain's watcher checks that no
     /// call is held and takes it, so the stream never ends between the two.
     deliveries: Mutex<Option<mpsc::UnboundedSender<Delivery>>>,
+}
+
+/// A held call's reply path holds the table it is held in and the writer's queue, so a side
+/// dropped with calls held, its link dropped without `close`, would keep them, the writer and its
+/// publisher connection (F429).
+impl Drop for ServerSide {
+    fn drop(&mut self) {
+        self.calls.clear();
+    }
 }
 
 impl ServerSide {

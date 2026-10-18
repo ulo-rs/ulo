@@ -1,8 +1,9 @@
 //! The RPC conformance suite over the RabbitMQ link, each scenario against a RabbitMQ broker in a
 //! container of its own, the client reaching it through a relay that `disrupt` cuts.
 //!
-//! Beside the suite, two tests drop each side of the link without `close` and count, through a
-//! relay, the connections the broker still holds.
+//! Beside the suite, three tests drop the link without `close` and count, through a relay, the
+//! connections the broker still holds: each side's link, and a server's link holding a call nobody
+//! answers.
 
 #![cfg(feature = "integration")]
 
@@ -10,12 +11,13 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage};
 use ulo::{BoundAddr, Runtime};
 use ulo_rpc::__private::ClientProbe;
-use ulo_rpc::{Link, Pattern};
+use ulo_rpc::{CallHeaders, Data, Frame, Link, Pattern, ReplyTo};
 use ulo_rpc_conformance::{Broker, report, startup_failed};
 use ulo_rpc_conformance::relay::{Relay, reachable, unshadowed};
 use ulo_rpc_rabbitmq::RabbitMq;
@@ -121,4 +123,43 @@ async fn a_client_link_dropped_without_close_closes_its_connection() {
     drop(outbound);
     drop(client);
     released(&broker.relay, "the client's link dropped without `close`").await;
+}
+
+/// How long a request has to reach the server's link.
+const PATIENCE: Duration = Duration::from_secs(10);
+
+/// F429: a server's link dropped holding a call whose delivery nobody answers closes its
+/// connection, undrained and drained. A held call's reply path holds the writer's queue and the
+/// table the call is held in, and the table holds the path; the writer holds a channel, which
+/// keeps the connection open. The side's drop clears the table, and the drain's watcher, which
+/// waits on the table, holds the side weakly. The request comes from a client connected to the
+/// broker directly, so the server's relay counts the server's connection alone.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_link_dropped_holding_a_call_closes_its_connection() {
+    let broker = RabbitMqBroker::start().await;
+    let client = broker.link();
+    let runtime: Arc<dyn Runtime> = Arc::new(ulo_runtime_tokio::Tokio::current());
+    let outbound = client.connect(&runtime).await.expect("the client's link connects");
+    for (id, drained) in [(1, false), (2, true)] {
+        let pattern = if drained { "link.held.drained" } else { "link.held" };
+        let relay = Relay::start(broker.server).await;
+        let server = RabbitMq::url(format!("amqp://guest:guest@{}/%2f", relay.addr()));
+        let mut inbound = server.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
+        let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+        (outbound.send)(Pattern::from(pattern), request, Some(ReplyTo { id })).await.expect("the request is published");
+        let delivery = tokio::time::timeout(PATIENCE, inbound.next())
+            .await
+            .unwrap_or_else(|_| panic!("the request did not reach the server within {PATIENCE:?}"))
+            .expect("the server's inbound stream ended");
+        assert!(matches!(delivery.frame, Frame::Req { .. }), "the server received something other than the request: {:?}", delivery.frame);
+        if drained {
+            server.drain().await;
+        }
+        drop(delivery);
+        drop(inbound);
+        drop(server);
+        let what = if drained { "the drained server's link dropped holding a call" } else { "the server's link dropped holding a call" };
+        released(&relay, what).await;
+    }
+    client.close().await.expect("the client's link closes");
 }

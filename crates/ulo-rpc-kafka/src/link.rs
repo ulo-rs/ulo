@@ -286,7 +286,9 @@ impl Link for Kafka {
                 consumer.subscribe(&names)?;
 
                 let control = control_consumer(&base, &group).await?;
-                let producer = producer(&base)?;
+                // Detached from its creation, so its drop, wherever the writer ends or the runtime
+                // drops it, runs on a thread of its own rather than on a worker.
+                let producer = Detached::new(producer(&base)?);
                 Ok::<_, BoxError>((consumer, control, producer))
             })
             .await??;
@@ -390,11 +392,14 @@ impl Link for Kafka {
         if let Err(error) = side.consumer.commit_consumer_state(CommitMode::Async) {
             tracing::debug!(%error, "the Kafka link had no offset to commit at the drain");
         }
-        let watched = Arc::clone(&side);
+        // The side is held weakly: its drop clears the table this waits on, and a watcher holding
+        // it would keep it and the table after the link's drop.
+        let (mut count, watched) = (side.calls.count.subscribe(), Arc::downgrade(&side));
         side.runtime.handle().spawn(async move {
-            let mut count = watched.calls.count.subscribe();
             let _ = count.wait_for(|held| *held == 0).await;
-            lock(&watched.deliveries).take();
+            if let Some(side) = watched.upgrade() {
+                lock(&side.deliveries).take();
+            }
         });
     }
 
@@ -681,6 +686,15 @@ struct ServerSide {
     limit: Option<usize>,
 }
 
+/// A held call's reply path holds the table it is held in and the writer's queue, so a side
+/// dropped with calls held, its link dropped without `close`, would keep them, the writer and its
+/// producer (F429).
+impl Drop for ServerSide {
+    fn drop(&mut self) {
+        self.calls.clear();
+    }
+}
+
 impl ServerSide {
     fn deliver(&self, delivery: Delivery) {
         if let Some(deliveries) = lock(&self.deliveries).as_ref() {
@@ -964,7 +978,9 @@ type Delivering = FuturesUnordered<BoxFuture<'static, ()>>;
 
 /// Queues the server's replies with librdkafka one after another, in the order they were queued,
 /// waiting for each delivery report beside the records that follow, until every sender is gone.
-async fn server_writer(producer: FutureProducer, mut queued: ordered::Receiver<Record>) {
+/// The producer drops as the writer ends, at `close` or once a dropped link's side has gone, on a
+/// thread of its own.
+async fn server_writer(producer: Detached<FutureProducer>, mut queued: ordered::Receiver<Record>) {
     let mut delivering = Delivering::new();
     loop {
         let Record { topic, correlation, kind, body, answer } = tokio::select! {
@@ -1461,9 +1477,10 @@ fn receiver_stream<T: Send + 'static>(receiver: mpsc::UnboundedReceiver<T>) -> f
 
 /// A value whose drop runs on a thread of its own, for a librdkafka consumer, whose drop leaves the
 /// group and polls until librdkafka confirms, about a tenth of a second with the broker up and
-/// without bound once the broker is gone, and for an admin client, whose drop joins its polling
-/// thread, about a tenth of a second. On a runtime worker either stalls every task scheduled
-/// there.
+/// without bound once the broker is gone, for an admin client, whose drop joins its polling
+/// thread, about a tenth of a second, and for the server's producer, whose drop joins its polling
+/// thread and flushes for up to half a second. On a runtime worker each stalls every task
+/// scheduled there.
 struct Detached<T: Send + 'static>(Option<T>);
 
 impl<T: Send + 'static> Detached<T> {
@@ -1493,8 +1510,8 @@ impl<T: Send + 'static> Drop for Detached<T> {
     }
 }
 
-/// Drops `value` on a thread of its own and answers once the drop has finished: a consumer, or the
-/// client's producer, whose drop flushes for up to half a second before closing its connections.
+/// Drops `value` on a thread of its own and answers once the drop has finished: a consumer, or a
+/// producer, whose drop flushes for up to half a second before closing its connections.
 /// Not a `spawn_blocking` task: a runtime waits for those as it shuts down, and a consumer whose
 /// broker is gone would hold it there. A thread that cannot be spawned drops `value` here.
 fn drop_detached<T: Send + 'static>(value: T) -> oneshot::Receiver<()> {

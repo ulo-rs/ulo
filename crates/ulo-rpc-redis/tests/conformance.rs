@@ -3,8 +3,9 @@
 //! reaches it through a relay that `disrupt` cuts.
 //!
 //! Beside the suite, a test drives the link through `Link` directly, for an ordering no scenario
-//! reaches on its own: a request read after the drain ended the inbound stream. Two more drop each
-//! side of the link without `close` and count, through a relay, the connections Redis still holds.
+//! reaches on its own: a request read after the drain ended the inbound stream. Three more drop
+//! the link without `close` and count, through a relay, the connections Redis still holds: each
+//! side's link, and a server's link holding a call nobody answers.
 
 #![cfg(feature = "integration")]
 
@@ -172,4 +173,39 @@ async fn a_client_link_dropped_without_close_closes_its_connections() {
     drop(outbound);
     drop(client);
     released(&broker.relay, "the client's link dropped without `close`").await;
+}
+
+/// F429: a server's link dropped holding a call whose delivery nobody answers closes its
+/// connections, undrained and drained. A held call's reply path holds the writer's queue and the
+/// table the call is held in, and the table holds the path; the writer holds the publisher
+/// connection. The side's drop clears the table, and the drain's watcher, which waits on the
+/// table, holds the side weakly. The request comes from a client connected to Redis directly, so
+/// the server's relay counts the server's connections alone.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_link_dropped_holding_a_call_closes_its_connections() {
+    let broker = RedisServer::start().await;
+    let client = broker.link();
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
+    for (id, drained) in [(1, false), (2, true)] {
+        let pattern = if drained { "link.held.drained" } else { "link.held" };
+        let relay = Relay::start(broker.server).await;
+        let server = Redis::url(format!("redis://{}", relay.addr()));
+        let mut inbound = server.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
+        let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+        (outbound.send)(Pattern::from(pattern), request, None).await.expect("the request is published");
+        let delivery = tokio::time::timeout(PATIENCE, inbound.next())
+            .await
+            .unwrap_or_else(|_| panic!("the request did not reach the server within {PATIENCE:?}"))
+            .expect("the server's inbound stream ended");
+        assert!(matches!(delivery.frame, Frame::Req { .. }), "the server received something other than the request: {:?}", delivery.frame);
+        if drained {
+            server.drain().await;
+        }
+        drop(delivery);
+        drop(inbound);
+        drop(server);
+        let what = if drained { "the drained server's link dropped holding a call" } else { "the server's link dropped holding a call" };
+        released(&relay, what).await;
+    }
+    client.close().await.expect("the client's link closes");
 }

@@ -1,9 +1,12 @@
 //! A server's link outlives neither its closed app nor `serve`: the TCP link, served through an
 //! app and closed, drops once `serve` has returned (F425), and bound through an app dropped
-//! unserved, drops with the app's value (F426).
+//! unserved, drops with the app's value (F426), its address then refusing connections (F428).
 
+use std::io::ErrorKind;
+use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use ulo::{App, AppHandle, BoundAddr, BoxError, Module, ModuleDef, ModuleIdentity, Runtime, Signal};
 use ulo_rpc::link::Inbound;
@@ -67,6 +70,15 @@ impl Link for Watched {
     }
 }
 
+/// How long the link's drop has to show at its address.
+const PATIENCE: Duration = Duration::from_secs(5);
+
+/// Whether a connection to `addr` is refused. An open listener accepts it; a closed one answers
+/// with a reset, which reads as `ConnectionRefused`.
+fn refuses(addr: SocketAddr) -> bool {
+    matches!(TcpStream::connect_timeout(&addr, Duration::from_millis(200)), Err(error) if error.kind() == ErrorKind::ConnectionRefused)
+}
+
 /// A module whose one singleton sets its flag when it drops.
 struct Root(Arc<AtomicBool>);
 
@@ -118,11 +130,17 @@ async fn a_bound_app_dropped_unserved_drops_its_server_s_link() {
         .listen()
         .await
         .expect("the server binds");
+    let addr = app.addresses().first().map(|bound| bound.addr).expect("the server's address");
+    assert!(!refuses(addr), "the bound server's address refuses connections");
     let handle = app.handle();
     drop(app);
-    // The address is not read: the link's accept loop is a task of its own, holding the listener,
-    // which outlives the link.
     assert!(dropped.load(Ordering::SeqCst), "the server's link outlived the app dropped unserved");
+    // The link's drop aborts its accept loop, which ends once this thread's runtime polls it.
+    let released = Instant::now();
+    while !refuses(addr) {
+        assert!(released.elapsed() < PATIENCE, "the address still accepts connections {PATIENCE:?} after the app's drop");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert!(!singleton.load(Ordering::SeqCst), "the app's singletons dropped while a handle was held");
     drop(handle);
     assert!(singleton.load(Ordering::SeqCst), "the app's singletons outlived its last handle");

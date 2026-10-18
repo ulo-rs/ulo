@@ -304,11 +304,14 @@ impl Link for RabbitMq {
                 }
             })
             .await;
-        let watched = Arc::clone(&side);
+        // The side is held weakly: its drop clears the table this waits on, and a watcher holding
+        // it would keep it and the table after the link's drop.
+        let (mut count, watched) = (side.calls.count.subscribe(), Arc::downgrade(&side));
         side.runtime.handle().spawn(async move {
-            let mut count = watched.calls.count.subscribe();
             let _ = count.wait_for(|held| *held == 0).await;
-            lock(&watched.deliveries).take();
+            if let Some(side) = watched.upgrade() {
+                lock(&side.deliveries).take();
+            }
         });
     }
 
@@ -407,6 +410,15 @@ struct ServerSide {
     tags: Vec<ShortString>,
     /// Taken once draining holds no call, or at close, which ends the inbound stream.
     deliveries: Mutex<Option<mpsc::UnboundedSender<Delivery>>>,
+}
+
+/// A held call's reply path holds the table it is held in and the writer's queue, so a side
+/// dropped with calls held, its link dropped without `close`, would keep them, the writer and the
+/// channel it publishes on, which keeps the connection open (F429).
+impl Drop for ServerSide {
+    fn drop(&mut self) {
+        self.calls.clear();
+    }
 }
 
 impl ServerSide {

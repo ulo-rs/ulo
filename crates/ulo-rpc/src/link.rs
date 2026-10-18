@@ -427,12 +427,14 @@ impl fmt::Display for NoDestination {
 
 impl Error for NoDestination {}
 
-/// A link's refusal to connect that no retry mends, a misconfiguration only its connect could see:
-/// an `mqtts://` or `tls://` link whose platform root certificates did not load, a NATS link whose
-/// roots file could not be written, or a `tls://` NATS link in a process that links more than one
-/// rustls crypto provider and installs none. `RpcClient` answers it
-/// `Internal` with `reason: "misconfigured_link"`, not the `Unavailable` of a connect that failed,
-/// and asks again on the next call, which a link holding the cause answers at once.
+/// A link's refusal to connect over a misconfiguration only its connect could see: an `mqtts://`
+/// or `tls://` link whose platform root certificates did not load, a NATS link whose roots file
+/// could not be written, a `tls://` NATS link in a process that links more than one rustls crypto
+/// provider and installs none, or a `tls://` NATS link whose roots' load outlasted its
+/// `roots_timeout`. No retry mends the first three, whose cause the link keeps; the last is mended
+/// by a later call once the load has ended, the load running on past the bound. `RpcClient`
+/// answers it `Internal` with `reason: "misconfigured_link"`, not the `Unavailable` of a connect
+/// that failed, and asks again on the next call, which a link holding the cause answers at once.
 #[derive(Debug)]
 pub struct Misconfigured {
     pub source: BoxError,

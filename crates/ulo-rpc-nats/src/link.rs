@@ -1099,8 +1099,9 @@ impl Roots {
     }
 
     /// The load once its file is written, waited for under `bound`, for a `nats://` server's
-    /// `listen`: `None` for a load that failed, logged once per load, or that outlasted the bound,
-    /// logged here.
+    /// `listen`: `None` for a load that failed, logged once per load, or that outlasted the bound
+    /// or ended unanswered, each logged here. A load ends unanswered when the runtime it ran on
+    /// shut down first, which may be another link's when this one joined the process's load.
     async fn awaited(&self, runtime: &Tokio, bound: Bound) -> Option<Arc<Load>> {
         let load = self.held(runtime);
         match within(runtime, bound, load.wait()).await {
@@ -1109,7 +1110,12 @@ impl Roots {
                 load.warn(&cause);
                 None
             }
-            Ok(None) => None,
+            Ok(None) => {
+                tracing::warn!(
+                    "the NATS link's root certificates load ended without an answer, the runtime it ran on having shut down, so its server connects to its `nats://` url without them; if the server there upgrades the connection to TLS, async-nats reads the platform's store on the thread polling the connection, at that connect and at each of its reconnects"
+                );
+                None
+            }
             Err(after) => {
                 tracing::warn!(
                     timeout = ?after,
@@ -1400,7 +1406,7 @@ mod tests {
     use super::*;
 
     /// Root certificates loaded per test, each test's loader counting in a slot of its own.
-    static LOADS: [AtomicUsize; 25] = [const { AtomicUsize::new(0) }; 25];
+    static LOADS: [AtomicUsize; 28] = [const { AtomicUsize::new(0) }; 28];
 
     /// A store that cannot be read: rustls-native-certs reading a file that is not there, as it
     /// reads one `SSL_CERT_FILE` names.
@@ -1472,7 +1478,7 @@ mod tests {
         }
     }
 
-    static GATES: [Gate; 4] = [const { Gate::new() }; 4];
+    static GATES: [Gate; 5] = [const { Gate::new() }; 5];
 
     /// The test certificate once gate `GATE` opens or `HELD` passes, counted in `SLOT`.
     fn gated<const SLOT: usize, const GATE: usize>() -> CertificateResult {
@@ -1481,6 +1487,14 @@ mod tests {
         let mut loaded = CertificateResult::default();
         loaded.certs.push(ulo_test_certs::localhost().cert_der().clone());
         loaded
+    }
+
+    /// A store that cannot be read, once gate `GATE` opens or `HELD` passes, counted in `SLOT`.
+    #[cfg(feature = "integration")]
+    fn gated_unreadable<const SLOT: usize, const GATE: usize>() -> CertificateResult {
+        LOADS[SLOT].fetch_add(1, Ordering::SeqCst);
+        GATES[GATE].wait();
+        rustls_native_certs::load_certs_from_paths(Some(Path::new("/nonexistent/ulo-rpc-nats-roots.pem")), None)
     }
 
     /// A directory of the test's own, made empty, which its links write their roots in.
@@ -2177,6 +2191,68 @@ mod tests {
         GATES[2].open();
         assert!(took < HELD / 2, "three waits bounded at {SHORT:?} took {took:?}, as long as the load");
         assert_eq!((LOADS[21].load(Ordering::SeqCst), LOADS[22].load(Ordering::SeqCst)), (1, 1), "a side loaded its roots other than once");
+    }
+
+    /// A `nats://` server's waits for its roots log one `warn` per distinct cause. A load
+    /// outlasting `roots_timeout` and failing later logs two, the expiry's from `listen`'s wait and
+    /// the failure's, with its cause, from the task `prepare`'s call armed; a load failing inside
+    /// the bound logs the failure once, `listen`'s wait and the armed task sharing the load's one
+    /// `warn`. No broker is reached: the calls are the two `prepare` and `listen` make.
+    #[cfg(feature = "integration")]
+    #[tokio::test]
+    async fn a_nats_server_s_roots_log_one_warn_per_cause() {
+        const SHORT: Duration = Duration::from_millis(200);
+        const EXPIRED: &str = "did not load within `roots_timeout`";
+        const FAILED: &str = "connects to its `nats://` url without root certificates of its own";
+        let capture = capture();
+        let here = std::thread::current().id();
+        let count = |text: &str| capture.warnings(here).into_iter().filter(|line| line.contains(text)).count();
+        let runtime = Tokio::current();
+        let servers = servers("nats://localhost:1").expect("the url parses");
+
+        let late = link("nats://localhost:1", gated_unreadable::<25, 4>, std::env::temp_dir).roots_timeout(Bound::After(SHORT));
+        assert!(late.roots(&servers, &runtime, false).await.expect("`prepare`'s call answers").is_none(), "a running load answered a file");
+        assert!(late.roots(&servers, &runtime, true).await.expect("`listen`'s call answers").is_none(), "an expired wait answered a file");
+        GATES[4].open();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while count(FAILED) == 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!((count(EXPIRED), count(FAILED)), (1, 1), "a load failing after the bound was logged other than once per cause: {:?}", capture.warnings(here));
+
+        let soon = link("nats://localhost:1", unreadable::<26>, std::env::temp_dir).roots_timeout(Bound::After(SHORT));
+        assert!(soon.roots(&servers, &runtime, false).await.expect("`prepare`'s call answers").is_none(), "a failing load answered a file");
+        assert!(soon.roots(&servers, &runtime, true).await.expect("`listen`'s call answers").is_none(), "a failed load answered a file");
+        // Room for the armed task, which ends once the load's answer reaches it.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!((count(EXPIRED), count(FAILED)), (1, 2), "a load failing inside the bound was logged other than once: {:?}", capture.warnings(here));
+        assert_eq!((LOADS[25].load(Ordering::SeqCst), LOADS[26].load(Ordering::SeqCst)), (1, 1), "a link loaded its roots other than once");
+    }
+
+    /// F431: a `nats://` server whose roots' load ends unanswered, the runtime it ran on having
+    /// shut down before the load's task ran, connects without them and logs one `warn` saying
+    /// so, as an expiry does. The link's load is started on a runtime that has shut down.
+    #[cfg(feature = "integration")]
+    #[tokio::test]
+    async fn a_nats_server_whose_roots_load_ends_unanswered_says_so() {
+        const UNANSWERED: &str = "load ended without an answer";
+        let capture = capture();
+        let here = std::thread::current().id();
+        let stopped = std::thread::spawn(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread().build().expect("a runtime to shut down");
+            let handle = runtime.handle().clone();
+            drop(runtime);
+            handle
+        })
+        .join()
+        .expect("the runtime shuts down");
+        let servers = servers("nats://localhost:1").expect("the url parses");
+        let serving = link("nats://localhost:1", test_root::<27>, std::env::temp_dir).roots_timeout(Bound::Unbounded);
+        let roots = serving.roots(&servers, &Tokio::from_handle(stopped), true).await.expect("`listen`'s call answers");
+        assert!(roots.is_none(), "a load that never ran answered a file");
+        let warned: Vec<String> = capture.warnings(here).into_iter().filter(|line| line.contains(UNANSWERED)).collect();
+        assert_eq!(warned.len(), 1, "the unanswered load was logged other than once: {warned:?}");
+        assert_eq!(LOADS[27].load(Ordering::SeqCst), 0, "the load ran on a runtime that had shut down");
     }
 
     /// The process's subscriber, installed by the first test that reads it: tracing caches whether

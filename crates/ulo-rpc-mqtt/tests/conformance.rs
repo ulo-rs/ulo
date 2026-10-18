@@ -4,9 +4,9 @@
 //! every interface and allows anonymous clients, which the default configuration does not.
 //!
 //! Beside the suite, five tests drive the link through `Link` directly, for orderings inside it
-//! that no scenario reaches on its own and for the flow-control window it announces. Two more drop
-//! each side of the link without `close` and count, through a relay, the connections Mosquitto
-//! still holds.
+//! that no scenario reaches on its own and for the flow-control window it announces. Three more
+//! drop the link without `close` and count, through a relay, the connections Mosquitto still
+//! holds: each side's link, and a server's link holding a call nobody answers.
 
 #![cfg(feature = "integration")]
 
@@ -402,4 +402,40 @@ async fn a_client_link_dropped_without_close_closes_its_connection() {
     drop(outbound);
     drop(client);
     released(&broker.relay, "the client's link dropped without `close`").await;
+}
+
+/// F429: a server's link dropped holding a call whose delivery nobody answers closes its
+/// connection, undrained and drained. A held call's reply path holds the event loop's request
+/// channel and the table the call is held in, and the table holds the path; the event loop owns
+/// the connection and the link's drop aborts it, so the connection closes whatever the table
+/// holds, and the link's unit tests check that the table goes too. The request comes from a
+/// client reaching the broker through the suite's relay, so the server's relay counts the
+/// server's connection alone.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_link_dropped_holding_a_call_closes_its_connection() {
+    let broker = Mosquitto::start().await;
+    let client = broker.client_link(&[]);
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
+    for (id, drained) in [(1, false), (2, true)] {
+        let pattern = if drained { "link/held/drained" } else { "link/held" };
+        let relay = Relay::start(broker.server).await;
+        let server = Mqtt::url(format!("mqtt://{}", relay.addr())).group(if drained { "held_drained" } else { "held" });
+        let mut inbound = server.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
+        let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+        (outbound.send)(Pattern::from(pattern), request, None).await.expect("the request is published");
+        let delivery = tokio::time::timeout(PATIENCE, inbound.next())
+            .await
+            .unwrap_or_else(|_| panic!("the request did not reach the server within {PATIENCE:?}"))
+            .expect("the server's inbound stream ended");
+        assert!(matches!(delivery.frame, Frame::Req { .. }), "the server received something other than the request: {:?}", delivery.frame);
+        if drained {
+            server.drain().await;
+        }
+        drop(delivery);
+        drop(inbound);
+        drop(server);
+        let what = if drained { "the drained server's link dropped holding a call" } else { "the server's link dropped holding a call" };
+        released(&relay, what).await;
+    }
+    client.close().await.expect("the client's link closes");
 }
