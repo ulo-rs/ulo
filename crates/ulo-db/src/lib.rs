@@ -17,7 +17,9 @@
 //! # Several instances
 //!
 //! `Module::keyed::<Q>()` requalifies a store module's exports as `T @ Q`: two keyed modules give
-//! `Dep<PgPool, Primary>` and `Dep<PgPool, Analytics>` and contribute two checks.
+//! `Dep<PgPool, Primary>` and `Dep<PgPool, Analytics>` and contribute two checks. A module read
+//! from a section names its check after the store and the section, `postgres@database`; one built
+//! with `from_options` names it after the store alone, so two such instances print alike.
 
 mod connect;
 mod error;

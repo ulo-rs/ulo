@@ -1,9 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use ulo::{BoxError, BoxFuture};
+use ulo::{BoxError, BoxFuture, Runtime, spawn_with};
 
-use crate::error::MigrationFailed;
+use crate::connect::{Attached, within};
+use crate::error::{LockFailed, MigrationFailed, MigrationTimedOut, TaskFailed};
 use crate::store::Store;
 
 /// The key of the migration lock where the lock is a number: the first eight bytes of the SHA-256
@@ -34,6 +35,11 @@ pub trait Migrations<S: Store>: Send + Sync + 'static {
 /// bound)`, the database name hashed when the lock name would pass 64 characters. SQLite: an OS lock
 /// on `<file>.ulo-migrate.lock` through `std::fs::File::lock`, taken off the worker, and none for
 /// an in-memory database. Each holds from a connection or file that releases it when it dies.
+///
+/// `lock` and `unlock` run inside one task on the app's runtime, `lock` first, then the migrator,
+/// then `unlock` whether the migrator succeeded or not. When the module's bound passes first the
+/// task is aborted and the guard dropped where it stands, so a guard releases the lock on drop as
+/// well as through `unlock`.
 pub trait MigrationLock: Store {
     /// The held lock: the dedicated connection, or the locked file.
     type Guard: Send + 'static;
@@ -44,13 +50,71 @@ pub trait MigrationLock: Store {
     fn unlock(guard: Self::Guard) -> BoxFuture<'static, ()>;
 }
 
+/// The migrations a module runs, with the lock protocol instantiated for its store where
+/// `S: MigrationLock` is known, which `Module::register` is not.
+pub(crate) struct Migrate<S: Store> {
+    migrations: Arc<dyn Migrations<S>>,
+    run: RunLocked<S>,
+}
+
+type RunLocked<S> =
+    fn(Arc<dyn Runtime>, <S as Store>::Client, Arc<dyn Migrations<S>>, Duration) -> BoxFuture<'static, Result<(), MigrationFailed>>;
+
+impl<S: Store> Migrate<S> {
+    pub(crate) fn new<M: Migrations<S>>(migrations: M) -> Self
+    where
+        S: MigrationLock,
+    {
+        Migrate { migrations: Arc::new(migrations), run: run_boxed::<S> }
+    }
+
+    /// The lock, the migrations and the release on `client`, under `bound`.
+    pub(crate) fn run(&self, runtime: Arc<dyn Runtime>, client: S::Client, bound: Duration) -> BoxFuture<'static, Result<(), MigrationFailed>> {
+        (self.run)(runtime, client, Arc::clone(&self.migrations), bound)
+    }
+}
+
+impl<S: Store> Clone for Migrate<S> {
+    fn clone(&self) -> Self {
+        Migrate { migrations: Arc::clone(&self.migrations), run: self.run }
+    }
+}
+
+fn run_boxed<S: MigrationLock>(
+    runtime: Arc<dyn Runtime>,
+    client: S::Client,
+    migrations: Arc<dyn Migrations<S>>,
+    bound: Duration,
+) -> BoxFuture<'static, Result<(), MigrationFailed>> {
+    Box::pin(run_locked::<S>(runtime, client, migrations, bound))
+}
+
 /// Takes the lock, runs `migrations`, releases the lock, all under `bound`. A failure of any step,
 /// the bound reached included, is a [`MigrationFailed`].
+///
+/// The three steps run as one task on the app's runtime, so whatever the migrator spawns runs
+/// there; the bound is timed on the app's clock outside that task and aborts it on expiry.
 pub(crate) async fn run_locked<S: MigrationLock>(
+    runtime: Arc<dyn Runtime>,
     client: S::Client,
     migrations: Arc<dyn Migrations<S>>,
     bound: Duration,
 ) -> Result<(), MigrationFailed> {
-    let _ = (client, migrations, bound);
-    todo!()
+    let steps = async move {
+        let guard = match S::lock(&client, bound).await {
+            Ok(guard) => guard,
+            Err(error) => return Err(BoxError::from(LockFailed(error))),
+        };
+        let ran: Result<(), BoxError> = migrations.run(client).await;
+        S::unlock(guard).await;
+        ran
+    };
+    let task = Attached(spawn_with(&*runtime, steps));
+    let source: BoxError = match within(&*runtime, bound, task).await {
+        Some(Ok(Ok(()))) => return Ok(()),
+        Some(Ok(Err(error))) => error,
+        Some(Err(end)) => TaskFailed::new(S::NAME, "migration", end).into(),
+        None => BoxError::from(MigrationTimedOut { bound }),
+    };
+    Err(MigrationFailed::new(S::NAME, source))
 }

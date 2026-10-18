@@ -46,11 +46,15 @@ pub trait Store: Send + Sync + 'static {
     /// One round trip: the `.ready` attempt and the health check.
     fn ping(c: &Self::Client) -> BoxFuture<'static, Result<(), BoxError>>;
 
+    /// Closes the client in its binding's `on_destroy`, after every transport has drained, through
+    /// `spawn_with` under the hook's bound. An execution the drain abandoned may still hold a
+    /// connection, so a close that waits for checked-out connections is cut by that bound.
     fn close(c: Self::Client) -> BoxFuture<'static, ()>;
 }
 
 /// A store whose `create` connects nothing, so [`StoreModule::lazy`](crate::StoreModule::lazy) is
 /// offered: the start does not wait for the database, and the check stays down until the first ping
 /// succeeds. Implemented exactly where `CREATE_CONNECTS` is `false`; elsewhere the method does not
-/// exist, so the refusal is at compile time.
+/// exist, so the refusal is at compile time. Calling `lazy` on a store implementing this marker
+/// with `CREATE_CONNECTS` true fails to compile as well.
 pub trait LazyStore: Store {}
