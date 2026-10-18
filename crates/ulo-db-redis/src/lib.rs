@@ -12,15 +12,17 @@
 //!
 //! # The runtime preference
 //!
-//! With both of redis-rs's runtime features compiled in, which an unrelated crate in the build can
-//! cause, redis-rs chooses a runtime through a process-global `OnceLock`. This crate calls
-//! `prefer_tokio()` once per process, under a `OnceLock` of its own, from the first pool factory to
-//! run at `connect`, after the runtime's name check, and every later Redis module reads the
-//! recorded outcome. The preference is process-wide: it decides only which runtime redis-rs uses when
-//! both features are compiled in, and an app already verified to be on tokio needs tokio. A
-//! preference another crate set first is read where redis-rs allows, tokio continuing and any other
-//! refused as `Permanent`; where it cannot be read, a `warn` names the conflict and the start
-//! continues, and a non-tokio preference then fails the first query.
+//! The crate enables redis-rs's `tokio-comp` alone. An unrelated crate in the build can still
+//! compile `smol-comp` in, and redis-rs then chooses a runtime through a process-global
+//! preference: `prefer_tokio()` or `prefer_smol()` if some crate set one, otherwise tokio where a
+//! tokio context exists. Absent a preference the choice is tokio here, because the connection is
+//! made on the app's runtime after `ulo-db`'s check that it is tokio's.
+//!
+//! redis-rs 1.7.1 defines `prefer_tokio()` only when both features are compiled in, and offers no
+//! read of the current preference, so this crate neither sets nor reads one. A dependency that calls
+//! `prefer_smol()` is not detected, and redis-rs then spawns onto smol's global executor, not the
+//! app's runtime. The crate keeps a process-wide guard so the step runs once and every Redis module
+//! reads one recorded outcome.
 
 mod options;
 mod store;

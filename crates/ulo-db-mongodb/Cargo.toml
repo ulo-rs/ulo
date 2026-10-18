@@ -18,7 +18,6 @@ ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.1" }
 # `dns-resolver` is what `mongodb+srv` needs. `compat-3-0-0` selects the driver's `bson` 2.
 mongodb = { workspace = true, features = ["compat-3-0-0", "rustls-tls", "dns-resolver"] }
 serde = { workspace = true, features = ["derive"] }
-tracing.workspace = true
 
 [lints]
 workspace = true

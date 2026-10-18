@@ -14,8 +14,8 @@ categories = ["database"]
 
 [features]
 default = []
-postgres = ["diesel-async/postgres"]
-mysql = ["diesel-async/mysql"]
+postgres = ["diesel-async/postgres", "dep:tokio-postgres"]
+mysql = ["diesel-async/mysql", "dep:mysql_async"]
 sqlite = ["diesel-async/sqlite", "diesel/sqlite"]
 
 [dependencies]
@@ -27,9 +27,15 @@ diesel.workspace = true
 # `migrations` brings `AsyncConnectionWrapper` and `diesel_migrations`.
 diesel-async = { workspace = true, features = ["deadpool", "migrations"] }
 diesel_migrations.workspace = true
+# The URL parsers of the drivers diesel-async connects through, so `validate` refuses at `wire` what
+# `establish` would refuse at `connect`. Declared as diesel-async 0.9.2 declares them, so the build
+# holds one copy of each.
+mysql_async = { version = "0.36.0", default-features = false, features = ["minimal-rust"], optional = true }
+tokio-postgres = { version = "0.7.10", default-features = false, optional = true }
 serde = { workspace = true, features = ["derive"] }
-# `rt`: `Handle`, the given runtime's, which `Given` calls `spawn_blocking` on.
-tokio = { workspace = true, features = ["rt"] }
+# `rt`: `Handle`, the given runtime's, which `Given` calls `spawn_blocking` on. `rt-multi-thread`:
+# `block_in_place`, through which a dropped SQLite query waits for its blocking task.
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tracing.workspace = true
 
 [lints]

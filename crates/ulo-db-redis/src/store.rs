@@ -1,24 +1,52 @@
 use std::sync::OnceLock;
+use std::time::Duration;
 
-use redis::aio::ConnectionManager;
-use ulo::{BoxError, BoxFuture, Secret};
+use redis::aio::{ConnectionManager, ConnectionManagerConfig};
+use redis::{ErrorKind, RedisError};
+use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
 use ulo_db::Store;
 
 use crate::options::RedisOptions;
 
-/// The outcome of the process's one `prefer_tokio()` call, recorded for every later Redis module.
-#[allow(dead_code)]
+/// One connection attempt's bound when the options set none. redis-rs's own default is 1 s, short
+/// for a TLS handshake to a remote server; `ulo-db`'s loop repeats the attempt under
+/// `connect_within`, so a longer bound here only caps the slowest single try.
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The outcome of the process's one runtime-preference step, recorded for every later Redis module.
 static TOKIO_PREFERENCE: OnceLock<Result<(), String>> = OnceLock::new();
 
-/// Makes the process's one `prefer_tokio()` call, or reads its recorded outcome.
+/// Makes the process's one runtime-preference step, or reads its recorded outcome.
 ///
-/// redis 1.7.1 offers `prefer_tokio()` only under `cfg(all(feature = "smol-comp", feature =
-/// "tokio-comp"))` and no read of the preference, so a crate enabling `tokio-comp` alone cannot call
-/// it. The call is built as the designer answers that premise.
-#[allow(dead_code)]
+/// redis 1.7.1 defines `prefer_tokio()` only when both `smol-comp` and `tokio-comp` are compiled
+/// in, and offers no read of the current preference, so a crate that enables `tokio-comp` alone
+/// cannot call it. The step is therefore the guard without the call: the outcome is recorded once
+/// and is `Ok`. It does not make redis-rs prefer tokio; it does not need to unless an unrelated
+/// crate compiled `smol-comp` in and set `prefer_smol()`, a conflict this crate cannot see. The
+/// caller runs on the app's runtime after `ulo-db`'s name check, so redis-rs, absent a preference,
+/// finds tokio's context and uses tokio.
 pub(crate) fn prefer_tokio_once() -> Result<(), BoxError> {
-    todo!()
+    let outcome = TOKIO_PREFERENCE.get_or_init(|| {
+        tracing::debug!(
+            target: "ulo_db_redis",
+            "redis-rs's runtime preference is not set: prefer_tokio() exists only with smol-comp compiled in"
+        );
+        Ok(())
+    });
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(conflict) => Err(Permanent::new(conflict.clone()).into()),
+    }
+}
+
+/// An error that no further attempt can mend is wrapped in `Permanent`; the rest are bare.
+fn classify(error: RedisError) -> BoxError {
+    if matches!(error.kind(), ErrorKind::AuthenticationFailed | ErrorKind::InvalidClientConfig) {
+        Permanent::new(error).into()
+    } else {
+        error.into()
+    }
 }
 
 /// The Redis store.
@@ -38,24 +66,45 @@ impl Store for Redis {
 
     /// The URL's password component.
     fn secrets(o: &RedisOptions) -> Vec<Secret<String>> {
-        let _ = o;
-        todo!()
+        let Ok(client) = redis::Client::open(o.url.expose().as_str()) else {
+            return Vec::new();
+        };
+        match client.get_connection_info().redis_settings().password() {
+            Some(password) if !password.is_empty() => vec![Secret::new(password.to_owned())],
+            _ => Vec::new(),
+        }
     }
 
-    /// `ConnectionManager::new` with `set_number_of_retries(0)`: connects once. One attempt's bound
-    /// inside `ulo-db`'s loop is the area's to decide.
+    /// `ConnectionManager::new_with_config` with `set_number_of_retries(0)`: connects once, so
+    /// `ulo-db`'s loop around this call is the one retry loop. One attempt is bounded by the
+    /// connection timeout, 5 s unless the options set it.
     fn create(o: &RedisOptions) -> BoxFuture<'static, Result<ConnectionManager, BoxError>> {
-        let _ = o;
-        todo!()
+        let url = o.url.clone();
+        let connection_timeout = o.connection_timeout_secs.map_or(CONNECTION_TIMEOUT, Duration::from_secs);
+        let response_timeout = o.response_timeout_secs.map(Duration::from_secs);
+        Box::pin(async move {
+            prefer_tokio_once()?;
+            let client = redis::Client::open(url.expose().as_str()).map_err(classify)?;
+            let mut config = ConnectionManagerConfig::new()
+                .set_number_of_retries(0)
+                .set_connection_timeout(Some(connection_timeout));
+            if response_timeout.is_some() {
+                config = config.set_response_timeout(response_timeout);
+            }
+            ConnectionManager::new_with_config(client, config).await.map_err(classify)
+        })
     }
 
     fn ping(c: &ConnectionManager) -> BoxFuture<'static, Result<(), BoxError>> {
-        let _ = c;
-        todo!()
+        let mut connection = c.clone();
+        Box::pin(async move {
+            redis::cmd("PING").query_async::<String>(&mut connection).await.map(|_| ()).map_err(classify)
+        })
     }
 
+    /// `ConnectionManager` has no close: its task ends when the last clone drops, so a consumer
+    /// still holding a clone keeps the connection open past this call.
     fn close(c: ConnectionManager) -> BoxFuture<'static, ()> {
-        let _ = c;
-        todo!()
+        Box::pin(async move { drop(c) })
     }
 }
