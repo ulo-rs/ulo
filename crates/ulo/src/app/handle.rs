@@ -30,8 +30,9 @@ use crate::transport::server::mounted_parts;
 /// to stop pulling work when the transports stop accepting, and runs each unit of work through
 /// [`execute`](Self::execute) so the drain waits for it: the drain tracks executions, not tasks.
 ///
-/// A handle kept past the `App` value's drop holds the app's shared state and no server: the drop
-/// released the servers, so a [`close`](Self::close) on it runs the shutdown's hooks and closes no
+/// A handle kept past the `App` value's drop holds the app's shared state. A
+/// [`close`](Self::close) under way at the drop keeps the servers and closes them; with none under
+/// way the drop released them, and a `close` started later runs the shutdown's hooks and closes no
 /// transport. See [`App`](crate::App).
 #[derive(Clone)]
 pub struct AppHandle {
@@ -73,8 +74,12 @@ impl AppHandle {
     /// nothing: it waits for the same shutdown, ignores its own signal and returns the same
     /// outcome.
     ///
-    /// A `close` that runs after or during the `App` value's drop closes no transport: the drop
-    /// released the servers. See [`App`](crate::App).
+    /// A `close` under way when the `App` value drops, counted from its first poll, keeps the
+    /// servers: its drain and close step reach every one, and each server's `close` runs. Dropped
+    /// before its close step, with the `App` value gone and no other `close` under way, it
+    /// releases them unclosed as it drops, and their drops run on the thread dropping it. A
+    /// `close` first polled after the drop, with none under way at it, closes no transport: the
+    /// drop released the servers. See [`App`](crate::App).
     pub async fn close(&self, signal: Signal) -> Result<Shutdown, ShutdownError> {
         shutdown::close(&self.shared, signal).await
     }

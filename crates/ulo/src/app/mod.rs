@@ -53,12 +53,24 @@ pub enum Bound {}
 /// and dropped unserved, one whose `serve` future is dropped, and one whose shutdown was abandoned
 /// mid-way. Each server then drops with its last other holder, and that drop is its only shutdown:
 /// its `close` does not run, and what only `close` ends, such as a task the server spawned and
-/// detached, keeps running. A drop while a `close` on a handle runs the shutdown elsewhere, before
-/// its close step, releases the servers too, and that close then drains and closes none. The
-/// release holds the lock on the app's list of servers only to empty it and awaits nothing; a
-/// server's own drop runs on the thread dropping the app. An [`AppHandle`] kept past the drop keeps
-/// the app's shared state, its singletons among it, and no server: a `close` on it runs the
-/// shutdown's hooks and closes no transport.
+/// detached, keeps running.
+///
+/// A drop while a `close` on a handle is under way, from that close's first poll, leaves the
+/// servers to it: its drain and close step run over every server, each server's `close` runs,
+/// and the close step's end releases them. A `close` dropped before its close step releases them
+/// as it drops, unclosed, as this drop would have; with several under way, the last to end or
+/// drop does. A `close` future made before the drop and first polled after it is a `close` after
+/// the drop. A `close` polled once and then neither polled again nor dropped holds the servers
+/// until it resumes or drops.
+///
+/// The release awaits nothing and does not panic on a lock: it takes two, each held only to read
+/// or change a field and never across an await, and reads either through when poisoned. A
+/// server's own drop runs on the thread dropping the app, or on the one ending the last `close`
+/// under way.
+///
+/// An [`AppHandle`] kept past the drop keeps the app's shared state, its singletons among it, and
+/// no server once they are released: a `close` started on it after that runs the shutdown's hooks
+/// and closes no transport.
 pub struct App<S = Wired> {
     pub(crate) shared: Owner,
     /// Queued by `bind` on `Connected`, bound by `listen`.
@@ -135,7 +147,7 @@ impl AppConfig {
 
 /// The `App` value's hold on the shared state. It moves from typestate to typestate and only
 /// `wire` makes one, so an app has one however many `AppHandle`s it hands out, and its drop is the
-/// app's.
+/// app's. A drop after the close step finds the list of servers empty.
 pub(crate) struct Owner(Arc<AppShared>);
 
 impl Deref for Owner {
@@ -148,8 +160,7 @@ impl Deref for Owner {
 
 impl Drop for Owner {
     fn drop(&mut self) {
-        // A second release, after the close step's, finds the list empty.
-        shutdown::release_servers(&self.0);
+        shutdown::app_dropped(&self.0);
     }
 }
 

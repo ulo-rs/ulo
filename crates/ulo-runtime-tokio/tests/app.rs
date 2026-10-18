@@ -1,19 +1,23 @@
 //! Which of `Dep<dyn Timer>` and `Dep<dyn Runtime>` an app binds for each way its builder sets a
 //! clock, the refusal of a test's override of either, `listen()`'s refusal of an app that binds a
 //! transport with no runtime, and when an app lets go of a server holding its handle: at the
-//! close step (F425), and at the app's drop when it never reaches that step (F426). The binding
-//! with `.runtime(..)` alone is the conformance suite's `the_app_binds_the_runtime_as_one_object`.
+//! close step (F425), at the app's drop when it never reaches that step (F426), and, when the app
+//! drops while a handle's `close` is under way, at that close's close step, or as it drops if it
+//! is abandoned first. The binding with `.runtime(..)` alone is the conformance suite's
+//! `the_app_binds_the_runtime_as_one_object`.
 
+use std::future::poll_fn;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::task::{Poll, Waker};
 use std::time::{Duration, Instant};
 
 use ulo::app::Bound as Serving;
 use ulo::testing::TestApp;
 use ulo::{
     App, AppBuilder, AppHandle, BoundAddr, BoxError, BoxFuture, ConnectError, Connected, DrainToken, FailureReason, LookupError, Module,
-    ModuleDef, ModuleIdentity, Mounted, Runtime, RuntimeMissing, Secret, Server, Signal, StartupError, TaskEnd, Timer,
+    ModuleDef, ModuleIdentity, Mounted, Phase, Runtime, RuntimeMissing, Secret, Server, Signal, StartupError, TaskEnd, Timer,
     Transport, WiringError,
 };
 use ulo_runtime_tokio::Tokio;
@@ -649,4 +653,272 @@ async fn a_closed_app_s_drop_and_a_later_close_release_nothing_again() {
     assert_eq!(seen.closes(), 1, "a later close ran the server's `close` again");
     drop(handle);
     assert!(singleton.load(Ordering::SeqCst), "the app's singletons outlived its last handle");
+}
+
+/// What happened, in order, across a [`Recording`] server pair and a [`Gated`] module.
+#[derive(Clone, Default)]
+struct Log(Arc<Mutex<Vec<String>>>);
+
+impl Log {
+    fn push(&self, event: impl Into<String>) {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).push(event.into());
+    }
+
+    fn events(&self) -> Vec<String> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    fn has(&self, event: &str) -> bool {
+        self.events().iter().any(|seen| seen == event)
+    }
+}
+
+/// A gate a future waits at until the test opens it.
+struct Gate(Mutex<(bool, Vec<Waker>)>);
+
+impl Gate {
+    fn new(open: bool) -> Arc<Gate> {
+        Arc::new(Gate(Mutex::new((open, Vec::new()))))
+    }
+
+    fn open(&self) {
+        let waiting = {
+            let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            state.0 = true;
+            std::mem::take(&mut state.1)
+        };
+        waiting.into_iter().for_each(Waker::wake);
+    }
+
+    async fn pass(&self) {
+        poll_fn(|cx| {
+            let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            if state.0 {
+                return Poll::Ready(());
+            }
+            state.1.push(cx.waker().clone());
+            Poll::Pending
+        })
+        .await
+    }
+}
+
+/// A server keeping the `AppHandle` its `prepare` is handed, as every shipped server does, whose
+/// `drain` and `close` record that they ran and wait at their gates, and whose drop is logged.
+struct Recording {
+    name: &'static str,
+    app: Option<AppHandle>,
+    log: Log,
+    drain_gate: Arc<Gate>,
+    close_gate: Arc<Gate>,
+}
+
+impl Drop for Recording {
+    fn drop(&mut self) {
+        self.log.push(format!("drop {}", self.name));
+    }
+}
+
+impl Server for Recording {
+    type Transport = Bare;
+
+    async fn prepare(&mut self, mounted: Mounted<'_, Bare>) -> Result<(), BoxError> {
+        self.app = Some(mounted.app().clone());
+        Ok(())
+    }
+
+    async fn bind(&mut self, _mounted: Mounted<'_, Bare>) -> Result<(), BoxError> {
+        Ok(())
+    }
+
+    async fn serve(&self) -> Result<(), BoxError> {
+        std::future::pending().await
+    }
+
+    async fn drain(&self, _token: DrainToken) {
+        self.log.push(format!("drain {}", self.name));
+        self.drain_gate.pass().await;
+    }
+
+    async fn close(&self) -> Result<(), BoxError> {
+        self.log.push(format!("close {}", self.name));
+        self.close_gate.pass().await;
+        Ok(())
+    }
+}
+
+/// A value whose drop is logged.
+struct Logged(Log, &'static str);
+
+impl Drop for Logged {
+    fn drop(&mut self) {
+        self.0.push(self.1);
+    }
+}
+
+/// A module whose one singleton logs its drop as `store dropped`, and whose before-shutdown hook
+/// logs that it started and waits at its gate.
+struct Gated {
+    log: Log,
+    hook_gate: Arc<Gate>,
+}
+
+impl Module for Gated {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.value(Logged(self.log.clone(), "store dropped"));
+        let (log, gate) = (self.log.clone(), Arc::clone(&self.hook_gate));
+        m.before_shutdown(move |_signal: Signal| {
+            let (log, gate) = (log.clone(), Arc::clone(&gate));
+            async move {
+                log.push("before-shutdown");
+                gate.pass().await;
+            }
+        });
+    }
+}
+
+/// An app binding two [`Recording`] servers, `a` then `b`, over a [`Gated`] root, with every gate
+/// it waits at.
+struct Paired {
+    app: App<Serving>,
+    log: Log,
+    hook_gate: Arc<Gate>,
+    drain_gate: Arc<Gate>,
+    close_gate: Arc<Gate>,
+}
+
+/// `held` names the gates that start closed, of `hook`, `drain` and `close`.
+async fn paired(held: &[&str]) -> Paired {
+    let log = Log::default();
+    let gate = |name| Gate::new(!held.contains(&name));
+    let (hook_gate, drain_gate, close_gate) = (gate("hook"), gate("drain"), gate("close"));
+    let server = |name| Recording {
+        name,
+        app: None,
+        log: log.clone(),
+        drain_gate: Arc::clone(&drain_gate),
+        close_gate: Arc::clone(&close_gate),
+    };
+    let root = Gated { log: log.clone(), hook_gate: Arc::clone(&hook_gate) };
+    let app = connect(App::builder(root).runtime(Tokio::current()))
+        .await
+        .bind(server("a"))
+        .bind(server("b"))
+        .listen()
+        .await
+        .unwrap_or_else(|error| panic!("the app did not bind: {error}"));
+    Paired { app, log, hook_gate, drain_gate, close_gate }
+}
+
+/// Waits until `log` holds `event`, failing the test after [`PATIENCE`].
+async fn until_logged(log: &Log, event: &str) {
+    let deadline = Instant::now() + PATIENCE;
+    while !log.has(event) {
+        assert!(Instant::now() < deadline, "`{event}` was never logged: {:?}", log.events());
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
+/// Runs `close` on a clone of `handle` in a task of its own.
+fn close_elsewhere(handle: &AppHandle) -> tokio::task::JoinHandle<Result<ulo::Shutdown, ulo::ShutdownError>> {
+    let handle = handle.clone();
+    tokio::spawn(async move { handle.close(Signal::new("test")).await })
+}
+
+/// The servers' closes and drops so far, in order.
+fn touched(log: &Log) -> Vec<String> {
+    log.events().into_iter().filter(|e| e.starts_with("close ") || e.starts_with("drop ")).collect()
+}
+
+/// Neither server has closed or dropped yet.
+fn assert_untouched(log: &Log, path: &str) {
+    let touched = touched(log);
+    assert!(touched.is_empty(), "a server closed or dropped at {path}: {touched:?}");
+}
+
+/// Every server's `close` ran, in reverse bind order, before any server dropped; both servers
+/// dropped once; and the store dropped last, with the last handle.
+fn assert_closed_then_freed(log: &Log, path: &str) {
+    let events = log.events();
+    let closes: Vec<&str> = events.iter().filter(|e| e.starts_with("close ")).map(String::as_str).collect();
+    assert_eq!(closes, ["close b", "close a"], "not every server's `close` ran after {path}: {events:?}");
+    let first_drop = events.iter().position(|e| e.starts_with("drop ")).expect("no server dropped");
+    let last_close = events.iter().rposition(|e| e.starts_with("close ")).expect("no server closed");
+    assert!(last_close < first_drop, "a server dropped before every `close` ran after {path}: {events:?}");
+    for drop in ["drop a", "drop b"] {
+        assert_eq!(events.iter().filter(|e| *e == drop).count(), 1, "`{drop}` was not logged once after {path}: {events:?}");
+    }
+    assert_eq!(events.last().map(String::as_str), Some("store dropped"), "the store did not drop last after {path}: {events:?}");
+}
+
+/// The app's drop while a handle's `close` runs the shutdown in another task, inside the
+/// before-shutdown hook, leaves the servers to that close: every server's `close` runs, then the
+/// servers drop, then the store with the last handle.
+#[tokio::test]
+async fn an_app_dropped_before_a_running_close_s_close_step_leaves_it_every_server() {
+    let Paired { app, log, hook_gate, close_gate, .. } = paired(&["hook", "close"]).await;
+    let handle = app.handle();
+    let closing = close_elsewhere(&handle);
+    until_logged(&log, "before-shutdown").await;
+    assert_eq!(handle.phase(), Phase::Stopping, "the close was not in its before-shutdown stage");
+    drop(app);
+    assert_untouched(&log, "the app's drop");
+    hook_gate.open();
+    // `b`'s `close` waits at the gate, which holds the close step open while the test reads it.
+    until_logged(&log, "close b").await;
+    assert_eq!(touched(&log), ["close b"], "the close step did not wait on `b`'s `close`");
+    assert!(!log.has("store dropped"), "the store dropped while a server's `close` ran");
+    close_gate.open();
+    let outcome = tokio::time::timeout(PATIENCE, closing).await.expect("the close did not end").expect("the close task panicked");
+    outcome.expect("the close failed");
+    assert!(!log.has("store dropped"), "the store dropped while a handle was held");
+    drop(handle);
+    assert_closed_then_freed(&log, "a drop inside the before-shutdown hook");
+}
+
+/// The same, with the app dropped during the drain, both servers' `drain` waiting at its gate.
+#[tokio::test]
+async fn an_app_dropped_during_a_running_close_s_drain_leaves_it_every_server() {
+    let Paired { app, log, drain_gate, .. } = paired(&["drain"]).await;
+    let handle = app.handle();
+    let closing = close_elsewhere(&handle);
+    until_logged(&log, "drain a").await;
+    until_logged(&log, "drain b").await;
+    assert_eq!(handle.phase(), Phase::Draining, "the close was not in its drain");
+    drop(app);
+    assert_untouched(&log, "the app's drop");
+    drain_gate.open();
+    let outcome = tokio::time::timeout(PATIENCE, closing).await.expect("the close did not end").expect("the close task panicked");
+    outcome.expect("the close failed");
+    assert!(!log.has("store dropped"), "the store dropped while a handle was held");
+    drop(handle);
+    assert_closed_then_freed(&log, "a drop during the drain");
+}
+
+/// A handle's `close` the app's drop left the servers to, itself dropped inside the before-shutdown
+/// hook and never resumed, releases them as it drops: each server drops with its `close` not run,
+/// and the store drops with the last handle.
+#[tokio::test]
+async fn a_close_abandoned_after_the_app_s_drop_releases_the_servers() {
+    let Paired { app, log, .. } = paired(&["hook"]).await;
+    let handle = app.handle();
+    let closing = close_elsewhere(&handle);
+    until_logged(&log, "before-shutdown").await;
+    drop(app);
+    assert_untouched(&log, "the app's drop");
+    closing.abort();
+    let ended = tokio::time::timeout(PATIENCE, closing).await.expect("the aborted close did not end");
+    assert!(ended.is_err_and(|error| error.is_cancelled()), "the close was not abandoned");
+    let events = log.events();
+    for drop in ["drop a", "drop b"] {
+        assert_eq!(events.iter().filter(|e| *e == drop).count(), 1, "`{drop}` was not logged once after the abandoned close: {events:?}");
+    }
+    assert!(!events.iter().any(|e| e.starts_with("close ")), "a server's `close` ran after the abandoned close: {events:?}");
+    assert!(!log.has("store dropped"), "the store dropped while a handle was held");
+    drop(handle);
+    assert_eq!(log.events().last().map(String::as_str), Some("store dropped"), "the store outlived the last handle");
 }
