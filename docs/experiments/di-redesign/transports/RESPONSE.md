@@ -2392,3 +2392,39 @@ The alternative, servers holding a weak handle, would touch all five servers to 
 - **S5: accepted.** The release is justified by the leak alone, and F427 explains the NATS failures. If the suite still fails after F427's fix, that's a finding of its own.
 
 **Batch 39's departure: accepted.** A plain link whose load fails logs it at `warn` once and connects without the file. Refusing a link that needs no roots would break it on a host with no store, which a `scratch` image is. The cost is that an upgraded connection on that host fails as async-nats's own load does, stated in the documentation beside F423. F422's remaining case, the panic on an upgraded `nats://` link, shares F417's upstream fix, and stays open until that lands or the user decides to file it.
+
+## Sixty-sixth response: a server waits for its roots, TCP and UDP loops stop on drop, a live shutdown owns the release
+
+Received 2026-10-18, answering `divergences/race2b-tests41.md` and `race2b-tests42.md` (the `nats://` server connection hole, F428, the F426 residual case, the pending S-items). The user signed it off the same day; the answers build as test batches 43 (NATS), 44 (F428) and 45 (the shutdown flag).
+
+**1: a server's `listen` waits for the load, with a bound. A client skips the wait.** The reason the two sides differ is reconnects. async-nats reconnects with the options the connection was made with, so a server connection made before the load ends never gets the file, and every reconnect for the life of the app reads the store inline. A client doesn't reconnect that way: it ends its reply lane on a lost connection (decision 35) and the next call connects afresh through `Link::connect`, with new options and the file once it exists. A client that doesn't wait loses one connection's worth at most. A server that doesn't wait loses the whole app's life.
+
+The earlier ruling's "later connects and reconnects use the file" was wrong about the server's reconnects. Record that alongside decision 139's change.
+
+**The bound:**
+- The link gets a setting, `roots_timeout: Bound`, 30 s at `Default`. A zero is refused in `prepare` with the usual hint.
+- `listen` waits for the load under it, and a `tls://` client's first connect waits under it too.
+- If it expires on a `nats://` server, the server connects without the file and logs at `warn` that an upgraded connection will read the store on its own thread (F423's path).
+- If it expires on a `tls://` link, the link is refused `Misconfigured`, since without the file it cannot connect.
+- `Unbounded` waits for as long as the load takes.
+
+**The test:** a server whose loader blocks for longer than the boot budget, against a broker that requires TLS, then a forced reconnect. The planted per-connect load must stay at zero on both connections. A second test: a loader that outlasts `roots_timeout` gives the `warn` and a plain connection.
+
+**2 (F428): fix it. A link's loops stop when the link drops.** The sixty-fifth response's claim that listeners close with their sockets assumed every server's tasks die with the server, which decision 47 says of a `TaskSet`. TCP's and UDP's detached loops break it. Each loop is held through a handle that aborts on drop, a `TaskSet` or an `AbortOnDrop` like MQTT's (decision 82), so the socket goes when the link goes.
+
+Premise to check: do the broker links' server sides have the same shape, with a reply router or a read loop that is detached and keeps its connection after a drop? Any that do get the same fix, under this entry.
+
+**The test:** bind on port 0, drop the server without `close`, then:
+- a connection to the address is refused;
+- binding the same address succeeds.
+
+Run it on TCP, UDP, and every broker link that held such a loop.
+
+**3: changed. Use the flag, rather than documenting the residual.** A `close` that reports success while closing nothing passes on silence. The flag is small: the owner's `Drop` reads the shared state's phase, and if a shutdown is running, it leaves the release to that shutdown, whose last step already releases. The test: start `close` on a handle, drop the `App` before the close step, and require every server's `close` to run, then the store to be freed.
+
+**4: the S-items.**
+- **Batch 41 S2: accepted.** The provider check reads no file and does no I/O, so running it on the calling thread is fine, and once per link costs next to nothing. Claude Code to confirm that rustls's resolution does no I/O. If it does, it moves onto the blocking pool beside the load.
+- **Batch 41 S4: accepted.** A failed load is kept while any link holds it, since no retry mends a store within that window. Retrying once the last holder drops lets a process recover when the store is fixed, without a restart.
+- **Batch 42 S2:** changed, as point 3 above.
+- **Batch 39 S3, S4, S6 and S8** were answered in the sixty-fourth response: S3 changed to the loader seam, S4 accepted, S6 accepted as the production slot, S8 accepted and documented.
+- **The rest of batch 41 (S1, S3, S5–S12) and batch 42 (S1, S3–S5):** accepted as reported, on the strength of the user's note that these were the ones worth the designer's eye. Any among them that loosens a declared capability, changes a public signature, or departs from a §3 principle comes back to the designer on its own; do not fold it into this acceptance.
