@@ -282,7 +282,8 @@ Full output in the session scratchpad, `batch42/verify/`, with `summary.txt`; on
   `Err`-variant size on `wire`, `connect` and `listen` (`:228`, `:248`, `:279`), and a collapsible `if`
   at `crates/ulo/src/app/shared.rs:297`. None is on an added line.
 - **The workspace test,** `cargo test --workspace --no-fail-fast --locked`: exit 0, 1,310 passed,
-  0 failed, 141 ignored, over 205 lines starting `test result:`. It ran on the tree as it stood,
+  0 failed, 141 ignored, over 203 lines starting `test result:` (re-measured on the same tree: the 205 first written here
+  was a miscount, and batch 41's log has 203). It ran on the tree as it stood,
   batch 41's uncommitted changes to `crates/ulo-rpc-nats` included, so its counts mix the two
   batches; batch 40's were 1,300 and 141 over 203, and this batch adds five tests in binaries that
   already existed. The SHA-256 of each of this batch's five source files matched before and after

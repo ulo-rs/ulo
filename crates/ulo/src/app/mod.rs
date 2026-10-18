@@ -54,11 +54,11 @@ pub enum Bound {}
 /// mid-way. Each server then drops with its last other holder, and that drop is its only shutdown:
 /// its `close` does not run, and what only `close` ends, such as a task the server spawned and
 /// detached, keeps running. A drop while a `close` on a handle runs the shutdown elsewhere, before
-/// its close step, releases the servers too, and that close then closes none. The release holds
-/// the lock on the app's list of servers only to empty it and awaits nothing; a server's own drop
-/// runs on the thread dropping the app. An [`AppHandle`] kept past the drop keeps the app's shared
-/// state, its singletons among it, and no server: a `close` on it runs the shutdown's hooks and
-/// closes no transport.
+/// its close step, releases the servers too, and that close then drains and closes none. The
+/// release holds the lock on the app's list of servers only to empty it and awaits nothing; a
+/// server's own drop runs on the thread dropping the app. An [`AppHandle`] kept past the drop keeps
+/// the app's shared state, its singletons among it, and no server: a `close` on it runs the
+/// shutdown's hooks and closes no transport.
 pub struct App<S = Wired> {
     pub(crate) shared: Owner,
     /// Queued by `bind` on `Connected`, bound by `listen`.
@@ -371,6 +371,9 @@ impl App<Bound> {
 
     /// Serves until `signal` resolves or a `close` on any handle, whichever comes first, then
     /// runs the shutdown sequence and returns its outcome (§9.5).
+    ///
+    /// Dropping the returned future releases the servers without running their `close`; see
+    /// [`App`].
     ///
     /// Each transport's `Server::serve` is polled from here until the shutdown's outcome, so a
     /// transport keeps serving through the before-shutdown stage and the drain. One that fails

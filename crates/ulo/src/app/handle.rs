@@ -29,6 +29,10 @@ use crate::transport::server::mounted_parts;
 /// working while the app serves. A background loop holding one reads [`draining`](Self::draining)
 /// to stop pulling work when the transports stop accepting, and runs each unit of work through
 /// [`execute`](Self::execute) so the drain waits for it: the drain tracks executions, not tasks.
+///
+/// A handle kept past the `App` value's drop holds the app's shared state and no server: the drop
+/// released the servers, so a [`close`](Self::close) on it runs the shutdown's hooks and closes no
+/// transport. See [`App`](crate::App).
 #[derive(Clone)]
 pub struct AppHandle {
     pub(crate) shared: Arc<AppShared>,
@@ -68,6 +72,9 @@ impl AppHandle {
     /// One of shutdown's two triggers; ends `serve`. A `close` during a running shutdown starts
     /// nothing: it waits for the same shutdown, ignores its own signal and returns the same
     /// outcome.
+    ///
+    /// A `close` that runs after or during the `App` value's drop closes no transport: the drop
+    /// released the servers. See [`App`](crate::App).
     pub async fn close(&self, signal: Signal) -> Result<Shutdown, ShutdownError> {
         shutdown::close(&self.shared, signal).await
     }
