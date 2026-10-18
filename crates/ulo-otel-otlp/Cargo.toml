@@ -29,9 +29,10 @@ opentelemetry-http.workspace = true
 # `ring`: the provider the workspace's `rustls` entry is built with, handed to ureq explicitly.
 rustls.workspace = true
 # Pinned exactly in the workspace (N2): the explicit provider is set through
-# `TlsConfig::unversioned_rustls_crypto_provider`, outside ureq's semver guarantee. The webpki roots
-# are the choice made here; the area may take the platform verifier instead.
-ureq = { workspace = true, features = ["rustls-no-provider", "rustls-webpki-roots"] }
+# `TlsConfig::unversioned_rustls_crypto_provider`, outside ureq's semver guarantee. The platform
+# verifier supplies the roots, as the other links' TLS does, so a receiver behind a private CA that
+# the host trusts is reachable; it takes the provider handed to it and tokio is not in its tree.
+ureq = { workspace = true, features = ["rustls-no-provider", "platform-verifier"] }
 
 [lints]
 workspace = true

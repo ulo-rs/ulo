@@ -20,7 +20,9 @@ ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
 ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
 # The flush hook awaits a oneshot the flush thread completes; no runtime is involved.
 futures-channel.workspace = true
-opentelemetry.workspace = true
+# `trace`: `SpanContext`, `TraceState` and the ID types the source converts through. The SDK's
+# `trace` feature enables it too; naming it keeps the crate from leaning on that.
+opentelemetry = { workspace = true, features = ["trace"] }
 opentelemetry_sdk = { workspace = true, features = ["trace"] }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true

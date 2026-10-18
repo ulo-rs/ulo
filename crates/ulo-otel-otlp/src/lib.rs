@@ -9,16 +9,29 @@
 //! and the tree holds no tokio. The `reqwest-blocking` feature selects reqwest's blocking client
 //! instead, which runs tokio on a thread of its own and never touches the app's.
 //!
-//! `ureq`'s rustls client is built with an explicit crypto provider, since rustls's own resolution
-//! panics in a process that links two providers and installs neither. Where it cannot be built the
-//! exporter refuses at construction: "this process links more than one rustls crypto provider and
-//! installs none; install one with `CryptoProvider::install_default` before the app starts".
+//! `ureq`'s rustls client is built with an explicit crypto provider (`ring`, the one the workspace's
+//! rustls is built with) and never asks rustls to resolve one, which panics in a process that
+//! links two providers and installs neither. Roots come from the platform's verifier. The
+//! `reqwest-blocking` client keeps reqwest's own TLS behaviour.
+//!
+//! The options' `endpoint` is the receiver's base URL, as `OTEL_EXPORTER_OTLP_ENDPOINT` is, and
+//! `/v1/traces` is appended to it. With no endpoint the exporter reads the standard `OTEL_*`
+//! variables itself and otherwise sends to `http://localhost:4318/v1/traces`. A request that has
+//! not finished in ten seconds fails.
 
+#[cfg(not(feature = "reqwest-blocking"))]
 mod client;
 
-use opentelemetry_otlp::SpanExporter;
+use std::collections::HashMap;
+use std::str::FromStr;
+use std::time::Duration;
+
+use http::{HeaderName, HeaderValue};
+use opentelemetry_otlp::{Protocol, SpanExporter, WithExportConfig, WithHttpConfig};
 use ulo::BoxError;
 use ulo_otel::{Exporter, OtelOptions};
+
+const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// OTLP over HTTP with protobuf, the exporter's default protocol. Endpoint and headers come from
 /// the [`OtelOptions`] it is built with.
@@ -28,6 +41,7 @@ pub struct OtlpExporter {
 }
 
 impl OtlpExporter {
+    /// The exporter to hand to `Otel::new` when spans go to an OTLP receiver over HTTP.
     pub fn http() -> Self {
         OtlpExporter { _private: () }
     }
@@ -37,7 +51,53 @@ impl Exporter for OtlpExporter {
     type Span = SpanExporter;
 
     fn build(self, options: &OtelOptions) -> Result<SpanExporter, BoxError> {
-        let _ = options;
-        todo!()
+        let mut builder = SpanExporter::builder()
+            .with_http()
+            .with_protocol(Protocol::HttpBinary)
+            .with_timeout(TIMEOUT);
+
+        if let Some(endpoint) = options.endpoint.as_deref().filter(|e| !e.is_empty()) {
+            builder = builder.with_endpoint(signal_endpoint(endpoint));
+        }
+
+        if let Some(headers) = &options.headers {
+            builder = builder.with_headers(parse_headers(headers.expose())?);
+        }
+
+        #[cfg(not(feature = "reqwest-blocking"))]
+        {
+            builder = builder.with_http_client(client::UreqClient::new(TIMEOUT)?);
+        }
+
+        Ok(builder.build()?)
     }
+}
+
+/// The traces URL under a base endpoint; a programmatic endpoint is otherwise used by the exporter
+/// as the whole URL, where the environment variable's value is a base.
+fn signal_endpoint(base: &str) -> String {
+    format!("{}/v1/traces", base.trim_end_matches('/'))
+}
+
+/// `key=value,key=value`. A refusal names the entry's position and never its text: the values are
+/// credentials. Values are left percent-encoded; the exporter decodes them.
+fn parse_headers(text: &str) -> Result<HashMap<String, String>, BoxError> {
+    let mut headers = HashMap::new();
+    for (n, entry) in text.split(',').map(str::trim).enumerate() {
+        if entry.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = entry.split_once('=') else {
+            return Err(format!("OTLP header entry {} has no `=`", n + 1).into());
+        };
+        let (key, value) = (key.trim(), value.trim());
+        if HeaderName::from_str(key).is_err() {
+            return Err(format!("OTLP header entry {} has an invalid name", n + 1).into());
+        }
+        if HeaderValue::from_str(value).is_err() {
+            return Err(format!("OTLP header entry {} has an invalid value", n + 1).into());
+        }
+        headers.insert(key.to_owned(), value.to_owned());
+    }
+    Ok(headers)
 }
