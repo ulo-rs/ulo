@@ -502,7 +502,7 @@ All four facts, and the staging, are accepted:
 
 ## Fourth response: answers to QUESTIONS_2
 
-Received 2026-10-18, answering `QUESTIONS_2.md` (the probe results and the design's open holes). Sign-off: pending the user's word.
+Received 2026-10-18, answering `QUESTIONS_2.md` (the probe results and the design's open holes). The user signed it off 2026-10-19.
 
 ### What the probes overturned
 
