@@ -594,3 +594,63 @@ Decision 133's condition, a runtime-free or runtime-neutral crate needing blocki
 - smol features in an application's tree:
   - SQLx with both runtime features uses tokio wherever a tokio context exists, and the name check guarantees one on every path that runs a query. So `runtime-smol` enabled elsewhere is harmless. A test in the workspace builds with it enabled to show that.
   - `ulo-db-redis` calls `prefer_tokio()` once, when the module is built. It is process-wide, but it only decides which runtime redis-rs uses when both of its runtime features are compiled in, and an app already verified to be on tokio needs tokio. The documentation says so, and a test builds with `smol-comp` enabled beside `tokio-comp`.
+
+## Fifth response: answers to QUESTIONS_3
+
+Received 2026-10-19, answering `QUESTIONS_3.md` (rulings that did not hold as applied, and the signatures the spine freezes). Sign-off: pending the user's word.
+
+### Rulings that do not hold as written
+
+**R1: the ring feature, with the platform's roots.** The H6 premise was wrong: ring is the workspace's provider. ring with platform roots adds no second provider and keeps every TLS stack in the workspace on one trust source. aws-lc-rs with webpki roots would bring both the second provider F422 is about and a bundled trust store that diverges from every other link's.
+
+One consequence to record with it: rumqttc already brings aws-lc-rs, so an application linking MQTT has both providers today, whichever SQLx feature is chosen. That is MQTT's limit, not a reason to add a third case.
+
+**R2: pre-scan saphyr's event stream, the parser layer under its loader, and bound the expansion before anything loads. If the event API can't support the count, refuse aliases.** Anchors are common in hand-written YAML configuration, so refusing all aliases outright costs real users.
+
+The scan counts the nodes inside each anchored node as its events arrive, adds that count at every alias, and refuses once the total passes 100,000 nodes, with a problem naming the alias's line. That's far beyond any configuration file and far below a memory problem. It's a fixed limit with no setting, as the 1 MiB deadline buffer is.
+
+Premise to check: whether the events carry the anchor IDs and positions the count needs. If they don't, the fallback is refusing every alias, with a problem naming the line, the same shape as merge keys. YAML ships last of the formats either way.
+
+**R3: `ulo-config`'s error type renders the kind of the value found, never the value, for every type and value problem. The one remaining case is stated at the type.** serde's `ContentDeserializer`, the buffered content behind `flatten` and `untagged`, builds its errors through the deserializer's own error type, through `invalid_type` and `invalid_value`. `ulo-config` owns that type, so it decides what those problems print: "expected an integer, found a string", never the string. That covers buffered content too, where no secret path is known.
+
+What it cannot cover is a leaf type's own `Error::custom` message, which might quote its input. So the restriction is stated on `Secret`'s `Deserialize` documentation and in `ulo-config`'s: a `Secret` under `flatten` or `untagged` is registered, through the collector, but a leaf type's own error message inside it is printed as that type wrote it. A second pass over the collected values can't help: a value that failed was never collected.
+
+**R4: changed. Supply a `SpawnBlocking` that enters the given runtime, as the probe recommends.** The name check proves the app's runtime is tokio's. It doesn't prove the thread polling a query has tokio's context, and a hidden fallback runtime is a runtime found rather than given.
+- `create` has already checked the name. It captures the given runtime's handle once, from a task on that runtime, `spawn_with(&rt, async { Handle::current() })`, which reads the runtime the task was given and finds nothing ambiently.
+- Each connection is built with `with_runtime(conn, Given(handle.clone()))`.
+- `Given::spawn_blocking` calls `handle.spawn_blocking(..)`.
+
+Diesel's migration uses the same `Given` (H2).
+
+**R5: accepted. The stage-2 test decides.** If a `PoolConnection` dropped off tokio's context still spawns on smol's global executor, that comes back as an S-item with the measured behaviour, and H6's ruling is revised then. The test builds with `runtime-smol` enabled beside `runtime-tokio`, drops a connection on a thread with no tokio context, and asserts no task ran on smol's executor.
+
+### Open signatures the spine freezes
+
+**S1: one bound, and one retry loop per store, not two in series.**
+- A store whose `create` doesn't connect: `.ready(..)` is the policy, as designed. Its retries and backoff, and `.timeout(connect_within)`.
+- A store whose `create` connects: the `create` loop is the policy, under `connect_within`, stopping on `Permanent`. `.ready(..)` then runs one confirming ping, `.retries(0)` with the default attempt bound. The construction bound is set to `connect_within` through `.timeout(..)` on the binding handle, so `construct_timeout` can't cut the loop short.
+
+Passing the remaining time from the loop to `.ready` isn't possible anyway: `.ready`'s bound is written at registration, as a fixed value. This shape needs none of that: each store has exactly one loop, so the one-copy rule holds per store, and the total bound is one number.
+
+**S2: `CREATE_CONNECTS` is true for the whole Mongo store.** It stays a `const`. For a plain `mongodb://` URL, `create` can't fail transiently, so the loop's first attempt succeeds and it costs nothing. For `+srv`, a DNS failure is retried under `connect_within`, which is what requirement 14 asks.
+
+**S3: call it once per process, under a guard of our own, and act on what redis-rs reports.**
+- The guard. A process-wide `OnceLock` in `ulo-db-redis`, so two Redis modules never conflict with each other.
+- If redis-rs refuses because another crate set a preference first: read the current preference, if redis-rs exposes a way to. Tokio means continue. Anything else is a refusal at `connect`, `Permanent`, naming the conflict.
+- If there's no way to read it: log a `warn` naming the conflict and continue. A non-tokio preference then fails loudly at the first query, and the `warn` says why. Refusing a harmless double setting we can't distinguish from a harmful one would break working applications.
+
+Premise to check: whether redis-rs exposes the preference.
+
+**S4: confirmed.** `GrpcHealth` is the only path to the reporter. It doesn't expose `HealthReporter`, and every write goes through its stored copy: the server's, the bridge's and the application's `set_named`. The copy is the truth per name, and a write compares against it before reaching the reporter.
+
+**S5:**
+- Raw text: confirmed. `TraceContext` keeps both headers as received, with the parsed fields beside them, and a forward writes the raw text.
+- Origin: accepted. A `TraceOrigin` marker, `Received` or `Originated`, inside `TraceContext`. `ExecOptions::trace` sets `Received`, `set_trace` from a `TraceSource` sets `Originated`, and the client's `tracestate` rule reads it.
+- Resolution: accepted. `App` resolves `Option<Dep<dyn TraceSource>>` once at `connect`, after the singletons are built. `AppHandle::trace_source() -> Option<&Arc<dyn TraceSource>>` is a plain accessor, read as `timer()` is.
+- A standalone execution: in `execute`, and only when the caller hands it a span. `ExecOptions::span(tracing::Span)` makes `execute` call `TraceSource::start(&span, inbound)` and record the result through `set_trace`, so a background job is traced when its author asks for it. Without a span, the execution carries its inbound context as `Received`, or none. `Execution::open` stays untouched, since transports already call the hook through `span::call`.
+
+### For the record
+
+- N1: accepted. 1.89 on `ulo-db-diesel` itself, for `File::lock`. The earlier "Diesel's own floor" was wrong, since Diesel's floors are lower.
+- N2: accepted, including the exact pin. A setter outside ureq's semver guarantee is what an exact pin is for, and bumping it is a deliberate change with its own test.
+- N3: accepted. `K = 3490428366386280370`. Not being a multiple of SQLx's multiplier is the right argument: no database name can make the two keys meet.
