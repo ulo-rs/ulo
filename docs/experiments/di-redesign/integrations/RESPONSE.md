@@ -499,3 +499,98 @@ All four facts, and the staging, are accepted:
   5. trace propagation and `ulo-otel`.
 
   The probes come first, as proposed, with two added to the list: whether SeaORM can create a connection without connecting, and whether a tracing-opentelemetry layer can set a span's parent at creation from a recorded field.
+
+## Fourth response: answers to QUESTIONS_2
+
+Received 2026-10-18, answering `QUESTIONS_2.md` (the probe results and the design's open holes). Sign-off: pending the user's word.
+
+### What the probes overturned
+
+**P1: confirmed.** `ulo-db-sqlx` and `ulo-db-seaorm` state 1.94, as `ulo-graphql-async-graphql` and `ulo-http-salvo` state theirs. `ulo-db` stays at 1.88 and names no lock primitive (H3). The SQLite sidecar lock, `File::lock`, stable since 1.89, belongs to the store crates that speak SQLite, which sit at 1.94 anyway, or at Diesel's own floor where higher.
+
+**P2: confirmed, with one addition to the core's report.** A second SQLx is a different `TypeId`, so it fails at `wire()` as a missing binding. Both `PgPool`s have the same path, so the report as it stands would print two identical names and leave the reader guessing. The core's §10.1 step 3 already names both spellings when a missing key matches a bound one up to `+ Send + Sync`. Extend it: when a missing key's full type name equals a bound key's exactly and the `TypeId`s differ, the help reads "the same type from two versions of its crate; `cargo tree -d` lists them". The CI `cargo tree -d` job guards the workspace, and the report is what guards a user's application.
+
+**P3: the rule, confirmed. The SeaORM store parses with SQLx's own option parser**, which SeaORM's SQL drivers use underneath, so no parser is added, and the scheme check is shared with `ulo-db-sqlx`. Three measures together:
+1. Registration. The options hold the URL as a `Secret<String>`, and the module registers both the whole URL and its password component with `m.secret(..)`. A library error that prints the URL, or the password alone, is then scrubbed wherever the core stores it, so SeaORM's `connect` errors need no special case.
+2. `Debug`. The options type's `Debug` writes the URL redacted, and no library's options value is ever formatted.
+3. The scheme. `validate` checks it itself, so `notascheme://` is refused there.
+
+**P4: `saphyr`'s `MarkedYaml` into the origin tree, behind the `yaml` feature, which ships after TOML and JSON.**
+- Anchors and aliases are supported once a probe shows the expansion is bounded. Without a bound, an alias bomb is a memory exhaustion at startup. If `saphyr` has no bound, the conversion into the tree enforces one, and passing it is a problem naming the line.
+- Merge keys (`<<`) are YAML 1.1, refused as a problem naming the line, not silently merged.
+- Scalars read by the YAML 1.2 core schema. `yes` given to a `bool` is a type problem, which reports itself.
+
+**P5: confirmed: our own parser.**
+
+| Form | Rule |
+| --- | --- |
+| a line | `KEY=VALUE`, with an optional `export ` prefix |
+| single quotes | literal |
+| double quotes | `\n`, `\"` and `\\` as escapes |
+| comments | `#` at the start of a line, or after whitespace in an unquoted value |
+| expansion | none |
+| multi-line values | none |
+
+Every problem carries a line number. A key appearing twice in one file is a problem naming both lines, since within a single file that is almost always a mistake. Layering between files is unaffected.
+
+**P6: both measures together.**
+- The collector. `Secret::deserialize` records its value into a collector `ulo-config` installs around each deserialisation. The deserialisation is synchronous, so a scoped thread-local is sound for the length of the call, and the collector catches `flatten` and `untagged`, where serde's buffered content loses the newtype's name. The name-based path keeps giving origins where it works; the collector exists for completeness of registration.
+- Problem text. A problem under a secret's path renders from its path and kind alone, never the value found.
+
+With both, no secret goes unregistered, and none appears in a problem.
+
+**P7: accepted as a stated limit.** serde stops a struct's pass at the first error raised inside a leaf type's own `Deserialize`, and nothing outside serde can resume it. Each section deserialises on its own, so other sections still report their problems. The design states it: at most one leaf-type error per section, reported with its path and origin.
+
+**P8: ship `ureq` by default, with `reqwest-blocking` as an opt-in feature.** `runtime-levels.txt` then reads `ulo-otel-otlp` as runtime-free at default features, plus a tokio-bound entry with `--features reqwest-blocking`. A crate that can be tokio-free should be.
+
+Premise to check: `ureq`'s rustls client is built with an explicit provider. If it falls back to rustls's own resolution, it hits F422's ambiguity when two providers are linked. If it can't be built with an explicit provider, the adapter refuses at construction with S7's message.
+
+**P9: document the deviation and file upstream.** A `Health` service of the bridge's own would be a second implementation of the protocol beside tonic-health's, which §3.7's one-copy rule argues against for a case no shipped client hits: Kubernetes probes use `Check`, not `Watch`.
+- The NOT_FOUND on an unregistered service's `Watch` is documented as tonic-health's behaviour.
+- Duplicate messages are prevented on our side: the bridge writes only on a change, and so do `ulo-grpc`'s own writes at `bind` and `drain`, which compare with the stored status first.
+
+**P10: reworded.** Kubernetes marks a pod's endpoints terminating at its deletion timestamp, before `preStop` and before SIGTERM. So the readiness flip is not what removes the endpoint there. What the application must allow for is the time kube-proxy and the load balancers take to see the change. A `preStop` sleep gives that time if the pod has one, and `.lag` gives it if not, so the guidance becomes: with a `preStop` sleep, leave `lag` at zero; without one, set it to a few seconds. The default stays zero.
+
+### Open design holes
+
+**H1: Redis builds once with no library retry, and `ulo-db` owns the retrying for stores that cannot build without connecting.** `ConnectionManager` cannot be built without connecting, so with no change, a Redis that is unreachable at startup fails at construction with no retry, which breaks requirement 14.
+- `Store` gains `const CREATE_CONNECTS: bool`.
+- For such a store, `ulo-db` runs `create` under the same retries, backoff and total bound it hands to `.ready(..)`. The loop is written once, in `ulo-db`, and stops on `Permanent` exactly as `.ready` does under E4.
+- `.ready` then only pings.
+- Redis's `create` sets `set_number_of_retries(0)`, so the library doesn't retry inside our loop. That is what made a wrong password take 9.5 s.
+
+Diesel's `.lazy()`: the earlier table was wrong. deadpool's `build` connects nothing, so Diesel offers `.lazy()`.
+
+**H2: no change to `Runtime`. `ulo-db-diesel`'s blocking path is tokio's own, reached from a task on the given runtime.**
+- Migrations: the module has already checked that `Runtime::name()` is `"tokio"`. It then runs `spawn_with(&runtime, async { tokio::task::spawn_blocking(migrate).await })`. That's no ambient lookup: the task runs on the given runtime, which is verified as tokio's, and its `spawn_blocking` lands on that runtime's blocking pool.
+- The SQLite wrapper keeps diesel-async's default `SpawnBlocking`, tokio's, through `custom_setup`. Its queries run in user handlers on the app's tokio workers, which the name check guarantees.
+
+Decision 133's condition, a runtime-free or runtime-neutral crate needing blocking work, still isn't met: `ulo-db-diesel` is tokio-bound.
+
+**H3: confirmed. `ulo-db` owns the protocol, and each store supplies the connection and the primitive.**
+- `ulo-db`: the key, the order, the bound and the error.
+- Each store: the dedicated connection and the lock primitive.
+
+| Store | Primitive |
+| --- | --- |
+| Postgres | `pg_advisory_lock(K)` on a connection held for the migration. Advisory locks are scoped to the current database, so one constant serves every database. |
+| MySQL | `GET_LOCK('ulo-db.migrate.' + database, timeout)`. A name longer than 64 characters takes a hash of the database name in place of the name. |
+| SQLite | an OS lock on `<file>.ulo-migrate.lock` |
+
+`K` is the first eight bytes of the SHA-256 of `"ulo-db/migrations"`, read as a big-endian `i64` and written into the design as the literal. It differs from SQLx's own migration key, so the two nest, ours outside, and never collide.
+
+**H4:**
+- An invalid incoming `traceparent` in pass-through gives no context. Only a participant can originate IDs, and in pass-through nothing does. The next hop that participates starts a trace.
+- `tracestate` is merged only when the context is originated or modified here, that is, when a `TraceSource` is bound. In pass-through, both headers are forwarded exactly as received, as §3.4 requires, and a caller's `tracestate` set with `.header` on a call that forwards is refused `reserved_header`, its message naming that adding a vendor entry needs an exporter.
+- Level 1. When a context originates here, only the sampled flag is written. In pass-through the flags are forwarded unchanged, `random` (0x02) included, since forwarding unchanged is the rule there. Level 2 waits until it is a Recommendation.
+- The correction is accepted: §3.5 carries the mutation rules.
+
+**H5: confirmed. `TraceSource` is a core hook, called inside `span::call` between creating the span and first entering it.** One addition the order needs: each transport extracts the incoming context before `Execution::open` and passes it in `ExecOptions::trace`. `span::call` then calls `TraceSource::start(&span, inbound)`, which answers the execution's own context, and that is written through `Execution::set_trace`. Like `route_to`, it can be called once, by the holder only, before `dispatch`. With no source bound, the inbound context stays as it is. `ulo-otel` implements the hook with `OpenTelemetrySpanExt::set_parent`.
+
+**H6:**
+- Mongo: `ulo-db-mongodb`, as on disk. The convention is `ulo-<role>-<library>` and the library is `mongodb`, so the design text is what changes.
+- MySQL: `ulo-db-sqlx`'s TLS feature is on by default and uses aws-lc-rs, the provider the rest of the workspace uses, so a second provider isn't linked into the F422 ambiguity. `mysql-rsa` isn't enabled: with TLS, caching_sha2's full authentication works without RSA key exchange. Premise to check: which SQLx 0.9 feature gives aws-lc-rs with the platform's roots. If none does, use aws-lc-rs with webpki roots, and document it.
+- `mongodb+srv`: `validate` checks the scheme and a host and does no lookup. The SRV lookup happens in `create`, on the app's runtime, through `spawn_with`.
+- smol features in an application's tree:
+  - SQLx with both runtime features uses tokio wherever a tokio context exists, and the name check guarantees one on every path that runs a query. So `runtime-smol` enabled elsewhere is harmless. A test in the workspace builds with it enabled to show that.
+  - `ulo-db-redis` calls `prefer_tokio()` once, when the module is built. It is process-wide, but it only decides which runtime redis-rs uses when both of its runtime features are compiled in, and an app already verified to be on tokio needs tokio. The documentation says so, and a test builds with `smol-comp` enabled beside `tokio-comp`.
