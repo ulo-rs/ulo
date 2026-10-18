@@ -408,19 +408,27 @@ fn mismatch(arrived: Arrived, route: &Route, pattern: &str) -> Option<String> {
 /// deadline passed otherwise; and left unsettled when the call was cancelled for another reason,
 /// so a broker redelivers it.
 fn settle_event(shared: &Shared, pattern: &str, exec: &ExecutionRef, outcome: Outcome, ack: Ack) {
+    // Called from the call's task, which runs instrumented with the call's span, so the current
+    // span is the event's consumer span.
+    let call_span = Span::current();
     match outcome {
         Outcome::Done(Ok(_)) | Outcome::Expired(Some(Ok(_))) => ack.ack(),
         Outcome::Done(Err(err)) => {
             let error = render(err, exec);
+            trace::record_failure(&call_span, error.kind);
             tracing::warn!(pattern, link = shared.link, kind = %error.kind, message = %error.message, "an event's handler failed; the event was rejected");
             ack.reject();
         }
         Outcome::Expired(Some(Err(err))) => {
             let error = body_of(&CallError::from_boxed(err));
+            trace::record_failure(&call_span, error.kind);
             tracing::warn!(pattern, link = shared.link, kind = %error.kind, message = %error.message, "an event's deadline passed; the event was rejected");
             ack.reject();
         }
-        Outcome::Expired(None) => ack.reject(),
+        Outcome::Expired(None) => {
+            trace::record_failure(&call_span, ErrorKind::Timeout);
+            ack.reject();
+        }
         Outcome::Cancelled(_) => {}
     }
 }
@@ -560,6 +568,12 @@ async fn cancelled(reply: &ReplyPath, exec: &ExecutionRef, id: u64, reason: Opti
 /// the second is the server's own code failing and is logged at `error`. Any other failure means
 /// the caller is gone, and the call is cancelled `Disconnected`.
 async fn send(reply: &ReplyPath, exec: &ExecutionRef, id: u64, frame: Frame) -> bool {
+    // Every caller runs in the call's task, instrumented with the call's span, so the current span
+    // is the call's. Every failure a caller is told of is an `err` frame sent here.
+    let call_span = Span::current();
+    if let Frame::Err { error, .. } = &frame {
+        trace::record_failure(&call_span, error.kind);
+    }
     match reply.send(frame).await {
         Ok(()) => true,
         Err(err) if err.is::<FrameTooLarge>() || err.is::<FrameUnencodable>() => {
@@ -570,6 +584,7 @@ async fn send(reply: &ReplyPath, exec: &ExecutionRef, id: u64, frame: Frame) -> 
                 "the reply is larger than the link carries"
             };
             let error = ErrorBody::new(ErrorKind::Internal, message, Details::new());
+            trace::record_failure(&call_span, error.kind);
             if reply.send(Frame::Err { id, error }).await.is_err() {
                 exec.cancel_with(CancelReason::Disconnected);
             }

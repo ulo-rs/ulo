@@ -30,7 +30,7 @@ use http::header::{CONNECTION, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET
 use http::request::Parts;
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
 use serde::{Deserialize, Serialize};
-use tracing::Instrument;
+use tracing::{Instrument, Span};
 use ulo::{
     AppHandle, BoxError, BoxFuture, CancelReason, Closed, DrainToken, ExecOptions, Execution, ExecutionRef, LateOutcome,
     ModuleRef, MountedHandler, Runtime, Spawn, TaskHandle, Timer, TraceContext, TraceMode, Transport,
@@ -882,10 +882,11 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
             }
         }
     };
-    let outcome = ulo::dispatch(connect, &handle, &cx, call).instrument(call_span).await;
+    let outcome = ulo::dispatch(connect, &handle, &cx, call).instrument(call_span.clone()).await;
     let slot = held.lock().unwrap_or_else(PoisonError::into_inner).take();
     if full.load(Ordering::Acquire) {
         accept.hub.unregister(id);
+        trace::record_failure(&call_span, ErrorKind::Unavailable);
         return Connected::Full;
     }
     let reply = outcome.unwrap_or_else(|err| ConnectReply::Refused(ConnectRefused::of_error(err)));
@@ -895,6 +896,7 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
         ConnectReply::Admitted => match slot.or_else(|| Slot::acquire(gateway)) {
             None => {
                 accept.hub.unregister(id);
+                trace::record_failure(&call_span, ErrorKind::Unavailable);
                 return Connected::Full;
             }
             Some(slot) => match &gateway.handler.messages {
@@ -911,6 +913,7 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
         ConnectReply::Refused(refused) => refused,
     };
     accept.hub.unregister(id);
+    trace::record_refusal(&call_span, &refused);
     Connected::Refused(refused)
 }
 
@@ -1445,7 +1448,9 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
     flight.answer_hold.before_queueing(&name).await;
     match outcome {
         Err(err) => {
-            let _ = outbound.push(envelope::error(codec, id.as_ref(), &CallError::from_boxed(err)));
+            let error = CallError::from_boxed(err);
+            trace::record_failure(&call_span, error.kind());
+            let _ = outbound.push(envelope::error(codec, id.as_ref(), &error));
         }
         Ok(Reply::None) => {
             if id.is_some() {
@@ -1458,6 +1463,7 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
                     Ok(message) => message,
                     Err(error) => {
                         tracing::error!(%error, event = %name, "a handler's reply frame does not match its gateway's codec");
+                        trace::record_failure(&call_span, ErrorKind::Internal);
                         envelope::error(codec, id.as_ref(), &CallError::new(ErrorKind::Internal, "internal error"))
                     }
                 };
@@ -1507,6 +1513,7 @@ async fn pump(
                 }
                 Err(error) => {
                     tracing::error!(%error, "a streamed reply frame does not match its gateway's codec");
+                    trace::record_failure(&Span::current(), ErrorKind::Internal);
                     envelope::error(codec, id, &CallError::new(ErrorKind::Internal, "internal error"))
                 }
             },
@@ -1526,19 +1533,27 @@ async fn late(
     id: Option<&MessageId>,
     codec: Codec,
 ) -> Message {
+    // `pump` runs instrumented with the message's span, so the current span is the message's.
+    let call_span = Span::current();
     let original = CallError::from_boxed(err);
     let Some(handler) = handler else {
+        trace::record_failure(&call_span, original.kind());
         return envelope::error(codec, id, &original);
     };
     let summary = original.summary();
     match ulo::dispatch_late(handler, exec, cx, Box::new(original)).await {
-        LateOutcome::Render(reshaped) => envelope::error(codec, id, &CallError::from_boxed(reshaped)),
+        LateOutcome::Render(reshaped) => {
+            let reshaped = CallError::from_boxed(reshaped);
+            trace::record_failure(&call_span, reshaped.kind());
+            envelope::error(codec, id, &reshaped)
+        }
         LateOutcome::End => envelope::complete(codec, id),
         _ => {
             tracing::warn!(
                 "an error handler answered `Ok` to a streamed item's error; the stream ends with the original error, \
                  since a late answer cannot replace it"
             );
+            trace::record_failure(&call_span, summary.kind());
             envelope::error(codec, id, &summary)
         }
     }

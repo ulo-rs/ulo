@@ -196,6 +196,7 @@ impl ServiceInner {
         }
         let status = response.status();
         call_span.record(span::HTTP_RESPONSE_STATUS_CODE, status.as_u16());
+        trace::record_status(&call_span, status);
         // A body the backend never writes is dropped unread, which is not the peer leaving.
         let unwritten = method == Method::HEAD || forbids_body(status);
         let app = self.app.clone();

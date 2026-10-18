@@ -527,6 +527,7 @@ fn call_span(app: &AppHandle, exec: &Execution, path: &str) -> Span {
 
 fn record_status(call_span: &Span, code: Code) {
     call_span.record(span::RPC_GRPC_STATUS_CODE, i32::from(code));
+    trace::record_status(call_span, code);
 }
 
 /// `users.v1.UserService` for the path `/users.v1.UserService/GetUser`.
