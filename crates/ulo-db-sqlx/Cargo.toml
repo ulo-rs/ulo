@@ -29,6 +29,8 @@ ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.1" }
 # `ulo-db` guarantees a tokio context on every path that runs a query.
 sqlx = { workspace = true, features = ["runtime-tokio", "migrate"] }
 serde = { workspace = true, features = ["derive"] }
+# The SQLite migration lock waits on a thread of its own and answers through a oneshot.
+futures-channel.workspace = true
 tracing.workspace = true
 
 [lints]
