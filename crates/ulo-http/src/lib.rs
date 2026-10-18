@@ -36,6 +36,7 @@ mod server;
 mod service;
 mod sse;
 mod tower_bridge;
+mod trace;
 mod transport;
 mod upgrade;
 

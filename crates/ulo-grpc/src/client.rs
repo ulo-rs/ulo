@@ -101,8 +101,10 @@ impl ClientTls {
     }
 }
 
-/// `request` with `grpc-timeout` set from `exec`'s remaining deadline. There is no ambient
-/// execution, so nothing forwards a deadline on its own.
+/// `request` with `grpc-timeout` set from `exec`'s remaining deadline and `exec`'s trace context
+/// written as `traceparent` and `tracestate` (integrations §6.2, I6), the context written whether
+/// or not the execution has a deadline. There is no ambient execution, so nothing forwards a
+/// deadline or a context on its own.
 ///
 /// ```ignore
 /// let user = users.get_user(ulo_grpc::outgoing(&exec, tonic::Request::new(query))?).await?;
@@ -117,7 +119,10 @@ impl ClientTls {
 /// The remaining time is read here, before the request reaches the client's `Channel`, and a
 /// `Channel` connects lazily, driven by the request it holds: on a new or re-established
 /// connection the callee is given up to the connect's length beyond the caller's deadline.
-pub fn outgoing<T>(exec: &ExecutionRef, request: tonic::Request<T>) -> Result<tonic::Request<T>, tonic::Status> {
+pub fn outgoing<T>(exec: &ExecutionRef, mut request: tonic::Request<T>) -> Result<tonic::Request<T>, tonic::Status> {
+    if let Some(context) = exec.trace() {
+        crate::trace::inject(context, request.metadata_mut());
+    }
     let Some(deadline) = exec.deadline() else { return Ok(request) };
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now().into_std());
     if remaining.is_zero() {

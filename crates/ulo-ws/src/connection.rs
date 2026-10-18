@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::panic::AssertUnwindSafe;
 use std::pin::{Pin, pin};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::task::{Context, Poll};
 
 use async_tungstenite::WebSocketStream;
@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use tracing::Instrument;
 use ulo::{
     AppHandle, BoxError, BoxFuture, CancelReason, Closed, DrainToken, ExecOptions, Execution, ExecutionRef, LateOutcome,
-    ModuleRef, MountedHandler, Runtime, Spawn, TaskHandle, Timer, Transport,
+    ModuleRef, MountedHandler, Runtime, Spawn, TaskHandle, Timer, TraceContext, TraceMode, Transport,
 };
 use ulo_transport::{CallError, ErrorKind, TaskSet, Tracked, span};
 use ulo_transport::__private::Watch;
@@ -49,6 +49,7 @@ use crate::gateway::{
 use crate::rooms::{BroadcastError, Hub};
 use crate::session::SessionHandle;
 use crate::table::{AnswerHold, MessagesRead};
+use crate::trace;
 use crate::transport::{ConnectCx, ConnectInner, ConnectReply, ConnectionInfo, CxInner, NoHandler, Reply, UpgradeHead, Ws, WsConnect, WsCx};
 
 /// A connection's id, unique across every process sharing a broadcast adapter: the process's
@@ -91,6 +92,10 @@ pub(crate) struct ConnInner {
     pub(crate) app: AppHandle,
     pub(crate) timer: Arc<dyn Timer>,
     pub(crate) runtime: Arc<dyn Runtime>,
+    /// The connect execution's trace context, its own once a `TraceSource` answered, the one the
+    /// handshake carried otherwise: the parent of every execution the connection opens after it
+    /// (integrations §6.2). Set once, as the connect phase's span is created.
+    pub(crate) trace: OnceLock<TraceContext>,
 }
 
 impl Connection {
@@ -140,7 +145,7 @@ impl Connection {
     /// unit of work in it, a graphql-transport-ws `subscribe` for example, and cancels it with
     /// `cancel_with(CancelReason::ClientCancelled)`. Refused once the app's drain has begun.
     pub fn open_execution(&self) -> Result<Execution, Closed> {
-        let exec = Execution::open(self.inner.gateway.connect.module(), ExecOptions::new())?;
+        let exec = Execution::open(self.inner.gateway.connect.module(), self.exec_options())?;
         self.seed(&exec);
         Ok(exec)
     }
@@ -169,6 +174,16 @@ impl Connection {
 
     pub(crate) fn app(&self) -> &AppHandle {
         &self.inner.app
+    }
+
+    /// The options of an execution the connection opens after its connect phase: the connect
+    /// execution's trace context as its inbound context, so each message's span is a child of
+    /// the connection's.
+    pub(crate) fn exec_options(&self) -> ExecOptions {
+        match self.inner.trace.get() {
+            Some(ctx) => ExecOptions::new().trace(ctx.clone()),
+            None => ExecOptions::new(),
+        }
     }
 
     /// The connection's three inputs, seeded into `exec`.
@@ -795,7 +810,15 @@ enum Connected {
 async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, protocol: Option<Arc<str>>) -> Connected {
     let gateway = &accept.gateway;
     let connect = &gateway.connect;
-    let Ok(exec) = Execution::open(connect.module(), ExecOptions::new()) else {
+    let mut opts = ExecOptions::new();
+    // A `tracestate` with no `traceparent` is discarded (W3C Trace Context §4.2).
+    if accept.app.trace_mode() == TraceMode::On
+        && head.headers.contains_key(trace::TRACEPARENT)
+        && let Some(ctx) = trace::extract(&head.headers)
+    {
+        opts = opts.trace(ctx);
+    }
+    let Ok(exec) = Execution::open(connect.module(), opts) else {
         return Connected::Refused(ConnectRefused { close_code: 1001, reason: "the server is shutting down".to_owned(), kind: None });
     };
     let id = accept.hub.next_id();
@@ -829,13 +852,17 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
             app: accept.app.clone(),
             timer: Arc::clone(&accept.runtime) as Arc<dyn Timer>,
             runtime: Arc::clone(&accept.runtime),
+            trace: OnceLock::new(),
         }),
     };
     accept.hub.register(id, Arc::clone(gateway), outbound);
     let handle = exec.handle();
     let cx = ConnectCx { inner: Arc::new(ConnectInner { exec: handle.clone(), conn: conn.clone() }) };
     let handler_name = format!("{}::connect", gateway.controller);
-    let call_span = span::call(<WsConnect as Transport>::KEY, "ws.connect", Some(&handler_name));
+    let call_span = span::call(&accept.app, &exec, span::Kind::Server, <WsConnect as Transport>::KEY, "ws.connect", Some(&handler_name));
+    if let Some(ctx) = exec.trace() {
+        let _ = conn.inner.trace.set(ctx.clone());
+    }
     call_span.record(span::URL_PATH, &*gateway.path);
     let admit = Arc::clone(&gateway.handler.admit);
     let held: Arc<Mutex<Option<Slot>>> = Arc::default();
@@ -1388,7 +1415,7 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
         Some((mounted, _)) => mounted.module().clone(),
         None => gateway.connect.module().clone(),
     };
-    let Ok(exec) = Execution::open(&module, ExecOptions::new()) else {
+    let Ok(exec) = Execution::open(&module, conn.exec_options()) else {
         let error = CallError::new(ErrorKind::Unavailable, "the server is shutting down");
         let _ = outbound.push(envelope::error(codec, id.as_ref(), &error));
         return;
@@ -1398,7 +1425,7 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
     let call = flight.register(id.clone(), handle.clone());
     let cx = WsCx { inner: Arc::new(CxInner { exec: handle.clone(), conn: conn.clone(), event: name.clone(), id: id.clone(), data }) };
     let handler_name = event.as_ref().map(|(mounted, _)| format!("{}::{}", gateway.controller, mounted.name()));
-    let call_span = span::call(<Ws as Transport>::KEY, &name, handler_name.as_deref());
+    let call_span = span::call(conn.app(), &exec, span::Kind::Server, <Ws as Transport>::KEY, &name, handler_name.as_deref());
     call_span.record(span::WS_EVENT, name.as_str());
     let outcome = match &event {
         Some((mounted, call)) => {
@@ -1524,11 +1551,11 @@ async fn disconnect(conn: &Connection, why: DisconnectReason, accept: &Accept) {
     let gateway = &accept.gateway;
     let Some(hook) = gateway.handler.disconnect.clone() else { return };
     let module = gateway.connect.module();
-    let exec = match Execution::open(module, ExecOptions::new()) {
+    let exec = match Execution::open(module, conn.exec_options()) {
         Ok(exec) => exec,
         Err(_) => {
             let Some(token) = accept.tracker.token().await else { return };
-            match Execution::open_terminal(&token, module, ExecOptions::new()) {
+            match Execution::open_terminal(&token, module, conn.exec_options()) {
                 Ok(exec) => exec,
                 Err(_) => {
                     tracing::debug!(gateway = %gateway.path, "on_disconnect skipped: the drain had ended");

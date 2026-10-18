@@ -77,7 +77,7 @@ use tower::ServiceExt;
 use tracing::{Instrument, Span, field};
 use ulo::{
     AppHandle, BoxError, BoxFuture, CancelReason, ExecOptions, Execution, ExecutionRef, LateOutcome, MountedHandler,
-    StreamOutcome, Timer, Transport,
+    StreamOutcome, Timer, TraceMode, Transport,
 };
 use ulo_http::stage::{Rest, ScopedStage, Stage};
 use ulo_http::{ConnInfo, HttpBody, Request, Response};
@@ -86,6 +86,7 @@ use ulo_transport::{Admission, CallError, ConnectionAdmission, Permit, span};
 use crate::__private::HandlerFn;
 use crate::pre_dispatch::StageCx;
 use crate::status::{self, code_for_http};
+use crate::trace;
 use crate::transport::{CxInner, Grpc, GrpcCx, GrpcMetadata, IntoGrpcItem, PeerAddr, Reply};
 
 const GRPC_STATUS: HeaderName = HeaderName::from_static("grpc-status");
@@ -155,6 +156,14 @@ impl Dispatcher {
         if let Some(deadline) = timeout.and_then(|after| self.timer.now().checked_add(after)) {
             opts = opts.deadline(deadline);
         }
+        // Read before `into_parts` below consumes the headers. A `tracestate` with no
+        // `traceparent` is discarded (W3C Trace Context §4.2).
+        if self.app.trace_mode() == TraceMode::On
+            && req.headers().contains_key(trace::TRACEPARENT)
+            && let Some(ctx) = trace::extract(req.headers())
+        {
+            opts = opts.trace(ctx);
+        }
         let Ok(exec) = Execution::open(&self.app.root(), opts) else {
             return status_response(Status::unavailable("the server is shutting down"));
         };
@@ -166,7 +175,7 @@ impl Dispatcher {
         }
         let path: Arc<str> = Arc::from(head.uri.path());
         let peer = conn.peer;
-        let call_span = call_span(head.uri.path());
+        let call_span = call_span(&self.app, &exec, head.uri.path());
         let handle = exec.handle();
         let mut conn = conn;
         conn.version = head.version;
@@ -504,10 +513,10 @@ fn parse_timeout(text: &str) -> Option<Duration> {
 }
 
 /// The span for a call to `path`: named `package.Service/Method`, with `rpc.system = "grpc"`,
-/// `rpc.service` and `rpc.method`.
-fn call_span(path: &str) -> Span {
+/// `rpc.service` and `rpc.method`, started on `exec`'s trace context.
+fn call_span(app: &AppHandle, exec: &Execution, path: &str) -> Span {
     let name = path.strip_prefix('/').unwrap_or(path);
-    let call_span = span::call(<Grpc as Transport>::KEY, name, None);
+    let call_span = span::call(app, exec, span::Kind::Server, <Grpc as Transport>::KEY, name, None);
     call_span.record(span::RPC_SYSTEM, "grpc");
     if let Some((service, method)) = name.split_once('/') {
         call_span.record(span::RPC_SERVICE, service);

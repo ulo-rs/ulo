@@ -8,6 +8,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, RwLock, Weak};
 use std::task::{Poll, Waker};
 
+use tracing::Instrument;
+
 use crate::app::AppConfig;
 use crate::binding::{ErasedCtor, Instance, Qualifier, Recipe};
 use crate::construct::ConstructError;
@@ -16,6 +18,7 @@ use crate::error::{Closed, FailureReason, LookupError, LookupKind};
 use crate::execution::cache::{OnceCells, Slot};
 use crate::execution::extensions::{Extensions, Seeded};
 use crate::execution::notify::Notify;
+use crate::execution::trace::{TraceMode, TraceSource};
 use crate::execution::{CancelReason, ExecOptions, ExecShared, Execution, StreamEnd};
 use crate::graph::{BindingId, Effective, FrozenBinding, Graph, ModuleId, Visible};
 use crate::key::{BindingKind, Key, KeyName};
@@ -50,6 +53,10 @@ pub(crate) struct AppShared {
     pub(crate) servers: Mutex<Vec<Arc<dyn ErasedServer>>>,
     /// Serializes `load`: one lazy module wires against one graph at a time.
     pub(crate) load_lock: async_lock::Mutex<()>,
+    /// The `dyn TraceSource` visible from the root, set once by `App::connect` after every
+    /// singleton is built; never set under `TraceMode::Off`. A source a lazily loaded module binds
+    /// is not read.
+    pub(crate) trace_source: OnceLock<Arc<dyn TraceSource>>,
 }
 
 impl AppShared {
@@ -66,6 +73,7 @@ impl AppShared {
             shutdown: ShutdownCell::new(),
             servers: Mutex::new(Vec::new()),
             load_lock: async_lock::Mutex::new(()),
+            trace_source: OnceLock::new(),
         })
     }
 
@@ -153,6 +161,7 @@ impl AppShared {
     /// executions from Draining on, terminal ones from the drain's end on. A refused terminal
     /// execution counts in `Shutdown::terminal_skipped`.
     pub(crate) fn open(self: &Arc<Self>, module: ModuleId, opts: ExecOptions, terminal: bool) -> Result<Execution, Closed> {
+        // A span in `opts` is read by `execute` alone; a transport traces through `span::call`.
         // Entered before the phase check, so a drain that begins after the check passes finds
         // the entry; a refusal drops it again. The phase check counts a refused terminal
         // execution itself.
@@ -170,6 +179,8 @@ impl AppShared {
             cancel: Notify::new(),
             cancel_reason: OnceLock::new(),
             deadline: opts.deadline,
+            trace_inbound: opts.trace.filter(|_| self.config.trace == TraceMode::On),
+            trace_own: OnceLock::new(),
             handler: OnceLock::new(),
             late: AtomicBool::new(false),
             stream_end: Mutex::new(StreamEnd::default()),
@@ -183,14 +194,28 @@ impl AppShared {
     /// The body of every `execute`: open, run the closure against the borrowed execution, fire
     /// cancellation at the deadline while still polling the closure, drop the execution when the
     /// closure's future completes.
-    pub(crate) async fn execute<F, R>(self: &Arc<Self>, module: ModuleId, opts: ExecOptions, f: F) -> Result<R, Closed>
+    ///
+    /// With a span in `opts` (I16), the source is called with it before the closure first runs,
+    /// the span not yet entered, and the closure runs inside it.
+    pub(crate) async fn execute<F, R>(self: &Arc<Self>, module: ModuleId, mut opts: ExecOptions, f: F) -> Result<R, Closed>
     where
         F: AsyncFnOnce(&Execution) -> R,
     {
+        let span = opts.span.take();
         let exec = self.open(module, opts, false)?;
-        let out = match self.deadline_sleep(&exec) {
-            None => f(&exec).await,
-            Some(sleep) => cancel_at(&exec.shared, sleep, f(&exec)).await,
+        if let (Some(span), Some(source)) = (&span, self.trace_source.get()) {
+            let own = source.start(span, exec.shared.trace());
+            exec.set_trace(own);
+        }
+        let run = async {
+            match self.deadline_sleep(&exec) {
+                None => f(&exec).await,
+                Some(sleep) => cancel_at(&exec.shared, sleep, f(&exec)).await,
+            }
+        };
+        let out = match span {
+            Some(span) => run.instrument(span).await,
+            None => run.await,
         };
         drop(exec);
         Ok(out)

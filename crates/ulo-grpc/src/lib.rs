@@ -35,6 +35,7 @@ mod pre_dispatch;
 mod reflection;
 mod server;
 mod status;
+mod trace;
 mod transport;
 
 #[doc(hidden)]

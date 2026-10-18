@@ -31,13 +31,14 @@ use futures_core::stream::BoxStream;
 use futures_util::{FutureExt, StreamExt};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use ulo::{Bound, BoxError, BoxFuture, CancelReason, ExecutionRef, Runtime, Timer};
+use ulo::{Bound, BoxError, BoxFuture, CancelReason, ExecutionRef, Runtime, Timer, TraceOrigin};
 use ulo_transport::{Classify, Detail, Details, ErrorKind};
 
 use crate::codec::Codec;
 use crate::dispatch::{quote, reason};
 use crate::frame::{Data, ErrorBody, Frame};
 use crate::link::{FrameTooLarge, FrameUnencodable, Link, Misconfigured, NoDestination, Outbound, Pattern, ReplyTo};
+use crate::trace;
 use crate::transport::CallHeaders;
 
 /// A client's timeout at `Bound::Default`.
@@ -47,6 +48,11 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 /// path copies an incoming call's headers into an outgoing one, so a caller setting it with
 /// `.header` is a mistake, refused when the call is awaited.
 const DEADLINE_MS: &str = "deadline-ms";
+
+/// The W3C Trace Context headers the client writes from the calling execution's context on a call
+/// made `.within` one that carries a context (integrations §6.3, I8).
+const TRACEPARENT: &str = "traceparent";
+const TRACESTATE: &str = "tracestate";
 
 fn timeout_of(timeout: Bound) -> Option<Duration> {
     match timeout {
@@ -528,18 +534,49 @@ impl Spec {
         Ok(ends)
     }
 
-    /// Refuses a call whose caller set `deadline-ms` with `.header`, readable or not: the client
-    /// writes that header from the call's bound, so a caller's value either contradicts the bound
-    /// or, where the call has none, sets one the client does not enforce. `BadRequest`, reason
-    /// `"reserved_header"`, the first such value quoted as the server's `bad_deadline` quotes one;
-    /// `instead` says what to write in its place.
+    /// Refuses a call whose caller set a header the client writes itself, `BadRequest` with the
+    /// reason `"reserved_header"`:
+    ///
+    /// - `deadline-ms`, readable or not: the client writes that header from the call's bound, so a
+    ///   caller's value either contradicts the bound or, where the call has none, sets one the
+    ///   client does not enforce. The first such value is quoted as the server's `bad_deadline`
+    ///   quotes one; `instead` says what to write in its place.
+    /// - `traceparent`, exactly on a call made `.within` an execution that carries a trace
+    ///   context, forwarded or its own: the client writes it from that context (I8).
+    /// - `tracestate` on such a call when the context is `TraceOrigin::Received`: the client
+    ///   forwards the list as it arrived, which W3C Trace Context §3.4 forbids modifying, and only a
+    ///   participant, an execution whose context a `TraceSource` set, may add an entry. On an
+    ///   `Originated` context the caller's entries are merged instead, when the frame is written.
+    ///
+    /// A call with no `.within`, or within an execution carrying no context, a `TraceMode::Off`
+    /// app's among them, keeps both as ordinary headers. The trace headers' names are matched
+    /// without regard to case, as W3C Trace Context matches them.
     fn reserved(&self, instead: &str) -> Result<(), RpcError> {
-        let Some(value) = self.headers.get(DEADLINE_MS) else { return Ok(()) };
-        let message = format!(
-            "the call set `{DEADLINE_MS}` to {} with `.header`, and the client reserves that header, writing it from the call's bound; {instead}",
-            quote(value)
-        );
-        Err(RpcError::new(ErrorKind::BadRequest, message).with_reason("reserved_header"))
+        if let Some(value) = self.headers.get(DEADLINE_MS) {
+            let message = format!(
+                "the call set `{DEADLINE_MS}` to {} with `.header`, and the client reserves that header, writing it from the call's bound; {instead}",
+                quote(value)
+            );
+            return Err(RpcError::new(ErrorKind::BadRequest, message).with_reason("reserved_header"));
+        }
+        let Some(context) = self.within.as_ref().and_then(ExecutionRef::trace) else { return Ok(()) };
+        if self.header_named(TRACEPARENT) {
+            let message = format!(
+                "the call set `{TRACEPARENT}` with `.header`, and the client reserves that header on a call made `.within` an execution carrying a trace context, writing it from that context"
+            );
+            return Err(RpcError::new(ErrorKind::BadRequest, message).with_reason("reserved_header"));
+        }
+        if context.origin() == TraceOrigin::Received && self.header_named(TRACESTATE) {
+            let message = format!(
+                "the call set `{TRACESTATE}` with `.header` within an execution forwarding the context it received, which the client passes on unchanged; adding a vendor entry needs an exporter, a `TraceSource` such as `ulo-otel`'s, to originate the execution's context"
+            );
+            return Err(RpcError::new(ErrorKind::BadRequest, message).with_reason("reserved_header"));
+        }
+        Ok(())
+    }
+
+    fn header_named(&self, name: &str) -> bool {
+        self.headers.iter().any(|(key, _)| key.eq_ignore_ascii_case(name))
     }
 
     /// Connects, registers the call, and sends its opening frame; a streamed request's items follow
@@ -553,7 +590,7 @@ impl Spec {
         };
         let (conn, id, waiting, replies) = inner.register().await?;
         let mut pending = Pending { conn: Arc::clone(&conn), id, pattern: pattern.clone(), settled: false };
-        if let Err(err) = written(&mut headers, ends, stamps, inner.runtime.now()) {
+        if let Err(err) = written(&mut headers, within.as_ref(), ends, stamps, inner.runtime.now()) {
             // Nothing reached a server that a `cancel` would stop.
             pending.settled = true;
             return Err(err);
@@ -583,14 +620,21 @@ impl Spec {
     }
 }
 
-/// What a call's frame carries of its bound when it is written at `now`, its connection in hand:
-/// `deadline-ms`, what is left of the bound ending at `ends`, when `stamps`. A bound that ended
-/// while the client connected fails the call `Timeout` and its frame is never sent: written then,
-/// it would reach a server that runs the call while its caller is told it timed out.
+/// What a call's frame carries of its bound and its trace context when it is written at `now`,
+/// its connection in hand: the calling execution's context as `traceparent` and `tracestate`, on
+/// every shape, events included, whether or not the call has a bound (I6); and `deadline-ms`, what
+/// is left of the bound ending at `ends`, when `stamps`. A bound that ended while the client
+/// connected fails the call `Timeout` and its frame is never sent: written then, it would reach a
+/// server that runs the call while its caller is told it timed out.
 ///
 /// Measured with the connection in hand, a call on a new connection gives its server none of the
 /// connect's length beyond the caller's wait.
-fn written(headers: &mut CallHeaders, ends: Option<Instant>, stamps: bool, now: Instant) -> Result<(), RpcError> {
+fn written(headers: &mut CallHeaders, within: Option<&ExecutionRef>, ends: Option<Instant>, stamps: bool, now: Instant) -> Result<(), RpcError> {
+    // A caller's `traceparent`, and its `tracestate` beside a received context, were refused by
+    // `reserved`, so what this writes is the only copy.
+    if let Some(context) = within.and_then(ExecutionRef::trace) {
+        trace::inject(headers, context);
+    }
     let Some(ends) = ends else { return Ok(()) };
     let left = ends.saturating_duration_since(now);
     if left.is_zero() {
@@ -913,7 +957,10 @@ impl<Res> Call<Res> {
     /// A header on the call, `h` or the broker's own headers. `deadline-ms` is reserved: the
     /// client writes it from [`timeout`](Self::timeout) or [`within`](Self::within), and a call
     /// given it here fails when it is awaited, before it connects, `BadRequest` with the reason
-    /// `"reserved_header"`.
+    /// `"reserved_header"`. On a call made `.within` an execution carrying a trace context,
+    /// `traceparent` is reserved the same way, and `tracestate` too when that context is one the
+    /// execution received; within one a `TraceSource` originated, a `tracestate` set here is
+    /// merged into the execution's list, its entries at the left (integrations §6.3).
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.spec.headers.insert(name, value);
         self
@@ -931,10 +978,10 @@ impl<Res> Call<Res> {
         self
     }
 
-    /// Forwards `exec`'s remaining deadline as `deadline-ms` and cancels the call when `exec` is
-    /// cancelled. A call made once `exec`'s deadline has passed, or once it is cancelled, fails
-    /// when it is awaited, before it connects, `Timeout` or `Unavailable`, so nothing reaches the
-    /// server.
+    /// Forwards `exec`'s remaining deadline as `deadline-ms` and its trace context as
+    /// `traceparent` and `tracestate`, and cancels the call when `exec` is cancelled. A call made
+    /// once `exec`'s deadline has passed, or once it is cancelled, fails when it is awaited, before
+    /// it connects, `Timeout` or `Unavailable`, so nothing reaches the server.
     pub fn within(mut self, exec: &ExecutionRef) -> Self {
         self.spec.within = Some(exec.clone());
         self
@@ -978,7 +1025,7 @@ pub struct Emit {
 impl Emit {
     /// A header on the event. `deadline-ms` is reserved, as on [`Call::header`]: an event given it
     /// fails when it is awaited, before it connects, `BadRequest` with the reason
-    /// `"reserved_header"`.
+    /// `"reserved_header"`. `traceparent` and `tracestate` follow [`Call::header`]'s rule.
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.spec.headers.insert(name, value);
         self
@@ -988,7 +1035,8 @@ impl Emit {
     /// to the send: an event emitted once `exec` is cancelled or its deadline has passed fails when
     /// it is awaited, before it connects, and one sent before then is handled whatever becomes of
     /// `exec`. The event carries none of `exec`'s deadline: nobody waits on it, so its handler runs
-    /// under no deadline.
+    /// under no deadline. It carries `exec`'s trace context, so the handler's span is a consumer of
+    /// the emitter's.
     ///
     /// A deadline that passes while the client connects fails the emit `Timeout` with nothing
     /// sent. A `Timeout` once the publish has started leaves the event's fate unknown: on a broker
@@ -1011,13 +1059,13 @@ impl IntoFuture for Emit {
             let runtime = Arc::clone(&spec.client.inner.runtime);
             let within = spec.within.clone();
             bounded(&*runtime, limit, within.as_ref(), async move {
-                let Spec { client, pattern, request, mut headers, ends, stamps, .. } = spec;
+                let Spec { client, pattern, request, mut headers, within, ends, stamps, .. } = spec;
                 let data = match request {
                     Request::One(payload) => payload?,
                     Request::Stream(_) => return Err(RpcError::new(ErrorKind::BadRequest, "an event carries one payload")),
                 };
                 let conn = client.inner.connection().await?;
-                written(&mut headers, ends, stamps, client.inner.runtime.now())?;
+                written(&mut headers, within.as_ref(), ends, stamps, client.inner.runtime.now())?;
                 let frame = Frame::Evt { pattern: pattern.as_str().to_owned(), headers, data };
                 conn.send(&pattern, frame, None).await.map_err(send_error)
             })
@@ -1062,7 +1110,7 @@ impl<Res> StreamCall<Res> {
     /// A header on the call. `deadline-ms` is reserved, as on [`Call::header`]: the client writes
     /// it from [`deadline`](Self::deadline) or [`within`](Self::within), and a call given it here
     /// fails when it is awaited, before it connects, `BadRequest` with the reason
-    /// `"reserved_header"`.
+    /// `"reserved_header"`. `traceparent` and `tracestate` follow [`Call::header`]'s rule.
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.spec.headers.insert(name, value);
         self
@@ -1097,8 +1145,8 @@ impl<Res> StreamCall<Res> {
         self
     }
 
-    /// Forwards `exec`'s remaining deadline as `deadline-ms` and cancels the stream when `exec` is
-    /// cancelled, as [`Call::within`] does.
+    /// Forwards `exec`'s remaining deadline as `deadline-ms` and its trace context, and cancels the
+    /// stream when `exec` is cancelled, as [`Call::within`] does.
     pub fn within(mut self, exec: &ExecutionRef) -> Self {
         self.spec.within = Some(exec.clone());
         self

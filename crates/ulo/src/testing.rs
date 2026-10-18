@@ -22,6 +22,7 @@ use crate::binding::factory::{Factory, erase_factory, erase_try_factory};
 use crate::binding::{Instance, Qualifier, Recipe, instance_of};
 use crate::dependency::Dependencies;
 use crate::error::StartupError;
+use crate::execution::trace::TraceMode;
 use crate::key::Key;
 use crate::module::{Module, ModuleIdentity};
 use crate::runtime::Runtime;
@@ -222,6 +223,12 @@ impl<S> TestApp<S> {
 
     pub fn construct_timeout(self, d: Duration) -> TestApp<Settled> {
         TestApp { builder: self.builder.construct_timeout(d), _s: PhantomData }
+    }
+
+    /// Whether the app reads and writes W3C trace headers, as
+    /// [`AppBuilder::trace`](crate::AppBuilder::trace) sets it.
+    pub fn trace(self, mode: TraceMode) -> TestApp<Settled> {
+        TestApp { builder: self.builder.trace(mode), _s: PhantomData }
     }
 
     pub fn wire(self) -> Result<App<Wired>, StartupError> {

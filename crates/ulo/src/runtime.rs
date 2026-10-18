@@ -26,6 +26,15 @@ pub trait Spawn: Send + Sync + 'static {
     /// dropping the handle detaches it. An implementation builds the handle with
     /// [`TaskHandle::launch`], which is what makes a panic end the task as `TaskEnd::Panicked`.
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle;
+
+    /// The runtime's name, which an integration that supports one runtime reads to refuse the
+    /// others at `connect` rather than look a runtime up from the thread. `ulo-runtime-tokio`
+    /// answers `"tokio"` and `ulo-runtime-smol` `"smol"`. A runtime that answers nothing of its
+    /// own is `"unknown"`, which such an integration refuses as it refuses any name it does not
+    /// support.
+    fn name(&self) -> &'static str {
+        "unknown"
+    }
 }
 
 /// The app's clock and executor in one value, set with `AppBuilder::runtime`. Services read it as
@@ -69,6 +78,12 @@ impl Spawn for Clocked {
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle {
         let (launched, recorded) = Launched::new(fut, Some(self.redactor.clone()));
         self.spawner.spawn(Box::pin(launched)).reading(recorded)
+    }
+
+    /// The runtime's, so an app whose clock `AppBuilder::timer` replaced still answers the name of
+    /// the runtime its tasks run on.
+    fn name(&self) -> &'static str {
+        self.spawner.name()
     }
 }
 

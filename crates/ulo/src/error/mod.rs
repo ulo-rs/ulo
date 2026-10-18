@@ -567,6 +567,146 @@ impl fmt::Display for EndStream {
 
 impl Error for EndStream {}
 
+/// Marks a failure that retrying cannot mend: bad credentials, an unknown database, a runtime the
+/// integration does not support, a migration that failed. A readiness attempt whose error is one
+/// ends the check at once, with no further attempt and no backoff, as
+/// `ConnectError::Readiness { reason: Errored(..) }`; [`is_permanent`] finds one in a
+/// `StartupError`, so `main` can tell a restart that cannot help from one that might.
+///
+/// An integration wraps its own error, `Err(Permanent::new(e).into())`, wherever it returns a
+/// `BoxError`. `Display` and `source()` are the wrapped error's, so the report reads as the error
+/// itself; the marker adds no text.
+#[non_exhaustive]
+pub struct Permanent(BoxError);
+
+impl Permanent {
+    pub fn new(error: impl Into<BoxError>) -> Permanent {
+        Permanent(error.into())
+    }
+}
+
+impl fmt::Debug for Permanent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Permanent").field(&self.0).finish()
+    }
+}
+
+impl fmt::Display for Permanent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+/// The wrapped error, so a reporter walking the chain reads its cause after the marker's text.
+impl Error for Permanent {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&*self.0)
+    }
+}
+
+/// Whether a restart of the same build and configuration cannot succeed: the failure carries a
+/// [`Permanent`], or it is a misconfiguration by its phase.
+///
+/// - `Wiring` is always permanent: the graph and the values registered into it are fixed by the
+///   code and its configuration, which a restart reads again unchanged.
+/// - `Connect`, `Configure` and `Bind` are permanent when a `Permanent` is found under them: in a
+///   construction's or a hook's error, in the last attempt of a readiness check, in a server's
+///   `prepare` failure or a transport's bind error, and down any error's `source()` chain, inside a
+///   [`Redacted`] too. `Bind` carrying the core's [`RuntimeMissing`] is permanent as well.
+///
+/// Anything else is retryable: a readiness check or a construction that timed out, a dependency
+/// that answered with an error carrying no `Permanent`, a port already taken.
+pub fn is_permanent(error: &StartupError) -> bool {
+    startup_permanent(error, 0)
+}
+
+fn startup_permanent(error: &StartupError, depth: usize) -> bool {
+    match error {
+        StartupError::Wiring(_) => true,
+        StartupError::Connect(connect) => connect_permanent(connect, depth),
+        StartupError::Configure(errors) => errors.iter().any(|e| redacted_permanent(&e.source, depth + 1)),
+        StartupError::Bind { source, .. } => {
+            source.downcast_ref::<RuntimeMissing>().is_some() || redacted_permanent(source, depth + 1)
+        }
+    }
+}
+
+/// Whether a readiness attempt's error carries a [`Permanent`], read before the attempt's error is
+/// redacted, which keeps the original reachable but by type alone.
+pub(crate) fn construct_permanent(error: &ConstructError) -> bool {
+    match error {
+        ConstructError::Failed(inner) => permanent_in(&**inner, 1),
+        ConstructError::Dependency(lookup) => lookup_permanent(lookup, 1),
+    }
+}
+
+fn permanent_in(error: &(dyn Error + 'static), depth: usize) -> bool {
+    if depth >= MAX_DEPTH {
+        return false;
+    }
+    if error.downcast_ref::<Permanent>().is_some() {
+        return true;
+    }
+    if let Some(redacted) = error.downcast_ref::<Redacted>() {
+        return redacted_permanent(redacted, depth + 1);
+    }
+    if let Some(found) = recognized_permanent(error, depth) {
+        return found;
+    }
+    error.source().is_some_and(|cause| permanent_in(cause, depth + 1))
+}
+
+/// A `Redacted` answers `None` for `source()`, so its original is walked instead: the core's own
+/// types by their structure, and any other error down its own chain.
+fn redacted_permanent(redacted: &Redacted, depth: usize) -> bool {
+    depth < MAX_DEPTH && permanent_in(redacted.original(), depth)
+}
+
+/// `Some` for the core's types that hold their failures in fields `source()` does not reach.
+fn recognized_permanent(error: &(dyn Error + 'static), depth: usize) -> Option<bool> {
+    if let Some(lookup) = error.downcast_ref::<LookupError>() {
+        return Some(lookup_permanent(lookup, depth));
+    }
+    if let Some(construct) = error.downcast_ref::<ConstructError>() {
+        return Some(match construct {
+            ConstructError::Dependency(lookup) => lookup_permanent(lookup, depth),
+            ConstructError::Failed(inner) => permanent_in(&**inner, depth + 1),
+        });
+    }
+    if let Some(connect) = error.downcast_ref::<ConnectError>() {
+        return Some(connect_permanent(connect, depth));
+    }
+    if let Some(load) = error.downcast_ref::<LoadError>() {
+        return Some(matches!(load, LoadError::Connect(connect) if connect_permanent(connect, depth)));
+    }
+    if let Some(startup) = error.downcast_ref::<StartupError>() {
+        return Some(startup_permanent(startup, depth));
+    }
+    None
+}
+
+fn lookup_permanent(error: &LookupError, depth: usize) -> bool {
+    match error {
+        LookupError::Construct { reason, .. } => reason_permanent(reason, depth),
+        _ => false,
+    }
+}
+
+fn connect_permanent(error: &ConnectError, depth: usize) -> bool {
+    match error {
+        ConnectError::Construct { reason, .. }
+        | ConnectError::Readiness { reason, .. }
+        | ConnectError::Hook { reason, .. } => reason_permanent(reason, depth),
+    }
+}
+
+fn reason_permanent(reason: &FailureReason, depth: usize) -> bool {
+    match reason {
+        FailureReason::Errored(redacted) => redacted_permanent(redacted, depth + 1),
+        FailureReason::Panicked(_) | FailureReason::TimedOut { .. } | FailureReason::Skipped => false,
+    }
+}
+
 /// Whether `error` carries a panic the core caught, whichever shape it arrived in. Inside a call
 /// there are two: [`PanicRecovered`] from a guard, an interceptor, the handler or an error
 /// handler, and [`LookupError::Construct`] with `reason: Panicked` from a build the container

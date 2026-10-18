@@ -209,8 +209,18 @@ impl fmt::Debug for Reply {
 /// handler parameter. Reserved: `deadline-ms`, the remaining time, which the client writes from a
 /// call's bound, refusing a call whose caller set it, and which becomes the execution's deadline,
 /// a call whose value the server cannot read being refused `BadRequest` before its handler runs.
-/// `traceparent` (W3C Trace Context) is an ordinary header: a caller sets it with `.header` to
-/// propagate trace context, and nothing in ulo reserves, writes or refuses it.
+///
+/// The W3C Trace Context headers are reserved per call (integrations §6.3). On a call made
+/// `.within` an execution that carries a trace context, forwarded or its own, the client writes
+/// `traceparent` from it and refuses a caller's, `BadRequest` with the reason `"reserved_header"`.
+/// It writes `tracestate` too: a context the execution received is forwarded as it arrived, and a
+/// caller's `tracestate` on that call is refused the same way, since only a participant may add an
+/// entry; into a context a `TraceSource` originated, the caller's entries are merged, at the left,
+/// as W3C Trace Context §3.5 has a vendor add its own. On a call with no `.within`, or within an
+/// execution carrying no context, a `TraceMode::Off` app's among them, both are ordinary headers.
+/// The server reads both into the execution's inbound context; a value it cannot read is ignored,
+/// never refused, and the call runs with no context, as the specification has a recipient restart
+/// the trace.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallHeaders {
     pub(crate) entries: Vec<(String, String)>,

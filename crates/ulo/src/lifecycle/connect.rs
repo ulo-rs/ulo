@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use crate::app::shared::AppShared;
 use crate::binding::{Qualifier, ReadyRecord, Recipe};
 use crate::construct::ConstructError;
-use crate::error::{ConnectError, FailureReason, LookupError};
+use crate::error::{ConnectError, FailureReason, LookupError, construct_permanent};
 use crate::graph::{BindingId, FrozenBinding, Graph, ModuleId, Visible};
 use crate::hooks::{HookCx, HookKind, HookRecord};
 use crate::key::{BindingKind, Key, KeyName};
@@ -77,9 +77,9 @@ pub(crate) async fn build_singleton(shared: &Arc<AppShared>, id: BindingId) -> R
 }
 
 /// Runs a readiness check: attempts under the attempt bound, `retries` more after an `Err` or an
-/// attempt timeout with `backoff` between, the whole under the check bound. A panicking attempt
-/// ends the check at once. `Readiness { key, attempts, reason }` on failure, the reason by the
-/// rules of §9.3.
+/// attempt timeout with `backoff` between, the whole under the check bound. A panicking attempt,
+/// and one whose error carries a `Permanent`, ends the check at once, with no backoff.
+/// `Readiness { key, attempts, reason }` on failure, the reason by the rules of §9.3.
 pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready: &ReadyRecord) -> Result<(), ConnectError> {
     let graph = shared.graph();
     let binding = graph.binding(id);
@@ -99,6 +99,11 @@ pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready:
             let made = attempts.fetch_add(1, Ordering::Relaxed).saturating_add(1);
             let reason = match run(timer, attempt, None, secrets, (*ready.check)(&resolver)).await {
                 Outcome::Done(Ok(())) => return Ok(()),
+                // Read before `construct_error` redacts it, which leaves the original reachable by
+                // its outer type alone.
+                Outcome::Done(Err(e)) if construct_permanent(&e) => {
+                    return Err(FailureReason::Errored(construct_error(secrets, e)));
+                }
                 Outcome::Done(Err(e)) => FailureReason::Errored(construct_error(secrets, e)),
                 Outcome::Panicked(p) => return Err(FailureReason::Panicked(p)),
                 Outcome::TimedOut { after, limit } => FailureReason::TimedOut { after, limit },

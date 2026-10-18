@@ -16,6 +16,7 @@
 pub(crate) mod cache;
 pub(crate) mod extensions;
 pub(crate) mod notify;
+pub(crate) mod trace;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,6 +29,7 @@ use crate::error::{Closed, LookupError};
 use crate::execution::cache::OnceCells;
 use crate::execution::extensions::{Extensions, Seeded};
 use crate::execution::notify::{Cancelled, Draining, Notify};
+use crate::execution::trace::{TraceContext, TraceMode};
 use crate::graph::ModuleId;
 use crate::module::handle::ModuleRef;
 use crate::resolver::{Purpose, Resolver};
@@ -50,10 +52,12 @@ pub struct ExecutionRef {
     pub(crate) shared: Arc<ExecShared>,
 }
 
-/// Options for a new execution.
+/// Options for a new execution. Each setter keeps the others, so they compose in any order.
 #[derive(Clone, Debug, Default)]
 pub struct ExecOptions {
     pub(crate) deadline: Option<Instant>,
+    pub(crate) trace: Option<TraceContext>,
+    pub(crate) span: Option<tracing::Span>,
 }
 
 impl ExecOptions {
@@ -64,7 +68,25 @@ impl ExecOptions {
     /// Cancellation fires when `at` passes, read on the app's `Timer`. The core stores the
     /// deadline; for a call the transport's runtime enforces it.
     pub fn deadline(self, at: Instant) -> Self {
-        ExecOptions { deadline: Some(at) }
+        ExecOptions { deadline: Some(at), ..self }
+    }
+
+    /// The execution's inbound trace context, marked `Received` whatever it carried: a transport
+    /// passes the context it extracted from the call, a standalone `execute` one it was handed.
+    /// `Execution::trace()` answers it until a `TraceSource`'s answer replaces it. Dropped under
+    /// `TraceMode::Off`.
+    pub fn trace(self, ctx: TraceContext) -> Self {
+        ExecOptions { trace: Some(ctx.received()), ..self }
+    }
+
+    /// A span its caller created and has not entered, for a standalone `execute` to trace: with a
+    /// `TraceSource` bound, `execute` calls `TraceSource::start` with it and the inbound context,
+    /// records the answer through `Execution::set_trace` and runs the closure inside it. Without
+    /// a source, or under `TraceMode::Off`, the span is entered and nothing else happens.
+    /// `Execution::open` reads no span: a transport traces a call through
+    /// `ulo_transport::span::call`.
+    pub fn span(self, span: tracing::Span) -> Self {
+        ExecOptions { span: Some(span), ..self }
     }
 }
 
@@ -120,6 +142,10 @@ pub(crate) struct ExecShared {
     /// Written once, before `cancel` fires, so a listener woken by the fire reads it.
     pub(crate) cancel_reason: OnceLock<CancelReason>,
     pub(crate) deadline: Option<Instant>,
+    /// What `ExecOptions::trace` seeded, `Received`; `None` under `TraceMode::Off`.
+    pub(crate) trace_inbound: Option<TraceContext>,
+    /// Set once by `Execution::set_trace`, `Originated`; from then on what `trace()` answers.
+    pub(crate) trace_own: OnceLock<TraceContext>,
     /// Set by `dispatch` before the first guard runs.
     pub(crate) handler: OnceLock<Arc<HandlerInfo>>,
     /// Set by `dispatch_late`: the error handlers now running see an error after the reply began.
@@ -175,6 +201,18 @@ impl Execution {
         }
     }
 
+    /// Records the execution's own trace context, a `TraceSource`'s answer, marked `Originated`:
+    /// from then on [`trace`](Self::trace) answers it, and a client called `.within` this
+    /// execution writes it out as a context originated here (integrations §6.3, I13).
+    ///
+    /// For whoever holds the execution, before `dispatch`: `ulo_transport::span::call` calls it
+    /// between creating the call's span and entering it, and a standalone `execute` given a span
+    /// does. Takes effect once; a later call, a call once `dispatch` has begun, or a call under
+    /// `TraceMode::Off` changes nothing, so a guard or a handler never sees the context change.
+    pub fn set_trace(&self, ctx: TraceContext) {
+        self.shared.set_trace(ctx);
+    }
+
     /// An owned clone, for a spawned subtask; it keeps the cache and the execution-scoped
     /// instances alive until it drops.
     pub fn handle(&self) -> ExecutionRef {
@@ -204,6 +242,13 @@ impl Execution {
 
     pub fn deadline(&self) -> Option<Instant> {
         self.shared.deadline
+    }
+
+    /// The execution's trace context: its own once `set_trace` recorded one, the inbound one
+    /// `ExecOptions::trace` seeded before that, and `None` when neither exists. A client called
+    /// `.within` this execution forwards it, as it forwards the deadline (integrations §6.1).
+    pub fn trace(&self) -> Option<&TraceContext> {
+        self.shared.trace()
     }
 
     /// `cancel_with(CancelReason::Explicit)`. Idempotent.
@@ -288,6 +333,11 @@ impl ExecutionRef {
         self.shared.deadline
     }
 
+    /// See [`Execution::trace`].
+    pub fn trace(&self) -> Option<&TraceContext> {
+        self.shared.trace()
+    }
+
     pub fn cancel(&self) {
         self.shared.cancel_with(CancelReason::Explicit);
     }
@@ -340,6 +390,19 @@ impl ExecShared {
 
     pub(crate) fn resolver(self: &Arc<Self>) -> Resolver<'_> {
         Resolver::new(&self.app, self.module(), Some(self), Purpose::Lookup)
+    }
+
+    pub(crate) fn trace(&self) -> Option<&TraceContext> {
+        self.trace_own.get().or(self.trace_inbound.as_ref())
+    }
+
+    /// `dispatch` sets `handler` before the first guard runs, which is where the holder's window
+    /// closes.
+    pub(crate) fn set_trace(&self, ctx: TraceContext) {
+        if self.app.config.trace == TraceMode::Off || self.handler.get().is_some() {
+            return;
+        }
+        let _ = self.trace_own.set(ctx.originated());
     }
 
     pub(crate) fn cancelled(&self) -> Cancelled<'_> {

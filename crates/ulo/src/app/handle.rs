@@ -8,6 +8,7 @@ use crate::binding::Qualifier;
 use crate::dependency::Dep;
 use crate::error::{Closed, DispatchStage, LoadError, LookupError, RuntimeMissing, Shutdown, ShutdownError};
 use crate::execution::notify::Draining;
+use crate::execution::trace::{TraceMode, TraceSource};
 use crate::execution::{ExecOptions, Execution};
 use crate::lifecycle::phase::Phase as Stage;
 use crate::lifecycle::shutdown;
@@ -105,6 +106,20 @@ impl AppHandle {
     /// link, which `Link::prepare` hands one, or a host embedding the app.
     pub fn timer(&self) -> Option<&Arc<dyn Timer>> {
         self.shared.config.timer.as_ref()
+    }
+
+    /// The `dyn TraceSource` the root module saw at `connect`, resolved once after every singleton
+    /// was built (integrations §6.4, I15); `None` with none bound, under `TraceMode::Off`, and
+    /// before `connect` has finished. Read with no await, which is what lets
+    /// `ulo_transport::span::call`, a synchronous function, call it.
+    pub fn trace_source(&self) -> Option<&Arc<dyn TraceSource>> {
+        self.shared.trace_source.get()
+    }
+
+    /// The mode `AppBuilder::trace` set, `TraceMode::On` unset. A transport reads it to skip
+    /// extracting a context under `Off`; `Execution::open` drops one it is handed in any case.
+    pub fn trace_mode(&self) -> TraceMode {
+        self.shared.config.trace
     }
 
     /// The app's `Runtime`, the object `Dep<dyn Runtime>` resolves to; `None` on an app built

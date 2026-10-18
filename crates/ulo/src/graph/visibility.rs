@@ -329,14 +329,16 @@ pub(crate) fn near_spelling(graph: &Graph, module: ModuleId, missing: Key) -> Op
             Visible::Input(_) => None,
         })
         .collect();
-    visible.sort_by_key(|(key, _)| key.type_name().full());
+    // A key of the same full name, one type from two versions of its crate, is the likelier
+    // cause, so it is named before one spelled alike by its last segment.
+    visible.sort_by_key(|(key, _)| (!two_versions(*key, missing), key.type_name().full()));
     if let Some(found) = visible.into_iter().next() {
         return Some(found);
     }
-    graph
-        .bindings
-        .iter()
-        .find_map(|binding| binding.record.keys().find(|key| near(key)).map(|key| (key, binding.origin)))
+    let anywhere = || graph.bindings.iter().flat_map(|binding| binding.record.keys().map(move |key| (key, binding.origin)));
+    anywhere()
+        .find(|(key, _)| near(key) && two_versions(*key, missing))
+        .or_else(|| anywhere().find(|(key, _)| near(key)))
 }
 
 /// A key `module` binds itself spelled like `exported`, for the hint on an export of a key the
@@ -352,12 +354,21 @@ pub(crate) fn own_near_spelling(graph: &Graph, module: ModuleId, exported: Key) 
 }
 
 /// Two different keys under one qualifier that a report cannot tell apart at a glance: equal up
-/// to trailing `Send` and `Sync` bounds, which are distinct `TypeId`s, or equal in their last path
-/// segments, `a::Config` beside `b::Config`.
+/// to trailing `Send` and `Sync` bounds, which are distinct `TypeId`s, equal in their last path
+/// segments, `a::Config` beside `b::Config`, or equal in their full names with distinct `TypeId`s,
+/// which is one type from two versions of its crate (I12).
 fn spelled_alike(key: Key, other: Key) -> bool {
     key.qualifier_id() == other.qualifier_id()
-        && key.type_name().full() != other.type_name().full()
-        && short_type_name(strip_auto_traits(key.type_name().full())) == short_type_name(strip_auto_traits(other.type_name().full()))
+        && (two_versions(key, other)
+            || (key.type_name().full() != other.type_name().full()
+                && short_type_name(strip_auto_traits(key.type_name().full()))
+                    == short_type_name(strip_auto_traits(other.type_name().full()))))
+}
+
+/// The same full type name on two `TypeId`s: `type_name` writes a crate's name without its
+/// version, so two versions of one crate in the build give two types under one path.
+pub(crate) fn two_versions(key: Key, other: Key) -> bool {
+    key.type_id() != other.type_id() && key.type_name().full() == other.type_name().full()
 }
 
 /// `name` without trailing auto-trait bounds, in either order and either spelling.

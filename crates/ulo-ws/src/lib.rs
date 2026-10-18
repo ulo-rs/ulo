@@ -32,6 +32,7 @@ mod module;
 mod rooms;
 mod session;
 mod table;
+mod trace;
 mod transport;
 
 #[doc(hidden)]

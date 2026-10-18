@@ -15,7 +15,7 @@ use http_body::{Body as _, Frame, SizeHint};
 use tracing::{Instrument, Span, field};
 use ulo::{
     AppHandle, BoxError, BoxFuture, CancelReason, DispatchStage, ExecOptions, Execution, ExecutionRef, MountedHandler,
-    Runtime, StreamOutcome, Timer, Transport,
+    Runtime, StreamOutcome, Timer, TraceMode, Transport,
 };
 use ulo_transport::{Admission, Permit, span};
 
@@ -32,6 +32,7 @@ use crate::response::Response;
 use crate::router::pattern::Pattern;
 use crate::router::{RouteTarget, Routed, Router};
 use crate::routing::Routing;
+use crate::trace;
 use crate::transport::{ClientAddr, Http, RequestHead};
 use crate::upgrade::UpgradeHandler;
 
@@ -157,7 +158,16 @@ impl ServiceInner {
         let Some(permit) = self.admission.try_admit() else {
             return render::shed(&self.config);
         };
-        let Ok(exec) = Execution::open(&self.app.root(), ExecOptions::new()) else {
+        let mut opts = ExecOptions::new();
+        // A `tracestate` with no `traceparent` is discarded (W3C Trace Context §4.2), so a request
+        // without one carries no context to extract.
+        if self.app.trace_mode() == TraceMode::On
+            && req.head.headers.contains_key(trace::TRACEPARENT)
+            && let Some(ctx) = trace::extract(&req.head.headers)
+        {
+            opts = opts.trace(ctx);
+        }
+        let Ok(exec) = Execution::open(&self.app.root(), opts) else {
             return render::draining(&self.config);
         };
         exec.seed(RequestHead { parts: req.head.clone() });
@@ -173,7 +183,7 @@ impl ServiceInner {
         });
         let tracking = Arc::new(Tracking { routing: OnceLock::new(), forward });
         let method = req.head.method.clone();
-        let call_span = span::call(<Http as Transport>::KEY, method.as_str(), None);
+        let call_span = span::call(&self.app, &exec, span::Kind::Server, <Http as Transport>::KEY, method.as_str(), None);
         call_span.record(span::HTTP_REQUEST_METHOD, method.as_str());
         let path = req.head.extensions.get::<OriginalPath>().map_or_else(|| req.head.uri.path(), OriginalPath::as_str);
         call_span.record(span::URL_PATH, path);

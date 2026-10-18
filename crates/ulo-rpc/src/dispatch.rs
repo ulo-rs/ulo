@@ -32,7 +32,7 @@ use futures_util::future::{Either, select};
 use tracing::{Instrument, Span};
 use ulo::{
     AppHandle, BoxError, BoxFuture, CancelReason, EndStream, ExecOptions, Execution, ExecutionRef, LateOutcome,
-    MountedHandler, Runtime, Shape, Timer, Transport,
+    MountedHandler, Runtime, Shape, Timer, TraceMode, Transport,
 };
 use ulo_transport::{Admission, CallError, Detail, Details, ErrorKind, Permit, TaskSet, Tracked, span};
 use ulo_transport::__private::Watch;
@@ -41,6 +41,7 @@ use crate::__private::{HandlerFn, Kind};
 use crate::codec::Codec;
 use crate::frame::{Data, ErrorBody, Frame};
 use crate::link::{Ack, Capabilities, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Pattern, ReplyPath};
+use crate::trace;
 use crate::transport::{Body, CallHeaders, CxInner, LinkInfo, NoHandler, Reply, Rpc, RpcCx};
 
 /// The `ErrorInfo` domain of every reason this transport writes.
@@ -221,6 +222,8 @@ fn start(shared: &Arc<Shared>, incoming: Incoming, reply: Option<ReplyPath>, ack
         Some(after) => ExecOptions::new().deadline(shared.timer.now() + after),
         None => ExecOptions::new(),
     };
+    // An event takes the same path, so its handler's span is a child of the emitter's.
+    let opts = traced(shared, &incoming.headers, opts);
     let Ok(exec) = Execution::open(route.handler.module(), opts) else {
         if let Some((id, reply)) = answered {
             refuse(shared, tasks, reply, id, refusal("the server is shutting down"));
@@ -236,7 +239,7 @@ fn start(shared: &Arc<Shared>, incoming: Incoming, reply: Option<ReplyPath>, ack
         Registered { shared: Arc::clone(shared), id, serial }
     });
     let cx = context(shared, handle, &incoming.pattern, incoming.headers, link, incoming.body);
-    let call_span = call_span(shared, &incoming.pattern, Some(&route.handler));
+    let call_span = call_span(shared, &exec, incoming.arrived, &incoming.pattern, Some(&route.handler));
     let call = Call {
         shared: Arc::clone(shared),
         route: route.clone(),
@@ -275,7 +278,8 @@ fn unhandled(shared: &Arc<Shared>, incoming: Incoming, link: LinkInfo, reply: Op
         ack.reject();
         return;
     };
-    let Ok(exec) = Execution::open(&shared.app.root(), ExecOptions::new()) else {
+    let opts = traced(shared, &incoming.headers, ExecOptions::new());
+    let Ok(exec) = Execution::open(&shared.app.root(), opts) else {
         refuse(shared, tasks, reply, id, refusal("the server is shutting down"));
         return;
     };
@@ -286,7 +290,7 @@ fn unhandled(shared: &Arc<Shared>, incoming: Incoming, link: LinkInfo, reply: Op
         .with_source(NoHandler::new(&incoming.pattern));
     let cx = context(shared, exec.handle(), &incoming.pattern, incoming.headers, link, incoming.body);
     let shared = Arc::clone(shared);
-    let call_span = call_span(&shared, cx.pattern(), None);
+    let call_span = call_span(&shared, &exec, incoming.arrived, cx.pattern(), None);
     tasks.spawn(
         async move {
             let handle = exec.handle();
@@ -657,9 +661,24 @@ pub(crate) fn reason(reason: &str) -> Detail {
     Detail::ErrorInfo { reason: reason.to_owned(), domain: DOMAIN.to_owned(), metadata: Default::default() }
 }
 
-fn call_span(shared: &Shared, pattern: &str, handler: Option<&MountedHandler<Rpc>>) -> Span {
+/// `opts` with the context `headers` carry, under `TraceMode::On`. A `tracestate` with no
+/// `traceparent` is discarded (W3C Trace Context §4.2), so headers without one carry none.
+fn traced(shared: &Shared, headers: &CallHeaders, opts: ExecOptions) -> ExecOptions {
+    if shared.app.trace_mode() == TraceMode::On
+        && headers.iter().any(|(name, _)| name.eq_ignore_ascii_case(trace::TRACEPARENT))
+        && let Some(ctx) = trace::extract(headers)
+    {
+        return opts.trace(ctx);
+    }
+    opts
+}
+
+/// A request's span is a server's; an event's handler is a consumer of the emitter's span, as
+/// OpenTelemetry's messaging conventions model it (integrations §6.2).
+fn call_span(shared: &Shared, exec: &Execution, arrived: Arrived, pattern: &str, handler: Option<&MountedHandler<Rpc>>) -> Span {
     let name = handler.map(|handler| format!("{}::{}", handler.controller(), handler.name()));
-    let call_span = span::call(<Rpc as Transport>::KEY, pattern, name.as_deref());
+    let kind = if arrived == Arrived::Evt { span::Kind::Consumer } else { span::Kind::Server };
+    let call_span = span::call(&shared.app, exec, kind, <Rpc as Transport>::KEY, pattern, name.as_deref());
     call_span.record(span::RPC_SYSTEM, "ulo");
     call_span.record(span::RPC_METHOD, pattern);
     // TCP and UDP record none: `messaging.system` names a broker.

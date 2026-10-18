@@ -193,6 +193,10 @@ impl ulo::Spawn for Smol {
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle {
         TaskHandle::launch(fut, |task| Task::Running(self.executor.spawn(task).fallible()))
     }
+
+    fn name(&self) -> &'static str {
+        "smol"
+    }
 }
 
 /// `async-task`'s handle as the core's `RuntimeTask`.

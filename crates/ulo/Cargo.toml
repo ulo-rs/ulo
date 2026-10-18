@@ -18,6 +18,11 @@ ulo-macros = { path = "../ulo-macros", version = "=0.1.0-alpha.1" }
 # The `warn` for a panic raised while a spawned task's future is dropped, which no caller is
 # waiting to receive.
 tracing.workspace = true
+# `Secret<T>: Deserialize` behind the `serde` feature, for `ulo-config` (integrations I3).
+serde = { workspace = true, optional = true }
+
+[features]
+serde = ["dep:serde"]
 
 [lints]
 workspace = true

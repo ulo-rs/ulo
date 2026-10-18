@@ -27,6 +27,7 @@ mod extract;
 mod frame;
 mod held;
 mod server;
+mod trace;
 mod transport;
 
 pub mod link;

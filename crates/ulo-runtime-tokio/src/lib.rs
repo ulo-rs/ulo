@@ -123,6 +123,10 @@ impl ulo::Spawn for Tokio {
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle {
         TaskHandle::launch(fut, |task| Task(self.handle.spawn(task)))
     }
+
+    fn name(&self) -> &'static str {
+        "tokio"
+    }
 }
 
 /// tokio's handle as the core's `RuntimeTask`. A `JoinHandle` resolves only once its future has

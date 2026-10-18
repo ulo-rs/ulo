@@ -9,6 +9,7 @@
 //! strip is the only protection there, a backstop and not a guarantee.
 
 use std::any::Any;
+use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -38,6 +39,11 @@ impl Redacted {
 
     pub(crate) fn from_parts(inner: BoxError, text: String) -> Self {
         Redacted { inner, text }
+    }
+
+    /// The original, for the core's own walks of an error chain, which `source()` stops short of.
+    pub(crate) fn original(&self) -> &(dyn Error + 'static) {
+        &*self.inner
     }
 }
 
@@ -111,6 +117,299 @@ impl From<String> for Secret<String> {
 impl From<&str> for Secret<String> {
     fn from(value: &str) -> Self {
         Secret::new(value.to_owned())
+    }
+}
+
+thread_local! {
+    /// The texts of the secrets deserialised on this thread while a collection is open, `None`
+    /// outside one. A deserialisation is synchronous, so one thread-local scoped to the call holds
+    /// exactly what that call produced.
+    static COLLECTOR: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` with a collection open on this thread and answers what it collected: the text of
+/// every scalar a `Secret`'s inner value was read from. The collection open before, if any, is
+/// restored afterwards, also when `f` unwinds, and receives nothing of this one's.
+pub(crate) fn collecting<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
+    struct Restore(Option<Vec<String>>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            let _ = COLLECTOR.try_with(|c| *c.borrow_mut() = previous);
+        }
+    }
+
+    let previous = COLLECTOR.try_with(|c| c.borrow_mut().replace(Vec::new())).ok().flatten();
+    let restore = Restore(previous);
+    let answer = f();
+    let collected = COLLECTOR.try_with(|c| c.borrow_mut().take()).ok().flatten().unwrap_or_default();
+    drop(restore);
+    (answer, collected)
+}
+
+#[cfg(feature = "serde")]
+mod serde_impl {
+    //! `Secret<T>: Deserialize` and the capture that feeds the collector (integrations §2.3).
+    //!
+    //! The capture wraps the deserializer `T` reads from and records the text of every scalar it
+    //! visits, so a `Secret<T>` is collected whatever `T` is, `Display` or not, and whatever
+    //! deserializer it meets, serde's buffered content under `flatten` and `untagged` included.
+    //! It descends through `Some` and newtypes; it records nothing inside a sequence, a map or an
+    //! enum, and nothing under a request for an `Option`, whose flattened form serde answers
+    //! through a visitor method that is not public API. A `bool` and a unit are not recorded: as
+    //! redaction texts they would replace every `true` in every error.
+
+    use std::fmt;
+    use std::marker::PhantomData;
+
+    use serde::de::{Deserialize, Deserializer, EnumAccess, Error, MapAccess, SeqAccess, Visitor};
+
+    use super::{COLLECTOR, Secret};
+
+    /// Read as a newtype named `"Secret"`, so `ulo-config`'s deserializer recognises it by that
+    /// name and records it with its path and origin; any other deserializer reads the inner value
+    /// as if the wrapper were absent. While `ulo-config`'s collection is open on the thread, the
+    /// value's text is also recorded there, which is what registers a secret under
+    /// `#[serde(flatten)]` and `#[serde(untagged)]`, where serde buffers the field and the name
+    /// never reaches the deserializer.
+    ///
+    /// The limit: an error `T`'s own `Deserialize` raises through `Error::custom` is printed as
+    /// `T` wrote it, and such a message may quote its input. Outside `flatten` and `untagged`,
+    /// `ulo-config` renders a problem under a secret's path from the path and the kind alone. Under
+    /// them the secret is registered, through the collector, but its path is not known to be a
+    /// secret's, so a message its inner type raises is printed as written. A value that failed to
+    /// deserialise was never a secret value, so no later pass over the collected ones can scrub it.
+    ///
+    /// `Secret` has no `Serialize`: writing one out through serde does not compile.
+    impl<'de, T: Deserialize<'de>> Deserialize<'de> for Secret<T> {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            deserializer.deserialize_newtype_struct("Secret", SecretVisitor(PhantomData))
+        }
+    }
+
+    struct SecretVisitor<T>(PhantomData<fn() -> T>);
+
+    impl<'de, T: Deserialize<'de>> Visitor<'de> for SecretVisitor<T> {
+        type Value = Secret<T>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a secret value")
+        }
+
+        fn visit_newtype_struct<D: Deserializer<'de>>(self, deserializer: D) -> Result<Secret<T>, D::Error> {
+            let value = if collection_open() { T::deserialize(Capture(deserializer))? } else { T::deserialize(deserializer)? };
+            Ok(Secret::new(value))
+        }
+    }
+
+    fn collection_open() -> bool {
+        COLLECTOR.try_with(|c| c.borrow().is_some()).unwrap_or(false)
+    }
+
+    /// An empty text is not recorded, as the registry ignores one.
+    fn record(text: String) {
+        if text.is_empty() {
+            return;
+        }
+        let _ = COLLECTOR.try_with(|c| {
+            if let Some(texts) = c.borrow_mut().as_mut() {
+                texts.push(text);
+            }
+        });
+    }
+
+    struct Capture<D>(D);
+
+    macro_rules! forward {
+        ($($method:ident),* $(,)?) => {$(
+            fn $method<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+                self.0.$method(Recording(visitor))
+            }
+        )*};
+    }
+
+    impl<'de, D: Deserializer<'de>> Deserializer<'de> for Capture<D> {
+        type Error = D::Error;
+
+        forward!(
+            deserialize_any,
+            deserialize_bool,
+            deserialize_i8,
+            deserialize_i16,
+            deserialize_i32,
+            deserialize_i64,
+            deserialize_i128,
+            deserialize_u8,
+            deserialize_u16,
+            deserialize_u32,
+            deserialize_u64,
+            deserialize_u128,
+            deserialize_f32,
+            deserialize_f64,
+            deserialize_char,
+            deserialize_str,
+            deserialize_string,
+            deserialize_bytes,
+            deserialize_byte_buf,
+            deserialize_unit,
+            deserialize_seq,
+            deserialize_map,
+            deserialize_identifier,
+            deserialize_ignored_any,
+        );
+
+        /// Unwrapped: see the module's documentation.
+        fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+            self.0.deserialize_option(visitor)
+        }
+
+        fn deserialize_unit_struct<V: Visitor<'de>>(self, name: &'static str, visitor: V) -> Result<V::Value, Self::Error> {
+            self.0.deserialize_unit_struct(name, Recording(visitor))
+        }
+
+        fn deserialize_newtype_struct<V: Visitor<'de>>(self, name: &'static str, visitor: V) -> Result<V::Value, Self::Error> {
+            self.0.deserialize_newtype_struct(name, Recording(visitor))
+        }
+
+        fn deserialize_tuple<V: Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error> {
+            self.0.deserialize_tuple(len, Recording(visitor))
+        }
+
+        fn deserialize_tuple_struct<V: Visitor<'de>>(
+            self,
+            name: &'static str,
+            len: usize,
+            visitor: V,
+        ) -> Result<V::Value, Self::Error> {
+            self.0.deserialize_tuple_struct(name, len, Recording(visitor))
+        }
+
+        fn deserialize_struct<V: Visitor<'de>>(
+            self,
+            name: &'static str,
+            fields: &'static [&'static str],
+            visitor: V,
+        ) -> Result<V::Value, Self::Error> {
+            self.0.deserialize_struct(name, fields, Recording(visitor))
+        }
+
+        fn deserialize_enum<V: Visitor<'de>>(
+            self,
+            name: &'static str,
+            variants: &'static [&'static str],
+            visitor: V,
+        ) -> Result<V::Value, Self::Error> {
+            self.0.deserialize_enum(name, variants, Recording(visitor))
+        }
+
+        fn is_human_readable(&self) -> bool {
+            self.0.is_human_readable()
+        }
+    }
+
+    struct Recording<V>(V);
+
+    macro_rules! record_display {
+        ($($method:ident: $ty:ty),* $(,)?) => {$(
+            fn $method<E: Error>(self, v: $ty) -> Result<Self::Value, E> {
+                record(v.to_string());
+                self.0.$method(v)
+            }
+        )*};
+    }
+
+    impl<'de, V: Visitor<'de>> Visitor<'de> for Recording<V> {
+        type Value = V::Value;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            self.0.expecting(f)
+        }
+
+        record_display!(
+            visit_i8: i8,
+            visit_i16: i16,
+            visit_i32: i32,
+            visit_i64: i64,
+            visit_i128: i128,
+            visit_u8: u8,
+            visit_u16: u16,
+            visit_u32: u32,
+            visit_u64: u64,
+            visit_u128: u128,
+            visit_f32: f32,
+            visit_f64: f64,
+            visit_char: char,
+        );
+
+        fn visit_bool<E: Error>(self, v: bool) -> Result<Self::Value, E> {
+            self.0.visit_bool(v)
+        }
+
+        fn visit_str<E: Error>(self, v: &str) -> Result<Self::Value, E> {
+            record(v.to_owned());
+            self.0.visit_str(v)
+        }
+
+        fn visit_borrowed_str<E: Error>(self, v: &'de str) -> Result<Self::Value, E> {
+            record(v.to_owned());
+            self.0.visit_borrowed_str(v)
+        }
+
+        fn visit_string<E: Error>(self, v: String) -> Result<Self::Value, E> {
+            record(v.clone());
+            self.0.visit_string(v)
+        }
+
+        /// Recorded only as UTF-8: the registry replaces text.
+        fn visit_bytes<E: Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+            record_bytes(v);
+            self.0.visit_bytes(v)
+        }
+
+        fn visit_borrowed_bytes<E: Error>(self, v: &'de [u8]) -> Result<Self::Value, E> {
+            record_bytes(v);
+            self.0.visit_borrowed_bytes(v)
+        }
+
+        fn visit_byte_buf<E: Error>(self, v: Vec<u8>) -> Result<Self::Value, E> {
+            record_bytes(&v);
+            self.0.visit_byte_buf(v)
+        }
+
+        fn visit_none<E: Error>(self) -> Result<Self::Value, E> {
+            self.0.visit_none()
+        }
+
+        fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+            self.0.visit_some(Capture(deserializer))
+        }
+
+        fn visit_unit<E: Error>(self) -> Result<Self::Value, E> {
+            self.0.visit_unit()
+        }
+
+        fn visit_newtype_struct<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+            self.0.visit_newtype_struct(Capture(deserializer))
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+            self.0.visit_seq(seq)
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+            self.0.visit_map(map)
+        }
+
+        fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> Result<Self::Value, A::Error> {
+            self.0.visit_enum(data)
+        }
+    }
+
+    fn record_bytes(v: &[u8]) {
+        if let Ok(text) = std::str::from_utf8(v) {
+            record(text.to_owned());
+        }
     }
 }
 

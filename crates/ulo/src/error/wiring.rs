@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt;
 use std::panic::Location;
 
+use crate::graph::visibility::two_versions;
 use crate::key::{BindingKind, Key, KeyName, role_spelling};
 use crate::module::{ModuleName, colliding_names};
 use crate::redact::Redacted;
@@ -578,10 +579,16 @@ impl WiringError {
             }
             WiringError::Missing { key, consumer, module, near } => {
                 let builder = builder_help(key.key());
+                let missing = key.key();
                 let key = show(key);
                 let module = show_module(module);
                 let help = match (builder, near) {
                     (Some(help), _) => help.to_owned(),
+                    (None, Some((bound, exporter))) if two_versions(bound.key(), missing) => format!(
+                        "help: {} exports `{}`, the same type from two versions of its crate; `cargo tree -d` lists them",
+                        show_module(exporter),
+                        show(bound)
+                    ),
                     (None, Some((bound, exporter))) => {
                         format!("help: {} exports `{}`; the injection point reads `{key}`", show_module(exporter), show(bound))
                     }

@@ -21,8 +21,15 @@ use std::time::Duration;
 use crate::app::shared::AppShared;
 use crate::binding::Qualifier;
 use crate::dependency::Dep;
-use crate::error::{Closed, ConfigureErrors, LookupError, RuntimeMissing, Shutdown, ShutdownError, StartupError};
+use crate::dependency::FromContainer;
+use crate::error::{
+    Closed, ConfigureErrors, ConnectError, FailureReason, LookupError, RuntimeMissing, Shutdown, ShutdownError,
+    StartupError,
+};
+use crate::execution::trace::{TraceMode, TraceSource};
 use crate::execution::{ExecOptions, Execution};
+use crate::key::{BindingKind, Key};
+use crate::resolver::{Purpose, Resolver};
 use crate::graph::{ModuleId, wire};
 use crate::lifecycle::phase::Phase as Stage;
 use crate::lifecycle::{connect, shutdown};
@@ -104,6 +111,7 @@ pub(crate) struct AppConfig {
     pub(crate) shutdown_timeout: Option<Duration>,
     pub(crate) hook_timeout: Option<Duration>,
     pub(crate) construct_timeout: Option<Duration>,
+    pub(crate) trace: TraceMode,
 }
 
 impl AppConfig {
@@ -234,6 +242,14 @@ impl AppBuilder {
         self
     }
 
+    /// Whether the app reads and writes W3C trace headers; `TraceMode::On` unset (integrations
+    /// §6.1). Under `Off` no transport's context reaches an execution, no `TraceSource` is resolved
+    /// or called, and `traceparent` and `tracestate` are ordinary headers to every client.
+    pub fn trace(mut self, mode: TraceMode) -> Self {
+        self.config.trace = mode;
+        self
+    }
+
     /// Builds the graph and validates everything, collecting every error in one pass. No
     /// instances, no I/O.
     pub fn wire(self) -> Result<App<Wired>, StartupError> {
@@ -256,6 +272,11 @@ impl<S> App<S> {
 impl App<Wired> {
     /// Builds the singletons in dependency order, running each one's readiness check right after
     /// it, then every `OnModuleInit` hook, then every `OnApplicationBootstrap` hook (§9.2).
+    ///
+    /// Then, under `TraceMode::On`, resolves the `dyn TraceSource` the root module sees, if one is
+    /// bound, for `AppHandle::trace_source()` to answer (I15). A source that cannot be read, one
+    /// two exports answer or one bound per execution, fails the connect as
+    /// `ConnectError::Construct` naming it.
     pub async fn connect(self) -> Result<App<Connected>, StartupError> {
         let shared = self.shared;
         shared.phase.advance(Stage::Connecting);
@@ -263,9 +284,33 @@ impl App<Wired> {
         // `ModuleId`s are positions in collection order, the order the hooks take.
         let modules: Vec<ModuleId> = graph.modules.iter().map(|module| module.id).collect();
         connect::connect(&shared, &graph.connect_order, &modules).await?;
+        if shared.config.trace == TraceMode::On {
+            let resolver = Resolver::new(&shared, graph.root, None, Purpose::Lookup);
+            match <Option<Dep<dyn TraceSource>> as FromContainer>::from_container(&resolver).await {
+                Ok(Some(source)) => {
+                    let _ = shared.trace_source.set(source.into_arc());
+                }
+                Ok(None) => {}
+                Err(error) => return Err(StartupError::Connect(trace_source_failure(&graph, error))),
+            }
+        }
         shared.phase.advance(Stage::Running);
         Ok(App::from_shared(shared, Vec::new()))
     }
+}
+
+/// A `dyn TraceSource` lookup at `connect` that answered neither a source nor `NotFound`.
+fn trace_source_failure(graph: &crate::graph::Graph, error: LookupError) -> ConnectError {
+    let key = Key::of::<dyn TraceSource, ()>().name(BindingKind::Single);
+    let module = graph.module(graph.root).name.clone();
+    let reason = match error {
+        LookupError::Construct { reason, .. } => reason,
+        other => {
+            let text = other.to_string();
+            FailureReason::Errored(Redacted::from_parts(Box::new(other), text))
+        }
+    };
+    ConnectError::Construct { key, module, reason }
 }
 
 impl App<Connected> {

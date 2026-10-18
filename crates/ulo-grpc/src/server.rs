@@ -383,7 +383,7 @@ impl ulo::Server for Server {
         }
         self.bound = addrs.into_iter().map(|addr| BoundAddr::new(<Grpc as Transport>::KEY, addr).tls(secure)).collect();
         for service in &services {
-            health.set_named(service, ServingStatus::Serving).await;
+            health.set_by_server(service, ServingStatus::Serving).await;
         }
         self.running = Some(Running { serve, dispatcher, connections: Arc::new(connections), health, services });
         Ok(())
@@ -399,13 +399,14 @@ impl ulo::Server for Server {
     }
 
     /// GOAWAY through `ulo-server-hyper`'s drain; health switches to NOT_SERVING first, the overall
-    /// status `""` included, so a client polling health stops sending before the GOAWAY arrives.
+    /// status `""` included unless `GrpcHealth::delegate_overall` handed it to another writer, so a
+    /// client polling health stops sending before the GOAWAY arrives.
     async fn drain(&self, token: DrainToken) {
         let _ = token;
         let Some(running) = &self.running else { return };
-        running.health.set_named("", ServingStatus::NotServing).await;
+        running.health.set_by_server("", ServingStatus::NotServing).await;
         for service in &running.services {
-            running.health.set_named(service, ServingStatus::NotServing).await;
+            running.health.set_by_server(service, ServingStatus::NotServing).await;
         }
         running.serve.drain().await;
     }
