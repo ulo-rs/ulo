@@ -22,8 +22,8 @@ impl<T: DeserializeOwned> Section<T> {
     /// Reads the section at `path`, dotted: `"database"`, `"http.limits"`. The empty path is the
     /// whole configuration.
     pub fn read(config: &Config, path: &str) -> Section<T> {
-        let _ = (config, path);
-        todo!()
+        let (outcome, secrets) = crate::de::section::<T>(config, path);
+        Section { path: path.to_owned(), outcome, secrets }
     }
 }
 
@@ -50,7 +50,9 @@ impl<T> Section<T> {
     where
         T: Clone,
     {
-        let _ = m;
-        todo!()
+        for secret in &self.secrets {
+            m.secret(secret);
+        }
+        self.outcome.clone()
     }
 }

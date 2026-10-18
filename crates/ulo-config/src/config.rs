@@ -1,8 +1,9 @@
+use std::collections::BTreeSet;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::source::{Source, SourceFailure};
-use crate::tree::Tree;
+use crate::tree::{Origin, Tree};
 
 /// The sources merged into one origin-carrying tree, as `main` loaded them.
 ///
@@ -16,13 +17,34 @@ pub struct Config {
 pub(crate) struct Loaded {
     pub(crate) tree: Tree,
     pub(crate) failures: Vec<SourceFailure>,
-    /// Whether a `Defaults` source was added, which a typed read lays under the file layers.
+    /// Whether a `Defaults` source was added. A typed read is bounded by `DeserializeOwned` alone,
+    /// so it cannot call `Default`; the type's `#[serde(default)]` supplies what is missing.
+    #[allow(dead_code)]
     pub(crate) defaults: bool,
+    /// The paths of the leaves a section read consumed, shared by every clone of the `Config`.
+    consumed: Mutex<BTreeSet<String>>,
 }
 
 impl Config {
     pub fn builder() -> ConfigBuilder {
         ConfigBuilder { sources: Vec::new() }
+    }
+
+    pub(crate) fn mark_consumed(&self, paths: BTreeSet<String>) {
+        let mut consumed = self.loaded.consumed.lock().unwrap_or_else(PoisonError::into_inner);
+        consumed.extend(paths);
+    }
+
+    /// Every leaf supplied by a source that no section read has consumed so far.
+    pub(crate) fn unread(&self) -> Vec<(String, Origin)> {
+        let consumed = self.loaded.consumed.lock().unwrap_or_else(PoisonError::into_inner);
+        self.loaded
+            .tree
+            .leaves()
+            .into_iter()
+            .filter(|(path, _)| !consumed.contains(path))
+            .map(|(path, node)| (path, node.origin.clone()))
+            .collect()
     }
 }
 
@@ -49,6 +71,15 @@ impl ConfigBuilder {
     /// a section from it reports that failure through `wire()`. Reads files, so it runs in `main`
     /// and not inside a runtime worker.
     pub fn load(self) -> Config {
-        todo!()
+        let mut tree = Tree::empty();
+        let mut failures = Vec::new();
+        let mut defaults = false;
+        for source in &self.sources {
+            let layer = source.read();
+            tree.overlay(layer.tree);
+            failures.extend(layer.failures);
+            defaults |= layer.defaults;
+        }
+        Config { loaded: Arc::new(Loaded { tree, failures, defaults, consumed: Mutex::new(BTreeSet::new()) }) }
     }
 }

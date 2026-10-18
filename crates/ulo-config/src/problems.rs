@@ -71,11 +71,32 @@ impl Problems {
     }
 }
 
+/// The header every standalone report starts with; a section read or `ConfigModule` supplies its
+/// own through `ConfigError`.
+const HEADER: &str = "configuration is invalid";
+
 impl fmt::Display for Problems {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _ = f;
-        todo!()
+        write_report(f, HEADER, self)
     }
+}
+
+/// The header line with the count, then one problem per line. Newlines are the separator because
+/// `Redacted` flattens an error into one string, and the renderer indents continuation lines.
+pub(crate) fn write_report(f: &mut fmt::Formatter<'_>, header: &str, problems: &Problems) -> fmt::Result {
+    let count = problems.list.len();
+    let plural = if count == 1 { "" } else { "s" };
+    write!(f, "{header} ({count} problem{plural})")?;
+    for problem in &problems.list {
+        f.write_str("\n")?;
+        match (problem.path.is_empty(), &problem.origin) {
+            (true, Some(origin)) => write!(f, "{origin}: {}", problem.message)?,
+            (true, None) => f.write_str(&problem.message)?,
+            (false, Some(origin)) => write!(f, "{} at {origin}: {}", problem.path, problem.message)?,
+            (false, None) => write!(f, "{}: {}", problem.path, problem.message)?,
+        }
+    }
+    Ok(())
 }
 
 impl std::error::Error for Problems {}

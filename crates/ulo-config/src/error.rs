@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::problems::Problems;
+use crate::problems::{Problems, write_report};
 
 /// What a failed section read or `ConfigModule` records through `try_value`.
 ///
@@ -23,8 +23,7 @@ impl ConfigError {
 
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _ = f;
-        todo!()
+        write_report(f, &self.header, &self.problems)
     }
 }
 
