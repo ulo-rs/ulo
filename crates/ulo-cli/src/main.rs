@@ -12,7 +12,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Create a project from a template: `ulo new <name> --transport http --db sqlx-postgres`
     New(commands::new::NewArgs),
+    /// Write a module, provider, controller, gateway or resolver as a new file and print the line
+    /// that registers it; no existing file is edited
     Generate(commands::generate::GenerateArgs),
     /// Run the application, rebuilding and restarting on file changes
     #[cfg(feature = "dev")]

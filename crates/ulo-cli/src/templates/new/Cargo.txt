@@ -1,9 +1,9 @@
 [package]
-name = "{{project_name}}"
+name = "@@name@@"
 version = "0.1.0"
 edition = "2024"
+rust-version = "@@rust_version@@"
 
 [dependencies]
-ulo = "0.1.0-alpha.1"
-ulo-http-axum = "0.1.0-alpha.1"
-tokio = { version = "1", features = ["full"] }
+@@dependencies@@
+@@sections@@

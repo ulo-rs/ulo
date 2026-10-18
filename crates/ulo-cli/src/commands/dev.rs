@@ -569,10 +569,10 @@ async fn start(plan: &Plan, running: &mut Option<Running>, executable: PathBuf) 
     let (job, task) = start_job(command);
     let handoff = Handoff::default();
     install_spawn_hook(&job, plan.held.clone(), handoff.clone());
-    let _ = job.set_error_handler(|error| match error.get() {
+    drop(job.set_error_handler(|error| match error.get() {
         Some(error) => eprintln!("{}", format!("[ulo dev] cannot start the application: {error}").red()),
         None => eprintln!("{}", "[ulo dev] cannot start the application".red()),
-    });
+    }));
     handoff.fill(socket);
     job.start().await;
     *running = Some(Running { job, task, executable, handoff });
@@ -607,13 +607,13 @@ fn child_command(plan: &Plan, executable: &Path) -> Result<Command> {
 /// Sets each child's environment and, with a held socket, has each spawn place it at descriptor
 /// 3. Installed once per job; the job calls both before every spawn.
 fn install_spawn_hook(job: &Job, held: Option<Arc<Held>>, handoff: Handoff) {
-    let _ = job.set_spawn_hook(move |command, _| {
+    drop(job.set_spawn_hook(move |command, _| {
         let command = command.command_mut();
         // The trampoline sets `LISTEN_PID`; one inherited from this command's own environment
         // names this process, not the child. The socket's variables are set by the spawn that
         // places it, and only there.
         command.env(DEV_VAR, "1").env_remove("LISTEN_PID").env_remove("LISTEN_FDS").env_remove("LISTEN_FDNAMES");
-    });
+    }));
     #[cfg(unix)]
     if let Some(held) = held {
         // Not awaited: the job handles its controls in order, so the function is in place before
