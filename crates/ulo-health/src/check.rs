@@ -9,6 +9,8 @@ pub trait Check: Send + Sync + 'static {
     /// The name the report and the `checks` object print.
     fn name(&self) -> &str;
 
+    /// One evaluation, run by each probe that reads the check. The health module races it against
+    /// the bound and reads a panic as down, so the future need not time itself.
     fn check(&self) -> BoxFuture<'_, Health>;
 
     /// `Bound::Default` is 2 s; `Bound::After(Duration::ZERO)` is refused at `connect`, where the

@@ -6,9 +6,13 @@
 //! ```
 //!
 //! Each route answers 200 when its probe passes and 503 when it does not; Kubernetes counts 200 to
-//! 399 as success. During `Draining` the HTTP server's own 503 answers every request before routing,
-//! the probes included, and kubelet has stopped the liveness and startup probes by then, so a
-//! liveness failure in the drain cannot kill the pod.
+//! 399 as success. The body follows the expired IETF health-check draft as a shape: media type
+//! `application/health+json`, `status` `pass` or `fail`, and with `.detail(true)` the draft's
+//! `checks` object, each down check's reason passed through the app's redaction.
+//!
+//! During `Draining` the HTTP server's own 503 answers every request before routing, the probes
+//! included, and kubelet has stopped the liveness and startup probes by then, so a liveness
+//! failure in the drain cannot kill the pod.
 
 mod body;
 mod routes;

@@ -12,7 +12,8 @@ categories = ["web-programming"]
 
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-# `Shared`: a probe arriving while a run is in flight shares that run.
+# `Shared`: a probe arriving while a run is in flight shares that run. `catch_unwind` and
+# `Shared` need its default `std` feature.
 futures-util.workspace = true
 tracing.workspace = true
 
