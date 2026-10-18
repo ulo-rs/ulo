@@ -2,21 +2,24 @@
 
 Race 3 builds the integration layer on the race 2b tree: configuration, health over HTTP and gRPC,
 the shared database policy with five stores and their conformance suite, the CLI's templates, and
-W3C trace propagation with OpenTelemetry export. The SPI extensions it needs are I1–I14
+W3C trace propagation with OpenTelemetry export. The SPI extensions it needs are I1–I16
 (`integrations/DESIGN.md` §9); I12, I13 and I14 are the fourth response's P2, H5 and P9, and its P6
-widens I3 by the secret collector.
+widens I3 by the secret collector. I15 and I16 are the fifth response's S5, which also widens I5 by
+the header text and `TraceOrigin`; its S4 widens I14 to a stored copy every write goes through.
 
-The spine comes first and alone, as in 2a and 2b. It writes every core and transport extension as
-finished code, the insertion points in the four hubs, the move of the RPC suite's shared pieces
-into a crate of their own, the workspace manifest, and every new crate's module tree and public
-signatures with `todo!()` bodies. The areas then fill the skeletons stage by stage, in the order of
-`integrations/DESIGN.md` §8, each building against the signatures the spine froze.
+The spine comes first, as in 2a and 2b, and runs as stage 0: three sub-agents in parallel, on
+disjoint files. Between them they write every core and transport extension as finished code, the
+insertion points in the four hubs, the move of the RPC suite's shared pieces into a crate of their
+own, the workspace manifest, and every new crate's module tree and public signatures with `todo!()`
+bodies. The areas then fill the skeletons stage by stage, in the order of `integrations/DESIGN.md`
+§8, each building against the signatures the spine froze.
 
-`integrations/DESIGN.md` is the spec, over `DESIGN.md` and `transports/DESIGN.md`.
-`integrations/RESPONSE.md` breaks a tie, the latest response winning: the fourth response, signed
-off 2026-10-19, supersedes `integrations/DESIGN.md` wherever the two differ (the table below lists
-where). `divergences/race3-S.md` lists every place the spine departs from the designs or fills what
-they leave open; those entries await the user's sign-off like any area's.
+`integrations/DESIGN.md` is the spec, over `DESIGN.md` and `transports/DESIGN.md`, and carries the
+fourth and fifth responses as ruled. `integrations/RESPONSE.md` breaks a tie, the latest response
+winning: the fifth response, signed off 2026-10-19, then the fourth, signed off the same day (the
+table below lists where each decides). `divergences/race3-S.md` lists every place the spine departs
+from the designs or fills what they leave open, each entry naming the sub-agent that wrote it; those
+entries await the user's sign-off like any area's.
 
 ## Names
 
@@ -32,29 +35,43 @@ workspace name differ by more than the prefix:
 
 Every other crate is the design name with the prefix swapped.
 
-## Where the fourth response decides
+## Where the fourth and fifth responses decide
 
-Each row is a point where `integrations/DESIGN.md`, as consolidated before the fourth response,
-says otherwise or nothing. The area named builds the fourth response's version.
+Each row is a point a response decided. `integrations/DESIGN.md` states each as ruled; the area
+named builds it. Where a fifth-response row and a fourth-response row cover one subject, the
+fifth's governs, and the fourth's row below states only what still holds of it.
 
-| Point | Fourth response | Area |
+| Point | Ruling | Area |
 |---|---|---|
 | P1 | `ulo-db` stays at 1.88 and names no lock primitive; `File::lock` sits in the store crates that speak SQLite | D1, D2, S2b |
-| P2 | a missing key whose full type name equals a bound key's with a different `TypeId` gets the help "the same type from two versions of its crate; `cargo tree -d` lists them" | S |
+| P2 | a missing key whose full type name equals a bound key's with a different `TypeId` gets the help "the same type from two versions of its crate; `cargo tree -d` lists them" | S-core |
 | P3 | SeaORM's store validates with SQLx's option parser; the whole URL and its password are both registered with `m.secret(..)`; the options' `Debug` writes the URL redacted; `validate` checks the scheme itself, shared with `ulo-db-sqlx` | S2a, D2 |
-| P4 | YAML on `saphyr`'s `MarkedYaml` into the origin tree, behind `yaml`, after TOML and JSON; aliases bounded, merge keys refused naming the line, scalars by the YAML 1.2 core schema | C |
+| P4 | YAML on `saphyr`'s `MarkedYaml` into the origin tree, behind `yaml`, after TOML and JSON; aliases bounded (R2), merge keys refused naming the line, scalars by the YAML 1.2 core schema | C |
 | P5 | the crate's own `.env` parser, the grammar table of P5, a key twice in one file a problem naming both lines | C |
-| P6 | a scoped collector `Secret::deserialize` writes to, installed by `ulo-config`, beside the name-based path; a problem under a secret's path rendered from path and kind alone | S (collector), C |
+| P6 | a scoped collector `Secret::deserialize` writes to, installed by `ulo-config`, beside the name-based path; a problem under a secret's path rendered from path and kind alone | S-core (collector), C |
 | P7 | at most one leaf-type error per section, a stated limit | C |
-| P8 | `ulo-otel-otlp` ships a `ureq` client by default and `reqwest-blocking` as an opt-in feature; runtime-free at default features | O3, S (levels) |
-| P9 | tonic-health's `NOT_FOUND` documented; the bridge writes only a change, and so do `ulo-grpc`'s writes at `bind` and `drain` | H2, S |
+| P8 | `ulo-otel-otlp` ships a `ureq` client by default and `reqwest-blocking` as an opt-in feature; runtime-free at default features | O3, S-skel (levels) |
+| P9 | tonic-health's `NOT_FOUND` documented; no writer writes an unchanged status (S4) | H2, S-core |
 | P10 | `.lag` guidance: zero with a `preStop` sleep, a few seconds without one; the default stays zero | H1 |
-| H1 | `Store` gains `const CREATE_CONNECTS: bool`; for such a store `ulo-db` runs `create` under the retries, backoff and bound it hands `.ready(..)`, stopping on `Permanent`; Redis sets `set_number_of_retries(0)`; Diesel offers `.lazy()` | D1, S2d, S2b |
-| H2 | no change to `Runtime`; Diesel's migrations run as `spawn_with(&runtime, async { tokio::task::spawn_blocking(migrate).await })`; SQLite keeps diesel-async's default `SpawnBlocking` through `custom_setup` | S2b |
+| H1 | `Store` gains `const CREATE_CONNECTS: bool`; for such a store `ulo-db` loops around `create`, stopping on `Permanent`, under the bounds S1 gives; Redis sets `set_number_of_retries(0)`; Diesel offers `.lazy()` | D1, S2b, S2d |
+| H2 | no change to `Runtime`; Diesel's blocking path as R4 gives it | S2b |
 | H3 | `ulo-db` owns the key, the order, the bound and the error; each store the dedicated connection and the primitive: `pg_advisory_lock(K)`, `GET_LOCK('ulo-db.migrate.' + database, timeout)` with a hash past 64 characters, an OS lock on `<file>.ulo-migrate.lock`; `K` is the first eight bytes of SHA-256 of `"ulo-db/migrations"` as a big-endian `i64` | D1, D2, S2a, S2b |
-| H4 | an invalid incoming `traceparent` in pass-through gives no context; in pass-through both headers are forwarded exactly as received and a caller's `tracestate` on a forwarding call is refused `reserved_header`, its message naming that a vendor entry needs an exporter; `tracestate` is merged only when a `TraceSource` is bound; Level 1, flags forwarded unchanged in pass-through | S (reservation), O1 |
-| H5 | `TraceSource` is a core hook called inside `span::call` between creating the span and first entering it: `TraceSource::start(&span, inbound)` answers the execution's own context, written through `Execution::set_trace`, once, by the holder, before `dispatch`; each transport extracts before `Execution::open` and passes it in `ExecOptions::trace` | S, O1, O2 |
-| H6 | `ulo-db-mongodb` keeps its name; MySQL over SQLx's TLS feature on aws-lc-rs, no `mysql-rsa`; `mongodb+srv` validated by scheme and host with the SRV lookup in `create`; `ulo-db-redis` calls `prefer_tokio()` once when the module is built | D2, S2c, S2d |
+| H4 | an invalid incoming `traceparent` in pass-through gives no context; in pass-through both headers are forwarded exactly as received and a caller's `tracestate` on a forwarding call is refused `reserved_header`, its message naming that a vendor entry needs an exporter; Level 1, flags forwarded unchanged in pass-through; which context merges is S5's `TraceOrigin` | S-core (reservation), O1 |
+| H5 | `TraceSource` is a core hook called inside `span::call` between creating the span and first entering it: `TraceSource::start(&span, inbound)` answers the execution's own context, written through `Execution::set_trace`, once, by the holder, before `dispatch`; each transport extracts before `Execution::open` and passes it in `ExecOptions::trace` | S-core, O1, O2 |
+| H6 | `ulo-db-mongodb` keeps its name; no `mysql-rsa`; `mongodb+srv` validated by scheme and host with the SRV lookup in `create`; the TLS feature as R1 gives it, Redis's preference as S3 | D2, S2c, S2d |
+| R1 | `ulo-db-sqlx`'s TLS is SQLx's `tls-rustls-ring-native-roots`: ring, the workspace's provider, with the platform's roots; rumqttc's aws-lc-rs is MQTT's limit, documented | D2 |
+| R2 | YAML aliases bounded by a pre-scan of `saphyr-parser`'s events before the loader runs: the nodes inside each anchored node counted as its events arrive, the count added at every alias, refused past 100,000 nodes with a problem naming the alias's line, a fixed limit; if the events lack anchor IDs or positions, every alias refused naming its line | C |
+| R3 | `ulo-config`'s error type renders every type and value problem from the kind of the value found, never the value, buffered content included; a leaf type's own `Error::custom` message is printed as written, the limit stated on `Secret`'s `Deserialize` docs and `ulo-config`'s | S-core (`Secret`'s docs), C |
+| R4 | `ulo-db-diesel`'s `Given`, a `SpawnBlocking` over the given runtime's handle captured once in `create`; each SQLite connection built with `with_runtime(conn, Given(handle.clone()))`; `Given::spawn_blocking` calls `handle.spawn_blocking(..)`; the migrations run through the same `Given` | S2b |
+| R5 | SQLx's `runtime-smol` beside `runtime-tokio` is decided by a stage-2 test: a `PoolConnection` dropped on a thread with no tokio context, asserting no task ran on smol's executor; a failure returns as an S-item | the coordinator (stage-2 test) |
+| S1 | one bound, `connect_within`, and one retry loop per store: `.ready(..)` with its retries, backoff and `.timeout(connect_within)` for a store whose `create` connects nothing; for one whose `create` connects, the `create` loop under `connect_within`, the construction bound set to `connect_within` through `.timeout(..)` on the binding handle, then `.ready(..)` as one confirming ping, `.retries(0)`, under the default attempt bound | D1, S2c, S2d |
+| S2 | `CREATE_CONNECTS` is `true` for the whole MongoDB store, a `const`; MongoDB therefore has no `.lazy()` | S2c |
+| S3 | `prefer_tokio()` once per process, under a `OnceLock` in `ulo-db-redis`; a refusal read for the current preference where redis-rs allows (tokio continues, anything else a `Permanent` refusal at `connect`), a `warn` naming the conflict where it does not | S2d |
+| S4 | `GrpcHealth` is the only path to the reporter and does not expose it; every write, the server's, the bridge's and the application's `set` and `set_named`, compares with its stored copy before reaching the reporter | S-core, H2 |
+| S5 | `TraceContext` keeps both headers' text as received beside the parsed fields, a forward writing the text; `TraceOrigin::{Received, Originated}` inside it, set by `ExecOptions::trace` and `set_trace`, read by the client's `tracestate` rule; `App` resolves `Option<Dep<dyn TraceSource>>` once at `connect`, read through `AppHandle::trace_source()`; `ExecOptions::span(tracing::Span)` makes `execute` call `TraceSource::start` and `set_trace`; `Execution::open` unchanged | S-core, O1, O2 |
+| N1 | `ulo-db-diesel` states 1.89, for `File::lock` | S2b |
+| N2 | `ureq` pinned exactly, `=3.4.2` | S-skel (the workspace entry), O3 |
+| N3 | `K = 3490428366386280370` | D1 |
 
 ## Rules
 
@@ -86,15 +103,15 @@ The rules of `BUILD_PLAN_2B.md` apply, restated with this race's names, with one
    states about it. No labels, no step narration, no section dividers.
 8. **`todo!()` is the only panic the spine leaves**, and every one is replaced. The core and the
    integrations never panic on a path the design gives a typed error.
-9. **The race runs in stages** (the exception). The spine runs alone and holds every core
-   extension of all five stages; the areas then run in the order of `integrations/DESIGN.md` §8,
+9. **The race runs in stages** (the exception). The spine runs first, its three sub-agents in
+   parallel on disjoint files, and holds every core extension of all five stages; the areas then run in the order of `integrations/DESIGN.md` §8,
    the areas of one stage in parallel, a stage starting once every area of the stage before has
    handed back its files and its log. An area builds against the spine's signatures; where it reads
    an earlier stage's bodies and disagrees with them, it logs the disagreement and edits nothing.
 
    | Stage | Areas | DESIGN §8 |
    |---|---|---|
-   | 0 | S | the core and transport extensions of every stage: I1, I2, I3 with P6's collector, I4, I5, I7, I8's reservation, I10, I11, I12, I13, I14 |
+   | 0 | S-core, S-move, S-skel, in parallel | the core and transport extensions of every stage: I1, I2, I3 with P6's collector, I4, I5, I7, I8's reservation, I12, I13, I14, I15, I16 (S-core); I11 (S-move); I10 and the skeletons (S-skel) |
    | 1 | C, H1 | 1: configuration and `ulo-health` with HTTP |
    | 2 | D1, D2, D3 | 2: `ulo-db` over `.ready`, SQLx and the suite |
    | 3 | S2a, S2b, S2c, S2d, H2 | 3: the other stores; `ulo-health-grpc` |
@@ -105,17 +122,30 @@ The rules of `BUILD_PLAN_2B.md` apply, restated with this race's names, with one
     concurrency, lifecycle, ordering or timing. Fable runs only on the user's approval, and no area
     here asks for it. Each area states its model on a `Model:` line.
 
-## S. The race-3 spine (first, alone)
-
-Model: Opus. The readiness loop's early end, `Permanent` through redaction, the `TraceContext` and
-`TraceSource` core change, `ExecOptions::trace`, `span::call`, the RPC client's reservation and the
-gRPC health writes on change are lifecycle and ordering work.
+## S. The race-3 spine (stage 0)
 
 The spine owns the core extensions, the transport changes that are not carriers, the insertion
 points of the carriers, the I11 move, the workspace manifest and the level list, and every new
-crate's skeleton.
+crate's skeleton. It runs as three sub-agents in parallel, S-core, S-move and S-skel, and no file
+belongs to two of them. Each logs into `divergences/race3-S.md` under its own name. A change one
+needs in another's file is a request in that log, routed by the coordinator after stage 0, as rule 3
+has it between areas; S-core and S-move need nothing from the root `Cargo.toml` or
+`runtime-levels.txt` beyond what S-skel writes from this plan, and a new workspace dependency either
+finds it needs is such a request.
 
-### Finished code
+S-skel does not wait on S-core: it codes against `integrations/DESIGN.md` §9, the cross-area
+contracts below and the surface this plan fixes for S-core (below), so every skeleton signature
+matches S-core's real types. S-core may add private items and accessors no skeleton names; it may
+not rename, reshape or drop an item of the fixed surface.
+
+### S-core: the core and transport extensions
+
+Model: Opus. The readiness loop's early end, `Permanent` through redaction, the `TraceContext` and
+`TraceSource` core change with its resolution at `connect`, `ExecOptions::trace` and `::span`,
+`span::call`, the RPC client's reservation and `GrpcHealth`'s stored copy are lifecycle and ordering
+work.
+
+#### Finished code
 
 | Files | Holds |
 |---|---|
@@ -123,21 +153,22 @@ crate's skeleton.
 | `crates/ulo-runtime-tokio/src/lib.rs`, `crates/ulo-runtime-smol/src/lib.rs` | I1: `name()` answering `"tokio"` in `impl ulo::Spawn for Tokio` (`:122`) and `"smol"` in `impl ulo::Spawn for Smol` (`:192`); the two test runtimes in `crates/ulo-rpc/src/client.rs` (`:1536`, `:1712`) keep the default |
 | `crates/ulo/src/error/mod.rs` | I2: `#[non_exhaustive] pub struct Permanent(BoxError)`, `Permanent::new(e)`, `Display` the inner error's, `source()` the inner error; `is_permanent(&StartupError) -> bool` beside `is_panic` (`:583`), walking the chain under the same depth bound and recognising `Permanent` inside a `Redacted` as one of the core's own types |
 | `crates/ulo/src/lifecycle/connect.rs` | I2: in `run_readiness` (`:83`), the `Outcome::Done(Err(e))` arm (`:102`) reads the attempt's error for a `Permanent` before `construct_error` redacts it, and a `Permanent` ends the check at once as `FailureReason::Errored(..)`, with no further attempt and no backoff |
-| `crates/ulo/Cargo.toml`, `crates/ulo/src/redact.rs`, `crates/ulo/src/__private.rs` | I3: the `serde` feature over the workspace's `serde`, optional; `impl<'de, T: Deserialize<'de>> Deserialize<'de> for Secret<T>` (`Secret` at `redact.rs:69`) through `deserialize_newtype_struct("Secret", ..)`, and no `Serialize`; P6: the scoped collector `Secret::deserialize` records into, sound for one synchronous deserialisation, installed by `ulo-config` through a doc-hidden entry in `__private` |
+| `crates/ulo/Cargo.toml`, `crates/ulo/src/redact.rs`, `crates/ulo/src/__private.rs` | I3: the `serde` feature over the workspace's `serde`, optional; `impl<'de, T: Deserialize<'de>> Deserialize<'de> for Secret<T>` (`Secret` at `redact.rs:69`) through `deserialize_newtype_struct("Secret", ..)`, and no `Serialize`; its documentation states R3's limit, that under `#[serde(flatten)]` or `#[serde(untagged)]` the secret is registered but an `Error::custom` message its inner type raises is printed as written; P6: the scoped collector `Secret::deserialize` records into, sound for one synchronous deserialisation, installed by `ulo-config` through the doc-hidden entry the fixed surface names |
 | `crates/ulo/src/graph/visibility.rs`, `crates/ulo/src/error/wiring.rs` | I12 (P2): `near_spelling` (`visibility.rs:319`, `spelled_alike` at `:357`) also matches a visible key whose full type name equals the missing key's while the `TypeId`s differ, and the rendering of `WiringError::Missing` (`wiring.rs:178`, rendered at `:579`) gives that match the help "the same type from two versions of its crate; `cargo tree -d` lists them" |
-| `crates/ulo/src/execution/trace.rs` (new) | I5: `TraceContext` and `TraceState`, runtime-free, no clock and no randomness, with the W3C Level 1 rules PROBES_obs.md §5 lists: the 55-character `00` grammar in lowercase hex, a higher version parsed by the `00` offsets with end-or-dash after the flags, `ff` and all-zero IDs invalid, a duplicated `traceparent` a restart, whitespace trimmed, flags as bits with unknown bits zeroed on output, `tracestate` parsed only beside a valid `traceparent`, at most 32 members, the key and value grammar, an invalid member discarding the list, `with_entry` adding at the left and truncating to 512 characters by whole entries; output always version `00`. `TraceMode::{On, Off}`, `On` the default. I7: `TraceSource`, `start(&Span, inbound)` answering the execution's own context (H5) |
-| `crates/ulo/src/execution/mod.rs` | I5: `ExecOptions::trace(TraceContext)` beside `deadline` (`:66`), its field in `ExecOptions` (`:55`), `deadline` rebuilt so the two compose; the inbound context and the set-once own context on `ExecShared` beside `deadline`; `Execution::trace()` beside `deadline()` (`:205`) and the same on `ExecutionRef` (`:287`); I13: `Execution::set_trace(TraceContext)`, taking effect once, on `Execution` and not `ExecutionRef`, before `dispatch`, as `route_to` (`:172`) does; `mod trace` |
-| `crates/ulo/src/app/shared.rs` | I5: the inbound context copied from `opts` beside `deadline: opts.deadline` (`:172`) |
-| `crates/ulo/src/app/mod.rs` | I5: `AppBuilder::trace(TraceMode)` (`AppBuilder` at `:84`), the mode on `AppConfig` |
-| `crates/ulo/src/testing.rs` | `TestApp::trace(TraceMode)` if the spine answers §14's question with yes; untouched otherwise |
-| `crates/ulo/src/lib.rs` | re-exports: `Permanent`, `is_permanent`, `TraceContext`, `TraceState`, `TraceMode`, `TraceSource` |
-| `crates/ulo-transport/src/span.rs` | I7: `call` (`:35`) declares `otel.kind` and `otel.status_code` empty beside its other fields, with their constants, for each hub to record, and calls the bound `TraceSource` with the new span and the execution's inbound context before returning it, writing the answer through `Execution::set_trace`; with no source bound the inbound context stays as it is (H5). The call sites change with the signature, in the hub files below |
-| `crates/ulo-grpc/src/health.rs`, `crates/ulo-grpc/src/server.rs` | I4: `GrpcHealth::delegate_overall()`, after which `drain` (`server.rs:406`) writes no status for `""`; I14 (P9): the server's writes at `bind` (`server.rs:385`) and `drain` compare with the last status written for that name and skip an unchanged one. tonic-health 0.14.6's `HealthReporter` has no read (its methods are `new`, `set_serving`, `set_not_serving`, `set_service_status`, `clear_service_status`; read in the registry), so `GrpcHealth` keeps the last status per name beside its reporter |
-| `crates/ulo-rpc/src/client.rs` (also in the next table), `crates/ulo-rpc/src/transport.rs` | I8 as H4 restates it: `Spec::reserved` (`client.rs:536`, called at `:951`, `:1009`, `:1115`) refuses a caller's `traceparent`, `BadRequest` with `reason: "reserved_header"` at the await, exactly on a call whose `.within` execution carries a context, and a caller's `tracestate` on such a call when the context is forwarded rather than set by a `TraceSource`; a call with no `.within`, or within an execution with no context, keeps both as ordinary headers. `CallHeaders`'s doc (`transport.rs:208`, the `traceparent` sentence at `:212`) states both rules where it names `deadline-ms` alone today. The F400 unit test (`client.rs:1587-1597`) sends `traceparent` with no `.within` and still holds; the spine checks it by reading |
+| `crates/ulo/src/execution/trace.rs` (new) | I5: `TraceContext` and `TraceState`, runtime-free, no clock and no randomness, with the W3C Level 1 rules PROBES_obs.md §5 lists: the 55-character `00` grammar in lowercase hex, a higher version parsed by the `00` offsets with end-or-dash after the flags, `ff` and all-zero IDs invalid, a duplicated `traceparent` a restart, whitespace trimmed, flags as bits with unknown bits zeroed on output, `tracestate` parsed only beside a valid `traceparent`, at most 32 members, the key and value grammar, an invalid member discarding the list, `with_entry` adding at the left and truncating to 512 characters by whole entries. A parsed context keeps both headers' text as received beside the parsed fields, and a `Received` context is written out as that text; an `Originated` one is written as version `00` (S5). `TraceOrigin::{Received, Originated}` inside `TraceContext`. `TraceMode::{On, Off}`, `On` the default. I7: `TraceSource`, `start(&Span, inbound)` answering the execution's own context (H5) |
+| `crates/ulo/src/execution/mod.rs` | I5: `ExecOptions::trace(TraceContext)` beside `deadline` (`:66`), marking the context `Received`, its field in `ExecOptions` (`:55`), `deadline` rebuilt so the options compose; I16: `ExecOptions::span(tracing::Span)` and its field; the inbound context and the set-once own context on `ExecShared` (`:107`) beside `deadline` (`:122`); `Execution::trace()` beside `deadline()` (`:205`) and the same on `ExecutionRef` (`:287`), answering the own context once set and the inbound one before; I13: `Execution::set_trace(TraceContext)`, taking effect once, marking the context `Originated`, on `Execution` and not `ExecutionRef`, before `dispatch`, as `route_to` (`:172`) does; `Execution::open` (`:145`) reads no span; `mod trace` |
+| `crates/ulo/src/app/shared.rs` | I5: the inbound context copied from `opts` beside `deadline: opts.deadline` (`:172`); I15: the resolved source on `AppShared` (`:31`), set once at `connect`; I16: `AppShared::execute` (`:186`) takes the span out of `opts` before `open` and, with a span and a resolved source, calls `TraceSource::start(&span, inbound)` and `set_trace` before the closure runs |
+| `crates/ulo/src/app/mod.rs` | I5: `AppBuilder::trace(TraceMode)` (`AppBuilder` at `:84`), the mode on `AppConfig` (`:92`); I15: `App::connect` (`:259`) resolves `Option<Dep<dyn TraceSource>>` after `connect::connect` (`:265`) has built every singleton, through `Dep::into_arc` (`crates/ulo/src/dependency/dep.rs:27`) |
+| `crates/ulo/src/app/handle.rs` | I15: `AppHandle::trace_source() -> Option<&Arc<dyn TraceSource>>` beside `timer()` (`:106`), a plain accessor |
+| `crates/ulo/src/testing.rs` | `TestApp::trace(TraceMode)` if S-core answers §14's question with yes; untouched otherwise |
+| `crates/ulo/src/lib.rs` | re-exports: `Permanent`, `is_permanent`, `TraceContext`, `TraceState`, `TraceOrigin`, `TraceMode`, `TraceSource` |
+| `crates/ulo-transport/src/span.rs` | I7: `call` (`:35`) declares `otel.kind` and `otel.status_code` empty beside its other fields, with their constants, for each hub to record, and calls the source `AppHandle::trace_source()` answers with the new span and the execution's inbound context before returning it, writing the answer through `Execution::set_trace`; with no source the inbound context stays as it is (H5). The call sites change with the signature, in the hub files below |
+| `crates/ulo-grpc/src/health.rs`, `crates/ulo-grpc/src/server.rs` | I4: `GrpcHealth::delegate_overall()`, after which `drain` (`server.rs:406`) writes no status for `""`; I14 (S4): `GrpcHealth` (`health.rs:16`) keeps the last status written per name beside its `reporter` (`:17`), shared across clones and starting with `""` at `SERVING`, and every write, `set` (`:37`), `set_named` (`:42`) and the server's at `bind` (`server.rs:385-387`) and `drain` (`:406-409`), compares with that copy and reaches the reporter only on a change, the comparison and the write under one lock. `HealthReporter` stays `pub(crate)`. tonic-health 0.14.6's reporter has no read (its methods are `new`, `set_serving`, `set_not_serving`, `set_service_status`, `clear_service_status`; read in the registry) |
+| `crates/ulo-rpc/src/client.rs` (also in the next table), `crates/ulo-rpc/src/transport.rs` | I8 as H4 and S5 give it: `Spec::reserved` (`client.rs:536`, called at `:951`, `:1009`, `:1115`) refuses a caller's `traceparent`, `BadRequest` with `reason: "reserved_header"` at the await, exactly on a call whose `.within` execution carries a context, and a caller's `tracestate` on such a call when the context's `TraceOrigin` is `Received`; a call with no `.within`, or within an execution with no context, keeps both as ordinary headers. `CallHeaders`'s doc (`transport.rs:208`, the `traceparent` sentence at `:212`) states both rules where it names `deadline-ms` alone today. The F400 unit test (`client.rs:1587-1597`) sends `traceparent` with no `.within` and still holds; S-core checks it by reading |
 
-### Insertion points, filled by O1
+#### Insertion points, filled by O1
 
-The spine writes each call and the helper it calls, `pub(crate)` in a new `trace.rs` per hub with a
+S-core writes each call and the helper it calls, `pub(crate)` in a new `trace.rs` per hub with a
 `todo!()` body, and the `mod trace;` line. O1 owns these files from stage 5.
 
 | Files | Holds |
@@ -147,22 +178,66 @@ The spine writes each call and the helper it calls, `pub(crate)` in a new `trace
 | `crates/ulo-rpc/src/dispatch.rs`, `src/client.rs`, `src/trace.rs` (new), `src/lib.rs` | I9: extraction from `incoming.headers` beside the `deadline-ms` read (`dispatch.rs:192`), into the `opts` built at `:220-223` for `Execution::open` (`:224`), and on the unhandled path (`:278`); `call_span` (`:660`, its `span::call` at `:662`, called at `:239` and `:289`) given what the hook needs. I6: injection in `written` (`client.rs:593`), its early return for a call with no bound moved behind the injection, on both call sites (`:556` for a request or stream, `:1020` for an event) |
 | `crates/ulo-ws/src/connection.rs`, `src/gateway.rs`, `src/trace.rs` (new), `src/lib.rs` | I9: extraction from the handshake's headers (`handshake`, `connection.rs:582`) into the connect phase's `Execution::open` (`:798`), its span at `:838`; the connect execution's own context kept on the connection beside the inputs `Connection::seed` (`:175`) seeds, and passed as the parent of each message's execution (`:1391`, its span at `:1401`), a hand-written gateway's (`:143`, `gateway.rs:576`) and the terminal one (`:1527`, `open_terminal` at `:1531`) |
 
-### The shared suite crate (I11)
+S-core writes 36 files: 22 of finished code and 14 at the insertion points, the RPC client counted
+once.
+
+#### The surface S-core's skeleton-facing items take
+
+Fixed by this plan. S-skel names these in signatures and manifests; S-core writes them as given.
+
+| Item | Fixed as |
+|---|---|
+| `ulo::Spawn::name` | `fn name(&self) -> &'static str`, default `"unknown"` |
+| `ulo::Permanent` | `#[non_exhaustive] pub struct Permanent(BoxError)`, the field private; `Permanent::new(e: impl Into<BoxError>) -> Permanent`; `Debug`, `Display` the inner error's, `std::error::Error` with `source()` the inner error |
+| `ulo::is_permanent` | `pub fn is_permanent(e: &StartupError) -> bool` |
+| the `serde` feature | named `serde` on `ulo`, off by default; `impl<'de, T: Deserialize<'de>> Deserialize<'de> for Secret<T>` behind it |
+| the collector entry | `ulo::__private::collect_secrets<R>(f: impl FnOnce() -> R) -> (R, ulo::__private::CollectedSecrets)`; `CollectedSecrets::register(self, m: &mut ulo::ModuleDef<'_>)`, which calls `m.secret(..)` for each; doc-hidden |
+| `ulo::TraceContext`, `ulo::TraceState` | `pub struct`s, fields private, defined in `crates/ulo/src/execution/trace.rs` and re-exported at the crate root; `Clone`, `Debug`, `PartialEq`, `Eq` |
+| `ulo::TraceOrigin` | `pub enum TraceOrigin { Received, Originated }`, `Clone`, `Copy`, `Debug`, `PartialEq`, `Eq`; read by `TraceContext::origin(&self) -> TraceOrigin` |
+| `ulo::TraceMode` | `pub enum TraceMode { On, Off }`, `Default` `On`, `Clone`, `Copy`, `Debug`, `PartialEq`, `Eq` |
+| `ulo::TraceSource` | `pub trait TraceSource: Send + Sync + 'static { fn start(&self, span: &tracing::Span, inbound: Option<&TraceContext>) -> TraceContext; }`, dyn-compatible |
+| `ExecOptions` | `pub fn trace(self, ctx: TraceContext) -> Self`, `pub fn span(self, span: tracing::Span) -> Self`, beside `deadline` |
+| `Execution`, `ExecutionRef` | `pub fn trace(&self) -> Option<&TraceContext>` on both; `pub fn set_trace(&self, ctx: TraceContext)` on `Execution` alone |
+| `AppBuilder` | `pub fn trace(self, mode: TraceMode) -> Self` |
+| `AppHandle` | `pub fn trace_source(&self) -> Option<&Arc<dyn TraceSource>>` |
+| `ulo_grpc::GrpcHealth` | `pub fn module() -> DynamicModule`, `pub fn delegate_overall(&self)`, `pub async fn set<S: NamedService>(&self, status: ServingStatus)`, `pub async fn set_named(&self, name: &str, status: ServingStatus)`; no public field and no accessor to the reporter |
+
+`span::call`'s signature, the hubs' `trace.rs` helpers and `TraceContext`'s methods other than
+`origin` are S-core's to choose: only S-core's own files and the stage-5 areas, which build after
+it, name them.
+
+Design sections: integrations DESIGN §1 (the change table), §2.3, §3.4, §6.1, §6.3, §6.4, §9 (I1–I9,
+I12–I16), §13.3, §13.4; fourth response P2, P6, P9, H4, H5; fifth response R3, S4, S5; PROBES_obs.md
+§1, §2, §5, §7; PROBES_config.md §6; DESIGN §9.3, §10.1 step 3, §10.2; transports DESIGN §2.9,
+decision 124.
+
+### S-move: the shared suite crate (I11)
+
+Model: Sonnet. A move, not a rewrite: items keep their names, bodies and docs, and the RPC suite
+reads them at their old paths.
 
 | Files | Holds |
 |---|---|
 | `crates/ulo-conformance-support/Cargo.toml`, `src/lib.rs`, `src/failures.rs`, `src/relay.rs`, `src/tokio_harness.rs`, `src/smol_harness.rs` (new; `publish = false`; features `tokio` and `smol` as the RPC suite has them) | moved from `crates/ulo-rpc-conformance/src/`, not rewritten: `report` (`lib.rs:88`), `startup_failed!` (`:107`) with `failures_dir` (`failures.rs:13`), `Harness` with `block_on_one_thread` (`:132`), `Budget` with `stall` (`:221`), `PARALLEL_VAR` and the slot bound of `__private`, the `not_applicable` stamping rules, `relay::{Relay, Outage, shadowed, unshadowed, reachable}` (`relay.rs:243`, `:267`), `OnTokio` and `OnSmol`. `failures_dir` still finds the workspace root from the manifest path, now this crate's |
 | `crates/ulo-rpc-conformance/Cargo.toml`, `src/lib.rs`; `src/failures.rs`, `src/relay.rs`, `src/tokio_harness.rs`, `src/smol_harness.rs` (removed) | the RPC suite depends on the support crate and forwards its `tokio` and `smol` features, and re-exports every moved item at its old path, so `src/cases/*.rs`, `src/rt.rs` and every link's `tests/conformance.rs` read them unchanged; `Broker`, `conformance_suite!`, `Stamped` and `ClientProbe`'s use stay |
 
-### The workspace
+S-move writes 12 files: 6 new, 2 edited, 4 removed. The workspace member line and the two level
+entries for `ulo-conformance-support` are S-skel's.
+
+Design sections: integrations DESIGN §4.9, §9 (I11); transports DESIGN §3.8, §5.2.
+
+### S-skel: the workspace and the skeletons
+
+Model: Sonnet. Manifests and signatures, each fixed by the area tables, DESIGN §9, the cross-area
+contracts and S-core's fixed surface; every body `todo!()`.
 
 | Files | Holds |
 |---|---|
-| `Cargo.toml` | `members` gains `crates/ulo-config`, `crates/ulo-health`, `crates/ulo-health-http`, `crates/ulo-health-grpc`, `crates/ulo-db`, `crates/ulo-db-sqlx`, `crates/ulo-db-seaorm`, `crates/ulo-db-diesel`, `crates/ulo-db-mongodb`, `crates/ulo-db-redis`, `crates/ulo-db-conformance`, `crates/ulo-conformance-support`, `crates/ulo-otel`, `crates/ulo-otel-otlp`; `exclude` loses the seven brought back and keeps `crates/ulo-db-prisma`, `integration-tests` and `examples`; the new workspace dependencies, at the versions the probes pinned: `toml` 1, `jsonc-parser` 0.34, `saphyr` 0.2, one `sqlx` 0.9 entry with no default features, `sea-orm` 2.0 and `sea-orm-migration` 2.0, `diesel` 2.3, `diesel-async` 0.9, `diesel_migrations` 2.3, `mongodb` 3.9, `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp` and `opentelemetry-http` 0.33.1 with no default features, `tracing-opentelemetry` 0.34.0, `tracing-subscriber` 0.3, `ureq` 3.4; `redis`, `tonic-health`, `futures-channel` and `serde` are entries already |
+| `Cargo.toml` | `members` gains `crates/ulo-config`, `crates/ulo-health`, `crates/ulo-health-http`, `crates/ulo-health-grpc`, `crates/ulo-db`, `crates/ulo-db-sqlx`, `crates/ulo-db-seaorm`, `crates/ulo-db-diesel`, `crates/ulo-db-mongodb`, `crates/ulo-db-redis`, `crates/ulo-db-conformance`, `crates/ulo-conformance-support`, `crates/ulo-otel`, `crates/ulo-otel-otlp`; `exclude` loses the seven brought back and keeps `crates/ulo-db-prisma`, `integration-tests` and `examples`; the new workspace dependencies, at the versions the probes pinned: `toml` 1, `jsonc-parser` 0.34, `saphyr` 0.2 and `saphyr-parser` 0.2 (R2's pre-scan reads its events; `saphyr` re-exports none of them), one `sqlx` 0.9 entry with no default features, `sea-orm` 2.0 and `sea-orm-migration` 2.0, `diesel` 2.3, `diesel-async` 0.9, `diesel_migrations` 2.3, `mongodb` 3.9, `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp` and `opentelemetry-http` 0.33.1 with no default features, `tracing-opentelemetry` 0.34.0, `tracing-subscriber` 0.3, `ureq` `=3.4.2`, pinned exactly (N2); `redis`, `tonic-health`, `futures-channel` and `serde` are entries already |
 | `runtime-levels.txt` | the entries listed below |
 | each crate's `Cargo.toml` and `src/**` in the tables of C, H1, H2, D1, D2, D3, S2a–S2d, O2 and O3 | the module tree and every public signature with `todo!()` bodies |
 
-A crate on `master` that an area rewrites in place is emptied to its skeleton by the spine: its old
+A crate on `master` that an area rewrites in place is emptied to its skeleton by S-skel: its old
 `src/**`, `tests/**`, `examples/**` and `README.md` are removed and the new module tree written, as
 the 2b spine did, so an area never reads old code as if it were the spec. The seven are
 `ulo-config`, `ulo-health`, `ulo-db-sqlx`, `ulo-db-seaorm`, `ulo-db-diesel`, `ulo-db-mongodb` and
@@ -170,19 +245,38 @@ the 2b spine did, so an area never reads old code as if it were the spec. The se
 ported and not touched by the spine; the coordinator deletes it and its `exclude` line after the
 race (decision 42).
 
-The spine writes 49 files outside the skeletons: 21 in the finished-code table, 14 at the insertion
-points (the RPC client counted once), 12 for I11 (6 new, 2 edited, 4 removed) and the 2 workspace
-files. The skeletons are 88 files, listed in the area tables: 137 in all, besides the removed
-`master` files of the seven rewritten crates.
+S-skel writes 90 files, the 88 skeletons listed in the area tables and the 2 workspace files,
+besides the removed `master` files of the seven rewritten crates. The spine writes 138 in all.
+
+Interface. S-skel codes against these, never against S-core's files, which are being written beside
+it:
+
+- `integrations/DESIGN.md` §9, for which core item each extension adds and where;
+- the cross-area contracts below, for every item one area calls in another, and the area tables, for
+  each file's items;
+- S-core's fixed surface above, for every core and `ulo-grpc` item a skeleton names in a signature
+  or a manifest: `ulo`'s `serde` feature in `ulo-config`'s manifest, `TraceSource` and
+  `TraceContext` in `ulo-otel`'s `source.rs`, `GrpcHealth` in `ulo-health-grpc`, `Permanent` where
+  `ulo-db` names it;
+- the existing core API for everything else (`Module`, `ModuleDef`, `try_value`, `try_singleton`,
+  `Dep`, `Many`, `Bound`, `Timer`, `Runtime`, `spawn_with`, `Keyed`, `BoxError`, `BoxFuture`), as
+  on the race-2b tree;
+- `ulo-conformance-support`'s items at the names they have in `crates/ulo-rpc-conformance` today,
+  which S-move keeps.
+
+A signature S-skel needs and none of these fixes is a divergence S-skel logs and chooses; S-core's
+surface is never one.
+
+Design sections: integrations DESIGN §1, §4.1, §8, §9 (I10); fourth response P8; fifth response N2.
 
 ### Floors
 
-The CI `msrv` job reads each declared `rust-version` and checks the crates declaring it with
+S-skel writes each floor into its crate's manifest. The CI `msrv` job reads each declared `rust-version` and checks the crates declaring it with
 `--all-features`, so a crate's floor covers every feature it has.
 
 | Crate | `rust-version` | From |
 |---|---|---|
-| `ulo-config` | 1.88 (workspace) | `toml` 1.1.8 and `saphyr` 0.2.2 declare 1.85, `jsonc-parser` 0.34.0 none (read in the registry); P4's `saphyr` replaces `serde-saphyr`'s 1.89, so the `yaml` feature needs no floor of its own |
+| `ulo-config` | 1.88 (workspace) | `toml` 1.1.8, `saphyr` 0.2.2 and `saphyr-parser` 0.2.2 declare 1.85, `jsonc-parser` 0.34.0 none (read in the registry); P4's `saphyr` replaces `serde-saphyr`'s 1.89, so the `yaml` feature needs no floor of its own |
 | `ulo-health`, `ulo-health-http`, `ulo-health-grpc` | 1.88 | |
 | `ulo-db` | 1.88 | P1: no lock primitive |
 | `ulo-db-sqlx` | 1.94 | SQLx 0.9.0 (PROBES_db.md, versions) |
@@ -199,7 +293,7 @@ matrix gains a 1.94 leg from the manifests, with no change to `ci.yml`.
 
 ### Level entries
 
-Sixteen lines, each under a comment saying why, as the file's other entries are:
+S-skel writes sixteen lines, each under a comment saying why, as the file's other entries are:
 
 ```text
 ulo-config                    runtime-free           --all-features
@@ -227,10 +321,6 @@ read at default features, as `ulo-rpc-conformance` is, their `tokio` feature bri
 (PROBES_obs.md §4a). `ulo-otel` is read with `--all-features` provided no feature of its own enables
 `opentelemetry_sdk`'s `rt-*`, `experimental_*` or `testing` features (PROBES_obs.md §3a).
 
-Design sections: integrations DESIGN §1 (the change table), §2.3, §3.4, §6.1, §6.3, §6.4, §9 (I1–I5,
-I7, I8, I10–I14), §13.3, §13.4; fourth response P2, P6, P8, P9, H4, H5; PROBES_obs.md §1, §2, §5,
-§7; PROBES_config.md §6; DESIGN §9.3, §10.1 step 3, §10.2; transports DESIGN §2.9, decision 124.
-
 ## Areas and files
 
 Every source file of the race's crates belongs to exactly one area. A file the spine finished and
@@ -244,13 +334,13 @@ it runs concurrently or on a clock.
 
 | Files | Holds |
 |---|---|
-| `crates/ulo-config/Cargo.toml`, `src/lib.rs` | the crate's manifest and re-exports; `ulo` with its `serde` feature, `serde`, `toml`, `jsonc-parser`, `saphyr` behind `yaml`; `tracing` for the unread-key warning |
+| `crates/ulo-config/Cargo.toml`, `src/lib.rs` | the crate's manifest and re-exports; `ulo` with its `serde` feature, `serde`, `toml`, `jsonc-parser`, `saphyr` and `saphyr-parser` behind `yaml`; `tracing` for the unread-key warning |
 | `crates/ulo-config/src/config.rs` | `Config`, `Config::builder()`, `.source(..)`, `.load()`, which never fails and records each source's failure inside the value |
 | `crates/ulo-config/src/source.rs` | the source trait and the five sources: `Defaults`, `File::toml(..)` and its JSON and YAML siblings with `.optional()`, `DotEnv::file(..)` with `.optional()`, `Env::process()` and `Env::from_map(..)` with `.prefix(..)` and `.separator(..)`, `Values::new().set(..)`; layering in the order added |
 | `crates/ulo-config/src/tree.rs` | the value tree whose every leaf carries its origin: a file with line and column, a variable's name, an explicit value, a default |
-| `crates/ulo-config/src/format/mod.rs`, `toml.rs`, `json.rs`, `yaml.rs`, `dotenv.rs` | the four readers into the tree: `toml`'s spanned parsing; `jsonc-parser` in strict mode; `saphyr`'s `MarkedYaml` with aliases expanded under a bound, a bound passed a problem naming the line, `<<` refused naming the line, the YAML 1.2 core schema (P4); the `.env` grammar of P5, a key twice in one file a problem naming both lines, no expansion, nothing written to the process environment |
-| `crates/ulo-config/src/de.rs` | the deserializer over the tree collecting every missing, ill-typed and out-of-range value; `Secret` recognised by its newtype name and recorded with path and origin; P6's collector installed around each deserialisation; one leaf-type error per section (P7) |
-| `crates/ulo-config/src/problems.rs` | `Problems`, `Problem`, `at(path, message)`; a problem under a secret's path rendered from path and kind alone; the `Display` with a header line and one problem per line with path and origin (decision 8) |
+| `crates/ulo-config/src/format/mod.rs`, `toml.rs`, `json.rs`, `yaml.rs`, `dotenv.rs` | the four readers into the tree: `toml`'s spanned parsing; `jsonc-parser` in strict mode; `saphyr`'s `MarkedYaml`, read only after R2's pre-scan of `saphyr-parser`'s events through a `SpannedEventReceiver` has passed: the nodes inside each anchored node counted as its events arrive, an alias inside one counting at its anchor's size, each alias adding its anchor's count, a total past 100,000 nodes a problem naming the line of the alias that passed it, a fixed limit with no setting; `<<` refused naming the line, the YAML 1.2 core schema (P4); the `.env` grammar of P5, a key twice in one file a problem naming both lines, no expansion, nothing written to the process environment |
+| `crates/ulo-config/src/de.rs` | the deserializer over the tree collecting every missing, ill-typed and out-of-range value; its error type, whose `invalid_type`, `invalid_value` and `unknown_variant` render the kind of the value found and never the value, which serde's buffered content under `flatten` and `untagged` raises through too (R3); `Secret` recognised by its newtype name and recorded with path and origin; P6's collector installed around each deserialisation through `ulo::__private::collect_secrets`; one leaf-type error per section (P7) |
+| `crates/ulo-config/src/problems.rs` | `Problems`, `Problem`, `at(path, message)`; a problem under a path recorded by name as a secret's rendered from path and kind alone, a leaf type's own message included; elsewhere a leaf type's own `Error::custom` message printed as written, the limit the crate's documentation states (R3); the `Display` with a header line and one problem per line with path and origin (decision 8) |
 | `crates/ulo-config/src/section.rs` | the section read every integration's `from_config` calls: deserialise the section at `path`, prefix its problems with the path, hand back the recorded secrets for `m.secret(..)`, record a failure through `try_value` |
 | `crates/ulo-config/src/module.rs` | `ConfigModule::<T>::new(&config)`, `.validate(..)`, `.deny_unread()`; registration through `m.try_value(..)` and `m.secret(..)`; the init hook logging each unread leaf with its origin at `warn`, or refusing under `.deny_unread()` |
 | `crates/ulo-config/src/error.rs` | the error `try_value` records, its structured list reachable through `Redacted::downcast_ref` |
@@ -261,7 +351,7 @@ branch's `ulo-macros` no longer carries. Rewrites in place: `ulo-config`. Brings
 Creates nothing.
 
 Design sections: §2, §7 (the file-format rows), §10 (the configuration rows), decisions 1–8, §13.1;
-fourth response P4, P5, P6, P7; PROBES_config.md §2–§7.
+fourth response P4, P5, P6, P7; fifth response R2, R3; PROBES_config.md §2–§7.
 
 ### H. Health
 
@@ -297,13 +387,13 @@ runtime, and writes ordered against the server's own.
 | Files | Holds |
 |---|---|
 | `crates/ulo-health-grpc/Cargo.toml`, `src/lib.rs` | the crate's manifest and re-exports; `ulo-grpc`, `ulo-health`, `tonic-health` |
-| `crates/ulo-health-grpc/src/bridge.rs` | the bridge module: its init hook calls `GrpcHealth::delegate_overall()` before `listen()`, then writes `""` from `Readiness` through `Dep<GrpcHealth>`, `NOT_SERVING` at `Stopping` and whenever a check is down, keeping the last value written and writing only a change |
+| `crates/ulo-health-grpc/src/bridge.rs` | the bridge module: its init hook calls `GrpcHealth::delegate_overall()` before `listen()`, then writes `""` from `Readiness` through `Dep<GrpcHealth>`, `NOT_SERVING` at `Stopping` and whenever a check is down; every write goes through `GrpcHealth`'s stored copy, which reaches the reporter only on a change (S4), so the bridge keeps no copy of its own |
 | `crates/ulo-health-grpc/src/interval.rs` | the re-evaluation task on `Dep<dyn Runtime>`: a `Bound`, `Default` 5 s, `Unbounded` meaning lifecycle transitions alone, `After(ZERO)` refused as `ping_interval`'s zero is |
 
 Replaces nothing on `master`. Creates: `ulo-health-grpc`.
 
-Design sections: §3.4, §3.5 item 5, decisions 11–13; fourth response P9; PROBES_obs.md §1;
-transports DESIGN §6.2, decision 11.
+Design sections: §3.4, §3.5 item 5, decisions 11–13, 59; fourth response P9; fifth response S4;
+PROBES_obs.md §1; transports DESIGN §6.2, decision 11.
 
 ### D. Databases: the shared policy, the reference store and the suite (stage 2)
 
@@ -316,8 +406,8 @@ Model: Opus. The connect policy over `.ready`, the `CREATE_CONNECTS` loop and it
 |---|---|
 | `crates/ulo-db/Cargo.toml`, `src/lib.rs` | the crate's manifest and re-exports; `ulo`, `ulo-config`, `ulo-health`, `serde`; no driver |
 | `crates/ulo-db/src/store.rs` | `Store`: `NAME`, `Options`, `Client`, `CREATE_CONNECTS`, `validate`, `create`, `ping`, `close` (§4.1, H1) |
-| `crates/ulo-db/src/module.rs` | `StoreModule<S>`, its identity `ModuleIdentity::of_value` over `S::Options`; `from_config(&config, path)`; `.keyed::<Q>()` through `Keyed`; `.lazy()` where offered, absent at compile time elsewhere; `.migrate(..)`; `.without_health_check()`; the total connect bound, 30 s by default, a zero refused at registration; registration: `validate` through `try_value`, the secrets, `try_singleton`, `.ready(..)` unless lazy, the contributed check, `.on_destroy(close)`, the bare `S::Client` export |
-| `crates/ulo-db/src/connect.rs` | the factory: `Dep<dyn Runtime>`'s `name()` compared with `"tokio"` before anything is built, `create` through `spawn_with`; for a `CREATE_CONNECTS` store, `create` under the retries, backoff and total bound `.ready(..)` gets, ending on `Permanent`, after which `.ready` only pings; the ping and the close through `spawn_with` |
+| `crates/ulo-db/src/module.rs` | `StoreModule<S>`, its identity `ModuleIdentity::of_value` over `S::Options`; `from_config(&config, path)`; `.keyed::<Q>()` through `Keyed`; `.lazy()` where offered, absent at compile time elsewhere; `.migrate(..)`; `.without_health_check()`; `.connect_within(d)`, the total connect bound, 30 s by default, a zero refused at registration; `.retries(..)` and `.backoff(..)`; registration: `validate` through `try_value`, the secrets, `try_singleton`, for a `CREATE_CONNECTS` store its construction bound set to `connect_within` through `.timeout(..)` on the binding handle, `.ready(..)` unless lazy (S1), the contributed check, `.on_destroy(close)`, the bare `S::Client` export |
+| `crates/ulo-db/src/connect.rs` | the factory: `Dep<dyn Runtime>`'s `name()` compared with `"tokio"` before anything is built, `create` through `spawn_with`; one retry loop per store (S1): for a store whose `create` connects nothing, `.ready(ping).retries(..).backoff(..).timeout(connect_within)`; for a `CREATE_CONNECTS` store, the loop around `create` with the module's retries and backoff, ending on `Permanent`, under the construction bound `connect_within`, then `.ready(ping).retries(0)` under the default attempt bound as one confirming ping; the ping and the close through `spawn_with` |
 | `crates/ulo-db/src/migrate.rs` | `Migrations`; the store-side lock trait (the dedicated connection and the primitive); the protocol: the key `K`, lock before the migrator and release after, under the module's bound, failures as `MigrationFailed`; run in the module's `on_init` after connecting |
 | `crates/ulo-db/src/health.rs` | the `Check` named from `S::NAME`, running `ping` |
 | `crates/ulo-db/src/error.rs` | `UnsupportedRuntime { module, required, given }` and `MigrationFailed { module, source }`, each raised inside `Permanent` |
@@ -325,8 +415,8 @@ Model: Opus. The connect policy over `.ready`, the `CREATE_CONNECTS` loop and it
 Replaces on `master`: the `CheckedModule` and `StartupCheck` of the old `ulo` core, on which every
 `master` store crate built its connect, retry and health policy. Creates: `ulo-db`.
 
-Design sections: §4.1–§4.5, §4.7, §4.8, §10 (the store rows), decisions 18–24, 27; fourth response
-P1, H1, H3; DESIGN §8.3, §8.6, §9.2, §9.3, §9.5.
+Design sections: §4.1–§4.5, §4.7, §4.8, §10 (the store rows), decisions 18–24, 27, 48; fourth
+response P1, H1, H3; fifth response S1, N3; DESIGN §8.3, §8.6, §9.2, §9.3, §9.5.
 
 #### D2. `ulo-db-sqlx`
 
@@ -335,26 +425,25 @@ primitive.
 
 | Files | Holds |
 |---|---|
-| `crates/ulo-db-sqlx/Cargo.toml`, `src/lib.rs` | `rust-version = "1.94"`; the workspace `sqlx` with `runtime-tokio` alone, `migrate`, and the features `postgres`, `mysql` and `sqlite`; the TLS feature of H6, on by default; `pub use sqlx`; the crate's module name for `StoreModule<S>` |
+| `crates/ulo-db-sqlx/Cargo.toml`, `src/lib.rs` | `rust-version = "1.94"`; the workspace `sqlx` with `runtime-tokio` alone, `migrate`, and the features `postgres`, `mysql` and `sqlite`; the TLS feature, on by default, enabling SQLx's `tls-rustls-ring-native-roots`: ring with the platform's roots (R1), and no `mysql-rsa`; `pub use sqlx`; the crate's module name for `StoreModule<S>` |
 | `crates/ulo-db-sqlx/src/options.rs` | `PgOptions`, `MySqlOptions`, `SqliteOptions`: the URL a `Secret<String>`, pool sizes, `Eq + Hash`, a `Debug` writing the URL redacted; the scheme check `ulo-db-seaorm` shares (P3); validation through each engine's `*ConnectOptions::from_str`, a failure a problem at `url` written from its category with the userinfo replaced |
 | `crates/ulo-db-sqlx/src/postgres.rs`, `src/mysql.rs`, `src/sqlite.rs` | `Postgres`, `MySql`, `Sqlite` as `Store`s: `connect_lazy_with` in `create`, `.lazy()` offered, `select 1` in `ping`, `close`; each engine's lock primitive on a connection held for the migration (H3): `pg_advisory_lock(K)`, `GET_LOCK` on a name built from `database()` and hashed past 64 characters, `File::lock` on `<file>.ulo-migrate.lock` taken off the worker, none for in-memory SQLite |
 | `crates/ulo-db-sqlx/src/classify.rs` | `permanent_or_not`: `Configuration`, and SQLSTATE class `28` or `3D000` on Postgres, `28000` or `42000` on MySQL, `14` on SQLite, wrapped in `Permanent`; `Io`, `PoolTimedOut`, `WorkerCrashed`, `Tls` bare |
 | `crates/ulo-db-sqlx/src/migrate.rs` | `Migrations` for `sqlx::migrate::Migrator`, run inside `ulo-db`'s lock; SQLx's own lock nests inside it under its own key |
 
-H6's premise, read in the registry: SQLx 0.9.0's only aws-lc-rs feature is `tls-rustls-aws-lc-rs`,
-which brings `webpki-roots` (`sqlx-core` 0.9.0, `_tls-rustls-aws-lc-rs`); platform roots come only
-with `tls-rustls-ring-native-roots`. H6's fallback, aws-lc-rs with webpki roots, therefore applies.
-H6 calls aws-lc-rs "the provider the rest of the workspace uses", while the root `Cargo.toml`'s
-`rustls`, `tokio-rustls`, `futures-rustls` and `rcgen` entries name `ring` and only rumqttc and the
-NATS tests reach aws-lc-rs: D2 builds H6's choice and logs the mismatch as a question for the
-designer.
+R1's premise, read in the registry: SQLx 0.9.0's `tls-rustls-ring-native-roots` enables
+`sqlx-core`'s `_tls-rustls-ring-native-roots`, which brings `rustls-native-certs`, and its rustls
+configuration is built with the provider it names (`sqlx-core` 0.9.0, `src/net/tls/tls_rustls.rs:99-107`).
+ring is the provider of the root `Cargo.toml`'s `rustls`, `tokio-rustls` and `futures-rustls`
+entries. The crate's documentation states that rumqttc brings aws-lc-rs, so an application linking
+`ulo-rpc-mqtt` links both providers whatever this crate enables.
 
 Replaces on `master`: `SqlxModule::postgres`, `postgres_named` and the other constructors returning
 `CheckedModule`, the pool wrapper, the `health` feature's indicator, the crate's own URL redaction,
 SQLx 0.8. Rewrites in place: `ulo-db-sqlx`. Brings back: `ulo-db-sqlx`. Creates nothing.
 
 Design sections: §4.1 (the worked store), §4.2, §4.4, §4.5, §4.6 (the SQLx rows), decisions 23, 26;
-fourth response P1, P3, H3, H6; PROBES_db.md §1, §6, §7, §8.1.
+fourth response P1, P3, H3, H6; fifth response R1, R5; PROBES_db.md §1, §6, §7, §8.1.
 
 #### D3. `ulo-db-conformance`
 
@@ -394,16 +483,16 @@ H3; PROBES_db.md §2.
 
 #### S2b. `ulo-db-diesel`
 
-Model: Opus. Where blocking work runs: migrations off the worker through `spawn_blocking` inside
-`spawn_with`, SQLite's `SpawnBlocking`, the sidecar lock.
+Model: Opus. Where blocking work runs: `Given` over the given runtime's handle for SQLite and the
+migrations, the handle captured inside `create`'s task, the sidecar lock.
 
 | Files | Holds |
 |---|---|
 | `crates/ulo-db-diesel/Cargo.toml`, `src/lib.rs` | `rust-version = "1.89"`; `diesel`, `diesel-async` with `deadpool`, `diesel_migrations`; features `postgres`, `mysql`, `sqlite`; the crate's module name |
 | `crates/ulo-db-diesel/src/options.rs` | the options: the URL a `Secret<String>`, a redacted `Debug`, the scheme check |
-| `crates/ulo-db-diesel/src/store.rs` | `Store` for a deadpool `Pool` of diesel-async connections; `build` connects nothing, so `.lazy()` is offered (H1); SQLite through `SyncConnectionWrapper` with diesel-async's default `SpawnBlocking` set through `custom_setup` (H2) |
+| `crates/ulo-db-diesel/src/store.rs` | `Store` for a deadpool `Pool` of diesel-async connections; `build` connects nothing, so `.lazy()` is offered (H1); `Given`, `pub(crate)`, a `SpawnBlocking` over a `tokio::runtime::Handle`, `spawn_blocking` calling `handle.spawn_blocking(..)` (R4); the handle read once with `Handle::current()` inside `create`'s future, which the factory runs on the given runtime through `spawn_with` after the name check; SQLite through `SyncConnectionWrapper`, each connection established in `custom_setup` through `Given::spawn_blocking` and wrapped with `with_runtime(conn, Given(handle.clone()))`, so neither `SyncConnectionWrapper::new` nor `establish`, the two callers of `get_runtime()`, is reached |
 | `crates/ulo-db-diesel/src/classify.rs` | diesel-async's errors into permanent and retryable: wrong credentials and an unknown database both arrive as `DatabaseError(Unknown, message)` with the SQLSTATE lost; `UnableToSendCommand` and `BadConnection` retryable |
-| `crates/ulo-db-diesel/src/migrate.rs` | `diesel_migrations` through `AsyncConnectionWrapper`, run as `spawn_with(&runtime, async { tokio::task::spawn_blocking(migrate).await })` once the name check has passed (H2) |
+| `crates/ulo-db-diesel/src/migrate.rs` | `diesel_migrations` through `AsyncConnectionWrapper`, its closure run through the same `Given` on the given runtime's blocking pool (R4); `AsyncConnectionWrapper` takes no `BlockOn` value, and its tokio `BlockOn` reads `Handle::try_current()` on that pool's thread, the given runtime (DESIGN §13.2) |
 | `crates/ulo-db-diesel/src/lock.rs` | the three primitives over diesel-async's connections, the SQLite sidecar lock off the worker |
 
 The workspace resolves one `libsqlite3-sys` across SQLx 0.9.0 (`>=0.30.1, <0.38.0`) and diesel
@@ -412,8 +501,8 @@ The workspace resolves one `libsqlite3-sys` across SQLx 0.9.0 (`>=0.30.1, <0.38.
 Replaces on `master`: the diesel-async 0.8 module over `CheckedModule`, its pool wrapper, health
 indicator and redaction. Rewrites in place and brings back: `ulo-db-diesel`.
 
-Design sections: §4.6 (the Diesel paragraph), decision 25; fourth response P1, H1, H2, H3;
-PROBES_db.md §3, §8.2.
+Design sections: §4.6 (the Diesel paragraph), decision 25; fourth response P1, H1, H2, H3; fifth
+response R4, N1; PROBES_db.md §3, §8.2.
 
 #### S2c. `ulo-db-mongodb`
 
@@ -421,14 +510,15 @@ Model: Sonnet.
 
 | Files | Holds |
 |---|---|
-| `crates/ulo-db-mongodb/Cargo.toml`, `src/lib.rs` | `mongodb` 3.9; the crate's module name; no `.migrate` |
+| `crates/ulo-db-mongodb/Cargo.toml`, `src/lib.rs` | `mongodb` 3.9; the crate's module name; no `.lazy()`, no `.migrate` |
 | `crates/ulo-db-mongodb/src/options.rs` | the options: the URI a `Secret<String>`, a redacted `Debug`; `validate` checking the scheme, `mongodb://` or `mongodb+srv://`, and a host, with no lookup (H6) |
-| `crates/ulo-db-mongodb/src/store.rs` | `Store` for `mongodb::Client`: `ClientOptions::parse` and the SRV lookup in `create`, on the app's runtime through `spawn_with`; `Client::with_options` connects nothing, so `.lazy()` is offered; `ErrorKind::Authentication` and `InvalidArgument` permanent, `ServerSelection` retryable |
+| `crates/ulo-db-mongodb/src/store.rs` | `Store` for `mongodb::Client`: `CREATE_CONNECTS = true`, a `const` for the whole store (S2), so a `+srv` DNS failure is retried by D1's loop under `connect_within` and a plain `mongodb://` URL succeeds on the loop's first attempt; `ClientOptions::parse` and the SRV lookup in `create`, on the app's runtime through `spawn_with`; no `.lazy()`, `CREATE_CONNECTS` being true, though `Client::with_options` connects nothing; `ErrorKind::Authentication` and `InvalidArgument` permanent, `ServerSelection` retryable |
 
 Replaces on `master`: the mongodb module over `CheckedModule`, its health indicator and redaction.
 Rewrites in place and brings back: `ulo-db-mongodb`.
 
-Design sections: §4.6; fourth response H6; PROBES_db.md §4, §8.3.
+Design sections: §4.6, decisions 48, 53; fourth response H6; fifth response S1, S2; PROBES_db.md §4,
+§8.3.
 
 #### S2d. `ulo-db-redis`
 
@@ -438,12 +528,18 @@ Model: Sonnet. The retry loop around a connecting `create` is D1's.
 |---|---|
 | `crates/ulo-db-redis/Cargo.toml`, `src/lib.rs` | the workspace `redis` with `connection-manager`, `tokio-comp` alone; the crate's module name; no `.lazy()`, no `.migrate` |
 | `crates/ulo-db-redis/src/options.rs` | the options: the URL a `Secret<String>`, a redacted `Debug`, `redis://` and `rediss://`, validated through `Client::open` |
-| `crates/ulo-db-redis/src/store.rs` | `Store` for `ConnectionManager`, `CREATE_CONNECTS = true`, `ConnectionManagerConfig::set_number_of_retries(0)` (H1); `prefer_tokio()` once when the module is built (H6); `AuthenticationFailed` and `InvalidClientConfig` permanent, `Io` and a timeout retryable |
+| `crates/ulo-db-redis/src/store.rs` | `Store` for `ConnectionManager`, `CREATE_CONNECTS = true`, `ConnectionManagerConfig::set_number_of_retries(0)` (H1); `prefer_tokio()` once per process under a process-wide `OnceLock` of the crate's, called by the first pool factory at `connect` after the name check, its outcome recorded for every later Redis module (S3): `Ok` continues; a refusal, another crate's preference set first, is read where redis-rs allows, tokio continuing and anything else a `Permanent` refusal at `connect` naming the conflict, and where it cannot be read, a `warn` naming the conflict and the start continuing; `AuthenticationFailed` and `InvalidClientConfig` permanent, `Io` and a timeout retryable |
 
 Replaces on `master`: the redis module over `CheckedModule`, its health indicator and redaction.
 Rewrites in place and brings back: `ulo-db-redis`.
 
-Design sections: §4.6; fourth response H1, H6; PROBES_db.md §5, §8.4.
+redis 1.7.1 offers no read of the preference, and offers `prefer_tokio()` only under
+`cfg(all(feature = "smol-comp", feature = "tokio-comp"))` (`src/aio/runtime.rs:93-105`), which a
+crate enabling `tokio-comp` alone cannot call (DESIGN §13.2). That premise is a design question
+returned before stage 3; S2d builds what the designer answers.
+
+Design sections: §4.5, §4.6, decision 60; fourth response H1, H6; fifth response S1, S3;
+PROBES_db.md §5, §8.4.
 
 ### L. CLI templates (stage 4)
 
@@ -469,20 +565,22 @@ Design sections: §5, decisions 30, 31; transports DESIGN §1 (the `generated co
 #### O1. The carriers in the four hubs
 
 Model: Opus. Order: extract before `Execution::open`, the WebSocket connection's context as each
-message's parent, the merge-or-forward rule of H4 against the reservation the spine wrote.
+message's parent, the merge-or-forward rule of H4 and S5 against the reservation S-core wrote.
 
 | Files | Holds |
 |---|---|
 | `crates/ulo-http/src/service.rs`, `src/trace.rs` | extraction from the request's headers into `ExecOptions::trace`; `otel.kind` SERVER; `otel.status_code` on a 5xx and not on a 4xx |
 | `crates/ulo-grpc/src/dispatch.rs`, `src/client.rs`, `src/trace.rs` | extraction from the request's metadata; injection into an outgoing request's metadata in `outgoing`; the status rule for gRPC codes |
-| `crates/ulo-rpc/src/dispatch.rs`, `src/client.rs`, `src/trace.rs` | extraction from `CallHeaders`, events through the same path, so an event's handler span has the emitter's as its parent; injection into the frame's headers in `written` on every shape, events included, `tracestate` merged by W3C §3.5 when a `TraceSource` set the context and forwarded unchanged otherwise (H4); the status rule for RPC |
+| `crates/ulo-rpc/src/dispatch.rs`, `src/client.rs`, `src/trace.rs` | extraction from `CallHeaders`, events through the same path, so an event's handler span has the emitter's as its parent; injection into the frame's headers in `written` on every shape, events included, `tracestate` merged by W3C §3.5 when the context's `TraceOrigin` is `Originated`, and the text as received forwarded when it is `Received` (H4, S5); the status rule for RPC |
 | `crates/ulo-ws/src/connection.rs`, `src/gateway.rs`, `src/trace.rs` | extraction from the handshake's headers; the connection's context as the parent of every message's execution and of the terminal one; the status rule for WebSocket |
 
 An invalid incoming context gives no context in pass-through and never fails the request (H4).
-Changes no crate's membership. The `Spec::reserved` rule in `ulo-rpc/src/client.rs` is the spine's
-and stays as written.
+Changes no crate's membership. The `Spec::reserved` rule in `ulo-rpc/src/client.rs` is S-core's
+and stays as written. Each hub reads the source through `AppHandle::trace_source()` as `span::call`
+takes it (S5).
 
-Design sections: §6.1–§6.3, decisions 32–36; fourth response H4, H5; PROBES_obs.md §5, §7.
+Design sections: §6.1–§6.3, decisions 32–36, 56, 57; fourth response H4, H5; fifth response S5;
+PROBES_obs.md §5, §7.
 
 #### O2. `ulo-otel`
 
@@ -494,14 +592,15 @@ and `set_parent` before the span is first entered.
 | `crates/ulo-otel/Cargo.toml`, `src/lib.rs` | `opentelemetry` with no default features, `opentelemetry_sdk` with `trace` alone, `tracing-opentelemetry` 0.34.0, `tracing-subscriber`, `futures-channel`, `ulo-config` |
 | `crates/ulo-otel/src/otel.rs` | `Otel::new(options)`, built in `main`; `.layer()` for the application's subscriber; `.module()` |
 | `crates/ulo-otel/src/options.rs` | `OtelOptions` from a configuration section, or from the `OTEL_*` names read from a given `Env` |
-| `crates/ulo-otel/src/source.rs` | the `TraceSource` implementation: the inbound context into an `opentelemetry::Context`, `OpenTelemetrySpanExt::set_parent`, then `span.context()` read back as the execution's own context |
+| `crates/ulo-otel/src/source.rs` | the `TraceSource` implementation, `start(&self, span: &Span, inbound: Option<&TraceContext>) -> TraceContext`: the inbound context into an `opentelemetry::Context`, `OpenTelemetrySpanExt::set_parent`, then `span.context()` read back as the execution's own context, which `set_trace` marks `Originated`; the source the app resolves once at `connect`, called by `span::call` and by `execute` on an `ExecOptions::span` (S5) |
 | `crates/ulo-otel/src/sampler.rs` | parent-based sampling by default; a remote parent with the sampled flag clear exports nothing |
 | `crates/ulo-otel/src/flush.rs` | the batch processor's `shutdown` on a thread of its own, its end signalled through a `futures-channel` oneshot the `OnApplicationShutdown` hook awaits under its bound; on expiry the thread left running, detached, the hook recorded `TimedOut` |
 | `crates/ulo-otel/src/exporter.rs` | the exporter slot `ulo-otel-otlp` fills |
 
 Creates: `ulo-otel`.
 
-Design sections: §6.4, decisions 37, 39; fourth response H5; PROBES_obs.md §2, §3.
+Design sections: §6.4, decisions 37, 39, 57, 58; fourth response H5; fifth response S5;
+PROBES_obs.md §2, §3.
 
 #### O3. `ulo-otel-otlp`
 
@@ -509,12 +608,13 @@ Model: Sonnet.
 
 | Files | Holds |
 |---|---|
-| `crates/ulo-otel-otlp/Cargo.toml`, `src/lib.rs` | `opentelemetry-otlp` with `http-proto` and `trace` alone, `opentelemetry-http`, `ureq`; the `reqwest-blocking` feature enabling `reqwest-blocking-client`; `OtlpExporter::http()` |
-| `crates/ulo-otel-otlp/src/client.rs` | the `HttpClient` over `ureq`, blocking inside its async `send_bytes` on the batch thread; its rustls client built with an explicit provider, or construction refused with transports S7's message (P8) |
+| `crates/ulo-otel-otlp/Cargo.toml`, `src/lib.rs` | `opentelemetry-otlp` with `http-proto` and `trace` alone, `opentelemetry-http`, the workspace `ureq`, pinned `=3.4.2` (N2); the `reqwest-blocking` feature enabling `reqwest-blocking-client`; `OtlpExporter::http()` |
+| `crates/ulo-otel-otlp/src/client.rs` | the `HttpClient` over `ureq`, blocking inside its async `send_bytes` on the batch thread; its rustls client built with an explicit provider through `TlsConfig::unversioned_rustls_crypto_provider`, outside ureq's semver guarantee, or construction refused with transports S7's message (P8) |
 
 Creates: `ulo-otel-otlp`.
 
-Design sections: §6.4 (export), decision 38; fourth response P8; PROBES_obs.md §4.
+Design sections: §6.4 (export), decisions 38, 61; fourth response P8; fifth response N2;
+PROBES_obs.md §4.
 
 ### Not in race 3
 
@@ -534,19 +634,21 @@ Design sections: §6.4 (export), decision 38; fourth response P8; PROBES_obs.md 
 
 Each row is an item one area calls in another; the owner keeps it as the spine writes it.
 
-### Owned by S
+### Owned by S-core and S-move
 
-| Item | Called by | For |
-|---|---|---|
-| `Spawn::name` | D1 | the runtime check in the pool's factory |
-| `Permanent`, `is_permanent` | D1, D2, S2a–S2d, D3 | permanent `create` and `ping` errors, `UnsupportedRuntime`, `MigrationFailed`, the suite's assertions |
-| the readiness loop's end on `Permanent` | D1 | bad credentials stop retrying |
-| `Secret<T>: Deserialize`, the collector entry in `__private` | C | recording every secret leaf |
-| `TraceContext`, `TraceState`, `TraceMode`, `ExecOptions::trace`, `Execution::{trace, set_trace}`, `ExecutionRef::trace`, `AppBuilder::trace` | O1, O2 | extraction, injection, the source's answer |
-| `TraceSource`, `span::call`'s signature, `otel.kind`, `otel.status_code` | O1 (call sites, status), O2 (implements `TraceSource`) | parentage and export |
-| the helpers each hub's `trace.rs` declares | O1 | the carrier bodies |
-| `GrpcHealth::{module, delegate_overall, set_named}` | H2 | one writer for `""` |
-| `ulo-conformance-support`'s moved items | D3, and the RPC suite | harness, budget, startup failures, relay, stamping rules |
+The items S-core owns keep the surface S fixes for them.
+
+| Item | Owner | Called by | For |
+|---|---|---|---|
+| `Spawn::name` | S-core | D1 | the runtime check in the pool's factory |
+| `Permanent`, `is_permanent` | S-core | D1, D2, S2a–S2d, D3 | permanent `create` and `ping` errors, `UnsupportedRuntime`, `MigrationFailed`, the suite's assertions |
+| the readiness loop's end on `Permanent` | S-core | D1 | bad credentials stop retrying |
+| `Secret<T>: Deserialize`, `ulo::__private::collect_secrets` and `CollectedSecrets` | S-core | C | recording every secret leaf |
+| `TraceContext`, `TraceState`, `TraceOrigin`, `TraceMode`, `ExecOptions::{trace, span}`, `Execution::{trace, set_trace}`, `ExecutionRef::trace`, `AppBuilder::trace`, `AppHandle::trace_source` | S-core | O1, O2 | extraction, injection, the `tracestate` rule, the source's answer |
+| `TraceSource`, `span::call`'s signature, `otel.kind`, `otel.status_code` | S-core | O1 (call sites, status), O2 (implements `TraceSource`) | parentage and export |
+| the helpers each hub's `trace.rs` declares | S-core | O1 | the carrier bodies |
+| `GrpcHealth::{module, delegate_overall, set, set_named}` and the stored copy behind them | S-core | H2 | one writer for `""`; a write reaching the reporter only on a change |
+| `ulo-conformance-support`'s moved items | S-move | D3, and the RPC suite | harness, budget, startup failures, relay, stamping rules |
 
 ### Owned by C
 
@@ -571,7 +673,7 @@ Each row is an item one area calls in another; the owner keeps it as the spine w
 | Item | Called by | For |
 |---|---|---|
 | `Store` with `NAME`, `Options`, `Client`, `CREATE_CONNECTS`, `validate`, `create`, `ping`, `close` | D2, S2a–S2d, D3 | every store |
-| `StoreModule<S>`: `from_config`, `.keyed::<Q>()`, `.lazy()`, `.migrate(..)`, `.without_health_check()`, the total connect bound | D2, S2a–S2d, D3, L | each store crate's module name; the suite; the templates |
+| `StoreModule<S>`: `from_config`, `.keyed::<Q>()`, `.lazy()`, `.migrate(..)`, `.without_health_check()`, `.connect_within(..)`, `.retries(..)`, `.backoff(..)` | D2, S2a–S2d, D3, L | each store crate's module name; the suite; the templates |
 | the migration lock protocol: `Migrations`, the store-side lock trait, the key, the order, the bound, the error | D2, S2a, S2b | the per-engine primitives |
 | `UnsupportedRuntime`, `MigrationFailed` | D3 | the runtime and migration scenarios |
 
@@ -600,28 +702,27 @@ H2, S2a–S2d, L, O1 and O3 own nothing outward.
 
 Not settled by the designs or by the spine. The owning area decides and logs the decision. A point
 that fixes a public signature is the spine's, since the spine freezes every signature; the area
-that fills the item builds against what the spine chose. Points the fourth response settled are
-not listed.
+that fills the item builds against what the spine chose. Points the fourth and fifth responses
+settled, and the surface S fixes for S-core, are not listed.
 
-- **S.** The module paths of `TraceContext` and `TraceSource`, and `TraceSource::start`'s exact
-  types; the parameters `span::call` gains to reach the execution and the bound source, which
-  I7 has each transport read as `Option<Dep<dyn TraceSource>>`, read where the hub can hand it over
-  synchronously; how a hub reads `TraceMode`, or whether `Execution::open` drops an inbound context
-  under `Off`; whether `TestApp` carries `trace(..)`; how the RPC client tells a context it forwards
-  from one a `TraceSource` set, which H4's reservation of `tracestate` needs; the collector's entry
-  in `__private` and what it records for a `T` that is not `Display`; how `near_spelling` reads a
-  key's full type name beside its `TypeId`; whether `GrpcHealth::set` and `set_named` also skip an
-  unchanged write; the shared suite crate's name. The signatures §14 leaves to areas: the spelling
-  of the JSON and YAML file constructors and whether JSON sits behind a feature; `Problems`'
-  constructors; the health module's name and how `.lag` is written on it; `Readiness`'s read
-  methods; whether `HealthHttp` is imported as a module or mounted as a controller; the error type
-  of a zero `Check` bound; where the bridge's interval is set; whether each store crate's module is
-  a type alias of `StoreModule<S>` or a newtype; the setter name of the total connect bound; how
-  `.lazy()` is absent at compile time; the shape of `Migrations` and the store-side lock trait; how
-  the exporter is handed to `Otel` and how `OtelOptions` is read from a section.
+- **S-core.** The parameters `span::call` gains to reach the execution and the source
+  `AppHandle::trace_source()` answers; `TraceContext`'s methods beyond `origin`; how a hub reads
+  `TraceMode`, or whether `Execution::open` drops an inbound context under `Off`; whether `execute`
+  runs the closure inside the span `ExecOptions::span` hands it; whether `TestApp` carries
+  `trace(..)`; what the collector records for a `T` that is not `Display`, behind
+  `CollectedSecrets::register`; how `near_spelling` reads a key's full type name beside its
+  `TypeId`; the lock `GrpcHealth`'s stored copy and its writes share.
+- **S-skel.** The signatures §14 leaves to areas: the spelling of the JSON and YAML file
+  constructors and whether JSON sits behind a feature; `Problems`' constructors; the health
+  module's name and how `.lag` is written on it; `Readiness`'s read methods; whether `HealthHttp` is
+  imported as a module or mounted as a controller; the error type of a zero `Check` bound; where
+  the bridge's interval is set; whether each store crate's module is a type alias of
+  `StoreModule<S>` or a newtype; how `.lazy()` is absent at compile time; the shape of `Migrations`
+  and the store-side lock trait; how the exporter is handed to `Otel` and how `OtelOptions` is read
+  from a section.
 - **C.** How a section's problems are prefixed with its path; how `ConfigModule` learns which leaves
   each section read consumed; how `Defaults`, built before the application's type is known, reaches
-  the tree; the alias-expansion bound, and whether `saphyr` has one of its own (P4's premise).
+  the tree; how a merge key is told apart in `MarkedYaml`.
 - **H1.** What `Readiness` reads to know the app is `Running`; how the gRPC bridge is told of a
   change.
 - **H2.** Whether `ulo-health-grpc` imports `GrpcHealth::module()` itself or requires the
@@ -636,7 +737,8 @@ not listed.
 - **S2a.** Whether the lock primitives reuse D2's over the SQLx pool SeaORM holds, which would need
   them public (a request to D2), or are written again.
 - **S2b.** How diesel-async's errors are classified, by the driver's own connect in `ping` or by
-  matched messages; how the SQLite sidecar lock is taken off the worker.
+  matched messages; how the SQLite sidecar lock is taken off the worker; what `Given::get_runtime`,
+  which `SpawnBlocking` requires and the crate never reaches, does.
 - **S2c.** Which failures of the SRV lookup in `create` are permanent.
 - **S2d.** The bound of one `create` attempt inside D1's loop.
 - **L.** The transport and database names `--transport` and `--db` accept; whether the no-tests
@@ -648,8 +750,8 @@ not listed.
   event's handler being a consumer of the producer's span (§6.2); where the WebSocket connection
   keeps its context.
 - **O2.** The flush hook's bound; how `OTEL_*` names map onto `OtelOptions`.
-- **O3.** Whether `ureq`'s rustls client takes an explicit provider (P8's premise), and which one,
-  the workspace's `rustls` entry naming `ring`.
+- **O3.** Which provider `ureq`'s rustls client is given, the workspace's `rustls` entry naming
+  `ring`.
 
 ## After the race
 
@@ -664,11 +766,16 @@ The coordinator:
    `ulo-db-mongodb`; `ulo-db-redis`), against containers behind an `integration` feature as the
    broker links' are; the health scenarios of §3.5 on every host that serves health; the trace
    scenarios of §6.5 on every transport suite with a recording tracer; unit tests for health's
-   state before `listen` (§3.2), `TraceContext` against the W3C vectors (PROBES_obs.md §5) and the
-   P2 help. Each scenario is shown failing against its planted break before it is believed.
+   state before `listen` (§3.2), `TraceContext` against the W3C vectors (PROBES_obs.md §5), the
+   raw text a `Received` context forwards, and the P2 help. Each scenario is shown failing against its planted break before it is believed.
 3. Runs the premise checks: DESIGN §13's rows marked not probed (`CREATE INDEX CONCURRENTLY` under
-   an advisory lock); `saphyr`'s alias bound (P4); `ureq`'s explicit provider (P8); a build with
-   SQLx's `runtime-smol` and one with redis-rs's `smol-comp` beside `tokio-comp` (H6); one SQLx in
+   an advisory lock); R2's event pre-scan against a nested alias bomb, and `saphyr-parser`'s events
+   carrying anchor IDs and positions; R3's error type against a failing `Secret` under `flatten` and
+   `untagged`; `ureq`'s explicit provider (P8); R5's test, built with SQLx's `runtime-smol` beside
+   `runtime-tokio`, dropping a `PoolConnection` on a thread with no tokio context and asserting no
+   task ran on smol's executor, which DESIGN §13.2's reading of `sqlx-core` expects to fail; a build
+   with redis-rs's `smol-comp` beside `tokio-comp`, and whether redis-rs lets the preference be
+   read (S3); one SQLx in
    `cargo tree -d` with both SQL modules (decision 26); `cargo tree -i tokio` exiting non-zero for
    `ulo-otel` and for `ulo-otel-otlp` at default features (PROBES_obs.md §3a, §4c). A failed
    premise returns as a design question before the stage that rests on it is accepted.
