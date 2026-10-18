@@ -10,7 +10,8 @@
 //! 5. `OnModuleDestroy` hooks, reverse connect order; phase Destroying from the first.
 //! 6. Transports close their sockets, in reverse bind order, one after another, each `close`
 //!    bounded by what is left of the cap, or by `hook_timeout` when no cap is set. The app then
-//!    lets go of its servers.
+//!    lets go of its servers, as the `App` value's drop does for an app that never reaches this
+//!    step.
 //! 7. `OnApplicationShutdown(signal)` hooks, reverse connect order.
 //!
 //! Lazily loaded modules come first in every hook step, in reverse load order. A failing step
@@ -334,11 +335,12 @@ async fn bounded_close(server: &dyn ErasedServer, bound: CloseBound, secrets: &S
     }
 }
 
-/// Lets go of the closed servers. A server keeping the `AppHandle` its `prepare` was handed holds
-/// the app, and the app holds its servers, so neither would drop while the app kept them: once
-/// released, each server drops with its last other holder, `serve` returning, and the app with its
-/// last handle.
-fn release_servers(shared: &AppShared) {
+/// Lets go of the app's servers: at the end of the close step, and when the `App` value drops,
+/// where a second call finds the list empty. A server keeping the `AppHandle` its `prepare` was
+/// handed holds the app, and the app holds its servers, so neither would drop while the app kept
+/// them: once released, each server drops with its last other holder, `serve` returning or the
+/// `App` value dropping, and the app's shared state with its last handle.
+pub(crate) fn release_servers(shared: &AppShared) {
     let released = std::mem::take(&mut *shared.servers.lock().unwrap_or_else(PoisonError::into_inner));
     // Dropped after the lock is released: a server whose drop read the app's servers would
     // otherwise wait on it forever.

@@ -12,6 +12,7 @@ pub(crate) mod shared;
 
 use std::future::{Future, poll_fn};
 use std::marker::PhantomData;
+use std::ops::Deref;
 use std::pin::{Pin, pin};
 use std::sync::{Arc, PoisonError};
 use std::task::Poll;
@@ -45,8 +46,21 @@ pub enum Connected {}
 /// Bound: every transport holds its sockets. `serve` consumes this state.
 pub enum Bound {}
 
+/// An application in typestate `S`.
+///
+/// Dropping it lets go of the bound transports' servers, as the end of the shutdown's close step
+/// does. For an app that never reaches that step the drop is where they are released: one bound
+/// and dropped unserved, one whose `serve` future is dropped, and one whose shutdown was abandoned
+/// mid-way. Each server then drops with its last other holder, and that drop is its only shutdown:
+/// its `close` does not run, and what only `close` ends, such as a task the server spawned and
+/// detached, keeps running. A drop while a `close` on a handle runs the shutdown elsewhere, before
+/// its close step, releases the servers too, and that close then closes none. The release holds
+/// the lock on the app's list of servers only to empty it and awaits nothing; a server's own drop
+/// runs on the thread dropping the app. An [`AppHandle`] kept past the drop keeps the app's shared
+/// state, its singletons among it, and no server: a `close` on it runs the shutdown's hooks and
+/// closes no transport.
 pub struct App<S = Wired> {
-    pub(crate) shared: Arc<AppShared>,
+    pub(crate) shared: Owner,
     /// Queued by `bind` on `Connected`, bound by `listen`.
     pub(crate) servers: Vec<Box<dyn ErasedServer>>,
     _s: PhantomData<S>,
@@ -116,6 +130,26 @@ impl AppConfig {
         .into_iter()
         .filter_map(|(name, set)| set.map(|_| name))
         .collect()
+    }
+}
+
+/// The `App` value's hold on the shared state. It moves from typestate to typestate and only
+/// `wire` makes one, so an app has one however many `AppHandle`s it hands out, and its drop is the
+/// app's.
+pub(crate) struct Owner(Arc<AppShared>);
+
+impl Deref for Owner {
+    type Target = Arc<AppShared>;
+
+    fn deref(&self) -> &Arc<AppShared> {
+        &self.0
+    }
+}
+
+impl Drop for Owner {
+    fn drop(&mut self) {
+        // A second release, after the close step's, finds the list empty.
+        shutdown::release_servers(&self.0);
     }
 }
 
@@ -198,12 +232,12 @@ impl AppBuilder {
             knobs_set: self.config.knobs_set(),
         };
         let graph = wire::wire(self.root, &env, self.plan)?;
-        Ok(App::from_shared(AppShared::new(graph, self.config), Vec::new()))
+        Ok(App::from_shared(Owner(AppShared::new(graph, self.config)), Vec::new()))
     }
 }
 
 impl<S> App<S> {
-    pub(crate) fn from_shared(shared: Arc<AppShared>, servers: Vec<Box<dyn ErasedServer>>) -> Self {
+    pub(crate) fn from_shared(shared: Owner, servers: Vec<Box<dyn ErasedServer>>) -> Self {
         App { shared, servers, _s: PhantomData }
     }
 }

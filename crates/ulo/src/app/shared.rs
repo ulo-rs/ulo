@@ -43,7 +43,8 @@ pub(crate) struct AppShared {
     pub(crate) live: Arc<LiveSet>,
     pub(crate) shutdown: ShutdownCell,
     /// The bound transports, set by `listen`; the shutdown sequence drains and closes them, then
-    /// empties it.
+    /// empties it. The `App` value's drop empties it too, so a server holding an `AppHandle`
+    /// leaves no cycle once the app has closed or its value has dropped, whichever comes first.
     pub(crate) servers: Mutex<Vec<Arc<dyn ErasedServer>>>,
     /// Serializes `load`: one lazy module wires against one graph at a time.
     pub(crate) load_lock: async_lock::Mutex<()>,

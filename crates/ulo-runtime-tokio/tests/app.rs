@@ -1,9 +1,11 @@
 //! Which of `Dep<dyn Timer>` and `Dep<dyn Runtime>` an app binds for each way its builder sets a
-//! clock, the refusal of a test's override of either, and `listen()`'s refusal of an app that
-//! binds a transport with no runtime. The binding with `.runtime(..)` alone is the conformance
-//! suite's `the_app_binds_the_runtime_as_one_object`.
+//! clock, the refusal of a test's override of either, `listen()`'s refusal of an app that binds a
+//! transport with no runtime, and when an app lets go of a server holding its handle: at the
+//! close step (F425), and at the app's drop when it never reaches that step (F426). The binding
+//! with `.runtime(..)` alone is the conformance suite's `the_app_binds_the_runtime_as_one_object`.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -447,6 +449,204 @@ async fn a_close_on_an_unserved_app_drops_its_server() {
         .await
         .expect("`serve` on a closed app did not return")
         .expect("`serve` on a closed app failed");
+    drop(handle);
+    assert!(singleton.load(Ordering::SeqCst), "the app's singletons outlived its last handle");
+}
+
+/// What a [`Listening`] server saw: its closes, its drops and the address it bound; and, while
+/// `panics` is set, a `bound` that panics once.
+#[derive(Default)]
+struct Seen {
+    closes: AtomicUsize,
+    drops: AtomicUsize,
+    addr: Mutex<Option<SocketAddr>>,
+    panics: AtomicBool,
+}
+
+impl Seen {
+    fn closes(&self) -> usize {
+        self.closes.load(Ordering::SeqCst)
+    }
+
+    fn drops(&self) -> usize {
+        self.drops.load(Ordering::SeqCst)
+    }
+
+    fn addr(&self) -> SocketAddr {
+        self.addr.lock().unwrap_or_else(PoisonError::into_inner).expect("the server bound no address")
+    }
+}
+
+/// A server keeping the `AppHandle` its `prepare` is handed and a TCP listener it binds, serving
+/// until its future is dropped.
+struct Listening {
+    app: Option<AppHandle>,
+    listener: Option<TcpListener>,
+    seen: Arc<Seen>,
+}
+
+impl Drop for Listening {
+    fn drop(&mut self) {
+        self.seen.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl Server for Listening {
+    type Transport = Bare;
+
+    async fn prepare(&mut self, mounted: Mounted<'_, Bare>) -> Result<(), BoxError> {
+        self.app = Some(mounted.app().clone());
+        Ok(())
+    }
+
+    async fn bind(&mut self, _mounted: Mounted<'_, Bare>) -> Result<(), BoxError> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        *self.seen.addr.lock().unwrap_or_else(PoisonError::into_inner) = Some(listener.local_addr()?);
+        self.listener = Some(listener);
+        Ok(())
+    }
+
+    async fn serve(&self) -> Result<(), BoxError> {
+        std::future::pending().await
+    }
+
+    async fn drain(&self, _token: DrainToken) {}
+
+    async fn close(&self) -> Result<(), BoxError> {
+        self.seen.closes.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn bound(&self) -> Vec<BoundAddr> {
+        if self.seen.panics.swap(false, Ordering::SeqCst) {
+            panic!("`bound` panics while the app's list of servers is locked");
+        }
+        vec![BoundAddr::new("bare", self.seen.addr())]
+    }
+}
+
+/// A module whose one singleton sets its flag when it drops, and whose before-shutdown hook counts
+/// its runs and, when `stalls`, never returns.
+struct Hooked {
+    singleton: Arc<AtomicBool>,
+    runs: Arc<AtomicUsize>,
+    stalls: bool,
+}
+
+impl Module for Hooked {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.value(DropFlag(Arc::clone(&self.singleton)));
+        let (runs, stalls) = (Arc::clone(&self.runs), self.stalls);
+        m.before_shutdown(move |_signal: Signal| {
+            let runs = Arc::clone(&runs);
+            async move {
+                runs.fetch_add(1, Ordering::SeqCst);
+                if stalls {
+                    std::future::pending::<()>().await;
+                }
+            }
+        });
+    }
+}
+
+/// An app binding one [`Listening`] server, with what the server and the module record.
+struct Watched {
+    app: App<Serving>,
+    seen: Arc<Seen>,
+    singleton: Arc<AtomicBool>,
+    runs: Arc<AtomicUsize>,
+}
+
+async fn listening(stalls: bool) -> Watched {
+    let seen = Arc::new(Seen::default());
+    let (singleton, runs) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicUsize::new(0)));
+    let root = Hooked { singleton: Arc::clone(&singleton), runs: Arc::clone(&runs), stalls };
+    let app = connect(App::builder(root).runtime(Tokio::current()))
+        .await
+        .bind(Listening { app: None, listener: None, seen: Arc::clone(&seen) })
+        .listen()
+        .await
+        .unwrap_or_else(|error| panic!("the app did not bind: {error}"));
+    assert!(dial(seen.addr()).is_ok(), "the bound server's address refused a connection");
+    Watched { app, seen, singleton, runs }
+}
+
+fn dial(addr: SocketAddr) -> std::io::Result<TcpStream> {
+    TcpStream::connect_timeout(&addr, Duration::from_secs(1))
+}
+
+/// Refused, and not failed otherwise: a listener still open whose backlog is full fails an
+/// attempt too, with a reset or a timeout by platform.
+fn refuses(addr: SocketAddr) -> bool {
+    dial(addr).is_err_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused)
+}
+
+/// What F426's three paths share once the app's value is gone: the server has dropped, its
+/// listener with it, without its `close` having run; the singletons drop with the last handle.
+fn assert_released(seen: &Seen, singleton: &AtomicBool, handle: AppHandle, path: &str) {
+    assert_eq!(seen.drops(), 1, "the server outlived {path}");
+    assert!(refuses(seen.addr()), "the server's address did not refuse a connection after {path}");
+    assert_eq!(seen.closes(), 0, "the server's `close` ran after {path}");
+    assert!(!singleton.load(Ordering::SeqCst), "the app's singletons dropped while a handle was held");
+    drop(handle);
+    assert!(singleton.load(Ordering::SeqCst), "the app's singletons outlived its last handle after {path}");
+}
+
+/// F426: an app bound and dropped without `serve` or `close` lets go of its server as it drops.
+#[tokio::test]
+async fn a_bound_app_dropped_unserved_drops_its_server() {
+    let Watched { app, seen, singleton, .. } = listening(false).await;
+    let handle = app.handle();
+    drop(app);
+    assert_released(&seen, &singleton, handle, "the app dropped unserved");
+}
+
+/// F426: an app whose `serve` future is dropped before any trigger, here by a timeout, lets go of
+/// its server as the future drops the app.
+#[tokio::test]
+async fn an_app_whose_serve_is_dropped_drops_its_server() {
+    let Watched { app, seen, singleton, runs } = listening(false).await;
+    let handle = app.handle();
+    let served = tokio::time::timeout(Duration::from_millis(50), app.serve(std::future::pending::<Signal>())).await;
+    assert!(served.is_err(), "`serve` returned with no trigger");
+    assert_eq!(runs.load(Ordering::SeqCst), 0, "the shutdown started");
+    assert_released(&seen, &singleton, handle, "`serve`'s dropped future");
+}
+
+/// F426: a shutdown whose runner, `serve` here, is dropped inside a before-shutdown hook that never
+/// returns, and never resumed, lets go of the server as the runner drops the app.
+#[tokio::test]
+async fn an_app_whose_shutdown_is_abandoned_drops_its_server() {
+    let Watched { app, seen, singleton, runs } = listening(true).await;
+    let handle = app.handle();
+    let served = tokio::time::timeout(Duration::from_millis(200), app.serve(async { Signal::new("test") })).await;
+    assert!(served.is_err(), "`serve` returned through a hook that never returns");
+    assert_eq!(runs.load(Ordering::SeqCst), 1, "the shutdown did not reach its before-shutdown hook");
+    assert_released(&seen, &singleton, handle, "the abandoned shutdown");
+}
+
+/// A closed app's drop releases nothing again and does not panic, with the app's list of servers
+/// poisoned by a panicking `bound`; a later `close` on a handle answers the same outcome and runs
+/// no hook and no `close` again.
+#[tokio::test]
+async fn a_closed_app_s_drop_and_a_later_close_release_nothing_again() {
+    let Watched { app, seen, singleton, runs } = listening(false).await;
+    let handle = app.handle();
+    seen.panics.store(true, Ordering::SeqCst);
+    let listed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.addresses()));
+    assert!(listed.is_err(), "`bound` did not panic inside `addresses()`");
+    let closed = handle.close(Signal::new("first")).await.expect("the app did not shut down");
+    assert_eq!((seen.closes(), seen.drops()), (1, 1), "the close step did not close and release the server once");
+    drop(app);
+    assert_eq!((seen.closes(), seen.drops()), (1, 1), "the closed app's drop closed or released the server again");
+    let again = handle.close(Signal::new("second")).await.expect("a close after the app's drop failed");
+    assert_eq!(again.signal.name(), closed.signal.name(), "a later close answered another outcome");
+    assert_eq!(runs.load(Ordering::SeqCst), 1, "a later close ran the before-shutdown hook again");
+    assert_eq!(seen.closes(), 1, "a later close ran the server's `close` again");
     drop(handle);
     assert!(singleton.load(Ordering::SeqCst), "the app's singletons outlived its last handle");
 }

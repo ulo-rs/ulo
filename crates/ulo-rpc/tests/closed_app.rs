@@ -1,5 +1,6 @@
 //! A server's link outlives neither its closed app nor `serve`: the TCP link, served through an
-//! app and closed, drops once `serve` has returned (F425).
+//! app and closed, drops once `serve` has returned (F425), and bound through an app dropped
+//! unserved, drops with the app's value (F426).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -97,6 +98,31 @@ async fn a_closed_app_drops_its_server_s_link() {
     let handle = app.handle();
     app.serve(async { Signal::new("test") }).await.expect("the app shuts down");
     assert!(dropped.load(Ordering::SeqCst), "the server's link outlived the closed app's `serve`");
+    assert!(!singleton.load(Ordering::SeqCst), "the app's singletons dropped while a handle was held");
+    drop(handle);
+    assert!(singleton.load(Ordering::SeqCst), "the app's singletons outlived its last handle");
+}
+
+#[tokio::test]
+async fn a_bound_app_dropped_unserved_drops_its_server_s_link() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let singleton = Arc::new(AtomicBool::new(false));
+    let app = App::builder(Root(Arc::clone(&singleton)))
+        .runtime(Tokio::current())
+        .wire()
+        .expect("the app wires")
+        .connect()
+        .await
+        .expect("the app connects")
+        .bind(ulo_rpc::Server::new(Watched { tcp: Tcp::new("127.0.0.1:0"), _dropped: DropFlag(Arc::clone(&dropped)) }))
+        .listen()
+        .await
+        .expect("the server binds");
+    let handle = app.handle();
+    drop(app);
+    // The address is not read: the link's accept loop is a task of its own, holding the listener,
+    // which outlives the link.
+    assert!(dropped.load(Ordering::SeqCst), "the server's link outlived the app dropped unserved");
     assert!(!singleton.load(Ordering::SeqCst), "the app's singletons dropped while a handle was held");
     drop(handle);
     assert!(singleton.load(Ordering::SeqCst), "the app's singletons outlived its last handle");
