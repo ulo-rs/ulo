@@ -378,3 +378,55 @@ Verdict: **holds**. The design's claim ("`Display` carries every problem, one pe
 - `serde(flatten)` and `serde(untagged)` silently defeat the name-based `Secret` capture.
 - `serde-saphyr` 2.0.0 has an MSRV of 1.89 and `saphyr` 0.2.2 gives YAML positions without it.
 - The crate's own error text would leak a secret's value (the out-of-range case) unless it consults the recorded secret paths.
+
+## Premise checks after the fill
+
+Run on `experiment/di-redesign` with `cargo test -p ulo-config --features yaml`. Tests:
+`crates/ulo-config/tests/yaml_alias_bomb.rs` (R2) and `tests/secret_leak.rs` (R3).
+
+### R2: the alias bound
+
+| Check | Result |
+| --- | --- |
+| Billion-laughs, 10 levels x 10 refs (10^10 nodes when expanded) | Refused by the pre-scan: `bomb.yaml:5:45: alias expands the document past 100000 nodes`. 0.8 ms; peak RSS 3.4 MB for the test alone (`/usr/bin/time -l`). Line 5 is level `l4`, the first whose expansion (10^5 plus scaffolding) passes the limit. |
+| 4 levels x 10 refs (10^4 nodes) | Loads. |
+| Ordinary anchors and aliases (a mapping and a sequence, each aliased) | Loads. |
+| Plain `<<` key | Refused: `merge.yaml:3:` `merge key `<<` is YAML 1.1 and is not supported`. |
+| Quoted `"<<"` key | An ordinary string key, loads. |
+
+Break, restore compared with `cmp` after `touch`:
+
+- `ALIAS_LIMIT = 10_000_000`: the bomb test goes red (refused at `bomb.yaml:7:45` past 10000000 nodes, so the assertion on the 100000 text fails). The pre-scan alone stays fast; the red is the limit's value.
+- `ALIAS_LIMIT = usize::MAX` (limit removed): saphyr's loader expands the bomb; the 5 s deadline thread aborts the process. Measured before the abort: 5.04 s wall, 1.03 GB max RSS, 3.4 GB peak footprint. Red.
+
+The 5 s guard aborts the process, so the red run costs at most about 3.4 GB for 5 s.
+
+### R3: `Secret` under `flatten` and `untagged`
+
+A section is read from `Values { name = "n", password = "hunter2-sentinel" }`; every rendering
+(`ConfigError` Display and Debug, `Section` Debug, each `Problem` Debug/path/message/origin,
+`Problems` Debug) is joined and searched for the sentinel.
+
+| Case | Before the fix | After |
+| --- | --- | --- |
+| Direct `Secret<u32>` and `Secret<Quoting>` (control) | no leak | no leak |
+| `flatten`, `Secret<u32>`, string given | no leak (serde's `invalid_type` and `invalid_value` go through the crate's kind-only `describe`) | no leak |
+| `flatten`, `Secret<Quoting>` whose `Deserialize` calls `Error::custom(format!("cannot parse `{text}`"))` | **leaks**: `cannot parse `hunter2-sentinel``, in Display, Debug and `Problem::message` | no leak: the message becomes `invalid value` |
+| `untagged`, `Secret<u32>` or `Secret<Quoting>` in either variant | no leak (serde replaces every variant failure with its own fixed text) | no leak |
+
+So the design's premise held only for the type and value errors. The leak is a leaf type's own
+`Error::custom` under `flatten`. The `Secret` is still collected there (`CollectedSecrets` held the
+text because `Quoting` read a `String` first), so the second pass is possible and was built: `scrub`
+in `de.rs::section`, 12 lines, replaces any problem message containing a collected secret's text.
+Break: commenting out the `scrub` call turns `custom_error_under_flatten_leaks_nothing` red (the
+sentinel appears in all five renderings); restored, `cmp` identical.
+
+Limits of the second pass:
+
+- It sees only text recorded by `Capture`, so a secret whose inner type fails before reading any scalar is not scrubbed. In that case there is no secret value for the message to quote.
+- A short secret (one character) replaces every message that contains it. The loss is fidelity, not safety.
+- It covers section reads. A source failure message is not scrubbed here.
+
+Also seen, not fixed: under `flatten`, the type-mismatch problem for `password` was reported with
+`origin: Explicit { key: "name" }` and an empty path, i.e. attributed to the sibling field. Serde's
+buffered content gives the deserializer no key for the failing leaf. Noted as a diagnostics gap.

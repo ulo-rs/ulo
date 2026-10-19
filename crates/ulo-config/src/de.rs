@@ -728,6 +728,19 @@ impl<'de, 'a> VariantAccess<'de> for VariantAcc<'a> {
     }
 }
 
+/// Second pass over the rendered problems: a message that contains the text of a collected secret
+/// is replaced whole. Under `#[serde(flatten)]` and `#[serde(untagged)]` no path is known to be a
+/// secret's, so a leaf type's `Error::custom` message reaches the problem list as written, and
+/// this is the only place it is checked against the values the section's secrets held. A short
+/// secret also replaces every message that happens to contain it.
+fn scrub(problems: &mut Problems, secrets: &BTreeSet<String>) {
+    for problem in &mut problems.list {
+        if secrets.iter().any(|text| !text.is_empty() && problem.message.contains(text.as_str())) {
+            problem.message = "invalid value".to_owned();
+        }
+    }
+}
+
 /// Deserialises the section at `path` as `T` inside the collector `ulo::__private::collect_secrets`
 /// installs, one pass per section, so at most one leaf-type error is reported for it. Answers the
 /// value or the error, and the secrets either path recorded.
@@ -795,6 +808,7 @@ pub(crate) fn section<T: DeserializeOwned>(
     }
     problems.list.extend(found.list);
     problems.list.extend(missing);
+    scrub(&mut problems, &texts);
 
     config.mark_consumed(consumed);
     let secrets: Vec<Secret<String>> = texts.into_iter().filter(|text| !text.is_empty()).map(Secret::new).collect();

@@ -199,3 +199,14 @@ No compile was run, so every type, borrow and trait-resolution claim below is re
   renderer. These are the premise checks in `BUILD_PLAN_3.md`, "After the race", item 3.
 - That `Handle` and `ModuleHook`, returned by `try_value` and `on_init`, carry no `#[must_use]`
   that the workspace denies.
+
+## Premise checks after the fill
+
+Both "never run" items for the alias bound and for `flatten`/`untagged` around a `Secret` were run
+(`PROBES_config.md`, "Premise checks after the fill").
+
+- Alias bound: holds. The pre-scan refuses a 10^10-node bomb at the line of the first alias past the limit in under 1 ms; removing the limit makes the loader reach 1.0 GB RSS in 5 s. Merge-key detection holds, quoted `<<` is a plain key.
+- `Secret` under `flatten`: **diverged from the written claim.** The crate documented that a leaf type's `Error::custom` message under `flatten` is printed as written. A test showed that message quotes the secret. Fixed by a second pass (`de.rs::scrub`) over the section's problems against every collected secret text; `lib.rs` "What an error prints" now says so. Under `untagged` no leak exists to fix: serde discards the variant errors.
+- Also changed: `yaml.rs::read` uses `?` on the final `into_result` (a clippy `question_mark` warning).
+- Not fixed: a `flatten` type mismatch is attributed to a sibling field's origin and an empty path.
+- `Secret`'s doc in `crates/ulo/src/redact.rs` still says the message is printed as written under `flatten`/`untagged`; that crate was out of scope for this task.

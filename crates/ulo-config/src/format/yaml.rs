@@ -44,9 +44,7 @@ pub(crate) fn read(text: &str, file: &Arc<str>) -> Result<Tree, Problems> {
             return Err(reader.problems);
         }
     };
-    if let Err(problems) = reader.problems.into_result() {
-        return Err(problems);
-    }
+    reader.problems.into_result()?;
     match root.value {
         Value::Null => Ok(Tree::empty()),
         Value::Table(_) => Ok(Tree { root: Some(root) }),

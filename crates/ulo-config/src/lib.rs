@@ -24,8 +24,10 @@
 //! every path, buffered content behind `#[serde(flatten)]` and `#[serde(untagged)]` included. A
 //! leaf type's own `Error::custom` message is printed as that type wrote it, except under the path
 //! of a [`Secret`](ulo::Secret), where only the path and kind are printed. Under `flatten` or
-//! `untagged` a `Secret` is still registered, but an error its inner type raises through
-//! `Error::custom` is printed as written, since a value that failed was never collected.
+//! `untagged` a `Secret` is still registered, and no path is known to be a secret's, so a message
+//! its inner type raises is checked afterwards against the text of every secret the section
+//! collected: a message containing one is replaced by `invalid value`. That holds only for a
+//! secret whose inner type read its input as a scalar before it failed.
 //!
 //! A section reports at most one leaf-type error: serde stops a struct's pass at the first error
 //! raised inside a leaf type's own `Deserialize`, and every other section still reports its own.
