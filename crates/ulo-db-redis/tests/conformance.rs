@@ -37,7 +37,11 @@ impl ulo_db_conformance::Host for Host {
     }
 
     fn unreachable_options(&self) -> RedisOptions {
-        self.at(server::REAL_PASSWORD, server::dead_port())
+        // A second per attempt, so the three-second bound holds several.
+        server::options(json!({
+            "url": format!("redis://:{}@127.0.0.1:{}", server::REAL_PASSWORD, server::dead_port()),
+            "connection_timeout_secs": 1,
+        }))
     }
 
     fn bad_credentials(&self) -> RedisOptions {

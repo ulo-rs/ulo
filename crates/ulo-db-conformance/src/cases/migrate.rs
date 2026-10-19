@@ -14,15 +14,17 @@ fn require_migrations<H: Host>(host: &H) {
     );
 }
 
-/// Migrations run only on request. Planted break: migrations run without `.migrate(..)`.
+/// Migrations run only on request. Planted breaks: migrations run without `.migrate(..)`; migrations
+/// not finished when `connect` returns (the migration run in a detached task).
 ///
 /// An app whose module has no `.migrate(..)` connects and closes first. An app whose module is
 /// given the host's migrations through [`Host::migrating`] then wires without running them, since
 /// `wire` builds nothing, and has run them once when `connect` returns, in the module's init hook:
-/// had the first app applied them, nothing would be pending and the count would stay at zero. A
-/// second app given the same migrations finds nothing pending, and the count stays at one. A
-/// migration run at registration, or run again over a schema that holds it, moves the count off the
-/// one asserted.
+/// had the first app applied them, nothing would be pending and the version table would stay empty.
+/// The table is read through the probe, not counted by the migrations. A second app given the same
+/// migrations finds nothing pending, and the table still holds one row. A migration run at
+/// registration, or run again over a schema that holds it, moves the count off the one asserted;
+/// a migration still running when `connect` returns reads as an empty table.
 pub async fn only_on_request<H: Host>() {
     let host = H::start().await;
     require_migrations(&host);
@@ -35,15 +37,15 @@ pub async fn only_on_request<H: Host>() {
         builder::<H>(Root::new().import(host.migrating(store::<H>(host.options()), probe.clone()))),
         "an app with `.migrate(..)`",
     );
-    assert_eq!(probe.runs(), 0, "migrations ran at `wire`, which builds nothing");
+    assert_eq!(probe.applied().await, 0, "migrations ran at `wire`, which builds nothing");
     let app = match app.connect().await {
         Ok(app) => app,
         Err(error) => panic!("an app with `.migrate(..)` did not connect{}: {}", migration_failure(&error), report(&error)),
     };
     assert_eq!(
-        probe.runs(),
+        probe.applied().await,
         1,
-        "the requested migrations did not run once by the end of `connect`: none pending means an app that did not ask for them applied them"
+        "the requested migrations were not finished when `connect` returned: none pending means an app that did not ask for them applied them, and a migration left to a detached task is still running"
     );
     closed(app, "the app with `.migrate(..)`").await;
 
@@ -52,22 +54,28 @@ pub async fn only_on_request<H: Host>() {
         "a second app with `.migrate(..)`",
     )
     .await;
-    assert_eq!(probe.runs(), 1, "migrations already applied ran again in a second app");
+    assert_eq!(probe.applied().await, 1, "migrations already applied ran again in a second app");
     closed(again, "the second app with `.migrate(..)`").await;
 }
 
 /// Two replicas started against one server apply the migrations once, the second waiting on the
 /// lock. The scenario uses ordinary DDL, since `CREATE INDEX CONCURRENTLY` can deadlock against a
-/// session waiting on an advisory lock. Planted break: the migration lock removed.
+/// session waiting on an advisory lock. Planted breaks: the migration lock removed; the lock
+/// released before the migrations run.
 ///
 /// The replicas are two apps in one process, each with its own graph and its own client, built
 /// from the host's options with the same migrations, so the server sees two clients as it would
-/// two processes. Both are wired first and then connected together, so their connects overlap from
-/// the first: the creation, the readiness ping, and the migrations in each init hook. Both connect,
-/// the second having waited on the lock and found nothing pending, and the migrations ran once.
-/// Without the lock, a migrator that takes none (SeaORM's, `diesel_migrations`) runs the body in
-/// both, and the loser fails its start on the version table or the count reaches two; SQLx's
-/// migrator takes a lock of its own and may still pass.
+/// two processes. Both are wired first and then connected together, and the host's migrations hold
+/// each replica at a two-party rendezvous (500ms at most) before the real migrator runs, so without
+/// a lock both start together. Both connect, and the version table, read once after both have
+/// finished, holds one row. Nothing is counted around a replica's own run: the migration is a
+/// `CREATE TABLE`, which the server refuses to repeat, so a second application fails that
+/// replica's start.
+///
+/// For sqlx the lock-removal break stays green: sqlx's own migrator takes a lock of its own, which
+/// makes ulo's redundant there, so this scenario cannot prove ulo's lock on sqlx and the ordering
+/// break (the lock released before the migrations run) is the evidence for sqlx. Lock removal is
+/// the evidence for SeaORM and Diesel, whose migrators take none.
 pub async fn once_across_replicas<H: Host>() {
     let host = H::start().await;
     require_migrations(&host);
@@ -82,7 +90,8 @@ pub async fn once_across_replicas<H: Host>() {
     let (first, second) = join(first.connect(), second.connect()).await;
     let first = started(first, "replica 1");
     let second = started(second, "replica 2");
-    assert_eq!(probe.runs(), 1, "two replicas racing on one server applied the migrations {} times", probe.runs());
+    let applied = probe.applied().await;
+    assert_eq!(applied, 1, "the version table holds {applied} rows after two replicas raced on one server");
     closed(first, "replica 1").await;
     closed(second, "replica 2").await;
 }

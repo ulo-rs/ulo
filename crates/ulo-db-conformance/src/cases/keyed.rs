@@ -13,13 +13,15 @@ struct First;
 /// The second keyed instance's qualifier.
 struct Second;
 
-/// Two keyed instances stay separate: two pools and two checks. Planted break: two qualifiers
-/// resolving to one instance.
+/// Two keyed instances stay separate: two pools and two checks. Planted breaks: two qualifiers
+/// resolving to one instance; a store whose `create` hands both instances one process-wide pool.
 ///
 /// Two modules over the host's options, one keyed `First` and one `Second`, and the health module
 /// connect. Each qualified client resolves, to two distinct instances, and each answers a ping of
 /// its own; the unqualified client is no binding, since a keyed module requalifies its exports; and
-/// readiness reads true over two checks contributed by the store, one per instance.
+/// readiness reads true over two checks contributed by the store, one per instance. Last, the
+/// `First` client is closed through [`Store::close`] and the `Second` pinged again: distinct
+/// handles are not distinct pools, and separate pools still answer where a shared one does not.
 pub async fn two_instances<H: Host>() {
     let host = H::start().await;
     let root = Root::new()
@@ -67,5 +69,13 @@ pub async fn two_instances<H: Host>() {
         "the two keyed instances did not contribute a check each: {}",
         describe(&report)
     );
+
+    <H::Store as Store>::close((*first).clone()).await;
+    if let Err(error) = <H::Store as Store>::ping(&*second).await {
+        panic!(
+            "the client keyed `Second` stopped answering when the client keyed `First` was closed: the instances share a pool: {}",
+            crate::report(&*error)
+        );
+    }
     closed(app, "the app with two keyed instances").await;
 }

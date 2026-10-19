@@ -97,8 +97,11 @@ pub fn options<T: DeserializeOwned>(fields: serde_json::Value) -> T {
     serde_json::from_value(fields).expect("the test's options deserialize")
 }
 
-/// Wraps a store's real migrations, counting how many migration rows they added: `count` reads the
-/// rows the migrator's version table holds, zero while it does not exist.
+/// Wraps a store's real migrations for the lock scenario. Each replica registers a reader of the
+/// version table with the probe, then waits at a two-party rendezvous (500ms at most) before
+/// calling the real migrator, so that with no lock both replicas start together. `count` reads the
+/// rows the migrator's version table holds, zero while it does not exist; the scenario reads it once
+/// after both replicas have finished.
 pub struct Counted<S: Store> {
     pub inner: Arc<dyn Migrations<S>>,
     pub probe: MigrationProbe,
@@ -108,19 +111,24 @@ pub struct Counted<S: Store> {
 impl<S: Store> Migrations<S> for Counted<S> {
     fn run(self: Arc<Self>, client: S::Client) -> BoxFuture<'static, Result<(), BoxError>> {
         Box::pin(async move {
-            let before = (self.count)(&client).await;
-            let outcome = Arc::clone(&self.inner).run(client.clone()).await;
-            let after = (self.count)(&client).await;
-            for _ in before..after {
-                self.probe.record();
-            }
-            outcome
+            let count = self.count;
+            let reading = client.clone();
+            self.probe.reads_with(Arc::new(move || count(&reading)));
+            self.probe.rendezvous::<ulo_db_conformance::OnTokio>().await;
+            Arc::clone(&self.inner).run(client).await
         })
     }
 }
 
 /// The one migration every host applies: ordinary DDL, which every engine reads.
 pub const CREATE_TABLE: &str = "create table ulo_conf_applied (id integer primary key)";
+
+/// The same migration for SQLite, followed by a query that keeps the transaction open for a while.
+/// SQLite serialises writers, so a migrator that starts a moment after the first one can find the
+/// table already made and pass without ever overlapping it; the pause is wide enough that a
+/// replica which starts beside the first one is still inside its transaction.
+pub const CREATE_TABLE_HELD_SQLITE: &str = "create table ulo_conf_applied (id integer primary key); \
+    with recursive c(x) as (select 1 union all select x + 1 from c where x < 1500000) select count(*) from c";
 
 fn ready_postgres() -> WaitFor {
     WaitFor::log(LogWaitStrategy::stderr("listening on IPv4 address"))

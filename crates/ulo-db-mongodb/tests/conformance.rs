@@ -37,7 +37,8 @@ impl ulo_db_conformance::Host for Host {
     }
 
     fn unreachable_options(&self) -> MongoOptions {
-        self.at(server::dead_port())
+        // A second per attempt, so the three-second bound holds several.
+        server::options(json!({ "uri": format!("mongodb://127.0.0.1:{}/?serverSelectionTimeoutMS=1000", server::dead_port()) }))
     }
 
     fn bad_credentials(&self) -> MongoOptions {
@@ -74,4 +75,6 @@ ulo_db_conformance::conformance_suite!(Host; not_applicable {
     lazy_readiness_waits_for_the_first_ping: "`create` connects, so the store offers no `.lazy()`",
     migrations_run_only_on_request: "MongoDB has no migrator",
     migrations_run_once_across_replicas: "MongoDB has no migrator",
+}; pending {
+    unreachable_database_fails_at_the_bound: "pending the laziness batch, designer ruling QUESTIONS_4 Q2/Q5: `create` connects nothing on a plain mongodb:// URL and `ping` does not retry, so an unreachable server fails at the first attempt; that batch must un-ignore this scenario",
 });

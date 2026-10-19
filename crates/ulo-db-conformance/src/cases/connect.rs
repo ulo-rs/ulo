@@ -19,8 +19,13 @@ const OUTAGE: Duration = Duration::from_millis(1_500);
 /// The scheduling slack allowed below a bound a scenario expects to be waited out.
 const EARLY: Duration = Duration::from_millis(100);
 
-/// An unreachable database fails `connect` at its bound, not `Permanent`. Planted break:
-/// `Unreachable` treated as permanent.
+/// An unreachable database fails `connect` at its bound, not `Permanent`. Planted break: every error
+/// classified permanent.
+///
+/// A host's [`Host::unreachable_options`] set a per-attempt timeout below the bound (one second
+/// against three), so the loop makes several attempts before the bound ends it; a readiness
+/// failure reports at least two. An attempt allowed to run as long as the bound would end the
+/// loop after one and pass every other assertion here.
 ///
 /// The module retries without counting out (a thousand retries a tenth of a second apart) under a
 /// three-second `connect_within`, so only the bound ends the loop. The refusal is a connect failure
@@ -56,6 +61,12 @@ pub async fn unreachable_fails_at_the_bound<H: Host>() {
         assert!(construct || readiness, "a store whose `create` connects failed its connect outside the loop and the confirming ping: {connect}");
     } else {
         assert!(readiness, "a store whose `create` connects nothing failed its connect outside the readiness check: {connect}");
+    }
+    if let ConnectError::Readiness { attempts, .. } = connect {
+        assert!(
+            *attempts >= 2,
+            "an unreachable database was refused after {attempts} attempt(s) in {took:?}: the retry loop never ran, or one attempt ate the whole {WITHIN:?} bound (the host sets a per-attempt timeout below it): {connect}"
+        );
     }
     assert!(took + EARLY >= WITHIN, "an unreachable database was refused after {took:?}, before the {WITHIN:?} bound: {connect}");
     let most = WITHIN + WITHIN + OVERRUN;

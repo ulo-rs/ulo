@@ -173,7 +173,12 @@ macro_rules! server_host {
                 }
 
                 fn unreachable_options(&self) -> $options {
-                    self.at(server::REAL_PASSWORD, server::dead_port())
+                    // A second per attempt, so the three-second bound holds several.
+                    server::options(json!({
+                        "url": format!($url, server::REAL_PASSWORD, server::dead_port()),
+                        "max_connections": 5,
+                        "acquire_timeout_secs": 1,
+                    }))
                 }
 
                 fn bad_credentials(&self) -> $options {

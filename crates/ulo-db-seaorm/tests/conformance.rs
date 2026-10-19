@@ -17,7 +17,7 @@ use ulo_db_seaorm::{SeaOrm, SeaOrmMigrations, SeaOrmOptions};
 #[allow(dead_code, unused_imports)]
 mod server;
 
-use server::{CREATE_TABLE, Counted};
+use server::{CREATE_TABLE, CREATE_TABLE_HELD_SQLITE, Counted};
 
 struct First;
 
@@ -30,7 +30,11 @@ impl MigrationName for First {
 #[sea_orm_migration::async_trait::async_trait]
 impl MigrationTrait for First {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager.get_connection().execute_unprepared(CREATE_TABLE).await.map(drop)
+        let sql = match manager.get_database_backend() {
+            sea_orm::DatabaseBackend::Sqlite => CREATE_TABLE_HELD_SQLITE,
+            _ => CREATE_TABLE,
+        };
+        manager.get_connection().execute_unprepared(sql).await.map(drop)
     }
 }
 
@@ -133,8 +137,9 @@ mod sqlite {
         unreachable_database_fails_at_the_bound: "a file is not reached over a network",
         bad_credentials_fail_at_once: "a file has no credentials",
         a_connecting_create_is_retried_and_stops_on_permanent: "SeaORM's `create` connects nothing on this store",
-        lazy_readiness_waits_for_the_first_ping: "KNOWN DEFECT: sea-orm's `sqlite-use-returning-for-3_35`, which sea-orm-migration turns on, makes the SQLite connector run `SELECT sqlite_version()` inside `connect_lazy`, so `create` connects and a missing file fails it at once",
         health_goes_down_in_an_outage_and_recovers: "a connection to a file stays open when the file is unlinked",
+    }; pending {
+        lazy_readiness_waits_for_the_first_ping: "pending the laziness batch, designer ruling QUESTIONS_4 Q2/Q5: sea-orm-migration turns on sea-orm's `sqlite-use-returning-for-3_35`, which makes `connect_lazy` run `SELECT sqlite_version()`, so `create` connects and a missing file fails it at once; that batch must un-ignore this scenario",
     });
 }
 
@@ -169,7 +174,12 @@ macro_rules! server_host {
                 }
 
                 fn unreachable_options(&self) -> SeaOrmOptions {
-                    self.at(server::REAL_PASSWORD, server::dead_port())
+                    // A second per attempt, so the three-second bound holds several.
+                    server::options(json!({
+                        "url": format!($url, server::REAL_PASSWORD, server::dead_port()),
+                        "max_connections": 5,
+                        "acquire_timeout_secs": 1,
+                    }))
                 }
 
                 fn bad_credentials(&self) -> SeaOrmOptions {

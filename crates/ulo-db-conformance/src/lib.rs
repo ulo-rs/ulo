@@ -19,7 +19,9 @@
 //!
 //! A store that lacks a capability, [`Capabilities::lazy`] or [`Capabilities::migrations`], declares
 //! the scenarios that need it not applicable with its reason, stamped `#[ignore]` so the report
-//! counts them as ignored, and run on a store they do not apply to they fail. Every scenario names
+//! counts them as ignored, and run on a store they do not apply to they fail. A scenario a store
+//! should pass but does not yet is declared `pending`, with the ruling that settles it and the
+//! batch that must un-ignore it; it is also ignored, and also fails when run. Every scenario names
 //! the planted break it is shown failing against.
 //!
 //! | Scenario | Applies to |
@@ -41,7 +43,7 @@
 
 use std::future::Future;
 use std::num::NonZeroUsize;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ulo_db::{Store, StoreModule};
@@ -86,11 +88,27 @@ impl Capabilities {
     }
 }
 
-/// Counts how often the migrations a host supplies ran, so the lock scenario can assert that two
-/// replicas racing against one server apply them once.
-#[derive(Clone, Debug, Default)]
+/// A reader of the migrator's version table, as one replica's client sees it.
+type Reader = Arc<dyn Fn() -> ulo::BoxFuture<'static, usize> + Send + Sync>;
+
+/// What the lock scenario learns about the migrations a host supplies: how many replicas reached
+/// them, and how many migrations the server's version table holds once they are done.
+///
+/// The count is read once, after the replicas have finished, and never by a replica around its own
+/// run: two unlocked replicas both reading an empty table before their runs would each count the
+/// other's application as theirs. A second application of the migration is caught by the
+/// migration itself, which the host writes as a `CREATE TABLE` the server refuses to repeat, so
+/// the replica that applied it second fails its start.
+#[derive(Clone, Default)]
 pub struct MigrationProbe {
-    runs: Arc<AtomicUsize>,
+    arrivals: Arc<AtomicUsize>,
+    reader: Arc<Mutex<Option<Reader>>>,
+}
+
+impl std::fmt::Debug for MigrationProbe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MigrationProbe").field("arrivals", &self.arrivals.load(Ordering::SeqCst)).finish()
+    }
 }
 
 impl MigrationProbe {
@@ -98,15 +116,51 @@ impl MigrationProbe {
         MigrationProbe::default()
     }
 
-    /// Called by the host's migrations each time they are applied: once per run that finds them
-    /// pending, and not on a run that finds nothing pending, so a replica that waited on the lock
-    /// records nothing.
-    pub fn record(&self) {
-        self.runs.fetch_add(1, Ordering::SeqCst);
+    /// Called by the host's migrations as a replica reaches them, before the real migrator runs;
+    /// returns how many replicas have arrived, this one included. The host holds the replica until
+    /// a second arrives, or briefly gives up, so that without a lock the two start together.
+    pub fn arrive(&self) -> usize {
+        self.arrivals.fetch_add(1, Ordering::SeqCst) + 1
     }
 
-    pub fn runs(&self) -> usize {
-        self.runs.load(Ordering::SeqCst)
+    /// Arrives, then waits until a second replica has, or half a second has passed on `H`'s clock.
+    /// A yield, not a sleep, between looks: a polling interval would let the later arrival migrate
+    /// alone for its length.
+    pub async fn rendezvous<H: Harness>(&self) {
+        use ulo::Timer;
+        self.arrive();
+        let waiting = async {
+            while self.arrivals.load(Ordering::SeqCst) < 2 {
+                let mut yielded = false;
+                std::future::poll_fn(|cx| {
+                    if std::mem::replace(&mut yielded, true) {
+                        return std::task::Poll::Ready(());
+                    }
+                    cx.waker().wake_by_ref();
+                    std::task::Poll::Pending
+                })
+                .await;
+            }
+        };
+        let deadline = H::runtime().sleep(std::time::Duration::from_millis(500));
+        futures_util::pin_mut!(waiting, deadline);
+        futures_util::future::select(waiting, deadline).await;
+    }
+
+    /// Called by the host's migrations with a reader of the version table through the replica's
+    /// own client; the latest replaces the earlier.
+    pub fn reads_with(&self, reader: Reader) {
+        *self.reader.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(reader);
+    }
+
+    /// The rows the version table holds now, zero while no replica has reached the migrations or
+    /// the table does not exist.
+    pub async fn applied(&self) -> usize {
+        let reader = self.reader.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        match reader {
+            Some(reader) => reader().await,
+            None => 0,
+        }
     }
 }
 
@@ -182,21 +236,42 @@ pub trait Host: Sized + Send + Sync + 'static {
 /// });
 /// ```
 ///
+/// A scenario a store should pass and does not yet is declared `pending`, with the ruling that
+/// settles it and the batch that must remove the line; it is stamped
+/// `#[ignore = "<reason>"]` (`not_applicable` is for a store lacking a capability, not for a defect),
+/// and run with `--ignored` it fails until the store is fixed:
+///
+/// ```ignore
+/// ulo_db_conformance::conformance_suite!(MongoHost; not_applicable {}; pending {
+///     unreachable_database_fails_at_the_bound: "pending the laziness batch, designer ruling QUESTIONS_4 Q2/Q5; that batch must un-ignore this",
+/// });
+/// ```
+///
 /// A declared name that is no scenario fails to compile.
 #[macro_export]
 macro_rules! conformance_suite {
     ($host:ty $(,)?) => {
-        $crate::conformance_suite!($host; not_applicable {});
+        $crate::conformance_suite!($host; not_applicable {}; pending {});
     };
     ($host:ty; not_applicable { $($skip:ident : $why:literal),* $(,)? } $(,)?) => {
-        $crate::conformance_suite!(@stamper [$] $host; $($skip : $why),*);
+        $crate::conformance_suite!($host; not_applicable { $($skip : $why),* }; pending {});
     };
-    (@stamper [$d:tt] $host:ty; $($skip:ident : $why:literal),*) => {
+    ($host:ty; not_applicable { $($skip:ident : $why:literal),* $(,)? }; pending { $($wait:ident : $because:literal),* $(,)? } $(,)?) => {
+        $crate::conformance_suite!(@stamper [$] $host; [$($skip : $why),*] [$($wait : $because),*]);
+    };
+    (@stamper [$d:tt] $host:ty; [$($skip:ident : $why:literal),*] [$($wait:ident : $because:literal),*]) => {
         macro_rules! __ulo_db_conformance_stamp {
             $(
                 ($skip, $d($d test:tt)*) => {
                     #[test]
                     #[ignore = concat!("not applicable: ", $why)]
+                    $d($d test)*
+                };
+            )*
+            $(
+                ($wait, $d($d test:tt)*) => {
+                    #[test]
+                    #[ignore = $because]
                     $d($d test)*
                 };
             )*
@@ -207,6 +282,7 @@ macro_rules! conformance_suite {
         }
         // A declared name that is no scenario names no function here.
         $(const _: fn() = $skip;)*
+        $(const _: fn() = $wait;)*
         $crate::conformance_suite!(@cases $host;
             malformed_url_is_refused => wire::malformed_url_is_refused,
             unreachable_database_fails_at_the_bound => connect::unreachable_fails_at_the_bound,
