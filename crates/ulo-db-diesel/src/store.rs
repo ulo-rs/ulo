@@ -157,14 +157,17 @@ where
 
 #[cfg(feature = "postgres")]
 mod postgres {
-    use diesel_async::pooled_connection::AsyncDieselConnectionManager;
+    use diesel::ConnectionError;
+    use diesel::ConnectionResult;
     use diesel_async::pooled_connection::deadpool::Pool;
-    use diesel_async::{AsyncPgConnection, RunQueryDsl};
+    use diesel_async::pooled_connection::{AsyncDieselConnectionManager, ManagerConfig};
+    use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
+    use tokio::runtime::Handle;
     use ulo::{BoxError, BoxFuture, Secret};
     use ulo_config::Problems;
     use ulo_db::{LazyStore, MigrationLock, Store};
 
-    use super::build_pool;
+    use super::{Given, build_pool};
     use crate::classify::permanent_or_not;
     use crate::lock::{self, DieselLock};
     use crate::options::{self, DieselOptions};
@@ -191,11 +194,15 @@ mod postgres {
             options::password_secrets(o.url.expose())
         }
 
-        /// Connects nothing: deadpool's `build` makes no connection.
+        /// Connects nothing: deadpool's `build` makes no connection. The given runtime's handle is
+        /// read here, once, for the pool's connection setup.
         fn create(o: &DieselOptions) -> BoxFuture<'static, Result<PgPool, BoxError>> {
             let o = o.clone();
             Box::pin(async move {
-                let manager = AsyncDieselConnectionManager::<AsyncPgConnection>::new(o.url.expose().clone());
+                let handle = Given::current()?.handle;
+                let mut config = ManagerConfig::<AsyncPgConnection>::default();
+                config.custom_setup = Box::new(move |url| establish(&handle, url));
+                let manager = AsyncDieselConnectionManager::new_with_config(o.url.expose().clone(), config);
                 build_pool(manager, &o)
             })
         }
@@ -220,6 +227,23 @@ mod postgres {
     }
 
     impl LazyStore for Postgres {}
+
+    /// The pool's `custom_setup`: `AsyncPgConnection::establish` driven to completion on the given
+    /// runtime's blocking pool. Authentication against a SCRAM server derives a key with 4096
+    /// rounds of HMAC-SHA-256 inside the connect future, which in an unoptimised build takes tens
+    /// of milliseconds; polled on the runtime's own thread it stalls every other task there. The
+    /// connection's driver task is spawned from inside `block_on`, so it lands on the given runtime.
+    fn establish<'a>(handle: &Handle, url: &'a str) -> BoxFuture<'a, ConnectionResult<AsyncPgConnection>> {
+        let handle = handle.clone();
+        let url = url.to_owned();
+        Box::pin(async move {
+            let given = Given { handle: handle.clone() };
+            match given.run(move || handle.block_on(AsyncPgConnection::establish(&url))).await {
+                Ok(connected) => connected,
+                Err(e) => Err(ConnectionError::BadConnection(e.to_string())),
+            }
+        })
+    }
 
     impl MigrationLock for Postgres {
         type Guard = DieselLock;
