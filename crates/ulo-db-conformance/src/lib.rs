@@ -26,8 +26,8 @@
 //!
 //! | Scenario | Applies to |
 //! | --- | --- |
-//! | `a_connecting_create_is_retried_and_stops_on_permanent` | a store whose `CREATE_CONNECTS` is true |
-//! | `lazy_readiness_waits_for_the_first_ping` | a store offering `.lazy()`: `CREATE_CONNECTS` false |
+//! | `a_connecting_create_is_retried_and_stops_on_permanent` | a host whose options make `Store::create_connects` true |
+//! | `lazy_readiness_waits_for_the_first_ping` | a host whose options make `Store::create_connects` false and whose module takes `.lazy()` |
 //! | `migrations_run_only_on_request`, `migrations_run_once_across_replicas` | a store offering `.migrate(..)` |
 //! | every other | every store |
 //!
@@ -66,7 +66,7 @@ pub const PASSWORD: &str = "hunter2";
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
-    /// The store offers `.lazy()`: `CREATE_CONNECTS` is false.
+    /// The host's options take `.lazy()`: `Store::create_connects` answers false for them.
     pub lazy: bool,
     /// The store offers `.migrate(..)`.
     pub migrations: bool,
@@ -205,7 +205,7 @@ pub trait Host: Sized + Send + Sync + 'static {
 
     /// `module.lazy()` for a store that offers it; a store that does not returns `module` unchanged
     /// and declares the lazy scenarios not applicable. Written as a method because `.lazy()` exists
-    /// only where `CREATE_CONNECTS` is false.
+    /// only on a [`LazyStore`](ulo_db::LazyStore).
     fn lazily(&self, module: StoreModule<Self::Store>) -> StoreModule<Self::Store>;
 
     /// `module.migrate(..)` with the migrations the lock scenario runs, ordinary DDL that records

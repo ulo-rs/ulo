@@ -138,8 +138,6 @@ mod sqlite {
         bad_credentials_fail_at_once: "a file has no credentials",
         a_connecting_create_is_retried_and_stops_on_permanent: "SeaORM's `create` connects nothing on this store",
         health_goes_down_in_an_outage_and_recovers: "a connection to a file stays open when the file is unlinked",
-    }; pending {
-        lazy_readiness_waits_for_the_first_ping: "pending the laziness batch, designer ruling QUESTIONS_4 Q2/Q5: sea-orm-migration turns on sea-orm's `sqlite-use-returning-for-3_35`, which makes `connect_lazy` run `SELECT sqlite_version()`, so `create` connects and a missing file fails it at once; that batch must un-ignore this scenario",
     });
 }
 

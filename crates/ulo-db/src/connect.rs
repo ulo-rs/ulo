@@ -34,16 +34,16 @@ pub(crate) fn require_tokio(runtime: &dyn Runtime, module: &'static str) -> Resu
 
 /// The pool's factory: the name check, then `S::create` through `spawn_with`.
 ///
-/// For a store whose `create` connects, the loop around `create` is the store's one retry loop:
+/// For options whose `create` connects, the loop around `create` is the store's one retry loop:
 /// the module's retries and backoff, ending on `Permanent`, under the construction bound
-/// `connect_within`. For any other store a single `create` runs and `.ready` retries the ping.
+/// `connect_within`. For any other options a single `create` runs and `.ready` retries the ping.
 pub(crate) async fn create<S: Store>(
     runtime: Arc<dyn Runtime>,
     options: S::Options,
     policy: Policy,
 ) -> Result<S::Client, BoxError> {
     require_tokio(&*runtime, S::NAME).map_err(|e| BoxError::from(Permanent::new(e)))?;
-    if !S::CREATE_CONNECTS {
+    if !S::create_connects(&options) {
         return create_once::<S>(&runtime, &options).await;
     }
     // No clock of the loop's own: the binding's construction bound, set to `connect_within`,

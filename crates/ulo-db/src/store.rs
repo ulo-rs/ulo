@@ -9,8 +9,8 @@ use ulo_config::Problems;
 ///
 /// A store has no error type of its own, so nothing clashes with `ulo::ConnectError`. It marks an
 /// error permanent, so no further attempt is made, by returning `Err(Permanent::new(e).into())`
-/// from [`ping`](Self::ping), or from [`create`](Self::create) under
-/// [`CREATE_CONNECTS`](Self::CREATE_CONNECTS).
+/// from [`ping`](Self::ping), or from [`create`](Self::create) when
+/// [`create_connects`](Self::create_connects) answers true.
 pub trait Store: Send + Sync + 'static {
     /// `"postgres"`, `"mongodb"`: the check's name and the messages.
     const NAME: &'static str;
@@ -21,10 +21,20 @@ pub trait Store: Send + Sync + 'static {
     /// The library's own pool or client, bound bare so a consumer writes `Dep<sqlx::PgPool>`.
     type Client: Clone + Send + Sync + 'static;
 
-    /// True when `create` cannot build the client without connecting. `ulo-db` then retries `create`
-    /// in a loop of its own under `connect_within`, and the store offers no `.lazy()`. A `const`
-    /// for the whole store.
-    const CREATE_CONNECTS: bool;
+    /// True when `create` cannot build the client for `o` without connecting or resolving a name
+    /// over the network. `ulo-db` then retries `create` in a loop of its own under `connect_within`,
+    /// and `.lazy()` on that module is refused at registration. A store answers from its nature,
+    /// the same for every `o`, unless the options decide it: MongoDB's `mongodb+srv://` URI
+    /// resolves DNS in `create` and a plain `mongodb://` URI does not.
+    fn create_connects(o: &Self::Options) -> bool;
+
+    /// What the registration refusal of `.lazy()` says about why `create` connects for `o`, naming
+    /// what in the options decides it. Read only when [`create_connects`](Self::create_connects)
+    /// answers true.
+    fn connects_because(o: &Self::Options) -> &'static str {
+        let _ = o;
+        "its `create` connects"
+    }
 
     /// Checks the options at registration, which does no I/O. A failure is recorded through
     /// `try_value` with every other configuration problem, written from the failure's category and
@@ -40,7 +50,7 @@ pub trait Store: Send + Sync + 'static {
     }
 
     /// Builds the client. Run through `spawn_with` on the app's runtime, so whatever the library
-    /// spawns at creation runs there. Connects only under `CREATE_CONNECTS`.
+    /// spawns at creation runs there. Connects only where `create_connects` answers true.
     fn create(o: &Self::Options) -> BoxFuture<'static, Result<Self::Client, BoxError>>;
 
     /// One round trip: the `.ready` attempt and the health check.
@@ -52,9 +62,10 @@ pub trait Store: Send + Sync + 'static {
     fn close(c: Self::Client) -> BoxFuture<'static, ()>;
 }
 
-/// A store whose `create` connects nothing, so [`StoreModule::lazy`](crate::StoreModule::lazy) is
-/// offered: the start does not wait for the database, and the check stays down until the first ping
-/// succeeds. Implemented exactly where `CREATE_CONNECTS` is `false`; elsewhere the method does not
-/// exist, so the refusal is at compile time. Calling `lazy` on a store implementing this marker
-/// with `CREATE_CONNECTS` true fails to compile as well.
+/// A store that may be lazy, so [`StoreModule::lazy`](crate::StoreModule::lazy) is offered: the
+/// start does not wait for the database, and the check stays down until the first ping succeeds.
+/// Whether the options allow it is [`Store::create_connects`], which is read at registration: a
+/// module over options for which it answers true refuses `.lazy()` there, through `try_value`.
+/// A store whose `create` connects for every option leaves this marker unimplemented, and the
+/// method does not exist for it.
 pub trait LazyStore: Store {}

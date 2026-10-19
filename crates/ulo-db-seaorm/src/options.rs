@@ -11,8 +11,12 @@ use ulo_db_sqlx::{Engine, validate_url};
 pub struct SeaOrmOptions {
     /// A `postgres://`, `mysql://` or `sqlite:` URL.
     pub url: Secret<String>,
+    /// On SQLite, 1 when unset, as SeaORM's own SQLite connector defaults it; on the other engines
+    /// SQLx's 10.
     pub max_connections: Option<u32>,
     pub min_connections: Option<u32>,
+    /// The wait for a pooled connection. Unset, SQLite's pool waits 5 s as `ulo-db-sqlx`'s pools do;
+    /// Postgres and MySQL keep SQLx's 30 s default.
     pub acquire_timeout_secs: Option<u64>,
 }
 
@@ -55,7 +59,7 @@ pub(crate) fn validate(o: &SeaOrmOptions) -> Result<(), Problems> {
     problems.into_result()
 }
 
-fn engine_of(url: &str) -> Option<Engine> {
+pub(crate) fn engine_of(url: &str) -> Option<Engine> {
     let (scheme, _) = url.split_once(':')?;
     match scheme.to_ascii_lowercase().as_str() {
         "postgres" | "postgresql" => Some(Engine::Postgres),

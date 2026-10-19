@@ -140,3 +140,25 @@ impl fmt::Display for MigrationTimedOut {
 }
 
 impl Error for MigrationTimedOut {}
+
+/// `.lazy()` on a module whose options make `create` connect, refused at registration through
+/// `try_value`.
+#[derive(Debug)]
+pub(crate) struct LazyRefused {
+    store: &'static str,
+    because: &'static str,
+}
+
+impl LazyRefused {
+    pub(crate) fn new(store: &'static str, because: &'static str) -> Self {
+        LazyRefused { store, because }
+    }
+}
+
+impl fmt::Display for LazyRefused {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the {} store module cannot be lazy: {}", self.store, self.because)
+    }
+}
+
+impl Error for LazyRefused {}

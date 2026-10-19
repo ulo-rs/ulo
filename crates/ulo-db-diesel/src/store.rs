@@ -178,7 +178,9 @@ mod postgres {
         const NAME: &'static str = "postgres";
         type Options = DieselOptions;
         type Client = PgPool;
-        const CREATE_CONNECTS: bool = false;
+        fn create_connects(_: &DieselOptions) -> bool {
+            false
+        }
 
         fn validate(o: &DieselOptions) -> Result<(), Problems> {
             options::validate_postgres(o)
@@ -255,7 +257,9 @@ mod mysql {
         const NAME: &'static str = "mysql";
         type Options = DieselOptions;
         type Client = MySqlPool;
-        const CREATE_CONNECTS: bool = false;
+        fn create_connects(_: &DieselOptions) -> bool {
+            false
+        }
 
         fn validate(o: &DieselOptions) -> Result<(), Problems> {
             options::validate_mysql(o)
@@ -337,7 +341,9 @@ mod sqlite {
         const NAME: &'static str = "sqlite";
         type Options = DieselOptions;
         type Client = SqlitePool;
-        const CREATE_CONNECTS: bool = false;
+        fn create_connects(_: &DieselOptions) -> bool {
+            false
+        }
 
         fn validate(o: &DieselOptions) -> Result<(), Problems> {
             options::validate_sqlite(o)

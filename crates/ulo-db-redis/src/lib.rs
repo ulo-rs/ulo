@@ -5,10 +5,15 @@
 //! m.import(RedisModule::from_config(&config, "redis"));
 //! ```
 //!
-//! `ConnectionManager::new` connects, and retries for about 9.5 s by default, a wrong password
-//! included. The store sets `CREATE_CONNECTS` and `ConnectionManagerConfig::set_number_of_retries(0)`,
-//! so the manager connects once and `ulo-db`'s loop around `create` is the one retry loop. The store
-//! therefore has no `.lazy()`, and no `.migrate(..)`.
+//! The manager is built with `ConnectionManager::new_lazy_with_config`, which connects nothing; the
+//! first command makes the connection. `create` therefore cannot fail on an unreachable server, the
+//! store offers `.lazy()`, and under `.ready` the first ping is the first connection, retried by
+//! `.ready` under `connect_within`. A wrong password is `Permanent` and ends the start at its first
+//! attempt. The store has no `.migrate(..)`.
+//!
+//! `set_number_of_retries` is 3 (probed, PROBES_db.md section 9): it governs every reconnect, so a
+//! command rides out an outage of about 1.2 s, and one `.ready` attempt against an unreachable
+//! server or a wrong password costs about that long. The default of 6 would cost 9.5 s per attempt.
 //!
 //! # The runtime preference
 //!

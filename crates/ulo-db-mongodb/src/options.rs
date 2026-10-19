@@ -13,7 +13,7 @@ pub struct MongoOptions {
 }
 
 const PLAIN: &str = "mongodb://";
-const SRV: &str = "mongodb+srv://";
+pub(crate) const SRV: &str = "mongodb+srv://";
 
 /// The part of `uri` after the scheme up to the first `/` or `?`: userinfo, hosts and ports. Answers
 /// the scheme's SRV-ness beside it, or `None` for a scheme the store does not take.

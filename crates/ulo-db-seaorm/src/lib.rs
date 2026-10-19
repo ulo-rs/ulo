@@ -19,8 +19,21 @@
 //!
 //! # Connecting and migrating
 //!
-//! The pool is lazy, so the start waits on `.ready` unless the module is `.lazy()`. An attempt's
-//! bound should exceed `acquire_timeout_secs`, which SQLx's 30 s default applies when unset.
+//! The pool is lazy on all three engines, so the start waits on `.ready` unless the module is
+//! `.lazy()`. An attempt's bound should exceed `acquire_timeout_secs`, which SQLx's 30 s default
+//! applies when unset on Postgres and MySQL.
+//!
+//! SQLite is built through `ulo-db-sqlx`'s lazy pool and wrapped by
+//! `SqlxSqliteConnector::from_sqlx_sqlite_pool`, because SeaORM's own SQLite connector queries
+//! `sqlite_version()` while connecting (`sea-orm-migration` turns that feature on for every build)
+//! and so would connect in `create`. The store's three pool options map onto SQLx's:
+//! `max_connections` (1 when unset, as SeaORM's connector defaults it), `min_connections`, and
+//! `acquire_timeout_secs` (5 s when unset, as `ulo-db-sqlx`'s pools). SeaORM's other `ConnectOptions`
+//! knobs are not exposed and do not apply to the wrapped pool, so statement logging follows SQLx's
+//! defaults. The wrapped path skips SeaORM's connect-time version check; the store's `ping` makes it
+//! instead and refuses a SQLite older than 3.35, which `RETURNING` needs, as `Permanent`. An old
+//! SQLite therefore fails the start under `.ready` and the first health check under `.lazy()`.
+//!
 //! Migrations run through `sea-orm-migration`'s `up` under `ulo-db`'s lock, taken with the
 //! primitives `ulo-db-sqlx` supplies for each engine on the SQLx pool SeaORM holds.
 

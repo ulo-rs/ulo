@@ -26,7 +26,9 @@ impl Store for Postgres {
     const NAME: &'static str = "postgres";
     type Options = PgOptions;
     type Client = sqlx::PgPool;
-    const CREATE_CONNECTS: bool = false;
+    fn create_connects(_: &PgOptions) -> bool {
+        false
+    }
 
     fn validate(o: &PgOptions) -> Result<(), Problems> {
         validate_options(Engine::Postgres, &o.url, o.max_connections, o.min_connections, o.acquire_timeout_secs)

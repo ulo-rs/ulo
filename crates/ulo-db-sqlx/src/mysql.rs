@@ -24,7 +24,9 @@ impl Store for MySql {
     const NAME: &'static str = "mysql";
     type Options = MySqlOptions;
     type Client = sqlx::MySqlPool;
-    const CREATE_CONNECTS: bool = false;
+    fn create_connects(_: &MySqlOptions) -> bool {
+        false
+    }
 
     fn validate(o: &MySqlOptions) -> Result<(), Problems> {
         validate_options(Engine::MySql, &o.url, o.max_connections, o.min_connections, o.acquire_timeout_secs)

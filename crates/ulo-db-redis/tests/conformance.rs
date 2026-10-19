@@ -61,7 +61,7 @@ impl ulo_db_conformance::Host for Host {
     }
 
     fn lazily(&self, module: StoreModule<Redis>) -> StoreModule<Redis> {
-        module
+        module.lazy()
     }
 
     fn migrating(&self, module: StoreModule<Redis>, _run: MigrationProbe) -> StoreModule<Redis> {
@@ -69,12 +69,12 @@ impl ulo_db_conformance::Host for Host {
     }
 
     fn capabilities(&self) -> ulo_db_conformance::Capabilities {
-        ulo_db_conformance::Capabilities::default().lazy(false).migrations(false)
+        ulo_db_conformance::Capabilities::default().migrations(false)
     }
 }
 
 ulo_db_conformance::conformance_suite!(Host; not_applicable {
-    lazy_readiness_waits_for_the_first_ping: "`create` connects, so the store offers no `.lazy()`",
+    a_connecting_create_is_retried_and_stops_on_permanent: "`create` connects nothing; `.ready` is the retry loop",
     migrations_run_only_on_request: "Redis has no migrator",
     migrations_run_once_across_replicas: "Redis has no migrator",
 });

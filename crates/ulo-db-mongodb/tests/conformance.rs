@@ -59,7 +59,7 @@ impl ulo_db_conformance::Host for Host {
     }
 
     fn lazily(&self, module: StoreModule<Mongo>) -> StoreModule<Mongo> {
-        module
+        module.lazy()
     }
 
     fn migrating(&self, module: StoreModule<Mongo>, _run: MigrationProbe) -> StoreModule<Mongo> {
@@ -67,14 +67,12 @@ impl ulo_db_conformance::Host for Host {
     }
 
     fn capabilities(&self) -> ulo_db_conformance::Capabilities {
-        ulo_db_conformance::Capabilities::default().lazy(false).migrations(false)
+        ulo_db_conformance::Capabilities::default().migrations(false)
     }
 }
 
 ulo_db_conformance::conformance_suite!(Host; not_applicable {
-    lazy_readiness_waits_for_the_first_ping: "`create` connects, so the store offers no `.lazy()`",
+    a_connecting_create_is_retried_and_stops_on_permanent: "the host's `mongodb://` URI resolves nothing in `create`; only a `mongodb+srv://` URI connects there, and no DNS exists in the harness",
     migrations_run_only_on_request: "MongoDB has no migrator",
     migrations_run_once_across_replicas: "MongoDB has no migrator",
-}; pending {
-    unreachable_database_fails_at_the_bound: "pending the laziness batch, designer ruling QUESTIONS_4 Q2/Q5: `create` connects nothing on a plain mongodb:// URL and `ping` does not retry, so an unreachable server fails at the first attempt; that batch must un-ignore this scenario",
 });

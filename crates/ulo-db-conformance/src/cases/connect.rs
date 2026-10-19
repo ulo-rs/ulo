@@ -32,11 +32,11 @@ const EARLY: Duration = Duration::from_millis(100);
 /// whose reason is `TimedOut`, `is_permanent` reads it as retryable, and it arrives no earlier than
 /// the bound. A store whose `create` connects nothing fails as `ConnectError::Readiness`, the
 /// `.ready(ping)` check timing out as a whole. A store whose `create` connects fails as
-/// `ConnectError::Construct`, its loop around `create` reaching the construction bound; or, where
-/// `create` succeeds without reaching the server (MongoDB on a plain `mongodb://` URL), as
-/// `ConnectError::Readiness` from the one confirming ping, under the attempt bound. The app sets
-/// that attempt bound, `construct_timeout`, to the connect bound, so either path waits at least the
-/// bound and at most the bound plus one attempt.
+/// `ConnectError::Construct`, its loop around `create` reaching the construction bound, or as
+/// `ConnectError::Readiness` from the one confirming ping, under the attempt bound. Which store is
+/// which is [`Store::create_connects`] over the host's unreachable options: MongoDB on a plain
+/// `mongodb://` URL is the first kind. The app sets that attempt bound, `construct_timeout`, to the
+/// connect bound, so either path waits at least the bound and at most the bound plus one attempt.
 pub async fn unreachable_fails_at_the_bound<H: Host>() {
     let host = H::start().await;
     let module = bounded::<H>(host.unreachable_options(), WITHIN);
@@ -57,7 +57,7 @@ pub async fn unreachable_fails_at_the_bound<H: Host>() {
     );
     let construct = matches!(connect, ConnectError::Construct { .. });
     let readiness = matches!(connect, ConnectError::Readiness { .. });
-    if <H::Store as Store>::CREATE_CONNECTS {
+    if <H::Store as Store>::create_connects(&host.unreachable_options()) {
         assert!(construct || readiness, "a store whose `create` connects failed its connect outside the loop and the confirming ping: {connect}");
     } else {
         assert!(readiness, "a store whose `create` connects nothing failed its connect outside the readiness check: {connect}");
@@ -84,10 +84,11 @@ pub async fn unreachable_fails_at_the_bound<H: Host>() {
 /// ping as a one-attempt `ConnectError::Readiness`.
 pub async fn bad_credentials_are_permanent<H: Host>() {
     let host = H::start().await;
-    let module = bounded::<H>(host.bad_credentials(), PATIENT);
+    let options = host.bad_credentials();
+    let module = bounded::<H>(options.clone(), PATIENT);
     let (error, took) =
         refused(builder::<H>(Root::new().import(module)), "an app with bad credentials", "the server accepted the bad credentials").await;
-    assert_permanent_at_once::<H>(&error, took, "bad credentials");
+    assert_permanent_at_once::<H>(&error, took, "bad credentials", &options);
 }
 
 /// A store whose `create` connects retries `create` under the connect bound and stops at once on
@@ -100,12 +101,12 @@ pub async fn bad_credentials_are_permanent<H: Host>() {
 /// [`bad_credentials_are_permanent`] asserts. A `create` run once fails at the first refused
 /// connection, with the store still out.
 pub async fn create_loop<H: Host>() {
+    let host = H::start().await;
     assert!(
-        <H::Store as Store>::CREATE_CONNECTS,
-        "`{}`'s `create` connects nothing, so its one retry loop is `.ready`'s: declare this scenario not applicable",
+        <H::Store as Store>::create_connects(&host.options()),
+        "`{}`'s `create` connects nothing for the host's options, so its one retry loop is `.ready`'s: declare this scenario not applicable",
         <H::Store as Store>::NAME
     );
-    let host = H::start().await;
     let budget = host.budget();
     let within = OUTAGE + budget.recovery;
 
@@ -138,20 +139,26 @@ pub async fn create_loop<H: Host>() {
         ),
     }
 
-    let module = bounded::<H>(host.bad_credentials(), PATIENT);
+    let options = host.bad_credentials();
+    let module = bounded::<H>(options.clone(), PATIENT);
     let (error, took) = refused(
         builder::<H>(Root::new().import(module)),
         "an app with bad credentials",
         "the server accepted the bad credentials",
     )
     .await;
-    assert_permanent_at_once::<H>(&error, took, "bad credentials in the loop around `create`");
+    assert_permanent_at_once::<H>(&error, took, "bad credentials in the loop around `create`", &options);
 }
 
 /// A refusal of `what` that ended the store's one retry loop at its first permanent error: permanent,
 /// `Errored`, one attempt where a readiness check failed, well inside [`PATIENT`], the password
 /// redacted.
-fn assert_permanent_at_once<H: Host>(error: &StartupError, took: Duration, what: &str) {
+fn assert_permanent_at_once<H: Host>(
+    error: &StartupError,
+    took: Duration,
+    what: &str,
+    options: &<H::Store as Store>::Options,
+) {
     let Some((connect, reason)) = connect_failure(error) else {
         panic!("{what} failed outside `connect`: {}", report(error));
     };
@@ -165,7 +172,7 @@ fn assert_permanent_at_once<H: Host>(error: &StartupError, took: Duration, what:
             assert_eq!(*attempts, 1, "{what} were retried: the readiness check made {attempts} attempts in {took:?}");
         }
         ConnectError::Construct { .. } => assert!(
-            <H::Store as Store>::CREATE_CONNECTS,
+            <H::Store as Store>::create_connects(&options),
             "{what} failed the construction of a store whose `create` connects nothing: {connect}"
         ),
         other => panic!("{what} failed outside the construction and the readiness check: {other}"),

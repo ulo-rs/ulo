@@ -5,7 +5,7 @@ use redis::aio::{ConnectionManager, ConnectionManagerConfig};
 use redis::{ErrorKind, RedisError};
 use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
-use ulo_db::Store;
+use ulo_db::{LazyStore, Store};
 
 use crate::options::RedisOptions;
 
@@ -13,6 +13,13 @@ use crate::options::RedisOptions;
 /// for a TLS handshake to a remote server; `ulo-db`'s loop repeats the attempt under
 /// `connect_within`, so a longer bound here only caps the slowest single try.
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The manager's own reconnect attempts per command, `set_number_of_retries`. It governs every
+/// reconnect, not only the first connection (PROBES_db.md section 9): 0 makes a command fail at
+/// once while the server is down, and a large value makes each command, and each `.ready` attempt,
+/// wait out the whole backoff before it fails (9.5 s at 6, a wrong password included). At 3 an
+/// attempt costs about 1.2 s and a command rides out an outage of about that length.
+const RECONNECT_RETRIES: usize = 3;
 
 /// The outcome of the process's one runtime-preference step, recorded for every later Redis module.
 static TOKIO_PREFERENCE: OnceLock<Result<(), String>> = OnceLock::new();
@@ -51,14 +58,22 @@ fn classify(error: RedisError) -> BoxError {
 
 /// The Redis store.
 ///
-/// `AuthenticationFailed` and `InvalidClientConfig` are permanent; `Io` and a timeout are retryable.
+/// `create` builds the manager without connecting; the first command, which is the first ping under
+/// `.ready` or under `.lazy()`, makes the connection. `.ready` is therefore the retry loop.
+/// `AuthenticationFailed` and `InvalidClientConfig` are permanent, so a wrong password ends the
+/// start at its first attempt; `Io` and a timeout are retryable.
 pub struct Redis;
+
+impl LazyStore for Redis {}
 
 impl Store for Redis {
     const NAME: &'static str = "redis";
     type Options = RedisOptions;
     type Client = ConnectionManager;
-    const CREATE_CONNECTS: bool = true;
+
+    fn create_connects(_: &RedisOptions) -> bool {
+        false
+    }
 
     fn validate(o: &RedisOptions) -> Result<(), Problems> {
         crate::options::validate(o)
@@ -75,9 +90,10 @@ impl Store for Redis {
         }
     }
 
-    /// `ConnectionManager::new_with_config` with `set_number_of_retries(0)`: connects once, so
-    /// `ulo-db`'s loop around this call is the one retry loop. One attempt is bounded by the
-    /// connection timeout, 5 s unless the options set it.
+    /// `ConnectionManager::new_lazy_with_config`: synchronous, connects nothing and fails only on a
+    /// URL the client cannot open. A connection attempt is bounded by the connection timeout, 5 s
+    /// unless the options set it, and repeats up to [`RECONNECT_RETRIES`] times inside the command
+    /// that made it.
     fn create(o: &RedisOptions) -> BoxFuture<'static, Result<ConnectionManager, BoxError>> {
         let url = o.url.clone();
         let connection_timeout = o.connection_timeout_secs.map_or(CONNECTION_TIMEOUT, Duration::from_secs);
@@ -86,15 +102,17 @@ impl Store for Redis {
             prefer_tokio_once()?;
             let client = redis::Client::open(url.expose().as_str()).map_err(classify)?;
             let mut config = ConnectionManagerConfig::new()
-                .set_number_of_retries(0)
+                .set_number_of_retries(RECONNECT_RETRIES)
                 .set_connection_timeout(Some(connection_timeout));
             if response_timeout.is_some() {
                 config = config.set_response_timeout(response_timeout);
             }
-            ConnectionManager::new_with_config(client, config).await.map_err(classify)
+            ConnectionManager::new_lazy_with_config(client, config).map_err(classify)
         })
     }
 
+    /// `PING`. The first one connects, so it also reports an unreachable server, a refused password
+    /// (`AuthenticationFailed`, permanent) and a TLS failure.
     fn ping(c: &ConnectionManager) -> BoxFuture<'static, Result<(), BoxError>> {
         let mut connection = c.clone();
         Box::pin(async move {

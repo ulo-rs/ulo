@@ -6,7 +6,7 @@ use ulo_config::{Config, ConfigError, Problems, Section};
 use ulo_health::Check;
 
 use crate::connect::{self, Policy};
-use crate::error::ZeroConnectBound;
+use crate::error::{LazyRefused, ZeroConnectBound};
 use crate::health::{StoreCheck, check_name};
 use crate::migrate::{Migrate, MigrationLock, Migrations};
 use crate::store::{LazyStore, Store};
@@ -37,8 +37,8 @@ const DEFAULT_BACKOFF: Duration = Duration::from_secs(1);
 /// # The bounded connect
 ///
 /// One total bound, [`connect_within`](Self::connect_within), 30 s by default, and one retry loop
-/// per store. A store whose `create` connects nothing runs `.ready(ping).retries(..).backoff(..)`
-/// under that bound. A store whose `create` connects runs `create` in `ulo-db`'s loop under it, the
+/// per module. Options whose `create` connects nothing run `.ready(ping).retries(..).backoff(..)`
+/// under that bound. Options whose `create` connects run `create` in `ulo-db`'s loop under it, the
 /// construction bound set to the same value, then one confirming ping with `.retries(0)` under the
 /// default attempt bound, which falls outside `connect_within`. Backoff is constant. An attempt
 /// returning `Permanent` ends the loop at once; the bound reached is retryable.
@@ -119,8 +119,11 @@ impl<S: Store> StoreModule<S> {
 impl<S: LazyStore> StoreModule<S> {
     /// Omits `.ready(..)`: the start does not wait for the database and the health check stays down
     /// until the first ping succeeds.
+    ///
+    /// Refused at registration, through `try_value` and naming the cause, when the options make
+    /// `create` connect ([`Store::create_connects`]): a `mongodb+srv://` URI, whose DNS lookup is
+    /// in `create`.
     pub fn lazy(mut self) -> Self {
-        const { assert!(!S::CREATE_CONNECTS, "a store whose `create` connects cannot be lazy") };
         self.lazy = true;
         self
     }
@@ -181,6 +184,11 @@ where
             }
             Err(error) => Err(BoxError::from(error)),
         };
+        let connects = validated.as_ref().is_ok_and(|options| S::create_connects(options));
+        if connects && self.lazy {
+            let because = validated.as_ref().map_or("", |options| S::connects_because(options));
+            m.try_value::<LazyRefused, _>(Err(LazyRefused::new(S::NAME, because)));
+        }
         m.try_value(validated.map(|options| StoreOptions::<S> { options, _store: PhantomData }));
 
         // Under a key of the error's own type, which nothing depends on: `wire()` reports it
@@ -193,7 +201,7 @@ where
         let client = m.try_singleton(move |stored: Dep<StoreOptions<S>>, runtime: Dep<dyn Runtime>| {
             connect::create::<S>(runtime.into_arc(), stored.options.clone(), policy)
         });
-        if S::CREATE_CONNECTS {
+        if connects {
             // The loop around `create` is the store's retrying, so the construction bound is the
             // total bound and the readiness check confirms the client once.
             client

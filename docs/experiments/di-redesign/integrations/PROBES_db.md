@@ -516,3 +516,46 @@ The default config retries ~9.5 s on every one of these (see 5), including `Auth
 Containers at start (all pre-existing, none touched): `backend-next-postgres-1`, `backend-next-s3-1`, `backend-next-redis-1`, `backend-next-mailpit-1`, `video-streaming-{caddy,worker,api,postgres,redis,minio,web}-1`, `sleepy_swanson`; all `Exited`.
 Containers at end: the same twelve, all still `Exited` with the same status; my four `race3-probe-*` containers removed by name. No `prune` was run.
 Images: 25 at start; 26 at end. The only change is `mongo:7`, pulled for the MongoDB probe (the machine had only `mongo:5.0.6`). It was left in place; it can be removed with `docker rmi mongo:7`.
+
+## 9. redis-rs 1.7.1 `ConnectionManager::new_lazy_with_config` (laziness batch)
+
+Run 2026-10-19 against `redis:7` started with `--requirepass`, in a container named
+`ulo-conf-redis-probe` on a fixed loopback port (a restart of a container with a random published
+port changes the port, which invalidated a first restart run; it was rerun on a fixed one) and
+removed by name afterwards. The probe is a scratch crate under
+`/private/tmp/claude-501/-Users-ifeanyi-Projects-Personal-open-source-toni-rs-toni-rs/a632688a-d566-4ff7-b727-8f28e1dd90c6/scratchpad/probe/`
+(`redis =1.7.1`, `tokio-comp`, `connection-manager`). Every config sets
+`set_connection_timeout(Some(5 s))`; `N` is `set_number_of_retries(N)`. This corrects section 5,
+which probed only the eager `ConnectionManager::new` and concluded a manager cannot be built
+without connecting.
+
+| Probe | Result | Mark |
+| --- | --- | --- |
+| (1) Build, live server | `new_lazy_with_config` returns `Ok` in 0.84 ms; the server's `CLIENT LIST` shows no client other than the observer 2 s and 4 s later | Probed |
+| (1) Build, refused port | `Ok` in 22 microseconds | Probed |
+| (2) First command | `PING` returns `PONG` in 29 ms, and `CLIENT LIST` then shows one client: the first command makes the connection | Probed |
+| (2) First command through a relay that delays the TCP connect 0.8 s | `PONG` after 806 ms with the default 500 ms response timeout: the connect is not inside the response timeout; the second `PING` takes 0.4 ms | Probed |
+| (3) Wrong password, first `PING` | `AuthenticationFailed` after 1.9 ms at N=0, 153 ms at N=1, 1.16 s at N=3, 9.47 s at N=6 | Probed |
+| (3) Wrong password, eager `new_with_config` at N=0 | `AuthenticationFailed` after 1.7 ms | Probed |
+| (3) Refused port, first `PING` | `Io` after 0.24 ms at N=0, 150 ms at N=1, 1.16 s at N=3 | Probed |
+| (4) Server restarted (`docker restart`, back within about 1 s), `PING` every 250 ms | One failed command at N=0, 1, 3 and 6 (the one in flight on the dropped connection), then success 0.25 s later in every case | Probed |
+| (4) Server stopped 4 s, then started, `PING` every 250 ms | N=0: 18 failures, each in under 0.2 ms, then success on the first command after the server returned. N=1: 17 failures, same. N=3: 4 failures, each about 0.9 s, success at 5.9 s. N=6: one failure, then the next command waited out the outage and succeeded at 5.6 s | Probed |
+
+What decides the setting:
+
+- `set_number_of_retries` governs every reconnect, not only the first connection. After a dropped
+  connection the manager makes up to N more attempts with exponential backoff (about 150 ms for
+  N=1, 1.2 s for N=3, 9.5 s for N=6, per command).
+- N=0 does not leave the manager broken. A command fails at once while the server is down and the
+  first command after it returns succeeds. The cost of 0 is that no command rides out an outage;
+  the cost of a large N is that each command, and each startup attempt, can wait the whole
+  backoff before it fails, a wrong password included (9.5 s at N=6 before `AuthenticationFailed`).
+- A value that makes one `.ready` attempt cost a bounded second or so and still lets a command
+  ride out a sub-second blip is 3: the wrong-password attempt ends in 1.2 s and the unreachable
+  attempt in 1.2 s, so a 3 s `connect_within` still holds two attempts.
+
+The store takes N=3 (`RECONNECT_RETRIES`). `AuthenticationFailed` is already `Permanent` in
+`ping`, so `.ready` ends at the first attempt, 1.2 s after it starts.
+
+Container state: one container created, `ulo-conf-redis-probe`, removed by name; no other container
+was touched and no prune was run.

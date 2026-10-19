@@ -26,8 +26,8 @@ pub async fn waits_for_the_first_ping<H: Host>() {
         <H::Store as Store>::NAME
     );
     assert!(
-        !<H::Store as Store>::CREATE_CONNECTS,
-        "the host declares `.lazy()` for `{}`, whose `create` connects, and which therefore offers none",
+        !<H::Store as Store>::create_connects(&host.options()),
+        "the host declares `.lazy()` for `{}`, whose `create` connects for the host's options, and which therefore refuses it",
         <H::Store as Store>::NAME
     );
     let budget = host.budget();

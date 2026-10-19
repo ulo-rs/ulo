@@ -23,7 +23,9 @@ impl Store for Sqlite {
     const NAME: &'static str = "sqlite";
     type Options = SqliteOptions;
     type Client = sqlx::SqlitePool;
-    const CREATE_CONNECTS: bool = false;
+    fn create_connects(_: &SqliteOptions) -> bool {
+        false
+    }
 
     fn validate(o: &SqliteOptions) -> Result<(), Problems> {
         validate_options(Engine::Sqlite, &o.url, o.max_connections, o.min_connections, o.acquire_timeout_secs)

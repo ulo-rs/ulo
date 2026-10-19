@@ -4,15 +4,18 @@ use mongodb::options::ClientOptions;
 use mongodb::Client;
 use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
-use ulo_db::Store;
+use ulo_db::{LazyStore, Store};
 
 use crate::options::MongoOptions;
 
 /// The MongoDB store.
 ///
 /// `create` parses the URI, which resolves a `mongodb+srv` host's DNS, and builds the client, which
-/// connects nothing. `ulo-db` retries `create` under `connect_within` because
-/// [`CREATE_CONNECTS`](Store::CREATE_CONNECTS) is true.
+/// connects nothing. A `mongodb+srv://` URI therefore answers
+/// [`create_connects`](Store::create_connects) true: `ulo-db` retries `create` under
+/// `connect_within`, and `.lazy()` on that module is refused at registration. A plain `mongodb://`
+/// URI resolves nothing, so `create` returns at once, `.lazy()` is offered, and `.ready(ping)` is
+/// the retry loop.
 ///
 /// Permanent, so no further attempt: `ErrorKind::Authentication`, `InvalidArgument`,
 /// `InvalidTlsConfig`, `IncompatibleServer` and a command refused as `AuthenticationFailed`.
@@ -64,11 +67,20 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+impl LazyStore for Mongo {}
+
 impl Store for Mongo {
     const NAME: &'static str = "mongodb";
     type Options = MongoOptions;
     type Client = Client;
-    const CREATE_CONNECTS: bool = true;
+
+    fn create_connects(o: &MongoOptions) -> bool {
+        o.uri.expose().starts_with(crate::options::SRV)
+    }
+
+    fn connects_because(_: &MongoOptions) -> &'static str {
+        "a `mongodb+srv://` URI resolves its DNS inside `create`, which the retry loop must carry; use a `mongodb://` URI to be lazy"
+    }
 
     fn validate(o: &MongoOptions) -> Result<(), Problems> {
         crate::options::validate(o)
@@ -120,5 +132,54 @@ impl Store for Mongo {
     /// wait, so a leaked cursor costs that bound and nothing else.
     fn close(c: Client) -> BoxFuture<'static, ()> {
         Box::pin(async move { c.shutdown().await })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use ulo::{App, StartupError, WiringError};
+    use ulo_db::StoreModule;
+
+    use super::Mongo;
+    use crate::MongoOptions;
+
+    fn module(uri: &str) -> StoreModule<Mongo> {
+        let options: MongoOptions = serde_json::from_value(json!({ "uri": uri })).unwrap();
+        StoreModule::from_options(options)
+    }
+
+    /// The registration refusals the module records through `try_value`. The app has no runtime,
+    /// so `wire()` also reports the missing `Dep<dyn Runtime>`, which is not what these tests read.
+    fn refusals(module: StoreModule<Mongo>) -> Vec<String> {
+        match App::builder(module).wire() {
+            Ok(_) => Vec::new(),
+            Err(StartupError::Wiring(errors)) => errors
+                .iter()
+                .filter_map(|e| match e {
+                    WiringError::ValueFailed { error, .. } => Some(error.to_string()),
+                    _ => None,
+                })
+                .collect(),
+            Err(other) => panic!("wiring failed outside the wiring report: {other}"),
+        }
+    }
+
+    #[test]
+    fn lazy_on_a_srv_uri_is_refused_at_registration_naming_the_scheme() {
+        let refused = refusals(module("mongodb+srv://cluster.example.net/").lazy());
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert!(refused[0].contains("mongodb+srv://"), "the refusal does not name the scheme: {refused:?}");
+        assert!(refused[0].contains("cannot be lazy"), "{refused:?}");
+    }
+
+    #[test]
+    fn lazy_on_a_plain_uri_is_not_refused() {
+        assert_eq!(refusals(module("mongodb://127.0.0.1:27017/").lazy()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_srv_uri_without_lazy_is_not_refused() {
+        assert_eq!(refusals(module("mongodb+srv://cluster.example.net/")), Vec::<String>::new());
     }
 }
