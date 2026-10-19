@@ -20,8 +20,9 @@ Paste alongside: `DESIGN.md` §2.3, §3.4, §4.2, §4.6, §6, §13, §14; `diver
 - Options: the optional `ModuleDef::qualifier(&self) -> Option<&'static str>` request in `race3-S2b.md` R1, or refuse a second keyed `from_options` store without a section path.
 - Recommendation: add `qualifier`; it is a read, not a new concept.
 
-**Q5. Mongo has no `.lazy()`.** The store's `create` runs `Client::with_options` inside the factory's task and does not defer anything, and `CREATE_CONNECTS` is false (`race3-S2c.md`). `lazy_readiness_waits_for_the_first_ping` does not apply to it and is ignored in the suite.
-- Recommendation: document that Mongo readiness waits on the first ping and drop `.lazy()` from the design's list for it.
+**Q5. Mongo lost `.lazy()` as a side effect of the `+srv` ruling, not because the driver cannot defer.** `Client::with_options` connects nothing (PROBES_db.md §4, probed), so Mongo could be lazy as it was on `master`. The store sets `CREATE_CONNECTS` for the whole store because `ClientOptions::parse` resolves a `mongodb+srv` URL's DNS inside `create` (QUESTIONS_3 S2, answered store-wide), and `CREATE_CONNECTS` is a `const`, so a plain `mongodb://` URL pays for it too. `lazy_readiness_waits_for_the_first_ping` is therefore ignored for Mongo.
+- Options: (a) keep as built; (b) make `CREATE_CONNECTS` a per-module value so a plain `mongodb://` URL offers `.lazy()` and a `+srv` URL gets the retry loop; (c) offer `.lazy()` always and document that a `+srv` DNS failure at start is not retried.
+- Recommendation: (b). It restores `master`'s behaviour for the common case without losing the retry the `+srv` lookup needs. Redis cannot be lazy (`ConnectionManager::new` connects, probed), so it stays as built.
 
 ## Observations that do not hold a ruling but cost a decision
 
