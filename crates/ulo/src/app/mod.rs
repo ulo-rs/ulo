@@ -62,22 +62,24 @@ pub enum Bound {}
 /// its `close` does not run, and what only `close` ends, such as a task the server spawned and
 /// detached, keeps running.
 ///
-/// A drop while a `close` on a handle is under way, from that close's first poll, leaves the
-/// servers to it: its drain and close step run over every server, each server's `close` runs,
-/// and the close step's end releases them. A `close` dropped before its close step releases them
-/// as it drops, unclosed, as this drop would have; with several under way, the last to end or
-/// drop does. A `close` future made before the drop and first polled after it is a `close` after
-/// the drop. A `close` polled once and then neither polled again nor dropped holds the servers
-/// until it resumes or drops.
+/// A drop while a `close` on a handle holds its claim, taken at the call to `close`, leaves the
+/// servers to it, whether its future was polled before the drop or is first polled after it: its
+/// drain and close step run over every server, each server's `close` runs, and the close step's
+/// end releases them. A `close` dropped before its close step, polled or not, releases them as it
+/// drops, unclosed, as this drop would have; with several claims held, the last to drop does. A
+/// `close` kept and neither polled to its end nor dropped holds the servers until it resumes or
+/// drops.
 ///
 /// The release awaits nothing and does not panic on a lock: it takes two, each held only to read
 /// or change a field and never across an await, and reads either through when poisoned. A
-/// server's own drop runs on the thread dropping the app, or on the one ending the last `close`
-/// under way.
+/// server's own drop runs on the thread dropping the app, or on the one dropping the last `close`
+/// claim.
 ///
 /// An [`AppHandle`] kept past the drop keeps the app's shared state, its singletons among it, and
-/// no server once they are released: a `close` started on it after that runs the shutdown's hooks
-/// and closes no transport.
+/// no server once they are released: a `close` called on it after that, with no other claim held
+/// and the close step not ended, runs none of the shutdown's steps and answers `Err` carrying
+/// [`ShutdownFailure::Dropped`](crate::ShutdownFailure::Dropped). Once a shutdown has run its close
+/// step, a `close` after the drop answers that shutdown's outcome.
 pub struct App<S = Wired> {
     pub(crate) shared: Owner,
     /// Queued by `bind` on `Connected`, bound by `listen`.

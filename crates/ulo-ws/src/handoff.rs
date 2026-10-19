@@ -112,6 +112,13 @@ impl UpgradeHandler for Handoff {
             }
         })
     }
+
+    /// Drops the table `prepare` built, which holds the app's `AppHandle`: the hand-off sits in the
+    /// app's graph, so the table would otherwise keep the app, and the hub with it.
+    fn release(&self) {
+        let table = self.table.lock().unwrap_or_else(PoisonError::into_inner).take();
+        drop(table);
+    }
 }
 
 /// Each gateway's `AfterInit`, spawned on `runtime` and detached: the server does not wait for

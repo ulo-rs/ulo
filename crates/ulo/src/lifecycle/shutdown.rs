@@ -10,8 +10,10 @@
 //! 5. `OnModuleDestroy` hooks, reverse connect order; phase Destroying from the first.
 //! 6. Transports close their sockets, in reverse bind order, one after another, each `close`
 //!    bounded by what is left of the cap, or by `hook_timeout` when no cap is set. The app then
-//!    lets go of its servers, as the `App` value's drop does for an app that never reaches this
-//!    step with no `close` under way.
+//!    lets go of its servers. For an app that never reaches this step, the `App` value's drop
+//!    lets go of them when no `close` holds a claim, and the last claim's drop otherwise. A `close`
+//!    whose claim finds the servers released that way runs none of the steps and answers
+//!    `ShutdownFailure::Dropped`.
 //! 7. `OnApplicationShutdown(signal)` hooks, reverse connect order.
 //!
 //! Lazily loaded modules come first in every hook step, in reverse load order. A failing step
@@ -21,7 +23,7 @@
 //! does not finish on its first poll is dropped and recorded as `ShutdownFailure::Close` with
 //! `TimedOut { limit: ShutdownCap }`.
 
-use std::future::poll_fn;
+use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::Poll;
@@ -52,17 +54,19 @@ pub(crate) struct ShutdownCell {
     /// and the next `serve` or `close` caller to take over the outcome resumes from it, so no
     /// hook runs twice.
     progress: async_lock::Mutex<Progress>,
-    /// Who lets go of the servers once the `App` value has dropped: its drop, or the last of the
-    /// `close` calls under way to end.
+    /// Who lets go of the servers once the `App` value has dropped: its drop, or the last `close`
+    /// claim to drop.
     release: Mutex<Release>,
 }
 
-/// Whether the `App` value has dropped, and how many `close` calls are under way. One lock holds
-/// both, so the drop and a `close` starting or ending on another thread see each other's change.
+/// Whether the `App` value has dropped, how many `close` claims are held, and whether the close
+/// step has ended. One lock holds all three, so the drop and a claim taken or dropped on another
+/// thread see each other's change.
 #[derive(Default)]
 struct Release {
     app_dropped: bool,
     closing: usize,
+    servers_closed: bool,
 }
 
 impl ShutdownCell {
@@ -136,43 +140,66 @@ enum DrainEnd {
     Open,
 }
 
-/// A `close` on the app or on any handle: triggers the shutdown if none has started, and either
-/// way waits for the one outcome.
-pub(crate) async fn close(shared: &Arc<AppShared>, signal: Signal) -> Result<Shutdown, ShutdownError> {
-    // Taken on the first poll, before the trigger and before any await: from here the `App`
-    // value's drop leaves the servers to this close.
-    let _closing = Closing::claim(shared);
-    shared.shutdown.trigger(signal.clone());
-    run_sequence(shared, signal).await
-}
-
-/// A `close` under way, from its first poll until its future ends or drops. Once the `App` value
-/// has dropped, the last of these to end lets go of the servers: after a sequence that ran its
-/// close step the list is already empty, and a `close` dropped before that step releases them
-/// unclosed, as the `App` value's drop would have.
-struct Closing<'a>(&'a AppShared);
-
-impl<'a> Closing<'a> {
-    fn claim(shared: &'a AppShared) -> Self {
-        shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner).closing += 1;
-        Closing(shared)
+/// A `close` on the app or on any handle. The claim on the servers is taken at this call; the
+/// trigger, starting the shutdown if none has started, at the returned future's first poll, which
+/// then waits for the one outcome.
+///
+/// A claim taken once the `App` value has dropped, with no other claim held and the close step not
+/// ended, finds the servers released by a drop: the future runs no step and answers
+/// `ShutdownFailure::Dropped`.
+pub(crate) fn close(
+    shared: &Arc<AppShared>,
+    signal: Signal,
+) -> impl Future<Output = Result<Shutdown, ShutdownError>> + Send + use<> {
+    let claim = Closing::claim(shared);
+    async move {
+        if claim.dropped {
+            return Err(dropped(&claim.shared, signal));
+        }
+        claim.shared.shutdown.trigger(signal.clone());
+        run_sequence(&claim.shared, signal).await
     }
 }
 
-impl Drop for Closing<'_> {
+/// One `close`'s claim on the servers, from the call until its future ends or drops, polled or
+/// not. Once the `App` value has dropped, the last claim to drop lets go of the servers: after a
+/// sequence that ran its close step the list is already empty, and a `close` dropped before that
+/// step releases them unclosed, as the `App` value's drop would have.
+struct Closing {
+    shared: Arc<AppShared>,
+    /// The servers were released by a drop before this claim: see [`close`].
+    dropped: bool,
+}
+
+impl Closing {
+    fn claim(shared: &Arc<AppShared>) -> Self {
+        let mut release = shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner);
+        let dropped = release.app_dropped && release.closing == 0 && !release.servers_closed;
+        release.closing += 1;
+        Closing { shared: Arc::clone(shared), dropped }
+    }
+}
+
+impl Drop for Closing {
     fn drop(&mut self) {
         let last = {
-            let mut release = self.0.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut release = self.shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner);
             release.closing -= 1;
             release.app_dropped && release.closing == 0
         };
         if last {
-            release_servers(self.0);
+            release_servers(&self.shared);
         }
     }
 }
 
-/// The `App` value's drop: lets go of the servers at once, or, with a `close` under way, leaves
+/// What a `close` answers once a drop has released the servers before the close step ended.
+fn dropped(shared: &AppShared, signal: Signal) -> ShutdownError {
+    let signal = shared.shutdown.winning_signal().unwrap_or(signal);
+    ShutdownError { report: Shutdown { signal, abandoned: 0, terminal_skipped: 0 }, failures: Arc::from([ShutdownFailure::Dropped]) }
+}
+
+/// The `App` value's drop: lets go of the servers at once, or, with a `close` claim held, leaves
 /// them to it.
 pub(crate) fn app_dropped(shared: &AppShared) {
     let now = {
@@ -221,6 +248,7 @@ async fn sequence(shared: &Arc<AppShared>, signal: Signal) -> Result<Shutdown, S
     }
     if p.stage == Stage::Close {
         close_servers(shared, p).await;
+        shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner).servers_closed = true;
         release_servers(shared);
         p.stage = Stage::Shutdown;
     }
@@ -390,8 +418,8 @@ async fn bounded_close(server: &dyn ErasedServer, bound: CloseBound, secrets: &S
 }
 
 /// Lets go of the app's servers: at the end of the close step; when the `App` value drops with no
-/// `close` under way; and, once the `App` value has dropped, when the last `close` under way ends
-/// or drops. Every call after the first finds the list empty. A server keeping
+/// `close` claim held; and, once the `App` value has dropped, when the last claim drops, its
+/// `close` ended, abandoned or never polled. Every call after the first finds the list empty. A server keeping
 /// the `AppHandle` its `prepare` was handed holds the app, and the app holds its servers, so
 /// neither would drop while the app kept them: once released, each server drops with its last
 /// other holder, `serve` returning or the `App` value dropping, and the app's shared state with

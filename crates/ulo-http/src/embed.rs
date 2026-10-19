@@ -56,7 +56,7 @@ use crate::render;
 use crate::request::{ConnInfo, OnUpgrade, Request};
 use crate::response::Response;
 use crate::router::pattern::Pattern;
-use crate::server::{PreparedApp, prepare_app, upgrades_bound, upgrades_close, upgrades_drain};
+use crate::server::{PreparedApp, prepare_app, upgrades_bound, upgrades_close, upgrades_drain, upgrades_release};
 use crate::service::AppService;
 use crate::transport::{ClientAddr, Http};
 use crate::upgrade::UpgradeHandler;
@@ -721,6 +721,21 @@ impl<A: Embed> ulo::Server for Embedded<A> {
     }
 }
 
+/// The embedding's drop without `close`. A host future installed and never taken by `serve` holds
+/// the state the handles share, through [`Handle::stopping`] and the [`Service`] it serves, and that
+/// state holds the future in its slot, so neither would drop, nor the host's listener the future
+/// owns, nor the app's shared state it keeps a handle to. The drop takes the future out of the slot and
+/// drops it, and an installation after the drop is refused as after `close`. It then releases each
+/// upgrade handler, as `Server<B>`'s drop does.
+impl<A: Embed> Drop for Embedded<A> {
+    fn drop(&mut self) {
+        let released = std::mem::replace(&mut *self.shared.host(), HostSlot::Released);
+        // Dropped after the slot's lock is released: the host future's drop reaches `Shared`.
+        drop(released);
+        upgrades_release(&self.upgrades);
+    }
+}
+
 /// The state the server and every handle share.
 struct Shared {
     state: Mutex<State>,
@@ -776,7 +791,7 @@ enum HostSlot {
     Installed(BoxFuture<'static, Result<(), BoxError>>),
     /// `serve` holds the future.
     Taken,
-    /// `close` ran first; an installation now is dropped.
+    /// `close` ran first, or the embedding dropped; an installation now is dropped.
     Released,
 }
 
@@ -845,7 +860,8 @@ impl<A: Embed> Handle<A> {
 
     /// Hands the app the host's server future, which `Embedded::serve` polls: no task is spawned.
     /// Wire the host's graceful shutdown to [`stopping`](Self::stopping) first. Installed after
-    /// `close`, or a second time, the future is dropped and the call answers `Err`.
+    /// `close` or after the embedding's drop, or a second time, the future is dropped and the call
+    /// answers `Err`.
     pub fn host<F, E>(&self, server: F) -> Result<(), BoxError>
     where
         F: Future<Output = Result<(), E>> + Send + 'static,
@@ -861,7 +877,7 @@ impl<A: Embed> Handle<A> {
                     waker
                 }
                 HostSlot::Installed(_) | HostSlot::Taken => return Err("a host server future is already installed".into()),
-                HostSlot::Released => return Err("the embedded server is closed".into()),
+                HostSlot::Released => return Err("the embedded server is closed or was dropped".into()),
             }
         };
         if let Some(waker) = waker {

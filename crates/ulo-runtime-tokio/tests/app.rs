@@ -2,9 +2,10 @@
 //! clock, the refusal of a test's override of either, `listen()`'s refusal of an app that binds a
 //! transport with no runtime, and when an app lets go of a server holding its handle: at the
 //! close step (F425), at the app's drop when it never reaches that step (F426), and, when the app
-//! drops while a handle's `close` is under way, at that close's close step, or as it drops if it
-//! is abandoned first. The binding with `.runtime(..)` alone is the conformance suite's
-//! `the_app_binds_the_runtime_as_one_object`.
+//! drops while a handle's `close` holds its claim, taken at the call, at that close's close step,
+//! or as it drops if it is abandoned or dropped unpolled first; a `close` called after such a drop
+//! answers `ShutdownFailure::Dropped`. The binding with `.runtime(..)` alone is the conformance
+//! suite's `the_app_binds_the_runtime_as_one_object`.
 
 use std::future::poll_fn;
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -17,8 +18,8 @@ use ulo::app::Bound as Serving;
 use ulo::testing::TestApp;
 use ulo::{
     App, AppBuilder, AppHandle, BoundAddr, BoxError, BoxFuture, ConnectError, Connected, DrainToken, FailureReason, LookupError, Module,
-    ModuleDef, ModuleIdentity, Mounted, Phase, Runtime, RuntimeMissing, Secret, Server, Signal, StartupError, TaskEnd, Timer,
-    Transport, WiringError,
+    ModuleDef, ModuleIdentity, Mounted, Phase, Runtime, RuntimeMissing, Secret, Server, ShutdownFailure, Signal, StartupError, TaskEnd,
+    Timer, Transport, WiringError,
 };
 use ulo_runtime_tokio::Tokio;
 
@@ -922,3 +923,86 @@ async fn a_close_abandoned_after_the_app_s_drop_releases_the_servers() {
     drop(handle);
     assert_eq!(log.events().last().map(String::as_str), Some("store dropped"), "the store outlived the last handle");
 }
+
+/// A `close` called before the app's drop and first polled after it holds its claim from the call:
+/// the drop leaves it the servers, and its poll runs the whole shutdown, the before-shutdown hook,
+/// every server's `close`, then the servers' drops and the store's with the last handle.
+#[tokio::test]
+async fn a_close_called_before_the_app_s_drop_and_polled_after_it_closes_every_server() {
+    let Paired { app, log, .. } = paired(&[]).await;
+    let handle = app.handle();
+    let closing = handle.close(Signal::new("test"));
+    drop(app);
+    assert_untouched(&log, "the app's drop");
+    assert!(!log.has("before-shutdown"), "the shutdown started before the close was polled");
+    let outcome = tokio::time::timeout(PATIENCE, closing).await.expect("the close did not end");
+    outcome.expect("the close failed");
+    assert!(log.has("before-shutdown"), "the shutdown's hook did not run: {:?}", log.events());
+    assert_eq!(handle.phase(), Phase::Closed, "the shutdown did not run to its end");
+    assert!(!log.has("store dropped"), "the store dropped while a handle was held");
+    drop(handle);
+    assert_closed_then_freed(&log, "a close polled after the app's drop");
+}
+
+/// A `close` called before the app's drop and dropped unpolled after it releases the servers as it
+/// drops, their `close` not run, and the store drops with the last handle.
+#[tokio::test]
+async fn a_close_called_before_the_app_s_drop_and_dropped_unpolled_releases_the_servers() {
+    let Paired { app, log, .. } = paired(&[]).await;
+    let handle = app.handle();
+    let closing = handle.close(Signal::new("test"));
+    drop(app);
+    assert_untouched(&log, "the app's drop");
+    drop(closing);
+    let events = log.events();
+    for drop in ["drop a", "drop b"] {
+        assert_eq!(events.iter().filter(|e| *e == drop).count(), 1, "`{drop}` was not logged once after the unpolled close's drop: {events:?}");
+    }
+    assert!(!events.iter().any(|e| e.starts_with("close ") || e == "before-shutdown"), "the unpolled close ran a step: {events:?}");
+    assert!(!log.has("store dropped"), "the store dropped while a handle was held");
+    drop(handle);
+    assert_eq!(log.events().last().map(String::as_str), Some("store dropped"), "the store outlived the last handle");
+}
+
+/// A `close` called after the app's drop released the servers answers `Dropped` and runs no hook.
+#[tokio::test]
+async fn a_close_called_after_the_app_s_drop_answers_that_the_app_was_dropped() {
+    let Paired { app, log, .. } = paired(&[]).await;
+    let handle = app.handle();
+    drop(app);
+    let error = handle.close(Signal::new("test")).await.expect_err("a close after the app's drop answered `Ok`");
+    assert!(matches!(&*error.failures, [ShutdownFailure::Dropped]), "the close answered {error}");
+    assert!(error.to_string().contains("the app was dropped before its shutdown closed its servers"), "the close answered {error}");
+    let events = log.events();
+    assert!(!events.iter().any(|e| e.starts_with("close ") || e == "before-shutdown"), "the close ran a step: {events:?}");
+    assert!(handle.close(Signal::new("again")).await.is_err_and(|again| matches!(&*again.failures, [ShutdownFailure::Dropped])), "a second close did not answer `Dropped`");
+    drop(handle);
+    assert_eq!(log.events().last().map(String::as_str), Some("store dropped"), "the store outlived the last handle");
+}
+
+/// The first test's case raced on two workers: a `close` spawned before the app's drop, with no
+/// wait between the spawn and the drop. Every race closes every server. The races in which the
+/// phase still reads `Running` after the drop are ones the drop won, its shutdown not yet
+/// triggered; the test requires at least one, so it exercises the case it is named for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_close_spawned_before_the_app_s_drop_closes_every_server_in_every_race() {
+    let mut drop_first = 0;
+    for race in 0..RACES {
+        let Paired { app, log, .. } = paired(&[]).await;
+        let handle = app.handle();
+        let closing = tokio::spawn(handle.close(Signal::new("test")));
+        drop(app);
+        if handle.phase() == Phase::Running {
+            drop_first += 1;
+        }
+        let outcome = tokio::time::timeout(PATIENCE, closing).await.expect("the close did not end").expect("the close task panicked");
+        outcome.unwrap_or_else(|error| panic!("race {race}: the close failed: {error}"));
+        drop(handle);
+        assert_closed_then_freed(&log, &format!("race {race}"));
+    }
+    println!("{RACES} races, every server closed in each; the drop ran before the trigger in {drop_first}");
+    assert!(drop_first > 0, "the drop ran before the trigger in none of {RACES} races");
+}
+
+/// How many races the race test runs.
+const RACES: usize = 500;

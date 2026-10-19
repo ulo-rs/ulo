@@ -57,6 +57,12 @@ pub trait UpgradeHandler: Send + Sync + 'static {
     fn close(&self) -> BoxFuture<'_, ()> {
         Box::pin(async {})
     }
+
+    /// Called as the HTTP server that prepared it drops, after `close` or without it: lets go of
+    /// what [`prepare`](Self::prepare) built. The handler is registered in module metadata, which
+    /// the app's graph holds, so state it keeps that holds the `AppHandle` holds the app through
+    /// the handler, and neither would drop.
+    fn release(&self) {}
 }
 
 /// Module metadata through which a transport registers its upgrade handler:

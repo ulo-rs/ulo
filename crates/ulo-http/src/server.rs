@@ -373,6 +373,19 @@ pub(crate) async fn upgrades_drain(handlers: &[Arc<dyn UpgradeHandler>], token: 
     join_all(handlers.iter().map(|handler| handler.drain(token.clone()))).await;
 }
 
+/// Each upgrade handler's `release`, as its server drops.
+pub(crate) fn upgrades_release(handlers: &[Arc<dyn UpgradeHandler>]) {
+    for handler in handlers {
+        handler.release();
+    }
+}
+
+impl<B: Backend> Drop for Server<B> {
+    fn drop(&mut self) {
+        upgrades_release(&self.upgrades);
+    }
+}
+
 /// Each upgrade handler's `close`, concurrently.
 pub(crate) async fn upgrades_close(handlers: &[Arc<dyn UpgradeHandler>]) {
     join_all(handlers.iter().map(|handler| handler.close())).await;

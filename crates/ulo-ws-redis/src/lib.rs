@@ -24,6 +24,7 @@
 //! so the app fails `connect` whether or not it serves a gateway. A publish reaching such an
 //! adapter anyway fails with the same refusal.
 
+use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -121,8 +122,10 @@ impl BroadcastAdapter for Redis {
 
     /// Runs the subscription on its own task on the adapter's runtime, reconnecting after a second
     /// when Redis goes away; broadcasts published while it is away are lost, as Pub/Sub delivers to
-    /// subscribers present. A server subscribes only once `prepare` has passed, so an adapter
-    /// with no runtime is refused before this; called anyway, it answers a stream that ends at once.
+    /// subscribers present. The task ends, closing its Pub/Sub connection, once the returned stream
+    /// drops, whether it was waiting on Redis, on a message or on the reconnect delay. A server
+    /// subscribes only once `prepare` has passed, so an adapter with no runtime is refused before
+    /// this; called anyway, it answers a stream that ends at once.
     fn subscribe(&self, node: NodeId) -> BoxStream<'static, (Target, Bytes)> {
         let (sender, receiver) = mpsc::unbounded_channel::<(Target, Bytes)>();
         let Ok(runtime) = self.runtime() else {
@@ -130,12 +133,15 @@ impl BroadcastAdapter for Redis {
         };
         let url = self.url.clone();
         runtime.handle().spawn(async move {
-            while !sender.is_closed() {
-                if let Err(error) = listen(&url, node, &sender).await {
-                    tracing::warn!(%error, "the Redis broadcast subscription failed; reconnecting");
+            let subscription = async {
+                loop {
+                    if let Err(error) = listen(&url, node, &sender).await {
+                        tracing::warn!(%error, "the Redis broadcast subscription failed; reconnecting");
+                    }
+                    tokio::time::sleep(RECONNECT_DELAY).await;
                 }
-                tokio::time::sleep(RECONNECT_DELAY).await;
-            }
+            };
+            futures_util::future::select(pin!(sender.closed()), pin!(subscription)).await;
         });
         Box::pin(futures_util::stream::unfold(receiver, |mut receiver| async move {
             receiver.recv().await.map(|item| (item, receiver))
@@ -143,7 +149,8 @@ impl BroadcastAdapter for Redis {
     }
 }
 
-/// One subscription, until Redis goes away or the stream's reader is dropped.
+/// One subscription, until Redis goes away or a send finds the stream's reader gone; the caller
+/// drops it as the reader drops.
 async fn listen(url: &str, node: NodeId, sender: &mpsc::UnboundedSender<(Target, Bytes)>) -> Result<(), BoxError> {
     let mut pubsub = redis::Client::open(url)?.get_async_pubsub().await?;
     pubsub.subscribe("ulo:ws:all").await?;

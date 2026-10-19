@@ -263,6 +263,11 @@ pub enum ShutdownFailure {
     /// duration when the cap bounded it, `limit: Default` with `hook_timeout` otherwise. Never
     /// `Skipped`: every `close` starts.
     Close { transport: TypeName, reason: FailureReason },
+    /// The `App` value dropped before its shutdown's close step ended, with no `close` holding a
+    /// claim on the servers, and the drop released them without their `close`. The `close`
+    /// answering it ran none of the shutdown's steps: no hook runs once the app has dropped this
+    /// way, and the report counts no execution.
+    Dropped,
 }
 
 impl ShutdownFailure {
@@ -271,6 +276,7 @@ impl ShutdownFailure {
         match self {
             ShutdownFailure::Hook { key, .. } => key.key().type_names().collect(),
             ShutdownFailure::Close { transport, .. } => vec![*transport],
+            ShutdownFailure::Dropped => Vec::new(),
         }
     }
 
@@ -281,6 +287,9 @@ impl ShutdownFailure {
             ShutdownFailure::Close { transport, reason } => {
                 format!("transport `{}` failed to close: {reason}", transport.written(full))
             }
+            ShutdownFailure::Dropped => "the app was dropped before its shutdown closed its servers: they were released \
+                                         without their `close`, and no shutdown hook runs after the drop"
+                .to_owned(),
         }
     }
 }

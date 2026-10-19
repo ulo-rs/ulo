@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use futures_util::StreamExt;
 use serde::Serialize;
@@ -34,6 +34,8 @@ pub(crate) struct Hub {
     members: Mutex<HashMap<ConnId, Member>>,
     /// Each prepared gateway's path under its controller's type, for `Rooms::gateway::<G>()`.
     paths: Mutex<HashMap<TypeName, Arc<str>>>,
+    /// The delivery task, which reaches the hub through a `Weak` and is aborted when the hub
+    /// drops: the hub owns it, and the task does not own the hub.
     delivery: Mutex<Option<TaskHandle>>,
 }
 
@@ -102,17 +104,19 @@ impl Hub {
     }
 
     /// Starts delivering what the adapter carries to this process's members, once, as a task on
-    /// `runtime`, the app's; the task lives until [`stop`](Self::stop). Called from a server's
-    /// `bind` or the hand-off's `bound`.
+    /// `runtime`, the app's; the task lives until [`stop`](Self::stop) or the hub's drop, the
+    /// application's last holder of it gone. Called from a server's `bind` or the hand-off's
+    /// `bound`.
     pub(crate) fn start(self: &Arc<Self>, runtime: &dyn Spawn) {
         let mut delivery = self.delivery.lock().unwrap_or_else(PoisonError::into_inner);
         if delivery.is_some() {
             return;
         }
-        let hub = Arc::clone(self);
+        let hub: Weak<Hub> = Arc::downgrade(self);
         let task = runtime.spawn(Box::pin(async move {
-            let mut carried = hub.adapter.subscribe(hub.node);
+            let Some(mut carried) = hub.upgrade().map(|hub| hub.adapter.subscribe(hub.node)) else { return };
             while let Some((target, frame)) = carried.next().await {
+                let Some(hub) = hub.upgrade() else { return };
                 hub.deliver(&target, &frame);
             }
         }));
@@ -147,6 +151,16 @@ impl Hub {
                 }
                 Err(error) => tracing::warn!(%error, gateway = %gateway.path, "a WebSocket broadcast could not be encoded"),
             }
+        }
+    }
+}
+
+/// A hub dropped without `stop`, its server dropped without `close` and the app's singletons and
+/// graph gone, ends its delivery task, and with it the adapter's subscription.
+impl Drop for Hub {
+    fn drop(&mut self) {
+        if let Some(task) = self.delivery.get_mut().unwrap_or_else(PoisonError::into_inner).take() {
+            task.abort();
         }
     }
 }

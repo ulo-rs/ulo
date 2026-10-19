@@ -32,9 +32,9 @@ use crate::transport::server::mounted_parts;
 /// [`execute`](Self::execute) so the drain waits for it: the drain tracks executions, not tasks.
 ///
 /// A handle kept past the `App` value's drop holds the app's shared state. A
-/// [`close`](Self::close) under way at the drop keeps the servers and closes them; with none under
-/// way the drop released them, and a `close` started later runs the shutdown's hooks and closes no
-/// transport. See [`App`](crate::App).
+/// [`close`](Self::close) called before the drop keeps the servers and closes them; with none
+/// called the drop released them, and a `close` called later answers
+/// [`ShutdownFailure::Dropped`](crate::ShutdownFailure::Dropped). See [`App`](crate::App).
 #[derive(Clone)]
 pub struct AppHandle {
     pub(crate) shared: Arc<AppShared>,
@@ -75,14 +75,20 @@ impl AppHandle {
     /// nothing: it waits for the same shutdown, ignores its own signal and returns the same
     /// outcome.
     ///
-    /// A `close` under way when the `App` value drops, counted from its first poll, keeps the
-    /// servers: its drain and close step reach every one, and each server's `close` runs. Dropped
-    /// before its close step, with the `App` value gone and no other `close` under way, it
-    /// releases them unclosed as it drops, and their drops run on the thread dropping it. A
-    /// `close` first polled after the drop, with none under way at it, closes no transport: the
-    /// drop released the servers. See [`App`](crate::App).
-    pub async fn close(&self, signal: Signal) -> Result<Shutdown, ShutdownError> {
-        shutdown::close(&self.shared, signal).await
+    /// The call claims the app's servers and the returned future's first poll triggers the
+    /// shutdown. The future holds what the shutdown needs and borrows nothing from the handle, so
+    /// it can be spawned.
+    ///
+    /// A `close` called before the `App` value drops keeps the servers, polled before the drop or
+    /// after it: its drain and close step reach every one, each server's `close` runs, and the
+    /// shutdown's hooks run. Dropped before its close step, polled or not, with the `App` value
+    /// gone and no other `close` holding a claim, it releases them unclosed as it drops, and their
+    /// drops run on the thread dropping it. A `close` called after the drop, with no other claim
+    /// held and the close step not ended, finds the servers released and answers `Err` carrying
+    /// [`ShutdownFailure::Dropped`](crate::ShutdownFailure::Dropped), running no hook. See
+    /// [`App`](crate::App).
+    pub fn close(&self, signal: Signal) -> impl Future<Output = Result<Shutdown, ShutdownError>> + Send + use<> {
+        shutdown::close(&self.shared, signal)
     }
 
     /// The same notice an execution's `draining()` gives, resolving at the same moment.
