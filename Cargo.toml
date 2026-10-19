@@ -67,10 +67,7 @@ members = [
     "crates/ulo-otel",
     "crates/ulo-otel-otlp",
 ]
-# `ulo-db-prisma` is not ported (decision 42); the coordinator deletes it and its line here after
-# race 3.
 exclude = [
-    "crates/ulo-db-prisma",
     "integration-tests",
     "examples",
 ]
