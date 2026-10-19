@@ -696,3 +696,53 @@ Mongo: (b). `Store`'s `const CREATE_CONNECTS: bool` becomes `fn create_connects(
 Redis: `new_lazy_with_config`, after the probe. With `create_connects` false, `.ready(..)` is Redis's retry policy. Redis offers `.lazy()`. What decides `set_number_of_retries` is what it governs: first connection only, keep 0; also reconnects while serving, keep nonzero. The probe answers (first command connects, wrong password's time to fail at each setting, a server restarted mid-service recovering at each setting). Redis's authentication error is `Permanent` in `ping`.
 
 SeaORM on SQLite: accepted. Build the pool through `ulo-db-sqlx`'s lazy pool, wrapped by `SqlxSqliteConnector::from_sqlx_sqlite_pool`; map the SeaORM pool options the store exposes onto SQLx's and document which. SeaORM's SQLite `ping` checks `sqlite_version()` against 3.35 and refuses an older version as `Permanent` naming `RETURNING`. The `not_applicable` declaration is withdrawn: `lazy_readiness_waits_for_the_first_ping` runs on SeaORM's SQLite, and a planted eager `create` must fail it.
+
+---
+
+# Eighth response (to the race 3 report)
+
+Accepted as reported: both corrected premises (Redis retries stay at 0; SQLx's lock scenario cannot prove ulo's lock), Mongo per scheme, Redis lazy, `close` carrying `use<>`, the `released` flag, and the Diesel SCRAM fix. `UpgradeHandler::release` is accepted, its safety tested, not argued.
+
+SCRAM premise to check: SQLx's Postgres driver and Mongo's derive their SCRAM key on the polling thread too. If either does, its stall scenario against an authenticated server, run in release, decides whether it moves to the blocking pool as Diesel's did or is recorded as the driver's limit, with the number.
+
+Q3: split the two waits and classify by what failed. (1) Waiting for the lock: bounded by `connect_within`; running out is retryable. (2) The migrations: bounded on their own from the moment the lock is granted, by `migrate_within: Bound`, `Unbounded` at `Default`; the hook's `TIMEOUT` is set to cover both waits so `hook_timeout` cannot cut them; running out is `Permanent`. (3) Every other failure in the lock step goes through the store's own classifier, the one `ping` uses: a lost connection or a server restarted between the ping and the lock is retryable; an SQL refusal such as no permission to take the lock is `Permanent`. Test: a lock granted at the bound with an instant migration succeeds.
+
+Q4: fall back to full names, as reports already do; do not refuse. `ModuleDef::qualifier` answers the nearest keyed ancestor on the path from the store's module upward, so a store inside a keyed application module reads that key. Premise to check: the core can see that path at registration; if it cannot, the fallback covers it. Names that still print alike go through `TypeName::colliding` (§10.1) and print in full.
+
+Q10: classify by who can fix it. A missing or malformed `ssl-ca`, read in `create`: `Permanent`. An unknown issuer: `Permanent`. A hostname mismatch: `Permanent`. An expired server certificate: retryable. SeaORM's classifier delegates to SQLx's for the errors SQLx raises underneath it, so there is one certificate table (§3.7).
+
+`LazyStore`: drop it. `create_connects` and the registration refusal are the one rule (F444 closes with it).
+
+An unpolled `close` future stored in the app's own state: accept and document. The documentation of `close` says the future holds a claim on the servers, so await it where it is made and do not store it in state the app owns.
+
+`draining()` and `phase()` after a drop: advance them at the owner's drop. When the owner's drop releases the servers without a shutdown, the phase becomes `Closed` and `draining()` resolves; a later `close` answers `Dropped`. Test: a task awaiting `draining()` wakes when the app is dropped and `phase()` reads `Closed`.
+
+`UpgradeHandler::release` with a shared hand-off: count the holders. Each server's `prepare` registers as a holder, and `release` clears the table only when the last holder releases. Test: two HTTP servers sharing one hand-off; drop the first; a gateway on the second still upgrades and serves a message.
+
+OTLP: explicit wins in the adapter. The ureq adapter applies the explicit headers last, after whatever the exporter set from `OTEL_EXPORTER_OTLP_HEADERS`; a test sets both and requires the explicit value on the wire. Proxy: the agent reads the standard proxy variables by default; `.proxy(..)` sets one explicitly and `.no_proxy()` turns proxies off whatever the environment says.
+
+gRPC refusal: use the existing `to_status`. `outgoing` builds its refusal as a `CallError` with an `ErrorInfo { reason: "reserved_header" }` detail and renders it through `ulo_grpc::to_status`, which packs the details into `grpc-status-details-bin`. Keep the message prefix as well.
+
+Defaults: accepted as built. An implicit entry through `ConfigModule<T>` is deferred.
+
+`Secret` under `flatten`: (1) a secret shorter than 4 characters is registered but not text-matched, and the documentation says so; (2) source-failure messages are scrubbed by the same pass; (3) a problem never carries another field's origin: when the deserializer cannot attribute a problem inside a flattened section it reports the containing struct's path and origin, marked as inside a flattened section.
+
+Small core items: fix `redact.rs`'s comment to match the ruling as built; correct the design text to `Otel::new(options, exporter)`.
+
+Filed items: F447 is written (`cargo tree -d` in CI, failing on two SQLx versions in the workspace's own tree). F443 and F444 close with the rulings above. F435 stays open.
+
+# Ninth response (to the follow-up on the core's missing tests)
+
+The core test series is confirmed and comes before the examples. One test per capability in the core's `CAPABILITIES.md`, each shown failing against a planted break; built by Sonnet, checked by Opus; the HTTP, health, GraphQL, configuration and tracing gaps each in their owner's crate. Rules: assert variants and fields, not message text (exceptions: §10.1's short-name and collision rule, and the help lines); every wiring error in §10.1 gets a test that fails `wire()` with that variant; every entry in §12's refusal table gets one at its listed point, compile time through `trybuild` in `ulo-codegen-tests`.
+
+Home: `crates/ulo/tests/`, not a new crate, if a probe allows it. `crates/ulo` takes `ulo-runtime-tokio` as a dev-dependency (a dev-dependency cycle Cargo allows); integration tests under `tests/` link the same `ulo` the runtime crate was built against; the runtime-levels check reads normal edges only. Premise to check: a test in `crates/ulo/tests/` can build an app on `Tokio` and run it; if the cycle breaks something, `ulo-core-tests` (`publish = false`) is the fallback. In-crate `#[cfg(test)]` suits only the pure pieces (`TypeName` collision, key equality, `Bound` arithmetic). Macro tests stay in `ulo-codegen-tests`.
+
+`serve_loop_death`: a guarantee. Test it and write the code if missing. It becomes a third core shutdown trigger beside the signal and `close`: a server whose `serve` ends with `Err`, or ends `Ok` while the phase is still `Running`, starts the same graceful shutdown; `serve` answers with that error naming the transport; every server's drain and close runs. Record it as a core decision. Test: two servers, one whose serve future fails mid-run; the other drains and closes, the hooks run, and `serve` answers `Err` naming the failed transport.
+
+`import_cycle`: refused, as core §10.1 step 1 states (path printed; no `forwardRef`). Master's tolerance does not carry over. The series tests the refusal, path included.
+
+The coverage ledger: dropped. CI already fails any job that runs no tests (§3.1). Each capability in a `CAPABILITIES.md` names the test that pins it; a capability with no test named is the gap list. Delete `coverage_ledger.rs`.
+
+The example catalogue: accepted as the step after the series, one concept per example, ordered as a learning path, with the inventory's 26 uncovered concepts as its checklist.
+
+Not recorded as a build item: the designer's acceptance of the inventory's dropped list as a migration guide's spine and of `import_cycle` / `forwardRef` as a migration-note item. The user ruled on 2026-10-20 that the branch stays alpha, that documentation states the framework as it stands, and that the docs-site pass is separate and later. No migration material is written.
