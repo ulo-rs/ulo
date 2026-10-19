@@ -384,6 +384,14 @@ impl<'a> ModuleDef<'a> {
         self.node.keyed = Some(qualifier);
     }
 
+    /// The qualifier this module is keyed by, as the full `type_name` of the `Q` in
+    /// `Module::keyed::<Q>()`, or `None` for a module that is not keyed. The key is set before the
+    /// module's own `register` runs, so a module can name what it contributes after its instance,
+    /// as a store's health check does.
+    pub fn qualifier(&self) -> Option<&'static str> {
+        self.node.keyed.map(|qualifier| qualifier.name)
+    }
+
     fn push(&mut self, record: BindingRecord) -> &mut BindingRecord {
         let index = self.node.bindings.len();
         self.node.bindings.push(record);

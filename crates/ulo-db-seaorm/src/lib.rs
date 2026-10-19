@@ -36,6 +36,22 @@
 //!
 //! Migrations run through `sea-orm-migration`'s `up` under `ulo-db`'s lock, taken with the
 //! primitives `ulo-db-sqlx` supplies for each engine on the SQLx pool SeaORM holds.
+//!
+//! # TLS coverage
+//!
+//! No test exercises a TLS connection through this store. The SQLx pool underneath is the one
+//! `ulo-db-sqlx` builds, whose MySQL TLS path is exercised there.
+//!
+//! # A pooled connection moved off the runtime
+//!
+//! SeaORM holds an SQLx pool, so what `ulo-db-sqlx` documents applies. If another crate in the
+//! build compiles SQLx's `runtime-smol` in beside `runtime-tokio`, SQLx tests for a tokio context
+//! at every spawn. An SQLx `PoolConnection` dropped on a thread with no tokio context, such as one
+//! user code moved to a plain `std::thread`, returns to its pool through a task spawned on smol's
+//! global executor, which starts threads the application did not ask for. Measured by
+//! `ulo-db-sqlx`'s `tests/smol_drop.rs`: the pool's `after_release` callback ran on a thread named
+//! `smol-*`. The pool still works. The remedy is to drop the connection on a tokio thread, or to
+//! hold it in a task spawned on the app's runtime.
 
 mod migrate;
 mod options;

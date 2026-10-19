@@ -26,10 +26,16 @@
 //! made on the app's runtime after `ulo-db`'s check that it is tokio's.
 //!
 //! redis-rs 1.7.1 defines `prefer_tokio()` only when both features are compiled in, and offers no
-//! read of the current preference, so this crate neither sets nor reads one. A dependency that calls
-//! `prefer_smol()` is not detected, and redis-rs then spawns onto smol's global executor, not the
-//! app's runtime. The crate keeps a process-wide guard so the step runs once and every Redis module
-//! reads one recorded outcome.
+//! read of the current preference. This crate's `smol-comp` feature compiles redis-rs's in beside
+//! `tokio-comp`; with it on, the crate calls `prefer_tokio()` once per process and logs a refusal,
+//! another crate's preference having been set first, at `warn`. With it off, nothing is called or
+//! logged, and a dependency that calls `prefer_smol()` is not detected: redis-rs then spawns onto
+//! smol's global executor, not the app's runtime.
+//!
+//! # TLS coverage
+//!
+//! No test exercises `rediss://`, with or without the `tls` feature. The suite runs against a
+//! container without TLS.
 
 mod options;
 mod store;

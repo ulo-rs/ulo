@@ -18,6 +18,14 @@
 //! with the platform's roots. `rumqttc` brings aws-lc-rs, so an application linking `ulo-rpc-mqtt`
 //! links both providers whatever this crate enables; that is MQTT's limit.
 //!
+//! # TLS coverage
+//!
+//! MySQL over TLS is exercised: `tests/tls.rs` starts MySQL 8 with a certificate a test CA issued,
+//! connects with `ssl-mode=verify_identity` and `ssl-ca` naming that CA, and shows a different CA
+//! and a plaintext connect refused. MySQL 8's `caching_sha2_password` authenticates over that
+//! channel with no RSA exchange. The Postgres TLS path is not exercised by any test; SQLite has
+//! none.
+//!
 //! # Pools
 //!
 //! The pool is lazy: `create` connects nothing and the start waits on `ping` under `.ready`. A pool
@@ -33,6 +41,16 @@
 //!
 //! [`check_scheme`] and [`validate_url`] are public for `ulo-db-seaorm`, which validates with
 //! SQLx's option parser before SeaORM sees a URL.
+//!
+//! # A `PoolConnection` moved off the runtime
+//!
+//! If another crate in the build compiles SQLx's `runtime-smol` in beside `runtime-tokio`, SQLx
+//! tests for a tokio context at every spawn. A `PoolConnection` dropped on a thread with no tokio
+//! context, such as one user code moved to a plain `std::thread`, returns to its pool through a task
+//! spawned on smol's global executor, which starts threads the application did not ask for. Measured
+//! in `tests/smol_drop.rs`: the pool's `after_release` callback ran on a thread named `smol-*`. The
+//! pool still works. The remedy is to drop the connection on a tokio thread, or to hold it in a
+//! task spawned on the app's runtime.
 //!
 //! # Migrations
 //!

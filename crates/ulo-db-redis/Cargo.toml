@@ -17,6 +17,10 @@ integration = []
 # `rediss://`, through rustls with the webpki roots, as `ulo-rpc-redis`'s `tls` feature does.
 tls = ["redis/tokio-rustls-comp", "redis/tls-rustls-webpki-roots"]
 
+# Compiles redis-rs's `smol-comp` in beside `tokio-comp`, which is what makes `prefer_tokio()` exist.
+# The crate then calls it once per process and logs a refusal at `warn`.
+smol-comp = ["redis/smol-comp"]
+
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
 ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
@@ -29,6 +33,8 @@ tracing.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 testcontainers.workspace = true
+# `support/server.rs` issues the TLS recipe's certificates.
+ulo-test-certs = { path = "../ulo-test-certs" }
 ulo-db-conformance = { path = "../ulo-db-conformance", features = ["tokio"] }
 
 [lints]

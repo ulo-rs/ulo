@@ -40,8 +40,20 @@ pub struct Recipe {
     pub ready: fn() -> WaitFor,
 }
 
+/// What a test adds to a recipe: files copied into the container before it starts, and server
+/// arguments appended to the recipe's own.
+#[derive(Clone, Default)]
+pub struct Extras {
+    pub files: Vec<(String, Vec<u8>)>,
+    pub args: Vec<String>,
+}
+
 impl Server {
     pub async fn start(recipe: &Recipe) -> Server {
+        Server::start_with(recipe, &Extras::default()).await
+    }
+
+    pub async fn start_with(recipe: &Recipe, extras: &Extras) -> Server {
         let (container, addrs) = unshadowed(recipe.label, || async {
             let name = format!(
                 "ulo-conf-{}-{}-{}",
@@ -58,8 +70,13 @@ impl Server {
             for (key, value) in recipe.env {
                 image = image.with_env_var(*key, *value);
             }
-            if !recipe.cmd.is_empty() {
-                image = image.with_cmd(recipe.cmd.iter().copied());
+            if !recipe.cmd.is_empty() || !extras.args.is_empty() {
+                image = image.with_cmd(
+                    recipe.cmd.iter().map(|arg| (*arg).to_owned()).chain(extras.args.iter().cloned()),
+                );
+            }
+            for (path, bytes) in &extras.files {
+                image = image.with_copy_to(path.clone(), bytes.clone());
             }
             let container = image
                 .start()
@@ -192,6 +209,30 @@ pub static REDIS: Recipe = Recipe {
     cmd: &["redis-server", "--requirepass", REAL_PASSWORD],
     ready: ready_redis,
 };
+
+/// The container directory the TLS material is copied to.
+const CERT_DIR: &str = "/certs";
+
+/// A TLS-serving MySQL: `mysql:8` with a server certificate issued by `ca` for `localhost` and
+/// `127.0.0.1`, and `require_secure_transport` on so a client that does not speak TLS is refused.
+/// Start it with `Server::start_with(&MYSQL, &mysql_tls(&ca))`. A client trusts it through `ca`'s
+/// certificate (`ca.cert_pem()`) and verifies the name, since the relay is reached at `127.0.0.1`.
+pub fn mysql_tls(ca: &ulo_test_certs::Ca) -> Extras {
+    let server = ca.issue(&["localhost", "127.0.0.1"]);
+    Extras {
+        files: vec![
+            (format!("{CERT_DIR}/ca.pem"), ca.cert_pem().into_bytes()),
+            (format!("{CERT_DIR}/server-cert.pem"), server.cert_pem().as_bytes().to_vec()),
+            (format!("{CERT_DIR}/server-key.pem"), server.key_pem().as_bytes().to_vec()),
+        ],
+        args: vec![
+            format!("--ssl-ca={CERT_DIR}/ca.pem"),
+            format!("--ssl-cert={CERT_DIR}/server-cert.pem"),
+            format!("--ssl-key={CERT_DIR}/server-key.pem"),
+            "--require-secure-transport=ON".to_owned(),
+        ],
+    }
+}
 
 /// A directory of the host's own under the OS temporary directory, removed with the guard.
 pub struct Scratch(pub std::path::PathBuf);

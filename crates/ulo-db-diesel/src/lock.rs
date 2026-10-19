@@ -96,7 +96,7 @@ pub(crate) mod mysql {
         .await?;
         match got {
             Some(1) => Ok(DieselLock { held: Box::new(Held { conn, name }) }),
-            Some(0) => Err(format!("the migration lock was not obtained within {bound:?}").into()),
+            Some(0) => Err(ulo_db::LockTimedOut::new(bound).into()),
             _ => Err("GET_LOCK failed without a result".into()),
         }
     }
@@ -195,7 +195,7 @@ pub(crate) mod sqlite {
                 None => POLL,
                 Some(deadline) => match deadline.checked_duration_since(Instant::now()) {
                     Some(left) if !left.is_zero() => left.min(POLL),
-                    _ => return Err(format!("the migration lock was not obtained within {bound:?}").into()),
+                    _ => return Err(ulo_db::LockTimedOut::new(bound).into()),
                 },
             };
             std::thread::sleep(pause);

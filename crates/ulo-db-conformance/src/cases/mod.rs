@@ -1,5 +1,5 @@
 //! The scenarios of integrations DESIGN §4.9, one function per scenario, each generic over the
-//! [`Host`](crate::Host) and each naming the planted break it is shown failing against.
+//! [`Host`] and each naming the planted break it is shown failing against.
 //!
 //! Every scenario builds its apps here: a root module importing what the scenario names, on the
 //! harness's runtime. No app binds a transport; an app stops at `Connected`, which reads as
@@ -161,6 +161,11 @@ pub(crate) fn store_reads<S: Store>(report: &Report, up: bool) -> Option<bool> {
 /// How many checks the store contributed to `report`.
 pub(crate) fn store_checks<S: Store>(report: &Report) -> usize {
     report.results().iter().filter(|result| result.name().contains(S::NAME)).count()
+}
+
+/// The names of the checks the store contributed to `report`.
+pub(crate) fn store_check_names<S: Store>(report: &Report) -> Vec<String> {
+    report.results().iter().map(|result| result.name()).filter(|name| name.contains(S::NAME)).map(str::to_owned).collect()
 }
 
 /// Every check of `report`, up or down with its reason, for a failure message.

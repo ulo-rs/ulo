@@ -131,7 +131,9 @@ impl<S: LazyStore> StoreModule<S> {
 
 impl<S: MigrationLock> StoreModule<S> {
     /// Runs `migrations` in the module's `on_init`, after connecting, under the lock and its bound.
-    /// Off unless written. A failure is `MigrationFailed` inside `Permanent`.
+    /// Off unless written. A failure is `MigrationFailed`, inside `Permanent` unless it is the wait
+    /// for the lock reaching the bound ([`MigrationFailed::waited_for_lock`](crate::MigrationFailed::waited_for_lock)): that one means
+    /// another replica is migrating, and `ulo::is_permanent` answers false for it.
     ///
     /// The bound is [`connect_within`](Self::connect_within), counted from the moment the lock is
     /// requested: a replica waiting on another's migrations waits inside it, and a long migration
@@ -221,7 +223,7 @@ where
         }
 
         if self.health_check {
-            let name = check_name::<S>(path);
+            let name = check_name::<S>(path, m.qualifier());
             m.contribute::<dyn Check>().singleton(
                 move |client: Dep<S::Client>, runtime: Dep<dyn Runtime>| {
                     let check = StoreCheck::<S>::new(name.clone(), runtime.into_arc(), (*client).clone());
@@ -238,7 +240,13 @@ where
             // and the failure arrives as `MigrationFailed` rather than a hook timeout.
             m.on_init(move |client: Dep<S::Client>, runtime: Dep<dyn Runtime>| {
                 let run = migrate.run(runtime.into_arc(), (*client).clone(), bound);
-                async move { run.await.map_err(Permanent::new) }
+                async move {
+                    run.await.map_err(|failed| {
+                        // Another replica holding the lock past the bound is no fault of this
+                        // build or its configuration, so a restart is worth trying.
+                        if failed.waited_for_lock() { BoxError::from(failed) } else { BoxError::from(Permanent::new(failed)) }
+                    })
+                }
             })
             .unbounded();
         }

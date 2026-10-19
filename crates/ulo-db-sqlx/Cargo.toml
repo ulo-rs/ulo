@@ -37,8 +37,13 @@ futures-channel.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+# `tests/smol_drop.rs` builds SQLx with `runtime-smol` beside `runtime-tokio`, as feature unification
+# can in an application.
+sqlx = { workspace = true, features = ["runtime-smol"] }
 serde_json.workspace = true
 testcontainers.workspace = true
+# `support/server.rs` issues the TLS recipe's certificates.
+ulo-test-certs = { path = "../ulo-test-certs" }
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 ulo-db-conformance = { path = "../ulo-db-conformance", features = ["tokio"] }
 

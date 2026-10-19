@@ -115,7 +115,7 @@ async fn take_lock(client: sqlx::MySqlPool, bound: Duration) -> Result<MySqlLock
         .await?;
     match got {
         Some(1) => Ok(MySqlLock { conn, name }),
-        Some(0) => Err(format!("the migration lock was not obtained within {bound:?}").into()),
+        Some(0) => Err(ulo_db::LockTimedOut::new(bound).into()),
         _ => Err("GET_LOCK failed without a result".into()),
     }
 }

@@ -22,30 +22,28 @@ const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 /// retries buy a command nothing but a longer wait before it fails.
 const RECONNECT_RETRIES: usize = 0;
 
-/// The outcome of the process's one runtime-preference step, recorded for every later Redis module.
-static TOKIO_PREFERENCE: OnceLock<Result<(), String>> = OnceLock::new();
+/// Set once the process's runtime-preference step has run.
+static TOKIO_PREFERENCE: OnceLock<()> = OnceLock::new();
 
-/// Makes the process's one runtime-preference step, or reads its recorded outcome.
+/// Makes the process's one runtime-preference step.
 ///
 /// redis 1.7.1 defines `prefer_tokio()` only when both `smol-comp` and `tokio-comp` are compiled
-/// in, and offers no read of the current preference, so a crate that enables `tokio-comp` alone
-/// cannot call it. The step is therefore the guard without the call: the outcome is recorded once
-/// and is `Ok`. It does not make redis-rs prefer tokio; it does not need to unless an unrelated
-/// crate compiled `smol-comp` in and set `prefer_smol()`, a conflict this crate cannot see. The
-/// caller runs on the app's runtime after `ulo-db`'s name check, so redis-rs, absent a preference,
-/// finds tokio's context and uses tokio.
-pub(crate) fn prefer_tokio_once() -> Result<(), BoxError> {
-    let outcome = TOKIO_PREFERENCE.get_or_init(|| {
-        tracing::debug!(
-            target: "ulo_db_redis",
-            "redis-rs's runtime preference is not set: prefer_tokio() exists only with smol-comp compiled in"
-        );
-        Ok(())
+/// in, so the call exists here only under this crate's own `smol-comp` feature. With the feature
+/// on, a refusal because another crate set a preference first is logged at `warn` and the start
+/// continues: redis 1.7.1 offers no read of the preference, so a harmless double setting cannot be
+/// told from a harmful one. With the feature off there is nothing to call and nothing is logged;
+/// redis-rs, absent a preference, finds tokio's context on the app's runtime and uses tokio.
+pub(crate) fn prefer_tokio_once() {
+    TOKIO_PREFERENCE.get_or_init(|| {
+        #[cfg(feature = "smol-comp")]
+        if let Err(refused) = redis::aio::prefer_tokio() {
+            tracing::warn!(
+                target: "ulo_db_redis",
+                error = %refused,
+                "another crate set redis-rs's runtime preference first; if it is not tokio, the first command fails"
+            );
+        }
     });
-    match outcome {
-        Ok(()) => Ok(()),
-        Err(conflict) => Err(Permanent::new(conflict.clone()).into()),
-    }
 }
 
 /// An error that no further attempt can mend is wrapped in `Permanent`; the rest are bare.
@@ -99,7 +97,7 @@ impl Store for Redis {
         let connection_timeout = o.connection_timeout_secs.map_or(CONNECTION_TIMEOUT, Duration::from_secs);
         let response_timeout = o.response_timeout_secs.map(Duration::from_secs);
         Box::pin(async move {
-            prefer_tokio_once()?;
+            prefer_tokio_once();
             let client = redis::Client::open(url.expose().as_str()).map_err(classify)?;
             let mut config = ConnectionManagerConfig::new()
                 .set_number_of_retries(RECONNECT_RETRIES)
@@ -124,5 +122,48 @@ impl Store for Redis {
     /// still holding a clone keeps the connection open past this call.
     fn close(c: ConnectionManager) -> BoxFuture<'static, ()> {
         Box::pin(async move { drop(c) })
+    }
+}
+
+#[cfg(all(test, feature = "smol-comp"))]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Level, Metadata, Subscriber};
+
+    use super::prefer_tokio_once;
+
+    struct Warnings(Arc<AtomicUsize>);
+
+    impl Subscriber for Warnings {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+        fn record(&self, _: &Id, _: &Record<'_>) {}
+        fn record_follows_from(&self, _: &Id, _: &Id) {}
+        fn event(&self, event: &Event<'_>) {
+            if *event.metadata().level() == Level::WARN {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        fn enter(&self, _: &Id) {}
+        fn exit(&self, _: &Id) {}
+    }
+
+    /// Another crate's preference set first: the refusal is a `warn`, once, and nothing else.
+    #[test]
+    fn a_refused_preference_is_a_warning() {
+        redis::aio::prefer_smol().expect("no preference was set yet in this process");
+        let seen = Arc::new(AtomicUsize::new(0));
+        tracing::subscriber::with_default(Warnings(Arc::clone(&seen)), || {
+            prefer_tokio_once();
+            prefer_tokio_once();
+        });
+        assert_eq!(seen.load(Ordering::SeqCst), 1, "one warning per process for a refused preference");
     }
 }

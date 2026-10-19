@@ -32,6 +32,10 @@
 //! `pg_advisory_lock` and `GET_LOCK` on a session of their own, and for a SQLite file an OS lock on
 //! `<file>.ulo-migrate.lock` beside it, which is left in place. A migration using
 //! `CREATE INDEX CONCURRENTLY` can deadlock against a session waiting on the advisory lock.
+//!
+//! # TLS coverage
+//!
+//! No test exercises a TLS connection through this store, for Postgres or MySQL.
 
 mod classify;
 mod lock;

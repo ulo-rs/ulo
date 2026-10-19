@@ -84,7 +84,7 @@ async fn take_lock(client: sqlx::PgPool, bound: Duration) -> Result<PgLock, BoxE
             let timed_out =
                 e.as_database_error().and_then(|d| d.code()).is_some_and(|code| &*code == LOCK_NOT_AVAILABLE);
             if timed_out {
-                Err(format!("the migration lock was not obtained within {bound:?}").into())
+                Err(ulo_db::LockTimedOut::new(bound).into())
             } else {
                 Err(e.into())
             }

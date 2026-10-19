@@ -38,6 +38,8 @@ tracing.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 testcontainers.workspace = true
+# `support/server.rs` issues the TLS recipe's certificates.
+ulo-test-certs = { path = "../ulo-test-certs" }
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 ulo-db-conformance = { path = "../ulo-db-conformance", features = ["tokio"] }
 

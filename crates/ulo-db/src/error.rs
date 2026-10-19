@@ -29,18 +29,31 @@ impl fmt::Display for UnsupportedRuntime {
 
 impl Error for UnsupportedRuntime {}
 
-/// A migration failed, or the lock it runs under could not be taken within its bound. Raised inside
-/// `ulo::Permanent` from the module's init hook: a misconfiguration, not retryable.
+/// The migration step of a store module failed, in one of two ways that restart differently.
+///
+/// - The wait for the migration lock reached the bound ([`waited_for_lock`](Self::waited_for_lock)
+///   is true): another replica is migrating, and a restart after it finishes would succeed. The
+///   module's init hook raises it without `ulo::Permanent`, so `ulo::is_permanent` answers false.
+/// - Anything else: the lock could not be taken for another reason, a migration failed, or the
+///   migrations themselves ran past the bound. The hook raises it inside `ulo::Permanent`, since a
+///   restart of the same build and configuration meets the same failure.
 #[non_exhaustive]
 #[derive(Debug)]
 pub struct MigrationFailed {
     pub module: &'static str,
     pub source: BoxError,
+    lock_wait: bool,
 }
 
 impl MigrationFailed {
-    pub(crate) fn new(module: &'static str, source: BoxError) -> Self {
-        MigrationFailed { module, source }
+    pub(crate) fn new(module: &'static str, source: BoxError, lock_wait: bool) -> Self {
+        MigrationFailed { module, source, lock_wait }
+    }
+
+    /// Whether the failure is the wait for the migration lock reaching the bound, the one
+    /// retryable migration failure.
+    pub fn waited_for_lock(&self) -> bool {
+        self.lock_wait
     }
 }
 
@@ -127,7 +140,30 @@ impl Error for LockFailed {
     }
 }
 
-/// The lock, the migrations and the release together passed the module's bound.
+/// The wait for the migration lock reached its bound, because another holder kept it. A store's
+/// `MigrationLock::lock` returns this, boxed, when the wait it bounded on the server or on the
+/// file ran out, so `ulo-db` can tell a held lock from a lock that could not be taken at all.
+#[non_exhaustive]
+#[derive(Debug)]
+pub struct LockTimedOut {
+    pub bound: Duration,
+}
+
+impl LockTimedOut {
+    pub fn new(bound: Duration) -> Self {
+        LockTimedOut { bound }
+    }
+}
+
+impl fmt::Display for LockTimedOut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the migration lock was not obtained within {:?}", self.bound)
+    }
+}
+
+impl Error for LockTimedOut {}
+
+/// The migrations, or the release after them, passed the module's bound once the lock was held.
 #[derive(Debug)]
 pub(crate) struct MigrationTimedOut {
     pub(crate) bound: Duration,
@@ -135,7 +171,7 @@ pub(crate) struct MigrationTimedOut {
 
 impl fmt::Display for MigrationTimedOut {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "the migration lock and the migrations did not finish within {:?}", self.bound)
+        write!(f, "the migrations did not finish within {:?}", self.bound)
     }
 }
 

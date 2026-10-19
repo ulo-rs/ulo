@@ -134,12 +134,12 @@ async fn take_lock(client: sqlx::SqlitePool, bound: Duration) -> Result<SqliteLo
 
     match wait.await {
         Ok(Ok(file)) => Ok(SqliteLock { file: Some(file) }),
-        Ok(Err(message)) => Err(message.into()),
+        Ok(Err(error)) => Err(error),
         Err(_) => Err("the SQLite migration lock thread ended without an answer".into()),
     }
 }
 
-fn acquire(path: &Path, bound: Duration) -> Result<File, String> {
+fn acquire(path: &Path, bound: Duration) -> Result<File, BoxError> {
     let file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -153,11 +153,11 @@ fn acquire(path: &Path, bound: Duration) -> Result<File, String> {
             Ok(()) => return Ok(file),
             Err(TryLockError::WouldBlock) => {
                 if deadline.is_some_and(|d| Instant::now() >= d) {
-                    return Err(format!("the migration lock on {} was not obtained within {bound:?}", path.display()));
+                    return Err(ulo_db::LockTimedOut::new(bound).into());
                 }
                 std::thread::sleep(POLL);
             }
-            Err(TryLockError::Error(e)) => return Err(format!("could not lock {}: {e}", path.display())),
+            Err(TryLockError::Error(e)) => return Err(format!("could not lock {}: {e}", path.display()).into()),
         }
     }
 }

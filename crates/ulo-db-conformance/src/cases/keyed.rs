@@ -5,7 +5,9 @@ use ulo_db::Store;
 use ulo_health::HealthModule;
 
 use crate::Host;
-use crate::cases::{Client, Root, builder, closed, connected, describe, readiness, readiness_reads, store, store_checks};
+use crate::cases::{
+    Client, Root, builder, closed, connected, describe, readiness, readiness_reads, store, store_check_names, store_checks,
+};
 
 /// The first keyed instance's qualifier.
 struct First;
@@ -13,8 +15,9 @@ struct First;
 /// The second keyed instance's qualifier.
 struct Second;
 
-/// Two keyed instances stay separate: two pools and two checks. Planted breaks: two qualifiers
-/// resolving to one instance; a store whose `create` hands both instances one process-wide pool.
+/// Two keyed instances stay separate: two pools and two checks with distinct names. Planted breaks:
+/// two qualifiers resolving to one instance; a store whose `create` hands both instances one
+/// process-wide pool; a check name that ignores the qualifier.
 ///
 /// Two modules over the host's options, one keyed `First` and one `Second`, and the health module
 /// connect. Each qualified client resolves, to two distinct instances, and each answers a ping of
@@ -69,6 +72,18 @@ pub async fn two_instances<H: Host>() {
         "the two keyed instances did not contribute a check each: {}",
         describe(&report)
     );
+
+    let names = store_check_names::<H::Store>(&report);
+    assert!(
+        names.len() == 2 && names[0] != names[1],
+        "the two keyed instances contribute checks that print alike, {names:?}: a health body lists them by name"
+    );
+    for qualifier in ["First", "Second"] {
+        assert!(
+            names.iter().any(|name| name.contains(qualifier)),
+            "no check names the instance keyed `{qualifier}`: {names:?}"
+        );
+    }
 
     <H::Store as Store>::close((*first).clone()).await;
     if let Err(error) = <H::Store as Store>::ping(&*second).await {

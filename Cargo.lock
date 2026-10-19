@@ -628,6 +628,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-fs"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8034a681df4aed8b8edbd7fbe472401ecf009251c8b40556b304567052e294c5"
+dependencies = [
+ "async-lock",
+ "blocking",
+ "futures-lite",
+]
+
+[[package]]
 name = "async-global-executor"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -794,6 +805,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-process"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc50921ec0055cdd8a16de48773bfeec5c972598674347252c0399676be7da75"
+dependencies = [
+ "async-channel",
+ "async-io",
+ "async-lock",
+ "async-signal",
+ "async-task",
+ "blocking",
+ "cfg-if 1.0.5",
+ "event-listener 5.4.1",
+ "futures-lite",
+ "rustix",
+]
+
+[[package]]
 name = "async-rs"
 version = "0.8.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -807,6 +836,24 @@ dependencies = [
  "hickory-resolver",
  "tokio",
  "tokio-stream",
+]
+
+[[package]]
+name = "async-signal"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52b5aaafa020cf5053a01f2a60e8ff5dccf550f0f77ec54a4e47285ac2bab485"
+dependencies = [
+ "async-io",
+ "async-lock",
+ "atomic-waker",
+ "cfg-if 1.0.5",
+ "futures-core",
+ "futures-io",
+ "rustix",
+ "signal-hook-registry",
+ "slab",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5783,6 +5830,7 @@ checksum = "ed5b98ae99461e02895c3a96a25dbe4d852a3d5e5b815d31d5d9e4b5344d99e9"
 dependencies = [
  "arc-swap",
  "arcstr",
+ "async-io",
  "async-lock",
  "backon",
  "bytes",
@@ -5798,6 +5846,8 @@ dependencies = [
  "rustls-native-certs 0.8.4",
  "ryu",
  "sha1_smol",
+ "smol",
+ "smol-timeout",
  "socket2 0.6.5",
  "tokio",
  "tokio-rustls",
@@ -6930,6 +6980,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "smol"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a33bd3e260892199c3ccfc487c88b2da2265080acb316cd920da72fdfd7c599f"
+dependencies = [
+ "async-channel",
+ "async-executor",
+ "async-fs",
+ "async-io",
+ "async-lock",
+ "async-net",
+ "async-process",
+ "blocking",
+ "futures-lite",
+]
+
+[[package]]
+name = "smol-timeout"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7859830574b98cb971aa80d150d8920d28a75df5ed7b0c0d6bd4b50fa0b0cf1f"
+dependencies = [
+ "async-io",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "socket2"
 version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7003,6 +7080,9 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05b44e85bf579a8eeb4ceaa77a3a523baf2bf0e9bac7e40f405d537b5d2d5ccb"
 dependencies = [
+ "async-fs",
+ "async-io",
+ "async-task",
  "base64 0.22.1",
  "bytes",
  "cfg-if 1.0.5",
@@ -7028,6 +7108,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "smallvec",
+ "smol",
  "thiserror 2.0.21",
  "time",
  "tokio",
@@ -7066,6 +7147,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "smol",
  "sqlx-core",
  "sqlx-mysql",
  "sqlx-postgres",
@@ -8233,6 +8315,7 @@ dependencies = [
  "ulo-config",
  "ulo-db",
  "ulo-db-conformance",
+ "ulo-test-certs",
 ]
 
 [[package]]
@@ -8247,6 +8330,7 @@ dependencies = [
  "ulo-config",
  "ulo-db",
  "ulo-db-conformance",
+ "ulo-test-certs",
 ]
 
 [[package]]
@@ -8262,6 +8346,7 @@ dependencies = [
  "ulo-config",
  "ulo-db",
  "ulo-db-conformance",
+ "ulo-test-certs",
 ]
 
 [[package]]
@@ -8280,6 +8365,7 @@ dependencies = [
  "ulo-db",
  "ulo-db-conformance",
  "ulo-db-sqlx",
+ "ulo-test-certs",
 ]
 
 [[package]]
@@ -8297,6 +8383,7 @@ dependencies = [
  "ulo-config",
  "ulo-db",
  "ulo-db-conformance",
+ "ulo-test-certs",
 ]
 
 [[package]]

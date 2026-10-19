@@ -27,6 +27,8 @@ serde = { workspace = true, features = ["derive"] }
 [dev-dependencies]
 serde_json.workspace = true
 testcontainers.workspace = true
+# `support/server.rs` issues the TLS recipe's certificates.
+ulo-test-certs = { path = "../ulo-test-certs" }
 ulo-db-conformance = { path = "../ulo-db-conformance", features = ["tokio"] }
 
 [lints]

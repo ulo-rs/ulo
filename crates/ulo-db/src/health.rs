@@ -23,10 +23,33 @@ impl<S: Store> StoreCheck<S> {
 }
 
 /// `S::NAME` for a module over a section at the root or built from options in code, and
-/// `S::NAME@path` for one read from a section: two keyed instances are read from two sections, so
-/// their checks print apart.
-pub(crate) fn check_name<S: Store>(path: &str) -> String {
-    if path.is_empty() { S::NAME.to_owned() } else { format!("{}@{path}", S::NAME) }
+/// `S::NAME@path` for one read from a section. A keyed module appends its qualifier, written short
+/// as a report writes a type: `S::NAME @ Primary`. Two instances built with `from_options` read no
+/// section, so the qualifier is what prints them apart.
+pub(crate) fn check_name<S: Store>(path: &str, qualifier: Option<&'static str>) -> String {
+    let base = if path.is_empty() { S::NAME.to_owned() } else { format!("{}@{path}", S::NAME) };
+    match qualifier {
+        Some(full) => format!("{base} @ {}", short(full)),
+        None => base,
+    }
+}
+
+/// `full` as a report writes a type: the last segment of each path in it, `app::db::Primary`
+/// as `Primary` and `a::Pair<b::X>` as `Pair<X>`.
+fn short(full: &str) -> String {
+    let mut out = String::with_capacity(full.len());
+    let mut rest = full;
+    while let Some(c) = rest.chars().next() {
+        if c.is_alphanumeric() || matches!(c, '_' | ':') {
+            let end = rest.find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | ':'))).unwrap_or(rest.len());
+            out.push_str(rest[..end].rsplit("::").next().unwrap_or(""));
+            rest = &rest[end..];
+        } else {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
 }
 
 impl<S: Store> Check for StoreCheck<S> {
@@ -44,5 +67,17 @@ impl<S: Store> Check for StoreCheck<S> {
                 Err(reason) => Health::Down(reason),
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::short;
+
+    #[test]
+    fn a_qualifier_prints_short() {
+        assert_eq!(short("app::db::Primary"), "Primary");
+        assert_eq!(short("a::Pair<b::X, c::Y>"), "Pair<X, Y>");
+        assert_eq!(short("Bare"), "Bare");
     }
 }
