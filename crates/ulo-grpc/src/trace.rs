@@ -33,13 +33,31 @@ fn texts<'a>(headers: &'a HeaderMap, name: &'static str) -> Option<Vec<&'a str>>
     headers.get_all(name).iter().map(|value| value.to_str().ok()).collect()
 }
 
+/// Refuses a request whose caller set a header `outgoing` writes itself: `traceparent`, or
+/// `tracestate` when `context` is `Received`. `INVALID_ARGUMENT`, as the RPC client's
+/// `reserved_header` refusal is `BadRequest`; the status message carries the reason.
+pub(crate) fn reserved(context: &TraceContext, metadata: &MetadataMap) -> Result<(), tonic::Status> {
+    if metadata.contains_key(TRACEPARENT) {
+        return Err(tonic::Status::invalid_argument(format!(
+            "reserved_header: the call set `{TRACEPARENT}` in its metadata, and `outgoing` reserves that header on an execution carrying a trace context, writing it from that context"
+        )));
+    }
+    if context.origin() == TraceOrigin::Received && metadata.contains_key(TRACESTATE) {
+        return Err(tonic::Status::invalid_argument(format!(
+            "reserved_header: the call set `{TRACESTATE}` in its metadata within an execution forwarding the context it received, which `outgoing` passes on unchanged; adding a vendor entry needs an exporter, a `TraceSource` such as `ulo-otel`'s, to originate the execution's context"
+        )));
+    }
+    Ok(())
+}
+
 /// Writes `context`, the calling execution's, into an outgoing request's `metadata` as
-/// `traceparent` and `tracestate`, in place of any the caller set.
+/// `traceparent` and `tracestate`. `outgoing` has refused a caller's `traceparent`, and a
+/// caller's `tracestate` on a `Received` context, through [`reserved`] first.
 ///
 /// A `Received` context is forwarded as it arrived, both headers' text, which W3C Trace Context
-/// §3.4 requires of a `traceparent` passed through unchanged; a caller's `tracestate` is replaced,
-/// since only a participant may add an entry. Into an `Originated` context the caller's own
-/// `tracestate` entries are merged as §3.5 has a vendor add its own, by `TraceState::prepend`.
+/// §3.4 requires of a `traceparent` passed through unchanged. Into an `Originated` context the
+/// caller's own `tracestate` entries are merged as §3.5 has a vendor add its own, by
+/// `TraceState::prepend`.
 ///
 /// A context whose `traceparent` text cannot travel as a metadata value, one received over a
 /// transport that carries more than visible ASCII, is not written, and neither is a caller's: the

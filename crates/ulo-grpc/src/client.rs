@@ -110,6 +110,14 @@ impl ClientTls {
 /// let user = users.get_user(ulo_grpc::outgoing(&exec, tonic::Request::new(query))?).await?;
 /// ```
 ///
+/// A request that sets `traceparent` itself, on an execution carrying a trace context, fails here
+/// as INVALID_ARGUMENT with `reserved_header` in the message, and so does one that sets
+/// `tracestate` when the context is `Received`: the context is forwarded as it arrived, and only
+/// a participant, whose `TraceSource` originated the context, may add an entry. Into an
+/// `Originated` context the caller's `tracestate` entries are merged. An execution carrying no
+/// context, a `TraceMode::Off` app's among them, leaves both as ordinary metadata. The RPC client
+/// refuses the same two cases as `BadRequest` with the reason `"reserved_header"`.
+///
 /// A deadline already passed fails here, DEADLINE_EXCEEDED, so the call is never made: sent with
 /// the shortest `grpc-timeout`, it would reach a callee that can run its handler while the caller
 /// is told it timed out. A deadline further off than `99999999H`, about 11,415 years and the
@@ -121,6 +129,7 @@ impl ClientTls {
 /// connection the callee is given up to the connect's length beyond the caller's deadline.
 pub fn outgoing<T>(exec: &ExecutionRef, mut request: tonic::Request<T>) -> Result<tonic::Request<T>, tonic::Status> {
     if let Some(context) = exec.trace() {
+        crate::trace::reserved(context, request.metadata())?;
         crate::trace::inject(context, request.metadata_mut());
     }
     let Some(deadline) = exec.deadline() else { return Ok(request) };
@@ -298,5 +307,91 @@ mod tests {
         }
         assert!(failures.is_empty(), "{} of the sweep's durations failed, the first ten: {:#?}", failures.len(), &failures[..failures.len().min(10)]);
         assert_eq!(encode(Duration::ZERO).map(|(value, _)| value), Ok("1n".to_owned()), "a zero remainder");
+    }
+
+    struct Root;
+
+    impl ulo::Module for Root {
+        fn identity(&self) -> ulo::ModuleIdentity {
+            ulo::ModuleIdentity::of_type::<Self>()
+        }
+
+        fn register(&self, _m: &mut ulo::ModuleDef<'_>) {}
+    }
+
+    fn context(state: &str) -> ulo::TraceContext {
+        ulo::TraceContext::new([1; 16], [2; 8], 1, ulo::TraceState::parse([state])).expect("a valid context")
+    }
+
+    fn request(metadata: &[(&'static str, &'static str)]) -> tonic::Request<()> {
+        let mut request = tonic::Request::new(());
+        for (name, value) in metadata {
+            request.metadata_mut().insert(*name, value.parse().expect("a metadata value"));
+        }
+        request
+    }
+
+    /// What `outgoing` makes of `metadata` set by the caller, within an execution carrying the
+    /// context `trace` names: `Received` is the inbound one, `Originated` is a `TraceSource`'s.
+    async fn through(origin: Option<ulo::TraceOrigin>, metadata: &[(&'static str, &'static str)]) -> Result<tonic::Request<()>, tonic::Status> {
+        let app = ulo::App::builder(Root)
+            .timer(ulo_runtime_tokio::Timer)
+            .wire()
+            .expect("the app wires")
+            .connect()
+            .await
+            .expect("the app connects");
+        let options = match origin {
+            Some(ulo::TraceOrigin::Received) => ulo::ExecOptions::new().trace(context("up=1")),
+            _ => ulo::ExecOptions::new(),
+        };
+        let answer = app
+            .execute(options, async |exec| {
+                if origin == Some(ulo::TraceOrigin::Originated) {
+                    exec.set_trace(context("own=1"));
+                }
+                super::outgoing(&exec.handle(), request(metadata))
+            })
+            .await
+            .expect("the execution opens");
+        let _ = app.close(ulo::Signal::new("test")).await;
+        answer
+    }
+
+    fn reserved(refused: Result<tonic::Request<()>, tonic::Status>, header: &str) {
+        let status = refused.expect_err("the request is refused");
+        assert_eq!(status.code(), tonic::Code::InvalidArgument, "{status:?}");
+        assert!(status.message().contains("reserved_header") && status.message().contains(header), "the refusal does not name the reason and the header: {status:?}");
+    }
+
+    /// A caller's `traceparent` is refused on a received context and on an originated one.
+    #[tokio::test]
+    async fn a_caller_s_traceparent_is_refused() {
+        const SET: (&str, &str) = ("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+        for origin in [ulo::TraceOrigin::Received, ulo::TraceOrigin::Originated] {
+            reserved(through(Some(origin), &[SET]).await, "traceparent");
+        }
+    }
+
+    /// A caller's `tracestate` is refused on a received context, which is forwarded as it arrived.
+    #[tokio::test]
+    async fn a_caller_s_tracestate_is_refused_on_a_received_context() {
+        reserved(through(Some(ulo::TraceOrigin::Received), &[("tracestate", "vendor=1")]).await, "tracestate");
+    }
+
+    /// A caller's `tracestate` on an originated context is merged at the left, not refused.
+    #[tokio::test]
+    async fn a_caller_s_tracestate_is_merged_into_an_originated_context() {
+        let sent = through(Some(ulo::TraceOrigin::Originated), &[("tracestate", "vendor=1")]).await.expect("the request is not refused");
+        let state = sent.metadata().get("tracestate").and_then(|value| value.to_str().ok());
+        assert_eq!(state, Some("vendor=1,own=1"));
+    }
+
+    /// With no trace context in the execution both are ordinary metadata.
+    #[tokio::test]
+    async fn without_a_context_both_headers_are_ordinary_metadata() {
+        let sent = through(None, &[("traceparent", "x"), ("tracestate", "vendor=1")]).await.expect("the request is not refused");
+        assert_eq!(sent.metadata().get("traceparent").and_then(|v| v.to_str().ok()), Some("x"));
+        assert_eq!(sent.metadata().get("tracestate").and_then(|v| v.to_str().ok()), Some("vendor=1"));
     }
 }

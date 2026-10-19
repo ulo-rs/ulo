@@ -238,7 +238,7 @@ impl<'a> NodeDeserializer<'a> {
     }
 
     fn record(&self, message: String) {
-        let origin = self.origin().filter(|origin| !matches!(origin, Origin::Default)).cloned();
+        let origin = self.origin().cloned();
         self.ctx.problems.borrow_mut().list.push(Problem { path: self.path.clone(), origin, message });
     }
 

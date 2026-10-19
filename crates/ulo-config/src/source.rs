@@ -3,6 +3,8 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use serde::Serialize;
+
 use crate::format::{Format, dotenv};
 use crate::problems::Problems;
 use crate::tree::{Node, Origin, Tree, Value};
@@ -88,10 +90,74 @@ fn segments(name: &str, prefix: Option<&str>, separator: &str) -> Option<Vec<Str
     if segments.iter().all(String::is_empty) { None } else { Some(segments) }
 }
 
-/// The type's `Default` as the bottom layer. The type is not known when the builder runs, so the
-/// layer is a marker that `ConfigModule` and a section read resolve against the type they read.
+/// The unit form of the defaults source, accepted and inert: it names no type, so it has no value
+/// to read. [`Defaults::of`] is the source that carries values.
+///
+/// A section that wants defaults either goes through [`Defaults::of`] or writes `#[serde(default)]`
+/// on the type or its fields, which serde fills when no source supplied the value.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Defaults;
+
+impl Defaults {
+    /// `T::default()` as a layer, read through serde the way a file's value is, so each value it
+    /// supplies carries the origin `default` in a problem message. Added first, it is the bottom
+    /// layer; every source added after it overrides it.
+    ///
+    /// ```
+    /// use serde::{Deserialize, Serialize};
+    /// use ulo_config::{Config, Defaults, Section, Values};
+    ///
+    /// #[derive(Clone, Debug, Deserialize, Serialize)]
+    /// struct Http { host: String, port: u16 }
+    ///
+    /// impl Default for Http {
+    ///     fn default() -> Self {
+    ///         Http { host: "0.0.0.0".into(), port: 8080 }
+    ///     }
+    /// }
+    ///
+    /// let config = Config::builder()
+    ///     .source(Defaults::of::<Http>())
+    ///     .source(Values::new().set("port", 9000))
+    ///     .load();
+    /// let http = Section::<Http>::read(&config, "").value().cloned().unwrap();
+    /// assert_eq!((http.host.as_str(), http.port), ("0.0.0.0", 9000));
+    /// ```
+    ///
+    /// `T` is the type at the path the layer is placed at, the whole configuration unless
+    /// [`at`](TypeDefaults::at) names a section.
+    ///
+    /// A section holding a [`Secret`](ulo::Secret) cannot use this: `Secret` has no `Serialize`,
+    /// by decision, so `T: Serialize` fails to hold.
+    ///
+    /// ```compile_fail
+    /// use serde::{Deserialize, Serialize};
+    /// use ulo::Secret;
+    /// use ulo_config::Defaults;
+    ///
+    /// #[derive(Deserialize, Serialize)]
+    /// struct Db { password: Secret<String> }
+    ///
+    /// impl Default for Db {
+    ///     fn default() -> Self {
+    ///         Db { password: Secret::new(String::new()) }
+    ///     }
+    /// }
+    ///
+    /// let _ = Defaults::of::<Db>();
+    /// ```
+    ///
+    /// Such a section writes `#[serde(default)]` instead. The value serde fills in is not in the
+    /// tree and carries no origin, and needs none: it is the type's own `Default`, which cannot
+    /// fail to parse.
+    ///
+    /// A value that cannot be written as a tree, a map keyed by something other than a string
+    /// among them, is a failure of the layer reported by `wire()`, not a panic.
+    pub fn of<T: Default + Serialize>() -> TypeDefaults {
+        let value = serde_json::to_value(T::default()).map_err(|error| format!("{}'s default cannot be read as configuration: {error}", std::any::type_name::<T>()));
+        TypeDefaults { value, path: Vec::new() }
+    }
+}
 
 impl sealed::Sealed for Defaults {}
 
@@ -99,6 +165,60 @@ impl Source for Defaults {
     fn read(&self) -> Layer {
         Layer { tree: Tree::empty(), failures: Vec::new(), defaults: true }
     }
+}
+
+/// The source [`Defaults::of`] builds: a type's `Default` value as the bottom layer.
+#[derive(Clone, Debug)]
+pub struct TypeDefaults {
+    value: Result<serde_json::Value, String>,
+    path: Vec<String>,
+}
+
+impl TypeDefaults {
+    /// Places the defaults at the dotted `path` of the section that reads `T`: `"database"`,
+    /// `"http.limits"`. The empty path, the default, is the whole configuration.
+    pub fn at(mut self, path: &str) -> Self {
+        self.path = path.split('.').filter(|segment| !segment.is_empty()).map(str::to_owned).collect();
+        self
+    }
+}
+
+impl sealed::Sealed for TypeDefaults {}
+
+impl Source for TypeDefaults {
+    fn read(&self) -> Layer {
+        let value = match &self.value {
+            Ok(value) => value,
+            Err(message) => return Layer::failed("default", message.clone()),
+        };
+        let node = default_node(value);
+        let mut tree = Tree::empty();
+        if self.path.is_empty() {
+            tree.root = Some(node);
+        } else {
+            tree.set(&self.path, node);
+        }
+        Layer::of(tree)
+    }
+}
+
+fn default_node(value: &serde_json::Value) -> Node {
+    use serde_json::Value as Json;
+
+    let value = match value {
+        Json::Null => Value::Null,
+        Json::Bool(flag) => Value::Bool(*flag),
+        Json::Number(number) => match (number.as_i64(), number.as_u64(), number.as_f64()) {
+            (Some(n), _, _) => Value::Integer(i128::from(n)),
+            (None, Some(n), _) => Value::Integer(i128::from(n)),
+            (None, None, Some(n)) => Value::Float(n),
+            (None, None, None) => Value::Null,
+        },
+        Json::String(text) => Value::String(text.clone()),
+        Json::Array(items) => Value::Array(items.iter().map(default_node).collect()),
+        Json::Object(entries) => Value::Table(entries.iter().map(|(key, item)| (key.clone(), default_node(item))).collect()),
+    };
+    Node { value, origin: Origin::Default }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -382,5 +502,98 @@ impl Source for Values {
             tree.set(&path, Node { value, origin: Origin::Explicit { key: key.clone() } });
         }
         Layer::of(tree)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::{Deserialize, Deserializer, Serialize};
+
+    use super::{Defaults, Env, Values};
+    use crate::config::Config;
+    use crate::section::Section;
+
+    /// A type whose own `Deserialize` refuses the empty string, so a default holding one fails the
+    /// read and the problem has to name where the value came from.
+    #[derive(Debug, Clone, PartialEq, Serialize)]
+    struct Named(String);
+
+    impl<'de> Deserialize<'de> for Named {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            let text = String::deserialize(deserializer)?;
+            if text.is_empty() { Err(serde::de::Error::custom("must not be empty")) } else { Ok(Named(text)) }
+        }
+    }
+
+    #[derive(Debug, Clone, Deserialize, Serialize)]
+    struct Service {
+        name: Named,
+        port: u16,
+        label: Option<String>,
+    }
+
+    impl Default for Service {
+        fn default() -> Self {
+            Service { name: Named(String::new()), port: 8080, label: None }
+        }
+    }
+
+    fn read(config: &Config, path: &str) -> Result<Service, String> {
+        Section::<Service>::read(config, path).value().cloned().map_err(ToString::to_string)
+    }
+
+    /// A default the type itself refuses is reported with the origin `default`, where the unit
+    /// `Defaults` supplies nothing and the problem would name a missing field.
+    #[test]
+    fn a_default_shows_its_origin_in_a_problem() {
+        let config = Config::builder().source(Defaults::of::<Service>()).load();
+        let problem = read(&config, "").expect_err("the default name is empty");
+        assert!(problem.contains("default: must not be empty"), "{problem}");
+    }
+
+    /// A value layered over a default replaces it and carries its own origin; a sibling the layer
+    /// does not name stays the default.
+    #[test]
+    fn a_value_over_a_default_wins_and_names_itself() {
+        let vars = [("NAME", "api"), ("PORT", "seventy")];
+        let config = Config::builder().source(Defaults::of::<Service>()).source(Env::from_map(vars).separator("__")).load();
+        let problem = read(&config, "").expect_err("the port is not a number");
+        assert!(problem.contains("port at variable PORT"), "{problem}");
+        assert!(!problem.contains("at default"), "{problem}");
+
+        let config = Config::builder().source(Defaults::of::<Service>()).source(Values::new().set("name", "api")).load();
+        let service = read(&config, "").expect("the name is set");
+        assert_eq!((service.name, service.port, service.label), (Named("api".into()), 8080, None));
+    }
+
+    /// `at` places the defaults under a section's path.
+    #[test]
+    fn defaults_at_a_path_fill_that_section() {
+        let config = Config::builder().source(Defaults::of::<Service>().at("svc")).source(Values::new().set("svc.name", "api")).load();
+        assert_eq!(read(&config, "svc").expect("the section reads").port, 8080);
+    }
+
+    /// The unit `Defaults` stays accepted and supplies nothing.
+    #[test]
+    fn the_unit_defaults_is_inert() {
+        let config = Config::builder().source(Defaults).load();
+        assert!(read(&config, "").is_err());
+    }
+
+    /// A map keyed by something that is not text cannot be a tree; the layer reports it.
+    #[test]
+    fn a_default_that_cannot_be_a_tree_is_a_reported_failure() {
+        #[derive(Deserialize, Serialize)]
+        struct Keyed {
+            by_pair: std::collections::BTreeMap<(u8, u8), u8>,
+        }
+        impl Default for Keyed {
+            fn default() -> Self {
+                Keyed { by_pair: [((1, 2), 3)].into() }
+            }
+        }
+        let config = Config::builder().source(Defaults::of::<Keyed>()).load();
+        let problem = Section::<Keyed>::read(&config, "").value().map(drop).expect_err("the default is not a tree").to_string();
+        assert!(problem.contains("default cannot be read as configuration"), "{problem}");
     }
 }

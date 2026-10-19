@@ -204,7 +204,7 @@ impl Nats {
     /// `warn`; if its server upgrades the connection, async-nats reads the platform's store on the
     /// thread polling it, at that connect and at every reconnect. A `nats://` client never waits.
     /// The load goes on after an expiry, and a later wait joins it. `Bound::After(Duration::ZERO)`
-    /// is refused in `prepare`.
+    /// is refused: by a client when it is built (`Link::usable`), by a server in `prepare`.
     pub fn roots_timeout(mut self, timeout: Bound) -> Self {
         self.roots_timeout = timeout;
         self
@@ -249,11 +249,7 @@ impl Link for Nats {
     }
 
     fn usable(&self) -> Result<(), BoxError> {
-        self.runtime().map(drop)
-    }
-
-    async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
-        self.usable()?;
+        self.runtime()?;
         if let Some(zero) = zero_bound(
             "roots_timeout",
             self.roots_timeout,
@@ -263,6 +259,11 @@ impl Link for Nats {
             failures.push(zero);
             return Err(failures.into_error().into());
         }
+        Ok(())
+    }
+
+    async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
+        self.usable()?;
         let servers = servers(&self.url)?;
         match &self.group {
             Some(group) => check_group(group)?,
@@ -1406,7 +1407,7 @@ mod tests {
     use super::*;
 
     /// Root certificates loaded per test, each test's loader counting in a slot of its own.
-    static LOADS: [AtomicUsize; 28] = [const { AtomicUsize::new(0) }; 28];
+    static LOADS: [AtomicUsize; 29] = [const { AtomicUsize::new(0) }; 29];
 
     /// A store that cannot be read: rustls-native-certs reading a file that is not there, as it
     /// reads one `SSL_CERT_FILE` names.
@@ -2171,6 +2172,25 @@ mod tests {
             );
         }
         assert_eq!(LOADS[19].load(Ordering::SeqCst), 0, "a link refused for its zero bound loaded its roots");
+    }
+
+    /// `.roots_timeout(Bound::After(Duration::ZERO))` is refused when a client is built, as
+    /// `UnusableLink` naming the setting and `Bound::Unbounded`, on either scheme, before any load
+    /// starts.
+    #[tokio::test]
+    async fn a_zero_roots_timeout_is_refused_when_a_client_is_built() {
+        for url in ["nats://localhost:1", "tls://localhost:1"] {
+            let link = link(url, test_root::<28>, std::env::temp_dir).roots_timeout(Bound::After(Duration::ZERO));
+            let refused = match RpcClient::new(link, Arc::new(Tokio::current())) {
+                Err(refused) => refused.to_string(),
+                Ok(_) => panic!("a client over a zero `roots_timeout` was built on `{url}`"),
+            };
+            assert!(
+                refused.contains("`.roots_timeout(Bound::After(Duration::ZERO))` would") && refused.contains("write `Bound::Unbounded`"),
+                "the refusal on `{url}` does not name the setting and the fix: {refused}"
+            );
+        }
+        assert_eq!(LOADS[28].load(Ordering::SeqCst), 0, "a client refused for its zero bound loaded its roots");
     }
 
     /// A `tls://` link whose roots outlast its `roots_timeout` is refused once the bound passes,

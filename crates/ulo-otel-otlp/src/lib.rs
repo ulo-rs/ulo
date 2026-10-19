@@ -18,6 +18,22 @@
 //! `/v1/traces` is appended to it. With no endpoint the exporter reads the standard `OTEL_*`
 //! variables itself and otherwise sends to `http://localhost:4318/v1/traces`. A request that has
 //! not finished in ten seconds fails.
+//!
+//! # The process environment
+//!
+//! Only variables the OpenTelemetry specification defines are read from the process environment,
+//! and they are read by the exporter crate and the SDK beneath this one, not through the `Env`
+//! the application passes to [`OtelOptions::from_env`](ulo_otel::OtelOptions::from_env). Where
+//! ulo passes a value explicitly, that value wins over the environment's for the endpoint (the
+//! per-signal `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` included), the request timeout and the
+//! protocol. Headers are the exception: `OTEL_EXPORTER_OTLP_HEADERS` and
+//! `OTEL_EXPORTER_OTLP_TRACES_HEADERS` entries are merged over the options' headers, so the
+//! environment's value wins for a header name both give. The batch processor's `OTEL_BSP_*` and
+//! the `OTEL_SPAN_*_LIMIT` names are read by the SDK; the options carry no value for them.
+//!
+//! One read is not an OpenTelemetry variable: the default `ureq` client takes its proxy from the
+//! environment (`ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`) as ureq's defaults do, and
+//! the options carry no proxy to override it.
 
 #[cfg(not(feature = "reqwest-blocking"))]
 mod client;

@@ -22,10 +22,15 @@ jsonc-parser.workspace = true
 saphyr = { workspace = true, optional = true }
 saphyr-parser = { workspace = true, optional = true }
 serde.workspace = true
+# `Defaults::of` reads a `Default` value through `serde_json::to_value`, whose `Null` is an `Option`'s `None`.
+serde_json.workspace = true
 # `parse`: the spanned reader; `std` and `serde` are what it needs beside it.
 toml = { workspace = true, features = ["std", "serde", "parse"] }
 # The warning for a key no section read.
 tracing.workspace = true
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
 
 [lints]
 workspace = true

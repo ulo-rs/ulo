@@ -1,13 +1,13 @@
 //! Layered configuration (integrations DESIGN §2).
 //!
 //! The application builds a [`Config`] in `main` from sources it names, each overriding the ones
-//! before it, and hands it to the modules that read it. [`Config::load`] never fails: a source
+//! before it, and hands it to the modules that read it. [`ConfigBuilder::load`] never fails: a source
 //! that cannot be read or parsed is recorded inside the value and reported by `wire()`, together
 //! with every missing, ill-typed or invalid value, one problem per line with its path and origin.
 //!
 //! ```ignore
 //! let config = Config::builder()
-//!     .source(Defaults)
+//!     .source(Defaults::of::<AppConfig>())
 //!     .source(File::toml("config/app.toml"))
 //!     .source(DotEnv::file(".env").optional())
 //!     .source(Env::process().prefix("APP_").separator("__"))
@@ -45,5 +45,5 @@ pub use error::ConfigError;
 pub use module::ConfigModule;
 pub use problems::{Problem, Problems};
 pub use section::Section;
-pub use source::{Defaults, DotEnv, Env, File, Layer, Scalar, Source, Values};
+pub use source::{Defaults, DotEnv, Env, File, Layer, Scalar, Source, TypeDefaults, Values};
 pub use tree::Origin;
