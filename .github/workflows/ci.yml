@@ -182,8 +182,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Pinned on purpose, one of the three pins in this file that are not read from
-      # a manifest; `generated code lints` and `miri` hold the others. `tests/ui/*.stderr` records rustc's rendering as well as the
+      # Pinned on purpose, one of the four pins in this file that are not read from
+      # a manifest; `generated code lints`, `template matrix` and `miri` hold the others. `tests/ui/*.stderr` records rustc's rendering as well as the
       # attributes' own text, and rustc rewords its half roughly once every three
       # minor versions: on `stable` that arrives as a red build on a pull request
       # that changed nothing related. ulo-codegen-tests' build script sets
@@ -284,3 +284,94 @@ jobs:
           name: conformance-failures-brokers
           path: target/conformance-failures/
           if-no-files-found: ignore
+
+  template-matrix-plan:
+    name: template matrix plan
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+      projects: ${{ steps.list.outputs.projects }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A pull request's diff against its base needs the base's history.
+          fetch-depth: 0
+      # Every push runs the matrix. A pull request runs it when it touches the CLI, whose templates
+      # are the thing under test, or the scripts that run them.
+      - id: gate
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          run=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            run=false
+            if git diff --name-only "origin/$BASE...HEAD" | grep -Eq '^(crates/ulo-cli/|scripts/)'; then
+              run=true
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+      # The legs are the script's own list, so a project added to the matrix is run without this
+      # file being touched. The list is always non-empty: an empty matrix is an error in Actions,
+      # and the job below is skipped through `run` instead.
+      - id: list
+        run: |
+          projects=$(python3 scripts/template_matrix.py --list | jq -R . | jq -sc .)
+          echo "projects=$projects" >> "$GITHUB_OUTPUT"
+          echo "projects: $projects"
+
+  template-matrix:
+    name: template matrix ${{ matrix.project }}
+    needs: template-matrix-plan
+    if: needs.template-matrix-plan.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(needs.template-matrix-plan.outputs.projects) }}
+    steps:
+      - uses: actions/checkout@v4
+      # The pin of `generated code lints`, and bumped with it: a project the CLI writes is held to
+      # the same clippy a user's crate is held to. The generated manifests declare rust-version
+      # 1.88 to 1.94, all below it.
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: clippy
+      # cmake builds librdkafka for `rpc-kafka`; libsqlite3-dev is what `diesel-sqlite` links.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake libsqlite3-dev
+      # The generated projects build into target/template-matrix, which the script shares between
+      # them; the key is the project, since each leg's third-party tree differs.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target/template-matrix"
+          key: ${{ matrix.project }}
+      # `ulo new` into a temporary directory, the workspace's crates patched in over crates.io,
+      # then `cargo test --locked` and `cargo clippy --all-targets --locked -- -D warnings`. A
+      # project whose tests print no `test <name> ... ok` line fails, as `unsafe_allowed.py miri`
+      # fails an entry that ran none: both count with `scripts/ran_a_test.py`. A failing project's
+      # whole log is printed. Before the build, the script's checks run against planted output.
+      - run: python3 scripts/template_matrix.py --self-test
+      - run: python3 scripts/template_matrix.py "${{ matrix.project }}"
+
+  store-conformance:
+    name: store conformance
+    # The database conformance suites against real servers: Postgres, MySQL, MongoDB and Redis
+    # start under Docker through testcontainers, and a run pulls their images. On push, not on
+    # pull requests, as `broker integration` is. SQLite needs only a file.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+      - uses: Swatinem/rust-cache@v2
+      # One crate per step, so a failure names its store. Each invokes `ulo-db-conformance`.
+      - run: cargo test -p ulo-db-sqlx --features postgres,mysql,sqlite,integration --test conformance --test lock_wait --locked
+      # `tls` needs `mysql` as well: the test is gated on all three and compiles to nothing
+      # without it. A server issued a certificate by a test CA, connected through rustls.
+      - run: cargo test -p ulo-db-sqlx --features mysql,tls,integration --test tls --locked
+      - run: cargo test -p ulo-db-seaorm --features postgres,mysql,sqlite,integration --test conformance --locked
+      - run: cargo test -p ulo-db-diesel --features postgres,mysql,sqlite,integration --test conformance --locked
+      - run: cargo test -p ulo-db-mongodb --features integration --test conformance --locked
+      - run: cargo test -p ulo-db-redis --features integration --test conformance --locked

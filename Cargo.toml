@@ -57,6 +57,7 @@ members = [
     "crates/ulo-health-grpc",
     "crates/ulo-db",
     "crates/ulo-db-sqlx",
+    "crates/ulo-db-sqlx-smol-probe",
     "crates/ulo-db-seaorm",
     "crates/ulo-db-diesel",
     "crates/ulo-db-mongodb",

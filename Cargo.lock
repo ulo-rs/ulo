@@ -8390,6 +8390,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ulo-db-sqlx-smol-probe"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "ulo-graphql"
 version = "0.1.0-alpha.1"
 dependencies = [

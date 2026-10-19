@@ -207,6 +207,10 @@ ulo-db                        runtime-free           --all-features
 # The SQLx stores: SQLx with `runtime-tokio` alone.
 ulo-db-sqlx                   tokio-bound
 
+# SQLx built with `runtime-smol` beside `runtime-tokio`, for `tests/smol_drop.rs` alone; it is
+# its own crate so that `ulo-db-sqlx`'s test targets build SQLx as production does.
+ulo-db-sqlx-smol-probe        tokio-bound
+
 # The SeaORM store, on SQLx.
 ulo-db-seaorm                 tokio-bound
 

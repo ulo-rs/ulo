@@ -2,8 +2,6 @@
 //! application: where does a `PoolConnection` dropped on a thread with no tokio context return to
 //! its pool? SQLx tests `Handle::try_current()` at every spawn, so that thread has no tokio and the
 //! return task goes to smol's global executor.
-#![cfg(feature = "sqlite")]
-
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 

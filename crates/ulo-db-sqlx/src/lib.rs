@@ -51,11 +51,11 @@
 //! code moved the connection to with `std::thread::spawn`:
 //!
 //! - With `runtime-tokio` alone, as this crate builds SQLx, the drop panics with "this
-//!   functionality requires a Tokio context". Measured by running `tests/smol_drop.rs` without the
-//!   `runtime-smol` dev-dependency.
+//!   functionality requires a Tokio context". Measured by running
+//!   `ulo-db-sqlx-smol-probe`'s `tests/smol_drop.rs` without `runtime-smol`.
 //! - If another crate in the build compiles SQLx's `runtime-smol` in beside it, the return task
 //!   goes to smol's global executor, which starts threads the application did not ask for. Measured
-//!   in `tests/smol_drop.rs`: the pool's `after_release` callback ran on a thread named `smol-*`.
+//!   in `ulo-db-sqlx-smol-probe`'s `tests/smol_drop.rs`: the pool's `after_release` callback ran on a thread named `smol-*`.
 //!
 //! The remedy in both is to drop the connection on a tokio thread, or to hold it in a task spawned
 //! on the app's runtime.

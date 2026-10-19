@@ -52,7 +52,7 @@
 //! is built with `runtime-tokio` alone. If another crate in the build compiles SQLx's
 //! `runtime-smol` in beside it, the connection returns to its pool through a task spawned on smol's
 //! global executor, which starts threads the application did not ask for. Both are measured by
-//! `ulo-db-sqlx`'s `tests/smol_drop.rs`. The remedy is to drop the connection on a tokio thread, or
+//! `ulo-db-sqlx-smol-probe`'s `tests/smol_drop.rs`. The remedy is to drop the connection on a tokio thread, or
 //! to hold it in a task spawned on the app's runtime.
 
 mod migrate;

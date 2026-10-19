@@ -1,0 +1,20 @@
+[package]
+name = "ulo-db-sqlx-smol-probe"
+version.workspace = true
+edition.workspace = true
+rust-version = "1.94"
+description = "SQLx built with runtime-smol beside runtime-tokio, to measure where a PoolConnection dropped off the runtime returns"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# Tests only: nothing depends on it, and it is never released. Its own crate because a
+# `runtime-smol` dev-dependency of `ulo-db-sqlx` would unify into every test target there, and
+# those would no longer build SQLx as production does.
+publish = false
+
+[dev-dependencies]
+sqlx = { workspace = true, features = ["runtime-tokio", "runtime-smol", "sqlite"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+
+[lints]
+workspace = true

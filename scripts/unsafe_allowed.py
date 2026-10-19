@@ -35,6 +35,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ran_a_test import ran_a_test  # noqa: E402  the definition `template_matrix.py` shares
+
 ROOT = Path(__file__).resolve().parent.parent
 LIST = ROOT / "unsafe-allowed.txt"
 SELFTEST = ROOT / "scripts" / "unsafe_allowed_selftest.txt"
@@ -311,10 +314,6 @@ def miri_command(meta, toolchain, entry):
     return command, prefix
 
 
-# libtest's line for a test it ran: `test <name> ... ok`, `FAILED`, or `ignored` for one it did not.
-RAN = re.compile(r"^test (\S+)(?: - should panic)? \.\.\. (ok|FAILED)\s*$")
-
-
 def miri(dry_run):
     failures = selftest()
     if failures:
@@ -346,8 +345,7 @@ def miri(dry_run):
         process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
             sys.stdout.write(line)
-            m = RAN.match(line)
-            if m and (prefix is None or m.group(1).startswith(prefix)):
+            if ran_a_test(line, prefix):
                 ran += 1
         sys.stdout.flush()
         code = process.wait()

@@ -40,9 +40,6 @@ tracing.workspace = true
 rustls = { workspace = true, optional = true }
 
 [dev-dependencies]
-# `tests/smol_drop.rs` builds SQLx with `runtime-smol` beside `runtime-tokio`, as feature unification
-# can in an application.
-sqlx = { workspace = true, features = ["runtime-smol"] }
 serde_json.workspace = true
 testcontainers.workspace = true
 # `support/server.rs` issues the TLS recipe's certificates.
