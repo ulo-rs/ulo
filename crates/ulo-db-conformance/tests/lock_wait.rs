@@ -1,6 +1,6 @@
 //! A replica that waits for another replica's migration lock until the bound fails retryably, and
 //! a migration that itself fails stays permanent. The store is a fake whose lock the options
-//! decide: `"held"` never frees, `"expires"` answers `LockTimedOut` at the bound, `"free"` is
+//! decide: `"held"` never frees, `"expires"` answers `LockTimedOut` at half the bound, `"free"` is
 //! taken at once.
 
 use std::sync::Arc;
@@ -48,8 +48,9 @@ impl MigrationLock for Fake {
         Box::pin(async move {
             match mode.as_str() {
                 "held" => std::future::pending().await,
+                // Before `ulo-db`'s own bound passes, so the store's answer is what is classified.
                 "expires" => {
-                    Timer::sleep(&<OnTokio as Harness>::runtime(), bound).await;
+                    Timer::sleep(&<OnTokio as Harness>::runtime(), bound / 2).await;
                     Err(LockTimedOut::new(bound).into())
                 }
                 "broken" => Err("the lock connection was refused".into()),
@@ -116,9 +117,13 @@ fn a_lock_that_never_frees_fails_retryably_at_the_bound() {
     waited_to_the_bound("held");
 }
 
+/// Planted break: `LockTimedOut` not recognised down the lock error's chain.
 #[test]
 fn a_lock_wait_that_expires_in_the_store_fails_retryably() {
-    waited_to_the_bound("expires");
+    let (error, took) = connect("expires", BOUND);
+    assert!(!is_permanent(&error), "a lock wait the store timed out is permanent: {error}");
+    assert!(took < BOUND, "failed after {took:?}: the module's bound ended it, not the store's answer");
+    assert!(error.to_string().contains("migration lock"), "the failure does not name the lock: {error}");
 }
 
 #[test]

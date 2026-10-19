@@ -9,7 +9,7 @@ use ulo_db_mongodb::{Mongo, MongoOptions};
 use ulo_db_conformance::MigrationProbe;
 
 #[path = "../../ulo-db-conformance/support/server.rs"]
-#[allow(dead_code, unused_imports)]
+#[allow(unused_imports)]
 mod server;
 
 struct Host {

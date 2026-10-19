@@ -15,7 +15,8 @@ const MAX_CHAIN: usize = 32;
 /// `detail`, each check with its redacted reason.
 ///
 /// `checks` maps a check's name to an array, as the draft's `checks` object does, so two checks of
-/// one name, two keyed stores of one kind, are both listed.
+/// one name are both listed: two stores of one kind built from options inside two keyed modules of
+/// the application's own, whose store modules are not keyed themselves.
 pub(crate) fn render(report: &Report, detail: bool, app: &AppHandle) -> String {
     let mut body = Map::new();
     body.insert(String::from("status"), Value::from(status(report.is_up())));

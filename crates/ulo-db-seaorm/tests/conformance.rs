@@ -14,7 +14,7 @@ use ulo_db_conformance::MigrationProbe;
 use ulo_db_seaorm::{SeaOrm, SeaOrmMigrations, SeaOrmOptions};
 
 #[path = "../../ulo-db-conformance/support/server.rs"]
-#[allow(dead_code, unused_imports)]
+#[allow(unused_imports)]
 mod server;
 
 use server::{CREATE_TABLE, CREATE_TABLE_HELD_SQLITE, Counted};

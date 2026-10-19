@@ -22,7 +22,9 @@
 //!
 //! MySQL over TLS is exercised: `tests/tls.rs` starts MySQL 8 with a certificate a test CA issued,
 //! connects with `ssl-mode=verify_identity` and `ssl-ca` naming that CA, and shows a different CA
-//! and a plaintext connect refused. MySQL 8's `caching_sha2_password` authenticates over that
+//! and a plaintext connect refused. A server certificate rustls refuses is `Permanent`, so a start
+//! over a different CA fails at its first attempt; an expired or not-yet-valid one stays retryable,
+//! since it reads the local clock. MySQL 8's `caching_sha2_password` authenticates over that
 //! channel with no RSA exchange. The Postgres TLS path is not exercised by any test; SQLite has
 //! none.
 //!
@@ -33,8 +35,8 @@
 //! an unreachable server lasts `acquire_timeout_secs`, 5 s unless set (SQLx's own default is 30 s,
 //! as long as the default total connect bound). A configuration error and a database error with
 //! SQLSTATE class `28` or `3D000` (Postgres), `28000` or `42000` (MySQL) or SQLite's `CANTOPEN` are
-//! `ulo::Permanent` and end the start at once; `Io`, `PoolTimedOut`, `WorkerCrashed` and `Tls` are
-//! retried.
+//! `ulo::Permanent` and end the start at once, as does a server certificate rustls refuses (TLS
+//! coverage above); any other `Io`, `PoolTimedOut`, `WorkerCrashed` and `Tls` are retried.
 //!
 //! SQLx opens a SQLite file read-write without creating it. `sqlite:data.db?mode=rwc` creates a
 //! missing file, and a missing one without it fails the first ping as a permanent error.
@@ -44,13 +46,19 @@
 //!
 //! # A `PoolConnection` moved off the runtime
 //!
-//! If another crate in the build compiles SQLx's `runtime-smol` in beside `runtime-tokio`, SQLx
-//! tests for a tokio context at every spawn. A `PoolConnection` dropped on a thread with no tokio
-//! context, such as one user code moved to a plain `std::thread`, returns to its pool through a task
-//! spawned on smol's global executor, which starts threads the application did not ask for. Measured
-//! in `tests/smol_drop.rs`: the pool's `after_release` callback ran on a thread named `smol-*`. The
-//! pool still works. The remedy is to drop the connection on a tokio thread, or to hold it in a
-//! task spawned on the app's runtime.
+//! A `PoolConnection` returns to its pool through a task SQLx spawns in its `Drop`, and SQLx tests
+//! for a tokio context at that spawn. Dropped on a thread with no tokio context, such as one user
+//! code moved the connection to with `std::thread::spawn`:
+//!
+//! - With `runtime-tokio` alone, as this crate builds SQLx, the drop panics with "this
+//!   functionality requires a Tokio context". Measured by running `tests/smol_drop.rs` without the
+//!   `runtime-smol` dev-dependency.
+//! - If another crate in the build compiles SQLx's `runtime-smol` in beside it, the return task
+//!   goes to smol's global executor, which starts threads the application did not ask for. Measured
+//!   in `tests/smol_drop.rs`: the pool's `after_release` callback ran on a thread named `smol-*`.
+//!
+//! The remedy in both is to drop the connection on a tokio thread, or to hold it in a task spawned
+//! on the app's runtime.
 //!
 //! # Migrations
 //!

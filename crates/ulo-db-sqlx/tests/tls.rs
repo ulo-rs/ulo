@@ -8,15 +8,18 @@
 
 #![cfg(all(feature = "integration", feature = "mysql", feature = "tls"))]
 
+use std::time::{Duration, Instant};
+
 use serde_json::json;
-use ulo_db::Store;
+use ulo::{App, Module, ModuleDef, ModuleIdentity, is_permanent};
+use ulo_db::{Store, StoreModule};
 use ulo_db_conformance::{Harness, OnTokio};
 use ulo_db_sqlx::sqlx::{self, Connection};
 use ulo_db_sqlx::{MySql, MySqlOptions};
 use ulo_test_certs::Ca;
 
 #[path = "../../ulo-db-conformance/support/server.rs"]
-#[allow(dead_code, unused_imports)]
+#[allow(unused_imports)]
 mod server;
 
 fn options(port: u16, mode: &str, ca: Option<&std::path::Path>) -> MySqlOptions {
@@ -34,7 +37,6 @@ fn root_file(ca: &Ca) -> (server::Scratch, std::path::PathBuf) {
     std::fs::write(&path, ca.cert_pem()).expect("the root file is written");
     (dir, path)
 }
-
 
 /// Pings `options` through the store, answering the cipher the session negotiated.
 async fn connect(options: &MySqlOptions) -> Result<String, String> {
@@ -65,8 +67,10 @@ async fn direct(options: &MySqlOptions) -> Result<(), sqlx::Error> {
     sqlx::MySqlConnection::connect(options.url.expose()).await.map(|_| ())
 }
 
-/// Planted breaks: the wrong-root case run with `ssl-mode=required`, which does not verify, and
-/// connects; the same case with `ssl-mode=disabled`.
+/// A certificate no supplied root issued is refused at the handshake, and a start over it fails at
+/// its first attempt as `Permanent` rather than retrying to `connect_within`. Planted breaks: the
+/// wrong-root case run with `ssl-mode=required`, which does not verify, and connects; the same case
+/// with `ssl-mode=disabled`; a classifier that reads the refused certificate as retryable.
 #[test]
 fn a_tls_connect_verifies_the_server_through_the_supplied_root() {
     <OnTokio as Harness>::block_on(async {
@@ -87,8 +91,34 @@ fn a_tls_connect_verifies_the_server_through_the_supplied_root() {
             other => panic!("verifying through a root that did not issue the certificate was not a TLS failure: {other:?}"),
         }
 
+        let (error, took) = start(options(port, "verify_identity", Some(&wrong_root))).await;
+        assert!(is_permanent(&error), "a certificate no supplied root issued is retryable, failing after {took:?}: {error}");
+        assert!(took < Duration::from_secs(5), "a certificate no supplied root issued took {took:?} to refuse the start");
+
         if direct(&options(port, "disabled", None)).await.is_ok() {
             panic!("a connect without TLS succeeded against a server that requires it");
         }
     });
+}
+
+struct Root(MySqlOptions);
+
+impl Module for Root {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_value(&self.0.url.expose().clone())
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.import(StoreModule::<MySql>::from_options(self.0.clone()).connect_within(Duration::from_secs(15)));
+    }
+}
+
+/// The start of an app whose only module is the store over `options`, refused, and how long it took.
+async fn start(options: MySqlOptions) -> (ulo::StartupError, Duration) {
+    let app = App::builder(Root(options)).runtime(<OnTokio as Harness>::runtime()).wire().expect("wires");
+    let began = Instant::now();
+    match app.connect().await {
+        Err(error) => (error, began.elapsed()),
+        Ok(_) => panic!("a start verifying the server through a root that did not issue its certificate connected"),
+    }
 }

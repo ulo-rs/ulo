@@ -19,7 +19,9 @@ tls = ["redis/tokio-rustls-comp", "redis/tls-rustls-webpki-roots"]
 
 # Compiles redis-rs's `smol-comp` in beside `tokio-comp`, which is what makes `prefer_tokio()` exist.
 # The crate then calls it once per process and logs a refusal at `warn`. The two rustls features ride along
-# because redis-rs 1.7.1 does not compile `smol-comp` beside tokio's runtime without a TLS feature for each.
+# because redis-rs 1.7.1 does not compile `smol-comp` once any crate in the build turns on `tls-rustls`
+# (this crate's `tls`, or `ulo-rpc-redis`'s) without `smol-rustls-comp`, which in turn needs
+# `tokio-rustls-comp`; `smol-comp` alone compiles. So the feature also compiles rustls in.
 smol-comp = ["redis/smol-comp", "redis/smol-rustls-comp", "redis/tokio-rustls-comp"]
 
 [dependencies]

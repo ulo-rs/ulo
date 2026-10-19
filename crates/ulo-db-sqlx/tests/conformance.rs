@@ -14,7 +14,7 @@ use ulo_db_conformance::{Capabilities, MigrationProbe};
 use ulo_db_sqlx::sqlx;
 
 #[path = "../../ulo-db-conformance/support/server.rs"]
-#[allow(dead_code, unused_imports)]
+#[allow(unused_imports)]
 mod server;
 
 use server::{CREATE_TABLE, Counted};

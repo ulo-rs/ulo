@@ -5837,6 +5837,7 @@ dependencies = [
  "cfg-if 1.0.5",
  "combine",
  "futures-channel",
+ "futures-rustls",
  "futures-util",
  "itoa",
  "num-bigint 0.5.1",
@@ -8257,6 +8258,7 @@ dependencies = [
  "saphyr",
  "saphyr-parser",
  "serde",
+ "serde_json",
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "ulo",
@@ -8373,6 +8375,7 @@ name = "ulo-db-sqlx"
 version = "0.1.0-alpha.1"
 dependencies = [
  "futures-channel",
+ "rustls",
  "serde",
  "serde_json",
  "sqlx",
@@ -8479,6 +8482,7 @@ dependencies = [
  "ulo-http",
  "ulo-listener-tokio",
  "ulo-net",
+ "ulo-runtime-tokio",
  "ulo-server-hyper",
  "ulo-transport",
 ]

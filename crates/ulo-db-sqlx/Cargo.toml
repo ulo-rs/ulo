@@ -16,7 +16,7 @@ default = ["tls"]
 # TLS through rustls over ring with the platform's roots: ring is the provider the workspace's
 # `rustls` entry is built with, so no second provider is added. No `mysql-rsa`: over TLS
 # `caching_sha2_password`'s full authentication needs no RSA key exchange.
-tls = ["sqlx/tls-rustls-ring-native-roots"]
+tls = ["sqlx/tls-rustls-ring-native-roots", "dep:rustls"]
 postgres = ["sqlx/postgres"]
 mysql = ["sqlx/mysql"]
 sqlite = ["sqlx/sqlite"]
@@ -35,6 +35,9 @@ serde = { workspace = true, features = ["derive"] }
 # The SQLite migration lock waits on a thread of its own and answers through a oneshot.
 futures-channel.workspace = true
 tracing.workspace = true
+# The type of a refused server certificate, which SQLx hands back inside an I/O error; SQLx's own
+# rustls, so no second copy or provider.
+rustls = { workspace = true, optional = true }
 
 [dev-dependencies]
 # `tests/smol_drop.rs` builds SQLx with `runtime-smol` beside `runtime-tokio`, as feature unification

@@ -39,19 +39,21 @@
 //!
 //! # TLS coverage
 //!
-//! No test exercises a TLS connection through this store. The SQLx pool underneath is the one
-//! `ulo-db-sqlx` builds, whose MySQL TLS path is exercised there.
+//! No test exercises a TLS connection through this store. On Postgres and MySQL SeaORM builds its
+//! own SQLx pool, over the SQLx and TLS features `ulo-db-sqlx` shares, so `ulo-db-sqlx`'s MySQL TLS
+//! test exercises SQLx's handshake but not this store's pool or its error classification; only
+//! SQLite uses `ulo-db-sqlx`'s pool.
 //!
 //! # A pooled connection moved off the runtime
 //!
-//! SeaORM holds an SQLx pool, so what `ulo-db-sqlx` documents applies. If another crate in the
-//! build compiles SQLx's `runtime-smol` in beside `runtime-tokio`, SQLx tests for a tokio context
-//! at every spawn. An SQLx `PoolConnection` dropped on a thread with no tokio context, such as one
-//! user code moved to a plain `std::thread`, returns to its pool through a task spawned on smol's
-//! global executor, which starts threads the application did not ask for. Measured by
-//! `ulo-db-sqlx`'s `tests/smol_drop.rs`: the pool's `after_release` callback ran on a thread named
-//! `smol-*`. The pool still works. The remedy is to drop the connection on a tokio thread, or to
-//! hold it in a task spawned on the app's runtime.
+//! SeaORM holds an SQLx pool, so what `ulo-db-sqlx` documents applies. An SQLx `PoolConnection`
+//! dropped on a thread with no tokio context, such as one user code moved to a plain
+//! `std::thread`, panics in its `Drop` with "this functionality requires a Tokio context" when SQLx
+//! is built with `runtime-tokio` alone. If another crate in the build compiles SQLx's
+//! `runtime-smol` in beside it, the connection returns to its pool through a task spawned on smol's
+//! global executor, which starts threads the application did not ask for. Both are measured by
+//! `ulo-db-sqlx`'s `tests/smol_drop.rs`. The remedy is to drop the connection on a tokio thread, or
+//! to hold it in a task spawned on the app's runtime.
 
 mod migrate;
 mod options;
