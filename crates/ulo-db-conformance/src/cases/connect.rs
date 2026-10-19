@@ -33,10 +33,11 @@ const EARLY: Duration = Duration::from_millis(100);
 /// the bound. A store whose `create` connects nothing fails as `ConnectError::Readiness`, the
 /// `.ready(ping)` check timing out as a whole. A store whose `create` connects fails as
 /// `ConnectError::Construct`, its loop around `create` reaching the construction bound, or as
-/// `ConnectError::Readiness` from the one confirming ping, under the attempt bound. Which store is
-/// which is [`Store::create_connects`] over the host's unreachable options: MongoDB on a plain
-/// `mongodb://` URL is the first kind. The app sets that attempt bound, `construct_timeout`, to the
-/// connect bound, so either path waits at least the bound and at most the bound plus one attempt.
+/// `ConnectError::Readiness` from the one confirming ping, under the attempt bound.
+/// [`Store::create_connects`] over the host's unreachable options decides the kind: MongoDB connects
+/// nothing in `create` on a plain `mongodb://` URL and connects there on a `mongodb+srv://` one. The
+/// app sets that attempt bound, `construct_timeout`, to the connect bound, so either path waits at
+/// least the bound and at most the bound plus one attempt.
 pub async fn unreachable_fails_at_the_bound<H: Host>() {
     let host = H::start().await;
     let module = bounded::<H>(host.unreachable_options(), WITHIN);
@@ -172,7 +173,7 @@ fn assert_permanent_at_once<H: Host>(
             assert_eq!(*attempts, 1, "{what} were retried: the readiness check made {attempts} attempts in {took:?}");
         }
         ConnectError::Construct { .. } => assert!(
-            <H::Store as Store>::create_connects(&options),
+            <H::Store as Store>::create_connects(options),
             "{what} failed the construction of a store whose `create` connects nothing: {connect}"
         ),
         other => panic!("{what} failed outside the construction and the readiness check: {other}"),

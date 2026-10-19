@@ -11,9 +11,11 @@
 //! `.ready` under `connect_within`. A wrong password is `Permanent` and ends the start at its first
 //! attempt. The store has no `.migrate(..)`.
 //!
-//! `set_number_of_retries` is 3 (probed, PROBES_db.md section 9): it governs every reconnect, so a
-//! command rides out an outage of about 1.2 s, and one `.ready` attempt against an unreachable
-//! server or a wrong password costs about that long. The default of 6 would cost 9.5 s per attempt.
+//! `set_number_of_retries` is 0 (PROBES_db.md sections 9 and 9.1), so `.ready` is the one retry
+//! policy. The setting governs every reconnect as well as the first connection, but a brief outage
+//! costs one failed command at every setting and recovery takes the same time, so the library's
+//! retries add only a longer wait before a failure: a wrong password fails in 2 ms at 0, 1.2 s at 3
+//! and 9.5 s at the default of 6.
 //!
 //! # The runtime preference
 //!

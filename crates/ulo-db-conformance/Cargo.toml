@@ -25,5 +25,9 @@ ulo-conformance-support = { path = "../ulo-conformance-support" }
 # `select` and `join` for a scenario's timeouts and its overlapping connects, which need no runtime.
 futures-util.workspace = true
 
+[dev-dependencies]
+# `OnTokio` for `tests/create_loop.rs`.
+ulo-conformance-support = { path = "../ulo-conformance-support", features = ["tokio"] }
+
 [lints]
 workspace = true

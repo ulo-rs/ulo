@@ -559,3 +559,31 @@ The store takes N=3 (`RECONNECT_RETRIES`). `AuthenticationFailed` is already `Pe
 
 Container state: one container created, `ulo-conf-redis-probe`, removed by name; no other container
 was touched and no prune was run.
+
+### 9.1 Checked (2026-10-19, the batch's checker)
+
+Rerun with the same scratch crate against a container named `ulo-conf-redis-check` on a fixed
+loopback port, removed by name afterwards; no other container touched, no prune. The outage was
+`docker stop -t 0`, a sleep, `docker start`, with `PING` every 250 ms. Rows (1) to (3) reproduce to
+the millisecond: wrong password 2.9 ms, 154 ms, 1.16 s and 9.47 s at N=0, 1, 3 and 6; refused port
+0.22 ms, 151 ms and 1.16 s at N=0, 1 and 3.
+
+| Outage (server answering again after) | N=0 | N=3 | Mark |
+| --- | --- | --- | --- |
+| about 0.3 s | 2 failures, each under 0.1 ms; success at 1.26 s | 1 failure; success at 1.01 s | Probed |
+| 1.4 s | 6 failures, each under 0.2 ms; success at 2.53 s | 2 failures, the second after waiting 0.91 s; success at 2.17 s | Probed |
+| 4.4 s | 18 failures, each under 0.2 ms; success at 5.30 s | 4 failures, each after waiting 0.90 s; success at 5.39 s | Probed |
+| a host that never answers (10.255.255.1), `set_connection_timeout(1 s)`, first `PING` | `Io` after 1.00 s | `Io` after 5.16 s | Probed |
+
+What this changes in the conclusion above:
+
+- The command that meets the dropped connection fails at every N. At N=3 a later command waits
+  about 0.9 s and, in an outage of 1.4 s or longer, still fails; no command spanning a 1 s outage
+  succeeded. N=3 removed one failed command in the 0.3 s outage and none of the recovery time,
+  which is the same as N=0's to within one 250 ms tick in every row. "A command rides out an outage
+  of about 1.2 s" is not supported.
+- Against a host that never answers, one first connection makes N+1 tries, each under the connection
+  timeout. At the store's 5 s default and N=3, one `.ready` attempt would last about 21 s of a 30 s
+  `connect_within` (extrapolated from the 1 s row, not probed).
+- The suite is green at N=0 and at N=3; at N=6 `unreachable_database_fails_at_the_bound`
+  fails, one attempt outlasting the bound. The suite does not choose between 0 and 3.

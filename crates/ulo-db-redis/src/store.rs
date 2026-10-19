@@ -10,16 +10,17 @@ use ulo_db::{LazyStore, Store};
 use crate::options::RedisOptions;
 
 /// One connection attempt's bound when the options set none. redis-rs's own default is 1 s, short
-/// for a TLS handshake to a remote server; `ulo-db`'s loop repeats the attempt under
-/// `connect_within`, so a longer bound here only caps the slowest single try.
+/// for a TLS handshake to a remote server. With [`RECONNECT_RETRIES`] at 0 one command that connects
+/// makes one try, so against a host that never answers one `.ready` attempt lasts this bound;
+/// `.ready` repeats the attempt under `connect_within`.
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The manager's own reconnect attempts per command, `set_number_of_retries`. It governs every
-/// reconnect, not only the first connection (PROBES_db.md section 9): 0 makes a command fail at
-/// once while the server is down, and a large value makes each command, and each `.ready` attempt,
-/// wait out the whole backoff before it fails (9.5 s at 6, a wrong password included). At 3 an
-/// attempt costs about 1.2 s and a command rides out an outage of about that length.
-const RECONNECT_RETRIES: usize = 3;
+/// The manager's own reconnect attempts per command, `set_number_of_retries`, switched off so that
+/// `.ready` is the one retry policy (DESIGN decision 48). It governs every reconnect, not only the
+/// first connection (PROBES_db.md sections 9 and 9.1): a wrong password fails in 2 ms instead of
+/// 1.2 s at 3 and 9.5 s at 6. Recovery from an outage takes the same time at every setting, so the
+/// retries buy a command nothing but a longer wait before it fails.
+const RECONNECT_RETRIES: usize = 0;
 
 /// The outcome of the process's one runtime-preference step, recorded for every later Redis module.
 static TOKIO_PREFERENCE: OnceLock<Result<(), String>> = OnceLock::new();
@@ -92,8 +93,7 @@ impl Store for Redis {
 
     /// `ConnectionManager::new_lazy_with_config`: synchronous, connects nothing and fails only on a
     /// URL the client cannot open. A connection attempt is bounded by the connection timeout, 5 s
-    /// unless the options set it, and repeats up to [`RECONNECT_RETRIES`] times inside the command
-    /// that made it.
+    /// unless the options set it, and is not repeated inside the command that made it.
     fn create(o: &RedisOptions) -> BoxFuture<'static, Result<ConnectionManager, BoxError>> {
         let url = o.url.clone();
         let connection_timeout = o.connection_timeout_secs.map_or(CONNECTION_TIMEOUT, Duration::from_secs);
