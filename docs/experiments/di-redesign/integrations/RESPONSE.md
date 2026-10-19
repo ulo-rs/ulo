@@ -654,3 +654,45 @@ Premise to check: whether redis-rs exposes the preference.
 - N1: accepted. 1.89 on `ulo-db-diesel` itself, for `File::lock`. The earlier "Diesel's own floor" was wrong, since Diesel's floors are lower.
 - N2: accepted, including the exact pin. A setter outside ureq's semver guarantee is what an exact pin is for, and bumping it is a deliberate change with its own test.
 - N3: accepted. `K = 3490428366386280370`. Not being a multiple of SQLx's multiplier is the right argument: no database name can make the two keys meet.
+
+---
+
+# Sixth response (to QUESTIONS_4, first part)
+
+Q1: accepted. `Defaults::of::<T>()` takes `T: Default + Serialize` and reads `T::default()` into the tree through serde, so a default carries the origin "default". Limit: `Secret` has no `Serialize`, by decision, so a section type holding a `Secret` cannot use `Defaults::of`; it uses serde's `#[serde(default)]`. The documentation of `Defaults` says so.
+
+Q2: accepted, but declared rather than ignored (later withdrawn, see the seventh response).
+
+Q3: agreed. Running out of time waiting for another replica's lock is retryable: another replica is migrating, not a wrong configuration. `is_permanent` answers false; the wait is bounded by `connect_within`. A migration that itself fails stays `Permanent`. Correct the docs on `run_locked` and `MigrationFailed`.
+
+Q4: accepted. Add `ModuleDef::qualifier`. The check name becomes `S::NAME @ Qualifier`, printed short as reports print types, and plain `S::NAME` when unkeyed.
+
+Q5: drop `.lazy()` for Mongo (superseded by the seventh response).
+
+Q6: refuse, for parity. A caller-set `traceparent`, or a caller-set `tracestate` on a `Received` context, is refused by `outgoing` as `INVALID_ARGUMENT` with the reason `reserved_header`, in RPC's wording. `trace::inject` keeps its frozen signature. An `Originated` context still merges the caller's `tracestate`. A test per refusal on the gRPC side.
+
+Q7: accepted. Only the variables OpenTelemetry's specification defines, stated at the module. Where ulo passes a value explicitly, that value wins over the environment's.
+
+Q8: accepted. A `warn` when the feature is on and the call returns its error, and nothing otherwise. Correct S3's ruling text.
+
+Q9: the refusal is confirmed (a written wait needs a `Timer`, §3.9).
+
+Q10: add the TLS recipe, MySQL first, Mongo after. Until it lands, each store's documentation marks its TLS path unexercised.
+
+Q11: if the test fails, document it. Refusing is not possible: SQLx exposes no way to see `runtime-smol`. Document the case, the measured behaviour and the remedy (drop the connection on a tokio thread).
+
+Q12: refused, not treated as the default. `Bound::After(ZERO)` on `roots_timeout` is refused by the zero rule: on a client in `usable`, on a server in `prepare`.
+
+Q13: confirmed. `Bound::Default` there is the link's own 30 s.
+
+Q14, Q15: see transports/RESPONSE.md, the sixty-seventh response.
+
+On the record: measure the Mongo stall in release; record the number in the store's documentation. SQLx's lock-removal break staying green is acceptable, and the scenario's comment says so (the build later showed the ordering break is also green on sqlx; see the build log). `ulo-db-prisma` is not built.
+
+# Seventh response (to QUESTIONS_4, the laziness correction)
+
+Mongo: (b). `Store`'s `const CREATE_CONNECTS: bool` becomes `fn create_connects(o: &Self::Options) -> bool`, decided by the options. `mongodb://` is false: lazy again, offers `.lazy()`. `mongodb+srv://` is true: the retry loop under `connect_within`, no `.lazy()`. `.lazy()` on a `+srv` module is refused at registration through `try_value`, naming the scheme. S2's ruling is revised: it answered store-wide for a case only one scheme has. Other stores answer from their own nature.
+
+Redis: `new_lazy_with_config`, after the probe. With `create_connects` false, `.ready(..)` is Redis's retry policy. Redis offers `.lazy()`. What decides `set_number_of_retries` is what it governs: first connection only, keep 0; also reconnects while serving, keep nonzero. The probe answers (first command connects, wrong password's time to fail at each setting, a server restarted mid-service recovering at each setting). Redis's authentication error is `Permanent` in `ping`.
+
+SeaORM on SQLite: accepted. Build the pool through `ulo-db-sqlx`'s lazy pool, wrapped by `SqlxSqliteConnector::from_sqlx_sqlite_pool`; map the SeaORM pool options the store exposes onto SQLx's and document which. SeaORM's SQLite `ping` checks `sqlite_version()` against 3.35 and refuses an older version as `Permanent` naming `RETURNING`. The `not_applicable` declaration is withdrawn: `lazy_readiness_waits_for_the_first_ping` runs on SeaORM's SQLite, and a planted eager `create` must fail it.

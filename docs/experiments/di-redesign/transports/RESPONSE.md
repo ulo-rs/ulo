@@ -2428,3 +2428,11 @@ Run it on TCP, UDP, and every broker link that held such a loop.
 - **Batch 42 S2:** changed, as point 3 above.
 - **Batch 39 S3, S4, S6 and S8** were answered in the sixty-fourth response: S3 changed to the loader seam, S4 accepted, S6 accepted as the production slot, S8 accepted and documented.
 - **The rest of batch 41 (S1, S3, S5–S12) and batch 42 (S1, S3–S5):** accepted as reported, on the strength of the user's note that these were the ones worth the designer's eye. Any among them that loosens a declared capability, changes a public signature, or departs from a §3 principle comes back to the designer on its own; do not fold it into this acceptance.
+
+---
+
+# Sixty-seventh response (to the Q14 and Q15 cases of integrations/QUESTIONS_4.md)
+
+Q14: change the signature, and make a `close` that finds the app already dropped say so. `close` is an inherent method, so going from `async fn close(&self, ..)` to `fn close(&self, ..) -> impl Future<Output = ..> + Send` leaves every `handle.close(sig).await` compiling. The claim is taken at the call; the trigger still happens at the first poll. Rule: a `close` future dropped without being polled releases its claim. `Owner::drop` with claims outstanding leaves the servers to them (batch 45). When the last claim drops without a shutdown having started and the app is already dropped, that drop releases the servers itself. A `close` answering `Ok` when it closed nothing must change, in both windows: add `ShutdownFailure::Dropped` (additive on the non-exhaustive enum), so such a `close` answers `Err(ShutdownError)` stating the app was dropped before its shutdown ran. Tests: a `close` made before the drop and polled after runs every server's `close` and the hooks; a `close` made and dropped unpolled after the drop frees the store; a `close` called after the drop answers `Dropped`; the p04 race harness runs the first case without its spin.
+
+Q15: in beside it. F433 and F434 join, each with F428's test form adapted to its crate, each fix breaking the cycle at the owner's drop.
