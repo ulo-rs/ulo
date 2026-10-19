@@ -76,8 +76,8 @@ pub enum Bound {}
 /// claim.
 ///
 /// An [`AppHandle`] kept past the drop keeps the app's shared state, its singletons among it, and
-/// no server once they are released: a `close` called on it after that, with no other claim held
-/// and the close step not ended, runs none of the shutdown's steps and answers `Err` carrying
+/// no server once they are released: a `close` called on it after that, the close step not
+/// ended, runs none of the shutdown's steps and answers `Err` carrying
 /// [`ShutdownFailure::Dropped`](crate::ShutdownFailure::Dropped). Once a shutdown has run its close
 /// step, a `close` after the drop answers that shutdown's outcome.
 pub struct App<S = Wired> {

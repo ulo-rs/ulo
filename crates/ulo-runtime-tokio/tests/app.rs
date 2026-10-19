@@ -980,6 +980,21 @@ async fn a_close_called_after_the_app_s_drop_answers_that_the_app_was_dropped() 
     assert_eq!(log.events().last().map(String::as_str), Some("store dropped"), "the store outlived the last handle");
 }
 
+/// A second `close` called after the drop while the first, which answers `Dropped`, still holds its
+/// claim finds the servers released too: it answers `Dropped` and runs no hook.
+#[tokio::test]
+async fn a_close_called_after_the_drop_beside_another_answers_that_the_app_was_dropped() {
+    let Paired { app, log, .. } = paired(&[]).await;
+    let handle = app.handle();
+    drop(app);
+    let first = handle.close(Signal::new("first"));
+    let second = handle.close(Signal::new("second"));
+    let error = second.await.expect_err("a close beside another after the app's drop answered `Ok`");
+    assert!(matches!(&*error.failures, [ShutdownFailure::Dropped]), "the close answered {error}");
+    assert!(first.await.is_err_and(|first| matches!(&*first.failures, [ShutdownFailure::Dropped])), "the first close did not answer `Dropped`");
+    assert!(!log.has("before-shutdown"), "a close after the app's drop ran a hook: {:?}", log.events());
+}
+
 /// The first test's case raced on two workers: a `close` spawned before the app's drop, with no
 /// wait between the spawn and the drop. Every race closes every server. The races in which the
 /// phase still reads `Running` after the drop are ones the drop won, its shutdown not yet

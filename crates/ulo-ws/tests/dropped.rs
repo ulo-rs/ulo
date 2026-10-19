@@ -36,9 +36,11 @@ impl Drop for OnDrop {
     }
 }
 
-/// The in-memory adapter, recording its own drop and its subscription's.
+/// The in-memory adapter, recording its own drop and its subscription's. With `stalls`, its
+/// subscription is a stream that never yields nor ends, whatever drops.
 struct Watched {
     inner: InMemory,
+    stalls: bool,
     _dropped: OnDrop,
     flags: Arc<Flags>,
 }
@@ -51,7 +53,8 @@ impl BroadcastAdapter for Watched {
     fn subscribe(&self, node: NodeId) -> BoxStream<'static, (Target, Bytes)> {
         self.flags.subscribed.store(true, Ordering::SeqCst);
         let dropped = OnDrop(Arc::clone(&self.flags), |flags| &flags.subscription_dropped);
-        Box::pin(self.inner.subscribe(node).map(move |item| {
+        let carried = if self.stalls { futures_util::stream::pending().boxed() } else { self.inner.subscribe(node) };
+        Box::pin(carried.map(move |item| {
             let _ = &dropped;
             item
         }))
@@ -71,7 +74,7 @@ impl Lobby {
 }
 
 /// `WsModule` over a [`Watched`] adapter, the one gateway, and a singleton recording its drop.
-struct Root(Arc<Flags>);
+struct Root(Arc<Flags>, bool);
 
 impl Module for Root {
     fn identity(&self) -> ModuleIdentity {
@@ -81,6 +84,7 @@ impl Module for Root {
     fn register(&self, m: &mut ModuleDef<'_>) {
         let adapter = Watched {
             inner: InMemory::new(),
+            stalls: self.1,
             _dropped: OnDrop(Arc::clone(&self.0), |flags| &flags.adapter_dropped),
             flags: Arc::clone(&self.0),
         };
@@ -110,11 +114,21 @@ async fn within<F: Future>(what: &str, fut: F) -> F::Output {
 
 #[tokio::test]
 async fn a_hub_whose_app_is_dropped_unclosed_ends_its_delivery_task() {
+    dropped_unclosed(false).await;
+}
+
+/// The hub's drop aborts the delivery task: a subscription that never ends of itself still drops.
+#[tokio::test]
+async fn a_hub_dropped_unclosed_aborts_a_delivery_task_waiting_on_its_subscription() {
+    dropped_unclosed(true).await;
+}
+
+async fn dropped_unclosed(stalls: bool) {
     let before = alive_tasks();
     let flags = Arc::new(Flags::default());
     let app = within(
         "the app's start",
-        App::builder(Root(Arc::clone(&flags)))
+        App::builder(Root(Arc::clone(&flags), stalls))
             .runtime(Tokio::current())
             .wire()
             .unwrap_or_else(|error| panic!("the app did not wire: {error}"))

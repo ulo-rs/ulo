@@ -59,13 +59,17 @@ pub(crate) struct ShutdownCell {
     release: Mutex<Release>,
 }
 
-/// Whether the `App` value has dropped, how many `close` claims are held, and whether the close
-/// step has ended. One lock holds all three, so the drop and a claim taken or dropped on another
-/// thread see each other's change.
+/// Whether the `App` value has dropped, how many `close` claims are held, whether a drop has
+/// released the servers, and whether the close step has ended. One lock holds all four, so the
+/// drop and a claim taken or dropped on another thread see each other's change.
 #[derive(Default)]
 struct Release {
     app_dropped: bool,
     closing: usize,
+    /// Set when the count reaches zero with the `App` value dropped, by its drop or the last
+    /// claim's. A claim answering `Dropped` still counts, so the count alone cannot tell a later
+    /// claim that the servers are gone.
+    released: bool,
     servers_closed: bool,
 }
 
@@ -144,9 +148,8 @@ enum DrainEnd {
 /// trigger, starting the shutdown if none has started, at the returned future's first poll, which
 /// then waits for the one outcome.
 ///
-/// A claim taken once the `App` value has dropped, with no other claim held and the close step not
-/// ended, finds the servers released by a drop: the future runs no step and answers
-/// `ShutdownFailure::Dropped`.
+/// A claim taken once a drop has released the servers, the close step not ended, runs no step and
+/// answers `ShutdownFailure::Dropped`, as does every claim after it.
 pub(crate) fn close(
     shared: &Arc<AppShared>,
     signal: Signal,
@@ -174,7 +177,7 @@ struct Closing {
 impl Closing {
     fn claim(shared: &Arc<AppShared>) -> Self {
         let mut release = shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner);
-        let dropped = release.app_dropped && release.closing == 0 && !release.servers_closed;
+        let dropped = release.released && !release.servers_closed;
         release.closing += 1;
         Closing { shared: Arc::clone(shared), dropped }
     }
@@ -185,6 +188,7 @@ impl Drop for Closing {
         let last = {
             let mut release = self.shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner);
             release.closing -= 1;
+            release.released |= release.app_dropped && release.closing == 0;
             release.app_dropped && release.closing == 0
         };
         if last {
@@ -205,6 +209,7 @@ pub(crate) fn app_dropped(shared: &AppShared) {
     let now = {
         let mut release = shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner);
         release.app_dropped = true;
+        release.released |= release.closing == 0;
         release.closing == 0
     };
     if now {
