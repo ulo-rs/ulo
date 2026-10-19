@@ -11,6 +11,9 @@ keywords = ["ulo", "redis", "database"]
 categories = ["database"]
 
 [features]
+# Builds `tests/conformance.rs`, which starts a server in a container per scenario and so needs a
+# running Docker daemon.
+integration = []
 # `rediss://`, through rustls with the webpki roots, as `ulo-rpc-redis`'s `tls` feature does.
 tls = ["redis/tokio-rustls-comp", "redis/tls-rustls-webpki-roots"]
 
@@ -22,6 +25,11 @@ ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.1" }
 redis = { workspace = true, features = ["connection-manager"] }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+testcontainers.workspace = true
+ulo-db-conformance = { path = "../ulo-db-conformance", features = ["tokio"] }
 
 [lints]
 workspace = true

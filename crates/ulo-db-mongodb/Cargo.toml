@@ -10,6 +10,11 @@ homepage.workspace = true
 keywords = ["ulo", "mongodb", "database"]
 categories = ["database"]
 
+[features]
+# Builds `tests/conformance.rs`, which starts a server in a container per scenario and so needs a
+# running Docker daemon.
+integration = []
+
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
 ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
@@ -18,6 +23,11 @@ ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.1" }
 # `dns-resolver` is what `mongodb+srv` needs. `compat-3-0-0` selects the driver's `bson` 2.
 mongodb = { workspace = true, features = ["compat-3-0-0", "rustls-tls", "dns-resolver"] }
 serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+testcontainers.workspace = true
+ulo-db-conformance = { path = "../ulo-db-conformance", features = ["tokio"] }
 
 [lints]
 workspace = true

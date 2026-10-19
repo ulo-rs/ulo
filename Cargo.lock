@@ -8224,12 +8224,15 @@ dependencies = [
  "diesel_migrations",
  "mysql_async",
  "serde",
+ "serde_json",
+ "testcontainers",
  "tokio",
  "tokio-postgres",
  "tracing",
  "ulo",
  "ulo-config",
  "ulo-db",
+ "ulo-db-conformance",
 ]
 
 [[package]]
@@ -8238,9 +8241,12 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "mongodb",
  "serde",
+ "serde_json",
+ "testcontainers",
  "ulo",
  "ulo-config",
  "ulo-db",
+ "ulo-db-conformance",
 ]
 
 [[package]]
@@ -8249,10 +8255,13 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "redis",
  "serde",
+ "serde_json",
+ "testcontainers",
  "tracing",
  "ulo",
  "ulo-config",
  "ulo-db",
+ "ulo-db-conformance",
 ]
 
 [[package]]
@@ -8262,10 +8271,14 @@ dependencies = [
  "sea-orm",
  "sea-orm-migration",
  "serde",
+ "serde_json",
+ "testcontainers",
+ "tokio",
  "tracing",
  "ulo",
  "ulo-config",
  "ulo-db",
+ "ulo-db-conformance",
  "ulo-db-sqlx",
 ]
 
@@ -8275,11 +8288,15 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "futures-channel",
  "serde",
+ "serde_json",
  "sqlx",
+ "testcontainers",
+ "tokio",
  "tracing",
  "ulo",
  "ulo-config",
  "ulo-db",
+ "ulo-db-conformance",
 ]
 
 [[package]]

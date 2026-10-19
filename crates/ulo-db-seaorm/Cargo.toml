@@ -19,6 +19,10 @@ postgres = ["sea-orm/sqlx-postgres", "sea-orm-migration/sqlx-postgres", "ulo-db-
 mysql = ["sea-orm/sqlx-mysql", "sea-orm-migration/sqlx-mysql", "ulo-db-sqlx/mysql"]
 sqlite = ["sea-orm/sqlx-sqlite", "sea-orm-migration/sqlx-sqlite", "ulo-db-sqlx/sqlite"]
 
+# Builds the Postgres and MySQL halves of `tests/conformance.rs`, which start a server in a container
+# per scenario and so need a running Docker daemon. The SQLite half needs only a file.
+integration = []
+
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
 ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
@@ -30,6 +34,12 @@ sea-orm = { workspace = true, features = ["runtime-tokio"] }
 sea-orm-migration = { workspace = true, features = ["runtime-tokio"] }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+testcontainers.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+ulo-db-conformance = { path = "../ulo-db-conformance", features = ["tokio"] }
 
 [lints]
 workspace = true

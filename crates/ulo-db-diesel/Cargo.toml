@@ -17,6 +17,9 @@ default = []
 postgres = ["diesel-async/postgres", "dep:tokio-postgres"]
 mysql = ["diesel-async/mysql", "dep:mysql_async"]
 sqlite = ["diesel-async/sqlite", "diesel/sqlite"]
+# Builds the Postgres and MySQL halves of `tests/conformance.rs`, which start a server in a container
+# per scenario and so need a running Docker daemon. The SQLite half needs only a file.
+integration = []
 
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
@@ -37,6 +40,11 @@ serde = { workspace = true, features = ["derive"] }
 # `block_in_place`, through which a dropped SQLite query waits for its blocking task.
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+testcontainers.workspace = true
+ulo-db-conformance = { path = "../ulo-db-conformance", features = ["tokio"] }
 
 [lints]
 workspace = true

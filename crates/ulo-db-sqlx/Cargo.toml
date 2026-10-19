@@ -20,6 +20,9 @@ tls = ["sqlx/tls-rustls-ring-native-roots"]
 postgres = ["sqlx/postgres"]
 mysql = ["sqlx/mysql"]
 sqlite = ["sqlx/sqlite"]
+# Builds the Postgres and MySQL halves of `tests/conformance.rs`, which start a server in a container
+# per scenario and so need a running Docker daemon. The SQLite half needs only a file.
+integration = []
 
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
@@ -32,6 +35,12 @@ serde = { workspace = true, features = ["derive"] }
 # The SQLite migration lock waits on a thread of its own and answers through a oneshot.
 futures-channel.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+testcontainers.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+ulo-db-conformance = { path = "../ulo-db-conformance", features = ["tokio"] }
 
 [lints]
 workspace = true
