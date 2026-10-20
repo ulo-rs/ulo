@@ -174,12 +174,14 @@ mod serde_impl {
     /// `#[serde(flatten)]` and `#[serde(untagged)]`, where serde buffers the field and the name
     /// never reaches the deserializer.
     ///
-    /// The limit: an error `T`'s own `Deserialize` raises through `Error::custom` is printed as
-    /// `T` wrote it, and such a message may quote its input. Outside `flatten` and `untagged`,
-    /// `ulo-config` renders a problem under a secret's path from the path and the kind alone. Under
-    /// them the secret is registered, through the collector, but its path is not known to be a
-    /// secret's, so a message its inner type raises is printed as written. A value that failed to
-    /// deserialise was never a secret value, so no later pass over the collected ones can scrub it.
+    /// The limit: an error `T`'s own `Deserialize` raises through `Error::custom` carries `T`'s
+    /// message, and such a message may quote its input. Outside `flatten` and `untagged`,
+    /// `ulo-config` renders a problem under a secret's path from the path and the kind alone.
+    /// Under them the secret is registered, through the collector, but its path is not known to
+    /// be a secret's, so `ulo-config` checks the section's problems afterwards against the text
+    /// of every secret the collector held and replaces a message that contains one. That holds
+    /// when `T` read its input as a scalar before it failed, which is what put the text in the
+    /// collector, and for a secret of four characters or more.
     ///
     /// `Secret` has no `Serialize`: writing one out through serde does not compile.
     impl<'de, T: Deserialize<'de>> Deserialize<'de> for Secret<T> {

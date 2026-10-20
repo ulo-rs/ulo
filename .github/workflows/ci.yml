@@ -36,6 +36,11 @@ jobs:
       # rather than a step in `check`, so a crate leaving its level fails under its own name and
       # does not stop the compile from reporting.
       - run: python3 scripts/runtime_levels.py --locked
+      # One `sqlx` and one `sqlx-core` in the workspace's own tree: `ulo-db-sqlx` hands its pool to
+      # SeaORM's connector, which needs both to name the same SQLx. Reads `cargo tree` too, so it
+      # shares this job's registry cache; `--self-test` inside it refuses a reader that has stopped
+      # recognising the tree.
+      - run: python3 scripts/one_sqlx.py --locked
 
   docs:
     name: docs

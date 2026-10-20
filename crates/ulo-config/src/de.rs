@@ -34,6 +34,9 @@ use crate::tree::{Node, Origin, Value, join_index, join_key};
 /// field, so this bounds the fields of one configuration that can be reported missing together.
 const MAX_PASSES: usize = 2048;
 
+/// The shortest secret `scrub` matches against problem messages.
+const MIN_SCRUBBED: usize = 4;
+
 #[derive(Debug)]
 enum Kind {
     /// Raised by `Error::custom`: a leaf type's own message, printed as it wrote it.
@@ -238,8 +241,12 @@ impl<'a> NodeDeserializer<'a> {
     }
 
     fn record(&self, message: String) {
+        self.record_in(message, false);
+    }
+
+    fn record_in(&self, message: String, flattened: bool) {
         let origin = self.origin().cloned();
-        self.ctx.problems.borrow_mut().list.push(Problem { path: self.path.clone(), origin, message });
+        self.ctx.problems.borrow_mut().list.push(Problem { path: self.path.clone(), origin, message, flattened });
     }
 
     /// Records that this node is not what the caller asked for. A node that is absent is reported
@@ -258,6 +265,10 @@ impl<'a> NodeDeserializer<'a> {
     }
 
     fn record_error(&self, error: DeError) -> DeError {
+        self.record_error_in(error, false)
+    }
+
+    fn record_error_in(&self, error: DeError, flattened: bool) -> DeError {
         if error.recorded {
             return error;
         }
@@ -267,7 +278,7 @@ impl<'a> NodeDeserializer<'a> {
         } else {
             error.message.clone()
         };
-        self.record(message);
+        self.record_in(message, flattened);
         error.silenced()
     }
 
@@ -316,7 +327,7 @@ impl<'a> NodeDeserializer<'a> {
         }
     }
 
-    fn table<'de, V: Visitor<'de>>(&self, visitor: V) -> Result<V::Value, DeError> {
+    fn table<'de, V: Visitor<'de>>(&self, visitor: V, via_map: bool) -> Result<V::Value, DeError> {
         let empty: &[(String, Node)] = &[];
         let (entries, silenced) = match self.target {
             Target::Node(Node { value: Value::Table(entries), .. }) => (entries.as_slice(), false),
@@ -342,24 +353,30 @@ impl<'a> NodeDeserializer<'a> {
             pending: None,
         };
         let result = visitor.visit_map(access);
-        self.table_result(result, silenced)
+        self.table_result(result, silenced, via_map)
     }
 
     /// A missing field ends the derive's pass over the struct, so it becomes a patch the driver
     /// supplies on the next pass. Anything else a visitor raised is recorded where it arose.
-    fn table_result<T>(&self, result: Result<T, DeError>, silenced: bool) -> Result<T, DeError> {
+    ///
+    /// An error that comes out of the visitor unrecorded was raised below a deserializer that is
+    /// not this one. Behind `#[serde(flatten)]`, which serde's derive reads through
+    /// `deserialize_map`, that is the buffered content, and its error names no key; it is
+    /// recorded against this table's path and origin and marked as inside a flattened section.
+    fn table_result<T>(&self, result: Result<T, DeError>, silenced: bool, via_map: bool) -> Result<T, DeError> {
         match result {
             Err(DeError { kind: Kind::Missing(field), recorded: false, .. }) => {
                 let problem = (!silenced).then(|| Problem {
                     path: join_key(&self.path, &field),
                     origin: self.origin().filter(|origin| !matches!(origin, Origin::Default)).cloned(),
                     message: "missing required field".to_owned(),
+                    flattened: false,
                 });
                 let message = format!("missing field `{field}`");
                 *self.ctx.new_patch.borrow_mut() = Some(NewPatch { parent: self.path.clone(), field: field.clone(), problem });
                 Err(DeError::new(Kind::Missing(field), message).silenced())
             }
-            other => self.done(other),
+            other => other.map_err(|error| self.record_error_in(error, via_map)),
         }
     }
 }
@@ -417,7 +434,7 @@ impl<'de, 'a> Deserializer<'de> for NodeDeserializer<'a> {
         };
         match &node.value {
             Value::Array(_) => self.seq(visitor),
-            Value::Table(_) => self.table(visitor),
+            Value::Table(_) => self.table(visitor, false),
             _ => match self.leaf() {
                 Leaf::Null => self.done(visitor.visit_unit()),
                 Leaf::Bool(flag) => self.done(visitor.visit_bool(flag)),
@@ -554,7 +571,7 @@ impl<'de, 'a> Deserializer<'de> for NodeDeserializer<'a> {
     }
 
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
-        self.table(visitor)
+        self.table(visitor, true)
     }
 
     fn deserialize_struct<V: Visitor<'de>>(
@@ -563,7 +580,7 @@ impl<'de, 'a> Deserializer<'de> for NodeDeserializer<'a> {
         _fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, DeError> {
-        self.table(visitor)
+        self.table(visitor, false)
     }
 
     fn deserialize_enum<V: Visitor<'de>>(
@@ -731,11 +748,18 @@ impl<'de, 'a> VariantAccess<'de> for VariantAcc<'a> {
 /// Second pass over the rendered problems: a message that contains the text of a collected secret
 /// is replaced whole. Under `#[serde(flatten)]` and `#[serde(untagged)]` no path is known to be a
 /// secret's, so a leaf type's `Error::custom` message reaches the problem list as written, and
-/// this is the only place it is checked against the values the section's secrets held. A short
-/// secret also replaces every message that happens to contain it.
+/// this is the only place it is checked against the values the section's secrets held. It reads
+/// the failures of the sources too, whose messages may quote the file's content.
+///
+/// A secret shorter than `MIN_SCRUBBED` characters is registered with the graph but not matched
+/// here: a one- or two-character text is contained in most messages, and replacing them all would
+/// hide every problem of the section without protecting anything a reader could recover.
 fn scrub(problems: &mut Problems, secrets: &BTreeSet<String>) {
     for problem in &mut problems.list {
-        if secrets.iter().any(|text| !text.is_empty() && problem.message.contains(text.as_str())) {
+        if secrets
+            .iter()
+            .any(|text| text.chars().count() >= MIN_SCRUBBED && problem.message.contains(text.as_str()))
+        {
             problem.message = "invalid value".to_owned();
         }
     }
@@ -787,7 +811,7 @@ pub(crate) fn section<T: DeserializeOwned>(
             (Err(error), _) => {
                 if !error.recorded {
                     let origin = root.map(|node| node.origin.clone());
-                    pass_problems.list.push(Problem { path: path.to_owned(), origin, message: error.message });
+                    pass_problems.list.push(Problem { path: path.to_owned(), origin, message: error.message, flattened: false });
                 }
                 found = pass_problems;
                 break;
@@ -803,7 +827,7 @@ pub(crate) fn section<T: DeserializeOwned>(
                 line: 0,
                 column: 0,
             });
-            problems.list.push(Problem { path: problem.path.clone(), origin: Some(origin), message: problem.message.clone() });
+            problems.list.push(Problem { path: problem.path.clone(), origin: Some(origin), message: problem.message.clone(), flattened: false });
         }
     }
     problems.list.extend(found.list);

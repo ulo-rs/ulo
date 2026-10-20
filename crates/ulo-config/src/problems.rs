@@ -9,6 +9,7 @@ pub struct Problem {
     pub(crate) path: String,
     pub(crate) origin: Option<Origin>,
     pub(crate) message: String,
+    pub(crate) flattened: bool,
 }
 
 impl Problem {
@@ -24,6 +25,15 @@ impl Problem {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// Whether the deserializer could not attribute this problem inside a `#[serde(flatten)]`
+    /// section: serde buffers a flattened field and gives its error no key, so the path and origin
+    /// are those of the struct that holds the flatten, not of the failing value. A problem is
+    /// never reported against a sibling field's origin; this marker says the path and origin name
+    /// the containing struct.
+    pub fn flattened(&self) -> bool {
+        self.flattened
     }
 }
 
@@ -46,7 +56,7 @@ impl Problems {
     /// Records a problem at `path`. Inside a section the path is relative to the section, and the
     /// section read prefixes it.
     pub fn at(&mut self, path: impl Into<String>, message: impl Into<String>) {
-        self.list.push(Problem { path: path.into(), origin: None, message: message.into() });
+        self.list.push(Problem { path: path.into(), origin: None, message: message.into(), flattened: false });
     }
 
     pub fn is_empty(&self) -> bool {
@@ -67,7 +77,7 @@ impl Problems {
     }
 
     pub(crate) fn at_origin(&mut self, path: impl Into<String>, origin: Origin, message: impl Into<String>) {
-        self.list.push(Problem { path: path.into(), origin: Some(origin), message: message.into() });
+        self.list.push(Problem { path: path.into(), origin: Some(origin), message: message.into(), flattened: false });
     }
 }
 
@@ -89,11 +99,15 @@ pub(crate) fn write_report(f: &mut fmt::Formatter<'_>, header: &str, problems: &
     write!(f, "{header} ({count} problem{plural})")?;
     for problem in &problems.list {
         f.write_str("\n")?;
+        let flattened = problem.flattened;
         match (problem.path.is_empty(), &problem.origin) {
             (true, Some(origin)) => write!(f, "{origin}: {}", problem.message)?,
             (true, None) => f.write_str(&problem.message)?,
             (false, Some(origin)) => write!(f, "{} at {origin}: {}", problem.path, problem.message)?,
             (false, None) => write!(f, "{}: {}", problem.path, problem.message)?,
+        }
+        if flattened {
+            f.write_str(" (inside a flattened section)")?;
         }
     }
     Ok(())

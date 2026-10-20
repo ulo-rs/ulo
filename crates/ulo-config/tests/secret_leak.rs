@@ -108,3 +108,69 @@ fn wrong_type_in_untagged_variant_leaks_nothing() {
 fn custom_error_in_untagged_variant_leaks_nothing() {
     assert_clean("untagged custom", &render::<Either<Quoting>>());
 }
+
+mod beyond_the_values {
+    use super::*;
+
+    fn read<T: for<'de> Deserialize<'de> + std::fmt::Debug>(config: &Config, path: &str) -> ulo_config::ConfigError {
+        Section::<T>::read(config, path).value().expect_err("the read must fail").clone()
+    }
+
+    /// A secret under four characters is registered but not matched, so a problem that happens to
+    /// contain it keeps its message.
+    #[derive(Debug, Deserialize)]
+    struct Short {
+        #[allow(dead_code)]
+        pin: Secret<String>,
+        #[allow(dead_code)]
+        port: u16,
+    }
+
+    #[test]
+    fn a_secret_under_four_characters_is_not_text_matched() {
+        // `st` is contained in the kind-only message "expected u16, found a string".
+        let config = Config::builder().source(Values::new().set("pin", "st").set("port", "label")).load();
+        let error = read::<Short>(&config, "");
+        let problem = error.problems().iter().find(|p| p.path() == "port").expect("the port problem");
+        assert_ne!(problem.message(), "invalid value", "a short secret replaced an unrelated message");
+
+        // At four characters the text is matched: `ring` is contained in the same message.
+        let config = Config::builder().source(Values::new().set("pin", "ring").set("port", "label")).load();
+        let error = read::<Short>(&config, "");
+        let problem = error.problems().iter().find(|p| p.path() == "port").expect("the port problem");
+        assert_eq!(problem.message(), "invalid value");
+    }
+
+    /// Serde's buffered content gives a flattened field's error no key. It was reported against
+    /// the sibling `name`'s origin with an empty path; it is now the containing struct's, marked.
+    #[test]
+    fn a_flattened_problem_is_marked_and_names_the_containing_struct() {
+        let config = Config::builder().source(Values::new().set("name", "n").set("password", SENTINEL)).load();
+        let error = read::<Flat<u32>>(&config, "");
+        let problem = error.problems().iter().next().expect("one problem");
+        assert!(problem.flattened());
+        assert_eq!(problem.path(), "");
+        assert!(problem.origin().is_some());
+        assert!(!problem.message().contains(SENTINEL));
+
+        // A problem the deserializer attributes itself is not marked.
+        let config = Config::builder().source(Values::new().set("password", SENTINEL)).load();
+        let error = read::<Direct<u32>>(&config, "");
+        assert!(error.problems().iter().all(|p| !p.flattened()));
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Holder {
+        #[allow(dead_code)]
+        db: Flat<u32>,
+    }
+
+    #[test]
+    fn a_flattened_problem_in_a_nested_table_carries_that_tables_path() {
+        let config = Config::builder().source(Values::new().set("db.name", "n").set("db.password", SENTINEL)).load();
+        let error = read::<Holder>(&config, "");
+        let problem = error.problems().iter().find(|p| p.flattened()).expect("a marked problem");
+        assert_eq!(problem.path(), "db");
+        assert!(matches!(problem.origin(), Some(ulo_config::Origin::Explicit { key }) if key.starts_with("db.")));
+    }
+}

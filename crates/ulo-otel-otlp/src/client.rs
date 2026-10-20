@@ -2,6 +2,7 @@ use std::fmt;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use http::{HeaderName, HeaderValue};
 use opentelemetry_http::{Bytes, HttpClient, HttpError, Request, Response, ResponseBodyTooLarge};
 use ulo::BoxError;
 use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
@@ -19,6 +20,21 @@ const MAX_RESPONSE_BODY: u64 = 4 * 1024 * 1024;
 /// given, so a process that links two providers and installs none still reaches a receiver.
 pub(crate) struct UreqClient {
     agent: ureq::Agent,
+    /// Applied after whatever the exporter set, so an explicit header replaces one the exporter
+    /// read from `OTEL_EXPORTER_OTLP_HEADERS` or `OTEL_EXPORTER_OTLP_TRACES_HEADERS`.
+    headers: Vec<(HeaderName, HeaderValue)>,
+}
+
+/// Where the agent's proxy comes from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ProxyChoice {
+    /// ureq's default: `ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`.
+    #[default]
+    Environment,
+    /// This URL, whatever the environment says.
+    Explicit(String),
+    /// No proxy, whatever the environment says.
+    Off,
 }
 
 impl UreqClient {
@@ -27,7 +43,11 @@ impl UreqClient {
     /// ureq builds its rustls configuration on the first https connection, where a failure would
     /// surface as an export error on every batch; building one here moves the refusal to
     /// construction.
-    pub(crate) fn new(timeout: Duration) -> Result<Self, BoxError> {
+    pub(crate) fn new(
+        timeout: Duration,
+        headers: Vec<(HeaderName, HeaderValue)>,
+        proxy: &ProxyChoice,
+    ) -> Result<Self, BoxError> {
         let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
 
         rustls::ClientConfig::builder_with_provider(provider.clone())
@@ -42,14 +62,23 @@ impl UreqClient {
 
         // A 4xx or 5xx answer is a response the exporter reads the status and `retry-after` of,
         // not an error.
-        let config = ureq::Agent::config_builder()
+        let builder = ureq::Agent::config_builder()
             .timeout_global(Some(timeout))
             .http_status_as_error(false)
-            .tls_config(tls)
-            .build();
+            .tls_config(tls);
+
+        // The proxy URL may carry credentials, so a refusal does not quote it.
+        let builder = match proxy {
+            ProxyChoice::Environment => builder,
+            ProxyChoice::Off => builder.proxy(None),
+            ProxyChoice::Explicit(url) => builder.proxy(Some(
+                ureq::Proxy::new(url).map_err(|_| "the OTLP proxy URL is not a valid proxy URL")?,
+            )),
+        };
 
         Ok(UreqClient {
-            agent: ureq::Agent::from(config),
+            agent: ureq::Agent::from(builder.build()),
+            headers,
         })
     }
 }
@@ -70,6 +99,12 @@ impl HttpClient for UreqClient {
             .method(parts.method.as_str())
             .uri(parts.uri.to_string());
         for (name, value) in &parts.headers {
+            if self.headers.iter().any(|(explicit, _)| explicit == name) {
+                continue;
+            }
+            outgoing = outgoing.header(name.as_str(), value.as_bytes());
+        }
+        for (name, value) in &self.headers {
             outgoing = outgoing.header(name.as_str(), value.as_bytes());
         }
         let outgoing = outgoing.body(body.to_vec())?;

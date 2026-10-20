@@ -9,7 +9,7 @@ use tonic::Code;
 use tonic::metadata::{AsciiMetadataValue, MetadataMap};
 use tracing::Span;
 use ulo::{TraceContext, TraceOrigin, TraceState};
-use ulo_transport::span;
+use ulo_transport::{CallError, Detail, Details, ErrorKind, span};
 
 /// The header a context is read from; a call without it carries none.
 pub(crate) const TRACEPARENT: &str = "traceparent";
@@ -35,20 +35,32 @@ fn texts<'a>(headers: &'a HeaderMap, name: &'static str) -> Option<Vec<&'a str>>
 
 /// Refuses a request whose caller set a header `outgoing` writes itself: `traceparent`, or
 /// `tracestate` when `context` is `Received`. `INVALID_ARGUMENT`, as the RPC client's
-/// `reserved_header` refusal is `BadRequest`; the status message carries the reason.
+/// `reserved_header` refusal is `BadRequest`: a `CallError` carrying an `ErrorInfo` detail whose
+/// reason is `reserved_header`, rendered through [`to_status`](crate::to_status) into
+/// `grpc-status-details-bin`. The message keeps the `reserved_header:` prefix.
 pub(crate) fn reserved(context: &TraceContext, metadata: &MetadataMap) -> Result<(), tonic::Status> {
     if metadata.contains_key(TRACEPARENT) {
-        return Err(tonic::Status::invalid_argument(format!(
+        return Err(refusal(format!(
             "reserved_header: the call set `{TRACEPARENT}` in its metadata, and `outgoing` reserves that header on an execution carrying a trace context, writing it from that context"
         )));
     }
     if context.origin() == TraceOrigin::Received && metadata.contains_key(TRACESTATE) {
-        return Err(tonic::Status::invalid_argument(format!(
+        return Err(refusal(format!(
             "reserved_header: the call set `{TRACESTATE}` in its metadata within an execution forwarding the context it received, which `outgoing` passes on unchanged; adding a vendor entry needs an exporter, a `TraceSource` such as `ulo-otel`'s, to originate the execution's context"
         )));
     }
     Ok(())
 }
+
+/// The `reserved_header` refusal as a status: `BadRequest` with the reason as an `ErrorInfo`.
+fn refusal(message: String) -> tonic::Status {
+    let info = Detail::ErrorInfo { reason: REASON.to_owned(), domain: DOMAIN.to_owned(), metadata: Default::default() };
+    crate::to_status(&CallError::new(ErrorKind::BadRequest, message).with_details(Details::new().with(info)))
+}
+
+/// The `ErrorInfo` reason of a refusal for a header `outgoing` writes itself, the RPC client's too.
+const REASON: &str = "reserved_header";
+const DOMAIN: &str = "ulo.grpc";
 
 /// Writes `context`, the calling execution's, into an outgoing request's `metadata` as
 /// `traceparent` and `tracestate`. `outgoing` has refused a caller's `traceparent`, and a

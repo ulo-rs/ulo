@@ -24,16 +24,21 @@
 //! Only variables the OpenTelemetry specification defines are read from the process environment,
 //! and they are read by the exporter crate and the SDK beneath this one, not through the `Env`
 //! the application passes to [`OtelOptions::from_env`](ulo_otel::OtelOptions::from_env). Where
-//! ulo passes a value explicitly, that value wins over the environment's for the endpoint (the
-//! per-signal `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` included), the request timeout and the
-//! protocol. Headers are the exception: `OTEL_EXPORTER_OTLP_HEADERS` and
-//! `OTEL_EXPORTER_OTLP_TRACES_HEADERS` entries are merged over the options' headers, so the
-//! environment's value wins for a header name both give. The batch processor's `OTEL_BSP_*` and
-//! the `OTEL_SPAN_*_LIMIT` names are read by the SDK; the options carry no value for them.
+//! ulo passes a value explicitly, that value wins over the environment's: the endpoint (the
+//! per-signal `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` included), the request timeout, the protocol
+//! and the headers. A header the options name replaces one of the same name from
+//! `OTEL_EXPORTER_OTLP_HEADERS` or `OTEL_EXPORTER_OTLP_TRACES_HEADERS`, because the default
+//! `ureq` client applies the options' headers after the exporter has set the environment's. Under
+//! the `reqwest-blocking` feature the exporter crate merges the environment's headers over the
+//! options' instead, so there the environment wins for a header name both give. The batch
+//! processor's `OTEL_BSP_*` and the `OTEL_SPAN_*_LIMIT` names are read by the SDK; the options
+//! carry no value for them.
 //!
 //! One read is not an OpenTelemetry variable: the default `ureq` client takes its proxy from the
-//! environment (`ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`) as ureq's defaults do, and
-//! the options carry no proxy to override it.
+//! environment (`ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`) as ureq's defaults do.
+//! [`OtlpExporter::proxy`] names one explicitly and [`OtlpExporter::no_proxy`] turns proxies off,
+//! each whatever the environment says. Neither is available under `reqwest-blocking`, where
+//! `build` refuses them.
 
 #[cfg(not(feature = "reqwest-blocking"))]
 mod client;
@@ -53,13 +58,44 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// the [`OtelOptions`] it is built with.
 #[derive(Clone, Debug, Default)]
 pub struct OtlpExporter {
-    _private: (),
+    #[cfg(not(feature = "reqwest-blocking"))]
+    proxy: client::ProxyChoice,
+    #[cfg(feature = "reqwest-blocking")]
+    proxy_requested: bool,
 }
 
 impl OtlpExporter {
     /// The exporter to hand to `Otel::new` when spans go to an OTLP receiver over HTTP.
     pub fn http() -> Self {
-        OtlpExporter { _private: () }
+        OtlpExporter::default()
+    }
+
+    /// Send through this proxy, whatever `ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`
+    /// say. A URL that is not a proxy URL is refused by `build`.
+    pub fn proxy(mut self, url: impl Into<String>) -> Self {
+        #[cfg(not(feature = "reqwest-blocking"))]
+        {
+            self.proxy = client::ProxyChoice::Explicit(url.into());
+        }
+        #[cfg(feature = "reqwest-blocking")]
+        {
+            let _ = url;
+            self.proxy_requested = true;
+        }
+        self
+    }
+
+    /// Send directly, whatever the proxy variables say.
+    pub fn no_proxy(mut self) -> Self {
+        #[cfg(not(feature = "reqwest-blocking"))]
+        {
+            self.proxy = client::ProxyChoice::Off;
+        }
+        #[cfg(feature = "reqwest-blocking")]
+        {
+            self.proxy_requested = true;
+        }
+        self
     }
 }
 
@@ -76,13 +112,28 @@ impl Exporter for OtlpExporter {
             builder = builder.with_endpoint(signal_endpoint(endpoint));
         }
 
+        #[cfg(not(feature = "reqwest-blocking"))]
+        let mut explicit = Vec::new();
         if let Some(headers) = &options.headers {
-            builder = builder.with_headers(parse_headers(headers.expose())?);
+            let headers = parse_headers(headers.expose())?;
+            #[cfg(not(feature = "reqwest-blocking"))]
+            {
+                explicit = decoded(&headers)?;
+            }
+            builder = builder.with_headers(headers);
         }
 
         #[cfg(not(feature = "reqwest-blocking"))]
         {
-            builder = builder.with_http_client(client::UreqClient::new(TIMEOUT)?);
+            builder = builder.with_http_client(client::UreqClient::new(
+                TIMEOUT,
+                explicit,
+                &self.proxy,
+            )?);
+        }
+        #[cfg(feature = "reqwest-blocking")]
+        if self.proxy_requested {
+            return Err("proxy and no_proxy apply to the default ureq client, not reqwest-blocking".into());
         }
 
         Ok(builder.build()?)
@@ -93,6 +144,25 @@ impl Exporter for OtlpExporter {
 /// as the whole URL, where the environment variable's value is a base.
 fn signal_endpoint(base: &str) -> String {
     format!("{}/v1/traces", base.trim_end_matches('/'))
+}
+
+/// The headers as the exporter puts them on the wire: values percent-decoded when they are valid
+/// UTF-8 after decoding, as the exporter does.
+#[cfg(not(feature = "reqwest-blocking"))]
+fn decoded(headers: &HashMap<String, String>) -> Result<Vec<(HeaderName, HeaderValue)>, BoxError> {
+    headers
+        .iter()
+        .map(|(key, value)| {
+            let value = percent_encoding::percent_decode_str(value)
+                .decode_utf8()
+                .map(|v| v.into_owned())
+                .unwrap_or_else(|_| value.clone());
+            let name = HeaderName::from_str(key).map_err(|_| "an OTLP header name is invalid")?;
+            let value =
+                HeaderValue::from_str(&value).map_err(|_| "an OTLP header value is invalid")?;
+            Ok((name, value))
+        })
+        .collect()
 }
 
 /// `key=value,key=value`. A refusal names the entry's position and never its text: the values are

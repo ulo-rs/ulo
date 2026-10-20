@@ -108,8 +108,7 @@ cargo run -p ulo-graphql-juniper --example hello_world
 ## Adding one
 
 Write the file, add a `[[example]]` entry to [Cargo.toml](Cargo.toml), and name it in a table
-above. `coverage_ledger.rs` in the integration-test crate fails on an example that is missing
-either — an example `cargo run --example` cannot reach, or one no index points at, is an example
+above. An example `cargo run --example` cannot reach, or one no index points at, is an example
 nobody runs.
 
 An example answers one question a user would ask, which decides both what goes in it and

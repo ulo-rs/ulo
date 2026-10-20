@@ -96,7 +96,7 @@ fn check_unread(config: &Config, deny: bool) -> Result<(), ConfigError> {
     }
     let mut problems = Problems::new();
     for (path, origin) in unread {
-        problems.list.push(Problem { path, origin: Some(origin), message: String::from("no module reads this key") });
+        problems.list.push(Problem { path, origin: Some(origin), message: String::from("no module reads this key"), flattened: false });
     }
     Err(ConfigError { header: String::from("configuration holds keys nothing reads"), problems })
 }

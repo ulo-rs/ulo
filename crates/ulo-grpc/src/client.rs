@@ -111,7 +111,8 @@ impl ClientTls {
 /// ```
 ///
 /// A request that sets `traceparent` itself, on an execution carrying a trace context, fails here
-/// as INVALID_ARGUMENT with `reserved_header` in the message, and so does one that sets
+/// as INVALID_ARGUMENT with an `ErrorInfo` detail whose reason is `reserved_header` (and the
+/// message prefixed `reserved_header:`), and so does one that sets
 /// `tracestate` when the context is `Received`: the context is forwarded as it arrived, and only
 /// a participant, whose `TraceSource` originated the context, may add an entry. Into an
 /// `Originated` context the caller's `tracestate` entries are merged. An execution carrying no
@@ -358,10 +359,12 @@ mod tests {
         answer
     }
 
-    fn reserved(refused: Result<tonic::Request<()>, tonic::Status>, header: &str) {
+    fn reserved(refused: Result<tonic::Request<()>, tonic::Status>) {
         let status = refused.expect_err("the request is refused");
         assert_eq!(status.code(), tonic::Code::InvalidArgument, "{status:?}");
-        assert!(status.message().contains("reserved_header") && status.message().contains(header), "the refusal does not name the reason and the header: {status:?}");
+        let info = tonic_types::StatusExt::get_details_error_info(&status).expect("the refusal carries an ErrorInfo detail");
+        assert_eq!(info.reason, "reserved_header");
+        assert_eq!(info.domain, "ulo.grpc");
     }
 
     /// A caller's `traceparent` is refused on a received context and on an originated one.
@@ -369,14 +372,14 @@ mod tests {
     async fn a_caller_s_traceparent_is_refused() {
         const SET: (&str, &str) = ("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
         for origin in [ulo::TraceOrigin::Received, ulo::TraceOrigin::Originated] {
-            reserved(through(Some(origin), &[SET]).await, "traceparent");
+            reserved(through(Some(origin), &[SET]).await);
         }
     }
 
     /// A caller's `tracestate` is refused on a received context, which is forwarded as it arrived.
     #[tokio::test]
     async fn a_caller_s_tracestate_is_refused_on_a_received_context() {
-        reserved(through(Some(ulo::TraceOrigin::Received), &[("tracestate", "vendor=1")]).await, "tracestate");
+        reserved(through(Some(ulo::TraceOrigin::Received), &[("tracestate", "vendor=1")]).await);
     }
 
     /// A caller's `tracestate` on an originated context is merged at the left, not refused.

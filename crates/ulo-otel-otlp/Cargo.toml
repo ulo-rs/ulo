@@ -26,6 +26,7 @@ http.workspace = true
 # `http-proto` and `trace` alone: the exporter's gRPC transport needs tokio and is deferred.
 opentelemetry-otlp = { workspace = true, features = ["http-proto", "trace"] }
 opentelemetry-http.workspace = true
+percent-encoding.workspace = true
 # `ring`: the provider the workspace's `rustls` entry is built with, handed to ureq explicitly.
 rustls.workspace = true
 # Pinned exactly in the workspace (N2): the explicit provider is set through
@@ -36,3 +37,7 @@ ureq = { workspace = true, features = ["rustls-no-provider", "platform-verifier"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+opentelemetry_sdk = { workspace = true, features = ["trace"] }
+opentelemetry = { workspace = true, features = ["trace"] }

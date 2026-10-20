@@ -27,7 +27,15 @@
 //! `untagged` a `Secret` is still registered, and no path is known to be a secret's, so a message
 //! its inner type raises is checked afterwards against the text of every secret the section
 //! collected: a message containing one is replaced by `invalid value`. That holds only for a
-//! secret whose inner type read its input as a scalar before it failed.
+//! secret whose inner type read its input as a scalar before it failed. The same pass reads the
+//! messages of failed sources, which a parser may write with the offending line quoted. A secret
+//! shorter than four characters is registered, so the graph's redaction replaces it, but is not
+//! matched against these messages: a text that short is contained in most of them.
+//!
+//! Under `flatten` serde gives an error in the buffered content no key. Such a problem is reported
+//! at the path and origin of the struct that holds the `flatten`, never at a sibling field's, and
+//! [`Problem::flattened`] is `true` for it; its rendering ends with `(inside a flattened
+//! section)`.
 //!
 //! A section reports at most one leaf-type error: serde stops a struct's pass at the first error
 //! raised inside a leaf type's own `Deserialize`, and every other section still reports its own.

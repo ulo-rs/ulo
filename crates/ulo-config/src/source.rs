@@ -596,4 +596,35 @@ mod tests {
         let problem = Section::<Keyed>::read(&config, "").value().map(drop).expect_err("the default is not a tree").to_string();
         assert!(problem.contains("default cannot be read as configuration"), "{problem}");
     }
+
+    /// A source that fails with a message quoting the line it choked on. None of the shipped
+    /// parsers writes such a message, so the failure is built here.
+    struct Quoting;
+    impl super::sealed::Sealed for Quoting {}
+    impl super::Source for Quoting {
+        fn read(&self) -> super::Layer {
+            super::Layer::failed("app.toml", "cannot read `password = hunter2-sentinel`")
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Credentials {
+        #[allow(dead_code)]
+        password: ulo::Secret<String>,
+    }
+
+    /// A failed source's message goes through the pass that scrubs the section's problems.
+    #[test]
+    fn a_source_failure_quoting_a_secret_is_scrubbed() {
+        let config = Config::builder().source(Quoting).source(Values::new().set("password", "hunter2-sentinel")).load();
+        let error = Section::<Credentials>::read(&config, "").value().map(drop).expect_err("the source failed").clone();
+        let rendered = format!("{error}{error:?}");
+        assert!(!rendered.contains("hunter2-sentinel"), "{rendered}");
+        assert!(error.problems().iter().any(|p| p.message() == "invalid value"));
+
+        // Without the secret in the section the message is reported as written.
+        let config = Config::builder().source(Quoting).load();
+        let error = Section::<Credentials>::read(&config, "").value().map(drop).expect_err("the source failed").clone();
+        assert!(error.problems().iter().any(|p| p.message().contains("hunter2-sentinel")));
+    }
 }
