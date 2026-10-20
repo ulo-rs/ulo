@@ -113,6 +113,18 @@ fn a_single_entry_displayed_on_its_own_applies_the_rule_to_its_own_names() {
     }
     // ...and in the report, where they meet, both print in full.
     assert!(errors.to_string().contains(type_name::<a::Config>()));
+
+    // One entry naming both prints both in full on its own: a read of `a::Config` where an import
+    // exports `b::Config` is a `Missing` whose `near` is the other.
+    let errors = wire_err(Mod::<Root>::new(|m| {
+        m.import(Mod::<Other>::new(|m| {
+            m.singleton(|| async { b::Config });
+            m.export::<b::Config>();
+        }));
+        m.singleton(|_c: Dep<a::Config>| async { Head });
+    }));
+    let alone = entry!(errors, entry @ WiringError::Missing { .. } => entry.to_string());
+    assert!(alone.contains(type_name::<a::Config>()) && alone.contains(type_name::<b::Config>()), "{alone}");
 }
 
 #[test]

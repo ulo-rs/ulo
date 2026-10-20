@@ -60,11 +60,16 @@ fn a_constructs_after_bound_on_an_app_with_no_timer() {
 
 #[test]
 fn a_readiness_timeout_and_attempt_timeout_on_an_app_with_no_timer() {
-    let whole = line!() + 3;
-    let attempt = line!() + 3;
+    // One call per line, so the registration, the `.ready` and the bound are three lines.
+    let whole = line!() + 4;
+    let attempt = line!() + 6;
     let errors = wire_err(Mod::<A>::new(|m| {
-        m.singleton(|| async { Svc }).ready(check()).timeout(SECOND);
-        m.singleton(|| async { A }).ready(check()).attempt_timeout(SECOND);
+        m.singleton(|| async { Svc })
+            .ready(check())
+            .timeout(SECOND);
+        m.singleton(|| async { A })
+            .ready(check())
+            .attempt_timeout(SECOND);
     }));
     let mut found = bounds(&errors);
     found.sort_by_key(|(_, line)| *line);
@@ -77,14 +82,19 @@ fn a_readiness_timeout_and_attempt_timeout_on_an_app_with_no_timer() {
 
 #[test]
 fn a_hook_timeout_and_a_module_hook_timeout_on_an_app_with_no_timer() {
+    let hook = line!() + 4;
+    let module_hook = line!() + 5;
     let errors = wire_err(Mod::<A>::new(|m| {
-        m.singleton(|| async { Svc }).on_init(check()).timeout(SECOND);
+        m.singleton(|| async { Svc })
+            .on_init(check())
+            .timeout(SECOND);
         m.on_init(check()).timeout(SECOND);
     }));
     let found = bounds(&errors);
     assert_eq!(found.len(), 2, "{errors}");
-    assert!(found.iter().any(|(item, _)| item.contains("Svc")), "the binding's hook: {found:?}");
-    assert!(found.iter().any(|(item, _)| item.contains(&mod_name::<A>())), "the module's hook: {found:?}");
+    let line_of = |needle: &str| found.iter().find(|(item, _)| item.contains(needle)).map(|&(_, line)| line);
+    assert_eq!(line_of("`Svc`"), Some(hook), "the binding's hook, at its `.on_init`: {found:?}");
+    assert_eq!(line_of(&mod_name::<A>()), Some(module_hook), "the module's hook: {found:?}");
 }
 
 #[test]

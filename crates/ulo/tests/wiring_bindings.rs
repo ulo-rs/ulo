@@ -179,6 +179,10 @@ fn try_value_err_via_module_def_and_via_contribute() {
     assert!(error.downcast_ref::<Boom>().is_some());
     assert!(!error.to_string().contains(SECRET));
     assert!(!errors.to_string().contains(SECRET), "nor does the report");
+    // A derived `Debug` on the entries reaches the stored error's own `Debug`.
+    for entry in &errors {
+        assert!(!format!("{entry:?}").contains(SECRET), "nor an entry's Debug: {entry:?}");
+    }
 }
 
 #[test]
