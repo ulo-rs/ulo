@@ -140,7 +140,7 @@ pub(crate) mod sqlite {
     use diesel::dsl::sql;
     use diesel::sql_types::{Nullable, Text};
     use diesel_async::RunQueryDsl;
-    use ulo::BoxError;
+    use ulo::{BoxError, Permanent};
 
     use super::DieselLock;
     use crate::store::{Given, SqlitePool};
@@ -184,12 +184,17 @@ pub(crate) mod sqlite {
     /// process waits on its lock would let a third take a lock on a new file at the same path.
     fn lock_sidecar(database: &str, bound: Duration, deadline: Option<Instant>) -> Result<File, BoxError> {
         let path = format!("{database}.ulo-migrate.lock");
-        let file = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path)?;
+        let file = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path).map_err(|e| {
+            // A sidecar that cannot be opened is a path or permission no restart mends.
+            BoxError::from(Permanent::new(format!("could not open {path}: {e}")))
+        })?;
         loop {
             match file.try_lock() {
                 Ok(()) => return Ok(file),
                 Err(TryLockError::WouldBlock) => {}
-                Err(TryLockError::Error(e)) => return Err(e.into()),
+                Err(TryLockError::Error(e)) => {
+                    return Err(Permanent::new(format!("could not lock {path}: {e}")).into());
+                }
             }
             let pause = match deadline {
                 None => POLL,

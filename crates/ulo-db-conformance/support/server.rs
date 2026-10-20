@@ -218,7 +218,13 @@ const CERT_DIR: &str = "/certs";
 /// Start it with `Server::start_with(&MYSQL, &mysql_tls(&ca))`. A client trusts it through `ca`'s
 /// certificate (`ca.cert_pem()`) and verifies the name, since the relay is reached at `127.0.0.1`.
 pub fn mysql_tls(ca: &ulo_test_certs::Ca) -> Extras {
-    let server = ca.issue(&["localhost", "127.0.0.1"]);
+    mysql_tls_for(ca, &["localhost", "127.0.0.1"])
+}
+
+/// [`mysql_tls`] with a certificate for `names` instead, for a client that reaches the server at a
+/// name the certificate does not carry.
+pub fn mysql_tls_for(ca: &ulo_test_certs::Ca, names: &[&str]) -> Extras {
+    let server = ca.issue(names);
     Extras {
         files: vec![
             (format!("{CERT_DIR}/ca.pem"), ca.cert_pem().into_bytes()),

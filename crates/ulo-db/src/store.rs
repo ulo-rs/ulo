@@ -61,11 +61,3 @@ pub trait Store: Send + Sync + 'static {
     /// connection, so a close that waits for checked-out connections is cut by that bound.
     fn close(c: Self::Client) -> BoxFuture<'static, ()>;
 }
-
-/// A store that may be lazy, so [`StoreModule::lazy`](crate::StoreModule::lazy) is offered: the
-/// start does not wait for the database, and the check stays down until the first ping succeeds.
-/// Whether the options allow it is [`Store::create_connects`], which is read at registration: a
-/// module over options for which it answers true refuses `.lazy()` there, through `try_value`.
-/// A store whose `create` connects for every option leaves this marker unimplemented, and the
-/// method does not exist for it.
-pub trait LazyStore: Store {}

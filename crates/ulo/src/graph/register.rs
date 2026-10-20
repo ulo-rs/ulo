@@ -155,6 +155,9 @@ impl<'a> Walk<'a> {
         // or through others, meets its own node and closes a cycle instead of registering again.
         let index = self.registry.nodes.len();
         let mut node = ModuleNode::new(identity.clone());
+        // Every module on the path has registered and been pushed already, its `keyed` set, so the
+        // nearest keyed one is known here.
+        node.inherited_keyed = self.path.iter().rev().find_map(|&ancestor| self.registry.nodes[ancestor].keyed);
         module.register(&mut ModuleDef::new(&mut node));
         let imports = std::mem::take(&mut node.imports);
         self.registry.nodes.push(node);

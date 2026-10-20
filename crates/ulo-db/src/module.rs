@@ -1,15 +1,15 @@
 use std::marker::PhantomData;
 use std::time::Duration;
 
-use ulo::{BoxError, BoxFuture, Dep, Module, ModuleDef, ModuleIdentity, Permanent, Runtime};
+use ulo::{Bound, BoxError, BoxFuture, Dep, Many, Module, ModuleDef, ModuleIdentity, Permanent, Runtime};
 use ulo_config::{Config, ConfigError, Problems, Section};
 use ulo_health::Check;
 
 use crate::connect::{self, Policy};
-use crate::error::{LazyRefused, ZeroConnectBound};
-use crate::health::{StoreCheck, check_name};
-use crate::migrate::{Migrate, MigrationLock, Migrations};
-use crate::store::{LazyStore, Store};
+use crate::error::{LazyRefused, ZeroConnectBound, ZeroMigrateBound};
+use crate::health::{QualifierTag, StoreCheck, Tag, check_name};
+use crate::migrate::{Bounds, Migrate, MigrationLock, Migrations};
+use crate::store::Store;
 
 const DEFAULT_CONNECT_WITHIN: Duration = Duration::from_secs(30);
 
@@ -18,6 +18,10 @@ const DEFAULT_CONNECT_WITHIN: Duration = Duration::from_secs(30);
 const DEFAULT_RETRIES: u32 = u32::MAX;
 
 const DEFAULT_BACKOFF: Duration = Duration::from_secs(1);
+
+/// Added to the two migration bounds for the init hook's own, which covers the release after the
+/// migrations (bounded inside `run` at five seconds) and the task's start and end.
+const HOOK_MARGIN: Duration = Duration::from_secs(10);
 
 /// The module every store crate names for its stores: `SqlxModule::<Postgres>`, `RedisModule`.
 ///
@@ -54,6 +58,7 @@ pub struct StoreModule<S: Store> {
     pub(crate) lazy: bool,
     pub(crate) health_check: bool,
     pub(crate) migrations: Option<Migrate<S>>,
+    pub(crate) migrate_within: Bound,
     _store: PhantomData<fn() -> S>,
 }
 
@@ -82,6 +87,7 @@ impl<S: Store> StoreModule<S> {
             lazy: false,
             health_check: true,
             migrations: None,
+            migrate_within: Bound::Default,
             _store: PhantomData,
         }
     }
@@ -95,8 +101,8 @@ impl<S: Store> StoreModule<S> {
     }
 
     /// The total connect bound, 30 s by default. Zero is refused at registration, a refusal the
-    /// core does not make on its own bounds. It also bounds the migration lock, the migrations and
-    /// the release together.
+    /// core does not make on its own bounds. It also bounds the wait for the migration lock; the
+    /// migrations have a bound of their own, [`migrate_within`](Self::migrate_within).
     pub fn connect_within(mut self, d: Duration) -> Self {
         self.connect_within = d;
         self
@@ -116,7 +122,7 @@ impl<S: Store> StoreModule<S> {
     }
 }
 
-impl<S: LazyStore> StoreModule<S> {
+impl<S: Store> StoreModule<S> {
     /// Omits `.ready(..)`: the start does not wait for the database and the health check stays down
     /// until the first ping succeeds.
     ///
@@ -130,16 +136,29 @@ impl<S: LazyStore> StoreModule<S> {
 }
 
 impl<S: MigrationLock> StoreModule<S> {
-    /// Runs `migrations` in the module's `on_init`, after connecting, under the lock and its bound.
-    /// Off unless written. A failure is `MigrationFailed`, inside `Permanent` unless it is the wait
-    /// for the lock reaching the bound ([`MigrationFailed::waited_for_lock`](crate::MigrationFailed::waited_for_lock)): that one means
-    /// another replica is migrating, and `ulo::is_permanent` answers false for it.
+    /// Runs `migrations` in the module's `on_init`, after connecting, under the lock. Off unless
+    /// written. A failure is `MigrationFailed`.
     ///
-    /// The bound is [`connect_within`](Self::connect_within), counted from the moment the lock is
-    /// requested: a replica waiting on another's migrations waits inside it, and a long migration
-    /// needs a longer `connect_within`.
+    /// Two waits, each with its own bound. The wait for the lock is bounded by
+    /// [`connect_within`](Self::connect_within) from the moment it is requested, and running out is
+    /// retryable ([`MigrationFailed::waited_for_lock`](crate::MigrationFailed::waited_for_lock)):
+    /// another replica is migrating. The migrations are bounded by
+    /// [`migrate_within`](Self::migrate_within) from the moment the lock is granted, so a replica
+    /// that waited out most of `connect_within` still gets all of `migrate_within`. Any other
+    /// failure of the lock step is classified by the store, as its `ping` is; a failure after the
+    /// lock is held is permanent. The init hook is bounded to cover both waits, so `hook_timeout`
+    /// never cuts them.
     pub fn migrate(mut self, migrations: impl Migrations<S>) -> Self {
         self.migrations = Some(Migrate::new(migrations));
+        self
+    }
+
+    /// The bound on the migrations themselves, counted from the moment the migration lock is
+    /// granted. `Bound::Default`, the default, and `Bound::Unbounded` set none; `Bound::After(d)`
+    /// fails the start with a permanent `MigrationFailed` when the migrations run past `d`. Zero is
+    /// refused at registration. Without `.migrate(..)` it has no effect.
+    pub fn migrate_within(mut self, bound: Bound) -> Self {
+        self.migrate_within = bound;
         self
     }
 }
@@ -174,6 +193,7 @@ where
 
     fn register(&self, m: &mut ModuleDef<'_>) {
         let path = self.section.path();
+        let check_path = path.to_owned();
         let validated: Result<S::Options, BoxError> = match self.section.register(m) {
             Ok(options) => {
                 for secret in S::secrets(&options) {
@@ -197,6 +217,9 @@ where
         // beside the options' problems rather than in their place.
         if self.connect_within.is_zero() {
             m.try_value::<ZeroConnectBound, _>(Err(ZeroConnectBound::new(S::NAME)));
+        }
+        if self.migrations.is_some() && self.migrate_within == Bound::After(Duration::ZERO) {
+            m.try_value::<ZeroMigrateBound, _>(Err(ZeroMigrateBound::new(S::NAME)));
         }
 
         let policy = Policy { connect_within: self.connect_within, retries: self.retries, backoff: self.backoff };
@@ -222,11 +245,18 @@ where
                 .on_destroy(close::<S>);
         }
 
+        let qualifier = m.qualifier();
         if self.health_check {
-            let name = check_name::<S>(path, m.qualifier());
+            if let Some(qualifier) = qualifier {
+                // Read by every check, so the names that print alike can be written in full. Only a
+                // module with a check contributes one: a lazily loaded module without its check
+                // contributes to no collection, which `load` would refuse.
+                m.contribute::<dyn QualifierTag>().singleton(move || async move { Tag(qualifier) }, |tag| tag);
+            }
             m.contribute::<dyn Check>().singleton(
-                move |client: Dep<S::Client>, runtime: Dep<dyn Runtime>| {
-                    let check = StoreCheck::<S>::new(name.clone(), runtime.into_arc(), (*client).clone());
+                move |client: Dep<S::Client>, runtime: Dep<dyn Runtime>, tags: Many<dyn QualifierTag>| {
+                    let name = check_name::<S>(&check_path, qualifier, &tags);
+                    let check = StoreCheck::<S>::new(name, runtime.into_arc(), (*client).clone());
                     async move { check }
                 },
                 |check| check,
@@ -235,20 +265,30 @@ where
 
         if let Some(migrate) = &self.migrations {
             let migrate = migrate.clone();
-            let bound = policy.connect_within;
-            // Unbounded as a hook so the module's own bound, inside `run`, is the one that ends it
-            // and the failure arrives as `MigrationFailed` rather than a hook timeout.
-            m.on_init(move |client: Dep<S::Client>, runtime: Dep<dyn Runtime>| {
-                let run = migrate.run(runtime.into_arc(), (*client).clone(), bound);
+            let bounds = Bounds {
+                lock: policy.connect_within,
+                migrations: match self.migrate_within {
+                    Bound::After(limit) => Some(limit),
+                    Bound::Default | Bound::Unbounded => None,
+                },
+            };
+            let hook = m.on_init(move |client: Dep<S::Client>, runtime: Dep<dyn Runtime>| {
+                let run = migrate.run(runtime.into_arc(), (*client).clone(), bounds);
                 async move {
                     run.await.map_err(|failed| {
-                        // Another replica holding the lock past the bound is no fault of this
-                        // build or its configuration, so a restart is worth trying.
-                        if failed.waited_for_lock() { BoxError::from(failed) } else { BoxError::from(Permanent::new(failed)) }
+                        // A restart can mend a retryable failure: another replica holds the lock,
+                        // or the connection was lost between the ping and the lock.
+                        if failed.is_retryable() { BoxError::from(failed) } else { BoxError::from(Permanent::new(failed)) }
                     })
                 }
-            })
-            .unbounded();
+            });
+            // The module's own bounds, inside `run`, are the ones that end the step, so the failure
+            // arrives as `MigrationFailed` rather than a hook timeout. A bounded step gets a hook
+            // bound that covers both waits and the release.
+            match bounds.migrations {
+                Some(limit) => hook.timeout(policy.connect_within.saturating_add(limit).saturating_add(HOOK_MARGIN)),
+                None => hook.unbounded(),
+            };
         }
 
         m.export::<S::Client>();

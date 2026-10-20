@@ -4,9 +4,9 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use ulo::{BoxError, BoxFuture, Secret};
+use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
-use ulo_db::{LazyStore, MigrationLock, Store};
+use ulo_db::{MigrationLock, Store};
 
 use crate::classify::permanent_or_not;
 use crate::options::{Engine, SqliteOptions, pool_options, unreadable_url, validate_options};
@@ -53,7 +53,6 @@ impl Store for Sqlite {
     }
 }
 
-impl LazyStore for Sqlite {}
 
 async fn create_pool(o: SqliteOptions) -> Result<sqlx::SqlitePool, BoxError> {
     let connect = o
@@ -114,7 +113,8 @@ async fn take_lock(client: sqlx::SqlitePool, bound: Duration) -> Result<SqliteLo
         "select file from pragma_database_list where name = 'main'",
     )
     .fetch_one(&client)
-    .await?;
+    .await
+    .map_err(|e| permanent_or_not(Engine::Sqlite, e))?;
     let Some(file) = file.filter(|f| !f.is_empty()) else {
         return Ok(SqliteLock { file: None });
     };
@@ -145,7 +145,7 @@ fn acquire(path: &Path, bound: Duration) -> Result<File, BoxError> {
         .create(true)
         .truncate(false)
         .open(path)
-        .map_err(|e| format!("could not open {}: {e}", path.display()))?;
+        .map_err(|e| BoxError::from(Permanent::new(format!("could not open {}: {e}", path.display()))))?;
     // `None` when the bound is too large for an `Instant`: wait without end.
     let deadline = Instant::now().checked_add(bound);
     loop {
@@ -157,7 +157,9 @@ fn acquire(path: &Path, bound: Duration) -> Result<File, BoxError> {
                 }
                 std::thread::sleep(POLL);
             }
-            Err(TryLockError::Error(e)) => return Err(format!("could not lock {}: {e}", path.display()).into()),
+            Err(TryLockError::Error(e)) => {
+                return Err(Permanent::new(format!("could not lock {}: {e}", path.display())).into());
+            }
         }
     }
 }

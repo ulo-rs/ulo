@@ -165,7 +165,7 @@ mod postgres {
     use tokio::runtime::Handle;
     use ulo::{BoxError, BoxFuture, Secret};
     use ulo_config::Problems;
-    use ulo_db::{LazyStore, MigrationLock, Store};
+    use ulo_db::{MigrationLock, Store};
 
     use super::{Given, build_pool};
     use crate::classify::permanent_or_not;
@@ -226,7 +226,6 @@ mod postgres {
         }
     }
 
-    impl LazyStore for Postgres {}
 
     /// The pool's `custom_setup`: `AsyncPgConnection::establish` driven to completion on the given
     /// runtime's blocking pool. Authentication against a SCRAM server derives a key with 4096
@@ -249,7 +248,8 @@ mod postgres {
         type Guard = DieselLock;
 
         fn lock(client: &PgPool, bound: std::time::Duration) -> BoxFuture<'static, Result<DieselLock, BoxError>> {
-            Box::pin(lock::postgres::lock(client.clone(), bound))
+            let client = client.clone();
+            Box::pin(async move { lock::postgres::lock(client, bound).await.map_err(crate::classify::lock_error) })
         }
 
         fn unlock(guard: DieselLock) -> BoxFuture<'static, ()> {
@@ -265,7 +265,7 @@ mod mysql {
     use diesel_async::{AsyncMysqlConnection, RunQueryDsl};
     use ulo::{BoxError, BoxFuture, Secret};
     use ulo_config::Problems;
-    use ulo_db::{LazyStore, MigrationLock, Store};
+    use ulo_db::{MigrationLock, Store};
 
     use super::build_pool;
     use crate::classify::permanent_or_not;
@@ -322,13 +322,13 @@ mod mysql {
         }
     }
 
-    impl LazyStore for MySql {}
 
     impl MigrationLock for MySql {
         type Guard = DieselLock;
 
         fn lock(client: &MySqlPool, bound: std::time::Duration) -> BoxFuture<'static, Result<DieselLock, BoxError>> {
-            Box::pin(lock::mysql::lock(client.clone(), bound))
+            let client = client.clone();
+            Box::pin(async move { lock::mysql::lock(client, bound).await.map_err(crate::classify::lock_error) })
         }
 
         fn unlock(guard: DieselLock) -> BoxFuture<'static, ()> {
@@ -347,7 +347,7 @@ mod sqlite {
     use tokio::runtime::Handle;
     use ulo::{BoxError, BoxFuture, Secret};
     use ulo_config::Problems;
-    use ulo_db::{LazyStore, MigrationLock, Store};
+    use ulo_db::{MigrationLock, Store};
 
     use super::{Given, build_pool};
     use crate::classify::permanent_or_not;
@@ -419,13 +419,13 @@ mod sqlite {
         }
     }
 
-    impl LazyStore for Sqlite {}
 
     impl MigrationLock for Sqlite {
         type Guard = DieselLock;
 
         fn lock(client: &SqlitePool, bound: std::time::Duration) -> BoxFuture<'static, Result<DieselLock, BoxError>> {
-            Box::pin(lock::sqlite::lock(client.clone(), bound))
+            let client = client.clone();
+            Box::pin(async move { lock::sqlite::lock(client, bound).await.map_err(crate::classify::lock_error) })
         }
 
         fn unlock(guard: DieselLock) -> BoxFuture<'static, ()> {

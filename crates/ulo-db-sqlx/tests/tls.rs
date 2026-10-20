@@ -101,6 +101,31 @@ fn a_tls_connect_verifies_the_server_through_the_supplied_root() {
     });
 }
 
+/// A certificate the supplied root issued, for a name the client does not reach the server by, is
+/// refused at its first attempt as `Permanent`: only the operator can change the certificate or the
+/// host. Planted break: the classifier reading `InvalidCertificate` as retryable, which this case
+/// then retries for the whole bound.
+#[test]
+fn a_name_mismatch_is_permanent_at_the_first_attempt() {
+    <OnTokio as Harness>::block_on(async {
+        let ca = Ca::new();
+        let server = server::Server::start_with(&server::MYSQL, &server::mysql_tls_for(&ca, &["db.internal.example"])).await;
+        let port = server.relay.addr().port();
+        let (_dir, root) = root_file(&ca);
+        // Wait until the server presents its certificate: the image restarts once after
+        // initialising, and a connect refused before that is retryable for a reason of its own.
+        let options = options(port, "verify_identity", Some(&root));
+        let until = Instant::now() + Duration::from_secs(60);
+        while !format!("{:?}", direct(&options).await.err()).contains("NotValidForName") {
+            assert!(Instant::now() < until, "the server never presented its certificate");
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        let (error, took) = start(options).await;
+        assert!(is_permanent(&error), "a certificate for another name is retryable, failing after {took:?}: {error}");
+        assert!(error.to_string().contains("after 1 attempt"), "a name mismatch was retried, failing after {took:?}: {error}");
+    });
+}
+
 struct Root(MySqlOptions);
 
 impl Module for Root {

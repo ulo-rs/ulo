@@ -243,6 +243,54 @@ pub(crate) fn unreadable_url(engine: Engine, url: &str, error: sqlx::Error) -> u
     ulo::Permanent::new(format!("url {}", describe(engine, url, &Failure::Library(error)))).into()
 }
 
+/// The query keys SQLx's option parser reads a root certificate from, in each engine.
+#[cfg(all(feature = "tls", any(feature = "postgres", feature = "mysql")))]
+fn root_cert_keys(engine: Engine) -> &'static [&'static str] {
+    match engine {
+        Engine::Postgres => &["sslrootcert", "ssl-root-cert", "ssl-ca"],
+        _ => &["sslca", "ssl-ca"],
+    }
+}
+
+/// Reads the root certificate `url` names, as `create` runs it. SQLx reads the file at the first
+/// handshake, so a missing path surfaces from the first ping as a bare `Io` of kind `NotFound`,
+/// indistinguishable from a Unix socket that is not there yet, which a restart does mend. Reading
+/// it here, where the path is known to be the root certificate's, lets the two be told apart: a path
+/// that cannot be read, or a file that is not PEM, is `Permanent`, since only the operator can fix
+/// it. An inline PEM value is read the same way SQLx does and checked for the same malformation.
+#[cfg(all(feature = "tls", any(feature = "postgres", feature = "mysql")))]
+pub(crate) fn check_root_cert(engine: Engine, url: &str) -> Result<(), ulo::BoxError> {
+    use rustls::pki_types::CertificateDer;
+    use rustls::pki_types::pem::PemObject;
+
+    let query = url.split_once('?').map(|(_, q)| q.split('#').next().unwrap_or(q)).unwrap_or("");
+    let named = query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .filter(|(key, _)| root_cert_keys(engine).iter().any(|k| key.eq_ignore_ascii_case(k)))
+        .map(|(_, value)| percent_decode(&value.replace('+', " ")))
+        .next_back();
+    let Some(value) = named else {
+        return Ok(());
+    };
+    let trimmed = value.trim();
+    let data = if trimmed.starts_with("-----BEGIN") && trimmed.ends_with("-----") {
+        value.into_bytes()
+    } else {
+        // The path is the operator's own configuration, not a credential, and naming it is what
+        // lets them find the mistake.
+        std::fs::read(&value).map_err(|e| {
+            ulo::BoxError::from(ulo::Permanent::new(format!("the root certificate `{value}` could not be read: {e}")))
+        })?
+    };
+    for certificate in CertificateDer::pem_slice_iter(&data) {
+        if certificate.is_err() {
+            return Err(ulo::Permanent::new("the root certificate is not valid PEM").into());
+        }
+    }
+    Ok(())
+}
+
 /// The migration lock of Postgres and MySQL pins one pooled connection while SQLx's migrator takes
 /// another, so a pool of one would wait on itself until the acquire timeout.
 #[cfg(any(feature = "postgres", feature = "mysql"))]

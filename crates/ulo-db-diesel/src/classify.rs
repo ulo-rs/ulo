@@ -48,6 +48,13 @@ pub(crate) fn permanent_or_not(error: BoxError) -> BoxError {
     if permanent(&*error) { Permanent::new(error).into() } else { error }
 }
 
+/// An error of the migration lock step, classified as `ping`'s are: the wait running out stays
+/// bare for `ulo-db` to read, as does anything the classifier does not call permanent.
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
+pub(crate) fn lock_error(error: BoxError) -> BoxError {
+    if error.is::<ulo_db::LockTimedOut>() { error } else { permanent_or_not(error) }
+}
+
 #[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
 fn permanent(error: &(dyn Error + 'static)) -> bool {
     if let Some(e) = error.downcast_ref::<PoolError>() {

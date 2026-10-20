@@ -71,6 +71,10 @@ pub async fn connecting_does_not_stall_the_thread<H: Host>() {
     stop.store(true, Ordering::Release);
     let ticks = joined(ticker.await, "the ticker");
 
+    // Set to read the number a passing run is held to, as a stall measurement across runs wants.
+    if std::env::var_os("ULO_CONF_REPORT_STALL").is_some() {
+        eprintln!("ULO_STALL_MS {:.1} during {} ticks {}", ticks.longest.as_secs_f64() * 1e3, ticks.during, ticks.count);
+    }
     assert_eq!(
         ticks.threads,
         vec![thread::current().id()],

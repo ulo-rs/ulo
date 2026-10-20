@@ -1,12 +1,11 @@
 use std::error::Error;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use ulo::{BoxError, BoxFuture, Runtime, spawn_with};
 
-use crate::connect::{Attached, within};
-use crate::error::{LockFailed, LockTimedOut, MigrationFailed, MigrationTimedOut, TaskFailed};
+use crate::connect::{Attached, carries_permanent, within};
+use crate::error::{LockFailed, LockTimedOut, MigrationFailed, MigrationTimedOut, Retry, TaskFailed};
 use crate::store::Store;
 
 /// How deep `lock_timed_out` walks a `source()` chain.
@@ -49,7 +48,11 @@ pub trait MigrationLock: Store {
     /// The held lock: the dedicated connection, or the locked file.
     type Guard: Send + 'static;
 
-    /// Takes the lock, waiting at most `bound`.
+    /// Takes the lock, waiting at most `bound`: `connect_within`, the wait's own bound. A wait that
+    /// runs out answers [`LockTimedOut`]. Any other error is classified as [`Store::ping`]'s are:
+    /// one only the operator can mend, such as no permission to take the lock, is returned inside
+    /// `ulo::Permanent`, and any other, a connection lost or a server restarted, bare, which
+    /// `ulo-db` reads as retryable.
     fn lock(client: &Self::Client, bound: Duration) -> BoxFuture<'static, Result<Self::Guard, BoxError>>;
 
     fn unlock(guard: Self::Guard) -> BoxFuture<'static, ()>;
@@ -62,8 +65,24 @@ pub(crate) struct Migrate<S: Store> {
     run: RunLocked<S>,
 }
 
-type RunLocked<S> =
-    fn(Arc<dyn Runtime>, <S as Store>::Client, Arc<dyn Migrations<S>>, Duration) -> BoxFuture<'static, Result<(), MigrationFailed>>;
+/// The two waits of a migration step, each with its own bound.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Bounds {
+    /// The wait for the lock, counted from the request.
+    pub(crate) lock: Duration,
+    /// The migrations, counted from the moment the lock is held. `None` is unbounded.
+    pub(crate) migrations: Option<Duration>,
+}
+
+/// How long the release may take before the guard is dropped instead, which releases the lock too.
+const UNLOCK_BOUND: Duration = Duration::from_secs(5);
+
+type RunLocked<S> = fn(
+    Arc<dyn Runtime>,
+    <S as Store>::Client,
+    Arc<dyn Migrations<S>>,
+    Bounds,
+) -> BoxFuture<'static, Result<(), MigrationFailed>>;
 
 impl<S: Store> Migrate<S> {
     pub(crate) fn new<M: Migrations<S>>(migrations: M) -> Self
@@ -73,9 +92,14 @@ impl<S: Store> Migrate<S> {
         Migrate { migrations: Arc::new(migrations), run: run_boxed::<S> }
     }
 
-    /// The lock, the migrations and the release on `client`, under `bound`.
-    pub(crate) fn run(&self, runtime: Arc<dyn Runtime>, client: S::Client, bound: Duration) -> BoxFuture<'static, Result<(), MigrationFailed>> {
-        (self.run)(runtime, client, Arc::clone(&self.migrations), bound)
+    /// The lock, the migrations and the release on `client`, under `bounds`.
+    pub(crate) fn run(
+        &self,
+        runtime: Arc<dyn Runtime>,
+        client: S::Client,
+        bounds: Bounds,
+    ) -> BoxFuture<'static, Result<(), MigrationFailed>> {
+        (self.run)(runtime, client, Arc::clone(&self.migrations), bounds)
     }
 }
 
@@ -89,51 +113,74 @@ fn run_boxed<S: MigrationLock>(
     runtime: Arc<dyn Runtime>,
     client: S::Client,
     migrations: Arc<dyn Migrations<S>>,
-    bound: Duration,
+    bounds: Bounds,
 ) -> BoxFuture<'static, Result<(), MigrationFailed>> {
-    Box::pin(run_locked::<S>(runtime, client, migrations, bound))
+    Box::pin(run_locked::<S>(runtime, client, migrations, bounds))
 }
 
-/// Takes the lock, runs `migrations`, releases the lock, all under `bound`. A failure of any step,
-/// the bound reached included, is a [`MigrationFailed`].
+/// Takes the lock, runs `migrations`, releases the lock. A failure of any step is a
+/// [`MigrationFailed`], which says whether a restart can mend it:
 ///
-/// Only one failure is retryable, and `MigrationFailed::waited_for_lock` names it: the wait for the
-/// lock reaching the bound, whether the store's own wait ran out ([`LockTimedOut`]) or this
-/// function's bound passed before the lock was held. Every other failure, a migration that fails
-/// or a bound passed once the lock was held among them, is not.
+/// - The wait for the lock reaching `bounds.lock`, whether the store's own wait ran out
+///   ([`LockTimedOut`]) or this function's clock did: retryable, another replica is migrating.
+/// - Any other error of the lock step, a lost connection or an SQL refusal: the store's own
+///   classification decides, as it does for `ping`. An error carrying `ulo::Permanent` is not
+///   retryable and any other is.
+/// - Everything after the lock is held, a failing migration and `bounds.migrations` passing among
+///   them: not retryable.
 ///
-/// The three steps run as one task on the app's runtime, so whatever the migrator spawns runs
-/// there; the bound is timed on the app's clock outside that task and aborts it on expiry.
+/// The steps run as one task on the app's runtime, so whatever the migrator spawns runs there. Both
+/// bounds are timed on the app's clock inside the task, the second starting when the lock is held,
+/// and dropping the returned future aborts the task, which drops the guard and releases the lock.
 pub(crate) async fn run_locked<S: MigrationLock>(
     runtime: Arc<dyn Runtime>,
     client: S::Client,
     migrations: Arc<dyn Migrations<S>>,
-    bound: Duration,
+    bounds: Bounds,
 ) -> Result<(), MigrationFailed> {
-    let held = Arc::new(AtomicBool::new(false));
-    let steps_held = Arc::clone(&held);
+    let clock = Arc::clone(&runtime);
     let steps = async move {
-        let guard = match S::lock(&client, bound).await {
-            Ok(guard) => guard,
-            Err(error) => return Err(BoxError::from(LockFailed(error))),
+        let waiting: BoxFuture<'static, _> = Box::pin(S::lock(&client, bounds.lock));
+        let guard = match within(&*clock, bounds.lock, waiting).await {
+            Some(Ok(guard)) => guard,
+            Some(Err(error)) => return Err(BoxError::from(LockFailed(error))),
+            None => return Err(LockTimedOut::new(bounds.lock).into()),
         };
-        steps_held.store(true, Ordering::SeqCst);
-        let ran: Result<(), BoxError> = migrations.run(client).await;
-        S::unlock(guard).await;
+        let running = migrations.run(client);
+        let ran: Result<(), BoxError> = match bounds.migrations {
+            None => running.await,
+            Some(limit) => match within(&*clock, limit, running).await {
+                Some(ran) => ran,
+                // Dropped where it stands: the guard releases the lock on drop.
+                None => return Err(MigrationTimedOut { bound: limit }.into()),
+            },
+        };
+        let unlocking: BoxFuture<'static, ()> = S::unlock(guard);
+        let _ = within(&*clock, UNLOCK_BOUND, unlocking).await;
         ran
     };
     let task = Attached(spawn_with(&*runtime, steps));
-    let (source, lock_wait): (BoxError, bool) = match within(&*runtime, bound, task).await {
-        Some(Ok(Ok(()))) => return Ok(()),
-        Some(Ok(Err(error))) => {
-            let timed_out = error.downcast_ref::<LockFailed>().is_some_and(|failed| lock_timed_out(&*failed.0));
-            (error, timed_out)
+    let (source, retry) = match task.await {
+        Ok(Ok(())) => return Ok(()),
+        Ok(Err(error)) => {
+            let retry = if error.is::<LockTimedOut>() {
+                Retry::LockWait
+            } else if let Some(failed) = error.downcast_ref::<LockFailed>() {
+                if lock_timed_out(&*failed.0) {
+                    Retry::LockWait
+                } else if carries_permanent(&*failed.0) {
+                    Retry::No
+                } else {
+                    Retry::LockStep
+                }
+            } else {
+                Retry::No
+            };
+            (error, retry)
         }
-        Some(Err(end)) => (TaskFailed::new(S::NAME, "migration", end).into(), false),
-        None if held.load(Ordering::SeqCst) => (MigrationTimedOut { bound }.into(), false),
-        None => (LockTimedOut::new(bound).into(), true),
+        Err(end) => (TaskFailed::new(S::NAME, "migration", end).into(), Retry::No),
     };
-    Err(MigrationFailed::new(S::NAME, source, lock_wait))
+    Err(MigrationFailed::new(S::NAME, source, retry))
 }
 
 /// Whether `error` or anything down its `source()` chain is a [`LockTimedOut`].

@@ -4,7 +4,7 @@ use mongodb::options::ClientOptions;
 use mongodb::Client;
 use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
-use ulo_db::{LazyStore, Store};
+use ulo_db::{Store};
 
 use crate::options::MongoOptions;
 
@@ -67,7 +67,6 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-impl LazyStore for Mongo {}
 
 impl Store for Mongo {
     const NAME: &'static str = "mongodb";

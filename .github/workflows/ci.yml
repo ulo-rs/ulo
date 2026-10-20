@@ -372,7 +372,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
       - uses: Swatinem/rust-cache@v2
       # One crate per step, so a failure names its store. Each invokes `ulo-db-conformance`.
-      - run: cargo test -p ulo-db-sqlx --features postgres,mysql,sqlite,integration --test conformance --test lock_wait --locked
+      - run: cargo test -p ulo-db-sqlx --features postgres,mysql,sqlite,integration --test conformance --test lock_wait --test root_cert --locked
       # `tls` needs `mysql` as well: the test is gated on all three and compiles to nothing
       # without it. A server issued a certificate by a test CA, connected through rustls.
       - run: cargo test -p ulo-db-sqlx --features mysql,tls,integration --test tls --locked

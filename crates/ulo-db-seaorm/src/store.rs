@@ -5,7 +5,7 @@ use std::time::Duration;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbBackend, DbErr};
 use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
-use ulo_db::{LazyStore, Store};
+use ulo_db::{Store};
 
 use crate::options::{SeaOrmOptions, password_texts, scrub};
 
@@ -94,7 +94,6 @@ impl Store for SeaOrm {
     }
 }
 
-impl LazyStore for SeaOrm {}
 
 /// SeaORM's SQLite connector sets 1 when the options name no maximum; the wrapped pool keeps it.
 #[cfg(feature = "sqlite")]
@@ -151,6 +150,42 @@ fn check_sqlite_version(version: &str) -> Result<(), SqliteTooOld> {
     }
 }
 
+#[cfg(all(test, feature = "tls", any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+mod certificates {
+    use std::io;
+    use std::sync::Arc;
+
+    use sea_orm::{DbBackend, DbErr, RuntimeErr, sqlx};
+
+    use super::is_permanent_error;
+
+    fn conn(error: sqlx::Error) -> DbErr {
+        DbErr::Conn(RuntimeErr::SqlxError(Arc::new(error)))
+    }
+
+    fn refused(error: rustls::CertificateError) -> DbErr {
+        conn(sqlx::Error::Io(io::Error::new(io::ErrorKind::InvalidData, rustls::Error::InvalidCertificate(error))))
+    }
+
+    #[test]
+    fn a_refused_server_certificate_is_permanent_through_seaorm() {
+        for error in [rustls::CertificateError::UnknownIssuer, rustls::CertificateError::NotValidForName] {
+            let label = format!("{error:?}");
+            assert!(is_permanent_error(DbBackend::MySql, &refused(error)), "{label} is retryable");
+        }
+    }
+
+    #[test]
+    fn a_certificate_the_clock_refuses_is_retryable_through_seaorm() {
+        assert!(!is_permanent_error(DbBackend::MySql, &refused(rustls::CertificateError::Expired)));
+    }
+
+    #[test]
+    fn a_tls_configuration_error_is_permanent_through_seaorm() {
+        assert!(is_permanent_error(DbBackend::Postgres, &conn(sqlx::Error::Tls("Invalid certificate".into()))));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::check_sqlite_version;
@@ -201,13 +236,14 @@ fn classify(backend: DbBackend, error: DbErr) -> BoxError {
     if is_permanent_error(backend, &error) { Permanent::new(error).into() } else { error.into() }
 }
 
-/// `Error::Configuration`, and a database error whose code `ulo-db-sqlx` treats as permanent for
-/// the engine: SQLSTATE class `28` or `3D000` on Postgres, `28000` or `42000` on MySQL, SQLite's
-/// primary code 14 (`CANTOPEN`, extended codes included). `ConnectionAcquire` (a pool timeout or a
-/// closed pool), `Io`, `Tls` and the rest stay bare.
+/// The errors SQLx raises underneath SeaORM are read by `ulo-db-sqlx`'s table, so the two stores
+/// share one certificate and credential classification: configuration, TLS configuration, a
+/// refused server certificate (its validity period aside) and the engine's refusing SQLSTATEs are
+/// permanent. `ConnectionAcquire` (a pool timeout or a closed pool), `Io` and the rest stay bare.
 #[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
 fn is_permanent_error(backend: DbBackend, error: &DbErr) -> bool {
-    use sea_orm::{RuntimeErr, sqlx};
+    use sea_orm::RuntimeErr;
+    use ulo_db_sqlx::Engine;
 
     let (DbErr::Conn(RuntimeErr::SqlxError(inner))
     | DbErr::Exec(RuntimeErr::SqlxError(inner))
@@ -215,28 +251,17 @@ fn is_permanent_error(backend: DbBackend, error: &DbErr) -> bool {
     else {
         return false;
     };
-    match &**inner {
-        sqlx::Error::Configuration(_) => true,
-        sqlx::Error::Database(database) => code_is_permanent(backend, database.code().as_deref()),
-        _ => false,
-    }
+    let engine = match backend {
+        DbBackend::Postgres => Engine::Postgres,
+        DbBackend::MySql => Engine::MySql,
+        DbBackend::Sqlite => Engine::Sqlite,
+        _ => return false,
+    };
+    ulo_db_sqlx::is_permanent_error(engine, inner)
 }
 
 #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
 fn is_permanent_error(backend: DbBackend, error: &DbErr) -> bool {
     let _ = (backend, error);
     false
-}
-
-#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
-fn code_is_permanent(backend: DbBackend, code: Option<&str>) -> bool {
-    let Some(code) = code else {
-        return false;
-    };
-    match backend {
-        DbBackend::Postgres => code.starts_with("28") || code == "3D000",
-        DbBackend::MySql => matches!(code, "28000" | "42000"),
-        DbBackend::Sqlite => code.parse::<i32>().is_ok_and(|n| n & 0xff == 14),
-        _ => false,
-    }
 }

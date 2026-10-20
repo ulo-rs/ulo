@@ -384,12 +384,23 @@ impl<'a> ModuleDef<'a> {
         self.node.keyed = Some(qualifier);
     }
 
-    /// The qualifier this module is keyed by, as the full `type_name` of the `Q` in
-    /// `Module::keyed::<Q>()`, or `None` for a module that is not keyed. The key is set before the
-    /// module's own `register` runs, so a module can name what it contributes after its instance,
-    /// as a store's health check does.
-    pub fn qualifier(&self) -> Option<&'static str> {
-        self.node.keyed.map(|qualifier| qualifier.name)
+    /// The qualifier of the nearest keyed module on the path from this one upward: this module's
+    /// own `Module::keyed::<Q>()` when it is keyed, else the nearest keyed ancestor that imports
+    /// it, directly or through others. `None` when neither is keyed. A store inside an application
+    /// module keyed `Primary` reads `Primary`, and a store keyed on its own reads its own key before
+    /// any ancestor's.
+    ///
+    /// The name is a [`TypeName`]: `{}` prints it short and `{:#}` in full, and
+    /// [`TypeName::colliding`] over every qualifier a report prints decides which are written in
+    /// full. The qualifier is set before this module's `register` runs, so a module can name what
+    /// it contributes after its instance, as a store's health check does.
+    ///
+    /// A module reached by several importers is registered once, under the path that reached it
+    /// first, so the ancestor it reads is that path's. Two importers keyed differently importing
+    /// an equal module give one instance, not two. A module loaded lazily reads only its own key:
+    /// its importer lives in a graph that is already frozen.
+    pub fn qualifier(&self) -> Option<TypeName> {
+        self.node.keyed.or(self.node.inherited_keyed).map(|qualifier| TypeName::from_parts(qualifier.id, qualifier.name))
     }
 
     fn push(&mut self, record: BindingRecord) -> &mut BindingRecord {
@@ -503,6 +514,9 @@ pub(crate) struct ModuleNode {
     pub(crate) global: bool,
     /// Set inside `Keyed<Q, M>`: unqualified exports leave the boundary as `T @ Q`.
     pub(crate) keyed: Option<Qualifier>,
+    /// The nearest keyed ancestor on the import path that first reached this module, for
+    /// `ModuleDef::qualifier`. It changes no export.
+    pub(crate) inherited_keyed: Option<Qualifier>,
     /// Queued by `import` and registered by the graph after `register` returns, in the order
     /// written; the order is part of collection order.
     pub(crate) imports: Vec<ImportRecord>,
@@ -529,6 +543,7 @@ impl ModuleNode {
             identity,
             global: false,
             keyed: None,
+            inherited_keyed: None,
             imports: Vec::new(),
             bindings: Vec::new(),
             enhancers: Vec::new(),

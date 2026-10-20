@@ -37,6 +37,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+# Constructs the certificate errors SQLx hands back, to check they reach `ulo-db-sqlx`'s table.
+rustls.workspace = true
 testcontainers.workspace = true
 # `support/server.rs` issues the TLS recipe's certificates.
 ulo-test-certs = { path = "../ulo-test-certs" }

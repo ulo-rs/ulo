@@ -101,7 +101,7 @@ pub(crate) fn close<S: Store>(runtime: Arc<dyn Runtime>, client: S::Client) -> B
 
 /// Whether `error` or anything down its `source()` chain is a `Permanent`, as the core's readiness
 /// loop reads an attempt's error.
-fn carries_permanent(error: &(dyn Error + 'static)) -> bool {
+pub(crate) fn carries_permanent(error: &(dyn Error + 'static)) -> bool {
     let mut next = Some(error);
     for _ in 0..MAX_DEPTH {
         match next {

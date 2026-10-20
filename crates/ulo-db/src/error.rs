@@ -29,31 +29,51 @@ impl fmt::Display for UnsupportedRuntime {
 
 impl Error for UnsupportedRuntime {}
 
-/// The migration step of a store module failed, in one of two ways that restart differently.
+/// The migration step of a store module failed, and whether a restart can mend it.
 ///
-/// - The wait for the migration lock reached the bound ([`waited_for_lock`](Self::waited_for_lock)
-///   is true): another replica is migrating, and a restart after it finishes would succeed. The
-///   module's init hook raises it without `ulo::Permanent`, so `ulo::is_permanent` answers false.
-/// - Anything else: the lock could not be taken for another reason, a migration failed, or the
-///   migrations themselves ran past the bound. The hook raises it inside `ulo::Permanent`, since a
-///   restart of the same build and configuration meets the same failure.
+/// - [`waited_for_lock`](Self::waited_for_lock): the wait for the migration lock reached its bound
+///   (`connect_within`). Another replica is migrating, and a restart after it finishes succeeds.
+/// - [`is_retryable`](Self::is_retryable) without that: another failure of the lock step, a lost
+///   connection or a server restarted between the ping and the lock. The store's own classifier
+///   decides, the one its `ping` uses: an error it marks `ulo::Permanent`, such as no permission to
+///   take the lock, is not retryable and any other is.
+/// - Not retryable: a migration that failed, the migrations running past
+///   `migrate_within` once the lock was held, or a task that panicked.
+///
+/// The module's init hook raises a retryable failure without `ulo::Permanent`, so
+/// `ulo::is_permanent` answers false for it, and every other inside `ulo::Permanent`.
 #[non_exhaustive]
 #[derive(Debug)]
 pub struct MigrationFailed {
     pub module: &'static str,
     pub source: BoxError,
-    lock_wait: bool,
+    retry: Retry,
+}
+
+/// What a restart can do for a [`MigrationFailed`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Retry {
+    No,
+    /// The lock wait reached its bound.
+    LockWait,
+    /// The lock step failed in a way the store's classifier does not call permanent.
+    LockStep,
 }
 
 impl MigrationFailed {
-    pub(crate) fn new(module: &'static str, source: BoxError, lock_wait: bool) -> Self {
-        MigrationFailed { module, source, lock_wait }
+    pub(crate) fn new(module: &'static str, source: BoxError, retry: Retry) -> Self {
+        MigrationFailed { module, source, retry }
     }
 
-    /// Whether the failure is the wait for the migration lock reaching the bound, the one
-    /// retryable migration failure.
+    /// Whether the failure is the wait for the migration lock reaching its bound.
     pub fn waited_for_lock(&self) -> bool {
-        self.lock_wait
+        self.retry == Retry::LockWait
+    }
+
+    /// Whether a restart of the same build and configuration can succeed: the lock wait ran out, or
+    /// the lock step failed in a way the store does not call permanent.
+    pub fn is_retryable(&self) -> bool {
+        self.retry != Retry::No
     }
 }
 
@@ -124,6 +144,27 @@ impl fmt::Display for ZeroConnectBound {
 
 impl Error for ZeroConnectBound {}
 
+/// `.migrate_within(Bound::After(Duration::ZERO))`, refused at registration through `try_value`,
+/// since a zero bound would fail every migration.
+#[derive(Debug)]
+pub(crate) struct ZeroMigrateBound {
+    store: &'static str,
+}
+
+impl ZeroMigrateBound {
+    pub(crate) fn new(store: &'static str) -> Self {
+        ZeroMigrateBound { store }
+    }
+}
+
+impl fmt::Display for ZeroMigrateBound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the {} store module's `migrate_within` is zero; the migration bound must be positive", self.store)
+    }
+}
+
+impl Error for ZeroMigrateBound {}
+
 /// The store's `MigrationLock::lock` answered an error, as `MigrationFailed`'s source.
 #[derive(Debug)]
 pub(crate) struct LockFailed(pub(crate) BoxError);
@@ -163,7 +204,7 @@ impl fmt::Display for LockTimedOut {
 
 impl Error for LockTimedOut {}
 
-/// The migrations, or the release after them, passed the module's bound once the lock was held.
+/// The migrations passed `migrate_within`, counted from the moment the lock was held.
 #[derive(Debug)]
 pub(crate) struct MigrationTimedOut {
     pub(crate) bound: Duration,

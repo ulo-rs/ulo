@@ -203,9 +203,8 @@ pub trait Host: Sized + Send + Sync + 'static {
     /// returns.
     fn restore(&self) -> impl Future<Output = ()> + Send;
 
-    /// `module.lazy()` for a store that offers it; a store that does not returns `module` unchanged
-    /// and declares the lazy scenarios not applicable. Written as a method because `.lazy()` exists
-    /// only on a [`LazyStore`](ulo_db::LazyStore).
+    /// `module.lazy()`, or `module` unchanged for a store whose options make `create` connect, which
+    /// refuses `.lazy()` at registration; that store declares the lazy scenarios not applicable.
     fn lazily(&self, module: StoreModule<Self::Store>) -> StoreModule<Self::Store>;
 
     /// `module.migrate(..)` with the migrations the lock scenario runs, ordinary DDL that records

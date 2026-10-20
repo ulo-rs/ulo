@@ -8,14 +8,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use ulo::{BoxError, BoxFuture, Permanent};
 use ulo_config::Problems;
 use ulo_conformance_support::OnTokio;
-use ulo_db::{LazyStore, Store, StoreModule};
+use ulo_db::{Store, StoreModule};
 use ulo_db_conformance::MigrationProbe;
 
 static OUT: AtomicBool = AtomicBool::new(false);
 
 struct Connecting;
-
-impl LazyStore for Connecting {}
 
 impl Store for Connecting {
     const NAME: &'static str = "connecting";

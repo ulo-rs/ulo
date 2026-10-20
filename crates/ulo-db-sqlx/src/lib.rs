@@ -22,21 +22,33 @@
 //!
 //! MySQL over TLS is exercised: `tests/tls.rs` starts MySQL 8 with a certificate a test CA issued,
 //! connects with `ssl-mode=verify_identity` and `ssl-ca` naming that CA, and shows a different CA
-//! and a plaintext connect refused. A server certificate rustls refuses is `Permanent`, so a start
-//! over a different CA fails at its first attempt; an expired or not-yet-valid one stays retryable,
-//! since it reads the local clock. MySQL 8's `caching_sha2_password` authenticates over that
+//! and a plaintext connect refused. What is classified follows who can fix it. A server certificate
+//! rustls refuses is `Permanent`, an unknown issuer and a name mismatch among them, so a start over
+//! a different CA or the wrong name fails at its first attempt; an expired or not-yet-valid one stays
+//! retryable, since it reads the local clock. A root certificate (`ssl-ca`, `sslrootcert`) that
+//! cannot be read or is not PEM is `Permanent` too, found by `create`'s own read of the named file. MySQL 8's `caching_sha2_password` authenticates over that
 //! channel with no RSA exchange. The Postgres TLS path is not exercised by any test; SQLite has
 //! none.
 //!
+//! # Authenticated Postgres
+//!
+//! SQLx's Postgres driver derives its SCRAM key on the thread that polls the connect. Measured
+//! against `postgres:18` authenticating with `scram-sha-256`, over ten runs of the suite's stall
+//! scenario (a one-thread runtime, a 5 ms ticker, a 50 ms bound), the longest gap between two ticks
+//! was 6.6 to 7.6 ms in release (median 7.3) and 6.6 to 7.6 ms in debug (median 7.1), so the
+//! derivation costs the thread about 2 ms and the connect stays where it is.
+//!
 //! # Pools
 //!
+//
 //! The pool is lazy: `create` connects nothing and the start waits on `ping` under `.ready`. A pool
 //! reports a refused connection as `PoolTimedOut` after its acquire timeout, so one attempt against
 //! an unreachable server lasts `acquire_timeout_secs`, 5 s unless set (SQLx's own default is 30 s,
 //! as long as the default total connect bound). A configuration error and a database error with
 //! SQLSTATE class `28` or `3D000` (Postgres), `28000` or `42000` (MySQL) or SQLite's `CANTOPEN` are
-//! `ulo::Permanent` and end the start at once, as does a server certificate rustls refuses (TLS
-//! coverage above); any other `Io`, `PoolTimedOut`, `WorkerCrashed` and `Tls` are retried.
+//! `ulo::Permanent` and end the start at once, as do a `Tls` error (a TLS configuration SQLx cannot
+//! use) and a server certificate rustls refuses (TLS coverage above); any other `Io`,
+//! `PoolTimedOut` and `WorkerCrashed` are retried.
 //!
 //! SQLx opens a SQLite file read-write without creating it. `sqlite:data.db?mode=rwc` creates a
 //! missing file, and a missing one without it fails the first ping as a permanent error.
@@ -72,6 +84,8 @@
 
 #[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
 mod classify;
+#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
+pub use classify::is_permanent_error;
 mod migrate;
 mod options;
 #[cfg(feature = "mysql")]

@@ -4,9 +4,9 @@
 use std::time::Duration;
 
 use sqlx::pool::PoolConnection;
-use ulo::{BoxError, BoxFuture, Secret};
+use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
-use ulo_db::{LazyStore, MIGRATION_LOCK_KEY, MigrationLock, Store};
+use ulo_db::{MIGRATION_LOCK_KEY, MigrationLock, Store};
 
 use crate::classify::permanent_or_not;
 use crate::options::{
@@ -56,7 +56,6 @@ impl Store for Postgres {
     }
 }
 
-impl LazyStore for Postgres {}
 
 async fn create_pool(o: PgOptions) -> Result<sqlx::PgPool, BoxError> {
     let connect = o
@@ -64,18 +63,28 @@ async fn create_pool(o: PgOptions) -> Result<sqlx::PgPool, BoxError> {
         .expose()
         .parse::<sqlx::postgres::PgConnectOptions>()
         .map_err(|e| unreadable_url(Engine::Postgres, o.url.expose(), e))?;
+    #[cfg(feature = "tls")]
+    crate::options::check_root_cert(Engine::Postgres, o.url.expose())?;
     Ok(pool_options::<sqlx::Postgres>(o.max_connections, o.min_connections, o.acquire_timeout_secs)
         .connect_lazy_with(connect))
 }
 
+/// Every error here is classified as `ping`'s are: a refused permission or a pool too small is
+/// `Permanent`, a lost connection is not.
 async fn take_lock(client: sqlx::PgPool, bound: Duration) -> Result<PgLock, BoxError> {
-    require_spare_connection(Engine::Postgres, client.options().get_max_connections())?;
-    let mut conn = client.acquire().await?;
+    let classify = |e: sqlx::Error| permanent_or_not(Engine::Postgres, e);
+    require_spare_connection(Engine::Postgres, client.options().get_max_connections())
+        .map_err(|e| BoxError::from(Permanent::new(e)))?;
+    let mut conn = client.acquire().await.map_err(classify)?;
     conn.close_on_drop();
 
     // `lock_timeout` of 0 disables the timeout, so the floor is 1 ms.
     let millis = bound.as_millis().clamp(1, MAX_LOCK_TIMEOUT_MS);
-    sqlx::query("select set_config('lock_timeout', $1, false)").bind(format!("{millis}ms")).execute(&mut *conn).await?;
+    sqlx::query("select set_config('lock_timeout', $1, false)")
+        .bind(format!("{millis}ms"))
+        .execute(&mut *conn)
+        .await
+        .map_err(classify)?;
 
     let locked = sqlx::query("select pg_advisory_lock($1)").bind(MIGRATION_LOCK_KEY).execute(&mut *conn).await;
     match locked {
@@ -83,11 +92,7 @@ async fn take_lock(client: sqlx::PgPool, bound: Duration) -> Result<PgLock, BoxE
         Err(e) => {
             let timed_out =
                 e.as_database_error().and_then(|d| d.code()).is_some_and(|code| &*code == LOCK_NOT_AVAILABLE);
-            if timed_out {
-                Err(ulo_db::LockTimedOut::new(bound).into())
-            } else {
-                Err(e.into())
-            }
+            if timed_out { Err(ulo_db::LockTimedOut::new(bound).into()) } else { Err(classify(e)) }
         }
     }
 }

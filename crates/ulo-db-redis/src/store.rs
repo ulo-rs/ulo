@@ -5,7 +5,7 @@ use redis::aio::{ConnectionManager, ConnectionManagerConfig};
 use redis::{ErrorKind, RedisError};
 use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
-use ulo_db::{LazyStore, Store};
+use ulo_db::{Store};
 
 use crate::options::RedisOptions;
 
@@ -63,7 +63,6 @@ fn classify(error: RedisError) -> BoxError {
 /// start at its first attempt; `Io` and a timeout are retryable.
 pub struct Redis;
 
-impl LazyStore for Redis {}
 
 impl Store for Redis {
     const NAME: &'static str = "redis";

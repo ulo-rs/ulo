@@ -3,9 +3,9 @@
 use std::time::Duration;
 
 use sqlx::pool::PoolConnection;
-use ulo::{BoxError, BoxFuture, Secret};
+use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
-use ulo_db::{LazyStore, MigrationLock, Store};
+use ulo_db::{MigrationLock, Store};
 
 use crate::classify::permanent_or_not;
 use crate::options::{
@@ -53,7 +53,6 @@ impl Store for MySql {
     }
 }
 
-impl LazyStore for MySql {}
 
 async fn create_pool(o: MySqlOptions) -> Result<sqlx::MySqlPool, BoxError> {
     let connect = o
@@ -61,6 +60,8 @@ async fn create_pool(o: MySqlOptions) -> Result<sqlx::MySqlPool, BoxError> {
         .expose()
         .parse::<sqlx::mysql::MySqlConnectOptions>()
         .map_err(|e| unreadable_url(Engine::MySql, o.url.expose(), e))?;
+    #[cfg(feature = "tls")]
+    crate::options::check_root_cert(Engine::MySql, o.url.expose())?;
     Ok(pool_options::<sqlx::MySql>(o.max_connections, o.min_connections, o.acquire_timeout_secs)
         .connect_lazy_with(connect))
 }
@@ -96,15 +97,24 @@ impl MigrationLock for MySql {
     }
 }
 
+/// Every error here is classified as `ping`'s are: a refused permission or a pool too small is
+/// `Permanent`, a lost connection is not.
 async fn take_lock(client: sqlx::MySqlPool, bound: Duration) -> Result<MySqlLock, BoxError> {
-    require_spare_connection(Engine::MySql, client.options().get_max_connections())?;
-    let mut conn = client.acquire().await?;
+    let classify = |e: sqlx::Error| permanent_or_not(Engine::MySql, e);
+    require_spare_connection(Engine::MySql, client.options().get_max_connections())
+        .map_err(|e| BoxError::from(Permanent::new(e)))?;
+    let mut conn = client.acquire().await.map_err(classify)?;
     conn.close_on_drop();
 
     let database = sqlx::query_scalar::<sqlx::MySql, Option<String>>("select database()")
         .fetch_one(&mut *conn)
-        .await?
-        .ok_or("the connection selected no database, so the migration lock has no name to be scoped to")?;
+        .await
+        .map_err(classify)?
+        .ok_or_else(|| {
+            BoxError::from(Permanent::new(
+                "the connection selected no database, so the migration lock has no name to be scoped to",
+            ))
+        })?;
     let name = lock_name(&database);
 
     let seconds = i64::try_from(bound.as_secs() + u64::from(bound.subsec_nanos() > 0)).unwrap_or(i64::MAX);
@@ -112,7 +122,8 @@ async fn take_lock(client: sqlx::MySqlPool, bound: Duration) -> Result<MySqlLock
         .bind(name.clone())
         .bind(seconds)
         .fetch_one(&mut *conn)
-        .await?;
+        .await
+        .map_err(classify)?;
     match got {
         Some(1) => Ok(MySqlLock { conn, name }),
         Some(0) => Err(ulo_db::LockTimedOut::new(bound).into()),
