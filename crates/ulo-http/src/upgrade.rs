@@ -62,6 +62,11 @@ pub trait UpgradeHandler: Send + Sync + 'static {
     /// what [`prepare`](Self::prepare) built. The handler is registered in module metadata, which
     /// the app's graph holds, so state it keeps that holds the `AppHandle` holds the app through
     /// the handler, and neither would drop.
+    ///
+    /// Each HTTP server that calls `prepare` calls `release` once, whatever `prepare` answered.
+    /// An app binding two HTTP servers, a public port and an admin port, shares one handler
+    /// between them, so a handler serving both keeps what `prepare` built until the release
+    /// matching its last `prepare`: the first server's drop must not end the second's gateways.
     fn release(&self) {}
 }
 

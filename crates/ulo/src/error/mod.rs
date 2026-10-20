@@ -268,6 +268,19 @@ pub enum ShutdownFailure {
     /// answering it ran none of the shutdown's steps: no hook runs once the app has dropped this
     /// way, and the report counts no execution.
     Dropped,
+    /// The transport's `serve` ended before any other trigger arrived, and that end started this
+    /// shutdown (§9.5). It is the first failure listed; the steps that follow add theirs.
+    Serve { transport: TypeName, end: ServeEnd },
+}
+
+/// How a transport's `serve` ended while the app was still running, on [`ShutdownFailure::Serve`].
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum ServeEnd {
+    /// Returned `Err`: the transport's own error, redacted.
+    Errored(Redacted),
+    /// Returned `Ok` before the shutdown began, so nothing served that transport any more.
+    Returned,
 }
 
 impl ShutdownFailure {
@@ -277,6 +290,7 @@ impl ShutdownFailure {
             ShutdownFailure::Hook { key, .. } => key.key().type_names().collect(),
             ShutdownFailure::Close { transport, .. } => vec![*transport],
             ShutdownFailure::Dropped => Vec::new(),
+            ShutdownFailure::Serve { transport, .. } => vec![*transport],
         }
     }
 
@@ -290,6 +304,12 @@ impl ShutdownFailure {
             ShutdownFailure::Dropped => "the app was dropped before its shutdown closed its servers: they were released \
                                          without their `close`, and no shutdown hook runs after the drop"
                 .to_owned(),
+            ShutdownFailure::Serve { transport, end: ServeEnd::Errored(reason) } => {
+                format!("transport `{}` failed while serving: {reason}", transport.written(full))
+            }
+            ShutdownFailure::Serve { transport, end: ServeEnd::Returned } => {
+                format!("transport `{}` stopped serving while the app was running", transport.written(full))
+            }
         }
     }
 }

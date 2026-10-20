@@ -26,18 +26,31 @@ use crate::transport::{Ws, WsConnect};
 pub(crate) struct Handoff {
     pub(crate) defaults: GatewayDefaults,
     hub: Arc<Hub>,
-    /// What `prepare` built: the gateways on the HTTP server's port, served through the same
-    /// table a standalone server serves through.
-    table: Arc<Mutex<Option<GatewayTable>>>,
+    slot: Mutex<Slot>,
+}
+
+/// What `prepare` built, and how many HTTP servers hold it. Every HTTP server in the app that
+/// prepares, a public port and an admin port for one, calls `prepare` and, as it drops,
+/// `release`; one lock holds both, so the last release is the one that drops the table.
+#[derive(Default)]
+struct Slot {
+    /// The gateways on the HTTP server's port, served through the same table a standalone server
+    /// serves through. A later `prepare` replaces it, built from the same app.
+    table: Option<GatewayTable>,
+    holders: usize,
 }
 
 impl Handoff {
     pub(crate) fn new(defaults: GatewayDefaults, hub: Arc<Hub>) -> Self {
-        Handoff { defaults, hub, table: Arc::new(Mutex::new(None)) }
+        Handoff { defaults, hub, slot: Mutex::new(Slot::default()) }
+    }
+
+    fn slot(&self) -> std::sync::MutexGuard<'_, Slot> {
+        self.slot.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn table(&self) -> Option<GatewayTable> {
-        self.table.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        self.slot().table.clone()
     }
 }
 
@@ -69,8 +82,11 @@ impl UpgradeHandler for Handoff {
     }
 
     /// The gateways on the HTTP server's port, built and checked; `WsModule`'s own defaults are
-    /// checked for zero limits too, and the broadcast adapter's `prepare` runs beside them.
+    /// checked for zero limits too, and the broadcast adapter's `prepare` runs beside them. The
+    /// calling server holds the hand-off from here, whether this answers `Ok` or `Err`, until its
+    /// `release`.
     fn prepare(&self, app: &AppHandle) -> Result<(), BoxError> {
+        self.slot().holders += 1;
         let connects = app.mounted::<WsConnect>()?;
         let messages = app.mounted::<Ws>()?;
         // `mounted` refuses an app with no runtime, so this finds one.
@@ -82,7 +98,7 @@ impl UpgradeHandler for Handoff {
         }
         let gateways = build_table(&connects, &messages, Port::Http, &self.defaults, &mut failures);
         let table = GatewayTable::new(gateways, Arc::clone(&self.hub), app.clone(), runtime, &self.defaults);
-        *self.table.lock().unwrap_or_else(PoisonError::into_inner) = Some(table);
+        self.slot().table = Some(table);
         failures.into_result()
     }
 
@@ -113,10 +129,17 @@ impl UpgradeHandler for Handoff {
         })
     }
 
-    /// Drops the table `prepare` built, which holds the app's `AppHandle`: the hand-off sits in the
-    /// app's graph, so the table would otherwise keep the app, and the hub with it.
+    /// Drops the table `prepare` built once the last server holding it releases: the table holds
+    /// the app's `AppHandle` and the hand-off sits in the app's graph, so the table would otherwise
+    /// keep the app, and the hub with it. A server releasing while another still serves the
+    /// gateways leaves the table to it.
     fn release(&self) {
-        let table = self.table.lock().unwrap_or_else(PoisonError::into_inner).take();
+        let table = {
+            let mut slot = self.slot();
+            slot.holders = slot.holders.saturating_sub(1);
+            if slot.holders == 0 { slot.table.take() } else { None }
+        };
+        // Dropped after the lock is released: the table's drop reaches the app's shared state.
         drop(table);
     }
 }

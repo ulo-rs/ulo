@@ -398,6 +398,9 @@ impl<B: Backend> ulo::Server for Server<B> {
         let mut failures = Failures::new();
         let limits = B::limits();
         let PreparedApp { service, upgrading, handlers } = prepare_app(&mounted, &self.config, "", false, &mut failures);
+        // Kept whatever the rest answers: each handler's `prepare` has run, and this server's drop
+        // owes each a `release`.
+        self.upgrades = handlers;
         if upgrading && !limits.upgrades {
             failures.push(format!(
                 "the {} backend declares `upgrades: false`, so it cannot hand a WebSocket upgrade to a gateway on its port; \
@@ -427,7 +430,6 @@ impl<B: Backend> ulo::Server for Server<B> {
             return Err(Box::new(failures.into_error()));
         };
         self.prepared = Some(Prepared { endpoints, tls, service });
-        self.upgrades = handlers;
         Ok(())
     }
 

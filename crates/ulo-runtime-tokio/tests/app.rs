@@ -4,8 +4,10 @@
 //! close step (F425), at the app's drop when it never reaches that step (F426), and, when the app
 //! drops while a handle's `close` holds its claim, taken at the call, at that close's close step,
 //! or as it drops if it is abandoned or dropped unpolled first; a `close` called after such a drop
-//! answers `ShutdownFailure::Dropped`. The binding with `.runtime(..)` alone is the conformance
-//! suite's `the_app_binds_the_runtime_as_one_object`.
+//! answers `ShutdownFailure::Dropped`. Such a drop moves the phase to `Closed` and resolves
+//! `draining()` for a loop holding a handle. A transport whose `serve` ends while the app runs
+//! starts the shutdown, and `serve` answers `ShutdownFailure::Serve` naming it. The binding with
+//! `.runtime(..)` alone is the conformance suite's `the_app_binds_the_runtime_as_one_object`.
 
 use std::future::poll_fn;
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -18,8 +20,8 @@ use ulo::app::Bound as Serving;
 use ulo::testing::TestApp;
 use ulo::{
     App, AppBuilder, AppHandle, BoundAddr, BoxError, BoxFuture, ConnectError, Connected, DrainToken, FailureReason, LookupError, Module,
-    ModuleDef, ModuleIdentity, Mounted, Phase, Runtime, RuntimeMissing, Secret, Server, ShutdownFailure, Signal, StartupError, TaskEnd,
-    Timer, Transport, WiringError,
+    ModuleDef, ModuleIdentity, Mounted, Phase, Runtime, RuntimeMissing, Secret, ServeEnd, Server, ShutdownFailure, Signal, StartupError,
+    TaskEnd, Timer, Transport, TypeName, WiringError,
 };
 use ulo_runtime_tokio::Tokio;
 
@@ -1021,3 +1023,163 @@ async fn a_close_spawned_before_the_app_s_drop_closes_every_server_in_every_race
 
 /// How many races the race test runs.
 const RACES: usize = 500;
+
+/// A loop holding a handle waits on `draining()` until the app's drop releases the servers.
+fn wait_for_draining(handle: &AppHandle) -> tokio::task::JoinHandle<()> {
+    let handle = handle.clone();
+    tokio::spawn(async move { handle.draining().await })
+}
+
+/// The loop is still waiting and the app still running a moment after it started to wait.
+async fn assert_still_waiting(waiting: &tokio::task::JoinHandle<()>, handle: &AppHandle, path: &str) {
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(!waiting.is_finished(), "`draining()` resolved before {path}");
+    assert_eq!(handle.phase(), Phase::Running, "the phase moved before {path}");
+}
+
+/// After a release by a drop: the loop has woken, the phase reads `Closed`, neither server's
+/// `close` ran, and a later `close` answers `Dropped`.
+async fn assert_told_to_stop(waiting: tokio::task::JoinHandle<()>, handle: &AppHandle, log: &Log, path: &str) {
+    tokio::time::timeout(PATIENCE, waiting)
+        .await
+        .unwrap_or_else(|_| panic!("`draining()` did not resolve after {path}"))
+        .expect("the waiting task panicked");
+    assert_eq!(handle.phase(), Phase::Closed, "the phase after {path}");
+    assert!(handle.is_draining(), "`is_draining()` is false after {path}");
+    let events = log.events();
+    assert!(!events.iter().any(|e| e.starts_with("close ") || e == "before-shutdown"), "a shutdown step ran after {path}: {events:?}");
+    for drop in ["drop a", "drop b"] {
+        assert_eq!(events.iter().filter(|e| *e == drop).count(), 1, "`{drop}` was not logged once after {path}: {events:?}");
+    }
+    let error = handle.close(Signal::new("later")).await.expect_err("a close after the release answered `Ok`");
+    assert!(matches!(&*error.failures, [ShutdownFailure::Dropped]), "a close after {path} answered {error}");
+}
+
+/// The `App` value's drop with no `close` claim held releases the servers unclosed, and that
+/// release tells a loop waiting on `draining()` to stop: it wakes, and `phase()` reads `Closed`.
+#[tokio::test]
+async fn a_loop_waiting_on_draining_wakes_when_the_app_is_dropped() {
+    let Paired { app, log, .. } = paired(&[]).await;
+    let handle = app.handle();
+    let waiting = wait_for_draining(&handle);
+    assert_still_waiting(&waiting, &handle, "the app's drop").await;
+    drop(app);
+    assert_told_to_stop(waiting, &handle, &log, "the app's drop").await;
+}
+
+/// The same when the release is the last claim's: a `close` called before the app's drop and
+/// dropped unpolled after it. The app's drop leaves the loop waiting, and the claim's drop wakes it.
+#[tokio::test]
+async fn a_loop_waiting_on_draining_wakes_when_the_last_claim_releases_the_servers() {
+    let Paired { app, log, .. } = paired(&[]).await;
+    let handle = app.handle();
+    let waiting = wait_for_draining(&handle);
+    let closing = handle.close(Signal::new("test"));
+    drop(app);
+    assert_still_waiting(&waiting, &handle, "the claim's drop").await;
+    drop(closing);
+    assert_told_to_stop(waiting, &handle, &log, "the claim's drop").await;
+}
+
+/// A second transport, so the failure names the one whose `serve` ended.
+struct Doomed;
+
+impl Transport for Doomed {
+    const KEY: &'static str = "doomed";
+    type Cx = ();
+    type Reply = ();
+}
+
+/// The error a [`Dying`] server's `serve` returns.
+#[derive(Debug)]
+struct ListenerLost;
+
+impl std::fmt::Display for ListenerLost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the listener was lost")
+    }
+}
+
+impl std::error::Error for ListenerLost {}
+
+/// A server whose `serve` waits at its gate, then ends with `fails`' answer: `Err(ListenerLost)`
+/// when set, `Ok` otherwise. Its `drain` and `close` are logged as `drain dying` and `close dying`.
+struct Dying {
+    log: Log,
+    gate: Arc<Gate>,
+    fails: bool,
+}
+
+impl Server for Dying {
+    type Transport = Doomed;
+
+    async fn bind(&mut self, _mounted: Mounted<'_, Doomed>) -> Result<(), BoxError> {
+        Ok(())
+    }
+
+    async fn serve(&self) -> Result<(), BoxError> {
+        self.gate.pass().await;
+        if self.fails { Err(Box::new(ListenerLost)) } else { Ok(()) }
+    }
+
+    async fn drain(&self, _token: DrainToken) {
+        self.log.push("drain dying");
+    }
+
+    async fn close(&self) -> Result<(), BoxError> {
+        self.log.push("close dying");
+        Ok(())
+    }
+}
+
+/// An app serving a [`Recording`] server `a` and a [`Dying`] one bound after it. Once `serve` runs
+/// with no trigger, the dying server's `serve` ends: the shutdown runs as for any trigger, the
+/// hook, both drains and both closes in reverse bind order, the phase reaches `Closed`, and `serve`
+/// answers `Err` whose one failure is `Serve` naming the dying transport, its `end` checked by
+/// `ended`. A later `close` answers the same failure.
+async fn a_serve_that_ends(fails: bool, ended: impl Fn(&ServeEnd) -> bool) {
+    let log = Log::default();
+    let gate = Gate::new(false);
+    let recording = Recording { name: "a", app: None, log: log.clone(), drain_gate: Gate::new(true), close_gate: Gate::new(true) };
+    let root = Gated { log: log.clone(), hook_gate: Gate::new(true) };
+    let app = connect(App::builder(root).runtime(Tokio::current()))
+        .await
+        .bind(recording)
+        .bind(Dying { log: log.clone(), gate: Arc::clone(&gate), fails })
+        .listen()
+        .await
+        .unwrap_or_else(|error| panic!("the app did not bind: {error}"));
+    let handle = app.handle();
+    let serving = tokio::spawn(app.serve(std::future::pending::<Signal>()));
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(handle.phase(), Phase::Running, "the app stopped running before the dying server's `serve` ended");
+    assert!(log.events().is_empty(), "a shutdown step ran before the dying server's `serve` ended: {:?}", log.events());
+    gate.open();
+    let outcome = tokio::time::timeout(PATIENCE, serving).await.expect("`serve` did not end").expect("the serving task panicked");
+    let error = outcome.expect_err("`serve` answered `Ok` after a transport's `serve` ended");
+    let events = log.events();
+    let steps: Vec<&str> = events.iter().map(String::as_str).filter(|e| !e.starts_with("drop ") && *e != "store dropped").collect();
+    assert_eq!(steps[0], "before-shutdown", "the before-shutdown hook did not run first: {events:?}");
+    let mut drains = steps[1..3].to_vec();
+    drains.sort_unstable();
+    assert_eq!(drains, ["drain a", "drain dying"], "not every server drained: {events:?}");
+    assert_eq!(&steps[3..], ["close dying", "close a"], "not every server closed, in reverse bind order: {events:?}");
+    assert_eq!(handle.phase(), Phase::Closed, "the shutdown did not run to its end");
+    let [ShutdownFailure::Serve { transport, end }] = &*error.failures else {
+        panic!("`serve` did not answer the one `Serve` failure: {error}");
+    };
+    assert_eq!(*transport, TypeName::of::<Doomed>(), "the failure names another transport");
+    assert!(ended(end), "the failure carries another end: {end:?}");
+    let again = handle.close(Signal::new("again")).await.expect_err("a close after the shutdown answered `Ok`");
+    assert!(matches!(&*again.failures, [ShutdownFailure::Serve { .. }]), "a close after the shutdown answered {again}");
+}
+
+#[tokio::test]
+async fn a_transport_whose_serve_fails_closes_the_app() {
+    a_serve_that_ends(true, |end| matches!(end, ServeEnd::Errored(reason) if reason.downcast_ref::<ListenerLost>().is_some())).await;
+}
+
+#[tokio::test]
+async fn a_transport_whose_serve_returns_while_the_app_runs_closes_the_app() {
+    a_serve_that_ends(false, |end| matches!(end, ServeEnd::Returned)).await;
+}

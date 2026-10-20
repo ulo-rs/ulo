@@ -1,4 +1,6 @@
-//! Shutdown: one event per app, two triggers, one outcome for every receiver (§9.5).
+//! Shutdown: one event per app, three triggers, one outcome for every receiver (§9.5). The
+//! triggers are `serve`'s signal, a `close`, and a transport's `serve` ending while the app runs,
+//! which `serve` reports as the outcome's first failure, `ShutdownFailure::Serve`.
 //!
 //! The sequence:
 //! 1. `BeforeApplicationShutdown(signal)` hooks, reverse connect order, while the app serves.
@@ -11,9 +13,9 @@
 //! 6. Transports close their sockets, in reverse bind order, one after another, each `close`
 //!    bounded by what is left of the cap, or by `hook_timeout` when no cap is set. The app then
 //!    lets go of its servers. For an app that never reaches this step, the `App` value's drop
-//!    lets go of them when no `close` holds a claim, and the last claim's drop otherwise. A `close`
-//!    whose claim finds the servers released that way runs none of the steps and answers
-//!    `ShutdownFailure::Dropped`.
+//!    lets go of them when no `close` holds a claim, and the last claim's drop otherwise; that
+//!    release moves the phase to `Closed` and fires `draining()`. A `close` whose claim finds the
+//!    servers released that way runs none of the steps and answers `ShutdownFailure::Dropped`.
 //! 7. `OnApplicationShutdown(signal)` hooks, reverse connect order.
 //!
 //! Lazily loaded modules come first in every hook step, in reverse load order. A failing step
@@ -47,7 +49,7 @@ use crate::transport::server::{DrainToken, ErasedServer};
 /// The one shutdown of an app: the winning trigger's signal and the outcome every `serve` and
 /// `close` caller receives.
 pub(crate) struct ShutdownCell {
-    signal: Mutex<Option<Signal>>,
+    trigger: Mutex<Trigger>,
     triggered: Notify,
     outcome: OnceCell<Result<Shutdown, ShutdownError>>,
     /// Where the sequence stands. A caller whose future is dropped mid-sequence leaves it here,
@@ -57,6 +59,16 @@ pub(crate) struct ShutdownCell {
     /// Who lets go of the servers once the `App` value has dropped: its drop, or the last `close`
     /// claim to drop.
     release: Mutex<Release>,
+}
+
+/// The winning trigger's signal and, for a transport's `serve` that ended while the app ran, the
+/// failure it records. One lock holds both, so the trigger that wins is the one whose cause the
+/// sequence reports.
+#[derive(Default)]
+struct Trigger {
+    signal: Option<Signal>,
+    /// Taken by the sequence's first step, which lists it first among the failures.
+    cause: Option<ShutdownFailure>,
 }
 
 /// Whether the `App` value has dropped, how many `close` claims are held, whether a drop has
@@ -76,7 +88,7 @@ struct Release {
 impl ShutdownCell {
     pub(crate) fn new() -> Self {
         ShutdownCell {
-            signal: Mutex::new(None),
+            trigger: Mutex::new(Trigger::default()),
             triggered: Notify::new(),
             outcome: OnceCell::new(),
             progress: async_lock::Mutex::new(Progress::default()),
@@ -86,12 +98,20 @@ impl ShutdownCell {
 
     /// Records `signal` if no trigger has arrived yet; `true` when this call won.
     pub(crate) fn trigger(&self, signal: Signal) -> bool {
+        self.trigger_with(signal, None)
+    }
+
+    /// [`trigger`](Self::trigger), recording `cause` with the signal when this call wins: a
+    /// transport's `serve` that ended while the app ran. A losing call drops `cause`, the shutdown
+    /// it would have started having started already.
+    pub(crate) fn trigger_with(&self, signal: Signal, cause: Option<ShutdownFailure>) -> bool {
         {
-            let mut slot = self.signal.lock().unwrap_or_else(PoisonError::into_inner);
-            if slot.is_some() {
+            let mut trigger = self.trigger.lock().unwrap_or_else(PoisonError::into_inner);
+            if trigger.signal.is_some() {
                 return false;
             }
-            *slot = Some(signal);
+            trigger.signal = Some(signal);
+            trigger.cause = cause;
         }
         self.triggered.fire();
         true
@@ -103,7 +123,11 @@ impl ShutdownCell {
     }
 
     pub(crate) fn winning_signal(&self) -> Option<Signal> {
-        self.signal.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        self.trigger.lock().unwrap_or_else(PoisonError::into_inner).signal.clone()
+    }
+
+    fn take_cause(&self) -> Option<ShutdownFailure> {
+        self.trigger.lock().unwrap_or_else(PoisonError::into_inner).cause.take()
     }
 }
 
@@ -185,16 +209,43 @@ impl Closing {
 
 impl Drop for Closing {
     fn drop(&mut self) {
-        let last = {
+        let released = {
             let mut release = self.shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner);
             release.closing -= 1;
-            release.released |= release.app_dropped && release.closing == 0;
-            release.app_dropped && release.closing == 0
+            released_by_drop(&self.shared, &mut release)
         };
-        if last {
-            release_servers(&self.shared);
+        if let Some(unclosed) = released {
+            after_release(&self.shared, unclosed);
         }
     }
+}
+
+/// Read and changed under the release lock, once the `App` value's drop or a claim's drop has
+/// changed it: `None` while the `App` value lives or a claim is held. Otherwise the servers are
+/// released, and the answer says whether the close step had not ended; for that release the phase
+/// moves to `Closed` here, under the lock, so a claim that answers `Dropped` is never followed by
+/// a read of an earlier phase.
+fn released_by_drop(shared: &AppShared, release: &mut Release) -> Option<bool> {
+    if !release.app_dropped || release.closing != 0 {
+        return None;
+    }
+    release.released = true;
+    let unclosed = !release.servers_closed;
+    if unclosed {
+        shared.phase.advance(Phase::Closed);
+    }
+    Some(unclosed)
+}
+
+/// Outside the release lock, after [`released_by_drop`] answered `Some(unclosed)`: fires
+/// `draining()` for a release that ran no close step, so a loop awaiting it through a kept handle
+/// wakes, then lets go of the servers. The fire comes after the lock, since a waker may poll a task
+/// inside `wake`, and that task's `close` takes the lock.
+fn after_release(shared: &AppShared, unclosed: bool) {
+    if unclosed {
+        shared.draining.fire();
+    }
+    release_servers(shared);
 }
 
 /// What a `close` answers once a drop has released the servers before the close step ended.
@@ -204,16 +255,16 @@ fn dropped(shared: &AppShared, signal: Signal) -> ShutdownError {
 }
 
 /// The `App` value's drop: lets go of the servers at once, or, with a `close` claim held, leaves
-/// them to it.
+/// them to it. A release before the close step ended moves the phase to `Closed` and fires
+/// `draining()`.
 pub(crate) fn app_dropped(shared: &AppShared) {
-    let now = {
+    let released = {
         let mut release = shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner);
         release.app_dropped = true;
-        release.released |= release.closing == 0;
-        release.closing == 0
+        released_by_drop(shared, &mut release)
     };
-    if now {
-        release_servers(shared);
+    if let Some(unclosed) = released {
+        after_release(shared, unclosed);
     }
 }
 
@@ -231,6 +282,7 @@ async fn sequence(shared: &Arc<AppShared>, signal: Signal) -> Result<Shutdown, S
     let p = &mut *progress;
 
     if p.stage == Stage::Trigger {
+        p.failures.extend(shared.shutdown.take_cause());
         // The cap starts at the trigger, where the orchestrator's grace period starts too.
         p.cap = cap_from_now(shared.config.timer.as_deref(), shared.config.shutdown_timeout);
         shared.phase.advance(Phase::Stopping);

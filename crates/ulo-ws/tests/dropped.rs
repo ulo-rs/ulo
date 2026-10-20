@@ -1,17 +1,22 @@
 //! An app serving a gateway through the hand-off on the HTTP server's port, bound and dropped
 //! without `serve` or `close`, lets go of its WebSocket hub once its last handle drops: the hub's
 //! delivery task ends, its subscription to the broadcast adapter with it, the adapter drops, no
-//! task is left on the runtime, and the app's singletons drop (F434).
+//! task is left on the runtime, and the app's singletons drop (F434). Two HTTP servers sharing the
+//! hand-off: the first one's drop leaves the gateways to the second.
+
+mod support;
 
 use std::future::Future;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
-use ulo::{App, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use serde_json::json;
+use ulo::{App, BoundAddr, BoxError, BoxFuture, DrainToken, Module, ModuleDef, ModuleIdentity, Mounted, Server, Signal, injectable, routes};
+use ulo_http::Http;
 use ulo_runtime_tokio::Tokio;
 use ulo_ws::{BroadcastAdapter, InMemory, NodeId, Target, WsModule};
 
@@ -149,4 +154,113 @@ async fn dropped_unclosed(stalls: bool) {
     assert!(flags.adapter_dropped.load(Ordering::SeqCst), "the broadcast adapter outlived the hub's delivery task");
     assert!(flags.singleton_dropped.load(Ordering::SeqCst), "the app's singletons outlived its last handle");
     until("every task's end", || alive_tasks() == before).await;
+}
+
+/// An HTTP server over hyper that the test can drop while the app keeps serving: the public port,
+/// taken down while the admin port serves on. `serve` waits forever, the test dropping the server
+/// before any shutdown; a shutdown that still finds it closes it.
+struct Droppable(Arc<Mutex<Option<ulo_http_hyper::Server>>>);
+
+impl Droppable {
+    fn take(&self) -> Option<ulo_http_hyper::Server> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).take()
+    }
+
+    fn put(&self, server: ulo_http_hyper::Server) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(server);
+    }
+}
+
+impl Server for Droppable {
+    type Transport = Http;
+
+    async fn prepare(&mut self, mounted: Mounted<'_, Http>) -> Result<(), BoxError> {
+        let mut server = self.take().ok_or("the droppable server was prepared after its drop")?;
+        let prepared = server.prepare(mounted).await;
+        self.put(server);
+        prepared
+    }
+
+    async fn bind(&mut self, mounted: Mounted<'_, Http>) -> Result<(), BoxError> {
+        let mut server = self.take().ok_or("the droppable server was bound after its drop")?;
+        let bound = server.bind(mounted).await;
+        self.put(server);
+        bound
+    }
+
+    async fn serve(&self) -> Result<(), BoxError> {
+        std::future::pending().await
+    }
+
+    async fn drain(&self, _token: DrainToken) {}
+
+    async fn close(&self) -> Result<(), BoxError> {
+        match self.take() {
+            Some(server) => Server::close(&server).await,
+            None => Ok(()),
+        }
+    }
+
+    fn bound(&self) -> Vec<BoundAddr> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map(Server::bound).unwrap_or_default()
+    }
+}
+
+/// `WsModule` and the one gateway.
+struct Plain;
+
+impl Module for Plain {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.import(WsModule::for_root());
+        m.controller::<Lobby>();
+    }
+}
+
+/// Two HTTP servers prepare the one hand-off `WsModule` registers. The public port's server drops
+/// while the app serves, and its drop releases the hand-off; the gateway on the admin port still
+/// upgrades and answers a message, the table the hand-off built being held for the admin server.
+#[tokio::test]
+async fn a_hand_off_two_servers_share_serves_the_second_after_the_first_drops() {
+    let public = Arc::new(Mutex::new(Some(ulo_http_hyper::Server::new("127.0.0.1:0"))));
+    let app = within(
+        "the app's start",
+        App::builder(Plain)
+            .runtime(Tokio::current())
+            .drain_timeout(Duration::from_secs(1))
+            .wire()
+            .unwrap_or_else(|error| panic!("the app did not wire: {error}"))
+            .connect(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("the app did not connect: {error}"))
+    .bind(Droppable(Arc::clone(&public)))
+    .bind(ulo_http_hyper::Server::new("127.0.0.1:0"))
+    .listen()
+    .await
+    .unwrap_or_else(|error| panic!("the app did not listen: {error}"));
+    let admin = match app.addresses().as_slice() {
+        [_, admin] => admin.addr,
+        other => panic!("expected the public and the admin address, got {other:?}"),
+    };
+    let handle = app.handle();
+    let serving = tokio::spawn(app.serve(std::future::pending::<Signal>()));
+
+    let dropped = public.lock().unwrap_or_else(PoisonError::into_inner).take();
+    assert!(dropped.is_some(), "the public server was gone before the test dropped it");
+    drop(dropped);
+
+    let upgrade = support::upgrade(admin, "/lobby", &[]).await;
+    let Some(mut socket) = upgrade.socket else {
+        panic!("the admin port refused the upgrade after the public server's drop: {} {:?}", upgrade.status, upgrade.body);
+    };
+    support::send_json(&mut socket, &json!({ "event": "ping", "id": "a" })).await;
+    assert_eq!(support::next_json(&mut socket).await, json!({ "id": "a", "data": "pong" }), "the admin port's gateway did not answer");
+    support::hang_up(socket).await;
+
+    within("the app's close", handle.close(Signal::new("test"))).await.unwrap_or_else(|error| panic!("the app did not close: {error}"));
+    within("`serve`'s end", serving).await.expect("the serving task panicked").unwrap_or_else(|error| panic!("`serve` failed: {error}"));
 }

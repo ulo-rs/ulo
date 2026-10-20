@@ -635,6 +635,9 @@ impl<A: Embed> ulo::Server for Embedded<A> {
         let mount = self.mount(&mut failures);
         let PreparedApp { service, upgrading, handlers } =
             prepare_app(&mounted, &self.config, &mount, self.on_miss == Miss::Forward, &mut failures);
+        // Kept whatever the rest answers: each handler's `prepare` has run, and this embedding's
+        // drop owes each a `release`.
+        self.upgrades = handlers;
         self.check_limits(&mounted, service.as_ref(), upgrading, &mut failures);
         let Some(service) = service.filter(|_| failures.is_empty()) else {
             return Err(Box::new(failures.into_error()));
@@ -643,7 +646,6 @@ impl<A: Embed> ulo::Server for Embedded<A> {
         let _ = self.shared.app.set(mounted.app().clone());
         let _ = self.shared.prefix.set(mount);
         self.prepared = Some(service);
-        self.upgrades = handlers;
         Ok(())
     }
 

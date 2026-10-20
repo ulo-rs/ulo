@@ -23,8 +23,8 @@ use crate::binding::Qualifier;
 use crate::dependency::Dep;
 use crate::dependency::FromContainer;
 use crate::error::{
-    Closed, ConfigureErrors, ConnectError, FailureReason, LookupError, RuntimeMissing, Shutdown, ShutdownError,
-    StartupError,
+    Closed, ConfigureErrors, ConnectError, FailureReason, LookupError, RuntimeMissing, ServeEnd, Shutdown, ShutdownError,
+    ShutdownFailure, StartupError,
 };
 use crate::execution::trace::{TraceMode, TraceSource};
 use crate::execution::{ExecOptions, Execution};
@@ -68,17 +68,24 @@ pub enum Bound {}
 /// end releases them. A `close` dropped before its close step, polled or not, releases them as it
 /// drops, unclosed, as this drop would have; with several claims held, the last to drop does. A
 /// `close` kept and neither polled to its end nor dropped holds the servers until it resumes or
-/// drops.
+/// drops. Its future holds a claim on the servers and the app's shared state, so it is awaited
+/// where it is made: stored in state the app owns, a singleton among it, it holds the app from
+/// inside the app, and no drop reaches either.
 ///
 /// The release awaits nothing and does not panic on a lock: it takes two, each held only to read
 /// or change a field and never across an await, and reads either through when poisoned. A
 /// server's own drop runs on the thread dropping the app, or on the one dropping the last `close`
 /// claim.
 ///
+/// A release by this drop or by the last claim's, the close step not ended, moves the app to
+/// [`Phase::Closed`] and resolves [`AppHandle::draining`], so a background loop holding a handle
+/// is told to stop; its `execute` then answers `Closed` and a lookup `LookupError::Closed`, as
+/// after a shutdown. No hook runs.
+///
 /// An [`AppHandle`] kept past the drop keeps the app's shared state, its singletons among it, and
 /// no server once they are released: a `close` called on it after that, the close step not
 /// ended, runs none of the shutdown's steps and answers `Err` carrying
-/// [`ShutdownFailure::Dropped`](crate::ShutdownFailure::Dropped). Once a shutdown has run its close
+/// [`ShutdownFailure::Dropped`]. Once a shutdown has run its close
 /// step, a `close` after the drop answers that shutdown's outcome.
 pub struct App<S = Wired> {
     pub(crate) shared: Owner,
@@ -427,16 +434,20 @@ impl App<Bound> {
         servers.iter().flat_map(|server| server.bound()).collect()
     }
 
-    /// Serves until `signal` resolves or a `close` on any handle, whichever comes first, then
-    /// runs the shutdown sequence and returns its outcome (§9.5).
+    /// Serves until `signal` resolves, a `close` on any handle, or a transport's `serve` ends,
+    /// whichever comes first, then runs the shutdown sequence and returns its outcome (§9.5).
     ///
     /// Dropping the returned future releases the servers without running their `close`; see
     /// [`App`].
     ///
     /// Each transport's `Server::serve` is polled from here until the shutdown's outcome, so a
-    /// transport keeps serving through the before-shutdown stage and the drain. One that fails
-    /// before any trigger starts the shutdown itself, under a signal naming the transport and its
-    /// redacted error; one that returns `Ok` early is simply done.
+    /// transport keeps serving through the before-shutdown stage and the drain. One whose `serve`
+    /// ends before any other trigger, returning `Err` or returning `Ok` while the app is running,
+    /// starts the same shutdown under a signal naming the transport: every server is drained and
+    /// closed and every hook runs, and the outcome is `Err` with
+    /// [`ShutdownFailure::Serve`] naming that transport listed
+    /// first, its error redacted, which every `close` caller receives too. A `serve` that ends once
+    /// the shutdown has begun is not a failure.
     pub async fn serve(self, signal: impl Future<Output = Signal> + Send) -> Result<Shutdown, ShutdownError> {
         let shared = self.shared;
         let servers: Vec<Arc<dyn ErasedServer>> = shared.servers.lock().unwrap_or_else(PoisonError::into_inner).clone();
@@ -459,10 +470,18 @@ impl App<Bound> {
                     let Some(fut) = slot else { continue };
                     let Poll::Ready(result) = fut.as_mut().poll(cx) else { continue };
                     *slot = None;
-                    if let Err(error) = result {
-                        let reason = redact(&shared.graph().secrets, error);
-                        return Poll::Ready(Signal::new(format!("transport `{}` failed: {reason}", server.transport_name())));
-                    }
+                    let transport = server.transport_name();
+                    let (signal, end) = match result {
+                        Err(error) => {
+                            let reason = redact(&shared.graph().secrets, error);
+                            (Signal::new(format!("transport `{transport}` failed: {reason}")), ServeEnd::Errored(reason))
+                        }
+                        Ok(()) => (Signal::new(format!("transport `{transport}` stopped serving")), ServeEnd::Returned),
+                    };
+                    // A trigger that arrived since `triggered` was polled wins, and this end is
+                    // then part of that shutdown rather than its cause.
+                    shared.shutdown.trigger_with(signal.clone(), Some(ShutdownFailure::Serve { transport, end }));
+                    return Poll::Ready(signal);
                 }
                 Poll::Pending
             })

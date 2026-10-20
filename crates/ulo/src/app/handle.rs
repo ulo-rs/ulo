@@ -33,7 +33,8 @@ use crate::transport::server::mounted_parts;
 ///
 /// A handle kept past the `App` value's drop holds the app's shared state. A
 /// [`close`](Self::close) called before the drop keeps the servers and closes them; with none
-/// called the drop released them, and a `close` called later answers
+/// called the drop released them, [`phase`](Self::phase) reads [`Phase::Closed`],
+/// [`draining`](Self::draining) has resolved, and a `close` called later answers
 /// [`ShutdownFailure::Dropped`](crate::ShutdownFailure::Dropped). See [`App`](crate::App).
 #[derive(Clone)]
 pub struct AppHandle {
@@ -71,19 +72,22 @@ impl AppHandle {
         load::load(&self.shared, Box::new(module)).await
     }
 
-    /// One of shutdown's two triggers; ends `serve`. A `close` during a running shutdown starts
+    /// One of shutdown's three triggers; ends `serve`. A `close` during a running shutdown starts
     /// nothing: it waits for the same shutdown, ignores its own signal and returns the same
     /// outcome.
     ///
     /// The call claims the app's servers and the returned future's first poll triggers the
     /// shutdown. The future holds what the shutdown needs and borrows nothing from the handle, so
-    /// it can be spawned.
+    /// it can be spawned. Await it, or spawn it, where it is made: the claim it holds keeps the
+    /// servers and the app's shared state, so one stored in state the app owns, a singleton among
+    /// it, holds the app from inside the app, and no drop reaches either.
     ///
     /// A `close` called before the `App` value drops keeps the servers, polled before the drop or
     /// after it: its drain and close step reach every one, each server's `close` runs, and the
     /// shutdown's hooks run. Dropped before its close step, polled or not, with the `App` value
-    /// gone and no other `close` holding a claim, it releases them unclosed as it drops, and their
-    /// drops run on the thread dropping it. A `close` called once a drop has released them, the
+    /// gone and no other `close` holding a claim, it releases them unclosed as it drops, their
+    /// drops running on the thread dropping it, and the phase reads `Closed` and `draining()`
+    /// resolves from then on. A `close` called once a drop has released them, the
     /// close step not ended, answers `Err` carrying
     /// [`ShutdownFailure::Dropped`](crate::ShutdownFailure::Dropped) and runs no hook, whatever
     /// other `close` is held beside it. See
@@ -92,7 +96,9 @@ impl AppHandle {
         shutdown::close(&self.shared, signal)
     }
 
-    /// The same notice an execution's `draining()` gives, resolving at the same moment.
+    /// The same notice an execution's `draining()` gives, resolving at the same moment. It also
+    /// resolves when the `App` value's drop, or the last `close` claim's, releases the servers
+    /// before a shutdown closed them.
     pub fn draining(&self) -> Draining<'_> {
         Draining::new(self.shared.draining.listen())
     }
@@ -140,7 +146,8 @@ impl AppHandle {
     }
 
     /// Where the app is in its life (transports DESIGN §11, X13). gRPC health reads it to report
-    /// NOT_SERVING from the drain on, consistent with `is_draining()`.
+    /// NOT_SERVING from the drain on, consistent with `is_draining()`. `Closed` once a shutdown
+    /// has run its last step, and once a drop released the servers before a shutdown closed them.
     pub fn phase(&self) -> Phase {
         match self.shared.phase.get() {
             Stage::Wired | Stage::Connecting | Stage::Running => Phase::Running,

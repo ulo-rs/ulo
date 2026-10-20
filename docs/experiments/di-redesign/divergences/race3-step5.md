@@ -259,3 +259,180 @@ the OpenSSL flags set. No docker command was run and no broker suite.
 - The prose: batch 45's scan for the banned register and template braces, asserted first against a
   planted line (it flagged `we` and `just`), over every added line under `crates` and `docs`, the new
   test files, this log and the ledger's added lines: no finding. The scan checks vocabulary only.
+
+---
+
+# The eighth and ninth responses' lifecycle rulings: the drop closes the phase, the hand-off counts its holders, a serve that ends is a trigger
+
+Four rulings built on top of step 5: `draining()` and `phase()` advanced by a release at a drop
+(eighth response), the upgrade hand-off's holder count (eighth), `serve_loop_death` as the third
+core trigger (ninth), and the documentation that a `close` future is awaited where it is made
+(eighth). No commit was made. `Cargo.lock` is unchanged.
+
+Files changed: `crates/ulo/src/lifecycle/shutdown.rs`, `src/app/{mod,handle}.rs`,
+`src/error/mod.rs`, `src/lib.rs`; `crates/ulo-http/src/{server,embed,upgrade}.rs`;
+`crates/ulo-ws/src/handoff.rs`; core `DESIGN.md` §9.5 (the triggers, the new paragraph, step 6,
+"Detached tasks"), §10.2's `ShutdownFailure` listing, decision 11, and the §8.6 sentence naming
+`close` a trigger; transports `DESIGN.md` 153, 157 and X21. Tests: four added to
+`crates/ulo-runtime-tokio/tests/app.rs`, one assertion pair added to `tests/claims.rs`, one test
+added to `crates/ulo-ws/tests/dropped.rs`. The workspace's `FRAMEWORK_GAPS.md` gains F449 (closed by
+this batch) and F450 (open).
+
+## The signatures
+
+```rust
+// crates/ulo/src/error/mod.rs, both `#[non_exhaustive]`, additive
+pub enum ShutdownFailure { Hook { .. }, Close { .. }, Dropped, Serve { transport: TypeName, end: ServeEnd } }
+pub enum ServeEnd { Errored(Redacted), Returned }
+
+// unchanged: `UpgradeHandler` gains no method; `release`'s documentation states the pairing
+```
+
+## Decisions
+
+### E1. The release by a drop moves the phase and fires `draining()`
+
+`app_dropped` and `Closing`'s drop now share `released_by_drop`, which runs under the release lock:
+once the `App` value has dropped and no claim is held it sets `released` and, with
+`servers_closed` not set, advances the phase to `Closed`, still under the lock. The caller then,
+outside the lock, fires `draining()` and calls `release_servers`, in that order.
+
+The phase moves under the lock so that a claim reading `released` and answering `Dropped` is never
+followed by a `phase()` read of an earlier phase: the claim and the advance take the same lock. The
+phase cell's own lock is a leaf, taken under no other lock and taking none, so the order release
+then phase cannot deadlock. The fire comes after the lock because `Notify::fire` wakes outside its
+own lock and an executor may poll a task inside `wake`: a task woken there that calls `close` takes
+the release lock, which a fire under it would hold. A claim on another thread can therefore answer
+`Dropped` a moment before `is_draining()` turns true; `phase()` already reads `Closed` then.
+
+No advance happens for a release after the close step ended (`servers_closed`): that shutdown has
+fired `draining()` itself, and a sequence abandoned between the close step and the shutdown hooks
+leaves the phase at `Destroying` for a later `close` to resume, as before.
+
+`Closed` carries the phase table's refusals: from the release on, a kept handle's `execute` answers
+`Closed`, a lookup `LookupError::Closed`, and `load` `LoadError::Closed` (G1).
+
+### E2. The hand-off counts its holders; no SPI method
+
+Counted inside `Handoff`, with no new `UpgradeHandler` method: `prepare` increments the count as
+its first statement and `release` decrements it, dropping the table only at zero, both under the
+one `Mutex<Slot>` that holds the table. That is the smallest public surface: the trait is
+unchanged, and `release`'s documentation now states the pairing it relies on, each HTTP server that
+calls `prepare` calling `release` once whatever `prepare` answered.
+
+Reading for the pairing found that it did not hold: `Server<B>::prepare` and `Embedded<A>::prepare`
+stored their handlers only on success, after every handler's `prepare` had run, so a server
+refused at `listen` dropped without releasing, and the hand-off's table kept the app (F449, closed
+here). Both now store the handlers right after `prepare_app`.
+
+A second `prepare` still replaces the table, built from the same app. With two HTTP servers, each
+calls the hand-off's `bound`, which starts the table twice: the hub's start is idempotent, the
+gateways' `AfterInit` is not (F450, open, G2).
+
+### E3. `serve_loop_death`
+
+The inventory's G23 read was right that nothing named it; `App::serve` did start the shutdown for a
+server returning `Err` before any trigger, under a signal naming the transport, and then answered
+whatever the sequence produced, `Ok` when no step failed. A server returning `Ok` early was "simply
+done": the app kept serving its other transports.
+
+Now each end before a trigger, `Err` or `Ok`, calls `ShutdownCell::trigger_with(signal, cause)`,
+which records the signal and the failure under one lock and only when it wins. The sequence's first
+step takes the cause into `Progress::failures`, so it is listed first and survives a dropped runner
+as the rest of the progress does, and the outcome is `Err` for `serve` and every `close`. A trigger
+arriving between the poll of `triggered` and the server's end wins, and the end is then part of
+that shutdown and records nothing. "While the phase is still `Running`" is that condition: the
+phase leaves `Running` only after a trigger.
+
+The signal texts are unchanged for `Err`, `transport `<name>` failed: <reason>`, and new for `Ok`,
+`transport `<name>` stopped serving`. `ServeEnd` is its own enum rather than a `FailureReason`:
+`FailureReason` has no variant for "returned `Ok`", and a `serve` panic is not caught, so
+`Panicked` would be unreachable on it (G3).
+
+### E4. The `close` future's documentation
+
+`AppHandle::close`, `App`'s documentation and §9.5 step 6 say that the future holds a claim on the
+servers and the app's shared state, so it is awaited or spawned where it is made, and that one
+stored in state the app owns holds the app from inside the app.
+
+## The tests
+
+| Test | What it holds |
+| --- | --- |
+| `app.rs` `a_loop_waiting_on_draining_wakes_when_the_app_is_dropped` | a task awaiting `draining()` still waits 20 ms in, phase `Running`; after the drop it wakes, `phase()` reads `Closed`, `is_draining()`, both servers dropped once with no `close` and no hook, a later `close` answers `[Dropped]` |
+| `a_loop_waiting_on_draining_wakes_when_the_last_claim_releases_the_servers` | the same with a `close` called before the drop: the drop leaves the task waiting and the phase `Running`; the unpolled `close`'s drop wakes it |
+| `a_transport_whose_serve_fails_closes_the_app` | two servers, `a` then a `Doomed` one whose `serve` waits at a gate: nothing runs and the phase is `Running` before the gate opens; then the hook, both drains, `close dying` then `close a`, phase `Closed`, `serve` answering `Err` with the one failure `Serve { transport: TypeName::of::<Doomed>(), end: Errored(_) }` whose reason downcasts to the server's `ListenerLost`; a later `close` answers the same failure |
+| `a_transport_whose_serve_returns_while_the_app_runs_closes_the_app` | the same with `serve` returning `Ok`: `end: Returned` |
+| `claims.rs` `every_order_of_claims_and_the_drop_closes_or_releases_the_server_once` | added: once every claim has settled, `is_draining()` holds, and an iteration whose server's `close` never ran reads `Phase::Closed` |
+| `ulo-ws` `dropped.rs` `a_hand_off_two_servers_share_serves_the_second_after_the_first_drops` | a public `ulo_http_hyper::Server` inside a wrapper the test can take it out of, and an admin one, share `WsModule`'s hand-off; the public server is dropped while the app serves; the admin port still answers the upgrade 101 and a `ping` with `pong`; the app then closes and `serve` answers `Ok` |
+
+### Breaks
+
+Specs in the session scratchpad's `batch/breaks.py`, output in `batch/broken/`, with
+`summary-b01-b06.txt` and `summary.txt` (b07) recording each restore's `cmp`. The script copies the
+file aside before its edit, copies it back after the runs, `touch`es it and `cmp`s it: every restore
+reported `identical`.
+
+| Break | Result |
+| --- | --- |
+| b01. the release by a drop neither advances the phase nor fires `draining()` | both `a_loop_waiting_on_draining_*` fail, "`draining()` did not resolve after the app's drop" and "after the claim's drop"; the claims race fails at iteration 1, `draining()` not fired, `closes 0, phase Running` |
+| b02. the phase advanced, `draining()` not fired | both loop tests fail on `draining()` not resolving |
+| b07. `draining()` fired, the phase not advanced | both loop tests fail on the phase read; the claims race fails at iteration 1, "a server released unclosed left the phase short of `Closed`" |
+| b03. the hand-off's `release` drops the table on the first release | the two-server test fails, the admin port answering the upgrade `404 "no gateway at this path"` |
+| b04. a `serve` end triggers with no cause | both serve tests fail, `serve` answering `Ok` |
+| b05. a `serve` returning `Ok` is done, as before | the `Ok` test fails, `serve` not ending within 5 s; the `Err` test passes |
+| b06. the sequence does not list the cause | both serve tests fail, `serve` answering `Ok` |
+
+## Flags for the designer
+
+### G1. `Closed` after a drop refuses a kept handle's work
+
+The ruling names `phase()` and `draining()`. The phase is the one the phase table reads, so the
+handle's `execute`, singleton lookups and `load` are refused from the release on, as after a
+shutdown, though no destroy hook ran. A loop that took `draining()` as its cue gets `Closed` from
+its next `execute`, which is what the "Detached tasks" paragraph prescribes. No test in the
+workspace read a singleton through a handle kept past a drop.
+
+### G2. Two HTTP servers run a gateway's `AfterInit` twice
+
+Probed: the same app ran a gateway's `AfterInit` once with one `ulo_http_hyper::Server` and twice
+with two (`batch/probe_after_init.rs`, output beside it; the file was planted in `crates/ulo-ws/tests`
+and removed). Each HTTP server calls its handlers' `bound`, and `Handoff::bound` calls
+`GatewayTable::start` (`crates/ulo-ws/src/table.rs:264`), which spawns every gateway's
+`AfterInit`; the hub's delivery start returns at once when it already runs. A `started` flag in the
+hand-off's slot would start each table once; not built, the ruling not naming it (F450).
+
+### G3. A `serve` panic, and a `serve` error after the trigger
+
+A panic in a server's `serve` future unwinds through `App::serve`, whose drop then releases the
+servers unclosed; it is not caught as `close` is. A `serve` that returns `Err` once the shutdown has
+begun records nothing. Both are as before and stated in §9.5.
+
+## Verification
+
+Full output in the session scratchpad's `batch/verify/`; one cargo command at a time, `--locked`,
+the OpenSSL flags set. No docker command was run and no broker suite.
+
+- `cargo check --workspace --all-targets --locked`: exit 0, `ulo`'s 17 known warnings (F445) and no
+  other.
+- Tests, `cargo test -p <crate> --locked`, each exit 0, passed and ignored: `ulo` 1 and 5;
+  `ulo-runtime-tokio` 57 and 1; `ulo-http` 20 and 9; `ulo-http-axum` 70 and 1; `ulo-http-poem` 70
+  and 1; `ulo-http-salvo` 71 and 2; `ulo-http-rocket` 66 and 5; `ulo-http-actix` 36 and 35;
+  `ulo-ws` 120 and 4; `ulo-ws-redis` 3 and 1; `ulo-http-hyper` 89 and 9; `ulo-ws-hyper` 108 and 1;
+  `ulo-rpc-tcp` 172 and 10; `ulo-rpc-udp` 58 and 7; `ulo-rpc` 54 and 4; `ulo-codegen-tests` 67 and 0.
+- `claims` five times on its own: 2,000 iterations each, every run passing, the `Ok` and `Dropped`
+  answers 2276/839, 2414/701, 2143/979, 2328/755 and 2314/764.
+- `python3 scripts/runtime_levels.py --locked`: 65 members, 71 entries, 42 checked, 0 failures,
+  0 errors, exit 0.
+- `python3 scripts/unsafe_allowed.py check`: "self-test: 6 planted lines refused, 2 valid lines
+  accepted", 580 files scanned, 2 listed, 0 findings, exit 0.
+- `cargo +1.98.1 clippy -p ulo -p ulo-runtime-tokio -p ulo-http -p ulo-ws --all-targets --no-deps
+  --locked`: exit 0, 105 locations, none on a line this batch added (the intersection with
+  `git diff -U0`, read by a script that reported a location planted on an added line).
+- `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --lib -p ulo -p ulo-http -p ulo-ws --locked`: exit
+  0, after two links in `App`'s documentation dropped their explicit targets, which the new
+  `ShutdownFailure` import in `app/mod.rs` made redundant; that edit changed doc comments only, after
+  the test runs.
+- The prose: a scan for the banned register over every added line under `crates` and `docs`, this
+  section and the ledger's two entries, asserted first against a planted line: one hit, the quoted
+  old documentation ("simply done") in E3. The scan checks vocabulary only.

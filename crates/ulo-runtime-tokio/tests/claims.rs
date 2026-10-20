@@ -2,6 +2,8 @@
 //! handle clones, each awaited, dropped unpolled, or polled once and dropped. Whatever the order,
 //! the server drops once, its `close` runs at most once, the store is freed with the last handle,
 //! and a `close` answering `Ok` closed the server while one answering `Dropped` saw it unclosed.
+//! Once every claim has settled, `draining()` has fired, and a server released unclosed leaves the
+//! phase at `Closed`.
 
 use std::future::Future;
 use std::pin::pin;
@@ -10,7 +12,7 @@ use std::sync::{Arc, Barrier};
 use std::task::{Context, Poll, Waker};
 
 use ulo::app::Bound as Serving;
-use ulo::{App, BoxError, DrainToken, Module, ModuleDef, ModuleIdentity, Mounted, Server, ShutdownFailure, Signal, Transport};
+use ulo::{App, BoxError, DrainToken, Module, ModuleDef, ModuleIdentity, Mounted, Phase, Server, ShutdownFailure, Signal, Transport};
 use ulo_runtime_tokio::Tokio;
 
 const ITERATIONS: u64 = 2000;
@@ -130,6 +132,8 @@ fn every_order_of_claims_and_the_drop_closes_or_releases_the_server_once() {
             let builder = App::builder(Root(Arc::clone(&counts))).runtime(Tokio::current());
             builder.wire().unwrap().connect().await.unwrap().bind(Counted(Arc::clone(&counts), None)).listen().await.unwrap()
         });
+        // Kept to read the phase once everything has settled, and dropped before the store is read.
+        let watch = app.handle();
         let closers = 1 + next(4) as usize;
         let barrier = Arc::new(Barrier::new(closers + 1));
         let threads: Vec<_> = (0..closers)
@@ -143,9 +147,15 @@ fn every_order_of_claims_and_the_drop_closes_or_releases_the_server_once() {
         (0..spin).for_each(|_| std::hint::spin_loop());
         drop(app);
         let answers: Vec<Answer> = threads.into_iter().map(|t| t.join().expect("a closer panicked")).collect();
+        let (phase, draining) = (watch.phase(), watch.is_draining());
+        drop(watch);
         let state = |c: &AtomicUsize| c.load(Ordering::SeqCst);
         let (closes, drops, hooks, store) = (state(&counts.closes), state(&counts.drops), state(&counts.hooks), state(&counts.store));
-        let at = format!("iteration {iteration}: answers {answers:?}, closes {closes}, drops {drops}, hooks {hooks}, store {store}");
+        let at = format!("iteration {iteration}: answers {answers:?}, closes {closes}, drops {drops}, hooks {hooks}, store {store}, phase {phase:?}");
+        assert!(draining, "`draining()` had not fired once every claim settled: {at}");
+        if closes == 0 {
+            assert_eq!(phase, Phase::Closed, "a server released unclosed left the phase short of `Closed`: {at}");
+        }
         assert_eq!(drops, 1, "the server did not drop once: {at}");
         assert!(closes <= 1 && hooks <= 1, "a step ran twice: {at}");
         assert_eq!(store, 1, "the store was not freed: {at}");
