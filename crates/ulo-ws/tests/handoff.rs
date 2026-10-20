@@ -1,6 +1,7 @@
 //! Gateways on the HTTP server's own port, reached through the upgrade hand-off `WsModule`
 //! registers and served by `ulo_http::Server` over hyper: the hand-off beside an HTTP route,
-//! `WsModule`'s defaults, `AfterInit` run from the hand-off's `bound`, the drain's 1001, rooms
+//! `WsModule`'s defaults, `AfterInit` run from the hand-off's `bound` once however many HTTP
+//! servers share the hand-off, the drain's 1001, rooms
 //! and broadcast across connections, a broadcast adapter refusing in its `prepare` failing the
 //! app's `connect`, and `WsModule`'s server-wide in-flight bound.
 
@@ -17,7 +18,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use bytes::Bytes;
 use futures_util::stream::BoxStream;
-use ulo::{App, BoxError, BoxFuture, ConnectError, Dep, FailureReason, Module, ModuleDef, ModuleIdentity, StartupError, injectable, routes};
+use ulo::{App, BoxError, BoxFuture, ConnectError, Dep, FailureReason, Module, ModuleDef, ModuleIdentity, Signal, StartupError, injectable, routes};
 use ulo_transport::Count;
 use ulo_ws::{
     AfterInit, BroadcastAdapter, ConnId, ConnectCx, ConnectRefused, GatewayRef, NodeId, OnConnect, Payload, Rooms, Target, WsCx, WsModule,
@@ -238,6 +239,34 @@ async fn after_init_runs_once_per_gateway_from_the_hand_off() {
     let calls = inits.0.at_least(1, "`AfterInit` on the lobby").await;
     assert_eq!(calls, vec![("/lobby".to_owned(), Some("lobby".to_owned()))]);
     app.stop().await;
+}
+
+/// Two HTTP servers, a public port and an admin port, share the one hand-off and each calls its
+/// `bound`; the gateway's `AfterInit` still runs once (F450).
+#[tokio::test]
+async fn after_init_runs_once_with_two_http_servers_sharing_the_hand_off() {
+    let inits = Inits(Record::new());
+    let app = within(
+        "the app's start",
+        App::builder(Root { inits: inits.clone() })
+            .runtime(ulo_runtime_tokio::Tokio::current())
+            .wire()
+            .unwrap_or_else(|error| panic!("the app did not wire: {error}"))
+            .connect(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("the app did not connect: {error}"))
+    .bind(ulo_http_hyper::Server::new("127.0.0.1:0"))
+    .bind(ulo_http_hyper::Server::new("127.0.0.1:0"))
+    .listen()
+    .await
+    .unwrap_or_else(|error| panic!("the app did not listen: {error}"));
+    inits.0.at_least(1, "`AfterInit` on the lobby").await;
+    // Both servers' `bound` ran inside `listen()`; a second `AfterInit` would be a task spawned
+    // beside the first, given here the time the first took and more.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(inits.0.snapshot(), vec![("/lobby".to_owned(), Some("lobby".to_owned()))]);
+    within("the app's close", app.handle().close(Signal::new("test"))).await.unwrap_or_else(|error| panic!("the app did not close: {error}"));
 }
 
 #[tokio::test]

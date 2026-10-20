@@ -38,6 +38,9 @@ struct Slot {
     /// serves through. A later `prepare` replaces it, built from the same app.
     table: Option<GatewayTable>,
     holders: usize,
+    /// Set by the first `bound`: every holder calls `bound`, and the gateways' `AfterInit` runs
+    /// once per app.
+    started: bool,
 }
 
 impl Handoff {
@@ -102,10 +105,17 @@ impl UpgradeHandler for Handoff {
         failures.into_result()
     }
 
-    /// Starts broadcast delivery and each gateway's `AfterInit` on its own task.
+    /// Starts broadcast delivery and each gateway's `AfterInit` on its own task, at the first
+    /// holder's `bound` only.
     fn bound(&self, app: &AppHandle) {
         let _ = app;
-        if let Some(table) = self.table() {
+        let table = {
+            let mut slot = self.slot();
+            let table = slot.table.clone().filter(|_| !slot.started);
+            slot.started |= table.is_some();
+            table
+        };
+        if let Some(table) = table {
             table.start();
         }
     }

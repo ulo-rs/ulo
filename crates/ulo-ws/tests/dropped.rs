@@ -1,8 +1,9 @@
 //! An app serving a gateway through the hand-off on the HTTP server's port, bound and dropped
 //! without `serve` or `close`, lets go of its WebSocket hub once its last handle drops: the hub's
 //! delivery task ends, its subscription to the broadcast adapter with it, the adapter drops, no
-//! task is left on the runtime, and the app's singletons drop (F434). Two HTTP servers sharing the
-//! hand-off: the first one's drop leaves the gateways to the second.
+//! task is left on the runtime, and the app's singletons drop (F434). An HTTP server refused at
+//! `listen()` releases the hand-off it prepared (F449). Two HTTP servers sharing the hand-off: the
+//! first one's drop leaves the gateways to the second.
 
 mod support;
 
@@ -15,9 +16,10 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use serde_json::json;
-use ulo::{App, BoundAddr, BoxError, BoxFuture, DrainToken, Module, ModuleDef, ModuleIdentity, Mounted, Server, Signal, injectable, routes};
+use ulo::{App, BoundAddr, BoxError, BoxFuture, DrainToken, Module, ModuleDef, ModuleIdentity, Mounted, Server, Signal, StartupError, injectable, routes};
 use ulo_http::Http;
 use ulo_runtime_tokio::Tokio;
+use ulo_transport::Count;
 use ulo_ws::{BroadcastAdapter, InMemory, NodeId, Target, WsModule};
 
 /// How long a drop has to take effect on the runtime.
@@ -154,6 +156,30 @@ async fn dropped_unclosed(stalls: bool) {
     assert!(flags.adapter_dropped.load(Ordering::SeqCst), "the broadcast adapter outlived the hub's delivery task");
     assert!(flags.singleton_dropped.load(Ordering::SeqCst), "the app's singletons outlived its last handle");
     until("every task's end", || alive_tasks() == before).await;
+}
+
+/// An HTTP server refused at `listen()` by its own configuration has run the hand-off's
+/// `prepare`, which built a table holding the app, and releases it as it drops: the app's
+/// singletons drop once the refusal does (F449).
+#[tokio::test]
+async fn an_http_server_refused_at_listen_releases_the_hand_off() {
+    let flags = Arc::new(Flags::default());
+    let refused = within(
+        "the app's start",
+        App::builder(Root(Arc::clone(&flags), false))
+            .runtime(Tokio::current())
+            .wire()
+            .unwrap_or_else(|error| panic!("the app did not wire: {error}"))
+            .connect(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("the app did not connect: {error}"))
+    .bind(ulo_http_hyper::Server::new("127.0.0.1:0").max_inflight(Count::Max(0)))
+    .listen()
+    .await;
+    assert!(matches!(refused, Err(StartupError::Configure(_))), "a server with `max_inflight` 0 was not refused at `listen()`");
+    drop(refused);
+    until("the app's singletons' drop", || flags.singleton_dropped.load(Ordering::SeqCst)).await;
 }
 
 /// An HTTP server over hyper that the test can drop while the app keeps serving: the public port,

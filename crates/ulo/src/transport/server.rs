@@ -44,8 +44,10 @@ pub trait Server: Send + Sync + 'static {
     fn bind(&mut self, mounted: Mounted<'_, Self::Transport>) -> impl Future<Output = Result<(), BoxError>> + Send;
 
     /// Accepts and serves until drained. Each call opens an `Execution`, at the root routed to
-    /// its handler's module or in that module directly. An error before the drain starts the
-    /// shutdown.
+    /// its handler's module or in that module directly. Ending before any other shutdown trigger,
+    /// with `Err` or with `Ok`, starts the shutdown, and the outcome reports
+    /// [`ShutdownFailure::Serve`](crate::ShutdownFailure::Serve): a `serve` with nothing left to
+    /// accept keeps its future pending until the drain.
     fn serve(&self) -> impl Future<Output = Result<(), BoxError>> + Send;
 
     /// Stop accepting, the protocol's way: HTTP/2 and gRPC send GOAWAY, HTTP/1 closes idle

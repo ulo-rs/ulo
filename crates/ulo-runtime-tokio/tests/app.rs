@@ -6,10 +6,11 @@
 //! or as it drops if it is abandoned or dropped unpolled first; a `close` called after such a drop
 //! answers `ShutdownFailure::Dropped`. Such a drop moves the phase to `Closed` and resolves
 //! `draining()` for a loop holding a handle. A transport whose `serve` ends while the app runs
-//! starts the shutdown, and `serve` answers `ShutdownFailure::Serve` naming it. The binding with
+//! starts the shutdown, and `serve` answers `ShutdownFailure::Serve` naming it: the first bound
+//! when two end on one poll, and none when the end follows a `close`. The binding with
 //! `.runtime(..)` alone is the conformance suite's `the_app_binds_the_runtime_as_one_object`.
 
-use std::future::poll_fn;
+use std::future::{Future, poll_fn};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -1182,4 +1183,184 @@ async fn a_transport_whose_serve_fails_closes_the_app() {
 #[tokio::test]
 async fn a_transport_whose_serve_returns_while_the_app_runs_closes_the_app() {
     a_serve_that_ends(false, |end| matches!(end, ServeEnd::Returned)).await;
+}
+
+/// A second doomed transport, so two [`Dying`] servers name different transports.
+struct Fated;
+
+impl Transport for Fated {
+    const KEY: &'static str = "fated";
+    type Cx = ();
+    type Reply = ();
+}
+
+/// A [`Dying`] server bound under transport `T`.
+struct DyingAs<T>(Dying, std::marker::PhantomData<fn() -> T>);
+
+impl<T: Transport> Server for DyingAs<T> {
+    type Transport = T;
+
+    async fn bind(&mut self, _mounted: Mounted<'_, T>) -> Result<(), BoxError> {
+        Ok(())
+    }
+
+    async fn serve(&self) -> Result<(), BoxError> {
+        Server::serve(&self.0).await
+    }
+
+    async fn drain(&self, token: DrainToken) {
+        Server::drain(&self.0, token).await;
+    }
+
+    async fn close(&self) -> Result<(), BoxError> {
+        Server::close(&self.0).await
+    }
+}
+
+/// A module recording the signal each shutdown hook receives, as `before-shutdown <name>` and
+/// `on-shutdown <name>`.
+struct Signalled(Log);
+
+impl Module for Signalled {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        let log = self.0.clone();
+        m.before_shutdown(move |signal: Signal| {
+            let log = log.clone();
+            async move { log.push(format!("before-shutdown {}", signal.name())) }
+        });
+        let log = self.0.clone();
+        m.on_shutdown(move |signal: Signal| {
+            let log = log.clone();
+            async move { log.push(format!("on-shutdown {}", signal.name())) }
+        });
+    }
+}
+
+/// Two servers whose `serve` ends on the same poll, both failing: the first bound is the cause,
+/// listed once, the second's end is part of that shutdown, and both hooks receive the signal the
+/// outcome reports, which names the first. Run several times, the answer being the same each time.
+#[tokio::test]
+async fn two_serves_ending_on_one_poll_record_the_first_bound_once() {
+    for run in 0..20 {
+        let log = Log::default();
+        let gate = Gate::new(false);
+        let dying = |fails| Dying { log: log.clone(), gate: Arc::clone(&gate), fails };
+        let app = connect(App::builder(Signalled(log.clone())).runtime(Tokio::current()))
+            .await
+            .bind(DyingAs::<Doomed>(dying(true), std::marker::PhantomData))
+            .bind(DyingAs::<Fated>(dying(true), std::marker::PhantomData))
+            .listen()
+            .await
+            .unwrap_or_else(|error| panic!("the app did not bind: {error}"));
+        let serving = tokio::spawn(app.serve(std::future::pending::<Signal>()));
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        gate.open();
+        let outcome = tokio::time::timeout(PATIENCE, serving).await.expect("`serve` did not end").expect("the serving task panicked");
+        let error = outcome.expect_err("`serve` answered `Ok` after two transports' `serve` failed");
+        let [ShutdownFailure::Serve { transport, end: ServeEnd::Errored(_) }] = &*error.failures else {
+            panic!("run {run}: `serve` did not answer one `Serve` failure: {:?}", error.failures);
+        };
+        assert_eq!(*transport, TypeName::of::<Doomed>(), "run {run}: the cause is not the first server bound");
+        let signal = error.report.signal.name().to_owned();
+        let hooks: Vec<String> = log.events().into_iter().filter(|e| e.contains("shutdown ")).collect();
+        assert_eq!(hooks, [format!("before-shutdown {signal}"), format!("on-shutdown {signal}")], "run {run}: the hooks' signals");
+    }
+}
+
+/// A `serve` that fails once a `close` has triggered the shutdown is part of that shutdown: the
+/// outcome is `Ok` under the close's signal, for `serve` and the `close` alike.
+#[tokio::test]
+async fn a_serve_failing_after_a_close_is_no_failure() {
+    let log = Log::default();
+    let (gate, hook_gate) = (Gate::new(false), Gate::new(false));
+    let app = connect(App::builder(Gated { log: log.clone(), hook_gate: Arc::clone(&hook_gate) }).runtime(Tokio::current()))
+        .await
+        .bind(Dying { log: log.clone(), gate: Arc::clone(&gate), fails: true })
+        .listen()
+        .await
+        .unwrap_or_else(|error| panic!("the app did not bind: {error}"));
+    let handle = app.handle();
+    let serving = tokio::spawn(app.serve(std::future::pending::<Signal>()));
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let closing = tokio::spawn(handle.close(Signal::new("operator")));
+    let deadline = Instant::now() + PATIENCE;
+    while !log.has("before-shutdown") {
+        assert!(Instant::now() < deadline, "the before-shutdown hook did not start");
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    gate.open();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    hook_gate.open();
+    let served = tokio::time::timeout(PATIENCE, serving).await.expect("`serve` did not end").expect("the serving task panicked");
+    let closed = tokio::time::timeout(PATIENCE, closing).await.expect("`close` did not end").expect("the closing task panicked");
+    for (who, outcome) in [("serve", served), ("close", closed)] {
+        let report = outcome.unwrap_or_else(|error| panic!("`{who}` answered {:?}", error.failures));
+        assert_eq!(report.signal.name(), "operator", "`{who}` reported another trigger");
+    }
+}
+
+/// What a [`Reentrant`] server's drop saw: the phase and whether `draining()` had fired, both read
+/// as the drop began, and whether the `close` it called answered `Dropped` on its first poll.
+type SeenInDrop = Arc<Mutex<Option<(Phase, bool, bool)>>>;
+
+/// A server keeping its `AppHandle` whose own drop calls `close` on it and polls it once.
+struct Reentrant {
+    app: Option<AppHandle>,
+    seen: SeenInDrop,
+}
+
+impl Drop for Reentrant {
+    fn drop(&mut self) {
+        let Some(app) = self.app.take() else { return };
+        // Read before the claim: the claim's own drop, at the end of its first poll, releases again.
+        let (phase, draining) = (app.phase(), app.is_draining());
+        let mut closing = std::pin::pin!(app.close(Signal::new("from the drop")));
+        let polled = closing.as_mut().poll(&mut std::task::Context::from_waker(Waker::noop()));
+        let dropped = matches!(&polled, Poll::Ready(Err(error)) if matches!(&*error.failures, [ShutdownFailure::Dropped]));
+        *self.seen.lock().unwrap_or_else(PoisonError::into_inner) = Some((phase, draining, dropped));
+    }
+}
+
+impl Server for Reentrant {
+    type Transport = Bare;
+
+    async fn prepare(&mut self, mounted: Mounted<'_, Bare>) -> Result<(), BoxError> {
+        self.app = Some(mounted.app().clone());
+        Ok(())
+    }
+
+    async fn bind(&mut self, _mounted: Mounted<'_, Bare>) -> Result<(), BoxError> {
+        Ok(())
+    }
+
+    async fn serve(&self) -> Result<(), BoxError> {
+        std::future::pending().await
+    }
+
+    async fn drain(&self, _token: DrainToken) {}
+
+    async fn close(&self) -> Result<(), BoxError> {
+        Ok(())
+    }
+}
+
+/// A server whose drop, run by the `App` value's drop, takes a `close` claim and drops it: the
+/// phase already reads `Closed` and `draining()` has fired as the server drops, the claim answers
+/// `Dropped` at once, and neither the claim nor its drop waits on the release under way.
+#[tokio::test]
+async fn a_close_inside_a_server_s_drop_answers_dropped() {
+    let seen = SeenInDrop::default();
+    let app = connect(App::builder(Gated { log: Log::default(), hook_gate: Gate::new(true) }).runtime(Tokio::current()))
+        .await
+        .bind(Reentrant { app: None, seen: Arc::clone(&seen) })
+        .listen()
+        .await
+        .unwrap_or_else(|error| panic!("the app did not bind: {error}"));
+    drop(app);
+    let seen = seen.lock().unwrap_or_else(PoisonError::into_inner).take();
+    assert_eq!(seen, Some((Phase::Closed, true, true)), "what the server's drop saw: (phase, draining, `Dropped`)");
 }
