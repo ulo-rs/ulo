@@ -21,6 +21,11 @@ tracing.workspace = true
 # `Secret<T>: Deserialize` behind the `serde` feature, for `ulo-config` (integrations I3).
 serde = { workspace = true, optional = true }
 
+[dev-dependencies]
+# Integration tests under `tests/` build apps on the tokio runtime; a dev-dependency cycle Cargo allows.
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+tokio = { workspace = true, features = ["rt", "macros"] }
+
 [features]
 serde = ["dep:serde"]
 

@@ -46,7 +46,7 @@ Area letters are the batch areas in section 5.
 | 7 | Collect contributions as a list, from several modules | §4, §7 | `ulo-db-conformance` (contribution through a store, one module) | partly | `bindings.rs :: contributions_from_two_modules_form_one_many`: `Many<dyn Plugin>` has both, in import order; a global-guards case lives in `enhancers.rs` | drop the second module's contributions |
 | 8 | Third-party type, neither annotated nor trait-implementing | §4 | `ulo-db-*` bind pools (not asserted at core level) | partly | `bindings.rs :: a_foreign_type_is_bound_by_value_and_by_factory`: `std::sync::Mutex<Vec<u8>>`-style foreign type with no `Construct` impl | require `Construct` in `value` |
 | 9 | Keys are compiler-checked, no string keys | §3.1 | none | none | `ulo-codegen-tests/tests/ui/key_is_a_type_not_a_string.rs` (trybuild): `m.value::<&str>("x", ..)` / `get("name")` does not compile; plus `bindings.rs` need not exist. Check `Key` has no `From<&str>` (API-surface assertion in the ui test) | add a `From<&str> for Key` (the ui test must then compile and fail the suite) |
-| 10 | Second single refused; single + collection mix refused | §4, §10.1 | none | none | `wiring_bindings.rs :: duplicate_single_is_refused` (`DuplicateBinding`), `a_single_beside_a_collection_is_refused` (`KindMix`) | last binding wins silently |
+| 10 | Second single refused; single + collection mix refused | §4, §10.1 | none | **B1 built** | `wiring_bindings.rs :: duplicate_single_binding`, `duplicate_single_through_a_second_key` (`DuplicateBinding`); `single_beside_collection`, `a_collection_is_app_wide_so_a_single_in_another_module_mixes_with_it` (`KindMix`); controls `qualifiers_and_modules_keep_equal_types_apart`, `a_collection_of_many_contributions_and_a_differently_keyed_single_are_not_a_mix` | last binding wins silently |
 | 11 | Fields, ctor params, factory params follow one rule | §5 | codegen fixtures only | none | `injection.rs :: field_ctor_and_factory_sites_resolve_alike`: three services reading the same `Dep<A>` through `Construct::new`, a `#[construct]`-style function, and a factory get the same instance; macro side `ulo-codegen-tests/tests/injection.rs` for field and parameter spellings | resolve factory params through a different path |
 | 12 | Site reads service, trait object, collection, or per-execution data | §5 | none | none | `injection.rs :: a_site_reads_each_of_the_four_shapes`: `Dep<S>`, `Dep<dyn T>`, `Many<dyn T>`, `Ext<U>` (the last inside `execute`) | `Many` resolves to the first element only |
 | 13 | Optional dependencies | §5 | none | none | `injection.rs :: an_optional_dependency_is_none_when_unbound_and_some_when_bound`; and `Option<Ext<T>>` is `None` in a standalone execution that wrote nothing; wiring does not report `Missing` | `Option` reported as `Missing` |
@@ -64,14 +64,14 @@ Area letters are the batch areas in section 5.
 | 25 | Role comes from the implemented trait, per transport | §7 | none | none | `enhancers.rs :: an_http_guard_and_an_rpc_guard_are_different_roles`: a type implementing only `Guard<A>` registers under `AnyGuard<A>` and not `AnyGuard<B>`; handler on B does not run it (test transports `A`, `B`) | register under every transport |
 | 26 | Declared by type / value / closure; closure scope rule; global, controller, method order | §7 | `ulo-codegen-tests/enhancers.rs :: an_impl_guard_by_type...`, `method_and_impl_interceptors_...` (gRPC tiers only) | partly | `enhancers.rs :: the_three_spellings_stack_global_controller_method_in_written_order`; `a_closure_is_built_once_unless_it_reads_an_execution`; `an_explicit_scope_overrides_the_closure_inference` | reverse tier order |
 | 27 | Each guard built only after the one before admits; nothing below built until all admit | §7 | none | none | `enhancers.rs :: guards_are_built_one_by_one_and_lower_stages_wait` with the `Probe`: the second guard's construction is absent when the first refuses; no interceptor or handler built | build all guards eagerly |
-| 28 | A binding under a role key registers that role | §7 | none | none | `enhancers.rs :: a_contribution_under_a_role_key_registers_the_role` and `wiring_roles.rs`: `SingleRoleBinding`, `QualifiedRoleContribution` (section 2) | ignore role keys at freeze |
+| 28 | A binding under a role key registers that role | §7 | none | none | `enhancers.rs :: a_contribution_under_a_role_key_registers_the_role` (B5); the refusals half is **B1 built** in `wiring_roles.rs` (`qualified_contribution_under_a_role_key`, `also_as_on_a_provided_type_under_a_role_key`, `also_as_on_a_value_under_a_role_key`, `also_as_on_a_factory_under_a_role_key`, `an_alias_under_a_role_key`, `the_role_is_per_transport`) | ignore role keys at freeze |
 | 29 | Module declares imports/providers/controllers/exports; export is the only exit | §8.1, §8.2 | none | none | `modules.rs :: an_unexported_binding_is_invisible_outside_its_module` (`WiringError::Missing`, `near: None`); an exported one resolves | all bindings visible |
 | 30 | Global modules reach every module | §8.2 | none | none | `modules.rs :: a_global_module_s_exports_reach_modules_that_do_not_import_it`; its unexported bindings do not | global exports ignored |
 | 31 | for_root: different config two modules, same config deduped (diamond) | §8.3, §3.6 | none | none | `modules.rs :: one_module_type_two_configs_is_two_modules`, `a_diamond_import_with_equal_config_is_one_module` (construction counter 1, `ModuleName` instance numbers) | identity ignores config |
 | 32 | Keyed instances, each injected by key | §8.3 | `ulo-db-conformance :: keyed::two_instances`; `ulo-codegen-tests/clients.rs :: keyed_clients_of_one_service_each...` | partly | `modules.rs :: two_keyed_instances_are_injected_by_their_keys`: `Dep<T, Primary>` vs `Dep<T, Replica>`, and `app.module_keyed::<M, Q>()` | one key shadows the other |
 | 33 | Modules built at runtime by a function | §8.4 | none | none | `modules.rs :: a_dynamic_module_registers_what_its_function_registers` (`DynamicModule`, identity, exports) | function never called |
 | 34 | Re-export what an import exports | §8.2 | none | none | `modules.rs :: reexport_passes_an_import_s_export_on` and `reexport_of_an_invisible_key_is_refused` (`ReexportNotVisible`), `ReexportAmbiguous` | reexport widens to all imports |
-| 35 | Module identity deduplicates and prints a readable name in every error | §3.6, §10.1 | `ulo-db-conformance/tests/check_names.rs` (`S::NAME @ Key`, full names on collision; store level) | partly | `names.rs :: errors_print_short_names_and_full_names_on_collision` (text assertion allowed): `billing::Module` vs `users::Module`, `a::Config` vs `b::Config @ Q`; `ModuleName` carries label and instance | print full paths always |
+| 35 | Module identity deduplicates and prints a readable name in every error | §3.6, §10.1 | `ulo-db-conformance/tests/check_names.rs` (`S::NAME @ Key`, full names on collision; store level) | **B1 built** | `names.rs :: colliding_types_print_in_full_only_for_those_types`, `a_type_prints_short_when_nothing_in_the_report_collides_with_it`, `a_collision_is_decided_across_entries_and_leaves_the_qualifier_short`, `colliding_qualifiers_print_in_full_and_the_type_they_qualify_stays_short`, `a_keys_binding_kind_plays_no_part_in_a_collision`, `a_single_entry_displayed_on_its_own_applies_the_rule_to_its_own_names`, `modules_whose_names_print_alike_print_in_full`, `a_keyed_module_prints_its_qualifier_and_a_second_configuration_its_position` (text assertions, as allowed); pure: `type_name.rs`/`key.rs` `#[cfg(test)]` | print full paths always |
 | 36 | Middleware configured per module, by route | §8, transports DESIGN | `ulo-codegen-tests/enhancers.rs :: a_scoped_pre_dispatch_entry_leaves_another_service_alone` (gRPC) | partly | question for the designer (Q2); owner is `ulo-http`/`ulo-transport`, not `crates/ulo`: `ulo-http/tests/middleware_scope.rs` | scope ignored |
 | 37 | Module handle for current/named module, visibility-limited lookups | §8.5 | `ulo-rpc-conformance/src/cases/app.rs` takes a `ModuleRef` as a fixture | partly | `module_ref.rs :: a_module_ref_sees_only_what_its_module_sees` (`NotFound` for an invisible key), `module_keyed`, `ambiguous module` (`LookupError::Ambiguous`), `with_execution`, `meta::<T>()` | ModuleRef resolves app-wide |
 | 38 | Lazy loading after startup | §8.6 | none | none | `lazy.rs :: load_wires_and_connects_a_module_after_startup`; `LoadError::Refused` per `LoadRefusal` variant (Controllers, Middleware, Contribution, GlobalExport, Input); `Wiring`; `Connect`; `Closed` after close | load skips visibility checks |
@@ -80,7 +80,7 @@ Area letters are the batch areas in section 5.
 | 41 | Hooks on execution-scoped/transient refused at compile time | §9.1, §12 | none | none | `ulo-codegen-tests/tests/ui/hook_on_execution_type.rs` and `hook_on_transient_type.rs` (trybuild) against `Construct<Scope: HookCapable>`; plus `wiring_scopes.rs :: HooksOnPerExecution` for an `Auto` type inferred per execution | remove the `HookCapable` supertrait |
 | 42 | Readiness checks with retries and timeout; failed check fails startup; credentials redacted | §9.3 | `ulo-db-conformance :: connect::unreachable_fails_at_the_bound`, `create_loop`, `lock_wait` | partly | `readiness.rs :: a_check_retries_then_fails_connect` (attempt counter, frozen timer, `ConnectError` readiness case, `FailureReason`), `attempt_timeout`, `a_secret_in_the_error_is_redacted` (`Redacted` carries no secret; assert by value not text) | retry count off by one; skip redaction |
 | 43 | Phases separate: build+connect, bind, serve | §9.4 | `ulo-runtime-tokio/tests/app.rs` (listen refusal, bind phase handing) | partly | `phases.rs :: phases_advance_wired_connected_bound_running_closed`: `phase()` at each point; no socket before `listen`; a server's `prepare` not called at `connect` | bind during connect |
-| 44 | Every wiring error before any instance built, all in one pass | §10.1 | none | none | `wiring_pass.rs :: all_errors_arrive_in_one_pass_and_nothing_is_built`: a graph with five distinct faults yields five entries; construction counter zero | stop at first |
+| 44 | Every wiring error before any instance built, all in one pass | §10.1 | none | **B1 built** | `wiring_pass.rs :: all_errors_arrive_in_one_pass_and_nothing_is_built` (five faults across steps 1-4 and 6, five entries in step order, `Probe` empty), `errors_are_reported_in_step_order_whatever_the_registration_order`, `unrelated_missing_bindings_do_not_hide_each_other`, `a_missing_piece_skips_only_its_own_edges`, `a_graph_without_faults_wires_and_builds_nothing_either` | stop at first |
 | 45 | Compile-time where feasible; nothing panics or exits; typed error | §10, §12 | `ulo-runtime-tokio/tests/app.rs :: a_transport_whose_serve_fails_closes_the_app` etc. (serve death) | partly | `startup_errors.rs :: no_failure_path_panics`: wiring, connect, listen failures each return `StartupError::{Wiring, Connect, Bind}` (matched, not text); a panicking constructor/hook is `FailureReason::Panicked` | `unwrap` in connect |
 | 46 | Compile error points at the site, says what to write | §10.3 | `ulo-codegen-tests/tests/ui` (gRPC and meta only) | partly | `ui/*.stderr` for each compile row in section 4; assertion is the `.stderr` snapshot (the allowed text exception: help lines) | change the `on_unimplemented` note |
 | 47 | Runtime lookups from app/context/module handle, typed errors | §6.3, §10.2 | `ulo-runtime-tokio/tests/app.rs` (`NotFound` for `Dep<dyn Runtime>` only) | partly | `lookup.rs :: lookups_answer_each_lookup_error_variant`: `NotFound`, `NotReady`, `WrongType`, `WrongKind`, `ExecutionRequired`, `Ambiguous`, `Closed`, `Construct`, from `app`, `ModuleRef` and inside an execution | collapse variants |
@@ -97,18 +97,18 @@ Planted break for all: skip that check in the named pass.
 
 | Variant | Step | Test | Asserts |
 |---|---|---|---|
-| `ImportCycle { path }` | 1 | `wiring_modules.rs :: an_import_cycle_is_refused_with_its_path` | path is `[A, B, A]` as `ModuleName`s; no `forwardRef` escape; 3-cycle too |
-| `ReexportNotVisible` | 1 | `wiring_modules.rs :: reexport_of_a_key_no_import_exports` | module, key |
-| `ReexportAmbiguous` | 1 | `wiring_modules.rs :: reexport_of_a_key_two_imports_export` | `sources` has both |
-| `KeyedInput` | 1 | `wiring_modules.rs :: a_keyed_module_may_not_declare_an_input` | module, key |
-| `ExportNotBound` | 1 | `wiring_modules.rs :: export_of_an_unbound_key`; with `imported: true` and `near: Some` when an import provides it / a near-miss key | `imported`, `near` |
-| `DuplicateBinding` | 2 | `wiring_bindings.rs :: duplicate_single_binding` | key, module, two locations distinct |
-| `KindMix` | 2 | `wiring_bindings.rs :: single_beside_collection` | both locations |
-| `DanglingAlias` | 2 | `wiring_bindings.rs :: alias_to_nothing` | alias, target |
-| `ValueFailed` | 2 | `wiring_bindings.rs :: try_value_err_via_module_def_and_via_contribute` | `Redacted` error, no secret (by value) |
-| `QualifiedRoleContribution` | 2 | `wiring_roles.rs :: qualified_contribution_under_a_role_key` | key, module |
-| `SingleRoleBinding` | 2 | `wiring_roles.rs :: value_provide_alias_also_as_under_a_role_key` (four spellings) | one variant each |
-| `DuplicateReadiness` | 2 | `wiring_bindings.rs :: two_readiness_checks_for_one_key` | two locations |
+| `ImportCycle { path }` | 1 | **B1 built** `wiring_modules.rs :: an_import_cycle_is_refused_with_its_path`, `a_three_module_cycle_and_a_module_importing_itself_are_refused`; control `a_diamond_of_imports_is_not_a_cycle` | path is `[A, B, A]` as `ModuleName`s; no `forwardRef` escape; 3-cycle too |
+| `ReexportNotVisible` | 1 | **B1 built** `wiring_modules.rs :: reexport_of_a_key_no_import_exports` | module, key |
+| `ReexportAmbiguous` | 1 | **B1 built** `wiring_modules.rs :: reexport_of_a_key_two_imports_export`; control `a_reexport_of_a_key_one_import_exports_is_accepted` | `sources` has both |
+| `KeyedInput` | 1 | **B1 built** `wiring_modules.rs :: a_keyed_module_may_not_declare_an_input`; control `an_unkeyed_module_may_declare_an_input` | module, key |
+| `ExportNotBound` | 1 | **B1 built** `wiring_modules.rs :: export_of_an_unbound_key`, `export_of_a_key_an_import_provides_says_to_reexport_it`, `export_of_a_key_spelled_like_a_bound_one_names_the_bound_key` | `imported`, `near` |
+| `DuplicateBinding` | 2 | **B1 built** `wiring_bindings.rs :: duplicate_single_binding`, `duplicate_single_through_a_second_key` | key, module, two locations distinct |
+| `KindMix` | 2 | **B1 built** `wiring_bindings.rs :: single_beside_collection`, `a_collection_is_app_wide_so_a_single_in_another_module_mixes_with_it` | both locations |
+| `DanglingAlias` | 2 | **B1 built** `wiring_bindings.rs :: alias_to_nothing`; control `an_alias_to_a_binding_the_module_sees_is_accepted` | alias, target |
+| `ValueFailed` | 2 | **B1 built** `wiring_bindings.rs :: try_value_err_via_module_def_and_via_contribute` (the secret's absence from `Display` is asserted beside `downcast_ref`, plan question 9) | `Redacted` error, no secret (by value) |
+| `QualifiedRoleContribution` | 2 | **B1 built** `wiring_roles.rs :: qualified_contribution_under_a_role_key`; controls `an_unqualified_contribution_under_a_role_key_is_accepted`, `a_qualified_contribution_under_a_key_that_is_not_a_role_is_accepted` | key, module |
+| `SingleRoleBinding` | 2 | **B1 built** `wiring_roles.rs :: also_as_on_a_provided_type_under_a_role_key`, `also_as_on_a_value_under_a_role_key`, `also_as_on_a_factory_under_a_role_key`, `an_alias_under_a_role_key`, `the_role_is_per_transport` | one variant each |
+| `DuplicateReadiness` | 2 | **B1 built** `wiring_bindings.rs :: two_readiness_checks_for_one_key`; control `one_readiness_check_per_key_is_accepted` | two locations |
 | `InputConflict` | 2 | `wiring_inputs.rs :: transport_vs_transport_different_seeders`, `transport_vs_module`, `transport_vs_binding`; and `also_seeded_by` merge succeeds; module-only duplicates stay `DuplicateBinding` | each `InputOrigin` side |
 | `OverrideUnmatched` | 2 | `wiring_overrides.rs :: stale_override` | key, `keyed` |
 | `OverrideAmbiguous` | 2 | `wiring_overrides.rs :: override_matching_two_modules`; `.everywhere()` succeeds | `matches` both |
@@ -120,21 +120,21 @@ Planted break for all: skip that check in the named pass.
 | `ReplacementUnmatched` | 2 | `wiring_overrides.rs :: replace_a_module_nobody_imports` | original; sole entry for the first call |
 | `DuplicateReplacement` | 2 | `wiring_overrides.rs :: second_replace_module_of_one_original`; over an unimported original: first `ReplacementUnmatched`, later ones `DuplicateReplacement`, never both on one call | first/second locations |
 | `UnreadPrefix` | freeze | `wiring_controllers.rs :: at_prefix_on_a_controller_no_transport_reads` and `on_a_controller_with_no_handlers` (`transports` empty) | prefix, controller |
-| `Missing` | 3 | `wiring_visibility.rs :: missing_dependency`; `near: Some` for the `dyn Repo + Send + Sync` spelling mismatch (text assertion permitted for the "both spellings" line) | key, consumer, module, near |
-| `Ambiguous` | 3 | `wiring_visibility.rs :: two_imports_export_one_key` | `sources` both modules |
-| `Cycle` | 4 | `wiring_cycles.rs :: a_dependency_cycle_prints_its_full_path` (A->B->C->A across modules; self-cycle; through `Option`? see Q3) | path steps with modules |
+| `Missing` | 3 | **B1 built** `wiring_visibility.rs :: missing_dependency`, `a_binding_that_is_not_exported_is_missing_outside_its_module`, `missing_dependency_whose_key_differs_only_by_send_and_sync_names_both_spellings`, `a_service_reading_the_timer_of_an_app_with_none_is_told_how_to_set_one` | key, consumer, module, near |
+| `Ambiguous` | 3 | **B1 built** `wiring_visibility.rs :: two_imports_export_one_key`, `an_ambiguous_key_in_the_root_is_reported_though_nothing_reads_it` | `sources` both modules |
+| `Cycle` | 4 | **B1 built** `wiring_cycles.rs :: a_dependency_cycle_prints_its_full_path`, `a_service_reading_itself_is_a_cycle`, `two_separate_tangles_are_two_entries`; control `a_diamond_of_dependencies_is_not_a_cycle`. Cycles through `Option`/`Many` edges: not tested until question 3 is ruled | path steps with modules |
 | `ScopeViolation` | 5 | `wiring_scopes.rs :: singleton_reading_execution_data` (direct, via transient, `by_closure`) | binding, declared, path |
 | `HooksOnPerExecution` | 5 | `wiring_scopes.rs :: hook_on_an_auto_type_inferred_per_execution`, closure hook and `.ready(..)` too | binding, module |
 | `ClosureScopeViolation` | 5 | `wiring_scopes.rs :: explicit_singleton_closure_enhancer_reading_execution` | transport as `TypeName` |
 | `ClosureNeedsExecution` | 5 | `wiring_scopes.rs :: hook_readiness_module_hook_or_metadata_closure_reading_ext` (four closures) | closure, path |
 | `InputNotSeeded` | 5 | `wiring_inputs.rs :: input_read_on_a_path_from_a_transport_that_does_not_seed_it`; `Option<Dep<..>>` is accepted | handler, transport, input, seeder, steps |
-| `BoundWithoutTimer` | 6 | `wiring_timer.rs :: a_written_wait_on_an_app_with_no_timer` (`.timeout`, `.attempt_timeout`, `After(..)`); `Default`/`Unbounded` accepted | item, location points at the call |
-| `BackoffWithoutTimer` | 6 | `wiring_timer.rs :: backoff_reports_its_own_line` (`at` is the `.backoff` line, not `.ready`) | binding, location |
-| `KnobWithoutTimer` | 6 | `wiring_timer.rs :: a_builder_knob_on_an_app_with_no_timer` (`drain_timeout`, `hook_timeout`, `construct_timeout`, `shutdown_timeout`) | knob name |
+| `BoundWithoutTimer` | 6 | **B1 built** `wiring_timer.rs :: a_construction_timeout_on_an_app_with_no_timer`, `a_constructs_after_bound_on_an_app_with_no_timer`, `a_trait_hooks_after_bound_on_an_app_with_no_timer`, `a_readiness_timeout_and_attempt_timeout_on_an_app_with_no_timer`, `a_hook_timeout_and_a_module_hook_timeout_on_an_app_with_no_timer`; `default_and_unbounded_need_no_timer`, `the_same_bounds_wire_on_an_app_with_a_timer` accepted | item, location points at the call |
+| `BackoffWithoutTimer` | 6 | **B1 built** `wiring_timer.rs :: backoff_reports_its_own_line`; control `a_zero_backoff_waits_for_nothing_and_needs_no_timer` | binding, location |
+| `KnobWithoutTimer` | 6 | **B1 built** `wiring_timer.rs :: a_builder_knob_on_an_app_with_no_timer` | knob name |
 
 Also: `WiringErrors` collects (5 entries in one pass, unrelated missing bindings do not hide each other,
 a missing piece skips only its edges), and the collision printing pass:
-`wiring_pass.rs :: errors_are_collected_in_one_pass`, `names.rs :: colliding types print in full only for those types`.
+`wiring_pass.rs :: all_errors_arrive_in_one_pass_and_nothing_is_built` and its three siblings, `names.rs :: colliding_types_print_in_full_only_for_those_types` and its siblings (all **B1 built**).
 
 ## 3. §12 refusal table: point and home
 
@@ -188,10 +188,11 @@ a missing piece skips only its edges), and the collision printing pass:
 
 ## 4. Pure in-crate tests (`#[cfg(test)]`)
 
-- `type_name.rs`: `TypeName::colliding` (equal short names, different paths; generic arguments cut; `{:#}` full).
-- `key.rs`: key equality (type, qualifier, unsized `dyn`, `dyn X + Send + Sync` distinct from `dyn X`).
-- `timer.rs`/bounds: `Bound` arithmetic (`Default`, `Unbounded`, `After(d)`; `Bound::After(ZERO)` refused by the zero rule: a wiring or prepare-time case).
-  The `timeout` helper in `timer.rs` is `pub(crate)` and currently unused by the lib (dead-code warning); check whether it is meant to be exercised here.
+- **B1 built** `type_name.rs` (`type_name::tests`, 10 tests): `TypeName::colliding` (equal short names, different paths; generic arguments cut; the same type twice; only the colliding names), `written`, `{:#}` full, closure segments, equality by `TypeId`.
+- **B1 built** `key.rs` (`key::tests`, 10 tests): key equality (type, qualifier, alias, unsized `dyn`, `dyn X + Send + Sync` distinct from `dyn X`), hashing in a map, `requalified`, `qualifier`, `Display`/`text_in`, `role_spelling`.
+- **B1 built** `timer.rs` (`timer::tests`, 8 tests): `resolve_bound` over `Default`, `Unbounded`, `After(d)` for each `BoundKind` with and without defaults, and the `timeout` helper (the future that finishes first wins; the sleep wins; work completing in the poll the sleep fires in counts as done).
+  Not built: `Bound::After(ZERO)` refused by a zero rule. No such rule exists in `crates/ulo/src` or in `DESIGN.md` (`resolve_bound` passes a zero duration through), so there is nothing to pin; see question 11.
+  The `timeout` helper in `timer.rs` is `pub(crate)` and unused by the lib (dead-code warning); it is exercised here only by its own unit tests.
 
 ## 5. Build batches
 
@@ -205,7 +206,7 @@ Sizes in tests (approximate). Each batch: one Sonnet build agent, then an Opus c
 | B3 Scopes, executions, overrides | caps 18-23, 47, 48; wiring step 5 and overrides (`ScopeViolation`, `HooksOnPerExecution`, `ClosureScopeViolation`, `ClosureNeedsExecution`, `InputNotSeeded`, `InputConflict`, `UnreadPrefix`, override variants x9) | `scopes.rs`, `executions.rs`, `lookup.rs`, `testing.rs`, `wiring_scopes.rs`, `wiring_inputs.rs`, `wiring_overrides.rs`, `wiring_controllers.rs` | ~36 | B1 |
 | B4 Lifecycle, phases, lazy, shutdown | caps 15, 38-40, 42, 43, 45; connect/close/load/draining rows of §12; two-server serve death | `construct_errors.rs`, `hooks.rs`, `readiness.rs`, `phases.rs`, `lazy.rs`, `shutdown.rs`, `startup_errors.rs` | ~30; needs `Tokio` (timers: use a frozen `Timer` as `ulo-runtime-tokio/tests/app.rs` does) | B1 |
 | B5 Enhancer pipeline | caps 24-28 (a test `Transport` marker pair, one `Controller` fixture; no HTTP) and the runtime rows (`GuardRejected`, panic stages) | `enhancers.rs`, `common/transport.rs` | ~14; fixture-heavy, run alone | B1, B3 (per-execution) |
-| B6 Compile-time refusals | caps 9, 41, 46 and every compile row of §3 | `ulo-codegen-tests/tests/ui/*.rs` + `.stderr` (about 22 files); `compile_fail.rs` globs `tests/ui/*.rs` already | ~22 ui cases; run one at a time (`TRYBUILD=overwrite` only on first creation, then review stderr) | none (independent of B1-B5) |
+| B6 Compile-time refusals | caps 9, 41, 46 and every compile row of §3 | `ulo-codegen-tests/tests/ui/*.rs` + `.stderr` (about 22 files); `compile_fail.rs` globs `tests/ui/*.rs` already | ~22 ui cases; run one at a time (`TRYBUILD=overwrite` only on first creation, then review stderr) | none (independent of B1-B5). **Status 2026-10-20: built, 28 new `ui/` cases, each shown red under a planted break; the controller-level `value = expr` row is not refused (F453), so it has no case.** |
 | O1 Owner-crate gaps, HTTP | SWITCH_INVENTORY G9-G15 | `ulo-http/tests/` (routing, SSE, extractors, handler forms, errors, metadata, CORS, tower, module middleware = cap 36) | see section 6 | B1 style only |
 | O2 Health, gRPC/RPC, WS | G17, G19-G21, G25 | `ulo-health-http/tests`, `ulo-health-grpc/tests`, `ulo-grpc/tests` or `ulo-codegen-tests`, `ulo-rpc/tests`, `ulo-ws/tests` | see section 6 | none |
 | O3 Config, GraphQL, tracing | G16, G18, G24 | `ulo-config/tests`, `ulo-graphql*/tests`, `ulo-otel/tests` | see section 6 | none |
@@ -213,6 +214,11 @@ Sizes in tests (approximate). Each batch: one Sonnet build agent, then an Opus c
 Core batches are roughly 30-36 tests each (B6 22 compile cases). B2, B3, B4 can run in parallel with
 each other after B1 lands (separate files); B5 follows B3. B6 can start at once. Cargo runs one at a
 time regardless (shared gotcha: one `cargo test` at a time).
+
+### B1 status
+
+Built: `tests/common/mod.rs` (harness, documented in its header), `names.rs`, `wiring_modules.rs`, `wiring_bindings.rs`, `wiring_roles.rs`, `wiring_visibility.rs`, `wiring_cycles.rs`, `wiring_timer.rs`, `wiring_pass.rs`, and the `#[cfg(test)]` modules in `type_name.rs`, `key.rs` and `timer.rs`. Each test file's header names the capabilities it pins. The planted-break table is in the B1 report; every break was planted in a scratch copy of the crate, never in the working tree.
+Not built, with the reason: cycles through `Option`/`Many` edges (question 3); `Bound::After(ZERO)` (no rule, question 11); the `ulo-runtime-tokio` clock/runtime-override tests stay where they are (B3 adds the variant-level ones).
 
 ## 6. Owner-crate gaps (SWITCH_INVENTORY section 1)
 
@@ -269,3 +275,5 @@ Batches: O1 = G9-G15 (HTTP, ~25 tests), O2 = G17, G19-G21, G25 (~18), O3 = G16, 
 10. `timer.rs::timeout` is `pub(crate)` and `cargo test` reports it unused (dead-code warning, with
     others in `redact.rs`). If it is not used by the library, it may be a planted-break target or
     dead code; the lib builds with 17 warnings.
+11. `Bound::After(Duration::ZERO)`: the plan expected a "zero rule" that refuses it at wiring or prepare time. Neither `DESIGN.md` nor `crates/ulo/src` has one: `resolve_bound` returns `After { after: ZERO, .. }` and a zero timeout then expires at once. Is a zero bound legal (an immediate expiry) or to be refused? No test written until ruled.
+12. `SingleRoleBinding` is spelled "`provide`, `value`, `also_as` or an alias" in section 12, but `provide`/`value` register a sized type under its own key, so a role key (always a `dyn`) can only be reached through `also_as` (on a `provide`, a `value` or a factory) or an alias. B1 pins those four. Confirm the section 12 wording should say so.

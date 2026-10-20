@@ -143,3 +143,110 @@ fn push_last_segment(out: &mut String, path: &str) {
     }
     out.push_str(last);
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
+    use super::*;
+
+    mod a {
+        pub struct Config;
+        pub struct Wrapper<T>(pub T);
+    }
+
+    mod b {
+        pub struct Config;
+    }
+
+    struct Solo;
+
+    trait Repo {}
+
+    type AliasOfConfig = a::Config;
+
+    fn name<T: ?Sized + 'static>() -> TypeName {
+        TypeName::of::<T>()
+    }
+
+    fn set(names: impl IntoIterator<Item = TypeName>) -> HashSet<TypeName> {
+        TypeName::colliding(names)
+    }
+
+    #[test]
+    fn display_cuts_every_path_segment_and_the_alternate_form_keeps_them() {
+        assert_eq!(name::<a::Config>().to_string(), "Config");
+        let full = format!("{:#}", name::<a::Config>());
+        assert!(full.ends_with("tests::a::Config") && full.len() > "Config".len(), "{full}");
+    }
+
+    #[test]
+    fn generic_arguments_are_cut_too() {
+        assert_eq!(name::<Arc<a::Config>>().to_string(), "Arc<Config>");
+        assert_eq!(name::<a::Wrapper<Arc<b::Config>>>().to_string(), "Wrapper<Arc<Config>>");
+        assert_eq!(name::<Vec<(a::Config, &'static b::Config)>>().to_string(), "Vec<(Config, &Config)>");
+    }
+
+    #[test]
+    fn the_punctuation_around_paths_is_copied_as_written() {
+        assert_eq!(name::<dyn Repo + Send + Sync>().to_string(), "dyn Repo + Send + Sync");
+        assert_eq!(name::<[a::Config; 3]>().to_string(), "[Config; 3]");
+        assert_eq!(name::<fn(a::Config) -> b::Config>().to_string(), "fn(Config) -> Config");
+    }
+
+    #[test]
+    fn a_closure_segment_keeps_the_item_that_encloses_it() {
+        fn enclosing() -> TypeName {
+            fn name_of<T: 'static>(_: &T) -> TypeName {
+                TypeName::of::<T>()
+            }
+            name_of(&|| ())
+        }
+        assert_eq!(enclosing().to_string(), "enclosing::{{closure}}");
+    }
+
+    #[test]
+    fn two_names_are_equal_when_their_types_are_not_when_their_spellings_are() {
+        assert_eq!(name::<AliasOfConfig>(), name::<a::Config>());
+        assert_ne!(name::<a::Config>(), name::<b::Config>());
+        assert_ne!(name::<dyn Repo>(), name::<dyn Repo + Send>());
+    }
+
+    #[test]
+    fn colliding_finds_equal_short_names_of_different_types() {
+        let found = set([name::<a::Config>(), name::<b::Config>()]);
+        assert_eq!(found, HashSet::from([name::<a::Config>(), name::<b::Config>()]));
+    }
+
+    #[test]
+    fn colliding_ignores_the_same_type_listed_twice_and_names_that_differ() {
+        assert!(set([name::<a::Config>(), name::<a::Config>(), name::<AliasOfConfig>()]).is_empty());
+        assert!(set([name::<a::Config>(), name::<Solo>()]).is_empty());
+        assert!(set([]).is_empty());
+    }
+
+    #[test]
+    fn colliding_returns_only_the_names_that_collide() {
+        let found = set([name::<a::Config>(), name::<Solo>(), name::<b::Config>(), name::<Solo>()]);
+        assert!(found.contains(&name::<a::Config>()) && found.contains(&name::<b::Config>()));
+        assert!(!found.contains(&name::<Solo>()));
+        assert_eq!(found.len(), 2);
+    }
+
+    #[test]
+    fn colliding_compares_the_cut_form_so_generic_arguments_count() {
+        // `Arc<a::Config>` and `Arc<b::Config>` both print `Arc<Config>`.
+        let found = set([name::<Arc<a::Config>>(), name::<Arc<b::Config>>(), name::<a::Config>()]);
+        assert!(found.contains(&name::<Arc<a::Config>>()) && found.contains(&name::<Arc<b::Config>>()));
+        assert!(!found.contains(&name::<a::Config>()), "`Config` and `Arc<Config>` print apart");
+    }
+
+    #[test]
+    fn written_gives_the_full_path_to_the_names_in_the_set_only() {
+        let full = set([name::<a::Config>(), name::<b::Config>()]);
+        assert_eq!(name::<a::Config>().written(&full), format!("{:#}", name::<a::Config>()));
+        assert_eq!(name::<Solo>().written(&full), "Solo");
+        assert_eq!(name::<a::Config>().written(&HashSet::new()), "Config");
+    }
+}

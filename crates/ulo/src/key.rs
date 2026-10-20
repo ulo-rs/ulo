@@ -209,3 +209,105 @@ pub(crate) fn role_spelling(text: &str) -> String {
     };
     format!("{prefix}{alias}{tail}")
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use super::*;
+
+    mod a {
+        pub struct Config;
+    }
+
+    struct Primary;
+    struct Replica;
+    struct Store;
+
+    trait Repo: Send + Sync {}
+
+    type AliasOfStore = Store;
+
+    #[test]
+    fn keys_compare_on_type_and_qualifier() {
+        assert_eq!(Key::of::<Store, ()>(), Key::of::<Store, ()>());
+        assert_eq!(Key::of::<Store, Primary>(), Key::of::<Store, Primary>());
+        assert_ne!(Key::of::<Store, Primary>(), Key::of::<Store, Replica>());
+        assert_ne!(Key::of::<Store, Primary>(), Key::of::<Store, ()>());
+        assert_ne!(Key::of::<Store, ()>(), Key::of::<a::Config, ()>());
+    }
+
+    #[test]
+    fn an_alias_of_a_type_is_the_same_key() {
+        assert_eq!(Key::of::<AliasOfStore, ()>(), Key::of::<Store, ()>());
+        assert_eq!(Key::of::<AliasOfStore, Replica>(), Key::of::<Store, Replica>());
+    }
+
+    #[test]
+    fn a_trait_object_is_a_key_and_a_different_bound_list_is_a_different_key() {
+        assert_eq!(Key::of::<dyn Repo, ()>(), Key::of::<dyn Repo, ()>());
+        assert_ne!(Key::of::<dyn Repo, ()>(), Key::of::<dyn Repo + Send + Sync, ()>());
+        assert_ne!(Key::of::<dyn Repo, ()>(), Key::of::<dyn Repo + Send, ()>());
+        assert_ne!(Key::of::<dyn Repo, ()>(), Key::of::<Store, ()>());
+    }
+
+    #[test]
+    fn equal_keys_hash_alike_and_find_each_other_in_a_map() {
+        let mut map: HashMap<Key, &str> = HashMap::new();
+        map.insert(Key::of::<Store, Primary>(), "primary");
+        map.insert(Key::of::<Store, Replica>(), "replica");
+        assert_eq!(map.get(&Key::of::<AliasOfStore, Primary>()), Some(&"primary"));
+        assert_eq!(map.get(&Key::of::<Store, Replica>()), Some(&"replica"));
+        assert_eq!(map.get(&Key::of::<Store, ()>()), None);
+        let set: HashSet<Key> = [Key::of::<Store, ()>(), Key::of::<AliasOfStore, ()>()].into_iter().collect();
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn the_binding_kind_belongs_to_the_key_name_and_not_to_the_key() {
+        let key = Key::of::<Store, ()>();
+        assert_eq!(key.name(BindingKind::Single).key(), key.name(BindingKind::Collection).key());
+        assert_ne!(key.name(BindingKind::Single), key.name(BindingKind::Collection));
+    }
+
+    #[test]
+    fn requalified_replaces_the_qualifier_and_keeps_the_type() {
+        let key = Key::of::<Store, Primary>().requalified::<Replica>();
+        assert_eq!(key, Key::of::<Store, Replica>());
+        assert_eq!(key.requalified::<()>(), Key::of::<Store, ()>());
+        assert!(key.requalified::<()>().is_unqualified());
+        assert!(!key.is_unqualified());
+    }
+
+    #[test]
+    fn qualifier_is_none_for_the_unit_qualifier() {
+        assert!(Key::of::<Store, ()>().qualifier().is_none());
+        assert_eq!(Key::of::<Store, Primary>().qualifier(), Some(TypeName::of::<Primary>()));
+    }
+
+    #[test]
+    fn display_writes_the_type_then_the_qualifier_and_the_alternate_form_writes_full_paths() {
+        assert_eq!(Key::of::<Store, ()>().to_string(), "Store");
+        assert_eq!(Key::of::<Store, Replica>().to_string(), "Store @ Replica");
+        let full = format!("{:#}", Key::of::<a::Config, Replica>());
+        assert!(full.contains("tests::a::Config @ ") && full.ends_with("tests::Replica"), "{full}");
+        assert_eq!(Key::of::<Store, ()>().name(BindingKind::Collection).to_string(), "Store (collection)");
+    }
+
+    #[test]
+    fn text_in_writes_full_paths_for_the_names_in_the_set_only() {
+        let key = Key::of::<a::Config, Replica>();
+        let full = HashSet::from([TypeName::of::<a::Config>()]);
+        let text = key.text_in(&full);
+        assert!(text.starts_with(TypeName::of::<a::Config>().full()) && text.ends_with(" @ Replica"), "{text}");
+    }
+
+    #[test]
+    fn a_role_key_prints_under_the_name_a_user_writes() {
+        assert_eq!(role_spelling("dyn ErasedGuard<Http>"), "AnyGuard<Http>");
+        assert_eq!(role_spelling("dyn ulo::transport::ErasedInterceptor<ulo_http::Http>"), "ulo::transport::AnyInterceptor<ulo_http::Http>");
+        assert_eq!(role_spelling("dyn my::ErasedErrorHandler<Rpc>"), "my::AnyErrorHandler<Rpc>");
+        assert_eq!(role_spelling("dyn Repo"), "dyn Repo");
+        assert_eq!(role_spelling("Store"), "Store");
+    }
+}

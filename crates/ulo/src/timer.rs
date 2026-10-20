@@ -112,3 +112,121 @@ pub(crate) async fn timeout<F: Future>(timer: &dyn Timer, d: Duration, fut: F) -
     })
     .await
 }
+
+#[cfg(test)]
+mod tests {
+    use std::task::{Context, Waker};
+    use std::time::Instant;
+
+    use super::*;
+
+    const HOOK: Duration = Duration::from_secs(10);
+    const CONSTRUCT: Duration = Duration::from_secs(30);
+    const SET: Duration = Duration::from_secs(3);
+
+    const KINDS: [BoundKind; 4] =
+        [BoundKind::Hook, BoundKind::Construction, BoundKind::ReadinessAttempt, BoundKind::ReadinessWhole];
+
+    fn defaults() -> Defaults {
+        Defaults { hook_timeout: HOOK, construct_timeout: CONSTRUCT }
+    }
+
+    #[test]
+    fn a_bound_is_default_until_written() {
+        assert_eq!(Bound::default(), Bound::Default);
+    }
+
+    #[test]
+    fn without_a_timer_every_bound_runs_unbounded() {
+        for kind in KINDS {
+            for bound in [Bound::Default, Bound::After(SET), Bound::Unbounded] {
+                assert_eq!(resolve_bound(bound, kind, None), Resolved::Unbounded, "{bound:?} on {kind:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn unbounded_stays_unbounded_with_a_timer() {
+        for kind in KINDS {
+            assert_eq!(resolve_bound(Bound::Unbounded, kind, Some(&defaults())), Resolved::Unbounded, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn an_explicit_bound_is_the_items_own_limit_and_a_readiness_attempts_is_the_attempt_limit() {
+        let defaults = defaults();
+        for kind in [BoundKind::Hook, BoundKind::Construction, BoundKind::ReadinessWhole] {
+            assert_eq!(
+                resolve_bound(Bound::After(SET), kind, Some(&defaults)),
+                Resolved::After { after: SET, limit: Limit::Item },
+                "{kind:?}"
+            );
+        }
+        assert_eq!(
+            resolve_bound(Bound::After(SET), BoundKind::ReadinessAttempt, Some(&defaults)),
+            Resolved::After { after: SET, limit: Limit::Attempt }
+        );
+    }
+
+    #[test]
+    fn default_takes_the_app_default_for_the_kind_of_item() {
+        let defaults = defaults();
+        let default = |after| Resolved::After { after, limit: Limit::Default };
+        assert_eq!(resolve_bound(Bound::Default, BoundKind::Hook, Some(&defaults)), default(HOOK));
+        assert_eq!(resolve_bound(Bound::Default, BoundKind::Construction, Some(&defaults)), default(CONSTRUCT));
+        assert_eq!(resolve_bound(Bound::Default, BoundKind::ReadinessAttempt, Some(&defaults)), default(CONSTRUCT));
+        // Only an attempt of a readiness check takes `construct_timeout`; the check as a whole has no default.
+        assert_eq!(resolve_bound(Bound::Default, BoundKind::ReadinessWhole, Some(&defaults)), Resolved::Unbounded);
+    }
+
+    /// A clock whose sleep is ready at once, or never, and which records the duration it was asked for.
+    struct Clock {
+        ready: bool,
+        asked: std::sync::Mutex<Option<Duration>>,
+    }
+
+    impl Timer for Clock {
+        fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+            *self.asked.lock().unwrap() = Some(d);
+            if self.ready { Box::pin(std::future::ready(())) } else { Box::pin(std::future::pending()) }
+        }
+
+        fn now(&self) -> Instant {
+            Instant::now()
+        }
+    }
+
+    fn block_on<F: Future>(fut: F) -> F::Output {
+        let mut fut = pin!(fut);
+        let mut cx = Context::from_waker(Waker::noop());
+        // Every future here finishes within a few polls; a bound turns a hang into a failure.
+        for _ in 0..100 {
+            if let Poll::Ready(output) = fut.as_mut().poll(&mut cx) {
+                return output;
+            }
+        }
+        panic!("the future did not complete in 100 polls");
+    }
+
+    #[test]
+    fn the_future_that_finishes_first_wins() {
+        let clock = Clock { ready: false, asked: Default::default() };
+        let out = block_on(timeout(&clock, SET, async { 7 }));
+        assert_eq!(out, Ok(7));
+        assert_eq!(*clock.asked.lock().unwrap(), Some(SET), "the sleep is asked for the bound");
+    }
+
+    #[test]
+    fn the_sleep_wins_when_the_future_never_finishes() {
+        let clock = Clock { ready: true, asked: Default::default() };
+        let out = block_on(timeout(&clock, SET, std::future::pending::<u8>()));
+        assert_eq!(out, Err(()));
+    }
+
+    #[test]
+    fn work_that_completes_in_the_poll_the_sleep_fires_in_counts_as_done() {
+        let clock = Clock { ready: true, asked: Default::default() };
+        let out = block_on(timeout(&clock, SET, async { 7 }));
+        assert_eq!(out, Ok(7));
+    }
+}
