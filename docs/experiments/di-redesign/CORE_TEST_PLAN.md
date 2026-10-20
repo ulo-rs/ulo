@@ -1,0 +1,271 @@
+# Core test series: plan
+
+Source: `integrations/RESPONSE.md`, ninth response. One test per capability in `CAPABILITIES.md`
+(48), each shown failing against a planted break; every `WiringError` variant and every §12 refusal
+gets a test at its listed point. Assert variants and fields, not message text, except §10.1's
+short-name/collision rule and the help lines.
+
+State at `188ac7ed`: `crates/ulo` has no tests of its own. Existing cover is incidental
+(`ulo-runtime-tokio/tests/app.rs` for the clock, runtime, close and serve-death paths;
+`ulo-db-conformance` for keyed modules and contribution through a store; `ulo-codegen-tests` for
+gRPC enhancer tiers). `ulo-codegen-tests/tests/ui` holds only the gRPC-shape and `meta` compile-fail
+cases: no §12 compile refusal is pinned.
+
+## 0. Home (probe result)
+
+`crates/ulo/tests/` works. `ulo-runtime-tokio` (and `tokio` with `rt`, `macros`) is a dev-dependency of
+`crates/ulo`; `cargo test -p ulo --test probe` built `TestApp::of(Empty).runtime(Tokio::current())`,
+connected and closed it. `Tokio` satisfying `TestApp::runtime(impl Runtime)` shows the test links
+the one `ulo` the runtime crate was built against. See the report for the other checks.
+
+Conventions for every file under `crates/ulo/tests/`:
+
+- A shared `tests/common/mod.rs` (`mod common;` per file): `Empty`, a `module!`-free hand-written
+  `Module` helper (`struct M(&'static str, fn(&mut ModuleDef))` with an identity from a name), `wire_err(builder) -> WiringErrors`
+  that asserts `wire()` fails and returns the entries, `connect(builder)`, a `Probe` recording
+  construction/hook order in an `Arc<Mutex<Vec<&'static str>>>`.
+- Tests use the value-level API only (no macros; macros stay in `ulo-codegen-tests`).
+- A planted break is a one-line change in `crates/ulo/src` that the test must fail under; each row names it. The
+  builder agent applies it, runs the one test, records the failure, reverts. Planted breaks never stay.
+- `#[tokio::test]` with `Tokio::current()` only where a hook, constructor or timer wait needs a
+  runtime; wiring tests are plain `#[test]` over `wire()`.
+
+## 1. Capabilities
+
+Verdict column: pinned / partly / none. Judged by reading what the existing test asserts, not its name.
+Area letters are the batch areas in section 5.
+
+| # | Capability | DESIGN | Existing test | Verdict | Proposed test (file :: name) and assertion | Planted break |
+|---|---|---|---|---|---|---|
+| 1 | Declare a service the container builds | §4, §3.4 | `ulo-codegen-tests` build services via `#[injectable]` as fixtures; none asserts injection | none | `bindings.rs :: a_construct_type_is_built_with_its_dependencies` (hand-written `Construct`, provided via `m.provide::<S>()`): `app.get::<S>()` holds the dep that was bound | make `provide` skip dependency resolution |
+| 2 | Bind a value under a key | §4 | none (`Values` in a template test only) | none | `bindings.rs :: a_value_is_read_back_by_its_key`: `get::<Cfg>()` is the bound `Arc` (`Arc::ptr_eq`) | return a clone |
+| 3 | Async factory, parameters are dependencies | §4 | none | none | `bindings.rs :: a_factory_s_parameters_are_its_dependencies_and_its_output_the_binding`: factory with `Dep<A>` reads A, binding is output; and a `try_` factory's `Err` is `StartupError::Connect` with `ConnectError` variant for the constructor | feed the factory a default instead of the resolved dep |
+| 4 | Implementation under a trait, injected by trait | §4 | none | none | `bindings.rs :: an_implementation_is_injected_by_its_trait`: `get::<dyn Repo>()` calls the impl; `get::<Impl>()` is `NotFound` (`LookupError::NotFound`) unless `also_as` | bind under the concrete key |
+| 5 | Several bindings of one type, told apart | §3.1, §4 | `ulo-db-conformance :: keyed::two_instances` (qualified, through a store) | partly | `bindings.rs :: qualified_bindings_of_one_type_are_separate`: `Dep<T, Primary>` and `Dep<T, Replica>` differ; unqualified read is `NotFound` | collapse qualifier to `()` in the key |
+| 6 | Alias | §4 | none | none | `bindings.rs :: an_alias_reads_the_same_instance`: `Arc::ptr_eq` through both keys, built once; `DanglingAlias` covered in section 2 | alias builds a second instance |
+| 7 | Collect contributions as a list, from several modules | §4, §7 | `ulo-db-conformance` (contribution through a store, one module) | partly | `bindings.rs :: contributions_from_two_modules_form_one_many`: `Many<dyn Plugin>` has both, in import order; a global-guards case lives in `enhancers.rs` | drop the second module's contributions |
+| 8 | Third-party type, neither annotated nor trait-implementing | §4 | `ulo-db-*` bind pools (not asserted at core level) | partly | `bindings.rs :: a_foreign_type_is_bound_by_value_and_by_factory`: `std::sync::Mutex<Vec<u8>>`-style foreign type with no `Construct` impl | require `Construct` in `value` |
+| 9 | Keys are compiler-checked, no string keys | §3.1 | none | none | `ulo-codegen-tests/tests/ui/key_is_a_type_not_a_string.rs` (trybuild): `m.value::<&str>("x", ..)` / `get("name")` does not compile; plus `bindings.rs` need not exist. Check `Key` has no `From<&str>` (API-surface assertion in the ui test) | add a `From<&str> for Key` (the ui test must then compile and fail the suite) |
+| 10 | Second single refused; single + collection mix refused | §4, §10.1 | none | none | `wiring_bindings.rs :: duplicate_single_is_refused` (`DuplicateBinding`), `a_single_beside_a_collection_is_refused` (`KindMix`) | last binding wins silently |
+| 11 | Fields, ctor params, factory params follow one rule | §5 | codegen fixtures only | none | `injection.rs :: field_ctor_and_factory_sites_resolve_alike`: three services reading the same `Dep<A>` through `Construct::new`, a `#[construct]`-style function, and a factory get the same instance; macro side `ulo-codegen-tests/tests/injection.rs` for field and parameter spellings | resolve factory params through a different path |
+| 12 | Site reads service, trait object, collection, or per-execution data | §5 | none | none | `injection.rs :: a_site_reads_each_of_the_four_shapes`: `Dep<S>`, `Dep<dyn T>`, `Many<dyn T>`, `Ext<U>` (the last inside `execute`) | `Many` resolves to the first element only |
+| 13 | Optional dependencies | §5 | none | none | `injection.rs :: an_optional_dependency_is_none_when_unbound_and_some_when_bound`; and `Option<Ext<T>>` is `None` in a standalone execution that wrote nothing; wiring does not report `Missing` | `Option` reported as `Missing` |
+| 14 | Owned state beside dependencies | §5 | none | none | `injection.rs :: a_constructor_sets_owned_state_beside_its_dependencies`: two services built by transient scope each get fresh owned state (distinct counters) while the dep is shared | share owned state through the cache |
+| 15 | Fallible and async constructors report a startup error | §3.4, §10.2 | `ulo-runtime-tokio` none; `ulo-codegen-tests/clients.rs :: a_uri_that_does_not_parse_fails_wiring` (value path) | partly | `construct_errors.rs :: a_failing_constructor_fails_connect` (`StartupError::Connect`, `ConnectError` constructor case with the key; `FailureReason::Failed`), `a_panicking_constructor_is_a_panicked_reason`, `a_constructor_past_construct_timeout_is_timed_out` (frozen timer) | swallow the `Err` and bind a default |
+| 16 | A site is read by type: alias or renamed import reads the same binding | §3.1 | none | none | `injection.rs :: a_type_alias_and_a_renamed_import_read_the_same_key`: `type Pool = PgPool; use X as Y;` site resolves; `Key` equality over `TypeId`, not spelling (also pure `#[cfg(test)]` in `key.rs`) | key by `type_name` string |
+| 17 | Every holder holds the same object; services need not be `Clone` | §3.3 | none | none | `scopes.rs :: two_holders_share_one_non_clone_singleton`: `Arc::ptr_eq`; a mutation through one holder (`Mutex`) and an init hook's effect are visible to the other | clone-on-resolve |
+| 18 | Singleton: built once at startup, shared | §3.3, §6.1 | none | none | `scopes.rs :: a_singleton_is_built_once_at_connect_and_shared` (construction counter is 1 after connect, 1 after N gets and N executions) | rebuild per get |
+| 19 | Execution scope: once per execution, shared inside; WS connection not an execution | §6.1, §6.3 | `ulo-ws-hyper/tests/handshake.rs` (WS per-message, transport level) | partly | `scopes.rs :: an_execution_scoped_binding_is_built_once_per_execution`: two `execute` calls build two, reads inside one share; the WS-connection half stays in `ulo-ws-hyper` (owner; not core) | share across executions |
+| 20 | Transient: fresh at every site | §6.1 | none | none | `scopes.rs :: a_transient_is_built_at_every_site`: two holders in one execution, ptr-ne | cache transients |
+| 21 | Singleton on execution-scoped refused at startup | §6.2 | none | none | `wiring_scopes.rs :: a_singleton_reading_execution_data_is_refused` (`ScopeViolation { declared: Singleton, by_closure: false, path }`, path ends at the `Ext`); through a transient in between; `by_closure: true` and `ClosureScopeViolation` for a closure | skip the needs-execution pass |
+| 22 | Controller depending on execution-scoped is built per call | §6.2, §7 | none | none | `scopes.rs :: a_controller_reading_execution_data_is_built_per_call`: hand-written `Controller` with one handler through a test transport; construction counter equals calls | build once |
+| 23 | Execution carries cache, extension bag, cancellation, deadline; context injectable | §3.8, §6.3 | `ulo-codegen-tests/deadlines.rs` (gRPC deadline propagation) | partly | `executions.rs :: an_execution_carries_cache_bag_cancellation_and_deadline` (`Ext<T>` write/read, `ExecutionRef` inject, `cancellation()` fires on drop/cancel, `deadline()` equals `ExecOptions`); `cache` once-per-execution | deadline dropped from `ExecOptions` |
+| 24 | Enhancers, gateways take part in the container, singleton or per execution | §7 | `ulo-codegen-tests/enhancers.rs` (gRPC) | partly | `enhancers.rs :: a_guard_reads_a_dep_and_is_per_execution_when_it_reads_one`: guard singleton built once; guard reading `Ext` built per call | build every enhancer as singleton |
+| 25 | Role comes from the implemented trait, per transport | §7 | none | none | `enhancers.rs :: an_http_guard_and_an_rpc_guard_are_different_roles`: a type implementing only `Guard<A>` registers under `AnyGuard<A>` and not `AnyGuard<B>`; handler on B does not run it (test transports `A`, `B`) | register under every transport |
+| 26 | Declared by type / value / closure; closure scope rule; global, controller, method order | §7 | `ulo-codegen-tests/enhancers.rs :: an_impl_guard_by_type...`, `method_and_impl_interceptors_...` (gRPC tiers only) | partly | `enhancers.rs :: the_three_spellings_stack_global_controller_method_in_written_order`; `a_closure_is_built_once_unless_it_reads_an_execution`; `an_explicit_scope_overrides_the_closure_inference` | reverse tier order |
+| 27 | Each guard built only after the one before admits; nothing below built until all admit | §7 | none | none | `enhancers.rs :: guards_are_built_one_by_one_and_lower_stages_wait` with the `Probe`: the second guard's construction is absent when the first refuses; no interceptor or handler built | build all guards eagerly |
+| 28 | A binding under a role key registers that role | §7 | none | none | `enhancers.rs :: a_contribution_under_a_role_key_registers_the_role` and `wiring_roles.rs`: `SingleRoleBinding`, `QualifiedRoleContribution` (section 2) | ignore role keys at freeze |
+| 29 | Module declares imports/providers/controllers/exports; export is the only exit | §8.1, §8.2 | none | none | `modules.rs :: an_unexported_binding_is_invisible_outside_its_module` (`WiringError::Missing`, `near: None`); an exported one resolves | all bindings visible |
+| 30 | Global modules reach every module | §8.2 | none | none | `modules.rs :: a_global_module_s_exports_reach_modules_that_do_not_import_it`; its unexported bindings do not | global exports ignored |
+| 31 | for_root: different config two modules, same config deduped (diamond) | §8.3, §3.6 | none | none | `modules.rs :: one_module_type_two_configs_is_two_modules`, `a_diamond_import_with_equal_config_is_one_module` (construction counter 1, `ModuleName` instance numbers) | identity ignores config |
+| 32 | Keyed instances, each injected by key | §8.3 | `ulo-db-conformance :: keyed::two_instances`; `ulo-codegen-tests/clients.rs :: keyed_clients_of_one_service_each...` | partly | `modules.rs :: two_keyed_instances_are_injected_by_their_keys`: `Dep<T, Primary>` vs `Dep<T, Replica>`, and `app.module_keyed::<M, Q>()` | one key shadows the other |
+| 33 | Modules built at runtime by a function | §8.4 | none | none | `modules.rs :: a_dynamic_module_registers_what_its_function_registers` (`DynamicModule`, identity, exports) | function never called |
+| 34 | Re-export what an import exports | §8.2 | none | none | `modules.rs :: reexport_passes_an_import_s_export_on` and `reexport_of_an_invisible_key_is_refused` (`ReexportNotVisible`), `ReexportAmbiguous` | reexport widens to all imports |
+| 35 | Module identity deduplicates and prints a readable name in every error | §3.6, §10.1 | `ulo-db-conformance/tests/check_names.rs` (`S::NAME @ Key`, full names on collision; store level) | partly | `names.rs :: errors_print_short_names_and_full_names_on_collision` (text assertion allowed): `billing::Module` vs `users::Module`, `a::Config` vs `b::Config @ Q`; `ModuleName` carries label and instance | print full paths always |
+| 36 | Middleware configured per module, by route | §8, transports DESIGN | `ulo-codegen-tests/enhancers.rs :: a_scoped_pre_dispatch_entry_leaves_another_service_alone` (gRPC) | partly | question for the designer (Q2); owner is `ulo-http`/`ulo-transport`, not `crates/ulo`: `ulo-http/tests/middleware_scope.rs` | scope ignored |
+| 37 | Module handle for current/named module, visibility-limited lookups | §8.5 | `ulo-rpc-conformance/src/cases/app.rs` takes a `ModuleRef` as a fixture | partly | `module_ref.rs :: a_module_ref_sees_only_what_its_module_sees` (`NotFound` for an invisible key), `module_keyed`, `ambiguous module` (`LookupError::Ambiguous`), `with_execution`, `meta::<T>()` | ModuleRef resolves app-wide |
+| 38 | Lazy loading after startup | §8.6 | none | none | `lazy.rs :: load_wires_and_connects_a_module_after_startup`; `LoadError::Refused` per `LoadRefusal` variant (Controllers, Middleware, Contribution, GlobalExport, Input); `Wiring`; `Connect`; `Closed` after close | load skips visibility checks |
+| 39 | Async hooks: init then bootstrap, destroy/before-shutdown/shutdown with signal; module hooks | §9.1 | `ulo-runtime-tokio/tests/app.rs` uses `on_init` to spawn tasks | none | `hooks.rs :: init_runs_before_bootstrap_and_a_failure_fails_connect`; `close_runs_destroy_then_before_shutdown_then_shutdown_with_the_signal_name`; `a_module_hook_runs_with_the_module` | swap bootstrap and init |
+| 40 | Startup hooks in dependency order, shutdown reverse | §9.2 | none | none | `hooks.rs :: hooks_run_in_dependency_order_and_shutdown_in_reverse` (chain A->B->C, plus a diamond) | sort ascending on shutdown |
+| 41 | Hooks on execution-scoped/transient refused at compile time | §9.1, §12 | none | none | `ulo-codegen-tests/tests/ui/hook_on_execution_type.rs` and `hook_on_transient_type.rs` (trybuild) against `Construct<Scope: HookCapable>`; plus `wiring_scopes.rs :: HooksOnPerExecution` for an `Auto` type inferred per execution | remove the `HookCapable` supertrait |
+| 42 | Readiness checks with retries and timeout; failed check fails startup; credentials redacted | §9.3 | `ulo-db-conformance :: connect::unreachable_fails_at_the_bound`, `create_loop`, `lock_wait` | partly | `readiness.rs :: a_check_retries_then_fails_connect` (attempt counter, frozen timer, `ConnectError` readiness case, `FailureReason`), `attempt_timeout`, `a_secret_in_the_error_is_redacted` (`Redacted` carries no secret; assert by value not text) | retry count off by one; skip redaction |
+| 43 | Phases separate: build+connect, bind, serve | §9.4 | `ulo-runtime-tokio/tests/app.rs` (listen refusal, bind phase handing) | partly | `phases.rs :: phases_advance_wired_connected_bound_running_closed`: `phase()` at each point; no socket before `listen`; a server's `prepare` not called at `connect` | bind during connect |
+| 44 | Every wiring error before any instance built, all in one pass | §10.1 | none | none | `wiring_pass.rs :: all_errors_arrive_in_one_pass_and_nothing_is_built`: a graph with five distinct faults yields five entries; construction counter zero | stop at first |
+| 45 | Compile-time where feasible; nothing panics or exits; typed error | §10, §12 | `ulo-runtime-tokio/tests/app.rs :: a_transport_whose_serve_fails_closes_the_app` etc. (serve death) | partly | `startup_errors.rs :: no_failure_path_panics`: wiring, connect, listen failures each return `StartupError::{Wiring, Connect, Bind}` (matched, not text); a panicking constructor/hook is `FailureReason::Panicked` | `unwrap` in connect |
+| 46 | Compile error points at the site, says what to write | §10.3 | `ulo-codegen-tests/tests/ui` (gRPC and meta only) | partly | `ui/*.stderr` for each compile row in section 4; assertion is the `.stderr` snapshot (the allowed text exception: help lines) | change the `on_unimplemented` note |
+| 47 | Runtime lookups from app/context/module handle, typed errors | §6.3, §10.2 | `ulo-runtime-tokio/tests/app.rs` (`NotFound` for `Dep<dyn Runtime>` only) | partly | `lookup.rs :: lookups_answer_each_lookup_error_variant`: `NotFound`, `NotReady`, `WrongType`, `WrongKind`, `ExecutionRequired`, `Ambiguous`, `Closed`, `Construct`, from `app`, `ModuleRef` and inside an execution | collapse variants |
+| 48 | Overrides without editing production modules | §11 | `ulo-runtime-tokio/tests/app.rs :: overriding_the_timer/runtime_is_refused...` (refusals only) | partly | `testing.rs :: override_value_replaces_the_recipe_and_keeps_visibility`; `override_factory`, `override_try_factory`, `override_many`, `.qualified`, `.in_module*`, `.everywhere()`, `replace_module` (superset rule); refusals are in section 2 | override changes the origin module |
+
+Tally: pinned 0, partly 18 (5, 7, 8, 15, 19, 23, 24, 26, 32, 35, 36, 37, 42, 43, 45, 46, 47, 48), none 30.
+No capability is judged pinned: the nearest ones (clock/runtime override refusal, serve death, keyed
+store modules) assert one slice of a capability through a different layer.
+
+## 2. Wiring errors: every `WiringError` variant (`crates/ulo/src/error/wiring.rs`)
+
+All in `wiring_*.rs` under `crates/ulo/tests/`; each calls `wire()` and matches the variant and its fields (`ModuleName`, `KeyName`, locations as `Some`/count, not text). §10.1 step in brackets.
+Planted break for all: skip that check in the named pass.
+
+| Variant | Step | Test | Asserts |
+|---|---|---|---|
+| `ImportCycle { path }` | 1 | `wiring_modules.rs :: an_import_cycle_is_refused_with_its_path` | path is `[A, B, A]` as `ModuleName`s; no `forwardRef` escape; 3-cycle too |
+| `ReexportNotVisible` | 1 | `wiring_modules.rs :: reexport_of_a_key_no_import_exports` | module, key |
+| `ReexportAmbiguous` | 1 | `wiring_modules.rs :: reexport_of_a_key_two_imports_export` | `sources` has both |
+| `KeyedInput` | 1 | `wiring_modules.rs :: a_keyed_module_may_not_declare_an_input` | module, key |
+| `ExportNotBound` | 1 | `wiring_modules.rs :: export_of_an_unbound_key`; with `imported: true` and `near: Some` when an import provides it / a near-miss key | `imported`, `near` |
+| `DuplicateBinding` | 2 | `wiring_bindings.rs :: duplicate_single_binding` | key, module, two locations distinct |
+| `KindMix` | 2 | `wiring_bindings.rs :: single_beside_collection` | both locations |
+| `DanglingAlias` | 2 | `wiring_bindings.rs :: alias_to_nothing` | alias, target |
+| `ValueFailed` | 2 | `wiring_bindings.rs :: try_value_err_via_module_def_and_via_contribute` | `Redacted` error, no secret (by value) |
+| `QualifiedRoleContribution` | 2 | `wiring_roles.rs :: qualified_contribution_under_a_role_key` | key, module |
+| `SingleRoleBinding` | 2 | `wiring_roles.rs :: value_provide_alias_also_as_under_a_role_key` (four spellings) | one variant each |
+| `DuplicateReadiness` | 2 | `wiring_bindings.rs :: two_readiness_checks_for_one_key` | two locations |
+| `InputConflict` | 2 | `wiring_inputs.rs :: transport_vs_transport_different_seeders`, `transport_vs_module`, `transport_vs_binding`; and `also_seeded_by` merge succeeds; module-only duplicates stay `DuplicateBinding` | each `InputOrigin` side |
+| `OverrideUnmatched` | 2 | `wiring_overrides.rs :: stale_override` | key, `keyed` |
+| `OverrideAmbiguous` | 2 | `wiring_overrides.rs :: override_matching_two_modules`; `.everywhere()` succeeds | `matches` both |
+| `OverrideModuleAmbiguous` | 2 | `wiring_overrides.rs :: in_module_over_two_instances`; `in_module_keyed` / `in_module_of` succeed | `candidates` |
+| `OverrideKind` | 2 | `wiring_overrides.rs :: override_value_over_a_collection` | expected/found `BindingKind` |
+| `TimerOverride` | 2 | existing `ulo-runtime-tokio ... overriding_the_timer_is_refused_naming_the_test_builder`; add variant-level test in `wiring_overrides.rs` | variant only |
+| `RuntimeOverride` | 2 | as above for `dyn Runtime` | variant only |
+| `ReplacementMissingExports` | 2 | `wiring_overrides.rs :: replacement_exports_a_subset` | `missing` |
+| `ReplacementUnmatched` | 2 | `wiring_overrides.rs :: replace_a_module_nobody_imports` | original; sole entry for the first call |
+| `DuplicateReplacement` | 2 | `wiring_overrides.rs :: second_replace_module_of_one_original`; over an unimported original: first `ReplacementUnmatched`, later ones `DuplicateReplacement`, never both on one call | first/second locations |
+| `UnreadPrefix` | freeze | `wiring_controllers.rs :: at_prefix_on_a_controller_no_transport_reads` and `on_a_controller_with_no_handlers` (`transports` empty) | prefix, controller |
+| `Missing` | 3 | `wiring_visibility.rs :: missing_dependency`; `near: Some` for the `dyn Repo + Send + Sync` spelling mismatch (text assertion permitted for the "both spellings" line) | key, consumer, module, near |
+| `Ambiguous` | 3 | `wiring_visibility.rs :: two_imports_export_one_key` | `sources` both modules |
+| `Cycle` | 4 | `wiring_cycles.rs :: a_dependency_cycle_prints_its_full_path` (A->B->C->A across modules; self-cycle; through `Option`? see Q3) | path steps with modules |
+| `ScopeViolation` | 5 | `wiring_scopes.rs :: singleton_reading_execution_data` (direct, via transient, `by_closure`) | binding, declared, path |
+| `HooksOnPerExecution` | 5 | `wiring_scopes.rs :: hook_on_an_auto_type_inferred_per_execution`, closure hook and `.ready(..)` too | binding, module |
+| `ClosureScopeViolation` | 5 | `wiring_scopes.rs :: explicit_singleton_closure_enhancer_reading_execution` | transport as `TypeName` |
+| `ClosureNeedsExecution` | 5 | `wiring_scopes.rs :: hook_readiness_module_hook_or_metadata_closure_reading_ext` (four closures) | closure, path |
+| `InputNotSeeded` | 5 | `wiring_inputs.rs :: input_read_on_a_path_from_a_transport_that_does_not_seed_it`; `Option<Dep<..>>` is accepted | handler, transport, input, seeder, steps |
+| `BoundWithoutTimer` | 6 | `wiring_timer.rs :: a_written_wait_on_an_app_with_no_timer` (`.timeout`, `.attempt_timeout`, `After(..)`); `Default`/`Unbounded` accepted | item, location points at the call |
+| `BackoffWithoutTimer` | 6 | `wiring_timer.rs :: backoff_reports_its_own_line` (`at` is the `.backoff` line, not `.ready`) | binding, location |
+| `KnobWithoutTimer` | 6 | `wiring_timer.rs :: a_builder_knob_on_an_app_with_no_timer` (`drain_timeout`, `hook_timeout`, `construct_timeout`, `shutdown_timeout`) | knob name |
+
+Also: `WiringErrors` collects (5 entries in one pass, unrelated missing bindings do not hide each other,
+a missing piece skips only its edges), and the collision printing pass:
+`wiring_pass.rs :: errors_are_collected_in_one_pass`, `names.rs :: colliding types print in full only for those types`.
+
+## 3. §12 refusal table: point and home
+
+| Refusal | Point | Home / test |
+|---|---|---|
+| Field/param not `FromContainer` | compile | `ulo-codegen-tests/tests/ui/site_not_from_container.rs` |
+| `Dep<T>` with `T` not `Send + Sync` | compile | `ui/dep_of_a_non_send_type.rs` |
+| `Ext`/`ExecutionRef` in an explicit singleton | compile | `ui/ext_in_an_explicit_singleton.rs` |
+| Hook on explicit execution/transient | compile | `ui/hook_on_execution_type.rs`, `hook_on_transient_type.rs` |
+| Closure hook or `.ready` on execution/transient handle | compile | `crates/ulo/tests/ui` is not available (no trybuild in `ulo`); put in `ulo-codegen-tests/tests/ui/ready_on_an_execution_handle.rs` |
+| Controller-level `value = expr` | compile | `ui/controller_level_value.rs` |
+| `.qualified` on an enhancer contribution | compile | `ui/qualified_on_enhancer_contribution.rs` |
+| `enhancer::<K>()` with non-role `K` | compile | `ui/enhancer_of_a_non_role_key.rs` |
+| Second bound on one handle item (`.timeout` twice, `.unbounded()` beside `.timeout`/`.attempt_timeout`, either after `.unbounded()`) | compile | `ui/second_bound_on_one_item.rs` (four cases, four files) |
+| Enhancer lacking its role trait, controller-level too | compile | `ui/enhancer_without_its_role_trait.rs`, `controller_enhancer_for_another_transport.rs` |
+| Constructor not `Send` | compile | `ui/constructor_not_send.rs` |
+| Two/zero constructors, bad attribute, malformed `into` | compile | `ui/two_constructors.rs`, `no_constructor.rs`, `bad_attribute.rs`, `malformed_into.rs` |
+| `X as <role key>` in `providers` | compile | `ui/provider_as_a_role_key.rs` |
+| Trait binding with non-implementing type | compile | `ui/trait_binding_non_implementor.rs` |
+| `?` on a failed value expression | wire | `wiring_bindings.rs :: ValueFailed` |
+| Missing; `dyn Repo` vs `dyn Repo + Send + Sync` | wire | `wiring_visibility.rs` |
+| Two sources for one key | wire | `wiring_visibility.rs :: Ambiguous` |
+| Duplicate single; mix | wire | `wiring_bindings.rs` |
+| Qualified contribution / single binding under a role key | wire | `wiring_roles.rs` |
+| Dependency cycle; module import cycle | wire | `wiring_cycles.rs`, `wiring_modules.rs` |
+| `ExportNotBound` | wire | `wiring_modules.rs` |
+| `.at(prefix)` on a controller that reads none | wire | `wiring_controllers.rs :: UnreadPrefix` |
+| Singleton -> execution (also via transients) | wire | `wiring_scopes.rs` |
+| `Auto` provider reading execution data (type and closure) | wire | `wiring_scopes.rs :: auto_provider_reads_execution_data` (hint names, asserted as the variant fields `declared`, `by_closure`) |
+| Hook on an `Auto` type inferred per execution | wire | `wiring_scopes.rs :: HooksOnPerExecution` |
+| Hook/readiness/module-hook/metadata closure reading `Ext` etc. | wire | `wiring_scopes.rs :: ClosureNeedsExecution` |
+| Input not seeded by the handler's transport | wire | `wiring_inputs.rs` |
+| Input declared by a keyed module | wire | `wiring_modules.rs :: KeyedInput` |
+| Input declared twice / against a binding | wire | `wiring_inputs.rs :: InputConflict` |
+| Override matches nothing / several; `in_module` over instances | wire | `wiring_overrides.rs` |
+| `replace_module` unmatched; duplicate | wire | `wiring_overrides.rs` |
+| `override_value::<dyn Timer/Runtime>` | wire | `wiring_overrides.rs` |
+| A module binding `dyn Timer` | wire | `wiring_timer.rs :: a_module_binding_dyn_timer_is_a_second_source` (`Ambiguous`) |
+| A wait on an app with no `Timer` | wire | `wiring_timer.rs` |
+| Constructor/factory/readiness/hook fails, panics, times out | connect | `construct_errors.rs`, `readiness.rs`, `hooks.rs`: `StartupError::Connect`, each `ConnectError` case and each `FailureReason` (`Failed`, `Panicked`, `TimedOut`) |
+| `ModuleRef::get` for a singleton not yet built | connect | `lookup.rs :: NotReady` (a hook looks up a later singleton) |
+| Transport on an app with no `Runtime`, or `.timer` alone | listen | existing `ulo-runtime-tokio/tests/app.rs :: an_app_with_a_timer_alone_is_refused_when_it_binds_a_transport` and `an_app_without_a_clock_...` (judged: pinned for this row; `RuntimeMissing` via `downcast_ref`, before `prepare`: verify the "before any server's prepare" half, Q5) |
+| Lazy module refusals (5 `LoadRefusal`s); `LoadError::Wiring`/`Connect`; `Closed` | load | `lazy.rs` |
+| `execute`/`Execution::open` from Draining on -> `Closed`; `open_terminal` with `DrainToken` allowed | runtime | `executions.rs :: draining_refuses_new_executions_but_allows_a_terminal_one` |
+| Singleton lookup from Destroying on -> `LookupError::Closed` | runtime | `lookup.rs`, `hooks.rs` (lookup inside a destroy hook) |
+| `LookupError` variants | runtime | `lookup.rs` |
+| Input not seeded in standalone / extension not written -> `NotFound` / `None` | runtime | `executions.rs` |
+| Guard refusal -> `GuardRejected` through error handlers | runtime | `enhancers.rs :: a_guard_refusal_reaches_the_error_handlers_as_GuardRejected` |
+| Panic in guard/interceptor/handler/error handler -> `PanicRecovered`; `is_panic` | runtime | `enhancers.rs :: a_panic_is_caught_at_its_stage` (four stages); `is_panic` through wrapping `Err`/`source()`, in `lookup.rs` for `LookupError::Construct { Panicked }` |
+| Shutdown hook panics/times out/skipped/param read fails; transport `close` fails/panics/exceeds | close | `shutdown.rs :: ShutdownFailure::{Hook, Close}` with `FailureReason`; later steps still run (probe order). `serve_loop_death` is already pinned by `ulo-runtime-tokio/tests/app.rs`; add the ninth response's two-server scenario to `shutdown.rs` if it differs (the existing `a_transport_whose_serve_fails_closes_the_app` is one server; Q4) |
+
+## 4. Pure in-crate tests (`#[cfg(test)]`)
+
+- `type_name.rs`: `TypeName::colliding` (equal short names, different paths; generic arguments cut; `{:#}` full).
+- `key.rs`: key equality (type, qualifier, unsized `dyn`, `dyn X + Send + Sync` distinct from `dyn X`).
+- `timer.rs`/bounds: `Bound` arithmetic (`Default`, `Unbounded`, `After(d)`; `Bound::After(ZERO)` refused by the zero rule: a wiring or prepare-time case).
+  The `timeout` helper in `timer.rs` is `pub(crate)` and currently unused by the lib (dead-code warning); check whether it is meant to be exercised here.
+
+## 5. Build batches
+
+Sizes in tests (approximate). Each batch: one Sonnet build agent, then an Opus check. A batch's own
+`tests/common/mod.rs` additions go in batch 1 only.
+
+| Batch | Areas | Files | Size | Depends on |
+|---|---|---|---|---|
+| B1 Foundations and wiring errors | harness (`common`), TypeName/key/Bound pure tests, wiring errors steps 1-4 and 6 (modules, bindings, roles, visibility, cycles, timer), `wiring_pass` | `common/mod.rs`, `wiring_modules.rs`, `wiring_bindings.rs`, `wiring_roles.rs`, `wiring_visibility.rs`, `wiring_cycles.rs`, `wiring_timer.rs`, `wiring_pass.rs`, `names.rs`, in-crate pure tests | ~34 tests (variants: ImportCycle, Reexport x2, KeyedInput, ExportNotBound, DuplicateBinding, KindMix, DanglingAlias, ValueFailed, role x2, DuplicateReadiness, Missing, Ambiguous, Cycle, timer x3; caps 10, 35, 44) | none |
+| B2 Bindings, injection, modules | caps 1-9, 11-17, 29-34, 37 | `bindings.rs`, `injection.rs`, `modules.rs`, `module_ref.rs` | ~34 | B1 (harness) |
+| B3 Scopes, executions, overrides | caps 18-23, 47, 48; wiring step 5 and overrides (`ScopeViolation`, `HooksOnPerExecution`, `ClosureScopeViolation`, `ClosureNeedsExecution`, `InputNotSeeded`, `InputConflict`, `UnreadPrefix`, override variants x9) | `scopes.rs`, `executions.rs`, `lookup.rs`, `testing.rs`, `wiring_scopes.rs`, `wiring_inputs.rs`, `wiring_overrides.rs`, `wiring_controllers.rs` | ~36 | B1 |
+| B4 Lifecycle, phases, lazy, shutdown | caps 15, 38-40, 42, 43, 45; connect/close/load/draining rows of §12; two-server serve death | `construct_errors.rs`, `hooks.rs`, `readiness.rs`, `phases.rs`, `lazy.rs`, `shutdown.rs`, `startup_errors.rs` | ~30; needs `Tokio` (timers: use a frozen `Timer` as `ulo-runtime-tokio/tests/app.rs` does) | B1 |
+| B5 Enhancer pipeline | caps 24-28 (a test `Transport` marker pair, one `Controller` fixture; no HTTP) and the runtime rows (`GuardRejected`, panic stages) | `enhancers.rs`, `common/transport.rs` | ~14; fixture-heavy, run alone | B1, B3 (per-execution) |
+| B6 Compile-time refusals | caps 9, 41, 46 and every compile row of §3 | `ulo-codegen-tests/tests/ui/*.rs` + `.stderr` (about 22 files); `compile_fail.rs` globs `tests/ui/*.rs` already | ~22 ui cases; run one at a time (`TRYBUILD=overwrite` only on first creation, then review stderr) | none (independent of B1-B5) |
+| O1 Owner-crate gaps, HTTP | SWITCH_INVENTORY G9-G15 | `ulo-http/tests/` (routing, SSE, extractors, handler forms, errors, metadata, CORS, tower, module middleware = cap 36) | see section 6 | B1 style only |
+| O2 Health, gRPC/RPC, WS | G17, G19-G21, G25 | `ulo-health-http/tests`, `ulo-health-grpc/tests`, `ulo-grpc/tests` or `ulo-codegen-tests`, `ulo-rpc/tests`, `ulo-ws/tests` | see section 6 | none |
+| O3 Config, GraphQL, tracing | G16, G18, G24 | `ulo-config/tests`, `ulo-graphql*/tests`, `ulo-otel/tests` | see section 6 | none |
+
+Core batches are roughly 30-36 tests each (B6 22 compile cases). B2, B3, B4 can run in parallel with
+each other after B1 lands (separate files); B5 follows B3. B6 can start at once. Cargo runs one at a
+time regardless (shared gotcha: one `cargo test` at a time).
+
+## 6. Owner-crate gaps (SWITCH_INVENTORY section 1)
+
+Assigned to the owner's `tests/`, never `crates/ulo`. G1-G8 are the core capabilities above (G1 -> B3, G2 -> B1/B3, G3 -> B2, G4 -> B2, G5 -> B3, G6 -> B4, G7 -> B5, G8 -> B3); G22 -> B4 `startup_errors.rs`; G23 -> B4 (existing single-server cover plus the two-server scenario).
+
+| Gap | Owner crate tests/ | Tests (variant/field level) |
+|---|---|---|
+| G9 HTTP routing | `ulo-http/tests/routing.rs` | trailing slash insignificant (same handler for `/a` and `/a/`), `{name}` parameter, duplicate route up to slashes refused at wiring/bind with a typed error, `{*rest}` |
+| G10 CORS, tower, module middleware, rewrite | `ulo-http/tests/cors.rs`, `tower_bridge.rs`, `middleware.rs` | credentials forces origin echo, allow-list, max-age, non-preflight decoration, tower layer runs pre-dispatch, per-module middleware by route with `exclude`, URI rewrite changes the match (also capability 36) |
+| G11 SSE | `ulo-http/tests/sse.rs` | headers; `data`/`id`/`event`/`retry`/comment framing; multi-line data splitting on CR/LF/CRLF; empty data writes `data: `; `LastEventId`; `end_event`; `keep_alive` |
+| G12 HTTP extractors, `Valid` | `ulo-http/tests/extract.rs`; `Valid` on RPC/WS in `ulo-rpc/tests`, `ulo-ws/tests` | `Path`, `Query`, `Json`, `Form`, `Multipart`, `BodyStream`, `Host`, `Header` success and the failure variant; `Valid<P>` failure shape per transport |
+| G13 Handler forms | `ulo-http/tests/handlers.rs` (macro forms in `ulo-codegen-tests`) | sync/async, no `&self`, alias of `Result` reaches the chain, `IntoReply` forms |
+| G14 Error model | `ulo-transport/tests/errors.rs`, `ulo-http/tests/errors.rs` | `Classify` derive kind per variant, kind -> HTTP status table, chain claim vs fall-through, reshape |
+| G15 Declared metadata on HTTP and RPC | `ulo-http/tests/meta.rs`, `ulo-rpc/tests/meta.rs` | handler and impl metadata, handler wins per type |
+| G16 Config | `ulo-config/tests/layers.rs` | layered sources precedence (defaults < file < `.env` < env < values), section by path, aggregated errors name path and source, secrets redacted (partly exists: `secret_leak`) |
+| G17 Health | `ulo-health-http/tests/probes.rs` | probe paths, 200/503, body, detail off by default, readiness false at drain before the first refusal |
+| G18 GraphQL | `ulo-graphql-http/tests/mount.rs`, `ulo-graphql-ws/tests/subscriptions.rs`, per engine in `ulo-graphql-async-graphql/tests`, `ulo-graphql-juniper/tests` | mount path, playground HTML, module identity (same schema two paths mounts both; collision refused), graphql-transport-ws |
+| G19 gRPC | `ulo-codegen-tests/tests/` (needs generated protos) | TLS serving (`ulo-test-certs`), `grpc-status-details-bin` payload, in-flight bound answers `ResourceExhausted`, service not injectable |
+| G20 RPC | `ulo-rpc/tests/` | controller cannot be injected, `RpcClientModule` injection, declared metadata, `Valid` payload |
+| G21 Multi-transport | `ulo-codegen-tests` or `ulo-http-hyper/tests` | one controller on two transports; one app serving four transports; one `close` drains all |
+| G24 Tracing | `ulo-otel/tests/propagation.rs`, `ulo-otel-otlp/tests/wire.rs` | `traceparent` across transports, span per call, reserved-header refusal per transport (`reserved_header`), explicit OTLP header wins over env |
+| G25 WS execution scope | `ulo-ws-hyper/tests/` | per-message scope, connect-guard bag reaches `on_connect` |
+| G26 Examples | not tests: the example catalogue step after the series | out of scope here |
+
+Batches: O1 = G9-G15 (HTTP, ~25 tests), O2 = G17, G19-G21, G25 (~18), O3 = G16, G18, G24 (~16).
+
+## 7. Questions for the designer
+
+1. Capability 9 ("no free-form string keys"): `qualified::<Q>()` and `for_root_named`-style
+   names are types, but `ModuleName`/`DynamicModule::builder(id)` take a string and `module_keyed`
+   keys are types. Is the test "no API takes a string where a key is expected" (ui test on `get`
+   and `value`), or does `DynamicModule`'s string id count as a key? The plan assumes the former.
+2. Capability 36 (per-module middleware by route) lives in `ulo-http`/`ulo-transport`, not
+   `crates/ulo`: `crates/ulo/src` mentions middleware only in `app/load.rs` (the lazy refusal),
+   `module/def.rs`, `module/meta.rs`. Confirm the owner crate and whether "by route" with
+   exclusions is still a capability or became `PreDispatch` scoping.
+3. §10.1 step 4: are cycles through `Option<Dep<_>>` or `Many<_>` edges cycles? The text says
+   "resolved edges"; no rule for optional edges. The plan tests the plain cycle only until ruled.
+4. `serve_loop_death`: `ulo-runtime-tokio/tests/app.rs` already has `a_transport_whose_serve_fails_closes_the_app`,
+   `..._returns_while_the_app_runs_closes_the_app` and `two_serves_ending_on_one_poll_...`, and
+   the lib implements it. The ninth response's two-server scenario (one fails mid-run, the other drains and closes, hooks run, `serve` answers `Err` naming the transport) is partly covered; confirm whether those tests count or the scenario is wanted in the core series as written.
+5. §12 "before any server's `prepare`" for `RuntimeMissing`: `app.rs` tests refusal but the
+   ordering half is not visibly asserted. Needs a server fixture recording `prepare`.
+6. Capability 19: "a WebSocket connection is not an execution" is a transport property; the core
+   cannot test it. Plan puts it in `ulo-ws-hyper`. Confirm.
+7. Capability 41 and the `.ready(..)`/closure-hook compile rows are trybuild tests; the plan puts
+   them in `ulo-codegen-tests` because `ulo` has no trybuild dev-dependency. Confirm, or allow
+   `trybuild` as a dev-dependency of `ulo` (the `ui/` directory would then live in `crates/ulo/tests/ui`).
+8. Capability 15/45: `FailureReason::{Failed, Panicked, TimedOut}` names are taken from
+   DESIGN §12 prose; the builder agent must read `error/mod.rs` for the actual case names before asserting.
+9. Capability 42 "credentials redacted": is the assertion on `Redacted`'s content by value (the
+   registered secret absent) or only that the error is a `Redacted`? The ruling forbids message
+   text assertions; plan asserts the secret string is absent from `Display`, an explicit exception to ask about.
+10. `timer.rs::timeout` is `pub(crate)` and `cargo test` reports it unused (dead-code warning, with
+    others in `redact.rs`). If it is not used by the library, it may be a planted-break target or
+    dead code; the lib builds with 17 warnings.
