@@ -288,6 +288,35 @@ pub(crate) fn check_root_cert(engine: Engine, url: &str) -> Result<(), ulo::BoxE
     Ok(())
 }
 
+/// The refusal `create` makes of a root certificate the URL names, for a store that connects through
+/// SQLx's option parser without going through this crate's `create` (`ulo-db-seaorm`). Parses `url`
+/// as `engine`'s SQLx options and runs the read of the root certificate the URL names only under the ssl modes that
+/// verify the server (`verify-ca` and `verify-full`, SQLx's `VerifyCa` and `VerifyFull` /
+/// `VerifyIdentity`), the rule `create` applies; in any other mode SQLx never reads the file and
+/// this returns `Ok`. A URL that does not parse is `Permanent`. SQLite has no root certificate, so
+/// it always returns `Ok`.
+#[cfg(all(feature = "tls", any(feature = "postgres", feature = "mysql")))]
+pub fn check_url_root_cert(engine: Engine, url: &str) -> Result<(), ulo::BoxError> {
+    let verifies = match engine {
+        #[cfg(feature = "postgres")]
+        Engine::Postgres => {
+            let connect = url
+                .parse::<sqlx::postgres::PgConnectOptions>()
+                .map_err(|e| unreadable_url(engine, url, e))?;
+            matches!(connect.get_ssl_mode(), sqlx::postgres::PgSslMode::VerifyCa | sqlx::postgres::PgSslMode::VerifyFull)
+        }
+        #[cfg(feature = "mysql")]
+        Engine::MySql => {
+            let connect = url
+                .parse::<sqlx::mysql::MySqlConnectOptions>()
+                .map_err(|e| unreadable_url(engine, url, e))?;
+            matches!(connect.get_ssl_mode(), sqlx::mysql::MySqlSslMode::VerifyCa | sqlx::mysql::MySqlSslMode::VerifyIdentity)
+        }
+        _ => false,
+    };
+    if verifies { check_root_cert(engine, url) } else { Ok(()) }
+}
+
 /// The migration lock of Postgres and MySQL pins one pooled connection while SQLx's migrator takes
 /// another, so a pool of one would wait on itself until the acquire timeout.
 #[cfg(any(feature = "postgres", feature = "mysql"))]

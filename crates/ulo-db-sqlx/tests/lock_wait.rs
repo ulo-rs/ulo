@@ -21,6 +21,10 @@ mod server;
 
 const BOUND: Duration = Duration::from_millis(800);
 
+/// When the sidecar is freed in the late-grant tests: 0.95 of `BOUND`, inside the last poll
+/// interval of the lock's wait.
+const FREED_AT: Duration = Duration::from_millis(760);
+
 struct Root(SqliteOptions);
 
 impl Module for Root {
@@ -53,34 +57,44 @@ fn a_held_sqlite_lock_fails_the_start_retryably_at_the_bound() {
         }
     });
     assert!(!is_permanent(&error), "a wait for another replica's lock is permanent: {error}");
-    assert!(took >= BOUND && took < BOUND * 3, "failed after {took:?}, against the {BOUND:?} bound: {error}");
+    // The wait ends at its last attempt, a few milliseconds before the bound, so that the answer
+    // reaches the caller ahead of the caller's own clock.
+    assert!(took >= BOUND - Duration::from_millis(50) && took < BOUND * 3, "failed after {took:?}, against the {BOUND:?} bound: {error}");
     drop(held);
 }
 
-/// Held until 150 ms before the bound, then released: the grant lands near the end of the wait and
-/// the start still succeeds.
+/// Held until 0.95 of the bound, then released: the grant lands in the last poll interval of the
+/// wait and the start still succeeds. Planted break: a wait that sleeps whole polls past its own
+/// deadline and makes no attempt at it.
 #[test]
 fn a_sqlite_lock_freed_near_the_bound_still_migrates() {
-    let dir = server::Scratch::new("lock-late");
-    let file = dir.0.join("app.db");
-    File::create(&file).expect("the database file is created");
-    let url = format!("sqlite://{}", file.display());
-    let held = File::create(dir.0.join("app.db.ulo-migrate.lock")).expect("the sidecar is created");
-    held.lock().expect("the sidecar is locked");
-    let release = std::thread::spawn(move || {
-        std::thread::sleep(BOUND - Duration::from_millis(250));
-        drop(held);
-    });
+    // Where the last poll falls against the release differs from start to start, so one start
+    // meets the break only some of the time; three starts meet it in most runs.
+    for round in 0..3 {
+        let dir = server::Scratch::new("lock-late");
+        let file = dir.0.join("app.db");
+        File::create(&file).expect("the database file is created");
+        let url = format!("sqlite://{}", file.display());
+        let held = File::create(dir.0.join("app.db.ulo-migrate.lock")).expect("the sidecar is created");
+        held.lock().expect("the sidecar is locked");
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(FREED_AT);
+            drop(held);
+        });
 
-    let options: SqliteOptions = server::options(json!({ "url": url }));
-    let began = Instant::now();
-    <OnTokio as Harness>::block_on(async move {
-        let app = App::builder(Root(options)).runtime(<OnTokio as Harness>::runtime()).wire().expect("wires");
-        let app = app.connect().await.unwrap_or_else(|error| panic!("a lock freed before the bound failed the start: {error}"));
-        let _ = app.close(Signal::new("test")).await;
-    });
-    release.join().expect("the releasing thread ends");
-    assert!(began.elapsed() >= BOUND - Duration::from_millis(300), "the start did not wait for the lock");
+        let options: SqliteOptions = server::options(json!({ "url": url }));
+        let began = Instant::now();
+        <OnTokio as Harness>::block_on(async move {
+            let app = App::builder(Root(options)).runtime(<OnTokio as Harness>::runtime()).wire().expect("wires");
+            let app = app
+                .connect()
+                .await
+                .unwrap_or_else(|error| panic!("round {round}: a lock freed before the bound failed the start: {error}"));
+            let _ = app.close(Signal::new("test")).await;
+        });
+        release.join().expect("the releasing thread ends");
+        assert!(began.elapsed() >= FREED_AT - Duration::from_millis(50), "the start did not wait for the lock");
+    }
 }
 
 /// SQLx's migrator after a one-second pause: longer than `BOUND`, so a migration counted against
@@ -108,10 +122,9 @@ impl Module for SlowRoot {
     }
 }
 
-/// The sidecar freed 250 ms before `BOUND`, then a migration of one second with `migrate_within`
+/// The sidecar freed at 0.95 of `BOUND`, then a migration of one second with `migrate_within`
 /// left unbounded: the start succeeds. The instant migration above passes a migration counted
-/// against `connect_within` too; this one does not. The margin is five of the lock thread's 50 ms
-/// polls: a lock freed in the last poll before the bound is not seen. Planted breaks: the
+/// against `connect_within` too; this one does not. Planted breaks: the
 /// migrations bounded by `connect_within`, from the grant or from the request.
 #[test]
 fn a_lock_granted_late_then_a_long_migration_still_starts() {
@@ -122,7 +135,7 @@ fn a_lock_granted_late_then_a_long_migration_still_starts() {
     let held = File::create(dir.0.join("app.db.ulo-migrate.lock")).expect("the sidecar is created");
     held.lock().expect("the sidecar is locked");
     let release = std::thread::spawn(move || {
-        std::thread::sleep(BOUND - Duration::from_millis(250));
+        std::thread::sleep(FREED_AT);
         drop(held);
     });
 
@@ -134,7 +147,7 @@ fn a_lock_granted_late_then_a_long_migration_still_starts() {
         let _ = app.close(Signal::new("test")).await;
     });
     release.join().expect("the releasing thread ends");
-    assert!(began.elapsed() >= BOUND - Duration::from_millis(250) + Duration::from_secs(1), "finished after {:?}", began.elapsed());
+    assert!(began.elapsed() >= FREED_AT + Duration::from_secs(1), "finished after {:?}", began.elapsed());
 }
 
 /// A sidecar path that is a directory cannot be opened, and no restart mends that.

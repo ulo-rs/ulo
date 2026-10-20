@@ -14,6 +14,13 @@ use crate::options::{Engine, SqliteOptions, pool_options, unreadable_url, valida
 /// How often the lock thread retries a lock another process holds.
 const POLL: Duration = Duration::from_millis(50);
 
+/// How long before the bound the lock thread makes its last attempt. The caller's own clock for
+/// the bound started before the thread did and runs in whole milliseconds, so an attempt at the
+/// bound itself reports after the caller has given up. The wait ends with one attempt at this
+/// margin, not a whole poll short of the bound, so a lock freed in the last poll interval is
+/// still taken.
+const LAST_ATTEMPT_MARGIN: Duration = Duration::from_millis(10);
+
 const SIDECAR_SUFFIX: &str = ".ulo-migrate.lock";
 
 /// The SQLite store; the client is `sqlx::SqlitePool`.
@@ -108,6 +115,8 @@ impl MigrationLock for Sqlite {
 }
 
 async fn take_lock(client: sqlx::SqlitePool, bound: Duration) -> Result<SqliteLock, BoxError> {
+    // Read before the query below and the thread's start, which the caller's clock also counts.
+    let started = Instant::now();
     let file = sqlx::query_scalar::<sqlx::Sqlite, Option<String>>(
         "select file from pragma_database_list where name = 'main'",
     )
@@ -127,7 +136,7 @@ async fn take_lock(client: sqlx::SqlitePool, bound: Duration) -> Result<SqliteLo
         .name("ulo-db-sqlite-lock".to_owned())
         .spawn(move || {
             // A send to a dropped receiver hands the file back, and dropping it releases the lock.
-            let _ = answer.send(acquire(&sidecar, bound));
+            let _ = answer.send(acquire(&sidecar, bound, started));
         })
         .map_err(|e| format!("could not start the thread that takes the SQLite migration lock: {e}"))?;
 
@@ -138,7 +147,7 @@ async fn take_lock(client: sqlx::SqlitePool, bound: Duration) -> Result<SqliteLo
     }
 }
 
-fn acquire(path: &Path, bound: Duration) -> Result<File, BoxError> {
+fn acquire(path: &Path, bound: Duration, started: Instant) -> Result<File, BoxError> {
     let file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -146,15 +155,21 @@ fn acquire(path: &Path, bound: Duration) -> Result<File, BoxError> {
         .open(path)
         .map_err(|e| BoxError::from(Permanent::new(format!("could not open {}: {e}", path.display()))))?;
     // `None` when the bound is too large for an `Instant`: wait without end.
-    let deadline = Instant::now().checked_add(bound);
+    let last_attempt = started.checked_add(bound).map(|d| d.checked_sub(LAST_ATTEMPT_MARGIN).unwrap_or(started));
     loop {
         match file.try_lock() {
             Ok(()) => return Ok(file),
             Err(TryLockError::WouldBlock) => {
-                if deadline.is_some_and(|d| Instant::now() >= d) {
-                    return Err(ulo_db::LockTimedOut::new(bound).into());
-                }
-                std::thread::sleep(POLL);
+                let pause = match last_attempt {
+                    None => POLL,
+                    // The last sleep ends at the last attempt instead of a poll past it, and that
+                    // attempt is made before the wait is declared over.
+                    Some(at) => match at.checked_duration_since(Instant::now()) {
+                        Some(left) if !left.is_zero() => left.min(POLL),
+                        _ => return Err(ulo_db::LockTimedOut::new(bound).into()),
+                    },
+                };
+                std::thread::sleep(pause);
             }
             Err(TryLockError::Error(e)) => {
                 return Err(Permanent::new(format!("could not lock {}: {e}", path.display())).into());

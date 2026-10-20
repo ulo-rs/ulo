@@ -151,13 +151,20 @@ pub(crate) mod sqlite {
     /// polls `try_lock` and its blocking-pool thread ends by itself at the bound.
     const POLL: Duration = Duration::from_millis(50);
 
+    /// How long before the bound the last attempt is made. The caller's own clock for the bound
+    /// started before this wait did and runs in whole milliseconds, so an attempt at the bound
+    /// itself reports after the caller has given up. A lock freed in the last poll interval is
+    /// still taken by the attempt at this margin.
+    const LAST_ATTEMPT_MARGIN: Duration = Duration::from_millis(10);
+
     struct Held(Option<File>);
 
     /// The sidecar sits beside the file SQLite resolved for the connection's `main` database,
     /// which is absolute, so replicas reaching one file through different relative paths take one
     /// lock. An in-memory or temporary database reports no file and takes none.
     pub(crate) async fn lock(pool: SqlitePool, bound: Duration) -> Result<DieselLock, BoxError> {
-        let deadline = Instant::now().checked_add(bound);
+        let started = Instant::now();
+        let deadline = started.checked_add(bound).map(|d| d.checked_sub(LAST_ATTEMPT_MARGIN).unwrap_or(started));
         let file: Option<String> = {
             let mut conn = pool.get().await?;
             diesel::select(sql::<Nullable<Text>>("(SELECT file FROM pragma_database_list WHERE name = 'main')"))

@@ -52,6 +52,12 @@ impl Store for SeaOrm {
                 .await?;
                 return Ok(sea_orm::SqlxSqliteConnector::from_sqlx_sqlite_pool(pool));
             }
+            // The certificate handling is `ulo-db-sqlx`'s: a root certificate that cannot be read is
+            // refused here, as there, instead of retried until the connect bound runs out.
+            #[cfg(all(feature = "tls", any(feature = "postgres", feature = "mysql")))]
+            if let Some(engine) = crate::options::engine_of(&url) {
+                ulo_db_sqlx::check_url_root_cert(engine, &url)?;
+            }
             let mut connect = ConnectOptions::new(url.clone());
             if let Some(n) = o.max_connections {
                 connect.max_connections(n);

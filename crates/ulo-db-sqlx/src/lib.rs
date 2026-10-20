@@ -98,6 +98,8 @@ mod sqlite;
 pub use sqlx;
 
 pub use options::{Engine, MySqlOptions, PgOptions, SqliteOptions, check_scheme, validate_url};
+#[cfg(all(feature = "tls", any(feature = "postgres", feature = "mysql")))]
+pub use options::check_url_root_cert;
 #[cfg(feature = "mysql")]
 pub use mysql::{MySql, MySqlLock};
 #[cfg(feature = "postgres")]
