@@ -26,9 +26,10 @@
 //! rustls refuses is `Permanent`, an unknown issuer and a name mismatch among them, so a start over
 //! a different CA or the wrong name fails at its first attempt; an expired or not-yet-valid one stays
 //! retryable, since it reads the local clock. A root certificate (`ssl-ca`, `sslrootcert`) that
-//! cannot be read or is not PEM is `Permanent` too, found by `create`'s own read of the named file. MySQL 8's `caching_sha2_password` authenticates over that
-//! channel with no RSA exchange. The Postgres TLS path is not exercised by any test; SQLite has
-//! none.
+//! cannot be read or is not PEM is `Permanent` too, under the modes that verify the server, found by
+//! `create`'s own read of the named file; under the others SQLx reads no root certificate.
+//! MySQL 8's `caching_sha2_password` authenticates over that channel with no RSA exchange. The
+//! Postgres TLS path is not exercised by any test; SQLite has none.
 //!
 //! # Authenticated Postgres
 //!
@@ -40,7 +41,6 @@
 //!
 //! # Pools
 //!
-//
 //! The pool is lazy: `create` connects nothing and the start waits on `ping` under `.ready`. A pool
 //! reports a refused connection as `PoolTimedOut` after its acquire timeout, so one attempt against
 //! an unreachable server lasts `acquire_timeout_secs`, 5 s unless set (SQLx's own default is 30 s,

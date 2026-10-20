@@ -53,15 +53,17 @@ impl Store for MySql {
     }
 }
 
-
 async fn create_pool(o: MySqlOptions) -> Result<sqlx::MySqlPool, BoxError> {
     let connect = o
         .url
         .expose()
         .parse::<sqlx::mysql::MySqlConnectOptions>()
         .map_err(|e| unreadable_url(Engine::MySql, o.url.expose(), e))?;
+    // SQLx reads the root certificate only in the modes that verify the server.
     #[cfg(feature = "tls")]
-    crate::options::check_root_cert(Engine::MySql, o.url.expose())?;
+    if matches!(connect.get_ssl_mode(), sqlx::mysql::MySqlSslMode::VerifyCa | sqlx::mysql::MySqlSslMode::VerifyIdentity) {
+        crate::options::check_root_cert(Engine::MySql, o.url.expose())?;
+    }
     Ok(pool_options::<sqlx::MySql>(o.max_connections, o.min_connections, o.acquire_timeout_secs)
         .connect_lazy_with(connect))
 }
@@ -117,7 +119,7 @@ async fn take_lock(client: sqlx::MySqlPool, bound: Duration) -> Result<MySqlLock
         })?;
     let name = lock_name(&database);
 
-    let seconds = i64::try_from(bound.as_secs() + u64::from(bound.subsec_nanos() > 0)).unwrap_or(i64::MAX);
+    let seconds = lock_seconds(bound);
     let got = sqlx::query_scalar::<sqlx::MySql, Option<i64>>("select get_lock(?, ?)")
         .bind(name.clone())
         .bind(seconds)
@@ -129,6 +131,12 @@ async fn take_lock(client: sqlx::MySqlPool, bound: Duration) -> Result<MySqlLock
         Some(0) => Err(ulo_db::LockTimedOut::new(bound).into()),
         _ => Err("GET_LOCK failed without a result".into()),
     }
+}
+
+/// `GET_LOCK`'s timeout: `bound` in whole seconds, rounded up, saturating at `i64::MAX` for a bound
+/// as large as `Duration::MAX`.
+fn lock_seconds(bound: Duration) -> i64 {
+    i64::try_from(bound.as_secs().saturating_add(u64::from(bound.subsec_nanos() > 0))).unwrap_or(i64::MAX)
 }
 
 /// `'ulo-db.migrate.'` and the database's name, or a hash of the name when the whole would pass
@@ -145,4 +153,19 @@ fn lock_name(database: &str) -> String {
 
 fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::lock_seconds;
+
+    /// Planted break: the rounding added without saturating, which overflows at `Duration::MAX`.
+    #[test]
+    fn the_lock_timeout_rounds_up_and_saturates() {
+        assert_eq!(lock_seconds(Duration::from_millis(1500)), 2);
+        assert_eq!(lock_seconds(Duration::from_secs(3)), 3);
+        assert_eq!(lock_seconds(Duration::MAX), i64::MAX);
+    }
 }

@@ -669,9 +669,16 @@ impl<'de, 'a> MapAccess<'de> for TableAcc<'a> {
 
     fn next_key_seed<K: DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>, DeError> {
         if let Some((key, node)) = self.entries.next() {
-            self.pending = Some((join_key(&self.base, key), Target::Node(node)));
-            let key: StrDeserializer<'_, DeError> = key.as_str().into_deserializer();
-            return seed.deserialize(key).map(Some);
+            let path = join_key(&self.base, key);
+            self.pending = Some((path.clone(), Target::Node(node)));
+            let text: StrDeserializer<'_, DeError> = key.as_str().into_deserializer();
+            // A key the map's key type refuses, `abc` for a `u16`, is recorded at the key's own
+            // path, so it never reaches `table_result` unrecorded and is not taken for a flattened
+            // section's. Behind `flatten` keys are read as content and do not fail here.
+            return seed
+                .deserialize(text)
+                .map(Some)
+                .map_err(|error| NodeDeserializer { ctx: self.ctx, target: Target::Node(node), path }.record_error(error));
         }
         if let Some(key) = self.extras.next() {
             let target = Target::Absent { reported: true, origin: self.origin };

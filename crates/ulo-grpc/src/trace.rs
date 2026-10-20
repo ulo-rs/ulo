@@ -60,6 +60,7 @@ fn refusal(message: String) -> tonic::Status {
 
 /// The `ErrorInfo` reason of a refusal for a header `outgoing` writes itself, the RPC client's too.
 const REASON: &str = "reserved_header";
+/// The `ErrorInfo` domain of that refusal, named in `outgoing`'s documentation.
 const DOMAIN: &str = "ulo.grpc";
 
 /// Writes `context`, the calling execution's, into an outgoing request's `metadata` as

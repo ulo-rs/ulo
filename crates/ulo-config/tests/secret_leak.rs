@@ -173,4 +173,22 @@ mod beyond_the_values {
         assert_eq!(problem.path(), "db");
         assert!(matches!(problem.origin(), Some(ulo_config::Origin::Explicit { key }) if key.starts_with("db.")));
     }
+
+    #[derive(Debug, Deserialize)]
+    struct Ports {
+        #[allow(dead_code)]
+        ports: std::collections::HashMap<u16, String>,
+    }
+
+    /// A map reads its keys through `deserialize_map` as `flatten` does, but a key its key type
+    /// refuses is the key's problem, at the key's path and not marked. Planted break: key errors
+    /// left to the table's unattributed-error branch.
+    #[test]
+    fn a_refused_map_key_is_not_marked_flattened() {
+        let config = Config::builder().source(Values::new().set("ports.http", "web")).load();
+        let error = read::<Ports>(&config, "");
+        let problem = error.problems().iter().next().expect("one problem");
+        assert!(!problem.flattened());
+        assert_eq!(problem.path(), "ports.http");
+    }
 }

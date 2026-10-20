@@ -161,6 +161,7 @@ fn child() {
     let _ = wait.recv_timeout(Duration::from_secs(4));
 }
 
+#[cfg(not(feature = "reqwest-blocking"))]
 #[test]
 fn an_explicit_header_replaces_one_from_the_environment() {
     let target = listen(OK);
@@ -197,6 +198,7 @@ fn the_proxy_variables_are_read_by_default() {
     assert!(target.head().is_none());
 }
 
+#[cfg(not(feature = "reqwest-blocking"))]
 #[test]
 fn no_proxy_ignores_the_proxy_variables() {
     let target = listen(OK);
@@ -213,6 +215,7 @@ fn no_proxy_ignores_the_proxy_variables() {
     assert!(env_proxy.head().is_none(), "the environment's proxy was used");
 }
 
+#[cfg(not(feature = "reqwest-blocking"))]
 #[test]
 fn an_explicit_proxy_wins_over_the_environment() {
     let explicit = listen(REFUSE);
@@ -232,4 +235,42 @@ fn an_explicit_proxy_wins_over_the_environment() {
 fn a_malformed_proxy_url_is_refused_at_build() {
     let refusal = OtlpExporter::http().proxy("not a url").build(&OtelOptions::default());
     assert!(refusal.is_err());
+}
+
+/// The proxy URL may carry credentials, and an exporter is `Debug`. Planted break: the proxy
+/// choice's derived `Debug`.
+#[test]
+fn a_proxy_s_credentials_are_not_printed() {
+    let exporter = OtlpExporter::http().proxy("http://user:hunter2-sentinel@proxy.invalid:8080");
+    let printed = format!("{exporter:?}");
+    assert!(!printed.contains("hunter2-sentinel"), "{printed}");
+}
+
+/// A percent-encoded CR LF decodes to a value no header may hold, so the build refuses it rather
+/// than writing a second header line.
+#[cfg(not(feature = "reqwest-blocking"))]
+#[test]
+fn a_header_value_decoding_to_a_line_break_is_refused() {
+    let options = OtelOptions {
+        endpoint: Some("http://127.0.0.1:9".to_owned()),
+        headers: Some(Secret::new("x-ulo-key=a%0D%0Ainjected: 1".to_owned())),
+        ..OtelOptions::default()
+    };
+    assert!(OtlpExporter::http().build(&options).is_err());
+}
+
+/// Under `reqwest-blocking` the exporter merges the environment's headers over the options', as
+/// the crate documents, and refuses a proxy choice at build.
+#[cfg(feature = "reqwest-blocking")]
+#[test]
+fn under_reqwest_the_environment_header_wins_and_a_proxy_is_refused() {
+    let target = listen(OK);
+    run_child(&[
+        (CHILD, &target.url()),
+        ("ULO_OTLP_CHILD_HEADERS", "x-ulo-key=explicit"),
+        ("OTEL_EXPORTER_OTLP_HEADERS", "x-ulo-key=from-env"),
+    ]);
+    let head = target.head().expect("the receiver was reached");
+    assert_eq!(header_values(&head, "x-ulo-key"), ["from-env"]);
+    assert!(OtlpExporter::http().no_proxy().build(&OtelOptions::default()).is_err());
 }

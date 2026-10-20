@@ -53,7 +53,6 @@ impl Store for Sqlite {
     }
 }
 
-
 async fn create_pool(o: SqliteOptions) -> Result<sqlx::SqlitePool, BoxError> {
     let connect = o
         .url

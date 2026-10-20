@@ -5,7 +5,7 @@ use redis::aio::{ConnectionManager, ConnectionManagerConfig};
 use redis::{ErrorKind, RedisError};
 use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
-use ulo_db::{Store};
+use ulo_db::Store;
 
 use crate::options::RedisOptions;
 
@@ -62,7 +62,6 @@ fn classify(error: RedisError) -> BoxError {
 /// `AuthenticationFailed` and `InvalidClientConfig` are permanent, so a wrong password ends the
 /// start at its first attempt; `Io` and a timeout are retryable.
 pub struct Redis;
-
 
 impl Store for Redis {
     const NAME: &'static str = "redis";

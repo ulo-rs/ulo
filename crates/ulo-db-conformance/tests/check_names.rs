@@ -155,3 +155,51 @@ fn keys_that_print_alike_print_in_full() {
     assert!(in_full[0].ends_with("a::Primary") && in_full[1].ends_with("b::Primary"), "{names:?}");
     assert!(names.contains(&"fake @ First".to_owned()), "a key that prints apart was written in full: {names:?}");
 }
+
+/// A keyed application module loaded after the start, holding a store with or without its check.
+struct Late {
+    check: bool,
+}
+
+impl Module for Late {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_value(&self.check)
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        let late = store("late");
+        if self.check { m.import(late) } else { m.import(late.without_health_check()) }
+    }
+}
+
+fn load_late(check: bool) -> Result<(), Box<ulo::LoadError>> {
+    <OnTokio as Harness>::block_on(async move {
+        let root = Root(vec![Box::new(|m: &mut ModuleDef<'_>| m.import(store("base").keyed::<First>()))]);
+        let app = App::builder(root).runtime(<OnTokio as Harness>::runtime()).wire().expect("wires");
+        let app = app.connect().await.unwrap_or_else(|error| panic!("the app did not connect: {error}"));
+        let loaded = app.handle().load(Late { check }.keyed::<Second>()).await.map(drop).map_err(Box::new);
+        let _ = app.close(Signal::new("test")).await;
+        loaded
+    })
+}
+
+/// Without its check a store in a keyed module contributes nothing, so a lazy load of it is
+/// allowed beside a keyed store that has one. Planted break: the qualifier contributed whatever
+/// `health_check` says.
+#[test]
+fn a_keyed_store_without_its_check_loads_lazily() {
+    load_late(false).unwrap_or_else(|error| panic!("a store without a check was refused: {error}"));
+}
+
+/// With its check the load is refused for the check's collection, the one an application
+/// declares, not for the crate-private qualifier collection. Planted break: the qualifier
+/// contributed before the check.
+#[test]
+fn a_keyed_store_with_its_check_is_refused_for_the_check() {
+    match load_late(true).map_err(|error| *error) {
+        Err(ulo::LoadError::Refused(ulo::LoadRefusal::Contribution { key, .. })) => {
+            assert!(key.key() == ulo::Key::of::<dyn ulo_health::Check, ()>(), "refused for {key}");
+        }
+        other => panic!("expected a refused contribution, got {other:?}"),
+    }
+}

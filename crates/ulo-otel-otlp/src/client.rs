@@ -25,8 +25,8 @@ pub(crate) struct UreqClient {
     headers: Vec<(HeaderName, HeaderValue)>,
 }
 
-/// Where the agent's proxy comes from.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Where the agent's proxy comes from. `Debug` never prints the URL, which may carry credentials.
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) enum ProxyChoice {
     /// ureq's default: `ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`.
     #[default]
@@ -35,6 +35,16 @@ pub(crate) enum ProxyChoice {
     Explicit(String),
     /// No proxy, whatever the environment says.
     Off,
+}
+
+impl fmt::Debug for ProxyChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            ProxyChoice::Environment => "Environment",
+            ProxyChoice::Explicit(_) => "Explicit(..)",
+            ProxyChoice::Off => "Off",
+        })
+    }
 }
 
 impl UreqClient {

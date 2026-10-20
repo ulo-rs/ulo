@@ -287,7 +287,7 @@ impl Store for Postgres {
 }
 ```
 
-`permanent_or_not` wraps the library's permanent errors (§4.6) in `Permanent` and leaves the rest bare; it takes the engine as well, `permanent_or_not(Engine::Postgres, e)`, since one SQLSTATE means different things on the three engines. `impl LazyStore for Postgres {}` follows, and `MigrationLock` for the lock primitive of §4.4. `PgConnectOptions`, `MySqlConnectOptions` and SeaORM's `ConnectOptions` print the password under `Debug` (PROBES_db.md §1.5, §2.2), so no library's options value is formatted anywhere: the options type holds the URL as a `Secret<String>`, and its own `Debug` writes the URL redacted.
+`permanent_or_not` wraps the library's permanent errors (§4.6) in `Permanent` and leaves the rest bare; it takes the engine as well, `permanent_or_not(Engine::Postgres, e)`, since one SQLSTATE means different things on the three engines. `MigrationLock` follows, for the lock primitive of §4.4. `PgConnectOptions`, `MySqlConnectOptions` and SeaORM's `ConnectOptions` print the password under `Debug` (PROBES_db.md §1.5, §2.2), so no library's options value is formatted anywhere: the options type holds the URL as a `Secret<String>`, and its own `Debug` writes the URL redacted.
 
 ### 4.2 `StoreModule<S>` and the phases
 

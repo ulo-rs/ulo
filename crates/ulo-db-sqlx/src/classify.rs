@@ -33,8 +33,9 @@ pub(crate) fn permanent_or_not(engine: Engine, error: sqlx::Error) -> BoxError {
     if is_permanent_error(engine, &error) { Permanent::new(error).into() } else { error.into() }
 }
 
-/// Whether the classifier marks `error` for `engine`, for a store built on SQLx's errors,
-/// such as `ulo-db-seaorm`'s, to read the same table.
+/// Whether `error` is one this crate's stores raise inside `ulo::Permanent` for `engine`: the table
+/// the crate documentation's TLS and pool sections give. For a store built on SQLx's errors, such as
+/// `ulo-db-seaorm`'s, to read the same table.
 pub fn is_permanent_error(engine: Engine, error: &sqlx::Error) -> bool {
     match error {
         sqlx::Error::Configuration(_) | sqlx::Error::Tls(_) => true,

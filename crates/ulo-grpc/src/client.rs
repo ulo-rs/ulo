@@ -111,9 +111,9 @@ impl ClientTls {
 /// ```
 ///
 /// A request that sets `traceparent` itself, on an execution carrying a trace context, fails here
-/// as INVALID_ARGUMENT with an `ErrorInfo` detail whose reason is `reserved_header` (and the
-/// message prefixed `reserved_header:`), and so does one that sets
-/// `tracestate` when the context is `Received`: the context is forwarded as it arrived, and only
+/// as INVALID_ARGUMENT with an `ErrorInfo` detail, domain `ulo.grpc` and reason `reserved_header`
+/// (the message prefixed `reserved_header:`), and so does one that sets `tracestate` when the
+/// context is `Received`: the context is forwarded as it arrived, and only
 /// a participant, whose `TraceSource` originated the context, may add an entry. Into an
 /// `Originated` context the caller's `tracestate` entries are merged. An execution carrying no
 /// context, a `TraceMode::Off` app's among them, leaves both as ordinary metadata. The RPC client
@@ -327,7 +327,10 @@ mod tests {
     fn request(metadata: &[(&'static str, &'static str)]) -> tonic::Request<()> {
         let mut request = tonic::Request::new(());
         for (name, value) in metadata {
-            request.metadata_mut().insert(*name, value.parse().expect("a metadata value"));
+            // Parsed rather than `from_static`, which refuses an upper-case name instead of
+            // folding it, so a test can write `TraceParent` as a caller's code could.
+            let key = tonic::metadata::MetadataKey::from_bytes(name.as_bytes()).expect("a metadata name");
+            request.metadata_mut().insert(key, value.parse().expect("a metadata value"));
         }
         request
     }
@@ -374,6 +377,15 @@ mod tests {
         for origin in [ulo::TraceOrigin::Received, ulo::TraceOrigin::Originated] {
             reserved(through(Some(origin), &[SET]).await);
         }
+    }
+
+    /// tonic folds a metadata name to lower case where it is parsed and keeps no other spelling,
+    /// so `TraceParent` and `TRACESTATE` meet the lower-case lookup and are refused too.
+    #[tokio::test]
+    async fn a_caller_s_traceparent_in_another_case_is_refused() {
+        const SET: (&str, &str) = ("TraceParent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+        reserved(through(Some(ulo::TraceOrigin::Received), &[SET]).await);
+        reserved(through(Some(ulo::TraceOrigin::Received), &[("TRACESTATE", "vendor=1")]).await);
     }
 
     /// A caller's `tracestate` is refused on a received context, which is forwarded as it arrived.

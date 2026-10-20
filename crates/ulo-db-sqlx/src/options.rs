@@ -257,7 +257,9 @@ fn root_cert_keys(engine: Engine) -> &'static [&'static str] {
 /// indistinguishable from a Unix socket that is not there yet, which a restart does mend. Reading
 /// it here, where the path is known to be the root certificate's, lets the two be told apart: a path
 /// that cannot be read, or a file that is not PEM, is `Permanent`, since only the operator can fix
-/// it. An inline PEM value is read the same way SQLx does and checked for the same malformation.
+/// it. SQLx's URL parser takes the value as a path whatever it holds, so an inline PEM is read as one
+/// too. SQLx reads the file only under the modes that verify the server, so `create` calls this only
+/// under those.
 #[cfg(all(feature = "tls", any(feature = "postgres", feature = "mysql")))]
 pub(crate) fn check_root_cert(engine: Engine, url: &str) -> Result<(), ulo::BoxError> {
     use rustls::pki_types::CertificateDer;
@@ -273,16 +275,11 @@ pub(crate) fn check_root_cert(engine: Engine, url: &str) -> Result<(), ulo::BoxE
     let Some(value) = named else {
         return Ok(());
     };
-    let trimmed = value.trim();
-    let data = if trimmed.starts_with("-----BEGIN") && trimmed.ends_with("-----") {
-        value.into_bytes()
-    } else {
-        // The path is the operator's own configuration, not a credential, and naming it is what
-        // lets them find the mistake.
-        std::fs::read(&value).map_err(|e| {
-            ulo::BoxError::from(ulo::Permanent::new(format!("the root certificate `{value}` could not be read: {e}")))
-        })?
-    };
+    // The path is the operator's own configuration, not a credential, and naming it is what lets
+    // them find the mistake.
+    let data = std::fs::read(&value).map_err(|e| {
+        ulo::BoxError::from(ulo::Permanent::new(format!("the root certificate `{value}` could not be read: {e}")))
+    })?;
     for certificate in CertificateDer::pem_slice_iter(&data) {
         if certificate.is_err() {
             return Err(ulo::Permanent::new("the root certificate is not valid PEM").into());

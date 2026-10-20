@@ -81,8 +81,10 @@ pub(crate) mod mysql {
     pub(crate) async fn lock(pool: MySqlPool, bound: Duration) -> Result<DieselLock, BoxError> {
         let mut conn = pool.manager().create().await?;
         let database: Option<String> = diesel::select(sql::<Nullable<Text>>("DATABASE()")).get_result(&mut conn).await?;
-        let database =
-            database.ok_or("the connection selected no database, so the migration lock has no name to be scoped to")?;
+        // A URL that names no database is the operator's to mend, as `ulo-db-sqlx` marks it.
+        let database = database.ok_or_else(|| {
+            ulo::Permanent::new("the connection selected no database, so the migration lock has no name to be scoped to")
+        })?;
         let name = lock_name(&database);
         let seconds = i64::try_from(bound.as_secs().saturating_add(u64::from(bound.subsec_nanos() > 0))).unwrap_or(i64::MAX);
         let got: Option<i64> = diesel::select(

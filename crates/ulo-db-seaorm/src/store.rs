@@ -5,7 +5,7 @@ use std::time::Duration;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbBackend, DbErr};
 use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
-use ulo_db::{Store};
+use ulo_db::Store;
 
 use crate::options::{SeaOrmOptions, password_texts, scrub};
 
@@ -93,7 +93,6 @@ impl Store for SeaOrm {
         })
     }
 }
-
 
 /// SeaORM's SQLite connector sets 1 when the options name no maximum; the wrapped pool keeps it.
 #[cfg(feature = "sqlite")]

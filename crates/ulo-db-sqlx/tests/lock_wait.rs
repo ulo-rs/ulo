@@ -83,6 +83,60 @@ fn a_sqlite_lock_freed_near_the_bound_still_migrates() {
     assert!(began.elapsed() >= BOUND - Duration::from_millis(300), "the start did not wait for the lock");
 }
 
+/// SQLx's migrator after a one-second pause: longer than `BOUND`, so a migration counted against
+/// `connect_within` is cut.
+struct Slow;
+
+impl ulo_db::Migrations<Sqlite> for Slow {
+    fn run(self: std::sync::Arc<Self>, client: ulo_db_sqlx::sqlx::SqlitePool) -> ulo::BoxFuture<'static, Result<(), ulo::BoxError>> {
+        Box::pin(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            Migrator::run(&Migrator::DEFAULT, &client).await.map_err(ulo::BoxError::from)
+        })
+    }
+}
+
+struct SlowRoot(SqliteOptions);
+
+impl Module for SlowRoot {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_value(&self.0.url.expose().clone())
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.import(StoreModule::<Sqlite>::from_options(self.0.clone()).connect_within(BOUND).migrate(Slow));
+    }
+}
+
+/// The sidecar freed 250 ms before `BOUND`, then a migration of one second with `migrate_within`
+/// left unbounded: the start succeeds. The instant migration above passes a migration counted
+/// against `connect_within` too; this one does not. The margin is five of the lock thread's 50 ms
+/// polls: a lock freed in the last poll before the bound is not seen. Planted breaks: the
+/// migrations bounded by `connect_within`, from the grant or from the request.
+#[test]
+fn a_lock_granted_late_then_a_long_migration_still_starts() {
+    let dir = server::Scratch::new("lock-late-slow");
+    let file = dir.0.join("app.db");
+    File::create(&file).expect("the database file is created");
+    let url = format!("sqlite://{}", file.display());
+    let held = File::create(dir.0.join("app.db.ulo-migrate.lock")).expect("the sidecar is created");
+    held.lock().expect("the sidecar is locked");
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(BOUND - Duration::from_millis(250));
+        drop(held);
+    });
+
+    let options: SqliteOptions = server::options(json!({ "url": url }));
+    let began = Instant::now();
+    <OnTokio as Harness>::block_on(async move {
+        let app = App::builder(SlowRoot(options)).runtime(<OnTokio as Harness>::runtime()).wire().expect("wires");
+        let app = app.connect().await.unwrap_or_else(|error| panic!("a late lock and a long migration failed the start: {error}"));
+        let _ = app.close(Signal::new("test")).await;
+    });
+    release.join().expect("the releasing thread ends");
+    assert!(began.elapsed() >= BOUND - Duration::from_millis(250) + Duration::from_secs(1), "finished after {:?}", began.elapsed());
+}
+
 /// A sidecar path that is a directory cannot be opened, and no restart mends that.
 #[test]
 fn a_sidecar_that_cannot_be_opened_is_permanent() {

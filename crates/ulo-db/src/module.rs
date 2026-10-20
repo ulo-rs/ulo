@@ -247,12 +247,6 @@ where
 
         let qualifier = m.qualifier();
         if self.health_check {
-            if let Some(qualifier) = qualifier {
-                // Read by every check, so the names that print alike can be written in full. Only a
-                // module with a check contributes one: a lazily loaded module without its check
-                // contributes to no collection, which `load` would refuse.
-                m.contribute::<dyn QualifierTag>().singleton(move || async move { Tag(qualifier) }, |tag| tag);
-            }
             m.contribute::<dyn Check>().singleton(
                 move |client: Dep<S::Client>, runtime: Dep<dyn Runtime>, tags: Many<dyn QualifierTag>| {
                     let name = check_name::<S>(&check_path, qualifier, &tags);
@@ -261,6 +255,13 @@ where
                 },
                 |check| check,
             );
+            if let Some(qualifier) = qualifier {
+                // Read by every check, so the names that print alike can be written in full. Only a
+                // module with a check contributes one: a lazily loaded module without its check
+                // contributes to no collection, which `load` would refuse. After the check, so a
+                // refused load names the check's collection rather than this one.
+                m.contribute::<dyn QualifierTag>().singleton(move || async move { Tag(qualifier) }, |tag| tag);
+            }
         }
 
         if let Some(migrate) = &self.migrations {

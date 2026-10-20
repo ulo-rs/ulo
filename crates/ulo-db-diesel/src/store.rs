@@ -226,7 +226,6 @@ mod postgres {
         }
     }
 
-
     /// The pool's `custom_setup`: `AsyncPgConnection::establish` driven to completion on the given
     /// runtime's blocking pool. Authentication against a SCRAM server derives a key with 4096
     /// rounds of HMAC-SHA-256 inside the connect future, which in an unoptimised build takes tens
@@ -321,7 +320,6 @@ mod mysql {
             Box::pin(async move { c.close() })
         }
     }
-
 
     impl MigrationLock for MySql {
         type Guard = DieselLock;
@@ -418,7 +416,6 @@ mod sqlite {
             })
         }
     }
-
 
     impl MigrationLock for Sqlite {
         type Guard = DieselLock;

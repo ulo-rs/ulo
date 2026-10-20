@@ -56,15 +56,17 @@ impl Store for Postgres {
     }
 }
 
-
 async fn create_pool(o: PgOptions) -> Result<sqlx::PgPool, BoxError> {
     let connect = o
         .url
         .expose()
         .parse::<sqlx::postgres::PgConnectOptions>()
         .map_err(|e| unreadable_url(Engine::Postgres, o.url.expose(), e))?;
+    // SQLx reads the root certificate only in the modes that verify the server.
     #[cfg(feature = "tls")]
-    crate::options::check_root_cert(Engine::Postgres, o.url.expose())?;
+    if matches!(connect.get_ssl_mode(), sqlx::postgres::PgSslMode::VerifyCa | sqlx::postgres::PgSslMode::VerifyFull) {
+        crate::options::check_root_cert(Engine::Postgres, o.url.expose())?;
+    }
     Ok(pool_options::<sqlx::Postgres>(o.max_connections, o.min_connections, o.acquire_timeout_secs)
         .connect_lazy_with(connect))
 }

@@ -90,6 +90,7 @@ impl Migrations<Fake> for Migrator {
         Box::pin(async move {
             match client.as_str() {
                 "free-fails" => Err("migration 2 failed".into()),
+                "free-panics" => panic!("a migration panicked"),
                 "free-slow" => std::future::pending().await,
                 "free-400" | "late" | "late-slow" | "late-bound-slow" => {
                     let wait = match client.as_str() {
@@ -229,6 +230,14 @@ fn migrate_within_counts_from_the_grant() {
 fn a_failing_migration_stays_permanent() {
     let (error, _) = connect("free-fails", BOUND);
     assert!(is_permanent(&error), "a migration that failed is retryable: {error}");
+}
+
+/// A migration that panics is a migration that failed. Planted break: a panicked task read as
+/// retryable.
+#[test]
+fn a_migration_that_panics_is_permanent() {
+    let (error, _) = connect("free-panics", BOUND);
+    assert!(is_permanent(&error), "a migration that panicked is retryable: {error}");
 }
 
 /// Planted break: running out of `migrate_within` classified as a lock wait.

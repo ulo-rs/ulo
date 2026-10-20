@@ -53,6 +53,22 @@ fn a_root_certificate_that_is_not_pem_is_permanent_in_create() {
     });
 }
 
+/// SQLx reads `ssl-ca` only under `verify_ca` and `verify_identity`, and connects under `required`
+/// with the file absent, so `create` does not refuse it there. Planted break: the read made in
+/// every mode.
+#[test]
+fn a_root_certificate_outside_the_verifying_modes_is_not_read() {
+    <OnTokio as Harness>::block_on(async {
+        let dir = server::Scratch::new("root-unread");
+        let missing = dir.0.join("nope.pem");
+        for mode in ["required", "preferred", "disabled"] {
+            created(&options(&format!("ssl-mode={mode}&ssl-ca={}", missing.display())))
+                .await
+                .unwrap_or_else(|error| panic!("{mode}: an unread root certificate was refused: {error}"));
+        }
+    });
+}
+
 #[test]
 fn a_readable_root_certificate_and_no_root_certificate_both_create() {
     <OnTokio as Harness>::block_on(async {
