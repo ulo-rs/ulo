@@ -1,0 +1,13 @@
+error[E0599]: the method `unbounded` exists for struct `Handle<'_, Pool, ulo::handle::Binding<ulo::scope::Singleton, Set>>`, but its trait bounds were not satisfied
+  --> tests/ui/second_bound_unbounded_beside_timeout.rs:18:72
+   |
+18 |         m.singleton(|| async { Pool }).timeout(Duration::from_secs(1)).unbounded();
+   |                                                                        ^^^^^^^^^ method cannot be called due to unsatisfied trait bounds
+   |
+  ::: $WORKSPACE/crates/ulo/src/binding/handle.rs
+   |
+   | pub struct Binding<S, B>(Infallible, PhantomData<(S, B)>);
+   | ------------------------ doesn't satisfy `_: Unbounded<Binding<Singleton, Set>>`
+   |
+   = note: the following trait bounds were not satisfied:
+           `ulo::handle::Binding<ulo::scope::Singleton, Set>: ulo::handle::Unbounded<ulo::handle::Binding<ulo::scope::Singleton, Set>>`

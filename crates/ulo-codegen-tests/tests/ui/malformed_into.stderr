@@ -1,0 +1,5 @@
+error: an `into` entry is a type, `value = expr`, `with = |..| ..` or `with(<scope>) = |..| ..`; an expression is contributed with `value = ..`
+  --> tests/ui/malformed_into.rs:12:41
+   |
+12 | #[module(providers = [into dyn Plugin: [make_plugin()]])]
+   |                                         ^^^^^^^^^^^^^

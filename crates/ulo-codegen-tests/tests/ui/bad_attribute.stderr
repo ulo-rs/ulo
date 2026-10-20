@@ -1,0 +1,5 @@
+error: expected `singleton`, `execution`, `transient` or `timeout = <Duration>`
+ --> tests/ui/bad_attribute.rs:6:14
+  |
+6 | #[injectable(forever)]
+  |              ^^^^^^^

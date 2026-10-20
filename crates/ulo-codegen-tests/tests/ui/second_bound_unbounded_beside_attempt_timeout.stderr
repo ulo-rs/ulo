@@ -1,0 +1,18 @@
+error[E0599]: the method `unbounded` exists for struct `Handle<'_, Pool, ReadyItem<Open, Set>, ulo::handle::Binding<ulo::scope::Singleton, Open>>`, but its trait bounds were not satisfied
+  --> tests/ui/second_bound_unbounded_beside_attempt_timeout.rs:22:14
+   |
+19 | /         m.singleton(|| async { Pool })
+20 | |             .ready(|| async { Ok::<(), BoxError>(()) })
+21 | |             .attempt_timeout(Duration::from_secs(1))
+22 | |             .unbounded();
+   | |             -^^^^^^^^^ method cannot be called due to unsatisfied trait bounds
+   | |_____________|
+   |
+   |
+  ::: $WORKSPACE/crates/ulo/src/binding/handle.rs
+   |
+   |   pub struct ReadyItem<W, A>(Infallible, PhantomData<(W, A)>);
+   |   -------------------------- doesn't satisfy `_: Unbounded<Binding<Singleton, Open>>`
+   |
+   = note: the following trait bounds were not satisfied:
+           `ReadyItem<Open, Set>: ulo::handle::Unbounded<ulo::handle::Binding<ulo::scope::Singleton, Open>>`

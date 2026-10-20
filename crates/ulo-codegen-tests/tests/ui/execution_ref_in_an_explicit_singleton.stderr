@@ -1,0 +1,22 @@
+error[E0277]: a `ulo::scope::Singleton` type cannot read `ExecutionRef`
+  --> tests/ui/execution_ref_in_an_explicit_singleton.rs:10:23
+   |
+10 |     fn new(execution: ExecutionRef) -> Self {
+   |                       ^^^^^^^^^^^^ this injection point needs an execution
+   |
+   = help: the trait `AllowedIn<ulo::scope::Singleton>` is not implemented for `ExecutionRef`
+   = note: declare the type #[injectable(execution)] or #[injectable(transient)]
+help: `ExecutionRef` implements trait `AllowedIn<S>`
+  --> $WORKSPACE/crates/ulo/src/dependency/handles.rs
+   |
+   | impl AllowedIn<PerExecution> for ExecutionRef {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `AllowedIn<ulo::scope::PerExecution>`
+   | impl AllowedIn<Transient> for ExecutionRef {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `AllowedIn<ulo::scope::Transient>`
+   | impl AllowedIn<Auto> for ExecutionRef {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `AllowedIn<ulo::scope::Auto>`
+note: required by a bound in `ulo::__private::param`
+  --> $WORKSPACE/crates/ulo/src/__private.rs
+   |
+   | pub fn param<S: FromContainer + AllowedIn<Sc>, Sc: Scope>(d: &mut Dependencies, name: &'static str) {
+   |                                 ^^^^^^^^^^^^^ required by this bound in `param`

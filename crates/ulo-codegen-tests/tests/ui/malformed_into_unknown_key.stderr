@@ -1,0 +1,5 @@
+error: an `into` entry is a type, `value = expr`, `with = |..| ..` or `with(<scope>) = |..| ..`
+  --> tests/ui/malformed_into_unknown_key.rs:12:41
+   |
+12 | #[module(providers = [into dyn Plugin: [instance = Metrics]])]
+   |                                         ^^^^^^^^

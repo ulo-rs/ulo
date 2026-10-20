@@ -1,0 +1,7 @@
+error[E0599]: no method named `qualified` found for struct `Contribute<'_, (dyn ErasedGuard<Http> + 'static), (), Enhancer>` in the current scope
+  --> tests/ui/qualified_on_enhancer_contribution.rs:16:40
+   |
+16 |         m.enhancer::<AnyGuard<Http>>().qualified::<Admin>();
+   |                                        ^^^^^^^^^ method not found in `Contribute<'_, (dyn ErasedGuard<Http> + 'static), (), Enhancer>`
+   |
+   = note: the method was found for `Contribute<'m, U, Q>`
