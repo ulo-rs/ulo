@@ -19,5 +19,11 @@ ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
 http.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+ulo-net = { path = "../ulo-net" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+http-body-util.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
+
 [lints]
 workspace = true

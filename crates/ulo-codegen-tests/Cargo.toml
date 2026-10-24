@@ -32,13 +32,22 @@ futures-util.workspace = true
 http.workspace = true
 # A plain HTTP/2 client, which enforces no `grpc-timeout` of its own, for the deadline tests.
 hyper-util = { workspace = true, features = ["client-legacy", "http1", "http2", "tokio"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync", "net", "io-util"] }
 # The events a test captures through a subscriber of its own.
 tracing.workspace = true
 # The clients of the health and reflection services the server answers.
 tonic-health.workspace = true
 tonic-reflection.workspace = true
 trybuild.workspace = true
+# O2: the details a status carries, TLS served and dialled, and the four transports in one app.
+tonic-types.workspace = true
+serde_json.workspace = true
+tokio-tungstenite = { workspace = true, features = ["connect"] }
+ulo-http-hyper = { path = "../ulo-http-hyper" }
+ulo-net = { path = "../ulo-net" }
+ulo-rpc-tcp = { path = "../ulo-rpc-tcp" }
+ulo-ws-hyper = { path = "../ulo-ws-hyper" }
+ulo-test-certs = { path = "../ulo-test-certs" }
 
 [build-dependencies]
 ulo-build = { path = "../ulo-build", version = "=0.1.0-alpha.1" }

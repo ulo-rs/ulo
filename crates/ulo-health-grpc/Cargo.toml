@@ -17,5 +17,11 @@ ulo-health = { path = "../ulo-health", version = "=0.1.0-alpha.1" }
 tonic-health.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+futures-util.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
+tonic = { workspace = true, features = ["channel"] }
+
 [lints]
 workspace = true
