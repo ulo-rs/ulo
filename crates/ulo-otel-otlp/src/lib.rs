@@ -12,7 +12,8 @@
 //! `ureq`'s rustls client is built with an explicit crypto provider (`ring`, the one the workspace's
 //! rustls is built with) and never asks rustls to resolve one, which panics in a process that
 //! links two providers and installs neither. Roots come from the platform's verifier. The
-//! `reqwest-blocking` client keeps reqwest's own TLS behaviour.
+//! `reqwest-blocking` client is handed the same: rustls over `ring` with the platform's verifier,
+//! and an `https` endpoint reached through a proxy is tunnelled with `CONNECT`.
 //!
 //! The options' `endpoint` is the receiver's base URL, as `OTEL_EXPORTER_OTLP_ENDPOINT` is, and
 //! `/v1/traces` is appended to it. With no endpoint the exporter reads the standard `OTEL_*`

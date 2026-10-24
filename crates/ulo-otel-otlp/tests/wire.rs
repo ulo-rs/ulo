@@ -51,7 +51,8 @@ fn listen(reply: &'static str) -> Capture {
         stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
         let mut head = Vec::new();
         let mut buf = [0u8; 4096];
-        while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+        // A TLS client waits for the server's hello, so its first record is the whole head.
+        while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.first() != Some(&TLS_HANDSHAKE) {
             match stream.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => head.extend_from_slice(&buf[..n]),
@@ -64,6 +65,8 @@ fn listen(reply: &'static str) -> Capture {
 }
 
 const OK: &str = "HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n";
+/// The content type of a TLS handshake record, the first byte a TLS client writes.
+const TLS_HANDSHAKE: u8 = 0x16;
 const REFUSE: &str = "HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n";
 
 impl Capture {
@@ -227,6 +230,35 @@ fn an_explicit_proxy_wins_over_the_environment() {
     ]);
     let head = explicit.head().expect("the explicit proxy was used");
     assert!(head.contains("otlp.invalid"), "{head}");
+    assert!(env_proxy.head().is_none(), "the environment's proxy was used");
+}
+
+/// An `https` endpoint is spoken TLS to: the receiver's first bytes are a TLS handshake record of
+/// major version 3, not a request line. Planted break: reqwest built with no TLS backend, which
+/// writes `POST /v1/traces` in plaintext to an `https` endpoint.
+#[test]
+fn an_https_endpoint_is_spoken_tls_to() {
+    let target = listen(OK);
+    run_child(&[(CHILD, &format!("https://{}", target.addr)), ("ULO_OTLP_CHILD_PROXY", "off")]);
+    let head = target.head().expect("the receiver was reached");
+    assert_eq!(head.as_bytes().get(..2), Some(&[TLS_HANDSHAKE, 3][..]), "{head:?}");
+}
+
+/// An `https` endpoint goes through the explicit proxy as a tunnel, whatever `HTTPS_PROXY` says.
+/// Planted break: the explicit proxy registered for `http` URLs alone, which every other proxy test
+/// here leaves standing because their endpoints are `http`.
+#[test]
+fn an_explicit_proxy_tunnels_an_https_endpoint() {
+    let explicit = listen(REFUSE);
+    let env_proxy = listen(REFUSE);
+    run_child(&[
+        (CHILD, "https://otlp.invalid"),
+        ("ULO_OTLP_CHILD_PROXY", &explicit.url()),
+        ("HTTPS_PROXY", &env_proxy.url()),
+        ("ALL_PROXY", &env_proxy.url()),
+    ]);
+    let head = explicit.head().expect("the explicit proxy was used");
+    assert!(head.starts_with("CONNECT otlp.invalid:443 "), "{head}");
     assert!(env_proxy.head().is_none(), "the environment's proxy was used");
 }
 

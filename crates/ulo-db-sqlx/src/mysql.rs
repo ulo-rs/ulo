@@ -44,7 +44,7 @@ impl Store for MySql {
     fn ping(c: &sqlx::MySqlPool) -> BoxFuture<'static, Result<(), BoxError>> {
         let c = c.clone();
         Box::pin(async move {
-            let tcp = reaches_by_tcp(&c);
+            let tcp = mysql_reaches_by_tcp(&c);
             sqlx::query("select 1").execute(&c).await.map(drop).map_err(|e| permanent_or_not_over(Engine::MySql, e, tcp))
         })
     }
@@ -100,15 +100,17 @@ impl MigrationLock for MySql {
     }
 }
 
-/// Whether the pool connects by host and port, not through a Unix socket.
-fn reaches_by_tcp(pool: &sqlx::MySqlPool) -> bool {
+/// Whether `pool` connects by host and port, not through a Unix socket: the reach
+/// [`is_permanent_error_over_tcp`](crate::is_permanent_error_over_tcp) is for. SQLx takes a socket
+/// exactly when the options name one (`socket=`).
+pub fn mysql_reaches_by_tcp(pool: &sqlx::MySqlPool) -> bool {
     pool.connect_options().get_socket().is_none()
 }
 
 /// Every error here is classified as `ping`'s are: a refused permission or a pool too small is
 /// `Permanent`, a lost connection is not.
 async fn take_lock(client: sqlx::MySqlPool, bound: Duration) -> Result<MySqlLock, BoxError> {
-    let tcp = reaches_by_tcp(&client);
+    let tcp = mysql_reaches_by_tcp(&client);
     let classify = |e: sqlx::Error| permanent_or_not_over(Engine::MySql, e, tcp);
     require_spare_connection(Engine::MySql, client.options().get_max_connections())
         .map_err(|e| BoxError::from(Permanent::new(e)))?;

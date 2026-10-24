@@ -116,9 +116,9 @@ pub use options::{Engine, MySqlOptions, PgOptions, SqliteOptions, check_scheme, 
 #[cfg(all(feature = "tls", any(feature = "postgres", feature = "mysql")))]
 pub use options::check_url_root_cert;
 #[cfg(feature = "mysql")]
-pub use mysql::{MySql, MySqlLock};
+pub use mysql::{MySql, MySqlLock, mysql_reaches_by_tcp};
 #[cfg(feature = "postgres")]
-pub use postgres::{PgLock, Postgres};
+pub use postgres::{PgLock, Postgres, pg_reaches_by_tcp};
 #[cfg(feature = "sqlite")]
 pub use sqlite::{Sqlite, SqliteLock};
 

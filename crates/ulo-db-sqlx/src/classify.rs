@@ -28,11 +28,12 @@ use crate::options::Engine;
 /// reads a file, so it is `Permanent` whichever way the path reached SQLx: the URL, which `create`
 /// has already read in the verifying modes and refused there, or `PGSSLROOTCERT`, `PGSSLCERT` and
 /// `PGSSLKEY`, which SQLx's option parser reads itself and this crate does not, so `create` cannot
-/// know them. The stores pass how the pool reaches its server; [`is_permanent_error`] assumes a
-/// socket.
+/// know them. The stores pass how the pool reaches its server, as `pg_reaches_by_tcp` and
+/// `mysql_reaches_by_tcp` read it; [`is_permanent_error`] assumes a socket.
 ///
 /// A pool reports a refused connection as `PoolTimedOut` once its acquire timeout passes, so an
 /// unreachable server and a wrong host both read as retryable here.
+#[cfg(feature = "sqlite")]
 pub(crate) fn permanent_or_not(engine: Engine, error: sqlx::Error) -> BoxError {
     permanent_or_not_over(engine, error, false)
 }
@@ -46,7 +47,7 @@ pub(crate) fn permanent_or_not_over(engine: Engine, error: sqlx::Error, over_tcp
 /// the crate documentation's TLS and pool sections give. For a store built on SQLx's errors, such as
 /// `ulo-db-seaorm`'s, to read the same table. A bare `Io` of kind `NotFound` stays retryable here,
 /// since the connection may be a Unix socket; [`is_permanent_error_over_tcp`] reads it as a
-/// certificate file.
+/// certificate file, for a pool `pg_reaches_by_tcp` or `mysql_reaches_by_tcp` answers `true` for.
 pub fn is_permanent_error(engine: Engine, error: &sqlx::Error) -> bool {
     permanent(engine, error, false)
 }

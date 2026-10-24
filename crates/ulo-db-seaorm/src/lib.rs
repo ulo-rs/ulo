@@ -41,8 +41,9 @@
 //!
 //! No test exercises a TLS connection through this store. On Postgres and MySQL SeaORM builds its
 //! own SQLx pool, over the SQLx and TLS features `ulo-db-sqlx` shares, so `ulo-db-sqlx`'s MySQL TLS
-//! test exercises SQLx's handshake but not this store's pool or its error classification; only
-//! SQLite uses `ulo-db-sqlx`'s pool.
+//! test exercises SQLx's handshake but not this store's pool; only SQLite uses `ulo-db-sqlx`'s pool.
+//! `tests/root_cert_env.rs` exercises this store's classification of a certificate file that cannot
+//! be read, over a host and port and over a socket, against stubs that stop at the TLS opening.
 //!
 //! # A pooled connection moved off the runtime
 //!

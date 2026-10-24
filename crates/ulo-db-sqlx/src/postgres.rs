@@ -47,7 +47,7 @@ impl Store for Postgres {
     fn ping(c: &sqlx::PgPool) -> BoxFuture<'static, Result<(), BoxError>> {
         let c = c.clone();
         Box::pin(async move {
-            let tcp = reaches_by_tcp(&c);
+            let tcp = pg_reaches_by_tcp(&c);
             sqlx::query("select 1").execute(&c).await.map(drop).map_err(|e| permanent_or_not_over(Engine::Postgres, e, tcp))
         })
     }
@@ -72,15 +72,20 @@ async fn create_pool(o: PgOptions) -> Result<sqlx::PgPool, BoxError> {
         .connect_lazy_with(connect))
 }
 
-/// Whether the pool connects by host and port, not through a Unix socket.
-fn reaches_by_tcp(pool: &sqlx::PgPool) -> bool {
-    pool.connect_options().get_socket().is_none()
+/// Whether `pool` connects by host and port, not through a Unix socket: the reach
+/// [`is_permanent_error_over_tcp`](crate::is_permanent_error_over_tcp) is for. SQLx takes a socket
+/// when the options name one (a `host=/dir` parameter, a percent-encoded `/` host) and also when the
+/// host itself starts with `/`, which is what `PGHOST`, or SQLx's probe of the default socket
+/// directories, leaves for a URL that names no host (`postgres:///app`).
+pub fn pg_reaches_by_tcp(pool: &sqlx::PgPool) -> bool {
+    let options = pool.connect_options();
+    options.get_socket().is_none() && !options.get_host().starts_with('/')
 }
 
 /// Every error here is classified as `ping`'s are: a refused permission or a pool too small is
 /// `Permanent`, a lost connection is not.
 async fn take_lock(client: sqlx::PgPool, bound: Duration) -> Result<PgLock, BoxError> {
-    let tcp = reaches_by_tcp(&client);
+    let tcp = pg_reaches_by_tcp(&client);
     let classify = |e: sqlx::Error| permanent_or_not_over(Engine::Postgres, e, tcp);
     require_spare_connection(Engine::Postgres, client.options().get_max_connections())
         .map_err(|e| BoxError::from(Permanent::new(e)))?;

@@ -87,7 +87,8 @@ impl Store for SeaOrm {
             if backend == DbBackend::Sqlite {
                 return ping_sqlite(&c).await;
             }
-            c.ping().await.map_err(|error| classify(backend, error))
+            let tcp = reaches_by_tcp(&c);
+            c.ping().await.map_err(|error| classify(backend, error, tcp))
         })
     }
 
@@ -116,11 +117,11 @@ async fn ping_sqlite(c: &DatabaseConnection) -> Result<(), BoxError> {
     let row = c
         .query_one_raw(Statement::from_string(DbBackend::Sqlite, "SELECT sqlite_version()"))
         .await
-        .map_err(|error| classify(DbBackend::Sqlite, error))?;
+        .map_err(|error| classify(DbBackend::Sqlite, error, false))?;
     let version: String = row
         .ok_or_else(|| BoxError::from("SQLite answered no row to `SELECT sqlite_version()`"))?
         .try_get_by_index(0)
-        .map_err(|error| classify(DbBackend::Sqlite, error))?;
+        .map_err(|error| classify(DbBackend::Sqlite, error, false))?;
     check_sqlite_version(&version).map_err(|refused| Permanent::new(refused).into())
 }
 
@@ -176,18 +177,31 @@ mod certificates {
     fn a_refused_server_certificate_is_permanent_through_seaorm() {
         for error in [rustls::CertificateError::UnknownIssuer, rustls::CertificateError::NotValidForName] {
             let label = format!("{error:?}");
-            assert!(is_permanent_error(DbBackend::MySql, &refused(error)), "{label} is retryable");
+            assert!(is_permanent_error(DbBackend::MySql, &refused(error), true), "{label} is retryable");
         }
     }
 
     #[test]
     fn a_certificate_the_clock_refuses_is_retryable_through_seaorm() {
-        assert!(!is_permanent_error(DbBackend::MySql, &refused(rustls::CertificateError::Expired)));
+        assert!(!is_permanent_error(DbBackend::MySql, &refused(rustls::CertificateError::Expired), true));
+    }
+
+    /// The reach decides a bare `NotFound` or `PermissionDenied`: a certificate file over a host and
+    /// port, a socket not yet created over a socket.
+    #[test]
+    fn a_file_that_cannot_be_read_is_permanent_through_seaorm_over_tcp_only() {
+        for backend in [DbBackend::Postgres, DbBackend::MySql] {
+            for kind in [io::ErrorKind::NotFound, io::ErrorKind::PermissionDenied] {
+                let error = conn(sqlx::Error::Io(io::Error::from(kind)));
+                assert!(is_permanent_error(backend, &error, true), "{backend:?} {kind:?} over tcp is retryable");
+                assert!(!is_permanent_error(backend, &error, false), "{backend:?} {kind:?} over a socket is permanent");
+            }
+        }
     }
 
     #[test]
     fn a_tls_configuration_error_is_permanent_through_seaorm() {
-        assert!(is_permanent_error(DbBackend::Postgres, &conn(sqlx::Error::Tls("Invalid certificate".into()))));
+        assert!(is_permanent_error(DbBackend::Postgres, &conn(sqlx::Error::Tls("Invalid certificate".into())), true));
     }
 }
 
@@ -237,16 +251,31 @@ fn refusal(error: &DbErr, url: &str) -> BoxError {
     Permanent::new(ConnectRefused(scrub(&error.to_string(), url))).into()
 }
 
-fn classify(backend: DbBackend, error: DbErr) -> BoxError {
-    if is_permanent_error(backend, &error) { Permanent::new(error).into() } else { error.into() }
+fn classify(backend: DbBackend, error: DbErr, over_tcp: bool) -> BoxError {
+    if is_permanent_error(backend, &error, over_tcp) { Permanent::new(error).into() } else { error.into() }
+}
+
+/// Whether `c` reaches its server by host and port, read off the SQLx pool underneath as
+/// `ulo-db-sqlx`'s own stores read theirs. SQLite reaches a file.
+fn reaches_by_tcp(c: &DatabaseConnection) -> bool {
+    // The pool accessors panic on a connection of another kind; the backend names the kind, and
+    // `create` builds only SQLx pools.
+    match c.get_database_backend() {
+        #[cfg(feature = "postgres")]
+        DbBackend::Postgres => ulo_db_sqlx::pg_reaches_by_tcp(c.get_postgres_connection_pool()),
+        #[cfg(feature = "mysql")]
+        DbBackend::MySql => ulo_db_sqlx::mysql_reaches_by_tcp(c.get_mysql_connection_pool()),
+        _ => false,
+    }
 }
 
 /// The errors SQLx raises underneath SeaORM are read by `ulo-db-sqlx`'s table, so the two stores
 /// share one certificate and credential classification: configuration, TLS configuration, a
-/// refused server certificate (its validity period aside) and the engine's refusing SQLSTATEs are
-/// permanent. `ConnectionAcquire` (a pool timeout or a closed pool), `Io` and the rest stay bare.
+/// refused server certificate (its validity period aside), the engine's refusing SQLSTATEs and,
+/// over a host and port, a file that cannot be found or read are permanent. `ConnectionAcquire` (a
+/// pool timeout or a closed pool), the rest of `Io` and the rest stay bare.
 #[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
-fn is_permanent_error(backend: DbBackend, error: &DbErr) -> bool {
+fn is_permanent_error(backend: DbBackend, error: &DbErr, over_tcp: bool) -> bool {
     use sea_orm::RuntimeErr;
     use ulo_db_sqlx::Engine;
 
@@ -262,11 +291,11 @@ fn is_permanent_error(backend: DbBackend, error: &DbErr) -> bool {
         DbBackend::Sqlite => Engine::Sqlite,
         _ => return false,
     };
-    ulo_db_sqlx::is_permanent_error(engine, inner)
+    if over_tcp { ulo_db_sqlx::is_permanent_error_over_tcp(engine, inner) } else { ulo_db_sqlx::is_permanent_error(engine, inner) }
 }
 
 #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
-fn is_permanent_error(backend: DbBackend, error: &DbErr) -> bool {
-    let _ = (backend, error);
+fn is_permanent_error(backend: DbBackend, error: &DbErr, over_tcp: bool) -> bool {
+    let _ = (backend, error, over_tcp);
     false
 }

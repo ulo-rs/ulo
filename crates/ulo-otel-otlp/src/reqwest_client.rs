@@ -27,7 +27,7 @@ impl ReqwestClient {
         headers: Vec<(HeaderName, HeaderValue)>,
         proxy: &ProxyChoice,
     ) -> Result<Self, BoxError> {
-        let builder = reqwest::blocking::Client::builder().timeout(timeout);
+        let builder = reqwest::blocking::Client::builder().timeout(timeout).tls_backend_preconfigured(tls_config()?);
         // The proxy URL may carry credentials, so a refusal does not quote it.
         let builder = match proxy {
             ProxyChoice::Environment => builder,
@@ -46,6 +46,21 @@ impl ReqwestClient {
             .map_err(|error| format!("failed to build the blocking HTTP client: {error}"))?;
         Ok(ReqwestClient { inner, headers })
     }
+}
+
+/// rustls over `ring` with the platform's verifier, the configuration the default client's ureq is
+/// given. reqwest's `rustls-no-provider` would otherwise resolve the process's default provider and
+/// panic when none is installed.
+fn tls_config() -> Result<rustls::ClientConfig, BoxError> {
+    use rustls_platform_verifier::BuilderVerifierExt;
+
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    Ok(rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(rustls::ALL_VERSIONS)
+        .map_err(|e| format!("the ring crypto provider cannot serve a TLS client: {e}"))?
+        .with_platform_verifier()
+        .map_err(|e| format!("the platform's certificate verifier is unavailable: {e}"))?
+        .with_no_client_auth())
 }
 
 impl fmt::Debug for ReqwestClient {
