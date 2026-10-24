@@ -83,6 +83,10 @@ impl Subscriptions {
     async fn ticks(&self) -> impl futures_util::Stream<Item = i32> {
         stream::iter(1..=3)
     }
+
+    async fn countdown(&self, from: i32) -> impl futures_util::Stream<Item = i32> {
+        stream::iter((1..=from).rev())
+    }
 }
 
 type Api = Schema<Query, EmptyMutation, Subscriptions>;
@@ -200,16 +204,61 @@ async fn a_request_that_fails_before_execution_is_a_request_error_with_no_data()
 
 /// A required variable the request leaves out is a fault in the request, which GraphQL's
 /// variable coercion raises before execution begins: `RequestError`, no `data`. async-graphql
-/// reports it at the field that reads the variable, with a `path`, so the adapter, which tells a
-/// request error by its errors carrying no path, answers `Executed`.
+/// reports it at the field that reads the variable, with a `path`, so the adapter checks the
+/// operation's variable definitions itself.
 #[tokio::test]
-#[ignore = "DEFECT F456: a missing required variable is answered Executed, not RequestError"]
 async fn a_missing_required_variable_is_a_request_error() {
     with_engine::<Gql, _>(async |app, engine| {
         let response = execute(app, &engine, GqlRequest::new("query A($n: String!) { hello(name: $n) }")).await;
         assert_eq!(response.outcome(), Outcome::RequestError);
         assert_eq!(response.data(), None);
         assert!(response.errors().iter().all(|error| error.path.is_empty()));
+    })
+    .await;
+}
+
+/// What tells a request error from an executed response is where the fault was raised, not whether
+/// its error names a field: a validation error is a request error, a resolver's error with a
+/// `path` is executed, and the three ways a variable fails coercion before execution are request
+/// errors in a query and in a subscription alike, while a variable with a default, or a supplied
+/// one, is not.
+#[tokio::test]
+async fn a_fault_is_a_request_error_by_where_it_was_raised_not_by_its_path() {
+    with_engine::<Gql, _>(async |app, engine| {
+        let unknown = execute(app, &engine, GqlRequest::new("{ nope }")).await;
+        assert_eq!(unknown.outcome(), Outcome::RequestError, "a validation error");
+
+        let resolver = execute(app, &engine, GqlRequest::new("{ softFail }")).await;
+        assert_eq!(resolver.outcome(), Outcome::Executed, "a resolver's error");
+        assert_eq!(resolver.errors()[0].path, [PathSegment::Field("softFail".into())]);
+
+        let null = GqlRequest { variables: vars(json!({ "n": null })), ..GqlRequest::new("query A($n: String!) { hello(name: $n) }") };
+        assert_eq!(execute(app, &engine, null).await.outcome(), Outcome::RequestError, "null for a non-null type");
+
+        let defaulted = execute(app, &engine, GqlRequest::new("query A($n: String! = \"x\") { hello(name: $n) }")).await;
+        assert_eq!(defaulted.outcome(), Outcome::Executed, "a default covers an absent variable");
+        let nullable = execute(app, &engine, GqlRequest::new("query A($n: String) { hello(name: $n) }")).await;
+        assert_eq!(nullable.outcome(), Outcome::Executed, "a nullable variable may be absent");
+        let given = GqlRequest { variables: vars(json!({ "n": "ada" })), ..GqlRequest::new("query A($n: String!) { hello(name: $n) }") };
+        assert_eq!(execute(app, &engine, given).await.data(), Some(&json!({ "hello": "hello ada" })));
+
+        let named = GqlRequest {
+            operation_name: Some("B".into()),
+            ..GqlRequest::new("query A($n: String!) { hello(name: $n) } query B { answer }")
+        };
+        assert_eq!(execute(app, &engine, named).await.outcome(), Outcome::Executed, "only the selected operation's variables count");
+
+        let missing = GqlRequest::new("subscription S($from: Int!) { countdown(from: $from) }");
+        let stream = app.execute(ExecOptions::new(), async |exec| engine.subscribe(missing, exec.handle())).await.expect("an execution");
+        let events = within("the stream", stream.collect::<Vec<_>>()).await;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].outcome(), Outcome::RequestError, "a missing variable in a subscription");
+        assert_eq!(events[0].data(), None);
+
+        let supplied = GqlRequest { variables: vars(json!({ "from": 2 })), ..GqlRequest::new("subscription S($from: Int!) { countdown(from: $from) }") };
+        let stream = app.execute(ExecOptions::new(), async |exec| engine.subscribe(supplied, exec.handle())).await.expect("an execution");
+        let events = within("the stream", stream.collect::<Vec<_>>()).await;
+        assert_eq!(events.iter().map(GqlResponse::data).collect::<Vec<_>>(), [Some(&json!({ "countdown": 2 })), Some(&json!({ "countdown": 1 }))]);
     })
     .await;
 }

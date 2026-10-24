@@ -11,12 +11,13 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use async_graphql::http::GraphiQLSource;
+use async_graphql::parser::types::DocumentOperations;
 use async_graphql::{ObjectType, Schema, ServerError, SubscriptionType, Variables};
 use futures_util::{StreamExt, future, stream};
 use serde_json::{Map, Value};
 use ulo::scope::Auto;
 use ulo::{BoxFuture, Construct, ConstructError, Dep, Dependencies, ExecutionRef, ModuleRef, Resolver};
-use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse};
+use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse, Location};
 
 /// The engine over schema `S`, read as `Dep<S>`, with context type `C`, resolved per call from the
 /// execution: `C` is an execution-scoped `#[injectable]` reading `Option<Ext<CurrentUser>>`,
@@ -119,11 +120,15 @@ async fn request<C: Send + Sync + 'static>(
             return Err(GqlResponse::failed(vec![GqlError::new("the request's context could not be built")]));
         }
     };
-    let variables = Variables::from_json(Value::Object(req.variables.unwrap_or_default()));
-    let mut request = async_graphql::Request::new(req.query).variables(variables);
+    let supplied = req.variables.unwrap_or_default();
+    let mut request = async_graphql::Request::new(req.query);
     if let Some(name) = req.operation_name {
         request = request.operation_name(name);
     }
+    if let Some(errors) = missing_variables(&mut request, &supplied) {
+        return Err(GqlResponse::request_error(errors));
+    }
+    request = request.variables(Variables::from_json(Value::Object(supplied)));
     for (name, value) in req.extensions.unwrap_or_default() {
         match async_graphql::Value::from_json(value) {
             Ok(value) => {
@@ -139,11 +144,47 @@ async fn request<C: Send + Sync + 'static>(
     Ok(request.data(context).data(exec))
 }
 
+/// The errors of GraphQL's variable coercion (CoerceVariableValues) that `supplied` fails against
+/// the operation `request` selects: a variable of a non-null type with no default that is absent
+/// or `null`. `None` when coercion passes, or when the document does not parse or select one
+/// operation, which the schema reports itself.
+///
+/// async-graphql coerces a variable when the field reading it resolves, so it reports the fault
+/// with that field's `path` and nothing in the error tells it from a resolver's. The document is
+/// parsed here once and cached on the request, which the schema then reuses.
+fn missing_variables(request: &mut async_graphql::Request, supplied: &Map<String, Value>) -> Option<Vec<GqlError>> {
+    let operation_name = request.operation_name.clone();
+    let document = request.parsed_query().ok()?;
+    let operation = match (&document.operations, operation_name.as_deref()) {
+        (DocumentOperations::Single(operation), None) => &operation.node,
+        (DocumentOperations::Multiple(operations), Some(name)) => &operations.get(name)?.node,
+        (DocumentOperations::Multiple(operations), None) if operations.len() == 1 => &operations.values().next()?.node,
+        _ => return None,
+    };
+    let errors: Vec<GqlError> = operation
+        .variable_definitions
+        .iter()
+        .filter(|definition| {
+            let definition = &definition.node;
+            let absent = supplied.get(definition.name.node.as_str()).is_none_or(Value::is_null);
+            absent && !definition.var_type.node.nullable && definition.default_value.is_none()
+        })
+        .map(|definition| {
+            let name = &definition.node.name.node;
+            let mut error = GqlError::new(format!("Variable \"${name}\" of required type \"{}\" was not provided.", definition.node.var_type.node));
+            error.locations = vec![Location { line: definition.pos.line as u32, column: definition.pos.column as u32 }];
+            error
+        })
+        .collect();
+    (!errors.is_empty()).then_some(errors)
+}
+
 /// async-graphql's response as a `GqlResponse`.
 ///
 /// async-graphql answers a request that failed before execution as a response whose `data` is
 /// `null` and whose errors carry no `path`, a field error always naming its field, so that is how
-/// a request error is told from an executed request whose data is `null`.
+/// a request error is told from an executed request whose data is `null`. Variable coercion is the
+/// exception, which [`missing_variables`] answers before the schema runs.
 fn response_of(response: async_graphql::Response) -> GqlResponse {
     let errors: Vec<GqlError> = response.errors.iter().map(error_of).collect();
     let before_execution =
