@@ -21,8 +21,10 @@ use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message;
 use ulo::{App, CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, Transport, injectable, routes};
 use ulo_codegen_tests::pb::counter_client::CounterClient;
-use ulo_codegen_tests::pb::{AddRequest, Sum};
+use ulo_codegen_tests::pb::{self, AddRequest, Number, Sum};
+use ulo_grpc::Message as Grpc;
 use ulo_rpc::{Payload, RpcClient};
+use ulo_transport::CallError;
 use ulo_rpc_tcp::Tcp;
 
 use support::{Record, within};
@@ -80,6 +82,44 @@ impl Chat {
         self.gate.hold("ws", exec).await;
         "ws done".to_owned()
     }
+
+    /// Waits for its execution's cancellation, then answers with the reason it read.
+    #[ulo_ws::message("observe")]
+    async fn observe(&self, exec: ExecutionRef) -> String {
+        self.gate.entered.push("ws");
+        exec.cancelled().await;
+        format!("observed {:?}", exec.cancel_reason())
+    }
+
+    /// Cancels its own execution, yields once, and answers.
+    #[ulo_ws::message("self_cancel")]
+    async fn self_cancel(&self, exec: ExecutionRef) -> String {
+        exec.cancel();
+        tokio::task::yield_now().await;
+        "answered after its own cancel".to_owned()
+    }
+}
+
+/// `Counter.Pause` as the two `Chat` handlers above: 1 cancels its own execution, yields and
+/// answers; any other value waits for the cancellation and answers. Either answer is the value.
+#[injectable]
+struct Observer {
+    gate: Dep<Gate>,
+}
+
+#[routes]
+impl Observer {
+    #[ulo_grpc::method(pb::counter::Pause)]
+    async fn pause(&self, req: Grpc<Number>, exec: ExecutionRef) -> Result<Number, CallError> {
+        if req.0.value == 1 {
+            exec.cancel();
+            tokio::task::yield_now().await;
+        } else {
+            self.gate.entered.push("grpc");
+            exec.cancelled().await;
+        }
+        Ok(Number { value: req.0.value })
+    }
 }
 
 #[injectable]
@@ -93,6 +133,13 @@ impl Bus {
     async fn slow(&self, n: Payload<u32>, exec: ExecutionRef) -> u32 {
         self.gate.hold("rpc", exec).await;
         n.0 + 1
+    }
+
+    /// Cancels its own execution and never answers.
+    #[ulo_rpc::message("cross.cancel")]
+    async fn cancel(&self, exec: ExecutionRef) -> u32 {
+        exec.cancel();
+        std::future::pending().await
     }
 }
 
@@ -126,6 +173,7 @@ impl Module for Root {
         m.controller::<Chat>();
         m.controller::<Bus>();
         m.controller::<wire::Service>();
+        m.controller::<Observer>();
         m.on_init(|hooks: Dep<HooksHandle>| async move {
             hooks.0.init.fetch_add(1, Ordering::SeqCst);
             Ok::<(), Infallible>(())
@@ -175,8 +223,12 @@ enum WsEnd {
 }
 
 async fn ws_end(addr: SocketAddr) -> WsEnd {
+    ws_call(addr, "slow").await
+}
+
+async fn ws_call(addr: SocketAddr, event: &str) -> WsEnd {
     let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws")).await.expect("the WebSocket upgrade");
-    socket.send(Message::text(json!({ "event": "slow", "id": 1 }).to_string())).await.expect("the message is sent");
+    socket.send(Message::text(json!({ "event": event, "id": 1 }).to_string())).await.expect("the message is sent");
     loop {
         match socket.next().await {
             Some(Ok(Message::Text(text))) => return WsEnd::Answered(serde_json::from_str(text.as_str()).expect("a JSON frame")),
@@ -186,6 +238,11 @@ async fn ws_end(addr: SocketAddr) -> WsEnd {
             None => return WsEnd::Cut("the stream ended".to_owned()),
         }
     }
+}
+
+async fn pause(addr: SocketAddr, value: i64) -> Result<tonic::Response<Number>, tonic::Status> {
+    let channel = tonic::transport::Endpoint::from_shared(format!("http://{addr}")).expect("an endpoint").connect().await.expect("the gRPC channel");
+    CounterClient::new(channel).pause(Number { value }).await
 }
 
 async fn refuses(addr: SocketAddr) -> bool {
@@ -480,6 +537,46 @@ async fn a_websocket_call_abandoned_at_the_drains_end_is_closed_1001_with_the_sh
         other => panic!("an abandoned WebSocket call did not end with a close frame: {other:?}"),
     }
     assert_eq!(app.gate.dropped.at_least(1, "the held handler dropping").await, vec![("ws", Some(CancelReason::Drain))], "the handler was cancelled by the drain");
+    let _ = within("serve", app.serving).await;
+}
+
+/// The handler is polled before the cancellation: one that wakes on the drain's end and answers
+/// in that poll is answered as it chose, on WebSocket and on gRPC.
+#[tokio::test]
+async fn a_handler_answering_in_the_poll_the_drains_end_wakes_is_answered_as_it_chose() {
+    let app = launch(Duration::from_millis(300)).await;
+    let ws = tokio::spawn(ws_call(app.ws, "observe"));
+    let grpc = tokio::spawn(pause(app.grpc, 2));
+    app.gate.entered.at_least(2, "both handlers waiting on their cancellation").await;
+
+    app.close_abandoning().await;
+    match within("the WebSocket call", ws).await.expect("the WebSocket task") {
+        WsEnd::Answered(reply) => assert_eq!(reply, json!({ "id": 1, "data": "observed Some(Drain)" })),
+        other => panic!("the WebSocket handler's own answer was lost: {other:?}"),
+    }
+    let reply = within("the gRPC call", grpc).await.expect("the gRPC task");
+    assert_eq!(reply.unwrap_or_else(|status| panic!("the gRPC handler's own answer was lost: {status:?}")).into_inner().value, 2);
+    let _ = within("serve", app.serving).await;
+}
+
+/// Only the drain's cancellation is rendered with the shutdown phrase. A handler that cancels its
+/// own execution and answers is answered on WebSocket and gRPC; RPC, which races the cancellation
+/// first, answers it `unavailable` with its own phrase.
+#[tokio::test]
+async fn a_call_its_own_handler_cancels_is_not_answered_as_the_drain() {
+    let app = launch(Duration::from_secs(5)).await;
+    match within("the WebSocket call", ws_call(app.ws, "self_cancel")).await {
+        WsEnd::Answered(reply) => assert_eq!(reply, json!({ "id": 1, "data": "answered after its own cancel" })),
+        other => panic!("a WebSocket handler that cancelled itself was not answered: {other:?}"),
+    }
+    let reply = within("the gRPC call", pause(app.grpc, 1)).await;
+    assert_eq!(reply.unwrap_or_else(|status| panic!("a gRPC handler that cancelled itself: {status:?}")).into_inner().value, 1);
+    let client = RpcClient::new(Tcp::new(app.rpc), Arc::new(ulo_runtime_tokio::Tokio::current())).expect("a client on the RPC address");
+    let error = within("the RPC call", async { client.request::<u32, u32>("cross.cancel", &1).timeout(Duration::from_secs(20)).await })
+        .await
+        .expect_err("an RPC call its handler cancelled was answered");
+    assert_eq!((error.kind(), error.message()), (ulo_transport::ErrorKind::Unavailable, "the call was cancelled"), "{error:?}");
+    let _ = within("close", app.handle.close(Signal::new("cross"))).await;
     let _ = within("serve", app.serving).await;
 }
 
