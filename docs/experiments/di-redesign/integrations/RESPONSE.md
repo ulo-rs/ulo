@@ -746,3 +746,75 @@ The coverage ledger: dropped. CI already fails any job that runs no tests (§3.1
 The example catalogue: accepted as the step after the series, one concept per example, ordered as a learning path, with the inventory's 26 uncovered concepts as its checklist.
 
 Not recorded as a build item: the designer's acceptance of the inventory's dropped list as a migration guide's spine and of `import_cycle` / `forwardRef` as a migration-note item. The user ruled on 2026-10-20 that the branch stays alpha, that documentation states the framework as it stands, and that the docs-site pass is separate and later. No migration material is written.
+
+---
+
+# Tenth response (to QUESTIONS_5)
+
+Migration material is not written: the branch is alpha and documentation states the framework as it stands. Where a ruling below mentions it, the mention is not taken up.
+
+**A1.** Confirmed, no-timer case included. Stopping accepting runs no user code; a spent window means no time to drain, not a skipped step. Each transport still sends its GOAWAY and closes its listener.
+
+**A2.** Record the call that wrote the wait. `.timeout(..)`, `.attempt_timeout(..)` and `.backoff(..)` each record their own `#[track_caller]` location. A trait const's `After(..)` has no call, so it reports the registration that brought the type in. §10.1 says exactly that.
+
+**A3.** Add the rule to the core; the NATS refusal stays. `resolve_bound` refuses `After(ZERO)` on every item it resolves (hooks, constructions, readiness attempts and wholes) as a wiring error naming the call, with the hint `.unbounded()`. The "zero rule" cited earlier is transports X22's `zero_bound`, which servers and links apply to their own settings; `roots_timeout` is a link setting the core never resolves, so the NATS refusal is X22's and not redundant. Two applications of one rule.
+
+**A4.** Correct core §7 and §12 to X2 and add the test in `ulo-codegen-tests`: an impl-level `value = Counter::new()` across two handlers, each called once, reading a count of two; a planted per-handler build reads one each.
+
+**A5.** Accepted. The bound moves into the macro's assertion, and the trybuild case's stderr pins exactly one error, the `FromContainer` refusal.
+
+**A6.** A guarantee (X3: `dispatch` sets the mounted handler's `HandlerInfo` before the first guard runs). Pin it: a guard reading the handler's metadata; the planted break moves the set after admission.
+
+**B1.** Not a supported shape; the 503 is right. Dropping the `App` is the end of the app (decision 25, F426). The documentation of `App` and `Embedded` says: keep the `App`, or the future serving it, alive for as long as the app serves. A handle is a view, not an owner.
+
+**B2.** Accepted. A `warn` naming the transport and the error.
+
+**B3.** An abandoned call is cancelled with `CancelReason::Drain`, and each transport renders it with the one shutdown phrase (decision 56, "the server is shutting down", replacing RPC's "the call was cancelled"): HTTP with the response not begun, 503 with `Connection: close`; HTTP with the response begun, the stream cut in the protocol's own way (§2.6's cut-off form); gRPC `UNAVAILABLE`; WebSocket close 1001; RPC `unavailable`. One test per transport holds a call through a drain window that expires.
+
+**B4.** The server writes `NOT_SERVING` for `""` at its drain even when the overall status has been delegated, as a floor; §6.2 states it that way. Test: a cap that skips the before-shutdown hook, with an `Unbounded` interval; `""` reads `NOT_SERVING` once the drain begins.
+
+**B5.** A promise. A server's `close` is where TLS close-notify, broker acknowledgements and deregistration happen; a drop does none. Test: a recording server whose `close` must run once on every shutdown path that reaches the close step; removing `close_servers` must fail it.
+
+**B6.** Accepted. A `prepare` that panics is caught and reported as a `Configure` entry naming the transport, as `close` already catches its panics; the hand-off's holder count is released on that path. Test: plant the panic and show the store freed after `listen` fails.
+
+**C1.** Accepted; document the granularity (a lock freed in the last 10 ms is a retryable failure and the restart takes the lock).
+
+**C2.** Refuse a nested `Keyed` in the core at `wire()`: the identity and the exports disagree for every module. The error names both qualifiers and says to key once.
+
+**C3.** Apply the four-character floor in the core's redaction too, as in `ulo-config`: secrets under four characters stay registered but no message is text-matched against them. Documented on `Secret`.
+
+**C4.** `PGSSLROOTCERT`: a store reads no environment of its own; the root certificate comes through the options, which configuration can fill from the `Env` source; the classifier makes a certificate file that is missing or unreadable `Permanent` whatever its source; SQLx's own `PG*` reading is documented as the library's. A lock thread that panics is `Permanent` and logged at `error` with the message. An expired root is accepted and documented (trust anchors are not validated as certificates, RFC 5280).
+
+**C5.** Bring `reqwest-blocking` in line: explicit headers applied last; `.proxy(..)` and `.no_proxy()` map onto reqwest's builder.
+
+**C6.** Accepted. The failure keeps the `TlsError`, which a `Redacted` reaches by downcast; a test downcasts it.
+
+**C7.** Accepted; filed and documented. File it upstream.
+
+**C8.** The promise is determinism, not an order: the same input gives the same order, shown by running the same failure twice. The tests that sort stay.
+
+**C9.** All three: pin the reason strings for 4401, 4429, 4400 and 4406 to the specification's text; cancel every running operation when the server sends its own close, with a test showing the operation's execution cancelled; test a `subscribe` arriving during the drain, refused with the shutdown phrase.
+
+**C10.** Forward it as received (pass-through modifies nothing, §3.4). One sentence in §6.3 says so.
+
+**C11.** multer's size-limit errors map to `ExtractError::TooLarge`, so a handler that propagates with `?` answers 413. Test: a chunked multipart body over the limit.
+
+**C12.** Refuse a scope covering no route in `prepare`, naming the scope and the entry's location.
+
+**C13.** Yes: `ulo-http-conformance` covers them across hosts. The chunked case is a defect: an 18-byte chunked body answered 200 against an 8-byte limit is a body limit not enforced on the chunked path. Fix it first, with its own test. Then four scenarios: a chunked body over the limit answered 413; percent-decoding; trailing slashes; SSE delivery (the client reads the first event before the handler produces the second, so a host that buffers frames fails).
+
+**D1.** Drop capability 36 from `CAPABILITIES.md`, noting that scoped `PreDispatch` with `exclude` replaced it and is tested in `ulo-http`. `DynamicModule`'s string is a label, not a key; capability 9's text says so.
+
+**D2.** Both are cycles; pin them (`Option<Dep<T>>`; a contribution reading `Many` of its own key). Each test fails `wire()` with the cycle's path.
+
+**D3.** Pin all four, each asserting the module, key or visibility involved.
+
+**D4.** The first reading is confirmed. Add `App::module_of(&config)` and `AppHandle::module_of(&config)`, beside `module` and `module_keyed`.
+
+**D5.** Per-execution is a capability: pin both forms, a gateway with a `Dep` built once and a gateway reading `Ext` built per message. A hand-written gateway's instance once per connection is pinned in `ulo-ws` (transports §4.1).
+
+**D6.** Refuse it. A controller is the edge of the application; the wiring error fires when any non-controller binding reads a controller's key, with the hint "move the shared logic into a provider both can read".
+
+**D7.** Confirmed.
+
+**Rule for every future test.** A test that asserts a variant also asserts every identity it carries (the module, the key, the route, the header, the transport), so that a break naming the wrong one fails.
