@@ -94,7 +94,8 @@ async fn the_checks_object_is_off_by_default_and_lists_every_check_when_asked_fo
 
 #[tokio::test]
 async fn a_down_reason_is_redacted_before_it_reaches_the_body() {
-    let leaky = Toggle::down_with("db", "refused for password hunter2-s3cret at host");
+    const REASON: &str = "refused for password hunter2-s3cret at host";
+    let leaky = Toggle::down_with("db", REASON);
     let mut root = Root::new().check(&leaky);
     root.http = HealthHttp::new().detail(true);
     root.secret = Some("hunter2-s3cret");
@@ -104,7 +105,9 @@ async fn a_down_reason_is_redacted_before_it_reaches_the_body() {
     assert!(!text.contains("hunter2-s3cret"), "the secret reached the body: {text}");
     let body = reply.json();
     assert_eq!(body["checks"]["db"][0]["status"], "fail");
-    assert!(body["checks"]["db"][0]["output"].is_string(), "the reason is still reported: {body}");
+    let redacted = app.handle.redact(ulo::BoxError::from(REASON)).to_string();
+    assert_ne!(redacted, REASON, "the app's redaction left the reason as it was");
+    assert_eq!(body["checks"]["db"][0]["output"], redacted.as_str(), "the reason with the secret replaced: {body}");
     app.stop().await;
 }
 

@@ -5,7 +5,7 @@
 mod support;
 
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use ulo::{Dep, Module, ModuleDef, ModuleIdentity, injectable, routes};
 use ulo_transport::{Valid, Validate};
 use ulo_ws::Payload;
@@ -51,6 +51,18 @@ impl Module for Root {
     }
 }
 
+/// What `Signup`'s own validation reports for the form, each violation as the envelope writes it,
+/// sorted by field.
+fn violations_of(name: &str, age: u32) -> Vec<Value> {
+    let violations = Signup { name: name.to_owned(), age }.validate().expect_err("the form is invalid");
+    sorted(violations.iter().map(|violation| json!({ "field": violation.field, "description": violation.description })).collect())
+}
+
+fn sorted(mut violations: Vec<Value>) -> Vec<Value> {
+    violations.sort_by_key(|violation| violation["field"].as_str().map(str::to_owned));
+    violations
+}
+
 #[tokio::test]
 async fn a_valid_payload_reaches_the_handler() {
     let ran = Ran(Record::new());
@@ -75,20 +87,16 @@ async fn an_invalid_payload_is_unprocessable_with_each_violated_field_and_the_ha
     let details = reply["error"]["details"].as_array().unwrap_or_else(|| panic!("no details in {reply}"));
     assert_eq!(details.len(), 1, "{reply}");
     assert_eq!(details[0]["type"], json!("field_violations"), "{reply}");
-    let mut fields: Vec<&str> = details[0]["violations"]
-        .as_array()
-        .unwrap_or_else(|| panic!("no violations in {reply}"))
-        .iter()
-        .filter_map(|violation| violation["field"].as_str())
-        .collect();
-    fields.sort_unstable();
+    let violations = sorted(details[0]["violations"].as_array().unwrap_or_else(|| panic!("no violations in {reply}")).clone());
+    let fields: Vec<&str> = violations.iter().filter_map(|violation| violation["field"].as_str()).collect();
     assert_eq!(fields, vec!["age", "name"], "{reply}");
+    assert_eq!(violations, violations_of("al", 12), "each violation with its description: {reply}");
     assert!(ran.0.snapshot().is_empty(), "the handler ran for an invalid payload");
 
     send_json(&mut socket, &json!({ "event": "signup", "id": 8, "data": { "name": "ada", "age": 12 } })).await;
     let reply = next_json(&mut socket).await;
     let violations = reply["error"]["details"][0]["violations"].as_array().unwrap_or_else(|| panic!("no violations in {reply}"));
-    assert_eq!(violations.len(), 1, "only the failing field is named: {reply}");
+    assert_eq!(violations, &violations_of("ada", 12), "only the failing field is named: {reply}");
     assert_eq!(violations[0]["field"], json!("age"));
     hang_up(socket).await;
     app.stop().await;

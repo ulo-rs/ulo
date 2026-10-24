@@ -4,7 +4,7 @@
 //! | `a` | answer |
 //! |---|---|
 //! | `>= 0`, not 100 | `Sum { a + b }` |
-//! | 100 | records `entered`, waits for `gate`, then `Sum { a + b }` |
+//! | 100 | records `entered`, waits for `gate`, then `Sum { a + b }`; records its cancel reason in `dropped` as it ends |
 //! | -1 | `Conflict` with an `ErrorInfo` |
 //! | -2 | `BadRequest` with two `FieldViolations`, a `Help` and a `RetryAfter` |
 //! | -3 | `NotFound` with a `Json` detail |
@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Notify;
-use ulo::{Dep, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, injectable, routes};
 use ulo_codegen_tests::pb::{self, AddRequest, Sum};
 use ulo_grpc::Message;
 use ulo_transport::{CallError, Detail, Details, ErrorKind, FieldViolation, Link};
@@ -31,11 +31,21 @@ use crate::support::Record;
 pub struct Hold {
     pub entered: Record<()>,
     pub gate: Arc<Notify>,
+    /// The held call's cancel reason, written as its handler's future drops.
+    pub dropped: Record<Option<CancelReason>>,
+}
+
+struct OnDrop(ExecutionRef, Record<Option<CancelReason>>);
+
+impl Drop for OnDrop {
+    fn drop(&mut self) {
+        self.1.push(self.0.cancel_reason());
+    }
 }
 
 impl Hold {
     pub fn new() -> Hold {
-        Hold { entered: Record::new(), gate: Arc::new(Notify::new()) }
+        Hold { entered: Record::new(), gate: Arc::new(Notify::new()), dropped: Record::new() }
     }
 }
 
@@ -47,10 +57,11 @@ pub struct Service {
 #[routes]
 impl Service {
     #[ulo_grpc::method(pb::counter::Add)]
-    async fn add(&self, req: Message<AddRequest>) -> Result<Sum, CallError> {
+    async fn add(&self, req: Message<AddRequest>, exec: ExecutionRef) -> Result<Sum, CallError> {
         let AddRequest { a, b } = req.0;
         match a {
             100 => {
+                let _dropped = OnDrop(exec, self.hold.dropped.clone());
                 self.hold.entered.push(());
                 self.hold.gate.notified().await;
                 Ok(Sum { sum: a + b })

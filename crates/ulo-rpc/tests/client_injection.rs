@@ -195,7 +195,9 @@ async fn two_unkeyed_client_modules_are_ambiguous_for_a_provider_reading_the_cli
         })
         .collect();
     assert_eq!(ambiguous.len(), 1, "{errors}");
-    let (key, _consumer, sources) = ambiguous[0];
+    let (key, consumer, sources) = ambiguous[0];
     assert_eq!(key.key(), Key::of::<RpcClient, ()>());
-    assert_eq!(sources.len(), 2, "both client modules are named as sources");
+    assert!(consumer.contains("Forwarder"), "the consumer is named: {consumer}");
+    let sources: Vec<String> = sources.iter().map(|(module, _)| module.to_string()).collect();
+    assert_eq!(sources, ["RpcClientModule", "RpcClientModule #2"], "both client modules are named as sources");
 }

@@ -19,7 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message;
-use ulo::{App, Dep, Module, ModuleDef, ModuleIdentity, Signal, Transport, injectable, routes};
+use ulo::{App, CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, Transport, injectable, routes};
 use ulo_codegen_tests::pb::counter_client::CounterClient;
 use ulo_codegen_tests::pb::{AddRequest, Sum};
 use ulo_rpc::{Payload, RpcClient};
@@ -32,10 +32,21 @@ use support::{Record, within};
 struct Gate {
     semaphore: Arc<Semaphore>,
     entered: Record<&'static str>,
+    /// Each held call's transport and cancel reason, written as its handler's future drops.
+    dropped: Record<(&'static str, Option<CancelReason>)>,
+}
+
+struct OnDrop(&'static str, ExecutionRef, Record<(&'static str, Option<CancelReason>)>);
+
+impl Drop for OnDrop {
+    fn drop(&mut self) {
+        self.2.push((self.0, self.1.cancel_reason()));
+    }
 }
 
 impl Gate {
-    async fn hold(&self, transport: &'static str) {
+    async fn hold(&self, transport: &'static str, exec: ExecutionRef) {
+        let _dropped = OnDrop(transport, exec, self.dropped.clone());
         self.entered.push(transport);
         let permit = self.semaphore.acquire().await.expect("the gate is never closed");
         permit.forget();
@@ -50,8 +61,8 @@ struct Web {
 #[routes]
 impl Web {
     #[ulo_http::get("/slow")]
-    async fn slow(&self) -> String {
-        self.gate.hold("http").await;
+    async fn slow(&self, exec: ExecutionRef) -> String {
+        self.gate.hold("http", exec).await;
         "http done".to_owned()
     }
 }
@@ -65,8 +76,8 @@ struct Chat {
 #[ulo_ws::gateway(path = "/ws", port = own)]
 impl Chat {
     #[ulo_ws::message("slow")]
-    async fn slow(&self) -> String {
-        self.gate.hold("ws").await;
+    async fn slow(&self, exec: ExecutionRef) -> String {
+        self.gate.hold("ws", exec).await;
         "ws done".to_owned()
     }
 }
@@ -79,8 +90,8 @@ struct Bus {
 #[routes]
 impl Bus {
     #[ulo_rpc::message("cross.slow")]
-    async fn slow(&self, n: Payload<u32>) -> u32 {
-        self.gate.hold("rpc").await;
+    async fn slow(&self, n: Payload<u32>, exec: ExecutionRef) -> u32 {
+        self.gate.hold("rpc", exec).await;
         n.0 + 1
     }
 }
@@ -91,6 +102,9 @@ struct Hooks {
     init: AtomicUsize,
     before_shutdown: AtomicUsize,
     destroy: AtomicUsize,
+    shutdown: AtomicUsize,
+    /// The signals the before-shutdown and shutdown hooks received, in the order they ran.
+    signals: std::sync::Mutex<Vec<Signal>>,
 }
 
 struct Root {
@@ -116,8 +130,13 @@ impl Module for Root {
             hooks.0.init.fetch_add(1, Ordering::SeqCst);
             Ok::<(), Infallible>(())
         });
-        m.before_shutdown(|_signal: Signal, hooks: Dep<HooksHandle>| async move {
+        m.before_shutdown(|signal: Signal, hooks: Dep<HooksHandle>| async move {
             hooks.0.before_shutdown.fetch_add(1, Ordering::SeqCst);
+            hooks.0.signals.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(signal);
+        });
+        m.on_shutdown(|signal: Signal, hooks: Dep<HooksHandle>| async move {
+            hooks.0.shutdown.fetch_add(1, Ordering::SeqCst);
+            hooks.0.signals.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(signal);
         });
         m.on_destroy(|hooks: Dep<HooksHandle>| async move {
             hooks.0.destroy.fetch_add(1, Ordering::SeqCst);
@@ -193,7 +212,7 @@ impl Held {
 }
 
 async fn launch(drain: Duration) -> Running {
-    let gate = Gate { semaphore: Arc::new(Semaphore::new(0)), entered: Record::new() };
+    let gate = Gate { semaphore: Arc::new(Semaphore::new(0)), entered: Record::new(), dropped: Record::new() };
     let grpc_hold = wire::Hold::new();
     let hooks = Arc::new(Hooks::default());
     let app = App::builder(Root { gate: gate.clone(), grpc_hold: grpc_hold.clone(), hooks: Arc::clone(&hooks) })
@@ -220,6 +239,7 @@ async fn launch(drain: Duration) -> Running {
     assert_eq!(keys, expected, "one address per transport, each on its own port");
     let ports: std::collections::HashSet<u16> = addresses.iter().map(|bound| bound.addr.port()).collect();
     assert_eq!(ports.len(), 4, "four distinct ports in {addresses:?}");
+    assert!(addresses.iter().all(|bound| !bound.tls), "a plaintext server marked secure in {addresses:?}");
     assert_eq!(hooks.init.load(Ordering::SeqCst), 1, "the init hook ran once, before listen");
 
     let http = address(&addresses, ulo_http::Http::KEY);
@@ -282,6 +302,7 @@ async fn one_close_drains_all_four_transports_and_every_held_call_completes() {
     assert!(!held.any_finished(), "a held call ended when the drain began");
     assert_eq!(app.hooks.before_shutdown.load(Ordering::SeqCst), 1, "the before-shutdown hook ran at the start of the sequence");
     assert_eq!(app.hooks.destroy.load(Ordering::SeqCst), 0, "destroy hooks wait for the drain");
+    assert_eq!(app.hooks.shutdown.load(Ordering::SeqCst), 0, "shutdown hooks wait for the drain");
     // Every transport entered its own drain: none accepts a new connection while its held call runs.
     for (name, addr) in [("http", app.http), ("ws", app.ws), ("rpc", app.rpc), ("grpc", app.grpc)] {
         assert!(refuses(addr).await, "the {name} server was still accepting during the drain");
@@ -305,9 +326,16 @@ async fn one_close_drains_all_four_transports_and_every_held_call_completes() {
     assert_eq!(shutdown.abandoned, 0, "an execution outlived the drain");
     let served = within("serve", app.serving).await.expect("the serve task");
     let served = served.unwrap_or_else(|error| panic!("serve failed: {error}"));
-    assert_eq!(served.signal.to_string(), "cross", "serve answers with the signal that won");
+    assert_eq!(served.signal, Signal::new("cross"), "serve answers with the signal that won");
     assert_eq!(app.hooks.before_shutdown.load(Ordering::SeqCst), 1);
     assert_eq!(app.hooks.destroy.load(Ordering::SeqCst), 1, "the destroy hook ran once");
+    assert_eq!(app.hooks.shutdown.load(Ordering::SeqCst), 1, "the shutdown hook ran once");
+    let signals = app.hooks.signals.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    assert_eq!(signals, vec![Signal::new("cross"), Signal::new("cross")], "the hooks received the closing signal");
+    let mut dropped = app.gate.dropped.snapshot();
+    dropped.sort_unstable_by_key(|(transport, _)| *transport);
+    assert_eq!(dropped, vec![("http", None), ("rpc", None), ("ws", None)], "a completed call was cancelled");
+    assert_eq!(app.grpc_hold.dropped.snapshot(), vec![None], "the completed gRPC call was cancelled");
     for (name, addr) in [("http", app.http), ("ws", app.ws), ("rpc", app.rpc), ("grpc", app.grpc)] {
         assert!(refuses(addr).await, "the {name} address still accepts connections after close");
     }
@@ -327,6 +355,12 @@ async fn calls_still_held_when_the_drain_window_ends_are_abandoned_and_close_fin
     let _ = within("serve", app.serving).await.expect("the serve task");
     assert_eq!(app.hooks.before_shutdown.load(Ordering::SeqCst), 1);
     assert_eq!(app.hooks.destroy.load(Ordering::SeqCst), 1, "the destroy hook ran once");
+    // Each abandoned call's handler is dropped cancelled by the drain, one per transport.
+    let mut dropped = app.gate.dropped.at_least(3, "the three held handlers dropping").await;
+    dropped.sort_unstable_by_key(|(transport, _)| *transport);
+    let drain = Some(CancelReason::Drain);
+    assert_eq!(dropped, vec![("http", drain), ("rpc", drain), ("ws", drain)]);
+    assert_eq!(app.grpc_hold.dropped.at_least(1, "the held gRPC handler dropping").await, vec![drain]);
     for (name, addr) in [("http", app.http), ("ws", app.ws), ("rpc", app.rpc), ("grpc", app.grpc)] {
         assert!(refuses(addr).await, "the {name} address still accepts connections after close");
     }

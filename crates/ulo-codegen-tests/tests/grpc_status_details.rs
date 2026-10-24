@@ -6,6 +6,8 @@
 mod support;
 mod wire;
 
+use std::collections::HashMap;
+
 use prost::Message as _;
 use tonic::Code;
 use tonic_types::StatusExt;
@@ -26,6 +28,16 @@ async fn fail(a: i64, b: i64) -> tonic::Status {
     status
 }
 
+/// The type URL of every `Any` the status's `google.rpc.Status` packs, sorted: tonic-types'
+/// `get_error_details` keeps the last of each type and skips unknown ones, so it reads neither an
+/// extra nor a repeated detail.
+fn packed_types(status: &tonic::Status) -> Vec<String> {
+    let packed = tonic_types::Status::decode(status.details()).unwrap_or_else(|error| panic!("details are not a google.rpc.Status: {error}"));
+    let mut types: Vec<String> = packed.details.into_iter().map(|any| any.type_url).collect();
+    types.sort_unstable();
+    types
+}
+
 #[tokio::test]
 async fn an_error_info_detail_arrives_with_its_reason_domain_and_metadata_under_the_kind_s_code() {
     let status = fail(-1, 0).await;
@@ -35,8 +47,8 @@ async fn an_error_info_detail_arrives_with_its_reason_domain_and_metadata_under_
     let info = details.error_info().unwrap_or_else(|| panic!("no ErrorInfo in {details:?}"));
     assert_eq!(info.reason, "NAME_TAKEN");
     assert_eq!(info.domain, "counter.example");
-    assert_eq!(info.metadata.get("name").map(String::as_str), Some("x"));
-    assert!(details.bad_request().is_none() && details.retry_info().is_none() && details.help().is_none());
+    assert_eq!(info.metadata, HashMap::from([("name".to_owned(), "x".to_owned())]));
+    assert_eq!(packed_types(&status), ["type.googleapis.com/google.rpc.ErrorInfo"]);
 }
 
 #[tokio::test]
@@ -53,6 +65,10 @@ async fn violations_help_and_retry_after_arrive_as_one_bad_request_one_help_and_
     assert_eq!(help.links[0].description, "the rules");
     let retry = details.retry_info().unwrap_or_else(|| panic!("no RetryInfo in {details:?}"));
     assert_eq!(retry.retry_delay, Some(std::time::Duration::from_secs(30)));
+    assert_eq!(
+        packed_types(&status),
+        ["type.googleapis.com/google.rpc.BadRequest", "type.googleapis.com/google.rpc.Help", "type.googleapis.com/google.rpc.RetryInfo"]
+    );
 }
 
 #[tokio::test]
@@ -61,6 +77,7 @@ async fn the_first_error_info_of_two_is_the_one_sent() {
     let details = status.get_error_details();
     let info = details.error_info().unwrap_or_else(|| panic!("no ErrorInfo in {details:?}"));
     assert_eq!((info.reason.as_str(), info.domain.as_str()), ("FIRST", "d1"));
+    assert_eq!(packed_types(&status), ["type.googleapis.com/google.rpc.ErrorInfo"], "the second ErrorInfo was sent too");
 }
 
 #[tokio::test]
