@@ -9,7 +9,7 @@ use futures_core::Stream;
 use futures_core::stream::BoxStream;
 use futures_util::StreamExt;
 use serde::de::DeserializeOwned;
-use ulo_transport::{ExtractError, FromCall};
+use ulo_transport::{ExtractError, FieldViolation, FromCall, Validate};
 
 use crate::frame::Data;
 use crate::transport::{Body, Rpc, RpcCx};
@@ -35,6 +35,13 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Rpc> for Payload<T> {
     async fn from_call(cx: &RpcCx) -> Result<Self, ExtractError> {
         let data = take_data(cx)?;
         decode(cx, &data).map(Payload)
+    }
+}
+
+/// `Valid<Payload<T>>` checks the `T`.
+impl<T: Validate> Validate for Payload<T> {
+    fn validate(&self) -> Result<(), Vec<FieldViolation>> {
+        self.0.validate()
     }
 }
 
