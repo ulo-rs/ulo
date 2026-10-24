@@ -27,7 +27,7 @@ use common::*;
 use ulo::scope::{Auto, PerExecution, Singleton, Transient};
 use ulo::{
     AnyErrorHandler, AnyGuard, AnyInterceptor, BoxError, Dep, EnhancerSpec, Ext, FailureReason, GuardRejected,
-    HandlerSpec, LookupError, PanicRecovered, is_panic,
+    HandlerSpec, Key, LookupError, PanicRecovered, is_panic,
 };
 
 struct A;
@@ -66,7 +66,8 @@ typed_controller!(Ordered, Singleton, |m| {
         .guard_value(G::new("m1"))
         .guard_with(|log: Dep<Log>| built_guard(&log, "m2"))
         .guard::<TypedM3>()
-        .interceptor_value(I::new("im1"));
+        .interceptor_value(I::new("im1"))
+        .interceptor_with(|log: Dep<Log>| built_interceptor(&log, "im2"));
     m.handler::<TP, _>(HandlerSpec::new("h", ()).controller(controller).method(method));
 });
 
@@ -80,6 +81,7 @@ fn ordered(log: &Log) -> impl ulo::Module {
         m.enhancer::<AnyGuard<TP>>().value(Arc::new(G::new("g1")));
         m.enhancer::<AnyGuard<TP>>().singleton(|log: Dep<Log>| built_guard(&log, "g2"), |a| a);
         m.enhancer::<AnyInterceptor<TP>>().value(Arc::new(I::new("ig1")));
+        m.enhancer::<AnyInterceptor<TP>>().value(Arc::new(I::new("ig2")));
         m.controller::<Ordered>();
     })
 }
@@ -114,19 +116,23 @@ async fn interceptors_nest_global_outermost_then_controller_then_method_around_t
         .into_iter()
         .filter(|line| line.starts_with("enter ") || line.starts_with("exit ") || line == "handler")
         .collect();
-    // The controller tier's closure and type interceptors keep the order written, and the
+    // Each tier keeps the order written, whichever spelling each entry uses, and the
     // interceptors that wrap the handler first see it last.
     assert_eq!(
         wrapped,
         strs(&[
             "enter ig1",
+            "enter ig2",
             "enter ic1",
             "enter TypedIc2",
             "enter im1",
+            "enter im2",
             "handler",
+            "exit im2 [ok]",
             "exit im1 [ok]",
             "exit TypedIc2",
             "exit ic1 [ok]",
+            "exit ig2 [ok]",
             "exit ig1 [ok]",
         ]),
         "{:?}",
@@ -146,8 +152,11 @@ typed_controller!(Lazy, PerExecution, |m| {
         .guard_with(|log: Dep<Log>, _u: Ext<User>| built_guard(&log, "r2"))
         .interceptor_with(|log: Dep<Log>, _u: Ext<User>| built_interceptor(&log, "ri"));
     m.handler::<TP, _>(HandlerSpec::new("refused", ()).method(refused));
+    // Two per-execution closures in one execution, so each must be built into a slot of its own.
     let mut admitted = EnhancerSpec::<TP>::new();
-    admitted.guard_with(|log: Dep<Log>, _u: Ext<User>| built_guard(&log, "a1"));
+    admitted
+        .guard_with(|log: Dep<Log>, _u: Ext<User>| built_guard(&log, "a1"))
+        .guard_with(|log: Dep<Log>, _u: Ext<User>| built_guard(&log, "a2"));
     m.handler::<TP, _>(HandlerSpec::new("admitted", ()).method(admitted));
 });
 
@@ -190,6 +199,8 @@ async fn once_every_guard_admits_interceptors_are_built_then_the_controller_then
             "guard g1",
             "build a1",
             "guard a1",
+            "build a2",
+            "guard a2",
             "build i1",
             "build Lazy",
             "enter i1",
@@ -273,7 +284,7 @@ async fn the_first_claim_ends_the_walk_and_a_reshaped_error_is_what_the_next_han
 
 typed_controller!(Refusals, Singleton, |m| {
     let mut refuse = EnhancerSpec::<TP>::new();
-    refuse.guard_value(G::refusing("r")).error_handler_value(E::pass("e"));
+    refuse.guard_value(Counting::new("c")).guard_value(G::refusing("r")).error_handler_value(E::pass("e"));
     m.handler::<TP, _>(HandlerSpec::new("refuse", ()).method(refuse));
     let mut fail = EnhancerSpec::<TP>::new();
     fail.guard_value(G::failing("f")).error_handler_value(E::pass("e"));
@@ -292,7 +303,8 @@ async fn a_guard_refusal_reaches_the_error_handlers_as_guard_rejected() {
     let built = log.events().len();
     let refuse = named::<TP>(&app, "refuse");
     let err = within("the call", call(&refuse, &log, Body::Ok)).await.expect_err("the guard refuses");
-    assert_eq!(since(&log, built), strs(&["guard r", "handle e [rejected]"]), "the handler never runs");
+    assert_eq!(since(&log, built), strs(&["serve c 1", "guard r", "handle e [rejected]"]), "the handler never runs");
+    // The guard that refused, not the one that admitted before it.
     assert_eq!(err.downcast_ref::<GuardRejected>().expect("GuardRejected").guard, type_name::<G>());
 
     // A guard that answers `Err` is that error, not a refusal.
@@ -391,11 +403,33 @@ async fn a_panic_is_caught_at_its_stage() {
     assert!(
         matches!(
             err.downcast_ref::<LookupError>(),
-            Some(LookupError::Construct { reason: FailureReason::Panicked(_), .. })
+            Some(LookupError::Construct { key, reason: FailureReason::Panicked(_) }) if key.key() == Key::of::<PanicsOnBuild, ()>()
         ),
         "{err}"
     );
     assert!(is_panic(&err));
+    drop(handler);
+    close(app).await;
+}
+
+typed_controller!(Bare, Singleton, |m| m.handler::<TP, _>(HandlerSpec::new("h", ())));
+
+#[tokio::test]
+async fn a_global_error_handler_s_panic_is_caught_and_offered_to_the_one_contributed_before_it() {
+    let log = Log::new();
+    let l = log.clone();
+    let app = connected_on_tokio(Mod::<A>::new(move |m| {
+        bind_log(m, &l);
+        m.enhancer::<AnyErrorHandler<TP>>().value(Arc::new(E::pass("eg0")));
+        m.enhancer::<AnyErrorHandler<TP>>().value(Arc::new(E::new("eg1", Act::Panic)));
+        m.controller::<Bare>();
+    }))
+    .await;
+    let handler = only::<TP>(&app);
+    let call_log = Log::new();
+    let err = within("the call", call(&handler, &call_log, Body::Fail)).await.expect_err("nothing claims the panic");
+    assert_eq!(call_log.events(), strs(&["handler", "handle eg1 [boom]", "handle eg0 [panic:ErrorHandler]"]));
+    assert_eq!(stage_of(&err), Some(ulo::DispatchStage::ErrorHandler));
     drop(handler);
     close(app).await;
 }

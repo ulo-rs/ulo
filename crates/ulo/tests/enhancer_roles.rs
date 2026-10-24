@@ -293,6 +293,7 @@ closure_enhancer_controller!(SingletonInterceptors, |c, m| {
 });
 
 closure_enhancer_controller!(SingletonErrorHandlers, |c, m| {
+    c.error_handler_value(E::pass("v"));
     c.error_handler_with_in::<Singleton, _, _>(|_u: Ext<User>| ready(E::pass("c")));
     m.error_handler_with_in::<Singleton, _, _>(|_u: Ext<User>| ready(E::pass("m")));
 });
@@ -303,14 +304,19 @@ fn an_explicit_singleton_closure_is_refused_in_the_interceptor_and_error_handler
         m.controller::<SingletonInterceptors>();
         m.controller::<SingletonErrorHandlers>();
     }));
-    let found = entries!(errors, WiringError::ClosureScopeViolation { closure, transport, role, path, .. }
-        => (closure.clone(), *transport, *role, path.clone()));
+    let found = entries!(errors, WiringError::ClosureScopeViolation { closure, transport, role, path, at }
+        => (closure.clone(), *transport, *role, path.clone(), *at));
     assert_eq!(found.len(), 4, "{errors}");
     assert_eq!(errors.len(), 4, "{errors}");
-    for (_, transport, _, path) in &found {
+    for (_, transport, _, path, at) in &found {
         assert_eq!(*transport, TypeName::of::<TP>());
         assert!(path.iter().any(|step| step.contains("Ext<")), "{path:?}");
+        assert_eq!(at.file(), file!(), "`at` points at the declaration");
     }
+    let mut lines: Vec<u32> = found.iter().map(|f| f.4.line()).collect();
+    lines.sort_unstable();
+    lines.dedup();
+    assert_eq!(lines.len(), 4, "each entry points at its own declaration: {found:?}");
     let by_role = |role: &str| -> Vec<&String> { found.iter().filter(|f| f.2 == role).map(|f| &f.0).collect() };
     let interceptors = by_role("interceptor");
     let handlers = by_role("error handler");
@@ -318,9 +324,10 @@ fn an_explicit_singleton_closure_is_refused_in_the_interceptor_and_error_handler
     assert_eq!(handlers.len(), 2, "{found:?}");
     assert!(by_role("guard").is_empty());
     // The closure label carries the tier and the position among the tier's declarations of the
-    // role: the method tier's refused interceptor follows a value.
+    // role: the method tier's refused interceptor and the controller tier's refused error handler
+    // each follow a value, so no two labels of one role share a position.
     assert!(interceptors.iter().any(|c| c.starts_with("controller-level interceptor #1")), "{interceptors:?}");
     assert!(interceptors.iter().any(|c| c.starts_with("method-level interceptor #2")), "{interceptors:?}");
-    assert!(handlers.iter().any(|c| c.starts_with("controller-level error handler #1")), "{handlers:?}");
+    assert!(handlers.iter().any(|c| c.starts_with("controller-level error handler #2")), "{handlers:?}");
     assert!(handlers.iter().any(|c| c.starts_with("method-level error handler #1")), "{handlers:?}");
 }
