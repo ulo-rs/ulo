@@ -664,3 +664,10 @@ pub async fn within<F: std::future::Future>(what: &str, fut: F) -> F::Output {
         Err(_) => panic!("{what} did not finish within {PATIENCE:?}"),
     }
 }
+
+// ---- Appended by batch B5 (enhancer pipeline). Nothing above changed. ----
+
+/// The pipeline fixture: transports `TP` and `TQ`, the guard, interceptor and error handler every
+/// B5 test composes, and `call`.
+#[macro_use]
+pub mod pipeline;
