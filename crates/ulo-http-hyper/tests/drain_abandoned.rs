@@ -164,8 +164,9 @@ async fn a_call_abandoned_before_its_response_began_reads_503_with_connection_cl
     assert_eq!(status_of(&raw), Some(503), "{:?}", String::from_utf8_lossy(&raw));
     assert!(head_of(&raw).lines().any(|line| line == "connection: close"), "{}", head_of(&raw));
     assert!(head_of(&raw).lines().any(|line| line == "content-type: application/problem+json"), "{}", head_of(&raw));
+    assert!(head_of(&raw).lines().any(|line| line == "retry-after: 1"), "the server's `shed_retry_after`: {}", head_of(&raw));
     let document: serde_json::Value = serde_json::from_str(&body_of(&raw)).expect("a problem document");
-    assert_eq!(document["status"], 503);
+    assert_eq!((&document["type"], &document["title"], &document["status"]), (&"about:blank".into(), &"Service Unavailable".into(), &503.into()));
     assert_eq!(document["detail"], "the server is shutting down");
     assert_eq!(served.finish(closing).await, 1, "the held call was abandoned");
 }

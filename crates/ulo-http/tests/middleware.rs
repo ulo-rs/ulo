@@ -341,10 +341,17 @@ async fn a_scoped_entry_covering_no_route_is_refused_with_its_scope_and_the_line
     let error = refused(scoped_entries_two_of_which_cover_no_route).await;
     let text = error.to_string();
 
+    // Each refusal is one line naming one entry's location beside the scopes that entry wrote.
+    let refusal_of = |line: &AtomicU32| -> Vec<&str> {
+        let at = format!("{}:{}:", file!(), line.load(Ordering::SeqCst));
+        text.lines().filter(|refusal| refusal.contains(&at)).collect()
+    };
     assert!(names_line(&error, &GHOST), "the entry scoped to routes nothing declares: {error}");
-    assert!(text.contains("`/ghost`") && text.contains("`/phantom/*`"), "every scope the entry wrote: {error}");
+    let ghost = refusal_of(&GHOST);
+    assert!(ghost.len() == 1 && ghost[0].contains("`/ghost`, `/phantom/*`") && !ghost[0].contains("posts"), "every scope the entry wrote, once: {error}");
     assert!(names_line(&error, &TOO_DEEP), "a scope deeper than any route covers none: {error}");
-    assert!(text.contains("`/admin/users/{id}/posts`"), "{error}");
+    let deep = refusal_of(&TOO_DEEP);
+    assert!(deep.len() == 1 && deep[0].contains("`/admin/users/{id}/posts`") && !deep[0].contains("ghost"), "{error}");
     assert!(!names_line(&error, &COVERING), "the entry whose scope covers routes is not named: {error}");
     assert!(!text.contains("`/admin/*`"), "{error}");
 }

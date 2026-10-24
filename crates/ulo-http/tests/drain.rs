@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-use futures_util::stream;
+use futures_util::{StreamExt, stream};
 use http_body_util::BodyExt;
 use o1_support::{Call, PATIENCE, read, start_draining};
 use tokio::sync::{Notify, Semaphore};
@@ -83,11 +83,24 @@ impl Held {
         "released"
     }
 
-    /// As `/hold`, its execution already cancelled by its own handler.
+    /// As `/hold`, its execution cancelled by its own handler once the drain has begun.
     #[ulo_http::get("/cancelled-hold")]
     async fn cancelled_hold(&self, exec: ExecutionRef) -> &'static str {
+        let _dropped = OnDrop(&self.hold, exec.clone());
+        self.hold.entered.notify_one();
+        exec.draining().await;
         exec.cancel();
-        self.hold(exec).await
+        self.hold.release.acquire().await.expect("the semaphore is never closed").forget();
+        "released"
+    }
+
+    /// Answers once its execution is cancelled, as a handler watching for it does.
+    #[ulo_http::get("/answers-when-cancelled")]
+    async fn answers_when_cancelled(&self, exec: ExecutionRef) -> &'static str {
+        let _dropped = OnDrop(&self.hold, exec.clone());
+        self.hold.entered.notify_one();
+        exec.cancelled().await;
+        "answered after the cancellation"
     }
 
     /// Answers at once with a stream: `first`, then `second` once released, then its end.
@@ -112,12 +125,26 @@ impl Held {
         Response::new(HttpBody::stream(body))
     }
 
-    /// As `/stream`, its execution already cancelled by its own handler: a reason that is not the
-    /// drain's.
+    /// As `/stream`, its execution cancelled by its own body once the drain has begun: a reason that
+    /// is not the drain's.
     #[ulo_http::get("/cancelled-stream")]
     async fn cancelled_stream(&self, exec: ExecutionRef) -> Response {
-        exec.cancel();
-        self.stream(exec).await
+        let ends = self.hold.clone();
+        exec.on_stream_end(move |outcome| ends.ends.lock().unwrap_or_else(PoisonError::into_inner).push(outcome));
+        let hold = self.hold.clone();
+        let body = stream::iter([Bytes::from_static(b"first"), Bytes::from_static(b"second")]).then(move |chunk| {
+            let (hold, exec) = (hold.clone(), exec.clone());
+            async move {
+                if chunk == "second" {
+                    hold.entered.notify_one();
+                    exec.draining().await;
+                    exec.cancel();
+                    hold.release.acquire().await.expect("the semaphore is never closed").forget();
+                }
+                Ok::<_, std::convert::Infallible>(chunk)
+            }
+        });
+        Response::new(HttpBody::stream(body))
     }
 }
 
@@ -146,10 +173,10 @@ async fn a_call_whose_response_has_not_begun_when_the_window_ends_is_answered_50
     let reply = read(response).await;
     assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(reply.header("connection"), Some("close"));
-    assert!(reply.header("retry-after").is_some(), "a refusal says when to retry");
+    assert_eq!(reply.header("retry-after"), Some("1"), "a refusal says when to retry: the server's `shed_retry_after`");
     assert_eq!(reply.header("content-type"), Some("application/problem+json"));
     let document = reply.json();
-    assert_eq!(document["status"], 503);
+    assert_eq!((&document["type"], &document["title"], &document["status"]), (&"about:blank".into(), &"Service Unavailable".into(), &503.into()));
     assert_eq!(document["detail"], "the server is shutting down", "the one phrase every transport's shutdown refusal carries");
     assert_eq!(reply.matched(), Some(("/hold".to_owned(), "hold")), "the refusal records the route the call had reached");
     assert!(matches!(reply.routing, Some(Routing::Matched { .. })));
@@ -235,6 +262,9 @@ async fn a_stream_cancelled_for_another_reason_is_not_cut_off_by_the_drain() {
     let response = app.call(Call::get("/cancelled-stream")).await;
     let reading = tokio::spawn(read(response));
     tokio::time::timeout(PATIENCE, hold.entered.notified()).await.expect("the stream waits for its second chunk");
+    // The body cancels its execution once the drain begins, and the window ends with it running.
+    let shutdown = tokio::time::timeout(PATIENCE, app.begin_close()).await.expect("close finished in time").expect("the close task");
+    assert_eq!(shutdown.map_or_else(|error| error.report.abandoned, |shutdown| shutdown.abandoned), 1, "the window ended with the stream open");
     hold.release.add_permits(1);
 
     let reply = tokio::time::timeout(PATIENCE, reading).await.expect("read in time").expect("the read task");
@@ -247,10 +277,27 @@ async fn a_stream_cancelled_for_another_reason_is_not_cut_off_by_the_drain() {
 async fn a_call_cancelled_for_another_reason_runs_on_and_is_answered_by_its_handler() {
     let app = start_draining(register, WINDOW).await;
     let (call, hold) = held(&app, "/cancelled-hold").await;
+    // The handler cancels its execution once the drain begins, and the window ends with it running.
+    let shutdown = tokio::time::timeout(PATIENCE, app.begin_close()).await.expect("close finished in time").expect("the close task");
+    assert_eq!(shutdown.map_or_else(|error| error.report.abandoned, |shutdown| shutdown.abandoned), 1, "the window ended with the call running");
     hold.release.add_permits(1);
 
     let reply = read(tokio::time::timeout(PATIENCE, call).await.expect("answered in time").expect("the call task")).await;
     assert_eq!((reply.status, reply.text()), (StatusCode::OK, "released".to_owned()));
     assert_eq!(hold.dropped(), vec![Some(CancelReason::Explicit)], "the handler's own cancellation is the reason it finished under");
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn a_handler_answering_once_the_drain_cancels_it_is_still_answered_503() {
+    let app = start_draining(register, WINDOW).await;
+    let (call, hold) = held(&app, "/answers-when-cancelled").await;
+    let closing = app.begin_close();
+
+    let reply = read(tokio::time::timeout(PATIENCE, call).await.expect("answered in time").expect("the call task")).await;
+    assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE, "the drain is checked before the pipeline: {}", reply.text());
+    assert_eq!(reply.json()["detail"], "the server is shutting down");
+    assert_eq!(hold.dropped(), vec![Some(CancelReason::Drain)]);
+    let _ = tokio::time::timeout(PATIENCE, closing).await.expect("close finished in time");
     app.stop().await;
 }

@@ -379,7 +379,7 @@ async fn a_multipart_body_of_no_known_length_over_the_limit_answers_413_when_the
     let (second, third) = rest.split_at(60);
     let parts = vec![first.to_owned(), second.to_owned(), third.to_owned()];
 
-    // The error comes out of `next_field` and out of reading the part under way; both are 413.
+    // The first frame already passes the limit, so the error comes out of `next_field`.
     let reply = apps.fails(frames(parts.clone()), StatusCode::PAYLOAD_TOO_LARGE, "TooLarge|body|16").await;
     assert_eq!(reply.json()["status"], 413);
     assert_eq!(reply.json()["detail"], ExtractError::TooLarge { param: "body", limit: 16 }.to_string(), "the problem names the limit");
@@ -436,5 +436,17 @@ async fn valid_runs_after_extraction_and_answers_422_with_every_violated_field()
 
     // A body that does not extract fails as extraction, before validation runs.
     apps.fails(item("{}"), BAD, "Malformed|body").await;
+    apps.stop().await;
+}
+
+#[tokio::test]
+async fn a_multipart_read_error_that_is_not_the_limit_is_not_answered_413() {
+    let apps = Apps::start().await;
+    // Within the limit of 16 and cut off in the middle of a part's headers.
+    let malformed = || Call::new(Method::POST, "/upload-through").header("content-type", "multipart/form-data; boundary=XB").chunks(["--XB\r\n", "bad"]);
+    let reply = apps.plain.send(malformed()).await;
+    assert_ne!(reply.status, StatusCode::PAYLOAD_TOO_LARGE, "only a read that ended at the limit is `TooLarge`: {}", reply.text());
+    let seen = apps.reporting.send(malformed()).await;
+    assert!(!seen.text().starts_with("TooLarge"), "the error handlers see the multipart error itself: {}", seen.text());
     apps.stop().await;
 }
