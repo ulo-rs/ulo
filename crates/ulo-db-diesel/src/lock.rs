@@ -174,8 +174,33 @@ pub(crate) mod sqlite {
         let Some(file) = file.filter(|f| !f.is_empty()) else {
             return Ok(DieselLock { held: Box::new(Held(None)) });
         };
-        let locked = Given::current()?.run(move || lock_sidecar(&file, bound, deadline)).await??;
+        let locked = on_blocking_thread(move || lock_sidecar(&file, bound, deadline)).await?;
         Ok(DieselLock { held: Box::new(Held(Some(locked))) })
+    }
+
+    /// Runs `work` on the given runtime's blocking pool. A panic in `work` is `Permanent` and
+    /// logged at `error` with its message: a retry runs the same code on the same file and panics
+    /// again, where a start that took the join error for a lost answer would retry to the bound.
+    pub(super) async fn on_blocking_thread(
+        work: impl FnOnce() -> Result<File, BoxError> + Send + 'static,
+    ) -> Result<File, BoxError> {
+        Given::current()?
+            .run(move || {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|panic| {
+                    let message = panic_message(&*panic);
+                    tracing::error!(panic = %message, "the SQLite migration lock thread panicked");
+                    Err(Permanent::new("the SQLite migration lock thread panicked").into())
+                })
+            })
+            .await?
+    }
+
+    /// The text of a panic payload: a `&str` or a `String`, which is what `panic!` raises.
+    fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+        match payload.downcast_ref::<&str>() {
+            Some(message) => (*message).to_owned(),
+            None => payload.downcast_ref::<String>().cloned().unwrap_or_else(|| "a payload that is not text".to_owned()),
+        }
     }
 
     pub(crate) async fn unlock(guard: DieselLock) {
@@ -214,5 +239,92 @@ pub(crate) mod sqlite {
             };
             std::thread::sleep(pause);
         }
+    }
+}
+
+#[cfg(all(test, feature = "sqlite"))]
+mod tests {
+    use std::fs::OpenOptions;
+    use std::sync::{Arc, Mutex, PoisonError};
+    use std::time::Duration;
+
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Level, Metadata, Subscriber};
+    use ulo::Permanent;
+
+    use super::sqlite::on_blocking_thread;
+
+    /// Every event logged while it is the default, with its level and fields.
+    type Events = Vec<(Level, Vec<(String, String)>)>;
+
+    #[derive(Clone, Default)]
+    struct Capture(Arc<Mutex<Events>>);
+
+    struct Fields(Vec<(String, String)>);
+
+    impl Visit for Fields {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.0.push((field.name().to_owned(), format!("{value:?}")));
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.0.push((field.name().to_owned(), value.to_owned()));
+        }
+    }
+
+    impl Subscriber for Capture {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+        fn record(&self, _: &Id, _: &Record<'_>) {}
+        fn record_follows_from(&self, _: &Id, _: &Id) {}
+        fn event(&self, event: &Event<'_>) {
+            let mut fields = Fields(Vec::new());
+            event.record(&mut fields);
+            self.0.lock().unwrap_or_else(PoisonError::into_inner).push((*event.metadata().level(), fields.0));
+        }
+        fn enter(&self, _: &Id) {}
+        fn exit(&self, _: &Id) {}
+    }
+
+    fn run<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread().build().expect("a runtime").block_on(future)
+    }
+
+    /// A lock thread that panics ends the wait as `Permanent` and logs the panic's own message at
+    /// `error`, once. A lock the thread took is returned, and an error it reports passes through
+    /// as it is.
+    #[test]
+    fn a_panicking_lock_thread_is_permanent_and_logged_at_error_with_its_message() {
+        // The event is logged on the lock thread, so the subscriber is the process's: this is the
+        // only test in the crate that installs one.
+        let capture = Capture::default();
+        tracing::subscriber::set_global_default(capture.clone()).expect("no other subscriber is installed");
+        let error = run(on_blocking_thread(|| panic!("the sidecar blew up"))).expect_err("a panic was taken for a lock");
+        assert!(error.is::<Permanent>(), "a panic in the lock thread is retryable: {error}");
+        let logged: Vec<_> = capture
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|(_, fields)| fields.iter().any(|(name, _)| name == "panic"))
+            .cloned()
+            .collect();
+        assert_eq!(logged.len(), 1, "one event for one panic: {logged:?}");
+        assert_eq!(logged[0].0, Level::ERROR);
+        assert!(logged[0].1.contains(&("panic".to_owned(), "the sidecar blew up".to_owned())), "the panic message: {logged:?}");
+
+        let path = std::env::temp_dir().join(format!("ulo-db-diesel-lock-thread-{}.lock", std::process::id()));
+        let file = OpenOptions::new().write(true).create(true).truncate(true).open(&path).expect("a scratch file");
+        let _ = std::fs::remove_file(&path);
+        run(on_blocking_thread(move || Ok(file))).expect("a lock the thread took is returned");
+        let refused = run(on_blocking_thread(|| Err(ulo_db::LockTimedOut::new(Duration::from_millis(1)).into())))
+            .expect_err("an error passes");
+        assert!(refused.is::<ulo_db::LockTimedOut>(), "an error the thread reports passes through as it is: {refused}");
+        assert!(!refused.is::<Permanent>());
     }
 }

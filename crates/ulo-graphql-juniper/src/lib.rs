@@ -5,6 +5,11 @@
 //! `Q::Context` in the call's execution and hands it over as the context. The application's
 //! context holds an `ExecutionRef` field, through which [`dep`] reads. `Engine::subscribe` is
 //! built on `resolve_into_stream`.
+//!
+//! A variable of the wrong type, an `Int` given a string, is a request error here, answered before
+//! any field executes. `ulo-graphql-async-graphql` answers it as an executed result carrying the
+//! error with a `path`: the two engines differ, and the difference is async-graphql's (see that
+//! crate's documentation).
 
 use std::any::Any;
 use std::marker::PhantomData;

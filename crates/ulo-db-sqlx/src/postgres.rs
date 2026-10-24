@@ -8,7 +8,7 @@ use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
 use ulo_db::{MIGRATION_LOCK_KEY, MigrationLock, Store};
 
-use crate::classify::permanent_or_not;
+use crate::classify::permanent_or_not_over;
 use crate::options::{
     Engine, PgOptions, password_secrets, pool_options, require_spare_connection, unreadable_url, validate_options,
 };
@@ -47,7 +47,8 @@ impl Store for Postgres {
     fn ping(c: &sqlx::PgPool) -> BoxFuture<'static, Result<(), BoxError>> {
         let c = c.clone();
         Box::pin(async move {
-            sqlx::query("select 1").execute(&c).await.map(drop).map_err(|e| permanent_or_not(Engine::Postgres, e))
+            let tcp = reaches_by_tcp(&c);
+            sqlx::query("select 1").execute(&c).await.map(drop).map_err(|e| permanent_or_not_over(Engine::Postgres, e, tcp))
         })
     }
 
@@ -71,10 +72,16 @@ async fn create_pool(o: PgOptions) -> Result<sqlx::PgPool, BoxError> {
         .connect_lazy_with(connect))
 }
 
+/// Whether the pool connects by host and port, not through a Unix socket.
+fn reaches_by_tcp(pool: &sqlx::PgPool) -> bool {
+    pool.connect_options().get_socket().is_none()
+}
+
 /// Every error here is classified as `ping`'s are: a refused permission or a pool too small is
 /// `Permanent`, a lost connection is not.
 async fn take_lock(client: sqlx::PgPool, bound: Duration) -> Result<PgLock, BoxError> {
-    let classify = |e: sqlx::Error| permanent_or_not(Engine::Postgres, e);
+    let tcp = reaches_by_tcp(&client);
+    let classify = |e: sqlx::Error| permanent_or_not_over(Engine::Postgres, e, tcp);
     require_spare_connection(Engine::Postgres, client.options().get_max_connections())
         .map_err(|e| BoxError::from(Permanent::new(e)))?;
     let mut conn = client.acquire().await.map_err(classify)?;

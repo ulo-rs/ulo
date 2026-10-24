@@ -7,6 +7,8 @@ use opentelemetry_http::{Bytes, HttpClient, HttpError, Request, Response, Respon
 use ulo::BoxError;
 use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
 
+use crate::proxy::ProxyChoice;
+
 /// The largest response body read; `opentelemetry-http`'s built-in clients use the same bound.
 const MAX_RESPONSE_BODY: u64 = 4 * 1024 * 1024;
 
@@ -23,28 +25,6 @@ pub(crate) struct UreqClient {
     /// Applied after whatever the exporter set, so an explicit header replaces one the exporter
     /// read from `OTEL_EXPORTER_OTLP_HEADERS` or `OTEL_EXPORTER_OTLP_TRACES_HEADERS`.
     headers: Vec<(HeaderName, HeaderValue)>,
-}
-
-/// Where the agent's proxy comes from. `Debug` never prints the URL, which may carry credentials.
-#[derive(Clone, Default, PartialEq, Eq)]
-pub(crate) enum ProxyChoice {
-    /// ureq's default: `ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`.
-    #[default]
-    Environment,
-    /// This URL, whatever the environment says.
-    Explicit(String),
-    /// No proxy, whatever the environment says.
-    Off,
-}
-
-impl fmt::Debug for ProxyChoice {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            ProxyChoice::Environment => "Environment",
-            ProxyChoice::Explicit(_) => "Explicit(..)",
-            ProxyChoice::Off => "Off",
-        })
-    }
 }
 
 impl UreqClient {

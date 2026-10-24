@@ -52,7 +52,8 @@ async fn overall(readiness: &Readiness) -> ServingStatus {
 /// after it. Every write goes through `GrpcHealth`'s stored copy, which reaches the reporter only
 /// on a change, so an unchanged tick sends a `Watch` subscriber nothing. The bridge's
 /// before-shutdown hook aborts the task before it writes `NOT_SERVING`, which leaves that write
-/// the last; the task's own end at `Stopping` covers a hook the shutdown cap skipped.
+/// the last; the task's own end at `Stopping` covers a hook the shutdown cap skipped, and with no interval, where
+/// there is no task to end, the server's write at the drain does.
 pub(crate) async fn reevaluate(
     runtime: Arc<dyn Runtime>,
     readiness: Readiness,

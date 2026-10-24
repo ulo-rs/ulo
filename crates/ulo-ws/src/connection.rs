@@ -322,6 +322,18 @@ impl Outbound {
         drop(state);
         self.space.notify(usize::MAX);
     }
+
+    /// Refuses everything pushed from now on and returns what was queued before: the messages a
+    /// task pushed after the loop last took the queue, which the close frame follows. `shut`
+    /// would discard them.
+    fn shut_taking(&self) -> VecDeque<Message> {
+        let mut state = self.lock();
+        state.closed = true;
+        let queued = std::mem::take(&mut state.queue);
+        drop(state);
+        self.space.notify(usize::MAX);
+        queued
+    }
 }
 
 /// Where a server or the hand-off is in its life, as its connections read it.
@@ -388,16 +400,30 @@ impl Tracker {
         self.live.wait_for(|live| *live == 0).await;
     }
 
-    /// Aborts every connection left and returns once their tasks have ended.
-    pub(crate) async fn close(&self) {
+    /// Aborts every connection left and returns once their tasks have ended. After the drain has
+    /// begun the connections first get `grace` to end on their own: a message abandoned at the
+    /// drain's end leaves its connection to send 1001 and finish the close handshake, which an
+    /// abort now would cut.
+    ///
+    /// The core drops a `close` after its first poll when the shutdown cap has expired, so the
+    /// abort also runs if this future is dropped during the grace.
+    pub(crate) async fn close(&self, grace: BoxFuture<'static, ()>) {
+        let _aborting = AbortOnDrop(self);
+        if self.is_draining() {
+            let ended = pin!(self.live.wait_for(|live| *live == 0));
+            let _ = future::select(ended, grace).await;
+        }
+        self.abort_all();
+        self.live.wait_for(|live| *live == 0).await;
+    }
+
+    fn abort_all(&self) {
         // Taken out of the lock before aborting: an abort may drop a task's future on this
         // thread, and its guard takes the same lock.
         let tasks = std::mem::take(&mut *self.tasks.lock().unwrap_or_else(PoisonError::into_inner));
         for task in tasks.values() {
             task.abort();
         }
-        drop(tasks);
-        self.live.wait_for(|live| *live == 0).await;
     }
 
     /// The drain's token, once the drain has begun.
@@ -439,6 +465,15 @@ impl Places {
         if before >= self.limit {
             self.freed.notify(usize::MAX);
         }
+    }
+}
+
+/// Aborts a tracker's connections when dropped, so a `close` dropped in its grace still aborts.
+struct AbortOnDrop<'a>(&'a Tracker);
+
+impl Drop for AbortOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.abort_all();
     }
 }
 
@@ -1165,8 +1200,10 @@ where
         };
         if let Some((code, reason)) = close {
             let why = if code == 1001 && draining { DisconnectReason::Drain } else { DisconnectReason::ServerClose { code } };
-            outbound.shut();
-            if send_close(&mut ws, code, &reason).await.is_err() {
+            // A message pushed between this turn's `take` and the decision to close, an answer
+            // that ended the last message in flight for one, is written before the close.
+            let late = outbound.shut_taking();
+            if write(&mut ws, late).await.is_err() || send_close(&mut ws, code, &reason).await.is_err() {
                 break why;
             }
             closing = Some(why);
@@ -1425,7 +1462,7 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
     };
     conn.seed(&exec);
     let handle = exec.handle();
-    let call = flight.register(id.clone(), handle.clone());
+    let registered = flight.register(id.clone(), handle.clone());
     let cx = WsCx { inner: Arc::new(CxInner { exec: handle.clone(), conn: conn.clone(), event: name.clone(), id: id.clone(), data }) };
     let handler_name = event.as_ref().map(|(mounted, _)| format!("{}::{}", gateway.controller, mounted.name()));
     let call_span = span::call(conn.app(), &exec, span::Kind::Server, <Ws as Transport>::KEY, &name, handler_name.as_deref());
@@ -1433,7 +1470,16 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
     let outcome = match &event {
         Some((mounted, call)) => {
             let call = Arc::clone(call);
-            ulo::dispatch(mounted, &handle, &cx, move |cx| call(cx)).instrument(call_span.clone()).await
+            let dispatching = ulo::dispatch(mounted, &handle, &cx, move |cx| call(cx)).instrument(call_span.clone());
+            match until_drained(&handle, dispatching).await {
+                Some(outcome) => outcome,
+                // Abandoned at the drain's end: the connection closes 1001 once no message is
+                // in flight, which is now.
+                None => {
+                    flight.unregister(registered);
+                    return;
+                }
+            }
         }
         None => {
             let error = CallError::new(ErrorKind::Unimplemented, format!("no handler for event `{name}`"))
@@ -1480,7 +1526,31 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
         }
     }
     handling.done();
-    flight.unregister(call);
+    flight.unregister(registered);
+}
+
+/// `fut` until the drain's end cancels the execution with `CancelReason::Drain` while it runs:
+/// then `None`, `fut` dropped at its current await so a handler's future reads `Drain` from its
+/// execution. `fut` is polled first, so a handler that observes the cancellation and answers in
+/// the poll it wakes in is answered as it chose. A cancellation for another reason is left to
+/// `fut`.
+async fn until_drained<F: Future>(exec: &ExecutionRef, fut: F) -> Option<F::Output> {
+    let mut fut = pin!(fut);
+    let mut cancelled = pin!(exec.cancelled());
+    let mut watching = true;
+    poll_fn(|cx| {
+        if let Poll::Ready(out) = fut.as_mut().poll(cx) {
+            return Poll::Ready(Some(out));
+        }
+        if watching && cancelled.as_mut().poll(cx).is_ready() {
+            if exec.cancel_reason() == Some(CancelReason::Drain) {
+                return Poll::Ready(None);
+            }
+            watching = false;
+        }
+        Poll::Pending
+    })
+    .await
 }
 
 /// A streamed answer, each item written `{"id","data"}` as the client takes them, ended with
@@ -1584,5 +1654,35 @@ async fn disconnect(conn: &Connection, why: DisconnectReason, accept: &Accept) {
         Ok(Ok(())) => {}
         Ok(Err(error)) => tracing::warn!(%error, gateway = %gateway.path, "on_disconnect failed"),
         Err(_) => tracing::error!(gateway = %gateway.path, "on_disconnect panicked"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn texts(queue: VecDeque<Message>) -> Vec<String> {
+        queue
+            .into_iter()
+            .map(|message| match message {
+                Message::Text(text) => text.as_str().to_owned(),
+                other => panic!("expected a text message, got {other:?}"),
+            })
+            .collect()
+    }
+
+    /// The messages a task pushed after the read loop last took the queue are handed back when the
+    /// loop decides to close, in order, and nothing pushed afterwards is accepted. `shut` would
+    /// have discarded them: an answer to the last message in flight, lost to the 1001 that its own
+    /// completion triggers.
+    #[test]
+    fn shutting_to_close_returns_what_was_queued_and_refuses_what_follows() {
+        let outbound = Outbound::new(None, Overflow::Close);
+        assert!(outbound.push(Message::text("first")).is_ok());
+        assert!(outbound.push(Message::text("second")).is_ok());
+
+        assert_eq!(texts(outbound.shut_taking()), ["first", "second"]);
+        assert!(outbound.push(Message::text("after")).is_err(), "a push after the close decision was accepted");
+        assert!(outbound.shut_taking().is_empty(), "nothing queued after the shut");
     }
 }

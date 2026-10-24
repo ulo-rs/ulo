@@ -18,7 +18,10 @@ use crate::interval;
 ///
 /// `""` turns `NOT_SERVING` in the bridge's before-shutdown hook, which runs at `Stopping`, before
 /// the drain's GOAWAY, so a client polling health stops sending first. This departs from
-/// transports §6.2, which keeps `""` `SERVING` until the drain; without the bridge §6.2 holds.
+/// transports §6.2, which keeps `""` `SERVING` until the drain; without the bridge §6.2 holds. The
+/// server's own drain write is a floor under it: with the hook skipped by a spent shutdown cap, or
+/// no interval and so no task to end at `Stopping`, `""` still reads `NOT_SERVING` once the drain
+/// begins.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct HealthGrpc {
     pub(crate) interval: Bound,

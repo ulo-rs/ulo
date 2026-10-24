@@ -15,7 +15,7 @@ categories = ["development-tools::debugging"]
 default = []
 # reqwest's blocking client, which brings tokio on a thread of its own and touches no app runtime.
 # With it the crate is tokio-bound; without it the tree holds no tokio.
-reqwest-blocking = ["opentelemetry-otlp/reqwest-blocking-client"]
+reqwest-blocking = ["opentelemetry-otlp/reqwest-blocking-client", "dep:reqwest"]
 
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
@@ -27,6 +27,9 @@ http.workspace = true
 opentelemetry-otlp = { workspace = true, features = ["http-proto", "trace"] }
 opentelemetry-http.workspace = true
 percent-encoding.workspace = true
+# The blocking client the `reqwest-blocking` feature builds itself, to apply the options' headers
+# last and the proxy choice; `system-proxy` reads the proxy variables as ureq's defaults do.
+reqwest = { workspace = true, features = ["blocking", "system-proxy"], optional = true }
 # `ring`: the provider the workspace's `rustls` entry is built with, handed to ureq explicitly.
 rustls.workspace = true
 # Pinned exactly in the workspace (N2): the explicit provider is set through

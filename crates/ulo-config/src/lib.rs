@@ -29,8 +29,8 @@
 //! collected: a message containing one is replaced by `invalid value`. That holds only for a
 //! secret whose inner type read its input as a scalar before it failed. The same pass reads the
 //! messages of failed sources, which a parser may write with the offending line quoted. A secret
-//! shorter than four characters is registered, so the graph's redaction replaces it, but is not
-//! matched against these messages: a text that short is contained in most of them.
+//! shorter than four characters is registered but matched against no message, these or the
+//! graph's: a text that short is contained in most of them.
 //!
 //! Under `flatten` serde gives an error in the buffered content no key. Such a problem is reported
 //! at the path and origin of the struct that holds the `flatten`, never at a sibling field's, and

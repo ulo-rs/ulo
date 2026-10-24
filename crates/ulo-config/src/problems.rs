@@ -37,7 +37,9 @@ impl Problem {
     }
 }
 
-/// Every problem found, in the order found.
+/// Every problem found, in the order found. The order is deterministic: the same failing input
+/// gives the same problems in the same order on every load. No particular order is promised, so a
+/// caller that needs one sorts.
 ///
 /// A validation hook, `Store::validate` and a section read all report through it, so one `wire()`
 /// error lists them together. The `Display` is a header line and one problem per line, each with

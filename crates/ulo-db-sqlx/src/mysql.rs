@@ -7,7 +7,7 @@ use ulo::{BoxError, BoxFuture, Permanent, Secret};
 use ulo_config::Problems;
 use ulo_db::{MigrationLock, Store};
 
-use crate::classify::permanent_or_not;
+use crate::classify::permanent_or_not_over;
 use crate::options::{
     Engine, MySqlOptions, password_secrets, pool_options, require_spare_connection, unreadable_url, validate_options,
 };
@@ -44,7 +44,8 @@ impl Store for MySql {
     fn ping(c: &sqlx::MySqlPool) -> BoxFuture<'static, Result<(), BoxError>> {
         let c = c.clone();
         Box::pin(async move {
-            sqlx::query("select 1").execute(&c).await.map(drop).map_err(|e| permanent_or_not(Engine::MySql, e))
+            let tcp = reaches_by_tcp(&c);
+            sqlx::query("select 1").execute(&c).await.map(drop).map_err(|e| permanent_or_not_over(Engine::MySql, e, tcp))
         })
     }
 
@@ -99,10 +100,16 @@ impl MigrationLock for MySql {
     }
 }
 
+/// Whether the pool connects by host and port, not through a Unix socket.
+fn reaches_by_tcp(pool: &sqlx::MySqlPool) -> bool {
+    pool.connect_options().get_socket().is_none()
+}
+
 /// Every error here is classified as `ping`'s are: a refused permission or a pool too small is
 /// `Permanent`, a lost connection is not.
 async fn take_lock(client: sqlx::MySqlPool, bound: Duration) -> Result<MySqlLock, BoxError> {
-    let classify = |e: sqlx::Error| permanent_or_not(Engine::MySql, e);
+    let tcp = reaches_by_tcp(&client);
+    let classify = |e: sqlx::Error| permanent_or_not_over(Engine::MySql, e, tcp);
     require_spare_connection(Engine::MySql, client.options().get_max_connections())
         .map_err(|e| BoxError::from(Permanent::new(e)))?;
     let mut conn = client.acquire().await.map_err(classify)?;

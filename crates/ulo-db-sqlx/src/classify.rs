@@ -22,27 +22,56 @@ use crate::options::Engine;
 /// `rustls::Error`. `Expired` and `NotValidYet` read the local clock, which can still be wrong
 /// early in a boot, so they stay retryable.
 ///
-/// A root certificate path that does not exist surfaces from SQLx as a bare `Io` of kind
-/// `NotFound`, which is also what a Unix socket not yet created gives and so is not classified
-/// here. `create` reads the named root certificate itself and marks an unreadable path `Permanent`
-/// there.
+/// A certificate file that does not exist or cannot be read surfaces from SQLx as a bare `Io` of
+/// kind `NotFound` or `PermissionDenied`, which is also what a Unix socket not yet created gives.
+/// Over a socket it is therefore not classified. Over a host and port nothing else in a connect
+/// reads a file, so it is `Permanent` whichever way the path reached SQLx: the URL, which `create`
+/// has already read in the verifying modes and refused there, or `PGSSLROOTCERT`, `PGSSLCERT` and
+/// `PGSSLKEY`, which SQLx's option parser reads itself and this crate does not, so `create` cannot
+/// know them. The stores pass how the pool reaches its server; [`is_permanent_error`] assumes a
+/// socket.
 ///
 /// A pool reports a refused connection as `PoolTimedOut` once its acquire timeout passes, so an
 /// unreachable server and a wrong host both read as retryable here.
 pub(crate) fn permanent_or_not(engine: Engine, error: sqlx::Error) -> BoxError {
-    if is_permanent_error(engine, &error) { Permanent::new(error).into() } else { error.into() }
+    permanent_or_not_over(engine, error, false)
+}
+
+/// [`permanent_or_not`] for a connection that `over_tcp` reaches by host and port.
+pub(crate) fn permanent_or_not_over(engine: Engine, error: sqlx::Error, over_tcp: bool) -> BoxError {
+    if permanent(engine, &error, over_tcp) { Permanent::new(error).into() } else { error.into() }
 }
 
 /// Whether `error` is one this crate's stores raise inside `ulo::Permanent` for `engine`: the table
 /// the crate documentation's TLS and pool sections give. For a store built on SQLx's errors, such as
-/// `ulo-db-seaorm`'s, to read the same table.
+/// `ulo-db-seaorm`'s, to read the same table. A bare `Io` of kind `NotFound` stays retryable here,
+/// since the connection may be a Unix socket; [`is_permanent_error_over_tcp`] reads it as a
+/// certificate file.
 pub fn is_permanent_error(engine: Engine, error: &sqlx::Error) -> bool {
+    permanent(engine, error, false)
+}
+
+/// [`is_permanent_error`] for a connection made by host and port, where a file that cannot be found
+/// or read is a certificate file: `Permanent`, from whichever source the path came (the rule
+/// stated on `permanent_or_not` above).
+pub fn is_permanent_error_over_tcp(engine: Engine, error: &sqlx::Error) -> bool {
+    permanent(engine, error, true)
+}
+
+fn permanent(engine: Engine, error: &sqlx::Error, over_tcp: bool) -> bool {
     match error {
         sqlx::Error::Configuration(_) | sqlx::Error::Tls(_) => true,
         sqlx::Error::Database(database) => database.code().is_some_and(|code| permanent_code(engine, &code)),
-        sqlx::Error::Io(io) => certificate_refused(io),
+        sqlx::Error::Io(io) => certificate_refused(io) || (over_tcp && file_unreadable(io)),
         _ => false,
     }
+}
+
+/// An operating-system error reading a file: kind `NotFound` or `PermissionDenied` with no error
+/// wrapped inside, which is how `std::fs::read` reports both and how nothing else on a TCP connect
+/// does.
+fn file_unreadable(io: &std::io::Error) -> bool {
+    io.get_ref().is_none() && matches!(io.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied)
 }
 
 #[cfg(feature = "tls")]
@@ -119,5 +148,25 @@ mod tests {
         for kind in [io::ErrorKind::ConnectionReset, io::ErrorKind::UnexpectedEof, io::ErrorKind::NotFound] {
             assert!(!is_permanent_error(Engine::MySql, &sqlx::Error::Io(io::Error::from(kind))), "{kind:?} is permanent");
         }
+    }
+
+    /// Over a host and port the only file a connect reads is a certificate's, so a file that is
+    /// missing or unreadable is the operator's to mend; the rest of `Io` is the network's.
+    #[test]
+    fn a_certificate_file_that_cannot_be_read_is_permanent_over_tcp_and_retryable_over_a_socket() {
+        for engine in [Engine::Postgres, Engine::MySql] {
+            for kind in [io::ErrorKind::NotFound, io::ErrorKind::PermissionDenied] {
+                let error = sqlx::Error::Io(io::Error::from(kind));
+                assert!(is_permanent_error_over_tcp(engine, &error), "{engine:?} {kind:?} over tcp is retryable");
+                assert!(!is_permanent_error(engine, &error), "{engine:?} {kind:?} over a socket is permanent");
+            }
+            for kind in [io::ErrorKind::ConnectionRefused, io::ErrorKind::ConnectionReset, io::ErrorKind::TimedOut, io::ErrorKind::UnexpectedEof] {
+                let error = sqlx::Error::Io(io::Error::from(kind));
+                assert!(!is_permanent_error_over_tcp(engine, &error), "{engine:?} {kind:?} over tcp is permanent");
+            }
+        }
+        // An error with a cause is not the operating system's answer to a file read.
+        let wrapped = sqlx::Error::Io(io::Error::new(io::ErrorKind::NotFound, "a proxy said so"));
+        assert!(!is_permanent_error_over_tcp(Engine::Postgres, &wrapped));
     }
 }

@@ -13,6 +13,7 @@ use ulo::DynamicModule;
 
 /// The health reporter, bound by the gRPC server as `Dep<GrpcHealth>`: SERVING for every known
 /// service after `bind`, NOT_SERVING from the drain on, and in between what the application sets.
+/// The overall status `""` reads NOT_SERVING from the drain on even when it was delegated.
 ///
 /// `imports = [GrpcHealth::module()]` binds it, global, for any module to read; the server finds
 /// it there and serves the statuses it sets. Without the import the server keeps a reporter of its
@@ -59,10 +60,14 @@ impl GrpcHealth {
         .label("GrpcHealth")
     }
 
-    /// Hands the overall status `""` to the caller: from this call on the server writes no status
-    /// for `""`, at the drain included, and the caller is its one writer, through
-    /// [`set_named`](Self::set_named). Named services keep their writers, the server at `bind` and
-    /// the drain and the application through `set` and `set_named`.
+    /// Hands the overall status `""` to the caller: from this call on the server writes no
+    /// `SERVING` for `""`, and the caller is its one writer, through
+    /// [`set_named`](Self::set_named). The one write the server keeps is the drain's
+    /// `NOT_SERVING`, a floor: whatever the caller wrote, `""` reads `NOT_SERVING` once the drain
+    /// begins, so a caller that never writes it, or whose own write was skipped by a spent
+    /// shutdown cap, still stops a client polling health before the GOAWAY. Named services keep
+    /// their writers, the server at `bind` and the drain and the application through `set` and
+    /// `set_named`.
     ///
     /// For a component that derives the overall status from something the server cannot see,
     /// `ulo-health-grpc`'s bridge writing it from readiness. Called before `listen()`, it covers
@@ -82,13 +87,26 @@ impl GrpcHealth {
         self.write(name, status).await;
     }
 
-    /// A write the server makes at `bind` and at the drain, which leaves `""` alone once
+    /// The status last written for `name`, `""` for the overall status, whoever wrote it; `None`
+    /// for a name nothing has written. This is the copy every write compares with, so it is what
+    /// `Check` answers for the name, and a test or a supervisor can read what the drain left
+    /// without a client whose connection the shutdown may close first.
+    pub async fn status(&self, name: &str) -> Option<ServingStatus> {
+        self.written.lock().await.get(name).copied()
+    }
+
+    /// A write the server makes at `bind`, which leaves `""` alone once
     /// [`delegate_overall`](Self::delegate_overall) has run.
     pub(crate) async fn set_by_server(&self, name: &str, status: ServingStatus) {
         if name.is_empty() && self.delegated.load(Ordering::Acquire) {
             return;
         }
         self.write(name, status).await;
+    }
+
+    /// The drain's `NOT_SERVING` for `name`, `""` included whether or not it was delegated.
+    pub(crate) async fn set_at_drain(&self, name: &str) {
+        self.write(name, ServingStatus::NotServing).await;
     }
 
     /// The lock is held across the reporter's write, so a second writer to the name reads the copy

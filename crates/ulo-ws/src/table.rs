@@ -45,6 +45,10 @@ use crate::module::HubMeta;
 use crate::rooms::Hub;
 use crate::transport::{Ws, WsConnect};
 
+/// How long `close` lets the connections end on their own, once the drain has begun, before it
+/// aborts them.
+const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// The settings a gateway reads where its attribute leaves one unset: `WsModule`'s for the
 /// gateways on the HTTP server's port, a standalone server's for those on its own.
 #[derive(Clone, Debug, Default)]
@@ -292,7 +296,7 @@ impl GatewayTable {
     /// Aborts every connection left, returns once their tasks have ended, and stops broadcast
     /// delivery.
     pub async fn close(&self) {
-        self.inner.tracker.close().await;
+        self.inner.tracker.close(self.inner.runtime.sleep(CLOSE_GRACE)).await;
         self.inner.hub.stop();
     }
 

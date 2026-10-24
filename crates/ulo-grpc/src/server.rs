@@ -3,8 +3,11 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Waker};
 use std::time::Duration;
 
 use hyper::body::Incoming;
@@ -32,6 +35,11 @@ const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// `timeout_grace` at `Bound::Default`, the HTTP server's.
 const DEFAULT_TIMEOUT_GRACE: Duration = Duration::from_secs(1);
+
+/// How long `close` lets the connections finish what the drain's end left them before it aborts
+/// them: a call abandoned at the drain's end answers UNAVAILABLE, and its connection, already in
+/// graceful shutdown, ends once that answer is written.
+const CLOSE_GRACE: Duration = Duration::from_millis(500);
 
 /// The core's `Server` for [`Grpc`]: `app.bind(ulo_grpc::Server::new("0.0.0.0:50051"))`.
 ///
@@ -322,16 +330,25 @@ impl ulo::Server for Server {
             }
         }
         let endpoints = self.resolve_endpoints(&mut failures);
+        let mut tls_failure = None;
         let tls = match &self.tls {
             None => None,
             Some(tls) => match tls.load(&[b"h2".as_slice()]) {
                 Ok(config) => Some(config),
                 Err(error) => {
                     failures.push(error.to_string());
+                    tls_failure = Some(error);
                     None
                 }
             },
         };
+        // A TLS failure that is the only problem is answered as the `TlsError` itself, which the
+        // startup report's entry reaches by downcast, so a caller can tell a missing file from a
+        // bad certificate or a key that does not match. Beside other problems it is one line of
+        // the list `Failures` writes.
+        if let Some(error) = tls_failure.filter(|_| failures.len() == 1) {
+            return Err(Box::new(error));
+        }
         let Some(stage) = stage.filter(|_| failures.is_empty()) else {
             return failures.into_result();
         };
@@ -399,27 +416,57 @@ impl ulo::Server for Server {
     }
 
     /// GOAWAY through `ulo-server-hyper`'s drain; health switches to NOT_SERVING first, the overall
-    /// status `""` included unless `GrpcHealth::delegate_overall` handed it to another writer, so a
-    /// client polling health stops sending before the GOAWAY arrives.
+    /// status `""` included whether or not `GrpcHealth::delegate_overall` handed it to another
+    /// writer, so a client polling health stops sending before the GOAWAY arrives.
     async fn drain(&self, token: DrainToken) {
         let _ = token;
         let Some(running) = &self.running else { return };
-        running.health.set_by_server("", ServingStatus::NotServing).await;
+        running.health.set_at_drain("").await;
         for service in &running.services {
-            running.health.set_by_server(service, ServingStatus::NotServing).await;
+            running.health.set_at_drain(service).await;
         }
         running.serve.drain().await;
     }
 
     async fn close(&self) -> Result<(), BoxError> {
         if let Some(running) = &self.running {
-            running.serve.close().await;
+            let mut closing = Closing(Some(Box::pin(running.serve.close())));
+            if running.dispatcher.app.is_draining() {
+                tokio::select! {
+                    biased;
+                    () = running.serve.drain() => {}
+                    () = running.dispatcher.timer.sleep(CLOSE_GRACE) => {}
+                }
+            }
+            closing.finish().await;
         }
         Ok(())
     }
 
     fn bound(&self) -> Vec<BoundAddr> {
         self.bound.clone()
+    }
+}
+
+/// `Serve::close`, which aborts the connections on its first poll. The core polls a `close` once
+/// and drops it when the shutdown cap has expired, and `close` above waits before it polls this
+/// one, so a drop before the first poll polls it here.
+struct Closing<F: Future<Output = ()> + Unpin>(Option<F>);
+
+impl<F: Future<Output = ()> + Unpin> Closing<F> {
+    async fn finish(&mut self) {
+        if let Some(closing) = self.0.as_mut() {
+            closing.await;
+        }
+        self.0 = None;
+    }
+}
+
+impl<F: Future<Output = ()> + Unpin> Drop for Closing<F> {
+    fn drop(&mut self) {
+        if let Some(mut closing) = self.0.take() {
+            let _ = Pin::new(&mut closing).poll(&mut Context::from_waker(Waker::noop()));
+        }
     }
 }
 

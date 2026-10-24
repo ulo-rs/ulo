@@ -24,6 +24,10 @@
 //! 8. A response a pre-dispatch entry answered with an HTTP status other than 200 translated by
 //!    the gRPC specification's HTTP-to-status table.
 //!
+//! A call still running when the drain's end cancels its execution with `CancelReason::Drain` is
+//! dropped at its await and answers UNAVAILABLE, "the server is shutting down", unless the handler
+//! answered in the poll the cancellation woke it in.
+//!
 //! The whole of it is raced against the deadline: when the deadline passes first, the pipeline is
 //! dropped at its await, the execution cancelled with `CancelReason::Deadline`, and the error
 //! handlers receive `Timeout` under `Server::timeout_grace`, the matched handler's tiers then the
@@ -165,7 +169,7 @@ impl Dispatcher {
             opts = opts.trace(ctx);
         }
         let Ok(exec) = Execution::open(&self.app.root(), opts) else {
-            return status_response(Status::unavailable("the server is shutting down"));
+            return status_response(Status::unavailable(SHUTTING_DOWN));
         };
         let (head, body) = req.into_parts();
         let metadata = GrpcMetadata::from_headers(&head.headers);
@@ -184,6 +188,7 @@ impl Dispatcher {
         let pipeline: BoxFuture<'static, Response> = Box::pin(
             Arc::clone(&self).unscoped(Arc::new(exec), request, call_span.clone(), Arc::clone(&matched)).instrument(call_span.clone()),
         );
+        let pipeline = until_drained(pipeline, handle.clone());
         let mut abandoned = CancelOnDrop(Some(handle.clone()));
         let (response, deadline) = match timeout {
             None => (pipeline.await, None),
@@ -428,6 +433,39 @@ fn with_metadata(body: tonic::body::Body, metadata: MetadataMap) -> Reply {
 /// `status` as a trailers-only reply.
 pub(crate) fn status_reply(status: Status) -> Reply {
     status.into_http()
+}
+
+/// The one phrase every refusal of a call because the server is draining or closing carries
+/// (transports DESIGN decision 56).
+const SHUTTING_DOWN: &str = "the server is shutting down";
+
+/// `pipeline` until it answers, or until the drain's end cancels the call with
+/// `CancelReason::Drain` while it is still running: then the pipeline is dropped at its current
+/// await, a handler's future reading `Drain` from its execution, and the call answers UNAVAILABLE.
+/// The pipeline is polled first, so a handler that observes the cancellation and answers in the
+/// poll it wakes in is answered as it chose. A cancellation for any other reason is left to the
+/// pipeline.
+fn until_drained(mut pipeline: BoxFuture<'static, Response>, exec: ExecutionRef) -> BoxFuture<'static, Response> {
+    Box::pin(async move {
+        // The listener lives across polls: a wait dropped between them would never wake.
+        let mut cancelled: Option<BoxFuture<'static, ()>> = Some(Box::pin({
+            let exec = exec.clone();
+            async move { exec.cancelled().await }
+        }));
+        poll_fn(move |cx| {
+            if let Poll::Ready(response) = pipeline.as_mut().poll(cx) {
+                return Poll::Ready(response);
+            }
+            if cancelled.as_mut().is_some_and(|cancelled| cancelled.as_mut().poll(cx).is_ready()) {
+                if exec.cancel_reason() == Some(CancelReason::Drain) {
+                    return Poll::Ready(status_response(Status::unavailable(SHUTTING_DOWN)));
+                }
+                cancelled = None;
+            }
+            Poll::Pending
+        })
+        .await
+    })
 }
 
 /// `status` as a trailers-only response.

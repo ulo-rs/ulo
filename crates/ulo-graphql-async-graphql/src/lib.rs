@@ -6,6 +6,18 @@
 //! call the adapter resolves `C` in the call's execution and inserts it as `Dep<C>` with
 //! `Request::data`, and inserts the `ExecutionRef` itself as a second `data`, which [`dep`] reads.
 //! A resolver reads the context with `ctx.data::<Dep<GqlContext>>()`.
+//!
+//! # Variables of the wrong type
+//!
+//! A required variable that is absent or `null` is answered before the schema runs, as a request
+//! error, as `ulo-graphql-juniper` answers it. A variable of the wrong type is not: an `Int`
+//! given a string, say. async-graphql coerces a variable when the field reading it resolves, so
+//! the request executes and the response is an executed result whose error carries the `path` of
+//! that field, where `ulo-graphql-juniper` answers a request error with no `data`. The two
+//! engines differ here, and a client that branches on `Outcome::RequestError` sees the fault only
+//! from juniper. Closing the gap in this adapter means coercing every supplied variable against
+//! the declared types, which is async-graphql's own job; the difference is filed upstream
+//! (`FRAMEWORK_GAPS.md` F464) and stays until async-graphql coerces before it executes.
 
 use std::marker::PhantomData;
 use std::sync::Arc;

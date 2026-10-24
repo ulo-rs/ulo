@@ -28,6 +28,16 @@
 //! retryable, since it reads the local clock. A root certificate (`ssl-ca`, `sslrootcert`) that
 //! cannot be read or is not PEM is `Permanent` too, under the modes that verify the server, found by
 //! `create`'s own read of the named file; under the others SQLx reads no root certificate.
+//!
+//! The store reads no environment of its own: the root certificate comes through the options, in
+//! the URL, which configuration can fill from its `Env` source like any other value. SQLx's option
+//! parser reads the libpq variables itself, `PGSSLROOTCERT`, `PGSSLCERT` and `PGSSLKEY` among them,
+//! and a certificate file named only there is SQLx's reading, not the store's, which `create`
+//! cannot see. The classifier covers it: over a host and port, a file that is missing or unreadable
+//! is `Permanent` at the first ping whatever the source of the path, since nothing else in a
+//! connect reads a file. Over a Unix socket it stays retryable, a socket not yet created giving the
+//! same error. A root certificate that is expired is accepted: a trust anchor is not validated as a
+//! certificate (RFC 5280 §6.1), so it still verifies a server certificate within its own validity.
 //! MySQL 8's `caching_sha2_password` authenticates over that channel with no RSA exchange. The
 //! Postgres TLS path is not exercised by any test; SQLite has none.
 //!
@@ -81,11 +91,16 @@
 //! On Postgres and MySQL the lock pins one pooled connection while the migrator takes another, so
 //! `max_connections` must be at least 2 when `.migrate(..)` is written. A migration using
 //! `CREATE INDEX CONCURRENTLY` can deadlock against a session waiting on an advisory lock.
+//!
+//! The SQLite wait polls the file lock and makes its last attempt 10 ms before the bound, so that
+//! its answer reaches `ulo-db`'s clock first. A lock freed in those last 10 ms is missed by design:
+//! the start fails with the retryable lock timeout, and the restart takes the lock. A wait whose
+//! thread panics is `Permanent` and logged at `error` with the panic's message.
 
 #[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
 mod classify;
 #[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
-pub use classify::is_permanent_error;
+pub use classify::{is_permanent_error, is_permanent_error_over_tcp};
 mod migrate;
 mod options;
 #[cfg(feature = "mysql")]

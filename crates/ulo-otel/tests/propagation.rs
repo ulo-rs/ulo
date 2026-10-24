@@ -599,6 +599,27 @@ async fn a_received_context_is_forwarded_unchanged_on_an_outgoing_rpc_call() {
     hub.stop().await;
 }
 
+/// A `tracestate` that fails the grammar is not parsed into members, and in pass-through it is
+/// forwarded as received beside the valid `traceparent` it came with: the execution keeps the text
+/// and the outgoing call writes the same bytes. Pass-through modifies nothing.
+#[tokio::test(flavor = "current_thread")]
+async fn a_tracestate_that_fails_the_grammar_is_forwarded_as_received() {
+    let hub = start(Setup::default()).await;
+    for bad in ["no-equals-sign", "UPPER=1", "k=", "a=1,b"] {
+        let before = hub.wire.sent().len();
+        assert_eq!(hub.get("/forward", &[("traceparent", TRACEPARENT), ("tracestate", bad)]).await, StatusCode::OK, "{bad}");
+        assert_eq!(hub.rec.emitted_outcomes().last(), Some(&("forward", None)), "{bad}: the event was sent");
+        let received = context(&hub.rec);
+        assert_eq!(received.traceparent(), TRACEPARENT, "{bad}: a bad tracestate never affects traceparent");
+        assert_eq!(received.tracestate().as_deref(), Some(bad), "{bad}: the execution keeps the text as it arrived");
+        assert!(received.state().is_empty(), "{bad}: the list that failed the grammar is not parsed into members");
+        let sent = hub.wire.headers_of(before);
+        assert_eq!(sent.get("traceparent"), Some(TRACEPARENT), "{bad}: traceparent as received");
+        assert_eq!(sent.get("tracestate"), Some(bad), "{bad}: tracestate forwarded as received");
+    }
+    hub.stop().await;
+}
+
 /// A call made with no `.within` carries no context, and its headers are the caller's own: the
 /// client has no mode of its own.
 #[tokio::test(flavor = "current_thread")]

@@ -553,11 +553,13 @@ async fn late(handler: Option<&MountedHandler<Rpc>>, exec: &ExecutionRef, cx: &R
 }
 
 /// What a cancelled call writes: nothing to a caller that left or cancelled, `timeout` at the
-/// deadline, `unavailable` at the drain's end or an explicit cancel.
+/// deadline, `unavailable` at the drain's end (the shutdown phrase every refusal carries) or an
+/// explicit cancel.
 async fn cancelled(reply: &ReplyPath, exec: &ExecutionRef, id: u64, reason: Option<CancelReason>) {
     let error = match reason {
         Some(CancelReason::ClientCancelled | CancelReason::Disconnected) => return,
         Some(CancelReason::Deadline) => timed_out(),
+        Some(CancelReason::Drain) => ErrorBody::new(ErrorKind::Unavailable, "the server is shutting down", Details::new()),
         _ => ErrorBody::new(ErrorKind::Unavailable, "the call was cancelled", Details::new()),
     };
     send(reply, exec, id, Frame::Err { id, error }).await;

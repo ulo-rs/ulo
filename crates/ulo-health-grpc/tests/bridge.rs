@@ -5,7 +5,7 @@
 
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -13,10 +13,14 @@ use futures_util::StreamExt;
 use tonic::Streaming;
 use tonic::transport::{Channel, Endpoint};
 use tonic_health::pb::health_check_response::ServingStatus as Wire;
+use tonic_health::ServingStatus;
 use tonic_health::pb::health_client::HealthClient;
 use tonic_health::pb::{HealthCheckRequest, HealthCheckResponse};
-use ulo::{App, AppHandle, Bound, BoxFuture, Module, ModuleDef, ModuleIdentity, Signal, StartupError, WiringError};
+use ulo::{
+    App, AppHandle, Bound, BoxFuture, Dep, FailureReason, HookKind, Module, ModuleDef, ModuleIdentity, ShutdownFailure, Signal, StartupError, WiringError,
+};
 use ulo_health::{Check, Health, HealthModule};
+use ulo_grpc::GrpcHealth;
 use ulo_health_grpc::{HealthGrpc, ZeroInterval};
 
 const PATIENCE: Duration = Duration::from_secs(10);
@@ -62,6 +66,7 @@ impl Check for Contributed {
 struct Root {
     flag: Arc<Flag>,
     interval: Bound,
+    health: Arc<Mutex<Option<GrpcHealth>>>,
 }
 
 impl Module for Root {
@@ -74,21 +79,40 @@ impl Module for Root {
         m.import(HealthGrpc::new().interval(self.interval));
         let check: Arc<dyn Check> = Arc::new(Contributed(Arc::clone(&self.flag)));
         m.contribute::<dyn Check>().value(check);
+        let slot = Arc::clone(&self.health);
+        m.on_init(move |health: Dep<GrpcHealth>| {
+            let slot = Arc::clone(&slot);
+            async move {
+                *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((*health).clone());
+                Ok::<(), std::convert::Infallible>(())
+            }
+        });
     }
 }
 
 struct Running {
     flag: Arc<Flag>,
+    /// The reporter the server and the bridge share, captured by an init hook of the root.
+    health: Arc<Mutex<Option<GrpcHealth>>>,
     handle: AppHandle,
     serving: tokio::task::JoinHandle<()>,
     channel: Channel,
 }
 
 async fn start(interval: Bound) -> Running {
+    start_capped(interval, None).await
+}
+
+/// `cap` is the app's `shutdown_timeout`: a zero cap is spent at the trigger, so no shutdown hook
+/// starts.
+async fn start_capped(interval: Bound, cap: Option<Duration>) -> Running {
     let flag = Arc::new(Flag { up: AtomicBool::new(true), runs: AtomicUsize::new(0) });
-    let app = App::builder(Root { flag: Arc::clone(&flag), interval })
-        .runtime(ulo_runtime_tokio::Tokio::current())
-        .drain_timeout(Duration::from_secs(4))
+    let health = Arc::new(Mutex::new(None));
+    let mut builder = App::builder(Root { flag: Arc::clone(&flag), interval, health: Arc::clone(&health) }).runtime(ulo_runtime_tokio::Tokio::current()).drain_timeout(Duration::from_secs(4));
+    if let Some(cap) = cap {
+        builder = builder.shutdown_timeout(cap);
+    }
+    let app = builder
         .wire()
         .unwrap_or_else(|error| panic!("the app wires: {error}"))
         .connect()
@@ -109,7 +133,7 @@ async fn start(interval: Bound) -> Running {
         Endpoint::from_shared(format!("http://{addr}")).expect("an endpoint").connect().await.unwrap_or_else(|error| panic!("connect: {error}"))
     })
     .await;
-    Running { flag, handle, serving, channel }
+    Running { flag, health, handle, serving, channel }
 }
 
 impl Running {
@@ -209,9 +233,57 @@ async fn stopping_writes_not_serving_before_the_drain_ends_the_watch() {
 }
 
 #[tokio::test]
+async fn a_spent_shutdown_cap_and_no_interval_still_turn_the_overall_status_not_serving_at_the_drain() {
+    // The cap is spent at the trigger, so the bridge's before-shutdown hook is skipped; with
+    // `Unbounded` there is no re-evaluation task to end at `Stopping` either. Only the server's
+    // own write at the drain can turn `""`, and the check stays up throughout.
+    let app = start_capped(Bound::Unbounded, Some(Duration::ZERO)).await;
+    assert_eq!(app.check().await, Wire::Serving);
+    let mut updates = app.watch().await;
+    assert_eq!(next(&mut updates).await, Wire::Serving);
+    let health = app.health.lock().unwrap_or_else(PoisonError::into_inner).clone().expect("the init hook captured the reporter");
+    assert_eq!(health.status("").await, Some(ServingStatus::Serving), "the status before the close");
+
+    // The shutdown closes the connections before a client could read the status (a spent cap
+    // allows no wait), so it is read from the reporter's stored copy, `Check`'s source.
+    let closed = within("close", app.handle.close(Signal::new("test"))).await;
+    assert_eq!(health.status("").await, Some(ServingStatus::NotServing), "the drain's write for the delegated overall status");
+    // The expired cap polls the server's `close` once; that poll still aborts the connection a
+    // `Watch` holds open, which graceful shutdown alone would wait on.
+    let rest = within("the watch's end", async {
+        let mut seen = Vec::new();
+        while let Some(update) = updates.next().await {
+            seen.push(update.map(|response| response.status()).map_err(|status| status.code()));
+        }
+        seen
+    })
+    .await;
+    assert!(rest.iter().all(|update| *update != Ok(Wire::Serving)), "SERVING after the drain: {rest:?}");
+    let error = closed.expect_err("a spent cap reports the hook it skipped");
+    let skipped: Vec<_> = error
+        .failures
+        .iter()
+        .filter_map(|failure| match failure {
+            ShutdownFailure::Hook { hook, key, reason: FailureReason::Skipped } => Some((*hook, format!("{:#}", key.key().type_name()))),
+            _ => None,
+        })
+        .collect();
+    assert!(skipped.iter().all(|(hook, _)| *hook == HookKind::BeforeApplicationShutdown), "only before-shutdown hooks start after the cap: {skipped:?}");
+    let mut owners: Vec<&str> = skipped.iter().map(|(_, owner)| owner.as_str()).collect();
+    owners.sort_unstable();
+    assert_eq!(
+        owners,
+        ["ulo_health::readiness::Readiness", "ulo_health_grpc::bridge::HealthGrpc"],
+        "the hooks skipped: readiness's and the bridge module's"
+    );
+    assert_eq!(app.flag.runs.load(Ordering::SeqCst), 1, "no evaluation after the first: the status turned without readiness");
+    let _ = within("serve", app.serving).await;
+}
+
+#[tokio::test]
 async fn a_zero_interval_is_refused_at_wiring_naming_zero_interval() {
     let flag = Arc::new(Flag { up: AtomicBool::new(true), runs: AtomicUsize::new(0) });
-    let wired = App::builder(Root { flag, interval: Bound::After(Duration::ZERO) }).runtime(ulo_runtime_tokio::Tokio::current()).wire();
+    let wired = App::builder(Root { flag, interval: Bound::After(Duration::ZERO), health: Arc::default() }).runtime(ulo_runtime_tokio::Tokio::current()).wire();
     let Err(StartupError::Wiring(errors)) = wired else {
         panic!("a zero interval wired");
     };

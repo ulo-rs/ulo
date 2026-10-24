@@ -162,14 +162,28 @@ async fn http_slow(addr: SocketAddr) -> (String, String) {
     (head.lines().next().unwrap_or("").to_owned(), body.to_owned())
 }
 
-async fn ws_slow(addr: SocketAddr) -> Value {
+/// How a held WebSocket call ended.
+#[derive(Debug)]
+enum WsEnd {
+    /// A close frame: its code and reason.
+    Closed(Option<(u16, String)>),
+    /// The socket ended without a close frame; the reason is read through `Debug` in a failure.
+    #[allow(dead_code)]
+    Cut(String),
+    /// A text frame answered the call.
+    Answered(Value),
+}
+
+async fn ws_end(addr: SocketAddr) -> WsEnd {
     let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws")).await.expect("the WebSocket upgrade");
     socket.send(Message::text(json!({ "event": "slow", "id": 1 }).to_string())).await.expect("the message is sent");
     loop {
         match socket.next().await {
-            Some(Ok(Message::Text(text))) => return serde_json::from_str(text.as_str()).expect("a JSON frame"),
+            Some(Ok(Message::Text(text))) => return WsEnd::Answered(serde_json::from_str(text.as_str()).expect("a JSON frame")),
+            Some(Ok(Message::Close(frame))) => return WsEnd::Closed(frame.map(|frame| (u16::from(frame.code), frame.reason.to_string()))),
             Some(Ok(_)) => continue,
-            other => panic!("the WebSocket ended without an answer: {other:?}"),
+            Some(Err(error)) => return WsEnd::Cut(error.to_string()),
+            None => return WsEnd::Cut("the stream ended".to_owned()),
         }
     }
 }
@@ -200,7 +214,7 @@ struct Running {
 /// The four calls, each started and held in its handler.
 struct Held {
     http: tokio::task::JoinHandle<(String, String)>,
-    ws: tokio::task::JoinHandle<Value>,
+    ws: tokio::task::JoinHandle<WsEnd>,
     rpc: tokio::task::JoinHandle<Result<u32, ulo_rpc::RpcError>>,
     grpc: tokio::task::JoinHandle<Result<tonic::Response<Sum>, tonic::Status>>,
 }
@@ -257,7 +271,7 @@ impl Running {
         let (http, ws, rpc, grpc) = (self.http, self.ws, self.rpc, self.grpc);
         let held = Held {
             http: tokio::spawn(http_slow(http)),
-            ws: tokio::spawn(ws_slow(ws)),
+            ws: tokio::spawn(ws_end(ws)),
             rpc: tokio::spawn(async move {
                 let client = RpcClient::new(Tcp::new(rpc), Arc::new(ulo_runtime_tokio::Tokio::current())).expect("a client on the RPC address");
                 client.request::<u32, u32>("cross.slow", &41).timeout(Duration::from_secs(20)).await
@@ -273,6 +287,47 @@ impl Running {
         entered.sort_unstable();
         assert_eq!(entered, vec!["http", "rpc", "ws"], "each held call reached the handler of its own transport");
         held
+    }
+
+    /// One RPC call held in its handler.
+    async fn hold_rpc(&self) -> tokio::task::JoinHandle<Result<u32, ulo_rpc::RpcError>> {
+        let rpc = self.rpc;
+        let call = tokio::spawn(async move {
+            let client = RpcClient::new(Tcp::new(rpc), Arc::new(ulo_runtime_tokio::Tokio::current())).expect("a client on the RPC address");
+            client.request::<u32, u32>("cross.slow", &41).timeout(Duration::from_secs(20)).await
+        });
+        self.gate.entered.at_least(1, "the RPC handler entering").await;
+        assert_eq!(self.gate.entered.snapshot(), vec!["rpc"], "the held call reached the RPC handler");
+        call
+    }
+
+    /// One gRPC call held in its handler.
+    async fn hold_grpc(&self) -> tokio::task::JoinHandle<Result<tonic::Response<Sum>, tonic::Status>> {
+        let grpc = self.grpc;
+        let call = tokio::spawn(async move {
+            let channel = tonic::transport::Endpoint::from_shared(format!("http://{grpc}")).expect("an endpoint").connect().await.expect("the gRPC channel");
+            CounterClient::new(channel).add(AddRequest { a: 100, b: 1 }).await
+        });
+        self.grpc_hold.entered.at_least(1, "the gRPC handler entering").await;
+        assert!(self.gate.entered.snapshot().is_empty(), "a call other than the gRPC one entered a handler");
+        call
+    }
+
+    /// One WebSocket call held in its handler.
+    async fn hold_ws(&self) -> tokio::task::JoinHandle<WsEnd> {
+        let call = tokio::spawn(ws_end(self.ws));
+        self.gate.entered.at_least(1, "the WebSocket handler entering").await;
+        assert_eq!(self.gate.entered.snapshot(), vec!["ws"], "the held call reached the WebSocket handler");
+        call
+    }
+
+    /// Closes with a drain window that expires, returning the number of executions abandoned.
+    async fn close_abandoning(&self) -> usize {
+        let closed = within("close", self.handle.close(Signal::new("cross"))).await;
+        match &closed {
+            Ok(shutdown) => shutdown.abandoned,
+            Err(error) => error.report.abandoned,
+        }
     }
 
     /// Starts the close and waits until the app reports draining.
@@ -315,7 +370,10 @@ async fn one_close_drains_all_four_transports_and_every_held_call_completes() {
     assert_eq!(status, "HTTP/1.1 200 OK");
     assert_eq!(body.trim().rsplit('\n').next().map(str::trim), Some("http done"), "body: {body:?}");
     let reply = within("the WebSocket call", held.ws).await.expect("the WebSocket task");
-    assert_eq!(reply, json!({ "id": 1, "data": "ws done" }));
+    match reply {
+        WsEnd::Answered(reply) => assert_eq!(reply, json!({ "id": 1, "data": "ws done" })),
+        other => panic!("the held WebSocket call was not answered with its result: {other:?}"),
+    }
     let reply = within("the RPC call", held.rpc).await.expect("the RPC task");
     assert_eq!(reply.unwrap_or_else(|error| panic!("the RPC call failed: {error}")), 42);
     let reply = within("the gRPC call", held.grpc).await.expect("the gRPC task");
@@ -365,14 +423,64 @@ async fn calls_still_held_when_the_drain_window_ends_are_abandoned_and_close_fin
         assert!(refuses(addr).await, "the {name} address still accepts connections after close");
     }
 
-    // No held call was answered with its handler's result.
+    // No held call was answered with its handler's result; each transport renders the
+    // abandonment its own way, with the one shutdown phrase.
     let http = within("the HTTP call's end", held.http).await.expect("the HTTP task");
     assert!(!http.1.contains("http done"), "an abandoned HTTP call was answered: {http:?}");
     let rpc = within("the RPC call's end", held.rpc).await.expect("the RPC task");
-    assert!(rpc.is_err(), "an abandoned RPC call was answered: {rpc:?}");
+    let rpc = rpc.expect_err("an abandoned RPC call was answered with its result");
+    assert_eq!((rpc.kind(), rpc.message()), (ulo_transport::ErrorKind::Unavailable, SHUTDOWN_PHRASE), "the RPC call: {rpc:?}");
     let grpc = within("the gRPC call's end", held.grpc).await.expect("the gRPC task");
-    assert!(grpc.is_err(), "an abandoned gRPC call was answered: {grpc:?}");
-    held.ws.abort();
+    let grpc = grpc.expect_err("an abandoned gRPC call was answered with its result");
+    assert_eq!((grpc.code(), grpc.message()), (tonic::Code::Unavailable, SHUTDOWN_PHRASE), "the gRPC call: {grpc:?}");
+    let ws = within("the WebSocket call's end", held.ws).await.expect("the WebSocket task");
+    assert!(matches!(&ws, WsEnd::Closed(Some((1001, reason))) if reason == SHUTDOWN_PHRASE), "the WebSocket call: {ws:?}");
+}
+
+const SHUTDOWN_PHRASE: &str = "the server is shutting down";
+
+#[tokio::test]
+async fn an_rpc_call_abandoned_at_the_drains_end_answers_unavailable_with_the_shutdown_phrase() {
+    let app = launch(Duration::from_millis(400)).await;
+    let call = app.hold_rpc().await;
+
+    assert_eq!(app.close_abandoning().await, 1, "one abandoned execution for the one held call");
+    let error = within("the RPC call's end", call).await.expect("the RPC task").expect_err("an abandoned RPC call was answered with its result");
+    assert_eq!(error.kind(), ulo_transport::ErrorKind::Unavailable, "the abandoned call's kind: {error:?}");
+    assert_eq!(error.message(), SHUTDOWN_PHRASE, "the abandoned call's phrase");
+    assert_eq!(app.gate.dropped.at_least(1, "the held handler dropping").await, vec![("rpc", Some(CancelReason::Drain))], "the handler was cancelled by the drain");
+    let _ = within("serve", app.serving).await;
+}
+
+#[tokio::test]
+async fn a_grpc_call_abandoned_at_the_drains_end_answers_unavailable_with_the_shutdown_phrase() {
+    let app = launch(Duration::from_millis(400)).await;
+    let call = app.hold_grpc().await;
+
+    assert_eq!(app.close_abandoning().await, 1, "one abandoned execution for the one held call");
+    let status = within("the gRPC call's end", call).await.expect("the gRPC task").expect_err("an abandoned gRPC call was answered with its result");
+    assert_eq!(status.code(), tonic::Code::Unavailable, "the abandoned call's code: {status:?}");
+    assert_eq!(status.message(), SHUTDOWN_PHRASE, "the abandoned call's phrase");
+    assert_eq!(app.grpc_hold.dropped.at_least(1, "the held handler dropping").await, vec![Some(CancelReason::Drain)], "the handler was cancelled by the drain");
+    let _ = within("serve", app.serving).await;
+}
+
+#[tokio::test]
+async fn a_websocket_call_abandoned_at_the_drains_end_is_closed_1001_with_the_shutdown_phrase() {
+    let app = launch(Duration::from_millis(400)).await;
+    let call = app.hold_ws().await;
+
+    assert_eq!(app.close_abandoning().await, 1, "one abandoned execution for the one held call");
+    let end = within("the WebSocket call's end", call).await.expect("the WebSocket task");
+    match end {
+        WsEnd::Closed(Some((code, reason))) => {
+            assert_eq!(code, 1001, "the close code of the abandoned call");
+            assert_eq!(reason, SHUTDOWN_PHRASE, "the close reason of the abandoned call");
+        }
+        other => panic!("an abandoned WebSocket call did not end with a close frame: {other:?}"),
+    }
+    assert_eq!(app.gate.dropped.at_least(1, "the held handler dropping").await, vec![("ws", Some(CancelReason::Drain))], "the handler was cancelled by the drain");
+    let _ = within("serve", app.serving).await;
 }
 
 /// One controller, one `#[routes]` impl, a handler on HTTP and a handler on RPC; the number of

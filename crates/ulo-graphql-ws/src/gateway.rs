@@ -30,6 +30,13 @@ const DEFAULT_INIT_TIMEOUT: Duration = Duration::from_secs(3);
 /// A close reason is at most 123 bytes of UTF-8 (RFC 6455 §5.5.1).
 const MAX_REASON: usize = 123;
 
+/// The close reasons graphql-ws's PROTOCOL.md and its reference server write beside each code.
+const REASON_SUBPROTOCOL: &str = "Subprotocol not acceptable";
+const REASON_INIT_TIMEOUT: &str = "Connection initialisation timeout";
+const REASON_INVALID_MESSAGE: &str = "Invalid message received";
+const REASON_TOO_MANY_INITS: &str = "Too many initialisation requests";
+const REASON_UNAUTHORIZED: &str = "Unauthorized";
+
 /// The gateway, serving the engine bound as `dyn Engine` (or `dyn Engine @ Q`): a controller listed
 /// in a module's `controllers` beside an import of `WsModule`, mounted at the subscription path
 /// with `ModuleDef::controller::<GraphqlWs>().at(path)`. Its settings: `event = "type"`,
@@ -205,7 +212,7 @@ impl<Q: Send + Sync + 'static> GatewayConfig for GraphqlWs<Q> {
 impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
     async fn on_connect(&self, conn: &Connection) -> Result<(), ConnectRefused> {
         if conn.head().subprotocol() != Some(PROTOCOL) {
-            return Err(refusal(4406, "Subprotocol not acceptable"));
+            return Err(refusal(4406, REASON_SUBPROTOCOL));
         }
         if let Some(after) = self.init_timeout {
             let Some(session) = conn.session().get::<ConnectionInit>() else {
@@ -219,7 +226,7 @@ impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
             drop(conn.runtime().spawn(Box::pin(async move {
                 timer.sleep(after).await;
                 if !state.is_acknowledged() {
-                    watched.close(4408, "Connection initialisation timeout").await;
+                    close(&watched, &state, 4408, REASON_INIT_TIMEOUT).await;
                 }
             })));
         }
@@ -236,7 +243,7 @@ impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
             Frame::Binary(_) => None,
         };
         let Some(message) = message else {
-            conn.close(4400, "Invalid message received").await;
+            close(conn, &session.state, 4400, REASON_INVALID_MESSAGE).await;
             return;
         };
         match message {
@@ -257,7 +264,7 @@ impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
                 if first {
                     send(conn, &ServerMessage::ConnectionAck).await;
                 } else {
-                    conn.close(4429, "Too many initialisation requests").await;
+                    close(conn, &session.state, 4429, REASON_TOO_MANY_INITS).await;
                 }
             }
             ClientMessage::Ping { payload } => {
@@ -319,11 +326,11 @@ impl<Q: Send + Sync + 'static> GraphqlWs<Q> {
             }
         };
         match admission {
-            Admission::Unauthorized => conn.close(4401, "Unauthorized").await,
+            Admission::Unauthorized => close(conn, &session.state, 4401, REASON_UNAUTHORIZED).await,
             Admission::Duplicate => {
                 let reason = format!("Subscriber for {id} already exists");
                 let reason = if reason.len() <= MAX_REASON { reason } else { "Subscriber already exists".to_owned() };
-                conn.close(4409, &reason).await;
+                close(conn, &session.state, 4409, &reason).await;
             }
             Admission::Draining => {
                 let errors = [GqlError::new("the server is shutting down")];
@@ -377,6 +384,18 @@ async fn run(
     // Dropped after the end reached the wire, so `on_stream_end` callbacks read how it ended.
     drop(stream);
     state.finish(&id, seq);
+}
+
+/// Closes the connection with a protocol code and cancels every operation it is running. The
+/// connection ends only when the client answers the close frame, or when its close timeout runs
+/// out, and an operation left running until then keeps producing results nobody can receive.
+/// `CancelReason::Explicit`: the gateway, not the client or the drain, ended them.
+async fn close(conn: &Connection, state: &ConnState, code: u16, reason: &str) {
+    conn.close(code, reason).await;
+    let running: Vec<Running> = state.lock().running.drain().map(|(_, running)| running).collect();
+    for operation in running {
+        operation.exec.cancel_with(CancelReason::Explicit);
+    }
 }
 
 /// Writes `message` as one text frame; `false` once the connection has closed.

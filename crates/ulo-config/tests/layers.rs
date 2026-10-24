@@ -268,6 +268,60 @@ fn every_problem_is_reported_together_each_with_its_path_and_origin() {
     assert_eq!(problems.len(), expected.len(), "one problem per fault, none twice: {problems:?}");
 }
 
+/// Every field of `the_same_failing_configuration...` is a number the sources give wrongly.
+#[derive(Clone, Debug, Deserialize)]
+#[allow(dead_code)]
+struct Many {
+    pool: u32,
+    retries: u32,
+    timeout: u32,
+    backlog: u32,
+    size: u32,
+    workers: u32,
+    max: u32,
+    name: String,
+}
+
+/// The report's order is deterministic for one input and is not a promise beyond that: the same
+/// failing configuration, loaded again, gives the same problems in the same order, each with its
+/// path, origin and message. Sources of every kind fail together, with several ill-typed values
+/// from the environment and from explicit values, whose maps a hasher could shuffle between loads.
+/// The tests that sort the problems stay: they pin what is reported, this pins that it repeats.
+#[test]
+fn the_same_failing_configuration_reports_the_same_problems_in_the_same_order() {
+    let dir = Dir::new();
+    let file = dir.write("app.toml", "pool = \"file\"\nretries = 3\n");
+    let absent = dir.path("absent.toml");
+    let broken = dir.write("broken.toml", "port = 1\nport = 2\n");
+    let load = || {
+        Config::builder()
+            .source(File::toml(&file))
+            .source(File::toml(&absent))
+            .source(File::toml(&broken))
+            .source(
+                Env::from_map([
+                    ("APP_RETRIES", "lots"),
+                    ("APP_TIMEOUT", "soon"),
+                    ("APP_BACKLOG", "deep"),
+                    ("APP_SIZE", "big"),
+                ])
+                .prefix("APP_"),
+            )
+            .source(Values::new().set("workers", "many").set("max", "all"))
+            .load()
+    };
+    let first = problems_of::<Many>(&load(), "");
+    let paths: Vec<&str> = first.iter().map(|problem| problem.path()).collect();
+    for expected in ["pool", "retries", "timeout", "backlog", "size", "workers", "max", "name"] {
+        assert!(paths.contains(&expected), "`{expected}` is among the problems: {paths:?}");
+    }
+    assert!(first.len() >= 9, "the scenario fails in nine places, the two failed sources among them: {first:?}");
+    for run in 1..=20 {
+        let again = problems_of::<Many>(&load(), "");
+        assert_eq!(again, first, "run {run} of the same failing configuration differs from the first");
+    }
+}
+
 /// A required file that is missing is a recorded problem naming the file, a missing `.optional()`
 /// one supplies nothing and raises none, and a file that exists and does not parse is a problem
 /// at the line of the fault. All three are reported beside the value problems.

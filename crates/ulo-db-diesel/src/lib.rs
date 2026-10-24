@@ -33,6 +33,11 @@
 //! `<file>.ulo-migrate.lock` beside it, which is left in place. A migration using
 //! `CREATE INDEX CONCURRENTLY` can deadlock against a session waiting on the advisory lock.
 //!
+//! The SQLite wait polls the file lock and makes its last attempt 10 ms before the bound, so that
+//! its answer reaches `ulo-db`'s clock first. A lock freed in those last 10 ms is missed by design:
+//! the start fails with the retryable lock timeout, and the restart takes the lock. A wait whose
+//! thread panics is `Permanent` and logged at `error` with the panic's message.
+//!
 //! # TLS coverage
 //!
 //! No test exercises a TLS connection through this store, for Postgres or MySQL.
