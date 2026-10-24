@@ -305,8 +305,9 @@ async fn a_load_that_fails_to_connect_leaves_the_app_as_found_and_a_retry_wires_
     };
 
     let error = handle.load(make(&log, &built, &fail)).await.err().expect("the load succeeded");
-    let LoadError::Connect(ConnectError::Construct { key, reason, .. }) = error else { panic!("expected a construction failure") };
+    let LoadError::Connect(ConnectError::Construct { key, module, reason }) = error else { panic!("expected a construction failure") };
     assert_eq!(key.key(), Key::of::<Cfg, ()>());
+    assert_eq!(module.to_string(), mod_name::<L1>(), "the module the failing binding is in, not the root");
     assert!(matches!(reason, FailureReason::Errored(_)));
     assert_eq!(built.get(), 1, "the singleton before the failure was built");
     assert!(log.has("svc dropped"), "and dropped again when the load failed");

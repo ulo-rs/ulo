@@ -139,7 +139,9 @@ fn in_module_over_two_instances() {
         })
     };
     let errors = errors_of(TestApp::of(root()).override_value::<Cfg>(cfg_override()).in_module::<Quiet>());
-    let candidates = entry!(errors, WiringError::OverrideModuleAmbiguous { candidates, .. } => candidates.iter().map(|m| m.to_string()).collect::<Vec<_>>());
+    let (module, candidates) = entry!(errors, WiringError::OverrideModuleAmbiguous { module, candidates, .. }
+        => (*module, candidates.iter().map(|m| m.to_string()).collect::<Vec<_>>()));
+    assert_eq!(module, std::any::type_name::<Quiet>(), "the module type `in_module` named");
     assert_eq!(candidates.len(), 2, "{errors}");
     assert_eq!(errors.len(), 1, "{errors}");
 
@@ -221,6 +223,7 @@ fn replace_a_module_nobody_imports() {
 #[test]
 fn second_replace_module_of_one_original() {
     let root = || Mod::<Root>::new(|m| m.import(exporting_cfg::<Orig>(1)));
+    let line = line!();
     let errors = errors_of(
         TestApp::of(root())
             .replace_module(exporting_cfg::<Orig>(1), exporting_cfg::<Fake>(2))
@@ -229,7 +232,7 @@ fn second_replace_module_of_one_original() {
     let (original, first, second) = entry!(errors, WiringError::DuplicateReplacement { original, first, second }
         => (original.to_string(), **first, **second));
     assert_eq!(original, mod_name::<Orig>());
-    assert_ne!(first.line(), second.line(), "both calls are named");
+    assert_eq!((first.line(), second.line()), (line + 3, line + 4), "`first` is the call wiring applies, `second` the one refused");
     assert_eq!(errors.len(), 1, "{errors}");
 }
 

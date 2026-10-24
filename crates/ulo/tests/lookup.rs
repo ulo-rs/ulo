@@ -50,7 +50,7 @@ async fn a_singleton_read_before_the_walk_built_it_is_not_ready() {
     let app = connected(Mod::<A>::new(|m| {
         m.singleton(|module: ModuleRef| async move {
             let read = module.get::<Late>().await;
-            Early(matches!(read, Err(LookupError::NotReady { .. })))
+            Early(matches!(read, Err(LookupError::NotReady { key }) if key.key() == Key::of::<Late, ()>()))
         });
         m.singleton(|| async { Late });
     }))
@@ -97,11 +97,15 @@ async fn a_single_read_as_a_collection_and_a_collection_read_as_a_single_are_wro
     .await;
     let outcome = app.execute(ExecOptions::new(), async |exec| exec.resolver().many::<dyn Plugin>().await.map(|_| ())).await.unwrap();
     match outcome {
-        Err(LookupError::WrongKind { expected, found, .. }) => assert_eq!((expected, found), (Collection, Single)),
+        Err(LookupError::WrongKind { key, expected, found }) => {
+            assert_eq!((key.key(), expected, found), (Key::of::<dyn Plugin, ()>(), Collection, Single));
+        }
         other => panic!("expected WrongKind, found {other:?}"),
     }
     match app.get::<dyn std::any::Any + Send + Sync>().await {
-        Err(LookupError::WrongKind { expected, found, .. }) => assert_eq!((expected, found), (Single, Collection)),
+        Err(LookupError::WrongKind { key, expected, found }) => {
+            assert_eq!((key.key(), expected, found), (Key::of::<dyn std::any::Any + Send + Sync, ()>(), Single, Collection));
+        }
         other => panic!("expected WrongKind, found {:?}", other.map(|_| ())),
     }
     close(app).await;
@@ -114,8 +118,9 @@ async fn an_execution_scoped_binding_needs_an_execution_from_the_app_and_a_modul
     }))
     .await;
     let module = app.module::<Mod<A>>().unwrap();
-    assert!(matches!(module.get::<Svc>().await, Err(LookupError::ExecutionRequired { .. })));
-    assert!(matches!(app.get::<Svc>().await, Err(LookupError::ExecutionRequired { .. })));
+    for read in [module.get::<Svc>().await.map(|_| ()), app.get::<Svc>().await.map(|_| ())] {
+        assert!(matches!(&read, Err(LookupError::ExecutionRequired { key }) if key.key() == Key::of::<Svc, ()>()), "{read:?}");
+    }
     app.execute(ExecOptions::new(), async |exec| {
         let inside = module.with_execution(&exec.handle());
         assert!(inside.get::<Svc>().await.is_ok(), "the handle carrying an execution reaches it");
@@ -238,7 +243,7 @@ async fn a_singleton_lookup_from_destroying_on_is_closed() {
             let s = Arc::clone(&s);
             async move {
                 let read = module.get::<Svc>().await;
-                *s.lock().unwrap() = Some(matches!(read, Err(LookupError::Closed { .. })));
+                *s.lock().unwrap() = Some(matches!(read, Err(LookupError::Closed { key }) if key.key() == Key::of::<Svc, ()>()));
             }
         });
     }))
@@ -247,5 +252,6 @@ async fn a_singleton_lookup_from_destroying_on_is_closed() {
     assert!(handle.get::<Svc>().await.is_ok());
     close(app).await;
     assert_eq!(*seen.lock().unwrap(), Some(true), "inside a destroy hook");
-    assert!(matches!(handle.get::<Svc>().await, Err(LookupError::Closed { .. })), "and after the close");
+    let after = handle.get::<Svc>().await.map(|_| ());
+    assert!(matches!(&after, Err(LookupError::Closed { key }) if key.key() == Key::of::<Svc, ()>()), "and after the close: {after:?}");
 }

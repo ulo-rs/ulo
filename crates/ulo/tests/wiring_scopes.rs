@@ -71,11 +71,14 @@ fn a_singleton_reaching_execution_data_through_a_transient_is_refused_once() {
 #[test]
 fn a_singleton_reading_an_execution_scoped_binding_is_refused() {
     let errors = wire_err(Mod::<A>::new(|m| {
-        m.provide::<Audit>();
-        m.provide::<OverAudit>();
+        m.import(Mod::<B>::new(|m| {
+            m.provide::<Audit>();
+            m.provide::<OverAudit>();
+        }));
     }));
-    let (declared, _, _, path) = violation(&errors, Key::of::<OverAudit, ()>());
+    let (declared, _, module, path) = violation(&errors, Key::of::<OverAudit, ()>());
     assert_eq!(declared, ScopeKind::Singleton);
+    assert_eq!(module, mod_name::<B>(), "the module the binding is in, not the root");
     assert!(path.iter().any(|step| step.contains("execution")), "{path:?}");
     assert_eq!(errors.len(), 1, "{errors}");
 }
@@ -175,11 +178,14 @@ fn hooks_on_an_auto_type_inferred_per_execution_are_refused() {
 #[test]
 fn a_readiness_check_on_a_binding_inferred_per_execution_is_refused() {
     let errors = wire_err(Mod::<A>::new(|m| {
-        m.enhancer::<AnyGuard<TA>>()
-            .with(|_user: Ext<User>| async { GuardA }, |a| a)
-            .ready(|| async { Ok::<(), Boom>(()) });
+        m.import(Mod::<B>::new(|m| {
+            m.enhancer::<AnyGuard<TA>>()
+                .with(|_user: Ext<User>| async { GuardA }, |a| a)
+                .ready(|| async { Ok::<(), Boom>(()) });
+        }));
     }));
-    entry!(errors, WiringError::HooksOnPerExecution { .. } => ());
+    let module = entry!(errors, WiringError::HooksOnPerExecution { module, .. } => module.to_string());
+    assert_eq!(module, mod_name::<B>(), "the module the contribution is in, not the root");
     assert_eq!(errors.len(), 1, "{errors}");
 }
 
@@ -247,8 +253,11 @@ fn an_explicit_singleton_closure_enhancer_reading_execution_data_is_refused_in_b
         assert_eq!(*role, "guard");
         assert!(path.iter().any(|step| step.contains("Ext<")), "{path:?}");
     }
-    assert!(found.iter().any(|(closure, ..)| closure.starts_with("controller-level guard #1")), "{found:?}");
-    assert!(found.iter().any(|(closure, ..)| closure.starts_with("method-level guard #1")), "{found:?}");
+    let named = |handler: &str| {
+        found.iter().find(|(closure, ..)| closure.contains(handler)).unwrap_or_else(|| panic!("no closure of `{handler}`: {found:?}")).0.clone()
+    };
+    assert!(named("SingletonAtController::").starts_with("controller-level guard #1"), "{found:?}");
+    assert!(named("SingletonAtMethod::").starts_with("method-level guard #1"), "{found:?}");
     assert_eq!(errors.len(), 2, "{errors}");
 }
 
