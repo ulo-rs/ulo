@@ -178,6 +178,7 @@ async fn keep_alive_writes_a_comment_frame_while_the_stream_is_idle_and_again_af
     let (_, mut body) = response.into_parts();
 
     let mut frames = Vec::new();
+    let started = std::time::Instant::now();
     let read = async {
         while frames.iter().filter(|frame: &&String| frame.as_str() == ": keepalive\n\n").count() < 2 {
             let frame = poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await.expect("the stream is not over").expect("no error");
@@ -187,8 +188,11 @@ async fn keep_alive_writes_a_comment_frame_while_the_stream_is_idle_and_again_af
         }
     };
     tokio::time::timeout(PATIENCE, read).await.expect("two keepalives arrived in time");
+    let elapsed = started.elapsed();
     drop(body);
 
+    // A lower bound only: each comment waits at least one 50 ms period, never less.
+    assert!(elapsed >= Duration::from_millis(100), "two keepalives took {elapsed:?}, under two periods");
     assert_eq!(frames[0], "data: first\n\n", "the event comes before any keepalive");
     assert!(frames[1..].iter().all(|frame| frame == ": keepalive\n\n"), "{frames:?}");
     app.stop().await;

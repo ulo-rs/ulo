@@ -205,26 +205,28 @@ fn chained(m: &mut ModuleDef<'_>) {
 #[tokio::test]
 async fn every_error_kind_renders_its_status_as_a_problem_document_of_that_status() {
     let app = start(plain).await;
+    // The title is RFC 9110's phrase for the status, as RFC 9457 has an `about:blank` problem's.
     let table = [
-        ("bad_request", StatusCode::BAD_REQUEST),
-        ("unauthorized", StatusCode::UNAUTHORIZED),
-        ("forbidden", StatusCode::FORBIDDEN),
-        ("not_found", StatusCode::NOT_FOUND),
-        ("conflict", StatusCode::CONFLICT),
-        ("unprocessable", StatusCode::UNPROCESSABLE_ENTITY),
-        ("too_many_requests", StatusCode::TOO_MANY_REQUESTS),
-        ("timeout", StatusCode::GATEWAY_TIMEOUT),
-        ("unavailable", StatusCode::SERVICE_UNAVAILABLE),
-        ("unimplemented", StatusCode::NOT_IMPLEMENTED),
-        ("internal", StatusCode::INTERNAL_SERVER_ERROR),
+        ("bad_request", StatusCode::BAD_REQUEST, "Bad Request"),
+        ("unauthorized", StatusCode::UNAUTHORIZED, "Unauthorized"),
+        ("forbidden", StatusCode::FORBIDDEN, "Forbidden"),
+        ("not_found", StatusCode::NOT_FOUND, "Not Found"),
+        ("conflict", StatusCode::CONFLICT, "Conflict"),
+        ("unprocessable", StatusCode::UNPROCESSABLE_ENTITY, "Unprocessable Content"),
+        ("too_many_requests", StatusCode::TOO_MANY_REQUESTS, "Too Many Requests"),
+        ("timeout", StatusCode::GATEWAY_TIMEOUT, "Gateway Timeout"),
+        ("unavailable", StatusCode::SERVICE_UNAVAILABLE, "Service Unavailable"),
+        ("unimplemented", StatusCode::NOT_IMPLEMENTED, "Not Implemented"),
+        ("internal", StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"),
     ];
 
-    for (name, status) in table {
+    for (name, status, title) in table {
         assert_eq!(kind_named(name).as_str(), name, "the table names the kind it claims to");
         let reply = app.send(Call::get(&format!("/kind/{name}"))).await;
         assert_eq!(reply.status, status, "{name}");
         assert_eq!(reply.header("content-type"), Some("application/problem+json"), "{name}");
         let problem = reply.json();
+        assert_eq!((&problem["type"], &problem["title"]), (&serde_json::json!("about:blank"), &serde_json::json!(title)), "{name}");
         assert_eq!(problem["status"], status.as_u16(), "{name}: the document repeats the status");
         assert_eq!(problem["detail"], "the message", "{name}");
     }

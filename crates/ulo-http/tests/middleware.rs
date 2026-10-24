@@ -97,6 +97,11 @@ impl Pages {
         headers.get_all("x-trail").iter().filter_map(|value| value.to_str().ok()).collect::<Vec<_>>().join(",")
     }
 
+    #[ulo_http::get("/trail-quiet")]
+    fn trail_quiet(&self, headers: HeaderMap) -> String {
+        headers.get_all("x-trail").iter().filter_map(|value| value.to_str().ok()).collect::<Vec<_>>().join(",")
+    }
+
     #[ulo_http::get("/public")]
     fn public(&self) -> &'static str {
         "public"
@@ -131,6 +136,11 @@ impl Pages {
 fn ordered(m: &mut ModuleDef<'_>) {
     m.controller::<Pages>();
     m.meta::<PreDispatch>().apply_value(Tag("one")).apply_value(Tag("two")).apply_value(Tag("three"));
+}
+
+fn ordered_with_an_exclude(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.meta::<PreDispatch>().apply_value(Tag("one")).apply_value(Tag("two")).exclude(["/trail-quiet"]).apply_value(Tag("three"));
 }
 
 fn unscoped_by_type(m: &mut ModuleDef<'_>) {
@@ -177,6 +187,17 @@ async fn unscoped_entries_run_in_the_order_written() {
 
     let reply = app.send(Call::get("/trail")).await;
     assert_eq!((reply.status, reply.text()), (StatusCode::OK, "one,two,three".to_owned()));
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn an_exclude_removes_its_paths_from_the_entry_written_just_before_it_only() {
+    let app = start(ordered_with_an_exclude).await;
+
+    let quiet = app.send(Call::get("/trail-quiet")).await;
+    assert_eq!((quiet.status, quiet.text()), (StatusCode::OK, "one,three".to_owned()));
+    let trail = app.send(Call::get("/trail")).await;
+    assert_eq!(trail.text(), "one,two,three", "a path the exclude does not name passes every entry");
     app.stop().await;
 }
 

@@ -136,13 +136,21 @@ fn an_environment_value_is_text_a_typed_read_parses() {
 /// list without it sees none of it, and one with it sees every variable, under the same mapping.
 #[test]
 fn the_process_environment_is_read_only_through_env_process() {
-    let path = std::env::var("PATH").expect("the test runs with a PATH");
+    // A variable whose path no other variable shares or extends, so what the environment around
+    // the test holds cannot change the read: `Path` beside `PATH`, or `PATH__X`, would.
+    let vars: Vec<(String, String)> = std::env::vars_os().filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?))).collect();
+    let head = |name: &str| name.split("__").find(|segment| !segment.is_empty()).map(str::to_lowercase);
+    let (name, value) = vars
+        .iter()
+        .find(|(name, _)| !name.contains("__") && !matches!(name.to_lowercase().as_str(), "x" | "y") && vars.iter().filter(|(other, _)| head(other) == head(name)).count() == 1)
+        .expect("the test runs with a variable whose path is its own");
+    let key = name.to_lowercase();
 
     let without = Config::builder().source(Values::new().set("x", 1)).source(Env::from_map([("Y", "2")])).load();
-    assert!(tree(&without).get("path").is_none(), "a map and values never reach the process environment");
+    assert!(tree(&without).get(&key).is_none(), "a map and values never reach the process environment");
 
     let with = Config::builder().source(Env::process()).load();
-    assert_eq!(tree(&with).get("path"), Some(&Value::String(path)), "`Env::process()` reads it, the name lowercased");
+    assert_eq!(tree(&with).get(&key), Some(&Value::String(value.clone())), "`Env::process()` reads `{name}`, the name lowercased");
 
     let filtered = Config::builder().source(Values::new().set("keep", 1)).source(Env::process().prefix("ULO_CONFIG_NO_SUCH_PREFIX_")).load();
     assert_eq!(tree(&filtered), json!({ "keep": 1 }), "a prefix nothing carries adds nothing");

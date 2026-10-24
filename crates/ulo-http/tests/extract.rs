@@ -157,7 +157,7 @@ fn describe(error: &ExtractError) -> String {
         ExtractError::UnsupportedMediaType { param, expected } => format!("UnsupportedMediaType|{param}|{expected}"),
         ExtractError::TooLarge { param, limit } => format!("TooLarge|{param}|{limit}"),
         ExtractError::Invalid { param, violations } => format!("Invalid|{param}|{}", violations.len()),
-        ExtractError::HostMissing { param, .. } => format!("HostMissing|{param}"),
+        ExtractError::HostMissing { param, type_name } => format!("HostMissing|{param}|{type_name}"),
         _ => "other extract error".to_owned(),
     }
 }
@@ -341,7 +341,8 @@ async fn a_host_value_is_read_from_the_request_and_its_absence_is_a_withheld_500
     apps.succeeds(|| Call::get("/host-optional").ext(Who("bob")), "bob").await;
     apps.succeeds(|| Call::get("/host-optional"), "none").await;
 
-    let missing = apps.fails(|| Call::get("/host"), StatusCode::INTERNAL_SERVER_ERROR, "HostMissing|host").await;
+    let report = format!("HostMissing|host|{}", std::any::type_name::<Who>());
+    let missing = apps.fails(|| Call::get("/host"), StatusCode::INTERNAL_SERVER_ERROR, &report).await;
     assert!(!missing.text().contains("Who"), "the deployment fault names no type to the client: {}", missing.text());
     apps.stop().await;
 }

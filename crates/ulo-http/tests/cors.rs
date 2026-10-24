@@ -9,11 +9,14 @@ use std::time::Duration;
 use http::{HeaderName, Method, StatusCode};
 use o1_support::{Call, Running, refused, refusals, start};
 use ulo::{ModuleDef, injectable, routes};
-use ulo_http::{Cors, PreDispatch, Routing};
+use ulo_http::{Cors, PreDispatch, Routing, WithHeaders};
 
 const FIRST: &str = "https://first.example";
 const SECOND: &str = "https://second.example";
 const STRANGER: &str = "https://stranger.example";
+/// `FIRST` in another case, and `FIRST` with more after it: an origin matches byte for byte.
+const FIRST_UPPER: &str = "HTTPS://FIRST.EXAMPLE";
+const FIRST_EXTENDED: &str = "https://first.example.evil";
 
 #[injectable]
 struct Pages;
@@ -23,6 +26,11 @@ impl Pages {
     #[ulo_http::get("/hit")]
     fn hit(&self) -> &'static str {
         "hit"
+    }
+
+    #[ulo_http::get("/varied")]
+    fn varied(&self) -> WithHeaders<&'static str> {
+        WithHeaders::new("varied").header("vary", "accept-encoding")
     }
 }
 
@@ -81,7 +89,9 @@ async fn an_origin_outside_the_list_or_none_at_all_gets_no_allow_origin_but_stil
 
     let stranger = app.send(Call::get("/hit").header("origin", STRANGER)).await;
     let bare = app.send(Call::get("/hit")).await;
-    for (what, reply) in [("a stranger", &stranger), ("no origin", &bare)] {
+    let upper = app.send(Call::get("/hit").header("origin", FIRST_UPPER)).await;
+    let extended = app.send(Call::get("/hit").header("origin", FIRST_EXTENDED)).await;
+    for (what, reply) in [("a stranger", &stranger), ("no origin", &bare), ("another case", &upper), ("a longer origin", &extended)] {
         assert_eq!(reply.status, StatusCode::OK, "{what}: the request is answered, only undecorated");
         assert_eq!(reply.header("access-control-allow-origin"), None, "{what}");
         assert_eq!(reply.header("access-control-expose-headers"), None, "{what}");
@@ -163,6 +173,8 @@ async fn a_preflight_from_an_origin_outside_the_list_is_answered_204_with_nothin
     for name in ["access-control-allow-origin", "access-control-allow-methods", "access-control-allow-headers", "access-control-max-age"] {
         assert_eq!(reply.header(name), None, "{name}");
     }
+    let vary: Vec<String> = reply.tokens("vary").into_iter().map(|token| token.to_ascii_lowercase()).collect();
+    assert_eq!(vary, ["access-control-request-headers", "access-control-request-method", "origin"], "a refusal varies as a grant does");
     app.stop().await;
 }
 
@@ -198,6 +210,8 @@ async fn an_actual_response_is_decorated_with_exposed_headers_and_so_are_a_miss_
     let hit = app.send(Call::get("/hit").header("origin", FIRST)).await;
     assert_eq!(hit.tokens("access-control-expose-headers"), ["x-total"]);
     assert_eq!(hit.header("access-control-max-age"), None, "max-age belongs to the preflight");
+    let varied = app.send(Call::get("/varied").header("origin", FIRST)).await;
+    assert_eq!(varied.tokens("vary"), ["accept-encoding", "origin"], "the handler's `Vary` is kept and `Origin` added to it");
 
     let miss = app.send(Call::get("/nowhere").header("origin", FIRST)).await;
     assert_eq!(miss.status, StatusCode::NOT_FOUND);

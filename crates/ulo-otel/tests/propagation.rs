@@ -540,6 +540,14 @@ async fn an_http_traceparent_becomes_the_execution_s_received_context() {
     assert_eq!(received.traceparent(), TRACEPARENT);
     assert_eq!(received.tracestate().as_deref(), Some(TRACESTATE));
     assert_eq!(received.state().get("congo"), Some("t61rcWkgMzE"));
+
+    // Two `tracestate` fields are one list in order (RFC 9110 §5.3); a repeated key keeps its
+    // leftmost entry.
+    let fields = [("traceparent", TRACEPARENT), ("tracestate", "a=1,b=2"), ("tracestate", "a=3,c=4")];
+    assert_eq!(hub.get("/seen", &fields).await, StatusCode::OK);
+    let received = context(&hub.rec);
+    assert_eq!(received.tracestate().as_deref(), Some("a=1,b=2,a=3,c=4"));
+    assert_eq!(received.state().entries().collect::<Vec<_>>(), [("a", "1"), ("b", "2"), ("c", "4")]);
     hub.stop().await;
 }
 
@@ -919,6 +927,10 @@ mod real {
         let otel = Otel::new(options, spans.clone()).expect("the exporter builds");
         let guard = tracing::subscriber::set_default(tracing_subscriber::registry().with(otel.layer()));
         let hub = start(Setup { otel: Some(otel), ..Setup::default() }).await;
+        // Tests on other threads, with no subscriber, register the transports' callsites too; one
+        // registered while this subscriber was being registered can keep a cached `never`, and its
+        // span then reaches no layer. Recomputed here, every callsite counts this subscriber.
+        tracing::callsite::rebuild_interest_cache();
         (hub, spans, guard)
     }
 

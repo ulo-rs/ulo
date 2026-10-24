@@ -290,6 +290,15 @@ async fn a_second_connection_init_closes_4429() {
     let mut socket = app.ready().await;
     send(&mut socket, json!({ "type": "connection_init" })).await;
     assert_eq!(closed_with(&mut socket).await.0, 4429);
+
+    let mut busy = app.ready().await;
+    send(&mut busy, subscribe("running", "subscription { hang }")).await;
+    app.until("the operation to reach the engine", |seen| seen.open.load(Ordering::SeqCst) == 1).await;
+    send(&mut busy, json!({ "type": "connection_init" })).await;
+    assert_eq!(closed_with(&mut busy).await.0, 4429, "a running operation does not spare the connection");
+    // The operation ends with the connection, which the client ends here.
+    drop(busy);
+    app.until("the running operation's stream to be dropped", |seen| seen.dropped.load(Ordering::SeqCst) == 1).await;
     app.stop().await;
 }
 
@@ -301,7 +310,8 @@ async fn a_duplicate_operation_id_closes_4409() {
     send(&mut socket, subscribe("same", "subscription { hang }")).await;
     app.until("the first operation to reach the engine", |seen| seen.open.load(Ordering::SeqCst) == 1).await;
     send(&mut socket, subscribe("same", "subscription { hang }")).await;
-    assert_eq!(closed_with(&mut socket).await.0, 4409);
+    // The reason the protocol gives 4409 names the id, the one way a client learns which.
+    assert_eq!(closed_with(&mut socket).await, (4409, "Subscriber for same already exists".to_owned()));
     assert_eq!(app.seen.subscribed().len(), 1, "the second was never given to the engine");
     app.stop().await;
 }
@@ -365,12 +375,11 @@ async fn a_connection_without_the_subprotocol_closes_4406() {
 async fn a_request_that_failed_before_execution_is_an_error_message_with_no_complete() {
     let app = start().await;
     let mut socket = app.ready().await;
-    for (id, query) in [("bad", "subscription { requestError }"), ("broken", "subscription { failed }")] {
+    // The payload is the engine's error list as the engine wrote it.
+    let cases = [("bad", "subscription { requestError }", "the document is invalid"), ("broken", "subscription { failed }", "the server failed")];
+    for (id, query, engine_said) in cases {
         send(&mut socket, subscribe(id, query)).await;
-        let message = next(&mut socket).await;
-        assert_eq!(message["type"], "error");
-        assert_eq!(message["id"], id);
-        assert!(message["payload"].as_array().is_some_and(|errors| errors.len() == 1 && errors[0]["message"].is_string()), "the payload is the list of errors: {message}");
+        assert_eq!(next(&mut socket).await, json!({ "type": "error", "id": id, "payload": [{ "message": engine_said }] }));
     }
     send(&mut socket, json!({ "type": "ping" })).await;
     assert_eq!(next(&mut socket).await, json!({ "type": "pong" }), "no `complete` followed either `error`");

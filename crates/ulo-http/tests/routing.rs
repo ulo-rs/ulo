@@ -175,13 +175,14 @@ async fn one_path_answers_each_verb_with_its_own_handler_and_lists_them_in_allow
     let post = app.send(Call::new(Method::POST, "/shared")).await;
     assert_eq!((post.text(), post.matched()), ("post".to_owned(), Some(("/shared".to_owned(), "shared_post"))));
 
-    let expected = ["GET", "HEAD", "OPTIONS", "POST"];
+    // One value in declaration order, `HEAD` beside the `GET` that answers it, `OPTIONS` last.
+    let expected = ["GET, HEAD, POST, OPTIONS"];
     let put = app.send(Call::new(Method::PUT, "/shared")).await;
     assert_eq!(put.status, StatusCode::METHOD_NOT_ALLOWED);
-    assert_eq!(put.tokens("allow"), expected);
+    assert_eq!(put.values("allow"), expected);
     let options = app.send(Call::new(Method::OPTIONS, "/shared")).await;
     assert_eq!(options.status, StatusCode::NO_CONTENT);
-    assert_eq!(options.tokens("allow"), expected);
+    assert_eq!(options.values("allow"), expected);
     app.stop().await;
 }
 

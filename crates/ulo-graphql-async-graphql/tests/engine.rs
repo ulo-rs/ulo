@@ -347,10 +347,11 @@ async fn the_sdl_names_the_schema_and_the_playground_is_given_both_paths() {
         let sdl = engine.sdl();
         assert!(sdl.contains("type Query") && sdl.contains("contextId") && sdl.contains("type Subscriptions"), "{sdl}");
 
-        let page = engine.playground_html("/graphql", Some("/graphql/ws")).expect("async-graphql has a playground");
-        assert!(page.contains("/graphql") && page.contains("/graphql/ws"), "the page connects to both paths");
-        let without = engine.playground_html("/graphql", None).expect("a playground without subscriptions");
-        assert!(!without.contains("/graphql/ws"));
+        // Neither path contains the other, so each is found only where the page was given it.
+        let page = engine.playground_html("/query-endpoint", Some("/live-endpoint")).expect("async-graphql has a playground");
+        assert!(page.contains("/query-endpoint") && page.contains("/live-endpoint"), "the page connects to both paths");
+        let without = engine.playground_html("/query-endpoint", None).expect("a playground without subscriptions");
+        assert!(without.contains("/query-endpoint") && !without.contains("/live-endpoint"));
     })
     .await;
 }

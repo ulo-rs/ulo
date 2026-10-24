@@ -178,12 +178,16 @@ async fn a_get_reads_the_query_string_and_refuses_a_mutation_with_405_and_allow(
     let mutation = app.call("GET", "/graphql?query=mutation%20%7B%20executed%20%7D", &[], b"").await;
     assert_eq!(mutation.status, StatusCode::METHOD_NOT_ALLOWED);
     let allow = mutation.header("allow").expect("a 405 carries `Allow`");
-    let allowed: Vec<&str> = allow.split(',').map(str::trim).collect();
-    assert!(allowed.contains(&"GET") && allowed.contains(&"POST"), "`Allow` names the methods the path answers: {allow}");
+    let options = app.call("OPTIONS", "/graphql", &[], b"").await;
+    assert_eq!(Some(allow), options.header("allow"), "`Allow` as the router answers it for the path");
     assert_eq!(seen.requests().len(), 1, "the mutation was not executed");
 
     let named = app.call("GET", "/graphql?query=query%20A%20%7B%20executed%20%7D%20mutation%20B%20%7B%20executed%20%7D&operationName=A", &[], b"").await;
     assert_eq!(named.status, StatusCode::OK, "the operation the request names decides, not the other in the document");
+    let after = app.call("GET", "/graphql?query=mutation%20B%20%7B%20executed%20%7D%20query%20A%20%7B%20executed%20%7D&operationName=A", &[], b"").await;
+    assert_eq!(after.status, StatusCode::OK, "the named query, written after a mutation");
+    let refused = app.call("GET", "/graphql?query=query%20A%20%7B%20executed%20%7D%20mutation%20B%20%7B%20executed%20%7D&operationName=B", &[], b"").await;
+    assert_eq!(refused.status, StatusCode::METHOD_NOT_ALLOWED, "the named mutation, written after a query");
 
     let bad = app.call("GET", "/graphql?query=%7B%20executed%20%7D&variables=%5B1%5D", &[], b"").await;
     assert_eq!(bad.status, StatusCode::BAD_REQUEST, "`variables` that is not a JSON object is a request error");
@@ -221,8 +225,9 @@ async fn the_playground_is_html_for_a_browser_with_no_query_and_only_when_enable
         let seen = Arc::clone(seen);
         move |m: &mut ModuleDef<'_>| {
             m.import(ulo_ws::WsModule::for_root());
+            // Both paths written unnormalised: the page is told them as the router mounts them.
             m.import(GraphqlModule::for_root(
-                GraphqlConfig::at("/graphql").subscriptions("/graphql/ws").playground(true).engine_from(EngineModule { seen: Arc::clone(&seen), page }),
+                GraphqlConfig::at("graphql/").subscriptions("graphql/ws/").playground(true).engine_from(EngineModule { seen: Arc::clone(&seen), page }),
             ));
         }
     };
