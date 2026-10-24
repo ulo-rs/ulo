@@ -66,9 +66,10 @@ impl HttpHandler {
     }
 }
 
-/// `(&&PathProbe::<P>::new()).check()`: `Some(PathCheck::of::<T>())` for a `Path<T>` parameter,
-/// `None` for any other, ranked by autoref at the concrete parameter type, so an alias of `Path`
-/// is checked as one.
+/// `(&&PathProbe::<P>::new()).__ulo_check()`: `Some(PathCheck::of::<T>())` for a `Path<T>`
+/// parameter, `None` for any other, ranked by autoref at the concrete parameter type, so an alias
+/// of `Path` is checked as one. Every probe method here is named `__ulo_*`, so it does not meet a
+/// user trait's method of a common name at the call (`ulo::__private`).
 pub struct PathProbe<P>(PhantomData<fn() -> P>);
 
 impl<P> PathProbe<P> {
@@ -84,21 +85,21 @@ impl<P> Default for PathProbe<P> {
 }
 
 pub trait ViaPath {
-    fn check(&self) -> Option<PathCheck>;
+    fn __ulo_check(&self) -> Option<PathCheck>;
 }
 
 impl<T: DeserializeOwned + 'static> ViaPath for &PathProbe<Path<T>> {
-    fn check(&self) -> Option<PathCheck> {
+    fn __ulo_check(&self) -> Option<PathCheck> {
         Some(PathCheck::of::<T>())
     }
 }
 
 pub trait NotPath {
-    fn check(&self) -> Option<PathCheck>;
+    fn __ulo_check(&self) -> Option<PathCheck>;
 }
 
 impl<P> NotPath for PathProbe<P> {
-    fn check(&self) -> Option<PathCheck> {
+    fn __ulo_check(&self) -> Option<PathCheck> {
         None
     }
 }
@@ -115,8 +116,8 @@ impl HostRead {
     }
 }
 
-/// `(&&HostProbe::<P>::new()).read()`: `Some` for a `Host<T>` or `Option<Host<T>>` parameter,
-/// `None` for any other, ranked by autoref as `PathProbe` is.
+/// `(&&HostProbe::<P>::new()).__ulo_read()`: `Some` for a `Host<T>` or `Option<Host<T>>`
+/// parameter, `None` for any other, ranked by autoref as `PathProbe` is.
 pub struct HostProbe<P>(PhantomData<fn() -> P>);
 
 impl<P> HostProbe<P> {
@@ -132,27 +133,27 @@ impl<P> Default for HostProbe<P> {
 }
 
 pub trait ViaHost {
-    fn read(&self) -> Option<HostRead>;
+    fn __ulo_read(&self) -> Option<HostRead>;
 }
 
 impl<T: 'static> ViaHost for &HostProbe<Host<T>> {
-    fn read(&self) -> Option<HostRead> {
+    fn __ulo_read(&self) -> Option<HostRead> {
         Some(HostRead::of::<T>())
     }
 }
 
 impl<T: 'static> ViaHost for &HostProbe<Option<Host<T>>> {
-    fn read(&self) -> Option<HostRead> {
+    fn __ulo_read(&self) -> Option<HostRead> {
         Some(HostRead::of::<T>())
     }
 }
 
 pub trait NotHost {
-    fn read(&self) -> Option<HostRead>;
+    fn __ulo_read(&self) -> Option<HostRead>;
 }
 
 impl<P> NotHost for HostProbe<P> {
-    fn read(&self) -> Option<HostRead> {
+    fn __ulo_read(&self) -> Option<HostRead> {
         None
     }
 }

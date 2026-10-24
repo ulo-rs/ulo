@@ -274,3 +274,46 @@ async fn a_prepare_that_panics_is_a_configure_entry_naming_its_transport_and_the
     drop(error);
     assert!(dropped.load(Ordering::SeqCst), "the singleton store dropped with the app once `listen` failed");
 }
+
+/// `is_panic` finds a panicking `prepare` in the report `listen()` answers, whether it is handed the
+/// `StartupError` or the `ConfigureErrors` inside it, and finds it beside another server's plain
+/// failure; a report of plain failures alone is not a panic.
+#[tokio::test]
+async fn is_panic_finds_a_panicking_prepare_in_the_configure_report() {
+    let log = Log::new();
+    let panicked = || PanicsInPrepare { app: None, log: log.clone() };
+
+    let error = within("listen", listen_err(builder(Empty), vec![server(panicked())])).await;
+    assert!(matches!(&error, StartupError::Configure(errors) if errors.len() == 1), "got: {error}");
+    assert!(ulo::is_panic(&ulo::BoxError::from(error)), "the `StartupError` of a panicking `prepare`");
+
+    let mixed = within(
+        "listen",
+        listen_err(builder(Empty), vec![server(TestServer::<TB>::new("b", &log).fail_prepare()), server(panicked())]),
+    )
+    .await;
+    let StartupError::Configure(errors) = mixed else { panic!("expected configuration errors, got: {mixed}") };
+    let transports: Vec<TypeName> = errors.iter().map(|entry| entry.transport).collect();
+    assert_eq!(transports, [TypeName::of::<TB>(), TypeName::of::<TA>()], "the plain failure first, then the panic");
+    let entries: Vec<bool> = errors
+        .iter()
+        .map(|entry| entry.source.downcast_ref::<PreparePanicked>().is_some())
+        .collect();
+    assert_eq!(entries, [false, true], "only the second entry carries the panic");
+    assert!(ulo::is_panic(&ulo::BoxError::from(errors)), "the `ConfigureErrors` holding one panic among its entries");
+
+    let plain = within(
+        "listen",
+        listen_err(
+            builder(Empty),
+            vec![
+                server(TestServer::<TA>::new("a", &log).fail_prepare()),
+                server(TestServer::<TB>::new("b", &log).fail_prepare()),
+            ],
+        ),
+    )
+    .await;
+    let StartupError::Configure(errors) = &plain else { panic!("expected configuration errors, got: {plain}") };
+    assert!(errors.iter().all(|entry| entry.source.downcast_ref::<Boom>().is_some()), "each entry is the server's own error");
+    assert!(!ulo::is_panic(&ulo::BoxError::from(plain)), "a report of plain `prepare` failures is no panic");
+}

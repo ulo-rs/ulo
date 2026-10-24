@@ -28,7 +28,9 @@ opentelemetry-otlp = { workspace = true, features = ["http-proto", "trace"] }
 opentelemetry-http.workspace = true
 percent-encoding.workspace = true
 # The blocking client the `reqwest-blocking` feature builds itself, to apply the options' headers
-# last and the proxy choice; `system-proxy` reads the proxy variables as ureq's defaults do.
+# last and the proxy choice. reqwest reads the proxy variables without `system-proxy`; the feature
+# adds the macOS SCDynamicStore and Windows registry settings where `HTTP_PROXY`/`HTTPS_PROXY`
+# are unset, which ureq never reads.
 reqwest = { workspace = true, features = ["blocking", "system-proxy"], optional = true }
 # `ring`: the provider the workspace's `rustls` entry is built with, handed to ureq explicitly.
 rustls.workspace = true

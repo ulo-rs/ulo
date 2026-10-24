@@ -68,8 +68,10 @@ pub fn shape(streams_request: bool, streams_reply: bool) -> Shape {
     }
 }
 
-/// `(&&InboundProbe::<P>::new()).streams()`: `true` for an `Inbound<T>` parameter, `false` for any
-/// other, ranked by autoref at the concrete parameter type, so an alias of `Inbound` counts.
+/// `(&&InboundProbe::<P>::new()).__ulo_streams()`: `true` for an `Inbound<T>` parameter, `false`
+/// for any other, ranked by autoref at the concrete parameter type, so an alias of `Inbound`
+/// counts. Every probe method here is named `__ulo_*`, so it does not meet a user trait's method of
+/// a common name at the call (`ulo::__private`).
 pub struct InboundProbe<P>(PhantomData<fn() -> P>);
 
 impl<P> InboundProbe<P> {
@@ -85,28 +87,28 @@ impl<P> Default for InboundProbe<P> {
 }
 
 pub trait ViaInbound {
-    fn streams(&self) -> bool;
+    fn __ulo_streams(&self) -> bool;
 }
 
 impl<T> ViaInbound for &InboundProbe<Inbound<T>> {
-    fn streams(&self) -> bool {
+    fn __ulo_streams(&self) -> bool {
         true
     }
 }
 
 pub trait NotInbound {
-    fn streams(&self) -> bool;
+    fn __ulo_streams(&self) -> bool;
 }
 
 impl<P> NotInbound for InboundProbe<P> {
-    fn streams(&self) -> bool {
+    fn __ulo_streams(&self) -> bool {
         false
     }
 }
 
-/// `(&&&ReplyShapeProbe::of(&|| async { .. })).streams()`: whether a handler's output streams its
-/// reply, read off the type the handler returns rather than its spelling, so a stream behind a
-/// type alias and an opaque `impl Stream` count alike.
+/// `(&&&ReplyShapeProbe::of(&|| async { .. })).__ulo_streams()`: whether a handler's output
+/// streams its reply, read off the type the handler returns rather than its spelling, so a stream
+/// behind a type alias and an opaque `impl Stream` count alike.
 ///
 /// The attribute writes, in the mount function, a closure that is never called, whose future
 /// calls the handler with the receiver and each parameter bound to `unreachable!()`:
@@ -121,9 +123,9 @@ impl<P> NotInbound for InboundProbe<P> {
 ///
 /// [`of`](Self::of) names the future's output `R`, and three arms ranked by autoref read it: a
 /// `Result` whose `Ok` side is a stream on `&&ReplyShapeProbe`, a stream on `&ReplyShapeProbe`,
-/// any other output on `ReplyShapeProbe`. `#[event]` reads the same probe through `event_reply`,
-/// whose two stream arms answer [`StreamedReplyOnEvent`], refused by `let (): ()` with E0308 at
-/// the return type.
+/// any other output on `ReplyShapeProbe`. `#[event]` reads the same probe through
+/// `__ulo_event_reply`, whose two stream arms answer [`StreamedReplyOnEvent`], refused by
+/// `let (): ()` with E0308 at the return type.
 pub struct ReplyShapeProbe<R>(PhantomData<fn() -> R>);
 
 impl<R> ReplyShapeProbe<R> {
@@ -143,51 +145,51 @@ pub struct StreamedReplyOnEvent {
 }
 
 pub trait StreamsInResult {
-    fn streams(&self) -> bool;
-    fn event_reply(&self) -> StreamedReplyOnEvent;
+    fn __ulo_streams(&self) -> bool;
+    fn __ulo_event_reply(&self) -> StreamedReplyOnEvent;
 }
 
 impl<S: Stream, E> StreamsInResult for &&ReplyShapeProbe<Result<S, E>> {
-    fn streams(&self) -> bool {
+    fn __ulo_streams(&self) -> bool {
         true
     }
 
-    fn event_reply(&self) -> StreamedReplyOnEvent {
+    fn __ulo_event_reply(&self) -> StreamedReplyOnEvent {
         StreamedReplyOnEvent { _private: () }
     }
 }
 
 pub trait StreamsBare {
-    fn streams(&self) -> bool;
-    fn event_reply(&self) -> StreamedReplyOnEvent;
+    fn __ulo_streams(&self) -> bool;
+    fn __ulo_event_reply(&self) -> StreamedReplyOnEvent;
 }
 
 impl<S: Stream> StreamsBare for &ReplyShapeProbe<S> {
-    fn streams(&self) -> bool {
+    fn __ulo_streams(&self) -> bool {
         true
     }
 
-    fn event_reply(&self) -> StreamedReplyOnEvent {
+    fn __ulo_event_reply(&self) -> StreamedReplyOnEvent {
         StreamedReplyOnEvent { _private: () }
     }
 }
 
 pub trait StreamsNot {
-    fn streams(&self) -> bool;
-    fn event_reply(&self);
+    fn __ulo_streams(&self) -> bool;
+    fn __ulo_event_reply(&self);
 }
 
 impl<R> StreamsNot for ReplyShapeProbe<R> {
-    fn streams(&self) -> bool {
+    fn __ulo_streams(&self) -> bool {
         false
     }
 
-    fn event_reply(&self) {}
+    fn __ulo_event_reply(&self) {}
 }
 
 /// The reply probe the generated call names:
-/// `(&&&IntoReplyProbe::<Rpc, _>::new(out)).into_reply(&cx)`, with `ViaCallError`, `ViaBoxError`
-/// and `ViaValue` imported anonymously.
+/// `(&&&IntoReplyProbe::<Rpc, _>::new(out)).__ulo_into_reply(&cx)`, with `ViaCallError`,
+/// `ViaBoxError` and `ViaValue` imported anonymously.
 ///
 /// The three arms rank the error side by autoref as `ulo-transport`'s do: `Result<V, E>` with
 /// `E: Into<CallError>` on `&&IntoReplyProbe`, `Result<V, E>` with `E: Into<BoxError>` on
@@ -213,19 +215,19 @@ impl<T, V> IntoReplyProbe<T, V> {
 }
 
 pub trait ViaCallError<M> {
-    fn into_reply(&self, cx: &RpcCx) -> Result<Reply, BoxError>;
+    fn __ulo_into_reply(&self, cx: &RpcCx) -> Result<Reply, BoxError>;
 }
 
 pub trait ViaBoxError<M> {
-    fn into_reply(&self, cx: &RpcCx) -> Result<Reply, BoxError>;
+    fn __ulo_into_reply(&self, cx: &RpcCx) -> Result<Reply, BoxError>;
 }
 
 pub trait ViaValue<M> {
-    fn into_reply(&self, cx: &RpcCx) -> Result<Reply, BoxError>;
+    fn __ulo_into_reply(&self, cx: &RpcCx) -> Result<Reply, BoxError>;
 }
 
 impl<V: Answer<M>, E: Into<CallError>, M> ViaCallError<M> for &&IntoReplyProbe<Rpc, Result<V, E>> {
-    fn into_reply(&self, cx: &RpcCx) -> Result<Reply, BoxError> {
+    fn __ulo_into_reply(&self, cx: &RpcCx) -> Result<Reply, BoxError> {
         match self.take()? {
             Ok(value) => value.answer(cx),
             Err(err) => {
@@ -237,7 +239,7 @@ impl<V: Answer<M>, E: Into<CallError>, M> ViaCallError<M> for &&IntoReplyProbe<R
 }
 
 impl<V: Answer<M>, E: Into<BoxError>, M> ViaBoxError<M> for &IntoReplyProbe<Rpc, Result<V, E>> {
-    fn into_reply(&self, cx: &RpcCx) -> Result<Reply, BoxError> {
+    fn __ulo_into_reply(&self, cx: &RpcCx) -> Result<Reply, BoxError> {
         match self.take()? {
             Ok(value) => value.answer(cx),
             Err(err) => Err(err.into()),
@@ -246,7 +248,7 @@ impl<V: Answer<M>, E: Into<BoxError>, M> ViaBoxError<M> for &IntoReplyProbe<Rpc,
 }
 
 impl<V: Answer<M>, M> ViaValue<M> for IntoReplyProbe<Rpc, V> {
-    fn into_reply(&self, cx: &RpcCx) -> Result<Reply, BoxError> {
+    fn __ulo_into_reply(&self, cx: &RpcCx) -> Result<Reply, BoxError> {
         self.take()?.answer(cx)
     }
 }
@@ -339,9 +341,9 @@ impl RpcHandler {
     }
 }
 
-/// `(&&&PayloadKindProbe::<P>::new()).kind()`: `Some(Binary)` for `Payload<Bytes>` and `Bytes`,
-/// `Some(Serde)` for any other `Payload<T>`, `None` for a parameter that is not a payload, ranked by
-/// autoref at the concrete parameter type.
+/// `(&&&PayloadKindProbe::<P>::new()).__ulo_kind()`: `Some(Binary)` for `Payload<Bytes>` and
+/// `Bytes`, `Some(Serde)` for any other `Payload<T>`, `None` for a parameter that is not a
+/// payload, ranked by autoref at the concrete parameter type.
 pub struct PayloadKindProbe<P>(PhantomData<fn() -> P>);
 
 impl<P> PayloadKindProbe<P> {
@@ -357,37 +359,37 @@ impl<P> Default for PayloadKindProbe<P> {
 }
 
 pub trait ViaBinary {
-    fn kind(&self) -> Option<PayloadKind>;
+    fn __ulo_kind(&self) -> Option<PayloadKind>;
 }
 
 impl ViaBinary for &&PayloadKindProbe<Payload<Bytes>> {
-    fn kind(&self) -> Option<PayloadKind> {
+    fn __ulo_kind(&self) -> Option<PayloadKind> {
         Some(PayloadKind::Binary)
     }
 }
 
 impl ViaBinary for &&PayloadKindProbe<Bytes> {
-    fn kind(&self) -> Option<PayloadKind> {
+    fn __ulo_kind(&self) -> Option<PayloadKind> {
         Some(PayloadKind::Binary)
     }
 }
 
 pub trait ViaSerde {
-    fn kind(&self) -> Option<PayloadKind>;
+    fn __ulo_kind(&self) -> Option<PayloadKind>;
 }
 
 impl<T> ViaSerde for &PayloadKindProbe<Payload<T>> {
-    fn kind(&self) -> Option<PayloadKind> {
+    fn __ulo_kind(&self) -> Option<PayloadKind> {
         Some(PayloadKind::Serde)
     }
 }
 
 pub trait NotPayload {
-    fn kind(&self) -> Option<PayloadKind>;
+    fn __ulo_kind(&self) -> Option<PayloadKind>;
 }
 
 impl<P> NotPayload for PayloadKindProbe<P> {
-    fn kind(&self) -> Option<PayloadKind> {
+    fn __ulo_kind(&self) -> Option<PayloadKind> {
         None
     }
 }

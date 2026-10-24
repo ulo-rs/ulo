@@ -16,7 +16,7 @@ use crate::paths::Paths;
 /// The expression turning the handler's output `out` into `Result<T::Reply, BoxError>`:
 ///
 /// ```text
-/// (&&&<transport>::__private::IntoReplyProbe::<Marker, _>::new(out)).into_reply(&cx)
+/// (&&&<transport>::__private::IntoReplyProbe::<Marker, _>::new(out)).__ulo_into_reply(&cx)
 /// ```
 ///
 /// with `ViaCallError`, `ViaBoxError` and `ViaValue` imported anonymously. The transport is the
@@ -35,7 +35,7 @@ pub fn reply_call(out: &Ident, cx: &Ident, paths: &Paths) -> TokenStream {
         {
             #[allow(unused_imports)]
             use #transport::__private::{ViaBoxError as _, ViaCallError as _, ViaValue as _};
-            (&&&#transport::__private::IntoReplyProbe::<#marker, _>::new(#out)).into_reply(&#cx)
+            (&&&#transport::__private::IntoReplyProbe::<#marker, _>::new(#out)).__ulo_into_reply(&#cx)
         }
     }
 }

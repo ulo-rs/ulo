@@ -5,8 +5,8 @@
 //!
 //! ```text
 //! ::ulo_http::__private::HttpHandler::new(::ulo_http::__private::Method::GET, "/users/{id}", __ulo_call)
-//!     .path_check((&&::ulo_http::__private::PathProbe::<P0>::new()).check())
-//!     .host_read((&&::ulo_http::__private::HostProbe::<P0>::new()).read())
+//!     .path_check((&&::ulo_http::__private::PathProbe::<P0>::new()).__ulo_check())
+//!     .host_read((&&::ulo_http::__private::HostProbe::<P0>::new()).__ulo_read())
 //!     /* one pair per parameter */
 //! ```
 //!
@@ -72,8 +72,8 @@ fn handler_value(method: &str, pattern: &LitStr, sig: &HandlerSig, paths: &Paths
     let checks = sig.params.iter().map(|param| {
         let ty = &param.ty;
         quote_spanned! {param.span=>
-            .path_check((&&#this::__private::PathProbe::<#ty>::new()).check())
-            .host_read((&&#this::__private::HostProbe::<#ty>::new()).read())
+            .path_check((&&#this::__private::PathProbe::<#ty>::new()).__ulo_check())
+            .host_read((&&#this::__private::HostProbe::<#ty>::new()).__ulo_read())
         }
     });
     quote! {

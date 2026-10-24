@@ -266,8 +266,8 @@ impl ProviderEntry {
                 let closure = wrap_async(closure);
                 let scope = scope.map_or_else(|| quote!(#ulo::scope::Auto), |scope| scope.path());
                 let bind = match key {
-                    None => quote!(bind::<#scope>(&mut *#m)),
-                    Some(key) => quote!(bind_as::<#key, #scope, _>(&mut *#m, |a| a)),
+                    None => quote!(__ulo_bind::<#scope>(&mut *#m)),
+                    Some(key) => quote!(__ulo_bind_as::<#key, #scope, _>(&mut *#m, |a| a)),
                 };
                 quote_spanned! {closure.span()=>
                     {
@@ -311,7 +311,7 @@ impl Contribution {
                         #[allow(unused_imports)]
                         use #ulo::__private::factory::{FallibleContribution as _, PlainContribution as _};
                         (&#ulo::__private::factory::Probe::new(#closure))
-                            .contribute_with::<#into, #scope, _>(&mut *#m, |a| a);
+                            .__ulo_contribute_with::<#into, #scope, _>(&mut *#m, |a| a);
                     }
                 }
             }

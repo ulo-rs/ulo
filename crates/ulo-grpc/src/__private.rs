@@ -11,10 +11,11 @@
 //!
 //! The hidden method also carries the compile-time checks of the handler against its marker: each
 //! body-consuming parameter's message type and shape through [`ParamProbe`], and the reply's
-//! message type and shape through [`ReplyProbe`]. A mismatch leaves [`ParamCheck::matches`] or
-//! [`Checked::checked`] uncallable, an E0599 whose type spells what the handler declares beside
-//! what the marker requires: `Checked<(Shaped<true>, UserEvent), (Shaped<false>, User)>` is a
-//! stream of `UserEvent` returned for a unary method replying `User`.
+//! message type and shape through [`ReplyProbe`]. A mismatch leaves
+//! [`ParamCheck::__ulo_matches`] or [`Checked::__ulo_checked`] uncallable, an E0599 whose type
+//! spells what the handler declares beside what the marker requires:
+//! `Checked<(Shaped<true>, UserEvent), (Shaped<false>, User)>` is a stream of `UserEvent`
+//! returned for a unary method replying `User`.
 
 use std::cell::Cell;
 use std::marker::PhantomData;
@@ -74,16 +75,19 @@ pub const fn streams_reply(shape: Shape) -> bool {
 /// One side of a call, one message or a stream of them, as a type the checks compare.
 pub struct Shaped<const STREAMED: bool>;
 
-/// What one parameter declares beside what the marker requires; [`matches`](Self::matches)
-/// exists only where the two are one type.
+/// What one parameter declares beside what the marker requires;
+/// [`__ulo_matches`](Self::__ulo_matches) exists only where the two are one type. Every method the
+/// generated code calls here is named `__ulo_*`, so it does not meet a user trait's method of a
+/// common name at the call (`ulo::__private`): where the two types differ, a user's `matches`
+/// implemented for every type would be the method the call reaches, and the check would pass.
 pub struct ParamCheck<Got, Want>(PhantomData<fn() -> (Got, Want)>);
 
 impl<T> ParamCheck<T, T> {
-    pub fn matches(self) {}
+    pub fn __ulo_matches(self) {}
 }
 
-/// `(&&ParamProbe::<M, P>::new()).body::<{ streams_request(M::SHAPE) }>().matches()`, written once
-/// per parameter: `Message<T>` and `Request<T>` declare one message `T`, `Streaming<T>` a stream of
+/// `(&&ParamProbe::<M, P>::new()).__ulo_body::<{ streams_request(M::SHAPE) }>().__ulo_matches()`,
+/// written once per parameter: `Message<T>` and `Request<T>` declare one message `T`, `Streaming<T>` a stream of
 /// `T`, each compared with `M::Request` and `M`'s request shape; any other parameter compares `()`
 /// with `()`. Ranked by autoref at the concrete parameter type, so an alias of `Message` is
 /// checked as one.
@@ -103,13 +107,13 @@ impl<M, P> Default for ParamProbe<M, P> {
 
 pub trait ViaBody<M: Method> {
     type Got;
-    fn body<const STREAMED: bool>(&self) -> ParamCheck<Self::Got, (Shaped<STREAMED>, M::Request)>;
+    fn __ulo_body<const STREAMED: bool>(&self) -> ParamCheck<Self::Got, (Shaped<STREAMED>, M::Request)>;
 }
 
 impl<M: Method, T> ViaBody<M> for &ParamProbe<M, Message<T>> {
     type Got = (Shaped<false>, T);
 
-    fn body<const STREAMED: bool>(&self) -> ParamCheck<Self::Got, (Shaped<STREAMED>, M::Request)> {
+    fn __ulo_body<const STREAMED: bool>(&self) -> ParamCheck<Self::Got, (Shaped<STREAMED>, M::Request)> {
         ParamCheck(PhantomData)
     }
 }
@@ -117,7 +121,7 @@ impl<M: Method, T> ViaBody<M> for &ParamProbe<M, Message<T>> {
 impl<M: Method, T> ViaBody<M> for &ParamProbe<M, Request<T>> {
     type Got = (Shaped<false>, T);
 
-    fn body<const STREAMED: bool>(&self) -> ParamCheck<Self::Got, (Shaped<STREAMED>, M::Request)> {
+    fn __ulo_body<const STREAMED: bool>(&self) -> ParamCheck<Self::Got, (Shaped<STREAMED>, M::Request)> {
         ParamCheck(PhantomData)
     }
 }
@@ -125,23 +129,23 @@ impl<M: Method, T> ViaBody<M> for &ParamProbe<M, Request<T>> {
 impl<M: Method, T> ViaBody<M> for &ParamProbe<M, Streaming<T>> {
     type Got = (Shaped<true>, T);
 
-    fn body<const STREAMED: bool>(&self) -> ParamCheck<Self::Got, (Shaped<STREAMED>, M::Request)> {
+    fn __ulo_body<const STREAMED: bool>(&self) -> ParamCheck<Self::Got, (Shaped<STREAMED>, M::Request)> {
         ParamCheck(PhantomData)
     }
 }
 
 pub trait NotBody {
-    fn body<const STREAMED: bool>(&self) -> ParamCheck<(), ()>;
+    fn __ulo_body<const STREAMED: bool>(&self) -> ParamCheck<(), ()>;
 }
 
 impl<M, P> NotBody for ParamProbe<M, P> {
-    fn body<const STREAMED: bool>(&self) -> ParamCheck<(), ()> {
+    fn __ulo_body<const STREAMED: bool>(&self) -> ParamCheck<(), ()> {
         ParamCheck(PhantomData)
     }
 }
 
 /// The handler's output turned into an answer, with what it declares beside what the marker
-/// requires; [`checked`](Self::checked) exists only where the two are one type.
+/// requires; [`__ulo_checked`](Self::__ulo_checked) exists only where the two are one type.
 pub struct Checked<Got, Want> {
     answer: Result<Answer, BoxError>,
     _types: PhantomData<fn() -> (Got, Want)>,
@@ -154,13 +158,13 @@ impl<Got, Want> Checked<Got, Want> {
 }
 
 impl<T> Checked<T, T> {
-    pub fn checked(self) -> Result<Answer, BoxError> {
+    pub fn __ulo_checked(self) -> Result<Answer, BoxError> {
         self.answer
     }
 }
 
 /// The reply probe of a gRPC handler:
-/// `(&&&&&&ReplyProbe::<M, _>::new(out)).answer::<{ streams_reply(M::SHAPE) }>().checked()`.
+/// `(&&&&&&ReplyProbe::<M, _>::new(out)).__ulo_answer::<{ streams_reply(M::SHAPE) }>().__ulo_checked()`.
 ///
 /// Six arms, each one reference deeper than the priority reads, the first that applies winning: a
 /// `Result` of an [`IntoGrpcStream`] whose error converts into a `CallError`, then one whose
@@ -189,38 +193,38 @@ impl<M, V> ReplyProbe<M, V> {
 
 pub trait StreamViaCallError<M: Method> {
     type Got;
-    fn answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)>;
+    fn __ulo_answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)>;
 }
 
 pub trait StreamViaBoxError<M: Method> {
     type Got;
-    fn answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)>;
+    fn __ulo_answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)>;
 }
 
 pub trait StreamValue<M: Method> {
     type Got;
-    fn answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)>;
+    fn __ulo_answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)>;
 }
 
 pub trait ValueViaCallError<M: Method> {
     type Got;
-    fn answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)>;
+    fn __ulo_answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)>;
 }
 
 pub trait ValueViaBoxError<M: Method> {
     type Got;
-    fn answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)>;
+    fn __ulo_answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)>;
 }
 
 pub trait Value<M: Method> {
     type Got;
-    fn answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)>;
+    fn __ulo_answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)>;
 }
 
 impl<M: Method, S: IntoGrpcStream, E: Into<CallError>> StreamViaCallError<M> for &&&&&ReplyProbe<M, Result<S, E>> {
     type Got = (Shaped<true>, S::Message);
 
-    fn answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)> {
+    fn __ulo_answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)> {
         Checked::new(match self.take() {
             Ok(Ok(stream)) => Ok(Answer::stream(stream)),
             Ok(Err(err)) => Err(BoxError::from(err.into())),
@@ -232,7 +236,7 @@ impl<M: Method, S: IntoGrpcStream, E: Into<CallError>> StreamViaCallError<M> for
 impl<M: Method, S: IntoGrpcStream, E: Into<BoxError>> StreamViaBoxError<M> for &&&&ReplyProbe<M, Result<S, E>> {
     type Got = (Shaped<true>, S::Message);
 
-    fn answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)> {
+    fn __ulo_answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)> {
         Checked::new(match self.take() {
             Ok(Ok(stream)) => Ok(Answer::stream(stream)),
             Ok(Err(err)) => Err(err.into()),
@@ -244,7 +248,7 @@ impl<M: Method, S: IntoGrpcStream, E: Into<BoxError>> StreamViaBoxError<M> for &
 impl<M: Method, S: IntoGrpcStream> StreamValue<M> for &&&ReplyProbe<M, S> {
     type Got = (Shaped<true>, S::Message);
 
-    fn answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)> {
+    fn __ulo_answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)> {
         Checked::new(self.take().map(Answer::stream))
     }
 }
@@ -252,7 +256,7 @@ impl<M: Method, S: IntoGrpcStream> StreamValue<M> for &&&ReplyProbe<M, S> {
 impl<M: Method, V: IntoGrpcReply, E: Into<CallError>> ValueViaCallError<M> for &&ReplyProbe<M, Result<V, E>> {
     type Got = (Shaped<false>, V::Message);
 
-    fn answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)> {
+    fn __ulo_answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)> {
         Checked::new(match self.take() {
             Ok(Ok(value)) => Ok(Answer::value(value)),
             Ok(Err(err)) => Err(BoxError::from(err.into())),
@@ -264,7 +268,7 @@ impl<M: Method, V: IntoGrpcReply, E: Into<CallError>> ValueViaCallError<M> for &
 impl<M: Method, V: IntoGrpcReply, E: Into<BoxError>> ValueViaBoxError<M> for &ReplyProbe<M, Result<V, E>> {
     type Got = (Shaped<false>, V::Message);
 
-    fn answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)> {
+    fn __ulo_answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)> {
         Checked::new(match self.take() {
             Ok(Ok(value)) => Ok(Answer::value(value)),
             Ok(Err(err)) => Err(err.into()),
@@ -276,7 +280,7 @@ impl<M: Method, V: IntoGrpcReply, E: Into<BoxError>> ValueViaBoxError<M> for &Re
 impl<M: Method, V: IntoGrpcReply> Value<M> for ReplyProbe<M, V> {
     type Got = (Shaped<false>, V::Message);
 
-    fn answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)> {
+    fn __ulo_answer<const STREAMED: bool>(&self) -> Checked<Self::Got, (Shaped<STREAMED>, M::Response)> {
         Checked::new(self.take().map(Answer::value))
     }
 }

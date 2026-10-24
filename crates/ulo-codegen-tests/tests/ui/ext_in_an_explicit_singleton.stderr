@@ -15,11 +15,11 @@ help: `Ext<T>` implements trait `AllowedIn<S>`
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `AllowedIn<ulo::scope::Transient>`
    | impl<T> AllowedIn<Auto> for Ext<T> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `AllowedIn<ulo::scope::Auto>`
-note: required by a bound in `ulo::__private::Declare::field`
+note: required by a bound in `ulo::__private::Declare::__ulo_field`
   --> $WORKSPACE/crates/ulo/src/__private.rs
    |
-   |     fn field(&self, d: &mut Dependencies, name: &'static str)
-   |        ----- required by a bound in this associated function
+   |     fn __ulo_field(&self, d: &mut Dependencies, name: &'static str)
+   |        ----------- required by a bound in this associated function
    |     where
    |         S: AllowedIn<Sc>;
-   |            ^^^^^^^^^^^^^ required by this bound in `Declare::field`
+   |            ^^^^^^^^^^^^^ required by this bound in `Declare::__ulo_field`

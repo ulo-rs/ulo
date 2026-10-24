@@ -220,7 +220,9 @@ fn tier_statements(
 }
 
 /// An impl-level value: a clone of its `Arc` in `Shared`, unsized into the role by `*_arc`. The
-/// role bound sits on the mount function's type parameter for this position.
+/// role bound sits on the mount function's type parameter for this position. The method is called
+/// by path: method syntax on the owned spec would reach a user trait's method of the same name
+/// implemented for every type one autoref step before the inherent `&mut self` one.
 fn shared_statement(role: Role, expr: &Expr, shared: &Ident, var: &Ident, position: usize) -> TokenStream {
     let ulo = ulo();
     let method = role.arc_method();
@@ -228,7 +230,7 @@ fn shared_statement(role: Role, expr: &Expr, shared: &Ident, var: &Ident, positi
     let tuple = Index { index: 0, span: expr.span() };
     let index = Index { index: position as u32, span: expr.span() };
     quote_spanned! {expr.span()=>
-        #var.#method(#ulo::__private::Arc::clone(&#shared.#tuple.#index));
+        #ulo::EnhancerSpec::#method(&mut #var, #ulo::__private::Arc::clone(&#shared.#tuple.#index));
     }
 }
 

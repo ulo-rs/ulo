@@ -1,4 +1,4 @@
-error[E0599]: no method named `matches` found for struct `ulo_grpc::__private::ParamCheck<(ulo_grpc::__private::Shaped<true>, AddRequest), (ulo_grpc::__private::Shaped<false>, AddRequest)>` in the current scope
+error[E0599]: no method named `__ulo_matches` found for struct `ulo_grpc::__private::ParamCheck<(ulo_grpc::__private::Shaped<true>, AddRequest), (ulo_grpc::__private::Shaped<false>, AddRequest)>` in the current scope
   --> tests/ui/grpc_streamed_request_for_a_unary_method.rs:13:36
    |
 13 |     async fn add(&self, mut items: Streaming<AddRequest>) -> Sum {

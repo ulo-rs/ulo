@@ -10,7 +10,9 @@
 //! 3. Once every guard admits: the interceptors, then the controller, then the handler inside
 //!    the interceptor chain. The handler closure resolves the controller itself; a singleton or
 //!    per-execution controller is already built by then, so a failure to build it reaches the
-//!    error handlers without passing through the interceptors.
+//!    error handlers without passing through the interceptors. On a transport whose
+//!    `Transport::BUILDS_CONTROLLER` is `false` the controller is not built here: the handler
+//!    builds it if it reads it, and a failure to build it passes through the interceptors.
 //! 4. Errors go through the error handlers, method first, then controller, then global, each
 //!    tier last-declared first. A refusal is one of them: `Ok(false)` becomes
 //!    `GuardRejected { guard }`. A panic is one too: a panic in a guard, an interceptor, the
@@ -202,7 +204,9 @@ where
     Fut: Future<Output = Result<T::Reply, BoxError>> + Send,
 {
     let interceptors = caught(DispatchStage::Interceptor, at.secrets, build_interceptors(handler, at)).await?;
-    build_controller(handler, at).await?;
+    if T::BUILDS_CONTROLLER {
+        build_controller(handler, at).await?;
+    }
     chain(cx, &interceptors, at.secrets, call).await
 }
 

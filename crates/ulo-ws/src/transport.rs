@@ -48,6 +48,13 @@ pub struct WsConnect;
 impl Transport for WsConnect {
     const KEY: &'static str = "ws_connect";
     const READS_PREFIX: bool = true;
+    /// The connect handler resolves the gateway in the connection phase's execution only to call
+    /// a hook: `OnConnect` for an attributed gateway, `Gateway::on_connect` for a hand-written
+    /// one, whose instance that execution then keeps for the connection's messages. An attributed
+    /// gateway with no `OnConnect` is not built at connect, so one whose dependencies need a
+    /// message's execution, an `Ext` a message guard writes, connects. A failure to build the gateway at
+    /// connect passes through the connect interceptors, as any error from the hook does.
+    const BUILDS_CONTROLLER: bool = false;
 
     type Cx = ConnectCx;
     type Reply = ConnectReply;

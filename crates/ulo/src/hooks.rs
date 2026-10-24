@@ -259,10 +259,10 @@ macro_rules! hooks {
             RegisterInit as _, RegisterShutdown as _,
         };
         let h = $h;
-        (&$crate::__private::hooks::Probe::of(&*h)).register_init(&mut *h);
-        (&$crate::__private::hooks::Probe::of(&*h)).register_bootstrap(&mut *h);
-        (&$crate::__private::hooks::Probe::of(&*h)).register_destroy(&mut *h);
-        (&$crate::__private::hooks::Probe::of(&*h)).register_before_shutdown(&mut *h);
-        (&$crate::__private::hooks::Probe::of(&*h)).register_shutdown(&mut *h);
+        (&$crate::__private::hooks::Probe::of(&*h)).__ulo_register_init(&mut *h);
+        (&$crate::__private::hooks::Probe::of(&*h)).__ulo_register_bootstrap(&mut *h);
+        (&$crate::__private::hooks::Probe::of(&*h)).__ulo_register_destroy(&mut *h);
+        (&$crate::__private::hooks::Probe::of(&*h)).__ulo_register_before_shutdown(&mut *h);
+        (&$crate::__private::hooks::Probe::of(&*h)).__ulo_register_shutdown(&mut *h);
     }};
 }

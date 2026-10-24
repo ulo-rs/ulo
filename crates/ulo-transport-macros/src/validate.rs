@@ -69,7 +69,7 @@ pub(crate) fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                 #[allow(unused_mut)]
                 let mut __ulo_violations: ::std::vec::Vec<::ulo_transport::FieldViolation> = ::std::vec::Vec::new();
                 #(#checks)*
-                if __ulo_violations.is_empty() {
+                if ::std::vec::Vec::is_empty(&__ulo_violations) {
                     ::core::result::Result::Ok(())
                 } else {
                     ::core::result::Result::Err(__ulo_violations)
@@ -88,7 +88,7 @@ fn check(field: &FieldRules, rule: &Rule) -> TokenStream {
     match rule {
         Rule::Length { min, max } => {
             let measured = quote_spanned! {span=>
-                (&&::ulo_transport::__private::validate::LengthProbe(&self.#ident)).length()
+                (&&::ulo_transport::__private::validate::LengthProbe(&self.#ident)).__ulo_length()
             };
             let test = bounded(quote!(__ulo_value), wire, "length must be", min.as_ref(), max.as_ref());
             quote! {{
@@ -104,7 +104,7 @@ fn check(field: &FieldRules, rule: &Rule) -> TokenStream {
             let text = quote_spanned!(span=> ::core::convert::AsRef::<str>::as_ref(&self.#ident));
             quote! {
                 if !::ulo_transport::__private::validate::is_email(#text) {
-                    __ulo_violations.push(::ulo_transport::FieldViolation::new(#wire, "must be an email address"));
+                    ::std::vec::Vec::push(&mut __ulo_violations, ::ulo_transport::FieldViolation::new(#wire, "must be an email address"));
                 }
             }
         }
@@ -117,7 +117,10 @@ fn bounded(value: TokenStream, wire: &str, subject: &str, min: Option<&Expr>, ma
     let violation = |template: String, args: TokenStream| {
         let template = LitStr::new(&template, proc_macro2::Span::call_site());
         quote! {
-            __ulo_violations.push(::ulo_transport::FieldViolation::new(#wire, ::std::format!(#template, #args)));
+            ::std::vec::Vec::push(
+                &mut __ulo_violations,
+                ::ulo_transport::FieldViolation::new(#wire, ::std::format!(#template, #args)),
+            );
         }
     };
     match (min, max) {

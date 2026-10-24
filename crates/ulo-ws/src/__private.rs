@@ -127,8 +127,9 @@ impl<G> Default for Hooks<G> {
     }
 }
 
-/// `(&&HookProbe::<Self>::new()).on_connect()` and its two siblings: `Some` where the gateway type
-/// implements the hook's trait, `None` otherwise.
+/// `(&&HookProbe::<Self>::new()).__ulo_on_connect()` and its two siblings: `Some` where the gateway
+/// type implements the hook's trait, `None` otherwise. Every probe method here is named `__ulo_*`,
+/// so it does not meet a user trait's method of a common name at the call (`ulo::__private`).
 pub struct HookProbe<G>(PhantomData<fn() -> G>);
 
 impl<G> HookProbe<G> {
@@ -144,61 +145,61 @@ impl<G> Default for HookProbe<G> {
 }
 
 pub trait ViaOnConnect<G> {
-    fn on_connect(&self) -> Option<OnConnectFn<G>>;
+    fn __ulo_on_connect(&self) -> Option<OnConnectFn<G>>;
 }
 
 impl<G: OnConnect> ViaOnConnect<G> for &HookProbe<G> {
-    fn on_connect(&self) -> Option<OnConnectFn<G>> {
+    fn __ulo_on_connect(&self) -> Option<OnConnectFn<G>> {
         Some(call_on_connect::<G>)
     }
 }
 
 pub trait NoOnConnect<G> {
-    fn on_connect(&self) -> Option<OnConnectFn<G>>;
+    fn __ulo_on_connect(&self) -> Option<OnConnectFn<G>>;
 }
 
 impl<G> NoOnConnect<G> for HookProbe<G> {
-    fn on_connect(&self) -> Option<OnConnectFn<G>> {
+    fn __ulo_on_connect(&self) -> Option<OnConnectFn<G>> {
         None
     }
 }
 
 pub trait ViaOnDisconnect<G> {
-    fn on_disconnect(&self) -> Option<OnDisconnectFn<G>>;
+    fn __ulo_on_disconnect(&self) -> Option<OnDisconnectFn<G>>;
 }
 
 impl<G: OnDisconnect> ViaOnDisconnect<G> for &HookProbe<G> {
-    fn on_disconnect(&self) -> Option<OnDisconnectFn<G>> {
+    fn __ulo_on_disconnect(&self) -> Option<OnDisconnectFn<G>> {
         Some(call_on_disconnect::<G>)
     }
 }
 
 pub trait NoOnDisconnect<G> {
-    fn on_disconnect(&self) -> Option<OnDisconnectFn<G>>;
+    fn __ulo_on_disconnect(&self) -> Option<OnDisconnectFn<G>>;
 }
 
 impl<G> NoOnDisconnect<G> for HookProbe<G> {
-    fn on_disconnect(&self) -> Option<OnDisconnectFn<G>> {
+    fn __ulo_on_disconnect(&self) -> Option<OnDisconnectFn<G>> {
         None
     }
 }
 
 pub trait ViaAfterInit<G> {
-    fn after_init(&self) -> Option<AfterInitFn<G>>;
+    fn __ulo_after_init(&self) -> Option<AfterInitFn<G>>;
 }
 
 impl<G: AfterInit> ViaAfterInit<G> for &HookProbe<G> {
-    fn after_init(&self) -> Option<AfterInitFn<G>> {
+    fn __ulo_after_init(&self) -> Option<AfterInitFn<G>> {
         Some(call_after_init::<G>)
     }
 }
 
 pub trait NoAfterInit<G> {
-    fn after_init(&self) -> Option<AfterInitFn<G>>;
+    fn __ulo_after_init(&self) -> Option<AfterInitFn<G>>;
 }
 
 impl<G> NoAfterInit<G> for HookProbe<G> {
-    fn after_init(&self) -> Option<AfterInitFn<G>> {
+    fn __ulo_after_init(&self) -> Option<AfterInitFn<G>> {
         None
     }
 }
@@ -306,9 +307,9 @@ fn encode_failure(err: BoxError) -> CallError {
 }
 
 /// The WebSocket reply probe, the shape of `ulo-transport`'s with [`Answer`] on the value side:
-/// `(&&&IntoReplyProbe::<Ws, _>::new(out)).into_reply(&cx)`. Three arms, each one reference
-/// deeper than the priority reads: `Result<V, E: Into<CallError>>`, `Result<V, E: Into<BoxError>>`,
-/// then any `V`. Each arm's trait carries the value marker `M`, inferred from `V: Answer<M>`.
+/// `(&&&IntoReplyProbe::<Ws, _>::new(out)).__ulo_into_reply(&cx)`. Three arms, each one
+/// reference deeper than the priority reads: `Result<V, E: Into<CallError>>`,
+/// `Result<V, E: Into<BoxError>>`, then any `V`. Each arm's trait carries the value marker `M`, inferred from `V: Answer<M>`.
 pub struct IntoReplyProbe<T, V> {
     value: Cell<Option<V>>,
     _t: PhantomData<fn() -> T>,
@@ -326,19 +327,19 @@ impl<T, V> IntoReplyProbe<T, V> {
 }
 
 pub trait ViaCallError<M> {
-    fn into_reply(&self, cx: &<Ws as Transport>::Cx) -> Result<Reply, BoxError>;
+    fn __ulo_into_reply(&self, cx: &<Ws as Transport>::Cx) -> Result<Reply, BoxError>;
 }
 
 pub trait ViaBoxError<M> {
-    fn into_reply(&self, cx: &<Ws as Transport>::Cx) -> Result<Reply, BoxError>;
+    fn __ulo_into_reply(&self, cx: &<Ws as Transport>::Cx) -> Result<Reply, BoxError>;
 }
 
 pub trait ViaValue<M> {
-    fn into_reply(&self, cx: &<Ws as Transport>::Cx) -> Result<Reply, BoxError>;
+    fn __ulo_into_reply(&self, cx: &<Ws as Transport>::Cx) -> Result<Reply, BoxError>;
 }
 
 impl<V: Answer<M>, E: Into<CallError>, M> ViaCallError<M> for &&IntoReplyProbe<Ws, Result<V, E>> {
-    fn into_reply(&self, cx: &WsCx) -> Result<Reply, BoxError> {
+    fn __ulo_into_reply(&self, cx: &WsCx) -> Result<Reply, BoxError> {
         match self.take()? {
             Ok(value) => value.answer(cx),
             Err(err) => {
@@ -350,7 +351,7 @@ impl<V: Answer<M>, E: Into<CallError>, M> ViaCallError<M> for &&IntoReplyProbe<W
 }
 
 impl<V: Answer<M>, E: Into<BoxError>, M> ViaBoxError<M> for &IntoReplyProbe<Ws, Result<V, E>> {
-    fn into_reply(&self, cx: &WsCx) -> Result<Reply, BoxError> {
+    fn __ulo_into_reply(&self, cx: &WsCx) -> Result<Reply, BoxError> {
         match self.take()? {
             Ok(value) => value.answer(cx),
             Err(err) => Err(err.into()),
@@ -359,7 +360,7 @@ impl<V: Answer<M>, E: Into<BoxError>, M> ViaBoxError<M> for &IntoReplyProbe<Ws, 
 }
 
 impl<V: Answer<M>, M> ViaValue<M> for IntoReplyProbe<Ws, V> {
-    fn into_reply(&self, cx: &WsCx) -> Result<Reply, BoxError> {
+    fn __ulo_into_reply(&self, cx: &WsCx) -> Result<Reply, BoxError> {
         self.take()?.answer(cx)
     }
 }

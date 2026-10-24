@@ -23,19 +23,19 @@ pub(crate) enum DependencyLabel {
     Param(Ident),
 }
 
-/// `(&::ulo::__private::Site::<Ty, #scope>::new()).field(d, "name");` or `.param(..)` for each
-/// dependency, spanned at its type: the call declares the dependency and asserts
-/// `AllowedIn<#scope>` for it. A type that is not `FromContainer` declares nothing and asserts
-/// nothing, so the read in `construct` is the one place that refuses it.
+/// `(&::ulo::__private::Site::<Ty, #scope>::new()).__ulo_field(d, "name");` or
+/// `.__ulo_param(..)` for each dependency, spanned at its type: the call declares the dependency
+/// and asserts `AllowedIn<#scope>` for it. A type that is not `FromContainer` declares nothing and
+/// asserts nothing, so the read in `construct` is the one place that refuses it.
 pub(crate) fn declare(dependencies: &[DependencySpec], scope: &TokenStream) -> TokenStream {
     let ulo = ulo();
     let d = dependencies_param();
     let calls = dependencies.iter().map(|dependency| {
         let ty = &dependency.ty;
         let (helper, name) = match &dependency.label {
-            DependencyLabel::Field(ident) => (Ident::new("field", dependency.span), label_text(ident)),
-            DependencyLabel::Index(index) => (Ident::new("field", dependency.span), index.to_string()),
-            DependencyLabel::Param(ident) => (Ident::new("param", dependency.span), label_text(ident)),
+            DependencyLabel::Field(ident) => (Ident::new("__ulo_field", dependency.span), label_text(ident)),
+            DependencyLabel::Index(index) => (Ident::new("__ulo_field", dependency.span), index.to_string()),
+            DependencyLabel::Param(ident) => (Ident::new("__ulo_param", dependency.span), label_text(ident)),
         };
         quote_spanned! {dependency.span=>
             {

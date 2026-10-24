@@ -111,7 +111,9 @@ where
 }
 
 /// The reply probe (transports DESIGN §2.3):
-/// `(&&&IntoReplyProbe::<T, _>::new(out)).into_reply(&cx)`.
+/// `(&&&IntoReplyProbe::<T, _>::new(out)).__ulo_into_reply(&cx)`. Every probe method here is
+/// named `__ulo_*`, so it does not meet a user trait's method of a common name at the call
+/// (`ulo::__private`).
 ///
 /// Three arms, each one reference deeper than the priority reads, since method lookup tries the
 /// impl on `&&IntoReplyProbe` first, then `&IntoReplyProbe`, then the bare type, and the first
@@ -134,21 +136,21 @@ impl<T, V> IntoReplyProbe<T, V> {
 /// user type with its own `From<MyErr> for CallError`. `Err` becomes
 /// `BoxError::from(CallError::from(e))`.
 pub trait ViaCallError<T: Transport> {
-    fn into_reply(&self, cx: &T::Cx) -> Result<T::Reply, BoxError>;
+    fn __ulo_into_reply(&self, cx: &T::Cx) -> Result<T::Reply, BoxError>;
 }
 
 /// `Result<V, E>` with `E: Into<BoxError>`: `Err` boxed unchanged.
 pub trait ViaBoxError<T: Transport> {
-    fn into_reply(&self, cx: &T::Cx) -> Result<T::Reply, BoxError>;
+    fn __ulo_into_reply(&self, cx: &T::Cx) -> Result<T::Reply, BoxError>;
 }
 
 /// Any `V: IntoReply<T>`: answered as the value.
 pub trait ViaValue<T: Transport> {
-    fn into_reply(&self, cx: &T::Cx) -> Result<T::Reply, BoxError>;
+    fn __ulo_into_reply(&self, cx: &T::Cx) -> Result<T::Reply, BoxError>;
 }
 
 impl<T: Transport, V: IntoReply<T>, E: Into<CallError>> ViaCallError<T> for &&IntoReplyProbe<T, Result<V, E>> {
-    fn into_reply(&self, cx: &T::Cx) -> Result<T::Reply, BoxError> {
+    fn __ulo_into_reply(&self, cx: &T::Cx) -> Result<T::Reply, BoxError> {
         match self.take()? {
             Ok(value) => reply::<T, V>(value, cx),
             Err(err) => {
@@ -160,7 +162,7 @@ impl<T: Transport, V: IntoReply<T>, E: Into<CallError>> ViaCallError<T> for &&In
 }
 
 impl<T: Transport, V: IntoReply<T>, E: Into<BoxError>> ViaBoxError<T> for &IntoReplyProbe<T, Result<V, E>> {
-    fn into_reply(&self, cx: &T::Cx) -> Result<T::Reply, BoxError> {
+    fn __ulo_into_reply(&self, cx: &T::Cx) -> Result<T::Reply, BoxError> {
         match self.take()? {
             Ok(value) => reply::<T, V>(value, cx),
             Err(err) => Err(err.into()),
@@ -169,7 +171,7 @@ impl<T: Transport, V: IntoReply<T>, E: Into<BoxError>> ViaBoxError<T> for &IntoR
 }
 
 impl<T: Transport, V: IntoReply<T>> ViaValue<T> for IntoReplyProbe<T, V> {
-    fn into_reply(&self, cx: &T::Cx) -> Result<T::Reply, BoxError> {
+    fn __ulo_into_reply(&self, cx: &T::Cx) -> Result<T::Reply, BoxError> {
         reply::<T, V>(self.take()?, cx)
     }
 }
@@ -191,23 +193,23 @@ fn reply<T: Transport, V: IntoReply<T>>(value: V, cx: &T::Cx) -> Result<T::Reply
 /// What `#[derive(Validate)]` generates calls.
 pub mod validate {
     /// The length a `length(..)` rule checks, chosen by autoref:
-    /// `(&&LengthProbe(&self.field)).length()` with both traits imported. Text, anything
+    /// `(&&LengthProbe(&self.field)).__ulo_length()` with both traits imported. Text, anything
     /// `AsRef<str>`, is counted in characters, so a `max` bounds what a person typed rather than its
     /// UTF-8 encoding; a collection whose borrowing iterator knows its length is counted in items.
     pub struct LengthProbe<'a, T: ?Sized>(pub &'a T);
 
     pub trait ViaChars {
-        fn length(&self) -> usize;
+        fn __ulo_length(&self) -> usize;
     }
 
     impl<T: ?Sized + AsRef<str>> ViaChars for &LengthProbe<'_, T> {
-        fn length(&self) -> usize {
+        fn __ulo_length(&self) -> usize {
             <T as AsRef<str>>::as_ref(self.0).chars().count()
         }
     }
 
     pub trait ViaItems {
-        fn length(&self) -> usize;
+        fn __ulo_length(&self) -> usize;
     }
 
     impl<'a, T: ?Sized> ViaItems for LengthProbe<'a, T>
@@ -215,7 +217,7 @@ pub mod validate {
         &'a T: IntoIterator,
         <&'a T as IntoIterator>::IntoIter: ExactSizeIterator,
     {
-        fn length(&self) -> usize {
+        fn __ulo_length(&self) -> usize {
             <&'a T as IntoIterator>::into_iter(self.0).len()
         }
     }

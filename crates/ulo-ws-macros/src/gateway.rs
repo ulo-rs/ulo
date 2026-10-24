@@ -10,7 +10,7 @@
 //!     fn session() -> ::ulo_ws::SessionFactory { ::ulo_ws::SessionFactory::default_of::<ChatSession>() }
 //!     fn mount_gateway(m: &mut ::ulo::Mount<'_>) {
 //!         let hooks = ::ulo_ws::__private::Hooks::<Self>::new()
-//!             .on_connect((&&::ulo_ws::__private::HookProbe::<Self>::new()).on_connect())
+//!             .on_connect((&&::ulo_ws::__private::HookProbe::<Self>::new()).__ulo_on_connect())
 //!             /* on_disconnect, after_init likewise */;
 //!         ::ulo_ws::__private::mount_connect::<Self>(m, hooks);
 //!     }
@@ -60,9 +60,9 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
                     ViaOnDisconnect as _,
                 };
                 let __ulo_hooks = ::ulo_ws::__private::Hooks::<Self>::new()
-                    .on_connect((&&::ulo_ws::__private::HookProbe::<Self>::new()).on_connect())
-                    .on_disconnect((&&::ulo_ws::__private::HookProbe::<Self>::new()).on_disconnect())
-                    .after_init((&&::ulo_ws::__private::HookProbe::<Self>::new()).after_init());
+                    .on_connect((&&::ulo_ws::__private::HookProbe::<Self>::new()).__ulo_on_connect())
+                    .on_disconnect((&&::ulo_ws::__private::HookProbe::<Self>::new()).__ulo_on_disconnect())
+                    .after_init((&&::ulo_ws::__private::HookProbe::<Self>::new()).__ulo_after_init());
                 ::ulo_ws::__private::mount_connect::<Self>(__ulo_m, __ulo_hooks);
             }
         }

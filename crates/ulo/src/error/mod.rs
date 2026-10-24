@@ -761,7 +761,9 @@ fn reason_permanent(reason: &FailureReason, depth: usize) -> bool {
 /// that answers every panic alike tests this instead of matching both.
 ///
 /// Also true for a `ConnectError` whose reason is `Panicked`, bare or inside `LoadError` or
-/// `StartupError`, which is how a handler calling `load` meets a lazily loaded module's panic.
+/// `StartupError`, which is how a handler calling `load` meets a lazily loaded module's panic,
+/// and for a [`PreparePanicked`] in an entry of `StartupError::Configure` or of the
+/// [`ConfigureErrors`] it holds, which is how `listen()` reports a server's panicking `prepare`.
 ///
 /// The panic is found under a constructor or a `try_` factory that returned a dependency's
 /// `LookupError` as its own `Err`, and down any error's `source()` chain. Inside a [`Redacted`],
@@ -810,12 +812,26 @@ fn recognized<'e>(error: impl ByType<'e>, depth: usize) -> Option<bool> {
         return Some(matches!(load, LoadError::Connect(connect) if connect_panicked(connect, depth)));
     }
     if let Some(startup) = error.get::<StartupError>() {
-        return Some(matches!(startup, StartupError::Connect(connect) if connect_panicked(connect, depth)));
+        return Some(match startup {
+            StartupError::Connect(connect) => connect_panicked(connect, depth),
+            StartupError::Configure(errors) => configure_panicked(errors, depth),
+            StartupError::Wiring(_) | StartupError::Bind { .. } => false,
+        });
+    }
+    if let Some(errors) = error.get::<ConfigureErrors>() {
+        return Some(configure_panicked(errors, depth));
     }
     if let Some(redacted) = error.get::<Redacted>() {
         return Some(redacted_panicked(redacted, depth + 1));
     }
     None
+}
+
+/// Each entry's `source` is a `Redacted`, which `ConfigureError::source()` does not hand out:
+/// `Display` already writes its text, so a chain reporter would print it twice. The entries are
+/// walked here instead.
+fn configure_panicked(errors: &ConfigureErrors, depth: usize) -> bool {
+    errors.iter().any(|entry| redacted_panicked(&entry.source, depth + 1))
 }
 
 fn lookup_panicked(error: &LookupError, depth: usize) -> bool {

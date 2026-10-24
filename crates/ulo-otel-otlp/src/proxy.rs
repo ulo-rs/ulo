@@ -3,7 +3,8 @@ use std::fmt;
 /// Where the client's proxy comes from. `Debug` never prints the URL, which may carry credentials.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) enum ProxyChoice {
-    /// The client's default: `ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`.
+    /// The client's default: `ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, and under
+    /// `reqwest-blocking` the macOS or Windows system proxy settings where those are unset.
     #[default]
     Environment,
     /// This URL, whatever the environment says.

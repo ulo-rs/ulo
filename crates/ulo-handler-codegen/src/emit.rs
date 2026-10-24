@@ -35,7 +35,7 @@
 //! let __ulo_arg1: Ext<CurrentUser> = <Ext<CurrentUser> as P<Http, _>>::extract(&cx).await?;
 //! let __ulo_this = <transport>::__private::controller::<Self, Http>(&cx).await?;
 //! let __ulo_out = Self::get(&*__ulo_this, __ulo_arg0, __ulo_arg1).await;
-//! (&&&<transport>::__private::IntoReplyProbe::<Http, _>::new(__ulo_out)).into_reply(&cx)
+//! (&&&<transport>::__private::IntoReplyProbe::<Http, _>::new(__ulo_out)).__ulo_into_reply(&cx)
 //! ```
 //!
 //! Parameters extract in order, inside `dispatch`'s call, so after every guard admits. A
@@ -257,15 +257,17 @@ pub fn dependencies(sig: &HandlerSig, paths: &Paths) -> TokenStream {
 
 /// A block evaluating to the handler's `::ulo::Metadata`: `controller(expr)` per impl-level
 /// declaration and `method(expr)` per method-level one, each spanned at its expression and
-/// compiled under its gates, built once when the handler mounts.
+/// compiled under its gates, built once when the handler mounts. Both are called by path: method
+/// syntax on the owned `Metadata` would reach a user trait's `controller(&self)` implemented for
+/// every type one autoref step before the inherent `&mut self` method.
 ///
 /// Each value first passes the transport probe (X24), spanned at the value and under the same
 /// gates, so a metadata type naming another transport fails E0308 where it is written:
 ///
 /// ```text
 /// let __ulo_value = <expr>;
-/// let (): () = (&&&::ulo::__private::MetaProbe::<Marker, _>::new(&__ulo_value)).check();
-/// __ulo_meta.method(__ulo_value);
+/// let (): () = (&&&::ulo::__private::MetaProbe::<Marker, _>::new(&__ulo_value)).__ulo_check();
+/// ::ulo::Metadata::method(&mut __ulo_meta, __ulo_value);
 /// ```
 pub fn metadata(meta: &MetaTokens, paths: &Paths) -> TokenStream {
     let core = &paths.core;
@@ -276,14 +278,14 @@ pub fn metadata(meta: &MetaTokens, paths: &Paths) -> TokenStream {
         let MetaExpr { gates, expr } = declared;
         let tier = Ident::new(tier, expr.span());
         let probe = quote_spanned! {expr.span()=>
-            let (): () = (&&&#core::__private::MetaProbe::<#marker, _>::new(&#value)).check();
+            let (): () = (&&&#core::__private::MetaProbe::<#marker, _>::new(&#value)).__ulo_check();
         };
         quote_spanned! {expr.span()=>
             #(#gates)*
             {
                 let #value = #expr;
                 #probe
-                #metadata.#tier(#value);
+                #core::Metadata::#tier(&mut #metadata, #value);
             }
         }
     };

@@ -1,0 +1,11 @@
+error[E0599]: no method named `__ulo_matches` found for struct `ulo_grpc::__private::ParamCheck<(ulo_grpc::__private::Shaped<false>, Number), (ulo_grpc::__private::Shaped<false>, AddRequest)>` in the current scope
+  --> tests/ui/grpc_request_of_another_message_beside_a_user_matches.rs:21:30
+   |
+21 |     async fn add(&self, req: Message<Number>) -> Sum {
+   |                              ^^^^^^^
+   |
+help: there is a method `matches` with a similar name
+   |
+21 -     async fn add(&self, req: Message<Number>) -> Sum {
+21 +     async fn add(&self, req: matches<Number>) -> Sum {
+   |

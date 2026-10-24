@@ -15,9 +15,15 @@ use crate::transport::Transport;
 use crate::transport::metadata::TransportMetadata;
 
 /// One injection point of type `S` in a construct of scope `Sc`, as the code `#[injectable]`
-/// generates declares it. The generated `dependencies` calls `field` or `param` on
+/// generates declares it. The generated `dependencies` calls `__ulo_field` or `__ulo_param` on
 /// `(&Site::<S, Sc>::new())` with [`Declare`] and [`Declined`] in scope, which method resolution
 /// settles on whether `S: FromContainer`.
+///
+/// Every probe method in this module, and in each transport crate's `__private`, carries the
+/// `__ulo_` prefix. The probe call is method syntax in the user's module, where a user trait in
+/// scope with a method of the same name, implemented for every type, is a candidate at the same
+/// autoref step as the probe's arm: the call is then ambiguous (E0034), or, where the arm's bounds
+/// do not hold, resolves to the user's method.
 ///
 /// A type that is not `FromContainer` takes the `Declined` arm and declares nothing. The refusal
 /// for it is the read in `construct`, which names `FromContainer` itself; declaring a second time
@@ -36,24 +42,24 @@ impl<S, Sc> Site<S, Sc> {
 /// The arm for a `FromContainer` type. Its scope bound is on the method, so it is checked, and
 /// reported at the field, only for a type that got this far: an `Ext` in an explicit singleton.
 pub trait Declare<S, Sc: Scope> {
-    fn field(&self, d: &mut Dependencies, name: &'static str)
+    fn __ulo_field(&self, d: &mut Dependencies, name: &'static str)
     where
         S: AllowedIn<Sc>;
 
-    fn param(&self, d: &mut Dependencies, name: &'static str)
+    fn __ulo_param(&self, d: &mut Dependencies, name: &'static str)
     where
         S: AllowedIn<Sc>;
 }
 
 impl<S: FromContainer, Sc: Scope> Declare<S, Sc> for Site<S, Sc> {
-    fn field(&self, d: &mut Dependencies, name: &'static str)
+    fn __ulo_field(&self, d: &mut Dependencies, name: &'static str)
     where
         S: AllowedIn<Sc>,
     {
         d.field::<S>(name);
     }
 
-    fn param(&self, d: &mut Dependencies, name: &'static str)
+    fn __ulo_param(&self, d: &mut Dependencies, name: &'static str)
     where
         S: AllowedIn<Sc>,
     {
@@ -64,9 +70,9 @@ impl<S: FromContainer, Sc: Scope> Declare<S, Sc> for Site<S, Sc> {
 /// The arm for a type that is not `FromContainer`; reached through one more autoref than
 /// [`Declare`], so it applies only when that one does not.
 pub trait Declined<S, Sc> {
-    fn field(&self, _d: &mut Dependencies, _name: &'static str) {}
+    fn __ulo_field(&self, _d: &mut Dependencies, _name: &'static str) {}
 
-    fn param(&self, _d: &mut Dependencies, _name: &'static str) {}
+    fn __ulo_param(&self, _d: &mut Dependencies, _name: &'static str) {}
 }
 
 impl<S, Sc> Declined<S, Sc> for &Site<S, Sc> {}
@@ -140,7 +146,7 @@ pub struct Shared<T>(pub T);
 /// value, at either tier, spanned at the value and under its gates (transports DESIGN §2.5, X24):
 ///
 /// ```text
-/// let (): () = (&&&::ulo::__private::MetaProbe::<::ulo_http::Http, _>::new(&value)).check();
+/// let (): () = (&&&::ulo::__private::MetaProbe::<::ulo_http::Http, _>::new(&value)).__ulo_check();
 /// ```
 ///
 /// with `MetaSame`, `MetaOther` and `MetaAny` imported anonymously. Three arms, each one reference
@@ -175,31 +181,31 @@ pub struct MetaMismatch<T, U> {
 
 /// The first arm: the value's transport is the handler's.
 pub trait MetaSame {
-    fn check(&self);
+    fn __ulo_check(&self);
 }
 
 impl<T: Transport, V: TransportMetadata<Transport = T>> MetaSame for &&MetaProbe<T, V> {
-    fn check(&self) {}
+    fn __ulo_check(&self) {}
 }
 
 /// The second arm: the value names another transport.
 pub trait MetaOther<T, U> {
-    fn check(&self) -> MetaMismatch<T, U>;
+    fn __ulo_check(&self) -> MetaMismatch<T, U>;
 }
 
 impl<T: Transport, V: TransportMetadata> MetaOther<T, V::Transport> for &MetaProbe<T, V> {
-    fn check(&self) -> MetaMismatch<T, V::Transport> {
+    fn __ulo_check(&self) -> MetaMismatch<T, V::Transport> {
         MetaMismatch { _t: PhantomData }
     }
 }
 
 /// The third arm: the value names no transport and is valid on every one.
 pub trait MetaAny {
-    fn check(&self);
+    fn __ulo_check(&self);
 }
 
 impl<T, V: ?Sized> MetaAny for MetaProbe<T, V> {
-    fn check(&self) {}
+    fn __ulo_check(&self) {}
 }
 
 /// What a constructor returns, `Self` or `Result<Self, E>`, decided by type rather than by the
@@ -226,8 +232,8 @@ impl<T, E: Into<BoxError>> IntoConstructed<T> for Result<T, E> {
 }
 
 /// The autoref probes behind `hooks!` and `#[injectable]`'s generated `Construct::hooks`:
-/// `(&Probe::of(h)).register_init(h)` reaches `RegisterInit` when the concrete type implements
-/// `OnModuleInit` and falls back, one autoref further, to the no-op `NoInit` otherwise.
+/// `(&Probe::of(h)).__ulo_register_init(h)` reaches `RegisterInit` when the concrete type
+/// implements `OnModuleInit` and falls back, one autoref further, to the no-op `NoInit` otherwise.
 pub mod hooks {
     use std::marker::PhantomData;
 
@@ -245,67 +251,67 @@ pub mod hooks {
     }
 
     pub trait RegisterInit<T> {
-        fn register_init(&self, h: &mut Hooks<T>);
+        fn __ulo_register_init(&self, h: &mut Hooks<T>);
     }
     impl<T: OnModuleInit> RegisterInit<T> for Probe<T> {
-        fn register_init(&self, h: &mut Hooks<T>) {
+        fn __ulo_register_init(&self, h: &mut Hooks<T>) {
             h.on_module_init();
         }
     }
     pub trait NoInit<T> {
-        fn register_init(&self, _h: &mut Hooks<T>) {}
+        fn __ulo_register_init(&self, _h: &mut Hooks<T>) {}
     }
     impl<T> NoInit<T> for &Probe<T> {}
 
     pub trait RegisterBootstrap<T> {
-        fn register_bootstrap(&self, h: &mut Hooks<T>);
+        fn __ulo_register_bootstrap(&self, h: &mut Hooks<T>);
     }
     impl<T: OnApplicationBootstrap> RegisterBootstrap<T> for Probe<T> {
-        fn register_bootstrap(&self, h: &mut Hooks<T>) {
+        fn __ulo_register_bootstrap(&self, h: &mut Hooks<T>) {
             h.on_application_bootstrap();
         }
     }
     pub trait NoBootstrap<T> {
-        fn register_bootstrap(&self, _h: &mut Hooks<T>) {}
+        fn __ulo_register_bootstrap(&self, _h: &mut Hooks<T>) {}
     }
     impl<T> NoBootstrap<T> for &Probe<T> {}
 
     pub trait RegisterDestroy<T> {
-        fn register_destroy(&self, h: &mut Hooks<T>);
+        fn __ulo_register_destroy(&self, h: &mut Hooks<T>);
     }
     impl<T: OnModuleDestroy> RegisterDestroy<T> for Probe<T> {
-        fn register_destroy(&self, h: &mut Hooks<T>) {
+        fn __ulo_register_destroy(&self, h: &mut Hooks<T>) {
             h.on_module_destroy();
         }
     }
     pub trait NoDestroy<T> {
-        fn register_destroy(&self, _h: &mut Hooks<T>) {}
+        fn __ulo_register_destroy(&self, _h: &mut Hooks<T>) {}
     }
     impl<T> NoDestroy<T> for &Probe<T> {}
 
     pub trait RegisterBeforeShutdown<T> {
-        fn register_before_shutdown(&self, h: &mut Hooks<T>);
+        fn __ulo_register_before_shutdown(&self, h: &mut Hooks<T>);
     }
     impl<T: BeforeApplicationShutdown> RegisterBeforeShutdown<T> for Probe<T> {
-        fn register_before_shutdown(&self, h: &mut Hooks<T>) {
+        fn __ulo_register_before_shutdown(&self, h: &mut Hooks<T>) {
             h.before_application_shutdown();
         }
     }
     pub trait NoBeforeShutdown<T> {
-        fn register_before_shutdown(&self, _h: &mut Hooks<T>) {}
+        fn __ulo_register_before_shutdown(&self, _h: &mut Hooks<T>) {}
     }
     impl<T> NoBeforeShutdown<T> for &Probe<T> {}
 
     pub trait RegisterShutdown<T> {
-        fn register_shutdown(&self, h: &mut Hooks<T>);
+        fn __ulo_register_shutdown(&self, h: &mut Hooks<T>);
     }
     impl<T: OnApplicationShutdown> RegisterShutdown<T> for Probe<T> {
-        fn register_shutdown(&self, h: &mut Hooks<T>) {
+        fn __ulo_register_shutdown(&self, h: &mut Hooks<T>) {
             h.on_application_shutdown();
         }
     }
     pub trait NoShutdown<T> {
-        fn register_shutdown(&self, _h: &mut Hooks<T>) {}
+        fn __ulo_register_shutdown(&self, _h: &mut Hooks<T>) {}
     }
     impl<T> NoShutdown<T> for &Probe<T> {}
 }
@@ -342,9 +348,9 @@ pub mod factory {
     }
 
     /// The providers arm: a single binding declared by closure, `with = ..`, `with(<scope>) = ..`
-    /// or a bare closure, in the scope `S` (`Auto` for the first and the last). `bind_as` is the
-    /// key-first form `K: with = ..`, which also binds the output under `K` through the coercion
-    /// closure written at the expansion, where `Arc<Built>` and `Arc<K>` are concrete.
+    /// or a bare closure, in the scope `S` (`Auto` for the first and the last). `__ulo_bind_as` is
+    /// the key-first form `K: with = ..`, which also binds the output under `K` through the
+    /// coercion closure written at the expansion, where `Arc<Built>` and `Arc<K>` are concrete.
     ///
     /// `#[track_caller]` on every method carries the providers entry's location through to the
     /// binding record, which the wiring errors print.
@@ -352,10 +358,10 @@ pub mod factory {
         type Built: Send + Sync + 'static;
 
         #[track_caller]
-        fn bind<S: ProviderScope>(&self, m: &mut ModuleDef<'_>);
+        fn __ulo_bind<S: ProviderScope>(&self, m: &mut ModuleDef<'_>);
 
         #[track_caller]
-        fn bind_as<K, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
+        fn __ulo_bind_as<K, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
         where
             K: ?Sized + Send + Sync + 'static,
             S: ProviderScope,
@@ -370,14 +376,14 @@ pub mod factory {
         type Built = T;
 
         #[track_caller]
-        fn bind<S: ProviderScope>(&self, m: &mut ModuleDef<'_>) {
+        fn __ulo_bind<S: ProviderScope>(&self, m: &mut ModuleDef<'_>) {
             if let Some(factory) = self.factory.take() {
                 S::try_bind::<Args, F, T, E>(m, factory);
             }
         }
 
         #[track_caller]
-        fn bind_as<K, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
+        fn __ulo_bind_as<K, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
         where
             K: ?Sized + Send + Sync + 'static,
             S: ProviderScope,
@@ -393,10 +399,10 @@ pub mod factory {
         type Built: Send + Sync + 'static;
 
         #[track_caller]
-        fn bind<S: ProviderScope>(&self, m: &mut ModuleDef<'_>);
+        fn __ulo_bind<S: ProviderScope>(&self, m: &mut ModuleDef<'_>);
 
         #[track_caller]
-        fn bind_as<K, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
+        fn __ulo_bind_as<K, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
         where
             K: ?Sized + Send + Sync + 'static,
             S: ProviderScope,
@@ -410,14 +416,14 @@ pub mod factory {
         type Built = <F as Factory<Args>>::Output;
 
         #[track_caller]
-        fn bind<S: ProviderScope>(&self, m: &mut ModuleDef<'_>) {
+        fn __ulo_bind<S: ProviderScope>(&self, m: &mut ModuleDef<'_>) {
             if let Some(factory) = self.factory.take() {
                 S::bind::<Args, F>(m, factory);
             }
         }
 
         #[track_caller]
-        fn bind_as<K, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
+        fn __ulo_bind_as<K, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
         where
             K: ?Sized + Send + Sync + 'static,
             S: ProviderScope,
@@ -529,7 +535,7 @@ pub mod factory {
         type Built: Send + Sync + 'static;
 
         #[track_caller]
-        fn contribute_with<U, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
+        fn __ulo_contribute_with<U, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
         where
             U: ?Sized + Send + Sync + 'static,
             S: ContributionScope,
@@ -544,7 +550,7 @@ pub mod factory {
         type Built = T;
 
         #[track_caller]
-        fn contribute_with<U, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
+        fn __ulo_contribute_with<U, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
         where
             U: ?Sized + Send + Sync + 'static,
             S: ContributionScope,
@@ -560,7 +566,7 @@ pub mod factory {
         type Built: Send + Sync + 'static;
 
         #[track_caller]
-        fn contribute_with<U, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
+        fn __ulo_contribute_with<U, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
         where
             U: ?Sized + Send + Sync + 'static,
             S: ContributionScope,
@@ -574,7 +580,7 @@ pub mod factory {
         type Built = <F as Factory<Args>>::Output;
 
         #[track_caller]
-        fn contribute_with<U, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
+        fn __ulo_contribute_with<U, S, C>(&self, m: &mut ModuleDef<'_>, coerce: C)
         where
             U: ?Sized + Send + Sync + 'static,
             S: ContributionScope,

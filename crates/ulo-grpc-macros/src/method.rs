@@ -12,10 +12,10 @@
 //!     -> Result<::ulo_grpc::__private::Answer, ::ulo::BoxError>
 //! {
 //!     (&&ParamProbe::<pb::user_service::GetUser, Message<pb::GetUserRequest>>::new())
-//!         .body::<{ streams_request(<pb::user_service::GetUser as Method>::SHAPE) }>().matches();
+//!         .__ulo_body::<{ streams_request(<pb::user_service::GetUser as Method>::SHAPE) }>().__ulo_matches();
 //!     let __ulo_out = Self::get_user(self, __ulo_p0).await;
 //!     (&&&&&&ReplyProbe::<pb::user_service::GetUser, _>::new(__ulo_out))
-//!         .answer::<{ streams_reply(<pb::user_service::GetUser as Method>::SHAPE) }>().checked()
+//!         .__ulo_answer::<{ streams_reply(<pb::user_service::GetUser as Method>::SHAPE) }>().__ulo_checked()
 //! }
 //! ```
 //!
@@ -94,8 +94,8 @@ fn hidden_method(item: &ImplItemFn, sig: &HandlerSig, marker: &Type, ident: &Ide
         let ty = &param.ty;
         quote_spanned! {param.span=>
             (&&::ulo_grpc::__private::ParamProbe::<#marker, #ty>::new())
-                .body::<{ ::ulo_grpc::__private::streams_request(<#marker as ::ulo_grpc::Method>::SHAPE) }>()
-                .matches();
+                .__ulo_body::<{ ::ulo_grpc::__private::streams_request(<#marker as ::ulo_grpc::Method>::SHAPE) }>()
+                .__ulo_matches();
         }
     });
     let method = &sig.ident;
@@ -108,8 +108,8 @@ fn hidden_method(item: &ImplItemFn, sig: &HandlerSig, marker: &Type, ident: &Ide
     };
     let reply = quote_spanned! {reply_span=>
         (&&&&&&::ulo_grpc::__private::ReplyProbe::<#marker, _>::new(#out))
-            .answer::<{ ::ulo_grpc::__private::streams_reply(<#marker as ::ulo_grpc::Method>::SHAPE) }>()
-            .checked()
+            .__ulo_answer::<{ ::ulo_grpc::__private::streams_reply(<#marker as ::ulo_grpc::Method>::SHAPE) }>()
+            .__ulo_checked()
     };
     quote! {
         #(#cfgs)*

@@ -45,6 +45,14 @@ pub trait Transport: 'static {
     /// whose handlers belongs to a transport answering `true`, since nothing would read it.
     const READS_PREFIX: bool = false;
 
+    /// Whether `dispatch` builds the handler's controller ahead of the interceptor chain, once
+    /// every guard has admitted, so a failure to build it reaches the error handlers without
+    /// passing through the interceptors. `true` unless the transport says otherwise. A transport
+    /// answering `false` leaves the controller to the handler, which builds it inside the chain
+    /// if it reads it at all: `ulo_ws::WsConnect`, whose handler is a gateway's connection phase
+    /// and reads the gateway only to call a hook it implements.
+    const BUILDS_CONTROLLER: bool = true;
+
     /// Per-call context: a cheap-clone handle to the execution.
     type Cx: Clone + Send + Sync;
     type Reply: Send;

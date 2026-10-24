@@ -6,11 +6,11 @@
 //!
 //! ```text
 //! ::ulo_rpc::__private::RpcHandler::new("invoices.create", ::ulo_rpc::__private::Kind::Message, __ulo_call)
-//!     .payload((&&&::ulo_rpc::__private::PayloadKindProbe::<P0>::new()).kind())
+//!     .payload((&&&::ulo_rpc::__private::PayloadKindProbe::<P0>::new()).__ulo_kind())
 //!     /* one per parameter */
 //! ```
 //!
-//! and the shape `::ulo_rpc::__private::shape(false || (&&InboundProbe::<P0>::new()).streams() || .., (&&&__ulo_reply).streams())`,
+//! and the shape `::ulo_rpc::__private::shape(false || (&&InboundProbe::<P0>::new()).__ulo_streams() || .., (&&&__ulo_reply).__ulo_streams())`,
 //! the request side probed at each parameter's type and the reply side at the type the handler
 //! returns, through `ReplyShapeProbe` over a closure that names the handler's call and is never
 //! run, so an alias or an opaque type reads as the type it stands for. The generated call names
@@ -120,7 +120,7 @@ fn handler_value(kind: Kind, pattern: &LitStr, sig: &HandlerSig, paths: &Paths) 
     let probes = sig.params.iter().map(|param| {
         let ty = &param.ty;
         quote_spanned! {param.span=>
-            .payload((&&&#this::__private::PayloadKindProbe::<#ty>::new()).kind())
+            .payload((&&&#this::__private::PayloadKindProbe::<#ty>::new()).__ulo_kind())
         }
     });
     quote! {
@@ -135,24 +135,24 @@ fn handler_value(kind: Kind, pattern: &LitStr, sig: &HandlerSig, paths: &Paths) 
 
 /// `.shape(..)`'s argument: the request side from one `Inbound<T>` probe per parameter, the reply
 /// side from `ReplyShapeProbe` over the handler's output type. For `#[event]` the block first
-/// asserts the output is no stream, spanned at the return type: the stream arms of `event_reply`
-/// answer `StreamedReplyOnEvent`, which `let (): ()` refuses.
+/// asserts the output is no stream, spanned at the return type: the stream arms of
+/// `__ulo_event_reply` answer `StreamedReplyOnEvent`, which `let (): ()` refuses.
 fn shape(kind: Kind, sig: &HandlerSig, output_span: Span, paths: &Paths) -> TokenStream {
     let this = &paths.this;
     let probes = sig.params.iter().map(|param| {
         let ty = &param.ty;
         quote_spanned! {param.span=>
-            || (&&#this::__private::InboundProbe::<#ty>::new()).streams()
+            || (&&#this::__private::InboundProbe::<#ty>::new()).__ulo_streams()
         }
     });
     let reply = Ident::new("__ulo_reply", Span::mixed_site());
     let probe = reply_probe(sig, &reply, paths);
     let event_check = (kind == Kind::Event).then(|| {
         quote_spanned! {output_span=>
-            let (): () = (&&&#reply).event_reply();
+            let (): () = (&&&#reply).__ulo_event_reply();
         }
     });
-    let streams = quote_spanned! {output_span=> (&&&#reply).streams() };
+    let streams = quote_spanned! {output_span=> (&&&#reply).__ulo_streams() };
     quote! {
         {
             #[allow(unused_imports)]

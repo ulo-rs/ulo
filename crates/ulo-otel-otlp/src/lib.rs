@@ -33,9 +33,13 @@
 //! `OTEL_SPAN_*_LIMIT` names are read by the SDK; the options carry no value for them.
 //!
 //! One read is not an OpenTelemetry variable: the client takes its proxy from the environment
-//! (`ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`) as ureq's and reqwest's defaults do.
-//! [`OtlpExporter::proxy`] names one explicitly and [`OtlpExporter::no_proxy`] turns proxies off,
-//! each whatever the environment says, with either client.
+//! (`ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`), as ureq's and reqwest's defaults do.
+//! Under `reqwest-blocking` on macOS and Windows the system's proxy settings fill what those
+//! variables leave unset: an `HTTP_PROXY` or `HTTPS_PROXY` from the SCDynamicStore on macOS, and
+//! both and `NO_PROXY` from the registry's Internet Settings on Windows, which reqwest's
+//! `system-proxy` feature reads and ureq never does. [`OtlpExporter::proxy`] names one explicitly
+//! and [`OtlpExporter::no_proxy`] turns proxies off, each whatever the environment and the system
+//! settings say, with either client.
 
 #[cfg(not(feature = "reqwest-blocking"))]
 mod client;
