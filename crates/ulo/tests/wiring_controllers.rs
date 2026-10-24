@@ -111,7 +111,7 @@ fn a_provider_reading_a_controller_in_its_own_module_is_refused() {
     assert_eq!(reads.len(), 1, "{errors}");
     let (controller, consumer, module, controller_module) = &reads[0];
     assert_eq!(*controller, Key::of::<NoHandlers, ()>());
-    assert!(consumer.starts_with("Reader"), "the reader is named: {consumer}");
+    assert_eq!(consumer, "Reader factory (param #1)", "the reader and its injection point");
     assert_eq!((module.as_str(), controller_module.as_str()), (mod_name::<A>().as_str(), mod_name::<A>().as_str()));
     assert_eq!(errors.len(), 1, "{errors}");
 }
@@ -129,7 +129,7 @@ fn an_optional_read_of_an_exported_controller_from_another_module_is_refused() {
     assert_eq!(reads.len(), 1, "{errors}");
     let (controller, consumer, module, controller_module) = &reads[0];
     assert_eq!(*controller, Key::of::<NoHandlers, ()>());
-    assert!(consumer.starts_with("Reader"), "{consumer}");
+    assert_eq!(consumer, "Reader factory (param #1)", "the reader and its injection point");
     assert_eq!(module, &mod_name::<A>(), "the reader's module");
     assert_eq!(controller_module, &mod_name::<X>(), "the controller's module");
     assert_eq!(errors.len(), 1, "{errors}");
@@ -152,9 +152,11 @@ fn a_readiness_check_a_hook_and_an_alias_reading_a_controller_are_refused() {
     }
     let mut readers: Vec<&str> = reads.iter().map(|(_, consumer, _, _)| consumer.as_str()).collect();
     readers.sort_unstable();
-    assert!(readers[0].starts_with("OnModuleDestroy hook of Reader"), "{readers:?}");
-    assert!(readers[1].starts_with("readiness check of Reader"), "{readers:?}");
-    assert!(readers[2].starts_with("the alias `NoHandlers @ Q`"), "{readers:?}");
+    assert_eq!(
+        readers,
+        ["OnModuleDestroy hook of Reader (param #1)", "readiness check of Reader (param #1)", "the alias `NoHandlers @ Q`"],
+        "each reader with its injection point"
+    );
     assert_eq!(errors.len(), 3, "{errors}");
 }
 

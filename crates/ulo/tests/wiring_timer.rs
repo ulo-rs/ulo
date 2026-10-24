@@ -261,19 +261,34 @@ fn refused_either_way(root: impl Fn() -> Mod<A>) -> Vec<(BoundItem, Option<Key>,
     found
 }
 
+trait Plugin: Send + Sync {}
+
+impl Plugin for Svc {}
+
 #[test]
 fn a_zero_construction_timeout_is_refused_at_its_timeout_call() {
     struct Inner;
-    let timeout = line!() + 5;
+    let timeout = line!() + 6;
+    let contribution = line!() + 8;
     let found = refused_either_way(|| {
         Mod::<A>::new(|m| {
             m.import(Mod::<Inner>::new(|m| {
                 m.singleton(|| async { Svc })
                     .timeout(ZERO);
+                m.contribute::<dyn Plugin>()
+                    .singleton(|| async { Svc }, |p| p)
+                    .timeout(ZERO);
             }));
         })
     });
-    assert_eq!(found, [(BoundItem::Construction, Some(Key::of::<Svc, ()>()), mod_name::<Inner>(), timeout)], "the module that binds it");
+    assert_eq!(
+        found,
+        [
+            (BoundItem::Construction, Some(Key::of::<Svc, ()>()), mod_name::<Inner>(), timeout),
+            (BoundItem::Construction, Some(Key::of::<dyn Plugin, ()>()), mod_name::<Inner>(), contribution),
+        ],
+        "the module that binds each, and a contribution's own `.timeout(..)` line"
+    );
 }
 
 #[test]

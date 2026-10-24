@@ -244,6 +244,7 @@ async fn a_prepare_that_panics_is_a_configure_entry_naming_its_transport_and_the
         let dropped = Arc::clone(&dropped);
         move |m| {
             let dropped = Arc::clone(&dropped);
+            m.secret(&ulo::Secret::new("exploded".to_owned()));
             m.singleton(move || {
                 let dropped = Arc::clone(&dropped);
                 async move { Stored(dropped) }
@@ -254,9 +255,10 @@ async fn a_prepare_that_panics_is_a_configure_entry_naming_its_transport_and_the
         "listen",
         listen_err(
             builder(root),
+            // The panicking server second, so an entry naming the first server is told apart.
             vec![
-                server(PanicsInPrepare { app: None, log: log.clone() }),
                 server(TestServer::<TB>::new("b", &log)),
+                server(PanicsInPrepare { app: None, log: log.clone() }),
             ],
         ),
     )
@@ -267,8 +269,8 @@ async fn a_prepare_that_panics_is_a_configure_entry_naming_its_transport_and_the
     let entry = errors.iter().next().expect("one entry");
     assert_eq!(entry.transport, TypeName::of::<TA>(), "the entry names the panicking server's transport");
     let panicked = entry.source.downcast_ref::<PreparePanicked>().expect("the entry carries the panic");
-    assert_eq!(panicked.message.to_string(), "the route table exploded");
-    assert_eq!(log.events(), ["prepare panics", "prepare b"], "the other server still prepared, and none bound");
+    assert_eq!(panicked.message.to_string(), "the route table [redacted]", "the payload is redacted");
+    assert_eq!(log.events(), ["prepare b", "prepare panics"], "every server prepared, and none bound");
     drop(error);
     assert!(dropped.load(Ordering::SeqCst), "the singleton store dropped with the app once `listen` failed");
 }

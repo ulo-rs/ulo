@@ -161,8 +161,10 @@ async fn a_serve_failing_after_a_handle_closed_the_app_is_warned_about_and_the_o
     let warnings = Warnings::installed();
     let serving = Gate::new(false);
     let when = When::AfterDrain { drained: Gate::new(false), serving: Arc::clone(&serving) };
+    // The error's `listener` is a secret: the warning carries the redacted text.
+    let root = Mod::<TB>::new(|m| m.secret(&ulo::Secret::new("listener".to_owned())));
     let app = listened(
-        ulo::App::builder(Empty).runtime(Tokio::current()).timer(Frozen::new()),
+        ulo::App::builder(root).runtime(Tokio::current()).timer(Frozen::new()),
         vec![server(failing::<TB>("lost the listener at the drain", when))],
     )
     .await
@@ -177,7 +179,8 @@ async fn a_serve_failing_after_a_handle_closed_the_app_is_warned_about_and_the_o
     let shutdown = served.unwrap_or_else(|error| panic!("a serve failing after the close is no failure: {error}"));
     assert_eq!(shutdown.signal.to_string(), "operator");
     assert!(closed.is_ok());
-    let warning = the_one(warnings.about("lost the listener at the drain"), "lost the listener at the drain");
+    assert!(warnings.about("lost the listener at the drain").is_empty(), "the secret never reaches the log");
+    let warning = the_one(warnings.about("lost the [redacted] at the drain"), "lost the [redacted] at the drain");
     assert_eq!(warning.get("transport"), Some(&TypeName::of::<TB>().to_string()), "{warning:?}");
 }
 

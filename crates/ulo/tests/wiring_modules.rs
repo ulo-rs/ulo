@@ -207,6 +207,7 @@ fn an_export_of_a_key_the_module_binds_is_accepted_and_is_visible_to_an_importer
 }
 
 struct Outer;
+struct Middle;
 
 #[test]
 fn a_keyed_module_keyed_again_is_refused_naming_both_qualifiers() {
@@ -223,6 +224,21 @@ fn a_keyed_module_keyed_again_is_refused_naming_both_qualifiers() {
     assert_eq!(outer, TypeName::of::<Outer>(), "the qualifier the identity carries");
     assert_eq!(inner, TypeName::of::<Primary>(), "the qualifier the exports leave under");
     assert_eq!(module, keyed_mod_name::<B, Outer>(), "the module as its identity names it");
+    assert_eq!(errors.len(), 1, "{errors}");
+
+    // Three deep: the outermost key is the identity's and the innermost the exports', whatever
+    // sits between them.
+    let errors = wire_err(Mod::<A>::new(|m| {
+        m.import(Mod::<B>::new(|m| {
+            m.value(Svc);
+            m.export::<Svc>();
+        })
+        .keyed::<Primary>()
+        .keyed::<Middle>()
+        .keyed::<Outer>());
+    }));
+    let found = entry!(errors, WiringError::NestedKeyed { module, outer, inner } => (module.to_string(), *outer, *inner));
+    assert_eq!(found, (keyed_mod_name::<B, Outer>(), TypeName::of::<Outer>(), TypeName::of::<Primary>()));
     assert_eq!(errors.len(), 1, "{errors}");
 }
 
