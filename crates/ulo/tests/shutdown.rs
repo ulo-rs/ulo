@@ -299,8 +299,8 @@ async fn an_expired_cap_skips_every_hook_not_yet_run_and_closes_a_server_that_ca
     }
     assert_eq!(
         log.events().iter().filter(|e| !e.starts_with("prepare") && !e.starts_with("bind")).collect::<Vec<_>>(),
-        ["close b", "close a"],
-        "no hook ran, and every `close` still started, the one that finished on its first poll without a failure"
+        ["drain a", "drain b", "close b", "close a"],
+        "no hook ran, every server entered its drain, and every `close` still started, the one that finished on its first poll without a failure"
     );
 }
 
@@ -309,7 +309,6 @@ async fn an_expired_cap_skips_every_hook_not_yet_run_and_closes_a_server_that_ca
 /// core creates each `drain` future and drops it without a poll, so the transport's own stop
 /// never runs. F455.
 #[tokio::test]
-#[ignore = "DEFECT F455: a zero-length drain window drops each server's `drain` future unpolled, so no transport stops accepting"]
 async fn an_expired_cap_still_enters_each_servers_drain() {
     let log = Log::new();
     let app = listened(

@@ -26,7 +26,7 @@
 //! `TimedOut { limit: ShutdownCap }`.
 
 use std::future::{Future, poll_fn};
-use std::pin::Pin;
+use std::pin::{Pin, pin};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::Poll;
 use std::time::{Duration, Instant};
@@ -383,15 +383,17 @@ pub(crate) async fn drain(shared: &Arc<AppShared>, progress: &mut Progress) -> (
         settle(drains).await;
         shared.live.until_empty().await;
     };
+    let mut settled = pin!(settled);
     match (progress.drain_end.unwrap_or(DrainEnd::Now), timer) {
         (DrainEnd::Open, _) => settled.await,
-        (DrainEnd::At(at), Some(timer)) => {
-            let left = at.saturating_duration_since(timer.now());
-            if !left.is_zero() {
-                select(settled, timer.sleep(left)).await;
-            }
+        (DrainEnd::At(at), Some(timer)) if !at.saturating_duration_since(timer.now()).is_zero() => {
+            select(settled, timer.sleep(at.saturating_duration_since(timer.now()))).await;
         }
-        _ => {}
+        // A window with nothing left still enters each server's drain: one poll, as an expired cap
+        // gives a `close`, and no more.
+        _ => {
+            let _ = poll_fn(|cx| Poll::Ready(settled.as_mut().poll(cx))).await;
+        }
     }
 
     // Ending the drain before cancelling refuses a terminal execution that would otherwise open
