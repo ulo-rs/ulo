@@ -8235,19 +8235,23 @@ dependencies = [
  "hyper-util",
  "prost",
  "prost-types",
+ "serde_json",
  "tokio",
  "tonic",
  "tonic-health",
  "tonic-prost",
  "tonic-reflection",
+ "tonic-types",
  "tracing",
  "trybuild",
  "ulo",
  "ulo-build",
  "ulo-grpc",
  "ulo-http",
+ "ulo-net",
  "ulo-rpc",
  "ulo-runtime-tokio",
+ "ulo-test-certs",
  "ulo-transport",
  "ulo-ws",
 ]
@@ -8542,11 +8546,15 @@ dependencies = [
 name = "ulo-health-grpc"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "futures-util",
+ "tokio",
+ "tonic",
  "tonic-health",
  "tracing",
  "ulo",
  "ulo-grpc",
  "ulo-health",
+ "ulo-runtime-tokio",
 ]
 
 [[package]]
@@ -8554,10 +8562,14 @@ name = "ulo-health-http"
 version = "0.1.0-alpha.1"
 dependencies = [
  "http 1.5.0",
+ "http-body-util",
  "serde_json",
+ "tokio",
  "ulo",
  "ulo-health",
  "ulo-http",
+ "ulo-net",
+ "ulo-runtime-tokio",
 ]
 
 [[package]]
