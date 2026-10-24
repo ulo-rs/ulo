@@ -298,3 +298,129 @@ impl ulo::Construct for GuardA {
         Ok(GuardA)
     }
 }
+
+// ---- Appended by batch B3 (scopes, executions, lookups, overrides). Nothing above changed. ----
+
+/// A shared construction counter: clone it into a factory, `bump` where the instance is built.
+#[derive(Clone, Default)]
+pub struct Count(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Count {
+    pub fn new() -> Self {
+        Count::default()
+    }
+
+    /// Adds one and returns the new total.
+    pub fn bump(&self) -> usize {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+    }
+
+    pub fn get(&self) -> usize {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// A `Construct` unit struct of scope `$scope` whose injection points are the listed fields: it
+/// declares each to the wiring pass and reads each when built. `reader!(Name, Scope, f: Ty, ..)`.
+macro_rules! reader {
+    ($name:ident, $scope:ty $(, $field:ident : $ty:ty)* $(,)?) => {
+        pub struct $name;
+
+        impl ulo::Construct for $name {
+            type Scope = $scope;
+
+            fn dependencies(d: &mut ulo::Dependencies) {
+                $( d.field::<$ty>(stringify!($field)); )*
+                let _ = d;
+            }
+
+            async fn construct(r: &ulo::Resolver<'_>) -> Result<Self, ulo::ConstructError> {
+                $( let _ = <$ty as ulo::FromContainer>::from_container(r).await?; )*
+                let _ = r;
+                Ok($name)
+            }
+        }
+    };
+}
+
+/// A [`reader!`] that is also a `Controller`; `mount` is the given body, so a test mounts the
+/// handlers it needs: `controller!(C, Auto, [u: Ext<U>], |m| m.handler::<TA, _>(..))`.
+macro_rules! controller {
+    ($name:ident, $scope:ty, [$($field:ident : $ty:ty),*], |$m:ident| $body:expr) => {
+        reader!($name, $scope $(, $field : $ty)*);
+
+        impl ulo::Controller for $name {
+            fn mount($m: &mut ulo::Mount<'_>) {
+                $body
+            }
+        }
+    };
+}
+
+// Appended by batch B2: connect and qualified-read helpers.
+
+/// `wire()` then `connect()` on `root` with the default builder (no `Timer`, no runtime). Panics
+/// with the startup error when either step fails.
+pub async fn connects(root: impl Module) -> ulo::App<ulo::Connected> {
+    watchdog();
+    match App::builder(root).wire() {
+        Ok(app) => match app.connect().await {
+            Ok(app) => app,
+            Err(error) => panic!("connect() failed on a graph that should connect:\n{error}"),
+        },
+        Err(error) => panic!("wire() refused a graph that should wire:\n{error}"),
+    }
+}
+
+/// `connect()` on a wired app and the startup error it must fail with.
+pub async fn connect_err(root: impl Module) -> StartupError {
+    watchdog();
+    match wires(root).connect().await {
+        Err(error) => error,
+        Ok(_) => panic!("connect() succeeded; the graph was expected to fail while connecting"),
+    }
+}
+
+/// `T @ Q` as the root module sees it. `App::get` reads the unqualified key only, so a qualified
+/// key is read through a standalone execution's resolver.
+pub async fn read_q<T: ?Sized + Send + Sync + 'static, Q: 'static>(
+    app: &ulo::App<ulo::Connected>,
+) -> Result<ulo::Dep<T, Q>, ulo::LookupError> {
+    app.execute(ulo::ExecOptions::new(), async |exec| exec.resolver().dep_qualified::<T, Q>().await)
+        .await
+        .expect("a connected app opens executions")
+}
+
+/// Every contribution to `T` as the root sees them, in collection order.
+pub async fn read_many<T: ?Sized + Send + Sync + 'static>(
+    app: &ulo::App<ulo::Connected>,
+) -> Result<ulo::Many<T>, ulo::LookupError> {
+    app.execute(ulo::ExecOptions::new(), async |exec| exec.resolver().many::<T>().await)
+        .await
+        .expect("a connected app opens executions")
+}
+
+/// Wires and connects `root` on an app with no clock and no runtime; panics with the error
+/// otherwise. Runs under [`watchdog`].
+pub async fn connected(root: impl Module) -> ulo::App<ulo::Connected> {
+    connected_with(App::builder(root)).await
+}
+
+pub async fn connected_with(builder: AppBuilder) -> ulo::App<ulo::Connected> {
+    watchdog();
+    match builder.wire() {
+        Ok(app) => app.connect().await.unwrap_or_else(|error| panic!("connect() failed:\n{error}")),
+        Err(error) => panic!("wire() refused a graph that should wire:\n{error}"),
+    }
+}
+
+/// As [`connected`], on the tokio runtime of the calling `#[tokio::test]`, which a test that
+/// asks the app for its mounted handlers needs.
+pub async fn connected_on_tokio(root: impl Module) -> ulo::App<ulo::Connected> {
+    connected_with(App::builder(root).runtime(ulo_runtime_tokio::Tokio::current())).await
+}
+
+/// Closes a connected app, panicking if the shutdown reports a failure.
+pub async fn close(app: ulo::App<ulo::Connected>) {
+    app.close(ulo::Signal::new("test")).await.unwrap_or_else(|error| panic!("close() failed: {error:?}"));
+}
