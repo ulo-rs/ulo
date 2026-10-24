@@ -30,5 +30,22 @@ tracing-opentelemetry.workspace = true
 # `registry`: `LookupSpan`, which the layer's subscriber must implement.
 tracing-subscriber = { workspace = true, features = ["std", "registry"] }
 
+[dev-dependencies]
+ulo-grpc = { path = "../ulo-grpc" }
+ulo-http = { path = "../ulo-http" }
+ulo-net = { path = "../ulo-net" }
+ulo-rpc = { path = "../ulo-rpc" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+ulo-transport = { path = "../ulo-transport" }
+futures-util.workspace = true
+http.workspace = true
+http-body.workspace = true
+# `channel`: the client `tests/propagation.rs` calls the gRPC server with, `transport` for its endpoint.
+tonic = { workspace = true, features = ["channel", "codegen"] }
+tonic-health.workspace = true
+tonic-types.workspace = true
+# `macros`, `rt`, `time`, `sync`: `#[tokio::test]` and the real-clock deadline each call runs under.
+tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
+
 [lints]
 workspace = true

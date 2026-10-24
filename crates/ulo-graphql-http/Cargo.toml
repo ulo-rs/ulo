@@ -20,5 +20,15 @@ http.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 
+[dev-dependencies]
+ulo-net = { path = "../ulo-net" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `WsModule`, which the application imports once for the subscription gateway to be reachable.
+ulo-ws = { path = "../ulo-ws" }
+futures-util.workspace = true
+http-body.workspace = true
+# `macros`, `rt`, `time`, `sync`: `#[tokio::test]` and the real-clock deadline each call runs under.
+tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
+
 [lints]
 workspace = true

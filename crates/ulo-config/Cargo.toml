@@ -30,7 +30,10 @@ toml = { workspace = true, features = ["std", "serde", "parse"] }
 tracing.workspace = true
 
 [dev-dependencies]
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 serde = { workspace = true, features = ["derive"] }
+# `macros`, `rt`, `time`: `#[tokio::test]` and the real-clock deadline `connect` runs under, in `tests/unread.rs`.
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
 [lints]
 workspace = true

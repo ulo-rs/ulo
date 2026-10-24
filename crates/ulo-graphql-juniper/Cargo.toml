@@ -18,5 +18,10 @@ juniper = { workspace = true, features = ["schema-language"] }
 serde_json.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `macros` and `rt`: `#[tokio::test]`, the one runtime the app is given; `time`: the deadline each test runs under.
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+
 [lints]
 workspace = true

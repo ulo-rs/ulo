@@ -8261,9 +8261,11 @@ dependencies = [
  "saphyr-parser",
  "serde",
  "serde_json",
+ "tokio",
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "ulo",
+ "ulo-runtime-tokio",
 ]
 
 [[package]]
@@ -8417,23 +8419,31 @@ dependencies = [
  "async-graphql",
  "futures-util",
  "serde_json",
+ "tokio",
  "tracing",
  "ulo",
  "ulo-graphql",
+ "ulo-runtime-tokio",
 ]
 
 [[package]]
 name = "ulo-graphql-http"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "futures-util",
  "http 1.5.0",
+ "http-body 1.1.0",
  "serde",
  "serde_json",
+ "tokio",
  "ulo",
  "ulo-graphql",
  "ulo-graphql-ws",
  "ulo-http",
+ "ulo-net",
+ "ulo-runtime-tokio",
  "ulo-transport",
+ "ulo-ws",
 ]
 
 [[package]]
@@ -8443,9 +8453,11 @@ dependencies = [
  "futures",
  "juniper",
  "serde_json",
+ "tokio",
  "tracing",
  "ulo",
  "ulo-graphql",
+ "ulo-runtime-tokio",
 ]
 
 [[package]]
@@ -8818,14 +8830,27 @@ name = "ulo-otel"
 version = "0.1.0-alpha.1"
 dependencies = [
  "futures-channel",
+ "futures-util",
+ "http 1.5.0",
+ "http-body 1.1.0",
  "opentelemetry",
  "opentelemetry_sdk",
  "serde",
+ "tokio",
+ "tonic",
+ "tonic-health",
+ "tonic-types",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
  "ulo",
  "ulo-config",
+ "ulo-grpc",
+ "ulo-http",
+ "ulo-net",
+ "ulo-rpc",
+ "ulo-runtime-tokio",
+ "ulo-transport",
 ]
 
 [[package]]
