@@ -424,3 +424,243 @@ pub async fn connected_on_tokio(root: impl Module) -> ulo::App<ulo::Connected> {
 pub async fn close(app: ulo::App<ulo::Connected>) {
     app.close(ulo::Signal::new("test")).await.unwrap_or_else(|error| panic!("close() failed: {error:?}"));
 }
+
+// ---- Appended by batch B4 (hooks, readiness, phases, lazy loading, shutdown). Nothing above changed. ----
+
+/// What happened, in order, with owned text: a [`Probe`] whose entries are built at run time.
+#[derive(Clone, Default)]
+pub struct Log(Arc<Mutex<Vec<String>>>);
+
+impl Log {
+    pub fn new() -> Self {
+        Log::default()
+    }
+
+    pub fn push(&self, event: impl Into<String>) {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).push(event.into());
+    }
+
+    pub fn events(&self) -> Vec<String> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    pub fn has(&self, event: &str) -> bool {
+        self.events().iter().any(|seen| seen == event)
+    }
+
+    pub fn count(&self, event: &str) -> usize {
+        self.events().iter().filter(|seen| *seen == event).count()
+    }
+}
+
+/// A gate a future waits at until the test opens it.
+pub struct Gate(Mutex<(bool, Vec<std::task::Waker>)>);
+
+impl Gate {
+    pub fn new(open: bool) -> Arc<Gate> {
+        Arc::new(Gate(Mutex::new((open, Vec::new()))))
+    }
+
+    pub fn open(&self) {
+        let waiting = {
+            let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            state.0 = true;
+            std::mem::take(&mut state.1)
+        };
+        waiting.into_iter().for_each(std::task::Waker::wake);
+    }
+
+    pub async fn pass(&self) {
+        std::future::poll_fn(|cx| {
+            let mut state = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            if state.0 {
+                return std::task::Poll::Ready(());
+            }
+            state.1.push(cx.waker().clone());
+            std::task::Poll::Pending
+        })
+        .await
+    }
+}
+
+/// Every duration a [`Recorded`] timer was asked to sleep, in order.
+#[derive(Clone, Default)]
+pub struct SleepLog(Arc<Mutex<Vec<Duration>>>);
+
+impl SleepLog {
+    pub fn new() -> Self {
+        SleepLog::default()
+    }
+
+    pub fn asked(&self) -> Vec<Duration> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// How many sleeps of exactly `d` were asked for.
+    pub fn count(&self, d: Duration) -> usize {
+        self.asked().into_iter().filter(|asked| *asked == d).count()
+    }
+}
+
+/// [`Frozen`] that writes down each sleep it is asked for.
+pub struct Recorded(Instant, SleepLog);
+
+impl Recorded {
+    pub fn new(log: &SleepLog) -> Self {
+        Recorded(Instant::now() + Duration::from_secs(86_400), log.clone())
+    }
+}
+
+impl Timer for Recorded {
+    fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+        self.1.0.lock().unwrap_or_else(PoisonError::into_inner).push(d);
+        Box::pin(async {})
+    }
+
+    fn now(&self) -> Instant {
+        self.0
+    }
+}
+
+/// How a [`TestServer`]'s `close` ends.
+#[derive(Clone, Copy)]
+pub enum CloseMode {
+    Ok,
+    Err,
+    Panic,
+    /// Never completes.
+    Pending,
+}
+
+/// What a [`TestServer`] does with the drain: called with the app's handle and the token the core
+/// hands each server.
+pub type OnDrain = Arc<dyn Fn(ulo::AppHandle, ulo::DrainToken) -> BoxFuture<'static, ()> + Send + Sync>;
+
+/// A server for transport `T` that binds nothing. It keeps the `AppHandle` its `prepare` is handed,
+/// as every shipped transport does, and logs `prepare`, `bind`, `drain` and `close` as
+/// `<verb> <name>`. Its `serve` never ends.
+pub struct TestServer<T> {
+    name: &'static str,
+    log: Log,
+    app: Option<ulo::AppHandle>,
+    fail_prepare: bool,
+    fail_bind: bool,
+    permanent: bool,
+    close: CloseMode,
+    on_drain: Option<OnDrain>,
+    _t: PhantomData<fn() -> T>,
+}
+
+impl<T: Transport> TestServer<T> {
+    pub fn new(name: &'static str, log: &Log) -> Self {
+        TestServer {
+            name,
+            log: log.clone(),
+            app: None,
+            fail_prepare: false,
+            fail_bind: false,
+            permanent: false,
+            close: CloseMode::Ok,
+            on_drain: None,
+            _t: PhantomData,
+        }
+    }
+
+    pub fn fail_prepare(mut self) -> Self {
+        self.fail_prepare = true;
+        self
+    }
+
+    pub fn fail_bind(mut self) -> Self {
+        self.fail_bind = true;
+        self
+    }
+
+    /// A failing `prepare` or `bind` answers an error wrapped in `Permanent`.
+    pub fn permanent(mut self) -> Self {
+        self.permanent = true;
+        self
+    }
+
+    pub fn close_with(mut self, mode: CloseMode) -> Self {
+        self.close = mode;
+        self
+    }
+
+    pub fn on_drain(mut self, f: OnDrain) -> Self {
+        self.on_drain = Some(f);
+        self
+    }
+}
+
+impl<T> TestServer<T> {
+    fn refusal(&self, text: &str) -> BoxError {
+        if self.permanent { Box::new(ulo::Permanent::new(Boom::new(text))) } else { Box::new(Boom::new(text)) }
+    }
+}
+
+impl<T: Transport> ulo::Server for TestServer<T> {
+    type Transport = T;
+
+    async fn prepare(&mut self, mounted: ulo::Mounted<'_, T>) -> Result<(), BoxError> {
+        self.log.push(format!("prepare {}", self.name));
+        self.app = Some(mounted.app().clone());
+        if self.fail_prepare { Err(self.refusal("prepare refused")) } else { Ok(()) }
+    }
+
+    async fn bind(&mut self, _mounted: ulo::Mounted<'_, T>) -> Result<(), BoxError> {
+        self.log.push(format!("bind {}", self.name));
+        if self.fail_bind { Err(self.refusal("bind refused")) } else { Ok(()) }
+    }
+
+    async fn serve(&self) -> Result<(), BoxError> {
+        std::future::pending().await
+    }
+
+    async fn drain(&self, token: ulo::DrainToken) {
+        self.log.push(format!("drain {}", self.name));
+        if let (Some(f), Some(app)) = (&self.on_drain, &self.app) {
+            f(app.clone(), token).await;
+        }
+    }
+
+    async fn close(&self) -> Result<(), BoxError> {
+        self.log.push(format!("close {}", self.name));
+        match self.close {
+            CloseMode::Ok => Ok(()),
+            CloseMode::Err => Err(Box::new(Boom::new("close refused"))),
+            CloseMode::Panic => panic!("close panics"),
+            CloseMode::Pending => std::future::pending().await,
+        }
+    }
+}
+
+/// A server waiting to be queued on a connected app: what [`server`] returns.
+pub type Queued = Box<dyn FnOnce(ulo::App<ulo::Connected>) -> ulo::App<ulo::Connected> + Send>;
+
+/// Connects `root` on `builder`, queues `servers` and `listen()`s: the bound app, or the startup
+/// error from any step.
+pub async fn listened(builder: AppBuilder, servers: Vec<Queued>) -> Result<ulo::App<ulo::app::Bound>, StartupError> {
+    watchdog();
+    let mut app = builder.wire()?.connect().await?;
+    for queue in servers {
+        app = queue(app);
+    }
+    app.listen().await
+}
+
+/// A queued server for [`listened`]: `server(TestServer::<TA>::new("a", &log))`.
+pub fn server<S: ulo::Server>(s: S) -> Queued {
+    Box::new(move |app| app.bind(s))
+}
+
+/// The real-clock bound every awaited step runs under, so a hang is a failure.
+pub const PATIENCE: Duration = Duration::from_secs(10);
+
+/// `fut` under [`PATIENCE`] on the real clock; panics with `what` when it does not finish.
+pub async fn within<F: std::future::Future>(what: &str, fut: F) -> F::Output {
+    match tokio::time::timeout(PATIENCE, fut).await {
+        Ok(out) => out,
+        Err(_) => panic!("{what} did not finish within {PATIENCE:?}"),
+    }
+}
