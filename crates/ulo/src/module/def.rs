@@ -379,8 +379,14 @@ impl<'a> ModuleDef<'a> {
         ControllerHandle { record: &mut self.node.controllers[index] }
     }
 
-    /// Marks this module as the inner module of a `Keyed<Q, M>`.
+    /// Marks this module as the inner module of a `Keyed<Q, M>`. A `Keyed` around another calls
+    /// this from the outside in, so a second call is a nested key: the first call's qualifier is
+    /// the one the identity carries, and the last one's the one the exports leave under.
     pub(crate) fn keyed_by(&mut self, qualifier: Qualifier) {
+        if let Some(earlier) = self.node.keyed {
+            let outer = self.node.nested_keyed.map_or(earlier, |(outer, _)| outer);
+            self.node.nested_keyed = Some((outer, qualifier));
+        }
         self.node.keyed = Some(qualifier);
     }
 
@@ -420,7 +426,7 @@ impl<'a> ModuleDef<'a> {
         dependencies: Dependencies,
         location: &'static Location<'static>,
     ) -> ModuleHook<'_> {
-        self.node.hooks.push(HookRecord { kind, bound: Bound::Default, run, dependencies, location });
+        self.node.hooks.push(HookRecord { kind, bound: Bound::Default, bound_at: None, run, dependencies, location });
         ModuleHook::new(&mut *self.node)
     }
 
@@ -480,7 +486,8 @@ fn shutdown_dependencies<Args, F: ShutdownFactory<Args>>() -> Dependencies {
 }
 
 /// The handle a module hook returns: its bound is written once, with `.timeout(..)` or
-/// `.unbounded()`, or left at `Default`.
+/// `.unbounded()`, or left at `Default`. A wiring error about the bound names the call that wrote
+/// it, and a zero `.timeout(..)` is refused at `wire()`.
 pub struct ModuleHook<'m, B = Open> {
     node: &'m mut ModuleNode,
     _b: PhantomData<B>,
@@ -491,17 +498,20 @@ impl<'m> ModuleHook<'m, Open> {
         ModuleHook { node, _b: PhantomData }
     }
 
+    #[track_caller]
     pub fn timeout(self, d: Duration) -> ModuleHook<'m, Set> {
-        self.write(Bound::After(d))
+        self.write(Bound::After(d), Location::caller())
     }
 
+    #[track_caller]
     pub fn unbounded(self) -> ModuleHook<'m, Set> {
-        self.write(Bound::Unbounded)
+        self.write(Bound::Unbounded, Location::caller())
     }
 
-    fn write(self, bound: Bound) -> ModuleHook<'m, Set> {
+    fn write(self, bound: Bound, at: &'static Location<'static>) -> ModuleHook<'m, Set> {
         if let Some(hook) = self.node.hooks.last_mut() {
             hook.bound = bound;
+            hook.bound_at = Some(at);
         }
         ModuleHook { node: self.node, _b: PhantomData }
     }
@@ -514,6 +524,9 @@ pub(crate) struct ModuleNode {
     pub(crate) global: bool,
     /// Set inside `Keyed<Q, M>`: unqualified exports leave the boundary as `T @ Q`.
     pub(crate) keyed: Option<Qualifier>,
+    /// `(outer, inner)` for a `Keyed` around another `Keyed`, which `wire()` refuses: the identity
+    /// carries `outer` and the exports `inner`.
+    pub(crate) nested_keyed: Option<(Qualifier, Qualifier)>,
     /// The nearest keyed ancestor on the import path that first reached this module, for
     /// `ModuleDef::qualifier`. It changes no export.
     pub(crate) inherited_keyed: Option<Qualifier>,
@@ -543,6 +556,7 @@ impl ModuleNode {
             identity,
             global: false,
             keyed: None,
+            nested_keyed: None,
             inherited_keyed: None,
             imports: Vec::new(),
             bindings: Vec::new(),

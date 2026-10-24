@@ -84,10 +84,32 @@ pub(crate) fn render_as_is(err: BoxError, config: &HttpConfig) -> Response {
     }
 }
 
+/// A multipart read that failed because the body passed the route's limit, as the
+/// `ExtractError::TooLarge` the body stream ended with: multer wraps a stream's error as the source
+/// of its own `StreamReadFailed`, which a handler propagating it with `?` returns, and the
+/// classification reads the error itself rather than its sources. Any other error is returned as
+/// it came. Applied to every error a handler returns, so the error handlers see the `TooLarge`.
+pub(crate) fn over_the_limit(err: BoxError) -> BoxError {
+    let read = match err.downcast::<multer::Error>() {
+        Ok(read) => read,
+        Err(err) => return err,
+    };
+    if let multer::Error::StreamReadFailed(source) = &*read
+        && let Some(&ExtractError::TooLarge { param, limit }) = source.downcast_ref::<ExtractError>()
+    {
+        return Box::new(ExtractError::TooLarge { param, limit });
+    }
+    read
+}
+
+/// What every refusal of a call because the server is draining or closing says, on every
+/// transport.
+pub(crate) const SHUTTING_DOWN: &str = "the server is shutting down";
+
 /// 503 with `Retry-After` and `Connection: close`: a request arriving once `Execution::open` is
-/// refused, during the drain.
+/// refused, during the drain, and a call still running when the drain's end abandons it.
 pub(crate) fn draining(config: &HttpConfig) -> Response {
-    let error = CallError::new(ErrorKind::Unavailable, "the server is shutting down");
+    let error = CallError::new(ErrorKind::Unavailable, SHUTTING_DOWN);
     let mut response = refusal(&error, config);
     response.headers_mut().insert(CONNECTION, HeaderValue::from_static("close"));
     response

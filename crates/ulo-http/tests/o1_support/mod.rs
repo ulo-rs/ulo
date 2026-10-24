@@ -73,10 +73,14 @@ pub struct Running {
 /// Starts the app, or answers what `listen()` refused it with: the route table and the
 /// pre-dispatch stage are built there.
 #[allow(clippy::result_large_err)]
-async fn launch(root: Root) -> Result<Running, StartupError> {
+async fn launch(root: Root, drain: Option<Duration>) -> Result<Running, StartupError> {
     let keeper = Keeper::default();
-    let app = App::builder(root)
-        .runtime(ulo_runtime_tokio::Tokio::current())
+    let builder = App::builder(root).runtime(ulo_runtime_tokio::Tokio::current());
+    let builder = match drain {
+        Some(window) => builder.drain_timeout(window),
+        None => builder,
+    };
+    let app = builder
         .wire()
         .expect("the app wires")
         .connect()
@@ -95,12 +99,17 @@ async fn launch(root: Root) -> Result<Running, StartupError> {
 
 /// Starts the app; panics when `listen()` refuses it.
 pub async fn start(register: fn(&mut ModuleDef<'_>)) -> Running {
-    launch(Root(register)).await.unwrap_or_else(|error| panic!("the app listens: {error}"))
+    launch(Root(register), None).await.unwrap_or_else(|error| panic!("the app listens: {error}"))
+}
+
+/// Starts the app with a drain window of `window`, after which a call still running is abandoned.
+pub async fn start_draining(register: fn(&mut ModuleDef<'_>), window: Duration) -> Running {
+    launch(Root(register), Some(window)).await.unwrap_or_else(|error| panic!("the app listens: {error}"))
 }
 
 /// What `listen()` refuses the app with.
 pub async fn refused(register: fn(&mut ModuleDef<'_>)) -> StartupError {
-    match launch(Root(register)).await {
+    match launch(Root(register), None).await {
         Ok(running) => {
             running.stop().await;
             panic!("listen() accepted an app it should refuse")
@@ -118,6 +127,8 @@ pub struct Call {
     path: String,
     headers: Vec<(String, Vec<u8>)>,
     body: Vec<u8>,
+    /// Sent as one frame each of a body of no known length, the way chunked encoding delivers one.
+    chunks: Option<Vec<Vec<u8>>>,
     ext: Vec<Insert>,
 }
 
@@ -127,7 +138,7 @@ impl Call {
     }
 
     pub fn new(method: http::Method, path: &str) -> Call {
-        Call { method, path: path.to_owned(), headers: Vec::new(), body: Vec::new(), ext: Vec::new() }
+        Call { method, path: path.to_owned(), headers: Vec::new(), body: Vec::new(), chunks: None, ext: Vec::new() }
     }
 
     pub fn header(mut self, name: &str, value: &str) -> Call {
@@ -145,6 +156,17 @@ impl Call {
         self
     }
 
+    /// The body as a stream of these frames: no `Content-Length`, no size hint, so a limit is met
+    /// as the frames arrive, as it is under chunked encoding.
+    pub fn chunks<I, C>(mut self, chunks: I) -> Call
+    where
+        I: IntoIterator<Item = C>,
+        C: Into<Vec<u8>>,
+    {
+        self.chunks = Some(chunks.into_iter().map(Into::into).collect());
+        self
+    }
+
     /// A value in the request's `http::Extensions`, as a host's middleware leaves it.
     pub fn ext<T: Clone + Send + Sync + 'static>(mut self, value: T) -> Call {
         self.ext.push(Box::new(move |extensions| {
@@ -153,7 +175,7 @@ impl Call {
         self
     }
 
-    fn into_request(self) -> Request {
+    pub fn into_request(self) -> Request {
         let mut builder = http::Request::builder().method(self.method).uri(self.path);
         for (name, value) in self.headers {
             builder = builder.header(name, http::HeaderValue::from_bytes(&value).expect("a header value"));
@@ -162,7 +184,11 @@ impl Call {
         for insert in self.ext {
             insert(&mut head.extensions);
         }
-        let body = if self.body.is_empty() { HttpBody::empty() } else { HttpBody::from_bytes(self.body) };
+        let body = match self.chunks {
+            Some(chunks) => HttpBody::stream(futures_util::stream::iter(chunks.into_iter().map(|chunk| Ok::<_, std::convert::Infallible>(bytes::Bytes::from(chunk))))),
+            None if self.body.is_empty() => HttpBody::empty(),
+            None => HttpBody::from_bytes(self.body),
+        };
         Request { head, body, conn: ConnInfo::new(http::Version::HTTP_11), upgrade: None }
     }
 }
@@ -221,6 +247,17 @@ impl Reply {
 impl Running {
     pub fn app(&self) -> &AppHandle {
         &self.handle
+    }
+
+    /// The service the backend was handed, to call from a task of the test's own.
+    pub fn service(&self) -> AppService {
+        self.svc.clone()
+    }
+
+    /// Starts the app's `close` on a task of its own.
+    pub fn begin_close(&self) -> tokio::task::JoinHandle<Result<ulo::Shutdown, ulo::ShutdownError>> {
+        let handle = self.handle.clone();
+        tokio::spawn(async move { handle.close(Signal::new("test")).await })
     }
 
     /// The response with its body not yet read.

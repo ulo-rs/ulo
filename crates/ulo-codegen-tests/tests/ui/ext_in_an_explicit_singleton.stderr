@@ -2,7 +2,7 @@ error[E0277]: a `ulo::scope::Singleton` type cannot read `Ext<CurrentUser>`
   --> tests/ui/ext_in_an_explicit_singleton.rs:10:11
    |
 10 |     user: Ext<CurrentUser>,
-   |           ^^^^^^^^^^^^^^^^ this injection point needs an execution
+   |           ^^^ this injection point needs an execution
    |
    = help: the trait `AllowedIn<ulo::scope::Singleton>` is not implemented for `Ext<CurrentUser>`
    = note: declare the type #[injectable(execution)] or #[injectable(transient)]
@@ -15,8 +15,11 @@ help: `Ext<T>` implements trait `AllowedIn<S>`
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `AllowedIn<ulo::scope::Transient>`
    | impl<T> AllowedIn<Auto> for Ext<T> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `AllowedIn<ulo::scope::Auto>`
-note: required by a bound in `ulo::__private::field`
+note: required by a bound in `ulo::__private::Declare::field`
   --> $WORKSPACE/crates/ulo/src/__private.rs
    |
-   | pub fn field<S: FromContainer + AllowedIn<Sc>, Sc: Scope>(d: &mut Dependencies, name: &'static str) {
-   |                                 ^^^^^^^^^^^^^ required by this bound in `field`
+   |     fn field(&self, d: &mut Dependencies, name: &'static str)
+   |        ----- required by a bound in this associated function
+   |     where
+   |         S: AllowedIn<Sc>;
+   |            ^^^^^^^^^^^^^ required by this bound in `Declare::field`

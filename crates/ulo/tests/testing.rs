@@ -252,6 +252,7 @@ impl Module for Conf {
 
 #[tokio::test]
 async fn in_module_of_and_in_module_keyed_name_one_instance() {
+    watchdog();
     let root = || {
         Mod::<Root>::new(|m| {
             m.import(Conf(1));
@@ -262,10 +263,9 @@ async fn in_module_of_and_in_module_keyed_name_one_instance() {
     };
     let app = TestApp::of(root()).override_value::<Cfg>(Arc::new(Cfg(9))).in_module_of(&Conf(2)).connect().await.unwrap();
     assert!(matches!(app.module::<Conf>(), Err(LookupError::AmbiguousModule { .. })));
-    // `load` of an identity the graph already holds answers that module's handle.
     let mut by_config = Vec::new();
     for n in [1, 2] {
-        let module = app.handle().load(Conf(n)).await.unwrap_or_else(|e| panic!("{e}"));
+        let module = app.module_of(&Conf(n)).unwrap_or_else(|e| panic!("{e}"));
         by_config.push(module.get::<Cfg>().await.unwrap().0);
     }
     assert_eq!(by_config, [1, 9], "the configuration named is the instance replaced");

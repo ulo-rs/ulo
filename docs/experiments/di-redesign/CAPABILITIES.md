@@ -24,7 +24,7 @@ Bindings
 6. Make one binding reachable under a second key (an alias).
 7. Collect many contributions under one trait and inject them as a list (plugins, a set of global guards). Contributions can come from several modules.
 8. Bind a third-party type the application can neither annotate nor implement traits for (a driver's connection pool).
-9. Keys are checked by the compiler; there are no free-form string keys.
+9. Keys are checked by the compiler; there are no free-form string keys. The string `DynamicModule::label` takes is a label, not a key: it changes how reports print the module and resolves nothing.
 10. A second single binding under one key is refused rather than silently replacing the first. Mixing a single binding and a collection under one key is refused too.
 
 Injection sites
@@ -52,14 +52,14 @@ Enhancers and roles
 28. A binding under a key whose declared type is a role (for example, "a guard for HTTP") registers that role.
 
 Modules
-29. A module declares imports, providers, controllers and exports. An export is the only way a binding leaves its module.
+29. A module declares imports, providers, controllers and exports. An export is the only way a binding leaves its module. A controller is the edge of the application: no binding but another controller reads one.
 30. Global modules, whose exports reach every module.
 31. Modules configured by value (`DbModule::for_root(url)`). One module type with two configurations is two modules; the same configuration imported twice (a diamond) is one.
-32. Several keyed instances of one configurable module (two databases from one integration), each injected by its key.
+32. Several keyed instances of one configurable module (two databases from one integration), each injected by its key, and each instance reached by its configuration (`module_of`).
 33. Modules built at runtime by a function, for integration crates.
 34. A module can re-export what one of its imports exports.
 35. Module identity is used for deduplication and is printed as a readable name in every error.
-36. Middleware configured per module, by route.
+36. Dropped. Scoped `PreDispatch` with `exclude` replaced middleware configured per module, by route; it is an HTTP matter and its tests are in `ulo-http`. The number is not reused.
 37. A handle to the current module, or to a named one, for runtime lookups limited to what that module can see.
 38. Loading a module lazily, after startup.
 

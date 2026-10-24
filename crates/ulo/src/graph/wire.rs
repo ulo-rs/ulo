@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::binding::{BindingRecord, Qualifier, Recipe, instance_of};
 use crate::dependency::{Dependencies, ReadKind};
 use crate::error::LoadRefusal;
-use crate::error::wiring::{InputOrigin, WiringError, WiringErrors};
+use crate::error::wiring::{BoundItem, InputOrigin, WiringError, WiringErrors};
 use crate::graph::register::{Import, Registry};
 use crate::graph::{
     BindingId, EdgeTarget, Effective, FrozenBinding, FrozenModule, Graph, InputDecl, ModuleId, Role, Visible,
@@ -160,6 +160,7 @@ fn check(graph: &mut Graph, declared: &Declared, env: &WireEnv, steps: &mut Step
     check_modules(graph, declared, &mut steps.modules);
     check_bindings(graph, declared, &mut steps.bindings);
     visibility::resolve_dependencies(graph, declared, &mut steps.dependencies);
+    visibility::check_controller_reads(graph, declared, &mut steps.dependencies);
     cycles::dependency_cycles(graph, &mut steps.cycles);
     scopes::assign_roles(graph);
     scopes::needs_execution(graph);
@@ -337,8 +338,16 @@ fn freeze(
     for (position, &index) in registry.post_order.iter().enumerate() {
         let Some(node) = nodes[index].take() else { continue };
         let id = ModuleId((first_module + position) as u32);
-        let ModuleNode { identity, global, keyed, bindings, enhancers, exports, controllers, inputs, hooks, meta, .. } =
-            node;
+        let ModuleNode {
+            identity, global, keyed, nested_keyed, bindings, enhancers, exports, controllers, inputs, hooks, meta, ..
+        } = node;
+        if let Some((outer, inner)) = nested_keyed {
+            steps.modules.push(WiringError::NestedKeyed {
+                module: names[index].clone(),
+                outer: TypeName::from_parts(outer.id, outer.name),
+                inner: TypeName::from_parts(inner.id, inner.name),
+            });
+        }
 
         let mut binding_ids = Vec::with_capacity(bindings.len());
         for (slot, record) in bindings.into_iter().enumerate() {
@@ -949,59 +958,93 @@ fn check_bindings(graph: &Graph, declared: &Declared, errors: &mut Vec<WiringErr
 /// `.backoff`, a hook's or constructor's `After(..)`, or a builder knob. A lazy load checks what
 /// it brought; the knobs were checked when the app wired.
 ///
+/// Every item `resolve_bound` resolves, a construction, a readiness check as a whole, one of its
+/// attempts and a hook, is refused here with a bound of `After(ZERO)`, timer or not: the item would
+/// time out before it starts. A zero bound is reported once, as `ZeroBound`, since `.unbounded()`
+/// answers both that and the missing `Timer`.
+///
+/// Each report names the call that wrote the wait: `.timeout(..)`, `.attempt_timeout(..)` or
+/// `.backoff(..)`, and for a trait const, which has no call, the registration that brought the
+/// type in.
+///
 /// The record holds a backoff as a `Duration` that is zero unless written, so `.backoff(ZERO)`
 /// reads as unwritten; it waits for nothing, and nothing needs a `Timer` for it.
 fn check_environment(graph: &Graph, env: &WireEnv, declared: &Declared, errors: &mut Vec<WiringError>) {
-    if env.timer.is_some() {
-        return;
-    }
-    if declared.first_module == 0 {
+    let timed = env.timer.is_some();
+    if !timed && declared.first_module == 0 {
         errors.extend(env.knobs_set.iter().map(|&knob| WiringError::KnobWithoutTimer { knob }));
     }
     for binding in graph.bindings.iter().skip(declared.first_binding) {
         let record = &binding.record;
         let name = graph.label(binding.id);
-        if matches!(record.construct_bound, Bound::After(_)) {
-            errors.push(WiringError::BoundWithoutTimer { item: format!("construction of `{name}`"), at: record.location });
-        }
+        let item = |item: BoundItem, bound: Bound, at: &'static Location<'static>, text: &dyn Fn() -> String| {
+            written_bound(bound, timed, || WiringError::ZeroBound {
+                item,
+                binding: Some(graph.key_name(binding.id)),
+                module: graph.module_name(binding.origin),
+                at,
+            }, || WiringError::BoundWithoutTimer { item: text(), at })
+        };
+        errors.extend(item(
+            BoundItem::Construction,
+            record.construct_bound,
+            record.construct_bound_at.unwrap_or(record.location),
+            &|| format!("construction of `{name}`"),
+        ));
         if let Some(ready) = &record.ready {
-            if !ready.backoff.is_zero() {
+            if !timed && !ready.backoff.is_zero() {
                 errors.push(WiringError::BackoffWithoutTimer {
                     binding: name.clone(),
                     at: ready.backoff_location.unwrap_or(ready.location),
                 });
             }
-            if matches!(ready.whole, Bound::After(_)) {
-                errors.push(WiringError::BoundWithoutTimer {
-                    item: format!("readiness `.timeout` of `{name}`"),
-                    at: ready.location,
-                });
-            }
-            if matches!(ready.attempt, Bound::After(_)) {
-                errors.push(WiringError::BoundWithoutTimer {
-                    item: format!("readiness `.attempt_timeout` of `{name}`"),
-                    at: ready.location,
-                });
-            }
+            errors.extend(item(
+                BoundItem::ReadinessWhole,
+                ready.whole,
+                ready.whole_at.unwrap_or(ready.location),
+                &|| format!("readiness `.timeout` of `{name}`"),
+            ));
+            errors.extend(item(
+                BoundItem::ReadinessAttempt,
+                ready.attempt,
+                ready.attempt_at.unwrap_or(ready.location),
+                &|| format!("readiness `.attempt_timeout` of `{name}`"),
+            ));
         }
         for hook in &record.hooks {
-            if matches!(hook.bound, Bound::After(_)) {
-                errors.push(WiringError::BoundWithoutTimer {
-                    item: format!("`{}` hook of `{name}`", hook.kind),
-                    at: hook.location,
-                });
-            }
+            errors.extend(item(
+                BoundItem::Hook(hook.kind),
+                hook.bound,
+                hook.bound_at.unwrap_or(hook.location),
+                &|| format!("`{}` hook of `{name}`", hook.kind),
+            ));
         }
     }
     for module in graph.modules.iter().skip(declared.first_module) {
         for hook in &module.hooks {
-            if matches!(hook.bound, Bound::After(_)) {
-                errors.push(WiringError::BoundWithoutTimer {
-                    item: format!("`{}` hook of module {}", hook.kind, module.name),
-                    at: hook.location,
-                });
-            }
+            let at = hook.bound_at.unwrap_or(hook.location);
+            errors.extend(written_bound(
+                hook.bound,
+                timed,
+                || WiringError::ZeroBound { item: BoundItem::Hook(hook.kind), binding: None, module: module.name.clone(), at },
+                || WiringError::BoundWithoutTimer { item: format!("`{}` hook of module {}", hook.kind, module.name), at },
+            ));
         }
+    }
+}
+
+/// The report on one written bound, if any: `zero` for `After(ZERO)`, whatever the clock, and
+/// `untimed` for any other `After(..)` on an app with no `Timer`.
+fn written_bound(
+    bound: Bound,
+    timed: bool,
+    zero: impl FnOnce() -> WiringError,
+    untimed: impl FnOnce() -> WiringError,
+) -> Option<WiringError> {
+    match bound {
+        Bound::After(after) if after.is_zero() => Some(zero()),
+        Bound::After(_) if !timed => Some(untimed()),
+        Bound::After(_) | Bound::Default | Bound::Unbounded => None,
     }
 }
 

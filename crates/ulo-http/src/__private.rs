@@ -40,7 +40,12 @@ impl HttpHandler {
     where
         F: Fn(HttpCx) -> BoxFuture<'static, Result<Response, BoxError>> + Send + Sync + 'static,
     {
-        HttpHandler { method, path, call: Arc::new(call), path_checks: Vec::new(), host_reads: Vec::new() }
+        // A multipart read that ended at the body limit is returned as the `TooLarge` it carries.
+        let call: HandlerFn = Arc::new(move |cx| {
+            let run = call(cx);
+            Box::pin(async move { run.await.map_err(crate::render::over_the_limit) })
+        });
+        HttpHandler { method, path, call, path_checks: Vec::new(), host_reads: Vec::new() }
     }
 
     /// One parameter's check, from `PathProbe`: `None` for a parameter that is not a `Path<T>`.

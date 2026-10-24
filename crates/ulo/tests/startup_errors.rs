@@ -2,8 +2,9 @@
 //!
 //! Capabilities pinned: 45 (nothing panics or exits: `wire`, `connect` and `listen` each answer a
 //! `StartupError` variant a caller matches, never text) and the listen rows of section 3:
-//! `prepare` runs on every server and its failures are collected before any server binds, and a
-//! bind failure closes the servers already bound. `is_permanent` is read here by phase.
+//! `prepare` runs on every server and its failures are collected before any server binds, a
+//! `prepare` that panics is one of those failures, and a bind failure closes the servers already
+//! bound. `is_permanent` is read here by phase.
 //!
 //! Panics in a constructor, a hook and a readiness attempt reach the caller as
 //! `FailureReason::Panicked` inside `Connect`; those are in `construct_errors.rs`, `hooks.rs` and
@@ -12,7 +13,10 @@
 #[macro_use]
 mod common;
 
-use ulo::{App, ConnectError, Dep, Permanent, Signal, StartupError, TypeName};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use ulo::{App, ConnectError, Dep, Permanent, PreparePanicked, Signal, StartupError, TypeName};
 use ulo_runtime_tokio::Tokio;
 
 use common::*;
@@ -189,4 +193,82 @@ async fn an_app_that_listened_closes_cleanly() {
     let report = within("serve", app.serve(async { Signal::new("done") })).await.expect("shutdown reported a failure");
     assert_eq!(report.signal.name(), "done");
     assert_eq!(log.events(), ["prepare a", "bind a", "drain a", "close a"]);
+}
+
+/// Sets its flag when it drops: the app's singleton store dropping with the app's shared state.
+struct Stored(Arc<AtomicBool>);
+
+impl Drop for Stored {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// A server whose `prepare` keeps the app's handle, as every shipped transport's does, and then
+/// panics.
+struct PanicsInPrepare {
+    app: Option<ulo::AppHandle>,
+    log: Log,
+}
+
+impl ulo::Server for PanicsInPrepare {
+    type Transport = TA;
+
+    async fn prepare(&mut self, mounted: ulo::Mounted<'_, TA>) -> Result<(), ulo::BoxError> {
+        self.log.push("prepare panics");
+        self.app = Some(mounted.app().clone());
+        panic!("the route table exploded");
+    }
+
+    async fn bind(&mut self, _mounted: ulo::Mounted<'_, TA>) -> Result<(), ulo::BoxError> {
+        self.log.push("bind panics");
+        Ok(())
+    }
+
+    async fn serve(&self) -> Result<(), ulo::BoxError> {
+        std::future::pending().await
+    }
+
+    async fn drain(&self, _token: ulo::DrainToken) {}
+
+    async fn close(&self) -> Result<(), ulo::BoxError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_prepare_that_panics_is_a_configure_entry_naming_its_transport_and_the_app_is_freed() {
+    let log = Log::new();
+    let dropped = Arc::new(AtomicBool::new(false));
+    let root = Mod::<A>::new({
+        let dropped = Arc::clone(&dropped);
+        move |m| {
+            let dropped = Arc::clone(&dropped);
+            m.singleton(move || {
+                let dropped = Arc::clone(&dropped);
+                async move { Stored(dropped) }
+            });
+        }
+    });
+    let error = within(
+        "listen",
+        listen_err(
+            builder(root),
+            vec![
+                server(PanicsInPrepare { app: None, log: log.clone() }),
+                server(TestServer::<TB>::new("b", &log)),
+            ],
+        ),
+    )
+    .await;
+
+    let StartupError::Configure(errors) = &error else { panic!("expected configuration errors, got: {error}") };
+    assert_eq!(errors.len(), 1, "{errors}");
+    let entry = errors.iter().next().expect("one entry");
+    assert_eq!(entry.transport, TypeName::of::<TA>(), "the entry names the panicking server's transport");
+    let panicked = entry.source.downcast_ref::<PreparePanicked>().expect("the entry carries the panic");
+    assert_eq!(panicked.message.to_string(), "the route table exploded");
+    assert_eq!(log.events(), ["prepare panics", "prepare b"], "the other server still prepared, and none bound");
+    drop(error);
+    assert!(dropped.load(Ordering::SeqCst), "the singleton store dropped with the app once `listen` failed");
 }

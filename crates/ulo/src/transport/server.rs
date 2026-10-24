@@ -31,7 +31,10 @@ pub trait Server: Send + Sync + 'static {
     /// checks, TLS loading and key/certificate matching, CORS validation, endpoint parsing, the
     /// check that inherited sockets exist, the backend's limits. Answers one error listing every
     /// failure this server found; `listen()` collects every server's into
-    /// `StartupError::Configure`, redacted. Nothing may bind here.
+    /// `StartupError::Configure`, redacted. Nothing may bind here. A `prepare` that panics is
+    /// caught and reported the same way, as [`PreparePanicked`](crate::PreparePanicked), and the
+    /// server is dropped with the others when `listen()` returns: what it holds from a `prepare`
+    /// cut short is released by its drop.
     fn prepare(&mut self, mounted: Mounted<'_, Self::Transport>) -> impl Future<Output = Result<(), BoxError>> + Send {
         let _ = mounted;
         async { Ok(()) }

@@ -204,6 +204,18 @@ impl Graph {
     /// qualifier: `LookupError::AmbiguousModule` over several configurations, `NotFound` with
     /// `LookupKind::Module` over none. `None` matches every instance of the type, keyed or not,
     /// so a type imported bare and keyed, or under two keys, is ambiguous without a qualifier.
+    /// The module registered under `identity`; `NotFound` naming its type and qualifier otherwise.
+    pub(crate) fn module_of(&self, identity: &ModuleIdentity) -> Result<ModuleId, LookupError> {
+        if let Some(&id) = self.by_identity.get(identity) {
+            return Ok(id);
+        }
+        let q = identity.qualifier().unwrap_or_else(Qualifier::none);
+        Err(LookupError::NotFound {
+            key: Key::from_parts(identity.type_id(), identity.type_name(), q.id, q.name).name(BindingKind::Single),
+            kind: LookupKind::Module,
+        })
+    }
+
     pub(crate) fn find_module(&self, ty: TypeId, type_name: &'static str, qualifier: Option<Qualifier>) -> Result<ModuleId, LookupError> {
         let found: Vec<&FrozenModule> = self
             .modules

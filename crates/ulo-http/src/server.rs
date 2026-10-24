@@ -298,7 +298,9 @@ fn check_zero_counts(config: &HttpConfig, failures: &mut Failures) {
 ///
 /// `mount` is the embedding's normalized prefix and `forward` its `Miss::Forward`; a backend
 /// passes `""` and `false`. Every registered upgrade handler's `prepare` runs here, its failure
-/// joining the others (X21).
+/// joining the others (X21). Each handler joins `upgrades`, the caller's own list, before its
+/// `prepare` runs, so a panic there or later in this function still leaves the caller's drop
+/// owing it a `release`.
 ///
 /// After a failed stage the route table is still built against an empty one, for its own
 /// failures. The service is then `None`, since every route's scoped stage in it reads as empty.
@@ -307,6 +309,7 @@ pub(crate) fn prepare_app(
     config: &HttpConfig,
     mount: &str,
     forward: bool,
+    upgrades: &mut Vec<Arc<dyn UpgradeHandler>>,
     failures: &mut Failures,
 ) -> PreparedApp {
     let (stage, staged) = match Stage::build(mounted.module_meta::<PreDispatch>()) {
@@ -317,7 +320,11 @@ pub(crate) fn prepare_app(
         }
     };
     let router = match Router::build(mounted.handlers(), config.body_limit, &stage, mount) {
-        Ok(router) => Some(router).filter(|_| staged),
+        Ok(router) if staged => {
+            failures.extend(stage.unreached());
+            Some(router)
+        }
+        Ok(_) => None,
         Err(errors) => {
             failures.extend(errors);
             None
@@ -325,13 +332,14 @@ pub(crate) fn prepare_app(
     };
     check_zero_timeouts(config, failures);
     check_zero_counts(config, failures);
-    let handlers = upgrade_handlers(mounted);
-    for handler in &handlers {
+    upgrades.clear();
+    for handler in upgrade_handlers(mounted) {
+        upgrades.push(Arc::clone(&handler));
         if let Err(error) = handler.prepare(mounted.app()) {
             failures.push_error(error);
         }
     }
-    let upgrades = upgrade_paths(mounted, &handlers, failures);
+    let upgrades = upgrade_paths(mounted, upgrades, failures);
     let upgrading = !upgrades.is_empty();
     let service = router.map(|router| {
         let config = Arc::new(config.clone());
@@ -348,7 +356,7 @@ pub(crate) fn prepare_app(
             forward,
         })
     });
-    PreparedApp { service, upgrading, handlers }
+    PreparedApp { service, upgrading }
 }
 
 /// What [`prepare_app`] built.
@@ -357,8 +365,6 @@ pub(crate) struct PreparedApp {
     pub(crate) service: Option<AppService>,
     /// Whether any upgrade path is registered, for the caller's own `upgrades` limit.
     pub(crate) upgrading: bool,
-    /// Every registered upgrade handler, once each, whose lifecycle the caller drives.
-    pub(crate) handlers: Vec<Arc<dyn UpgradeHandler>>,
 }
 
 /// Each upgrade handler's `bound`, once the server has bound.
@@ -397,10 +403,9 @@ impl<B: Backend> ulo::Server for Server<B> {
     async fn prepare(&mut self, mounted: Mounted<'_, Http>) -> Result<(), BoxError> {
         let mut failures = Failures::new();
         let limits = B::limits();
-        let PreparedApp { service, upgrading, handlers } = prepare_app(&mounted, &self.config, "", false, &mut failures);
-        // Kept whatever the rest answers: each handler's `prepare` has run, and this server's drop
-        // owes each a `release`.
-        self.upgrades = handlers;
+        // `self.upgrades` keeps every handler whose `prepare` ran, whatever the rest answers or a
+        // panic: this server's drop owes each a `release`.
+        let PreparedApp { service, upgrading } = prepare_app(&mounted, &self.config, "", false, &mut self.upgrades, &mut failures);
         if upgrading && !limits.upgrades {
             failures.push(format!(
                 "the {} backend declares `upgrades: false`, so it cannot hand a WebSocket upgrade to a gateway on its port; \

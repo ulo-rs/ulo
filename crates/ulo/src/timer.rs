@@ -70,7 +70,8 @@ pub(crate) struct Defaults {
 
 /// Applies the §3.9 rule: an explicit bound is `Limit::Item` (or `Limit::Attempt` for a
 /// readiness attempt), `Default` is the app default only when a `Timer` exists, `Unbounded`
-/// is none. The environment pass has already refused an explicit bound with no `Timer`.
+/// is none. The environment pass has already refused an explicit bound with no `Timer`, and an
+/// `After(ZERO)` on every item this resolves, as `WiringError::ZeroBound`.
 pub(crate) fn resolve_bound(bound: Bound, kind: BoundKind, defaults: Option<&Defaults>) -> Resolved {
     // Without a `Timer` nothing can time the item, whatever it wrote.
     let Some(defaults) = defaults else {

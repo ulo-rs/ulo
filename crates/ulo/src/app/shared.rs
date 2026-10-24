@@ -25,6 +25,7 @@ use crate::key::{BindingKind, Key, KeyName};
 use crate::lifecycle::phase::{Phase, PhaseCell};
 use crate::lifecycle::run::{Outcome, run};
 use crate::lifecycle::shutdown::ShutdownCell;
+use crate::module::Module;
 use crate::module::handle::ModuleRef;
 use crate::redact::redact;
 use crate::resolver::{Purpose, Resolver};
@@ -103,6 +104,13 @@ impl AppShared {
     pub(crate) async fn get_root<T: ?Sized + Send + Sync + 'static>(self: &Arc<Self>) -> Result<Dep<T>, LookupError> {
         let r = Resolver::new(self, self.graph().root, None, Purpose::Lookup);
         r.dep::<T>().await
+    }
+
+    /// The module with `config`'s identity, its type, configuration and qualifier, as the graph
+    /// holds it; nothing is loaded.
+    pub(crate) fn module_of(self: &Arc<Self>, config: &dyn Module) -> Result<ModuleRef, LookupError> {
+        let id = self.graph().module_of(&config.identity())?;
+        Ok(self.module_ref(id))
     }
 
     /// The one module whose identity names the type `M`, keyed by `qualifier` when given.

@@ -6,6 +6,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
+use futures_channel::oneshot;
 use futures_util::stream::{self, BoxStream};
 use futures_util::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,7 @@ use ulo::{
 };
 use ulo_http::embed::EmbedLimits;
 use ulo_http::{
-    BodyLimit, Cors, Event, Host, Http, HttpBody, HttpCx, Json, PreDispatch, Query, Request, Response, Sse,
+    BodyLimit, Cors, Event, Host, Http, HttpBody, HttpCx, Json, Path, PreDispatch, Query, Request, Response, Sse,
     StatusCode, UpgradeHandler, Upgrades,
 };
 use ulo_transport::{CallError, Classify, ErrorKind, IntoReply, Valid, Validate};
@@ -180,6 +181,26 @@ impl Suite {
         Sse::new(first.chain(idle).chain(ticks).boxed())
     }
 
+    #[ulo_http::get("/echo/{name}")]
+    fn echo(&self, name: Path<String>) -> String {
+        name.0
+    }
+
+    /// The event `one`, then `two` once the test opens the gate: a host that holds frames back
+    /// until the response ends never delivers the first before the gate opens.
+    #[ulo_http::get("/gated")]
+    fn gated(&self, probe: Dep<Probe>) -> Sse<BoxStream<'static, Event>> {
+        let gate = probe.gate.take();
+        let first = stream::once(async { Event::default().data("one") });
+        let second = stream::once(async move {
+            if let Some(gate) = gate {
+                let _ = gate.await;
+            }
+            Event::default().data("two")
+        });
+        Sse::new(first.chain(second).boxed())
+    }
+
     #[ulo_http::get("/host-value")]
     fn host_value(&self, value: Host<HostValue>) -> String {
         value.0.0
@@ -202,9 +223,42 @@ impl ErrorHandler<Http> for Reshape {
 
 /// What `GET /endless` recorded when its stream ended: the outcome and the execution's
 /// cancellation reason read then.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Probe {
     ends: Arc<Mutex<Vec<(StreamOutcome, Option<CancelReason>)>>>,
+    pub(crate) gate: Gate,
+}
+
+impl Default for Probe {
+    fn default() -> Self {
+        Probe { ends: Arc::default(), gate: Gate::new() }
+    }
+}
+
+/// The gate `GET /gated` waits on after its first event: runtime-free, so any host's runtime
+/// drives it. Taken by the one request that waits.
+#[derive(Clone)]
+pub(crate) struct Gate {
+    waiting: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+    open: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+}
+
+impl Gate {
+    fn new() -> Self {
+        let (open, waiting) = oneshot::channel();
+        Gate { waiting: Arc::new(Mutex::new(Some(waiting))), open: Arc::new(Mutex::new(Some(open))) }
+    }
+
+    fn take(&self) -> Option<oneshot::Receiver<()>> {
+        self.waiting.lock().unwrap_or_else(PoisonError::into_inner).take()
+    }
+
+    /// Lets `GET /gated` write its second event.
+    pub(crate) fn open(&self) {
+        if let Some(open) = self.open.lock().unwrap_or_else(PoisonError::into_inner).take() {
+            let _ = open.send(());
+        }
+    }
 }
 
 impl Probe {

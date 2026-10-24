@@ -17,7 +17,7 @@ use ulo::{
     AppHandle, BoxError, BoxFuture, CancelReason, DispatchStage, ExecOptions, Execution, ExecutionRef, MountedHandler,
     Runtime, StreamOutcome, Timer, TraceMode, Transport,
 };
-use ulo_transport::{Admission, Permit, span};
+use ulo_transport::{Admission, CallError, ErrorKind, Permit, span};
 
 use crate::backend::HttpConfig;
 use crate::body::HttpBody;
@@ -74,6 +74,13 @@ use crate::upgrade::UpgradeHandler;
 ///    answers: the outcome concerns the body, and such a response owes the client none. A peer
 ///    leaving before the head is written is a connection failure, not an incomplete body. A status
 ///    that forbids a body carrying a stream is logged at `warn`.
+///
+/// A call still running when the end of the drain cancels its execution with
+/// `CancelReason::Drain` is abandoned. Before the response is produced, the pipeline is dropped
+/// and the answer is the 503 of step 2, `Connection: close` included, with the `Routing` the call
+/// had decided. Once it is produced, a body of no known length ends with an error frame, a
+/// `CallError` of kind `Unavailable`, and reports `CutOff(Some(Drain))`, which a backend writes as
+/// a closed HTTP/1.1 connection or a reset HTTP/2 stream; a body of known length is written whole.
 ///
 /// A panic while the backend polls the response body ends the body with an error frame, reports
 /// the stream `CutOff` and is logged as `PanicRecovered` with stage `Handler`, so it never
@@ -188,7 +195,16 @@ impl ServiceInner {
         let path = req.head.extensions.get::<OriginalPath>().map_or_else(|| req.head.uri.path(), OriginalPath::as_str);
         call_span.record(span::URL_PATH, path);
         call_span.record(span::URL_SCHEME, if req.conn.tls.is_some() { "https" } else { "http" });
-        let mut response = self.unscoped(Arc::new(exec), req, call_span.clone(), Arc::clone(&tracking)).instrument(call_span.clone()).await;
+        let pipeline = self.unscoped(Arc::new(exec), req, call_span.clone(), Arc::clone(&tracking)).instrument(call_span.clone());
+        let mut response = match until_drained(pipeline, &handle).await {
+            Some(response) => response,
+            // The call outlived the drain window. Routing is whatever the call had decided.
+            None => {
+                let mut refused = render::draining(&self.config);
+                refused.extensions_mut().remove::<Routing>();
+                refused
+            }
+        };
         // Set here rather than where routing decides, so a pre-dispatch entry that rebuilt the
         // response does not drop it.
         if response.extensions().get::<Routing>().is_none() {
@@ -553,6 +569,29 @@ async fn race(mut pipeline: BoxFuture<'static, Response>, sleep: BoxFuture<'stat
     .await
 }
 
+/// Whether `exec` was cancelled by the end of the drain (`CancelReason::Drain`), given that
+/// `cancelled`, a listener on `exec`, resolved.
+fn by_drain(exec: &ExecutionRef) -> bool {
+    exec.cancel_reason() == Some(CancelReason::Drain)
+}
+
+/// `pipeline`, or `None` once the end of the drain has cancelled `exec` with `CancelReason::Drain`:
+/// the call is abandoned, `pipeline` dropped at its current await so a handler's future dropped
+/// there reads the reason, and its caller answers the 503 of a refusal. The drain is checked
+/// first, so an answer the handler produced in response to the cancellation does not replace it.
+async fn until_drained(pipeline: impl Future<Output = Response>, exec: &ExecutionRef) -> Option<Response> {
+    let mut pipeline = pin!(pipeline);
+    let mut cancelled = pin!(exec.cancelled());
+    poll_fn(|cx| {
+        // A cancellation that is not the drain's leaves the pipeline to run on.
+        if cancelled.as_mut().poll(cx).is_ready() && by_drain(exec) {
+            return Poll::Ready(None);
+        }
+        pipeline.as_mut().poll(cx).map(Some)
+    })
+    .await
+}
+
 /// `fut` raced against the grace, polled first: `None` when the grace runs out, `fut` dropped at
 /// its current await. With no grace, `fut` runs to its end.
 async fn within<F: Future>(fut: F, mut grace: Option<&mut BoxFuture<'static, ()>>) -> Option<F::Output> {
@@ -755,12 +794,25 @@ struct ExecBody {
     app: AppHandle,
     _permit: Permit,
     ended: bool,
+    /// Resolves when the execution is cancelled; built when the body is first polled open.
+    cancelled: Option<BoxFuture<'static, ()>>,
+    /// The execution was cancelled, and not by the drain: `cancelled` has resolved and is dropped.
+    settled: bool,
 }
 
 impl ExecBody {
     fn new(inner: HttpBody, exec: ExecutionRef, app: AppHandle, permit: Permit, unwritten: bool) -> Self {
         let ended = unwritten || inner.is_end_stream();
-        ExecBody { inner, exec, app, _permit: permit, ended }
+        ExecBody { inner, exec, app, _permit: permit, ended, cancelled: None, settled: false }
+    }
+
+    /// The drain ended while the body was open: its stream is reported cut off by the drain, the
+    /// body dropped without another poll, and the shutdown refusal is the error frame that ends it.
+    fn cut_off(&mut self) -> BoxError {
+        self.ended = true;
+        self.exec.report_stream_end(StreamOutcome::CutOff(Some(CancelReason::Drain)));
+        drop(std::mem::take(&mut self.inner));
+        CallError::new(ErrorKind::Unavailable, render::SHUTTING_DOWN).into()
     }
 
     /// A panic in the body's `poll_frame`: the body is ended, its stream reported `CutOff`, the
@@ -805,6 +857,25 @@ impl http_body::Body for ExecBody {
 
     fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         let this = self.get_mut();
+        // A stream still open when the drain ends is cut off, not completed: the error frame makes
+        // the backend close the connection (HTTP/1.1) or reset the stream (HTTP/2) rather than
+        // write the terminating chunk or `END_STREAM`. A body of known length is written whole.
+        if !this.ended && !this.settled && this.inner.size_hint().exact().is_none() {
+            let exec = &this.exec;
+            let cancelled = this.cancelled.get_or_insert_with(|| {
+                let exec = exec.clone();
+                Box::pin(async move { exec.cancelled().await })
+            });
+            if cancelled.as_mut().poll(cx).is_ready() {
+                if by_drain(exec) {
+                    return Poll::Ready(Some(Err(this.cut_off())));
+                }
+                // Cancelled for another reason, which leaves the body to run on; a resolved
+                // listener is not polled again.
+                this.settled = true;
+                this.cancelled = None;
+            }
+        }
         // The body is never polled again after a panic: `recover` replaces it.
         let frame = match catch_unwind(AssertUnwindSafe(|| Pin::new(&mut this.inner).poll_frame(cx))) {
             Ok(frame) => frame,

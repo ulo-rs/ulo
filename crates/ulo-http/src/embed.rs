@@ -309,6 +309,10 @@ impl From<&http::Uri> for OriginalPath {
 /// Its settings are the app's: the five below, where the app is mounted, whether the host
 /// supplies the peer address, which host values are copied in, and what a miss does. Each adapter
 /// crate exports an alias, `ulo_http_axum::Embedded`.
+///
+/// Keep the `App`, or the future serving it, alive for as long as the app serves: a [`Handle`],
+/// and the [`Service`] it hands the host, are views, not owners. Once the `App` value drops, the
+/// app is closed, and a host still serving through a kept handle answers each request 503.
 pub struct Embedded<A: Embed> {
     config: HttpConfig,
     nested_at: Option<Cow<'static, str>>,
@@ -633,11 +637,11 @@ impl<A: Embed> ulo::Server for Embedded<A> {
     async fn prepare(&mut self, mounted: Mounted<'_, Http>) -> Result<(), BoxError> {
         let mut failures = Failures::new();
         let mount = self.mount(&mut failures);
-        let PreparedApp { service, upgrading, handlers } =
-            prepare_app(&mounted, &self.config, &mount, self.on_miss == Miss::Forward, &mut failures);
-        // Kept whatever the rest answers: each handler's `prepare` has run, and this embedding's
-        // drop owes each a `release`.
-        self.upgrades = handlers;
+        // `self.upgrades` keeps every handler whose `prepare` ran, whatever the rest answers or a
+        // panic: this embedding's drop owes each a `release`.
+        let forward = self.on_miss == Miss::Forward;
+        let PreparedApp { service, upgrading } =
+            prepare_app(&mounted, &self.config, &mount, forward, &mut self.upgrades, &mut failures);
         self.check_limits(&mounted, service.as_ref(), upgrading, &mut failures);
         let Some(service) = service.filter(|_| failures.is_empty()) else {
             return Err(Box::new(failures.into_error()));

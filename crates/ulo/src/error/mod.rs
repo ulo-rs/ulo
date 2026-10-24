@@ -115,6 +115,24 @@ impl fmt::Display for RuntimeMissing {
 
 impl Error for RuntimeMissing {}
 
+/// A server's `prepare` that panicked, caught by `listen()` and reported as that server's
+/// [`ConfigureError`], whose `source` holds it. The other servers' `prepare` still run, and
+/// nothing binds. [`is_panic`] recognises it.
+#[non_exhaustive]
+#[derive(Debug)]
+pub struct PreparePanicked {
+    /// The payload, converted to a message and redacted.
+    pub message: Redacted,
+}
+
+impl fmt::Display for PreparePanicked {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "`prepare` panicked: {}", self.message)
+    }
+}
+
+impl Error for PreparePanicked {}
+
 /// A failure in the connect phase, on `StartupError::Connect` from `connect` and on
 /// `LoadError::Connect` from `load`.
 #[non_exhaustive]
@@ -773,7 +791,7 @@ fn redacted_panicked(redacted: &Redacted, depth: usize) -> bool {
 /// `Some` when `error` is one of the core's types that can carry a panic, holding whether it
 /// does; `None` for any other type.
 fn recognized<'e>(error: impl ByType<'e>, depth: usize) -> Option<bool> {
-    if error.get::<PanicRecovered>().is_some() {
+    if error.get::<PanicRecovered>().is_some() || error.get::<PreparePanicked>().is_some() {
         return Some(true);
     }
     if let Some(lookup) = error.get::<LookupError>() {

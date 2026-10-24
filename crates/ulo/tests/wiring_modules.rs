@@ -1,5 +1,5 @@
-//! Section 10.1 step 1, the module graph: import cycles, re-exports, exports of unbound keys and
-//! inputs declared by keyed modules. Each test makes `wire()` fail with one `WiringError` variant
+//! Section 10.1 step 1, the module graph: import cycles, re-exports, exports of unbound keys,
+//! inputs declared by keyed modules and a keyed module keyed again. Each test makes `wire()` fail with one `WiringError` variant
 //! and asserts the variant and its fields.
 //!
 //! Capabilities pinned: 29 (an export is the only exit, `ExportNotBound`), 34 (re-export and its
@@ -10,7 +10,7 @@
 mod common;
 
 use common::*;
-use ulo::{Key, Module, WiringError};
+use ulo::{Key, Module, TypeName, WiringError};
 
 struct A;
 struct B;
@@ -204,4 +204,35 @@ fn an_export_of_a_key_the_module_binds_is_accepted_and_is_visible_to_an_importer
         m.singleton(|_repo: ulo::Dep<dyn Repo>| async { Head });
     });
     wires(root);
+}
+
+struct Outer;
+
+#[test]
+fn a_keyed_module_keyed_again_is_refused_naming_both_qualifiers() {
+    let errors = wire_err(Mod::<A>::new(|m| {
+        m.import(Mod::<B>::new(|m| {
+            m.value(Svc);
+            m.export::<Svc>();
+        })
+        .keyed::<Primary>()
+        .keyed::<Outer>());
+    }));
+    let (module, outer, inner) =
+        entry!(errors, WiringError::NestedKeyed { module, outer, inner } => (module.to_string(), *outer, *inner));
+    assert_eq!(outer, TypeName::of::<Outer>(), "the qualifier the identity carries");
+    assert_eq!(inner, TypeName::of::<Primary>(), "the qualifier the exports leave under");
+    assert_eq!(module, keyed_mod_name::<B, Outer>(), "the module as its identity names it");
+    assert_eq!(errors.len(), 1, "{errors}");
+}
+
+#[test]
+fn a_module_keyed_once_is_accepted() {
+    wires(Mod::<A>::new(|m| {
+        m.import(Mod::<B>::new(|m| {
+            m.value(Svc);
+            m.export::<Svc>();
+        })
+        .keyed::<Outer>());
+    }));
 }

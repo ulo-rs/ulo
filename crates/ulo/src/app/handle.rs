@@ -31,7 +31,8 @@ use crate::transport::server::mounted_parts;
 /// to stop pulling work when the transports stop accepting, and runs each unit of work through
 /// [`execute`](Self::execute) so the drain waits for it: the drain tracks executions, not tasks.
 ///
-/// A handle kept past the `App` value's drop holds the app's shared state. A
+/// A handle is a view, not an owner: keep the `App`, or the future serving it, alive for as long
+/// as the app serves. A handle kept past the `App` value's drop holds the app's shared state. A
 /// [`close`](Self::close) called before the drop keeps the servers and closes them; with none
 /// called the drop released them, [`phase`](Self::phase) reads [`Phase::Closed`],
 /// [`draining`](Self::draining) has resolved, and a `close` called later answers
@@ -54,6 +55,12 @@ impl AppHandle {
 
     pub fn module_keyed<M: 'static, Q: 'static>(&self) -> Result<ModuleRef, LookupError> {
         self.shared.find_module::<M>(Some(Qualifier::of::<Q>()))
+    }
+
+    /// The module whose identity is `config`'s; see [`App::module_of`](crate::App). Unlike
+    /// [`load`](Self::load), it never wires or builds anything.
+    pub fn module_of<M: Module>(&self, config: &M) -> Result<ModuleRef, LookupError> {
+        self.shared.module_of(config)
     }
 
     /// A standalone execution with the root module's visibility; see [`App::execute`](crate::App).

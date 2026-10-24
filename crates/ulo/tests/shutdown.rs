@@ -4,7 +4,8 @@
 //! Capabilities pinned: 39 and 40 for the close side (before-shutdown, drain, destroy, each
 //! transport's `close` in reverse bind order, on-shutdown), and the close rows of section 3: a
 //! shutdown hook that panics, times out, is skipped by the cap or whose parameter read fails; a
-//! transport `close` that errs, panics or exceeds its bound; later steps still run.
+//! transport `close` that errs, panics or exceeds its bound; later steps still run. A server's
+//! `close` is a promise: it runs once on every shutdown path that reaches the close step.
 //!
 //! Already pinned by `ulo-runtime-tokio/tests/app.rs`, and not repeated: a transport's `serve`
 //! that fails or returns while the app runs starts the shutdown and `serve` answers
@@ -605,4 +606,69 @@ async fn a_shutdown_whose_runner_is_dropped_mid_hook_resumes_without_running_a_h
         "the hook that was running when its runner dropped is not started again, nor are the ones before it; the rest run once"
     );
     drop(app);
+}
+
+/// A server for `TC` whose `serve` fails at once, and which logs its `close` as `close dying`.
+struct Dying(Log);
+
+impl ulo::Server for Dying {
+    type Transport = TC;
+
+    async fn bind(&mut self, _mounted: ulo::Mounted<'_, TC>) -> Result<(), ulo::BoxError> {
+        Ok(())
+    }
+
+    async fn serve(&self) -> Result<(), ulo::BoxError> {
+        Err(Box::new(Boom::new("the accept loop died")))
+    }
+
+    async fn drain(&self, _token: ulo::DrainToken) {}
+
+    async fn close(&self) -> Result<(), ulo::BoxError> {
+        self.0.push("close dying");
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn every_shutdown_path_that_reaches_the_close_step_closes_each_server_once() {
+    type Serve = fn(App<ulo::app::Bound>) -> ulo::BoxFuture<'static, Result<ulo::Shutdown, ulo::ShutdownError>>;
+    let on_signal: Serve = |app| Box::pin(app.serve(async { Signal::new("signal") }));
+    let on_handle_close: Serve = |app| {
+        let handle = app.handle();
+        Box::pin(async move {
+            let serving = tokio::spawn(app.serve(std::future::pending()));
+            let _ = handle.close(Signal::new("handle")).await;
+            serving.await.expect("serve did not panic")
+        })
+    };
+    let on_serve_death: Serve = |app| Box::pin(app.serve(std::future::pending()));
+    let paths: [(&str, Serve, bool, Option<Duration>); 4] = [
+        ("signal", on_signal, false, None),
+        ("handle close", on_handle_close, false, None),
+        ("serve-loop death", on_serve_death, true, None),
+        ("expired cap", on_signal, false, Some(Duration::ZERO)),
+    ];
+    for (path, serve, dying, cap) in paths {
+        let log = Log::new();
+        let mut builder = frozen(Empty);
+        if let Some(cap) = cap {
+            builder = builder.shutdown_timeout(cap);
+        }
+        let mut servers = vec![server(TestServer::<TA>::new("a", &log)), server(TestServer::<TB>::new("b", &log))];
+        if dying {
+            servers.push(server(Dying(log.clone())));
+        }
+        let app = listened(builder, servers).await.unwrap_or_else(|error| panic!("{path}: listen() failed: {error}"));
+        let handle = app.handle();
+        let outcome = within(path, serve(app)).await;
+        assert_eq!(outcome.is_err(), dying, "{path}: only the serve-loop death is a failure: {outcome:?}");
+        // A later `close` answers the same outcome and closes nothing again.
+        let again = within(path, handle.close(Signal::new("again"))).await;
+        assert_eq!(again.is_err(), dying, "{path}");
+        for name in ["close a", "close b"] {
+            assert_eq!(log.count(name), 1, "{path}: `{name}` ran {} times: {:?}", log.count(name), log.events());
+        }
+        assert_eq!(log.count("close dying"), usize::from(dying), "{path}: the dead server's `close` runs too: {:?}", log.events());
+    }
 }

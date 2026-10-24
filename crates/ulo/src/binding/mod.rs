@@ -111,6 +111,9 @@ pub(crate) struct BindingRecord {
     pub(crate) recipe: Recipe,
     pub(crate) dependencies: Dependencies,
     pub(crate) construct_bound: Bound,
+    /// The `.timeout(..)` or `.unbounded()` call that wrote `construct_bound`; `None` when a trait
+    /// const or nothing wrote it, and a report then names `location`.
+    pub(crate) construct_bound_at: Option<&'static Location<'static>>,
     /// The check written last. A `.ready(..)` on a handle that already carries one replaces it
     /// and leaves the replaced check's location in `replaced_ready`.
     pub(crate) ready: Option<ReadyRecord>,
@@ -178,11 +181,16 @@ pub(crate) struct ReadyRecord {
     pub(crate) backoff_location: Option<&'static Location<'static>>,
     /// `.timeout(..)`: the whole check, retries and backoff included. `Limit::Item` on expiry.
     pub(crate) whole: Bound,
+    /// The `.timeout(..)` call that wrote `whole`; `None` until one is written, and a report then
+    /// names `location`.
+    pub(crate) whole_at: Option<&'static Location<'static>>,
     /// `.attempt_timeout(..)`: one attempt. `Limit::Attempt` when written, `Limit::Default`
     /// (`construct_timeout`) when left at `Default` with a `Timer`. It stays `Default` only on a
     /// check that writes no bound at all: writing either bound or `.unbounded()` opts out of the
     /// attempt default (§9.3), so `.timeout(..)` alone writes `Unbounded` here.
     pub(crate) attempt: Bound,
+    /// The `.attempt_timeout(..)` call that wrote `attempt`; `None` until one is written.
+    pub(crate) attempt_at: Option<&'static Location<'static>>,
     pub(crate) location: &'static Location<'static>,
 }
 
@@ -209,6 +217,7 @@ impl BindingRecord {
             recipe,
             dependencies,
             construct_bound: Bound::Default,
+            construct_bound_at: None,
             ready: None,
             replaced_ready: Vec::new(),
             hooks: Vec::new(),

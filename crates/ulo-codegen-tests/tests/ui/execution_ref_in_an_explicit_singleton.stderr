@@ -15,8 +15,11 @@ help: `ExecutionRef` implements trait `AllowedIn<S>`
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `AllowedIn<ulo::scope::Transient>`
    | impl AllowedIn<Auto> for ExecutionRef {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `AllowedIn<ulo::scope::Auto>`
-note: required by a bound in `ulo::__private::param`
+note: required by a bound in `ulo::__private::Declare::param`
   --> $WORKSPACE/crates/ulo/src/__private.rs
    |
-   | pub fn param<S: FromContainer + AllowedIn<Sc>, Sc: Scope>(d: &mut Dependencies, name: &'static str) {
-   |                                 ^^^^^^^^^^^^^ required by this bound in `param`
+   |     fn param(&self, d: &mut Dependencies, name: &'static str)
+   |        ----- required by a bound in this associated function
+   |     where
+   |         S: AllowedIn<Sc>;
+   |            ^^^^^^^^^^^^^ required by this bound in `Declare::param`

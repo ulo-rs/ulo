@@ -231,8 +231,13 @@ async fn a_module_s_controllers_mount_and_their_handlers_see_what_that_module_se
     close(app).await;
 }
 
+// A controller whose construction reads `CtlX`.
+controller!(ReadsCtlX, Singleton, [x: Dep<CtlX>], |m| {
+    let _ = m;
+});
+
 #[test]
-fn a_controller_leaves_its_module_only_when_exported() {
+fn a_controller_leaves_its_module_only_when_exported_and_only_a_controller_reads_it() {
     let consumer = |m: &mut ulo::ModuleDef<'_>| {
         m.singleton(|_c: Dep<CtlX>| async { Hidden });
     };
@@ -247,13 +252,30 @@ fn a_controller_leaves_its_module_only_when_exported() {
     assert_eq!(key, Key::of::<CtlX, ()>());
     assert_eq!(errors.len(), 1, "{errors}");
 
-    wires(Mod::<A>::new(move |m| {
+    // Exported, it is visible, and a provider reading it is refused all the same.
+    let errors = wire_err(Mod::<A>::new(move |m| {
         m.import(logs(&Log::new()));
         m.import(Mod::<X>::new(|m| {
             m.controller::<CtlX>();
             m.export::<CtlX>();
         }));
         consumer(m);
+    }));
+    let (controller, module, controller_module) = entry!(errors, WiringError::ControllerRead { controller, module, controller_module, .. }
+        => (controller.key(), module.to_string(), controller_module.to_string()));
+    assert_eq!(controller, Key::of::<CtlX, ()>());
+    assert_eq!((module, controller_module), (mod_name::<A>(), mod_name::<X>()));
+    assert_eq!(errors.len(), 1, "{errors}");
+
+    // A controller is the one reader an exported controller has.
+    wires(Mod::<A>::new(move |m| {
+        m.import(logs(&Log::new()));
+        m.import(Mod::<X>::new(|m| {
+            m.controller::<CtlX>();
+            m.export::<CtlX>();
+        }));
+        m.singleton(|| async { Hidden });
+        m.controller::<ReadsCtlX>();
     }));
 }
 

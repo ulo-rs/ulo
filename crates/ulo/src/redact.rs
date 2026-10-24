@@ -69,6 +69,10 @@ impl Error for Redacted {
 /// once registered: by `m.secret(&self.url)`, by `#[module]` for every `Secret<_>` field of a
 /// configured module, or by binding it with `m.value(..)`.
 ///
+/// A secret shorter than four characters stays registered, and no message is matched against it:
+/// a text that short is contained in most messages, and replacing it would mangle them without
+/// hiding anything. `ulo-config` applies the same floor to the messages it checks.
+///
 /// `Debug` and `Display` never print the value. Equality and hashing are the value's, so a
 /// configured module holding one keeps identity by value.
 #[derive(Clone, PartialEq, Eq)]
@@ -442,11 +446,12 @@ impl SecretRegistry {
         }
     }
 
-    /// Every registered text replaced by the marker, longest first, so a secret containing
-    /// another is replaced whole. One pass over the text, so a replacement is never matched
-    /// again by a shorter secret.
+    /// Every registered text of at least [`MIN_MATCHED`] characters replaced by the marker,
+    /// longest first, so a secret containing another is replaced whole. One pass over the text, so
+    /// a replacement is never matched again by a shorter secret.
     fn replace(&self, text: &str) -> String {
-        let mut secrets: Vec<&str> = self.texts.iter().map(String::as_str).filter(|s| !s.is_empty()).collect();
+        let mut secrets: Vec<&str> =
+            self.texts.iter().map(String::as_str).filter(|s| s.chars().count() >= MIN_MATCHED).collect();
         if secrets.is_empty() {
             return text.to_owned();
         }
@@ -491,6 +496,10 @@ impl Redactor {
 }
 
 const MARKER: &str = "[redacted]";
+
+/// The shortest secret, in characters, a message is matched against. A shorter one stays
+/// registered; `ulo-config`'s scrub of its own messages uses the same floor.
+const MIN_MATCHED: usize = 4;
 
 /// The one function every outside error passes through before a core error type stores it.
 ///

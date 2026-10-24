@@ -4,8 +4,9 @@
 //! Capabilities pinned (CAPABILITIES.md ids): 29 (a module's bindings, and an export as the only
 //! way out), 30 (a global module's exports reach every module), 31 (one module type with two
 //! configurations is two modules, the same configuration imported twice is one), 32 (keyed
-//! instances of one module, each injected by its key), 33 (a module built at runtime by a
-//! function), 34 (a module re-exports what one of its imports exports).
+//! instances of one module, each injected by its key, and one configured or keyed instance reached
+//! by its configuration through `module_of`), 33 (a module built at runtime by a function), 34 (a
+//! module re-exports what one of its imports exports).
 //!
 //! Capability 29 also names controllers among a module's declarations. A controller is a
 //! transport's fixture and belongs to the enhancer batch; this file declares providers, imports
@@ -393,4 +394,41 @@ fn a_reexport_names_one_key_and_not_the_import_s_whole_surface() {
     let (key, module) = entry!(errors, WiringError::Missing { key, module, .. } => (key.key(), module.to_string()));
     assert_eq!(key, Key::of::<Other, ()>());
     assert_eq!(module, mod_name::<A>());
+}
+
+#[tokio::test]
+async fn module_of_names_one_configuration_or_keyed_instance_and_registers_nothing() {
+    let (registered, built) = (Tally::default(), Tally::default());
+    let db = |url| Db::new(url, false, &registered, &built);
+    let app = connects(Mod::<A>::new({
+        let (registered, built) = (registered.clone(), built.clone());
+        move |m| {
+            m.import(Db::new(1, false, &registered, &built));
+            m.import(Db::new(2, false, &registered, &built));
+            m.import(Db::new(3, false, &registered, &built).keyed::<Primary>());
+        }
+    }))
+    .await;
+    assert_eq!((registered.get(), built.get()), (3, 3));
+
+    let second = app.module_of(&db(2)).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(second.name().to_string(), "Db #2");
+    assert_eq!(second.get::<Pool>().await.unwrap().0, 2, "the configuration named, not the first of its type");
+    let keyed = app.handle().module_of(&db(3).keyed::<Primary>()).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(keyed.name().to_string(), "Db @ Primary");
+    assert_eq!(keyed.get::<Pool>().await.unwrap().0, 3);
+
+    // The keyed instance's configuration unkeyed is another identity, and so is one never imported.
+    for (config, handle) in [(db(3), false), (db(9), true)] {
+        let found = if handle { app.handle().module_of(&config) } else { app.module_of(&config) };
+        let Err(LookupError::NotFound { key, kind: LookupKind::Module }) = found else {
+            panic!("a configuration the graph does not hold answered a module");
+        };
+        assert_eq!(key.key(), Key::of::<Db, ()>());
+    }
+    let Err(LookupError::NotFound { key, kind: LookupKind::Module }) = app.module_of(&db(1).keyed::<Replica>()) else {
+        panic!("a key the graph does not hold answered a module");
+    };
+    assert_eq!(key.key(), Key::of::<Db, Replica>(), "the miss names the qualifier asked for");
+    assert_eq!((registered.get(), built.get()), (3, 3), "a lookup registers and builds nothing");
 }

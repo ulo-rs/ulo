@@ -49,30 +49,35 @@ pub struct ReadyItem<W, A>(Infallible, PhantomData<(W, A)>);
 pub struct HookItem<B>(Infallible, PhantomData<B>);
 
 mod sealed {
+    use std::panic::Location;
+
     use crate::binding::BindingRecord;
     use crate::timer::Bound;
 
-    /// Which field of the record a state's bound methods write. The item a state names is in
-    /// the record whenever the handle is in that state: the readiness item only follows
-    /// `.ready(..)`, and the hook item only follows the push of its hook.
+    /// Which field of the record a state's bound methods write, and the call that wrote it, which
+    /// a wiring report on the bound names. The item a state names is in the record whenever the
+    /// handle is in that state: the readiness item only follows `.ready(..)`, and the hook item
+    /// only follows the push of its hook.
     pub trait State {
-        fn write(record: &mut BindingRecord, bound: Bound);
+        fn write(record: &mut BindingRecord, bound: Bound, at: &'static Location<'static>);
 
-        fn write_unbounded(record: &mut BindingRecord) {
-            Self::write(record, Bound::Unbounded);
+        fn write_unbounded(record: &mut BindingRecord, at: &'static Location<'static>) {
+            Self::write(record, Bound::Unbounded, at);
         }
     }
 }
 
 impl<S, B> sealed::State for Binding<S, B> {
-    fn write(record: &mut BindingRecord, bound: Bound) {
+    fn write(record: &mut BindingRecord, bound: Bound, at: &'static Location<'static>) {
         record.construct_bound = bound;
+        record.construct_bound_at = Some(at);
     }
 }
 
 impl<S, B> sealed::State for Contribution<S, B> {
-    fn write(record: &mut BindingRecord, bound: Bound) {
+    fn write(record: &mut BindingRecord, bound: Bound, at: &'static Location<'static>) {
         record.construct_bound = bound;
+        record.construct_bound_at = Some(at);
     }
 }
 
@@ -80,9 +85,10 @@ impl<W, A> sealed::State for ReadyItem<W, A> {
     /// The whole-check bound. Writing it opts the attempt out of its `construct_timeout`
     /// default (§9.3), so an attempt bound not yet written becomes `Unbounded`; a later
     /// `.attempt_timeout(..)` still writes it.
-    fn write(record: &mut BindingRecord, bound: Bound) {
+    fn write(record: &mut BindingRecord, bound: Bound, at: &'static Location<'static>) {
         if let Some(ready) = record.ready.as_mut() {
             ready.whole = bound;
+            ready.whole_at = Some(at);
             if ready.attempt == Bound::Default {
                 ready.attempt = Bound::Unbounded;
             }
@@ -90,18 +96,21 @@ impl<W, A> sealed::State for ReadyItem<W, A> {
     }
 
     /// `.unbounded()` on a readiness check stands in for both bounds.
-    fn write_unbounded(record: &mut BindingRecord) {
+    fn write_unbounded(record: &mut BindingRecord, at: &'static Location<'static>) {
         if let Some(ready) = record.ready.as_mut() {
             ready.whole = Bound::Unbounded;
             ready.attempt = Bound::Unbounded;
+            ready.whole_at = Some(at);
+            ready.attempt_at = Some(at);
         }
     }
 }
 
 impl<B> sealed::State for HookItem<B> {
-    fn write(record: &mut BindingRecord, bound: Bound) {
+    fn write(record: &mut BindingRecord, bound: Bound, at: &'static Location<'static>) {
         if let Some(hook) = record.hooks.last_mut() {
             hook.bound = bound;
+            hook.bound_at = Some(at);
         }
     }
 }
@@ -211,7 +220,7 @@ impl<'m, T: ?Sized, K, C> Handle<'m, T, K, C> {
         dependencies: Dependencies,
         location: &'static Location<'static>,
     ) -> Handle<'m, T, K2, C> {
-        self.record.hooks.push(HookRecord { kind, bound: Bound::Default, run, dependencies, location });
+        self.record.hooks.push(HookRecord { kind, bound: Bound::Default, bound_at: None, run, dependencies, location });
         self.to()
     }
 }
@@ -261,7 +270,9 @@ impl<'m, T: ?Sized, K, C: HookHost> Handle<'m, T, K, C> {
             backoff: Duration::ZERO,
             backoff_location: None,
             whole: Bound::Default,
+            whole_at: None,
             attempt: Bound::Default,
+            attempt_at: None,
             location,
         };
         if let Some(replaced) = self.record.ready.replace(ready) {
@@ -323,27 +334,35 @@ impl<'m, T: ?Sized, K, C: HookHost> Handle<'m, T, K, C> {
 
 impl<'m, T: ?Sized, K: Timeout<C>, C> Handle<'m, T, K, C> {
     /// Bounds the item written last: the construction directly after the binding is registered,
-    /// the whole check after `.ready(..)`, the hook after an `on_*`. Needs a `Timer`.
+    /// the whole check after `.ready(..)`, the hook after an `on_*`. Needs a `Timer`; a wiring
+    /// error about the bound names this call. A zero duration is refused at `wire()`: write
+    /// [`unbounded`](Self::unbounded) for no bound.
+    #[track_caller]
     pub fn timeout(self, d: Duration) -> Handle<'m, T, K::Next, K::Construction> {
-        <K as sealed::State>::write(&mut *self.record, Bound::After(d));
+        <K as sealed::State>::write(&mut *self.record, Bound::After(d), Location::caller());
         self.to()
     }
 }
 
 impl<'m, T: ?Sized, K: Unbounded<C>, C> Handle<'m, T, K, C> {
     /// No bound on the item written last; still inside `shutdown_timeout` at shutdown.
+    #[track_caller]
     pub fn unbounded(self) -> Handle<'m, T, K::Next, K::Construction> {
-        <K as sealed::State>::write_unbounded(&mut *self.record);
+        <K as sealed::State>::write_unbounded(&mut *self.record, Location::caller());
         self.to()
     }
 }
 
 impl<'m, T: ?Sized, K: AttemptTimeout, C> Handle<'m, T, K, C> {
     /// Bounds one attempt of the readiness check; an attempt that times out with retries left
-    /// is retried like one that returned `Err`. Needs a `Timer`.
+    /// is retried like one that returned `Err`. Needs a `Timer`; a wiring error about the bound
+    /// names this call. A zero duration is refused at `wire()`.
+    #[track_caller]
     pub fn attempt_timeout(self, d: Duration) -> Handle<'m, T, K::Next, C> {
+        let location = Location::caller();
         if let Some(ready) = self.record.ready.as_mut() {
             ready.attempt = Bound::After(d);
+            ready.attempt_at = Some(location);
         }
         self.to()
     }

@@ -3497,9 +3497,11 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "socket2 0.6.5",
+ "system-configuration",
  "tokio",
  "tower-service",
  "tracing",
+ "windows-registry",
 ]
 
 [[package]]
@@ -8684,6 +8686,7 @@ dependencies = [
  "http 1.5.0",
  "hyper 1.11.1",
  "hyper-util",
+ "serde_json",
  "tokio",
  "tokio-rustls",
  "tracing",
@@ -8881,6 +8884,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "percent-encoding",
+ "reqwest",
  "rustls",
  "ulo",
  "ulo-otel",

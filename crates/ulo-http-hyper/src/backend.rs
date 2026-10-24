@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 use std::pin::pin;
 use std::sync::Arc;
 use std::task::Poll;
+use std::time::Duration;
 
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
@@ -16,6 +17,10 @@ use ulo_net::rustls::ServerConfig;
 use ulo_transport::Count;
 
 use crate::convert;
+
+/// How long `close` lets connections write the answers of calls the drain abandoned before it
+/// aborts them.
+const FLUSH: Duration = Duration::from_millis(500);
 
 /// The hyper backend on listener `L`, the runtime's sockets: `ulo_listener_tokio::TokioListener`
 /// for [`Hyper`](crate::Hyper), `ulo_listener_smol::SmolListener` on smol. `Default`, so
@@ -137,8 +142,15 @@ impl<L: Listener> Backend for HyperOn<L> {
         }
     }
 
+    /// Aborts the connections still open, after giving the calls the drain just abandoned
+    /// 500 ms to answer: the service answers each 503 or ends its body with an error frame as
+    /// the app cancels it, and the connection ends once hyper has written that. The wait ends as
+    /// soon as no connection is left.
     async fn close(&self) -> Result<(), BoxError> {
         if let Some(bound) = &self.bound {
+            let flushed = bound.serve.drain();
+            let expired = bound.service.runtime().sleep(FLUSH);
+            futures_util::future::select(pin!(flushed), expired).await;
             bound.serve.close().await;
         }
         Ok(())

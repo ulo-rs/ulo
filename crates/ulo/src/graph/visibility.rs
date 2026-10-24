@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::binding::Recipe;
 use crate::dependency::{Dependencies, ReadKind};
 use crate::error::wiring::WiringError;
 use crate::graph::wire::Declared;
@@ -217,6 +218,53 @@ pub(crate) fn resolve_dependencies(graph: &mut Graph, declared: &Declared, error
                 module: graph.module_name(root),
                 sources: ambiguous_sources(graph, list),
             });
+        }
+    }
+}
+
+/// Every read of a controller's key by a binding that is not a controller: its construction's
+/// edges, its hooks and readiness check, and an alias naming the controller. Each injection point
+/// is one entry. A controller reading another controller is not refused, since both sit at the
+/// edge.
+pub(crate) fn check_controller_reads(graph: &Graph, declared: &Declared, errors: &mut Vec<WiringError>) {
+    let controller_of = |module: ModuleId, key: Key| match graph.lookup(module, key) {
+        Some(Visible::Binding(id)) if graph.binding(*id).record.controller => Some(*id),
+        _ => None,
+    };
+    let report = |reader: &crate::graph::FrozenBinding, controller: BindingId, consumer: String, errors: &mut Vec<WiringError>| {
+        errors.push(WiringError::ControllerRead {
+            controller: graph.key_name(controller),
+            consumer,
+            module: graph.module_name(reader.origin),
+            controller_module: graph.module_name(graph.binding(controller).origin),
+        });
+    };
+    for reader in graph.bindings.iter().skip(declared.first_binding).filter(|binding| !binding.record.controller) {
+        for edge in &reader.edges {
+            if let EdgeTarget::Binding(id) = edge.target
+                && graph.binding(id).record.controller
+            {
+                report(reader, id, graph.consumer(reader.id, edge.dependency), errors);
+            }
+        }
+        if let Recipe::Alias { target } = &reader.record.recipe
+            && let Some(id) = controller_of(reader.origin, *target)
+        {
+            report(reader, id, format!("the alias `{}`", graph.key_name(reader.id)), errors);
+        }
+        let ready = reader.record.ready.iter().map(|ready| (format!("readiness check of {}", graph.label(reader.id)), &ready.dependencies));
+        let hooks =
+            reader.record.hooks.iter().map(|hook| (format!("{} hook of {}", hook.kind, graph.label(reader.id)), &hook.dependencies));
+        for (owner, dependencies) in ready.chain(hooks) {
+            for dependency in &dependencies.list {
+                for read in &dependency.requirement.reads {
+                    if let ReadKind::Single(key) = &read.kind
+                        && let Some(id) = controller_of(reader.origin, *key)
+                    {
+                        report(reader, id, format!("{owner} ({})", dependency_label(dependency.label)), errors);
+                    }
+                }
+            }
         }
     }
 }

@@ -43,6 +43,8 @@ async-net.workspace = true
 futures.workspace = true
 futures-rustls.workspace = true
 futures-util.workspace = true
+# The problem document `tests/drain_abandoned.rs` reads off the wire.
+serde_json.workspace = true
 # `tests/listeners.rs` hands a child process its socket as descriptor 3.
 command-fds.workspace = true
 # `net` and `io-util`: the raw HTTP/1.1 client the route-timeout tests read a response with.

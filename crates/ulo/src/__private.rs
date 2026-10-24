@@ -14,18 +14,62 @@ use crate::timer::BoxError;
 use crate::transport::Transport;
 use crate::transport::metadata::TransportMetadata;
 
-/// A struct field, declared under its name. The bounds are the per-field assertion:
-/// `#[injectable]` emits one call per field with `quote_spanned!`, so a field that is not
-/// `FromContainer`, or that needs an execution in an explicit singleton, fails on that field.
-/// Declaring and asserting in one call keeps a bad field to one error here rather than two.
-pub fn field<S: FromContainer + AllowedIn<Sc>, Sc: Scope>(d: &mut Dependencies, name: &'static str) {
-    d.field::<S>(name);
+/// One injection point of type `S` in a construct of scope `Sc`, as the code `#[injectable]`
+/// generates declares it. The generated `dependencies` calls `field` or `param` on
+/// `(&Site::<S, Sc>::new())` with [`Declare`] and [`Declined`] in scope, which method resolution
+/// settles on whether `S: FromContainer`.
+///
+/// A type that is not `FromContainer` takes the `Declined` arm and declares nothing. The refusal
+/// for it is the read in `construct`, which names `FromContainer` itself; declaring a second time
+/// would report the same missing impl once per function, and the scope check below would add an
+/// error about a scope the field's type never reached. The read is bounded in the same impl as
+/// the declaration, so a type that takes the `Declined` arm does not compile and never runs.
+pub struct Site<S, Sc>(PhantomData<fn() -> (S, Sc)>);
+
+impl<S, Sc> Site<S, Sc> {
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Site(PhantomData)
+    }
 }
 
-/// A constructor parameter, declared under its name, with the same assertion as [`field`].
-pub fn param<S: FromContainer + AllowedIn<Sc>, Sc: Scope>(d: &mut Dependencies, name: &'static str) {
-    d.param::<S>(name);
+/// The arm for a `FromContainer` type. Its scope bound is on the method, so it is checked, and
+/// reported at the field, only for a type that got this far: an `Ext` in an explicit singleton.
+pub trait Declare<S, Sc: Scope> {
+    fn field(&self, d: &mut Dependencies, name: &'static str)
+    where
+        S: AllowedIn<Sc>;
+
+    fn param(&self, d: &mut Dependencies, name: &'static str)
+    where
+        S: AllowedIn<Sc>;
 }
+
+impl<S: FromContainer, Sc: Scope> Declare<S, Sc> for Site<S, Sc> {
+    fn field(&self, d: &mut Dependencies, name: &'static str)
+    where
+        S: AllowedIn<Sc>,
+    {
+        d.field::<S>(name);
+    }
+
+    fn param(&self, d: &mut Dependencies, name: &'static str)
+    where
+        S: AllowedIn<Sc>,
+    {
+        d.param::<S>(name);
+    }
+}
+
+/// The arm for a type that is not `FromContainer`; reached through one more autoref than
+/// [`Declare`], so it applies only when that one does not.
+pub trait Declined<S, Sc> {
+    fn field(&self, _d: &mut Dependencies, _name: &'static str) {}
+
+    fn param(&self, _d: &mut Dependencies, _name: &'static str) {}
+}
+
+impl<S, Sc> Declined<S, Sc> for &Site<S, Sc> {}
 
 /// How a wiring report names a handler parameter: by the identifier its signature writes, or, for
 /// a destructuring pattern, by its position among the parameters after the receiver, from 0, which

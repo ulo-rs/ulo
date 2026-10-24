@@ -23,8 +23,8 @@ use crate::binding::Qualifier;
 use crate::dependency::Dep;
 use crate::dependency::FromContainer;
 use crate::error::{
-    Closed, ConfigureErrors, ConnectError, FailureReason, LookupError, RuntimeMissing, ServeEnd, Shutdown, ShutdownError,
-    ShutdownFailure, StartupError,
+    Closed, ConfigureErrors, ConnectError, FailureReason, LookupError, PreparePanicked, RuntimeMissing, ServeEnd, Shutdown,
+    ShutdownError, ShutdownFailure, StartupError,
 };
 use crate::execution::trace::{TraceMode, TraceSource};
 use crate::execution::{ExecOptions, Execution};
@@ -32,15 +32,17 @@ use crate::key::{BindingKind, Key};
 use crate::resolver::{Purpose, Resolver};
 use crate::graph::{ModuleId, wire};
 use crate::lifecycle::phase::Phase as Stage;
+use crate::lifecycle::run::CatchUnwind;
 use crate::lifecycle::{connect, shutdown};
 use crate::module::Module;
 use crate::module::handle::ModuleRef;
-use crate::redact::{Redacted, Redactor, redact};
+use crate::redact::{Redacted, Redactor, redact, redact_panic};
 use crate::runtime::{Clocked, Runtime};
 use crate::signal::Signal;
 use crate::testing::TestPlan;
 use crate::timer::{BoxError, BoxFuture, Defaults, Timer};
 use crate::transport::server::{BoundAddr, ErasedServer, Server};
+use crate::type_name::TypeName;
 
 pub use handle::{AppHandle, Phase};
 
@@ -54,6 +56,10 @@ pub enum Connected {}
 pub enum Bound {}
 
 /// An application in typestate `S`.
+///
+/// Keep the `App`, or the future serving it, alive for as long as the app serves: an
+/// [`AppHandle`] is a view, not an owner. The `App` value's drop is the end of the app, whatever
+/// handles are kept; what that drop does is below.
 ///
 /// Dropping it lets go of the bound transports' servers, as the end of the shutdown's close step
 /// does. For an app that never reaches that step the drop is where they are released: one bound
@@ -335,7 +341,9 @@ impl App<Connected> {
     /// 1. `prepare` on every server: route tables, duplicate checks, TLS loading, CORS
     ///    validation, endpoint parsing, inherited sockets. Every failure is collected and
     ///    reported together as `StartupError::Configure`; nothing has bound yet, so a
-    ///    configuration error is always reported before a port conflict.
+    ///    configuration error is always reported before a port conflict. A `prepare` that panics
+    ///    is caught and reported as that server's entry, its `source` holding a
+    ///    [`PreparePanicked`], and the other servers still prepare.
     /// 2. `bind` on each server in order. When one fails, those already bound are closed before
     ///    the error returns, so a refused app holds no sockets.
     ///
@@ -353,10 +361,19 @@ impl App<Connected> {
         }
         let handle = self.handle();
 
-        let mut refused = Vec::new();
+        // A panic in one server's `prepare` is that server's failure: the others still prepare,
+        // and the panicked server drops with the rest when `listen` returns, which is where a
+        // transport lets go of what its `prepare` took.
+        let mut refused: Vec<(TypeName, BoxError)> = Vec::new();
         for server in &mut queued {
-            if let Err(error) = server.prepare(&handle).await {
-                refused.push((server.transport_name(), error));
+            let transport = server.transport_name();
+            match CatchUnwind::new(async { server.prepare(&handle).await }).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => refused.push((transport, error)),
+                Err(payload) => {
+                    let message = redact_panic(&self.shared.graph().secrets, payload);
+                    refused.push((transport, Box::new(PreparePanicked { message })));
+                }
             }
         }
         if !refused.is_empty() {
@@ -398,6 +415,14 @@ impl App<Connected> {
     /// The keyed instance `Q` of `M`.
     pub fn module_keyed<M: 'static, Q: 'static>(&self) -> Result<ModuleRef, LookupError> {
         self.shared.find_module::<M>(Some(Qualifier::of::<Q>()))
+    }
+
+    /// The module whose identity is `config`'s: one configuration of a module type registered
+    /// with several, `app.module_of(&DbModule::for_root(url))`, a keyed one written
+    /// `.keyed::<Q>()` as it was imported. Nothing is loaded or built: a module the graph does not
+    /// hold is `LookupError::NotFound` with `LookupKind::Module`.
+    pub fn module_of<M: Module>(&self, config: &M) -> Result<ModuleRef, LookupError> {
+        self.shared.module_of(config)
     }
 
     /// A standalone execution with the root module's visibility (§6.3). Refused from Draining on
@@ -471,16 +496,20 @@ impl App<Bound> {
                     let Poll::Ready(result) = fut.as_mut().poll(cx) else { continue };
                     *slot = None;
                     let transport = server.transport_name();
-                    let (signal, end) = match result {
+                    let (signal, end, failed) = match result {
                         Err(error) => {
                             let reason = redact(&shared.graph().secrets, error);
-                            (Signal::new(format!("transport `{transport}` failed: {reason}")), ServeEnd::Errored(reason))
+                            let failed = reason.to_string();
+                            (Signal::new(format!("transport `{transport}` failed: {failed}")), ServeEnd::Errored(reason), Some(failed))
                         }
-                        Ok(()) => (Signal::new(format!("transport `{transport}` stopped serving")), ServeEnd::Returned),
+                        Ok(()) => (Signal::new(format!("transport `{transport}` stopped serving")), ServeEnd::Returned, None),
                     };
                     // A trigger that arrived since `triggered` was polled wins, and this end is
                     // then part of that shutdown rather than its cause.
-                    shared.shutdown.trigger_with(signal.clone(), Some(ShutdownFailure::Serve { transport, end }));
+                    let won = shared.shutdown.trigger_with(signal.clone(), Some(ShutdownFailure::Serve { transport, end }));
+                    if !won && let Some(failed) = failed {
+                        discarded(transport, &failed);
+                    }
                     return Poll::Ready(signal);
                 }
                 Poll::Pending
@@ -490,15 +519,28 @@ impl App<Bound> {
 
         let mut closing = pin!(shutdown::close(&shared, trigger));
         poll_fn(|cx| {
-            for slot in serving.iter_mut() {
+            for (server, slot) in servers.iter().zip(serving.iter_mut()) {
                 if let Some(fut) = slot
-                    && fut.as_mut().poll(cx).is_ready()
+                    && let Poll::Ready(result) = fut.as_mut().poll(cx)
                 {
                     *slot = None;
+                    if let Err(error) = result {
+                        discarded(server.transport_name(), &redact(&shared.graph().secrets, error).to_string());
+                    }
                 }
             }
             closing.as_mut().poll(cx)
         })
         .await
     }
+}
+
+/// A `serve` that failed once another trigger had arrived: the outcome reports that trigger
+/// alone, so the failure reaches the log and nothing else.
+fn discarded(transport: TypeName, error: &str) {
+    tracing::warn!(
+        transport = %transport,
+        error,
+        "a transport's `serve` failed after the shutdown was triggered; the outcome reports the trigger alone"
+    );
 }

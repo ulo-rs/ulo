@@ -4,6 +4,7 @@ use std::fmt;
 use std::panic::Location;
 
 use crate::graph::visibility::two_versions;
+use crate::hooks::HookKind;
 use crate::key::{BindingKind, Key, KeyName, role_spelling};
 use crate::module::{ModuleName, colliding_names};
 use crate::redact::Redacted;
@@ -111,6 +112,10 @@ pub enum WiringError {
     ReexportAmbiguous { module: ModuleName, key: KeyName, sources: Vec<ModuleName>, at: &'static Location<'static> },
     /// Step 1: an execution input declared inside a keyed module.
     KeyedInput { module: ModuleName, key: KeyName, at: &'static Location<'static> },
+    /// Step 1: a keyed module keyed again, `m.keyed::<Inner>().keyed::<Outer>()`. The module's
+    /// identity carries `outer` and its exports `inner`, so the two disagree for every module
+    /// written this way. `module` is the module as its identity names it.
+    NestedKeyed { module: ModuleName, outer: TypeName, inner: TypeName },
     /// Step 1: `export::<T>()` of a key the module does not bind. `imported` when the module sees
     /// the key through an import, which leaves through `reexport`; `near` is a key the module
     /// binds that is spelled the same up to a trailing `+ Send + Sync`, or by its last path
@@ -179,6 +184,11 @@ pub enum WiringError {
     Missing { key: KeyName, consumer: String, module: ModuleName, near: Option<(KeyName, ModuleName)> },
     /// Step 3: an injection point whose key the module sees from several sources, naming each.
     Ambiguous { key: KeyName, consumer: String, module: ModuleName, sources: Vec<(ModuleName, &'static Location<'static>)> },
+    /// Step 3: a binding that is not a controller reads a controller's key, through its
+    /// construction, a hook, its readiness check or an alias. A controller is the edge of the
+    /// application, reached by its transport alone. `consumer` names the reader as `Missing`
+    /// does; `module` is the reader's module, and `controller_module` the controller's.
+    ControllerRead { controller: KeyName, consumer: String, module: ModuleName, controller_module: ModuleName },
 
     /// Step 4: the full path, as in `A → B → C → A`, each step with its module.
     Cycle { path: Vec<(KeyName, ModuleName)> },
@@ -222,6 +232,38 @@ pub enum WiringError {
     BackoffWithoutTimer { binding: String, at: &'static Location<'static> },
     /// Step 6: a builder knob set on an app with no `Timer`.
     KnobWithoutTimer { knob: &'static str },
+    /// Step 6: a bound of `After(Duration::ZERO)` on a construction, a readiness check, one of its
+    /// attempts or a hook, which would time the item out before it starts. Refused whatever the
+    /// app's clock, and reported instead of `BoundWithoutTimer` on an app with none. `binding` is
+    /// the binding the item belongs to, `None` for a module's own hook; `at` is the call that wrote
+    /// the bound, or the registration that brought the type in for a trait const. Hint:
+    /// `.unbounded()`.
+    ZeroBound { item: BoundItem, binding: Option<KeyName>, module: ModuleName, at: &'static Location<'static> },
+}
+
+/// The item a bound is written on, as [`WiringError::ZeroBound`] names it.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BoundItem {
+    /// The construction: `.timeout(..)` after the registration, or `CONSTRUCT_TIMEOUT`.
+    Construction,
+    /// A readiness check as a whole: `.timeout(..)` after `.ready(..)`.
+    ReadinessWhole,
+    /// One attempt of a readiness check: `.attempt_timeout(..)`.
+    ReadinessAttempt,
+    /// A hook: `.timeout(..)` after an `on_*`, or the hook trait's `TIMEOUT`.
+    Hook(HookKind),
+}
+
+impl fmt::Display for BoundItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BoundItem::Construction => f.write_str("construction"),
+            BoundItem::ReadinessWhole => f.write_str("readiness check"),
+            BoundItem::ReadinessAttempt => f.write_str("readiness attempt"),
+            BoundItem::Hook(kind) => write!(f, "`{kind}` hook"),
+        }
+    }
 }
 
 impl WiringError {
@@ -250,8 +292,10 @@ impl WiringError {
             WiringError::Cycle { path } => path.iter().map(|(key, _)| key).collect(),
             WiringError::ScopeViolation { binding, .. } | WiringError::HooksOnPerExecution { binding, .. } => vec![binding],
             WiringError::InputNotSeeded { input, .. } => vec![input],
-            WiringError::UnreadPrefix { controller, .. } => vec![controller],
+            WiringError::UnreadPrefix { controller, .. } | WiringError::ControllerRead { controller, .. } => vec![controller],
+            WiringError::ZeroBound { binding, .. } => binding.iter().collect(),
             WiringError::ImportCycle { .. }
+            | WiringError::NestedKeyed { .. }
             | WiringError::OverrideModuleAmbiguous { .. }
             | WiringError::TimerOverride { .. }
             | WiringError::RuntimeOverride { .. }
@@ -275,6 +319,7 @@ impl WiringError {
             WiringError::ClosureScopeViolation { transport, .. } => vec![*transport],
             WiringError::UnreadPrefix { transports, .. } => transports.clone(),
             WiringError::InputConflict { first, second, .. } => first.type_names().into_iter().chain(second.type_names()).collect(),
+            WiringError::NestedKeyed { outer, inner, .. } => vec![*outer, *inner],
             WiringError::ImportCycle { .. }
             | WiringError::ReexportNotVisible { .. }
             | WiringError::ReexportAmbiguous { .. }
@@ -304,7 +349,9 @@ impl WiringError {
             | WiringError::ClosureNeedsExecution { .. }
             | WiringError::BoundWithoutTimer { .. }
             | WiringError::BackoffWithoutTimer { .. }
-            | WiringError::KnobWithoutTimer { .. } => Vec::new(),
+            | WiringError::KnobWithoutTimer { .. }
+            | WiringError::ControllerRead { .. }
+            | WiringError::ZeroBound { .. } => Vec::new(),
         };
         keys.chain(transports).collect()
     }
@@ -325,7 +372,10 @@ impl WiringError {
             | WiringError::DuplicateReadiness { module, .. }
             | WiringError::ScopeViolation { module, .. }
             | WiringError::HooksOnPerExecution { module, .. }
-            | WiringError::UnreadPrefix { module, .. } => vec![module],
+            | WiringError::UnreadPrefix { module, .. }
+            | WiringError::NestedKeyed { module, .. }
+            | WiringError::ZeroBound { module, .. } => vec![module],
+            WiringError::ControllerRead { module, controller_module, .. } => vec![module, controller_module],
             WiringError::ReexportAmbiguous { module, sources, .. } => std::iter::once(module).chain(sources).collect(),
             WiringError::OverrideUnmatched { keyed, .. } => keyed.iter().collect(),
             WiringError::OverrideAmbiguous { matches, .. } => matches.iter().collect(),
@@ -715,6 +765,40 @@ impl WiringError {
                 f,
                 format!("`{knob}` is set on an app with no `Timer`"),
                 vec!["help: set one with `.timer(..)`; every timing knob is timed by it".to_owned()],
+            ),
+            WiringError::ZeroBound { item, binding, module, at } => {
+                let owner = match binding {
+                    Some(binding) => format!("`{}` in {}", show(binding), show_module(module)),
+                    None => format!("module {}", show_module(module)),
+                };
+                tree(
+                    f,
+                    format!("a zero bound on the {item} of {owner} would end it before it starts"),
+                    vec![
+                        format!("written at {}", place(at)),
+                        "help: write `.unbounded()` for no bound, or give it a duration above zero".to_owned(),
+                    ],
+                )
+            }
+            WiringError::NestedKeyed { module, outer, inner } => {
+                let outer = show_type(*outer);
+                let inner = show_type(*inner);
+                tree(
+                    f,
+                    format!("{} is keyed twice, by `{inner}` and then by `{outer}`", show_module(module)),
+                    vec![
+                        format!("its identity carries `{outer}`, and its exports leave as `T @ {inner}`"),
+                        "help: key the module once, with the one qualifier its importers read".to_owned(),
+                    ],
+                )
+            }
+            WiringError::ControllerRead { controller, consumer, module, controller_module } => tree(
+                f,
+                format!("the controller `{}` in {} is read by {consumer} in {}", show(controller), show_module(controller_module), show_module(module)),
+                vec![
+                    "a controller is the edge of the application, reached by its transport alone".to_owned(),
+                    "help: move the shared logic into a provider both can read".to_owned(),
+                ],
             ),
         }
     }

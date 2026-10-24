@@ -3,7 +3,8 @@
 //!
 //! Capabilities pinned: 10 (a second single and a single beside a collection are refused rather
 //! than replacing), 6 (an alias must point at something), 44 (reported by `wire()`), 45 (a failed
-//! value is a typed entry, not a panic), 42 (the entry's error is redacted).
+//! value is a typed entry, not a panic), 42 (the entry's error is redacted, and a secret under
+//! four characters is matched against no message).
 
 #[macro_use]
 mod common;
@@ -211,4 +212,19 @@ fn one_readiness_check_per_key_is_accepted() {
     wires(Mod::<A>::new(|m| {
         m.singleton(|| async { Svc }).ready(|| async { Ok::<(), Boom>(()) });
     }));
+}
+
+#[test]
+fn a_secret_under_four_characters_is_matched_against_no_message() {
+    // Three characters in four bytes: the floor counts characters.
+    const SHORT: &str = "p\u{e4}1";
+    const FOUR: &str = "q7x9";
+    let errors = wire_err(Mod::<A>::new(|m| {
+        m.secret(&Secret::new(SHORT.to_owned()));
+        m.secret(&Secret::new(FOUR.to_owned()));
+        m.try_value::<u32, _>(Err(Boom::new(format!("tokens {SHORT} and {FOUR} refused"))));
+    }));
+    let (key, error) = entry!(errors, WiringError::ValueFailed { key, error, .. } => (key.key(), error.to_string()));
+    assert_eq!(key, Key::of::<u32, ()>());
+    assert_eq!(error, format!("tokens {SHORT} and [redacted] refused"), "the four-character secret is replaced and the shorter one left");
 }

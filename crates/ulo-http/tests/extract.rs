@@ -118,6 +118,28 @@ impl Inputs {
         format!("{read}|ok")
     }
 
+    /// Propagates the stream's error, as a handler written with `?` does.
+    #[ulo_http::post("/stream-through")]
+    #[meta(BodyLimit(8))]
+    async fn stream_through(&self, mut body: BodyStream) -> Result<String, BoxError> {
+        let mut read = 0;
+        while let Some(chunk) = body.next().await {
+            read += chunk?.len();
+        }
+        Ok(read.to_string())
+    }
+
+    /// Propagates the multipart error, from `next_field` and from reading a part alike.
+    #[ulo_http::post("/upload-through")]
+    #[meta(BodyLimit(16))]
+    async fn upload_through(&self, mut parts: Multipart) -> Result<String, multer::Error> {
+        let mut read = 0;
+        while let Some(field) = parts.next_field().await? {
+            read += field.bytes().await?.len();
+        }
+        Ok(read.to_string())
+    }
+
     #[ulo_http::post("/bytes")]
     #[meta(BodyLimit(8))]
     fn bytes(&self, bytes: Bytes) -> String {
@@ -330,6 +352,45 @@ async fn a_body_stream_and_bytes_stop_at_the_routes_body_limit_and_report_the_li
     apps.succeeds(|| Call::new(Method::POST, "/stream").body("123456789012345678"), "0|TooLarge|body|8").await;
     apps.succeeds(|| Call::new(Method::POST, "/bytes").body("12345678"), "8").await;
     apps.fails(|| Call::new(Method::POST, "/bytes").body("123456789"), StatusCode::PAYLOAD_TOO_LARGE, "TooLarge|body|8").await;
+    apps.stop().await;
+}
+
+#[tokio::test]
+async fn a_body_of_no_known_length_is_held_to_the_limit_as_its_frames_arrive() {
+    let apps = Apps::start().await;
+    let bytes = |frames: &'static [&'static str]| move || Call::new(Method::POST, "/bytes").chunks(frames.iter().copied());
+    let stream = |frames: &'static [&'static str]| move || Call::new(Method::POST, "/stream-through").chunks(frames.iter().copied());
+
+    apps.succeeds(bytes(&["1234", "5678"]), "8").await;
+    apps.fails(bytes(&["1234", "5678", "9"]), StatusCode::PAYLOAD_TOO_LARGE, "TooLarge|body|8").await;
+    apps.fails(bytes(&["123456789"]), StatusCode::PAYLOAD_TOO_LARGE, "TooLarge|body|8").await;
+    apps.succeeds(stream(&["1234", "5678"]), "8").await;
+    apps.fails(stream(&["12345", "6789"]), StatusCode::PAYLOAD_TOO_LARGE, "TooLarge|body|8").await;
+    // The reader sees the bytes within the limit and then the error that names the limit.
+    apps.succeeds(|| Call::new(Method::POST, "/stream").chunks(["12345", "6789"]), "5|TooLarge|body|8").await;
+    apps.stop().await;
+}
+
+#[tokio::test]
+async fn a_multipart_body_of_no_known_length_over_the_limit_answers_413_when_the_handler_propagates_the_read_error() {
+    let apps = Apps::start().await;
+    let frames = |frames: Vec<String>| move || Call::new(Method::POST, "/upload-through").header("content-type", "multipart/form-data; boundary=XB").chunks(frames.clone());
+    let (first, rest) = UPLOAD.split_at(40);
+    let (second, third) = rest.split_at(60);
+    let parts = vec![first.to_owned(), second.to_owned(), third.to_owned()];
+
+    // The error comes out of `next_field` and out of reading the part under way; both are 413.
+    let reply = apps.fails(frames(parts.clone()), StatusCode::PAYLOAD_TOO_LARGE, "TooLarge|body|16").await;
+    assert_eq!(reply.json()["status"], 413);
+    assert_eq!(reply.json()["detail"], ExtractError::TooLarge { param: "body", limit: 16 }.to_string(), "the problem names the limit");
+
+    // The same frames under a limit they fit are read whole.
+    let fits = parts.clone();
+    apps.succeeds(
+        move || Call::new(Method::POST, "/upload").header("content-type", "multipart/form-data; boundary=XB").chunks(fits.clone()),
+        "title=Hello;doc[a.txt]=contents",
+    )
+    .await;
     apps.stop().await;
 }
 

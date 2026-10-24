@@ -156,6 +156,10 @@ pub(crate) enum TraitHookFn<T> {
 pub(crate) struct HookRecord {
     pub(crate) kind: HookKind,
     pub(crate) bound: Bound,
+    /// The `.timeout(..)` or `.unbounded()` call that wrote `bound`; `None` for a trait hook, whose
+    /// `TIMEOUT` const has no call, and for a closure hook left at `Default`. A report then names
+    /// `location`.
+    pub(crate) bound_at: Option<&'static Location<'static>>,
     pub(crate) run: HookFn,
     /// The closure's dependencies, resolved by the wiring pass like any binding's. Empty for a
     /// trait hook.
@@ -196,6 +200,7 @@ pub(crate) fn erase_trait_hooks<T: Construct>(location: &'static Location<'stati
         .map(|hook| HookRecord {
             kind: hook.kind,
             bound: hook.bound,
+            bound_at: None,
             run: erase_trait_hook(hook.kind, hook.run),
             dependencies: Dependencies::default(),
             location,

@@ -26,6 +26,7 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::panic::Location;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use bytes::Bytes;
@@ -66,8 +67,9 @@ use crate::transport::{Http, HttpCarried, RequestHead};
 /// checks that the declaring module sees them.
 ///
 /// `prepare` refuses a scope or an exclusion that does not parse, a scoped entry naming no pattern,
-/// an `exclude` or a `supplies` written before any entry, a `supplies` written after an `adopt`,
-/// and a `Cors` value the Fetch specification forbids.
+/// a scoped entry whose scope covers no route of the table, naming the entry's declaring location
+/// and the scope it wrote, an `exclude` or a `supplies` written before any entry, a `supplies`
+/// written after an `adopt`, and a `Cors` value the Fetch specification forbids.
 ///
 /// `T` is the transport whose server runs the entries: `Http` unwritten, and `ulo_grpc::Grpc` for
 /// gRPC's stage, `ulo_grpc::PreDispatch`, scoped by method path (`/users.v1.UserService/*`). An
@@ -319,6 +321,9 @@ pub struct Stage<T: HttpCarried = Http> {
     run: Arc<[Runnable]>,
     /// `scoped` as it runs, each with the scopes it covers and excludes, index for index.
     covering: Vec<Covering>,
+    /// Whether some route's pattern has been covered by each entry's scope, `covering` index for
+    /// index: set as `prepare` builds the route table.
+    reached: Vec<AtomicBool>,
 }
 
 /// The entries one route runs after it matched: those whose scope covers it, minus exclusions,
@@ -411,6 +416,7 @@ impl<T: HttpCarried> Stage<T> {
                     scope,
                     exclude,
                 });
+                stage.reached.push(AtomicBool::new(false));
             }
         }
         if !failures.is_empty() {
@@ -428,7 +434,29 @@ impl<T: HttpCarried> Stage<T> {
             shared: Mutex::new(Vec::new()),
             run: Arc::from(Vec::new()),
             covering: Vec::new(),
+            reached: Vec::new(),
         }
+    }
+
+    /// One refusal for each scoped entry whose scope covered no route of the table the stage was
+    /// asked for: the entry's declaring location and the scope it wrote. Read after every route has
+    /// taken its [`scoped`](Self::scoped) stage; an entry with an empty scope is refused by
+    /// [`build`](Self::build) already.
+    pub(crate) fn unreached(&self) -> Vec<String> {
+        self.covering
+            .iter()
+            .zip(&self.reached)
+            .zip(&self.scoped)
+            .filter(|((covering, reached), _)| !covering.scope.is_empty() && !reached.load(Ordering::Relaxed))
+            .map(|((covering, _), (_, meta, index))| {
+                let scope: Vec<String> = covering.scope.iter().map(|scope| format!("`{}`", scope.raw)).collect();
+                format!(
+                    "pre-dispatch entry at {} is scoped to {} and covers no route",
+                    meta.entries[*index].location,
+                    scope.join(", ")
+                )
+            })
+            .collect()
     }
 
     /// The scoped stage of `route`, a route pattern such as `/users/{id}` or a gRPC method path,
@@ -457,8 +485,12 @@ impl<T: HttpCarried> Stage<T> {
             .covering
             .iter()
             .enumerate()
-            .filter(|(_, entry)| {
-                entry.scope.iter().any(|scope| scope.covers(pattern)) && !entry.exclude.iter().any(|scope| scope.covers(pattern))
+            .filter(|(index, entry)| {
+                let covers = entry.scope.iter().any(|scope| scope.covers(pattern));
+                if covers {
+                    self.reached[*index].store(true, Ordering::Relaxed);
+                }
+                covers && !entry.exclude.iter().any(|scope| scope.covers(pattern))
             })
             .map(|(index, _)| index)
             .collect();

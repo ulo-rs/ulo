@@ -181,7 +181,8 @@ impl FromCall<Http> for BodyStream {
 /// An empty body is `ExtractError::Missing`; a body that is not `multipart/form-data` with a
 /// boundary is `UnsupportedMediaType` (415); a declared length over the route's limit is
 /// `TooLarge` (413). A body that turns out longer than the limit while its parts are read fails
-/// that `next_field` call.
+/// that `next_field` call, or the read of the part under way, with a `multer::Error`; a handler
+/// that returns it unclaimed answers 413 as well.
 pub struct Multipart {
     pub(crate) inner: multer::Multipart<'static>,
 }
