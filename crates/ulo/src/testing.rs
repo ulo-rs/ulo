@@ -217,10 +217,12 @@ impl<S> TestApp<S> {
         TestApp { builder: self.builder.shutdown_timeout(d), _s: PhantomData }
     }
 
+    #[track_caller]
     pub fn hook_timeout(self, d: Duration) -> TestApp<Settled> {
         TestApp { builder: self.builder.hook_timeout(d), _s: PhantomData }
     }
 
+    #[track_caller]
     pub fn construct_timeout(self, d: Duration) -> TestApp<Settled> {
         TestApp { builder: self.builder.construct_timeout(d), _s: PhantomData }
     }

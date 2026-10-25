@@ -440,13 +440,18 @@ async fn valid_runs_after_extraction_and_answers_422_with_every_violated_field()
 }
 
 #[tokio::test]
-async fn a_multipart_read_error_that_is_not_the_limit_is_not_answered_413() {
+async fn a_multipart_read_error_that_is_not_the_limit_is_malformed_and_answers_400() {
     let apps = Apps::start().await;
     // Within the limit of 16 and cut off in the middle of a part's headers.
-    let malformed = || Call::new(Method::POST, "/upload-through").header("content-type", "multipart/form-data; boundary=XB").chunks(["--XB\r\n", "bad"]);
-    let reply = apps.plain.send(malformed()).await;
-    assert_ne!(reply.status, StatusCode::PAYLOAD_TOO_LARGE, "only a read that ended at the limit is `TooLarge`: {}", reply.text());
-    let seen = apps.reporting.send(malformed()).await;
-    assert!(!seen.text().starts_with("TooLarge"), "the error handlers see the multipart error itself: {}", seen.text());
+    let cut = || Call::new(Method::POST, "/upload-through").header("content-type", "multipart/form-data; boundary=XB").chunks(["--XB\r\n", "bad"]);
+    // A first line that is not the declared boundary.
+    let broken = || Call::new(Method::POST, "/upload-through").header("content-type", "multipart/form-data; boundary=XB").body("--ZZ\r\nx\r\n");
+    for (name, call) in [("cut", &cut as &dyn Fn() -> Call), ("broken boundary", &broken)] {
+        let reply = apps.plain.send(call()).await;
+        assert_eq!(reply.status, BAD, "{name}: {}", reply.text());
+        assert_eq!(reply.json()["status"], 400, "{name}");
+        let seen = apps.reporting.send(call()).await;
+        assert_eq!(seen.text(), "Malformed|body", "{name}: the error handlers see `Malformed` naming `body`");
+    }
     apps.stop().await;
 }

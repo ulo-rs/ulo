@@ -19,7 +19,7 @@ mod tls;
 pub use activation::{Activation, ActivationError};
 pub use endpoint::{Endpoint, EndpointError, EndpointSpec, ListenerName};
 pub use listener::{BindError, BoundListener, bind_all};
-pub use tls::{Tls, TlsError};
+pub use tls::{CertificateCause, KeyCause, Tls, TlsError};
 pub use ulo::BoundAddr;
 /// The rustls whose `ServerConfig` [`Tls::load`] answers.
 pub use rustls;

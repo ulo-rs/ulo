@@ -239,6 +239,10 @@ pub enum WiringError {
     /// the bound, or the registration that brought the type in for a trait const. Hint:
     /// `.unbounded()`.
     ZeroBound { item: BoundItem, binding: Option<KeyName>, module: ModuleName, at: &'static Location<'static> },
+    /// Step 6: `construct_timeout` or `hook_timeout` set to `Duration::ZERO`, which would end
+    /// every item left at `Default` before it starts. `knob` is the builder method's name and
+    /// `at` the call that set it. Hint: `.unbounded()` on the items.
+    ZeroDefault { knob: &'static str, at: &'static Location<'static> },
 }
 
 /// The item a bound is written on, as [`WiringError::ZeroBound`] names it.
@@ -305,6 +309,7 @@ impl WiringError {
             | WiringError::ClosureScopeViolation { .. }
             | WiringError::BoundWithoutTimer { .. }
             | WiringError::BackoffWithoutTimer { .. }
+            | WiringError::ZeroDefault { .. }
             | WiringError::KnobWithoutTimer { .. } => Vec::new(),
         }
     }
@@ -351,6 +356,7 @@ impl WiringError {
             | WiringError::BackoffWithoutTimer { .. }
             | WiringError::KnobWithoutTimer { .. }
             | WiringError::ControllerRead { .. }
+            | WiringError::ZeroDefault { .. }
             | WiringError::ZeroBound { .. } => Vec::new(),
         };
         keys.chain(transports).collect()
@@ -400,6 +406,7 @@ impl WiringError {
             | WiringError::InputNotSeeded { .. }
             | WiringError::BoundWithoutTimer { .. }
             | WiringError::BackoffWithoutTimer { .. }
+            | WiringError::ZeroDefault { .. }
             | WiringError::KnobWithoutTimer { .. } => Vec::new(),
         }
     }
@@ -765,6 +772,14 @@ impl WiringError {
                 f,
                 format!("`{knob}` is set on an app with no `Timer`"),
                 vec!["help: set one with `.timer(..)`; every timing knob is timed by it".to_owned()],
+            ),
+            WiringError::ZeroDefault { knob, at } => tree(
+                f,
+                format!("`{knob}` is zero, which would end every item left at its default before it starts"),
+                vec![
+                    format!("set at {}", place(at)),
+                    "help: write `.unbounded()` on the items for no bound, or give the knob a duration above zero".to_owned(),
+                ],
             ),
             WiringError::ZeroBound { item, binding, module, at } => {
                 let owner = match binding {

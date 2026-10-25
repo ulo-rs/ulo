@@ -11,10 +11,11 @@ use ulo::{BoxError, Runtime};
 use ulo_http::ConnInfo;
 use ulo_net::BoundListener;
 use ulo_net::rustls::ServerConfig;
-use ulo_transport::TaskSet;
+use ulo_transport::{TaskSet, Turns};
 use ulo_transport::__private::Watch;
 
 use crate::listener::{Incoming, Io, Listener, ReadCount};
+use crate::rt::RuntimeExecutor;
 
 /// What the accept loop needs beyond its listeners and runtime.
 #[derive(Clone, Debug, Default)]
@@ -86,6 +87,8 @@ pub struct Serve<L: Listener> {
     handshake_timeout: Option<Duration>,
     read_count: ReadCount,
     signals: Arc<Signals>,
+    /// Every connection's task, and every task hyper spawns through [`executor`](Self::executor).
+    turns: Turns,
 }
 
 impl<L: Listener> Serve<L> {
@@ -106,7 +109,14 @@ impl<L: Listener> Serve<L> {
             handshake_timeout: config.handshake_timeout,
             read_count: config.read_count.clone(),
             signals: Arc::new(Signals { draining: Watch::new(false), closing: Watch::new(false), finished: Watch::new(false) }),
+            turns: Turns::default(),
         })
+    }
+
+    /// hyper's executor for the connections this `Serve` hands out: each task spawned on the
+    /// runtime, and polled by [`close_after`](Self::close_after) as the connections are.
+    pub fn executor(&self) -> RuntimeExecutor {
+        RuntimeExecutor::tracked(Arc::clone(&self.runtime), self.turns.clone())
     }
 
     /// Accepts on every listener until the drain, each connection on its own task, and returns
@@ -131,6 +141,7 @@ impl<L: Listener> Serve<L> {
                 self.handshake_timeout,
                 self.read_count.clone(),
                 Arc::clone(&self.signals),
+                self.turns.clone(),
             ));
         }
         while let Some(end) = loops.join_next().await {
@@ -156,6 +167,23 @@ impl<L: Listener> Serve<L> {
         self.signals.finished.wait_for(|finished| *finished).await;
     }
 
+    /// A server's `close` that lets the connections write what the drain's end left them. Its
+    /// first poll polls every connection, and every task spawned through
+    /// [`executor`](Self::executor), once on the calling thread, an HTTP/2 stream's task before
+    /// its connection: an answer that needs no wait, a call's 503 or UNAVAILABLE, is written
+    /// there. It then waits for the connections to end, until `grace` resolves, and aborts those
+    /// left. Dropped before its end, as the core drops a `close` its bound cuts, it still aborts
+    /// them, so no connection outlives the cut.
+    pub async fn close_after(&self, grace: impl Future<Output = ()>) {
+        let _aborting = AbortOnDrop(self);
+        self.turns.give();
+        {
+            let (mut drained, mut grace) = (pin!(self.drain()), pin!(grace));
+            poll_fn(|cx| if drained.as_mut().poll(cx).is_ready() || grace.as_mut().poll(cx).is_ready() { Poll::Ready(()) } else { Poll::Pending }).await;
+        }
+        self.close().await;
+    }
+
     /// Closes the listeners of a `run` that never started, which no accept loop will close: an
     /// app shut down before it served, or a `listen()` closing the servers it bound before a later
     /// one failed.
@@ -164,6 +192,17 @@ impl<L: Listener> Serve<L> {
         if unserved.is_some() {
             Signals::raise(&self.signals.finished);
         }
+    }
+}
+
+/// Raises `closing` when dropped, and closes the listeners of a `run` that never started: a
+/// `close_after` cut short still aborts the connections.
+struct AbortOnDrop<'a, L: Listener>(&'a Serve<L>);
+
+impl<L: Listener> Drop for AbortOnDrop<'_, L> {
+    fn drop(&mut self) {
+        Signals::raise(&self.0.signals.closing);
+        self.0.release_unserved();
     }
 }
 
@@ -194,6 +233,7 @@ async fn accept_loop<L, F, Fut>(
     handshake_timeout: Option<Duration>,
     read_count: ReadCount,
     signals: Arc<Signals>,
+    turns: Turns,
 ) where
     L: Listener,
     F: Fn(Accepted<L>) -> Fut + Send + Sync + 'static,
@@ -226,14 +266,14 @@ async fn accept_loop<L, F, Fut>(
         };
         match woke {
             Woke::Accepted(Ok(incoming)) => {
-                connections.spawn(serve_connection(
+                connections.spawn(turns.track(serve_connection(
                     incoming,
                     Arc::clone(&runtime),
                     handshake_timeout,
                     Arc::clone(&connection),
                     read_count.clone(),
                     Arc::clone(&signals),
-                ));
+                )));
             }
             Woke::Accepted(Err(error)) => backoff(error, &*runtime).await,
             Woke::Draining => break,

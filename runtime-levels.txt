@@ -240,5 +240,7 @@ ulo-otel                      runtime-free           --all-features
 # The OTLP exporter at default features: the HTTP client over `ureq` brings no tokio.
 ulo-otel-otlp                 runtime-free
 
-# The same crate with reqwest's blocking client, which brings tokio on a thread of its own.
-ulo-otel-otlp                 tokio-bound            --features reqwest-blocking
+# The same crate with reqwest's blocking client alone, which brings tokio on a thread of its own,
+# and with both clients.
+ulo-otel-otlp                 tokio-bound            --no-default-features --features reqwest-blocking
+ulo-otel-otlp                 tokio-bound            --all-features

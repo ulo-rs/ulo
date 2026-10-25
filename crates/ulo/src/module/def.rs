@@ -43,9 +43,8 @@ impl<'a> ModuleDef<'a> {
 
     /// Imports `module`: this module sees its exports. Two imports of an equal identity, from
     /// anywhere in the graph, are one module.
-    #[track_caller]
     pub fn import<M: Module>(&mut self, module: M) {
-        self.node.imports.push(ImportRecord { module: Box::new(module), location: Location::caller() });
+        self.node.imports.push(ImportRecord { module: Box::new(module) });
     }
 
     /// Makes this module's exports visible to every module.
@@ -174,8 +173,8 @@ impl<'a> ModuleDef<'a> {
         Handle::new(self.push(record))
     }
 
-    /// A value under the key of its own type, a `Result` included. A `Secret<String>` value
-    /// registers itself for redaction.
+    /// A value under the key of its own type, a `Result` included. A `Secret<String>` or
+    /// `Secret<&'static str>` value registers itself for redaction.
     #[track_caller]
     pub fn value<T: Send + Sync + 'static>(&mut self, value: T) -> Handle<'_, T, Binding<Singleton, Set>> {
         let location = Location::caller();
@@ -199,7 +198,7 @@ impl<'a> ModuleDef<'a> {
                 Recipe::Value(instance_of(Arc::new(value)))
             }
             Err(error) => {
-                self.node.failures.push(ValueFailure { key: Key::of::<T, ()>(), error: error.into(), location });
+                self.node.failures.push(ValueFailure { error: error.into(), location });
                 Recipe::Failed
             }
         };
@@ -430,11 +429,14 @@ impl<'a> ModuleDef<'a> {
         ModuleHook::new(&mut *self.node)
     }
 
-    /// A `Secret<String>` is the one secret a generic value can be recognized as; any other
-    /// `Secret<T>` bound by value is registered with `m.secret(..)`.
+    /// A generic value is recognized as a secret only by a downcast to a type named here, a
+    /// `Secret<String>` or a `Secret<&'static str>`; any other `Secret<T>` bound by value is
+    /// registered with `m.secret(..)`.
     fn register_secret(&mut self, value: &dyn Any) {
         if let Some(secret) = value.downcast_ref::<Secret<String>>() {
             self.node.secrets.push(secret.expose().clone());
+        } else if let Some(secret) = value.downcast_ref::<Secret<&'static str>>() {
+            self.node.secrets.push((*secret.expose()).to_owned());
         }
     }
 }
@@ -574,7 +576,6 @@ impl ModuleNode {
 
 pub(crate) struct ImportRecord {
     pub(crate) module: Box<dyn Module>,
-    pub(crate) location: &'static Location<'static>,
 }
 
 pub(crate) struct ExportRecord {
@@ -591,7 +592,6 @@ pub(crate) struct InputRecord {
 }
 
 pub(crate) struct ValueFailure {
-    pub(crate) key: Key,
     pub(crate) error: BoxError,
     pub(crate) location: &'static Location<'static>,
 }

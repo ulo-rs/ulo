@@ -104,14 +104,6 @@ impl ModuleIdentity {
     pub(crate) fn qualifier(&self) -> Option<Qualifier> {
         self.qualifier
     }
-
-    pub(crate) fn label_text(&self) -> Option<&'static str> {
-        self.label
-    }
-
-    pub(crate) fn is_configured(&self) -> bool {
-        self.config.is_some()
-    }
 }
 
 impl PartialEq for ModuleIdentity {

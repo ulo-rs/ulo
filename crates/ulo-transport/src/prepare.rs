@@ -18,9 +18,10 @@
 
 use std::collections::HashSet;
 use std::fmt;
+use std::panic::Location;
 use std::time::Duration;
 
-use ulo::{Bound, BoxError, PrepareError, TypeName};
+use ulo::{Bound, BoxError, PrepareEntry, PrepareError, TypeName};
 
 use crate::count::Count;
 
@@ -38,8 +39,8 @@ impl Failures {
     }
 
     /// A failure another component answered as a `BoxError`: an upgrade handler's `prepare`, a
-    /// link's. A `PrepareError` keeps its names, so they enter the report's naming pass; any other
-    /// error keeps its text.
+    /// link's. A `PrepareError` keeps its names, which enter the report's naming pass, and its
+    /// entries; any other error keeps its text.
     pub fn push_error(&mut self, error: BoxError) {
         self.0.push(Failure::from_error(error));
     }
@@ -57,6 +58,7 @@ impl Failures {
     /// its text and several as a list under "N problems:".
     pub fn into_error(self) -> PrepareError {
         let names: Vec<TypeName> = self.0.iter().flat_map(Failure::names).copied().collect();
+        let entries: Vec<PrepareEntry> = self.0.iter().flat_map(Failure::entries).collect();
         PrepareError::new(names, move |full| {
             let names = Names::new(full);
             match self.0.as_slice() {
@@ -72,6 +74,7 @@ impl Failures {
                 }
             }
         })
+        .with_entries(entries)
     }
 
     /// `Ok(())` with no failure, otherwise [`into_error`](Self::into_error) boxed: the tail of a
@@ -95,7 +98,18 @@ impl fmt::Debug for Failures {
 
 /// One failure of a `prepare`. One naming types is written only when the report is, since
 /// whether a type prints by its full path depends on every other type the report names.
-pub struct Failure(Inner);
+///
+/// A failure also carries what it is about as data, which `PrepareError::entries` hands on:
+/// [`at`](Self::at) the source line that declared what failed, [`about`](Self::about) what that
+/// is, [`scoped`](Self::scoped) the route scopes involved.
+pub struct Failure {
+    inner: Inner,
+    location: Option<&'static Location<'static>>,
+    subject: Option<String>,
+    scopes: Vec<String>,
+    /// The entries of the `PrepareError` this failure came from, which it passes on whole.
+    nested: Vec<PrepareEntry>,
+}
 
 enum Inner {
     Plain(String),
@@ -103,39 +117,92 @@ enum Inner {
 }
 
 impl Failure {
+    fn of(inner: Inner) -> Failure {
+        Failure { inner, location: None, subject: None, scopes: Vec::new(), nested: Vec::new() }
+    }
+
     /// A failure whose text names no type.
     pub fn plain(text: impl Into<String>) -> Failure {
-        Failure(Inner::Plain(text.into()))
+        Failure::of(Inner::Plain(text.into()))
     }
 
     /// A failure naming the types in `names`, each written in `text` through [`Names::of`].
     pub fn naming(names: Vec<TypeName>, text: impl Fn(&Names<'_>) -> String + Send + Sync + 'static) -> Failure {
-        Failure(Inner::Naming { names, text: Box::new(text) })
+        Failure::of(Inner::Naming { names, text: Box::new(text) })
     }
 
-    /// A failure from another component's error: a `PrepareError` keeps its names and writes its
-    /// text against the report's, any other error its `Display`.
+    /// A failure from another component's error: a `PrepareError` keeps its names and entries and
+    /// writes its text against the report's, any other error its `Display`.
     pub fn from_error(error: BoxError) -> Failure {
         match error.downcast::<PrepareError>() {
             Ok(prepared) => {
                 let names = prepared.names().to_vec();
-                Failure::naming(names, move |names| prepared.text(names.full))
+                let nested = prepared.entries().to_vec();
+                let mut failure = Failure::naming(names, move |names| prepared.text(names.full));
+                failure.nested = nested;
+                failure
             }
             Err(error) => Failure::plain(error.to_string()),
         }
     }
 
+    /// The source line that declared what failed.
+    pub fn at(mut self, location: &'static Location<'static>) -> Failure {
+        self.location = Some(location);
+        self
+    }
+
+    /// What failed, such as `"pre-dispatch entry"`.
+    pub fn about(mut self, subject: impl Into<String>) -> Failure {
+        self.subject = Some(subject.into());
+        self
+    }
+
+    /// The route scopes the failure concerns, as written.
+    pub fn scoped(mut self, scopes: impl IntoIterator<Item = String>) -> Failure {
+        self.scopes = scopes.into_iter().collect();
+        self
+    }
+
     /// The types this failure names.
     pub fn names(&self) -> &[TypeName] {
-        match &self.0 {
+        match &self.inner {
             Inner::Plain(_) => &[],
             Inner::Naming { names, .. } => names,
         }
     }
 
+    pub fn location(&self) -> Option<&'static Location<'static>> {
+        self.location
+    }
+
+    pub fn subject(&self) -> Option<&str> {
+        self.subject.as_deref()
+    }
+
+    pub fn scopes(&self) -> &[String] {
+        &self.scopes
+    }
+
+    /// This failure as the entries `PrepareError::entries` lists: its own, or the ones of the
+    /// `PrepareError` it was made from.
+    fn entries(&self) -> Vec<PrepareEntry> {
+        if !self.nested.is_empty() {
+            return self.nested.clone();
+        }
+        let mut entry = PrepareEntry::new(self.names().iter().copied()).scoped(self.scopes.iter().cloned());
+        if let Some(location) = self.location {
+            entry = entry.at(location);
+        }
+        if let Some(subject) = &self.subject {
+            entry = entry.about(subject.clone());
+        }
+        vec![entry]
+    }
+
     /// The text, each name written as `names` decides.
     pub fn text(&self, names: &Names<'_>) -> String {
-        match &self.0 {
+        match &self.inner {
             Inner::Plain(text) => text.clone(),
             Inner::Naming { text, .. } => text(names),
         }

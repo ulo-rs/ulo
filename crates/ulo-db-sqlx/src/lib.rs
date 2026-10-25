@@ -36,7 +36,9 @@
 //! cannot see. The classifier covers it: over a host and port, a file that is missing or unreadable
 //! is `Permanent` at the first ping whatever the source of the path, since nothing else in a
 //! connect reads a file. Over a Unix socket it stays retryable, a socket not yet created giving the
-//! same error. A root certificate that is expired is accepted: a trust anchor is not validated as a
+//! same error. MySQL's client certificate (`ssl-cert`, `ssl-key`) is read by SQLx alone, in every
+//! TLS mode, and `create` does not check it: a missing one fails the first ping, `Permanent` over
+//! a host and port. A root certificate that is expired is accepted: a trust anchor is not validated as a
 //! certificate (RFC 5280 §6.1), so it still verifies a server certificate within its own validity.
 //! MySQL 8's `caching_sha2_password` authenticates over that channel with no RSA exchange. The
 //! Postgres TLS path is not exercised by any test; SQLite has none.

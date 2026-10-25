@@ -4,10 +4,13 @@
 //! let otel = ulo_otel::Otel::new(options, ulo_otel_otlp::OtlpExporter::http())?;
 //! ```
 //!
-//! By default the HTTP client is the crate's own over `ureq`, blocking inside its async `send_bytes`
-//! on the batch processor's thread, so an export reaches a receiver from a caller with no runtime
-//! and the tree holds no tokio. The `reqwest-blocking` feature selects reqwest's blocking client
-//! instead, which runs tokio on a thread of its own and never touches the app's.
+//! The HTTP client is the crate's own over `ureq` (feature `ureq`, on by default), blocking inside
+//! its async `send_bytes` on the batch processor's thread, so an export reaches a receiver from a
+//! caller with no runtime and the tree holds no tokio. The `reqwest-blocking` feature adds
+//! reqwest's blocking client, which runs tokio on a thread of its own and never touches the app's.
+//! The features are additive. An application that wants reqwest alone disables default features
+//! and enables `reqwest-blocking`; with both, [`OtlpExporter::http`] uses `ureq` and
+//! [`OtlpExporter::http_over`] names the client. At least one of the two is required.
 //!
 //! `ureq`'s rustls client is built with an explicit crypto provider (`ring`, the one the workspace's
 //! rustls is built with) and never asks rustls to resolve one, which panics in a process that
@@ -29,20 +32,21 @@
 //! per-signal `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` included), the request timeout, the protocol
 //! and the headers. A header the options name replaces one of the same name from
 //! `OTEL_EXPORTER_OTLP_HEADERS` or `OTEL_EXPORTER_OTLP_TRACES_HEADERS`, because each client, the
-//! `ureq` one by default and reqwest's under `reqwest-blocking`, applies the options' headers
+//! `ureq` one and reqwest's, applies the options' headers
 //! after the exporter has set the environment's. The batch processor's `OTEL_BSP_*` and the
 //! `OTEL_SPAN_*_LIMIT` names are read by the SDK; the options carry no value for them.
 //!
 //! One read is not an OpenTelemetry variable: the client takes its proxy from the environment
-//! (`ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`), as ureq's and reqwest's defaults do.
-//! Under `reqwest-blocking` on macOS and Windows the system's proxy settings fill what those
-//! variables leave unset: an `HTTP_PROXY` or `HTTPS_PROXY` from the SCDynamicStore on macOS, and
-//! both and `NO_PROXY` from the registry's Internet Settings on Windows, which reqwest's
-//! `system-proxy` feature reads and ureq never does. [`OtlpExporter::proxy`] names one explicitly
-//! and [`OtlpExporter::no_proxy`] turns proxies off, each whatever the environment and the system
-//! settings say, with either client.
+//! (`ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`), as ureq's and reqwest's defaults do, and
+//! nothing else: reqwest is built without its `system-proxy` feature, so the macOS and Windows
+//! system proxy settings are not read by either client. [`OtlpExporter::proxy`] names one
+//! explicitly and [`OtlpExporter::no_proxy`] turns proxies off, each whatever the environment says,
+//! with either client.
 
-#[cfg(not(feature = "reqwest-blocking"))]
+#[cfg(not(any(feature = "ureq", feature = "reqwest-blocking")))]
+compile_error!("`ulo-otel-otlp` needs an HTTP client: enable the `ureq` feature (on by default) or `reqwest-blocking`");
+
+#[cfg(feature = "ureq")]
 mod client;
 mod proxy;
 #[cfg(feature = "reqwest-blocking")]
@@ -61,17 +65,51 @@ use crate::proxy::ProxyChoice;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The HTTP client an [`OtlpExporter`] sends with. A variant exists when its feature is enabled.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Client {
+    /// The crate's client over `ureq`; no tokio.
+    #[cfg(feature = "ureq")]
+    Ureq,
+    /// reqwest's blocking client, on a tokio runtime of its own.
+    #[cfg(feature = "reqwest-blocking")]
+    ReqwestBlocking,
+}
+
+impl Default for Client {
+    /// `ureq` when its feature is enabled, otherwise reqwest's.
+    fn default() -> Self {
+        #[cfg(feature = "ureq")]
+        return Client::Ureq;
+        #[cfg(not(feature = "ureq"))]
+        return Client::ReqwestBlocking;
+    }
+}
+
 /// OTLP over HTTP with protobuf, the exporter's default protocol. Endpoint and headers come from
 /// the [`OtelOptions`] it is built with.
 #[derive(Clone, Debug, Default)]
 pub struct OtlpExporter {
     proxy: ProxyChoice,
+    client: Client,
 }
 
 impl OtlpExporter {
-    /// The exporter to hand to `Otel::new` when spans go to an OTLP receiver over HTTP.
+    /// The exporter to hand to `Otel::new` when spans go to an OTLP receiver over HTTP, on
+    /// `ureq` when that feature is enabled and on reqwest's blocking client otherwise.
     pub fn http() -> Self {
         OtlpExporter::default()
+    }
+
+    /// The same exporter on the named client, for an application with both features enabled.
+    pub fn http_over(client: Client) -> Self {
+        OtlpExporter { client, ..OtlpExporter::default() }
+    }
+
+    /// The client this exporter sends on.
+    pub fn client(&self) -> Client {
+        self.client
     }
 
     /// Send through this proxy, whatever `ALL_PROXY`, `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`
@@ -108,14 +146,14 @@ impl Exporter for OtlpExporter {
             builder = builder.with_headers(headers);
         }
 
-        #[cfg(not(feature = "reqwest-blocking"))]
-        {
-            builder = builder.with_http_client(client::UreqClient::new(TIMEOUT, explicit, &self.proxy)?);
-        }
-        #[cfg(feature = "reqwest-blocking")]
-        {
-            builder = builder.with_http_client(reqwest_client::ReqwestClient::new(TIMEOUT, explicit, &self.proxy)?);
-        }
+        builder = match self.client {
+            #[cfg(feature = "ureq")]
+            Client::Ureq => builder.with_http_client(client::UreqClient::new(TIMEOUT, explicit, &self.proxy)?),
+            #[cfg(feature = "reqwest-blocking")]
+            Client::ReqwestBlocking => {
+                builder.with_http_client(reqwest_client::ReqwestClient::new(TIMEOUT, explicit, &self.proxy)?)
+            }
+        };
 
         Ok(builder.build()?)
     }

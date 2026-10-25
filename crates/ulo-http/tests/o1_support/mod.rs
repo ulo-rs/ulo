@@ -9,7 +9,7 @@ use std::time::Duration;
 use http_body_util::BodyExt;
 use tokio::sync::Notify;
 use ulo::{App, AppHandle, BoxError, Module, ModuleDef, ModuleIdentity, Signal, StartupError};
-use ulo::{PrepareError, TypeName};
+use ulo::{PrepareEntry, PrepareError, TypeName};
 use ulo_http::{AppService, Backend, BackendLimits, ConnInfo, HeaderMap, HttpBody, HttpConfig, Request, Response, Routing, StatusCode};
 use ulo_net::BoundListener;
 use ulo_net::rustls::ServerConfig;
@@ -291,6 +291,14 @@ pub fn refusal_names(error: &StartupError) -> Vec<TypeName> {
         panic!("expected StartupError::Configure, got {error}");
     };
     errors.iter().flat_map(|refused| refused.source.downcast_ref::<PrepareError>().expect("a PrepareError").names().to_vec()).collect()
+}
+
+/// Every entry the refusal's `PrepareError`s list, in the order the transports answered.
+pub fn refusal_entries(error: &StartupError) -> Vec<PrepareEntry> {
+    let StartupError::Configure(errors) = error else {
+        panic!("expected StartupError::Configure, got {error}");
+    };
+    errors.iter().flat_map(|refused| refused.source.downcast_ref::<PrepareError>().expect("a PrepareError").entries().to_vec()).collect()
 }
 
 /// How many transports refused.

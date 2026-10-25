@@ -223,19 +223,20 @@ pub(crate) fn resolve_dependencies(graph: &mut Graph, declared: &Declared, error
 }
 
 /// Every read of a controller's key by a binding that is not a controller: its construction's
-/// edges, its hooks and readiness check, and an alias naming the controller. Each injection point
-/// is one entry. A controller reading another controller is not refused, since both sit at the
-/// edge.
+/// edges, its hooks and readiness check, and an alias naming the controller; and by a module's own
+/// hook or a handler's enhancer closure. Each injection point is one entry. A controller reading
+/// another controller is not refused, since both sit at the edge; a handler parameter is not
+/// checked either.
 pub(crate) fn check_controller_reads(graph: &Graph, declared: &Declared, errors: &mut Vec<WiringError>) {
     let controller_of = |module: ModuleId, key: Key| match graph.lookup(module, key) {
         Some(Visible::Binding(id)) if graph.binding(*id).record.controller => Some(*id),
         _ => None,
     };
-    let report = |reader: &crate::graph::FrozenBinding, controller: BindingId, consumer: String, errors: &mut Vec<WiringError>| {
+    let report = |reader_module: ModuleId, controller: BindingId, consumer: String, errors: &mut Vec<WiringError>| {
         errors.push(WiringError::ControllerRead {
             controller: graph.key_name(controller),
             consumer,
-            module: graph.module_name(reader.origin),
+            module: graph.module_name(reader_module),
             controller_module: graph.module_name(graph.binding(controller).origin),
         });
     };
@@ -244,13 +245,13 @@ pub(crate) fn check_controller_reads(graph: &Graph, declared: &Declared, errors:
             if let EdgeTarget::Binding(id) = edge.target
                 && graph.binding(id).record.controller
             {
-                report(reader, id, graph.consumer(reader.id, edge.dependency), errors);
+                report(reader.origin, id, graph.consumer(reader.id, edge.dependency), errors);
             }
         }
         if let Recipe::Alias { target } = &reader.record.recipe
             && let Some(id) = controller_of(reader.origin, *target)
         {
-            report(reader, id, format!("the alias `{}`", graph.key_name(reader.id)), errors);
+            report(reader.origin, id, format!("the alias `{}`", graph.key_name(reader.id)), errors);
         }
         let ready = reader.record.ready.iter().map(|ready| (format!("readiness check of {}", graph.label(reader.id)), &ready.dependencies));
         let hooks =
@@ -261,9 +262,33 @@ pub(crate) fn check_controller_reads(graph: &Graph, declared: &Declared, errors:
                     if let ReadKind::Single(key) = &read.kind
                         && let Some(id) = controller_of(reader.origin, *key)
                     {
-                        report(reader, id, format!("{owner} ({})", dependency_label(dependency.label)), errors);
+                        report(reader.origin, id, format!("{owner} ({})", dependency_label(dependency.label)), errors);
                     }
                 }
+            }
+        }
+    }
+    let closure_reads = |module: ModuleId, owner: &str, dependencies: &Dependencies, errors: &mut Vec<WiringError>| {
+        for dependency in &dependencies.list {
+            for read in &dependency.requirement.reads {
+                if let ReadKind::Single(key) = &read.kind
+                    && let Some(id) = controller_of(module, *key)
+                {
+                    report(module, id, format!("{owner} ({})", dependency_label(dependency.label)), errors);
+                }
+            }
+        }
+    };
+    for module in graph.modules.iter().skip(declared.first_module) {
+        for hook in &module.hooks {
+            closure_reads(module.id, &format!("{} hook of {}", hook.kind, module.name), &hook.dependencies, errors);
+        }
+    }
+    for handler in graph.handlers.iter().skip(declared.first_handler) {
+        for dep in &handler.decl.enhancer_deps {
+            if let EnhancerDep::Closure(closure) = dep {
+                let owner = format!("{} (enhancer closure)", graph.handler_name(handler));
+                closure_reads(handler.module, &owner, &closure.dependencies, errors);
             }
         }
     }
@@ -285,7 +310,7 @@ fn binding_edges(
                     check_key(graph, binding.origin, *key, read.optional, consumer, errors, reported)
                 }
                 ReadKind::Collection(key) => Some(EdgeTarget::Collection(*key)),
-                ReadKind::Extension(_) | ReadKind::Execution => Some(EdgeTarget::Execution),
+                ReadKind::Extension | ReadKind::Execution => Some(EdgeTarget::Execution),
                 ReadKind::Module => Some(EdgeTarget::Module),
             };
             if let Some(target) = target {

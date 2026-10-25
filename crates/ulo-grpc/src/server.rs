@@ -3,20 +3,17 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::future::Future;
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Waker};
 use std::time::Duration;
 
 use hyper::body::Incoming;
 use hyper::server::conn::http2;
-use hyper_util::rt::{TokioExecutor, TokioTimer};
+use hyper_util::rt::TokioTimer;
 use tonic_health::ServingStatus;
 use ulo::{Bound, BoundAddr, BoxError, DrainToken, Mounted, Transport, TypeName};
 use ulo_http::stage::Stage;
-use ulo_server_hyper::{Accepted, Serve, ServeConfig};
+use ulo_server_hyper::{Accepted, RuntimeExecutor, Serve, ServeConfig};
 use ulo_listener_tokio::TokioListener;
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec, ListenerName, Tls};
@@ -84,7 +81,7 @@ pub(crate) struct Prepared {
 pub(crate) struct Running {
     serve: Serve<TokioListener>,
     dispatcher: Arc<Dispatcher>,
-    connections: Arc<http2::Builder<TokioExecutor>>,
+    connections: Arc<http2::Builder<RuntimeExecutor>>,
     health: GrpcHealth,
     services: Vec<String>,
 }
@@ -315,7 +312,16 @@ impl ulo::Server for Server {
             }
         };
         let routes = match &stage {
-            Some(stage) => routes(&mounted, stage, &mut failures),
+            Some(stage) => {
+                let before = failures.len();
+                let routes = routes(&mounted, stage, &mut failures);
+                // A route the table could not hold took no scoped stage, so its scopes would read
+                // as unreached beside the failure that already names it.
+                if failures.len() == before {
+                    failures.extend(stage.unreached());
+                }
+                routes
+            }
             None => HashMap::new(),
         };
         let health = match mounted.app().get::<GrpcHealth>().await {
@@ -387,7 +393,7 @@ impl ulo::Server for Server {
         };
         let config = ServeConfig { handshake_timeout, ..ServeConfig::default() };
         let serve = Serve::<TokioListener>::new(listeners, tls, &config, Arc::clone(mounted.runtime()))?;
-        let mut connections = http2::Builder::new(TokioExecutor::new());
+        let mut connections = http2::Builder::new(serve.executor());
         connections.timer(TokioTimer::new());
         match self.max_concurrent_streams {
             Count::Default => {}
@@ -428,17 +434,19 @@ impl ulo::Server for Server {
         running.serve.drain().await;
     }
 
+    /// Each connection and each call's stream is polled once in this future's first poll, so a
+    /// call the drain's end cancelled writes its UNAVAILABLE even when a spent cap leaves `close`
+    /// that one poll; once the drain has begun the connections then get `CLOSE_GRACE` to end
+    /// before they are aborted, and a `close` the core's bound cuts aborts them all the same.
     async fn close(&self) -> Result<(), BoxError> {
         if let Some(running) = &self.running {
-            let mut closing = Closing(Some(Box::pin(running.serve.close())));
-            if running.dispatcher.app.is_draining() {
-                tokio::select! {
-                    biased;
-                    () = running.serve.drain() => {}
-                    () = running.dispatcher.timer.sleep(CLOSE_GRACE) => {}
+            let grace = running.dispatcher.app.is_draining().then(|| running.dispatcher.timer.sleep(CLOSE_GRACE));
+            running.serve.close_after(async move {
+                if let Some(grace) = grace {
+                    grace.await;
                 }
-            }
-            closing.finish().await;
+            })
+            .await;
         }
         Ok(())
     }
@@ -448,31 +456,9 @@ impl ulo::Server for Server {
     }
 }
 
-/// `Serve::close`, which aborts the connections on its first poll. The core polls a `close` once
-/// and drops it when the shutdown cap has expired, and `close` above waits before it polls this
-/// one, so a drop before the first poll polls it here.
-struct Closing<F: Future<Output = ()> + Unpin>(Option<F>);
-
-impl<F: Future<Output = ()> + Unpin> Closing<F> {
-    async fn finish(&mut self) {
-        if let Some(closing) = self.0.as_mut() {
-            closing.await;
-        }
-        self.0 = None;
-    }
-}
-
-impl<F: Future<Output = ()> + Unpin> Drop for Closing<F> {
-    fn drop(&mut self) {
-        if let Some(mut closing) = self.0.take() {
-            let _ = Pin::new(&mut closing).poll(&mut Context::from_waker(Waker::noop()));
-        }
-    }
-}
-
 /// One connection after its handshake: HTTP/2 until it ends, each call answered by the
 /// dispatcher, the connection's graceful shutdown, GOAWAY, started once the drain begins.
-async fn connection(accepted: Accepted<TokioListener>, dispatcher: Arc<Dispatcher>, connections: Arc<http2::Builder<TokioExecutor>>) {
+async fn connection(accepted: Accepted<TokioListener>, dispatcher: Arc<Dispatcher>, connections: Arc<http2::Builder<RuntimeExecutor>>) {
     let Accepted { io, conn, draining } = accepted;
     let peer = conn.peer;
     let admission = dispatcher.connection();

@@ -2,7 +2,9 @@
 //! the hyper backend: a response not yet begun is the 503 refusal with `Connection: close`, the
 //! connection then closed; one begun ends with the connection closed in the middle of the chunked
 //! body, the terminating chunk never written, so the client can tell a cut-off stream from a
-//! finished one. A call that finishes inside the window is answered whole.
+//! finished one. A call that finishes inside the window is answered whole. A stream answered at
+//! about the window's end reads as one of those two or, where the drain ends during the hand-off
+//! to hyper, as a connection closed with nothing written; never as a 503 after a 200.
 //!
 //! The client is raw HTTP/1.1 over a socket, reading until the server closes the connection.
 
@@ -11,7 +13,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::stream;
+use futures_util::{StreamExt, stream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Notify, Semaphore};
@@ -28,6 +30,8 @@ const WINDOW: Duration = Duration::from_millis(400);
 struct Hold {
     release: Semaphore,
     entered: Notify,
+    /// How long `/late` waits before it answers.
+    late: Duration,
 }
 
 #[derive(Clone)]
@@ -45,6 +49,15 @@ impl Held {
         self.hold.0.entered.notify_one();
         self.hold.0.release.acquire().await.expect("never closed").forget();
         "released"
+    }
+
+    /// After `late`, a stream that never ends: `first`, then nothing.
+    #[ulo_http::get("/late")]
+    async fn late(&self) -> Response {
+        self.hold.0.entered.notify_one();
+        tokio::time::sleep(self.hold.0.late).await;
+        let body = stream::iter([Ok::<_, Infallible>(Bytes::from_static(b"first"))]).chain(stream::pending());
+        Response::new(HttpBody::stream(body))
     }
 
     /// `first` at once, then `second` once released.
@@ -90,7 +103,11 @@ struct Served {
 }
 
 async fn serve(window: Duration) -> Served {
-    let hold = Shared(Arc::new(Hold { release: Semaphore::new(0), entered: Notify::new() }));
+    serve_late(window, Duration::ZERO).await
+}
+
+async fn serve_late(window: Duration, late: Duration) -> Served {
+    let hold = Shared(Arc::new(Hold { release: Semaphore::new(0), entered: Notify::new(), late }));
     let app = App::builder(Root(hold.clone()))
         .runtime(ulo_runtime_tokio::Tokio::current())
         .drain_timeout(window)
@@ -201,4 +218,70 @@ async fn a_response_that_finishes_inside_the_window_ends_with_the_terminating_ch
     assert!(body_of(&raw).contains("6\r\nsecond\r\n"), "{text:?}");
     assert!(raw.ends_with(b"0\r\n\r\n"), "a finished body ends with the terminating chunk: {text:?}");
     assert_eq!(served.finish(closing).await, 0);
+}
+
+/// How a call answered at about the drain window's end read on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Read {
+    /// The 503 refusal, whole.
+    Refused,
+    /// A 200 whose chunked body ended with no terminating chunk.
+    CutOff,
+    /// The connection closed with nothing written.
+    Nothing,
+}
+
+fn classify(raw: &[u8]) -> Read {
+    let text = String::from_utf8_lossy(raw).into_owned();
+    if raw.is_empty() {
+        return Read::Nothing;
+    }
+    assert_eq!(text.matches("HTTP/1.1 ").count(), 1, "one response and no second one after it: {text:?}");
+    match status_of(raw) {
+        Some(503) => {
+            assert!(head_of(raw).lines().any(|line| line == "connection: close"), "{text:?}");
+            let document: serde_json::Value = serde_json::from_str(&body_of(raw)).expect("a problem document, whole");
+            assert_eq!(document["detail"], "the server is shutting down", "{text:?}");
+            Read::Refused
+        }
+        Some(200) => {
+            assert!(head_of(raw).lines().any(|line| line == "transfer-encoding: chunked"), "{text:?}");
+            assert!(!raw.ends_with(b"0\r\n\r\n"), "an endless stream cannot have finished: {text:?}");
+            Read::CutOff
+        }
+        other => panic!("a status other than 503 or 200: {other:?} in {text:?}"),
+    }
+}
+
+/// An endless stream answered within 8 ms either side of the drain window's end, 200 times, each
+/// on an app of its own. The service checks the drain once more as it returns a stream, so a
+/// drain that has ended by then is answered 503; what is left is the hand-off to hyper, where a
+/// drain ending before the head is flushed closes the connection with nothing written. The counts
+/// are printed: `--nocapture` shows how often each reading occurred.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stream_answered_at_the_windows_end_reads_as_a_503_a_cut_off_200_or_nothing_never_both() {
+    const WINDOW_MS: u64 = 30;
+    const RUNS: u64 = 200;
+    const BATCH: u64 = 8;
+    let mut counts = std::collections::HashMap::<Read, usize>::new();
+    for batch in 0..RUNS / BATCH {
+        let runs = (0..BATCH).map(|i| {
+            // -8 ms to +8 ms around the window's end, spread over the runs.
+            let offset = ((batch * BATCH + i) % 17) as i64 - 8;
+            let late = Duration::from_millis((WINDOW_MS as i64 + offset) as u64);
+            tokio::spawn(async move {
+                let served = serve_late(Duration::from_millis(WINDOW_MS), late).await;
+                let mut stream = served.start("/late").await;
+                let closing = served.close();
+                let raw = read_to_close(&mut stream).await;
+                let _ = served.finish(closing).await;
+                classify(&raw)
+            })
+        });
+        for run in futures_util::future::join_all(runs).await {
+            *counts.entry(run.expect("the run task")).or_default() += 1;
+        }
+    }
+    eprintln!("readings over {RUNS} runs: {counts:?}");
+    assert_eq!(counts.values().sum::<usize>(), RUNS as usize);
 }

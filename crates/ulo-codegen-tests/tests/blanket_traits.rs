@@ -47,7 +47,7 @@ macro_rules! blanket {
             controller method meta route shape dependencies handler once payload path_check host_read
             provide value try_value contribute also_as export import global secret guard guard_arc
             guard_value guard_with interceptor interceptor_arc error_handler error_handler_arc
-            validate codec port subprotocols refuse overflow message_limit
+            validate codec port subprotocols refuse overflow message_limit construct
         );
     };
 }

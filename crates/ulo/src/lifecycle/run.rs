@@ -12,7 +12,7 @@ use std::pin::{Pin, pin};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use crate::error::{FailureReason, Limit};
+use crate::error::Limit;
 use crate::redact::{Redacted, SecretRegistry, redact_panic};
 use crate::timer::{BoxFuture, Resolved, Timer};
 
@@ -35,17 +35,6 @@ pub(crate) enum Outcome<T> {
     Done(T),
     Panicked(Redacted),
     TimedOut { after: Duration, limit: Limit },
-}
-
-impl<T> Outcome<T> {
-    /// The reason a non-`Done` outcome reports.
-    pub(crate) fn into_failure(self) -> Result<T, FailureReason> {
-        match self {
-            Outcome::Done(v) => Ok(v),
-            Outcome::Panicked(p) => Err(FailureReason::Panicked(p)),
-            Outcome::TimedOut { after, limit } => Err(FailureReason::TimedOut { after, limit }),
-        }
-    }
 }
 
 /// Runs `fut` under `bound` and, at shutdown, `cap`; whichever limit fires first is the one
@@ -131,26 +120,4 @@ impl<F: Future + ?Sized> Future for CatchUnwind<F> {
             Err(payload) => Poll::Ready(Err(payload)),
         }
     }
-}
-
-/// Polls both, answering whichever completes first; the other is dropped. `a` is polled first,
-/// so it wins a tie.
-pub(crate) async fn select<A: Future, B: Future>(a: A, b: B) -> Either<A::Output, B::Output> {
-    let mut a = pin!(a);
-    let mut b = pin!(b);
-    poll_fn(|cx| {
-        if let Poll::Ready(v) = a.as_mut().poll(cx) {
-            return Poll::Ready(Either::Left(v));
-        }
-        if let Poll::Ready(v) = b.as_mut().poll(cx) {
-            return Poll::Ready(Either::Right(v));
-        }
-        Poll::Pending
-    })
-    .await
-}
-
-pub(crate) enum Either<A, B> {
-    Left(A),
-    Right(B),
 }

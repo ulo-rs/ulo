@@ -9,19 +9,27 @@ use std::time::{Duration, Instant};
 
 use hyper::rt::{Executor, Sleep, Timer};
 use ulo::{BoxFuture, Runtime};
+use ulo_transport::Turns;
 
 /// hyper's executor over a `ulo` [`Runtime`]: each future hyper hands it, HTTP/2's stream and
 /// connection tasks among them, is spawned on the runtime and detached. Built from the app's
 /// runtime, `Mounted::runtime()` in a server's `bind`, so a connection's tasks run on the runtime
-/// the app runs on and a panic in one is redacted with the app's secrets.
+/// the app runs on and a panic in one is redacted with the app's secrets. One built by
+/// [`Serve::executor`](crate::Serve::executor) tracks each task in that `Serve`'s turns, so its
+/// `close_after` polls an HTTP/2 stream's task as it polls the connections.
 #[derive(Clone)]
 pub struct RuntimeExecutor {
     runtime: Arc<dyn Runtime>,
+    turns: Option<Turns>,
 }
 
 impl RuntimeExecutor {
     pub fn new(runtime: Arc<dyn Runtime>) -> RuntimeExecutor {
-        RuntimeExecutor { runtime }
+        RuntimeExecutor { runtime, turns: None }
+    }
+
+    pub(crate) fn tracked(runtime: Arc<dyn Runtime>, turns: Turns) -> RuntimeExecutor {
+        RuntimeExecutor { runtime, turns: Some(turns) }
     }
 }
 
@@ -30,10 +38,14 @@ where
     F: Future + Send + 'static,
 {
     fn execute(&self, fut: F) {
-        // Dropping the handle detaches the task, which hyper's own executors do too.
-        drop(self.runtime.spawn(Box::pin(async move {
+        let fut = async move {
             fut.await;
-        })));
+        };
+        // Dropping the handle detaches the task, which hyper's own executors do too.
+        match &self.turns {
+            Some(turns) => drop(self.runtime.spawn(Box::pin(turns.track(fut)))),
+            None => drop(self.runtime.spawn(Box::pin(fut))),
+        }
     }
 }
 

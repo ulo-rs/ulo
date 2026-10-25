@@ -33,6 +33,7 @@ use bytes::Bytes;
 use ulo::{
     AppHandle, BoxError, BoxFuture, Dep, Dependencies, DispatchStage, ExecutionRef, LookupError, Meta, ModuleRef, TypeName,
 };
+use ulo_transport::prepare::Failure;
 
 use crate::body::HttpBody;
 use crate::cors::Cors;
@@ -321,9 +322,10 @@ pub struct Stage<T: HttpCarried = Http> {
     run: Arc<[Runnable]>,
     /// `scoped` as it runs, each with the scopes it covers and excludes, index for index.
     covering: Vec<Covering>,
-    /// Whether some route's pattern has been covered by each entry's scope, `covering` index for
-    /// index: set as `prepare` builds the route table.
-    reached: Vec<AtomicBool>,
+    /// Whether some route's pattern has been covered by each of each entry's scopes, `covering`
+    /// index for index and scope for scope: set as `prepare` builds the route table, for a route
+    /// the entry does not exclude.
+    reached: Vec<Vec<AtomicBool>>,
 }
 
 /// The entries one route runs after it matched: those whose scope covers it, minus exclusions,
@@ -410,13 +412,14 @@ impl<T: HttpCarried> Stage<T> {
                     failures.push(format!("pre-dispatch entry at {} names no route pattern, so it covers no route", entry.location));
                 }
                 let scope = scopes(&entry.scope, entry.location, &mut failures);
+                let scope_count = scope.len();
                 stage.scoped.push((module.clone(), Arc::clone(&meta), index));
                 stage.covering.push(Covering {
                     runnable: Runnable { module: module.clone(), action, exclude: Vec::new() },
                     scope,
                     exclude,
                 });
-                stage.reached.push(AtomicBool::new(false));
+                stage.reached.push(stage_flags(scope_count));
             }
         }
         if !failures.is_empty() {
@@ -438,25 +441,31 @@ impl<T: HttpCarried> Stage<T> {
         }
     }
 
-    /// One refusal for each scoped entry whose scope covered no route of the table the stage was
-    /// asked for: the entry's declaring location and the scope it wrote. Read after every route has
-    /// taken its [`scoped`](Self::scoped) stage; an entry with an empty scope is refused by
-    /// [`build`](Self::build) already.
-    pub(crate) fn unreached(&self) -> Vec<String> {
-        self.covering
-            .iter()
-            .zip(&self.reached)
-            .zip(&self.scoped)
-            .filter(|((covering, reached), _)| !covering.scope.is_empty() && !reached.load(Ordering::Relaxed))
-            .map(|((covering, _), (_, meta, index))| {
-                let scope: Vec<String> = covering.scope.iter().map(|scope| format!("`{}`", scope.raw)).collect();
-                format!(
-                    "pre-dispatch entry at {} is scoped to {} and covers no route",
-                    meta.entries[*index].location,
-                    scope.join(", ")
-                )
-            })
-            .collect()
+    /// One refusal for each scope of a scoped entry that covered no route of the table the stage
+    /// was asked for, once the entry's exclusions are taken out: the entry's declaring location and
+    /// the scope it wrote. Read after every route has taken its [`scoped`](Self::scoped) stage; an
+    /// entry with an empty scope is refused by [`build`](Self::build) already.
+    ///
+    /// Each refusal is a [`Failure`] carrying the entry's `location`, the `subject`
+    /// `"pre-dispatch entry"` and the one scope in `scopes`.
+    pub fn unreached(&self) -> Vec<Failure> {
+        let mut refusals = Vec::new();
+        for ((covering, reached), (_, meta, index)) in self.covering.iter().zip(&self.reached).zip(&self.scoped) {
+            let location = meta.entries[*index].location;
+            for (scope, reached) in covering.scope.iter().zip(reached) {
+                if reached.load(Ordering::Relaxed) {
+                    continue;
+                }
+                let raw = scope.raw.to_string();
+                refusals.push(
+                    Failure::plain(format!("pre-dispatch entry at {location} is scoped to `{raw}` and covers no route"))
+                        .at(location)
+                        .about(PRE_DISPATCH_ENTRY)
+                        .scoped([raw]),
+                );
+            }
+        }
+        refusals
     }
 
     /// The scoped stage of `route`, a route pattern such as `/users/{id}` or a gRPC method path,
@@ -486,11 +495,17 @@ impl<T: HttpCarried> Stage<T> {
             .iter()
             .enumerate()
             .filter(|(index, entry)| {
-                let covers = entry.scope.iter().any(|scope| scope.covers(pattern));
-                if covers {
-                    self.reached[*index].store(true, Ordering::Relaxed);
+                let excluded = entry.exclude.iter().any(|scope| scope.covers(pattern));
+                let mut covered = false;
+                for (scope, reached) in entry.scope.iter().zip(&self.reached[*index]) {
+                    if scope.covers(pattern) {
+                        covered = true;
+                        if !excluded {
+                            reached.store(true, Ordering::Relaxed);
+                        }
+                    }
                 }
-                covers && !entry.exclude.iter().any(|scope| scope.covers(pattern))
+                covered && !excluded
             })
             .map(|(index, _)| index)
             .collect();
@@ -528,6 +543,13 @@ impl<T: HttpCarried> ScopedStage<T> {
         self.run.is_empty()
     }
 }
+
+fn stage_flags(count: usize) -> Vec<AtomicBool> {
+    (0..count).map(|_| AtomicBool::new(false)).collect()
+}
+
+/// The `subject` of a [`Failure`] about a pre-dispatch entry.
+const PRE_DISPATCH_ENTRY: &str = "pre-dispatch entry";
 
 fn scopes(patterns: &[Cow<'static, str>], at: &Location<'_>, failures: &mut Vec<String>) -> Vec<ScopePattern> {
     patterns

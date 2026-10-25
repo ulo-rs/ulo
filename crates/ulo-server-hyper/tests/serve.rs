@@ -1,8 +1,9 @@
 //! The accept loop through its plug point: `Serve` over listeners of the tests' own, on smol, so
 //! nothing here is the tokio listener's or the smol listener's. A connection reaches the closure
 //! with its addresses and is served through hyper over `FuturesIo`; a handshake past its timeout
-//! is dropped on the app's clock; the drain stops accepting and waits for the connections; and
-//! the accept loop and every connection are tasks of the runtime `Serve` was given.
+//! is dropped on the app's clock; the drain stops accepting and waits for the connections; the
+//! accept loop and every connection are tasks of the runtime `Serve` was given; and `close_after`
+//! polls each connection in its own first poll, and aborts them when dropped after it.
 
 mod support;
 
@@ -257,5 +258,170 @@ fn the_accept_loop_and_every_connection_are_tasks_of_the_runtime_serve_was_given
 
         within("the drain", serve.drain()).await;
         assert!(within("the serve loop's end", running).await.is_finished());
+    });
+}
+
+/// `close_after` polls `close` once and answers whether it ended there, as the core polls a
+/// `close` under a spent shutdown cap; the future is dropped as it returns.
+async fn first_poll_of_close(serve: &Serve<Plain>) -> bool {
+    let mut close = Box::pin(serve.close_after(pending::<()>()));
+    std::future::poll_fn(|cx| std::task::Poll::Ready(close.as_mut().poll(cx).is_ready())).await
+}
+
+/// A connection whose future is ready to answer once `ready` is set, which wakes nothing: only a
+/// poll it did not ask for finds it. It records each poll that answered.
+fn answering_when_polled(ready: Arc<AtomicBool>, answered: Arc<AtomicUsize>) -> impl Future<Output = ()> + Send {
+    std::future::poll_fn(move |_| {
+        if ready.load(Ordering::SeqCst) {
+            answered.fetch_add(1, Ordering::SeqCst);
+            std::task::Poll::Ready(())
+        } else {
+            std::task::Poll::Pending
+        }
+    })
+}
+
+#[test]
+fn close_afters_first_poll_polls_each_connection_once_on_the_calling_thread() {
+    on_smol(|smol| async move {
+        let runtime: Arc<dyn Runtime> = Arc::new(smol);
+        let listener = port_zero();
+        let addr = listener.local_addr();
+        let serve = Arc::new(Serve::<Plain>::new(vec![listener], None, &ServeConfig::default(), Arc::clone(&runtime)).expect("adopted"));
+        let (ready, answered, started) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicUsize::new(0)), Arc::new(AtomicBool::new(false)));
+        let running = {
+            let (serve, ready, answered, started) = (Arc::clone(&serve), Arc::clone(&ready), Arc::clone(&answered), Arc::clone(&started));
+            runtime.spawn(Box::pin(async move {
+                let _ = serve
+                    .run(move |accepted: Accepted<Plain>| {
+                        let (ready, answered, started) = (Arc::clone(&ready), Arc::clone(&answered), Arc::clone(&started));
+                        async move {
+                            let _io = accepted.io;
+                            started.store(true, Ordering::SeqCst);
+                            answering_when_polled(ready, answered).await;
+                        }
+                    })
+                    .await;
+            }))
+        };
+        let _held = TcpStream::connect(addr).await.expect("the server accepts");
+        within("the connection reaching the closure", async {
+            while !started.load(Ordering::SeqCst) {
+                runtime.sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+
+        ready.store(true, Ordering::SeqCst);
+        assert!(!first_poll_of_close(&serve).await, "close ended on its first poll with a connection open");
+        assert_eq!(answered.load(Ordering::SeqCst), 1, "the connection was not polled in close's first poll");
+        assert!(within("the serve loop's end", running).await.is_finished());
+    });
+}
+
+/// A connection that never ends, recording its future's drop.
+struct Dropped(Arc<AtomicBool>);
+
+impl Drop for Dropped {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn a_close_after_dropped_after_its_first_poll_still_aborts_the_connections() {
+    on_smol(|smol| async move {
+        let runtime: Arc<dyn Runtime> = Arc::new(smol);
+        let listener = port_zero();
+        let addr = listener.local_addr();
+        let serve = Arc::new(Serve::<Plain>::new(vec![listener], None, &ServeConfig::default(), Arc::clone(&runtime)).expect("adopted"));
+        let (started, dropped) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let running = {
+            let (serve, started, dropped) = (Arc::clone(&serve), Arc::clone(&started), Arc::clone(&dropped));
+            runtime.spawn(Box::pin(async move {
+                let _ = serve
+                    .run(move |accepted: Accepted<Plain>| {
+                        let (started, dropped) = (Arc::clone(&started), Arc::clone(&dropped));
+                        async move {
+                            let _io = accepted.io;
+                            let _dropped = Dropped(dropped);
+                            started.store(true, Ordering::SeqCst);
+                            // Ignores the drain: only an abort ends it.
+                            pending::<()>().await;
+                        }
+                    })
+                    .await;
+            }))
+        };
+        let _held = TcpStream::connect(addr).await.expect("the server accepts");
+        within("the connection reaching the closure", async {
+            while !started.load(Ordering::SeqCst) {
+                runtime.sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+
+        assert!(!first_poll_of_close(&serve).await, "close ended on its first poll with a connection open");
+        within("the connection's abort", async {
+            while !dropped.load(Ordering::SeqCst) {
+                runtime.sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(within("the serve loop's end", running).await.is_finished(), "the accept loop outlived the cut close");
+    });
+}
+
+#[test]
+fn close_after_aborts_a_connection_that_outlives_its_grace_and_returns_at_once_with_none_open() {
+    on_smol(|smol| async move {
+        let runtime: Arc<dyn Runtime> = Arc::new(smol);
+        let listener = port_zero();
+        let addr = listener.local_addr();
+        let serve = Arc::new(Serve::<Plain>::new(vec![listener], None, &ServeConfig::default(), Arc::clone(&runtime)).expect("adopted"));
+        let (started, dropped) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let running = {
+            let (serve, started, dropped) = (Arc::clone(&serve), Arc::clone(&started), Arc::clone(&dropped));
+            runtime.spawn(Box::pin(async move {
+                let _ = serve
+                    .run(move |accepted: Accepted<Plain>| {
+                        let (started, dropped) = (Arc::clone(&started), Arc::clone(&dropped));
+                        async move {
+                            let _io = accepted.io;
+                            let _dropped = Dropped(dropped);
+                            started.store(true, Ordering::SeqCst);
+                            // Ignores the drain: only an abort ends it.
+                            pending::<()>().await;
+                        }
+                    })
+                    .await;
+            }))
+        };
+        let _held = TcpStream::connect(addr).await.expect("the server accepts");
+        within("the connection reaching the closure", async {
+            while !started.load(Ordering::SeqCst) {
+                runtime.sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+
+        let begun = std::time::Instant::now();
+        within("close_after under a 100 ms grace", serve.close_after(runtime.sleep(Duration::from_millis(100)))).await;
+        let took = begun.elapsed();
+        assert!(took >= Duration::from_millis(100), "close_after returned before its grace with a connection open: {took:?}");
+        assert!(dropped.load(Ordering::SeqCst), "the connection outlived close_after");
+        assert!(within("the serve loop's end", running).await.is_finished());
+
+        // With no connection open, the drain's end ends the wait, whatever the grace.
+        let listener = port_zero();
+        let idle = Arc::new(Serve::<Plain>::new(vec![listener], None, &ServeConfig::default(), Arc::clone(&runtime)).expect("adopted"));
+        let running = {
+            let idle = Arc::clone(&idle);
+            runtime.spawn(Box::pin(async move {
+                let _ = idle.run(|accepted: Accepted<Plain>| async move { drop(accepted) }).await;
+            }))
+        };
+        within("close_after with nothing open and a grace that never ends", idle.close_after(pending::<()>())).await;
+        assert!(within("the idle serve loop's end", running).await.is_finished());
     });
 }

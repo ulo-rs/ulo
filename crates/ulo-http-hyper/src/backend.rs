@@ -85,11 +85,11 @@ impl Protocols {
     ///
     /// `max_concurrent_streams` at `Count::Default` leaves hyper's own value; `Count::Unlimited`
     /// clears it, which sends no `SETTINGS_MAX_CONCURRENT_STREAMS`.
-    fn new(cfg: &HttpConfig, svc: &AppService) -> Self {
+    fn new(cfg: &HttpConfig, svc: &AppService, executor: RuntimeExecutor) -> Self {
         let header_timeout = cfg.header_timeout_after();
         let runtime = Arc::clone(svc.runtime());
         let timer = RuntimeTimer::new(Arc::clone(&runtime) as Arc<dyn ulo::Timer>);
-        let mut auto = auto::Builder::new(RuntimeExecutor::new(runtime));
+        let mut auto = auto::Builder::new(executor);
         auto.http1().timer(timer.clone()).header_read_timeout(header_timeout);
         match cfg.max_concurrent_streams {
             Count::Default => {}
@@ -122,7 +122,7 @@ impl<L: Listener> Backend for HyperOn<L> {
     ) -> Result<(), BoxError> {
         let config = ServeConfig { handshake_timeout: cfg.handshake_timeout_after(), read_count: self.read_count.clone() };
         let serve = Serve::<L>::new(listeners, tls, &config, Arc::clone(svc.runtime()))?;
-        let protocols = Arc::new(Protocols::new(cfg, &svc));
+        let protocols = Arc::new(Protocols::new(cfg, &svc, serve.executor()));
         self.bound = Some(Bound { serve, service: svc, protocols });
         Ok(())
     }
@@ -144,14 +144,13 @@ impl<L: Listener> Backend for HyperOn<L> {
 
     /// Aborts the connections still open, after giving the calls the drain just abandoned
     /// 500 ms to answer: the service answers each 503 or ends its body with an error frame as
-    /// the app cancels it, and the connection ends once hyper has written that. The wait ends as
-    /// soon as no connection is left.
+    /// the app cancels it, and the connection ends once hyper has written that. Each connection is
+    /// polled once in this future's first poll, so an answer that needs no wait is written even
+    /// when a spent cap leaves `close` that one poll. The wait ends as soon as no connection is
+    /// left; cut by the core's bound, the connections are aborted all the same.
     async fn close(&self) -> Result<(), BoxError> {
         if let Some(bound) = &self.bound {
-            let flushed = bound.serve.drain();
-            let expired = bound.service.runtime().sleep(FLUSH);
-            futures_util::future::select(pin!(flushed), expired).await;
-            bound.serve.close().await;
+            bound.serve.close_after(bound.service.runtime().sleep(FLUSH)).await;
         }
         Ok(())
     }

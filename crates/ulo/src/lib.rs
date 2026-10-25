@@ -55,7 +55,7 @@ pub use construct::{Construct, ConstructError};
 pub use dependency::{Dep, Dependencies, Ext, FromContainer, Many, Requirement};
 pub use error::{
     Closed, ConfigureError, ConfigureErrors, ConnectError, DispatchStage, EndStream, FailureReason, GuardRejected,
-    Limit, LoadError, LoadRefusal, LookupError, LookupKind, PanicRecovered, PrepareError, Shutdown, ShutdownError,
+    Limit, LoadError, LoadRefusal, LookupError, LookupKind, PanicRecovered, PrepareEntry, PrepareError, Shutdown, ShutdownError,
     Permanent, PreparePanicked, RuntimeMissing, ServeEnd, ShutdownFailure, StartupError, is_panic, is_permanent,
 };
 pub use error::wiring::{BoundItem, InputOrigin, WiringError, WiringErrors};

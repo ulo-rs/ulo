@@ -78,7 +78,10 @@ use crate::upgrade::UpgradeHandler;
 /// A call still running when the end of the drain cancels its execution with
 /// `CancelReason::Drain` is abandoned. Before the response is produced, the pipeline is dropped
 /// and the answer is the 503 of step 2, `Connection: close` included, with the `Routing` the call
-/// had decided. Once it is produced, a body of no known length ends with an error frame, a
+/// had decided. The pipeline is polled before the cancellation, so a response ready in the poll
+/// the cancellation wakes is the answer; when that response's body has no known length, the drain
+/// is checked once more as the service returns it and the answer is the 503 instead, the body
+/// being one the next step would cut. Once it is produced, a body of no known length ends with an error frame, a
 /// `CallError` of kind `Unavailable`, and reports `CutOff(Some(Drain))`, which a backend writes as
 /// a closed HTTP/1.1 connection or a reset HTTP/2 stream; a body of known length is written whole.
 ///
@@ -197,6 +200,17 @@ impl ServiceInner {
         call_span.record(span::URL_SCHEME, if req.conn.tls.is_some() { "https" } else { "http" });
         let pipeline = self.unscoped(Arc::new(exec), req, call_span.clone(), Arc::clone(&tracking)).instrument(call_span.clone());
         let mut response = match until_drained(pipeline, &handle).await {
+            // A stream answered once the drain's end has cancelled the call would be cut at its
+            // first poll, and a backend that has not yet written the head then closes the
+            // connection with nothing written. The refusal is the answer instead, with the
+            // route the call reached. What remains is the hand-off to the backend: a drain ending
+            // after this check and before the head is flushed is a cut like any other.
+            Some(response) if by_drain(&handle) && cut_at_first_poll(&response, &method) => {
+                drop(response);
+                let mut refused = render::draining(&self.config);
+                refused.extensions_mut().remove::<Routing>();
+                refused
+            }
             Some(response) => response,
             // The call outlived the drain window. Routing is whatever the call had decided.
             None => {
@@ -508,6 +522,13 @@ fn options(allow: HeaderValue) -> Response {
     response
 }
 
+/// Whether `ExecBody` would end `response`'s body with the drain's error frame at its first poll:
+/// a body of no known length that the backend writes, so not a `HEAD` answer's or one its status
+/// forbids.
+fn cut_at_first_poll(response: &Response, method: &Method) -> bool {
+    response.body().size_hint().exact().is_none() && *method != Method::HEAD && !forbids_body(response.status())
+}
+
 /// Whether `status` forbids content: 1xx, 204 and 304 (RFC 9110 §6.4.1).
 fn forbids_body(status: StatusCode) -> bool {
     status.is_informational() || status == StatusCode::NO_CONTENT || status == StatusCode::NOT_MODIFIED
@@ -577,17 +598,26 @@ fn by_drain(exec: &ExecutionRef) -> bool {
 
 /// `pipeline`, or `None` once the end of the drain has cancelled `exec` with `CancelReason::Drain`:
 /// the call is abandoned, `pipeline` dropped at its current await so a handler's future dropped
-/// there reads the reason, and its caller answers the 503 of a refusal. The drain is checked
-/// first, so an answer the handler produced in response to the cancellation does not replace it.
+/// there reads the reason, and its caller answers the 503 of a refusal. The pipeline is polled
+/// first, so an answer ready in the poll the cancellation wakes, one the handler chose on
+/// observing it included, is the call's answer.
 async fn until_drained(pipeline: impl Future<Output = Response>, exec: &ExecutionRef) -> Option<Response> {
     let mut pipeline = pin!(pipeline);
     let mut cancelled = pin!(exec.cancelled());
+    let mut watching = true;
     poll_fn(|cx| {
-        // A cancellation that is not the drain's leaves the pipeline to run on.
-        if cancelled.as_mut().poll(cx).is_ready() && by_drain(exec) {
-            return Poll::Ready(None);
+        if let Poll::Ready(response) = pipeline.as_mut().poll(cx) {
+            return Poll::Ready(Some(response));
         }
-        pipeline.as_mut().poll(cx).map(Some)
+        if watching && cancelled.as_mut().poll(cx).is_ready() {
+            if by_drain(exec) {
+                return Poll::Ready(None);
+            }
+            // A cancellation that is not the drain's leaves the pipeline to run on, and a resolved
+            // listener is not polled again.
+            watching = false;
+        }
+        Poll::Pending
     })
     .await
 }

@@ -35,7 +35,7 @@ use ulo::{
     AppHandle, BoxError, BoxFuture, CancelReason, Closed, DrainToken, ExecOptions, Execution, ExecutionRef, LateOutcome,
     ModuleRef, MountedHandler, Runtime, Spawn, TaskHandle, Timer, TraceContext, TraceMode, Transport,
 };
-use ulo_transport::{CallError, ErrorKind, TaskSet, Tracked, span};
+use ulo_transport::{CallError, ErrorKind, TaskSet, Tracked, Turns, span};
 use ulo_transport::__private::Watch;
 
 use crate::__private::HandlerFn;
@@ -354,6 +354,9 @@ pub(crate) struct Tracker {
     tasks: Mutex<HashMap<u64, TaskHandle>>,
     next: AtomicU64,
     live: Watch<usize>,
+    /// Every connection's task and every message task one starts, which `close` polls once
+    /// before it waits.
+    pub(crate) turns: Turns,
 }
 
 impl Tracker {
@@ -370,6 +373,7 @@ impl Tracker {
             tasks: Mutex::new(HashMap::new()),
             next: AtomicU64::new(0),
             live: Watch::new(0),
+            turns: Turns::default(),
         })
     }
 
@@ -385,10 +389,10 @@ impl Tracker {
         // Spawned under the lock, so a task that ends at once removes its entry only after the
         // entry is in; a runtime's `spawn` does not poll the task before it returns.
         let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
-        let task = runtime.spawn(Box::pin(async move {
+        let task = runtime.spawn(Box::pin(self.turns.track(async move {
             let _guard = guard;
             fut.await;
-        }));
+        })));
         tasks.insert(key, task);
     }
 
@@ -405,10 +409,14 @@ impl Tracker {
     /// drain's end leaves its connection to send 1001 and finish the close handshake, which an
     /// abort now would cut.
     ///
-    /// The core drops a `close` after its first poll when the shutdown cap has expired, so the
-    /// abort also runs if this future is dropped during the grace.
+    /// The core drops a `close` after its first poll when the shutdown cap has expired, so its
+    /// first poll polls every connection and message task once, a message's task before its
+    /// connection's: a message the drain's end abandoned leaves its connection with no message in
+    /// flight, and the connection's poll writes the 1001 close. The abort also runs if this
+    /// future is dropped during the grace.
     pub(crate) async fn close(&self, grace: BoxFuture<'static, ()>) {
         let _aborting = AbortOnDrop(self);
+        self.turns.give();
         if self.is_draining() {
             let ended = pin!(self.live.wait_for(|live| *live == 0));
             let _ = future::select(ended, grace).await;
@@ -1163,7 +1171,7 @@ where
     let mut tasks = TaskSet::new(Arc::clone(&accept.runtime) as Arc<dyn Spawn>);
     let inbox = match (&gateway.handler.messages, &admitted.instance) {
         (Messages::Raw { on_message, .. }, Some(instance)) => {
-            Some(raw_inbox(&mut tasks, conn.clone(), Arc::clone(instance), Arc::clone(on_message), Arc::clone(&flight)))
+            Some(raw_inbox(&mut tasks, &accept.tracker.turns, conn.clone(), Arc::clone(instance), Arc::clone(on_message), Arc::clone(&flight)))
         }
         _ => None,
     };
@@ -1216,7 +1224,7 @@ where
             && !places.is_full()
             && let Some(frame) = waiting.take()
         {
-            waiting = received(frame, conn, &flight, &mut tasks, inbox.as_ref());
+            waiting = received(frame, conn, &flight, &mut tasks, &accept.tracker.turns, inbox.as_ref());
         }
         let reading = closing.is_some()
             || (!draining && waiting.is_none() && !places.is_full() && flight.handling() < limits.max_inflight);
@@ -1257,10 +1265,10 @@ where
                 None => break closing.unwrap_or(DisconnectReason::Lost),
                 Some(Ok(Message::Text(text))) if closing.is_none() => {
                     let frame = Frame::Text(text.as_str().to_owned());
-                    waiting = received(frame, conn, &flight, &mut tasks, inbox.as_ref());
+                    waiting = received(frame, conn, &flight, &mut tasks, &accept.tracker.turns, inbox.as_ref());
                 }
                 Some(Ok(Message::Binary(bytes))) if closing.is_none() => {
-                    waiting = received(Frame::Binary(bytes), conn, &flight, &mut tasks, inbox.as_ref());
+                    waiting = received(Frame::Binary(bytes), conn, &flight, &mut tasks, &accept.tracker.turns, inbox.as_ref());
                 }
                 Some(Ok(Message::Ping(_))) => {
                     if ws.flush().await.is_err() {
@@ -1364,6 +1372,7 @@ fn received(
     conn: &Connection,
     flight: &Arc<Flight>,
     tasks: &mut TaskSet,
+    turns: &Turns,
     inbox: Option<&mpsc::UnboundedSender<Frame>>,
 ) -> Option<Frame> {
     if let Some(inbox) = inbox {
@@ -1409,7 +1418,7 @@ fn received(
     if !flight.begin() {
         return Some(frame);
     }
-    tasks.spawn(message(conn.clone(), Arc::clone(flight), event, head));
+    tasks.spawn(turns.track(message(conn.clone(), Arc::clone(flight), event, head)));
     None
 }
 
@@ -1417,13 +1426,14 @@ fn received(
 /// `on_message` is logged and closes the connection with 1011.
 fn raw_inbox(
     tasks: &mut TaskSet,
+    turns: &Turns,
     conn: Connection,
     instance: Instance,
     on_message: crate::gateway::MessageFn,
     flight: Arc<Flight>,
 ) -> mpsc::UnboundedSender<Frame> {
     let (sender, mut receiver) = mpsc::unbounded::<Frame>();
-    tasks.spawn(async move {
+    tasks.spawn(turns.track(async move {
         while let Some(frame) = receiver.next().await {
             let handled = AssertUnwindSafe(on_message(Arc::clone(&instance), conn.clone(), frame)).catch_unwind().await;
             if handled.is_err() {
@@ -1433,7 +1443,7 @@ fn raw_inbox(
             flight.handled();
             flight.finished();
         }
-    });
+    }));
     sender
 }
 

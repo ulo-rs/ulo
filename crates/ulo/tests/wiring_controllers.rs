@@ -17,6 +17,7 @@ use ulo::{Dep, HandlerSpec, Key, Transport, TypeName, WiringError};
 struct A;
 struct X;
 struct Q;
+struct Y;
 struct Reader;
 
 /// A transport that joins a prefix to its routes, as HTTP does.
@@ -166,5 +167,99 @@ fn a_controller_reading_another_controller_wires() {
     wires(Mod::<A>::new(|m| {
         m.controller::<NoHandlers>();
         m.controller::<ReadsController>();
+    }));
+}
+
+#[test]
+fn a_module_hook_reading_a_controller_is_refused_naming_the_hook_and_its_module() {
+    let errors = wire_err(Mod::<A>::new(|m| {
+        m.import(Mod::<Y>::new(|m| {
+            m.import(Mod::<X>::new(|m| {
+                m.controller::<NoHandlers>();
+                m.export::<NoHandlers>();
+            }));
+            m.on_init(|_c: Dep<NoHandlers>| async { Ok::<(), Boom>(()) });
+        }));
+    }));
+    let reads = controller_reads(&errors);
+    assert_eq!(reads.len(), 1, "{errors}");
+    let (controller, consumer, module, controller_module) = &reads[0];
+    assert_eq!(*controller, Key::of::<NoHandlers, ()>());
+    assert_eq!(consumer, &format!("OnModuleInit hook of {} (param #1)", mod_name::<Y>()), "the hook and its injection point");
+    assert_eq!(module, &mod_name::<Y>(), "the module whose hook reads it, not the root");
+    assert_eq!(controller_module, &mod_name::<X>());
+    assert_eq!(errors.len(), 1, "{errors}");
+}
+
+/// A controller whose one handler declares a guard closure reading `NoHandlers`.
+struct GuardedByRead;
+
+impl ulo::Construct for GuardedByRead {
+    type Scope = Auto;
+
+    fn dependencies(_d: &mut ulo::Dependencies) {}
+
+    async fn construct(_r: &ulo::Resolver<'_>) -> Result<Self, ulo::ConstructError> {
+        Ok(GuardedByRead)
+    }
+}
+
+impl ulo::Controller for GuardedByRead {
+    fn mount(m: &mut ulo::Mount<'_>) {
+        let mut spec = ulo::EnhancerSpec::<TA>::new();
+        spec.guard_with(|_c: Dep<NoHandlers>| async { GuardA });
+        m.handler::<TA, _>(HandlerSpec::new("h", ()).method(spec));
+    }
+}
+
+#[test]
+fn an_enhancer_closure_reading_a_controller_is_refused_naming_the_handler_and_its_module() {
+    let errors = wire_err(Mod::<A>::new(|m| {
+        m.import(Mod::<Y>::new(|m| {
+            m.import(Mod::<X>::new(|m| {
+                m.controller::<NoHandlers>();
+                m.export::<NoHandlers>();
+            }));
+            m.controller::<GuardedByRead>();
+        }));
+    }));
+    let reads = controller_reads(&errors);
+    assert_eq!(reads.len(), 1, "{errors}");
+    let (controller, consumer, module, controller_module) = &reads[0];
+    assert_eq!(*controller, Key::of::<NoHandlers, ()>());
+    assert!(consumer.starts_with("GuardedByRead::h (enhancer closure)") && consumer.ends_with("(param #1)"), "{consumer}");
+    assert_eq!(module, &mod_name::<Y>(), "the handler's module, not the root or the controller's");
+    assert_eq!(controller_module, &mod_name::<X>());
+    assert_eq!(errors.len(), 1, "{errors}");
+}
+
+#[test]
+fn a_handler_parameter_reading_a_controller_wires() {
+    controller!(ParamReader, Auto, [], |m| {
+        let mut reads = ulo::Dependencies::default();
+        reads.add::<Dep<NoHandlers>>();
+        m.handler::<TA, _>(HandlerSpec::new("h", ()).dependencies(reads));
+    });
+    wires(Mod::<A>::new(|m| {
+        m.controller::<NoHandlers>();
+        m.controller::<ParamReader>();
+    }));
+}
+
+/// Metadata that declares a read of `NoHandlers`.
+#[derive(Default)]
+struct MetaReadsController;
+
+impl ulo::Meta for MetaReadsController {
+    fn dependencies(&self, d: &mut ulo::Dependencies) {
+        d.add::<Dep<NoHandlers>>();
+    }
+}
+
+#[test]
+fn a_metadata_value_declaring_a_controller_read_wires() {
+    wires(Mod::<A>::new(|m| {
+        m.controller::<NoHandlers>();
+        m.meta::<MetaReadsController>();
     }));
 }

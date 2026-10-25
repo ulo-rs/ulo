@@ -2,7 +2,9 @@
 //! a call held in its handler, closed by one `close`: the app turns to draining while the four
 //! calls are in flight, every one completes once released, the module's hooks run once each, `serve`
 //! answers `Ok` with nothing abandoned, and the four addresses stop accepting. Capability: one
-//! application across transports, one `close` draining all (G21).
+//! application across transports, one `close` draining all (G21). The drain's end is rendered per
+//! transport, a handler's own answer to it is kept, a spent shutdown cap still writes each
+//! rendering, and the servers' closes run at once.
 
 mod support;
 mod wire;
@@ -19,7 +21,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message;
-use ulo::{App, CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, Transport, injectable, routes};
+use ulo::{
+    App, CancelReason, Dep, ExecutionRef, FailureReason, HookKind, Key, Limit, Module, ModuleDef, ModuleIdentity, ShutdownFailure, Signal, Transport, TypeName,
+    injectable, routes,
+};
 use ulo_codegen_tests::pb::counter_client::CounterClient;
 use ulo_codegen_tests::pb::{self, AddRequest, Number, Sum};
 use ulo_grpc::Message as Grpc;
@@ -66,6 +71,14 @@ impl Web {
     async fn slow(&self, exec: ExecutionRef) -> String {
         self.gate.hold("http", exec).await;
         "http done".to_owned()
+    }
+
+    /// Waits for its execution's cancellation, then answers with the reason it read.
+    #[ulo_http::get("/observe")]
+    async fn observe(&self, exec: ExecutionRef) -> String {
+        self.gate.entered.push("http");
+        exec.cancelled().await;
+        format!("observed {:?}", exec.cancel_reason())
     }
 }
 
@@ -135,6 +148,14 @@ impl Bus {
         n.0 + 1
     }
 
+    /// Waits for its execution's cancellation, then answers with the reason it read.
+    #[ulo_rpc::message("cross.observe")]
+    async fn observe(&self, exec: ExecutionRef) -> String {
+        self.gate.entered.push("rpc");
+        exec.cancelled().await;
+        format!("observed {:?}", exec.cancel_reason())
+    }
+
     /// Cancels its own execution and never answers.
     #[ulo_rpc::message("cross.cancel")]
     async fn cancel(&self, exec: ExecutionRef) -> u32 {
@@ -201,8 +222,13 @@ fn address(addresses: &[ulo::BoundAddr], transport: &str) -> SocketAddr {
 }
 
 async fn http_slow(addr: SocketAddr) -> (String, String) {
+    http_call(addr, "/slow").await
+}
+
+/// `GET path` on its own connection: the status line and the body, read until the server closes.
+async fn http_call(addr: SocketAddr, path: &str) -> (String, String) {
     let mut stream = TcpStream::connect(addr).await.expect("the HTTP server accepts");
-    stream.write_all(b"GET /slow HTTP/1.1\r\nHost: cross\r\nConnection: close\r\n\r\n").await.expect("the request is written");
+    stream.write_all(format!("GET {path} HTTP/1.1\r\nHost: cross\r\nConnection: close\r\n\r\n").as_bytes()).await.expect("the request is written");
     let mut answer = Vec::new();
     stream.read_to_end(&mut answer).await.expect("the answer is read to its end");
     let text = String::from_utf8_lossy(&answer).into_owned();
@@ -283,12 +309,21 @@ impl Held {
 }
 
 async fn launch(drain: Duration) -> Running {
+    launch_capped(drain, None).await
+}
+
+/// [`launch`] with `shutdown_timeout` set to `cap`.
+async fn launch_capped(drain: Duration, cap: Option<Duration>) -> Running {
     let gate = Gate { semaphore: Arc::new(Semaphore::new(0)), entered: Record::new(), dropped: Record::new() };
     let grpc_hold = wire::Hold::new();
     let hooks = Arc::new(Hooks::default());
-    let app = App::builder(Root { gate: gate.clone(), grpc_hold: grpc_hold.clone(), hooks: Arc::clone(&hooks) })
+    let mut builder = App::builder(Root { gate: gate.clone(), grpc_hold: grpc_hold.clone(), hooks: Arc::clone(&hooks) })
         .runtime(ulo_runtime_tokio::Tokio::current())
-        .drain_timeout(drain)
+        .drain_timeout(drain);
+    if let Some(cap) = cap {
+        builder = builder.shutdown_timeout(cap);
+    }
+    let app = builder
         .wire()
         .unwrap_or_else(|error| panic!("the app did not wire: {error}"))
         .connect()
@@ -541,27 +576,42 @@ async fn a_websocket_call_abandoned_at_the_drains_end_is_closed_1001_with_the_sh
 }
 
 /// The handler is polled before the cancellation: one that wakes on the drain's end and answers
-/// in that poll is answered as it chose, on WebSocket and on gRPC.
+/// in that poll is answered as it chose, on all four transports.
 #[tokio::test]
 async fn a_handler_answering_in_the_poll_the_drains_end_wakes_is_answered_as_it_chose() {
     let app = launch(Duration::from_millis(300)).await;
+    let http = tokio::spawn(http_call(app.http, "/observe"));
     let ws = tokio::spawn(ws_call(app.ws, "observe"));
+    let rpc = tokio::spawn({
+        let rpc = app.rpc;
+        async move {
+            let client = RpcClient::new(Tcp::new(rpc), Arc::new(ulo_runtime_tokio::Tokio::current())).expect("a client on the RPC address");
+            client.request::<u32, String>("cross.observe", &0).timeout(Duration::from_secs(20)).await
+        }
+    });
     let grpc = tokio::spawn(pause(app.grpc, 2));
-    app.gate.entered.at_least(2, "both handlers waiting on their cancellation").await;
+    let mut entered = app.gate.entered.at_least(4, "the four handlers waiting on their cancellation").await;
+    entered.sort_unstable();
+    assert_eq!(entered, vec!["grpc", "http", "rpc", "ws"]);
 
-    app.close_abandoning().await;
+    assert_eq!(app.close_abandoning().await, 4, "the window ended with the four calls running");
+    let observed = "observed Some(Drain)";
+    let (status, body) = within("the HTTP call", http).await.expect("the HTTP task");
+    assert_eq!((status.as_str(), body.trim().rsplit('\n').next().map(str::trim)), ("HTTP/1.1 200 OK", Some(observed)), "the HTTP handler's own answer: {body:?}");
     match within("the WebSocket call", ws).await.expect("the WebSocket task") {
-        WsEnd::Answered(reply) => assert_eq!(reply, json!({ "id": 1, "data": "observed Some(Drain)" })),
+        WsEnd::Answered(reply) => assert_eq!(reply, json!({ "id": 1, "data": observed })),
         other => panic!("the WebSocket handler's own answer was lost: {other:?}"),
     }
+    let reply = within("the RPC call", rpc).await.expect("the RPC task");
+    assert_eq!(reply.unwrap_or_else(|error| panic!("the RPC handler's own answer was lost: {error:?}")), observed);
     let reply = within("the gRPC call", grpc).await.expect("the gRPC task");
     assert_eq!(reply.unwrap_or_else(|status| panic!("the gRPC handler's own answer was lost: {status:?}")).into_inner().value, 2);
     let _ = within("serve", app.serving).await;
 }
 
 /// Only the drain's cancellation is rendered with the shutdown phrase. A handler that cancels its
-/// own execution and answers is answered on WebSocket and gRPC; RPC, which races the cancellation
-/// first, answers it `unavailable` with its own phrase.
+/// own execution and answers is answered on WebSocket and gRPC; on RPC one that cancels its own
+/// execution and never answers is answered `unavailable` with the cancellation's own phrase.
 #[tokio::test]
 async fn a_call_its_own_handler_cancels_is_not_answered_as_the_drain() {
     let app = launch(Duration::from_secs(5)).await;
@@ -651,4 +701,125 @@ async fn one_controller_serves_http_and_rpc_from_one_instance() {
 
     let _ = within("close", handle.close(Signal::new("cross"))).await;
     let _ = within("serve", serving).await;
+}
+
+/// A spent shutdown cap gives each server's `close` one poll, and that poll writes the answer a
+/// call cancelled at the drain's end needs no wait for: each client reads its transport's
+/// rendering of the shutdown, not a reset. Every `close` is then cut by the cap, and the report
+/// lists the cuts in bind order between the hooks the cap skipped.
+#[tokio::test]
+async fn a_spent_cap_still_writes_each_held_calls_shutdown_answer() {
+    let app = launch_capped(Duration::from_secs(5), Some(Duration::ZERO)).await;
+    let held = app.hold_four().await;
+
+    let error = within("close", app.handle.close(Signal::new("cross"))).await.expect_err("a spent cap records the steps it cut");
+    assert_eq!(error.report.abandoned, 4, "one abandoned execution per held call: {error}");
+    let mut failures = error.failures.iter();
+    for kind in [HookKind::BeforeApplicationShutdown, HookKind::OnModuleDestroy] {
+        match failures.next() {
+            Some(ShutdownFailure::Hook { hook, key, reason: FailureReason::Skipped }) => {
+                assert_eq!(*hook, kind);
+                assert_eq!(key.key(), Key::of::<Root, ()>(), "the hook's owner");
+            }
+            other => panic!("expected the cap to skip the {kind:?} hook, got: {other:?}"),
+        }
+    }
+    let bind_order = [
+        TypeName::of::<ulo_http::Http>(),
+        TypeName::of::<ulo_ws::Ws>(),
+        TypeName::of::<ulo_rpc::Rpc>(),
+        TypeName::of::<ulo_grpc::Grpc>(),
+    ];
+    for expected in bind_order {
+        match failures.next() {
+            Some(ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit } }) => {
+                assert_eq!(*transport, expected, "the closes the cap cut, in bind order");
+                assert_eq!((*after, *limit), (Duration::ZERO, Limit::ShutdownCap), "{transport}'s close");
+            }
+            other => panic!("expected `{expected}`'s close cut by the cap, got: {other:?}"),
+        }
+    }
+    match failures.next() {
+        Some(ShutdownFailure::Hook { hook: HookKind::OnApplicationShutdown, key, reason: FailureReason::Skipped }) => {
+            assert_eq!(key.key(), Key::of::<Root, ()>(), "the hook's owner");
+        }
+        other => panic!("expected the cap to skip the on-shutdown hook, got: {other:?}"),
+    }
+    assert!(failures.next().is_none(), "a failure past the seven expected: {error}");
+    let _ = within("serve", app.serving).await;
+
+    let (status, body) = within("the HTTP call's end", held.http).await.expect("the HTTP task");
+    assert_eq!(status, "HTTP/1.1 503 Service Unavailable", "the HTTP call: {body:?}");
+    let document: Value = serde_json::from_str(body.trim()).unwrap_or_else(|error| panic!("a problem document, got {body:?}: {error}"));
+    assert_eq!(document["detail"], SHUTDOWN_PHRASE, "the HTTP call: {document}");
+    let ws = within("the WebSocket call's end", held.ws).await.expect("the WebSocket task");
+    assert!(matches!(&ws, WsEnd::Closed(Some((1001, reason))) if reason == SHUTDOWN_PHRASE), "the WebSocket call: {ws:?}");
+    let rpc = within("the RPC call's end", held.rpc).await.expect("the RPC task").expect_err("an abandoned RPC call was answered with its result");
+    assert_eq!((rpc.kind(), rpc.message()), (ulo_transport::ErrorKind::Unavailable, SHUTDOWN_PHRASE), "the RPC call: {rpc:?}");
+    let grpc = within("the gRPC call's end", held.grpc).await.expect("the gRPC task").expect_err("an abandoned gRPC call was answered with its result");
+    assert_eq!((grpc.code(), grpc.message()), (tonic::Code::Unavailable, SHUTDOWN_PHRASE), "the gRPC call: {grpc:?}");
+}
+
+/// A WebSocket client that sends `slow`, held by the handler, and then reads nothing more, so it
+/// never answers the server's close.
+async fn frozen_ws(addr: SocketAddr) -> impl Sized {
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws")).await.expect("the WebSocket upgrade");
+    socket.send(Message::text(json!({ "event": "slow", "id": 1 }).to_string())).await.expect("the message is sent");
+    socket
+}
+
+/// The `Chat` gateway alone, for an app binding only WebSocket servers.
+struct ChatOnly(Gate);
+
+impl Module for ChatOnly {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.value(self.0.clone());
+        m.controller::<Chat>();
+    }
+}
+
+/// The closes run at once: two WebSocket servers, each with a client that holds a call and then
+/// reads nothing, so each server waits out its 500 ms grace for the close handshake its client
+/// never completes, and `close` takes the drain window and one grace, not two.
+#[tokio::test]
+async fn two_servers_waiting_out_their_grace_for_frozen_clients_close_within_one_grace() {
+    const DRAIN: Duration = Duration::from_millis(200);
+    const GRACE: Duration = Duration::from_millis(500);
+    let gate = Gate { semaphore: Arc::new(Semaphore::new(0)), entered: Record::new(), dropped: Record::new() };
+    let app = App::builder(ChatOnly(gate.clone()))
+        .runtime(ulo_runtime_tokio::Tokio::current())
+        .drain_timeout(DRAIN)
+        .wire()
+        .unwrap_or_else(|error| panic!("the app did not wire: {error}"))
+        .connect()
+        .await
+        .unwrap_or_else(|error| panic!("the app did not connect: {error}"))
+        .bind(ulo_ws_hyper::Server::new("127.0.0.1:0"))
+        .bind(ulo_ws_hyper::Server::new("127.0.0.1:0"))
+        .listen()
+        .await
+        .unwrap_or_else(|error| panic!("the app did not listen: {error}"));
+    let addrs: Vec<SocketAddr> = app.addresses().iter().map(|bound| bound.addr).collect();
+    assert_eq!(addrs.len(), 2, "one address per server: {addrs:?}");
+    let handle = app.handle();
+    let serving = tokio::spawn(async move { app.serve(std::future::pending::<Signal>()).await });
+    let frozen = (frozen_ws(addrs[0]).await, frozen_ws(addrs[1]).await);
+    gate.entered.at_least(2, "both handlers entering").await;
+
+    let started = std::time::Instant::now();
+    let closed = within("close", handle.close(Signal::new("cross"))).await;
+    let took = started.elapsed();
+    let shutdown = closed.unwrap_or_else(|error| panic!("each close ended within its own bound: {error}"));
+    assert_eq!(shutdown.abandoned, 2, "the two held calls were abandoned");
+    assert!(took >= DRAIN + GRACE, "close returned before a server waited out its grace: {took:?}");
+    assert!(took < DRAIN + GRACE + Duration::from_millis(400), "the two graces were paid one after the other: {took:?}");
+    let _ = within("serve", serving).await;
+    let mut dropped = gate.dropped.at_least(2, "the two held handlers dropping").await;
+    dropped.sort_unstable_by_key(|(transport, _)| *transport);
+    assert_eq!(dropped, vec![("ws", Some(CancelReason::Drain)), ("ws", Some(CancelReason::Drain))]);
+    drop(frozen);
 }

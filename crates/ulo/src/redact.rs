@@ -434,18 +434,6 @@ impl SecretRegistry {
         }
     }
 
-    /// Registers the value when `value` is a `Secret<String>`, which is how `m.value(..)`
-    /// registers the secret it binds. The stored `Arc<Secret<String>>` of an instance is
-    /// recognized too.
-    pub(crate) fn register_if_secret(&mut self, value: &dyn Any) {
-        let secret = value
-            .downcast_ref::<Secret<String>>()
-            .or_else(|| value.downcast_ref::<Arc<Secret<String>>>().map(|s| &**s));
-        if let Some(secret) = secret {
-            self.register(secret.expose().clone());
-        }
-    }
-
     /// Every registered text of at least [`MIN_MATCHED`] characters replaced by the marker,
     /// longest first, so a secret containing another is replaced whole. One pass over the text, so
     /// a replacement is never matched again by a shorter secret.

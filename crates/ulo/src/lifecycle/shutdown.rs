@@ -10,8 +10,8 @@
 //!    `Timer`) or the earlier expiry of the cap.
 //! 4. Cancel and abandon the rest, counting them in `Shutdown::abandoned`.
 //! 5. `OnModuleDestroy` hooks, reverse connect order; phase Destroying from the first.
-//! 6. Transports close their sockets, in reverse bind order, one after another, each `close`
-//!    bounded by what is left of the cap, or by `hook_timeout` when no cap is set. The app then
+//! 6. Transports close their sockets, every `close` at once, each bounded by what is left of the
+//!    cap, or by `hook_timeout` when no cap is set, their failures recorded in bind order. The app then
 //!    lets go of its servers. For an app that never reaches this step, the `App` value's drop
 //!    lets go of them when no `close` holds a claim, and the last claim's drop otherwise; that
 //!    release moves the phase to `Closed` and fires `draining()`. A `close` whose claim finds the
@@ -40,10 +40,10 @@ use crate::graph::{BindingId, Graph, ModuleId};
 use crate::hooks::HookKind;
 use crate::lifecycle::connect::{HookOwner, hook_plan, hooks_of, owner_key, run_hook};
 use crate::lifecycle::phase::Phase;
-use crate::lifecycle::run::{Cap, CatchUnwind, Either, Outcome, select};
+use crate::lifecycle::run::{Cap, CatchUnwind, Outcome};
 use crate::redact::{SecretRegistry, redact, redact_panic};
 use crate::signal::Signal;
-use crate::timer::{BoxFuture, Timer};
+use crate::timer::{BoxFuture, Timer, timeout};
 use crate::transport::server::{DrainToken, ErasedServer};
 
 /// The one shutdown of an app: the winning trigger's signal and the outcome every `serve` and
@@ -387,7 +387,7 @@ pub(crate) async fn drain(shared: &Arc<AppShared>, progress: &mut Progress) -> (
     match (progress.drain_end.unwrap_or(DrainEnd::Now), timer) {
         (DrainEnd::Open, _) => settled.await,
         (DrainEnd::At(at), Some(timer)) if !at.saturating_duration_since(timer.now()).is_zero() => {
-            select(settled, timer.sleep(at.saturating_duration_since(timer.now()))).await;
+            let _ = timeout(timer, at.saturating_duration_since(timer.now()), settled).await;
         }
         // A window with nothing left still enters each server's drain: one poll, as an expired cap
         // gives a `close`, and no more.
@@ -410,45 +410,82 @@ async fn settle(mut pending: Vec<BoxFuture<'_, ()>>) {
     .await
 }
 
-/// Step 6, in reverse bind order, one `close` after another. A `close` that exceeds its bound is
-/// dropped and recorded as `TimedOut`: `limit: ShutdownCap` with the cap's duration when bounded
-/// by the cap, `limit: Default` with `hook_timeout` otherwise.
+/// Step 6: every `close` at once, each under its own bound, so a server waiting out its grace does
+/// not hold back the next one. A `close` that exceeds its bound is dropped and recorded as
+/// `TimedOut`: `limit: ShutdownCap` with the cap's duration when bounded by the cap,
+/// `limit: Default` with `hook_timeout` otherwise. The failures are recorded in bind order once
+/// every `close` has ended, whichever ended first, so the report reads the same on every run.
 ///
-/// Each bound is taken as that `close` starts, so the cap's remainder shrinks with every close
-/// before it. Without a `Timer` there is neither bound, and `close` runs unbounded.
+/// The closes start in reverse bind order, the first poll of each in that order. Every bound is
+/// taken as the step starts, all of them then ending where the cap ends. Without a `Timer`
+/// there is neither bound, and `close` runs unbounded.
 async fn close_servers(shared: &Arc<AppShared>, progress: &mut Progress) {
     let servers = servers_of(shared);
+    // A runner dropped mid-step started every close already; its successor starts none again.
+    if progress.cursor >= servers.len() {
+        progress.cursor = 0;
+        return;
+    }
+    progress.cursor = servers.len();
     let graph = shared.graph();
     let timer = shared.config.timer.as_deref();
     let hook_timeout = shared.config.defaults().map(|defaults| defaults.hook_timeout);
-    while progress.cursor < servers.len() {
-        let server = &servers[servers.len() - 1 - progress.cursor];
-        progress.cursor += 1;
-        let bound = close_bound(timer, progress.cap, hook_timeout);
-        if let Err(reason) = bounded_close(&**server, bound, &graph.secrets).await {
+    let closes: Vec<_> = servers
+        .iter()
+        .rev()
+        .map(|server| Box::pin(bounded_close(&**server, close_bound(timer, progress.cap, hook_timeout), &graph.secrets)))
+        .collect();
+    let mut ended = join_all(closes).await;
+    // `ended` follows the reverse bind order the closes started in.
+    ended.reverse();
+    for (server, ended) in servers.iter().zip(ended) {
+        if let Err(reason) = ended {
             progress.failures.push(ShutdownFailure::Close { transport: server.transport_name(), reason });
         }
     }
     progress.cursor = 0;
 }
 
-enum CloseBound {
+/// Every future of `futures` polled until it ends, each in its turn on every poll, answering
+/// their outputs in the order given.
+async fn join_all<F: Future + Unpin>(futures: Vec<F>) -> Vec<F::Output> {
+    let mut pending: Vec<Option<F>> = futures.into_iter().map(Some).collect();
+    let mut outputs: Vec<Option<F::Output>> = pending.iter().map(|_| None).collect();
+    poll_fn(|cx| {
+        for (slot, output) in pending.iter_mut().zip(outputs.iter_mut()) {
+            if let Some(future) = slot
+                && let Poll::Ready(out) = Pin::new(future).poll(cx)
+            {
+                *output = Some(out);
+                *slot = None;
+            }
+        }
+        if pending.iter().all(Option::is_none) { Poll::Ready(()) } else { Poll::Pending }
+    })
+    .await;
+    outputs.into_iter().flatten().collect()
+}
+
+enum CloseBound<'t> {
     Unbounded,
     /// The cap has expired: the `close` gets its first poll and no more.
     Expired { after: Duration },
-    Within { sleep: BoxFuture<'static, ()>, after: Duration, limit: Limit },
+    /// `until` is fixed when the step starts, the same instant for every `close` under the cap, so
+    /// a `close` whose first poll comes after a slow one before it is not given longer; `after`
+    /// is the duration the failure reports.
+    Within { timer: &'t dyn Timer, until: Instant, after: Duration, limit: Limit },
 }
 
-fn close_bound(timer: Option<&dyn Timer>, cap: Option<Cap>, hook_timeout: Option<Duration>) -> CloseBound {
+fn close_bound<'t>(timer: Option<&'t dyn Timer>, cap: Option<Cap>, hook_timeout: Option<Duration>) -> CloseBound<'t> {
     let Some(timer) = timer else { return CloseBound::Unbounded };
     match (cap, hook_timeout) {
         (Some(cap), _) if cap.expired(timer) => CloseBound::Expired { after: cap.after },
-        (Some(cap), _) => CloseBound::Within {
-            sleep: timer.sleep(cap.at.saturating_duration_since(timer.now())),
-            after: cap.after,
-            limit: Limit::ShutdownCap,
+        (Some(cap), _) => CloseBound::Within { timer, until: cap.at, after: cap.after, limit: Limit::ShutdownCap },
+        // A `hook_timeout` past the clock's range never fires.
+        (None, Some(after)) => match timer.now().checked_add(after) {
+            Some(until) => CloseBound::Within { timer, until, after, limit: Limit::Default },
+            None => CloseBound::Unbounded,
         },
-        (None, Some(after)) => CloseBound::Within { sleep: timer.sleep(after), after, limit: Limit::Default },
         (None, None) => CloseBound::Unbounded,
     }
 }
@@ -456,7 +493,7 @@ fn close_bound(timer: Option<&dyn Timer>, cap: Option<Cap>, hook_timeout: Option
 /// The `close` is polled before the bound, so one that completes on the poll where the bound
 /// fires counts as closed. The call happens inside the caught future, so a `close` that panics
 /// before returning its future is caught too.
-async fn bounded_close(server: &dyn ErasedServer, bound: CloseBound, secrets: &SecretRegistry) -> Result<(), FailureReason> {
+async fn bounded_close(server: &dyn ErasedServer, bound: CloseBound<'_>, secrets: &SecretRegistry) -> Result<(), FailureReason> {
     let mut close = CatchUnwind::new(async move { server.close().await });
     let ended = match bound {
         CloseBound::Unbounded => close.await,
@@ -464,9 +501,9 @@ async fn bounded_close(server: &dyn ErasedServer, bound: CloseBound, secrets: &S
             Poll::Ready(ended) => ended,
             Poll::Pending => return Err(FailureReason::TimedOut { after, limit: Limit::ShutdownCap }),
         },
-        CloseBound::Within { sleep, after, limit } => match select(close, sleep).await {
-            Either::Left(ended) => ended,
-            Either::Right(()) => return Err(FailureReason::TimedOut { after, limit }),
+        CloseBound::Within { timer, until, after, limit } => match timeout(timer, until.saturating_duration_since(timer.now()), close).await {
+            Ok(ended) => ended,
+            Err(()) => return Err(FailureReason::TimedOut { after, limit }),
         },
     };
     match ended {

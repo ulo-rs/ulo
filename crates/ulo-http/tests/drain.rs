@@ -3,7 +3,8 @@
 //! begun is 503 with `Connection: close` and the problem document the other refusals use; one
 //! begun is a body that errors, which a backend writes as a closed connection (HTTP/1.1) or a reset
 //! stream (HTTP/2), never as the terminating chunk or `END_STREAM`. A call that finishes inside the
-//! window is untouched.
+//! window is untouched, and so is an answer the handler chose on observing the cancellation,
+//! unless that answer is a stream, which would be cut before its first frame and is answered 503.
 
 mod o1_support;
 
@@ -94,6 +95,17 @@ impl Held {
         "released"
     }
 
+    /// As `/cancelled-hold`, answering with a stream.
+    #[ulo_http::get("/cancelled-then-streams")]
+    async fn cancelled_then_streams(&self, exec: ExecutionRef) -> Response {
+        let _dropped = OnDrop(&self.hold, exec.clone());
+        self.hold.entered.notify_one();
+        exec.draining().await;
+        exec.cancel();
+        self.hold.release.acquire().await.expect("the semaphore is never closed").forget();
+        Response::new(HttpBody::stream(stream::iter([Ok::<_, std::convert::Infallible>(Bytes::from_static(b"released"))])))
+    }
+
     /// Answers once its execution is cancelled, as a handler watching for it does.
     #[ulo_http::get("/answers-when-cancelled")]
     async fn answers_when_cancelled(&self, exec: ExecutionRef) -> &'static str {
@@ -101,6 +113,39 @@ impl Held {
         self.hold.entered.notify_one();
         exec.cancelled().await;
         "answered after the cancellation"
+    }
+
+    /// Answers with a stream once its execution is cancelled.
+    #[ulo_http::get("/streams-when-cancelled")]
+    async fn streams_when_cancelled(&self, exec: ExecutionRef) -> Response {
+        let _dropped = OnDrop(&self.hold, exec.clone());
+        let ends = self.hold.clone();
+        exec.on_stream_end(move |outcome| ends.ends.lock().unwrap_or_else(PoisonError::into_inner).push(outcome));
+        self.hold.entered.notify_one();
+        exec.cancelled().await;
+        Response::new(HttpBody::stream(stream::iter([Ok::<_, std::convert::Infallible>(Bytes::from_static(b"never written"))])))
+    }
+
+    /// A `HEAD` handler answering with a stream once its execution is cancelled: a body the
+    /// backend never writes.
+    #[ulo_http::head("/head-streams-when-cancelled")]
+    async fn head_streams_when_cancelled(&self, exec: ExecutionRef) -> Response {
+        let _dropped = OnDrop(&self.hold, exec.clone());
+        self.hold.entered.notify_one();
+        exec.cancelled().await;
+        Response::new(HttpBody::stream(stream::iter([Ok::<_, std::convert::Infallible>(Bytes::from_static(b"discarded"))])))
+    }
+
+    /// Answers 204 carrying a stream once its execution is cancelled: a body the backend never
+    /// writes.
+    #[ulo_http::get("/no-content-when-cancelled")]
+    async fn no_content_when_cancelled(&self, exec: ExecutionRef) -> Response {
+        let _dropped = OnDrop(&self.hold, exec.clone());
+        self.hold.entered.notify_one();
+        exec.cancelled().await;
+        let mut response = Response::new(HttpBody::stream(stream::iter([Ok::<_, std::convert::Infallible>(Bytes::from_static(b"discarded"))])));
+        *response.status_mut() = StatusCode::NO_CONTENT;
+        response
     }
 
     /// Answers at once with a stream: `first`, then `second` once released, then its end.
@@ -288,16 +333,95 @@ async fn a_call_cancelled_for_another_reason_runs_on_and_is_answered_by_its_hand
     app.stop().await;
 }
 
+/// The pipeline is polled before the cancellation: a handler that answers on observing the
+/// drain's cancellation is answered as it chose.
 #[tokio::test]
-async fn a_handler_answering_once_the_drain_cancels_it_is_still_answered_503() {
+async fn a_handler_answering_once_the_drain_cancels_it_is_answered_as_it_chose() {
     let app = start_draining(register, WINDOW).await;
     let (call, hold) = held(&app, "/answers-when-cancelled").await;
     let closing = app.begin_close();
 
     let reply = read(tokio::time::timeout(PATIENCE, call).await.expect("answered in time").expect("the call task")).await;
-    assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE, "the drain is checked before the pipeline: {}", reply.text());
+    assert_eq!((reply.status, reply.text()), (StatusCode::OK, "answered after the cancellation".to_owned()));
+    assert_eq!(reply.header("connection"), None, "the handler's own answer carries no refusal's header");
+    assert_eq!(reply.matched(), Some(("/answers-when-cancelled".to_owned(), "answers_when_cancelled")));
+    assert_eq!(hold.dropped(), vec![Some(CancelReason::Drain)], "the handler ran on to its end under the drain's cancellation");
+    let shutdown = tokio::time::timeout(PATIENCE, closing).await.expect("close finished in time").expect("the close task");
+    assert_eq!(shutdown.map_or_else(|error| error.report.abandoned, |shutdown| shutdown.abandoned), 1, "the window ended with the call running");
+    app.stop().await;
+}
+
+/// A stream answered once the drain's end has cancelled the call would be cut before its first
+/// frame, so the service checks the drain once more as it returns it and answers the refusal.
+#[tokio::test]
+async fn a_stream_answered_once_the_drain_cancels_the_call_is_answered_503_instead() {
+    let app = start_draining(register, WINDOW).await;
+    let (call, hold) = held(&app, "/streams-when-cancelled").await;
+    let closing = app.begin_close();
+
+    let reply = read(tokio::time::timeout(PATIENCE, call).await.expect("answered in time").expect("the call task")).await;
+    assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE, "{}", reply.text());
+    assert_eq!(reply.header("connection"), Some("close"));
+    assert_eq!(reply.header("retry-after"), Some("1"));
+    assert_eq!(reply.header("content-type"), Some("application/problem+json"));
     assert_eq!(reply.json()["detail"], "the server is shutting down");
+    assert_eq!(reply.matched(), Some(("/streams-when-cancelled".to_owned(), "streams_when_cancelled")), "the refusal keeps the route");
+    assert!(hold.ends().is_empty(), "the discarded stream reported an end: {:?}", hold.ends());
+    assert_eq!(hold.dropped(), vec![Some(CancelReason::Drain)]);
+    let shutdown = tokio::time::timeout(PATIENCE, closing).await.expect("close finished in time").expect("the close task");
+    assert_eq!(shutdown.map_or_else(|error| error.report.abandoned, |shutdown| shutdown.abandoned), 1);
+    app.stop().await;
+}
+
+/// The second check covers only a body the backend would write: a 204 carrying a stream owes the
+/// client no body, so the drain cuts nothing and the handler's 204 stands.
+#[tokio::test]
+async fn a_no_content_answer_chosen_once_the_drain_cancels_the_call_is_not_replaced() {
+    let app = start_draining(register, WINDOW).await;
+    let (call, hold) = held(&app, "/no-content-when-cancelled").await;
+    let closing = app.begin_close();
+
+    let reply = read(tokio::time::timeout(PATIENCE, call).await.expect("answered in time").expect("the call task")).await;
+    assert_eq!(reply.status, StatusCode::NO_CONTENT, "{}", reply.text());
+    assert_eq!(reply.header("connection"), None, "the handler's own answer carries no refusal's header");
+    assert_eq!(reply.matched(), Some(("/no-content-when-cancelled".to_owned(), "no_content_when_cancelled")));
     assert_eq!(hold.dropped(), vec![Some(CancelReason::Drain)]);
     let _ = tokio::time::timeout(PATIENCE, closing).await.expect("close finished in time");
+    app.stop().await;
+}
+
+/// The second check covers only a body the backend writes: a `HEAD` handler's stream owes the
+/// client no body, so the handler's 200 stands.
+#[tokio::test]
+async fn a_head_answered_by_a_stream_once_the_drain_cancels_the_call_is_not_replaced() {
+    let app = start_draining(register, WINDOW).await;
+    let hold = app.app().get::<Hold>().await.expect("the app binds its hold");
+    let service = app.service();
+    let request = Call::new(http::Method::HEAD, "/head-streams-when-cancelled").into_request();
+    let call = tokio::spawn(async move { service.call(request).await });
+    tokio::time::timeout(PATIENCE, hold.entered.notified()).await.expect("the handler is entered in time");
+    let closing = app.begin_close();
+
+    let reply = read(tokio::time::timeout(PATIENCE, call).await.expect("answered in time").expect("the call task")).await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text());
+    assert_eq!(reply.header("connection"), None, "the handler's own answer carries no refusal's header");
+    assert_eq!(hold.dropped(), vec![Some(CancelReason::Drain)]);
+    let _ = tokio::time::timeout(PATIENCE, closing).await.expect("close finished in time");
+    app.stop().await;
+}
+
+/// The second check reads the drain's cancellation alone: a stream answered by a call its own
+/// handler cancelled is written as it chose.
+#[tokio::test]
+async fn a_stream_answered_by_a_call_cancelled_for_another_reason_is_not_replaced() {
+    let app = start_draining(register, WINDOW).await;
+    let (call, hold) = held(&app, "/cancelled-then-streams").await;
+    let shutdown = tokio::time::timeout(PATIENCE, app.begin_close()).await.expect("close finished in time").expect("the close task");
+    assert_eq!(shutdown.map_or_else(|error| error.report.abandoned, |shutdown| shutdown.abandoned), 1, "the window ended with the call running");
+    hold.release.add_permits(1);
+
+    let reply = read(tokio::time::timeout(PATIENCE, call).await.expect("answered in time").expect("the call task")).await;
+    assert_eq!((reply.status, reply.text()), (StatusCode::OK, "released".to_owned()));
+    assert_eq!(hold.dropped(), vec![Some(CancelReason::Explicit)]);
     app.stop().await;
 }

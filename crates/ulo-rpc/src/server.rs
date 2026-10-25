@@ -11,7 +11,7 @@ use futures_util::future::{Either, select};
 use futures_util::{FutureExt, StreamExt};
 use ulo::{Bound, BoundAddr, BoxError, DrainToken, MountedHandler, Mounted, Shape, Spawn, TypeName};
 use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
-use ulo_transport::{Admission, Count, TaskSet};
+use ulo_transport::{Admission, Count, TaskSet, Turns};
 use ulo_transport::__private::Watch;
 
 use crate::__private::{Kind, RpcHandler};
@@ -171,6 +171,7 @@ impl<L: Link> ulo::Server for Server<L> {
             serial: AtomicU64::new(0),
             unhandled_events: AtomicU64::new(0),
             settling: Watch::new(Settling::default()),
+            turns: Turns::default(),
         }));
         Ok(())
     }
@@ -240,7 +241,13 @@ impl<L: Link> ulo::Server for Server<L> {
         }
     }
 
+    /// Each call still running is polled once first, on this future's first poll: a call the
+    /// drain's end cancelled queues its `unavailable` on its reply path then, which the link writes
+    /// even when a spent cap leaves `close` that one poll.
     async fn close(&self) -> Result<(), BoxError> {
+        if let Some(shared) = &self.shared {
+            shared.turns.give();
+        }
         self.closing.modify(|closing| *closing = true);
         self.inbound.lock().unwrap_or_else(PoisonError::into_inner).take();
         self.link.close().await

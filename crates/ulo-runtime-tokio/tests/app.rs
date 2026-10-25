@@ -844,7 +844,7 @@ fn assert_untouched(log: &Log, path: &str) {
     assert!(touched.is_empty(), "a server closed or dropped at {path}: {touched:?}");
 }
 
-/// Every server's `close` ran, in reverse bind order, before any server dropped; both servers
+/// Every server's `close` started, in reverse bind order, before any server dropped; both servers
 /// dropped once; and the store dropped last, with the last handle.
 fn assert_closed_then_freed(log: &Log, path: &str) {
     let events = log.events();
@@ -872,9 +872,10 @@ async fn an_app_dropped_before_a_running_close_s_close_step_leaves_it_every_serv
     drop(app);
     assert_untouched(&log, "the app's drop");
     hook_gate.open();
-    // `b`'s `close` waits at the gate, which holds the close step open while the test reads it.
-    until_logged(&log, "close b").await;
-    assert_eq!(touched(&log), ["close b"], "the close step did not wait on `b`'s `close`");
+    // Both closes start at once; `b`'s waits at the gate, which holds the close step open while
+    // the test reads it.
+    until_logged(&log, "close a").await;
+    assert_eq!(touched(&log), ["close b", "close a"], "the closes did not both start, last bound first");
     assert!(!log.has("store dropped"), "the store dropped while a server's `close` ran");
     close_gate.open();
     let outcome = tokio::time::timeout(PATIENCE, closing).await.expect("the close did not end").expect("the close task panicked");

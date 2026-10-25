@@ -161,7 +161,7 @@ impl<'m, U: ?Sized + Send + Sync + 'static, Q: 'static, M> Contribute<'m, U, Q, 
         let recipe = match value {
             Ok(value) => Recipe::Value(instance_of(value)),
             Err(error) => {
-                self.node.failures.push(ValueFailure { key: Key::of::<U, Q>(), error: error.into(), location });
+                self.node.failures.push(ValueFailure { error: error.into(), location });
                 Recipe::Failed
             }
         };

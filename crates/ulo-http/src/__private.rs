@@ -40,10 +40,12 @@ impl HttpHandler {
     where
         F: Fn(HttpCx) -> BoxFuture<'static, Result<Response, BoxError>> + Send + Sync + 'static,
     {
-        // A multipart read that ended at the body limit is returned as the `TooLarge` it carries.
+        // A multipart error is returned as the `ExtractError` it is: `TooLarge` at the body limit,
+        // `Malformed` otherwise.
         let call: HandlerFn = Arc::new(move |cx| {
+            let app = cx.app().clone();
             let run = call(cx);
-            Box::pin(async move { run.await.map_err(crate::render::over_the_limit) })
+            Box::pin(async move { run.await.map_err(|err| crate::render::from_multipart(err, &app)) })
         });
         HttpHandler { method, path, call, path_checks: Vec::new(), host_reads: Vec::new() }
     }

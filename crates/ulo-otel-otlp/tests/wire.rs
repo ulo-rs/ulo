@@ -1,6 +1,8 @@
 //! What reaches a local listener when `OtlpExporter` exports one span.
 //!
-//! The same scenarios run under `--features reqwest-blocking`, which swaps the HTTP client.
+//! The same scenarios run under `--no-default-features --features reqwest-blocking`, where
+//! `OtlpExporter::http()` is reqwest's client; with both features it is `ureq`, and
+//! `OtlpExporter::http_over` names either.
 //!
 //! The process environment is set only on a child process (the test binary re-run on `child`), so
 //! no test mutates its own.
@@ -19,7 +21,7 @@ use opentelemetry::InstrumentationScope;
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use ulo::Secret;
 use ulo_otel::{Exporter, OtelOptions};
-use ulo_otel_otlp::OtlpExporter;
+use ulo_otel_otlp::{Client, OtlpExporter};
 
 const CHILD: &str = "ULO_OTLP_CHILD";
 
@@ -145,7 +147,14 @@ fn child() {
         headers: std::env::var("ULO_OTLP_CHILD_HEADERS").ok().map(Secret::new),
         ..OtelOptions::default()
     };
-    let mut exporter = OtlpExporter::http();
+    let mut exporter = match std::env::var("ULO_OTLP_CHILD_CLIENT").as_deref() {
+        #[cfg(feature = "ureq")]
+        Ok("ureq") => OtlpExporter::http_over(Client::Ureq),
+        #[cfg(feature = "reqwest-blocking")]
+        Ok("reqwest") => OtlpExporter::http_over(Client::ReqwestBlocking),
+        Ok(other) => panic!("no client `{other}` in this build"),
+        Err(_) => OtlpExporter::http(),
+    };
     match std::env::var("ULO_OTLP_CHILD_PROXY").as_deref() {
         Ok("off") => exporter = exporter.no_proxy(),
         Ok(url) if url.starts_with("http") => exporter = exporter.proxy(url),
@@ -287,4 +296,51 @@ fn a_header_value_decoding_to_a_line_break_is_refused() {
         ..OtelOptions::default()
     };
     assert!(OtlpExporter::http().build(&options).is_err());
+}
+
+/// The first header line of the request head. `ureq` writes `content-length` first and reqwest
+/// `content-type`; the exporter sets the same `user-agent` for both, so the order is what tells the
+/// clients apart on the wire.
+fn first_header(head: &str) -> String {
+    head.lines().nth(1).and_then(|line| line.split_once(':')).map(|(name, _)| name.to_owned()).unwrap_or_default()
+}
+
+/// With the `ureq` feature on, `http()` sends on `ureq` whatever else is enabled, and
+/// `http_over(Client::Ureq)` is the same client.
+#[cfg(feature = "ureq")]
+#[test]
+fn ureq_is_the_default_client_and_is_named_by_http_over() {
+    assert_eq!(OtlpExporter::http().client(), Client::Ureq);
+    for choice in [None, Some("ureq")] {
+        let target = listen(OK);
+        let url = target.url();
+        let mut envs = vec![(CHILD, url.as_str())];
+        envs.extend(choice.map(|name| ("ULO_OTLP_CHILD_CLIENT", name)));
+        run_child(&envs);
+        let head = target.head().expect("the receiver was reached");
+        assert_eq!(first_header(&head), "content-length", "{choice:?}: {head}");
+    }
+}
+
+/// `http_over(Client::ReqwestBlocking)` sends on reqwest.
+#[cfg(feature = "reqwest-blocking")]
+#[test]
+fn http_over_reqwest_sends_on_reqwest() {
+    assert_eq!(OtlpExporter::http_over(Client::ReqwestBlocking).client(), Client::ReqwestBlocking);
+    let target = listen(OK);
+    run_child(&[(CHILD, &target.url()), ("ULO_OTLP_CHILD_CLIENT", "reqwest")]);
+    let head = target.head().expect("the receiver was reached");
+    assert!(head.starts_with("POST /v1/traces"), "{head}");
+    assert_eq!(first_header(&head), "content-type", "{head}");
+}
+
+/// Without the `ureq` feature, `http()` is reqwest's client.
+#[cfg(not(feature = "ureq"))]
+#[test]
+fn http_is_reqwest_when_ureq_is_not_enabled() {
+    assert_eq!(OtlpExporter::http().client(), Client::ReqwestBlocking);
+    let target = listen(OK);
+    run_child(&[(CHILD, &target.url())]);
+    let head = target.head().expect("the receiver was reached");
+    assert_eq!(first_header(&head), "content-type", "{head}");
 }

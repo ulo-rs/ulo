@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use http::{HeaderMap, HeaderValue, StatusCode};
-use o1_support::{Call, Running, refused, start};
+use o1_support::{Call, Running, refusal_entries, refused, start};
 use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, injectable, routes};
 use ulo_http::middleware::{Middleware, Next};
 use ulo_http::{Http, HttpBody, HttpCx, PreDispatch, Request, Response, Routing};
@@ -336,22 +336,59 @@ async fn a_declaration_the_stage_cannot_build_is_refused_at_the_line_that_wrote_
     assert!(names_line(&error, &BAD_SCOPE), "a scope without a leading slash: {error}");
 }
 
+/// Whether `entry` is the refusal of one unreached scope of the pre-dispatch entry written at
+/// `line`: that line of this file, the subject, exactly that one scope, and no type named.
+fn is_unreached(entry: &ulo::PrepareEntry, line: &AtomicU32, scope: &str) -> bool {
+    let line = line.load(Ordering::SeqCst);
+    assert_ne!(line, 0, "the declaration never ran");
+    entry.location().is_some_and(|at| at.file() == file!() && at.line() == line)
+        && entry.subject() == Some("pre-dispatch entry")
+        && entry.scopes() == [scope.to_owned()]
+        && entry.names().is_empty()
+}
+
 #[tokio::test]
 async fn a_scoped_entry_covering_no_route_is_refused_with_its_scope_and_the_line_that_wrote_it() {
     let error = refused(scoped_entries_two_of_which_cover_no_route).await;
-    let text = error.to_string();
+    let entries = refusal_entries(&error);
 
-    // Each refusal is one line naming one entry's location beside the scopes that entry wrote.
-    let refusal_of = |line: &AtomicU32| -> Vec<&str> {
-        let at = format!("{}:{}:", file!(), line.load(Ordering::SeqCst));
-        text.lines().filter(|refusal| refusal.contains(&at)).collect()
-    };
-    assert!(names_line(&error, &GHOST), "the entry scoped to routes nothing declares: {error}");
-    let ghost = refusal_of(&GHOST);
-    assert!(ghost.len() == 1 && ghost[0].contains("`/ghost`, `/phantom/*`") && !ghost[0].contains("posts"), "every scope the entry wrote, once: {error}");
-    assert!(names_line(&error, &TOO_DEEP), "a scope deeper than any route covers none: {error}");
-    let deep = refusal_of(&TOO_DEEP);
-    assert!(deep.len() == 1 && deep[0].contains("`/admin/users/{id}/posts`") && !deep[0].contains("ghost"), "{error}");
-    assert!(!names_line(&error, &COVERING), "the entry whose scope covers routes is not named: {error}");
-    assert!(!text.contains("`/admin/*`"), "{error}");
+    // One refusal per unreached scope, so the entry that wrote two is named twice, once for each;
+    // the entry whose scope covers routes is named not at all.
+    assert_eq!(entries.len(), 3, "{error}");
+    assert!(is_unreached(&entries[0], &GHOST, "/ghost"), "{entries:?}");
+    assert!(is_unreached(&entries[1], &GHOST, "/phantom/*"), "{entries:?}");
+    assert!(is_unreached(&entries[2], &TOO_DEEP, "/admin/users/{id}/posts"), "{entries:?}");
+    let text = error.to_string();
+    assert!(text.contains("`/ghost`") && text.contains("`/phantom/*`") && !text.contains("`/admin/*`"), "{error}");
+}
+
+static MIXED: AtomicU32 = AtomicU32::new(0);
+static EXCLUDED: AtomicU32 = AtomicU32::new(0);
+
+fn entry_with_one_scope_that_covers_and_one_that_does_not(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.provide::<Stamp>();
+    declared_at!(MIXED, m.meta::<PreDispatch>().apply_for::<Stamp>(["/admin/*", "/typo"]));
+}
+
+fn entry_whose_every_covered_route_is_excluded(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.provide::<Stamp>();
+    declared_at!(EXCLUDED, m.meta::<PreDispatch>().apply_for::<Stamp>(["/public"]).exclude(["/public"]));
+}
+
+#[tokio::test]
+async fn a_scope_beside_one_that_covers_a_route_is_still_refused() {
+    let error = refused(entry_with_one_scope_that_covers_and_one_that_does_not).await;
+    let entries = refusal_entries(&error);
+    assert_eq!(entries.len(), 1, "{error}");
+    assert!(is_unreached(&entries[0], &MIXED, "/typo"), "{entries:?}");
+}
+
+#[tokio::test]
+async fn a_scope_whose_covered_routes_are_all_excluded_is_refused() {
+    let error = refused(entry_whose_every_covered_route_is_excluded).await;
+    let entries = refusal_entries(&error);
+    assert_eq!(entries.len(), 1, "{error}");
+    assert!(is_unreached(&entries[0], &EXCLUDED, "/public"), "{entries:?}");
 }

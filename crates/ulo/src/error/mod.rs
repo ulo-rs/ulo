@@ -24,7 +24,7 @@ use crate::signal::Signal;
 use crate::timer::BoxError;
 use crate::type_name::{TypeName, short_type_name};
 
-pub use configure::{ConfigureError, ConfigureErrors, PrepareError};
+pub use configure::{ConfigureError, ConfigureErrors, PrepareEntry, PrepareError};
 pub use wiring::WiringErrors;
 
 #[non_exhaustive]

@@ -7,7 +7,7 @@ use std::time::Duration;
 use http::header::{ACCEPT, ALLOW, CONNECTION, CONTENT_TYPE, HeaderValue, RETRY_AFTER, WWW_AUTHENTICATE};
 use http::StatusCode;
 use serde::Serialize;
-use ulo::{BoxError, CancelReason, ExecutionRef};
+use ulo::{AppHandle, BoxError, CancelReason, ExecutionRef};
 use ulo_transport::{CallError, Details, ErrorKind, ExtractError};
 
 use crate::backend::HttpConfig;
@@ -84,12 +84,14 @@ pub(crate) fn render_as_is(err: BoxError, config: &HttpConfig) -> Response {
     }
 }
 
-/// A multipart read that failed because the body passed the route's limit, as the
-/// `ExtractError::TooLarge` the body stream ended with: multer wraps a stream's error as the source
-/// of its own `StreamReadFailed`, which a handler propagating it with `?` returns, and the
-/// classification reads the error itself rather than its sources. Any other error is returned as
-/// it came. Applied to every error a handler returns, so the error handlers see the `TooLarge`.
-pub(crate) fn over_the_limit(err: BoxError) -> BoxError {
+/// A multipart read error a handler returned, as the `ExtractError` it is: `TooLarge` when the read
+/// failed because the body passed the route's limit, `Malformed` (400) for any other `multer`
+/// error, a broken boundary or a cut-off part header among them. Multer wraps a stream's error as
+/// the source of its own `StreamReadFailed`, which a handler propagating it with `?` returns, and
+/// the classification reads the error itself rather than its sources. An error that is not
+/// multer's is returned as it came. Applied to every error a handler returns, so the error
+/// handlers see the `ExtractError`.
+pub(crate) fn from_multipart(err: BoxError, app: &AppHandle) -> BoxError {
     let read = match err.downcast::<multer::Error>() {
         Ok(read) => read,
         Err(err) => return err,
@@ -99,7 +101,7 @@ pub(crate) fn over_the_limit(err: BoxError) -> BoxError {
     {
         return Box::new(ExtractError::TooLarge { param, limit });
     }
-    read
+    Box::new(ExtractError::Malformed { param: "body", source: app.redact(read) })
 }
 
 /// What every refusal of a call because the server is draining or closing says, on every

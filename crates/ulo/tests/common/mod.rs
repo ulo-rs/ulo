@@ -530,6 +530,8 @@ pub enum CloseMode {
     Panic,
     /// Never completes.
     Pending,
+    /// Fails after this long on the real clock, the error naming the server.
+    ErrAfter(Duration),
 }
 
 /// What a [`TestServer`] does with the drain: called with the app's handle and the token the core
@@ -631,6 +633,10 @@ impl<T: Transport> ulo::Server for TestServer<T> {
             CloseMode::Err => Err(Box::new(Boom::new("close refused"))),
             CloseMode::Panic => panic!("close panics"),
             CloseMode::Pending => std::future::pending().await,
+            CloseMode::ErrAfter(after) => {
+                tokio::time::sleep(after).await;
+                Err(Box::new(Boom::new(format!("close {} refused", self.name))))
+            }
         }
     }
 }

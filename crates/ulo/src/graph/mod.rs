@@ -77,8 +77,6 @@ pub(crate) struct FrozenModule {
     pub(crate) keyed: Option<Qualifier>,
     pub(crate) imports: Vec<ModuleId>,
     pub(crate) bindings: Vec<BindingId>,
-    /// Final export keys, requalified at a keyed module's boundary.
-    pub(crate) exports: Vec<Key>,
     pub(crate) hooks: Vec<HookRecord>,
     pub(crate) meta: FrozenMeta,
     /// `Some(n)` for the n-th lazily loaded module; shutdown runs those in reverse load order.
@@ -342,7 +340,7 @@ impl Graph {
                 ReadKind::Collection(key) => {
                     deps.extend(self.collections.get(key).into_iter().flat_map(|ids| ids.iter().copied()));
                 }
-                ReadKind::Extension(_) | ReadKind::Execution | ReadKind::Module => {}
+                ReadKind::Extension | ReadKind::Execution | ReadKind::Module => {}
             }
         }
         deps

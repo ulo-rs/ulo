@@ -1,0 +1,49 @@
+error[E0277]: lifecycle hooks are only allowed on singletons
+  --> tests/ui/refusals_beside_a_blanket_trait.rs:63:6
+   |
+63 | impl OnModuleDestroy for Scratch {
+   |      ^^^^^^^^^^^^^^^ `ulo::scope::Transient` scope cannot have hooks
+   |
+   = help: the trait `HookCapable` is not implemented for `ulo::scope::Transient`
+   = note: remove the scope argument from #[injectable], or move the hook to a singleton
+help: the following other types implement trait `HookCapable`
+  --> $WORKSPACE/crates/ulo/src/scope.rs
+   |
+   | impl HookCapable for Singleton {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ulo::scope::Singleton`
+   | impl HookCapable for Auto {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^ `ulo::scope::Auto`
+note: required by a bound in `ulo::OnModuleDestroy`
+  --> $WORKSPACE/crates/ulo/src/hooks.rs
+   |
+   | pub trait OnModuleDestroy: Construct<Scope: HookCapable> {
+   |                                             ^^^^^^^^^^^ required by this bound in `OnModuleDestroy`
+
+error[E0599]: no method named `__ulo_matches` found for struct `ulo_grpc::__private::ParamCheck<(ulo_grpc::__private::Shaped<false>, Number), (ulo_grpc::__private::Shaped<false>, AddRequest)>` in the current scope
+  --> tests/ui/refusals_beside_a_blanket_trait.rs:43:30
+   |
+43 |     async fn add(&self, req: Message<Number>) -> Sum {
+   |                              ^^^^^^^
+   |
+help: there is a method `matches` with a similar name
+   |
+43 -     async fn add(&self, req: Message<Number>) -> Sum {
+43 +     async fn add(&self, req: matches<Number>) -> Sum {
+   |
+
+error[E0599]: no method named `__ulo_checked` found for struct `ulo_grpc::__private::Checked<(ulo_grpc::__private::Shaped<false>, Number), (ulo_grpc::__private::Shaped<false>, ulo_codegen_tests::pb::Sum)>` in the current scope
+  --> tests/ui/refusals_beside_a_blanket_trait.rs:55:54
+   |
+55 |     async fn add(&self, req: Message<AddRequest>) -> Number {
+   |                                                      ^^^^^^ method not found in `ulo_grpc::__private::Checked<(ulo_grpc::__private::Shaped<false>, Number), (ulo_grpc::__private::Shaped<false>, ulo_codegen_tests::pb::Sum)>`
+   |
+   = note: the method was found for `ulo_grpc::__private::Checked<T, T>`
+
+error[E0308]: mismatched types
+  --> tests/ui/refusals_beside_a_blanket_trait.rs:30:12
+   |
+30 |     #[meta(Timeout::after(Duration::from_secs(5)))]
+   |            ^^^^^^^ expected `()`, found `MetaMismatch<Rpc, Http>`
+   |
+   = note: expected unit type `()`
+                 found struct `ulo::__private::MetaMismatch<Rpc, Http>`

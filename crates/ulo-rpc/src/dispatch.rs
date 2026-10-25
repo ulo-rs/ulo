@@ -34,7 +34,7 @@ use ulo::{
     AppHandle, BoxError, BoxFuture, CancelReason, EndStream, ExecOptions, Execution, ExecutionRef, LateOutcome,
     MountedHandler, Runtime, Shape, Timer, TraceMode, Transport,
 };
-use ulo_transport::{Admission, CallError, Detail, Details, ErrorKind, Permit, TaskSet, Tracked, span};
+use ulo_transport::{Admission, CallError, Detail, Details, ErrorKind, Permit, TaskSet, Tracked, Turns, span};
 use ulo_transport::__private::Watch;
 
 use crate::__private::{HandlerFn, Kind};
@@ -67,6 +67,8 @@ pub(crate) struct Shared {
     pub(crate) unhandled_events: AtomicU64,
     /// What `Server::drain` waits for beside the live executions the core waits for.
     pub(crate) settling: Watch<Settling>,
+    /// Every call's task, which `Server::close` polls once before the link closes.
+    pub(crate) turns: Turns,
 }
 
 /// What the drain window waits for that opens no execution: the link's inbound stream read to
@@ -252,7 +254,7 @@ fn start(shared: &Arc<Shared>, incoming: Incoming, reply: Option<ReplyPath>, ack
         _registered: registered,
         permit,
     };
-    tasks.spawn(call.run().instrument(call_span));
+    tasks.spawn(shared.turns.track(call.run().instrument(call_span)));
 }
 
 fn context(shared: &Shared, exec: ExecutionRef, pattern: &str, headers: CallHeaders, link: LinkInfo, body: Body) -> RpcCx {
@@ -291,15 +293,18 @@ fn unhandled(shared: &Arc<Shared>, incoming: Incoming, link: LinkInfo, reply: Op
     let cx = context(shared, exec.handle(), &incoming.pattern, incoming.headers, link, incoming.body);
     let shared = Arc::clone(shared);
     let call_span = call_span(&shared, &exec, incoming.arrived, cx.pattern(), None);
+    let turns = shared.turns.clone();
     tasks.spawn(
-        async move {
-            let handle = exec.handle();
-            let outcome = ulo::recover::<Rpc>(None, &handle, &cx, BoxError::from(error)).await;
-            answer(&shared, None, &handle, &cx, &reply, id, Outcome::Done(outcome), &mut None).await;
-            ack.ack();
-            drop(exec);
-        }
-        .instrument(call_span),
+        turns.track(
+            async move {
+                let handle = exec.handle();
+                let outcome = ulo::recover::<Rpc>(None, &handle, &cx, BoxError::from(error)).await;
+                answer(&shared, None, &handle, &cx, &reply, id, Outcome::Done(outcome), &mut None).await;
+                ack.ack();
+                drop(exec);
+            }
+            .instrument(call_span),
+        ),
     );
 }
 
@@ -605,12 +610,12 @@ async fn send(reply: &ReplyPath, exec: &ExecutionRef, id: u64, frame: Frame) -> 
 fn refuse(shared: &Arc<Shared>, tasks: &mut TaskSet, reply: ReplyPath, id: u64, error: ErrorBody) {
     shared.settling.modify(|settling| settling.refusals += 1);
     let pending = Refusing(Arc::clone(shared));
-    tasks.spawn(async move {
+    tasks.spawn(shared.turns.track(async move {
         if let Err(err) = reply.send(Frame::Err { id, error }).await {
             tracing::debug!(error = %err, "a refusal could not be sent; the caller is gone");
         }
         drop(pending);
-    });
+    }));
 }
 
 /// One refusal in [`Settling::refusals`], released when its task ends or is aborted.
@@ -728,20 +733,26 @@ enum Ended<T> {
 }
 
 /// `fut` raced against the execution's cancellation and its deadline, polled in that order:
-/// the cancellation, `fut`, the deadline. A deadline that passes cancels the execution `Deadline`,
-/// so every later race ends on the cancellation, which is polled first, and the expired sleep is
-/// never polled again.
+/// `fut`, the cancellation, the deadline. An answer ready in the poll the cancellation wakes is
+/// the call's answer, a handler that answers on observing its cancellation included, and is
+/// written whatever the reason: a caller that cancelled discards it. An execution already
+/// cancelled when the race starts ends it at once, so a stream whose items are always ready is
+/// cut at its next item rather than run on. A deadline that passes cancels the execution
+/// `Deadline`, so every later race ends at its start, and the expired sleep is never polled again.
 ///
 /// The cancellation is written inside the expiry branch's own future, before the race drops
 /// `fut`: a handler's future dropped at the deadline reads `Deadline` from its execution.
 async fn until_ended<F: Future>(exec: &ExecutionRef, deadline: &mut Option<BoxFuture<'static, ()>>, fut: F) -> Ended<F::Output> {
+    if exec.is_cancelled() {
+        return Ended::Cancelled(exec.cancel_reason());
+    }
     let expired = async {
         expiry(deadline).await;
         exec.cancel_with(CancelReason::Deadline);
     };
-    match select(pin!(exec.cancelled()), select(pin!(fut), pin!(expired))).await {
-        Either::Left(_) => Ended::Cancelled(exec.cancel_reason()),
-        Either::Right((Either::Left((out, _)), _)) => Ended::Done(out),
+    match select(pin!(fut), select(pin!(exec.cancelled()), pin!(expired))).await {
+        Either::Left((out, _)) => Ended::Done(out),
+        Either::Right((Either::Left(_), _)) => Ended::Cancelled(exec.cancel_reason()),
         Either::Right((Either::Right(_), _)) => Ended::Cancelled(Some(CancelReason::Deadline)),
     }
 }

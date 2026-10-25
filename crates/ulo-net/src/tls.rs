@@ -43,12 +43,12 @@ impl Tls {
     pub fn load(&self, alpn: &[&[u8]]) -> Result<Arc<ServerConfig>, TlsError> {
         let (certs, key) = match &self.source {
             Source::PemFiles { cert, key } => (
-                certificates(&read(cert)?).map_err(|reason| TlsError::Certificate(in_file(cert, reason)))?,
-                private_key(&read(key)?).map_err(|reason| TlsError::PrivateKey(in_file(key, reason)))?,
+                certificates(&read(cert)?).map_err(|cause| TlsError::Certificate { path: Some(cert.clone()), cause })?,
+                private_key(&read(key)?).map_err(|cause| TlsError::PrivateKey { path: Some(key.clone()), cause })?,
             ),
             Source::Pem { cert, key } => (
-                certificates(cert).map_err(TlsError::Certificate)?,
-                private_key(key).map_err(TlsError::PrivateKey)?,
+                certificates(cert).map_err(|cause| TlsError::Certificate { path: None, cause })?,
+                private_key(key).map_err(|cause| TlsError::PrivateKey { path: None, cause })?,
             ),
         };
         // An explicit provider rather than the process default, which panics when the build
@@ -59,9 +59,21 @@ impl Tls {
             .map_err(TlsError::Rustls)?
             .with_no_client_auth()
             .with_single_cert(certs, key)
-            .map_err(TlsError::Rustls)?;
+            .map_err(|error| match error {
+                rustls::Error::InconsistentKeys(_) => {
+                    TlsError::PrivateKey { path: key_path(&self.source), cause: KeyCause::DoesNotMatchCertificate }
+                }
+                error => TlsError::Rustls(error),
+            })?;
         config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
         Ok(Arc::new(config))
+    }
+}
+
+fn key_path(source: &Source) -> Option<PathBuf> {
+    match source {
+        Source::PemFiles { key, .. } => Some(key.clone()),
+        Source::Pem { .. } => None,
     }
 }
 
@@ -69,37 +81,81 @@ fn read(path: &Path) -> Result<Vec<u8>, TlsError> {
     fs::read(path).map_err(|source| TlsError::Read { path: path.to_owned(), source })
 }
 
-fn in_file(path: &Path, reason: String) -> String {
-    format!("`{}`: {reason}", path.display())
-}
-
-fn certificates(bytes: &[u8]) -> Result<Vec<CertificateDer<'static>>, String> {
-    let certs = CertificateDer::pem_slice_iter(bytes)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
+fn certificates(bytes: &[u8]) -> Result<Vec<CertificateDer<'static>>, CertificateCause> {
+    let mut certs = Vec::new();
+    for (index, cert) in CertificateDer::pem_slice_iter(bytes).enumerate() {
+        match cert {
+            Ok(cert) => certs.push(cert),
+            Err(error) => return Err(CertificateCause::Unparseable { index, reason: error.to_string() }),
+        }
+    }
     if certs.is_empty() {
-        return Err("no `CERTIFICATE` section found".to_owned());
+        return Err(CertificateCause::NoneFound);
     }
     Ok(certs)
 }
 
-fn private_key(bytes: &[u8]) -> Result<PrivateKeyDer<'static>, String> {
+fn private_key(bytes: &[u8]) -> Result<PrivateKeyDer<'static>, KeyCause> {
     PrivateKeyDer::from_pem_slice(bytes).map_err(|error| match error {
-        pem::Error::NoItemsFound => "no private key section found".to_owned(),
-        error => error.to_string(),
+        pem::Error::NoItemsFound => KeyCause::NoneFound,
+        error => KeyCause::Unparseable { reason: error.to_string() },
     })
+}
+
+/// Why a certificate PEM was refused.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CertificateCause {
+    /// The PEM holds no `CERTIFICATE` section.
+    NoneFound,
+    /// The `index`th section, counting from 0, did not parse.
+    Unparseable { index: usize, reason: String },
+}
+
+impl fmt::Display for CertificateCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CertificateCause::NoneFound => f.write_str("no `CERTIFICATE` section found"),
+            CertificateCause::Unparseable { index, reason } => write!(f, "section {index} does not parse: {reason}"),
+        }
+    }
+}
+
+/// Why a private key PEM was refused.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyCause {
+    /// The PEM holds no private key section.
+    NoneFound,
+    /// The key section did not parse.
+    Unparseable { reason: String },
+    /// The key parses and is not the certificate's.
+    DoesNotMatchCertificate,
+}
+
+impl fmt::Display for KeyCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KeyCause::NoneFound => f.write_str("no private key section found"),
+            KeyCause::Unparseable { reason } => write!(f, "does not parse: {reason}"),
+            KeyCause::DoesNotMatchCertificate => f.write_str("does not match the certificate"),
+        }
+    }
 }
 
 /// Why a server's TLS configuration could not be loaded.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum TlsError {
+    /// A certificate or key file could not be read; `source.kind()` says why.
     Read { path: PathBuf, source: io::Error },
-    /// The certificate PEM holds no certificate, or one that does not parse.
-    Certificate(String),
-    /// The key PEM holds no private key, or one that does not parse.
-    PrivateKey(String),
-    /// rustls refused the pair: a key that does not match the certificate, an unsupported key type.
+    /// The certificate PEM holds no certificate, or one that does not parse. `path` is the file it
+    /// was read from, `None` for PEM given in memory.
+    Certificate { path: Option<PathBuf>, cause: CertificateCause },
+    /// The key PEM holds no private key, one that does not parse, or one that is not the
+    /// certificate's.
+    PrivateKey { path: Option<PathBuf>, cause: KeyCause },
+    /// rustls refused the configuration for another reason, such as a key of an unsupported type.
     Rustls(rustls::Error),
 }
 
@@ -107,8 +163,10 @@ impl fmt::Display for TlsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TlsError::Read { path, source } => write!(f, "cannot read `{}`: {source}", path.display()),
-            TlsError::Certificate(reason) => write!(f, "bad TLS certificate: {reason}"),
-            TlsError::PrivateKey(reason) => write!(f, "bad TLS private key: {reason}"),
+            TlsError::Certificate { path: Some(path), cause } => write!(f, "bad TLS certificate: `{}`: {cause}", path.display()),
+            TlsError::Certificate { path: None, cause } => write!(f, "bad TLS certificate: {cause}"),
+            TlsError::PrivateKey { path: Some(path), cause } => write!(f, "bad TLS private key: `{}`: {cause}", path.display()),
+            TlsError::PrivateKey { path: None, cause } => write!(f, "bad TLS private key: {cause}"),
             TlsError::Rustls(error) => write!(f, "TLS configuration refused: {error}"),
         }
     }

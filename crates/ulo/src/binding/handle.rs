@@ -58,6 +58,9 @@ mod sealed {
     /// a wiring report on the bound names. The item a state names is in the record whenever the
     /// handle is in that state: the readiness item only follows `.ready(..)`, and the hook item
     /// only follows the push of its hook.
+    /// Sealed: its methods cannot be named outside the crate, so the crate-private record they
+    /// write is not reachable through them.
+    #[allow(private_interfaces)]
     pub trait State {
         fn write(record: &mut BindingRecord, bound: Bound, at: &'static Location<'static>);
 
@@ -67,6 +70,7 @@ mod sealed {
     }
 }
 
+#[allow(private_interfaces)]
 impl<S, B> sealed::State for Binding<S, B> {
     fn write(record: &mut BindingRecord, bound: Bound, at: &'static Location<'static>) {
         record.construct_bound = bound;
@@ -74,6 +78,7 @@ impl<S, B> sealed::State for Binding<S, B> {
     }
 }
 
+#[allow(private_interfaces)]
 impl<S, B> sealed::State for Contribution<S, B> {
     fn write(record: &mut BindingRecord, bound: Bound, at: &'static Location<'static>) {
         record.construct_bound = bound;
@@ -81,6 +86,7 @@ impl<S, B> sealed::State for Contribution<S, B> {
     }
 }
 
+#[allow(private_interfaces)]
 impl<W, A> sealed::State for ReadyItem<W, A> {
     /// The whole-check bound. Writing it opts the attempt out of its `construct_timeout`
     /// default (§9.3), so an attempt bound not yet written becomes `Unbounded`; a later
@@ -106,6 +112,7 @@ impl<W, A> sealed::State for ReadyItem<W, A> {
     }
 }
 
+#[allow(private_interfaces)]
 impl<B> sealed::State for HookItem<B> {
     fn write(record: &mut BindingRecord, bound: Bound, at: &'static Location<'static>) {
         if let Some(hook) = record.hooks.last_mut() {

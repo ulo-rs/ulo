@@ -38,6 +38,8 @@ pub(crate) struct WireEnv {
     pub(crate) runtime: Option<Arc<dyn Runtime>>,
     /// The builder knobs that were set: each is a wiring error without a `Timer` (step 6).
     pub(crate) knobs_set: Vec<&'static str>,
+    /// The default knobs set to zero, with the call that set each (step 6).
+    pub(crate) zero_defaults: Vec<(&'static str, &'static Location<'static>)>,
 }
 
 /// Registers the root, freezes the graph and runs every check. `plan` carries a test's
@@ -428,7 +430,6 @@ fn freeze(
             frozen_meta.insert(ty, Arc::from(entry.value));
         }
 
-        let export_keys: Vec<Key> = exports.iter().map(|export| boundary_key(keyed, export.key)).collect();
         declared.exports.extend(exports.into_iter().map(|export| (id, export)));
         let imports: Vec<ModuleId> = registry.imports[index]
             .iter()
@@ -447,7 +448,6 @@ fn freeze(
             keyed,
             imports,
             bindings: binding_ids,
-            exports: export_keys,
             hooks,
             meta: frozen_meta,
             loaded: load,
@@ -967,12 +967,19 @@ fn check_bindings(graph: &Graph, declared: &Declared, errors: &mut Vec<WiringErr
 /// `.backoff(..)`, and for a trait const, which has no call, the registration that brought the
 /// type in.
 ///
+/// `construct_timeout(ZERO)` and `hook_timeout(ZERO)` are refused as `ZeroDefault`, at the call
+/// that set the knob, since every item left at `Default` would time out before it starts.
+/// `drain_timeout` and `shutdown_timeout` accept zero.
+///
 /// The record holds a backoff as a `Duration` that is zero unless written, so `.backoff(ZERO)`
 /// reads as unwritten; it waits for nothing, and nothing needs a `Timer` for it.
 fn check_environment(graph: &Graph, env: &WireEnv, declared: &Declared, errors: &mut Vec<WiringError>) {
     let timed = env.timer.is_some();
     if !timed && declared.first_module == 0 {
         errors.extend(env.knobs_set.iter().map(|&knob| WiringError::KnobWithoutTimer { knob }));
+    }
+    if declared.first_module == 0 {
+        errors.extend(env.zero_defaults.iter().map(|&(knob, at)| WiringError::ZeroDefault { knob, at }));
     }
     for binding in graph.bindings.iter().skip(declared.first_binding) {
         let record = &binding.record;

@@ -12,6 +12,7 @@ pub(crate) mod shared;
 
 use std::future::{Future, poll_fn};
 use std::marker::PhantomData;
+use std::panic::Location;
 use std::ops::Deref;
 use std::pin::{Pin, pin};
 use std::sync::{Arc, PoisonError};
@@ -126,6 +127,9 @@ pub(crate) struct AppConfig {
     pub(crate) shutdown_timeout: Option<Duration>,
     pub(crate) hook_timeout: Option<Duration>,
     pub(crate) construct_timeout: Option<Duration>,
+    /// The calls that set `hook_timeout` and `construct_timeout`, for a zero `wire` refuses.
+    hook_timeout_at: Option<&'static Location<'static>>,
+    construct_timeout_at: Option<&'static Location<'static>>,
     pub(crate) trace: TraceMode,
 }
 
@@ -152,6 +156,18 @@ impl AppConfig {
             Some(_) => self.drain_timeout.unwrap_or(Self::DEFAULT_DRAIN),
             None => Duration::ZERO,
         }
+    }
+
+    /// The default knobs set to zero, which would end every item left at `Default` before it
+    /// starts, each with the call that set it. `drain_timeout` and `shutdown_timeout` are windows
+    /// where zero means none, and are not listed.
+    pub(crate) fn zero_defaults(&self) -> Vec<(&'static str, &'static Location<'static>)> {
+        let hook = self.hook_timeout.zip(self.hook_timeout_at);
+        let construct = self.construct_timeout.zip(self.construct_timeout_at);
+        [("hook_timeout", hook), ("construct_timeout", construct)]
+            .into_iter()
+            .filter_map(|(name, set)| set.filter(|(d, _)| d.is_zero()).map(|(_, at)| (name, at)))
+            .collect()
     }
 
     /// The names of the knobs that were set, for the environment check.
@@ -244,16 +260,21 @@ impl AppBuilder {
         self
     }
 
-    /// The `Default` every hook starts with; ten seconds unset.
+    /// The `Default` every hook starts with; ten seconds unset. Zero is refused by `wire()` as
+    /// `WiringError::ZeroDefault`.
+    #[track_caller]
     pub fn hook_timeout(mut self, d: Duration) -> Self {
         self.config.hook_timeout = Some(d);
+        self.config.hook_timeout_at = Some(Location::caller());
         self
     }
 
     /// The `Default` every construction and one attempt of every readiness check starts with;
-    /// thirty seconds unset.
+    /// thirty seconds unset. Zero is refused by `wire()` as `WiringError::ZeroDefault`.
+    #[track_caller]
     pub fn construct_timeout(mut self, d: Duration) -> Self {
         self.config.construct_timeout = Some(d);
+        self.config.construct_timeout_at = Some(Location::caller());
         self
     }
 
@@ -272,6 +293,7 @@ impl AppBuilder {
             timer: self.config.timer.clone(),
             runtime: self.config.runtime.clone(),
             knobs_set: self.config.knobs_set(),
+            zero_defaults: self.config.zero_defaults(),
         };
         let graph = wire::wire(self.root, &env, self.plan)?;
         Ok(App::from_shared(Owner(AppShared::new(graph, self.config)), Vec::new()))

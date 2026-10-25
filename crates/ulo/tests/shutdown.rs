@@ -1,8 +1,8 @@
 //! The shutdown sequence (section 9.5) with servers: its order, its three triggers, what a failing
 //! step records, what the cap does, and how the drain treats live and terminal executions.
 //!
-//! Capabilities pinned: 39 and 40 for the close side (before-shutdown, drain, destroy, each
-//! transport's `close` in reverse bind order, on-shutdown), and the close rows of section 3: a
+//! Capabilities pinned: 39 and 40 for the close side (before-shutdown, drain, destroy, every
+//! transport's `close` at once with its failures reported in bind order, on-shutdown), and the close rows of section 3: a
 //! shutdown hook that panics, times out, is skipped by the cap or whose parameter read fails; a
 //! transport `close` that errs, panics or exceeds its bound; later steps still run. A server's
 //! `close` is a promise: it runs once on every shutdown path that reaches the close step.
@@ -374,7 +374,7 @@ async fn a_close_that_errs_panics_or_exceeds_its_bound_is_recorded_and_every_clo
 
     let closes: Vec<String> = log.events().into_iter().filter(|e| e.starts_with("close")).collect();
     assert_eq!(closes, ["close d", "close c", "close b", "close a"], "every `close` started, last bound first");
-    let [d, c, b] = &*error.failures else { panic!("expected three failures, got: {error}") };
+    let [b, c, d] = &*error.failures else { panic!("expected three failures, got: {error}") };
     match d {
         ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit } } => {
             assert_eq!(*transport, TypeName::of::<TD>());
@@ -402,13 +402,63 @@ async fn a_close_that_exceeds_the_cap_reports_the_cap_as_its_limit() {
         .await
         .unwrap_or_else(|error| panic!("listen() failed: {error}"));
     let error = within("serve", app.serve(async { Signal::new("done") })).await.expect_err("shutdown reported no failure");
-    match &error.failures[0] {
+    let transports: Vec<TypeName> = error
+        .failures
+        .iter()
+        .map(|failure| match failure {
+            ShutdownFailure::Close { transport, .. } => *transport,
+            other => panic!("expected only close failures, got: {other}"),
+        })
+        .collect();
+    assert_eq!(transports, [TypeName::of::<TB>(), TypeName::of::<TC>(), TypeName::of::<TD>()], "the failures in bind order");
+    match &error.failures[2] {
         ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit } } => {
             assert_eq!(*transport, TypeName::of::<TD>());
             assert_eq!((*after, *limit), (Duration::from_secs(8), Limit::ShutdownCap), "the cap, not `hook_timeout`, bounded the close");
         }
         other => panic!("expected a close timeout, got: {other}"),
     }
+}
+
+/// The closes run at once, so two that each take a while take as long as the longer one, and
+/// the report lists their failures in bind order, not in the order they ended. `a` is bound first
+/// and ends last.
+#[tokio::test]
+async fn the_closes_run_at_once_and_their_failures_are_reported_in_bind_order() {
+    let log = Log::new();
+    let app = listened(
+        App::builder(Empty).runtime(Tokio::current()),
+        vec![
+            server(TestServer::<TA>::new("a", &log).close_with(CloseMode::ErrAfter(Duration::from_millis(400)))),
+            server(TestServer::<TB>::new("b", &log).close_with(CloseMode::ErrAfter(Duration::from_millis(300)))),
+        ],
+    )
+    .await
+    .unwrap_or_else(|error| panic!("listen() failed: {error}"));
+    let handle = app.handle();
+    let serving = tokio::spawn(app.serve(std::future::pending::<Signal>()));
+    let started = Instant::now();
+    let error = within("close", handle.close(Signal::new("done"))).await.expect_err("shutdown reported no failure");
+    let took = started.elapsed();
+    let _ = within("serve", serving).await;
+
+    assert!(took >= Duration::from_millis(400), "close returned before the longer close ended: {took:?}");
+    assert!(took < Duration::from_millis(650), "the closes ran one after another, 700 ms in all: {took:?}");
+    let closes: Vec<String> = log.events().into_iter().filter(|e| e.starts_with("close")).collect();
+    assert_eq!(closes, ["close b", "close a"], "both closes started, last bound first");
+    let failed: Vec<(TypeName, String)> = error
+        .failures
+        .iter()
+        .map(|failure| match failure {
+            ShutdownFailure::Close { transport, reason: FailureReason::Errored(source) } => (*transport, source.to_string()),
+            other => panic!("expected a close error, got: {other}"),
+        })
+        .collect();
+    assert_eq!(
+        failed,
+        [(TypeName::of::<TA>(), "close a refused".to_owned()), (TypeName::of::<TB>(), "close b refused".to_owned())],
+        "bind order, `a` first though it ended last, each failure under its own transport"
+    );
 }
 
 #[tokio::test]
@@ -671,4 +721,87 @@ async fn every_shutdown_path_that_reaches_the_close_step_closes_each_server_once
         }
         assert_eq!(log.count("close dying"), usize::from(dying), "{path}: the dead server's `close` runs too: {:?}", log.events());
     }
+}
+
+/// The closes all start in the close step's first poll, so a runner dropped during the step
+/// leaves its successor nothing to start: each `close` runs once.
+#[tokio::test]
+async fn a_shutdown_whose_runner_is_dropped_mid_close_step_starts_no_close_again() {
+    let log = Log::new();
+    let app = listened(
+        App::builder(Empty).runtime(Tokio::current()).drain_timeout(Duration::from_millis(10)),
+        vec![
+            server(TestServer::<TA>::new("a", &log)),
+            server(TestServer::<TB>::new("b", &log).close_with(CloseMode::Pending)),
+        ],
+    )
+    .await
+    .unwrap_or_else(|error| panic!("listen() failed: {error}"));
+    let handle = app.handle();
+    let closes = || log.events().into_iter().filter(|e| e.starts_with("close")).collect::<Vec<String>>();
+
+    let mut abandoned = Box::pin(handle.close(Signal::new("first")));
+    let outcome = tokio::time::timeout(Duration::from_millis(300), abandoned.as_mut()).await;
+    assert!(outcome.is_err(), "the shutdown finished though `b`'s close never ends");
+    assert_eq!(closes(), ["close b", "close a"], "both closes started in the step's first poll");
+    drop(abandoned);
+
+    let _ = within("second close", handle.close(Signal::new("second"))).await;
+    assert_eq!(closes(), ["close b", "close a"], "the resumed shutdown started a close again");
+    drop(app);
+}
+
+/// A server for `TA` whose `close` holds its first poll for `0` on the real clock, as a `close`
+/// polling many connections once does, then ends.
+struct SlowFirstPoll(Duration);
+
+impl ulo::Server for SlowFirstPoll {
+    type Transport = TA;
+
+    async fn bind(&mut self, _mounted: ulo::Mounted<'_, TA>) -> Result<(), ulo::BoxError> {
+        Ok(())
+    }
+
+    async fn serve(&self) -> Result<(), ulo::BoxError> {
+        std::future::pending().await
+    }
+
+    async fn drain(&self, _token: ulo::DrainToken) {}
+
+    async fn close(&self) -> Result<(), ulo::BoxError> {
+        std::thread::sleep(self.0);
+        Ok(())
+    }
+}
+
+/// The cap ends at one instant counted from the trigger: a drain that took part of it leaves the
+/// closes the rest, and a `close` first polled after another's slow first poll is cut at that same
+/// instant, not given the remainder again from its own start. 300 ms of drain and 200 ms of `a`'s
+/// first poll leave `b` 200 ms of a 700 ms cap.
+#[tokio::test]
+async fn a_close_is_cut_where_the_cap_ends_whatever_ran_before_it() {
+    let log = Log::new();
+    let slow_drain: OnDrain = Arc::new(|_, _| Box::pin(tokio::time::sleep(Duration::from_millis(300))));
+    let app = listened(
+        App::builder(Empty).runtime(Tokio::current()).drain_timeout(Duration::from_secs(5)).shutdown_timeout(Duration::from_millis(700)),
+        vec![
+            server(TestServer::<TB>::new("b", &log).close_with(CloseMode::Pending).on_drain(slow_drain)),
+            server(SlowFirstPoll(Duration::from_millis(200))),
+        ],
+    )
+    .await
+    .unwrap_or_else(|error| panic!("listen() failed: {error}"));
+    let started = Instant::now();
+    let error = within("serve", app.serve(async { Signal::new("done") })).await.expect_err("shutdown reported no failure");
+    let took = started.elapsed();
+
+    match &error.failures[..] {
+        [ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit } }] => {
+            assert_eq!(*transport, TypeName::of::<TB>());
+            assert_eq!((*after, *limit), (Duration::from_millis(700), Limit::ShutdownCap));
+        }
+        other => panic!("expected `b`'s close cut by the cap alone, got: {other:?}"),
+    }
+    assert!(took >= Duration::from_millis(650), "the close was cut before the cap ended: {took:?}");
+    assert!(took < Duration::from_millis(850), "the shutdown outlived its 700 ms cap: {took:?}");
 }

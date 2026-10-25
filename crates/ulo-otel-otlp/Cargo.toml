@@ -12,7 +12,11 @@ keywords = ["ulo", "opentelemetry", "otlp", "tracing"]
 categories = ["development-tools::debugging"]
 
 [features]
-default = []
+default = ["ureq"]
+# The crate's HTTP client over `ureq`, which holds no tokio. At least one of `ureq` and
+# `reqwest-blocking` is required; with both, `OtlpExporter::http()` uses `ureq` and
+# `OtlpExporter::http_over(Client::ReqwestBlocking)` names the other.
+ureq = ["dep:ureq"]
 # reqwest's blocking client, which brings tokio on a thread of its own and touches no app runtime.
 # With it the crate is tokio-bound; without it the tree holds no tokio.
 reqwest-blocking = ["opentelemetry-otlp/reqwest-blocking-client", "dep:reqwest", "dep:rustls-platform-verifier"]
@@ -30,10 +34,11 @@ percent-encoding.workspace = true
 # The blocking client the `reqwest-blocking` feature builds itself, to apply the options' headers
 # last and the proxy choice. reqwest reads the proxy variables without `system-proxy`; the feature
 # adds the macOS SCDynamicStore and Windows registry settings where `HTTP_PROXY`/`HTTPS_PROXY`
-# are unset, which ureq never reads. `rustls-no-provider`: without a TLS feature reqwest speaks
+# are unset, which ureq never reads, so the feature is left off and both clients read the standard
+# variables and nothing else. `rustls-no-provider`: without a TLS feature reqwest speaks
 # plaintext HTTP to an `https` endpoint and forwards one to a proxy instead of tunnelling it; the
 # client is handed a rustls configuration over `ring` and the platform verifier, as ureq's is.
-reqwest = { workspace = true, features = ["blocking", "system-proxy", "rustls-no-provider"], optional = true }
+reqwest = { workspace = true, features = ["blocking", "rustls-no-provider"], optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 # `ring`: the provider the workspace's `rustls` entry is built with, handed to ureq explicitly.
 rustls.workspace = true
@@ -41,7 +46,7 @@ rustls.workspace = true
 # `TlsConfig::unversioned_rustls_crypto_provider`, outside ureq's semver guarantee. The platform
 # verifier supplies the roots, as the other links' TLS does, so a receiver behind a private CA that
 # the host trusts is reachable; it takes the provider handed to it and tokio is not in its tree.
-ureq = { workspace = true, features = ["rustls-no-provider", "platform-verifier"] }
+ureq = { workspace = true, features = ["rustls-no-provider", "platform-verifier"], optional = true }
 
 [lints]
 workspace = true

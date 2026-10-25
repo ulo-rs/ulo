@@ -137,6 +137,41 @@ async fn a_secret_in_a_constructors_error_is_redacted_and_the_original_stays_rea
     assert!(source.downcast_ref::<Boom>().is_some_and(|b| b.0.contains(SECRET)), "the original is handed over by type");
 }
 
+/// `m.value(Secret<String>)` registers the text it binds (§9.3), with no `m.secret(..)` beside it.
+#[tokio::test]
+async fn a_secret_bound_by_value_is_redacted_in_a_constructors_error() {
+    const SECRET: &str = "v4lue-bound-secret";
+    let error = connect_err(Mod::<A>::new(|m| {
+        m.value(Secret::new(SECRET.to_owned()));
+        m.try_singleton(|| async { Err::<S1, _>(Boom::new(format!("connect failed with {SECRET}"))) });
+    }))
+    .await;
+
+    assert!(!error.to_string().contains(SECRET), "the startup report holds the secret: {error}");
+    let (key, _, reason) = construction(error);
+    assert_eq!(key, Key::of::<S1, ()>());
+    let FailureReason::Errored(source) = reason else { panic!("expected `Errored`, got: {reason}") };
+    assert!(!source.to_string().contains(SECRET) && !format!("{source:?}").contains(SECRET));
+    assert!(source.downcast_ref::<Boom>().is_some_and(|b| b.0.contains(SECRET)), "the original is handed over by type");
+}
+
+/// A `Secret<&'static str>` bound by value registers its text as a `Secret<String>` does.
+#[tokio::test]
+async fn a_str_secret_bound_by_value_is_redacted_in_a_constructors_error() {
+    const SECRET: &str = "str-bound-secret";
+    let error = connect_err(Mod::<A>::new(|m| {
+        m.value(Secret::new(SECRET));
+        m.try_singleton(|| async { Err::<S1, _>(Boom::new(format!("connect failed with {SECRET}"))) });
+    }))
+    .await;
+
+    assert!(!error.to_string().contains(SECRET), "the startup report holds the secret: {error}");
+    let (key, _, reason) = construction(error);
+    assert_eq!(key, Key::of::<S1, ()>());
+    let FailureReason::Errored(source) = reason else { panic!("expected `Errored`, got: {reason}") };
+    assert!(!source.to_string().contains(SECRET) && !format!("{source:?}").contains(SECRET));
+}
+
 #[tokio::test]
 async fn a_failed_connect_stops_the_walk_and_runs_no_hook_of_what_it_had_built() {
     let log = Log::new();

@@ -42,6 +42,7 @@ pub(crate) async fn load(shared: &Arc<AppShared>, module: Box<dyn Module>) -> Re
         timer: shared.config.timer.clone(),
         runtime: shared.config.runtime.clone(),
         knobs_set: shared.config.knobs_set(),
+        zero_defaults: Vec::new(),
     };
     let LazyWiring { graph, module: loaded, singletons } = match wire::wire_lazy(&base, module, &env) {
         Ok(wiring) => wiring,

@@ -389,3 +389,40 @@ fn a_bound_above_zero_and_unbounded_are_not_zero_bounds() {
         .timer(Frozen::new()),
     );
 }
+
+#[test]
+fn a_zero_construct_or_hook_default_is_refused_at_the_call_that_set_it() {
+    let construct = line!() + 3;
+    let hook = line!() + 3;
+    let builder = App::builder(Empty).timer(Frozen::new())
+        .construct_timeout(ZERO)
+        .hook_timeout(ZERO);
+    let errors = wire_err_with(builder);
+    let found = entries!(errors, WiringError::ZeroDefault { knob, at } => (*knob, at.line()));
+    assert_eq!(found, [("hook_timeout", hook), ("construct_timeout", construct)], "each knob with the line that set it, in one fixed order");
+    assert_eq!(errors.len(), 2, "{errors}");
+    let text = errors.to_string();
+    assert!(text.contains("`construct_timeout` is zero") && text.contains(".unbounded()"), "{text}");
+
+    // Refused whatever the clock; with none, the missing `Timer` is reported beside it.
+    let errors = wire_err_with(App::builder(Empty).hook_timeout(ZERO));
+    assert_eq!(entries!(errors, WiringError::ZeroDefault { knob, .. } => *knob), ["hook_timeout"]);
+    assert_eq!(entries!(errors, WiringError::KnobWithoutTimer { knob } => *knob), ["hook_timeout"]);
+    assert_eq!(errors.len(), 2, "{errors}");
+}
+
+#[test]
+fn a_zero_drain_or_shutdown_window_is_accepted() {
+    wires_with(App::builder(Empty).timer(Frozen::new()).drain_timeout(ZERO).shutdown_timeout(ZERO));
+}
+
+#[test]
+fn a_zero_default_set_through_test_app_is_refused_at_the_tests_call() {
+    let construct = line!() + 1;
+    let app = ulo::testing::TestApp::of(Empty).timer(Frozen::new()).construct_timeout(ZERO);
+    let hook = line!() + 1;
+    let app = app.hook_timeout(ZERO);
+    let errors = wiring_errors(app.wire());
+    let found = entries!(errors, WiringError::ZeroDefault { knob, at } => (*knob, at.file(), at.line()));
+    assert_eq!(found, [("hook_timeout", file!(), hook), ("construct_timeout", file!(), construct)], "the test's own lines, not `TestApp`'s");
+}

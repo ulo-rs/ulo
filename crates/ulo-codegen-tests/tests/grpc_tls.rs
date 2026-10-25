@@ -14,7 +14,8 @@ use ulo::{App, Signal, StartupError, TypeName};
 use ulo_codegen_tests::pb::counter_client::CounterClient;
 use ulo_codegen_tests::pb::{AddRequest, Sum};
 use ulo_grpc::Grpc;
-use ulo_net::{Tls, TlsError};
+use ulo_net::{CertificateCause, KeyCause, Tls, TlsError};
+use ulo_net::rustls;
 use ulo_test_certs::{Certified, localhost};
 
 use support::{Running, within};
@@ -129,29 +130,111 @@ fn gateway(tls: Tls) -> ulo_grpc::Server {
     ulo_grpc::Server::new("127.0.0.1:0").reflection(false).tls(tls)
 }
 
-/// Which `TlsError` the entry's source is, so a caller can tell the cause. Each case names the
-/// variant and what it carries: the certificate and key text are each refused as their own, a
-/// pair that does not match is rustls's, and an unreadable file names its path.
+/// The `TlsError` the entry's source is.
+fn tls_error(entry: &ulo::ConfigureErrors) -> &TlsError {
+    source(entry).downcast_ref::<TlsError>().unwrap_or_else(|| panic!("the entry is not a `TlsError`: {entry}"))
+}
+
+/// `pem` with a second, undecodable `CERTIFICATE` section after it.
+fn chain_with_a_broken_second_section(pem: &str) -> String {
+    format!("{pem}\n-----BEGIN CERTIFICATE-----\n!!!not base64!!!\n-----END CERTIFICATE-----\n")
+}
+
+/// Which `TlsError` the entry's source is, so a caller can tell the cause. Each case asserts the
+/// member that tells it: an unreadable file its path and the I/O error's kind, a certificate or a
+/// key its file and its cause, a key beside the wrong certificate its own cause, and rustls's
+/// refusal of a key it cannot use the `rustls::Error` variant.
 #[tokio::test]
 async fn a_tls_failure_keeps_its_tls_error_for_the_entry_to_downcast() {
     let ours = localhost();
     let other = ulo_test_certs::Certified::self_signed(&["other.invalid"]);
 
     let entry = configure_entry(gateway(Tls::from_pem("not a certificate", ours.key_pem()))).await;
-    assert!(matches!(source(&entry).downcast_ref::<TlsError>(), Some(TlsError::Certificate(_))), "a bad certificate: {entry}");
+    assert!(
+        matches!(tls_error(&entry), TlsError::Certificate { path: None, cause: CertificateCause::NoneFound }),
+        "a PEM with no certificate: {entry}"
+    );
+
+    let broken = chain_with_a_broken_second_section(ours.cert_pem());
+    let entry = configure_entry(gateway(Tls::from_pem(broken, ours.key_pem()))).await;
+    match tls_error(&entry) {
+        TlsError::Certificate { path: None, cause: CertificateCause::Unparseable { index, reason } } => {
+            assert_eq!(*index, 1, "the second section is the one that does not parse");
+            assert!(!reason.is_empty(), "the parser's reason travels: {entry}");
+        }
+        other => panic!("a chain with a broken second section was {other:?}"),
+    }
 
     let entry = configure_entry(gateway(Tls::from_pem(ours.cert_pem(), "not a key"))).await;
-    assert!(matches!(source(&entry).downcast_ref::<TlsError>(), Some(TlsError::PrivateKey(_))), "a bad key: {entry}");
+    assert!(
+        matches!(tls_error(&entry), TlsError::PrivateKey { path: None, cause: KeyCause::NoneFound }),
+        "a PEM with no key: {entry}"
+    );
+
+    let undecodable = "-----BEGIN PRIVATE KEY-----\n!!!not base64!!!\n-----END PRIVATE KEY-----\n";
+    let entry = configure_entry(gateway(Tls::from_pem(ours.cert_pem(), undecodable))).await;
+    match tls_error(&entry) {
+        TlsError::PrivateKey { path: None, cause: KeyCause::Unparseable { reason } } => {
+            assert!(!reason.is_empty(), "the parser's reason travels: {entry}");
+        }
+        other => panic!("a key section that is not base64 was {other:?}"),
+    }
 
     let entry = configure_entry(gateway(Tls::from_pem(ours.cert_pem(), other.key_pem()))).await;
-    assert!(matches!(source(&entry).downcast_ref::<TlsError>(), Some(TlsError::Rustls(_))), "a key that does not match: {entry}");
+    assert!(
+        matches!(tls_error(&entry), TlsError::PrivateKey { path: None, cause: KeyCause::DoesNotMatchCertificate }),
+        "a key that is not the certificate's: {entry}"
+    );
 
-    let missing = std::env::temp_dir().join("ulo-grpc-tls-no-such-certificate.pem");
-    let entry = configure_entry(gateway(Tls::from_pem_files(&missing, &missing))).await;
-    match source(&entry).downcast_ref::<TlsError>() {
-        Some(TlsError::Read { path, .. }) => assert_eq!(path, &missing, "the file the failure names"),
+    // Valid base64 that is not a key: the PEM parses, and rustls cannot use what it holds.
+    let not_der = "-----BEGIN PRIVATE KEY-----\nAAAAAAAA\n-----END PRIVATE KEY-----\n";
+    let entry = configure_entry(gateway(Tls::from_pem(ours.cert_pem(), not_der))).await;
+    match tls_error(&entry) {
+        TlsError::Rustls(rustls::Error::General(reason)) => assert_eq!(reason, "failed to parse private key as RSA, ECDSA, or EdDSA", "{entry}"),
+        other => panic!("a key section holding no key was {other:?}"),
+    }
+}
+
+/// The same causes read from files carry the file, and a file that cannot be read carries the
+/// I/O error's kind.
+#[tokio::test]
+async fn a_tls_failure_from_a_file_names_the_file_and_its_cause() {
+    let ours = localhost();
+    let dir = std::env::temp_dir().join(format!("ulo-grpc-tls-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap_or_else(|error| panic!("scratch directory: {error}"));
+    let (cert, key) = (dir.join("cert.pem"), dir.join("key.pem"));
+    std::fs::write(&cert, ours.cert_pem()).unwrap_or_else(|error| panic!("write certificate: {error}"));
+    std::fs::write(&key, ours.key_pem()).unwrap_or_else(|error| panic!("write key: {error}"));
+    let empty = dir.join("empty.pem");
+    std::fs::write(&empty, "").unwrap_or_else(|error| panic!("write empty file: {error}"));
+    let missing = dir.join("no-such-certificate.pem");
+
+    let entry = configure_entry(gateway(Tls::from_pem_files(&missing, &key))).await;
+    match tls_error(&entry) {
+        TlsError::Read { path, source } => assert_eq!((path, source.kind()), (&missing, std::io::ErrorKind::NotFound), "{entry}"),
         other => panic!("an unreadable certificate file was {other:?}"),
     }
+
+    let entry = configure_entry(gateway(Tls::from_pem_files(&empty, &key))).await;
+    match tls_error(&entry) {
+        TlsError::Certificate { path: Some(path), cause: CertificateCause::NoneFound } => assert_eq!(path, &empty, "{entry}"),
+        other => panic!("an empty certificate file was {other:?}"),
+    }
+
+    let entry = configure_entry(gateway(Tls::from_pem_files(&cert, &empty))).await;
+    match tls_error(&entry) {
+        TlsError::PrivateKey { path: Some(path), cause: KeyCause::NoneFound } => assert_eq!(path, &empty, "{entry}"),
+        other => panic!("an empty key file was {other:?}"),
+    }
+
+    let other = ulo_test_certs::Certified::self_signed(&["other.invalid"]);
+    std::fs::write(&key, other.key_pem()).unwrap_or_else(|error| panic!("write key: {error}"));
+    let entry = configure_entry(gateway(Tls::from_pem_files(&cert, &key))).await;
+    match tls_error(&entry) {
+        TlsError::PrivateKey { path: Some(path), cause: KeyCause::DoesNotMatchCertificate } => assert_eq!(path, &key, "{entry}"),
+        other => panic!("another certificate's key file was {other:?}"),
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A configure failure that is not TLS does not downcast to `TlsError`: a server with a zero

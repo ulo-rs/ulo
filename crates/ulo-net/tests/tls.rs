@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use ulo_net::rustls::pki_types::ServerName;
 use ulo_net::rustls::{self, ClientConfig, ClientConnection, ServerConnection};
-use ulo_net::{Tls, TlsError};
+use ulo_net::{KeyCause, Tls, TlsError};
 use ulo_test_certs::{Certified, localhost};
 
 fn served() -> Tls {
@@ -68,5 +68,8 @@ fn load_offers_the_protocols_it_is_given_in_order() {
 fn a_key_that_is_not_the_certificates_is_refused() {
     let other = Certified::self_signed(&["localhost"]);
     let refused = Tls::from_pem(other.cert_pem(), localhost().key_pem()).load(&[]).expect_err("a key not matching the certificate is refused");
-    assert!(matches!(refused, TlsError::Rustls(_)), "refused by rustls, got {refused:?}");
+    assert!(
+        matches!(refused, TlsError::PrivateKey { path: None, cause: KeyCause::DoesNotMatchCertificate }),
+        "refused as a key that is not the certificate's, got {refused:?}"
+    );
 }

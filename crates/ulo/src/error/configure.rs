@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
+use std::panic::Location;
 
 use crate::redact::{Redacted, SecretRegistry, redact, redact_as};
 use crate::timer::BoxError;
@@ -135,7 +136,62 @@ impl Error for ConfigureError {}
 /// ```
 pub struct PrepareError {
     names: Vec<TypeName>,
+    entries: Vec<PrepareEntry>,
     text: Box<dyn Fn(&HashSet<TypeName>) -> String + Send + Sync>,
+}
+
+/// One failure a [`PrepareError`] lists, as data a test or a tool reads without parsing the
+/// report's text: the types it names, the source line that declared what failed, what failed, and
+/// the route scopes involved.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PrepareEntry {
+    names: Vec<TypeName>,
+    location: Option<&'static Location<'static>>,
+    subject: Option<String>,
+    scopes: Vec<String>,
+}
+
+impl PrepareEntry {
+    /// An entry naming `names` and nothing else; [`at`](Self::at), [`about`](Self::about) and
+    /// [`scoped`](Self::scoped) add the rest.
+    pub fn new(names: impl IntoIterator<Item = TypeName>) -> Self {
+        PrepareEntry { names: names.into_iter().collect(), ..PrepareEntry::default() }
+    }
+
+    /// The source line that declared what failed.
+    pub fn at(mut self, location: &'static Location<'static>) -> Self {
+        self.location = Some(location);
+        self
+    }
+
+    /// What failed, such as `"pre-dispatch entry"`.
+    pub fn about(mut self, subject: impl Into<String>) -> Self {
+        self.subject = Some(subject.into());
+        self
+    }
+
+    /// The route scopes the failure concerns, as written.
+    pub fn scoped(mut self, scopes: impl IntoIterator<Item = String>) -> Self {
+        self.scopes = scopes.into_iter().collect();
+        self
+    }
+
+    /// The types the failure names.
+    pub fn names(&self) -> &[TypeName] {
+        &self.names
+    }
+
+    pub fn location(&self) -> Option<&'static Location<'static>> {
+        self.location
+    }
+
+    pub fn subject(&self) -> Option<&str> {
+        self.subject.as_deref()
+    }
+
+    pub fn scopes(&self) -> &[String] {
+        &self.scopes
+    }
 }
 
 impl PrepareError {
@@ -143,11 +199,23 @@ impl PrepareError {
         names: impl IntoIterator<Item = TypeName>,
         text: impl Fn(&HashSet<TypeName>) -> String + Send + Sync + 'static,
     ) -> Self {
-        PrepareError { names: names.into_iter().collect(), text: Box::new(text) }
+        PrepareError { names: names.into_iter().collect(), entries: Vec::new(), text: Box::new(text) }
+    }
+
+    /// Sets the failures [`entries`](Self::entries) lists, in the order found, each as data.
+    pub fn with_entries(mut self, entries: Vec<PrepareEntry>) -> Self {
+        self.entries = entries;
+        self
     }
 
     pub fn names(&self) -> &[TypeName] {
         &self.names
+    }
+
+    /// The failures this error lists, one per failure the server found; empty for an error built
+    /// by [`new`](Self::new) alone.
+    pub fn entries(&self) -> &[PrepareEntry] {
+        &self.entries
     }
 
     /// The text, each name in `full` written with its full path.

@@ -61,7 +61,7 @@ impl Requirement {
 
     /// The extension `T` of the current execution. Needs an execution.
     pub fn ext<T: 'static>(&mut self) {
-        self.reads.push(Read { kind: ReadKind::Extension(Key::of::<T, ()>()), optional: false });
+        self.reads.push(Read { kind: ReadKind::Extension, optional: false });
     }
 
     /// The current execution itself. Needs an execution.
@@ -95,16 +95,11 @@ pub(crate) struct Read {
 pub(crate) enum ReadKind {
     Single(Key),
     Collection(Key),
-    /// Keyed by the extension's type, unqualified.
-    Extension(Key),
+    /// An extension of the current execution, read by its type at run time; the wiring pass reads
+    /// only that it needs an execution.
+    Extension,
     Execution,
     Module,
-}
-
-impl ReadKind {
-    pub(crate) fn needs_execution(&self) -> bool {
-        matches!(self, ReadKind::Extension(_) | ReadKind::Execution)
-    }
 }
 
 /// The declared injection points of a binding, a hook closure, a readiness closure or an
@@ -139,10 +134,6 @@ impl Dependencies {
         S::describe(&mut requirement);
         self.list.push(DependencyRecord { label, type_name: std::any::type_name::<S>(), requirement });
         self
-    }
-
-    pub(crate) fn needs_execution_directly(&self) -> bool {
-        self.list.iter().flat_map(|d| &d.requirement.reads).any(|r| r.kind.needs_execution())
     }
 }
 
