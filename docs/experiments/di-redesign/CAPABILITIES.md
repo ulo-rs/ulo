@@ -52,7 +52,7 @@ Enhancers and roles
 28. A binding under a key whose declared type is a role (for example, "a guard for HTTP") registers that role.
 
 Modules
-29. A module declares imports, providers, controllers and exports. An export is the only way a binding leaves its module. A controller is the edge of the application: no binding but another controller reads one. `wire()` refuses a binding's read of a controller through its construction, a hook, its readiness check or an alias; a module's own hooks, enhancer closures and handler parameters are not checked.
+29. A module declares imports, providers, controllers and exports. An export is the only way a binding leaves its module. A controller is the edge of the application: no binding but another controller reads one. `wire()` refuses a read of a controller by a binding (through its construction, a hook, its readiness check or an alias), by a module's own hook and by a handler's enhancer closure; a controller reading a controller, a handler parameter, metadata and a runtime `app.get::<Ctl>()` are not refused.
 30. Global modules, whose exports reach every module.
 31. Modules configured by value (`DbModule::for_root(url)`). One module type with two configurations is two modules; the same configuration imported twice (a diamond) is one.
 32. Several keyed instances of one configurable module (two databases from one integration), each injected by its key, and each instance reached by its configuration (`module_of`).
