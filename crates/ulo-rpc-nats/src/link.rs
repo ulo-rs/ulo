@@ -1734,7 +1734,7 @@ mod tests {
         server.prepare(&app.handle()).await.expect("the server's link prepares");
         assert_eq!(files_in(&here).len(), 1, "`prepare` wrote other than one file");
         drop(server);
-        assert_eq!(files_in(&here), Vec::<PathBuf>::new(), "the roots outlived the link");
+        assert_eq!(emptied(&here).await, Vec::<PathBuf>::new(), "the roots outlived the link");
         let _ = std::fs::remove_dir(&here);
     }
 
