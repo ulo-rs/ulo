@@ -216,8 +216,9 @@ Bindings and the value API:
   for a binding qualified outside a keyed module.
 - **`Secret<T>`.** [spine 17] `new`, `expose`, `into_inner`; `From<String>` and `From<&str>` for
   `Secret<String>`; `Debug`/`Display` print `[redacted]`; `Clone`, `Eq`, `Hash` by value. A
-  `Secret<String>` bound with `m.value(..)` is registered for redaction by downcast; any other
-  `Secret<T>` needs `m.secret(&secret)` (`T: Display`).
+  `Secret<String>` or `Secret<&'static str>` bound with `m.value(..)` is registered for redaction
+  by downcast; any other `Secret<T>` needs `m.secret(&secret)` (`T: Display`), or its text stays
+  visible in reports.
 
 Modules:
 
