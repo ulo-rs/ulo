@@ -1566,7 +1566,10 @@ async fn until_drained<F: Future>(exec: &ExecutionRef, fut: F) -> Option<F::Outp
 /// A streamed answer, each item written `{"id","data"}` as the client takes them, ended with
 /// `{"id","complete":true}`. An `Err` item runs `dispatch_late` and is written as the `error`
 /// envelope, which ends the stream; an error handler's `EndStream` ends it with `complete`. A
-/// `cancel` for the message, or the connection ending, cuts it off.
+/// `cancel` for the message, the connection ending, or any other cancellation of the message's
+/// execution cuts it off. The stream is polled before the cancellation, so an item ready in the
+/// poll the cancellation wakes is written; once the cancellation has been observed the pump takes
+/// no further item, which ends a stream whose items are always ready at its next wait.
 async fn pump(
     mut stream: Tracked<BoxStream<'static, Result<Frame, BoxError>>>,
     handler: Option<&MountedHandler<Ws>>,
@@ -1577,11 +1580,12 @@ async fn pump(
     codec: Codec,
 ) {
     loop {
-        // The cancellation is polled before the stream, so a cancelled message writes no further
-        // item.
-        let next = match future::select(pin!(exec.cancelled()), stream.next()).await {
-            Either::Left(_) => return,
-            Either::Right((item, _)) => item,
+        if exec.is_cancelled() {
+            return;
+        }
+        let next = match future::select(stream.next(), pin!(exec.cancelled())).await {
+            Either::Left((item, _)) => item,
+            Either::Right(_) => return,
         };
         let last = match next {
             Some(Ok(frame)) => match envelope::data(codec, id, &frame) {

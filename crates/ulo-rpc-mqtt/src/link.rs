@@ -27,7 +27,7 @@ use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured,
     Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
 };
-use ulo_transport::{Detail, Details, ErrorKind};
+use ulo_transport::{Detail, Details, ErrorKind, Turns};
 
 /// The user property naming a message's frame kind where the message alone does not tell it:
 /// `open` on the request lane, `in`, `in_end` and `cancel` on the control lane, `opened` on the
@@ -90,8 +90,23 @@ pub struct Mqtt {
 
 #[derive(Default)]
 pub(crate) struct State {
-    server: Option<(Arc<ServerSide>, JoinHandle<()>)>,
-    client: Option<(Arc<ClientSide>, JoinHandle<()>)>,
+    server: Option<(Arc<ServerSide>, Loop)>,
+    client: Option<(Arc<ClientSide>, Loop)>,
+}
+
+/// A connection's event loop: its task, and the turn `close` gives it before it waits.
+struct Loop {
+    task: JoinHandle<()>,
+    turns: Turns,
+}
+
+impl Loop {
+    /// `eventloop` spawned on `runtime`, tracked for the turn `close` gives it.
+    fn spawn(runtime: &Tokio, eventloop: impl Future<Output = ()> + Send + 'static) -> Loop {
+        let turns = Turns::default();
+        let task = runtime.handle().spawn(turns.track(eventloop));
+        Loop { task, turns }
+    }
 }
 
 /// A link dropped without `close` aborts the event loops `close` would have shut, each of which
@@ -99,11 +114,11 @@ pub(crate) struct State {
 /// its subscriptions and its reconnects until the process ends.
 impl Drop for State {
     fn drop(&mut self) {
-        if let Some((_, task)) = &self.server {
-            task.abort();
+        if let Some((_, event_loop)) = &self.server {
+            event_loop.task.abort();
         }
-        if let Some((_, task)) = &self.client {
-            task.abort();
+        if let Some((_, event_loop)) = &self.client {
+            event_loop.task.abort();
         }
     }
 }
@@ -253,9 +268,9 @@ impl Link for Mqtt {
         });
 
         let (ready, bound) = oneshot::channel();
-        let task = runtime.handle().spawn(server_loop(Arc::clone(&side), eventloop, ready));
+        let event_loop = Loop::spawn(&runtime, server_loop(Arc::clone(&side), eventloop, ready));
         // Until the broker answers, a `listen` dropped mid-handshake takes the event loop with it.
-        let pending = AbortOnDrop::new(task.abort_handle());
+        let pending = AbortOnDrop::new(event_loop.task.abort_handle());
         // `bind`'s outcome waits for the first CONNACK and the SUBACK of every subscription, so a
         // broker without shared subscriptions, or one refusing a filter, fails `bind`.
         let outcome = bound.await.unwrap_or_else(|_| Err("the MQTT link's event loop ended before the broker answered".into()));
@@ -264,7 +279,7 @@ impl Link for Mqtt {
             return Err(error);
         }
         pending.disarm();
-        lock(&self.state).server = Some((side, task));
+        lock(&self.state).server = Some((side, event_loop));
         Ok(receiver_stream(inbound))
     }
 
@@ -305,15 +320,15 @@ impl Link for Mqtt {
         }
         let (frames, replies) = mpsc::unbounded_channel();
         let (ready, subscribed) = oneshot::channel();
-        let task = runtime.handle().spawn(client_loop(Arc::clone(&side), eventloop, frames, ready));
+        let event_loop = Loop::spawn(&runtime, client_loop(Arc::clone(&side), eventloop, frames, ready));
         // Until the broker answers, a `connect` dropped mid-handshake, a call's timeout cutting it
         // short, takes the event loop with it.
-        let pending = AbortOnDrop::new(task.abort_handle());
+        let pending = AbortOnDrop::new(event_loop.task.abort_handle());
         // The reply subscription is in place before the first request can be published.
         let outcome = subscribed.await.unwrap_or_else(|_| Err("the MQTT link's event loop ended before the broker answered".into()));
         outcome?;
         pending.disarm();
-        lock(&self.state).client = Some((Arc::clone(&side), task));
+        lock(&self.state).client = Some((Arc::clone(&side), event_loop));
 
         Ok(Outbound {
             send: Box::new(move |pattern: Pattern, frame: Frame, _reply_to: Option<ReplyTo>| -> BoxFuture<'static, Result<(), BoxError>> {
@@ -363,16 +378,16 @@ impl Link for Mqtt {
             let mut state = lock(&self.state);
             (state.server.take(), state.client.take())
         };
-        if let Some((side, task)) = server {
+        if let Some((side, event_loop)) = server {
             side.phase.send_replace(Phase::Closed);
             // Taken before the table is cleared, so no call is held once it is.
             lock(&side.deliveries).take();
             side.calls.clear();
-            shut(&side.client, task).await;
+            shut(&side.client, event_loop, &side.runtime).await;
         }
-        if let Some((side, task)) = client {
+        if let Some((side, event_loop)) = client {
             side.closed.store(true, Ordering::Release);
-            shut(&side.client, task).await;
+            shut(&side.client, event_loop, &side.runtime).await;
         }
         Ok(())
     }
@@ -382,11 +397,19 @@ impl Link for Mqtt {
 /// DISCONNECT written, or once the connection fails after `close`. `publish` and `disconnect` only
 /// queue requests for the loop, which writes them in order, so every one queued earlier is written
 /// ahead of the DISCONNECT: a drained call's reply or a refusal on the server side, an event or a
-/// `cancel` on the client side. Where neither ending comes, the core's `close` bound drops this
-/// future and the guard aborts the loop.
-async fn shut(client: &AsyncClient, mut task: JoinHandle<()>) {
+/// `cancel` on the client side. The loop is polled once on the calling thread as soon as the
+/// DISCONNECT is queued, so what is queued is written in this future's first poll, which is all a
+/// `close` under a spent shutdown cap gets. Where neither ending comes, the core's `close` bound
+/// drops this future and the guard aborts the loop.
+async fn shut(client: &AsyncClient, event_loop: Loop, runtime: &Tokio) {
+    let Loop { mut task, turns } = event_loop;
     let _abort = AbortOnDrop::new(task.abort_handle());
     let _ = client.disconnect().await;
+    {
+        // The loop's timers and sockets belong to the link's runtime, whichever thread polls it.
+        let _runtime = runtime.handle().enter();
+        turns.give();
+    }
     let _ = (&mut task).await;
 }
 
@@ -1548,7 +1571,7 @@ mod tests {
             let (_, path) = side.hold("held".to_owned(), "ulo/rpc/reply/held".to_owned(), None);
             drop(path);
             let table = Arc::downgrade(&side.calls);
-            let event_loop = runtime.handle().spawn(std::future::pending::<()>());
+            let event_loop = Loop::spawn(&runtime, std::future::pending::<()>());
             lock(&link.state).server = Some((side, event_loop));
             if drained {
                 link.drain().await;

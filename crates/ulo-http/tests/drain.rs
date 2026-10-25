@@ -5,9 +5,12 @@
 //! stream (HTTP/2), never as the terminating chunk or `END_STREAM`. A call that finishes inside the
 //! window is untouched, and so is an answer the handler chose on observing the cancellation,
 //! unless that answer is a stream, which would be cut before its first frame and is answered 503.
+//! A begun body's frame ready in the poll the cancellation wakes is written before the error
+//! frame, and no frame is taken in a later poll.
 
 mod o1_support;
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
@@ -16,9 +19,14 @@ use futures_util::{StreamExt, stream};
 use http_body_util::BodyExt;
 use o1_support::{Call, PATIENCE, read, start_draining};
 use tokio::sync::{Notify, Semaphore};
-use ulo::{CancelReason, Dep, ExecutionRef, ModuleDef, StreamOutcome, injectable, routes};
+use ulo::{BoxError, CancelReason, Dep, ExecutionRef, ModuleDef, StreamOutcome, injectable, routes};
 use ulo_http::{Bytes, HttpBody, Response, Routing, StatusCode};
 use ulo_transport::{CallError, ErrorKind};
+
+/// How many frames the six-frame bodies have; each would end after its last.
+const SIX: usize = 6;
+/// The frame `/self-drained` cancels its execution on.
+const CANCELLED_AT: usize = 3;
 
 /// The window the tests let a held call outlive.
 const WINDOW: Duration = Duration::from_millis(300);
@@ -31,6 +39,13 @@ struct Hold {
     dropped: Mutex<Vec<Option<CancelReason>>>,
     ends: Mutex<Vec<StreamOutcome>>,
     entries: AtomicUsize,
+    /// How many frames the six-frame bodies below produced.
+    produced: Arc<AtomicUsize>,
+    /// The gated body's second frame waits here, and `waiting` is notified as it starts to.
+    gate: Arc<Notify>,
+    waiting: Arc<Notify>,
+    /// The gated call's execution, for the test to cancel.
+    exec: Mutex<Option<ExecutionRef>>,
 }
 
 impl Default for Hold {
@@ -41,6 +56,10 @@ impl Default for Hold {
             dropped: Mutex::new(Vec::new()),
             ends: Mutex::new(Vec::new()),
             entries: AtomicUsize::new(0),
+            produced: Arc::new(AtomicUsize::new(0)),
+            gate: Arc::new(Notify::new()),
+            waiting: Arc::new(Notify::new()),
+            exec: Mutex::new(None),
         }
     }
 }
@@ -165,6 +184,44 @@ impl Held {
                     }
                     _ => None,
                 }
+            }
+        });
+        Response::new(HttpBody::stream(body))
+    }
+
+    /// Six frames, every one ready, the third cancelling the execution with the drain's reason as
+    /// it is produced: the frame and the cancellation are ready in one poll.
+    #[ulo_http::get("/self-drained")]
+    async fn self_drained(&self, exec: ExecutionRef) -> Response {
+        let ends = self.hold.clone();
+        exec.on_stream_end(move |outcome| ends.ends.lock().unwrap_or_else(PoisonError::into_inner).push(outcome));
+        let produced = Arc::clone(&self.hold.produced);
+        let body = stream::iter(1..=SIX).map(move |n| {
+            produced.fetch_add(1, Ordering::SeqCst);
+            if n == CANCELLED_AT {
+                exec.cancel_with(CancelReason::Drain);
+            }
+            Ok::<_, std::convert::Infallible>(Bytes::from(n.to_string()))
+        });
+        Response::new(HttpBody::stream(body))
+    }
+
+    /// Six frames: the first ready, the second once the gate opens, the rest ready.
+    #[ulo_http::get("/gated")]
+    async fn gated(&self, exec: ExecutionRef) -> Response {
+        let ends = self.hold.clone();
+        exec.on_stream_end(move |outcome| ends.ends.lock().unwrap_or_else(PoisonError::into_inner).push(outcome));
+        *self.hold.exec.lock().unwrap_or_else(PoisonError::into_inner) = Some(exec);
+        let (produced, gate, waiting) = (Arc::clone(&self.hold.produced), Arc::clone(&self.hold.gate), Arc::clone(&self.hold.waiting));
+        let body = stream::iter(1..=SIX).then(move |n| {
+            let (produced, gate, waiting) = (Arc::clone(&produced), Arc::clone(&gate), Arc::clone(&waiting));
+            async move {
+                if n == 2 {
+                    waiting.notify_one();
+                    gate.notified().await;
+                }
+                produced.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, std::convert::Infallible>(Bytes::from(n.to_string()))
             }
         });
         Response::new(HttpBody::stream(body))
@@ -423,5 +480,72 @@ async fn a_stream_answered_by_a_call_cancelled_for_another_reason_is_not_replace
     let reply = read(tokio::time::timeout(PATIENCE, call).await.expect("answered in time").expect("the call task")).await;
     assert_eq!((reply.status, reply.text()), (StatusCode::OK, "released".to_owned()));
     assert_eq!(hold.dropped(), vec![Some(CancelReason::Explicit)]);
+    app.stop().await;
+}
+
+/// Reads `body` to its end: its data frames as text, and the error that ended it.
+async fn frames_to_the_error(body: &mut HttpBody) -> (Vec<String>, BoxError) {
+    let mut data = Vec::new();
+    loop {
+        match tokio::time::timeout(PATIENCE, body.frame()).await.expect("a frame in time") {
+            Some(Ok(frame)) => data.push(String::from_utf8_lossy(&frame.into_data().expect("a data frame")).into_owned()),
+            Some(Err(error)) => return (data, error),
+            None => panic!("the body ended cleanly after {data:?}"),
+        }
+    }
+}
+
+fn shutting_down(error: &BoxError) {
+    let call = error.downcast_ref::<CallError>().unwrap_or_else(|| panic!("the error frame is not the shutdown refusal: {error}"));
+    assert_eq!((call.kind(), call.message()), (ErrorKind::Unavailable, "the server is shutting down"));
+}
+
+#[tokio::test]
+async fn a_body_whose_frames_are_always_ready_takes_no_frame_past_the_poll_its_cancellation_is_observed_in() {
+    let app = start_draining(register, Duration::from_secs(5)).await;
+    let hold = app.app().get::<Hold>().await.expect("the app binds its hold");
+    let response = app.call(Call::get("/self-drained")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, mut body) = response.into_parts();
+
+    let (data, error) = frames_to_the_error(&mut body).await;
+    assert_eq!(data, ["1", "2", "3"], "the frames written before the error frame");
+    shutting_down(&error);
+    assert_eq!(hold.produced.load(Ordering::SeqCst), CANCELLED_AT, "a frame was taken after the cancellation");
+    assert_eq!(hold.ends(), vec![StreamOutcome::CutOff(Some(CancelReason::Drain))], "reported cut off by the drain, and once");
+    drop(body);
+    app.stop().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_frame_ready_in_the_poll_the_cancellation_wakes_is_written_and_none_after_it() {
+    let app = start_draining(register, Duration::from_secs(5)).await;
+    let hold = app.app().get::<Hold>().await.expect("the app binds its hold");
+    let response = app.call(Call::get("/gated")).await;
+    let (_, mut body) = response.into_parts();
+    let first = tokio::time::timeout(PATIENCE, body.frame()).await.expect("first frame in time").expect("a frame").expect("no error yet");
+    assert_eq!(first.into_data().ok(), Some(Bytes::from_static(b"1")));
+    {
+        let mut next = std::pin::pin!(body.frame());
+        tokio::select! {
+            biased;
+            frame = &mut next => panic!("the second frame came before its gate opened: {:?}", frame.map(|frame| frame.map(|_| ()))),
+            () = hold.waiting.notified() => {}
+        }
+        // Both are ready before the body's next poll: the frame is polled first.
+        let exec = hold.exec.lock().unwrap_or_else(PoisonError::into_inner).take().expect("the handler kept its execution");
+        exec.cancel_with(CancelReason::Drain);
+        hold.gate.notify_one();
+        let second = tokio::time::timeout(PATIENCE, next).await.expect("the second frame in time").expect("a frame");
+        let second = second.unwrap_or_else(|error| panic!("the frame ready in the cancellation's poll was replaced by {error}"));
+        assert_eq!(second.into_data().ok(), Some(Bytes::from_static(b"2")));
+    }
+
+    let (data, error) = frames_to_the_error(&mut body).await;
+    assert!(data.is_empty(), "frames taken after the poll the cancellation woke: {data:?}");
+    shutting_down(&error);
+    assert_eq!(hold.produced.load(Ordering::SeqCst), 2, "a frame was produced after the poll the cancellation woke");
+    assert_eq!(hold.ends(), vec![StreamOutcome::CutOff(Some(CancelReason::Drain))], "reported cut off by the drain, and once");
+    drop(body);
     app.stop().await;
 }

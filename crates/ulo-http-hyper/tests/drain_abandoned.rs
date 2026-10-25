@@ -258,6 +258,11 @@ fn classify(raw: &[u8]) -> Read {
 /// drain that has ended by then is answered 503; what is left is the hand-off to hyper, where a
 /// drain ending before the head is flushed closes the connection with nothing written. The counts
 /// are printed: `--nocapture` shows how often each reading occurred.
+///
+/// It stays green with that second check removed, since more runs then read nothing, which is one
+/// of the three readings it accepts. `ulo-http`'s `tests/drain.rs ::
+/// a_stream_answered_once_the_drain_cancels_the_call_is_answered_503_instead` is the test that
+/// decides the second check; this one guards against a 503 written after a 200.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stream_answered_at_the_windows_end_reads_as_a_503_a_cut_off_200_or_nothing_never_both() {
     const WINDOW_MS: u64 = 30;

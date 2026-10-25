@@ -1,6 +1,7 @@
 //! The services the gRPC server answers beside the handlers, each called through its own tonic
 //! client: `grpc.health.v1`, SERVING for every service a handler's path names after `bind`,
-//! settable through `GrpcHealth::module`, NOT_SERVING from the drain on; and
+//! settable through `GrpcHealth::module`, NOT_SERVING from the drain on, which an open `Watch`
+//! reads under a spent shutdown cap too; and
 //! `grpc.reflection.v1` and `v1alpha` over the descriptor set `ulo-build` wrote, absent under
 //! `reflection(false)`.
 
@@ -184,4 +185,50 @@ async fn reflection_off_is_unimplemented_and_health_still_answers() {
     let mut client = HealthClient::new(app.channel().await);
     assert_eq!(check(&mut client, KNOWN).await.map_err(|status| status.code()), Ok(Wire::Serving));
     app.stop().await;
+}
+
+/// A spent shutdown cap gives the server's `close` one poll, and that poll writes the drain's
+/// NOT_SERVING to an open `Watch` before the connections are aborted: the client reads it.
+#[tokio::test]
+async fn an_open_watch_reads_not_serving_under_a_spent_shutdown_cap() {
+    let server = ulo_grpc::Server::new("127.0.0.1:0").reflection(false);
+    let app = ulo::App::builder(Root { health_module: false })
+        .runtime(ulo_runtime_tokio::Tokio::current())
+        .shutdown_timeout(std::time::Duration::ZERO)
+        .wire()
+        .unwrap_or_else(|error| panic!("the gRPC app did not wire: {error}"))
+        .connect()
+        .await
+        .unwrap_or_else(|error| panic!("the gRPC app did not connect: {error}"))
+        .bind(server)
+        .listen()
+        .await
+        .unwrap_or_else(|error| panic!("the gRPC app did not listen: {error}"));
+    let addr = app.addresses()[0].addr;
+    let handle = app.handle();
+    let serving = tokio::spawn(async move { app.serve(std::future::pending::<ulo::Signal>()).await });
+    let channel = within("the channel", async { tonic::transport::Endpoint::from_shared(format!("http://{addr}")).expect("an endpoint").connect().await })
+        .await
+        .unwrap_or_else(|error| panic!("the client did not connect: {error}"));
+    let mut client = HealthClient::new(channel);
+    let mut watches = Vec::new();
+    for service in [KNOWN, ""] {
+        let watch = client.watch(HealthCheckRequest { service: service.to_owned() }).await;
+        let mut updates = watch.unwrap_or_else(|status| panic!("Watch {service:?} failed: {status:?}")).into_inner();
+        let first = within("the first health update", updates.next()).await;
+        assert_eq!(first.map(|update| update.map(|update| update.status())).transpose().ok().flatten(), Some(Wire::Serving), "{service:?}");
+        watches.push((service, updates));
+    }
+
+    let closed = within("close", handle.close(ulo::Signal::new("spent"))).await;
+    let error = closed.expect_err("a spent cap records the close it cut");
+    assert!(
+        error.failures.iter().any(|failure| matches!(failure, ulo::ShutdownFailure::Close { reason: ulo::FailureReason::TimedOut { limit: ulo::Limit::ShutdownCap, .. }, .. })),
+        "the server's close was cut by the cap: {error}"
+    );
+    for (service, updates) in &mut watches {
+        let next: Option<Result<HealthCheckResponse, tonic::Status>> = within("the drain's health update", updates.next()).await;
+        assert_eq!(next.map(|update| update.map(|update| update.status()).map_err(|status| status.code())), Some(Ok(Wire::NotServing)), "{service:?}");
+    }
+    let _ = within("serve", serving).await;
 }

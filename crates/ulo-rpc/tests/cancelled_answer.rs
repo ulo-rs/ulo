@@ -1,11 +1,13 @@
 //! What the dispatcher writes once a caller cancels its call, over a link the test drives. The
 //! handler is polled before the cancellation, so an answer it chooses on observing the cancel is
-//! written on the reply path: the caller that cancelled discards it. A stream whose items are
-//! always ready is cut at its next item, not run on.
+//! written on the reply path: the caller that cancelled discards it. A reply stream follows the
+//! same order: an item ready in the poll the cancellation wakes is written, and no item is taken
+//! after that poll, so a stream whose items are always ready ends at its next item, at a
+//! cancellation and at a passed deadline alike.
 
 use std::error::Error;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -20,6 +22,13 @@ use ulo_transport::{CallError, Classify, ErrorKind};
 
 const OBSERVE: &str = "cancelled.observe";
 const ENDLESS: &str = "cancelled.endless";
+const SELF_DRAINED: &str = "cancelled.self_drained";
+const GATED: &str = "cancelled.gated";
+
+/// How many items the six-item streams below have; each would end after its last.
+const ITEMS: usize = 6;
+/// The item `self_drained` cancels its execution on.
+const CANCELLED_AT: usize = 3;
 
 /// The longest any one wait below lasts before it fails the test.
 const PATIENCE: Duration = Duration::from_secs(5);
@@ -47,6 +56,16 @@ struct Probe {
     entered: Notify,
     /// Set when the endless stream drops.
     stream_dropped: Arc<AtomicBool>,
+    /// How many items the six-item stream of the call under test produced.
+    produced: Arc<AtomicUsize>,
+    /// Set when the six-item stream of the call under test drops.
+    six_dropped: Arc<AtomicBool>,
+    /// The gated stream's second item waits here.
+    gate: Arc<Notify>,
+    /// Notified when the gated stream starts waiting for its second item.
+    waiting: Arc<Notify>,
+    /// The gated call's execution, for the test to cancel.
+    exec: Mutex<Option<ExecutionRef>>,
 }
 
 #[derive(Clone)]
@@ -73,6 +92,41 @@ impl Handlers {
         self.probe.0.entered.notify_one();
         exec.cancelled().await;
         Ok(format!("observed {:?}", exec.cancel_reason()))
+    }
+
+    /// Six items, every one ready, the third cancelling its own execution with the drain's
+    /// reason as it is produced: the item and the cancellation are ready in one poll.
+    #[ulo_rpc::message("cancelled.self_drained")]
+    async fn self_drained(&self, exec: ExecutionRef) -> impl Stream<Item = Result<u64, CallError>> {
+        let probe = Arc::clone(&self.probe.0);
+        let dropped = OnDrop(Arc::clone(&probe.six_dropped));
+        stream::iter(1..=ITEMS as u64).map(move |n| {
+            let _ = &dropped;
+            probe.produced.fetch_add(1, Ordering::SeqCst);
+            if n == CANCELLED_AT as u64 {
+                exec.cancel_with(CancelReason::Drain);
+            }
+            Ok(n)
+        })
+    }
+
+    /// Six items: the first ready, the second once the gate opens, the rest ready.
+    #[ulo_rpc::message("cancelled.gated")]
+    async fn gated(&self, exec: ExecutionRef) -> impl Stream<Item = Result<u64, CallError>> {
+        *lock(&self.probe.0.exec) = Some(exec);
+        let probe = Arc::clone(&self.probe.0);
+        let dropped = OnDrop(Arc::clone(&probe.six_dropped));
+        stream::iter(1..=ITEMS as u64).then(move |n| {
+            let (probe, _) = (Arc::clone(&probe), &dropped);
+            async move {
+                if n == 2 {
+                    probe.waiting.notify_one();
+                    probe.gate.notified().await;
+                }
+                probe.produced.fetch_add(1, Ordering::SeqCst);
+                Ok(n)
+            }
+        })
     }
 
     /// A stream whose every item is ready.
@@ -225,6 +279,97 @@ async fn a_stream_whose_items_are_always_ready_ends_at_its_next_item_once_cancel
     }
     assert!(after.len() <= 2, "the stream ran on after its caller cancelled: {} frames", after.len());
     assert!(after.iter().all(|frame| matches!(frame, Frame::Item { id: 1, .. })), "a cancelled caller is written no end: {after:?}");
+    running.stop().await;
+}
+
+/// The frames a call wrote once its stream dropped: every frame sent before the drop, since the
+/// reply path's sends complete before the stream drops.
+async fn written_until(dropped: &AtomicBool, frames: &mut mpsc::UnboundedReceiver<Frame>) -> Vec<Frame> {
+    within("the stream's drop", async {
+        while !dropped.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let mut written = Vec::new();
+    while let Ok(frame) = frames.try_recv() {
+        written.push(frame);
+    }
+    written
+}
+
+/// The items `1..=n` under call 1, then the shutdown refusal.
+fn items_then_shutdown(written: &[Frame], n: u64) {
+    let (last, items) = written.split_last().unwrap_or_else(|| panic!("nothing was written"));
+    let numbers: Vec<Option<u64>> = items
+        .iter()
+        .map(|frame| match frame {
+            Frame::Item { id: 1, data } => serde_json::from_slice(data.as_bytes()).ok(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(numbers, (1..=n).map(Some).collect::<Vec<_>>(), "the items written before the stream ended: {written:?}");
+    match last {
+        Frame::Err { id, error } => {
+            assert_eq!(*id, 1, "the refusal names the call");
+            assert_eq!((error.kind, error.message.as_str()), (ErrorKind::Unavailable, "the server is shutting down"), "{error:?}");
+        }
+        other => panic!("the stream did not end with the shutdown refusal: {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_always_ready_stream_takes_no_item_past_the_poll_its_cancellation_is_observed_in() {
+    let running = Running::start().await;
+    let (path, mut frames) = replies();
+    running.deliver(request(1, SELF_DRAINED), Some(path));
+
+    let written = written_until(&running.probe.0.six_dropped, &mut frames).await;
+    items_then_shutdown(&written, CANCELLED_AT as u64);
+    assert_eq!(running.probe.0.produced.load(Ordering::SeqCst), CANCELLED_AT, "an item was taken after the cancellation");
+    running.stop().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_item_ready_in_the_poll_the_cancellation_wakes_is_written_and_none_after_it() {
+    let running = Running::start().await;
+    let (path, mut frames) = replies();
+    running.deliver(request(1, GATED), Some(path));
+    let first = within("the first item", frames.recv()).await.expect("a frame on the reply path");
+    assert!(matches!(&first, Frame::Item { id: 1, data } if data.as_bytes() == b"1"), "{first:?}");
+    within("the stream waiting at its gate", running.probe.0.waiting.notified()).await;
+    // One task on one thread: the call's next poll finds both the cancellation and the item.
+    let exec = lock(&running.probe.0.exec).clone().expect("the handler kept its execution");
+    exec.cancel_with(CancelReason::Drain);
+    running.probe.0.gate.notify_one();
+
+    let mut written = vec![first];
+    written.extend(written_until(&running.probe.0.six_dropped, &mut frames).await);
+    items_then_shutdown(&written, 2);
+    assert_eq!(running.probe.0.produced.load(Ordering::SeqCst), 2, "an item was taken after the poll the cancellation woke");
+    running.stop().await;
+}
+
+/// A deadline passing while a stream's items are always ready ends it: the race polls the deadline
+/// only while the stream waits, and this stream never does.
+#[tokio::test(flavor = "current_thread")]
+async fn an_always_ready_stream_ends_at_its_next_item_once_its_deadline_passes() {
+    let running = Running::start().await;
+    let (path, mut frames) = replies();
+    let mut headers = CallHeaders::new();
+    headers.insert("deadline-ms", "50");
+    running.deliver(Frame::Req { id: 1, pattern: ENDLESS.to_owned(), headers, data: Data::new(b"null".as_slice()) }, Some(path));
+
+    let written = written_until(&running.probe.0.stream_dropped, &mut frames).await;
+    let (last, items) = written.split_last().unwrap_or_else(|| panic!("nothing was written"));
+    assert!(items.iter().all(|frame| matches!(frame, Frame::Item { id: 1, data } if data.as_bytes() == b"7")), "{items:?}");
+    match last {
+        Frame::Err { id, error } => {
+            assert_eq!(*id, 1, "the refusal names the call");
+            assert_eq!((error.kind, error.message.as_str()), (ErrorKind::Timeout, "the call's deadline passed"), "{error:?}");
+        }
+        other => panic!("the stream did not end with the deadline's error: {other:?}"),
+    }
     running.stop().await;
 }
 

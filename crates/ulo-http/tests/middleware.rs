@@ -279,6 +279,12 @@ async fn an_entrys_failure_reaches_the_global_error_handler_with_its_kind() {
 static STRAY_EXCLUDE: AtomicU32 = AtomicU32::new(0);
 static EMPTY_SCOPE: AtomicU32 = AtomicU32::new(0);
 static BAD_SCOPE: AtomicU32 = AtomicU32::new(0);
+static STRAY_SUPPLIES: AtomicU32 = AtomicU32::new(0);
+static ADOPT_SUPPLIES: AtomicU32 = AtomicU32::new(0);
+
+/// A value a `supplies` declares.
+#[derive(Clone)]
+struct Supplied;
 
 /// `declaration` with the line it is written on stored in `line`; `track_caller` reports that line.
 macro_rules! declared_at {
@@ -299,6 +305,16 @@ fn scoped_entry_naming_no_pattern(m: &mut ModuleDef<'_>) {
     declared_at!(EMPTY_SCOPE, m.meta::<PreDispatch>().apply_for::<Stamp>(Vec::<&str>::new()));
 }
 
+fn supplies_with_no_entry(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    declared_at!(STRAY_SUPPLIES, m.meta::<PreDispatch>().supplies::<Supplied>());
+}
+
+fn supplies_after_an_adopt(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    declared_at!(ADOPT_SUPPLIES, m.meta::<PreDispatch>().adopt::<Supplied>().supplies::<Supplied>());
+}
+
 fn scope_that_is_not_a_pattern(m: &mut ModuleDef<'_>) {
     m.controller::<Pages>();
     m.provide::<Stamp>();
@@ -317,23 +333,46 @@ fn scoped_entries_two_of_which_cover_no_route(m: &mut ModuleDef<'_>) {
     declared_at!(TOO_DEEP, m.meta::<PreDispatch>().apply_for::<Stamp>(["/admin/users/{id}/posts"]));
 }
 
-/// Whether the refusal's text names the source line `line` of this file.
-fn names_line(error: &ulo::StartupError, line: &AtomicU32) -> bool {
+/// Whether `entry` was written at `line` of this file, about a pre-dispatch entry, concerning
+/// exactly `scopes`, and names no type.
+fn is_refusal_at(entry: &ulo::PrepareEntry, line: &AtomicU32, scopes: &[&str]) -> bool {
     let line = line.load(Ordering::SeqCst);
     assert_ne!(line, 0, "the declaration never ran");
-    error.to_string().contains(&format!("{}:{line}:", file!()))
+    entry.location().is_some_and(|at| at.file() == file!() && at.line() == line)
+        && entry.subject() == Some("pre-dispatch entry")
+        && entry.scopes() == scopes
+        && entry.names().is_empty()
 }
 
 #[tokio::test]
 async fn a_declaration_the_stage_cannot_build_is_refused_at_the_line_that_wrote_it() {
     let error = refused(exclude_with_no_entry).await;
-    assert!(names_line(&error, &STRAY_EXCLUDE), "an `exclude` with no entry before it: {error}");
+    let entries = refusal_entries(&error);
+    assert_eq!(entries.len(), 1, "an `exclude` with no entry before it: {error}");
+    assert!(is_refusal_at(&entries[0], &STRAY_EXCLUDE, &[]), "{entries:?}");
 
     let error = refused(scoped_entry_naming_no_pattern).await;
-    assert!(names_line(&error, &EMPTY_SCOPE), "a scoped entry with an empty scope: {error}");
+    let entries = refusal_entries(&error);
+    assert_eq!(entries.len(), 1, "a scoped entry with an empty scope: {error}");
+    assert!(is_refusal_at(&entries[0], &EMPTY_SCOPE, &[]), "{entries:?}");
 
     let error = refused(scope_that_is_not_a_pattern).await;
-    assert!(names_line(&error, &BAD_SCOPE), "a scope without a leading slash: {error}");
+    let entries = refusal_entries(&error);
+    assert_eq!(entries.len(), 1, "a scope without a leading slash: {error}");
+    assert!(is_refusal_at(&entries[0], &BAD_SCOPE, &["admin/*"]), "{entries:?}");
+}
+
+#[tokio::test]
+async fn a_supplies_with_no_entry_to_follow_is_refused_at_the_line_that_wrote_it() {
+    let error = refused(supplies_with_no_entry).await;
+    let entries = refusal_entries(&error);
+    assert_eq!(entries.len(), 1, "a `supplies` with no entry before it: {error}");
+    assert!(is_refusal_at(&entries[0], &STRAY_SUPPLIES, &[]), "{entries:?}");
+
+    let error = refused(supplies_after_an_adopt).await;
+    let entries = refusal_entries(&error);
+    assert_eq!(entries.len(), 1, "a `supplies` after an `adopt`: {error}");
+    assert!(is_refusal_at(&entries[0], &ADOPT_SUPPLIES, &[]), "{entries:?}");
 }
 
 /// Whether `entry` is the refusal of one unreached scope of the pre-dispatch entry written at

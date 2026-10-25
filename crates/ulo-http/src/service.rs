@@ -81,9 +81,11 @@ use crate::upgrade::UpgradeHandler;
 /// had decided. The pipeline is polled before the cancellation, so a response ready in the poll
 /// the cancellation wakes is the answer; when that response's body has no known length, the drain
 /// is checked once more as the service returns it and the answer is the 503 instead, the body
-/// being one the next step would cut. Once it is produced, a body of no known length ends with an error frame, a
-/// `CallError` of kind `Unavailable`, and reports `CutOff(Some(Drain))`, which a backend writes as
-/// a closed HTTP/1.1 connection or a reset HTTP/2 stream; a body of known length is written whole.
+/// being one the next step would cut. Once it is produced, a body of no known length ends with an
+/// error frame, a `CallError` of kind `Unavailable`, and reports `CutOff(Some(Drain))`, which a
+/// backend writes as a closed HTTP/1.1 connection or a reset HTTP/2 stream; a body of known length
+/// is written whole. A frame ready in the poll the cancellation wakes is written before the error
+/// frame, and no frame is taken in a later poll.
 ///
 /// A panic while the backend polls the response body ends the body with an error frame, reports
 /// the stream `CutOff` and is logged as `PanicRecovered` with stage `Handler`, so it never
@@ -824,16 +826,19 @@ struct ExecBody {
     app: AppHandle,
     _permit: Permit,
     ended: bool,
-    /// Resolves when the execution is cancelled; built when the body is first polled open.
+    /// Resolves when the execution is cancelled; built when the body first waits.
     cancelled: Option<BoxFuture<'static, ()>>,
     /// The execution was cancelled, and not by the drain: `cancelled` has resolved and is dropped.
     settled: bool,
+    /// The last poll answered `Pending`: the next poll continues that wait rather than starting a
+    /// new one.
+    waiting: bool,
 }
 
 impl ExecBody {
     fn new(inner: HttpBody, exec: ExecutionRef, app: AppHandle, permit: Permit, unwritten: bool) -> Self {
         let ended = unwritten || inner.is_end_stream();
-        ExecBody { inner, exec, app, _permit: permit, ended, cancelled: None, settled: false }
+        ExecBody { inner, exec, app, _permit: permit, ended, cancelled: None, settled: false, waiting: false }
     }
 
     /// The drain ended while the body was open: its stream is reported cut off by the drain, the
@@ -890,21 +895,12 @@ impl http_body::Body for ExecBody {
         // A stream still open when the drain ends is cut off, not completed: the error frame makes
         // the backend close the connection (HTTP/1.1) or reset the stream (HTTP/2) rather than
         // write the terminating chunk or `END_STREAM`. A body of known length is written whole.
-        if !this.ended && !this.settled && this.inner.size_hint().exact().is_none() {
-            let exec = &this.exec;
-            let cancelled = this.cancelled.get_or_insert_with(|| {
-                let exec = exec.clone();
-                Box::pin(async move { exec.cancelled().await })
-            });
-            if cancelled.as_mut().poll(cx).is_ready() {
-                if by_drain(exec) {
-                    return Poll::Ready(Some(Err(this.cut_off())));
-                }
-                // Cancelled for another reason, which leaves the body to run on; a resolved
-                // listener is not polled again.
-                this.settled = true;
-                this.cancelled = None;
-            }
+        // The body is polled before the cancellation, so a frame ready in the poll the
+        // cancellation wakes goes out; a wait that begins once the drain has cancelled the call
+        // takes no further frame, which ends a body whose frames are always ready.
+        let watching = !this.ended && !this.settled && this.inner.size_hint().exact().is_none();
+        if watching && !this.waiting && by_drain(&this.exec) {
+            return Poll::Ready(Some(Err(this.cut_off())));
         }
         // The body is never polled again after a panic: `recover` replaces it.
         let frame = match catch_unwind(AssertUnwindSafe(|| Pin::new(&mut this.inner).poll_frame(cx))) {
@@ -914,8 +910,27 @@ impl http_body::Body for ExecBody {
         match &frame {
             Poll::Ready(None | Some(Err(_))) => this.ended = true,
             Poll::Ready(Some(Ok(_))) if this.inner.is_end_stream() => this.ended = true,
-            _ => {}
+            Poll::Ready(Some(Ok(_))) => {}
+            Poll::Pending => {
+                if watching {
+                    let exec = &this.exec;
+                    let cancelled = this.cancelled.get_or_insert_with(|| {
+                        let exec = exec.clone();
+                        Box::pin(async move { exec.cancelled().await })
+                    });
+                    if cancelled.as_mut().poll(cx).is_ready() {
+                        if by_drain(exec) {
+                            return Poll::Ready(Some(Err(this.cut_off())));
+                        }
+                        // Cancelled for another reason, which leaves the body to run on; a
+                        // resolved listener is not polled again.
+                        this.settled = true;
+                        this.cancelled = None;
+                    }
+                }
+            }
         }
+        this.waiting = frame.is_pending();
         frame
     }
 

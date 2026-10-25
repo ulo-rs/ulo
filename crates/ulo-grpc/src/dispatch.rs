@@ -26,7 +26,9 @@
 //!
 //! A call still running when the drain's end cancels its execution with `CancelReason::Drain` is
 //! dropped at its await and answers UNAVAILABLE, "the server is shutting down", unless the handler
-//! answered in the poll the cancellation woke it in.
+//! answered in the poll the cancellation woke it in. A reply stream still open then ends with the
+//! same status in its trailers, after any item ready in the poll the cancellation woke it in, as
+//! one still open when its deadline passes ends with DEADLINE_EXCEEDED.
 //!
 //! The whole of it is raced against the deadline: when the deadline passes first, the pipeline is
 //! dropped at its await, the execution cancelled with `CancelReason::Deadline`, and the error
@@ -400,7 +402,10 @@ where
     S: Stream + Send + 'static,
     S::Item: IntoGrpcItem,
 {
-    let items = LateItems { stream: Box::pin(stream), cx: cx.clone(), state: Late::Streaming };
+    // A stream built once the deadline has passed is the error handlers' answer to it, which
+    // `single` reads under the grace; the deadline ends only a stream it finds running.
+    let settled = cx.exec().cancel_reason() == Some(CancelReason::Deadline);
+    let items = LateItems { stream: Box::pin(stream), cx: cx.clone(), state: Late::Streaming, cancelled: None, waiting: false, settled };
     let body = EncodeBody::new_server(
         ProstEncoder::<<S::Item as IntoGrpcItem>::Message>::new(BufferSettings::default()),
         items,
@@ -711,13 +716,25 @@ impl http_body::Body for Buffered {
     }
 }
 
-/// A reply stream's items with the late path for an `Err` item.
+/// A reply stream's items with the late path for an `Err` item. A stream still open when the
+/// drain's end cancels the call with `CancelReason::Drain` ends with UNAVAILABLE and the shutdown
+/// phrase in its trailers, and one still open when its deadline passes with DEADLINE_EXCEEDED. The
+/// stream is polled before the cancellation, so an item ready in the poll the cancellation wakes
+/// is written; a wait that begins once the call is cancelled takes no further item, which ends a
+/// stream whose items are always ready.
 struct LateItems<S> {
     stream: Pin<Box<S>>,
     /// Held while the stream runs, which keeps the execution's instances and its cancellation
     /// signal alive.
     cx: GrpcCx,
     state: Late,
+    /// Resolves when the execution is cancelled; built when the stream first waits.
+    cancelled: Option<BoxFuture<'static, ()>>,
+    /// The last poll of the stream answered `Pending`: the next poll continues that wait.
+    waiting: bool,
+    /// The execution was cancelled, by neither the drain nor the deadline: the stream runs on
+    /// unwatched.
+    settled: bool,
 }
 
 enum Late {
@@ -734,6 +751,39 @@ impl<S> LateItems<S> {
     fn failed(&self, error: BoxError) -> Status {
         status::render(error, self.cx.exec())
     }
+
+    /// The status that ends the stream for the execution's cancellation: the drain's and the
+    /// deadline's end it, any other leaves it to run.
+    fn ending(&self) -> Option<Status> {
+        match self.cx.exec().cancel_reason() {
+            Some(CancelReason::Drain) => Some(Status::unavailable(SHUTTING_DOWN)),
+            Some(CancelReason::Deadline) => Some(status::deadline_exceeded()),
+            _ => None,
+        }
+    }
+
+    /// The status that ends the stream once the cancellation listener resolves, polled when the
+    /// stream answered `Pending`. A cancellation that does not end the stream leaves it to run on,
+    /// and a resolved listener is not polled again.
+    fn cancelled(&mut self, cx: &mut Context<'_>) -> Option<Status> {
+        if self.settled {
+            return None;
+        }
+        let exec = self.cx.exec();
+        let cancelled = self.cancelled.get_or_insert_with(|| {
+            let exec = exec.clone();
+            Box::pin(async move { exec.cancelled().await })
+        });
+        if cancelled.as_mut().poll(cx).is_pending() {
+            return None;
+        }
+        let ending = self.ending();
+        if ending.is_none() {
+            self.settled = true;
+            self.cancelled = None;
+        }
+        ending
+    }
 }
 
 impl<S> Stream for LateItems<S>
@@ -745,34 +795,54 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
+        if matches!(this.state, Late::Streaming) && !this.settled && !this.waiting
+            && let Some(ending) = this.ending()
+        {
+            this.state = Late::Done;
+            return Poll::Ready(Some(Err(ending)));
+        }
         loop {
             match &mut this.state {
-                Late::Streaming => match ready!(this.stream.as_mut().poll_next(cx)) {
-                    Some(item) => match item.into_grpc_item() {
-                        Ok(message) => return Poll::Ready(Some(Ok(message))),
-                        Err(error) => {
-                            let original = error.summary();
-                            match this.cx.inner.handler.clone() {
-                                Some(handler) => {
-                                    let exec = this.cx.exec().clone();
-                                    let call_cx = this.cx.clone();
-                                    let outcome: BoxFuture<'static, LateOutcome> = Box::pin(async move {
-                                        ulo::dispatch_late(&handler, &exec, &call_cx, BoxError::from(error)).await
-                                    });
-                                    this.state = Late::Recovering { original, outcome };
-                                }
-                                None => {
-                                    this.state = Late::Done;
-                                    return Poll::Ready(Some(Err(this.failed(BoxError::from(error)))));
+                Late::Streaming => {
+                    let item = match this.stream.as_mut().poll_next(cx) {
+                        Poll::Ready(item) => item,
+                        Poll::Pending => {
+                            this.waiting = true;
+                            if let Some(ending) = this.cancelled(cx) {
+                                this.state = Late::Done;
+                                return Poll::Ready(Some(Err(ending)));
+                            }
+                            return Poll::Pending;
+                        }
+                    };
+                    this.waiting = false;
+                    match item {
+                        Some(item) => match item.into_grpc_item() {
+                            Ok(message) => return Poll::Ready(Some(Ok(message))),
+                            Err(error) => {
+                                let original = error.summary();
+                                match this.cx.inner.handler.clone() {
+                                    Some(handler) => {
+                                        let exec = this.cx.exec().clone();
+                                        let call_cx = this.cx.clone();
+                                        let outcome: BoxFuture<'static, LateOutcome> = Box::pin(async move {
+                                            ulo::dispatch_late(&handler, &exec, &call_cx, BoxError::from(error)).await
+                                        });
+                                        this.state = Late::Recovering { original, outcome };
+                                    }
+                                    None => {
+                                        this.state = Late::Done;
+                                        return Poll::Ready(Some(Err(this.failed(BoxError::from(error)))));
+                                    }
                                 }
                             }
+                        },
+                        None => {
+                            this.state = Late::Done;
+                            return Poll::Ready(None);
                         }
-                    },
-                    None => {
-                        this.state = Late::Done;
-                        return Poll::Ready(None);
                     }
-                },
+                }
                 Late::Recovering { original, outcome } => {
                     let error: BoxError = match ready!(outcome.as_mut().poll(cx)) {
                         LateOutcome::End => {
@@ -816,6 +886,8 @@ struct CallBody {
     ended: bool,
     /// The reply is a marked stream whose end is still to be reported.
     tracking: bool,
+    /// The deadline passed on a poll that also yielded a frame: the next poll ends the body.
+    expired: bool,
 }
 
 impl CallBody {
@@ -828,7 +900,7 @@ impl CallBody {
         tracked: bool,
     ) -> Self {
         let ended = inner.is_end_stream();
-        let mut body = CallBody { inner, exec, deadline, call_span, _permit: permit, ended, tracking: tracked };
+        let mut body = CallBody { inner, exec, deadline, call_span, _permit: permit, ended, tracking: tracked, expired: false };
         if ended {
             body.report(false);
         }
@@ -867,11 +939,20 @@ impl http_body::Body for CallBody {
         if this.ended {
             return Poll::Ready(None);
         }
-        if let Some(deadline) = this.deadline.as_mut() {
-            if deadline.as_mut().poll(cx).is_ready() {
-                this.exec.cancel_with(CancelReason::Deadline);
-                return this.end_with(status::deadline_exceeded());
-            }
+        if this.expired {
+            return this.end_with(status::deadline_exceeded());
+        }
+        // The deadline is observed before the body is polled and acted on after it: a frame the
+        // body yields in the poll the deadline passes in goes out and the body ends at the next
+        // poll, and a marked stream, which reads the cancellation at its next wait, takes no item
+        // after the one that poll found ready.
+        let mut passed = false;
+        if let Some(deadline) = this.deadline.as_mut()
+            && deadline.as_mut().poll(cx).is_ready()
+        {
+            this.deadline = None;
+            this.exec.cancel_with(CancelReason::Deadline);
+            passed = true;
         }
         // A reply stream that panics is ended here rather than in hyper's connection task.
         let polled = match catch_unwind(AssertUnwindSafe(|| Pin::new(&mut this.inner).poll_frame(cx))) {
@@ -907,6 +988,11 @@ impl http_body::Body for CallBody {
         }
         if this.ended {
             this.deadline = None;
+        } else if passed {
+            if polled.is_pending() {
+                return this.end_with(status::deadline_exceeded());
+            }
+            this.expired = true;
         }
         polled
     }

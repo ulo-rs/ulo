@@ -1,9 +1,9 @@
 // Every refusal a generator exists to make holds with a user trait in scope whose methods `check`,
-// `matches` and `construct` every type has: the probes the generators emit are `__ulo_` names
-// called by path, so none of them resolves to the user's method and none of the checks turns off.
-// Four refusals, one per generator family: metadata naming another transport (`check`), a gRPC
-// handler taking another message than its method (`matches`), a gRPC handler replying another
-// message, and a hook on a type that is built per use (`construct`).
+// `matches` and `construct` every type has: the probes the generators emit are `__ulo_` names, so
+// none of them resolves to the user's method and none of the checks turns off. Four refusals:
+// metadata naming another transport (`__ulo_check`), a gRPC handler taking another message than
+// its method (`__ulo_matches`) or replying another (`__ulo_checked`), and a hook on a type built
+// per use, which rests on a supertrait bound and calls no method.
 use std::time::Duration;
 
 use ulo::{OnModuleDestroy, injectable, routes};

@@ -15,7 +15,6 @@ use ulo_codegen_tests::pb::counter_client::CounterClient;
 use ulo_codegen_tests::pb::{AddRequest, Sum};
 use ulo_grpc::Grpc;
 use ulo_net::{CertificateCause, KeyCause, Tls, TlsError};
-use ulo_net::rustls;
 use ulo_test_certs::{Certified, localhost};
 
 use support::{Running, within};
@@ -142,8 +141,8 @@ fn chain_with_a_broken_second_section(pem: &str) -> String {
 
 /// Which `TlsError` the entry's source is, so a caller can tell the cause. Each case asserts the
 /// member that tells it: an unreadable file its path and the I/O error's kind, a certificate or a
-/// key its file and its cause, a key beside the wrong certificate its own cause, and rustls's
-/// refusal of a key it cannot use the `rustls::Error` variant.
+/// key its file and its cause, and a key beside the wrong certificate, or one that is no key at all,
+/// its own cause.
 #[tokio::test]
 async fn a_tls_failure_keeps_its_tls_error_for_the_entry_to_downcast() {
     let ours = localhost();
@@ -186,13 +185,13 @@ async fn a_tls_failure_keeps_its_tls_error_for_the_entry_to_downcast() {
         "a key that is not the certificate's: {entry}"
     );
 
-    // Valid base64 that is not a key: the PEM parses, and rustls cannot use what it holds.
+    // Valid base64 that is not a key: the PEM parses, and no supported key type reads what it holds.
     let not_der = "-----BEGIN PRIVATE KEY-----\nAAAAAAAA\n-----END PRIVATE KEY-----\n";
     let entry = configure_entry(gateway(Tls::from_pem(ours.cert_pem(), not_der))).await;
-    match tls_error(&entry) {
-        TlsError::Rustls(rustls::Error::General(reason)) => assert_eq!(reason, "failed to parse private key as RSA, ECDSA, or EdDSA", "{entry}"),
-        other => panic!("a key section holding no key was {other:?}"),
-    }
+    assert!(
+        matches!(tls_error(&entry), TlsError::PrivateKey { path: None, cause: KeyCause::Unrecognised }),
+        "a key section holding no key: {entry}"
+    );
 }
 
 /// The same causes read from files carry the file, and a file that cannot be read carries the

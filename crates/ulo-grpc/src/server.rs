@@ -9,11 +9,10 @@ use std::time::Duration;
 
 use hyper::body::Incoming;
 use hyper::server::conn::http2;
-use hyper_util::rt::TokioTimer;
 use tonic_health::ServingStatus;
 use ulo::{Bound, BoundAddr, BoxError, DrainToken, Mounted, Transport, TypeName};
 use ulo_http::stage::Stage;
-use ulo_server_hyper::{Accepted, RuntimeExecutor, Serve, ServeConfig};
+use ulo_server_hyper::{Accepted, RuntimeExecutor, RuntimeTimer, Serve, ServeConfig};
 use ulo_listener_tokio::TokioListener;
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec, ListenerName, Tls};
@@ -394,7 +393,8 @@ impl ulo::Server for Server {
         let config = ServeConfig { handshake_timeout, ..ServeConfig::default() };
         let serve = Serve::<TokioListener>::new(listeners, tls, &config, Arc::clone(mounted.runtime()))?;
         let mut connections = http2::Builder::new(serve.executor());
-        connections.timer(TokioTimer::new());
+        // hyper times HTTP/2 keep-alive pings with it; on the app's clock like every other wait.
+        connections.timer(RuntimeTimer::new(Arc::clone(mounted.timer())));
         match self.max_concurrent_streams {
             Count::Default => {}
             Count::Max(streams) => {

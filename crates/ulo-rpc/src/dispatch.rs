@@ -19,10 +19,11 @@
 //! link delivers right after it always finds the call; the call itself then runs in its own task.
 
 use std::collections::HashMap;
-use std::future::Future;
+use std::future::{Future, poll_fn};
 use std::pin::pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::task::Poll;
 use std::time::Duration;
 
 use futures_channel::mpsc::{self, UnboundedSender};
@@ -510,6 +511,7 @@ async fn stream_reply(
     loop {
         match until_ended(exec, deadline, stream.next()).await {
             Ended::Done(Some(Ok(data))) => {
+                passed(exec, deadline).await;
                 if !send(reply, exec, id, Frame::Item { id, data }).await {
                     return;
                 }
@@ -754,6 +756,16 @@ async fn until_ended<F: Future>(exec: &ExecutionRef, deadline: &mut Option<BoxFu
         Either::Left((out, _)) => Ended::Done(out),
         Either::Right((Either::Left(_), _)) => Ended::Cancelled(exec.cancel_reason()),
         Either::Right((Either::Right(_), _)) => Ended::Cancelled(Some(CancelReason::Deadline)),
+    }
+}
+
+/// Polls the deadline once without waiting, after an item the race took: a deadline passed by
+/// then cancels the execution `Deadline`, so the next race ends at its start. The race polls the
+/// deadline only while its stream waits, and a stream whose items are always ready never waits.
+async fn passed(exec: &ExecutionRef, deadline: &mut Option<BoxFuture<'static, ()>>) {
+    let Some(sleep) = deadline else { return };
+    if poll_fn(|cx| Poll::Ready(sleep.as_mut().poll(cx).is_ready())).await {
+        exec.cancel_with(CancelReason::Deadline);
     }
 }
 

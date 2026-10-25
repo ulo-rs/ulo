@@ -54,6 +54,11 @@ impl Tls {
         // An explicit provider rather than the process default, which panics when the build
         // enables both rustls backends and nothing installed one.
         let provider = Arc::new(rustls::crypto::ring::default_provider());
+        // rustls would refuse these bytes inside `with_single_cert` with a free-text error; asking
+        // the provider first keeps the cause a variant of ours.
+        if provider.key_provider.load_private_key(key.clone_key()).is_err() {
+            return Err(TlsError::PrivateKey { path: key_path(&self.source), cause: KeyCause::Unrecognised });
+        }
         let mut config = ServerConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
             .map_err(TlsError::Rustls)?
@@ -129,6 +134,9 @@ pub enum KeyCause {
     NoneFound,
     /// The key section did not parse.
     Unparseable { reason: String },
+    /// The section parses as PEM and holds bytes that are no RSA, ECDSA or EdDSA private key the
+    /// TLS backend supports.
+    Unrecognised,
     /// The key parses and is not the certificate's.
     DoesNotMatchCertificate,
 }
@@ -138,6 +146,7 @@ impl fmt::Display for KeyCause {
         match self {
             KeyCause::NoneFound => f.write_str("no private key section found"),
             KeyCause::Unparseable { reason } => write!(f, "does not parse: {reason}"),
+            KeyCause::Unrecognised => f.write_str("is not an RSA, ECDSA or EdDSA private key"),
             KeyCause::DoesNotMatchCertificate => f.write_str("does not match the certificate"),
         }
     }
@@ -152,10 +161,10 @@ pub enum TlsError {
     /// The certificate PEM holds no certificate, or one that does not parse. `path` is the file it
     /// was read from, `None` for PEM given in memory.
     Certificate { path: Option<PathBuf>, cause: CertificateCause },
-    /// The key PEM holds no private key, one that does not parse, or one that is not the
-    /// certificate's.
+    /// The key PEM holds no private key, one that does not parse or is not a supported key, or one
+    /// that is not the certificate's.
     PrivateKey { path: Option<PathBuf>, cause: KeyCause },
-    /// rustls refused the configuration for another reason, such as a key of an unsupported type.
+    /// rustls refused the configuration for another reason.
     Rustls(rustls::Error),
 }
 

@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use futures_util::future::{Either, select};
 use futures_util::StreamExt;
-use ulo::{Bound, Signal};
-use ulo_rpc::{Capabilities, RpcError};
+use ulo::{Bound, FailureReason, Limit, ShutdownFailure, Signal, TypeName};
+use ulo_rpc::{Capabilities, Rpc, RpcError};
 use ulo_transport::ErrorKind;
 
 use crate::Broker;
@@ -19,6 +19,14 @@ const PACE: Duration = Duration::from_millis(10);
 
 /// The event emitted during the drain on a link that declares `holds_unserved`.
 const HELD_EVENT: u32 = 11;
+
+/// What the server answers a call the drain's end abandoned, beside the kind `unavailable`. The
+/// spent-cap scenario reads it, since the client's own `unavailable` for a connection that closed
+/// carries the same kind and no reason.
+const SHUTDOWN_PHRASE: &str = "the server is shutting down";
+
+/// How long the spent-cap scenario's call holds its handler: longer than the scenario runs.
+const HELD_PAST_THE_CLOSE: u64 = 60_000;
 
 /// The drain: a new call refused `unavailable`, an in-flight call finishing, a stream ending on
 /// `draining()`. A link declaring `holds_unserved` answers the new call with the caller's own
@@ -136,4 +144,50 @@ fn assert_refused_after_close(capabilities: &Capabilities, after: Result<Sum, Rp
         Err(error) if error.kind() == ErrorKind::Timeout && (!capabilities.miss_signal || capabilities.holds_unserved) => {}
         other => panic!("a call sent once the drained server had closed was not refused `Unavailable`, got: {other:?}"),
     }
+}
+
+/// A call still in its handler when the server closes under a `shutdown_timeout` already spent:
+/// the drain's end cancels it, and the server's `close`, polled once before the cap drops it,
+/// writes its `unavailable` with the shutdown phrase, which the caller reads rather than its own
+/// timeout or a closed connection. The shutdown counts the call abandoned; a `close` that did
+/// not end in that one poll is reported cut by the cap, at zero.
+///
+/// Stamped twice. On one thread nothing but `close`'s first poll runs the call's task before the
+/// cap drops `close`. On the harness's runtime another worker may run it first, and the server's
+/// app drops while the link's tasks may still hold the answer, which a link has to send.
+pub async fn spent_cap<B: Broker>() {
+    let fixture = Fixture::<B>::start_capped(Duration::ZERO).await;
+    let rpc = fixture.rpc().clone();
+    let held = spawn::<B, _, _>(async move { rpc.request::<_, u64>(HOLD, &HELD_PAST_THE_CLOSE).timeout(Duration::from_secs(30)).await });
+    let probe = fixture.server.probe.clone();
+    assert!(eventually::<B>(Duration::from_secs(10), || probe.holding() > 0).await, "the held call did not reach its handler");
+    assert_eq!(probe.holding(), 1, "one call reached the holding handler");
+
+    let closing = fixture.server.handle.close(Signal::new("conformance spent cap"));
+    let abandoned = match within::<B, _>(Duration::from_secs(10), "the capped close", closing).await {
+        Ok(shutdown) => shutdown.abandoned,
+        Err(error) => {
+            let [failure] = &*error.failures else { panic!("expected one failure, the RPC server's close, got: {error}") };
+            match failure {
+                ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit } } => {
+                    assert_eq!(*transport, TypeName::of::<Rpc>(), "the close the cap cut");
+                    assert_eq!((*after, *limit), (Duration::ZERO, Limit::ShutdownCap), "the RPC server's close");
+                }
+                other => panic!("expected the RPC server's close cut by the cap, got: {other:?}"),
+            }
+            error.report.abandoned
+        }
+    };
+    assert_eq!(abandoned, 1, "the held call is the one execution abandoned at the drain's end");
+
+    let answer = joined(within::<B, _>(Duration::from_secs(30), "the held call's answer", held).await, "the held call's task");
+    match answer {
+        Err(error) => assert_eq!(
+            (error.kind(), error.message(), error.reason()),
+            (ErrorKind::Unavailable, SHUTDOWN_PHRASE, None),
+            "the held call's answer: {error:?}"
+        ),
+        Ok(value) => panic!("a call abandoned at the drain's end was answered with its result, {value}"),
+    }
+    fixture.stop().await;
 }

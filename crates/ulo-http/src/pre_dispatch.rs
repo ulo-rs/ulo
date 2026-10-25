@@ -371,30 +371,46 @@ enum Action {
 impl<T: HttpCarried> Stage<T> {
     /// The stage from `mounted.module_meta::<PreDispatch<T>>()`, every scope and exclusion parsed
     /// and every value check run; every failure returned, for the server's `prepare` failure.
-    pub fn build(metas: Vec<(ModuleRef, Arc<PreDispatch<T>>)>) -> Result<Stage<T>, Vec<String>> {
+    pub fn build(metas: Vec<(ModuleRef, Arc<PreDispatch<T>>)>) -> Result<Stage<T>, Vec<Failure>> {
         let mut failures = Vec::new();
         let mut stage = Stage::empty();
         let mut run = Vec::new();
         for (module, meta) in metas {
             for location in &meta.stray_excludes {
-                failures.push(format!("`exclude` at {location} follows no pre-dispatch entry, so it excludes nothing"));
+                failures.push(
+                    Failure::plain(format!("`exclude` at {location} follows no pre-dispatch entry, so it excludes nothing"))
+                        .at(location)
+                        .about(PRE_DISPATCH_ENTRY),
+                );
             }
             for location in &meta.stray_supplies {
-                failures.push(format!(
-                    "`supplies` at {location} follows no pre-dispatch entry; it declares what the entry before it inserts, \
-                     and a value the host keeps is copied in by the embedding with `Embedded::forward`"
-                ));
+                failures.push(
+                    Failure::plain(format!(
+                        "`supplies` at {location} follows no pre-dispatch entry; it declares what the entry before it inserts, \
+                         and a value the host keeps is copied in by the embedding with `Embedded::forward`"
+                    ))
+                    .at(location)
+                    .about(PRE_DISPATCH_ENTRY),
+                );
             }
             for location in &meta.adopt_supplies {
-                failures.push(format!(
-                    "`supplies` at {location} follows an `adopt` entry: `adopt` copies a value out of the request and \
-                     inserts none; declare the `supplies` after the entry that inserts it"
-                ));
+                failures.push(
+                    Failure::plain(format!(
+                        "`supplies` at {location} follows an `adopt` entry: `adopt` copies a value out of the request and \
+                         inserts none; declare the `supplies` after the entry that inserts it"
+                    ))
+                    .at(location)
+                    .about(PRE_DISPATCH_ENTRY),
+                );
             }
             for (index, entry) in meta.entries.iter().enumerate() {
                 if let Some(check) = &entry.check {
                     if let Err(err) = (**check)() {
-                        failures.push(format!("pre-dispatch entry at {}: {err}", entry.location));
+                        failures.push(
+                            Failure::plain(format!("pre-dispatch entry at {}: {err}", entry.location))
+                                .at(entry.location)
+                                .about(PRE_DISPATCH_ENTRY),
+                        );
                     }
                 }
                 let exclude = scopes(&entry.exclude, entry.location, &mut failures);
@@ -409,7 +425,11 @@ impl<T: HttpCarried> Stage<T> {
                     continue;
                 }
                 if entry.scope.is_empty() {
-                    failures.push(format!("pre-dispatch entry at {} names no route pattern, so it covers no route", entry.location));
+                    failures.push(
+                        Failure::plain(format!("pre-dispatch entry at {} names no route pattern, so it covers no route", entry.location))
+                            .at(entry.location)
+                            .about(PRE_DISPATCH_ENTRY),
+                    );
                 }
                 let scope = scopes(&entry.scope, entry.location, &mut failures);
                 let scope_count = scope.len();
@@ -551,13 +571,15 @@ fn stage_flags(count: usize) -> Vec<AtomicBool> {
 /// The `subject` of a [`Failure`] about a pre-dispatch entry.
 const PRE_DISPATCH_ENTRY: &str = "pre-dispatch entry";
 
-fn scopes(patterns: &[Cow<'static, str>], at: &Location<'_>, failures: &mut Vec<String>) -> Vec<ScopePattern> {
+fn scopes(patterns: &[Cow<'static, str>], at: &'static Location<'static>, failures: &mut Vec<Failure>) -> Vec<ScopePattern> {
     patterns
         .iter()
         .filter_map(|pattern| match ScopePattern::parse(pattern) {
             Ok(scope) => Some(scope),
             Err(err) => {
-                failures.push(format!("pre-dispatch entry at {at}: {err}"));
+                failures.push(
+                    Failure::plain(format!("pre-dispatch entry at {at}: {err}")).at(at).about(PRE_DISPATCH_ENTRY).scoped([pattern.to_string()]),
+                );
                 None
             }
         })

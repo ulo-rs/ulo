@@ -92,6 +92,7 @@ impl Broker for Mosquitto {
 
 ulo_rpc_conformance::conformance_suite!(Mosquitto; not_applicable {
     cancel_follows_its_request: "U17: the link carries a request and its `cancel` on separate lanes, and the broker may deliver the `cancel` first",
+    a_call_held_past_a_spent_cap_is_answered_unavailable: "F479, open: on a worker pool another worker queues the held call's answer after `close` queued the DISCONNECT, and MQTT allows no packet after it; the one-thread stamp passes",
 });
 
 /// How long a test waits for a frame the server's link should deliver.

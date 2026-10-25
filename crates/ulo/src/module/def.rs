@@ -173,8 +173,10 @@ impl<'a> ModuleDef<'a> {
         Handle::new(self.push(record))
     }
 
-    /// A value under the key of its own type, a `Result` included. A `Secret<String>` or
-    /// `Secret<&'static str>` value registers itself for redaction.
+    /// A value under the key of its own type, a `Result` included.
+    ///
+    /// A `Secret<String>` or a `Secret<&'static str>` bound here is registered for redaction. Any
+    /// other `Secret<T>` needs `m.secret(&s)` beside it, or its text stays visible in reports.
     #[track_caller]
     pub fn value<T: Send + Sync + 'static>(&mut self, value: T) -> Handle<'_, T, Binding<Singleton, Set>> {
         let location = Location::caller();

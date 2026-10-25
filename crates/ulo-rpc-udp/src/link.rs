@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use bytes::Bytes;
+use futures_util::FutureExt;
 use tokio::net::UdpSocket;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -50,7 +51,10 @@ const WRITE_QUEUE: usize = 64;
 /// socket sends leave it in the order they were sent.
 ///
 /// A server's link dropped without `close`, as it is when its app drops before the close step,
-/// stops its receive and writer tasks, so its socket closes and the address can be bound again.
+/// stops its receive task, and its writer once it has sent the datagrams already queued, so its
+/// socket closes and the address can be bound again. A reply queued as the app drops, the
+/// `unavailable` a `close` cut by a spent `shutdown_timeout` wrote in its one poll among them,
+/// is sent.
 ///
 /// The link's sockets and tasks live on the tokio runtime it holds, the one current where it was
 /// built or the one [`with_handle`](Self::with_handle) names, so its futures and streams may be
@@ -69,7 +73,7 @@ pub struct Udp {
     /// `State`, which the task holds itself, so the link's drop reaches it.
     receiving: Mutex<Option<Owned>>,
     /// The server socket's writer, which `close` leaves running to send its refusals.
-    writing: Mutex<Option<Owned>>,
+    writing: Mutex<Option<Flushed>>,
 }
 
 /// A task only the link holds, aborted when dropped: a tokio `JoinHandle` detaches on drop.
@@ -79,6 +83,18 @@ struct Owned(JoinHandle<()>);
 impl Drop for Owned {
     fn drop(&mut self) {
         self.0.abort();
+    }
+}
+
+/// The server's writer task, which the link alone stops: dropped, it tells the writer to send
+/// what is queued and end.
+struct Flushed(Option<oneshot::Sender<()>>);
+
+impl Drop for Flushed {
+    fn drop(&mut self) {
+        if let Some(stop) = self.0.take() {
+            let _ = stop.send(());
+        }
     }
 }
 
@@ -205,7 +221,9 @@ impl Link for Udp {
         *lock(&self.state.bound) = vec![BoundAddr::new("rpc", socket.local_addr()?)];
         *lock(&self.state.socket) = Some(Arc::clone(&socket));
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
-        *lock(&self.writing) = Some(Owned(runtime.handle().spawn(write_datagrams(Arc::clone(&socket), queued, std::future::pending()))));
+        let (dropped, stop) = oneshot::channel::<()>();
+        drop(runtime.handle().spawn(write_server_datagrams(Arc::clone(&socket), queued, stop)));
+        *lock(&self.writing) = Some(Flushed(Some(dropped)));
         *lock(&self.state.writes) = Some(writes.clone());
         let (deliveries, inbound) = mpsc::channel(DELIVERY_QUEUE);
         let receiving = runtime.handle().spawn(receive(socket, self.codec, Arc::clone(&self.state), deliveries, writes));
@@ -567,24 +585,49 @@ impl Sending for Weak<UdpSocket> {
 async fn write_datagrams(socket: impl Sending, mut queued: ordered::Receiver<Datagram>, stop: impl Future<Output = ()>) {
     let mut stop = std::pin::pin!(stop);
     loop {
-        let Datagram { bytes, to, answer } = tokio::select! {
+        let datagram = tokio::select! {
             datagram = queued.recv() => match datagram {
                 Some(datagram) => datagram,
                 None => return,
             },
             () = &mut stop => return,
         };
-        let sent = match socket.socket() {
-            Some(socket) => match to {
-                Some(peer) => socket.send_to(&bytes, peer).await,
-                None => socket.send(&bytes).await,
-            }
-            .map(drop)
-            .map_err(BoxError::from),
-            None => Err("the UDP link's client socket is closed".into()),
-        };
-        let _ = answer.send(sent);
+        send_datagram(&socket, datagram).await;
     }
+}
+
+/// The server socket's writer: each queued datagram in turn until the link drops, then every
+/// datagram the queue holds at that moment, so a reply queued as the link drops is sent though the
+/// writer is first polled after it.
+async fn write_server_datagrams(socket: Arc<UdpSocket>, mut queued: ordered::Receiver<Datagram>, dropped: oneshot::Receiver<()>) {
+    let mut dropped = std::pin::pin!(dropped);
+    loop {
+        let datagram = tokio::select! {
+            biased;
+            _ = &mut dropped => break,
+            datagram = queued.recv() => match datagram {
+                Some(datagram) => datagram,
+                None => return,
+            },
+        };
+        send_datagram(&socket, datagram).await;
+    }
+    while let Some(Some(datagram)) = queued.recv().now_or_never() {
+        send_datagram(&socket, datagram).await;
+    }
+}
+
+async fn send_datagram(socket: &impl Sending, Datagram { bytes, to, answer }: Datagram) {
+    let sent = match socket.socket() {
+        Some(socket) => match to {
+            Some(peer) => socket.send_to(&bytes, peer).await,
+            None => socket.send(&bytes).await,
+        }
+        .map(drop)
+        .map_err(BoxError::from),
+        None => Err("the UDP link's client socket is closed".into()),
+    };
+    let _ = answer.send(sent);
 }
 
 fn with_id(frame: Frame, id: u64) -> Frame {

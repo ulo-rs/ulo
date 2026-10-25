@@ -69,6 +69,9 @@ impl Error for Redacted {
 /// once registered: by `m.secret(&self.url)`, by `#[module]` for every `Secret<_>` field of a
 /// configured module, or by binding it with `m.value(..)`.
 ///
+/// `m.value(..)` registers a `Secret<String>` or a `Secret<&'static str>`. Any other `Secret<T>`
+/// needs `m.secret(&s)` beside it, or its text stays visible in reports.
+///
 /// A secret shorter than four characters stays registered, and no message is matched against it:
 /// a text that short is contained in most messages, and replacing it would mangle them without
 /// hiding anything. `ulo-config` applies the same floor to the messages it checks.

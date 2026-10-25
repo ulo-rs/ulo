@@ -113,6 +113,8 @@ pub(crate) struct ProbeState {
     /// The stalled call's execution's reason, written when its handler's future is dropped or
     /// returns.
     stalled: Mutex<Option<Option<CancelReason>>>,
+    /// How many calls have reached the holding handler.
+    holding: AtomicUsize,
     /// When the held call's handler returned its answer, which the link then publishes.
     held_answered: Mutex<Option<Instant>>,
     /// The bounded handlers' calls running now, and the most that ran at once.
@@ -198,6 +200,11 @@ impl Probe {
 
     pub(crate) fn held_answered(&self) -> Option<Instant> {
         *lock(&self.0.held_answered)
+    }
+
+    /// How many calls have reached the holding handler.
+    pub(crate) fn holding(&self) -> usize {
+        self.0.holding.load(Ordering::SeqCst)
     }
 
     /// Every run of the slow event's handler so far.
@@ -432,6 +439,7 @@ impl CoreController {
 
     #[ulo_rpc::message("conformance.hold")]
     async fn hold(&self, millis: Payload<u64>, timer: Dep<dyn Timer>) -> Result<u64, Refusal> {
+        self.probe.0.holding.fetch_add(1, Ordering::SeqCst);
         timer.sleep(Duration::from_millis(millis.0)).await;
         *lock(&self.probe.0.held_answered) = Some(Instant::now());
         Ok(millis.0)
@@ -640,10 +648,18 @@ impl Server {
     }
 }
 
-async fn bound<B: Broker, L: Link>(link: L, probe: Probe, mounts: Mounts, max_inflight: Count) -> Result<App<Serving>, StartupError> {
-    App::builder(ServerRoot { probe, mounts })
-        .runtime(<B::Harness as Harness>::runtime())
-        .drain_timeout(DRAIN)
+async fn bound<B: Broker, L: Link>(
+    link: L,
+    probe: Probe,
+    mounts: Mounts,
+    max_inflight: Count,
+    cap: Option<Duration>,
+) -> Result<App<Serving>, StartupError> {
+    let mut builder = App::builder(ServerRoot { probe, mounts }).runtime(<B::Harness as Harness>::runtime()).drain_timeout(DRAIN);
+    if let Some(cap) = cap {
+        builder = builder.shutdown_timeout(cap);
+    }
+    builder
         .wire()?
         .connect()
         .await?
@@ -664,9 +680,18 @@ pub(crate) async fn server_bounded<B: Broker>(broker: &B, max_inflight: Count) -
 
 /// [`server_bounded`] over `link`, a link built from the broker's [`Broker::link`].
 pub(crate) async fn server_over<B: Broker, L: Link>(broker: &B, link: L, max_inflight: Count) -> Server {
+    serving::<B, L>(broker, link, max_inflight, None).await
+}
+
+/// [`server`] with its `shutdown_timeout` set to `cap`.
+pub(crate) async fn server_capped<B: Broker>(broker: &B, cap: Duration) -> Server {
+    serving::<B, _>(broker, broker.link(), Count::Default, Some(cap)).await
+}
+
+async fn serving<B: Broker, L: Link>(broker: &B, link: L, max_inflight: Count, cap: Option<Duration>) -> Server {
     let probe = Probe::default();
     let mounts = Mounts::carried(&broker.link().capabilities());
-    let app = bound::<B, L>(link, probe.clone(), mounts, max_inflight)
+    let app = bound::<B, L>(link, probe.clone(), mounts, max_inflight, cap)
         .await
         .unwrap_or_else(|error| crate::startup_failed!("the conformance server did not start: {}", report(&error)));
     let handle = app.handle();
@@ -688,7 +713,7 @@ pub(crate) async fn server_over<B: Broker, L: Link>(broker: &B, link: L, max_inf
 /// Asserts that a server mounting `mounts` is refused at startup as a `Configure` error: what a
 /// link's capabilities exclude is refused in `prepare`, before anything binds.
 pub(crate) async fn refused_at_startup<B: Broker>(broker: &B, mounts: Mounts) {
-    match bound::<B, _>(broker.link(), Probe::default(), mounts, Count::Default).await {
+    match bound::<B, _>(broker.link(), Probe::default(), mounts, Count::Default, None).await {
         Err(StartupError::Configure(_)) => {}
         Err(other) => crate::startup_failed!("expected a `Configure` refusal for {mounts:?}, got: {}", report(&other)),
         Ok(app) => {
@@ -789,6 +814,15 @@ impl<B: Broker> Fixture<B> {
     /// [`start`](Self::start) with the server's `max_inflight` set.
     pub(crate) async fn start_bounded(max_inflight: Count) -> Fixture<B> {
         Fixture::start_over(max_inflight, B::link).await
+    }
+
+    /// [`start`](Self::start) with the server's `shutdown_timeout` set to `cap`.
+    pub(crate) async fn start_capped(cap: Duration) -> Fixture<B> {
+        let broker = B::start().await;
+        let server = server_capped(&broker, cap).await;
+        let client = client(&broker, &[&server]).await;
+        ready(&broker, &client.rpc, &[&server]).await;
+        Fixture { broker, server, client }
     }
 
     /// [`start_bounded`](Self::start_bounded) with the server over the link `server_link` builds

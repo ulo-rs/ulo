@@ -2,8 +2,10 @@
 //! nothing here is the tokio listener's or the smol listener's. A connection reaches the closure
 //! with its addresses and is served through hyper over `FuturesIo`; a handshake past its timeout
 //! is dropped on the app's clock; the drain stops accepting and waits for the connections; the
-//! accept loop and every connection are tasks of the runtime `Serve` was given; and `close_after`
-//! polls each connection in its own first poll, and aborts them when dropped after it.
+//! accept loop and every connection are tasks of the runtime `Serve` was given; `close_after`
+//! polls each connection in its own first poll, and aborts them when dropped after it; and a
+//! `close_after` cut after its first poll releases listeners no `run` ever took, so their address
+//! can be bound again while the `Serve` lives on.
 
 mod support;
 
@@ -423,5 +425,22 @@ fn close_after_aborts_a_connection_that_outlives_its_grace_and_returns_at_once_w
         };
         within("close_after with nothing open and a grace that never ends", idle.close_after(pending::<()>())).await;
         assert!(within("the idle serve loop's end", running).await.is_finished());
+    });
+}
+
+#[test]
+fn a_close_after_cut_after_its_first_poll_releases_listeners_that_never_served() {
+    on_smol(|smol| async move {
+        let runtime: Arc<dyn Runtime> = Arc::new(smol);
+        let listener = port_zero();
+        let addr = listener.local_addr();
+        let serve = Serve::<Plain>::new(vec![listener], None, &ServeConfig::default(), Arc::clone(&runtime)).expect("adopted");
+        let held = std::net::TcpListener::bind(addr).map(drop);
+        assert_eq!(held.map_err(|error| error.kind()), Err(io::ErrorKind::AddrInUse), "the address was free while `Serve` held its listener");
+
+        assert!(first_poll_of_close(&serve).await, "close with nothing served did not end in its first poll");
+        let rebound = std::net::TcpListener::bind(addr).unwrap_or_else(|error| panic!("{addr} was not released by the cut close: {error}"));
+        assert_eq!(rebound.local_addr().expect("the rebound address"), addr);
+        drop(serve);
     });
 }

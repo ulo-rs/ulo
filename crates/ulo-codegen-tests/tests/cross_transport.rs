@@ -768,10 +768,36 @@ async fn frozen_ws(addr: SocketAddr) -> impl Sized {
     socket
 }
 
-/// The `Chat` gateway alone, for an app binding only WebSocket servers.
-struct ChatOnly(Gate);
+/// `Counter.Count` as a flood: `up_to` numbers, every one ready, each a ten-byte varint.
+#[injectable]
+struct Flood;
 
-impl Module for ChatOnly {
+#[routes]
+impl Flood {
+    #[ulo_grpc::method(pb::counter::Count)]
+    async fn count(&self, req: Grpc<pb::CountRequest>) -> impl futures_util::Stream<Item = Result<Number, CallError>> {
+        futures_util::stream::iter((0..i64::from(req.0.up_to)).map(|n| Ok(Number { value: i64::MAX - n })))
+    }
+}
+
+/// A gRPC client that calls `Count` for more than its 64 KiB HTTP/2 receive windows hold and then
+/// reads nothing, so the server's send waits for a `WINDOW_UPDATE` that never comes.
+async fn frozen_grpc(addr: SocketAddr) -> impl Sized {
+    let channel = tonic::transport::Endpoint::from_shared(format!("http://{addr}"))
+        .expect("an endpoint")
+        .initial_stream_window_size(65_535)
+        .initial_connection_window_size(65_535)
+        .connect()
+        .await
+        .expect("the gRPC channel");
+    let reply = CounterClient::new(channel.clone()).count(pb::CountRequest { up_to: 400_000 }).await.expect("the stream's head");
+    (channel, reply.into_inner())
+}
+
+/// The `Chat` gateway and the `Count` flood, for an app binding WebSocket and gRPC servers.
+struct Frozen(Gate);
+
+impl Module for Frozen {
     fn identity(&self) -> ModuleIdentity {
         ModuleIdentity::of_type::<Self>()
     }
@@ -779,18 +805,21 @@ impl Module for ChatOnly {
     fn register(&self, m: &mut ModuleDef<'_>) {
         m.value(self.0.clone());
         m.controller::<Chat>();
+        m.controller::<Flood>();
     }
 }
 
 /// The closes run at once: two WebSocket servers, each with a client that holds a call and then
 /// reads nothing, so each server waits out its 500 ms grace for the close handshake its client
-/// never completes, and `close` takes the drain window and one grace, not two.
+/// never completes, and two gRPC servers, each with a client whose reply stream fills its HTTP/2
+/// window and is never read, so each waits out its 500 ms grace for a connection that cannot end.
+/// `close` takes the drain window and one grace, not four.
 #[tokio::test]
-async fn two_servers_waiting_out_their_grace_for_frozen_clients_close_within_one_grace() {
+async fn four_servers_waiting_out_their_grace_for_frozen_clients_close_within_one_grace() {
     const DRAIN: Duration = Duration::from_millis(200);
     const GRACE: Duration = Duration::from_millis(500);
     let gate = Gate { semaphore: Arc::new(Semaphore::new(0)), entered: Record::new(), dropped: Record::new() };
-    let app = App::builder(ChatOnly(gate.clone()))
+    let app = App::builder(Frozen(gate.clone()))
         .runtime(ulo_runtime_tokio::Tokio::current())
         .drain_timeout(DRAIN)
         .wire()
@@ -800,23 +829,26 @@ async fn two_servers_waiting_out_their_grace_for_frozen_clients_close_within_one
         .unwrap_or_else(|error| panic!("the app did not connect: {error}"))
         .bind(ulo_ws_hyper::Server::new("127.0.0.1:0"))
         .bind(ulo_ws_hyper::Server::new("127.0.0.1:0"))
+        .bind(ulo_grpc::Server::new("127.0.0.1:0").reflection(false))
+        .bind(ulo_grpc::Server::new("127.0.0.1:0").reflection(false))
         .listen()
         .await
         .unwrap_or_else(|error| panic!("the app did not listen: {error}"));
-    let addrs: Vec<SocketAddr> = app.addresses().iter().map(|bound| bound.addr).collect();
-    assert_eq!(addrs.len(), 2, "one address per server: {addrs:?}");
+    let addrs = |transport: &str| -> Vec<SocketAddr> { app.addresses().iter().filter(|bound| bound.transport == transport).map(|bound| bound.addr).collect() };
+    let (ws, grpc) = (addrs(ulo_ws::Ws::KEY), addrs(ulo_grpc::Grpc::KEY));
+    assert_eq!((ws.len(), grpc.len()), (2, 2), "one address per server: {:?}", app.addresses());
     let handle = app.handle();
     let serving = tokio::spawn(async move { app.serve(std::future::pending::<Signal>()).await });
-    let frozen = (frozen_ws(addrs[0]).await, frozen_ws(addrs[1]).await);
-    gate.entered.at_least(2, "both handlers entering").await;
+    let frozen = (frozen_ws(ws[0]).await, frozen_ws(ws[1]).await, frozen_grpc(grpc[0]).await, frozen_grpc(grpc[1]).await);
+    gate.entered.at_least(2, "both WebSocket handlers entering").await;
 
     let started = std::time::Instant::now();
     let closed = within("close", handle.close(Signal::new("cross"))).await;
     let took = started.elapsed();
     let shutdown = closed.unwrap_or_else(|error| panic!("each close ended within its own bound: {error}"));
-    assert_eq!(shutdown.abandoned, 2, "the two held calls were abandoned");
+    assert_eq!(shutdown.abandoned, 4, "the two held calls and the two frozen streams were abandoned");
     assert!(took >= DRAIN + GRACE, "close returned before a server waited out its grace: {took:?}");
-    assert!(took < DRAIN + GRACE + Duration::from_millis(400), "the two graces were paid one after the other: {took:?}");
+    assert!(took < DRAIN + GRACE + Duration::from_millis(400), "the graces were paid one after the other: {took:?}");
     let _ = within("serve", serving).await;
     let mut dropped = gate.dropped.at_least(2, "the two held handlers dropping").await;
     dropped.sort_unstable_by_key(|(transport, _)| *transport);

@@ -172,6 +172,53 @@ async fn a_str_secret_bound_by_value_is_redacted_in_a_constructors_error() {
     assert!(!source.to_string().contains(SECRET) && !format!("{source:?}").contains(SECRET));
 }
 
+/// A `Secret` of a type `value` cannot recognize by downcast.
+#[derive(Clone, PartialEq, Eq)]
+struct Token(&'static str);
+
+impl std::fmt::Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+/// `m.value` registers `Secret<String>` and `Secret<&'static str>` alone; any other `Secret<T>`
+/// bound by value stays visible in a report until `m.secret(&s)` registers it (section 9.3).
+#[tokio::test]
+async fn a_secret_of_another_type_is_visible_in_a_report_without_m_secret() {
+    const SECRET: &str = "custom-display-secret";
+    let error = connect_err(Mod::<A>::new(|m| {
+        m.value(Secret::new(Token(SECRET)));
+        m.try_singleton(|| async { Err::<S1, _>(Boom::new(format!("connect failed with {SECRET}"))) });
+    }))
+    .await;
+
+    assert!(error.to_string().contains(SECRET), "the documented gap closed, update section 9.3: {error}");
+    let (key, _, reason) = construction(error);
+    assert_eq!(key, Key::of::<S1, ()>());
+    let FailureReason::Errored(source) = reason else { panic!("expected `Errored`, got: {reason}") };
+    assert!(source.to_string().contains(SECRET));
+}
+
+#[tokio::test]
+async fn a_secret_of_another_type_is_redacted_once_m_secret_registers_it() {
+    const SECRET: &str = "custom-display-secret";
+    let error = connect_err(Mod::<A>::new(|m| {
+        let secret = Secret::new(Token(SECRET));
+        m.secret(&secret);
+        m.value(secret);
+        m.try_singleton(|| async { Err::<S1, _>(Boom::new(format!("connect failed with {SECRET}"))) });
+    }))
+    .await;
+
+    assert!(!error.to_string().contains(SECRET), "the startup report holds the secret: {error}");
+    let (key, _, reason) = construction(error);
+    assert_eq!(key, Key::of::<S1, ()>());
+    let FailureReason::Errored(source) = reason else { panic!("expected `Errored`, got: {reason}") };
+    assert!(!source.to_string().contains(SECRET) && !format!("{source:?}").contains(SECRET));
+    assert!(source.downcast_ref::<Boom>().is_some_and(|b| b.0.contains(SECRET)));
+}
+
 #[tokio::test]
 async fn a_failed_connect_stops_the_walk_and_runs_no_hook_of_what_it_had_built() {
     let log = Log::new();

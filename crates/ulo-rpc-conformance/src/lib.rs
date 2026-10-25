@@ -17,7 +17,9 @@
 //! ulo_rpc_conformance::conformance_suite!(NatsBroker);
 //! ```
 //!
-//! A scenario asserts kinds and reason strings, never message text. A scenario a link's
+//! A scenario asserts kinds and reason strings, never message text, with one exception: the
+//! spent-cap scenario reads the shutdown phrase, the only thing telling the server's `unavailable`
+//! from the client's own for a connection that closed. A scenario a link's
 //! capabilities exclude asserts the refusal the capability declares instead: a streamed shape on
 //! UDP is refused at startup, a binary payload on a JSON link before any I/O and its handler at
 //! startup, a miss on a link without `miss_signal` is the client's `Timeout`, and the
@@ -244,6 +246,8 @@ macro_rules! conformance_suite {
             oversized_payload => payloads::oversized,
             drain => drain::drain,
             drain_window => drain::window,
+            a_call_held_past_a_spent_cap_is_answered_unavailable => drain::spent_cap,
+            a_call_held_past_a_spent_cap_is_answered_unavailable_on_one_thread => drain::spent_cap [block_on_one_thread],
             recovery_after_disrupt => recovery::after_disrupt,
             client_close => client_close::client_close,
             two_instances => delivery::two_instances,

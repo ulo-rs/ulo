@@ -73,3 +73,29 @@ fn a_key_that_is_not_the_certificates_is_refused() {
         "refused as a key that is not the certificate's, got {refused:?}"
     );
 }
+
+/// Valid base64 that is not a key: the PEM parses and no supported key type reads what it holds.
+#[test]
+fn a_pem_section_holding_no_key_is_refused_as_unrecognised() {
+    let not_a_key = "-----BEGIN PRIVATE KEY-----\nAAAAAAAA\n-----END PRIVATE KEY-----\n";
+    let refused = Tls::from_pem(localhost().cert_pem(), not_a_key).load(&[]).expect_err("a section holding no key is refused");
+    assert!(
+        matches!(refused, TlsError::PrivateKey { path: None, cause: KeyCause::Unrecognised }),
+        "refused as bytes that are no supported key, got {refused:?}"
+    );
+}
+
+#[test]
+fn an_unrecognised_key_file_is_refused_with_its_path() {
+    let dir = std::env::temp_dir().join(format!("ulo-net-tls-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch directory");
+    let (cert, key) = (dir.join("cert.pem"), dir.join("key.pem"));
+    std::fs::write(&cert, localhost().cert_pem()).expect("write certificate");
+    std::fs::write(&key, "-----BEGIN PRIVATE KEY-----\nAAAAAAAA\n-----END PRIVATE KEY-----\n").expect("write key");
+    let refused = Tls::from_pem_files(&cert, &key).load(&[]).expect_err("a file holding no key is refused");
+    let _ = std::fs::remove_dir_all(&dir);
+    match refused {
+        TlsError::PrivateKey { path: Some(path), cause: KeyCause::Unrecognised } => assert_eq!(path, key),
+        other => panic!("a key file holding no key was {other:?}"),
+    }
+}
