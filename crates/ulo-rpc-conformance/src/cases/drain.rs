@@ -20,10 +20,11 @@ const PACE: Duration = Duration::from_millis(10);
 /// The event emitted during the drain on a link that declares `holds_unserved`.
 const HELD_EVENT: u32 = 11;
 
-/// What the server answers a call the drain's end abandoned, beside the kind `unavailable`. The
-/// spent-cap scenario reads it, since the client's own `unavailable` for a connection that closed
-/// carries the same kind and no reason.
-const SHUTDOWN_PHRASE: &str = "the server is shutting down";
+/// What the server answers a call the drain's end abandoned, beside the kind `unavailable`, read
+/// through the constant `ulo-transport` exports so the phrase has one source. The spent-cap
+/// scenario compares it, since the client's own `unavailable` for a connection that closed carries
+/// the same kind and no reason.
+const SHUTDOWN_PHRASE: &str = ulo_transport::SHUTDOWN_MESSAGE;
 
 /// How long the spent-cap scenario's call holds its handler: longer than the scenario runs.
 const HELD_PAST_THE_CLOSE: u64 = 60_000;

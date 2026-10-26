@@ -25,6 +25,12 @@
 //! its session as it ends; the 65,535 Receive Maximum keeps that window as wide as MQTT 5 allows,
 //! which keeps the case rare.
 //!
+//! A server's `close` answers every call it still holds `unavailable` with the shutdown phrase,
+//! ahead of its DISCONNECT and in its first poll, and drops a reply sent after it: MQTT allows no
+//! packet after the DISCONNECT. A reply finding rumqttc's request channel full waits for room, so
+//! a long streamed reply is paced by the broker; `close` queues its answers without waiting, and a
+//! channel full at `close` loses them.
+//!
 //! The link refuses work over the server's bound rather than holding it at the broker: over
 //! `Server::max_inflight`, 1,024 unset, a request is answered `unavailable` with a `RetryAfter`
 //! detail, as on TCP, UDP, NATS and Redis. Holding it instead, the acknowledgement sent once the

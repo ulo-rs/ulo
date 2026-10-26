@@ -14,6 +14,10 @@ mod support;
 use std::time::{Duration, Instant};
 
 use futures_util::{Stream, StreamExt, future, stream};
+use http::{HeaderMap, Request};
+use http_body_util::{BodyExt, Full};
+use prost::Message as _;
+use prost::bytes::Bytes;
 use tonic::{Code, Status};
 use ulo::{BoxError, Bound, Dep, ErrorHandler, ExecutionRef, Module, ModuleDef, ModuleIdentity, injectable, routes};
 use ulo_codegen_tests::probe::clock_client::ClockClient;
@@ -29,6 +33,10 @@ const GRACE: Duration = Duration::from_millis(300);
 
 /// Longer than any test runs: a handler sleeping this long is still running at the deadline.
 const FOREVER: Duration = Duration::from_secs(30);
+
+/// How long `Late` holds its thread, and the message it answers with.
+const LATE: Duration = Duration::from_millis(300);
+const LATE_TICK: u32 = 42;
 
 const STREAM_WARNING: &str = "an error handler answered a timed-out call with a stream; the stream was ended at the deadline";
 
@@ -193,6 +201,21 @@ impl ClockService {
     async fn stall_trickled(&self, _req: Message<Ticks>, exec: ExecutionRef) -> impl Stream<Item = Result<Tick, CallError>> {
         let _ = self.stall(exec).await;
         stream::empty()
+    }
+
+    /// Yields once, so the dispatcher polls the deadline's timer, then holds its thread past the
+    /// deadline and answers: the reply is ready in the poll the deadline passes in.
+    #[ulo_grpc::method(probe::clock::Late)]
+    async fn late(&self, _req: Message<Ticks>) -> Tick {
+        tokio::task::yield_now().await;
+        std::thread::sleep(LATE);
+        Tick { n: LATE_TICK }
+    }
+
+    /// A reply stream that yields nothing: its body is waiting for a message at the deadline.
+    #[ulo_grpc::method(probe::clock::Hush)]
+    fn hush(&self, _req: Message<Ticks>) -> impl Stream<Item = Result<Tick, CallError>> {
+        stream::pending()
     }
 
     /// One tick, then nothing until the reply is ended.
@@ -487,6 +510,95 @@ async fn a_deadline_passing_during_a_streamed_reply_ends_it_with_deadline_exceed
     match end {
         Some(Err(status)) => assert_eq!(status.code(), Code::DeadlineExceeded, "{status:?}"),
         other => panic!("expected the reply to end with DEADLINE_EXCEEDED, got {other:?}"),
+    }
+    app.stop().await;
+}
+
+/// One frame of a raw reply body.
+#[derive(Debug)]
+enum Written {
+    Message(Tick),
+    Trailers(HeaderMap),
+}
+
+/// `path` called over the plain client with `grpc-timeout: timeout` and an empty `Ticks`, the
+/// reply's head and every frame of its body, in order, to the body's end.
+async fn raw_call(app: &Running, client: &PlainHttp2, path: &str, timeout: &str) -> (HeaderMap, Vec<Written>) {
+    let request = Request::post(format!("{}{path}", app.origin()))
+        .header("content-type", "application/grpc")
+        .header("te", "trailers")
+        .header("grpc-timeout", timeout)
+        .body(tonic::body::Body::new(Full::new(Bytes::from_static(&[0; 5]))))
+        .unwrap_or_else(|error| panic!("bad request: {error}"));
+    let reply = support::within("the reply's head", client.request(request)).await.unwrap_or_else(|error| panic!("{path} failed: {error}"));
+    let (head, mut body) = reply.into_parts();
+    let mut written = Vec::new();
+    while let Some(frame) = support::within("the reply's next frame", body.frame()).await {
+        let frame = frame.unwrap_or_else(|error| panic!("the reply's body failed: {error}"));
+        match frame.into_data() {
+            Ok(data) => {
+                assert_eq!(data.first(), Some(&0), "a compressed or malformed message: {data:?}");
+                let tick = Tick::decode(&data[5..]).unwrap_or_else(|error| panic!("an undecodable message: {error}"));
+                written.push(Written::Message(tick));
+            }
+            Err(frame) => written.push(Written::Trailers(frame.into_trailers().unwrap_or_else(|_| panic!("a frame of neither kind")))),
+        }
+    }
+    (head.headers, written)
+}
+
+fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+/// A worker pool, so the deadline's timer fires on a thread other than the one `Late` holds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_unary_reply_ready_in_the_deadlines_poll_is_sent_with_ok_trailers() {
+    let (app, _client, _) = start().await;
+    let (plain, _) = app.plain_http2();
+    let (headers, written) = raw_call(&app, &plain, "/codegen.probe.v1.Clock/Late", "50m").await;
+    assert_eq!(header(&headers, "grpc-status"), None, "the head of a reply with a message is not a trailers-only status: {headers:?}");
+    match written.as_slice() {
+        [Written::Message(tick), Written::Trailers(trailers)] => {
+            assert_eq!(tick.n, LATE_TICK);
+            assert_eq!(header(trailers, "grpc-status"), Some("0"), "{trailers:?}");
+            assert_eq!(header(trailers, "grpc-message"), None, "{trailers:?}");
+        }
+        other => panic!("expected the message, then OK trailers, and nothing after, got {other:?}"),
+    }
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn a_reply_still_waiting_for_its_message_at_the_deadline_is_ended_with_deadline_exceeded_and_no_message() {
+    let (app, _client, _) = start().await;
+    let (plain, _) = app.plain_http2();
+    let (headers, written) = raw_call(&app, &plain, "/codegen.probe.v1.Clock/Hush", "200m").await;
+    let status = match written.as_slice() {
+        [Written::Trailers(trailers)] => trailers,
+        [] => &headers,
+        other => panic!("expected no message and one set of trailers, got {other:?}"),
+    };
+    assert_eq!(header(status, "grpc-status"), Some("4"), "{status:?}");
+    assert_eq!(header(status, "grpc-message"), Some("the%20call's%20deadline%20passed"), "grpc-message is percent-encoded: {status:?}");
+    app.stop().await;
+}
+
+/// The health service's `Watch` is a builtin reply stream, which no handler marks: it reads no
+/// cancellation, so the outermost body is what ends it when the deadline passes while it waits
+/// for a change, with DEADLINE_EXCEEDED trailers after the status it sent first.
+#[tokio::test]
+async fn an_unmarked_reply_stream_waiting_at_the_deadline_is_ended_with_deadline_exceeded() {
+    let (app, _client, _) = start().await;
+    let (plain, _) = app.plain_http2();
+    let (headers, written) = raw_call(&app, &plain, "/grpc.health.v1.Health/Watch", "200m").await;
+    assert_eq!(header(&headers, "grpc-status"), None, "the head of a reply that sent a message is not a trailers-only status: {headers:?}");
+    match written.as_slice() {
+        [Written::Message(_), Written::Trailers(trailers)] => {
+            assert_eq!(header(trailers, "grpc-status"), Some("4"), "{trailers:?}");
+            assert_eq!(header(trailers, "grpc-message"), Some("the%20call's%20deadline%20passed"), "{trailers:?}");
+        }
+        other => panic!("expected the first status, then DEADLINE_EXCEEDED trailers, got {other:?}"),
     }
     app.stop().await;
 }

@@ -14,8 +14,8 @@ use async_nats::{Client, ConnectOptions, Event, HeaderMap, Message, ServerAddr, 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use bytes::Bytes;
-use futures_util::StreamExt;
 use futures_util::future::{Either, select};
+use futures_util::{FutureExt, StreamExt};
 use rustls_native_certs::CertificateResult;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -31,7 +31,7 @@ use ulo_rpc::{
     Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
 };
 use ulo_transport::prepare::{Failures, zero_bound};
-use ulo_transport::{Detail, Details, ErrorKind};
+use ulo_transport::{Detail, Details, ErrorKind, SHUTDOWN_MESSAGE};
 
 /// The header naming a message's frame kind where the message alone does not tell it: `open` on
 /// the request lane, `in`, `in_end` and `cancel` on the control lane, `opened` on the reply lane.
@@ -286,7 +286,15 @@ impl Link for Nats {
         // The server's one connection reconnects with the options it is made with for the app's
         // life, so it waits for the file rather than connect without it.
         let roots = self.roots(&servers, &runtime, true).await?;
-        let client = runtime.run(open(servers, ConnectOptions::new(), roots.as_deref().and_then(Load::path))).await??;
+        let (ended, _) = watch::channel(0u64);
+        let reported = ended.clone();
+        let options = ConnectOptions::new().event_callback(move |event| {
+            if matches!(event, Event::Closed | Event::Disconnected) {
+                reported.send_modify(|ends| *ends += 1);
+            }
+            async {}
+        });
+        let client = runtime.run(open(servers, options, roots.as_deref().and_then(Load::path))).await??;
         self.max_payload.store(client.server_info().max_payload as u64, Ordering::Relaxed);
 
         // Every subscription is made before any lane starts, so a failure leaves nothing
@@ -316,7 +324,16 @@ impl Link for Nats {
         }
 
         let (phase, _) = watch::channel(Phase::Serving);
-        let side = Arc::new(ServerSide { client, codec: self.codec, calls: Arc::new(Calls::new()), phase, _roots: roots });
+        let side = Arc::new(ServerSide {
+            client,
+            codec: self.codec,
+            runtime: runtime.clone(),
+            calls: Arc::new(Calls::new()),
+            replies: Arc::default(),
+            ended,
+            phase,
+            _roots: roots,
+        });
         let (deliveries, inbound) = mpsc::unbounded_channel();
         let handle = runtime.handle();
         let mut state = lock(&self.state);
@@ -407,9 +424,12 @@ impl Link for Nats {
         if let Some(side) = server {
             side.phase.send_replace(Phase::Closed);
             side.calls.clear();
+            side.replies.close(&side.client, side.codec);
+            let shut_down = side.keep_until_closed();
             if let Err(error) = shut(&side.client).await {
                 failure = Some(error);
             }
+            let _ = shut_down.send(());
         }
         if let Some(client) = client
             && let Err(error) = shut(&client).await
@@ -456,7 +476,12 @@ enum Phase {
 struct ServerSide {
     client: Client,
     codec: Codec,
+    /// The link's runtime, which the task keeping the connection to its close is spawned on.
+    runtime: Tokio,
     calls: Arc<Calls>,
+    replies: Arc<Replies>,
+    /// Counts the connection's `Closed` and `Disconnected` events.
+    ended: watch::Sender<u64>,
     phase: watch::Sender<Phase>,
     /// The load whose file the connection was handed, held while the connection may reconnect,
     /// since each reconnect reads the file again.
@@ -510,7 +535,7 @@ impl ServerSide {
         let frame = match kind_of(message.headers.as_ref()).as_deref() {
             Some(IN) => self.calls.get(&key).map(|(id, path)| (Frame::In { id, data: Data::new(message.payload) }, path)),
             Some(IN_END) => self.calls.get(&key).map(|(id, path)| (Frame::InEnd { id }, path)),
-            Some(CANCEL) => self.calls.release(&key).map(|(id, path)| (Frame::Cancel { id }, path)),
+            Some(CANCEL) => self.release(&key).map(|(id, path)| (Frame::Cancel { id }, path)),
             _ => None,
         };
         if let Some((frame, path)) = frame {
@@ -520,25 +545,184 @@ impl ServerSide {
 
     /// Holds a call under its reply subject, the key its control messages carry.
     fn hold(&self, subject: String) -> (u64, ReplyPath) {
-        let key = subject.clone();
-        let client = self.client.clone();
         let codec = self.codec;
-        let calls = Arc::clone(&self.calls);
+        let lane = Lane { client: self.client.clone(), calls: Arc::clone(&self.calls), replies: Arc::clone(&self.replies), subject: subject.clone() };
         let path = ReplyPath::new(move |frame: Frame| -> BoxFuture<'static, Result<(), BoxError>> {
-            let client = client.clone();
-            let calls = Arc::clone(&calls);
-            let subject = subject.clone();
-            Box::pin(async move {
-                if is_terminal(&frame) {
-                    calls.release(&subject);
-                }
-                let bytes = codec.encode_frame(&frame)?;
-                client.publish(subject, bytes).await?;
-                Ok(())
-            })
+            // Queued here rather than in the future, so the frame's place against `close`'s
+            // answers is fixed when the send is called, not when its future is first polled.
+            match codec.encode_frame(&frame) {
+                Ok(bytes) => lane.send(bytes, is_terminal(&frame)),
+                Err(error) => Box::pin(std::future::ready(Err(BoxError::from(error)))),
+            }
         });
-        let id = self.calls.hold(key, path.clone());
+        let id = self.calls.hold(subject.clone(), path.clone());
+        lock(&self.replies.answers).unanswered.insert(subject, id);
         (id, path)
+    }
+
+    /// Lets go of the call held under `key`, whose caller cancelled it: the server writes it
+    /// nothing more, and `close` answers it nothing.
+    fn release(&self, key: &str) -> Option<(u64, ReplyPath)> {
+        let call = self.calls.release(key);
+        lock(&self.replies.answers).unanswered.remove(key);
+        call
+    }
+
+    /// Spawns a task holding a clone of the connection's `Client` until the connection reports
+    /// itself closed or disconnected, and answers the sender `close` signals once its own drain is
+    /// queued. async-nats's connection task exits as soon as its command channel has no sender
+    /// left, without writing the commands it has taken and not yet written, so the replies and the
+    /// `unavailable`s `close` queued would be lost when a `close` cut by a spent shutdown cap drops
+    /// the last `Client` with the app. A `close` dropped before its drain is queued leaves the
+    /// task to queue it, and the drain closes the connection once what was queued is written. A
+    /// connection already down is not kept: async-nats writes nothing it queued until it
+    /// reconnects.
+    fn keep_until_closed(&self) -> oneshot::Sender<()> {
+        let (shut_down, drained) = oneshot::channel::<()>();
+        if self.client.connection_state() != Connection::Connected {
+            return shut_down;
+        }
+        let client = self.client.clone();
+        let mut ended = self.ended.subscribe();
+        ended.borrow_and_update();
+        self.runtime.handle().spawn(async move {
+            if drained.await.is_err()
+                && let Err(error) = client.drain().await
+            {
+                tracing::debug!(%error, "the NATS link could not drain its connection after a `close` cut short");
+                return;
+            }
+            let _ = ended.changed().await;
+            drop(client);
+        });
+        shut_down
+    }
+}
+
+/// One held call's way to its caller, which its `ReplyPath` sends through.
+#[derive(Clone)]
+struct Lane {
+    client: Client,
+    calls: Arc<Calls>,
+    replies: Arc<Replies>,
+    /// The call's reply subject, the key it is held under in `calls` and in `replies`.
+    subject: String,
+}
+
+impl Lane {
+    /// Queues one reply frame, unless `close` has queued its answers. A terminal frame queued
+    /// ends the call: its control messages find no call, and `close` writes it nothing. A frame
+    /// finding async-nats's command channel full waits for room in the future answered, the lock
+    /// let go, so a streamed reply is paced by the connection rather than cut at the channel's
+    /// capacity; the call stays unanswered while it waits, so a `close` meanwhile answers it first.
+    fn send(&self, bytes: Bytes, terminal: bool) -> BoxFuture<'static, Result<(), BoxError>> {
+        let mut answers = lock(&self.replies.answers);
+        if answers.closed {
+            return Box::pin(std::future::ready(Err("the NATS link has closed; the reply was not sent".into())));
+        }
+        // Polled inside tokio's cooperative budget, unlike `close`'s answers: a spent budget answers
+        // `Pending` here, and the frame waiting below yields the thread, which a stream produced
+        // with no await between items otherwise holds until the channel fills.
+        match queue(&self.client, self.subject.clone(), bytes.clone(), Budget::Kept) {
+            Ok(()) => {
+                if terminal {
+                    self.answered(&mut answers);
+                }
+                return Box::pin(std::future::ready(Ok(())));
+            }
+            Err(Queued::Refused(error)) => {
+                self.answered(&mut answers);
+                return Box::pin(std::future::ready(Err(error)));
+            }
+            Err(Queued::Full) => {}
+        }
+        drop(answers);
+        let lane = self.clone();
+        Box::pin(async move {
+            let sent = lane.client.publish(lane.subject.clone(), bytes).await;
+            let mut answers = lock(&lane.replies.answers);
+            if sent.is_err() || terminal {
+                lane.answered(&mut answers);
+            }
+            Ok(sent?)
+        })
+    }
+
+    /// The call is sent its last frame: its control messages find no call, and `close` writes it
+    /// nothing.
+    fn answered(&self, answers: &mut Answers) {
+        answers.unanswered.remove(&self.subject);
+        self.calls.release(&self.subject);
+    }
+}
+
+/// Whether [`queue`] polls inside tokio's cooperative budget.
+enum Budget {
+    Kept,
+    Ignored,
+}
+
+/// Why [`queue`] did not queue a publish.
+enum Queued {
+    /// The command channel has no room.
+    Full,
+    Refused(BoxError),
+}
+
+/// Publishes without waiting: async-nats offers no `try_` publish, so its `publish` is polled
+/// once, which hands the command to the connection's channel when it has room and answers
+/// `Pending` when it has none, the publish then dropped unqueued. Inside tokio's cooperative
+/// budget a spent budget answers `Pending` too.
+fn queue(client: &Client, subject: String, bytes: Bytes, budget: Budget) -> Result<(), Queued> {
+    let published = match budget {
+        Budget::Kept => client.publish(subject, bytes).now_or_never(),
+        Budget::Ignored => tokio::task::unconstrained(client.publish(subject, bytes)).now_or_never(),
+    };
+    match published {
+        Some(published) => published.map_err(|error| Queued::Refused(error.into())),
+        None => Err(Queued::Full),
+    }
+}
+
+/// The lock every reply a server sends and its `close` take, so that once `close` has queued
+/// the `unavailable` for each call still held, no call's own answer is queued after it.
+#[derive(Default)]
+struct Replies {
+    answers: Mutex<Answers>,
+}
+
+#[derive(Default)]
+struct Answers {
+    /// Set by `close` once it has queued its answers: a reply sent after it is dropped.
+    closed: bool,
+    /// The local id of each held call whose terminal frame has not been queued, by its reply
+    /// subject.
+    unanswered: HashMap<String, u64>,
+}
+
+impl Replies {
+    /// Queues, in one hold of the lock and without waiting, the `err` of kind `unavailable` with
+    /// the shutdown phrase for every held call no terminal frame was queued for, a stream's after
+    /// the items queued before it, and marks the replies closed, so a call's own answer arriving
+    /// after it is dropped. A frame the channel has no room for is not sent and is logged at
+    /// `debug`.
+    fn close(&self, client: &Client, codec: Codec) {
+        let mut answers = lock(&self.answers);
+        let mut unanswered: Vec<(String, u64)> = answers.unanswered.drain().collect();
+        unanswered.sort_by_key(|(_, id)| *id);
+        for (subject, id) in unanswered {
+            let error = ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new());
+            let queued = codec.encode_frame(&Frame::Err { id, error }).map_err(BoxError::from).and_then(|bytes| {
+                queue(client, subject, bytes, Budget::Ignored).map_err(|refused| match refused {
+                    Queued::Full => BoxError::from("the NATS link's command channel is full"),
+                    Queued::Refused(error) => error,
+                })
+            });
+            if let Err(error) = queued {
+                tracing::debug!(%error, "the NATS link could not queue the shutdown answer of a call it held at `close`");
+            }
+        }
+        answers.closed = true;
     }
 }
 
@@ -1807,6 +1991,91 @@ mod tests {
         assert!(!plain.to_string().contains("tls://"), "{plain}");
         let tls = link("tls://localhost:1", missing, std::env::temp_dir).roots.wait(&runtime, true, Bound::Default).await.err().expect("the roots did not load");
         assert!(tls.to_string().contains("`tls://`"), "{tls}");
+    }
+
+    /// F482: what a `close` cut in its first poll queued reaches the caller once every other
+    /// handle on the connection has dropped.
+    #[cfg(feature = "integration")]
+    mod cut_close {
+        use std::net::{Ipv4Addr, SocketAddr};
+
+        use testcontainers::core::{IntoContainerPort, WaitFor};
+        use testcontainers::runners::AsyncRunner;
+        use testcontainers::{ContainerAsync, GenericImage};
+        use ulo_rpc_conformance::relay::{reachable, unshadowed};
+        use ulo_rpc_conformance::{report, startup_failed};
+
+        use super::*;
+
+        async fn nats() -> (SocketAddr, ContainerAsync<GenericImage>) {
+            let (container, addrs) = unshadowed("the NATS container", || async {
+                let container = GenericImage::new("nats", "2.10.14")
+                    .with_exposed_port(4222.tcp())
+                    .with_wait_for(WaitFor::message_on_stderr("Server is ready"))
+                    .start()
+                    .await
+                    .unwrap_or_else(|error| startup_failed!("the NATS container did not start: {}", report(&error)));
+                let port = container
+                    .get_host_port_ipv4(4222)
+                    .await
+                    .unwrap_or_else(|error| startup_failed!("the NATS port is not mapped: {}", report(&error)));
+                (container, vec![SocketAddr::from((Ipv4Addr::LOCALHOST, port))])
+            })
+            .await;
+            reachable(addrs[0], Duration::from_secs(10)).await;
+            (addrs[0], container)
+        }
+
+        /// A `close` polled once and dropped queues the `unavailable` for the call it holds, and
+        /// the side, the call's path and the `close` then drop, the server's last handles on its
+        /// connection but the one `close` hands its keeping task. The test runs on one thread, so
+        /// async-nats's connection task first runs after every drop: with no handle left it exits
+        /// without writing what it took from its channel, which a probe of async-nats 0.46 alone
+        /// showed for 40 publishes of 40, each followed by the drop of the last `Client`. The
+        /// keeping task drains the connection, which then closes.
+        #[tokio::test]
+        async fn a_close_cut_short_keeps_the_connection_until_it_has_written_its_answers() {
+            const REPLY: &str = "cut.reply";
+            let (server, _container) = nats().await;
+            let caller = async_nats::connect(server.to_string()).await.expect("the caller connects");
+            let mut replies = caller.subscribe(REPLY).await.expect("the caller subscribes");
+            caller.flush().await.expect("the subscription reaches the server");
+
+            let (ended, mut closed) = watch::channel(0u64);
+            let reported = ended.clone();
+            let options = ConnectOptions::new().event_callback(move |event| {
+                if matches!(event, Event::Closed | Event::Disconnected) {
+                    reported.send_modify(|ends| *ends += 1);
+                }
+                async {}
+            });
+            let client = options.connect(server.to_string()).await.expect("the server's connection opens");
+            let side = ServerSide {
+                client,
+                codec: Codec::Json,
+                runtime: Tokio::current(),
+                calls: Arc::new(Calls::new()),
+                replies: Arc::default(),
+                ended,
+                phase: watch::channel(Phase::Serving).0,
+                _roots: None,
+            };
+            let (id, path) = side.hold(REPLY.to_owned());
+
+            side.replies.close(&side.client, side.codec);
+            let shut_down = side.keep_until_closed();
+            drop((shut_down, path, side));
+
+            let answer = tokio::time::timeout(Duration::from_secs(5), replies.next()).await.ok().flatten().map(|message| message.payload);
+            let frame = answer.map(|payload| Codec::Json.decode_frame(&payload).expect("the answer decodes"));
+            assert_eq!(
+                frame,
+                Some(Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()) }),
+                "what the caller read for the call the cut close held"
+            );
+            let closed = tokio::time::timeout(Duration::from_secs(5), closed.changed()).await;
+            assert!(matches!(closed, Ok(Ok(()))), "the server's connection did not close after the cut close");
+        }
     }
 
     /// F423: a `nats://` link to a plaintext NATS server stays plain though it hands every

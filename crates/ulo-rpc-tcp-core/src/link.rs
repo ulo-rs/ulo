@@ -593,7 +593,7 @@ async fn idle(state: &State) {
 fn refuse(delivery: Delivery, runtime: &Arc<dyn Runtime>) {
     let (Frame::Req { id, .. } | Frame::Open { id, .. }) = delivery.frame else { return };
     let Some(reply) = delivery.reply else { return };
-    let error = ErrorBody::new(ErrorKind::Unavailable, "the server is shutting down", Details::new());
+    let error = ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new());
     drop(runtime.spawn(Box::pin(async move {
         if let Err(error) = reply.send(Frame::Err { id, error }).await {
             tracing::debug!(%error, "the TCP link could not refuse a request that arrived after the drain");

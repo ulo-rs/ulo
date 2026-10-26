@@ -38,6 +38,8 @@ service Clock {
   rpc StallAnswered(Ticks) returns (Tick);
   rpc StallStreamed(Ticks) returns (stream Tick);
   rpc StallTrickled(Ticks) returns (stream Tick);
+  rpc Late(Ticks) returns (Tick);
+  rpc Hush(Ticks) returns (stream Tick);
 }
 
 // Reply streams whose end `on_stream_end` reports, one method per case.

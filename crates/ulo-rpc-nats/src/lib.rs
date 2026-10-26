@@ -19,6 +19,14 @@
 //! async-nats reads the platform's store on the thread polling it. A `tls://` link whose load
 //! outlasts the bound is refused. A `nats://` link whose load fails connects without the file.
 //!
+//! A server's `close` answers every call it still holds `unavailable` with the shutdown phrase in
+//! its first poll, and drops a reply sent after it. A reply finding async-nats's command channel
+//! full waits for room, so a long streamed reply is paced by the connection; `close` queues its
+//! answers without waiting, and a channel full at `close` loses them. A task holds the server's connection past a `close` cut
+//! short until the connection has drained and closed, since async-nats discards what it has not
+//! written once its last handle drops; against a broker that stopped reading, until async-nats's
+//! pings report the connection lost.
+//!
 //! ```ignore
 //! app.bind(ulo_rpc::Server::new(ulo_rpc_nats::Nats::url("nats://bus:4222")))
 //! ```

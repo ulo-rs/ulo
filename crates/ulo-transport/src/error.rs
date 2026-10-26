@@ -228,7 +228,11 @@ impl<E: Classify> From<E> for CallError {
 
 pub(crate) const INTERNAL_MESSAGE: &str = "internal error";
 const FORBIDDEN_MESSAGE: &str = "forbidden";
-const CLOSED_MESSAGE: &str = "the server is shutting down";
+
+/// The message of the `Unavailable` every transport answers a call it refuses, or abandons at the
+/// drain's end, once the server is shutting down. The one source of the phrase: a transport
+/// writes it from here and a test compares against it.
+pub const SHUTDOWN_MESSAGE: &str = "the server is shutting down";
 
 /// Bounded, in case a chain of `Redacted` and constructor errors loops back on itself.
 const MAX_DEPTH: usize = 32;
@@ -272,7 +276,7 @@ fn recognise<'e>(error: impl ByType<'e>, depth: usize) -> Option<CallError> {
         return Some(from_lookup(lookup, depth + 1));
     }
     if error.get::<Closed>().is_some() {
-        return Some(CallError::new(ErrorKind::Unavailable, CLOSED_MESSAGE));
+        return Some(CallError::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE));
     }
     if let Some(redacted) = error.get::<Redacted>() {
         return recognise(redacted, depth + 1);
@@ -289,7 +293,7 @@ pub(crate) fn from_lookup(lookup: &LookupError, depth: usize) -> CallError {
         LookupError::Construct { reason: FailureReason::Errored(cause), .. } => {
             recognise(cause, depth + 1).unwrap_or_else(internal)
         }
-        LookupError::Closed { .. } => CallError::new(ErrorKind::Unavailable, CLOSED_MESSAGE),
+        LookupError::Closed { .. } => CallError::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE),
         _ => internal(),
     }
 }

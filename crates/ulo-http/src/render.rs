@@ -106,7 +106,7 @@ pub(crate) fn from_multipart(err: BoxError, app: &AppHandle) -> BoxError {
 
 /// What every refusal of a call because the server is draining or closing says, on every
 /// transport.
-pub(crate) const SHUTTING_DOWN: &str = "the server is shutting down";
+pub(crate) const SHUTTING_DOWN: &str = ulo_transport::SHUTDOWN_MESSAGE;
 
 /// 503 with `Retry-After` and `Connection: close`: a request arriving once `Execution::open` is
 /// refused, during the drain, and a call still running when the drain's end abandons it.

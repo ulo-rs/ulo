@@ -92,7 +92,7 @@ impl Broker for Mosquitto {
 
 ulo_rpc_conformance::conformance_suite!(Mosquitto; not_applicable {
     cancel_follows_its_request: "U17: the link carries a request and its `cancel` on separate lanes, and the broker may deliver the `cancel` first",
-    a_call_held_past_a_spent_cap_is_answered_unavailable: "F479, open: on a worker pool another worker queues the held call's answer after `close` queued the DISCONNECT, and MQTT allows no packet after it; the one-thread stamp passes",
+    a_call_held_past_a_spent_cap_is_answered_unavailable: "F479, open: dropping the socket right after the DISCONNECT can lose the held call's answer before the broker reads it; seen without load on a worker pool and under CPU load on one thread (the stamp passes about 1 run in 3 under load, as before the lock)",
 });
 
 /// How long a test waits for a frame the server's link should deliver.
@@ -100,6 +100,48 @@ const PATIENCE: Duration = Duration::from_secs(5);
 
 async fn next_frame(inbound: &mut Inbound) -> Option<Frame> {
     tokio::time::timeout(PATIENCE, inbound.next()).await.ok().flatten().map(|delivery| delivery.frame)
+}
+
+/// A streamed reply longer than the server's 65,536-request channel arrives whole and in order
+/// though its frames are sent back to back on one thread, as the core sends a stream that is
+/// always ready: a frame finding the channel full waits for room rather than ending the call.
+#[tokio::test]
+async fn a_streamed_reply_longer_than_the_channel_arrives_whole() {
+    const LONG: &str = "link.long";
+    const ITEMS: u32 = 70_000;
+    let broker = Mosquitto::start().await;
+    let server = broker.link().group("long_stream");
+    let mut inbound = server.listen(&[Pattern::from(LONG)]).await.expect("the server's link listens");
+    let client = broker.link();
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
+    let mut replies = outbound.replies;
+
+    let request = Frame::Req { id: 1, pattern: LONG.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+    (outbound.send)(Pattern::from(LONG), request, None).await.expect("the request is published");
+    let delivery = tokio::time::timeout(PATIENCE, inbound.next()).await.ok().flatten().expect("the request reaches the server");
+    let (Frame::Req { id, .. }, Some(path)) = (delivery.frame, delivery.reply) else { panic!("the server received something other than a request") };
+    let sending = tokio::spawn(async move {
+        for n in 0..ITEMS {
+            path.send(Frame::Item { id, data: Data::new(Bytes::from(n.to_string())) }).await.unwrap_or_else(|error| panic!("item {n} was not sent: {error}"));
+        }
+        path.send(Frame::End { id }).await.expect("the end is sent");
+    });
+
+    let mut received = 0u32;
+    loop {
+        match tokio::time::timeout(PATIENCE, replies.next()).await.ok().flatten() {
+            Some(Frame::Item { id: 1, data }) => {
+                assert_eq!(data.as_bytes(), received.to_string().as_bytes(), "item {received} arrived out of place");
+                received += 1;
+            }
+            Some(Frame::End { id: 1 }) => break,
+            other => panic!("after {received} of {ITEMS} items the caller read {other:?}"),
+        }
+    }
+    assert_eq!(received, ITEMS, "the items the caller read before the end");
+    sending.await.expect("the sends end");
+    client.close().await.expect("the client's link closes");
+    server.close().await.expect("the server's link closes");
 }
 
 /// The client side's `close` writes what was queued before it. rumqttc's `publish` only queues a

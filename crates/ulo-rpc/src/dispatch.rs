@@ -229,7 +229,7 @@ fn start(shared: &Arc<Shared>, incoming: Incoming, reply: Option<ReplyPath>, ack
     let opts = traced(shared, &incoming.headers, opts);
     let Ok(exec) = Execution::open(route.handler.module(), opts) else {
         if let Some((id, reply)) = answered {
-            refuse(shared, tasks, reply, id, refusal("the server is shutting down"));
+            refuse(shared, tasks, reply, id, refusal(ulo_transport::SHUTDOWN_MESSAGE));
         }
         return;
     };
@@ -283,7 +283,7 @@ fn unhandled(shared: &Arc<Shared>, incoming: Incoming, link: LinkInfo, reply: Op
     };
     let opts = traced(shared, &incoming.headers, ExecOptions::new());
     let Ok(exec) = Execution::open(&shared.app.root(), opts) else {
-        refuse(shared, tasks, reply, id, refusal("the server is shutting down"));
+        refuse(shared, tasks, reply, id, refusal(ulo_transport::SHUTDOWN_MESSAGE));
         return;
     };
     exec.seed(incoming.headers.clone());
@@ -566,7 +566,7 @@ async fn cancelled(reply: &ReplyPath, exec: &ExecutionRef, id: u64, reason: Opti
     let error = match reason {
         Some(CancelReason::ClientCancelled | CancelReason::Disconnected) => return,
         Some(CancelReason::Deadline) => timed_out(),
-        Some(CancelReason::Drain) => ErrorBody::new(ErrorKind::Unavailable, "the server is shutting down", Details::new()),
+        Some(CancelReason::Drain) => ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()),
         _ => ErrorBody::new(ErrorKind::Unavailable, "the call was cancelled", Details::new()),
     };
     send(reply, exec, id, Frame::Err { id, error }).await;

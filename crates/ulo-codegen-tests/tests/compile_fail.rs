@@ -19,10 +19,17 @@ fn mismatched_handlers_fail_to_compile() {
 }
 
 /// `ulo-otel-otlp` built with neither client feature answers the `compile_error!` and no other
-/// error, none from an item that names a client. A warning cannot show here: rustc runs no late
-/// lint once it has reported an error. The crate is a dependency of no test crate here, since a build of it without a client
-/// fails by design, so the case runs `cargo check` on it and compares what cargo prints to
-/// `tests/ui_features/otlp_without_a_client.stderr`, with the progress lines taken out.
+/// error, none from an item that names a client. This guards errors only: rustc runs no late lint
+/// once it has reported an error, so a warning from an ungated module is invisible here, and a
+/// warning in a configuration that cannot compile reaches no user.
+///
+/// It is not a trybuild case. trybuild builds a test program against the crate under test as a
+/// dependency, and a dependency that fails to build by design cannot be a dev-dependency of this
+/// one. The case runs `cargo check` on the crate with its default features off and compares what
+/// cargo prints, progress lines taken out, to `tests/ui_features/otlp_without_a_client.stderr`.
+/// On a cold target directory that check compiles the OpenTelemetry dependency tree. CI runs the
+/// case only in the `macro diagnostics` job, the one that holds the rustc 1.98.1 snapshots, so the
+/// compile shares that job's target directory and cache and no other job pays for it.
 #[test]
 #[cfg_attr(not(ulo_snapshot_rustc), ignore = "the .stderr snapshots are rustc 1.98.1's")]
 fn a_client_less_otlp_exporter_fails_with_one_error() {

@@ -333,7 +333,7 @@ impl<Q: Send + Sync + 'static> GraphqlWs<Q> {
                 close(conn, &session.state, 4409, &reason).await;
             }
             Admission::Draining => {
-                let errors = [GqlError::new("the server is shutting down")];
+                let errors = [GqlError::new(ulo_transport::SHUTDOWN_MESSAGE)];
                 send(conn, &ServerMessage::Error { id: &id, payload: &errors }).await;
             }
             Admission::Open(exec, seq) => {

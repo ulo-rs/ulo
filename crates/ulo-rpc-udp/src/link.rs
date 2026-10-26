@@ -435,7 +435,7 @@ async fn idle(state: &State) {
 /// anything else names no call in flight and is dropped.
 async fn refuse(writes: &ordered::Sender<Datagram>, codec: Codec, peer: SocketAddr, frame: &Frame) {
     let (Frame::Req { id, .. } | Frame::Open { id, .. }) = *frame else { return };
-    let error = ErrorBody::new(ErrorKind::Unavailable, "the server is shutting down", Details::new());
+    let error = ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new());
     let refused = match encode(codec, &Frame::Err { id, error }) {
         Ok(bytes) => write(writes, bytes, Some(peer)).await,
         Err(error) => Err(error),

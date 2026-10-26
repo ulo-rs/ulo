@@ -32,7 +32,7 @@ pub mod __private;
 pub use admission::{Admission, ConnectionAdmission, Permit};
 pub use count::Count;
 pub use details::{Detail, Details, FieldViolation, Link};
-pub use error::{CallError, Classify, ErrorKind};
+pub use error::{CallError, Classify, ErrorKind, SHUTDOWN_MESSAGE};
 pub use extract::{ExtractError, FromCall, Injected};
 pub use reply::{IntoReply, IntoReplyError};
 pub use task_set::TaskSet;

@@ -40,7 +40,8 @@
 //! second message, or not ended when the grace runs out, is dropped for DEADLINE_EXCEEDED, logged
 //! at `warn` as a stream. When the reply comes first,
 //! the deadline moves into its body, which ends with DEADLINE_EXCEEDED trailers, offered to no
-//! error handler, if the deadline passes while it streams.
+//! error handler, if the deadline passes while it streams. A unary reply whose message has been
+//! written ends with its own trailers: the deadline ends only a body still waiting for its message.
 //!
 //! A reply stream reports its end where the dispatcher writes it, at the frames of the body
 //! ([`CallBody`]): `encode_stream` marks the reply it builds, and the outermost body of a marked
@@ -442,7 +443,7 @@ pub(crate) fn status_reply(status: Status) -> Reply {
 
 /// The one phrase every refusal of a call because the server is draining or closing carries
 /// (transports DESIGN decision 56).
-const SHUTTING_DOWN: &str = "the server is shutting down";
+const SHUTTING_DOWN: &str = ulo_transport::SHUTDOWN_MESSAGE;
 
 /// `pipeline` until it answers, or until the drain's end cancels the call with
 /// `CancelReason::Drain` while it is still running: then the pipeline is dropped at its current
@@ -886,7 +887,9 @@ struct CallBody {
     ended: bool,
     /// The reply is a marked stream whose end is still to be reported.
     tracking: bool,
-    /// The deadline passed on a poll that also yielded a frame: the next poll ends the body.
+    /// The deadline passed on a poll that also yielded a frame: the next poll ends the body with
+    /// DEADLINE_EXCEEDED, unless it is a reply that is not a marked stream and that poll yields
+    /// its trailers.
     expired: bool,
 }
 
@@ -939,13 +942,15 @@ impl http_body::Body for CallBody {
         if this.ended {
             return Poll::Ready(None);
         }
-        if this.expired {
+        if this.expired && this.tracking {
             return this.end_with(status::deadline_exceeded());
         }
         // The deadline is observed before the body is polled and acted on after it: a frame the
-        // body yields in the poll the deadline passes in goes out and the body ends at the next
-        // poll, and a marked stream, which reads the cancellation at its next wait, takes no item
-        // after the one that poll found ready.
+        // body yields in the poll the deadline passes in goes out, and a marked stream, which
+        // reads the cancellation at its next wait, takes no item after the one that poll found
+        // ready. A reply that is not a marked stream may be a unary one, whose message has been
+        // written and which ends with its own trailers; the next poll lets those through and
+        // ends anything else with DEADLINE_EXCEEDED.
         let mut passed = false;
         if let Some(deadline) = this.deadline.as_mut()
             && deadline.as_mut().poll(cx).is_ready()
@@ -988,10 +993,9 @@ impl http_body::Body for CallBody {
         }
         if this.ended {
             this.deadline = None;
+        } else if this.expired || (passed && polled.is_pending()) {
+            return this.end_with(status::deadline_exceeded());
         } else if passed {
-            if polled.is_pending() {
-                return this.end_with(status::deadline_exceeded());
-            }
             this.expired = true;
         }
         polled

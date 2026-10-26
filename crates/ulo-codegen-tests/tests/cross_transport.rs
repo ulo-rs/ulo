@@ -529,7 +529,7 @@ async fn calls_still_held_when_the_drain_window_ends_are_abandoned_and_close_fin
     assert!(matches!(&ws, WsEnd::Closed(Some((1001, reason))) if reason == SHUTDOWN_PHRASE), "the WebSocket call: {ws:?}");
 }
 
-const SHUTDOWN_PHRASE: &str = "the server is shutting down";
+const SHUTDOWN_PHRASE: &str = ulo_transport::SHUTDOWN_MESSAGE;
 
 #[tokio::test]
 async fn an_rpc_call_abandoned_at_the_drains_end_answers_unavailable_with_the_shutdown_phrase() {

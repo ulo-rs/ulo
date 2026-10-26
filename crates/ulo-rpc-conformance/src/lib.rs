@@ -18,8 +18,9 @@
 //! ```
 //!
 //! A scenario asserts kinds and reason strings, never message text, with one exception: the
-//! spent-cap scenario reads the shutdown phrase, the only thing telling the server's `unavailable`
-//! from the client's own for a connection that closed. A scenario a link's
+//! spent-cap scenario compares the shutdown phrase, through the `ulo_transport::SHUTDOWN_MESSAGE`
+//! constant and never a literal, the only thing telling the server's `unavailable` from the
+//! client's own for a connection that closed. A scenario a link's
 //! capabilities exclude asserts the refusal the capability declares instead: a streamed shape on
 //! UDP is refused at startup, a binary payload on a JSON link before any I/O and its handler at
 //! startup, a miss on a link without `miss_signal` is the client's `Timeout`, and the

@@ -444,3 +444,19 @@ fn a_close_after_cut_after_its_first_poll_releases_listeners_that_never_served()
         drop(serve);
     });
 }
+
+#[test]
+fn a_serve_dropped_unserved_releases_its_listeners() {
+    on_smol(|smol| async move {
+        let runtime: Arc<dyn Runtime> = Arc::new(smol);
+        let listener = port_zero();
+        let addr = listener.local_addr();
+        let serve = Serve::<Plain>::new(vec![listener], None, &ServeConfig::default(), runtime).expect("adopted");
+        let held = std::net::TcpListener::bind(addr).map(drop);
+        assert_eq!(held.map_err(|error| error.kind()), Err(io::ErrorKind::AddrInUse), "the address was free while `Serve` held its listener");
+
+        drop(serve);
+        let rebound = std::net::TcpListener::bind(addr).unwrap_or_else(|error| panic!("{addr} was not released by the dropped `Serve`: {error}"));
+        assert_eq!(rebound.local_addr().expect("the rebound address"), addr);
+    });
+}

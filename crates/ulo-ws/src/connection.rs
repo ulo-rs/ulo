@@ -643,7 +643,7 @@ pub(crate) async fn handshake(accept: Accept, head: Parts, peer: Option<SocketAd
         Err(refusal) => return Handshake::Refuse(refusal),
     };
     if accept.tracker.is_draining() {
-        return Handshake::Refuse(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "the server is shutting down"));
+        return Handshake::Refuse(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, ulo_transport::SHUTDOWN_MESSAGE));
     }
     let head = Arc::new(head);
     let protocol: Option<Arc<str>> = checked.protocol.as_deref().map(Arc::from);
@@ -658,7 +658,7 @@ pub(crate) async fn handshake(accept: Accept, head: Parts, peer: Option<SocketAd
                 let _ = answer.send(decided);
             });
             // Cancelled only when the table's close aborts the phase.
-            answered.await.unwrap_or_else(|_| Handshake::Refuse(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "the server is shutting down")))
+            answered.await.unwrap_or_else(|_| Handshake::Refuse(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, ulo_transport::SHUTDOWN_MESSAGE)))
         }
     }
 }
@@ -862,7 +862,7 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
         opts = opts.trace(ctx);
     }
     let Ok(exec) = Execution::open(connect.module(), opts) else {
-        return Connected::Refused(ConnectRefused { close_code: 1001, reason: "the server is shutting down".to_owned(), kind: None });
+        return Connected::Refused(ConnectRefused { close_code: 1001, reason: ulo_transport::SHUTDOWN_MESSAGE.to_owned(), kind: None });
     };
     let id = accept.hub.next_id();
     let info = ConnectionInfo { peer, path: Arc::clone(&gateway.path), id };
@@ -1203,7 +1203,7 @@ where
         }
         let close = match close {
             Some(close) if closing.is_none() => Some(close),
-            _ if draining && closing.is_none() && flight.idle() => Some((1001, "the server is shutting down".to_owned())),
+            _ if draining && closing.is_none() && flight.idle() => Some((1001, ulo_transport::SHUTDOWN_MESSAGE.to_owned())),
             _ => None,
         };
         if let Some((code, reason)) = close {
@@ -1466,7 +1466,7 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
         None => gateway.connect.module().clone(),
     };
     let Ok(exec) = Execution::open(&module, conn.exec_options()) else {
-        let error = CallError::new(ErrorKind::Unavailable, "the server is shutting down");
+        let error = CallError::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE);
         let _ = outbound.push(envelope::error(codec, id.as_ref(), &error));
         return;
     };

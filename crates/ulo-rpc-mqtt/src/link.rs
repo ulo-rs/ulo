@@ -27,7 +27,7 @@ use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured,
     Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
 };
-use ulo_transport::{Detail, Details, ErrorKind, Turns};
+use ulo_transport::{Detail, Details, ErrorKind, SHUTDOWN_MESSAGE, Turns};
 
 /// The user property naming a message's frame kind where the message alone does not tell it:
 /// `open` on the request lane, `in`, `in_end` and `cancel` on the control lane, `opened` on the
@@ -59,6 +59,15 @@ const MAX_INCOMING: u32 = 268_435_455;
 /// unset, and holds the rest back, and what it holds back is dropped with the session when the
 /// instance leaves. The crate doc says why the link refuses rather than holds work at the broker.
 const RECEIVE_MAXIMUM: u16 = u16::MAX;
+
+/// The capacity of the server side's rumqttc request channel. A reply finding it full waits for
+/// room outside the lock `close` takes, and `close` queues its answers without waiting, so a full
+/// channel at `close` loses them. The event loop takes requests while fewer publishes are
+/// unacknowledged than the broker's Receive Maximum, so the channel fills only when the broker
+/// stops reading or acknowledging, or when replies are queued faster than the broker acknowledges
+/// them until this many wait. rumqttc's channel allocates as it fills.
+const SERVER_REQUESTS: usize = 65_536;
+
 
 /// The MQTT v5 link.
 ///
@@ -249,7 +258,7 @@ impl Link for Mqtt {
         let runtime = self.runtime()?;
         let target = Target::parse(&self.url)?;
         let tls = self.tls(&target, &runtime).await?;
-        let (client, eventloop) = AsyncClient::new(target.options(client_id(), tls), 64);
+        let (client, eventloop) = AsyncClient::new(target.options(client_id(), tls), SERVER_REQUESTS);
         let shared: Vec<String> = patterns.iter().map(|pattern| format!("$share/{group}/{pattern}")).collect();
         let (phase, _) = watch::channel(Phase::Serving);
         let (deliveries, inbound) = mpsc::unbounded_channel();
@@ -260,6 +269,7 @@ impl Link for Mqtt {
             runtime: runtime.clone(),
             shared,
             calls: Arc::new(Calls::new()),
+            replies: Arc::default(),
             phase,
             max_packet: Arc::clone(&self.max_packet),
             deliveries: Mutex::new(Some(deliveries)),
@@ -380,31 +390,35 @@ impl Link for Mqtt {
         };
         if let Some((side, event_loop)) = server {
             side.phase.send_replace(Phase::Closed);
-            // Taken before the table is cleared, so no call is held once it is.
+            // Taken before the table is cleared, so no call is held once it is, and before the
+            // replies close, so every call held is one they answer.
             lock(&side.deliveries).take();
             side.calls.clear();
-            shut(&side.client, event_loop, &side.runtime).await;
+            shut(event_loop, &side.runtime, async { side.replies.close(&side.client, side.codec, side.qos) }).await;
         }
         if let Some((side, event_loop)) = client {
             side.closed.store(true, Ordering::Release);
-            shut(&side.client, event_loop, &side.runtime).await;
+            shut(event_loop, &side.runtime, async {
+                let _ = side.client.disconnect().await;
+            })
+            .await;
         }
         Ok(())
     }
 }
 
-/// Queues a DISCONNECT and awaits the connection's event loop, which ends once it reports the
-/// DISCONNECT written, or once the connection fails after `close`. `publish` and `disconnect` only
-/// queue requests for the loop, which writes them in order, so every one queued earlier is written
-/// ahead of the DISCONNECT: a drained call's reply or a refusal on the server side, an event or a
-/// `cancel` on the client side. The loop is polled once on the calling thread as soon as the
-/// DISCONNECT is queued, so what is queued is written in this future's first poll, which is all a
-/// `close` under a spent shutdown cap gets. Where neither ending comes, the core's `close` bound
-/// drops this future and the guard aborts the loop.
-async fn shut(client: &AsyncClient, event_loop: Loop, runtime: &Tokio) {
+/// Runs `disconnect`, which queues the DISCONNECT, and awaits the connection's event loop, which
+/// ends once it reports the DISCONNECT written, or once the connection fails after `close`. The
+/// loop writes requests in the order they were queued, so every one queued earlier is written ahead
+/// of the DISCONNECT: a reply or a refusal on the server side, an event or a `cancel` on the client
+/// side. The loop is polled once on the calling thread as soon as the DISCONNECT is queued, so what
+/// is queued is written in this future's first poll, which is all a `close` under a spent shutdown
+/// cap gets. Where neither ending comes, the core's `close` bound drops this future and the guard
+/// aborts the loop.
+async fn shut(event_loop: Loop, runtime: &Tokio, disconnect: impl Future<Output = ()>) {
     let Loop { mut task, turns } = event_loop;
     let _abort = AbortOnDrop::new(task.abort_handle());
-    let _ = client.disconnect().await;
+    disconnect.await;
     {
         // The loop's timers and sockets belong to the link's runtime, whichever thread polls it.
         let _runtime = runtime.handle().enter();
@@ -624,6 +638,7 @@ struct ServerSide {
     /// The `$share/<group>/<pattern>` filters, unsubscribed by the drain.
     shared: Vec<String>,
     calls: Arc<Calls>,
+    replies: Arc<Replies>,
     phase: watch::Sender<Phase>,
     max_packet: Arc<AtomicU64>,
     /// Taken once draining holds no call, or at close, which ends the inbound stream. A call is
@@ -734,8 +749,7 @@ impl ServerSide {
     /// behind the replies already waiting, and dropping it would leave the caller to its own
     /// `Timeout`. Queued without waiting: this runs on the event loop, which drains the queue.
     fn refuse(&self, reply: String, correlation: Option<Bytes>, pattern: &str) {
-        let error = ErrorBody::new(ErrorKind::Unavailable, "the server is shutting down", Details::new());
-        let sent = self.codec.encode_frame(&Frame::Err { id: 0, error }).map_err(BoxError::from).and_then(|bytes| {
+        let sent = self.codec.encode_frame(&shutting_down(0)).map_err(BoxError::from).and_then(|bytes| {
             let properties = reply_properties(correlation, None);
             Ok(self.client.try_publish_with_properties(reply, self.qos, false, bytes, properties)?)
         });
@@ -760,7 +774,7 @@ impl ServerSide {
             let frame = match kind.as_deref() {
                 Some(IN) => self.calls.get(&key).map(|(id, path)| (Frame::In { id, data: Data::new(publish.payload) }, path)),
                 Some(IN_END) => self.calls.get(&key).map(|(id, path)| (Frame::InEnd { id }, path)),
-                Some(CANCEL) => self.calls.release(&key).map(|(id, path)| (Frame::Cancel { id }, path)),
+                Some(CANCEL) => self.release(&key).map(|(id, path)| (Frame::Cancel { id }, path)),
                 _ => None,
             };
             if let Some((frame, path)) = frame {
@@ -786,7 +800,7 @@ impl ServerSide {
                     if sender.send(Delivery { frame, reply: Some(path), ack: Ack::none() }).is_ok() {
                         return;
                     }
-                    self.calls.release(&key);
+                    self.release(&key);
                 }
                 drop(deliveries);
                 self.refuse(reply, correlation, &topic);
@@ -816,28 +830,155 @@ impl ServerSide {
 
     /// Holds a call under `key`, its Correlation Data, the key its control messages carry.
     fn hold(&self, key: String, reply: String, correlation: Option<Bytes>) -> (u64, ReplyPath) {
-        let client = self.client.clone();
         let codec = self.codec;
-        let qos = self.qos;
-        let calls = Arc::clone(&self.calls);
-        let released = key.clone();
+        let to = Addressee { topic: reply, correlation };
+        let lane = Lane {
+            client: self.client.clone(),
+            qos: self.qos,
+            calls: Arc::clone(&self.calls),
+            replies: Arc::clone(&self.replies),
+            key: key.clone(),
+            to: to.clone(),
+        };
         let path = ReplyPath::new(move |frame: Frame| -> BoxFuture<'static, Result<(), BoxError>> {
-            let client = client.clone();
-            let calls = Arc::clone(&calls);
-            let reply = reply.clone();
-            let released = released.clone();
-            let properties = reply_properties(correlation.clone(), None);
-            Box::pin(async move {
-                if is_terminal(&frame) {
-                    calls.release(&released);
-                }
-                let bytes = codec.encode_frame(&frame)?;
-                client.publish_with_properties(reply, qos, false, bytes, properties).await?;
-                Ok(())
-            })
+            // Queued here rather than in the future, so the frame's place against the DISCONNECT
+            // is fixed when the send is called, not when its future is first polled.
+            match codec.encode_frame(&frame) {
+                Ok(bytes) => lane.send(bytes, is_terminal(&frame)),
+                Err(error) => Box::pin(std::future::ready(Err(BoxError::from(error)))),
+            }
         });
-        let id = self.calls.hold(key, path.clone());
+        let id = self.calls.hold(key.clone(), path.clone());
+        lock(&self.replies.answers).unanswered.insert(key, Unanswered { id, to });
         (id, path)
+    }
+
+    /// Lets go of the call held under `key`, whose caller cancelled it or which the core never
+    /// received: the server writes it nothing more, and `close` answers it nothing.
+    fn release(&self, key: &str) -> Option<(u64, ReplyPath)> {
+        let call = self.calls.release(key);
+        lock(&self.replies.answers).unanswered.remove(key);
+        call
+    }
+}
+
+/// Where a held call's replies go: its Response Topic and Correlation Data.
+#[derive(Clone)]
+struct Addressee {
+    topic: String,
+    correlation: Option<Bytes>,
+}
+
+/// The lock every reply a server sends and its `close` take, so a reply and the DISCONNECT are
+/// queued in one order. rumqttc's request channel is the server side's one queue, and MQTT allows
+/// no packet after a DISCONNECT: a reply queued behind it is never written. Every queueing under
+/// the lock is a `try_` call, so nothing waits while holding it; a reply finding the channel full
+/// waits for room after letting go of it.
+#[derive(Default)]
+struct Replies {
+    answers: Mutex<Answers>,
+}
+
+#[derive(Default)]
+struct Answers {
+    /// Set by `close` once it has queued the DISCONNECT: a reply sent after it is dropped.
+    closed: bool,
+    /// Each held call whose terminal frame has not been queued, by the key it is held under in
+    /// [`Calls`].
+    unanswered: HashMap<String, Unanswered>,
+}
+
+struct Unanswered {
+    /// The call's local id, which the `err` `close` writes for it carries.
+    id: u64,
+    to: Addressee,
+}
+
+/// One held call's way to its caller, which its `ReplyPath` sends through.
+#[derive(Clone)]
+struct Lane {
+    client: AsyncClient,
+    qos: MqttQoS,
+    calls: Arc<Calls>,
+    replies: Arc<Replies>,
+    /// The key the call is held under in `calls` and in `replies`.
+    key: String,
+    to: Addressee,
+}
+
+impl Lane {
+    /// Queues one reply frame, unless `close` has queued the DISCONNECT. A terminal frame queued
+    /// ends the call: its control messages find no call, and `close` writes it nothing. A frame
+    /// finding the request channel full waits for room in the future answered, the lock let go,
+    /// so a streamed reply is paced by the broker rather than cut at the channel's capacity; the
+    /// call stays unanswered while it waits, so a `close` meanwhile answers it, and the frame then
+    /// queued behind the DISCONNECT is never written. A channel whose event loop has ended takes
+    /// nothing, and the call ends.
+    fn send(&self, bytes: Bytes, terminal: bool) -> BoxFuture<'static, Result<(), BoxError>> {
+        let mut answers = lock(&self.replies.answers);
+        if answers.closed {
+            return Box::pin(std::future::ready(Err("the MQTT link has closed; the reply was not sent".into())));
+        }
+        let properties = reply_properties(self.to.correlation.clone(), None);
+        // rumqttc's `TryRequest` does not tell a full channel from one whose loop has ended, so
+        // either waits below, which answers at once for the second.
+        if self.client.try_publish_with_properties(self.to.topic.clone(), self.qos, false, bytes.clone(), properties.clone()).is_ok() {
+            if terminal {
+                self.answered(&mut answers);
+            }
+            return Box::pin(std::future::ready(Ok(())));
+        }
+        drop(answers);
+        let lane = self.clone();
+        Box::pin(async move {
+            let sent = lane.client.publish_with_properties(lane.to.topic.clone(), lane.qos, false, bytes, properties).await;
+            let mut answers = lock(&lane.replies.answers);
+            match sent {
+                Ok(()) => {
+                    if terminal {
+                        lane.answered(&mut answers);
+                    }
+                    Ok(())
+                }
+                Err(error) => {
+                    lane.answered(&mut answers);
+                    Err(format!("the MQTT link could not queue a reply: {error}").into())
+                }
+            }
+        })
+    }
+
+    /// The call is sent its last frame: its control messages find no call, and `close` writes it
+    /// nothing.
+    fn answered(&self, answers: &mut Answers) {
+        answers.unanswered.remove(&self.key);
+        self.calls.release(&self.key);
+    }
+}
+
+impl Replies {
+    /// Queues, in one hold of the lock, the `err` of kind `unavailable` with the shutdown phrase
+    /// for every held call no terminal frame was queued for, a stream's after the items queued
+    /// before it, then the DISCONNECT; and marks the replies closed, so a call's own answer
+    /// arriving after it is dropped rather than queued behind the DISCONNECT. Nothing here waits:
+    /// a frame or a DISCONNECT the channel refuses is not sent and is logged at `debug`.
+    fn close(&self, client: &AsyncClient, codec: Codec, qos: MqttQoS) {
+        let mut answers = lock(&self.answers);
+        let mut unanswered: Vec<Unanswered> = answers.unanswered.drain().map(|(_, call)| call).collect();
+        unanswered.sort_by_key(|call| call.id);
+        for Unanswered { id, to } in unanswered {
+            let queued = codec.encode_frame(&shutting_down(id)).map_err(BoxError::from).and_then(|bytes| {
+                let properties = reply_properties(to.correlation, None);
+                Ok(client.try_publish_with_properties(to.topic, qos, false, bytes, properties)?)
+            });
+            if let Err(error) = queued {
+                tracing::debug!(%error, "the MQTT link could not queue the shutdown answer of a call it held at `close`");
+            }
+        }
+        if let Err(error) = client.try_disconnect() {
+            tracing::debug!(%error, "the MQTT link could not queue its DISCONNECT at `close`");
+        }
+        answers.closed = true;
     }
 }
 
@@ -1399,6 +1540,12 @@ fn with_id(frame: Frame, id: u64) -> Frame {
     }
 }
 
+/// The `unavailable` with the shutdown phrase and no detail, which the core writes for a call the
+/// drain's end abandons and for one it refuses once the drain began.
+fn shutting_down(id: u64) -> Frame {
+    Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) }
+}
+
 fn is_terminal(frame: &Frame) -> bool {
     matches!(frame, Frame::Res { .. } | Frame::Err { .. } | Frame::End { .. })
 }
@@ -1434,6 +1581,7 @@ mod tests {
     use std::path::Path;
     use std::sync::atomic::AtomicUsize;
 
+    use futures_util::FutureExt;
     use ulo::{App, Module, ModuleDef, ModuleIdentity, StartupError};
     use ulo_rpc::{RpcClient, Server};
     use ulo_transport::ErrorKind;
@@ -1555,19 +1703,7 @@ mod tests {
             let runtime = Tokio::current();
             let (client, _eventloop) = AsyncClient::new(MqttOptions::new("held", "localhost", 1), 8);
             let (deliveries, inbound) = mpsc::unbounded_channel();
-            let side = Arc::new(ServerSide {
-                client,
-                codec: Codec::Json,
-                qos: MqttQoS::AtLeastOnce,
-                runtime: runtime.clone(),
-                shared: Vec::new(),
-                calls: Arc::new(Calls::new()),
-                phase: watch::channel(Phase::Serving).0,
-                max_packet: Arc::new(AtomicU64::new(0)),
-                deliveries: Mutex::new(Some(deliveries)),
-                unsubscribing: Mutex::new(Unsubscribing::default()),
-                unconfirmed: watch::channel(0).0,
-            });
+            let side = server_side(client, deliveries);
             let (_, path) = side.hold("held".to_owned(), "ulo/rpc/reply/held".to_owned(), None);
             drop(path);
             let table = Arc::downgrade(&side.calls);
@@ -1588,6 +1724,183 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }
+    }
+
+    /// A server side built by hand on `client`, on the test's runtime, with no patterns.
+    fn server_side(client: AsyncClient, deliveries: mpsc::UnboundedSender<Delivery>) -> Arc<ServerSide> {
+        Arc::new(ServerSide {
+            client,
+            codec: Codec::Json,
+            qos: MqttQoS::AtLeastOnce,
+            runtime: Tokio::current(),
+            shared: Vec::new(),
+            calls: Arc::new(Calls::new()),
+            replies: Arc::default(),
+            phase: watch::channel(Phase::Serving).0,
+            max_packet: Arc::new(AtomicU64::new(0)),
+            deliveries: Mutex::new(Some(deliveries)),
+            unsubscribing: Mutex::new(Unsubscribing::default()),
+            unconfirmed: watch::channel(0).0,
+        })
+    }
+
+    /// A server's link whose side is built by hand, with a request channel of `capacity` and an
+    /// event loop that is never polled, a pending task standing in for it: what the side queues
+    /// stays in the channel for [`queued`] to read in order. No broker is reached.
+    fn unpolled_server(capacity: usize) -> (Mqtt, Arc<ServerSide>, EventLoop) {
+        let link = Mqtt::url("mqtt://localhost:1");
+        let (client, eventloop) = AsyncClient::new(MqttOptions::new("unpolled", "localhost", 1), capacity);
+        let side = server_side(client, mpsc::unbounded_channel().0);
+        let event_loop = Loop::spawn(&Tokio::current(), std::future::pending::<()>());
+        lock(&link.state).server = Some((Arc::clone(&side), event_loop));
+        (link, side, eventloop)
+    }
+
+    /// A request the side queued, as the broker would read it.
+    #[derive(Debug, PartialEq)]
+    enum Queued {
+        Reply { topic: String, correlation: Option<Bytes>, frame: Frame },
+        Disconnect,
+        Other(String),
+    }
+
+    /// Every request queued and not yet taken, oldest first.
+    fn queued(eventloop: &mut EventLoop) -> Vec<Queued> {
+        eventloop.clean();
+        eventloop
+            .pending
+            .drain(..)
+            .map(|request| match request {
+                rumqttc::v5::Request::Publish(publish) => Queued::Reply {
+                    topic: String::from_utf8_lossy(&publish.topic).into_owned(),
+                    correlation: publish.properties.and_then(|properties| properties.correlation_data),
+                    frame: Codec::Json.decode_frame(&publish.payload).expect("a reply decodes"),
+                },
+                rumqttc::v5::Request::Disconnect => Queued::Disconnect,
+                other => Queued::Other(format!("{other:?}")),
+            })
+            .collect()
+    }
+
+    /// What the caller under `correlation` reads for frame `frame` on reply topic `topic`.
+    fn reply(topic: &str, correlation: &'static str, frame: Frame) -> Queued {
+        Queued::Reply { topic: topic.to_owned(), correlation: Some(Bytes::from_static(correlation.as_bytes())), frame }
+    }
+
+    /// The `err` the core writes for a call the drain's end abandons, which `close` writes for a
+    /// call no terminal frame was queued for: kind `unavailable`, the shutdown phrase, no detail
+    /// and so no reason.
+    fn abandoned(id: u64) -> Frame {
+        Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()) }
+    }
+
+    fn res(id: u64, data: &'static [u8]) -> Frame {
+        Frame::Res { id, data: Data::new(Bytes::from_static(data)) }
+    }
+
+    fn item(id: u64, data: &'static [u8]) -> Frame {
+        Frame::Item { id, data: Data::new(Bytes::from_static(data)) }
+    }
+
+    fn hold(side: &ServerSide, correlation: &'static str) -> (u64, ReplyPath) {
+        side.hold(correlation.to_owned(), format!("ulo/rpc/reply/{correlation}"), Some(Bytes::from_static(correlation.as_bytes())))
+    }
+
+    /// `close`'s first poll, all a `close` under a spent shutdown cap gets, then its drop.
+    fn close_once(link: &Mqtt) {
+        assert!(link.close().now_or_never().is_none(), "the close ended though its event loop never ran");
+    }
+
+    /// H1: a server's `close`, in its first poll, queues the `unavailable` with the shutdown
+    /// phrase for every held call no terminal frame was queued for, then the DISCONNECT, and
+    /// drops what a call sends after it. An answered call gets nothing more, and a stream gets its
+    /// items, then the `unavailable`.
+    #[tokio::test]
+    async fn close_answers_each_call_still_held_unavailable_ahead_of_the_disconnect() {
+        let (link, side, mut eventloop) = unpolled_server(16);
+        let (unanswered, unanswered_path) = hold(&side, "a.1");
+        let (answered, answered_path) = hold(&side, "a.2");
+        let (streaming, streaming_path) = hold(&side, "a.3");
+        answered_path.send(res(answered, b"7")).await.expect("the answered call's reply is queued");
+        streaming_path.send(item(streaming, b"1")).await.expect("the stream's item is queued");
+
+        close_once(&link);
+        let late = unanswered_path.send(res(unanswered, b"8")).await;
+        let late_end = streaming_path.send(Frame::End { id: streaming }).await;
+
+        assert_eq!(
+            queued(&mut eventloop),
+            vec![
+                reply("ulo/rpc/reply/a.2", "a.2", res(answered, b"7")),
+                reply("ulo/rpc/reply/a.3", "a.3", item(streaming, b"1")),
+                reply("ulo/rpc/reply/a.1", "a.1", abandoned(unanswered)),
+                reply("ulo/rpc/reply/a.3", "a.3", abandoned(streaming)),
+                Queued::Disconnect,
+            ],
+            "what the close queued, in order"
+        );
+        let late = late.expect_err("a reply sent after the close was taken");
+        assert_eq!(late.to_string(), "the MQTT link has closed; the reply was not sent");
+        assert!(late_end.is_err(), "a stream's end sent after the close was taken");
+    }
+
+    /// H1: a reply's place against the DISCONNECT is fixed when its send is called. Its future,
+    /// first polled after `close` queued the DISCONNECT, answers the reply sent, and `close`
+    /// writes the call nothing more.
+    #[tokio::test]
+    async fn a_reply_sent_before_close_keeps_its_place_though_its_future_is_polled_after() {
+        let (link, side, mut eventloop) = unpolled_server(16);
+        let (id, path) = hold(&side, "b.1");
+        let sending = path.send(res(id, b"9"));
+
+        close_once(&link);
+        sending.await.expect("the reply sent before the close is queued");
+
+        assert_eq!(
+            queued(&mut eventloop),
+            vec![reply("ulo/rpc/reply/b.1", "b.1", res(id, b"9")), Queued::Disconnect],
+            "what the close queued, in order"
+        );
+    }
+
+    /// H1: a reply finding the request channel full waits for room in its future, the lock let
+    /// go, and is queued once the event loop takes what is ahead of it, in order; a stream longer
+    /// than the channel is paced rather than cut. The call it belongs to stays held until its last
+    /// frame is queued, so a `close` meanwhile answers it.
+    #[tokio::test]
+    async fn a_reply_finding_the_channel_full_waits_for_room_outside_the_lock() {
+        let (link, side, mut eventloop) = unpolled_server(3);
+        let (paced, paced_path) = hold(&side, "c.1");
+        let (other, _other_path) = hold(&side, "c.2");
+        paced_path.send(item(paced, b"1")).await.expect("the first item is queued");
+        paced_path.send(item(paced, b"2")).await.expect("the second item is queued");
+        paced_path.send(item(paced, b"3")).await.expect("the third item is queued");
+
+        let mut waiting = paced_path.send(item(paced, b"4"));
+        assert!((&mut waiting).now_or_never().is_none(), "a send to a full channel answered without waiting");
+        assert!(side.calls.get("c.1").is_some(), "the call whose frame waits is not held");
+
+        // flume moves a waiting send into the channel at the next take that finds room, here the
+        // second drain, and wakes it.
+        let mut taken = queued(&mut eventloop);
+        taken.extend(queued(&mut eventloop));
+        tokio::time::timeout(Duration::from_secs(5), waiting).await.expect("the waiting item was never queued").expect("the waiting item is queued once the channel has room");
+        assert_eq!(
+            taken,
+            vec![
+                reply("ulo/rpc/reply/c.1", "c.1", item(paced, b"1")),
+                reply("ulo/rpc/reply/c.1", "c.1", item(paced, b"2")),
+                reply("ulo/rpc/reply/c.1", "c.1", item(paced, b"3")),
+                reply("ulo/rpc/reply/c.1", "c.1", item(paced, b"4")),
+            ],
+            "what the channel took, in order"
+        );
+        close_once(&link);
+        assert_eq!(
+            queued(&mut eventloop),
+            vec![reply("ulo/rpc/reply/c.1", "c.1", abandoned(paced)), reply("ulo/rpc/reply/c.2", "c.2", abandoned(other)), Queued::Disconnect],
+            "what the close queued: each held call's `unavailable`, the paced stream's after its items"
+        );
     }
 
     /// The RPC suite's stall scenario over `mqtts://`, the one url on which the link loads roots,

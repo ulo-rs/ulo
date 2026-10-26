@@ -195,14 +195,14 @@ impl<L: Listener> Serve<L> {
     }
 }
 
-/// Raises `closing` when dropped, and closes the listeners of a `run` that never started: a
-/// `close_after` cut short still aborts the connections.
+/// Raises `closing` when dropped: a `close_after` cut short still aborts the connections. It
+/// releases no listeners; `drain`, polled in `close_after`'s first poll, has by the time the
+/// guard can drop, and a `Serve` dropped before any of this releases them as its field drops.
 struct AbortOnDrop<'a, L: Listener>(&'a Serve<L>);
 
 impl<L: Listener> Drop for AbortOnDrop<'_, L> {
     fn drop(&mut self) {
         Signals::raise(&self.0.signals.closing);
-        self.0.release_unserved();
     }
 }
 
