@@ -20,13 +20,13 @@ futures-util.workspace = true
 ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
 ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
 socket2.workspace = true
-tokio = { workspace = true, features = ["net", "sync", "rt", "macros", "time"] }
+tokio = { workspace = true, features = ["net", "sync", "rt", "macros"] }
 tracing.workspace = true
 
 [dev-dependencies]
 futures-executor.workspace = true
 ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 
 [lints]
 workspace = true

@@ -30,10 +30,11 @@
 //! packet after the DISCONNECT. A reply finding rumqttc's request channel full waits for room, so
 //! a long streamed reply is paced by the broker, and one still waiting when `close` runs is
 //! dropped. An answer of `close`'s own that finds the channel full waits for room too, so it
-//! reaches the caller only if the `close` is not cut first. The connection is kept for up to two
-//! seconds after `close`, completed or cut, reading until the broker closes it: dropped with the
-//! broker's packets unread, the socket resets the connection, and Mosquitto discards what it
-//! received and had not yet read.
+//! reaches the caller only if the `close` is not cut first. On either side the connection is kept
+//! for up to two seconds after `close`, completed or cut, reading until the broker closes it:
+//! dropped with the broker's packets unread, the socket resets the connection, and Mosquitto
+//! discards what it received and had not yet read. The two seconds run on the app's `Timer`, and
+//! for a client built outside an app on the runtime it was given.
 //!
 //! The link refuses work over the server's bound rather than holding it at the broker: over
 //! `Server::max_inflight`, 1,024 unset, a request is answered `unavailable` with a `RetryAfter`

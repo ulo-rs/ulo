@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::pin::{Pin, pin};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::task::Poll;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -13,7 +14,7 @@ use futures_io::{AsyncRead, AsyncWrite};
 use futures_util::future::{Either, select};
 use futures_util::stream::FuturesUnordered;
 use futures_util::{AsyncReadExt, AsyncWriteExt, FutureExt, SinkExt, StreamExt, select_biased};
-use ulo::{BoundAddr, BoxError, BoxFuture, Runtime, Spawn, TaskHandle};
+use ulo::{BoundAddr, BoxError, BoxFuture, Runtime, Spawn, TaskHandle, Timer};
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
@@ -38,6 +39,14 @@ const DELIVERY_QUEUE: usize = 1024;
 
 /// Reply frames read ahead of the client; a full queue holds the connection's reader back.
 const REPLY_QUEUE: usize = 64;
+
+/// Frames a server connection reads between the turns it gives the runtime's other tasks.
+const FRAMES_PER_TURN: usize = 32;
+
+/// How long a server connection the link ends stays open, reading and discarding what its peer
+/// still sends while its writer delivers the answers queued before the end (transports DESIGN
+/// §5.2, "A cut `close`"), measured with the app's `Timer`.
+pub const CUT_GRACE: Duration = Duration::from_secs(2);
 
 const RUNNING: u8 = 0;
 const DRAINING: u8 = 1;
@@ -80,7 +89,8 @@ impl Incoming {
 /// runtime.
 ///
 /// Dropped without `close`, it aborts the server's accept loop and forwarding task, so the
-/// listener closes, the connections the server accepted close, and the address can be bound again.
+/// listener closes, the connections the server accepted end as at `close`, and the address can be
+/// bound again.
 pub struct Core {
     endpoint: EndpointSpec,
     tls: Option<Tls>,
@@ -88,6 +98,8 @@ pub struct Core {
     max_frame: Option<u64>,
     /// Set by `prepare`.
     prepared: Option<Prepared>,
+    /// The app's clock, handed over in `prepare`, which times each server connection's linger.
+    timer: Option<Arc<dyn Timer>>,
     state: Arc<State>,
     /// The accept loop, which holds the listener; set while the server listens. It is held here
     /// and not in `State`, which the loop holds itself, so the link's drop reaches it.
@@ -140,6 +152,7 @@ impl Core {
             codec: Codec::Json,
             max_frame: None,
             prepared: None,
+            timer: None,
             accept: Mutex::new(None),
             forward: Mutex::new(None),
             state: Arc::new(State {
@@ -183,7 +196,9 @@ impl Core {
 
     /// Everything that can fail before a socket, reported together with `usable`, the link's own
     /// refusal: the endpoint, an inherited socket, the TLS configuration, a zero `max_frame`.
-    pub fn prepare(&mut self, usable: Result<(), BoxError>) -> Result<(), BoxError> {
+    /// `timer` is the app's, `AppHandle::timer`, which bounds each server connection's linger.
+    pub fn prepare(&mut self, usable: Result<(), BoxError>, timer: Option<Arc<dyn Timer>>) -> Result<(), BoxError> {
+        self.timer = timer;
         let mut problems = Vec::new();
         if let Err(error) = usable {
             problems.push(error.to_string());
@@ -235,6 +250,9 @@ impl Core {
         let Some(prepared) = &self.prepared else {
             return Err("the TCP link listens once `prepare` has resolved its endpoint".into());
         };
+        let Some(timer) = self.timer.clone() else {
+            return Err("the TCP link's server has no `Timer` to bound its lingering close with: its app has none".into());
+        };
         let mut accept = lock(&self.accept);
         if accept.is_some() {
             return Err("the TCP link is already listening".into());
@@ -245,7 +263,7 @@ impl Core {
         *lock(&self.state.bound) = vec![BoundAddr::new("rpc", local).tls(prepared.tls.is_some())];
         let (deliveries, received) = mpsc::channel(DELIVERY_QUEUE);
         let (forwarded, inbound) = mpsc::channel(DELIVERY_QUEUE);
-        let server = Server { codec: self.codec, limit: self.limit(), state: Arc::clone(&self.state), runtime: Arc::clone(&runtime) };
+        let server = Server { codec: self.codec, limit: self.limit(), state: Arc::clone(&self.state), runtime: Arc::clone(&runtime), timer };
         *accept = Some(Owned(runtime.spawn(Box::pin(server.accept(listener, deliveries)))));
         *lock(&self.forward) = Some(Owned(runtime.spawn(Box::pin(forward(Arc::clone(&self.state), received, forwarded, Arc::clone(&runtime))))));
         Ok(Box::pin(inbound))
@@ -395,6 +413,77 @@ async fn read_replies(
     }
 }
 
+/// A server connection's reader and its writer's task. Dropped with the connection's task, as
+/// `close` and the link's drop abort it, it hands both to a linger on the link's runtime, which
+/// nothing waits for (transports DESIGN §5.2): the writer shuts its half once the answers queued
+/// before the end are written, and the linger reads and discards what the peer still sends until
+/// the peer closes its half, the connection fails, or `CUT_GRACE` passes on the app's clock, when
+/// it stops the writer too. A socket closed with the peer's bytes unread closes with a reset,
+/// which discards what the server wrote and the peer has not read (F484).
+struct Lingering {
+    /// `None` once `release` has let go of it.
+    reader: Option<Reader>,
+    writer: Option<TaskHandle>,
+    runtime: Arc<dyn Runtime>,
+    timer: Arc<dyn Timer>,
+}
+
+impl Lingering {
+    fn get(&mut self) -> &mut Reader {
+        self.reader.as_mut().expect("the connection's reader is held until its task stops reading")
+    }
+
+    /// Drops the reader and leaves the writer to end as its queue does: the task stopped reading
+    /// at the connection's end, on a frame it drops the connection for, or once the server took
+    /// no more deliveries.
+    fn release(&mut self) {
+        self.reader = None;
+        self.writer = None;
+    }
+}
+
+impl Drop for Lingering {
+    fn drop(&mut self) {
+        let (Some(reader), Some(writer)) = (self.reader.take(), self.writer.take()) else { return };
+        let grace = self.timer.sleep(CUT_GRACE);
+        drop(self.runtime.spawn(Box::pin(linger(reader, writer, grace))));
+    }
+}
+
+/// Reads and discards until the peer closes its half or the connection fails, or until `grace`
+/// resolves, which also stops the writer.
+async fn linger(mut reader: Reader, writer: TaskHandle, grace: BoxFuture<'static, ()>) {
+    let mut buffer = vec![0u8; 16 * 1024];
+    let discarded = async {
+        while let Ok(read) = reader.read(&mut buffer).await
+            && read > 0
+        {
+            yield_now().await;
+        }
+    };
+    if let Either::Right(((), _)) = select(pin!(discarded), grace).await {
+        writer.abort();
+        tracing::debug!("a TCP connection the link ended was still being written to `CUT_GRACE` after the end; it is dropped");
+    }
+}
+
+/// Gives the runtime's other tasks a turn. `async-io`'s sockets answer a read at once while the
+/// peer's bytes keep arriving, and tokio's only once its task budget is spent, and a channel with
+/// room answers a send at once, so a loop reading a peer that never stops writing would keep its
+/// thread, and a linger its grace unpolled.
+async fn yield_now() {
+    let mut yielded = false;
+    std::future::poll_fn(|cx| {
+        if yielded {
+            return Poll::Ready(());
+        }
+        yielded = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    })
+    .await;
+}
+
 /// What every connection task of one server reads.
 #[derive(Clone)]
 struct Server {
@@ -403,6 +492,8 @@ struct Server {
     state: Arc<State>,
     /// The link's runtime, which every connection's tasks are spawned on.
     runtime: Arc<dyn Runtime>,
+    /// The app's clock, which times each connection's linger.
+    timer: Arc<dyn Timer>,
 }
 
 impl Server {
@@ -469,12 +560,14 @@ impl Server {
         }
     }
 
-    /// Reads one connection's frames until it closes, then cancels its calls in flight.
-    async fn serve(self, mut reader: Reader, writer: Writer, peer: SocketAddr, mut deliveries: mpsc::Sender<Delivery>) {
+    /// Reads one connection's frames until it closes, then cancels its calls in flight. Ended by
+    /// the link instead, at `close` or at the link's drop, the connection lingers.
+    async fn serve(self, reader: Reader, writer: Writer, peer: SocketAddr, mut deliveries: mpsc::Sender<Delivery>) {
         let (queue, queued) = ordered::channel(WRITE_QUEUE);
         // The writer runs apart from this task: the server's calls hold reply paths into its queue
         // after the connection's reader has ended, and it ends when the last of them drops.
-        drop(self.runtime.spawn(Box::pin(write_frames(writer, queued, pending()))));
+        let writer = self.runtime.spawn(Box::pin(write_frames(writer, queued, pending())));
+        let mut reader = Lingering { reader: Some(reader), writer: Some(writer), runtime: Arc::clone(&self.runtime), timer: Arc::clone(&self.timer) };
         let connection = self.state.next_connection.fetch_add(1, Ordering::Relaxed);
         lock(&self.state.connections).insert(connection, queue.clone());
         // A connection accepted before the drain and registered after it, its TLS handshake
@@ -487,8 +580,17 @@ impl Server {
         }
         let ids = Arc::new(Mutex::new(Ids::new(Arc::clone(&self.state))));
         let path = reply_path(queue, self.codec, self.limit, Arc::clone(&ids), peer);
+        let mut read = 0usize;
         loop {
-            let bytes = match read_frame(&mut reader, self.limit).await {
+            // Whatever becomes of the frames: one the server drops awaits nothing, and one it
+            // delivers awaits a channel that has room while the server keeps pace, so a peer that
+            // never stops writing would keep this task's thread, and `close`, whose abort lands
+            // when the task next yields, would wait on it.
+            read += 1;
+            if read.is_multiple_of(FRAMES_PER_TURN) {
+                yield_now().await;
+            }
+            let bytes = match read_frame(reader.get(), self.limit).await {
                 Ok(Some(bytes)) => bytes,
                 Ok(None) => break,
                 Err(error) => {
@@ -515,6 +617,7 @@ impl Server {
                 break;
             }
         }
+        reader.release();
         lock(&self.state.connections).remove(&connection);
         let orphaned = lock(&ids).drain();
         let count = orphaned.len();

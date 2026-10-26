@@ -21,7 +21,7 @@ use rustls_native_certs::CertificateResult;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, Bound, BoxError, BoxFuture, Runtime};
+use ulo::{AppHandle, Bound, BoxError, BoxFuture, Runtime, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -55,7 +55,7 @@ const CONTROL: &str = "ulo.rpc.control";
 const DOMAIN: &str = "ulo.rpc";
 
 /// How long a server's connection outlives `close`, completed or cut, to write what was queued
-/// before it (transports DESIGN §5.2).
+/// before it (transports DESIGN §5.2), timed on the app's `Timer`.
 const CUT_GRACE: Duration = Duration::from_secs(2);
 
 /// The NATS link.
@@ -113,6 +113,9 @@ pub struct Nats {
     pub(crate) max_payload: Arc<AtomicU64>,
     pub(crate) roots: Roots,
     pub(crate) roots_timeout: Bound,
+    /// The app's clock, read by `prepare`. A `listen` made without `prepare` times its grace on
+    /// the link's runtime.
+    pub(crate) timer: Option<Arc<dyn Timer>>,
     pub(crate) state: Mutex<State>,
     #[cfg(feature = "conformance-probe")]
     pub(crate) probe: Arc<ClientProbe>,
@@ -168,6 +171,7 @@ impl Nats {
             max_payload: Arc::new(AtomicU64::new(0)),
             roots: Roots::platform(),
             roots_timeout: Bound::Default,
+            timer: None,
             state: Mutex::new(State::default()),
             #[cfg(feature = "conformance-probe")]
             probe: Arc::default(),
@@ -274,6 +278,7 @@ impl Link for Nats {
             Some(group) => check_group(group)?,
             None => self.default_group = Some(queue_group(&format!("{:#}", app.root().name()))),
         }
+        self.timer = app.timer().cloned();
         // A server starts its roots' load here, so over `tls://` a store that yields none fails
         // `bind` before `listen`; over `nats://` `listen` waits for it.
         self.roots(&servers, &self.runtime()?, false).await?;
@@ -333,6 +338,7 @@ impl Link for Nats {
             client,
             codec: self.codec,
             runtime: runtime.clone(),
+            timer: self.timer.clone().unwrap_or_else(|| Arc::new(runtime.clone())),
             calls: Arc::new(Calls::new()),
             replies: Arc::default(),
             ended,
@@ -489,6 +495,8 @@ struct ServerSide {
     codec: Codec,
     /// The link's runtime, which the task keeping the connection to its close is spawned on.
     runtime: Tokio,
+    /// The clock that task times [`CUT_GRACE`] on, which outlives `close` with it.
+    timer: Arc<dyn Timer>,
     calls: Arc<Calls>,
     replies: Arc<Replies>,
     /// Counts the connection's `Closed` and `Disconnected` events.
@@ -616,16 +624,18 @@ impl ServerSide {
             return (kept, None);
         }
         let client = self.client.clone();
+        let timer = Arc::clone(&self.timer);
         let mut ended = self.ended.subscribe();
         let task = self.runtime.handle().spawn(async move {
             let _ = closed.await;
+            // After `close` ends, so the flush follows every answer `close` queued, the waited ones included.
             let written = async {
                 tokio::select! {
                     _ = client.flush() => {}
                     _ = ended.changed() => {}
                 }
             };
-            if tokio::time::timeout(CUT_GRACE, written).await.is_err() {
+            if let Either::Right(_) = select(pin!(written), timer.sleep(CUT_GRACE)).await {
                 tracing::debug!("the NATS link let go of its connection `CUT_GRACE` after `close` with writes still queued");
             }
             drop(client);
@@ -762,8 +772,8 @@ impl Replies {
     /// Queues, in one hold of the lock and without waiting, the `err` of kind `unavailable` with
     /// the shutdown phrase for every held call no terminal frame was queued for, a stream's after
     /// the items queued before it, and marks the replies closed, so a call's own answer arriving
-    /// after it is dropped. What the channel has no room for, from the first refusal on, is
-    /// answered with its reply subject for `close` to queue once there is room.
+    /// after it is dropped. What the channel has no room for is answered with its reply subject
+    /// for `close` to queue once there is room.
     fn close(&self, client: &Client, codec: Codec) -> Vec<(String, Bytes)> {
         let mut answers = lock(&self.answers);
         answers.closed = true;
@@ -777,17 +787,13 @@ impl Replies {
                     continue;
                 }
             };
-            if unsent.is_empty() {
-                match queue(client, subject.clone(), bytes.clone(), Budget::Ignored) {
-                    Ok(()) => continue,
-                    Err(Queued::Refused(error)) => {
-                        tracing::debug!(%error, "the NATS link could not queue the shutdown answer of a call it held at `close`");
-                        continue;
-                    }
-                    Err(Queued::Full) => {}
+            match queue(client, subject.clone(), bytes.clone(), Budget::Ignored) {
+                Ok(()) => {}
+                Err(Queued::Refused(error)) => {
+                    tracing::debug!(%error, "the NATS link could not queue the shutdown answer of a call it held at `close`");
                 }
+                Err(Queued::Full) => unsent.push((subject, bytes)),
             }
-            unsent.push((subject, bytes));
         }
         unsent
     }
@@ -2152,6 +2158,7 @@ mod tests {
                 client,
                 codec: Codec::Json,
                 runtime: Tokio::current(),
+                timer: Arc::new(Tokio::current()),
                 calls: Arc::new(Calls::new()),
                 replies: Arc::default(),
                 ended,
@@ -2264,6 +2271,67 @@ mod tests {
             None
         }
 
+        /// A clock that moves only when the test advances it, waking the sleeps it ends, and that
+        /// records each sleep asked of it.
+        #[derive(Clone)]
+        struct Scripted(Arc<Mutex<Script>>);
+
+        struct Script {
+            now: Instant,
+            asked: Vec<Duration>,
+            waiting: Vec<std::task::Waker>,
+        }
+
+        impl Scripted {
+            fn new() -> Scripted {
+                Scripted(Arc::new(Mutex::new(Script { now: Instant::now(), asked: Vec::new(), waiting: Vec::new() })))
+            }
+
+            fn advance(&self, by: Duration) {
+                let waiting = {
+                    let mut script = lock(&self.0);
+                    script.now += by;
+                    std::mem::take(&mut script.waiting)
+                };
+                waiting.into_iter().for_each(std::task::Waker::wake);
+            }
+
+            /// The sleeps asked of the clock once more than `beyond` have been, waiting at most 10 s.
+            async fn asked(&self, beyond: usize) -> Vec<Duration> {
+                let from = Instant::now();
+                loop {
+                    let asked = lock(&self.0).asked.clone();
+                    if asked.len() > beyond || from.elapsed() > Duration::from_secs(10) {
+                        return asked;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+
+        impl Timer for Scripted {
+            fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+                let script = Arc::clone(&self.0);
+                let until = {
+                    let mut script = lock(&script);
+                    script.asked.push(d);
+                    script.now + d
+                };
+                Box::pin(std::future::poll_fn(move |cx| {
+                    let mut script = lock(&script);
+                    if script.now >= until {
+                        return Poll::Ready(());
+                    }
+                    script.waiting.push(cx.waker().clone());
+                    Poll::Pending
+                }))
+            }
+
+            fn now(&self) -> Instant {
+                lock(&self.0).now
+            }
+        }
+
         /// A server's link reached through `relay` and listening on `pattern`, a caller's link
         /// straight to `server`, and the reply path of one request the caller sent, id 1.
         async fn served(server: SocketAddr, relay: SocketAddr, pattern: &str, group: &str) -> (Nats, Nats, Outbound, Inbound, u64, ReplyPath) {
@@ -2281,12 +2349,17 @@ mod tests {
             (serving, caller, outbound, inbound, id, path)
         }
 
-        /// I2: the task keeping a cut `close`'s connection lets go of it at `CUT_GRACE` when what
-        /// was queued cannot be written, the server's socket taking no writes: the relay stops
-        /// reading before the server's publishes fill async-nats's command channel, and never
-        /// reads again. The socket itself stays open past the grace: async-nats's connection task
-        /// does not poll its command channel while its write buffer is over its soft limit, so it
-        /// does not see the last sender go until a write or its pings end it.
+        /// I2: the task keeping a cut `close`'s connection lets go of it at `CUT_GRACE` on the
+        /// side's clock when what was queued cannot be written, the server's socket taking no
+        /// writes: the relay stops reading before the server's publishes fill async-nats's command
+        /// channel, and never reads again. The clock is scripted, so the task holds until the test
+        /// moves it the whole grace and lets go once it has.
+        ///
+        /// The last assertion is a tripwire on async-nats 0.46's limit, not on the link: the
+        /// connection task does not poll its command channel while its write buffer is over its
+        /// soft limit, so it does not see the last sender go and the socket stays open past the
+        /// task. It fails once async-nats gains an explicit close, or observes the last sender's
+        /// drop while writes are held.
         #[tokio::test(flavor = "multi_thread")]
         async fn the_task_keeping_a_cut_close_s_connection_lets_go_at_the_grace() {
             const REPLY: &str = "grace.reply";
@@ -2301,10 +2374,12 @@ mod tests {
                 async {}
             });
             let client = options.connect(relay.addr.to_string()).await.expect("the server's connection opens");
+            let clock = Scripted::new();
             let side = ServerSide {
                 client,
                 codec: Codec::Json,
                 runtime: Tokio::current(),
+                timer: Arc::new(clock.clone()),
                 calls: Arc::new(Calls::new()),
                 replies: Arc::default(),
                 ended,
@@ -2325,21 +2400,23 @@ mod tests {
             let unsent = side.replies.close(&side.client, side.codec);
             assert_eq!(unsent.len(), 1, "the close found room for the held call's answer in a full channel");
             let (kept, task) = side.keep_until_closed();
-            let cut = Instant::now();
             drop((kept, path, side));
             let task = task.expect("a connected server keeps its connection past the cut");
-            tokio::time::timeout(Duration::from_secs(10), task).await.expect("the keeping task outlived the grace by 8 s").expect("the keeping task");
-            let held = cut.elapsed();
-            assert!(
-                held >= CUT_GRACE - Duration::from_millis(50) && held < CUT_GRACE + Duration::from_secs(1),
-                "the keeping task let go {held:?} after the cut, where the grace is {CUT_GRACE:?}"
-            );
-            assert!(connected_to(relay.addr), "the socket closed with the keeping task, which async-nats 0.46 does not do while it holds writes");
+            assert_eq!(clock.asked(0).await, [CUT_GRACE], "the sleeps the keeping task asked of the side's clock");
+            clock.advance(CUT_GRACE - Duration::from_millis(1));
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            assert!(!task.is_finished(), "the keeping task let go before its clock reached the grace");
+            clock.advance(Duration::from_millis(1));
+            tokio::time::timeout(Duration::from_secs(10), task).await.expect("the keeping task outlived the grace").expect("the keeping task");
+
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            assert!(connected_to(relay.addr), "the socket closed after the keeping task let go, which async-nats 0.46 does not do while it holds writes");
         }
 
         /// I2: the task keeping a cut `close`'s connection lets go of it once the connection
         /// reports itself lost, before the grace: the server's socket takes no writes, so the
-        /// flush is never answered, and the relay then closes the connection.
+        /// flush is never answered, and the relay then closes the connection. The side's clock is
+        /// scripted and never moves, so the loss alone ends the task.
         #[tokio::test(flavor = "multi_thread")]
         async fn the_task_keeping_a_cut_close_s_connection_lets_go_when_it_is_lost() {
             const REPLY: &str = "lost.reply";
@@ -2354,10 +2431,12 @@ mod tests {
                 async {}
             });
             let client = options.connect(relay.addr.to_string()).await.expect("the server's connection opens");
+            let clock = Scripted::new();
             let side = ServerSide {
                 client,
                 codec: Codec::Json,
                 runtime: Tokio::current(),
+                timer: Arc::new(clock.clone()),
                 calls: Arc::new(Calls::new()),
                 replies: Arc::default(),
                 ended,
@@ -2375,14 +2454,14 @@ mod tests {
             }
             let _ = side.replies.close(&side.client, side.codec);
             let (kept, task) = side.keep_until_closed();
-            let cut = Instant::now();
             drop((kept, path, side));
             let task = task.expect("a connected server keeps its connection past the cut");
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            assert_eq!(clock.asked(0).await, [CUT_GRACE], "the sleeps the keeping task asked of the side's clock");
             relay.sever();
-            tokio::time::timeout(Duration::from_secs(10), task).await.expect("the keeping task outlived the grace by 8 s").expect("the keeping task");
-            let held = cut.elapsed();
-            assert!(held < CUT_GRACE - Duration::from_millis(500), "the keeping task let go {held:?} after the cut, though the connection was lost 200 ms after it");
+            tokio::time::timeout(Duration::from_secs(10), task)
+                .await
+                .expect("the keeping task outlived the lost connection by 10 s")
+                .expect("the keeping task");
         }
 
         /// I2: a `close` cut in its first poll while the server's socket takes no writes, the
@@ -2391,7 +2470,10 @@ mod tests {
         /// `unavailable`, and lets go once it is written, the socket closing within the grace.
         /// The relay stops reading while a stream of large items fills the socket's buffers, and
         /// reads again half a second after the cut. Without the task, the link's drop leaves no
-        /// sender, and async-nats exits as it takes the last commands, unwritten.
+        /// sender, and async-nats exits as it takes the last commands, unwritten. This test shows
+        /// the delivery path, not the keeping task's timing:
+        /// `the_task_keeping_a_cut_close_s_connection_lets_go_at_the_grace` is the deterministic
+        /// pin of that.
         #[tokio::test(flavor = "multi_thread")]
         async fn a_cut_close_writes_what_was_queued_once_the_socket_takes_writes_again() {
             const FLOOD: &str = "drained.flood";
@@ -2431,6 +2513,39 @@ mod tests {
             assert!(closed.is_some(), "the server's socket was still open at the grace, though it took writes again");
 
             let _ = caller.close().await;
+        }
+
+        /// A bound server's grace is timed on the app's `Timer`, which `prepare` reads, not on the
+        /// link's runtime: the app's clock is scripted, and the task keeping its connection asks it
+        /// for `CUT_GRACE` once `close` ends.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_server_s_grace_is_timed_on_the_app_s_timer() {
+            let (server, _container) = nats().await;
+            let clock = Scripted::new();
+            let app = App::builder(Root)
+                .runtime(Tokio::current())
+                .timer(clock.clone())
+                .wire()
+                .expect("the app wires")
+                .connect()
+                .await
+                .expect("the app connects");
+            let mut serving = link(&format!("nats://{server}"), test_root::<25>, std::env::temp_dir).group("timed");
+            serving.prepare(&app.handle()).await.expect("the server's link prepares");
+            let _inbound = serving.listen(&[Pattern::from("timed.grace")]).await.expect("the server's link listens");
+            let side = lock(&serving.state).server.clone().expect("a listening link holds its server side");
+            let before = lock(&clock.0).asked.len();
+
+            let (kept, task) = side.keep_until_closed();
+            drop(kept);
+            let asked = clock.asked(before).await;
+            assert_eq!(asked.get(before), Some(&CUT_GRACE), "the sleeps asked of the app's clock once `close` ended: {asked:?}");
+            tokio::time::timeout(Duration::from_secs(10), task.expect("a connected server keeps its connection past the cut"))
+                .await
+                .expect("the keeping task did not end once its flush was answered")
+                .expect("the keeping task");
+            drop(side);
+            let _ = serving.close().await;
         }
 
         /// I5: a request lane holding its call races `close` on another worker. The lane is stopped

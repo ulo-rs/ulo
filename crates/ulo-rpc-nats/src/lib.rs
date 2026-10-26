@@ -25,10 +25,11 @@
 //! when `close` runs is dropped. An answer of `close`'s own that finds the channel full waits for
 //! room too, so it reaches the caller only if the `close` is not cut first. A request arriving
 //! once `close` has answered the calls it held is refused `unavailable` rather than held. A task
-//! holds the server's connection for up to two seconds after `close`, completed or cut, until what
-//! was queued before then is written, since async-nats discards what it has not written once its
-//! last handle drops. Against a server that stopped reading, the connection outlives the task:
-//! async-nats's connection task does not see its last handle go while its writes are held.
+//! holds the server's connection for up to two seconds on the app's clock after `close`, completed
+//! or cut, until what was queued before then is written, since async-nats discards what it has not
+//! written once its last handle drops. Against a server that stopped reading, the connection
+//! outlives the task until the server reads again, the connection is reported lost, or the process
+//! exits: async-nats's connection task does not see its last handle go while its writes are held.
 //!
 //! ```ignore
 //! app.bind(ulo_rpc::Server::new(ulo_rpc_nats::Nats::url("nats://bus:4222")))

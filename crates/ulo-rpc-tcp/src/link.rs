@@ -25,13 +25,20 @@ use ulo_runtime_tokio::Tokio;
 /// on a connection the caller kept open, is answered `err` of kind `unavailable` by the link, as
 /// the server answers one during the drain.
 ///
+/// At `close` every connection the server accepted ends: its writer shuts its half once the
+/// answers queued before the close are written, and the link reads and discards what the peer
+/// still sends until the peer closes its half, the connection fails, or two seconds pass on the
+/// app's `Timer`, when the connection drops. `close` does not wait for that. A peer that is still
+/// writing as the server closes, and reading, receives what is written in that time and then the
+/// server's FIN, not a reset.
+///
 /// `close` also ends every connection the link's client side opened: its socket is shut and its
 /// reply lane ends, so the calls waiting on it fail `Unavailable`. A call made afterwards connects
 /// again.
 ///
 /// A server's link dropped without `close`, as it is when its app drops before the close step,
-/// stops accepting: its listener and the connections it accepted close, and the address can be
-/// bound again.
+/// stops accepting: its listener closes, the connections it accepted end as at `close`, and the
+/// address can be bound again.
 ///
 /// The link's sockets and tasks live on the tokio runtime it holds, the one current where it was
 /// built or the one [`with_handle`](Self::with_handle) names, so its futures and streams may be
@@ -101,11 +108,10 @@ impl Link for Tcp {
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
-        let _ = app;
         // A server reports `usable`'s runtime refusal alone: the rest is about what a client
         // connects to, and `Core::prepare` reports the server's own endpoint.
         let usable = self.runtime().map(drop);
-        self.core.prepare(usable)
+        self.core.prepare(usable, app.timer().cloned())
     }
 
     async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {

@@ -3,7 +3,7 @@
 //! 2.x supports MQTT v5 shared subscriptions; the image's `/mosquitto-no-auth.conf` listens on
 //! every interface and allows anonymous clients, which the default configuration does not.
 //!
-//! Beside the suite, ten tests drive the link through `Link` directly, for orderings inside it
+//! Beside the suite, twelve tests drive the link through `Link` directly, for orderings inside it
 //! that no scenario reaches on its own, for the flow-control window it announces, for how long
 //! its connection outlives `close` and for what it writes around its DISCONNECT. Three more
 //! drop the link without `close` and count, through a relay, the connections Mosquitto still
@@ -91,6 +91,11 @@ impl Broker for Mosquitto {
     }
 }
 
+// Whether the worker-pool spent-cap stamp, `a_call_held_past_a_spent_cap_is_answered_unavailable`,
+// runs on this link is decided by the relay grace test,
+// `a_server_s_connection_ends_at_the_grace_when_the_broker_does_not_close_it`, not by the stamp's
+// own pass counts, which do not tell a link that lingers past its DISCONNECT from one that does
+// not (F479).
 ulo_rpc_conformance::conformance_suite!(Mosquitto; not_applicable {
     cancel_follows_its_request: "U17: the link carries a request and its `cancel` on separate lanes, and the broker may deliver the `cancel` first",
 });
@@ -277,13 +282,24 @@ fn tally(kinds: &[u8]) -> Vec<(u8, usize)> {
     counts
 }
 
+/// How the inner side's connection to a [`Parsing`] relay ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ended {
+    Fin,
+    Reset,
+}
+
 /// A TCP relay to `target` for one connection that records the type of every MQTT packet the
 /// inner side writes, as the broker reads them, and that can stop forwarding what the inner side
-/// writes until resumed, reading nothing more meanwhile.
+/// writes until resumed, reading nothing more meanwhile, and hold what the target sends until
+/// released. Like Mosquitto, it discards what the inner side wrote and it had not forwarded once
+/// it finds the connection reset.
 struct Parsing {
     addr: SocketAddr,
     paused: tokio::sync::watch::Sender<bool>,
+    held: tokio::sync::watch::Sender<bool>,
     kinds: Arc<Mutex<Vec<u8>>>,
+    ended: Arc<Mutex<Option<Ended>>>,
 }
 
 impl Parsing {
@@ -292,16 +308,35 @@ impl Parsing {
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.expect("a loopback port");
         let addr = listener.local_addr().expect("the relay's address");
         let (paused, mut gate) = tokio::sync::watch::channel(false);
+        let (held, mut replies) = tokio::sync::watch::channel(false);
         let kinds: Arc<Mutex<Vec<u8>>> = Arc::default();
         let recorded = Arc::clone(&kinds);
+        let ended: Arc<Mutex<Option<Ended>>> = Arc::default();
+        let ending = Arc::clone(&ended);
         tokio::spawn(async move {
             let Ok((inner, _)) = listener.accept().await else { return };
             let Ok(outer) = tokio::net::TcpStream::connect(target).await else { return };
             let (mut inner_read, mut inner_write) = inner.into_split();
             let (mut outer_read, mut outer_write) = outer.into_split();
             tokio::spawn(async move {
-                let _ = tokio::io::copy(&mut outer_read, &mut inner_write).await;
+                let mut buffer = vec![0u8; 16 * 1024];
+                loop {
+                    if replies.wait_for(|held| !*held).await.is_err() {
+                        return;
+                    }
+                    let read = match outer_read.read(&mut buffer).await {
+                        Ok(0) | Err(_) => {
+                            let _ = inner_write.shutdown().await;
+                            return;
+                        }
+                        Ok(read) => read,
+                    };
+                    if replies.wait_for(|held| !*held).await.is_err() || inner_write.write_all(&buffer[..read]).await.is_err() {
+                        return;
+                    }
+                }
             });
+            let end = |how| *ending.lock().unwrap_or_else(PoisonError::into_inner) = Some(how);
             let mut buffer = vec![0u8; 16 * 1024];
             let mut pending: Vec<u8> = Vec::new();
             loop {
@@ -309,7 +344,13 @@ impl Parsing {
                     return;
                 }
                 let read = match inner_read.read(&mut buffer).await {
-                    Ok(0) | Err(_) => {
+                    Ok(0) => {
+                        end(Ended::Fin);
+                        let _ = outer_write.shutdown().await;
+                        return;
+                    }
+                    Err(_) => {
+                        end(Ended::Reset);
                         let _ = outer_write.shutdown().await;
                         return;
                     }
@@ -317,6 +358,13 @@ impl Parsing {
                 };
                 // A read under way when the relay was paused is held until it resumes.
                 if gate.wait_for(|paused| !*paused).await.is_err() {
+                    return;
+                }
+                // macOS hands over what arrived before a reset ahead of the reset itself, which
+                // Mosquitto, handling the socket's error first, never reads.
+                if let Ok(Some(_)) = inner_read.as_ref().take_error() {
+                    end(Ended::Reset);
+                    let _ = outer_write.shutdown().await;
                     return;
                 }
                 pending.extend_from_slice(&buffer[..read]);
@@ -329,7 +377,7 @@ impl Parsing {
                 }
             }
         });
-        Parsing { addr, paused, kinds }
+        Parsing { addr, paused, held, kinds, ended }
     }
 
     fn pause(&self) {
@@ -338,6 +386,19 @@ impl Parsing {
 
     fn resume(&self) {
         self.paused.send_replace(false);
+    }
+
+    fn hold_replies(&self) {
+        self.held.send_replace(true);
+    }
+
+    fn release_replies(&self) {
+        self.held.send_replace(false);
+    }
+
+    /// How the inner side's connection ended, once the relay has read its end.
+    fn ended(&self) -> Option<Ended> {
+        *self.ended.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The type of every packet the inner side wrote that the relay has read, in order.
@@ -390,21 +451,84 @@ async fn client_close_writes_what_was_queued_before_it() {
     server.close().await.expect("the server's link closes");
 }
 
-/// A client side's `close` cut in its first poll still writes its DISCONNECT: it is queued before
-/// the event loop's turn on the calling thread, so the turn writes it. On a current-thread runtime
-/// the loop runs only in that turn, and the cut aborts it.
-#[tokio::test]
+/// A client side's `close` cut after its first poll still writes its DISCONNECT: it is queued
+/// before the event loop's turn on the calling thread, so the turn writes it. The client's link
+/// runs on a current-thread runtime driven only while it connects, so the loop gets no poll but
+/// the turn.
+#[tokio::test(flavor = "multi_thread")]
 async fn a_client_close_cut_in_its_first_poll_writes_its_disconnect() {
     let broker = Mosquitto::start().await;
     let relay = Parsing::start(broker.server).await;
-    let client = Mqtt::url(format!("mqtt://{}", relay.addr));
-    let _outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
-    assert!(client.close().now_or_never().is_none(), "the client's close ended in its first poll");
+    let addr = relay.addr;
+    let kept = tokio::task::spawn_blocking(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("the client's runtime");
+        let client = Mqtt::url(format!("mqtt://{addr}")).with_handle(runtime.handle().clone());
+        let handed: Arc<dyn Runtime> = Arc::new(ulo_runtime_tokio::Tokio::from_handle(runtime.handle().clone()));
+        let outbound = runtime.block_on(client.connect(&handed)).expect("the client's link connects");
+        let _ = client.close().now_or_never();
+        (runtime, client, outbound)
+    })
+    .await
+    .expect("the client's thread");
     let wrote = std::time::Instant::now();
     while !relay.written().contains(&DISCONNECT) {
         assert!(wrote.elapsed() < PATIENCE, "the broker read no DISCONNECT from a close cut in its first poll: {:?}", tally(&relay.written()));
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    // A runtime cannot be dropped on an async worker.
+    tokio::task::spawn_blocking(move || drop(kept)).await.expect("the client's runtime drops");
+}
+
+/// J4: a client's link polled past its DISCONNECT reads what the broker sends until the broker
+/// closes the connection, so the broker reads every PUBLISH the client wrote, then the DISCONNECT,
+/// and the connection ends with a FIN. The relay holds the PUBACKs for the first events, so they
+/// are unread when `close` runs and reach the client after it, and holds what the client writes
+/// after those events until the PUBACKs have arrived. A socket dropped at the DISCONNECT answers
+/// the PUBACKs with a reset, and the relay, as Mosquitto does, then discards what it had not read.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_client_reads_until_the_broker_closes_so_the_broker_reads_its_disconnect() {
+    const UNREAD: &str = "link.unread";
+    const BEFORE: usize = 5;
+    const AFTER: usize = 5;
+    let broker = Mosquitto::start().await;
+    let relay = Parsing::start(broker.server).await;
+    let client = Mqtt::url(format!("mqtt://{}", relay.addr));
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
+    let publishes = || relay.written().iter().filter(|&&kind| kind == PUBLISH).count();
+    let event = |n: usize| Frame::Evt { pattern: UNREAD.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from(n.to_string())) };
+
+    relay.hold_replies();
+    for n in 0..BEFORE {
+        (outbound.send)(Pattern::from(UNREAD), event(n), None).await.expect("an event is published");
+    }
+    let sent = std::time::Instant::now();
+    while publishes() < BEFORE {
+        assert!(sent.elapsed() < PATIENCE, "the broker read {} of the first {BEFORE} events", publishes());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    relay.pause();
+    for n in BEFORE..BEFORE + AFTER {
+        (outbound.send)(Pattern::from(UNREAD), event(n), None).await.expect("an event is published");
+    }
+    client.close().await.expect("the client's link closes");
+    // Past the moment a socket dropped at the DISCONNECT has gone, and well inside `CUT_GRACE`.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    relay.release_replies();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    relay.resume();
+
+    let resumed = std::time::Instant::now();
+    let ended = loop {
+        if let Some(ended) = relay.ended() {
+            break ended;
+        }
+        assert!(resumed.elapsed() < PATIENCE, "the client's connection had not ended {PATIENCE:?} after the relay resumed: {:?}", tally(&relay.written()));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    let written = relay.written();
+    assert_eq!(ended, Ended::Fin, "how the client's connection ended, the broker having read {:?}", tally(&written));
+    assert_eq!(written.iter().filter(|&&kind| kind == PUBLISH).count(), BEFORE + AFTER, "the PUBLISHes the broker read: {:?}", tally(&written));
+    assert_eq!(written.last(), Some(&DISCONNECT), "the broker's last packet from the client: {:?}", tally(&written));
 }
 
 /// A draining server delivers the `cancel` that releases the last call it holds before its
@@ -525,8 +649,8 @@ async fn the_broker_holds_back_no_request_for_flow_control() {
     server.close().await.expect("the server's link closes");
 }
 
-/// How long the server's link keeps its connection after `close` to read until the broker
-/// closes it, transports DESIGN §5.2's `CUT_GRACE`.
+/// How long a link keeps its connection after `close` to read until the broker closes it,
+/// transports DESIGN §5.2's `CUT_GRACE`.
 const CUT_GRACE: Duration = Duration::from_secs(2);
 
 /// A server's link keeps its connection past `close` only until the broker closes it or for
@@ -554,6 +678,106 @@ async fn a_server_s_connection_ends_at_the_grace_when_the_broker_does_not_close_
         kept >= CUT_GRACE - Duration::from_millis(100) && kept < CUT_GRACE + Duration::from_secs(1),
         "the server's link dropped its connection {kept:?} after `close`, where the grace is {CUT_GRACE:?}"
     );
+}
+
+/// Each side's grace runs on the clock it was given: a server's on the app's `Timer`, which
+/// `prepare` reads, and a client's on the runtime `connect` is handed. Through relays that forward
+/// nothing either link writes once muted, the broker never reads a DISCONNECT and never closes a
+/// connection, so each link holds its connection until its clock says the grace has passed,
+/// however far the wall clock runs past it.
+#[tokio::test(flavor = "multi_thread")]
+async fn each_side_s_grace_runs_on_the_clock_it_was_given() {
+    let broker = Mosquitto::start().await;
+    let clock = Held::default();
+    let app = ulo::App::builder(Root)
+        .runtime(ulo_runtime_tokio::Tokio::current())
+        .timer(clock.clone())
+        .wire()
+        .expect("the app wires")
+        .connect()
+        .await
+        .expect("the app connects");
+    let handed = Arc::clone(app.handle().runtime().expect("the app's runtime"));
+
+    let server_relay = Muting::start(broker.server).await;
+    let mut server = Mqtt::url(format!("mqtt://{}", server_relay.addr)).group("clocked");
+    server.prepare(&app.handle()).await.expect("the server's link prepares");
+    let _inbound = server.listen(&[Pattern::from("link.clocked")]).await.expect("the server's link listens");
+    let client_relay = Muting::start(broker.server).await;
+    let client = Mqtt::url(format!("mqtt://{}", client_relay.addr));
+    let _outbound = client.connect(&handed).await.expect("the client's link connects");
+
+    server_relay.mute();
+    client_relay.mute();
+    server.close().await.expect("the server's link closes");
+    client.close().await.expect("the client's link closes");
+    let closed = std::time::Instant::now();
+    while clock.asked(CUT_GRACE) < 2 {
+        assert!(closed.elapsed() < PATIENCE, "the links asked their clocks for {} of their two graces", clock.asked(CUT_GRACE));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(CUT_GRACE + Duration::from_secs(1)).await;
+    assert_eq!(server_relay.ended(), None, "the server's link dropped its connection on a clock other than the app's");
+    assert_eq!(client_relay.ended(), None, "the client's link dropped its connection on a clock other than the runtime it was handed");
+
+    clock.fire();
+    let fired = std::time::Instant::now();
+    while server_relay.ended().is_none() || client_relay.ended().is_none() {
+        assert!(fired.elapsed() < PATIENCE, "a link still held its connection {PATIENCE:?} after its clock passed the grace");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+struct Root;
+
+impl ulo::Module for Root {
+    fn identity(&self) -> ulo::ModuleIdentity {
+        ulo::ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ulo::ModuleDef<'_>) {
+        let _ = m;
+    }
+}
+
+/// A clock whose sleeps end only once the test fires it, counting each length asked of it.
+#[derive(Clone, Default)]
+struct Held {
+    asked: Arc<Mutex<Vec<Duration>>>,
+    fired: Arc<std::sync::atomic::AtomicBool>,
+    wake: Arc<tokio::sync::Notify>,
+}
+
+impl Held {
+    fn asked(&self, length: Duration) -> usize {
+        self.asked.lock().unwrap_or_else(PoisonError::into_inner).iter().filter(|&&asked| asked == length).count()
+    }
+
+    fn fire(&self) {
+        self.fired.store(true, Ordering::Release);
+        self.wake.notify_waiters();
+    }
+}
+
+impl ulo::Timer for Held {
+    fn sleep(&self, d: Duration) -> ulo::BoxFuture<'static, ()> {
+        self.asked.lock().unwrap_or_else(PoisonError::into_inner).push(d);
+        let (fired, wake) = (Arc::clone(&self.fired), Arc::clone(&self.wake));
+        Box::pin(async move {
+            loop {
+                // Made before the check: `notify_waiters` wakes a `Notified` from its creation.
+                let woken = wake.notified();
+                if fired.load(Ordering::Acquire) {
+                    return;
+                }
+                woken.await;
+            }
+        })
+    }
+
+    fn now(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
 }
 
 /// A TCP relay to `target` for one connection that, once muted, forwards what the target sends

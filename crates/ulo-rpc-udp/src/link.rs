@@ -7,11 +7,12 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::FutureExt;
+use futures_util::future::{Either, select};
 use tokio::net::UdpSocket;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
-use ulo::{AppHandle, BoundAddr, BoxError, BoxFuture, Runtime};
+use ulo::{AppHandle, BoundAddr, BoxError, BoxFuture, Runtime, Timer};
 use ulo_runtime_tokio::Tokio;
 use ulo_net::{Endpoint, EndpointSpec};
 use ulo_rpc::link::{Inbound, UNARY_ONLY};
@@ -37,7 +38,7 @@ const REPLY_QUEUE: usize = 64;
 const WRITE_QUEUE: usize = 64;
 
 /// How long the server's writer keeps the socket after the link drops, to send what was queued
-/// before it (transports DESIGN §5.2, "A cut `close`").
+/// before it (transports DESIGN §5.2, "A cut `close`"), measured with the app's `Timer`.
 const CUT_GRACE: Duration = Duration::from_secs(2);
 
 /// The UDP link: a server binds its endpoint, a client sends to it.
@@ -56,8 +57,9 @@ const CUT_GRACE: Duration = Duration::from_secs(2);
 /// socket sends leave it in the order they were sent.
 ///
 /// A server's link dropped without `close`, as it is when its app drops before the close step,
-/// stops its receive task, and its writer once it has sent the datagrams already queued, so its
-/// socket closes and the address can be bound again. A reply queued as the app drops, the
+/// stops its receive task, and its writer once it has sent the datagrams already queued or two
+/// seconds have passed on the app's `Timer`, so its socket closes and the address can be bound
+/// again. A reply queued as the app drops, the
 /// `unavailable` a `close` cut by a spent `shutdown_timeout` wrote in its one poll among them,
 /// is sent.
 ///
@@ -73,6 +75,8 @@ pub struct Udp {
     pub(crate) runtime: Option<Tokio>,
     /// Set by `prepare`.
     pub(crate) prepared: Option<SocketAddr>,
+    /// The app's clock, taken in `prepare`, which bounds the server writer's last sends.
+    timer: Option<Arc<dyn Timer>>,
     pub(crate) state: Arc<State>,
     /// The server's receive task; set while the server listens. It is held here and not in
     /// `State`, which the task holds itself, so the link's drop reaches it.
@@ -132,6 +136,7 @@ impl Udp {
             codec: Codec::Json,
             runtime: Tokio::try_current(),
             prepared: None,
+            timer: None,
             receiving: Mutex::new(None),
             writing: Mutex::new(None),
             state: Arc::new(State {
@@ -206,9 +211,9 @@ impl Link for Udp {
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
-        let _ = app;
         self.runtime()?;
         self.prepared = Some(self.address()?);
+        self.timer = app.timer().cloned();
         Ok(())
     }
 
@@ -221,13 +226,16 @@ impl Link for Udp {
         if lock(&self.receiving).is_some() {
             return Err("the UDP link is already listening".into());
         }
+        let Some(timer) = self.timer.clone() else {
+            return Err("the UDP link's server has no `Timer` to bound its socket's release with: its app has none".into());
+        };
         let runtime = self.runtime()?;
         let socket = Arc::new(runtime.run(UdpSocket::bind(addr)).await??);
         *lock(&self.state.bound) = vec![BoundAddr::new("rpc", socket.local_addr()?)];
         *lock(&self.state.socket) = Some(Arc::clone(&socket));
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
         let (dropped, stop) = oneshot::channel::<()>();
-        drop(runtime.handle().spawn(write_server_datagrams(Arc::clone(&socket), queued, stop)));
+        drop(runtime.handle().spawn(write_server_datagrams(Arc::clone(&socket), queued, stop, timer)));
         *lock(&self.writing) = Some(Flushed(Some(dropped)));
         *lock(&self.state.writes) = Some(writes.clone());
         let (deliveries, inbound) = mpsc::channel(DELIVERY_QUEUE);
@@ -603,8 +611,10 @@ async fn write_datagrams(socket: impl Sending, mut queued: ordered::Receiver<Dat
 
 /// The server socket's writer: each queued datagram in turn until the link drops, then every
 /// datagram the queue holds at that moment, so a reply queued as the link drops is sent though the
-/// writer is first polled after it.
-async fn write_server_datagrams(socket: Arc<UdpSocket>, mut queued: ordered::Receiver<Datagram>, dropped: oneshot::Receiver<()>) {
+/// writer is first polled after it. The link's drop can close the queue before it signals
+/// `dropped`, the receive task's abort releasing the last sender, so a closed queue ends the
+/// writer the same way: through the bounded drain, which finds it empty.
+async fn write_server_datagrams(socket: Arc<UdpSocket>, mut queued: ordered::Receiver<Datagram>, dropped: oneshot::Receiver<()>, timer: Arc<dyn Timer>) {
     let mut dropped = std::pin::pin!(dropped);
     loop {
         let datagram = tokio::select! {
@@ -612,17 +622,18 @@ async fn write_server_datagrams(socket: Arc<UdpSocket>, mut queued: ordered::Rec
             _ = &mut dropped => break,
             datagram = queued.recv() => match datagram {
                 Some(datagram) => datagram,
-                None => return,
+                None => break,
             },
         };
         send_datagram(&socket, datagram).await;
     }
-    drain_queued(&mut queued, CUT_GRACE, |datagram| send_datagram(&socket, datagram)).await;
+    drain_queued(&mut queued, &*timer, CUT_GRACE, |datagram| send_datagram(&socket, datagram)).await;
 }
 
-/// Sends what `queued` holds now, giving up at `grace`: a send waiting for room in a socket whose
-/// buffer never drains would otherwise hold the writer, and the socket with it, indefinitely.
-async fn drain_queued<F, Fut>(queued: &mut ordered::Receiver<Datagram>, grace: Duration, mut send: F)
+/// Sends what `queued` holds now, giving up once `grace` has passed on `timer`: a send waiting for
+/// room in a socket whose buffer never drains would otherwise hold the writer, and the socket with
+/// it, indefinitely.
+async fn drain_queued<F, Fut>(queued: &mut ordered::Receiver<Datagram>, timer: &dyn Timer, grace: Duration, mut send: F)
 where
     F: FnMut(Datagram) -> Fut,
     Fut: Future<Output = ()>,
@@ -632,7 +643,7 @@ where
             send(datagram).await;
         }
     };
-    if tokio::time::timeout(grace, drain).await.is_err() {
+    if let Either::Right(((), _)) = select(std::pin::pin!(drain), timer.sleep(grace)).await {
         tracing::debug!("the UDP link let go of its socket `CUT_GRACE` after its drop with writes still queued");
     }
 }
@@ -672,7 +683,9 @@ fn encode(codec: Codec, frame: &Frame) -> Result<Bytes, BoxError> {
 
 #[cfg(test)]
 mod tests {
-    use tokio::time::Instant;
+    use std::sync::atomic::AtomicBool;
+    use std::task::{Context, Poll, Waker};
+    use std::time::Instant;
 
     use super::*;
 
@@ -681,35 +694,77 @@ mod tests {
         Datagram { bytes: Bytes::new(), to: None, answer }
     }
 
-    /// The drain ends at its grace when the first send never completes, with datagrams still
-    /// queued. The clock is paused, so it advances only to the next timer: the drain ends at the
-    /// grace exactly, and a drain with no bound fails at the outer one rather than hanging.
-    #[tokio::test(start_paused = true)]
-    async fn drain_ends_at_the_grace_when_a_send_never_completes() {
+    /// A clock that moves only when the test advances it, recording the length of each sleep asked
+    /// of it. A sleep ends once the clock has advanced past it; the test polls by hand, so no waker
+    /// is kept.
+    struct Scripted {
+        base: Instant,
+        at: Arc<Mutex<Duration>>,
+        asked: Mutex<Vec<Duration>>,
+    }
+
+    impl Scripted {
+        fn new() -> Scripted {
+            Scripted { base: Instant::now(), at: Arc::new(Mutex::new(Duration::ZERO)), asked: Mutex::new(Vec::new()) }
+        }
+
+        fn advance(&self, by: Duration) {
+            *lock(&self.at) += by;
+        }
+    }
+
+    impl Timer for Scripted {
+        fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+            lock(&self.asked).push(d);
+            let (at, until) = (Arc::clone(&self.at), *lock(&self.at) + d);
+            Box::pin(std::future::poll_fn(move |_| if *lock(&at) >= until { Poll::Ready(()) } else { Poll::Pending }))
+        }
+
+        fn now(&self) -> Instant {
+            self.base + *lock(&self.at)
+        }
+    }
+
+    /// The drain ends once the app's clock passes the grace when the first send never completes,
+    /// with datagrams still queued, and not a moment sooner.
+    #[test]
+    fn drain_ends_at_the_grace_when_a_send_never_completes() {
         let (writes, mut queued) = ordered::channel(4);
         for _ in 0..3 {
             drop(writes.send(datagram()));
         }
-        let grace = Duration::from_millis(200);
-        let began = Instant::now();
-        let drained = tokio::time::timeout(grace * 10, drain_queued(&mut queued, grace, |_| std::future::pending::<()>())).await;
-        assert!(drained.is_ok(), "the drain was still sending at ten times its grace");
-        assert_eq!(began.elapsed(), grace, "how long the drain held the socket");
+        let (clock, grace) = (Scripted::new(), Duration::from_millis(200));
+        let started = AtomicBool::new(false);
+        let mut drain = Box::pin(drain_queued(&mut queued, &clock, grace, |_| {
+            started.store(true, Ordering::Relaxed);
+            std::future::pending::<()>()
+        }));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(drain.as_mut().poll(&mut cx).is_pending(), "the drain ended before its clock moved");
+        assert!(started.load(Ordering::Relaxed), "the drain did not start sending");
+        clock.advance(grace - Duration::from_millis(1));
+        assert!(drain.as_mut().poll(&mut cx).is_pending(), "the drain ended short of its grace");
+        clock.advance(Duration::from_millis(1));
+        assert!(drain.as_mut().poll(&mut cx).is_ready(), "the drain was still sending once its grace had passed");
+        drop(drain);
+        assert_eq!(*lock(&clock.asked), [grace], "the sleeps the drain asked of the app's clock");
         assert!(queued.recv().now_or_never().flatten().is_some(), "the drain took every datagram though its first send never completed");
     }
 
-    #[tokio::test]
-    async fn drain_sends_everything_queued_when_sends_complete() {
+    #[test]
+    fn drain_sends_everything_queued_when_sends_complete() {
         let (writes, mut queued) = ordered::channel(4);
         for _ in 0..3 {
             drop(writes.send(datagram()));
         }
+        let clock = Scripted::new();
         let mut sent = 0;
-        drain_queued(&mut queued, Duration::from_secs(5), |_| {
+        let drained = drain_queued(&mut queued, &clock, Duration::from_secs(5), |_| {
             sent += 1;
             std::future::ready(())
         })
-        .await;
+        .now_or_never();
+        assert!(drained.is_some(), "the drain waited with every send complete");
         assert_eq!(sent, 3);
     }
 }
