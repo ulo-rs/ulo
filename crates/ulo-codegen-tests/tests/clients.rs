@@ -344,29 +344,35 @@ fn signed_millis(a: Instant, b: Instant) -> f64 {
 /// before the request reaches tonic's `Channel`, whose connection the request itself drives from
 /// inside the channel, so on a new connection the server is given the connect's length beyond the
 /// caller's deadline. Three rounds, each the first call over a channel of its own whose connector
-/// holds the connect a quarter second, from an execution with two seconds left: the server's
-/// deadline is no later than the caller's plus the connect, from its start to its end as the
-/// connector measured them, plus the request's transit, from the connect's end to the server's
-/// reading of `grpc-timeout`, plus one millisecond. A stamp written earlier than the call, or a
-/// connect starting later after it, would fail it.
+/// holds the connect a quarter second, from an execution with two seconds left. What the server
+/// is given beyond the caller's deadline, less the connect, measured by the connector from its
+/// start to its end, and less the request's transit, from the connect's end to the server's
+/// reading of `grpc-timeout`, is the time from `outgoing`'s reading of the clock to the connect's
+/// start. The test reads the clock on either side of `outgoing`, so that gap lies between what the
+/// two readings give, less one unit of the `grpc-timeout` written, which tonic truncates to. A
+/// stamp written later than `outgoing` returns, after the connect among them, fails the lower
+/// bound; one written earlier than it is called, or a `grpc-timeout` longer than the time left,
+/// the upper.
 #[tokio::test]
 async fn a_new_connection_gives_the_server_the_connect_beyond_the_caller_s_deadline_and_no_more() {
     let (server, ran) = counted("a").await;
     let app = client_app(Vec::new()).await;
     let held = Duration::from_millis(250);
     let mut report = Vec::new();
-    let mut late = false;
+    let (mut late, mut early) = (false, false);
     for round in 0..3 {
         let connects = Arc::new(Mutex::new(Vec::new()));
         let connector = SlowConnector { inner: HttpConnector::new(), held, connects: Arc::clone(&connects) };
         let endpoint = Endpoint::from_shared(server.origin()).unwrap_or_else(|error| panic!("bad endpoint: {error}"));
         let mut clock = ClockClient::new(endpoint.connect_with_connector_lazy(connector));
         let deadline = tokio::time::Instant::now().into_std() + Duration::from_secs(2);
-        let (written, outcome) = app
+        let (before, after, written, outcome) = app
             .execute(ExecOptions::new().deadline(deadline), async |exec| {
+                let before = Instant::now();
                 let request = forward(&exec.handle()).unwrap_or_else(|status| panic!("a deadline 2 s off was refused: {status:?}"));
+                let after = Instant::now();
                 let written = request.metadata().get("grpc-timeout").and_then(|value| value.to_str().ok()).map(str::to_owned);
-                (written, within("the call over a new connection", clock.quick(request)).await)
+                (before, after, written, within("the call over a new connection", clock.quick(request)).await)
             })
             .await
             .unwrap_or_else(|error| panic!("the execution was refused: {error}"));
@@ -381,15 +387,23 @@ async fn a_new_connection_gives_the_server_the_connect_beyond_the_caller_s_deadl
         };
         let read = server_deadline - grpc_timeout(&written);
         let (connect, transit) = (connected - began, read.saturating_duration_since(connected));
-        late |= server_deadline > deadline + connect + transit + Duration::from_millis(1);
+        // The server's deadline beyond the caller's, less the connect and the transit, in
+        // milliseconds: the gap from `outgoing`'s reading of the clock to the connect's start.
+        let gap = signed_millis(server_deadline, deadline) - (connect + transit).as_secs_f64() * 1e3;
+        let unit = grpc_timeout(&format!("1{}", &written[written.len() - 1..])).as_secs_f64() * 1e3;
+        late |= gap > signed_millis(began, before);
+        early |= gap < signed_millis(began, after) - unit;
         report.push(format!(
-            "round {round}: `grpc-timeout: {written}`, the server's deadline {:+.3} ms from the caller's, the connect {:.3} ms, the request {:.3} ms in transit",
+            "round {round}: `grpc-timeout: {written}`, the server's deadline {:+.3} ms from the caller's, the connect {:.3} ms, the request {:.3} ms in transit, a gap of {gap:.6} ms against {:.6} to {:.6} ms",
             signed_millis(server_deadline, deadline),
             connect.as_secs_f64() * 1e3,
-            transit.as_secs_f64() * 1e3
+            transit.as_secs_f64() * 1e3,
+            signed_millis(began, after) - unit,
+            signed_millis(began, before)
         ));
     }
-    assert!(!late, "a server's deadline was later than its caller's by more than the connect, the transit and 1 ms:\n{}", report.join("\n"));
+    assert!(!late, "a server was given more than the connect, the transit and the time from `outgoing` to the connect:\n{}", report.join("\n"));
+    assert!(!early, "a server was given less than the connect, the transit and the time from `outgoing`'s return to the connect:\n{}", report.join("\n"));
     let _ = app.close(Signal::new("test")).await;
     server.stop().await;
 }

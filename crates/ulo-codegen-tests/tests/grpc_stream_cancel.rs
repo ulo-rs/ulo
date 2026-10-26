@@ -249,7 +249,7 @@ impl Running {
     }
 }
 
-const SHUTTING_DOWN: &str = "the server is shutting down";
+const SHUTTING_DOWN: &str = ulo_transport::SHUTDOWN_MESSAGE;
 const DEADLINE_PASSED: &str = "the call's deadline passed";
 
 #[tokio::test]

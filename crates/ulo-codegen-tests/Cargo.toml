@@ -30,6 +30,7 @@ ulo-transport = { path = "../ulo-transport" }
 ulo-ws = { path = "../ulo-ws" }
 futures-util.workspace = true
 http.workspace = true
+http-body.workspace = true
 http-body-util.workspace = true
 # A plain HTTP/2 client, which enforces no `grpc-timeout` of its own, for the deadline tests.
 hyper-util = { workspace = true, features = ["client-legacy", "http1", "http2", "tokio"] }

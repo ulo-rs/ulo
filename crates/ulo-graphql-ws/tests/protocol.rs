@@ -583,11 +583,11 @@ async fn a_subscribe_handled_during_the_drain_is_refused_with_the_shutdown_phras
             other => panic!("expected a message or the close frame, got {other:?}"),
         }
     };
-    let refused = json!({ "type": "error", "id": "late", "payload": [{ "message": "the server is shutting down" }] });
+    let refused = json!({ "type": "error", "id": "late", "payload": [{ "message": ulo_transport::SHUTDOWN_MESSAGE }] });
     assert_eq!(messages.iter().filter(|message| **message == refused).count(), 1, "the refusal of `late` among {messages:?}");
     assert!(messages.contains(&json!({ "type": "complete", "id": "held" })), "the held operation ended with complete: {messages:?}");
     assert_eq!(messages.len(), 2, "nothing else was sent: {messages:?}");
-    assert_eq!(closed, (1001, "the server is shutting down".to_owned()), "the drain's close");
+    assert_eq!(closed, (1001, ulo_transport::SHUTDOWN_MESSAGE.to_owned()), "the drain's close");
     assert_eq!(app.seen.subscribed().len(), 1, "`late` never reached the engine");
     within("the close", closing).await.expect("the close task ended");
     let _ = within("serve", app.serving).await;

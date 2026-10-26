@@ -603,7 +603,7 @@ async fn a_handshake_once_the_drain_has_begun_is_refused_503_before_the_connecti
             panic!("{path}: a handshake once the drain had begun was accepted");
         };
         assert_eq!(refusal.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
-        assert_eq!(refusal.reason(), "the server is shutting down", "{path}");
+        assert_eq!(refusal.reason(), ulo_transport::SHUTDOWN_MESSAGE, "{path}");
     }
     assert_eq!(hooks.all(), Vec::new(), "the connection phase ran once the drain had begun");
 }

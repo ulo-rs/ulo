@@ -172,7 +172,7 @@ pub async fn draining<H: Host>() {
     app.read_past(counted, "the server's count including the connection carrying half an upgrade request").await;
 
     let closing = app.close_in_background();
-    assert_eq!(idle.close_frame().await, Some((1001, "the server is shutting down".to_owned())), "the drain's close");
+    assert_eq!(idle.close_frame().await, Some((1001, ulo_transport::SHUTDOWN_MESSAGE.to_owned())), "the drain's close");
     write(&mut pending, rest).await;
     let answer =
         crate::app::within(app.timer(), "the answer to an upgrade request finished during the drain", read_answer(pending, upgrade.sent_key()))

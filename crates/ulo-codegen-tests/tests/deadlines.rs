@@ -15,11 +15,12 @@ use std::time::{Duration, Instant};
 
 use futures_util::{Stream, StreamExt, future, stream};
 use http::{HeaderMap, Request};
-use http_body_util::{BodyExt, Full};
+use http_body::Frame;
+use http_body_util::{BodyExt, Full, StreamBody};
 use prost::Message as _;
 use prost::bytes::Bytes;
 use tonic::{Code, Status};
-use ulo::{BoxError, Bound, Dep, ErrorHandler, ExecutionRef, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{BoxError, Bound, Dep, ErrorHandler, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, injectable, routes};
 use ulo_codegen_tests::probe::clock_client::ClockClient;
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
 use ulo_grpc::{Grpc, GrpcCx, Message, Reply};
@@ -134,6 +135,51 @@ impl ErrorHandler<Grpc> for TrickleOnTimeout {
 }
 
 #[injectable]
+/// Answers with a body of its own and never runs the handler: a reply no `encode_stream` built
+/// carries no `Streamed` mark, so the outermost body treats it as one that may be unary.
+struct Unmarked;
+
+impl Interceptor<Grpc> for Unmarked {
+    async fn intercept(&self, _cx: &GrpcCx, _next: Next<'_, Grpc>) -> Result<Reply, BoxError> {
+        Ok(Reply::new(tonic::body::Body::new(burst())))
+    }
+}
+
+/// How many messages `Burst` writes before its OK trailers.
+const BURST: u32 = 6;
+
+/// Which message of `burst` holds its thread past the deadline before it is written.
+const BURST_SLOW: u32 = 1;
+
+/// `BURST` messages numbered from 1, one frame each, then OK trailers. Frame `BURST_SLOW` yields
+/// once, so the deadline's timer is polled, then holds its thread past the deadline; every frame
+/// after it is ready at once, so the poll after it finds the deadline passed with the next message
+/// ready.
+fn burst() -> impl http_body::Body<Data = Bytes, Error = Status> + Send + 'static {
+    StreamBody::new(stream::unfold(0u32, |sent| async move {
+        if sent > BURST {
+            return None;
+        }
+        if sent == BURST_SLOW {
+            tokio::task::yield_now().await;
+            std::thread::sleep(LATE);
+        }
+        let frame = if sent < BURST {
+            let message = Tick { n: sent + 1 }.encode_to_vec();
+            let mut framed = vec![0];
+            framed.extend_from_slice(&u32::try_from(message.len()).unwrap_or_default().to_be_bytes());
+            framed.extend_from_slice(&message);
+            Frame::data(Bytes::from(framed))
+        } else {
+            let mut trailers = HeaderMap::new();
+            trailers.insert("grpc-status", http::HeaderValue::from_static("0"));
+            Frame::trailers(trailers)
+        };
+        Some((Ok::<_, Status>(frame), sent + 1))
+    }))
+}
+
+#[injectable]
 struct ClockService {
     seen: Dep<Seen>,
 }
@@ -216,6 +262,12 @@ impl ClockService {
     #[ulo_grpc::method(probe::clock::Hush)]
     fn hush(&self, _req: Message<Ticks>) -> impl Stream<Item = Result<Tick, CallError>> {
         stream::pending()
+    }
+
+    #[ulo_grpc::method(probe::clock::Burst)]
+    #[interceptors(value = Unmarked)]
+    fn burst(&self, _req: Message<Ticks>) -> impl Stream<Item = Result<Tick, CallError>> {
+        stream::empty()
     }
 
     /// One tick, then nothing until the reply is ended.
@@ -600,5 +652,32 @@ async fn an_unmarked_reply_stream_waiting_at_the_deadline_is_ended_with_deadline
         }
         other => panic!("expected the first status, then DEADLINE_EXCEEDED trailers, got {other:?}"),
     }
+    app.stop().await;
+}
+
+/// A reply that is not a marked stream may be a unary one, whose message has been written and
+/// which ends with its own trailers; a second data frame after the deadline is what tells it
+/// from one, and it is not taken. `Burst`'s frame `BURST_SLOW` is written, the poll after it
+/// finds the deadline passed with the next message ready, that message goes out with the poll,
+/// and the one after it is dropped for DEADLINE_EXCEEDED. A worker pool, so the deadline's timer
+/// fires on a thread other than the one the slow frame holds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unmarked_body_yielding_a_second_data_frame_after_the_deadline_is_ended_without_it() {
+    let (app, _client, _) = start().await;
+    let (plain, _) = app.plain_http2();
+    let (headers, written) = raw_call(&app, &plain, "/codegen.probe.v1.Clock/Burst", "50m").await;
+    assert_eq!(header(&headers, "grpc-status"), None, "{headers:?}");
+    let Some((Written::Trailers(trailers), messages)) = written.split_last() else {
+        panic!("expected messages and trailers, got {written:?}");
+    };
+    assert_eq!(header(trailers, "grpc-status"), Some("4"), "the body ran to its own OK trailers: {written:?}");
+    let numbers: Vec<u32> = messages
+        .iter()
+        .map(|frame| match frame {
+            Written::Message(tick) => tick.n,
+            Written::Trailers(other) => panic!("trailers before the end: {other:?}"),
+        })
+        .collect();
+    assert_eq!(numbers, vec![1, 2, 3], "the messages written before the deadline and the one in its poll, and no other");
     app.stop().await;
 }

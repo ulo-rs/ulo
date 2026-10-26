@@ -4,6 +4,7 @@ use std::io::{self, Write as _};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::pin::pin;
+use std::task::Poll;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::Duration;
@@ -52,6 +53,10 @@ const CONTROL: &str = "ulo.rpc.control";
 
 /// The `ErrorInfo` domain of the `no_destination` error this link writes for no-responders.
 const DOMAIN: &str = "ulo.rpc";
+
+/// How long a server's connection outlives `close`, completed or cut, to write what was queued
+/// before it (transports DESIGN §5.2).
+const CUT_GRACE: Duration = Duration::from_secs(2);
 
 /// The NATS link.
 ///
@@ -424,12 +429,18 @@ impl Link for Nats {
         if let Some(side) = server {
             side.phase.send_replace(Phase::Closed);
             side.calls.clear();
-            side.replies.close(&side.client, side.codec);
-            let shut_down = side.keep_until_closed();
+            let unsent = side.replies.close(&side.client, side.codec);
+            let (_kept, _) = side.keep_until_closed();
+            // Every reply path finds the replies closed, so these wait behind nothing but the
+            // frames already queued.
+            for (subject, bytes) in unsent {
+                if let Err(error) = side.client.publish(subject, bytes).await {
+                    tracing::debug!(%error, "the NATS link could not queue the shutdown answer of a call it held at `close`");
+                }
+            }
             if let Err(error) = shut(&side.client).await {
                 failure = Some(error);
             }
-            let _ = shut_down.send(());
         }
         if let Some(client) = client
             && let Err(error) = shut(&client).await
@@ -508,12 +519,14 @@ impl ServerSide {
                 return;
             }
             (Some(reply), None) => {
-                let (id, path) = self.hold(reply.to_string());
+                #[cfg(test)]
+                tests::gate::at_hold(&pattern).await;
+                let Some((id, path)) = self.hold(reply.to_string()) else { return self.refuse(reply.to_string(), &pattern) };
                 (Frame::Req { id, pattern, headers, data: Data::new(message.payload) }, path)
             }
             (Some(reply), Some(OPEN)) => {
                 let subject = reply.to_string();
-                let (id, path) = self.hold(subject.clone());
+                let Some((id, path)) = self.hold(subject.clone()) else { return self.refuse(subject, &pattern) };
                 // The caller holds the request's items until this arrives, so they reach the
                 // control lane after the call is held here.
                 let opened = publish(&self.client, subject, None, &CallHeaders::new(), Some(OPENED), Bytes::new()).await;
@@ -543,8 +556,10 @@ impl ServerSide {
         }
     }
 
-    /// Holds a call under its reply subject, the key its control messages carry.
-    fn hold(&self, subject: String) -> (u64, ReplyPath) {
+    /// Holds a call under its reply subject, the key its control messages carry, unless `close`
+    /// has answered the calls it found held: checked under the lock `close` takes, so a call is
+    /// either held where `close` finds it or not held at all.
+    fn hold(&self, subject: String) -> Option<(u64, ReplyPath)> {
         let codec = self.codec;
         let lane = Lane { client: self.client.clone(), calls: Arc::clone(&self.calls), replies: Arc::clone(&self.replies), subject: subject.clone() };
         let path = ReplyPath::new(move |frame: Frame| -> BoxFuture<'static, Result<(), BoxError>> {
@@ -555,9 +570,27 @@ impl ServerSide {
                 Err(error) => Box::pin(std::future::ready(Err(BoxError::from(error)))),
             }
         });
+        let mut answers = lock(&self.replies.answers);
+        if answers.closed {
+            return None;
+        }
         let id = self.calls.hold(subject.clone(), path.clone());
-        lock(&self.replies.answers).unanswered.insert(subject, id);
-        (id, path)
+        answers.unanswered.insert(subject, id);
+        Some((id, path))
+    }
+
+    /// Answers a request or streamed request that arrived once `close` had answered the calls it
+    /// held `err` of kind `unavailable` with the shutdown phrase, as the server answers one during
+    /// the drain, rather than hold a call nothing will answer. Queued without waiting.
+    fn refuse(&self, subject: String, pattern: &str) {
+        let refused = self
+            .codec
+            .encode_frame(&Frame::Err { id: 0, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) })
+            .map_err(BoxError::from)
+            .and_then(|bytes| queue(&self.client, subject, bytes, Budget::Ignored).map_err(Queued::into_error));
+        if let Err(error) = refused {
+            tracing::debug!(%error, pattern, "the NATS link could not refuse a request that arrived after `close`");
+        }
     }
 
     /// Lets go of the call held under `key`, whose caller cancelled it: the server writes it
@@ -568,34 +601,36 @@ impl ServerSide {
         call
     }
 
-    /// Spawns a task holding a clone of the connection's `Client` until the connection reports
-    /// itself closed or disconnected, and answers the sender `close` signals once its own drain is
-    /// queued. async-nats's connection task exits as soon as its command channel has no sender
-    /// left, without writing the commands it has taken and not yet written, so the replies and the
-    /// `unavailable`s `close` queued would be lost when a `close` cut by a spent shutdown cap drops
-    /// the last `Client` with the app. A `close` dropped before its drain is queued leaves the
-    /// task to queue it, and the drain closes the connection once what was queued is written. A
-    /// connection already down is not kept: async-nats writes nothing it queued until it
-    /// reconnects.
-    fn keep_until_closed(&self) -> oneshot::Sender<()> {
-        let (shut_down, drained) = oneshot::channel::<()>();
+    /// Spawns a task that, once `close` ends, completed or cut, which the drop of the answered
+    /// sender signals, holds a clone of the connection's `Client` until a flush shows everything
+    /// queued ahead of it written, until the connection reports itself closed or disconnected, or
+    /// for [`CUT_GRACE`], whichever comes first. async-nats's connection task exits as soon as it
+    /// finds its command channel without a sender, without writing the commands it has taken and
+    /// not yet written, so the replies and the `unavailable`s `close` queued would be lost when a
+    /// `close` cut by a spent shutdown cap drops the last `Client` with the app. After a completed
+    /// `close`, whose drain has closed the connection, the flush fails at once. A connection
+    /// already down is not kept: async-nats writes nothing it queued until it reconnects.
+    fn keep_until_closed(&self) -> (oneshot::Sender<()>, Option<tokio::task::JoinHandle<()>>) {
+        let (kept, closed) = oneshot::channel::<()>();
         if self.client.connection_state() != Connection::Connected {
-            return shut_down;
+            return (kept, None);
         }
         let client = self.client.clone();
         let mut ended = self.ended.subscribe();
-        ended.borrow_and_update();
-        self.runtime.handle().spawn(async move {
-            if drained.await.is_err()
-                && let Err(error) = client.drain().await
-            {
-                tracing::debug!(%error, "the NATS link could not drain its connection after a `close` cut short");
-                return;
+        let task = self.runtime.handle().spawn(async move {
+            let _ = closed.await;
+            let written = async {
+                tokio::select! {
+                    _ = client.flush() => {}
+                    _ = ended.changed() => {}
+                }
+            };
+            if tokio::time::timeout(CUT_GRACE, written).await.is_err() {
+                tracing::debug!("the NATS link let go of its connection `CUT_GRACE` after `close` with writes still queued");
             }
-            let _ = ended.changed().await;
             drop(client);
         });
-        shut_down
+        (kept, Some(task))
     }
 }
 
@@ -618,7 +653,7 @@ impl Lane {
     fn send(&self, bytes: Bytes, terminal: bool) -> BoxFuture<'static, Result<(), BoxError>> {
         let mut answers = lock(&self.replies.answers);
         if answers.closed {
-            return Box::pin(std::future::ready(Err("the NATS link has closed; the reply was not sent".into())));
+            return Box::pin(std::future::ready(Err(CLOSED.into())));
         }
         // Polled inside tokio's cooperative budget, unlike `close`'s answers: a spent budget answers
         // `Pending` here, and the frame waiting below yields the thread, which a stream produced
@@ -639,12 +674,23 @@ impl Lane {
         drop(answers);
         let lane = self.clone();
         Box::pin(async move {
-            let sent = lane.client.publish(lane.subject.clone(), bytes).await;
-            let mut answers = lock(&lane.replies.answers);
-            if sent.is_err() || terminal {
-                lane.answered(&mut answers);
-            }
-            Ok(sent?)
+            // tokio's channel hands a waiting send its room as the receiver takes, but the command
+            // enters the channel only at the send's next poll, so each poll is made under the
+            // lock, after `closed` is checked: a frame waiting when `close` runs is dropped, its
+            // room going to the next waiting send.
+            let mut publish = pin!(lane.client.publish(lane.subject.clone(), bytes));
+            std::future::poll_fn(|cx| {
+                let mut answers = lock(&lane.replies.answers);
+                if answers.closed {
+                    return Poll::Ready(Err(BoxError::from(CLOSED)));
+                }
+                let Poll::Ready(sent) = publish.as_mut().poll(cx) else { return Poll::Pending };
+                if sent.is_err() || terminal {
+                    lane.answered(&mut answers);
+                }
+                Poll::Ready(sent.map_err(BoxError::from))
+            })
+            .await
         })
     }
 
@@ -662,11 +708,23 @@ enum Budget {
     Ignored,
 }
 
+/// What a reply sent once `close` has answered its call is refused with.
+const CLOSED: &str = "the NATS link has closed; the reply was not sent";
+
 /// Why [`queue`] did not queue a publish.
 enum Queued {
     /// The command channel has no room.
     Full,
     Refused(BoxError),
+}
+
+impl Queued {
+    fn into_error(self) -> BoxError {
+        match self {
+            Queued::Full => BoxError::from("the NATS link's command channel is full"),
+            Queued::Refused(error) => error,
+        }
+    }
 }
 
 /// Publishes without waiting: async-nats offers no `try_` publish, so its `publish` is polled
@@ -704,25 +762,34 @@ impl Replies {
     /// Queues, in one hold of the lock and without waiting, the `err` of kind `unavailable` with
     /// the shutdown phrase for every held call no terminal frame was queued for, a stream's after
     /// the items queued before it, and marks the replies closed, so a call's own answer arriving
-    /// after it is dropped. A frame the channel has no room for is not sent and is logged at
-    /// `debug`.
-    fn close(&self, client: &Client, codec: Codec) {
+    /// after it is dropped. What the channel has no room for, from the first refusal on, is
+    /// answered with its reply subject for `close` to queue once there is room.
+    fn close(&self, client: &Client, codec: Codec) -> Vec<(String, Bytes)> {
         let mut answers = lock(&self.answers);
-        let mut unanswered: Vec<(String, u64)> = answers.unanswered.drain().collect();
-        unanswered.sort_by_key(|(_, id)| *id);
-        for (subject, id) in unanswered {
-            let error = ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new());
-            let queued = codec.encode_frame(&Frame::Err { id, error }).map_err(BoxError::from).and_then(|bytes| {
-                queue(client, subject, bytes, Budget::Ignored).map_err(|refused| match refused {
-                    Queued::Full => BoxError::from("the NATS link's command channel is full"),
-                    Queued::Refused(error) => error,
-                })
-            });
-            if let Err(error) = queued {
-                tracing::debug!(%error, "the NATS link could not queue the shutdown answer of a call it held at `close`");
-            }
-        }
         answers.closed = true;
+        let mut unsent = Vec::new();
+        for (subject, id) in answers.unanswered.drain() {
+            let error = ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new());
+            let bytes = match codec.encode_frame(&Frame::Err { id, error }) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    tracing::debug!(%error, "the NATS link could not encode the shutdown answer of a call it held at `close`");
+                    continue;
+                }
+            };
+            if unsent.is_empty() {
+                match queue(client, subject.clone(), bytes.clone(), Budget::Ignored) {
+                    Ok(()) => continue,
+                    Err(Queued::Refused(error)) => {
+                        tracing::debug!(%error, "the NATS link could not queue the shutdown answer of a call it held at `close`");
+                        continue;
+                    }
+                    Err(Queued::Full) => {}
+                }
+            }
+            unsent.push((subject, bytes));
+        }
+        unsent
     }
 }
 
@@ -1590,6 +1657,36 @@ mod tests {
 
     use super::*;
 
+    /// A request lane stopped where it is about to hold a call, for a test to run `close` there.
+    pub(super) mod gate {
+        use super::*;
+
+        type Stop = (String, oneshot::Sender<()>, oneshot::Receiver<()>);
+
+        static AT_HOLD: Mutex<Option<Stop>> = Mutex::new(None);
+
+        /// Stops the next request for `pattern` before its call is held: the first receiver
+        /// answers once a lane has stopped there, and the sender releases it.
+        #[cfg_attr(not(feature = "integration"), allow(dead_code))]
+        pub(crate) fn stop(pattern: &str) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+            let (arrived, stopped) = oneshot::channel();
+            let (release, released) = oneshot::channel();
+            *lock(&AT_HOLD) = Some((pattern.to_owned(), arrived, released));
+            (stopped, release)
+        }
+
+        pub(crate) async fn at_hold(pattern: &str) {
+            let stop = {
+                let mut stop = lock(&AT_HOLD);
+                if stop.as_ref().is_some_and(|(stopped, _, _)| stopped == pattern) { stop.take() } else { None }
+            };
+            if let Some((_, arrived, released)) = stop {
+                let _ = arrived.send(());
+                let _ = released.await;
+            }
+        }
+    }
+
     /// Root certificates loaded per test, each test's loader counting in a slot of its own.
     static LOADS: [AtomicUsize; 29] = [const { AtomicUsize::new(0) }; 29];
 
@@ -2032,7 +2129,8 @@ mod tests {
         /// async-nats's connection task first runs after every drop: with no handle left it exits
         /// without writing what it took from its channel, which a probe of async-nats 0.46 alone
         /// showed for 40 publishes of 40, each followed by the drop of the last `Client`. The
-        /// keeping task drains the connection, which then closes.
+        /// keeping task flushes and then lets go of its handle, the last one, so the connection
+        /// closes.
         #[tokio::test]
         async fn a_close_cut_short_keeps_the_connection_until_it_has_written_its_answers() {
             const REPLY: &str = "cut.reply";
@@ -2060,10 +2158,10 @@ mod tests {
                 phase: watch::channel(Phase::Serving).0,
                 _roots: None,
             };
-            let (id, path) = side.hold(REPLY.to_owned());
+            let (id, path) = side.hold(REPLY.to_owned()).expect("the call is held before the close");
 
-            side.replies.close(&side.client, side.codec);
-            let shut_down = side.keep_until_closed();
+            assert!(side.replies.close(&side.client, side.codec).is_empty(), "the close's answer found the channel full");
+            let (shut_down, _) = side.keep_until_closed();
             drop((shut_down, path, side));
 
             let answer = tokio::time::timeout(Duration::from_secs(5), replies.next()).await.ok().flatten().map(|message| message.payload);
@@ -2075,6 +2173,299 @@ mod tests {
             );
             let closed = tokio::time::timeout(Duration::from_secs(5), closed.changed()).await;
             assert!(matches!(closed, Ok(Ok(()))), "the server's connection did not close after the cut close");
+        }
+
+        /// A relay to `target` for one connection that can stop reading what the inner side
+        /// writes, so the inner side's socket stops taking writes once the buffers between fill.
+        struct Pausing {
+            addr: SocketAddr,
+            paused: watch::Sender<bool>,
+            /// Ends the relay's connection to the inner side.
+            severed: watch::Sender<bool>,
+        }
+
+        impl Pausing {
+            async fn start(target: SocketAddr) -> Pausing {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.expect("a loopback port");
+                let addr = listener.local_addr().expect("the relay's address");
+                let (paused, mut gate) = watch::channel(false);
+                let (severed, mut cut) = watch::channel(false);
+                let mut back = cut.clone();
+                tokio::spawn(async move {
+                    let Ok((inner, _)) = listener.accept().await else { return };
+                    let Ok(outer) = tokio::net::TcpStream::connect(target).await else { return };
+                    let (mut inner_read, mut inner_write) = inner.into_split();
+                    let (mut outer_read, mut outer_write) = outer.into_split();
+                    tokio::spawn(async move {
+                        tokio::select! {
+                            _ = tokio::io::copy(&mut outer_read, &mut inner_write) => {}
+                            _ = back.wait_for(|severed| *severed) => {}
+                        }
+                    });
+                    let mut buffer = vec![0u8; 64 * 1024];
+                    loop {
+                        if *cut.borrow_and_update() {
+                            return;
+                        }
+                        tokio::select! {
+                            waited = gate.wait_for(|paused| !*paused) => if waited.is_err() { return },
+                            _ = cut.wait_for(|severed| *severed) => return,
+                        }
+                        match inner_read.read(&mut buffer).await {
+                            Ok(0) | Err(_) => {
+                                let _ = outer_write.shutdown().await;
+                                return;
+                            }
+                            Ok(read) => {
+                                if outer_write.write_all(&buffer[..read]).await.is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                });
+                Pausing { addr, paused, severed }
+            }
+
+            fn pause(&self) {
+                self.paused.send_replace(true);
+            }
+
+            /// Closes the relay's connection to the inner side, which then reads its end.
+            fn sever(&self) {
+                self.severed.send_replace(true);
+            }
+
+            fn resume(&self) {
+                self.paused.send_replace(false);
+            }
+        }
+
+        /// Whether this process holds an established connection to `relay`: the server link's
+        /// socket, read with `lsof` since the link owns it.
+        fn connected_to(relay: SocketAddr) -> bool {
+            let listed = std::process::Command::new("lsof")
+                .args(["-nP", "-a", "-p", &std::process::id().to_string(), "-iTCP", "-sTCP:ESTABLISHED"])
+                .output()
+                .expect("lsof runs");
+            String::from_utf8_lossy(&listed.stdout).lines().any(|line| line.contains(&format!("->{relay} (ESTABLISHED)")))
+        }
+
+        /// How long after `from` this process stops holding a connection to `relay`, waiting at most
+        /// `patience`.
+        async fn disconnected(relay: SocketAddr, from: Instant, patience: Duration) -> Option<Duration> {
+            while from.elapsed() < patience {
+                if !connected_to(relay) {
+                    return Some(from.elapsed());
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            None
+        }
+
+        /// A server's link reached through `relay` and listening on `pattern`, a caller's link
+        /// straight to `server`, and the reply path of one request the caller sent, id 1.
+        async fn served(server: SocketAddr, relay: SocketAddr, pattern: &str, group: &str) -> (Nats, Nats, Outbound, Inbound, u64, ReplyPath) {
+            let app = app().await;
+            let mut serving = link(&format!("nats://{relay}"), test_root::<25>, std::env::temp_dir).group(group);
+            serving.prepare(&app.handle()).await.expect("the server's link prepares");
+            let mut inbound = serving.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
+            let caller = link(&format!("nats://{server}"), test_root::<25>, std::env::temp_dir);
+            let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
+            let outbound = caller.connect(&runtime).await.expect("the caller's link connects");
+            let request = Frame::Req { id: 1, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+            (outbound.send)(Pattern::from(pattern), request, None).await.expect("the request is published");
+            let delivery = tokio::time::timeout(Duration::from_secs(10), inbound.next()).await.ok().flatten().expect("the request reaches the server");
+            let (Frame::Req { id, .. }, Some(path)) = (delivery.frame, delivery.reply) else { panic!("the server received something other than a request") };
+            (serving, caller, outbound, inbound, id, path)
+        }
+
+        /// I2: the task keeping a cut `close`'s connection lets go of it at `CUT_GRACE` when what
+        /// was queued cannot be written, the server's socket taking no writes: the relay stops
+        /// reading before the server's publishes fill async-nats's command channel, and never
+        /// reads again. The socket itself stays open past the grace: async-nats's connection task
+        /// does not poll its command channel while its write buffer is over its soft limit, so it
+        /// does not see the last sender go until a write or its pings end it.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn the_task_keeping_a_cut_close_s_connection_lets_go_at_the_grace() {
+            const REPLY: &str = "grace.reply";
+            let (server, _container) = nats().await;
+            let relay = Pausing::start(server).await;
+            let (ended, _) = watch::channel(0u64);
+            let reported = ended.clone();
+            let options = ConnectOptions::new().event_callback(move |event| {
+                if matches!(event, Event::Closed | Event::Disconnected) {
+                    reported.send_modify(|ends| *ends += 1);
+                }
+                async {}
+            });
+            let client = options.connect(relay.addr.to_string()).await.expect("the server's connection opens");
+            let side = ServerSide {
+                client,
+                codec: Codec::Json,
+                runtime: Tokio::current(),
+                calls: Arc::new(Calls::new()),
+                replies: Arc::default(),
+                ended,
+                phase: watch::channel(Phase::Serving).0,
+                _roots: None,
+            };
+            let (_id, path) = side.hold(REPLY.to_owned()).expect("the call is held before the close");
+            relay.pause();
+            let mut queued = 0;
+            while queue(&side.client, "grace.flood".to_owned(), Bytes::from(vec![b'7'; 1024]), Budget::Ignored).is_ok() {
+                queued += 1;
+                if queued % 256 == 0 {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+            assert!(queued >= 2_048, "the command channel filled after {queued} publishes, short of async-nats's 2,048");
+
+            let unsent = side.replies.close(&side.client, side.codec);
+            assert_eq!(unsent.len(), 1, "the close found room for the held call's answer in a full channel");
+            let (kept, task) = side.keep_until_closed();
+            let cut = Instant::now();
+            drop((kept, path, side));
+            let task = task.expect("a connected server keeps its connection past the cut");
+            tokio::time::timeout(Duration::from_secs(10), task).await.expect("the keeping task outlived the grace by 8 s").expect("the keeping task");
+            let held = cut.elapsed();
+            assert!(
+                held >= CUT_GRACE - Duration::from_millis(50) && held < CUT_GRACE + Duration::from_secs(1),
+                "the keeping task let go {held:?} after the cut, where the grace is {CUT_GRACE:?}"
+            );
+            assert!(connected_to(relay.addr), "the socket closed with the keeping task, which async-nats 0.46 does not do while it holds writes");
+        }
+
+        /// I2: the task keeping a cut `close`'s connection lets go of it once the connection
+        /// reports itself lost, before the grace: the server's socket takes no writes, so the
+        /// flush is never answered, and the relay then closes the connection.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn the_task_keeping_a_cut_close_s_connection_lets_go_when_it_is_lost() {
+            const REPLY: &str = "lost.reply";
+            let (server, _container) = nats().await;
+            let relay = Pausing::start(server).await;
+            let (ended, _) = watch::channel(0u64);
+            let reported = ended.clone();
+            let options = ConnectOptions::new().event_callback(move |event| {
+                if matches!(event, Event::Closed | Event::Disconnected) {
+                    reported.send_modify(|ends| *ends += 1);
+                }
+                async {}
+            });
+            let client = options.connect(relay.addr.to_string()).await.expect("the server's connection opens");
+            let side = ServerSide {
+                client,
+                codec: Codec::Json,
+                runtime: Tokio::current(),
+                calls: Arc::new(Calls::new()),
+                replies: Arc::default(),
+                ended,
+                phase: watch::channel(Phase::Serving).0,
+                _roots: None,
+            };
+            let (_id, path) = side.hold(REPLY.to_owned()).expect("the call is held before the close");
+            relay.pause();
+            let mut queued = 0;
+            while queue(&side.client, "lost.flood".to_owned(), Bytes::from(vec![b'7'; 1024]), Budget::Ignored).is_ok() {
+                queued += 1;
+                if queued % 256 == 0 {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+            let _ = side.replies.close(&side.client, side.codec);
+            let (kept, task) = side.keep_until_closed();
+            let cut = Instant::now();
+            drop((kept, path, side));
+            let task = task.expect("a connected server keeps its connection past the cut");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            relay.sever();
+            tokio::time::timeout(Duration::from_secs(10), task).await.expect("the keeping task outlived the grace by 8 s").expect("the keeping task");
+            let held = cut.elapsed();
+            assert!(held < CUT_GRACE - Duration::from_millis(500), "the keeping task let go {held:?} after the cut, though the connection was lost 200 ms after it");
+        }
+
+        /// I2: a `close` cut in its first poll while the server's socket takes no writes, the
+        /// socket taking them again within the grace: the task holding the connection writes what
+        /// was queued before the cut, the caller reading every item and then the stream's
+        /// `unavailable`, and lets go once it is written, the socket closing within the grace.
+        /// The relay stops reading while a stream of large items fills the socket's buffers, and
+        /// reads again half a second after the cut. Without the task, the link's drop leaves no
+        /// sender, and async-nats exits as it takes the last commands, unwritten.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_cut_close_writes_what_was_queued_once_the_socket_takes_writes_again() {
+            const FLOOD: &str = "drained.flood";
+            const GROUP: &str = "drained";
+            let (server, _container) = nats().await;
+            let relay = Pausing::start(server).await;
+            let (serving, caller, outbound, inbound, id, path) = served(server, relay.addr, FLOOD, GROUP).await;
+            let mut replies = outbound.replies;
+            relay.pause();
+            const ITEMS: usize = 100;
+            for _ in 0..ITEMS {
+                let item = Frame::Item { id, data: Data::new(Bytes::from(vec![b'7'; 256 * 1024])) };
+                path.send(item).await.expect("an item is queued");
+            }
+
+            assert!(serving.close().now_or_never().is_none(), "the close ended in its first poll");
+            let cut = Instant::now();
+            drop((serving, inbound, path));
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            assert!(connected_to(relay.addr), "the server's socket closed while it took no writes, within the grace");
+            relay.resume();
+
+            let mut items = 0;
+            let terminal = loop {
+                match tokio::time::timeout(Duration::from_secs(5), replies.next()).await.ok().flatten() {
+                    Some(Frame::Item { id: 1, .. }) => items += 1,
+                    other => break other,
+                }
+            };
+            assert_eq!(items, ITEMS, "the items the caller read before the terminal frame");
+            assert_eq!(
+                terminal,
+                Some(Frame::Err { id: 1, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) }),
+                "the terminal frame the caller read for the stream the cut close held"
+            );
+            let closed = disconnected(relay.addr, cut, CUT_GRACE).await;
+            assert!(closed.is_some(), "the server's socket was still open at the grace, though it took writes again");
+
+            let _ = caller.close().await;
+        }
+
+        /// I5: a request lane holding its call races `close` on another worker. The lane is stopped
+        /// where it is about to hold the call, `close` takes the lock and answers the calls it
+        /// found, and the lane, released, finds the replies closed: the call is not held, and its
+        /// caller reads `unavailable` with the shutdown phrase rather than its own `Timeout`.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_call_arriving_once_close_has_taken_the_lock_is_refused_not_held() {
+            const LATE: &str = "gate.late";
+            let (server, _container) = nats().await;
+            let app = app().await;
+            let mut serving = link(&format!("nats://{server}"), test_root::<25>, std::env::temp_dir).group("gate");
+            serving.prepare(&app.handle()).await.expect("the server's link prepares");
+            let _inbound = serving.listen(&[Pattern::from(LATE)]).await.expect("the server's link listens");
+            let caller = link(&format!("nats://{server}"), test_root::<25>, std::env::temp_dir);
+            let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
+            let outbound = caller.connect(&runtime).await.expect("the caller's link connects");
+            let mut replies = outbound.replies;
+
+            let (stopped, release) = super::gate::stop(LATE);
+            let request = Frame::Req { id: 1, pattern: LATE.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+            (outbound.send)(Pattern::from(LATE), request, None).await.expect("the request is published");
+            tokio::time::timeout(Duration::from_secs(10), stopped).await.expect("no request lane stopped at the hold").expect("the gate");
+
+            let mut closing = pin!(serving.close());
+            assert!(closing.as_mut().now_or_never().is_none(), "the close ended in its first poll");
+            let _ = release.send(());
+            let answer = tokio::time::timeout(Duration::from_secs(5), replies.next()).await.ok().flatten();
+            assert_eq!(
+                answer,
+                Some(Frame::Err { id: 1, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) }),
+                "what the caller read for the call that arrived once the close had taken the lock"
+            );
+            tokio::time::timeout(Duration::from_secs(10), closing).await.expect("the close did not end").expect("the close");
+            let _ = caller.close().await;
         }
     }
 

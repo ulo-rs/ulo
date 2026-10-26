@@ -279,7 +279,7 @@ async fn a_call_whose_response_has_not_begun_when_the_window_ends_is_answered_50
     assert_eq!(reply.header("content-type"), Some("application/problem+json"));
     let document = reply.json();
     assert_eq!((&document["type"], &document["title"], &document["status"]), (&"about:blank".into(), &"Service Unavailable".into(), &503.into()));
-    assert_eq!(document["detail"], "the server is shutting down", "the one phrase every transport's shutdown refusal carries");
+    assert_eq!(document["detail"], ulo_transport::SHUTDOWN_MESSAGE, "the one phrase every transport's shutdown refusal carries");
     assert_eq!(reply.matched(), Some(("/hold".to_owned(), "hold")), "the refusal records the route the call had reached");
     assert!(matches!(reply.routing, Some(Routing::Matched { .. })));
 
@@ -326,7 +326,7 @@ async fn a_response_begun_when_the_window_ends_is_cut_off_with_an_error_frame_no
     let error = next.expect("the body did not end cleanly").expect_err("the body ends with an error frame, not a last chunk");
     let call = error.downcast_ref::<CallError>().expect("the shutdown refusal is the error");
     assert_eq!(call.kind(), ErrorKind::Unavailable);
-    assert_eq!(call.message(), "the server is shutting down");
+    assert_eq!(call.message(), ulo_transport::SHUTDOWN_MESSAGE);
     assert_eq!(hold.ends(), vec![StreamOutcome::CutOff(Some(CancelReason::Drain))], "reported cut off by the drain, and once");
 
     let shutdown = tokio::time::timeout(PATIENCE, closing).await.expect("close finished in time").expect("the close task");
@@ -421,7 +421,7 @@ async fn a_stream_answered_once_the_drain_cancels_the_call_is_answered_503_inste
     assert_eq!(reply.header("connection"), Some("close"));
     assert_eq!(reply.header("retry-after"), Some("1"));
     assert_eq!(reply.header("content-type"), Some("application/problem+json"));
-    assert_eq!(reply.json()["detail"], "the server is shutting down");
+    assert_eq!(reply.json()["detail"], ulo_transport::SHUTDOWN_MESSAGE);
     assert_eq!(reply.matched(), Some(("/streams-when-cancelled".to_owned(), "streams_when_cancelled")), "the refusal keeps the route");
     assert!(hold.ends().is_empty(), "the discarded stream reported an end: {:?}", hold.ends());
     assert_eq!(hold.dropped(), vec![Some(CancelReason::Drain)]);
@@ -497,7 +497,7 @@ async fn frames_to_the_error(body: &mut HttpBody) -> (Vec<String>, BoxError) {
 
 fn shutting_down(error: &BoxError) {
     let call = error.downcast_ref::<CallError>().unwrap_or_else(|| panic!("the error frame is not the shutdown refusal: {error}"));
-    assert_eq!((call.kind(), call.message()), (ErrorKind::Unavailable, "the server is shutting down"));
+    assert_eq!((call.kind(), call.message()), (ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE));
 }
 
 #[tokio::test]

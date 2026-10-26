@@ -50,7 +50,7 @@ pub async fn drain<H: Host>() {
     // answered message shows the phase admitted it, so the drain meets an admitted, idle connection.
     assert_eq!(conn.exchange(json!({ "event": "echo", "id": 1, "data": "admitted" })).await, json!({ "id": 1, "data": "admitted" }));
     let closing = app.close_in_background();
-    assert_eq!(conn.close_frame().await, Some((1001, "the server is shutting down".to_owned())), "an idle connection at the drain");
+    assert_eq!(conn.close_frame().await, Some((1001, ulo_transport::SHUTDOWN_MESSAGE.to_owned())), "an idle connection at the drain");
     conn.hang_up().await;
     let probe = app.probe.clone();
     app.closed(closing).await;

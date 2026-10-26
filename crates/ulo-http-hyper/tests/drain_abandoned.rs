@@ -184,7 +184,7 @@ async fn a_call_abandoned_before_its_response_began_reads_503_with_connection_cl
     assert!(head_of(&raw).lines().any(|line| line == "retry-after: 1"), "the server's `shed_retry_after`: {}", head_of(&raw));
     let document: serde_json::Value = serde_json::from_str(&body_of(&raw)).expect("a problem document");
     assert_eq!((&document["type"], &document["title"], &document["status"]), (&"about:blank".into(), &"Service Unavailable".into(), &503.into()));
-    assert_eq!(document["detail"], "the server is shutting down");
+    assert_eq!(document["detail"], ulo_transport::SHUTDOWN_MESSAGE);
     assert_eq!(served.finish(closing).await, 1, "the held call was abandoned");
 }
 
@@ -241,7 +241,7 @@ fn classify(raw: &[u8]) -> Read {
         Some(503) => {
             assert!(head_of(raw).lines().any(|line| line == "connection: close"), "{text:?}");
             let document: serde_json::Value = serde_json::from_str(&body_of(raw)).expect("a problem document, whole");
-            assert_eq!(document["detail"], "the server is shutting down", "{text:?}");
+            assert_eq!(document["detail"], ulo_transport::SHUTDOWN_MESSAGE, "{text:?}");
             Read::Refused
         }
         Some(200) => {

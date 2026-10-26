@@ -312,7 +312,7 @@ fn items_then_shutdown(written: &[Frame], n: u64) {
     match last {
         Frame::Err { id, error } => {
             assert_eq!(*id, 1, "the refusal names the call");
-            assert_eq!((error.kind, error.message.as_str()), (ErrorKind::Unavailable, "the server is shutting down"), "{error:?}");
+            assert_eq!((error.kind, error.message.as_str()), (ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE), "{error:?}");
         }
         other => panic!("the stream did not end with the shutdown refusal: {other:?}"),
     }

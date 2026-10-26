@@ -72,11 +72,10 @@ async fn close_answers_the_requests_its_socket_already_holds() {
             Err(error) => panic!("{} of {LEFT} requests left in the socket at close were answered; the next read failed: {error}", refused.len()),
         };
         match Codec::Json.decode_frame(&datagram[..len]) {
-            // The phrase every transport refuses with once the server is shutting down.
-            Ok(Frame::Err { id, error }) if error.kind == ErrorKind::Unavailable && error.message == "the server is shutting down" => {
+            Ok(Frame::Err { id, error }) if error.kind == ErrorKind::Unavailable && error.message == ulo_transport::SHUTDOWN_MESSAGE => {
                 refused.push(id)
             }
-            other => panic!("a request left in the socket at close was not refused `unavailable`, \"the server is shutting down\", got: {other:?}"),
+            other => panic!("a request left in the socket at close was not refused `unavailable`, \"{}\", got: {other:?}", ulo_transport::SHUTDOWN_MESSAGE),
         }
     }
     refused.sort_unstable();

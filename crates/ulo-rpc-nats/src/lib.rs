@@ -21,11 +21,14 @@
 //!
 //! A server's `close` answers every call it still holds `unavailable` with the shutdown phrase in
 //! its first poll, and drops a reply sent after it. A reply finding async-nats's command channel
-//! full waits for room, so a long streamed reply is paced by the connection; `close` queues its
-//! answers without waiting, and a channel full at `close` loses them. A task holds the server's connection past a `close` cut
-//! short until the connection has drained and closed, since async-nats discards what it has not
-//! written once its last handle drops; against a broker that stopped reading, until async-nats's
-//! pings report the connection lost.
+//! full waits for room, so a long streamed reply is paced by the connection, and one still waiting
+//! when `close` runs is dropped. An answer of `close`'s own that finds the channel full waits for
+//! room too, so it reaches the caller only if the `close` is not cut first. A request arriving
+//! once `close` has answered the calls it held is refused `unavailable` rather than held. A task
+//! holds the server's connection for up to two seconds after `close`, completed or cut, until what
+//! was queued before then is written, since async-nats discards what it has not written once its
+//! last handle drops. Against a server that stopped reading, the connection outlives the task:
+//! async-nats's connection task does not see its last handle go while its writes are held.
 //!
 //! ```ignore
 //! app.bind(ulo_rpc::Server::new(ulo_rpc_nats::Nats::url("nats://bus:4222")))

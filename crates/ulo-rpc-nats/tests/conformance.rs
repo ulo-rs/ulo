@@ -1,11 +1,13 @@
 //! The RPC conformance suite over the NATS link, each scenario against a NATS server in a
-//! container of its own, the client reaching it through a relay that `disrupt` cuts. Beside it, one
-//! test drives the link through `Link` directly, for the ordering of a held call's answer against a
-//! `close` cut short, which no scenario reaches on every run.
+//! container of its own, the client reaching it through a relay that `disrupt` cuts. Beside it, five
+//! tests drive the link through `Link` directly, for orderings of a held call's answers against a
+//! `close`, cut short or under way, that no scenario reaches on every run.
 
 #![cfg(feature = "integration")]
 
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -209,6 +211,181 @@ async fn a_streamed_reply_longer_than_the_channel_arrives_whole() {
     sending.await.expect("the sends end");
     client.close().await.expect("the client's link closes");
     server.close().await.expect("the server's link closes");
+}
+
+/// I1: a streamed reply whose next item waits on async-nats's full command channel when the
+/// server's `close` runs. The item never reaches the channel; the caller reads every item queued
+/// before the close, then exactly one terminal frame, the `unavailable` with the shutdown phrase,
+/// which waited for room itself. The server reaches NATS through a relay that stops reading what
+/// the server writes until `close` is under way, so the channel fills.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_waiting_on_a_full_channel_when_close_runs_ends_with_close_s_one_answer() {
+    const BLOCKED: &str = "link.blocked";
+    let broker = NatsServer::start().await;
+    let relay = Pausing::start(broker.server).await;
+    let server = Arc::new(Nats::url(format!("nats://{}", relay.addr)).group("blocked_stream"));
+    let mut inbound = server.listen(&[Pattern::from(BLOCKED)]).await.expect("the server's link listens");
+    let client = broker.link();
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
+    let mut replies = outbound.replies;
+    let request = Frame::Req { id: 1, pattern: BLOCKED.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+    (outbound.send)(Pattern::from(BLOCKED), request, None).await.expect("the request is published");
+    let delivery = tokio::time::timeout(PATIENCE, inbound.next()).await.ok().flatten().expect("the request reaches the server");
+    let (Frame::Req { id, .. }, Some(path)) = (delivery.frame, delivery.reply) else { panic!("the server received something other than a request") };
+
+    relay.pause();
+    let sent = Arc::new(AtomicU64::new(0));
+    let counted = Arc::clone(&sent);
+    let sending = tokio::spawn(async move {
+        loop {
+            let n = counted.load(Ordering::SeqCst);
+            if let Err(error) = path.send(Frame::Item { id, data: Data::new(Bytes::from(n.to_string())) }).await {
+                return error.to_string();
+            }
+            counted.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+    let mut last = u64::MAX;
+    let blocked = std::time::Instant::now();
+    loop {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let now = sent.load(Ordering::SeqCst);
+        if now == last {
+            break;
+        }
+        last = now;
+        assert!(blocked.elapsed() < Duration::from_secs(60), "the stream did not block within 60 s, {now} items sent");
+    }
+    assert!(last >= 2_048, "the stream blocked after {last} items, short of async-nats's channel");
+
+    let closing = tokio::spawn({
+        let server = Arc::clone(&server);
+        async move { server.close().await.map_err(|error| error.to_string()) }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!closing.is_finished(), "the close ended though its answer had no room");
+    relay.resume();
+
+    let mut received = 0u64;
+    let terminal = loop {
+        match tokio::time::timeout(PATIENCE, replies.next()).await.ok().flatten() {
+            Some(Frame::Item { id: 1, data }) => {
+                assert_eq!(data.as_bytes(), received.to_string().as_bytes(), "item {received} arrived out of place");
+                received += 1;
+            }
+            other => break other,
+        }
+    };
+    assert_eq!(
+        terminal,
+        Some(Frame::Err { id: 1, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) }),
+        "the terminal frame the caller read after {received} items"
+    );
+    assert_eq!(received, last, "the items the caller read, against those queued before the close");
+    let after = tokio::time::timeout(Duration::from_secs(1), replies.next()).await.ok().flatten();
+    assert_eq!(after, None, "the caller read a frame after the terminal one");
+    tokio::time::timeout(Duration::from_secs(10), closing).await.expect("the close did not end once the server read again").expect("the close's task").expect("the close");
+    let refused = tokio::time::timeout(PATIENCE, sending).await.expect("the waiting send did not end").expect("the sending task");
+    assert_eq!(refused, "the NATS link has closed; the reply was not sent", "how the item waiting at the close ended");
+    client.close().await.expect("the client's link closes");
+}
+
+/// I1: a stream's end that waited on async-nats's full command channel ends its call once queued,
+/// so a `close` afterwards writes the call nothing more: the caller reads the items and the end,
+/// and no `unavailable` after it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_frame_queued_after_waiting_ends_its_call() {
+    const ENDED: &str = "link.ended";
+    let broker = NatsServer::start().await;
+    let relay = Pausing::start(broker.server).await;
+    let server = Nats::url(format!("nats://{}", relay.addr)).group("waited_end");
+    let mut inbound = server.listen(&[Pattern::from(ENDED)]).await.expect("the server's link listens");
+    let client = broker.link();
+    let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
+    let mut replies = outbound.replies;
+    let request = Frame::Req { id: 1, pattern: ENDED.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+    (outbound.send)(Pattern::from(ENDED), request, None).await.expect("the request is published");
+    let delivery = tokio::time::timeout(PATIENCE, inbound.next()).await.ok().flatten().expect("the request reaches the server");
+    let (Frame::Req { id, .. }, Some(path)) = (delivery.frame, delivery.reply) else { panic!("the server received something other than a request") };
+
+    relay.pause();
+    let mut sent = 0u64;
+    let blocked = loop {
+        let mut send = path.send(Frame::Item { id, data: Data::new(Bytes::from(sent.to_string())) });
+        if tokio::time::timeout(Duration::from_millis(500), &mut send).await.is_err() {
+            break send;
+        }
+        sent += 1;
+    };
+    let mut ending = path.send(Frame::End { id });
+    assert!((&mut ending).now_or_never().is_none(), "the end found room in a full channel");
+    relay.resume();
+    blocked.await.expect("the item that waited is queued");
+    ending.await.expect("the end that waited is queued");
+    server.close().await.expect("the server's link closes");
+
+    let mut received = 0u64;
+    let terminal = loop {
+        match tokio::time::timeout(PATIENCE, replies.next()).await.ok().flatten() {
+            Some(Frame::Item { id: 1, .. }) => received += 1,
+            other => break other,
+        }
+    };
+    assert_eq!((received, terminal), (sent + 1, Some(Frame::End { id: 1 })), "the items the caller read, and the frame after them");
+    let after = tokio::time::timeout(Duration::from_secs(1), replies.next()).await.ok().flatten();
+    assert_eq!(after, None, "the caller read a frame after the stream's end");
+    client.close().await.expect("the client's link closes");
+}
+
+/// A relay to `target` for one connection that can stop reading what the inner side writes, so
+/// the inner side's socket stops taking writes once the buffers between fill.
+struct Pausing {
+    addr: SocketAddr,
+    paused: tokio::sync::watch::Sender<bool>,
+}
+
+impl Pausing {
+    async fn start(target: SocketAddr) -> Pausing {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.expect("a loopback port");
+        let addr = listener.local_addr().expect("the relay's address");
+        let (paused, mut gate) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            let Ok((inner, _)) = listener.accept().await else { return };
+            let Ok(outer) = tokio::net::TcpStream::connect(target).await else { return };
+            let (mut inner_read, mut inner_write) = inner.into_split();
+            let (mut outer_read, mut outer_write) = outer.into_split();
+            tokio::spawn(async move {
+                let _ = tokio::io::copy(&mut outer_read, &mut inner_write).await;
+            });
+            let mut buffer = vec![0u8; 64 * 1024];
+            loop {
+                if gate.wait_for(|paused| !*paused).await.is_err() {
+                    return;
+                }
+                match inner_read.read(&mut buffer).await {
+                    Ok(0) | Err(_) => {
+                        let _ = outer_write.shutdown().await;
+                        return;
+                    }
+                    Ok(read) => {
+                        if outer_write.write_all(&buffer[..read]).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        Pausing { addr, paused }
+    }
+
+    fn pause(&self) {
+        self.paused.send_replace(true);
+    }
+
+    fn resume(&self) {
+        self.paused.send_replace(false);
+    }
 }
 
 /// The runtime a client hands its link: the test's tokio runtime, which a tokio link ignores.

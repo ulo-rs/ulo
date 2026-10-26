@@ -38,7 +38,7 @@ use ulo_ws::{Connection, Frame, Gateway, GatewayConfig, GatewayDefaults, Gateway
 /// The longest a test waits on tokio's own clock for something that must happen.
 const PATIENCE: Duration = Duration::from_secs(5);
 
-const SHUTDOWN_PHRASE: &str = "the server is shutting down";
+const SHUTDOWN_PHRASE: &str = ulo_transport::SHUTDOWN_MESSAGE;
 
 /// What `on_message` waits on and tells the test.
 #[derive(Clone)]

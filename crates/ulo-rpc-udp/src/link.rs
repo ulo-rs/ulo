@@ -3,6 +3,7 @@ use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::FutureExt;
@@ -34,6 +35,10 @@ const REPLY_QUEUE: usize = 64;
 /// Datagrams queued for one socket's writer ahead of the next send's wait: each send is queued at its call and waits until it is
 /// among this many the writer has not taken.
 const WRITE_QUEUE: usize = 64;
+
+/// How long the server's writer keeps the socket after the link drops, to send what was queued
+/// before it (transports DESIGN §5.2, "A cut `close`").
+const CUT_GRACE: Duration = Duration::from_secs(2);
 
 /// The UDP link: a server binds its endpoint, a client sends to it.
 ///
@@ -612,8 +617,23 @@ async fn write_server_datagrams(socket: Arc<UdpSocket>, mut queued: ordered::Rec
         };
         send_datagram(&socket, datagram).await;
     }
-    while let Some(Some(datagram)) = queued.recv().now_or_never() {
-        send_datagram(&socket, datagram).await;
+    drain_queued(&mut queued, CUT_GRACE, |datagram| send_datagram(&socket, datagram)).await;
+}
+
+/// Sends what `queued` holds now, giving up at `grace`: a send waiting for room in a socket whose
+/// buffer never drains would otherwise hold the writer, and the socket with it, indefinitely.
+async fn drain_queued<F, Fut>(queued: &mut ordered::Receiver<Datagram>, grace: Duration, mut send: F)
+where
+    F: FnMut(Datagram) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let drain = async {
+        while let Some(Some(datagram)) = queued.recv().now_or_never() {
+            send(datagram).await;
+        }
+    };
+    if tokio::time::timeout(grace, drain).await.is_err() {
+        tracing::debug!("the UDP link let go of its socket `CUT_GRACE` after its drop with writes still queued");
     }
 }
 
@@ -648,4 +668,48 @@ fn encode(codec: Codec, frame: &Frame) -> Result<Bytes, BoxError> {
         return Err(Box::new(FrameTooLarge { size, limit: MAX_DATAGRAM }));
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::time::Instant;
+
+    use super::*;
+
+    fn datagram() -> Datagram {
+        let (answer, _) = oneshot::channel();
+        Datagram { bytes: Bytes::new(), to: None, answer }
+    }
+
+    /// The drain ends at its grace when the first send never completes, with datagrams still
+    /// queued. The clock is paused, so it advances only to the next timer: the drain ends at the
+    /// grace exactly, and a drain with no bound fails at the outer one rather than hanging.
+    #[tokio::test(start_paused = true)]
+    async fn drain_ends_at_the_grace_when_a_send_never_completes() {
+        let (writes, mut queued) = ordered::channel(4);
+        for _ in 0..3 {
+            drop(writes.send(datagram()));
+        }
+        let grace = Duration::from_millis(200);
+        let began = Instant::now();
+        let drained = tokio::time::timeout(grace * 10, drain_queued(&mut queued, grace, |_| std::future::pending::<()>())).await;
+        assert!(drained.is_ok(), "the drain was still sending at ten times its grace");
+        assert_eq!(began.elapsed(), grace, "how long the drain held the socket");
+        assert!(queued.recv().now_or_never().flatten().is_some(), "the drain took every datagram though its first send never completed");
+    }
+
+    #[tokio::test]
+    async fn drain_sends_everything_queued_when_sends_complete() {
+        let (writes, mut queued) = ordered::channel(4);
+        for _ in 0..3 {
+            drop(writes.send(datagram()));
+        }
+        let mut sent = 0;
+        drain_queued(&mut queued, Duration::from_secs(5), |_| {
+            sent += 1;
+            std::future::ready(())
+        })
+        .await;
+        assert_eq!(sent, 3);
+    }
 }

@@ -28,8 +28,12 @@
 //! A server's `close` answers every call it still holds `unavailable` with the shutdown phrase,
 //! ahead of its DISCONNECT and in its first poll, and drops a reply sent after it: MQTT allows no
 //! packet after the DISCONNECT. A reply finding rumqttc's request channel full waits for room, so
-//! a long streamed reply is paced by the broker; `close` queues its answers without waiting, and a
-//! channel full at `close` loses them.
+//! a long streamed reply is paced by the broker, and one still waiting when `close` runs is
+//! dropped. An answer of `close`'s own that finds the channel full waits for room too, so it
+//! reaches the caller only if the `close` is not cut first. The connection is kept for up to two
+//! seconds after `close`, completed or cut, reading until the broker closes it: dropped with the
+//! broker's packets unread, the socket resets the connection, and Mosquitto discards what it
+//! received and had not yet read.
 //!
 //! The link refuses work over the server's bound rather than holding it at the broker: over
 //! `Server::max_inflight`, 1,024 unset, a request is answered `unavailable` with a `RetryAfter`

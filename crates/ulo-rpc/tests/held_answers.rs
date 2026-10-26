@@ -290,7 +290,7 @@ fn unhandled(id: u64) -> Frame {
 }
 
 fn shutting_down(id: u64) -> Frame {
-    unavailable(id, "the server is shutting down", Details::new())
+    unavailable(id, ulo_transport::SHUTDOWN_MESSAGE, Details::new())
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]

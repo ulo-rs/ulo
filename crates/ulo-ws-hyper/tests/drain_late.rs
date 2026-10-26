@@ -24,7 +24,7 @@ use ulo_ws::Payload;
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-const SHUTDOWN_PHRASE: &str = "the server is shutting down";
+const SHUTDOWN_PHRASE: &str = ulo_transport::SHUTDOWN_MESSAGE;
 
 /// The longest any one wait lasts before it fails the test.
 const WAIT: Duration = Duration::from_secs(10);

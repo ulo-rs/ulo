@@ -292,7 +292,7 @@ async fn the_drain_closes_a_same_port_connection_with_going_away() {
     let (app, _) = start().await;
     let mut socket = app.connect("/annex", &[]).await;
     let stopping = tokio::spawn(app.stop());
-    assert_eq!(close_frame(&mut socket).await, Some((1001, "the server is shutting down".to_owned())));
+    assert_eq!(close_frame(&mut socket).await, Some((1001, ulo_transport::SHUTDOWN_MESSAGE.to_owned())));
     hang_up(socket).await;
     within("the app's close after its last connection answered", stopping).await.unwrap_or_else(|error| panic!("{error}"));
 }
