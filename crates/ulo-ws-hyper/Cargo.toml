@@ -48,9 +48,12 @@ ulo-http = { path = "../ulo-http", features = ["tokio-io"] }
 # `smol`: `OnSmol`, the runtime half `conformance_smol.rs` runs its scenarios on.
 ulo-http-conformance = { path = "../ulo-http-conformance", features = ["smol"] }
 ulo-listener-smol = { path = "../ulo-listener-smol" }
+# `starvation`: the one-thread executor, ticker and watchdog the flood tests run in.
+ulo-conformance-support = { path = "../ulo-conformance-support", features = ["smol"] }
 ulo-runtime-smol = { path = "../ulo-runtime-smol" }
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 async-net.workspace = true
+futures-io.workspace = true
 # `sink`: the tests write through `SinkExt` on the client's socket.
 futures-util = { workspace = true, features = ["sink"] }
 # The MessagePack gateway's frames, which `messages.rs` encodes and decodes.

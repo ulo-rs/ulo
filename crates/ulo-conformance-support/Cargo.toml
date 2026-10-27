@@ -26,5 +26,9 @@ futures-channel.workspace = true
 # `rt-multi-thread`: `OnTokio`'s runtime.
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "net"], optional = true }
 
+[dev-dependencies]
+# Itself with `smol`, so `tests/starvation.rs` builds whatever features the run selects.
+ulo-conformance-support = { path = ".", features = ["smol"] }
+
 [lints]
 workspace = true

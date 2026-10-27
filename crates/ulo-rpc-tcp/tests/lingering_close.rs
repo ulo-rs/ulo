@@ -223,7 +223,12 @@ impl Writing {
 fn read_all(stream: &TcpStream) -> mpsc::Receiver<(Vec<u64>, io::Result<()>)> {
     let mut stream = stream.try_clone().expect("the peer's socket clones");
     // A socket already reset refuses the option, `EINVAL` on macOS: the read ends with that.
-    let timeout = stream.set_read_timeout(Some(PATIENCE / 2));
+    // macOS refuses the option with `EINVAL` once the connection has closed both ways, where no
+    // read can block: what is buffered is read, then the end.
+    let timeout = match stream.set_read_timeout(Some(PATIENCE / 2)) {
+        Err(error) if error.kind() == ErrorKind::InvalidInput => Ok(()),
+        other => other,
+    };
     let (done, read) = mpsc::channel();
     thread::spawn(move || {
         let mut ids = Vec::new();

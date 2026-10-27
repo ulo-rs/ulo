@@ -13,7 +13,8 @@
 //! once the draining server holds no call, the link answering later requests `unavailable`; and
 //! every connection, a server's and a client's, ending at `close` and reading what its peer still
 //! sends until the peer closes its half, the whole connection dropped [`CUT_GRACE`] after `close`
-//! ends. A link supplies its sockets: a listener adopted from `ulo-net`'s
+//! ends; a client connection ends the same way at the link's drop or its reply lane's, its grace
+//! counted from the drop. A link supplies its sockets: a listener adopted from `ulo-net`'s
 //! [`BoundListener`](ulo_net::BoundListener) behind [`Accept`], each accepted connection's TLS
 //! handshake in an [`Incoming`], and a connected client's two halves, all on `futures-io`'s
 //! traits. Every task the core starts is spawned on the runtime the link hands it, and every wait

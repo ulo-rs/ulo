@@ -237,7 +237,12 @@ impl Writing {
 fn read_all(stream: &TcpStream) -> mpsc::Receiver<(Vec<u64>, io::Result<()>)> {
     let mut stream = stream.try_clone().expect("the peer's socket clones");
     // A socket already reset refuses the option, `EINVAL` on macOS: the read ends with that.
-    let timeout = stream.set_read_timeout(Some(PATIENCE / 2));
+    // macOS refuses the option with `EINVAL` once the connection has closed both ways, where no
+    // read can block: what is buffered is read, then the end.
+    let timeout = match stream.set_read_timeout(Some(PATIENCE / 2)) {
+        Err(error) if error.kind() == ErrorKind::InvalidInput => Ok(()),
+        other => other,
+    };
     let (done, read) = mpsc::channel();
     thread::spawn(move || {
         let mut ids = Vec::new();
@@ -328,6 +333,36 @@ async fn write_fails(what: &str, writing: &Writing) -> io::Error {
     failed.expect("the gate opened on a failure")
 }
 
+/// How long a scenario may run before [`watched`] fails it.
+const WATCHDOG: Duration = Duration::from_secs(30);
+
+/// Runs `scenario` on smol from a thread of its own, failing the test when it has not ended within
+/// `WATCHDOG`. A connection loop that stops giving the executor a turn can hold the thread that
+/// polls the scenario, where no wait inside the scenario can see it, and the test would otherwise
+/// hang until the harness kills it.
+fn watched<F, Fut>(scenario: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()>,
+{
+    let (done, finished) = mpsc::channel();
+    let running = thread::spawn(move || {
+        OnSmol::block_on(scenario());
+        let _ = done.send(());
+    });
+    match finished.recv_timeout(WATCHDOG) {
+        Ok(()) => {}
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            if let Err(panic) = running.join() {
+                std::panic::resume_unwind(panic);
+            }
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => panic!(
+            "the scenario did not end within {WATCHDOG:?}: a connection loop of ulo-rpc-tcp-core (Reading::turn, read by Reading::frame and Reading::discard) kept the scenario's thread"
+        ),
+    }
+}
+
 /// Whether `error` is what a write meets on a connection its peer dropped with bytes unread.
 fn reset(error: &io::Error) -> bool {
     matches!(error.kind(), ErrorKind::ConnectionReset | ErrorKind::BrokenPipe)
@@ -335,7 +370,7 @@ fn reset(error: &io::Error) -> bool {
 
 #[test]
 fn a_peer_writing_through_close_reads_every_queued_answer_then_a_fin() {
-    OnSmol::block_on(run_a_peer_writing_through_close_reads_every_queued_answer_then_a_fin());
+    watched(run_a_peer_writing_through_close_reads_every_queued_answer_then_a_fin);
 }
 
 async fn run_a_peer_writing_through_close_reads_every_queued_answer_then_a_fin() {
@@ -361,7 +396,7 @@ async fn run_a_peer_writing_through_close_reads_every_queued_answer_then_a_fin()
 
 #[test]
 fn a_peer_that_never_stops_writing_is_dropped_at_the_grace() {
-    OnSmol::block_on(run_a_peer_that_never_stops_writing_is_dropped_at_the_grace());
+    watched(run_a_peer_that_never_stops_writing_is_dropped_at_the_grace);
 }
 
 async fn run_a_peer_that_never_stops_writing_is_dropped_at_the_grace() {
@@ -399,7 +434,7 @@ async fn run_a_peer_that_never_stops_writing_is_dropped_at_the_grace() {
 /// connection drops though answers are still queued.
 #[test]
 fn a_peer_that_neither_reads_nor_stops_writing_is_dropped_at_the_grace() {
-    OnSmol::block_on(run_a_peer_that_neither_reads_nor_stops_writing_is_dropped_at_the_grace());
+    watched(run_a_peer_that_neither_reads_nor_stops_writing_is_dropped_at_the_grace);
 }
 
 async fn run_a_peer_that_neither_reads_nor_stops_writing_is_dropped_at_the_grace() {
@@ -423,7 +458,7 @@ async fn run_a_peer_that_neither_reads_nor_stops_writing_is_dropped_at_the_grace
 /// writing meets the reset with the app's clock never moved.
 #[test]
 fn a_frame_that_does_not_decode_drops_the_connection_without_a_linger() {
-    OnSmol::block_on(run_a_frame_that_does_not_decode_drops_the_connection_without_a_linger());
+    watched(run_a_frame_that_does_not_decode_drops_the_connection_without_a_linger);
 }
 
 async fn run_a_frame_that_does_not_decode_drops_the_connection_without_a_linger() {
@@ -462,7 +497,7 @@ async fn writer_dropped_at_the_grace(clock: &Scripted, peer: &TcpStream, answers
 /// the grace.
 #[test]
 fn a_peer_that_half_closes_and_never_reads_loses_the_writer_at_the_grace() {
-    OnSmol::block_on(run_a_peer_that_half_closes_and_never_reads_loses_the_writer_at_the_grace());
+    watched(run_a_peer_that_half_closes_and_never_reads_loses_the_writer_at_the_grace);
 }
 
 async fn run_a_peer_that_half_closes_and_never_reads_loses_the_writer_at_the_grace() {
@@ -485,7 +520,7 @@ async fn run_a_peer_that_half_closes_and_never_reads_loses_the_writer_at_the_gra
 /// answers the peer never reads, drops at the grace of the `close` that follows.
 #[test]
 fn a_peer_that_half_closed_before_the_close_loses_the_writer_at_the_grace() {
-    OnSmol::block_on(run_a_peer_that_half_closed_before_the_close_loses_the_writer_at_the_grace());
+    watched(run_a_peer_that_half_closed_before_the_close_loses_the_writer_at_the_grace);
 }
 
 async fn run_a_peer_that_half_closed_before_the_close_loses_the_writer_at_the_grace() {
@@ -550,7 +585,7 @@ fn serving_peer() -> (SocketAddr, mpsc::Receiver<TcpStream>) {
 /// server had not read.
 #[test]
 fn a_server_writing_through_the_client_s_close_is_read_until_the_grace() {
-    OnSmol::block_on(run_a_server_writing_through_the_client_s_close_is_read_until_the_grace());
+    watched(run_a_server_writing_through_the_client_s_close_is_read_until_the_grace);
 }
 
 async fn run_a_server_writing_through_the_client_s_close_is_read_until_the_grace() {
@@ -619,7 +654,7 @@ impl<S: Spawn> Spawn for Handed<S> {
 /// A connection the client's link opens after a `close` is not ended by that close's grace.
 #[test]
 fn a_client_connection_opened_after_a_close_outlives_that_close_s_grace() {
-    OnSmol::block_on(run_a_client_connection_opened_after_a_close_outlives_that_close_s_grace());
+    watched(run_a_client_connection_opened_after_a_close_outlives_that_close_s_grace);
 }
 
 async fn run_a_client_connection_opened_after_a_close_outlives_that_close_s_grace() {
@@ -649,20 +684,10 @@ async fn run_a_client_connection_opened_after_a_close_outlives_that_close_s_grac
 /// A peer flooding events the server delivers as fast as it reads them does not hold `close`: on
 /// smol a read answers at once while the peer's bytes keep arriving, and so does a send to a
 /// channel the server keeps emptying, so a connection task that never gives the executor a turn
-/// keeps its thread, and `close`, which waits for the task's abort, with it. The scenario runs on
-/// a thread of its own, so a starved executor fails the test rather than hanging it.
+/// keeps its thread, and `close`, which waits for the task's abort, with it.
 #[test]
 fn a_flood_the_server_keeps_pace_with_does_not_hold_the_close() {
-    let (done, finished) = mpsc::channel();
-    thread::spawn(move || {
-        OnSmol::block_on(run_a_flood_the_server_keeps_pace_with_does_not_hold_the_close());
-        let _ = done.send(());
-    });
-    match finished.recv_timeout(PATIENCE * 3) {
-        Ok(()) => {}
-        Err(mpsc::RecvTimeoutError::Disconnected) => panic!("the scenario failed; its panic is above"),
-        Err(mpsc::RecvTimeoutError::Timeout) => panic!("the scenario did not end within {:?}: the flooded connection's task kept its thread", PATIENCE * 3),
-    }
+    watched(run_a_flood_the_server_keeps_pace_with_does_not_hold_the_close);
 }
 
 async fn run_a_flood_the_server_keeps_pace_with_does_not_hold_the_close() {

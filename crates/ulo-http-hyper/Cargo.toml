@@ -36,6 +36,8 @@ tracing.workspace = true
 [dev-dependencies]
 ulo-http-conformance = { path = "../ulo-http-conformance", features = ["tokio", "smol"] }
 ulo-listener-smol = { path = "../ulo-listener-smol" }
+# `starvation`: the one-thread executor, ticker and watchdog the flood tests run in.
+ulo-conformance-support = { path = "../ulo-conformance-support", features = ["smol"] }
 ulo-runtime-smol = { path = "../ulo-runtime-smol" }
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 async-io.workspace = true

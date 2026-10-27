@@ -972,6 +972,9 @@ where
     let mut deadline = accept.gateway.limits.pong_timeout.map(|after| accept.runtime.sleep(after));
     let mut turn = 0usize;
     loop {
+        if turn % TURNS_PER_YIELD == TURNS_PER_YIELD - 1 {
+            yield_now().await;
+        }
         // Each turn polls the other branch first, so neither is favoured: a client that keeps
         // sending cannot hold the wait past its deadline.
         let first = turn;
@@ -1329,12 +1332,12 @@ where
 /// How many branches the read loop's wait polls.
 const BRANCHES: usize = 9;
 
-/// Turns of the read loop between the turns it gives the runtime's other tasks. tungstenite
-/// answers the next frame from what it has buffered, and `async-io`'s sockets answer a read at
-/// once while the peer's bytes keep arriving, so a peer flooding frames that need no answer,
-/// Pongs among them, would otherwise keep the loop's thread from every other task, and the
-/// server's abort of the connection, which lands only when the task yields, would never take
-/// effect.
+/// Turns of the read loop, and of the wait after a refusal, between the turns they give the
+/// runtime's other tasks. tungstenite answers the next frame from what it has buffered, and
+/// `async-io`'s sockets answer a read at once while the peer's bytes keep arriving, so a peer
+/// flooding frames that need no answer, Pongs among them, would otherwise keep the loop's thread
+/// from every other task, and the server's abort of the connection, which lands only when the
+/// task yields, would never take effect.
 const TURNS_PER_YIELD: usize = 32;
 
 async fn yield_now() {

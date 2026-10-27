@@ -29,12 +29,16 @@ use ulo::Runtime;
 
 mod failures;
 pub mod relay;
+mod scripted;
 #[cfg(feature = "smol")]
 mod smol_harness;
+#[cfg(feature = "smol")]
+pub mod starvation;
 #[cfg(feature = "tokio")]
 mod tokio_harness;
 
 pub use failures::failures_dir;
+pub use scripted::ScriptedTimer;
 #[cfg(feature = "smol")]
 pub use smol_harness::OnSmol;
 #[cfg(feature = "tokio")]

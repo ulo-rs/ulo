@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 
-use ulo::{AppHandle, Bound, BoundAddr, BoxError, CancelReason, ExecOptions, ExecutionRef, Runtime};
+use ulo::{AppHandle, Bound, BoundAddr, BoxError, CancelReason, ExecOptions, ExecutionRef, Runtime, Timer};
 use ulo_rpc::{CallHeaders, Capabilities, Frame, Link, Outbound, Pattern, RpcClient, RpcError, RpcStream, ZeroTimeout};
 use ulo_rpc::link::Inbound;
 use ulo_transport::{Count, ErrorKind};
@@ -654,35 +654,91 @@ const UNANSWERED: &str = "10000";
 /// after the block ends, half a timeout past the bound's end. The block leaves the link's own
 /// connect half the timeout to finish in, so the frame is sent and the timer alone ends the call:
 /// a connect returning past the bound is refused there instead, whatever the timer does.
+///
+/// Each call is timed on the std clock, and the report on a failure gives, for each, the client
+/// runtime's clock beside it, so a failure reading the two clocks apart shows, and when its
+/// connect began and returned against the call's start, on both.
 pub async fn blocked_connect_s_timer_ends_with_its_bound<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     let budget = fixture.broker.budget();
     let timeout = budget.settle * 2 / 5;
     let blocked = timeout / 2;
     let margin = budget.settle / 10;
-    let mut outcomes = Vec::new();
+    let clock = crate::rt::runtime::<B>();
+    let mut calls = Vec::new();
     for _ in 0..BLOCKED_CALLS {
         let stamped = Stamped { link: fixture.broker.client_link(&addresses(&[&fixture.server])), value: UNANSWERED };
-        let client = client_over::<B, _>(SlowConnect::new(stamped, Hold::Blocks(blocked))).await;
-        let started = Instant::now();
+        let link = SlowConnect::new(stamped, Hold::Blocks(blocked));
+        let connects = link.connects.clone();
+        let client = client_over::<B, _>(link).await;
+        let started = Instants::now(&*clock);
         let call = client.rpc.request::<_, ()>(STALL, &()).timeout(timeout).into_future();
         let outcome = within::<B, _>(timeout + blocked + budget.boot, "the call", call).await;
-        outcomes.push((started.elapsed(), outcome));
+        let answered = Instants::now(&*clock);
+        calls.push(Blocked { started, answered, connects: connects.all(), outcome });
         client.close().await;
     }
-    let report: Vec<String> = outcomes
-        .iter()
-        .map(|(took, outcome)| format!("{:.1} ms, {:?}", took.as_secs_f64() * 1e3, outcome.as_ref().map_err(RpcError::kind)))
-        .collect();
     let latest = timeout.max(blocked) + margin;
-    for (took, outcome) in &outcomes {
-        assert!(
-            matches!(outcome, Err(error) if error.kind() == ErrorKind::Timeout) && *took <= latest,
-            "a call given {timeout:?} over a connect blocking {blocked:?} was answered later than {latest:?} or not `Timeout`; every call:\n{}",
+    let late = |call: &Blocked| !matches!(&call.outcome, Err(error) if error.kind() == ErrorKind::Timeout) || call.answered.std - call.started.std > latest;
+    if calls.iter().any(late) {
+        let report: Vec<String> = calls.iter().map(Blocked::report).collect();
+        panic!(
+            "a call given {timeout:?} over a connect blocking {blocked:?} was answered later than {latest:?} by the std clock or not `Timeout`; every call:\n{}",
             report.join("\n")
         );
     }
     fixture.stop().await;
+}
+
+/// One call of [`blocked_connect_s_timer_ends_with_its_bound`]: when it was made and answered,
+/// when its client's connects began and returned, and its outcome.
+struct Blocked {
+    started: Instants,
+    answered: Instants,
+    connects: Vec<(Instants, Instants)>,
+    outcome: Result<(), RpcError>,
+}
+
+impl Blocked {
+    fn report(&self) -> String {
+        let since = |at: Instants| format!("{:+.1} ms by std, {:+.1} ms by the runtime", signed_millis(at.std, self.started.std), signed_millis(at.timer, self.started.timer));
+        let connects: Vec<String> = self
+            .connects
+            .iter()
+            .map(|(began, returned)| format!("a connect began {} and returned {}", since(*began), since(*returned)))
+            .collect();
+        format!(
+            "answered {}; {}; the runtime's clock read {:+.3} ms from std as the call was made; {:?}",
+            since(self.answered),
+            if connects.is_empty() { "no connect".to_owned() } else { connects.join(", ") },
+            signed_millis(self.started.timer, self.started.std),
+            self.outcome
+        )
+    }
+}
+
+/// One moment on the std clock and on a runtime's, read back to back.
+#[derive(Clone, Copy, Debug)]
+struct Instants {
+    std: Instant,
+    timer: Instant,
+}
+
+impl Instants {
+    fn now(timer: &dyn Timer) -> Instants {
+        Instants { std: Instant::now(), timer: timer.now() }
+    }
+}
+
+/// When each connect of a [`SlowConnect`] link began and returned, on the std clock and on the
+/// clock of the runtime the client handed it.
+#[derive(Clone, Default)]
+struct Connects(Arc<Mutex<Vec<(Instants, Instants)>>>);
+
+impl Connects {
+    fn all(&self) -> Vec<(Instants, Instants)> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
 }
 
 /// `a - b` in milliseconds, negative when `a` is the earlier.
@@ -720,16 +776,17 @@ impl Handoffs {
 }
 
 /// A client link holding each connect for its [`Hold`] before making it, as a slow network or a
-/// handshake does, and recording its [`Handoffs`].
+/// handshake does, and recording its [`Handoffs`] and [`Connects`].
 struct SlowConnect<L> {
     link: L,
     hold: Hold,
     handoffs: Handoffs,
+    connects: Connects,
 }
 
 impl<L> SlowConnect<L> {
     fn new(link: L, hold: Hold) -> Self {
-        SlowConnect { link, hold, handoffs: Handoffs::default() }
+        SlowConnect { link, hold, handoffs: Handoffs::default(), connects: Connects::default() }
     }
 }
 
@@ -757,15 +814,18 @@ impl<L: Link> Link for SlowConnect<L> {
     }
 
     async fn connect(&self, runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+        let began = Instants::now(&**runtime);
         match self.hold {
             Hold::Waits(held) => runtime.sleep(held).await,
             Hold::Blocks(held) => std::thread::sleep(held),
             Hold::BlocksConnected(_) => {}
         }
-        let Outbound { send, replies } = self.link.connect(runtime).await?;
-        if let Hold::BlocksConnected(held) = self.hold {
+        let connected = self.link.connect(runtime).await;
+        if let (Ok(_), Hold::BlocksConnected(held)) = (&connected, self.hold) {
             std::thread::sleep(held);
         }
+        self.connects.0.lock().unwrap_or_else(PoisonError::into_inner).push((began, Instants::now(&**runtime)));
+        let Outbound { send, replies } = connected?;
         let (handoffs, clock) = (self.handoffs.clone(), Arc::clone(runtime));
         Ok(Outbound {
             send: Box::new(move |pattern, frame, reply_to| {

@@ -3,17 +3,19 @@
 //! keep arriving, so a connection loop that awaits nothing else keeps its thread, and the abort
 //! that ends the connection once the drain runs out never takes effect. The client is a plain
 //! socket speaking h2c on a thread of its own, writing `WINDOW_UPDATE` frames for the connection,
-//! and the scenario runs on a thread of its own too, so a starved executor fails the test rather
-//! than hanging it.
+//! and the scenario runs on a one-thread executor beside a ticker, under a watchdog on a thread of
+//! its own (`ulo-conformance-support`'s `starvation`), so a starved executor fails the test naming
+//! the loop rather than hanging it.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ulo::{Runtime, Signal};
+use ulo_conformance_support::starvation::{Probe, Starvation};
 use ulo_http_conformance::{Harness, OnSmol};
 use ulo_http_hyper::ServerOn;
 use ulo_listener_smol::SmolListener;
@@ -21,13 +23,17 @@ use ulo_listener_smol::SmolListener;
 /// The suite app's drain, past which the server aborts the connections still open.
 const DRAIN: Duration = Duration::from_secs(4);
 
-/// How long the close and the connection's end may take past the drain.
-const PATIENCE: Duration = Duration::from_secs(5);
+const LOOP: &str = "ulo-listener-smol read budget under hyper's HTTP/2 connection loop (SmolStream::poll_read yield every READS_PER_TURN reads)";
+
+/// What the client has written when the connection's loop is known to be inside the flood: three
+/// times what a loopback connection takes with nothing reading it, about 1.7 MB on macOS and 2.7 MB
+/// on Linux, so the loop has been taking it.
+const FLOODED: u64 = 8 * 1024 * 1024;
 
 /// Opens an h2c connection and writes `WINDOW_UPDATE` frames of one byte for the connection until
 /// a write fails or `stop` is set; answers the failure, if any, once the writing ends. A thread of
 /// its own reads and discards what the server writes.
-fn flooding_client(addr: std::net::SocketAddr, stop: Arc<AtomicBool>) -> (mpsc::Receiver<()>, mpsc::Receiver<Option<std::io::Error>>) {
+fn flooding_client(addr: std::net::SocketAddr, stop: Arc<AtomicBool>, written: Arc<AtomicU64>) -> (mpsc::Receiver<()>, mpsc::Receiver<Option<std::io::Error>>) {
     let (flooding, flood) = mpsc::channel();
     let (end, ended) = mpsc::channel();
     thread::spawn(move || {
@@ -47,6 +53,7 @@ fn flooding_client(addr: std::net::SocketAddr, stop: Arc<AtomicBool>) -> (mpsc::
                 let _ = end.send(Some(error));
                 return;
             }
+            written.fetch_add(updates.len() as u64, Ordering::Release);
         }
         let _ = end.send(None);
     });
@@ -55,19 +62,10 @@ fn flooding_client(addr: std::net::SocketAddr, stop: Arc<AtomicBool>) -> (mpsc::
 
 #[test]
 fn an_http2_frame_flood_does_not_hold_the_close() {
-    let (done, finished) = mpsc::channel();
-    thread::spawn(move || {
-        OnSmol::block_on(run_an_http2_frame_flood_does_not_hold_the_close());
-        let _ = done.send(());
-    });
-    match finished.recv_timeout(DRAIN + PATIENCE * 3) {
-        Ok(()) => {}
-        Err(mpsc::RecvTimeoutError::Disconnected) => panic!("the scenario failed; its panic is above"),
-        Err(mpsc::RecvTimeoutError::Timeout) => panic!("the scenario did not end: the flooded connection's task kept its thread"),
-    }
+    Starvation::new(LOOP).allow(DRAIN * 3).run(run_an_http2_frame_flood_does_not_hold_the_close);
 }
 
-async fn run_an_http2_frame_flood_does_not_hold_the_close() {
+async fn run_an_http2_frame_flood_does_not_hold_the_close(probe: Probe) {
     let app = ulo_http_conformance::app(OnSmol::runtime()).await;
     let app = app.bind(ServerOn::<SmolListener>::new("127.0.0.1:0").h2c(true)).listen().await.expect("the app listens");
     let addr = app.addresses()[0].addr;
@@ -75,29 +73,21 @@ async fn run_an_http2_frame_flood_does_not_hold_the_close() {
     let runtime: Arc<dyn Runtime> = Arc::new(OnSmol::runtime());
     let serving = ulo::spawn_with(&*runtime, app.serve(std::future::pending::<Signal>()));
     let stop = Arc::new(AtomicBool::new(false));
-    let (flood, ended) = flooding_client(addr, Arc::clone(&stop));
-    let began = Instant::now();
-    while flood.try_recv().is_err() {
-        assert!(began.elapsed() < PATIENCE, "the client did not begin its flood within {PATIENCE:?}");
-        runtime.sleep(Duration::from_millis(5)).await;
-    }
-    // Long enough for the connection's loop to be spinning on the flood.
-    runtime.sleep(Duration::from_millis(200)).await;
+    let written = Arc::new(AtomicU64::new(0));
+    let (flood, ended) = flooding_client(addr, Arc::clone(&stop), Arc::clone(&written));
+    probe.until("the client beginning its flood", probe.budget().boot, || flood.try_recv().is_ok()).await;
+    probe.until("the connection's loop taking the flood", probe.budget().boot, || written.load(Ordering::Acquire) > FLOODED).await;
 
     let closing = ulo::spawn_with(&*runtime, async move { handle.close(Signal::new("flood")).await });
-    let expired = runtime.sleep(DRAIN + PATIENCE);
-    if let futures_util::future::Either::Right(_) = futures_util::future::select(closing, expired).await {
-        panic!("the app's close did not end within {:?} of a {DRAIN:?} drain", DRAIN + PATIENCE);
-    }
+    probe.within(&format!("the app's close, a {DRAIN:?} drain included"), DRAIN + probe.budget().recovery, closing).await.expect("the close task ends").expect("the app closes");
     let _ = serving.await;
-    let began = Instant::now();
-    let failed = loop {
-        if let Ok(failed) = ended.try_recv() {
-            break failed;
-        }
-        assert!(began.elapsed() < PATIENCE, "the client still wrote {PATIENCE:?} after the app closed: the server kept the connection");
-        runtime.sleep(Duration::from_millis(5)).await;
-    };
+    let mut failed = None;
+    probe
+        .until("the client's write failing once the app has closed: the server kept the connection", probe.budget().recovery, || {
+            failed = ended.try_recv().ok();
+            failed.is_some()
+        })
+        .await;
     stop.store(true, Ordering::Release);
-    assert!(failed.is_some(), "the client's flood ended without a write failing");
+    assert!(failed.flatten().is_some(), "the client's flood ended without a write failing");
 }

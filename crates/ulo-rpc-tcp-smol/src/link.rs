@@ -38,7 +38,9 @@ use ulo_rpc_tcp_core::{Accept, Core, Incoming};
 ///
 /// A server's link dropped without `close`, as it is when its app drops before the close step,
 /// stops accepting: its listener closes, the connections it accepted end as at `close`, and the
-/// address can be bound again.
+/// address can be bound again. A client's link dropped without `close`, and a connection whose
+/// client drops its reply lane, end as at `close` too, read for at most two seconds from the drop,
+/// so a server still writing is not reset by it.
 ///
 /// The sockets need no runtime of their own: `async-io` drives them from its reactor thread, so the
 /// link's futures and streams may be polled on any executor or on a plain thread. Its tasks, a

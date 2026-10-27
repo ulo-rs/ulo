@@ -19,6 +19,7 @@ futures-io.workspace = true
 futures-rustls.workspace = true
 
 [dev-dependencies]
+ulo-conformance-support = { path = "../ulo-conformance-support", features = ["smol"] }
 ulo = { path = "../ulo" }
 ulo-runtime-smol = { path = "../ulo-runtime-smol" }
 ulo-test-certs = { path = "../ulo-test-certs" }

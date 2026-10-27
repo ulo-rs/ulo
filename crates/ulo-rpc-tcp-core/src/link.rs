@@ -43,11 +43,11 @@ const REPLY_QUEUE: usize = 64;
 /// Reads a connection makes between the turns it gives the runtime's other tasks.
 const READS_PER_TURN: usize = 32;
 
-/// How long, at most, a connection outlives the end of a `close`, completed or cut, or the link's
-/// drop: its writer delivering what was queued before the end, its reader discarding what the
-/// peer still sends (transports DESIGN §5.2, "A cut `close`"). Measured with the app's `Timer` on
-/// a server, and on a client with the clock of the runtime its client hands `connect`, the app's
-/// inside an app.
+/// How long, at most, a connection outlives the end of a `close`, completed or cut, the link's
+/// drop, or, on a client, its reply lane's drop: its writer delivering what was queued before the
+/// end, its reader discarding what the peer still sends (transports DESIGN §5.2, "A cut
+/// `close`"). Measured with the app's `Timer` on a server, and on a client with the clock of the
+/// runtime its client hands `connect`, the app's inside an app.
 pub const CUT_GRACE: Duration = Duration::from_secs(2);
 
 const RUNNING: u8 = 0;
@@ -92,7 +92,8 @@ impl Incoming {
 ///
 /// Dropped without `close`, it aborts the server's accept loop and forwarding task, so the
 /// listener closes, the connections the server accepted end as at `close`, and the address can be
-/// bound again.
+/// bound again; the connections its client side opened end as at `close` too, their grace counted
+/// from the drop.
 pub struct Core {
     endpoint: EndpointSpec,
     tls: Option<Tls>,
@@ -136,7 +137,8 @@ struct State {
     next_id: AtomicU64,
     /// Calls in flight across every connection: ids mapped and not yet forgotten.
     held: Watch<usize>,
-    /// Advanced as `close` begins; a client connection ends when it changes.
+    /// Advanced as `close` begins and at the link's drop; a client connection ends when it
+    /// changes.
     client_epoch: Watch<u64>,
     /// The highest epoch of a `close` that has ended, completed or cut, and `u64::MAX` once the
     /// link is dropped: a client connection's deadline runs from the end of a `close` begun after
@@ -300,24 +302,36 @@ impl Core {
     /// lane's reader as tasks on `runtime`. At `close` the writer shuts its half once the frames
     /// queued before it are written, the reply lane ends, and the connection reads and discards
     /// what the server still sends until the server closes its half, the read fails, or
-    /// `CUT_GRACE` on `timer` after `close` ends.
+    /// `CUT_GRACE` on `timer` after `close` ends. The link's drop ends it the same way, and so
+    /// does the drop of its reply lane, the grace then counted from the drop: a socket closed with
+    /// the server's bytes unread would reset the server mid-write.
     pub fn connect(&self, runtime: &Arc<dyn Runtime>, timer: Arc<dyn Timer>, reader: Reader, writer: Writer) -> Outbound {
         let state = &self.state;
         let at = state.client_epoch.read(|epoch| *epoch);
         let (queue, queued) = ordered::channel(WRITE_QUEUE);
         let (lingering, handed) = oneshot::channel();
+        let (released, lane_dropped) = oneshot::channel::<()>();
         {
             let (shut, wrote) = oneshot::channel();
             let mut writers = lock(&state.client_writers);
             while let Some(Some(_)) = writers.next().now_or_never() {}
             writers.push(wrote);
             let end = closed(Arc::clone(state), at);
-            drop(runtime.spawn(Box::pin(run_connection(writer, queued, end, Some(shut), handed, close_ended(state, at), timer))));
+            let close_ended = close_ended(state, at);
+            let ended = async move {
+                let released = async {
+                    if lane_dropped.await.is_err() {
+                        pending::<()>().await;
+                    }
+                };
+                select(pin!(close_ended), pin!(released)).await;
+            };
+            drop(runtime.spawn(Box::pin(run_connection(writer, queued, end, Some(shut), handed, ended, timer))));
         }
         let (codec, limit) = (self.codec, self.limit());
         let (frames, replies) = mpsc::channel(REPLY_QUEUE);
         let (lane, dropped) = oneshot::channel::<()>();
-        drop(runtime.spawn(Box::pin(read_replies(Reading::new(reader), Arc::clone(state), at, codec, limit, frames, lane, lingering))));
+        drop(runtime.spawn(Box::pin(read_replies(Reading::new(reader), Arc::clone(state), at, codec, limit, frames, lane, lingering, released))));
         // Queued at the call, so frames go out in the order their sends were called.
         let send = Box::new(move |_pattern: Pattern, frame: Frame, _reply_to: Option<ReplyTo>| -> BoxFuture<'static, Result<(), BoxError>> {
             let queued = encode(codec, limit, &frame).map(|bytes| queue.send(bytes));
@@ -365,6 +379,9 @@ impl Core {
         // was aborted before it could remove its own.
         lock(&self.state.connections).clear();
         let mut writers = std::mem::take(&mut *lock(&self.state.client_writers));
+        // Awaited because each connection's grace runs from this future's end: ended sooner, it would
+        // drop a writer still delivering what was queued before the close, and a peer slower than
+        // `CUT_GRACE` would read a reset where those frames and the FIN belong.
         while writers.next().await.is_some() {}
     }
 
@@ -375,6 +392,7 @@ impl Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
+        self.state.client_epoch.modify(|epoch| *epoch += 1);
         self.state.ended.modify(|ended| *ended = u64::MAX);
     }
 }
@@ -415,9 +433,10 @@ async fn reached(state: &State, at: u8) {
     state.phase.wait_for(|phase| *phase >= at).await;
 }
 
-/// Reads one client connection's reply frames into `frames` until the connection ends or the reply
-/// lane is dropped, or until the link closes, when it hands the reader to `lingering`, the
-/// connection's writer task, and the reply lane ends.
+/// Reads one client connection's reply frames into `frames` until the connection ends, or until
+/// the link closes or drops or the reply lane is dropped, when it hands the reader to `lingering`,
+/// the connection's writer task, and the reply lane ends. A dropped lane also sends `released`,
+/// which starts the connection's grace.
 #[allow(clippy::too_many_arguments)]
 async fn read_replies(
     mut reading: Reading,
@@ -428,22 +447,23 @@ async fn read_replies(
     mut frames: mpsc::Sender<Frame>,
     mut lane: oneshot::Sender<()>,
     lingering: oneshot::Sender<Reading>,
+    released: oneshot::Sender<()>,
 ) {
-    let closing = loop {
+    let end = loop {
         let delivered = async {
             let bytes = match reading.frame(limit).await {
                 Ok(Some(bytes)) => bytes,
-                Ok(None) => return false,
+                Ok(None) => return Some(LaneEnd::Lost),
                 Err(error) => {
                     tracing::debug!(%error, "the TCP connection's reply lane ended");
-                    return false;
+                    return Some(LaneEnd::Lost);
                 }
             };
             match codec.decode_frame(&bytes) {
-                Ok(frame) => frames.send(frame).await.is_ok(),
+                Ok(frame) => frames.send(frame).await.err().map(|_| LaneEnd::Dropped),
                 Err(error) => {
                     tracing::warn!(%error, "a reply frame did not decode; the TCP connection is dropped");
-                    false
+                    Some(LaneEnd::Lost)
                 }
             }
         }
@@ -452,14 +472,32 @@ async fn read_replies(
         let dropped = lane.cancellation().fuse();
         let (mut delivered, mut ended, mut dropped) = (pin!(delivered), pin!(ended), pin!(dropped));
         select_biased! {
-            () = ended => break true,
-            () = dropped => break false,
-            delivered = delivered => if !delivered { break false },
+            () = ended => break LaneEnd::Closed,
+            () = dropped => break LaneEnd::Dropped,
+            delivered = delivered => if let Some(end) = delivered { break end },
         }
     };
-    if closing {
-        let _ = lingering.send(reading);
+    match end {
+        LaneEnd::Lost => {}
+        LaneEnd::Closed => {
+            let _ = lingering.send(reading);
+        }
+        LaneEnd::Dropped => {
+            let _ = lingering.send(reading);
+            let _ = released.send(());
+        }
     }
+}
+
+/// Why a client connection's reply lane stopped reading.
+enum LaneEnd {
+    /// The connection ended, or sent a frame that does not decode: nothing is left to read.
+    Lost,
+    /// The link closed or dropped.
+    Closed,
+    /// The client dropped the reply lane. Its stream drops the channel's receiver ahead of the
+    /// lane's own signal, so a send failing is the same drop seen first.
+    Dropped,
 }
 
 /// A connection's reading half, which gives the runtime's other tasks a turn every

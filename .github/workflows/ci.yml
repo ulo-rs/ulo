@@ -120,6 +120,16 @@ jobs:
       - run: cargo test -p ulo-ws --test conformance_smol --test conformance_pipe --locked
       # The RPC suite against the smol TCP link, plain, CBOR and TLS.
       - run: cargo test -p ulo-rpc-tcp-smol --test conformance --test conformance_cbor --test conformance_tls --locked
+      # The starvation cases, each on a one-thread smol executor beside a ticker under a watchdog
+      # (transports DESIGN §3.7): the listener's read budget, the WebSocket read and refusal
+      # loops, hyper's HTTP/2 loop, and the TCP core's frame loop, linger and reply reader.
+      - run: cargo test -p ulo-listener-smol --test read_budget --locked
+      - run: cargo test -p ulo-ws-hyper --test yield_smol --test flood_smol --locked
+      - run: cargo test -p ulo-http-hyper --test flood_smol --locked
+      - run: cargo test -p ulo-rpc-tcp-smol --test frame_flood --test linger_flood --test client_flood --locked
+      # The TCP link's lingering close, cut close and dropped client on smol, timed on scripted
+      # clocks and sized from the buffers the kernel grants.
+      - run: cargo test -p ulo-rpc-tcp-smol --test lingering_close --test cut_grace --test dropped_client --locked
       # A conformance suite writes each startup failure, its full error chain included, to a file
       # under target/conformance-failures/ before the test panics with it. The files are printed
       # here, so the cause is in the job log whatever else the log keeps, and kept as an artifact.
@@ -254,10 +264,11 @@ jobs:
     name: broker integration
     # The tests that need a live broker: the five broker RPC conformance suites,
     # the NATS and MQTT links' own broker tests and the WebSocket Redis adapter's
-    # two-process test. On push, not on pull requests: each starts its broker
-    # under Docker through testcontainers, and the image pulls and the compile of
-    # eight `integration` test targets cost minutes a pull request does not need
-    # to wait on. One crate per step, so a failure names its broker. The Kafka
+    # two-process test; and Kafka's `NoTimer` refusal, which needs none and is
+    # required by name, as the NATS and MQTT lib tests are. On push, not on pull
+    # requests: each starts its broker under Docker through testcontainers, and
+    # the image pulls and the compile of eight `integration` test targets cost
+    # minutes a pull request does not need to wait on. One crate per step, so a failure names its broker. The Kafka
     # suite starts a broker container per scenario, at most four at once.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -285,6 +296,10 @@ jobs:
           -- cargo test -p ulo-rpc-mqtt --features integration --lib --locked
       - run: cargo test -p ulo-rpc-rabbitmq --features integration --test conformance --locked
       - run: cargo test -p ulo-rpc-kafka --features integration --test conformance --locked
+      - run: >-
+          python3 scripts/require_tests.py
+          a_server_on_an_app_with_no_timer_refuses_to_listen
+          -- cargo test -p ulo-rpc-kafka --features integration --test no_timer --locked
       # Broadcast across two processes through the WebSocket transport's Redis adapter.
       - run: cargo test -p ulo-ws-redis --features integration --test integration --locked
       # A conformance suite writes each startup failure, its full error chain included, to a file
