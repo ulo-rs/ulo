@@ -368,11 +368,13 @@ The execution cache uses a runtime-agnostic async once-cell (for example from `a
 ```rust
 pub trait Timer: Send + Sync + 'static {
     fn sleep(&self, d: Duration) -> BoxFuture<'static, ()>;
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>>;   // default: `sleep`, then `Ok`
     fn now(&self) -> Instant;
 }
 
 pub trait Spawn: Send + Sync + 'static {
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle;
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused>;   // default: `spawn`, then `Ok`
 }
 
 pub trait Runtime: Timer + Spawn {}      // implemented for every `Timer + Spawn`
@@ -385,6 +387,8 @@ pub enum Bound {
 ```
 
 The core has no clock of its own. Every wait it times, the drain, a hook, a construction, a readiness check, a transport's `close` at shutdown, runs through the app's `Timer`, set on the builder (§9.4). `sleep` returns a boxed `'static` future: the trait stays dyn-compatible, which `-> impl Future` is not, and a caller can spawn what it returns. `timeout(d, fut)` is a select over `sleep`. `now` sits on the same trait because deadlines and sleeps have to read one clock; measured with `std::time::Instant`, a deadline on a paused test clock never arrives while sleeps keep resolving.
+
+A runtime that has shut down refuses as a value and never panics. `try_sleep` answers `Err(Refused)` and `try_spawn` answers `Err(Refused)`, the future unrun; `sleep` ends at once, `spawn`'s handle answers `Aborted` and `now` still answers. A runtime with no shutdown, `fw-runtime-smol`'s, keeps the defaults and never refuses. Code that holds a handed `Timer` or `Spawn` past its runtime and bounds something with it uses the `try_` form, to tell a refusal from an elapsed bound.
 
 A `Runtime` is a `Timer` with an executor. `Spawn::spawn` starts a `BoxFuture` as a task and answers a `TaskHandle`, which detaches on drop, stops the task on `abort`, and awaited answers how the task ended; the core spawns nothing of its own and holds the runtime for the transports, every one of which spawns its connections and calls through it, so `listen()` refuses an app that binds a transport without one (§9.5), while an app that binds nothing needs the clock alone. The runtime is set on the builder with `.runtime(r)` (§9.4); `fw-runtime-tokio`'s `Tokio` is one. A task that panics ends as `TaskEnd::Panicked(Arc<Redacted>)`, its message converted as `PanicRecovered`'s is: a task spawned through the app's runtime, `Dep<dyn Runtime>` or `AppHandle::runtime()`, has every secret the graph registered replaced, its drop-time `warn` too, since the app binds the runtime as a wrapper of its own carrying the graph's redactor; one spawned on a runtime outside any app has the userinfo strip alone. The core logs once, at `warn` through `tracing`: a panic raised while a task's future is dropped, which the wrapper `TaskHandle::launch` builds catches so that no runtime sees it, the task's end staying `Aborted` or what was recorded; nothing else in the core logs. `TaskHandle`, `TaskEnd`, the `RuntimeTask` SPI a runtime crate implements, `spawn_with` and `fw-transport`'s `TaskSet` are in transports §8.
 
