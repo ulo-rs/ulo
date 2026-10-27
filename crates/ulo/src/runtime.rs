@@ -18,14 +18,24 @@ use std::time::{Duration, Instant};
 
 use crate::lifecycle::run::CatchUnwind;
 use crate::redact::{Redacted, Redactor, SecretRegistry, redact_panic};
-use crate::timer::{BoxFuture, Timer};
+use crate::timer::{BoxFuture, Refused, Timer};
 
 /// Starts tasks on a runtime's executor. With [`Timer`] it makes a [`Runtime`].
 pub trait Spawn: Send + Sync + 'static {
     /// Starts `fut` as a task of its own. The task runs whether the handle is kept or not:
     /// dropping the handle detaches it. An implementation builds the handle with
     /// [`TaskHandle::launch`], which is what makes a panic end the task as `TaskEnd::Panicked`.
+    ///
+    /// A runtime that has shut down drops `fut` unrun, without panicking, and the handle answers
+    /// `TaskEnd::Aborted`; [`try_spawn`](Self::try_spawn) tells that refusal from an abort.
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle;
+
+    /// `spawn`, answering `Err(Refused)` when the runtime has shut down, `fut` dropped unrun. The
+    /// default answers `spawn`'s handle as `Ok`, which is right for a runtime that cannot shut
+    /// down; a runtime adapter whose runtime can shut down implements it.
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused> {
+        Ok(self.spawn(fut))
+    }
 
     /// The runtime's name, which an integration that supports one runtime reads to refuse the
     /// others at `connect` rather than look a runtime up from the thread. `ulo-runtime-tokio`
@@ -69,6 +79,10 @@ impl Timer for Clocked {
     fn now(&self) -> Instant {
         self.timer.now()
     }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
+        self.timer.try_sleep(d)
+    }
 }
 
 /// The task's future goes to the runtime under a wrapper of the app's own, which catches a panic
@@ -78,6 +92,11 @@ impl Spawn for Clocked {
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle {
         let (launched, recorded) = Launched::new(fut, Some(self.redactor.clone()));
         self.spawner.spawn(Box::pin(launched)).reading(recorded)
+    }
+
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused> {
+        let (launched, recorded) = Launched::new(fut, Some(self.redactor.clone()));
+        Ok(self.spawner.try_spawn(Box::pin(launched))?.reading(recorded))
     }
 
     /// The runtime's, so an app whose clock `AppBuilder::timer` replaced still answers the name of

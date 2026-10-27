@@ -9066,6 +9066,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "ulo",
+ "ulo-conformance-support",
  "ulo-net",
  "ulo-rpc",
  "ulo-rpc-conformance",

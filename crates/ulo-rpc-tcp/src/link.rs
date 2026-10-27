@@ -44,7 +44,8 @@ use ulo_runtime_tokio::Tokio;
 /// stops accepting: its listener closes, the connections it accepted end as at `close`, and the
 /// address can be bound again. A client's link dropped without `close`, and a connection whose
 /// client drops its reply lane, end as at `close` too, read for at most two seconds from the drop,
-/// so a server still writing is not reset by it.
+/// so a server still writing is not reset by it. A client whose runtime has shut down cannot bound
+/// a linger, and drops its connection without one.
 ///
 /// The link's sockets and tasks live on the tokio runtime it holds, the one current where it was
 /// built or the one [`with_handle`](Self::with_handle) names, so its futures and streams may be

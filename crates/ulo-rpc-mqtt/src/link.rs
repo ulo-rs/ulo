@@ -142,15 +142,20 @@ impl Loop {
 /// Runs `connection` until it ends, or for [`CUT_GRACE`] on `timer` once `close` has ended,
 /// completed or cut, whichever comes first. Each side's connection polls past the DISCONNECT and
 /// ends when the broker closes the connection, so the socket is not dropped with the broker's
-/// packets unread; the grace bounds the wait on a broker that never closes it.
+/// packets unread; the grace bounds the wait on a broker that never closes it. A clock that
+/// refuses the grace, its runtime shut down, bounds no linger: the connection drops at once.
 async fn linger(connection: impl Future<Output = ()>, released: oneshot::Receiver<()>, timer: Arc<dyn Timer>) {
     let grace = async {
         let _ = released.await;
-        timer.sleep(CUT_GRACE).await;
+        timer.try_sleep(CUT_GRACE).await
     };
     tokio::select! {
         biased;
-        () = grace => tracing::debug!("the MQTT link dropped its connection `CUT_GRACE` after `close`"),
+        slept = grace => match slept {
+            Ok(()) => tracing::debug!("the MQTT link dropped its connection `CUT_GRACE` after `close`"),
+            // Timed on no other clock: the grace is the given clock's, and its runtime is gone.
+            Err(refused) => tracing::debug!(%refused, "the runtime timing the MQTT link's linger refused its grace; the connection is dropped without one"),
+        },
         () = connection => {}
     }
 }

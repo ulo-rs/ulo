@@ -18,10 +18,42 @@ pub type BoxError = Box<dyn Error + Send + Sync + 'static>;
 /// one clock: measured with `std::time::Instant`, a deadline on a paused test clock never
 /// arrives while sleeps keep resolving. When a `Timer` is configured, services read it as
 /// `Dep<dyn Timer>`.
+///
+/// A clock whose runtime has shut down refuses to time, as a value and never a panic:
+/// [`try_sleep`](Self::try_sleep) answers `Err(Refused)`, and `sleep` ends at once. `now` still
+/// answers.
 pub trait Timer: Send + Sync + 'static {
+    /// Ends once `d` has passed, or at once on a clock whose runtime has shut down, before the
+    /// sleep or during it. [`try_sleep`](Self::try_sleep) tells the two ends apart.
     fn sleep(&self, d: Duration) -> BoxFuture<'static, ()>;
+
     fn now(&self) -> Instant;
+
+    /// `sleep`, answering `Err(Refused)` when the clock's runtime has shut down, before the sleep
+    /// or during it. Code that would otherwise act on a deadline it can no longer keep reads this.
+    /// The default answers `sleep`'s end as `Ok`, which is right for a clock that cannot shut
+    /// down; a runtime adapter whose runtime can shut down implements it.
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
+        let sleep = self.sleep(d);
+        Box::pin(async move {
+            sleep.await;
+            Ok(())
+        })
+    }
 }
+
+/// What a runtime that has shut down answers [`Timer::try_sleep`] and
+/// [`Spawn::try_spawn`](crate::Spawn::try_spawn) with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Refused;
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the runtime has shut down")
+    }
+}
+
+impl Error for Refused {}
 
 /// How long a hook, a construction or a readiness check may take.
 ///

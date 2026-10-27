@@ -17,6 +17,7 @@ use tracing::{Event, Level, Metadata, Subscriber};
 use ulo::{TaskEnd, Timer};
 
 pub mod app;
+pub mod refusal;
 pub mod set;
 pub mod task;
 pub mod value;

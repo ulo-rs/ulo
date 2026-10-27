@@ -47,7 +47,8 @@ const READS_PER_TURN: usize = 32;
 /// drop, or, on a client, its reply lane's drop: its writer delivering what was queued before the
 /// end, its reader discarding what the peer still sends (transports DESIGN §5.2, "A cut
 /// `close`"). Measured with the app's `Timer` on a server, and on a client with the clock of the
-/// runtime its client hands `connect`, the app's inside an app.
+/// runtime its client hands `connect`, the app's inside an app. A clock that refuses the grace,
+/// its runtime shut down, bounds no linger: the connection drops at once.
 pub const CUT_GRACE: Duration = Duration::from_secs(2);
 
 const RUNNING: u8 = 0;
@@ -496,7 +497,10 @@ enum LaneEnd {
     /// The link closed or dropped.
     Closed,
     /// The client dropped the reply lane. Its stream drops the channel's receiver ahead of the
-    /// lane's own signal, so a send failing is the same drop seen first.
+    /// lane's own signal, so a send failing is the same drop seen first. Read as `Lost`, that send
+    /// would leave the reader unhanded and a peer still writing would read a reset; no caller reads
+    /// either end, the lane being gone. Unpinned by a deterministic test: only a reader on another
+    /// worker, between the stream's two drops, reaches it.
     Dropped,
 }
 
@@ -935,7 +939,8 @@ fn encode(codec: Codec, limit: u64, frame: &Frame) -> Result<Bytes, BoxError> {
 /// each queued frame behind its length prefix until the queue's senders are gone or `end`
 /// resolves, then shuts the writer and drops `shut`; if `lingering` hands the reader over, reads
 /// and discards until the peer closes its half or a read fails. `CUT_GRACE` on `timer` after
-/// `ended` resolves, both halves drop wherever they are, which closes the socket.
+/// `ended` resolves, or at once there when `timer` refuses the grace, both halves drop wherever
+/// they are, which closes the socket.
 async fn run_connection(
     writer: Writer,
     mut queued: ordered::Receiver<Bytes>,
@@ -973,17 +978,23 @@ async fn run_connection(
     // Declared ahead of the connection, so the halves drop before the sleep does and a clock that
     // sees the sleep go sees the socket closed.
     let mut grace = None;
-    let cut = {
+    let lingered = {
         let mut connection = pin!(join(writing, reading));
         match select(connection.as_mut(), pin!(ended)).await {
-            Either::Left(_) => false,
+            Either::Left(_) => None,
             Either::Right(((), _)) => {
-                let sleep = grace.insert(timer.sleep(CUT_GRACE));
-                matches!(select(connection, sleep.as_mut()).await, Either::Right(_))
+                let sleep = grace.insert(timer.try_sleep(CUT_GRACE));
+                match select(connection, sleep.as_mut()).await {
+                    Either::Left(_) => None,
+                    Either::Right((slept, _)) => Some(slept),
+                }
             }
         }
     };
-    if cut {
-        tracing::debug!("a TCP connection was still open `CUT_GRACE` after the link's close; it is dropped");
+    match lingered {
+        None => {}
+        Some(Ok(())) => tracing::debug!("a TCP connection was still open `CUT_GRACE` after the link's close; it is dropped"),
+        // Timed on no other clock: the grace is the handed runtime's, and that runtime is gone.
+        Some(Err(refused)) => tracing::debug!(%refused, "the runtime timing a TCP connection's linger refused its grace; the connection is dropped without one"),
     }
 }

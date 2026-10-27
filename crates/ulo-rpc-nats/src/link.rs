@@ -636,8 +636,11 @@ impl ServerSide {
                     _ = ended.changed() => {}
                 }
             };
-            if let Either::Right(_) = select(pin!(written), timer.sleep(CUT_GRACE)).await {
-                tracing::debug!("the NATS link let go of its connection `CUT_GRACE` after `close` with writes still queued");
+            match select(pin!(written), timer.try_sleep(CUT_GRACE)).await {
+                Either::Left(_) => {}
+                Either::Right((Ok(()), _)) => tracing::debug!("the NATS link let go of its connection `CUT_GRACE` after `close` with writes still queued"),
+                // Timed on no other clock: the grace is the app's, and its runtime is gone.
+                Either::Right((Err(refused), _)) => tracing::debug!(%refused, "the runtime timing the NATS link's grace refused it; the connection is let go without one"),
             }
             drop(client);
         });

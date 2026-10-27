@@ -20,6 +20,7 @@ struct Script {
     base: Instant,
     at: Duration,
     live: HashMap<Duration, usize>,
+    pending_at: HashMap<Duration, Duration>,
     waiting: Vec<Waker>,
 }
 
@@ -31,7 +32,7 @@ struct Sleep {
 
 impl ScriptedTimer {
     pub fn new() -> ScriptedTimer {
-        ScriptedTimer(Arc::new(Mutex::new(Script { base: Instant::now(), at: Duration::ZERO, live: HashMap::new(), waiting: Vec::new() })))
+        ScriptedTimer(Arc::new(Mutex::new(Script { base: Instant::now(), at: Duration::ZERO, live: HashMap::new(), pending_at: HashMap::new(), waiting: Vec::new() })))
     }
 
     pub fn advance(&self, by: Duration) {
@@ -46,6 +47,19 @@ impl ScriptedTimer {
     /// The sleeps of exactly `length` that exist and have not been dropped.
     pub fn live(&self, length: Duration) -> usize {
         self.lock().live.get(&length).copied().unwrap_or(0)
+    }
+
+    /// The clock time, as [`elapsed`](Self::elapsed) reads it, at which a sleep of exactly
+    /// `length` last answered `Pending`; `None` if none has. A value equal to `elapsed()` means the
+    /// sleep has seen the latest advance and not ended on it: a test waits on that to know the code
+    /// under test observed the clock short of its deadline.
+    pub fn pending_at(&self, length: Duration) -> Option<Duration> {
+        self.lock().pending_at.get(&length).copied()
+    }
+
+    /// How far the clock has been advanced since it was made.
+    pub fn elapsed(&self) -> Duration {
+        self.lock().at
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Script> {
@@ -83,6 +97,8 @@ impl Future for Sleep {
         if script.at >= self.until {
             return Poll::Ready(());
         }
+        let at = script.at;
+        script.pending_at.insert(self.length, at);
         script.waiting.push(cx.waker().clone());
         Poll::Pending
     }

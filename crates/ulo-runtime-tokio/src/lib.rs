@@ -11,12 +11,12 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
-use ulo::{BoxFuture, ExecutionRef, RuntimeTask, Signal, TaskHandle};
+use ulo::{BoxFuture, ExecutionRef, Refused, RuntimeTask, Signal, TaskHandle};
 
 /// The app's runtime on one tokio runtime, held by its `Handle`: tasks are spawned on that
 /// runtime, and sleeps registered with its timer, from whichever thread asks, a worker of another
@@ -24,8 +24,10 @@ use ulo::{BoxFuture, ExecutionRef, RuntimeTask, Signal, TaskHandle};
 /// `AppBuilder::runtime(ulo_runtime_tokio::Tokio::current())`, or given to a client built outside an app.
 /// A tokio-based RPC link holds one of its own, whatever runtime the app was given.
 ///
-/// The runtime must outlive what is spawned through it: once it has shut down, a task spawned on
-/// it is dropped without running, and the handle answers `Aborted`.
+/// A runtime that has shut down refuses, as a value and never a panic: `try_spawn` and
+/// `try_sleep` answer `Err(Refused)`, `spawn` drops the task unrun and its handle answers
+/// `Aborted`, a sleep ends at once, the shutdown falling before the sleep or during it, and `now`
+/// still answers.
 #[derive(Clone, Debug)]
 pub struct Tokio {
     handle: Handle,
@@ -105,23 +107,65 @@ impl<T> Drop for Aborting<T> {
     }
 }
 
-/// Each method enters the held runtime, so a sleep is created against its timer and `now` reads
-/// its clock, a paused one included, wherever it is called.
+/// `now` enters the held runtime, so it reads that runtime's clock, a paused one included,
+/// wherever it is called.
 impl ulo::Timer for Tokio {
     fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
-        let _entered = self.handle.enter();
-        ulo::Timer::sleep(&Timer, d)
+        let sleep = ulo::Timer::try_sleep(self, d);
+        Box::pin(async move {
+            let _ = sleep.await;
+        })
     }
 
     fn now(&self) -> Instant {
         let _entered = self.handle.enter();
         ulo::Timer::now(&Timer)
     }
+
+    /// The sleep runs as a task of the held runtime. tokio's timer panics when a sleep is polled
+    /// after the runtime has shut down, wherever it is polled, and a runtime drops its tasks
+    /// before it shuts its timer down, so a sleep inside one is never polled then: the runtime
+    /// drops it and the task's `JoinHandle` reports that. The deadline is read here, as
+    /// `tokio::time::sleep` reads it at its call; the task is spawned at the first poll.
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
+        let deadline = {
+            let _entered = self.handle.enter();
+            let now = tokio::time::Instant::now();
+            // `tokio::time::sleep`'s own answer to a duration past what an `Instant` holds.
+            now.checked_add(d).unwrap_or_else(|| now + Duration::from_secs(86400 * 365 * 30))
+        };
+        let handle = self.handle.clone();
+        Box::pin(async move {
+            // The task's future cannot panic, so an error is the runtime dropping it.
+            Aborting(handle.spawn(async move { tokio::time::sleep_until(deadline).await })).await.map_err(|_| Refused)
+        })
+    }
 }
 
 impl ulo::Spawn for Tokio {
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle {
-        TaskHandle::launch(fut, |task| Task(self.handle.spawn(task)))
+        TaskHandle::launch(fut, |task| Task(Some(self.handle.spawn(task))))
+    }
+
+    /// tokio offers no check for a runtime that has shut down; one drops a task inside `spawn`,
+    /// so the task's `JoinHandle` answers on its first poll. The wrapper the core spawns cannot
+    /// panic and nothing has aborted the task yet, so an error there is that drop.
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused> {
+        let mut refused = false;
+        let task = TaskHandle::launch(fut, |task| {
+            let mut join = self.handle.spawn(task);
+            // Unconstrained: an exhausted cooperative budget would answer `Pending` for a task
+            // already dropped.
+            match Pin::new(&mut tokio::task::unconstrained(&mut join)).poll(&mut Context::from_waker(Waker::noop())) {
+                Poll::Pending => Task(Some(join)),
+                Poll::Ready(Ok(())) => Task(None),
+                Poll::Ready(Err(_)) => {
+                    refused = true;
+                    Task(None)
+                }
+            }
+        });
+        if refused { Err(Refused) } else { Ok(task) }
     }
 
     fn name(&self) -> &'static str {
@@ -131,16 +175,23 @@ impl ulo::Spawn for Tokio {
 
 /// tokio's handle as the core's `RuntimeTask`. A `JoinHandle` resolves only once its future has
 /// been dropped, after an abort as after a return, which is what `poll_ended` requires; dropping
-/// it detaches the task.
-struct Task(JoinHandle<()>);
+/// it detaches the task. `None` once the handle has answered: polled again, a `JoinHandle` panics.
+struct Task(Option<JoinHandle<()>>);
 
 impl RuntimeTask for Task {
     fn abort(&mut self) {
-        self.0.abort();
+        if let Some(join) = &self.0 {
+            join.abort();
+        }
     }
 
     fn poll_ended(&mut self, cx: &mut Context<'_>) -> Poll<()> {
-        Pin::new(&mut self.0).poll(cx).map(|_| ())
+        let Some(join) = self.0.as_mut() else { return Poll::Ready(()) };
+        let ended = Pin::new(join).poll(cx).map(|_| ());
+        if ended.is_ready() {
+            self.0 = None;
+        }
+        ended
     }
 
     fn detach(self: Box<Self>) {}

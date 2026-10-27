@@ -11,19 +11,16 @@
 //! test advances it. Each test sizes what it queues or writes from the buffers the kernel granted
 //! the peer's socket, read back, so the buffers cannot hold it whatever the platform's defaults.
 
-use std::collections::HashMap;
-use std::future::Future;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
-use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::task::{Context, Poll, Waker};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use ulo::{App, Bound, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Spawn, TaskHandle, Timer};
+use ulo_conformance_support::ScriptedTimer;
 use ulo_rpc::{CallHeaders, Codec, Data, Frame, Link, Pattern, ReplyTo, RpcClient, RpcClientModule};
 use ulo_rpc_tcp::Tcp;
 use ulo_rpc_tcp_core::CUT_GRACE;
@@ -65,81 +62,6 @@ impl Module for Root {
 
     fn register(&self, m: &mut ModuleDef<'_>) {
         let _ = m;
-    }
-}
-
-/// The app's clock: a sleep ends once the test has advanced the clock past it. Each live sleep is
-/// counted by its length.
-#[derive(Clone)]
-struct Scripted(Arc<Mutex<Script>>);
-
-struct Script {
-    base: Instant,
-    at: Duration,
-    live: HashMap<Duration, usize>,
-    waiting: Vec<Waker>,
-}
-
-struct Sleep {
-    clock: Scripted,
-    length: Duration,
-    until: Duration,
-}
-
-impl Scripted {
-    fn new() -> Scripted {
-        Scripted(Arc::new(Mutex::new(Script { base: Instant::now(), at: Duration::ZERO, live: HashMap::new(), waiting: Vec::new() })))
-    }
-
-    fn advance(&self, by: Duration) {
-        let waiting = {
-            let mut script = self.0.lock().unwrap();
-            script.at += by;
-            std::mem::take(&mut script.waiting)
-        };
-        waiting.into_iter().for_each(Waker::wake);
-    }
-
-    fn live(&self, length: Duration) -> usize {
-        self.0.lock().unwrap().live.get(&length).copied().unwrap_or(0)
-    }
-}
-
-impl Timer for Scripted {
-    fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
-        let until = {
-            let mut script = self.0.lock().unwrap();
-            *script.live.entry(d).or_default() += 1;
-            script.at + d
-        };
-        Box::pin(Sleep { clock: self.clone(), length: d, until })
-    }
-
-    fn now(&self) -> Instant {
-        let script = self.0.lock().unwrap();
-        script.base + script.at
-    }
-}
-
-impl Future for Sleep {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        let mut script = self.clock.0.lock().unwrap();
-        if script.at >= self.until {
-            return Poll::Ready(());
-        }
-        script.waiting.push(cx.waker().clone());
-        Poll::Pending
-    }
-}
-
-impl Drop for Sleep {
-    fn drop(&mut self) {
-        let mut script = self.clock.0.lock().unwrap();
-        if let Some(live) = script.live.get_mut(&self.length) {
-            *live -= 1;
-        }
     }
 }
 
@@ -271,7 +193,7 @@ async fn received<T>(what: &str, receiver: &mpsc::Receiver<T>) -> T {
 }
 
 /// A server link listening on the app's runtime and timing its linger with `clock`.
-async fn listening(clock: &Scripted) -> (App<ulo::Connected>, Tcp, ulo_rpc::link::Inbound, SocketAddr) {
+async fn listening(clock: &ScriptedTimer) -> (App<ulo::Connected>, Tcp, ulo_rpc::link::Inbound, SocketAddr) {
     let app = App::builder(Root)
         .runtime(Tokio::current())
         .timer(clock.clone())
@@ -326,7 +248,7 @@ fn reset(error: &io::Error) -> bool {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_peer_writing_through_close_reads_every_queued_answer_then_a_fin() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let (_app, tcp, mut inbound, addr) = listening(&clock).await;
     let mut peer = TcpStream::connect(addr).expect("the link accepts a connection");
 
@@ -348,7 +270,7 @@ async fn a_peer_writing_through_close_reads_every_queued_answer_then_a_fin() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_peer_that_never_stops_writing_is_dropped_at_the_grace() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let (_app, tcp, mut inbound, addr) = listening(&clock).await;
     let mut peer = TcpStream::connect(addr).expect("the link accepts a connection");
     // A delivery shows the server's connection task reading before the close.
@@ -382,7 +304,7 @@ async fn a_peer_that_never_stops_writing_is_dropped_at_the_grace() {
 /// connection drops though answers are still queued.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_peer_that_neither_reads_nor_stops_writing_is_dropped_at_the_grace() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let (_app, tcp, mut inbound, addr) = listening(&clock).await;
     let mut peer = TcpStream::connect(addr).expect("the link accepts a connection");
     queue_answers(&mut peer, &mut inbound).await;
@@ -402,7 +324,7 @@ async fn a_peer_that_neither_reads_nor_stops_writing_is_dropped_at_the_grace() {
 /// writing meets the reset with the app's clock never moved.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_frame_that_does_not_decode_drops_the_connection_without_a_linger() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let (_app, _tcp, inbound, addr) = listening(&clock).await;
     let mut peer = TcpStream::connect(addr).expect("the link accepts a connection");
     let garbage = b"not a frame";
@@ -418,7 +340,7 @@ async fn a_frame_that_does_not_decode_drops_the_connection_without_a_linger() {
 
 /// Reads `peer`'s answers to the end once the grace has dropped the server's connection, and
 /// checks it ended before the last of the `answers` queued: the writer did not outlive the grace.
-async fn writer_dropped_at_the_grace(clock: &Scripted, peer: &TcpStream, answers: u64) {
+async fn writer_dropped_at_the_grace(clock: &ScriptedTimer, peer: &TcpStream, answers: u64) {
     assert_eq!(clock.live(CUT_GRACE), 1, "the link asked the app's clock for its grace");
     clock.advance(CUT_GRACE);
     gate("the grace ends the connection", || clock.live(CUT_GRACE) == 0).await;
@@ -437,7 +359,7 @@ async fn writer_dropped_at_the_grace(clock: &Scripted, peer: &TcpStream, answers
 /// the grace.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_peer_that_half_closes_and_never_reads_loses_the_writer_at_the_grace() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let (_app, tcp, mut inbound, addr) = listening(&clock).await;
     let mut peer = TcpStream::connect(addr).expect("the link accepts a connection");
     let answers = queue_answers(&mut peer, &mut inbound).await;
@@ -456,7 +378,7 @@ async fn a_peer_that_half_closes_and_never_reads_loses_the_writer_at_the_grace()
 /// answers the peer never reads, drops at the grace of the `close` that follows.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_peer_that_half_closed_before_the_close_loses_the_writer_at_the_grace() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let (_app, tcp, mut inbound, addr) = listening(&clock).await;
     let mut peer = TcpStream::connect(addr).expect("the link accepts a connection");
     let answers = queue_answers(&mut peer, &mut inbound).await;
@@ -517,7 +439,7 @@ fn serving_peer() -> (SocketAddr, mpsc::Receiver<TcpStream>) {
 /// server had not read.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_server_writing_through_the_client_s_close_is_read_until_the_grace() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let (addr, accepted) = serving_peer();
     let app = App::builder(ClientRoot { link: Mutex::new(Some(Tcp::new(addr))) })
         .runtime(Tokio::current())
@@ -559,7 +481,7 @@ async fn a_server_writing_through_the_client_s_close_is_read_until_the_grace() {
 
 /// A scripted clock with a runtime's spawning: what a client's app hands its link's `connect`.
 struct Handed<S> {
-    clock: Scripted,
+    clock: ScriptedTimer,
     spawn: S,
 }
 
@@ -582,7 +504,7 @@ impl<S: Spawn> Spawn for Handed<S> {
 /// A connection the client's link opens after a `close` is not ended by that close's grace.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_client_connection_opened_after_a_close_outlives_that_close_s_grace() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let (_app, _server, mut inbound, addr) = listening(&clock).await;
     let handed: Arc<dyn Runtime> = Arc::new(Handed { clock: clock.clone(), spawn: Tokio::current() });
     let client = Tcp::new(addr);

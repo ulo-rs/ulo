@@ -38,6 +38,10 @@ use ulo::{BoxFuture, RuntimeTask, TaskHandle};
 /// The executor is the caller's, not a global one: the caller decides how many threads run it and
 /// when they stop. A task spawned on an executor nothing runs again is never polled, and an
 /// executor dropped with tasks in it drops them, each handle answering `Aborted`.
+///
+/// A `Smol` never refuses to spawn or to time, so it keeps the core's `try_spawn` and `try_sleep`:
+/// it holds its executor, which `async-executor` gives no way to shut down, and `async-io`'s
+/// timers fire from a reactor thread that lives as long as the process.
 #[derive(Clone)]
 pub struct Smol {
     executor: Arc<Executor<'static>>,

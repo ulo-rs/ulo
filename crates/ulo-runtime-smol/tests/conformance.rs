@@ -5,7 +5,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use ulo_runtime_conformance::{Harness, runtime_suite};
+use ulo_runtime_conformance::{Harness, Stoppable, runtime_suite};
 use ulo_runtime_smol::{Executor, Smol};
 
 /// The threads running the scenario's executor beside the test's own.
@@ -23,6 +23,13 @@ impl Harness for OnSmol {
     fn block_on<F: Future>(fut: F) -> F::Output {
         Smol::new(Arc::new(Executor::new())).with_workers(WORKERS).block_on(fut)
     }
+
+    fn stoppable() -> Option<Stoppable<Smol>> {
+        None
+    }
 }
 
-runtime_suite!(OnSmol);
+runtime_suite!(OnSmol; not_applicable {
+    a_shut_down_runtime_refuses_spawning_and_timing_without_panicking:
+        "a `Smol` holds its executor, which has no shutdown, and its timers fire from async-io's reactor thread, which lives as long as the process",
+});

@@ -1,7 +1,8 @@
 //! The conformance suite every `ulo` runtime runs: what a [`TaskHandle`](ulo::TaskHandle) answers
 //! after a return, an abort, a panic and a drop, what [`spawn_with`](ulo::spawn_with) and a
 //! [`TaskSet`](ulo_transport::TaskSet) answer over it, and the app binding the runtime as one
-//! object that redacts a spawned task's panic with the app's secrets. One scenario list, stamped
+//! object that redacts a spawned task's panic with the app's secrets, and a runtime that has shut
+//! down refusing to spawn and to time without a panic. One scenario list, stamped
 //! per runtime by [`runtime_suite!`] from a [`Harness`] the runtime crate implements in its
 //! `tests/`.
 //!
@@ -13,6 +14,7 @@
 //!     type Runtime = ulo_runtime_tokio::Tokio;
 //!     fn runtime() -> ulo_runtime_tokio::Tokio { ulo_runtime_tokio::Tokio::current() }
 //!     fn block_on<F: Future>(fut: F) -> F::Output { /* a runtime of its own per test */ }
+//!     fn stoppable() -> Option<Stoppable<ulo_runtime_tokio::Tokio>> { /* another, and its shutdown */ }
 //! }
 //!
 //! ulo_runtime_conformance::runtime_suite!(OnTokio);
@@ -44,12 +46,60 @@ pub trait Harness {
     /// Runs `fut` to its end from a plain `#[test]` thread, on an executor that runs the tasks
     /// the runtime spawns while `fut` waits. Each scenario calls it once.
     fn block_on<F: Future>(fut: F) -> F::Output;
+
+    /// A runtime of its own, running, with what shuts it down, for the scenario on a runtime that
+    /// has shut down. `None` for a runtime that cannot shut down while a value of it is held,
+    /// whose suite then declares that scenario not applicable. Called inside the future
+    /// `block_on` runs.
+    fn stoppable() -> Option<Stoppable<Self::Runtime>>;
+}
+
+/// A running runtime and what shuts it down, as [`Harness::stoppable`] answers them.
+pub struct Stoppable<R> {
+    pub runtime: R,
+    /// Returns once the runtime has shut down. Called from inside the future `block_on` runs.
+    pub stop: Box<dyn FnOnce() + Send>,
 }
 
 /// Stamps one `#[test]` per scenario in [`cases`] for the [`Harness`] given.
+///
+/// A scenario that cannot apply to a runtime is declared with its reason, and stamped
+/// `#[ignore = "not applicable: <reason>"]`, so the test report counts it as ignored rather than
+/// passed:
+///
+/// ```ignore
+/// ulo_runtime_conformance::runtime_suite!(OnSmol; not_applicable {
+///     a_shut_down_runtime_refuses_spawning_and_timing_without_panicking: "a `Smol` cannot shut down",
+/// });
+/// ```
+///
+/// A declared name that is no scenario fails to compile. The shut-down scenario run on a harness
+/// whose `stoppable` answers `None` fails rather than passing, so a runtime leaving out the
+/// declaration fails too.
 #[macro_export]
 macro_rules! runtime_suite {
     ($harness:ty $(,)?) => {
+        $crate::runtime_suite!($harness; not_applicable {});
+    };
+    ($harness:ty; not_applicable { $($skip:ident : $why:literal),* $(,)? } $(,)?) => {
+        $crate::runtime_suite!(@stamper [$] $harness; $($skip : $why),*);
+    };
+    (@stamper [$d:tt] $harness:ty; $($skip:ident : $why:literal),*) => {
+        macro_rules! __ulo_runtime_conformance_stamp {
+            $(
+                ($skip, $d($d test:tt)*) => {
+                    #[test]
+                    #[ignore = concat!("not applicable: ", $why)]
+                    $d($d test)*
+                };
+            )*
+            ($d other:ident, $d($d test:tt)*) => {
+                #[test]
+                $d($d test)*
+            };
+        }
+        // A declared name that is no scenario names no function here.
+        $(const _: fn() = $skip;)*
         $crate::runtime_suite!(@cases $harness;
             a_returned_future_is_finished => task::finished,
             a_dropped_handle_detaches => task::detached,
@@ -66,16 +116,28 @@ macro_rules! runtime_suite {
             a_dropped_set_aborts_its_tasks => set::dropped,
             the_app_binds_the_runtime_as_one_object => app::one_object,
             a_task_spawned_through_the_app_redacts_its_secrets => app::redacted,
+            a_running_runtime_refuses_neither_spawning_nor_timing => refusal::running,
+        );
+
+        __ulo_runtime_conformance_stamp!(a_shut_down_runtime_refuses_spawning_and_timing_without_panicking,
+            fn a_shut_down_runtime_refuses_spawning_and_timing_without_panicking() {
+                <$harness as $crate::Harness>::block_on(async {
+                    let stoppable = <$harness as $crate::Harness>::stoppable().expect(
+                        "the harness answers no runtime that can shut down: declare \
+                         `a_shut_down_runtime_refuses_spawning_and_timing_without_panicking` not applicable with the reason",
+                    );
+                    $crate::cases::refusal::shut_down(<$harness as $crate::Harness>::runtime(), stoppable).await
+                });
+            }
         );
     };
     (@cases $harness:ty; $($name:ident => $module:ident :: $case:ident),* $(,)?) => {
         $(
-            #[test]
-            fn $name() {
+            __ulo_runtime_conformance_stamp!($name, fn $name() {
                 <$harness as $crate::Harness>::block_on(async {
                     $crate::cases::$module::$case(<$harness as $crate::Harness>::runtime()).await
                 });
-            }
+            });
         )*
     };
 }

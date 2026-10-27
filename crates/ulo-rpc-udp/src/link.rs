@@ -630,7 +630,8 @@ async fn write_server_datagrams(socket: Arc<UdpSocket>, mut queued: ordered::Rec
     drain_queued(&mut queued, &*timer, CUT_GRACE, |datagram| send_datagram(&socket, datagram)).await;
 }
 
-/// Sends what `queued` holds now, giving up once `grace` has passed on `timer`: a send waiting for
+/// Sends what `queued` holds now, giving up once `grace` has passed on `timer`, or at once when
+/// `timer` refuses it, its runtime shut down: a send waiting for
 /// room in a socket whose buffer never drains would otherwise hold the writer, and the socket with
 /// it, indefinitely.
 async fn drain_queued<F, Fut>(queued: &mut ordered::Receiver<Datagram>, timer: &dyn Timer, grace: Duration, mut send: F)
@@ -643,8 +644,11 @@ where
             send(datagram).await;
         }
     };
-    if let Either::Right(((), _)) = select(std::pin::pin!(drain), timer.sleep(grace)).await {
-        tracing::debug!("the UDP link let go of its socket `CUT_GRACE` after its drop with writes still queued");
+    match select(std::pin::pin!(drain), timer.try_sleep(grace)).await {
+        Either::Left(_) => {}
+        Either::Right((Ok(()), _)) => tracing::debug!("the UDP link let go of its socket `CUT_GRACE` after its drop with writes still queued"),
+        // Timed on no other clock: the grace is the app's, and its runtime is gone.
+        Either::Right((Err(refused), _)) => tracing::debug!(%refused, "the runtime timing the UDP link's grace refused it; the socket is let go without one"),
     }
 }
 

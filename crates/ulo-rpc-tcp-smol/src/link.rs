@@ -40,7 +40,8 @@ use ulo_rpc_tcp_core::{Accept, Core, Incoming};
 /// stops accepting: its listener closes, the connections it accepted end as at `close`, and the
 /// address can be bound again. A client's link dropped without `close`, and a connection whose
 /// client drops its reply lane, end as at `close` too, read for at most two seconds from the drop,
-/// so a server still writing is not reset by it.
+/// so a server still writing is not reset by it. A client whose runtime has shut down cannot bound
+/// a linger, and drops its connection without one.
 ///
 /// The sockets need no runtime of their own: `async-io` drives them from its reactor thread, so the
 /// link's futures and streams may be polled on any executor or on a plain thread. Its tasks, a

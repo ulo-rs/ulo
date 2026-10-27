@@ -10,18 +10,15 @@
 //! `cancel` frames naming no call. The clock is scripted: no sleep it hands out ends until the
 //! test advances it.
 
-use std::collections::HashMap;
-use std::future::Future;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::task::{Context, Poll, Waker};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use ulo::{App, Bound, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Spawn, TaskHandle, Timer};
+use ulo_conformance_support::ScriptedTimer;
 use ulo_rpc::{CallHeaders, Codec, Data, Frame, Link, Pattern, ReplyTo, RpcClient, RpcClientModule};
 use ulo_rpc_conformance::{Harness, OnSmol};
 use ulo_rpc_tcp_core::CUT_GRACE;
@@ -44,86 +41,9 @@ fn buffered(peer: &TcpStream) -> u64 {
     granted as u64
 }
 
-/// A clock a sleep ends on once the test has advanced it past the sleep. Each live sleep is counted
-/// by its length.
-#[derive(Clone)]
-struct Scripted(Arc<Mutex<Script>>);
-
-struct Script {
-    base: Instant,
-    at: Duration,
-    live: HashMap<Duration, usize>,
-    waiting: Vec<Waker>,
-}
-
-struct Sleep {
-    clock: Scripted,
-    length: Duration,
-    until: Duration,
-}
-
-impl Scripted {
-    fn new() -> Scripted {
-        let script = Script { base: Instant::now(), at: Duration::ZERO, live: HashMap::new(), waiting: Vec::new() };
-        Scripted(Arc::new(Mutex::new(script)))
-    }
-
-    fn advance(&self, by: Duration) {
-        let waiting = {
-            let mut script = self.0.lock().unwrap();
-            script.at += by;
-            std::mem::take(&mut script.waiting)
-        };
-        waiting.into_iter().for_each(Waker::wake);
-    }
-
-    fn live(&self, length: Duration) -> usize {
-        self.0.lock().unwrap().live.get(&length).copied().unwrap_or(0)
-    }
-
-}
-
-impl Timer for Scripted {
-    fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
-        let until = {
-            let mut script = self.0.lock().unwrap();
-            *script.live.entry(d).or_default() += 1;
-            script.at + d
-        };
-        Box::pin(Sleep { clock: self.clone(), length: d, until })
-    }
-
-    fn now(&self) -> Instant {
-        let script = self.0.lock().unwrap();
-        script.base + script.at
-    }
-}
-
-impl Future for Sleep {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        let mut script = self.clock.0.lock().unwrap();
-        if script.at >= self.until {
-            return Poll::Ready(());
-        }
-        script.waiting.push(cx.waker().clone());
-        Poll::Pending
-    }
-}
-
-impl Drop for Sleep {
-    fn drop(&mut self) {
-        let mut script = self.clock.0.lock().unwrap();
-        if let Some(live) = script.live.get_mut(&self.length) {
-            *live -= 1;
-        }
-    }
-}
-
 /// A scripted clock with a runtime's spawning: what a client's app hands its link's `connect`.
 struct Handed<S> {
-    clock: Scripted,
+    clock: ScriptedTimer,
     spawn: S,
 }
 
@@ -252,7 +172,7 @@ fn serving_peer() -> (SocketAddr, mpsc::Receiver<TcpStream>) {
 
 /// After the drop, the server writing on `peer` is read until `CUT_GRACE` on `clock` has passed,
 /// and reset there.
-async fn read_until_the_grace(clock: &Scripted, peer: &TcpStream, writing: &Writing) {
+async fn read_until_the_grace(clock: &ScriptedTimer, peer: &TcpStream, writing: &Writing) {
     let over = OVER_BUFFERS * buffered(peer);
     let failed = writing.read_through("the client reads what the server writes after the drop", over).await;
     assert!(failed.is_none(), "a write of the server failed at the drop: {failed:?}");
@@ -271,7 +191,7 @@ async fn read_until_the_grace(clock: &Scripted, peer: &TcpStream, writing: &Writ
 
 /// A client link's connection with the server writing on it: the link, its connection and the
 /// server's socket.
-async fn writing_server(clock: &Scripted) -> (Tcp, ulo_rpc::Outbound, TcpStream, Writing) {
+async fn writing_server(clock: &ScriptedTimer) -> (Tcp, ulo_rpc::Outbound, TcpStream, Writing) {
     let (addr, accepted) = serving_peer();
     let handed: Arc<dyn Runtime> = Arc::new(Handed { clock: clock.clone(), spawn: OnSmol::runtime() });
     let client = Tcp::new(addr);
@@ -290,7 +210,7 @@ fn a_connection_whose_reply_lane_is_dropped_reads_a_writing_server_until_the_gra
 }
 
 async fn run_a_connection_whose_reply_lane_is_dropped_reads_a_writing_server_until_the_grace() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let (client, outbound, peer, writing) = writing_server(&clock).await;
     drop(outbound);
     read_until_the_grace(&clock, &peer, &writing).await;
@@ -303,7 +223,7 @@ fn a_link_dropped_without_close_reads_a_writing_server_until_the_grace() {
 }
 
 async fn run_a_link_dropped_without_close_reads_a_writing_server_until_the_grace() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let (client, outbound, peer, writing) = writing_server(&clock).await;
     drop(client);
     read_until_the_grace(&clock, &peer, &writing).await;
@@ -331,7 +251,7 @@ fn a_client_app_dropped_without_close_reads_a_writing_server_until_the_grace() {
 }
 
 async fn run_a_client_app_dropped_without_close_reads_a_writing_server_until_the_grace() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let (addr, accepted) = serving_peer();
     let app = App::builder(ClientRoot(Mutex::new(Some(Tcp::new(addr)))))
         .runtime(OnSmol::runtime())

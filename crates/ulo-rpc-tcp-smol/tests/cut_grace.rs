@@ -9,20 +9,18 @@
 //! sizes what it queues from the buffers the kernel granted the peer's socket, read back, so the
 //! buffers cannot hold it whatever the platform's defaults.
 
-use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::future::{Future, pending};
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
-use std::task::{Context, Poll, Waker};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use ulo::{App, BoxFuture, FailureReason, Module, ModuleDef, ModuleIdentity, Runtime, ShutdownFailure, Signal, Spawn, TaskHandle, Timer, injectable, routes};
+use ulo_conformance_support::ScriptedTimer;
 use ulo_rpc::{CallHeaders, Codec, Data, Frame, Link, Pattern, Payload, ReplyTo};
 use ulo_rpc_conformance::{Harness, OnSmol};
 use ulo_rpc_tcp_core::CUT_GRACE;
@@ -59,95 +57,9 @@ fn frames(peer: &TcpStream) -> u64 {
     (OVER_BUFFERS as u64 * buffered(peer)).div_ceil(FRAME_BYTES as u64)
 }
 
-/// A clock a sleep ends on once the test has advanced it past the sleep. Each live sleep is counted
-/// by its length, with the clock time it last answered `Pending` at.
-#[derive(Clone)]
-struct Scripted(Arc<Mutex<Script>>);
-
-struct Script {
-    base: Instant,
-    at: Duration,
-    live: HashMap<Duration, usize>,
-    pending_at: HashMap<Duration, Duration>,
-    waiting: Vec<Waker>,
-}
-
-struct Sleep {
-    clock: Scripted,
-    length: Duration,
-    until: Duration,
-}
-
-impl Scripted {
-    fn new() -> Scripted {
-        let script = Script { base: Instant::now(), at: Duration::ZERO, live: HashMap::new(), pending_at: HashMap::new(), waiting: Vec::new() };
-        Scripted(Arc::new(Mutex::new(script)))
-    }
-
-    fn advance(&self, by: Duration) {
-        let waiting = {
-            let mut script = self.0.lock().unwrap();
-            script.at += by;
-            std::mem::take(&mut script.waiting)
-        };
-        waiting.into_iter().for_each(Waker::wake);
-    }
-
-    fn live(&self, length: Duration) -> usize {
-        self.0.lock().unwrap().live.get(&length).copied().unwrap_or(0)
-    }
-
-    /// Whether a sleep of `length` has answered `Pending` at the clock's current time: it has seen
-    /// the last advance and not ended on it.
-    fn outlasted_the_advance(&self, length: Duration) -> bool {
-        let script = self.0.lock().unwrap();
-        script.pending_at.get(&length) == Some(&script.at)
-    }
-}
-
-impl Timer for Scripted {
-    fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
-        let until = {
-            let mut script = self.0.lock().unwrap();
-            *script.live.entry(d).or_default() += 1;
-            script.at + d
-        };
-        Box::pin(Sleep { clock: self.clone(), length: d, until })
-    }
-
-    fn now(&self) -> Instant {
-        let script = self.0.lock().unwrap();
-        script.base + script.at
-    }
-}
-
-impl Future for Sleep {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        let mut script = self.clock.0.lock().unwrap();
-        if script.at >= self.until {
-            return Poll::Ready(());
-        }
-        let at = script.at;
-        script.pending_at.insert(self.length, at);
-        script.waiting.push(cx.waker().clone());
-        Poll::Pending
-    }
-}
-
-impl Drop for Sleep {
-    fn drop(&mut self) {
-        let mut script = self.clock.0.lock().unwrap();
-        if let Some(live) = script.live.get_mut(&self.length) {
-            *live -= 1;
-        }
-    }
-}
-
 /// A scripted clock with a runtime's spawning: what a client's app hands its link's `connect`.
 struct Handed<S> {
-    clock: Scripted,
+    clock: ScriptedTimer,
     spawn: S,
 }
 
@@ -367,7 +279,7 @@ fn a_cut_close_holds_a_half_closed_peer_s_connection_for_the_grace() {
 }
 
 async fn run_a_cut_close_holds_a_half_closed_peer_s_connection_for_the_grace() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let app = App::builder(ServerRoot)
         .runtime(OnSmol::runtime())
         .timer(clock.clone())
@@ -402,7 +314,7 @@ async fn run_a_cut_close_holds_a_half_closed_peer_s_connection_for_the_grace() {
     gate("the connection asks the app's clock for its grace", || clock.live(CUT_GRACE) == 1).await;
 
     clock.advance(CUT_GRACE - Duration::from_millis(1));
-    gate("the connection's grace sees the clock short of it", || clock.outlasted_the_advance(CUT_GRACE)).await;
+    gate("the connection's grace sees the clock short of it", || clock.pending_at(CUT_GRACE) == Some(clock.elapsed())).await;
     assert_eq!(clock.live(CUT_GRACE), 1, "the connection was dropped short of the grace");
 
     clock.advance(Duration::from_millis(1));
@@ -439,7 +351,7 @@ fn a_client_s_grace_runs_from_the_end_of_a_close_that_took_time() {
 }
 
 async fn run_a_client_s_grace_runs_from_the_end_of_a_close_that_took_time() {
-    let clock = Scripted::new();
+    let clock = ScriptedTimer::new();
     let (addr, accepted) = silent_peer();
     let handed: Arc<dyn Runtime> = Arc::new(Handed { clock: clock.clone(), spawn: OnSmol::runtime() });
     let client = Arc::new(Tcp::new(addr));

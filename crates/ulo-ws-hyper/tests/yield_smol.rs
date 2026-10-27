@@ -43,6 +43,10 @@ const PONGS: usize = 3_000;
 
 /// The Pongs a loop takes between two of its yields, and the two reads that can be in flight
 /// around a turn of the ticker: the most the meter may advance between two turns.
+///
+/// The two reads are 120 bytes, 20 Pongs, so the bound tells a loop yielding every 64 turns from
+/// one yielding every 32, and cannot tell one yielding every 48 from every 32: the resolution is
+/// set by `CAP`, since each read can move the meter by up to 60 bytes.
 const ALLOWED_GAP: u64 = 32 * PONG.len() as u64 + 2 * CAP as u64;
 
 /// Holds back the first read of every connection the listener accepts on this thread until
