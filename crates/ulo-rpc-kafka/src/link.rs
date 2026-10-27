@@ -28,7 +28,7 @@ use ulo_rpc::__private::ClientProbe;
 use ulo_rpc::__private::HoldUntil;
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Link, NoDestination,
+    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Link, NoDestination, NoTimer,
     Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
 };
 use ulo_transport::__private::ordered;
@@ -262,7 +262,7 @@ impl Link for Kafka {
             .ok_or("the Kafka link's group is unset: `listen` ran before `prepare`")?;
         let runtime = self.runtime()?;
         let base = Brokers::parse(&self.brokers)?.config();
-        let timer = self.timer.clone().ok_or("the Kafka link has no timer: `listen` ran before `prepare`, or on an app with none")?;
+        let timer = self.timer.clone().ok_or(NoTimer { link: "Kafka" })?;
         let topics: Vec<String> = patterns.iter().map(|pattern| pattern.as_str().to_owned()).collect();
         let (partitions, replication) = (self.partitions, self.replication);
         let (consumer, control, producer) = runtime

@@ -1,12 +1,15 @@
 //! A server's `close` lingers on each connection it ends (F484): the writer shuts its half once
 //! the answers queued before the close are written, and the link reads and discards what the peer
-//! still sends until the peer closes its half, the connection fails, or `CUT_GRACE` passes on the
-//! app's clock. A socket closed with the peer's bytes unread closes with a reset, which discards
-//! what the server had written and the peer had not yet read.
+//! still sends until the peer closes its half or the connection fails. `CUT_GRACE` on the app's
+//! clock after `close` ends, whatever of a connection is still open drops, its writer included. A
+//! socket closed with the peer's bytes unread closes with a reset, which discards what the server
+//! had written and the peer had not yet read. A client's `close` lingers on its connection the
+//! same way, on the clock of the runtime its app hands the link.
 //!
 //! The peer is a plain socket on threads of its own, writing `cancel` frames naming no call, which
-//! the server reads and drops. The app's clock is scripted: no sleep it hands out ends until the
-//! test advances it.
+//! the link reads and drops. The app's clock is scripted: no sleep it hands out ends until the
+//! test advances it. Each test sizes what it queues or writes from the buffers the kernel granted
+//! the peer's socket, read back, so the buffers cannot hold it whatever the platform's defaults.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -20,22 +23,38 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
-use ulo::{App, BoxFuture, Module, ModuleDef, ModuleIdentity, Spawn, Timer};
-use ulo_rpc::{CallHeaders, Codec, Data, Frame, Link, Pattern};
+use ulo::{App, Bound, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Spawn, TaskHandle, Timer};
+use ulo_rpc::{CallHeaders, Codec, Data, Frame, Link, Pattern, ReplyTo, RpcClient, RpcClientModule};
 use ulo_rpc_conformance::{Harness, OnSmol};
 use ulo_rpc_tcp_core::CUT_GRACE;
 use ulo_rpc_tcp_smol::Tcp;
 
 const ECHO: &str = "lingering_close.echo";
 
-/// Answers queued before the close, each over 64 KiB: more than the two sockets' buffers hold
-/// while the peer is not reading, so the last of them are still in the server's send buffer when
-/// its socket closes.
-const ANSWERS: u64 = 128;
+/// The size of each answer queued before a close.
 const ANSWER_BYTES: usize = 64 * 1024;
+
+/// How many times over the peer's granted buffers a test queues answers or has the peer write
+/// after a close: more than the two sockets' buffers hold, so answers queued before a close are
+/// still in the server's queue when its socket closes, and a peer's writes outrun the buffers
+/// only while the link reads them.
+const OVER_BUFFERS: usize = 16;
 
 /// How long a gated wait lasts before the test fails.
 const PATIENCE: Duration = Duration::from_secs(10);
+
+/// The bytes the kernel granted the peer's send and receive buffers, read back: the stand-in for
+/// the link's socket at the other end, which the test cannot reach.
+fn buffered(peer: &TcpStream) -> u64 {
+    let socket = socket2::SockRef::from(peer);
+    let granted = socket.send_buffer_size().expect("the peer's SO_SNDBUF") + socket.recv_buffer_size().expect("the peer's SO_RCVBUF");
+    granted as u64
+}
+
+/// How many answers a test queues on `peer`'s connection.
+fn answers(peer: &TcpStream) -> u64 {
+    (OVER_BUFFERS as u64 * buffered(peer)).div_ceil(ANSWER_BYTES as u64)
+}
 
 struct Root;
 
@@ -212,14 +231,17 @@ impl Writing {
 }
 
 /// Reads frames from a thread of its own until the connection ends, answering the ids of the
-/// `res` frames read and how the read ended: `Ok` at a clean end between frames, the server's FIN.
+/// `res` frames read and how the read ended: `Ok` at a clean end between frames, the link's FIN.
+/// A `cancel` is passed over: a client's `close` fails the calls waiting on it, and each call's
+/// `cancel` is written ahead of the FIN when it is queued before the writer sees the close.
 fn read_all(stream: &TcpStream) -> mpsc::Receiver<(Vec<u64>, io::Result<()>)> {
     let mut stream = stream.try_clone().expect("the peer's socket clones");
-    stream.set_read_timeout(Some(PATIENCE / 2)).expect("a read timeout");
+    // A socket already reset refuses the option, `EINVAL` on macOS: the read ends with that.
+    let timeout = stream.set_read_timeout(Some(PATIENCE / 2));
     let (done, read) = mpsc::channel();
     thread::spawn(move || {
         let mut ids = Vec::new();
-        let end = loop {
+        let end = timeout.and_then(|()| loop {
             let mut prefix = [0u8; 4];
             match stream.read(&mut prefix[..1]) {
                 Ok(0) => break Ok(()),
@@ -235,9 +257,10 @@ fn read_all(stream: &TcpStream) -> mpsc::Receiver<(Vec<u64>, io::Result<()>)> {
             }
             match Codec::Json.decode_frame(&body) {
                 Ok(Frame::Res { id, .. }) => ids.push(id),
-                other => break Err(io::Error::other(format!("the server wrote a frame other than `res`: {other:?}"))),
+                Ok(Frame::Cancel { .. }) => {}
+                other => break Err(io::Error::other(format!("the link wrote a frame other than `res` or `cancel`: {other:?}"))),
             }
-        };
+        });
         let _ = done.send((ids, end));
     });
     read
@@ -277,18 +300,21 @@ fn request(id: u64) -> Frame {
     Frame::Req { id, pattern: ECHO.to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) }
 }
 
-/// Sends `ANSWERS` requests and queues an answer to each at the server, none of them read yet.
-async fn queue_answers(peer: &mut TcpStream, inbound: &mut ulo_rpc::link::Inbound) {
-    for id in 1..=ANSWERS {
+/// Sends [`answers`] requests and queues an answer to each at the server, none of them read yet,
+/// and answers how many.
+async fn queue_answers(peer: &mut TcpStream, inbound: &mut ulo_rpc::link::Inbound) -> u64 {
+    let count = answers(peer);
+    for id in 1..=count {
         write_frame(peer, &request(id)).expect("the request is written");
     }
     let answer = Data::new(format!("\"{}\"", "a".repeat(ANSWER_BYTES)).into_bytes());
-    for _ in 0..ANSWERS {
+    for _ in 0..count {
         let delivery = within("a request", inbound.next()).await.expect("a delivery");
         let id = delivery.frame.id().expect("a request's id");
         // Queued at the call; the send's wait is dropped unpolled.
         drop(delivery.reply.expect("a request's reply path").send(Frame::Res { id, data: answer.clone() }));
     }
+    count
 }
 
 /// Waits for a write of `writing` to fail, and answers the failure.
@@ -317,14 +343,14 @@ async fn run_a_peer_writing_through_close_reads_every_queued_answer_then_a_fin()
     let (_app, tcp, mut inbound, addr) = listening(&clock).await;
     let mut peer = TcpStream::connect(addr).expect("the link accepts a connection");
 
-    queue_answers(&mut peer, &mut inbound).await;
+    let answers = queue_answers(&mut peer, &mut inbound).await;
     let writing = Writing::start(&peer);
     gate("the peer writes", || writing.written() > 0).await;
 
     tcp.close().await.expect("the link closes");
     let (ids, end) = received("the peer's read ends", &read_all(&peer)).await;
     assert!(end.is_ok(), "the peer's read after {} answers ended {end:?}, not with the server's FIN", ids.len());
-    assert_eq!(ids, (1..=ANSWERS).collect::<Vec<_>>(), "the answers the peer read");
+    assert_eq!(ids, (1..=answers).collect::<Vec<_>>(), "the answers the peer read");
     let failed = writing.stop().await;
     assert!(failed.is_none(), "a write of the peer still writing through the close failed: {failed:?}");
 
@@ -357,7 +383,8 @@ async fn run_a_peer_that_never_stops_writing_is_dropped_at_the_grace() {
 
     clock.advance(CUT_GRACE - Duration::from_millis(1));
     let before = writing.written();
-    gate("the linger reads what the peer writes short of the grace", || writing.written() > before + 4 * 1024 * 1024).await;
+    let over = OVER_BUFFERS as u64 * buffered(&peer);
+    gate("the linger reads what the peer writes short of the grace", || writing.written() > before + over).await;
     assert!(writing.failed().is_none(), "the peer's write failed short of the grace");
     assert_eq!(clock.live(CUT_GRACE), 1, "the linger ended short of the grace");
 
@@ -411,6 +438,211 @@ async fn run_a_frame_that_does_not_decode_drops_the_connection_without_a_linger(
     let error = write_fails("a write of the peer fails after the frame that does not decode", &writing).await;
     assert!(reset(&error), "the peer's write failed with {error}, not a reset");
     assert_eq!(clock.live(CUT_GRACE), 0, "the dropped connection lingered");
+    drop(inbound);
+}
+
+/// Reads `peer`'s answers to the end once the grace has dropped the server's connection, and
+/// checks it ended before the last of the `answers` queued: the writer did not outlive the grace.
+async fn writer_dropped_at_the_grace(clock: &Scripted, peer: &TcpStream, answers: u64) {
+    assert_eq!(clock.live(CUT_GRACE), 1, "the link asked the app's clock for its grace");
+    clock.advance(CUT_GRACE);
+    gate("the grace ends the connection", || clock.live(CUT_GRACE) == 0).await;
+    let (ids, end) = received("the peer's read ends", &read_all(peer)).await;
+    assert!(
+        end.as_ref().map_or_else(|error| error.kind() == ErrorKind::UnexpectedEof, |()| true),
+        "the peer's read after {} answers ended {end:?}, not with the server's FIN",
+        ids.len()
+    );
+    assert!((ids.len() as u64) < answers, "the peer read all {answers} answers: the writer outlived the grace");
+    assert_eq!(ids, (1..=ids.len() as u64).collect::<Vec<_>>(), "the answers the peer read");
+}
+
+/// A peer that shuts its half as the server closes and reads nothing ends the linger's read at
+/// once; the writer, holding answers the peer never reads, drops with the rest of the connection at
+/// the grace.
+#[test]
+fn a_peer_that_half_closes_and_never_reads_loses_the_writer_at_the_grace() {
+    OnSmol::block_on(run_a_peer_that_half_closes_and_never_reads_loses_the_writer_at_the_grace());
+}
+
+async fn run_a_peer_that_half_closes_and_never_reads_loses_the_writer_at_the_grace() {
+    let clock = Scripted::new();
+    let (_app, tcp, mut inbound, addr) = listening(&clock).await;
+    let mut peer = TcpStream::connect(addr).expect("the link accepts a connection");
+    let answers = queue_answers(&mut peer, &mut inbound).await;
+
+    tcp.close().await.expect("the link closes");
+    peer.shutdown(Shutdown::Write).expect("the peer shuts its half");
+    gate("the link asks the app's clock for its grace", || clock.live(CUT_GRACE) == 1).await;
+    // Time for the linger to read the peer's FIN, which a writer outliving the grace needs to
+    // show: the grace reached before the FIN ends the writer either way.
+    OnSmol::runtime().sleep(Duration::from_millis(200)).await;
+    writer_dropped_at_the_grace(&clock, &peer, answers).await;
+    drop(inbound);
+}
+
+/// A connection whose peer shut its half before the close no longer reads, and its writer, holding
+/// answers the peer never reads, drops at the grace of the `close` that follows.
+#[test]
+fn a_peer_that_half_closed_before_the_close_loses_the_writer_at_the_grace() {
+    OnSmol::block_on(run_a_peer_that_half_closed_before_the_close_loses_the_writer_at_the_grace());
+}
+
+async fn run_a_peer_that_half_closed_before_the_close_loses_the_writer_at_the_grace() {
+    let clock = Scripted::new();
+    let (_app, tcp, mut inbound, addr) = listening(&clock).await;
+    let mut peer = TcpStream::connect(addr).expect("the link accepts a connection");
+    let answers = queue_answers(&mut peer, &mut inbound).await;
+    // A call left unanswered: the server cancels it once its connection's reader ends.
+    let held = answers + 1;
+    write_frame(&mut peer, &request(held)).expect("the request is written");
+    let delivery = within("a request", inbound.next()).await.expect("a delivery");
+    let id = delivery.frame.id().expect("a request's id");
+
+    peer.shutdown(Shutdown::Write).expect("the peer shuts its half");
+    let cancel = within("a cancel", inbound.next()).await.expect("a delivery");
+    assert!(matches!(cancel.frame, Frame::Cancel { id: cancelled } if cancelled == id), "the server received {:?}", cancel.frame);
+    drop(delivery);
+
+    tcp.close().await.expect("the link closes");
+    gate("the link asks the app's clock for its grace", || clock.live(CUT_GRACE) == 1).await;
+    writer_dropped_at_the_grace(&clock, &peer, answers).await;
+    drop(inbound);
+}
+
+/// Imports one `RpcClientModule` over the link it is given.
+struct ClientRoot {
+    link: Mutex<Option<Tcp>>,
+}
+
+impl Module for ClientRoot {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        if let Some(link) = self.link.lock().unwrap().take() {
+            m.import(RpcClientModule::for_root(link).timeout(Bound::Unbounded));
+        }
+    }
+}
+
+/// A server that accepts one connection on a thread of its own, reads the frame the client's
+/// call writes, and hands the connection over.
+fn serving_peer() -> (SocketAddr, mpsc::Receiver<TcpStream>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let addr = listener.local_addr().expect("the peer's address");
+    let (accepted, connection) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("the client connects");
+        let mut prefix = [0u8; 4];
+        stream.read_exact(&mut prefix).expect("the call's frame arrives");
+        let mut frame = vec![0u8; u32::from_be_bytes(prefix) as usize];
+        stream.read_exact(&mut frame).expect("the call's frame arrives whole");
+        let _ = accepted.send(stream);
+    });
+    (addr, connection)
+}
+
+/// A server still writing as its client closes is read until it closes its half or the grace
+/// passes, and then reset: the client's socket does not close with the server's bytes unread
+/// before then, which would reset the server mid-write and discard what the client wrote and the
+/// server had not read.
+#[test]
+fn a_server_writing_through_the_client_s_close_is_read_until_the_grace() {
+    OnSmol::block_on(run_a_server_writing_through_the_client_s_close_is_read_until_the_grace());
+}
+
+async fn run_a_server_writing_through_the_client_s_close_is_read_until_the_grace() {
+    let clock = Scripted::new();
+    let (addr, accepted) = serving_peer();
+    let app = App::builder(ClientRoot { link: Mutex::new(Some(Tcp::new(addr))) })
+        .runtime(OnSmol::runtime())
+        .timer(clock.clone())
+        .wire()
+        .expect("the client app wires")
+        .connect()
+        .await
+        .expect("the client app connects");
+    let rpc = (*app.get::<RpcClient>().await.expect("the app holds an `RpcClient`")).clone();
+    let call = ulo::spawn_with(&OnSmol::runtime(), async move { rpc.request::<String, String>("held", &"x".to_owned()).await });
+    let peer = received("the client's call reaches the server", &accepted).await;
+    let writing = Writing::start(&peer);
+    gate("the server writes", || writing.written() > 0).await;
+
+    if let Err(error) = app.close(Signal::new("lingering_close")).await {
+        panic!("the client app's close reported a failure: {error}");
+    }
+    let (ids, end) = received("the server's read ends", &read_all(&peer)).await;
+    assert!(ids.is_empty(), "the client wrote {ids:?}");
+    assert!(end.is_ok(), "the server's read ended {end:?}, not with the client's FIN");
+    let (before, over) = (writing.written(), OVER_BUFFERS as u64 * buffered(&peer));
+    let mut failed = None;
+    gate("the client reads what the server writes after its close", || {
+        failed = writing.failed();
+        failed.is_some() || writing.written() > before + over
+    })
+    .await;
+    assert!(failed.is_none(), "a write of the server still writing through the client's close failed: {failed:?}");
+    gate("the client asks its app's clock for its grace", || clock.live(CUT_GRACE) == 1).await;
+
+    clock.advance(CUT_GRACE);
+    let error = write_fails("a write of the server fails once the grace has passed", &writing).await;
+    assert!(reset(&error), "the server's write failed at the grace with {error}, not a reset");
+    assert_eq!(clock.live(CUT_GRACE), 0, "the client's grace outlived its connection");
+    let answered = within("the call's end at the close", call).await.expect("the call's task ends");
+    assert!(answered.is_err(), "the call waiting at the close was answered {answered:?}");
+}
+
+/// A scripted clock with a runtime's spawning: what a client's app hands its link's `connect`.
+struct Handed<S> {
+    clock: Scripted,
+    spawn: S,
+}
+
+impl<S: Spawn> Timer for Handed<S> {
+    fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+        self.clock.sleep(d)
+    }
+
+    fn now(&self) -> Instant {
+        self.clock.now()
+    }
+}
+
+impl<S: Spawn> Spawn for Handed<S> {
+    fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle {
+        self.spawn.spawn(fut)
+    }
+}
+
+/// A connection the client's link opens after a `close` is not ended by that close's grace.
+#[test]
+fn a_client_connection_opened_after_a_close_outlives_that_close_s_grace() {
+    OnSmol::block_on(run_a_client_connection_opened_after_a_close_outlives_that_close_s_grace());
+}
+
+async fn run_a_client_connection_opened_after_a_close_outlives_that_close_s_grace() {
+    let clock = Scripted::new();
+    let (_app, _server, mut inbound, addr) = listening(&clock).await;
+    let handed: Arc<dyn Runtime> = Arc::new(Handed { clock: clock.clone(), spawn: OnSmol::runtime() });
+    let client = Tcp::new(addr);
+    let first = client.connect(&handed).await.expect("the client connects");
+    client.close().await.expect("the client's link closes");
+    let mut second = client.connect(&handed).await.expect("the client connects again");
+    // Each round gives a connection time to ask for its grace before the next advance ends it.
+    for _ in 0..3 {
+        clock.advance(CUT_GRACE);
+        OnSmol::runtime().sleep(Duration::from_millis(50)).await;
+    }
+    (second.send)(Pattern::from(ECHO), request(1), Some(ReplyTo { id: 1 })).await.expect("the request is written");
+    let delivery = within("a request", inbound.next()).await.expect("a delivery");
+    let id = delivery.frame.id().expect("a request's id");
+    let reply = delivery.reply.expect("a request's reply path");
+    reply.send(Frame::Res { id, data: Data::new(b"2".as_slice()) }).await.expect("the answer is queued");
+    let answered = within("a reply", second.replies.next()).await;
+    assert!(matches!(answered, Some(Frame::Res { id: 1, .. })), "the second connection read {answered:?}");
+    drop(first);
     drop(inbound);
 }
 

@@ -17,7 +17,7 @@ use ulo_runtime_tokio::Tokio;
 use ulo_net::{Endpoint, EndpointSpec};
 use ulo_rpc::link::{Inbound, UNARY_ONLY};
 use ulo_rpc::{
-    Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Outbound, Pattern, ReplyPath, ReplyTo,
+    Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo,
 };
 use ulo_transport::__private::ordered;
 use ulo_transport::{Details, ErrorKind};
@@ -227,7 +227,7 @@ impl Link for Udp {
             return Err("the UDP link is already listening".into());
         }
         let Some(timer) = self.timer.clone() else {
-            return Err("the UDP link's server has no `Timer` to bound its socket's release with: its app has none".into());
+            return Err(NoTimer { link: "UDP" }.into());
         };
         let runtime = self.runtime()?;
         let socket = Arc::new(runtime.run(UdpSocket::bind(addr)).await??);

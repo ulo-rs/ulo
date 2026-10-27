@@ -41,7 +41,7 @@ pub use codec::Codec;
 pub use extract::{Inbound, Payload};
 pub use frame::{Data, ErrorBody, Frame, PayloadKind};
 pub use link::{
-    Ack, Capabilities, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Link, Misconfigured, NoDestination, Ordering,
+    Ack, Capabilities, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Link, Misconfigured, NoDestination, NoTimer, Ordering,
     Outbound, Pattern, ReplyPath, ReplyTo,
 };
 pub use server::Server;

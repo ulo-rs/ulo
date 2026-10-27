@@ -1191,6 +1191,9 @@ where
     let mut turn = 0usize;
 
     let why = loop {
+        if turn % TURNS_PER_YIELD == TURNS_PER_YIELD - 1 {
+            yield_now().await;
+        }
         woken.get_or_insert_with(|| outbound.wake.listen());
         progressed.get_or_insert_with(|| flight.progress.listen());
         if !draining {
@@ -1325,6 +1328,27 @@ where
 
 /// How many branches the read loop's wait polls.
 const BRANCHES: usize = 9;
+
+/// Turns of the read loop between the turns it gives the runtime's other tasks. tungstenite
+/// answers the next frame from what it has buffered, and `async-io`'s sockets answer a read at
+/// once while the peer's bytes keep arriving, so a peer flooding frames that need no answer,
+/// Pongs among them, would otherwise keep the loop's thread from every other task, and the
+/// server's abort of the connection, which lands only when the task yields, would never take
+/// effect.
+const TURNS_PER_YIELD: usize = 32;
+
+async fn yield_now() {
+    let mut yielded = false;
+    poll_fn(|cx| {
+        if yielded {
+            return Poll::Ready(());
+        }
+        yielded = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    })
+    .await;
+}
 
 /// What ended one turn of the read loop's wait.
 enum Turn {

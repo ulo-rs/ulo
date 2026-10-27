@@ -7,7 +7,7 @@ use tokio::runtime::Handle;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-use ulo::{AppHandle, BoundAddr, BoxError, Runtime};
+use ulo::{AppHandle, BoundAddr, BoxError, Runtime, Timer};
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{BoundListener, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
@@ -27,14 +27,18 @@ use ulo_runtime_tokio::Tokio;
 ///
 /// At `close` every connection the server accepted ends: its writer shuts its half once the
 /// answers queued before the close are written, and the link reads and discards what the peer
-/// still sends until the peer closes its half, the connection fails, or two seconds pass on the
-/// app's `Timer`, when the connection drops. `close` does not wait for that. A peer that is still
-/// writing as the server closes, and reading, receives what is written in that time and then the
-/// server's FIN, not a reset.
+/// still sends until the peer closes its half or the connection fails. Two seconds on the app's
+/// `Timer` after `close` ends, completed or cut, every connection still open drops, a writer
+/// mid-answer included, so a peer that has stopped reading loses what it has not read. `close`
+/// does not wait for that. A peer that is still writing as the server closes, and reading,
+/// receives what is written in that time and then the server's FIN, not a reset.
 ///
-/// `close` also ends every connection the link's client side opened: its socket is shut and its
-/// reply lane ends, so the calls waiting on it fail `Unavailable`. A call made afterwards connects
-/// again.
+/// `close` also ends every connection the link's client side opened: its writer shuts its half
+/// once the frames queued before the close are written, and its reply lane ends, so the calls
+/// waiting on it fail `Unavailable`. The link reads and discards what the server still sends
+/// until the server closes its half or the connection fails, for at most two seconds after `close`
+/// ends on the clock of the runtime the client hands `connect`, the app's inside an app. A call
+/// made afterwards connects again.
 ///
 /// A server's link dropped without `close`, as it is when its app drops before the close step,
 /// stops accepting: its listener closes, the connections it accepted end as at `close`, and the
@@ -122,14 +126,16 @@ impl Link for Tcp {
         self.core.listen(Arc::new(runtime) as Arc<dyn Runtime>, move |listener, tls| TokioListener::adopt(&handle, listener, tls))
     }
 
-    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+    async fn connect(&self, handed: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let addr = self.core.client_addr()?;
         let runtime = self.runtime()?;
         let stream = runtime.run(TcpStream::connect(addr)).await??;
         let _ = stream.set_nodelay(true);
         let (reader, writer) = stream.into_split();
         let runtime: Arc<dyn Runtime> = Arc::new(runtime);
-        Ok(self.core.connect(&runtime, Box::pin(reader.compat()), Box::pin(writer.compat_write())))
+        // The connection's tasks run on the link's runtime and its grace on the handed one's clock.
+        let timer = Arc::clone(handed) as Arc<dyn Timer>;
+        Ok(self.core.connect(&runtime, timer, Box::pin(reader.compat()), Box::pin(writer.compat_write())))
     }
 
     async fn drain(&self) {

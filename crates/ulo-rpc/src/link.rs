@@ -42,7 +42,8 @@ pub trait Link: Send + Sync + 'static {
     /// (`format!("{:#}", app.root().name())`) is the default competing-consumer group on NATS and
     /// MQTT. It reports [`usable`](Self::usable)'s refusal beside its own, where that refusal
     /// applies to a server. A client's link reports that refusal where the client is built, and the
-    /// rest from its first `connect`.
+    /// rest from its first `connect`. A server link keeps `app.timer()` from here for `listen`,
+    /// which refuses with [`NoTimer`] when the app had none.
     fn prepare(&mut self, app: &AppHandle) -> impl Future<Output = Result<(), BoxError>> + Send {
         let _ = app;
         async { Ok(()) }
@@ -71,7 +72,9 @@ pub trait Link: Send + Sync + 'static {
     }
 
     /// Server side: subscribe to `patterns`, the mounted handlers' patterns. Called from
-    /// `Server::bind`, all-or-nothing: a failure leaves nothing subscribed.
+    /// `Server::bind`, all-or-nothing: a failure leaves nothing subscribed. A link that bounds its
+    /// close with the app's clock (TCP, UDP, NATS, MQTT, Kafka) refuses with [`NoTimer`] before any
+    /// I/O when `prepare` found the app without one.
     fn listen(&self, patterns: &[Pattern]) -> impl Future<Output = Result<Inbound, BoxError>> + Send;
 
     /// Client side: connect. `RpcClient` calls it lazily, on its first call and again after the
@@ -426,6 +429,23 @@ impl fmt::Display for NoDestination {
 }
 
 impl Error for NoDestination {}
+
+/// A server link's refusal to listen on an app that handed it no `Timer`: each link bounds its
+/// close with the app's clock and has none of its own to fall back on. `link` is the transport's
+/// name as it reads in prose (`TCP`, `UDP`, `NATS`, `MQTT`, `Kafka`). A caller finds it with
+/// `downcast_ref` on the `BoxError` `listen` returns.
+#[derive(Debug)]
+pub struct NoTimer {
+    pub link: &'static str,
+}
+
+impl fmt::Display for NoTimer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the {} link's server has no `Timer` to bound its close with: its app has none", self.link)
+    }
+}
+
+impl Error for NoTimer {}
 
 /// A link's refusal to connect over a misconfiguration only its connect could see: an `mqtts://`
 /// or `tls://` link whose platform root certificates did not load, a NATS link whose roots file

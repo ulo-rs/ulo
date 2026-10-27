@@ -46,18 +46,31 @@ impl Listener for SmolListener {
         let (stream, peer) = self.tcp.accept().await?;
         let local = stream.local_addr().ok();
         let Some(acceptor) = self.tls.clone() else {
-            return Ok(Incoming::plain(FuturesIo::new(SmolStream(Inner::Plain(stream))), peer, local));
+            return Ok(Incoming::plain(FuturesIo::new(SmolStream { inner: Inner::Plain(stream), reads: 0 }), peer, local));
         };
         Ok(Incoming::handshaking(peer, local, async move {
             let stream = acceptor.accept(stream).await?;
             let info = tls_info(stream.get_ref().1);
-            Ok((FuturesIo::new(SmolStream(Inner::Tls(Box::new(stream)))), info))
+            Ok((FuturesIo::new(SmolStream { inner: Inner::Tls(Box::new(stream)), reads: 0 }), info))
         }))
     }
 }
 
+/// Reads a connection answers between the turns it gives the runtime's other tasks.
+const READS_PER_TURN: usize = 32;
+
 /// An accepted connection on `futures-io`'s traits, plain or after its TLS handshake.
-pub struct SmolStream(Inner);
+///
+/// Every `READS_PER_TURN`th read answers `Pending` and wakes its task at once. `async-io`'s
+/// sockets answer a read at once while the peer's bytes keep arriving, and a connection loop that
+/// awaits nothing else, hyper's HTTP/2 one reading a flood of frames that need no answer among
+/// them, would otherwise keep its thread from every other task, and the abort that ends the
+/// connection after the drain would never take effect. tokio's cooperative budget does the same
+/// for a tokio socket.
+pub struct SmolStream {
+    inner: Inner,
+    reads: usize,
+}
 
 enum Inner {
     Plain(TcpStream),
@@ -67,13 +80,19 @@ enum Inner {
 impl SmolStream {
     /// Whether the connection completed a TLS handshake.
     pub fn is_tls(&self) -> bool {
-        matches!(self.0, Inner::Tls(_))
+        matches!(self.inner, Inner::Tls(_))
     }
 }
 
 impl AsyncRead for SmolStream {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
-        match &mut self.get_mut().0 {
+        let this = self.get_mut();
+        this.reads += 1;
+        if this.reads.is_multiple_of(READS_PER_TURN) {
+            cx.waker().wake_by_ref();
+            return Poll::Pending;
+        }
+        match &mut this.inner {
             Inner::Plain(stream) => Pin::new(stream).poll_read(cx, buf),
             Inner::Tls(stream) => Pin::new(&mut **stream).poll_read(cx, buf),
         }
@@ -82,28 +101,28 @@ impl AsyncRead for SmolStream {
 
 impl AsyncWrite for SmolStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
-        match &mut self.get_mut().0 {
+        match &mut self.get_mut().inner {
             Inner::Plain(stream) => Pin::new(stream).poll_write(cx, buf),
             Inner::Tls(stream) => Pin::new(&mut **stream).poll_write(cx, buf),
         }
     }
 
     fn poll_write_vectored(self: Pin<&mut Self>, cx: &mut Context<'_>, bufs: &[io::IoSlice<'_>]) -> Poll<io::Result<usize>> {
-        match &mut self.get_mut().0 {
+        match &mut self.get_mut().inner {
             Inner::Plain(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
             Inner::Tls(stream) => Pin::new(&mut **stream).poll_write_vectored(cx, bufs),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match &mut self.get_mut().0 {
+        match &mut self.get_mut().inner {
             Inner::Plain(stream) => Pin::new(stream).poll_flush(cx),
             Inner::Tls(stream) => Pin::new(&mut **stream).poll_flush(cx),
         }
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match &mut self.get_mut().0 {
+        match &mut self.get_mut().inner {
             Inner::Plain(stream) => Pin::new(stream).poll_close(cx),
             Inner::Tls(stream) => Pin::new(&mut **stream).poll_close(cx),
         }

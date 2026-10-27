@@ -11,14 +11,14 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures_channel::{mpsc, oneshot};
 use futures_io::{AsyncRead, AsyncWrite};
-use futures_util::future::{Either, select};
+use futures_util::future::{Either, join, select};
 use futures_util::stream::FuturesUnordered;
 use futures_util::{AsyncReadExt, AsyncWriteExt, FutureExt, SinkExt, StreamExt, select_biased};
 use ulo::{BoundAddr, BoxError, BoxFuture, Runtime, Spawn, TaskHandle, Timer};
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Outbound, Pattern, ReplyPath, ReplyTo};
+use ulo_rpc::{Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo};
 use ulo_transport::__private::{Watch, ordered};
 use ulo_transport::{Details, ErrorKind, TaskSet};
 
@@ -40,12 +40,14 @@ const DELIVERY_QUEUE: usize = 1024;
 /// Reply frames read ahead of the client; a full queue holds the connection's reader back.
 const REPLY_QUEUE: usize = 64;
 
-/// Frames a server connection reads between the turns it gives the runtime's other tasks.
-const FRAMES_PER_TURN: usize = 32;
+/// Reads a connection makes between the turns it gives the runtime's other tasks.
+const READS_PER_TURN: usize = 32;
 
-/// How long a server connection the link ends stays open, reading and discarding what its peer
-/// still sends while its writer delivers the answers queued before the end (transports DESIGN
-/// §5.2, "A cut `close`"), measured with the app's `Timer`.
+/// How long, at most, a connection outlives the end of a `close`, completed or cut, or the link's
+/// drop: its writer delivering what was queued before the end, its reader discarding what the
+/// peer still sends (transports DESIGN §5.2, "A cut `close`"). Measured with the app's `Timer` on
+/// a server, and on a client with the clock of the runtime its client hands `connect`, the app's
+/// inside an app.
 pub const CUT_GRACE: Duration = Duration::from_secs(2);
 
 const RUNNING: u8 = 0;
@@ -134,10 +136,15 @@ struct State {
     next_id: AtomicU64,
     /// Calls in flight across every connection: ids mapped and not yet forgotten.
     held: Watch<usize>,
-    /// Advanced by `close`; a client connection ends when it changes.
+    /// Advanced as `close` begins; a client connection ends when it changes.
     client_epoch: Watch<u64>,
-    /// The writer of each client connection, which `close` waits for once it has shut the socket.
-    client_writers: Mutex<FuturesUnordered<TaskHandle>>,
+    /// The highest epoch of a `close` that has ended, completed or cut, and `u64::MAX` once the
+    /// link is dropped: a client connection's deadline runs from the end of a `close` begun after
+    /// it opened, a server connection's from the end of the first `close`.
+    ended: Watch<u64>,
+    /// Dropped by each client connection's writer once it has shut its half of the socket, which
+    /// `close` waits for.
+    client_writers: Mutex<FuturesUnordered<oneshot::Receiver<()>>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -163,6 +170,7 @@ impl Core {
                 next_id: AtomicU64::new(1),
                 held: Watch::new(0),
                 client_epoch: Watch::new(0),
+                ended: Watch::new(0),
                 client_writers: Mutex::new(FuturesUnordered::new()),
             }),
         }
@@ -251,7 +259,7 @@ impl Core {
             return Err("the TCP link listens once `prepare` has resolved its endpoint".into());
         };
         let Some(timer) = self.timer.clone() else {
-            return Err("the TCP link's server has no `Timer` to bound its lingering close with: its app has none".into());
+            return Err(NoTimer { link: "TCP" }.into());
         };
         let mut accept = lock(&self.accept);
         if accept.is_some() {
@@ -289,20 +297,27 @@ impl Core {
     }
 
     /// A client connection over the two halves of a connected socket: its writer and its reply
-    /// lane's reader as tasks on `runtime`, both ending at `close`.
-    pub fn connect(&self, runtime: &Arc<dyn Runtime>, reader: Reader, writer: Writer) -> Outbound {
+    /// lane's reader as tasks on `runtime`. At `close` the writer shuts its half once the frames
+    /// queued before it are written, the reply lane ends, and the connection reads and discards
+    /// what the server still sends until the server closes its half, the read fails, or
+    /// `CUT_GRACE` on `timer` after `close` ends.
+    pub fn connect(&self, runtime: &Arc<dyn Runtime>, timer: Arc<dyn Timer>, reader: Reader, writer: Writer) -> Outbound {
         let state = &self.state;
         let at = state.client_epoch.read(|epoch| *epoch);
         let (queue, queued) = ordered::channel(WRITE_QUEUE);
+        let (lingering, handed) = oneshot::channel();
         {
+            let (shut, wrote) = oneshot::channel();
             let mut writers = lock(&state.client_writers);
             while let Some(Some(_)) = writers.next().now_or_never() {}
-            writers.push(runtime.spawn(Box::pin(write_frames(writer, queued, closed(Arc::clone(state), at)))));
+            writers.push(wrote);
+            let end = closed(Arc::clone(state), at);
+            drop(runtime.spawn(Box::pin(run_connection(writer, queued, end, Some(shut), handed, close_ended(state, at), timer))));
         }
         let (codec, limit) = (self.codec, self.limit());
         let (frames, replies) = mpsc::channel(REPLY_QUEUE);
         let (lane, dropped) = oneshot::channel::<()>();
-        drop(runtime.spawn(Box::pin(read_replies(reader, Arc::clone(state), at, codec, limit, frames, lane))));
+        drop(runtime.spawn(Box::pin(read_replies(Reading::new(reader), Arc::clone(state), at, codec, limit, frames, lane, lingering))));
         // Queued at the call, so frames go out in the order their sends were called.
         let send = Box::new(move |_pattern: Pattern, frame: Frame, _reply_to: Option<ReplyTo>| -> BoxFuture<'static, Result<(), BoxError>> {
             let queued = encode(codec, limit, &frame).map(|bytes| queue.send(bytes));
@@ -331,10 +346,16 @@ impl Core {
     }
 
     /// Stops the accept loop and every server connection, and ends every client connection: its
-    /// socket shut, its reply lane ended.
+    /// socket shut, its reply lane ended. Each connection's `CUT_GRACE` runs from this future's
+    /// end, completed or dropped.
     pub async fn close(&self) {
         self.state.phase.modify(|phase| advance(phase, CLOSED));
-        self.state.client_epoch.modify(|epoch| *epoch += 1);
+        let mut epoch = 0;
+        self.state.client_epoch.modify(|at| {
+            *at += 1;
+            epoch = *at;
+        });
+        let _ended = Ended { state: &self.state, epoch };
         let accept = lock(&self.accept).take();
         if let Some(mut accept) = accept {
             let _ = (&mut accept.0).await;
@@ -350,6 +371,32 @@ impl Core {
     pub fn bound(&self) -> Vec<BoundAddr> {
         lock(&self.state.bound).clone()
     }
+}
+
+impl Drop for Core {
+    fn drop(&mut self) {
+        self.state.ended.modify(|ended| *ended = u64::MAX);
+    }
+}
+
+/// Records, as `close`'s future ends or is dropped, that the `close` begun at `epoch` has ended.
+struct Ended<'a> {
+    state: &'a State,
+    epoch: u64,
+}
+
+impl Drop for Ended<'_> {
+    fn drop(&mut self) {
+        let epoch = self.epoch;
+        self.state.ended.modify(|ended| *ended = (*ended).max(epoch));
+    }
+}
+
+/// Resolves at the end of the first `close` begun once the client epoch was `at`, or at the
+/// link's drop.
+fn close_ended(state: &Arc<State>, at: u64) -> impl Future<Output = ()> + Send + 'static {
+    let state = Arc::clone(state);
+    async move { state.ended.wait_for(|ended| *ended > at).await }
 }
 
 fn advance(phase: &mut u8, to: u8) {
@@ -368,109 +415,141 @@ async fn reached(state: &State, at: u8) {
     state.phase.wait_for(|phase| *phase >= at).await;
 }
 
-/// Reads one client connection's reply frames into `frames` until the connection ends, the link
-/// closes, or the reply lane is dropped.
+/// Reads one client connection's reply frames into `frames` until the connection ends or the reply
+/// lane is dropped, or until the link closes, when it hands the reader to `lingering`, the
+/// connection's writer task, and the reply lane ends.
+#[allow(clippy::too_many_arguments)]
 async fn read_replies(
-    mut reader: Reader,
+    mut reading: Reading,
     state: Arc<State>,
     at: u64,
     codec: Codec,
     limit: u64,
     mut frames: mpsc::Sender<Frame>,
     mut lane: oneshot::Sender<()>,
+    lingering: oneshot::Sender<Reading>,
 ) {
-    loop {
-        let read = {
-            let read = read_frame(&mut reader, limit).fuse();
-            let ended = closed(Arc::clone(&state), at).fuse();
-            let dropped = lane.cancellation().fuse();
-            let (mut read, mut ended, mut dropped) = (pin!(read), pin!(ended), pin!(dropped));
-            select_biased! {
-                read = read => read,
-                () = ended => return,
-                () = dropped => return,
-            }
-        };
-        let bytes = match read {
-            Ok(Some(bytes)) => bytes,
-            Ok(None) => return,
-            Err(error) => {
-                tracing::debug!(%error, "the TCP connection's reply lane ended");
-                return;
-            }
-        };
-        match codec.decode_frame(&bytes) {
-            Ok(frame) => {
-                if frames.send(frame).await.is_err() {
-                    return;
+    let closing = loop {
+        let delivered = async {
+            let bytes = match reading.frame(limit).await {
+                Ok(Some(bytes)) => bytes,
+                Ok(None) => return false,
+                Err(error) => {
+                    tracing::debug!(%error, "the TCP connection's reply lane ended");
+                    return false;
+                }
+            };
+            match codec.decode_frame(&bytes) {
+                Ok(frame) => frames.send(frame).await.is_ok(),
+                Err(error) => {
+                    tracing::warn!(%error, "a reply frame did not decode; the TCP connection is dropped");
+                    false
                 }
             }
-            Err(error) => {
-                tracing::warn!(%error, "a reply frame did not decode; the TCP connection is dropped");
-                return;
+        }
+        .fuse();
+        let ended = closed(Arc::clone(&state), at).fuse();
+        let dropped = lane.cancellation().fuse();
+        let (mut delivered, mut ended, mut dropped) = (pin!(delivered), pin!(ended), pin!(dropped));
+        select_biased! {
+            () = ended => break true,
+            () = dropped => break false,
+            delivered = delivered => if !delivered { break false },
+        }
+    };
+    if closing {
+        let _ = lingering.send(reading);
+    }
+}
+
+/// A connection's reading half, which gives the runtime's other tasks a turn every
+/// `READS_PER_TURN` reads, whatever becomes of what it reads (F485). `async-io`'s sockets answer
+/// a read at once while the peer's bytes keep arriving, and a channel with room answers a send at
+/// once, so a loop reading a peer that never stops writing would otherwise keep its thread from
+/// every other task: the abort of a server connection, which `close` waits for, lands only when
+/// the task yields, and a linger would never poll the deadline it races.
+struct Reading {
+    reader: Reader,
+    reads: usize,
+}
+
+impl Reading {
+    fn new(reader: Reader) -> Reading {
+        Reading { reader, reads: 0 }
+    }
+
+    async fn turn(&mut self) {
+        self.reads += 1;
+        if self.reads.is_multiple_of(READS_PER_TURN) {
+            // Unpinned on tokio: its cooperative budget has a read answer `Pending` without it.
+            yield_now().await;
+        }
+    }
+
+    /// One length-prefixed frame; `None` at a clean end between frames. A prefix over `limit`
+    /// fails before the body is read.
+    async fn frame(&mut self, limit: u64) -> io::Result<Option<Vec<u8>>> {
+        self.turn().await;
+        let mut prefix = [0u8; 4];
+        match self.reader.read_exact(&mut prefix).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(error) => return Err(error),
+        }
+        let len = u64::from(u32::from_be_bytes(prefix));
+        if len > limit {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("a frame of {len} bytes is over the limit of {limit} bytes")));
+        }
+        let mut body = vec![0; len as usize];
+        self.reader.read_exact(&mut body).await?;
+        Ok(Some(body))
+    }
+
+    /// Reads and discards until the peer closes its half or a read fails.
+    async fn discard(mut self) {
+        let mut buffer = vec![0u8; 16 * 1024];
+        loop {
+            self.turn().await;
+            match self.reader.read(&mut buffer).await {
+                Ok(read) if read > 0 => {}
+                _ => return,
             }
         }
     }
 }
 
-/// A server connection's reader and its writer's task. Dropped with the connection's task, as
-/// `close` and the link's drop abort it, it hands both to a linger on the link's runtime, which
-/// nothing waits for (transports DESIGN §5.2): the writer shuts its half once the answers queued
-/// before the end are written, and the linger reads and discards what the peer still sends until
-/// the peer closes its half, the connection fails, or `CUT_GRACE` passes on the app's clock, when
-/// it stops the writer too. A socket closed with the peer's bytes unread closes with a reset,
-/// which discards what the server wrote and the peer has not read (F484).
+/// A server connection's reader, handed to the connection's writer task if the connection's task
+/// is dropped while it holds it, as `close` and the link's drop abort it, so the connection reads
+/// and discards what the peer still sends until the peer closes its half, the read fails, or
+/// `CUT_GRACE` after `close` ends (transports DESIGN §5.2). A socket closed with the peer's bytes unread closes with a
+/// reset, which discards what the server wrote and the peer has not read (F484).
 struct Lingering {
     /// `None` once `release` has let go of it.
-    reader: Option<Reader>,
-    writer: Option<TaskHandle>,
-    runtime: Arc<dyn Runtime>,
-    timer: Arc<dyn Timer>,
+    reading: Option<Reading>,
+    handover: Option<oneshot::Sender<Reading>>,
 }
 
 impl Lingering {
-    fn get(&mut self) -> &mut Reader {
-        self.reader.as_mut().expect("the connection's reader is held until its task stops reading")
+    fn get(&mut self) -> &mut Reading {
+        self.reading.as_mut().expect("the connection's reader is held until its task stops reading")
     }
 
-    /// Drops the reader and leaves the writer to end as its queue does: the task stopped reading
-    /// at the connection's end, on a frame it drops the connection for, or once the server took
-    /// no more deliveries.
+    /// Drops the reader: the task stopped reading at the connection's end, on a frame it drops the
+    /// connection for, or once the server took no more deliveries.
     fn release(&mut self) {
-        self.reader = None;
-        self.writer = None;
+        self.reading = None;
+        self.handover = None;
     }
 }
 
 impl Drop for Lingering {
     fn drop(&mut self) {
-        let (Some(reader), Some(writer)) = (self.reader.take(), self.writer.take()) else { return };
-        let grace = self.timer.sleep(CUT_GRACE);
-        drop(self.runtime.spawn(Box::pin(linger(reader, writer, grace))));
-    }
-}
-
-/// Reads and discards until the peer closes its half or the connection fails, or until `grace`
-/// resolves, which also stops the writer.
-async fn linger(mut reader: Reader, writer: TaskHandle, grace: BoxFuture<'static, ()>) {
-    let mut buffer = vec![0u8; 16 * 1024];
-    let discarded = async {
-        while let Ok(read) = reader.read(&mut buffer).await
-            && read > 0
-        {
-            yield_now().await;
+        if let (Some(reading), Some(handover)) = (self.reading.take(), self.handover.take()) {
+            let _ = handover.send(reading);
         }
-    };
-    if let Either::Right(((), _)) = select(pin!(discarded), grace).await {
-        writer.abort();
-        tracing::debug!("a TCP connection the link ended was still being written to `CUT_GRACE` after the end; it is dropped");
     }
 }
 
-/// Gives the runtime's other tasks a turn. `async-io`'s sockets answer a read at once while the
-/// peer's bytes keep arriving, and tokio's only once its task budget is spent, and a channel with
-/// room answers a send at once, so a loop reading a peer that never stops writing would keep its
-/// thread, and a linger its grace unpolled.
 async fn yield_now() {
     let mut yielded = false;
     std::future::poll_fn(|cx| {
@@ -564,10 +643,15 @@ impl Server {
     /// the link instead, at `close` or at the link's drop, the connection lingers.
     async fn serve(self, reader: Reader, writer: Writer, peer: SocketAddr, mut deliveries: mpsc::Sender<Delivery>) {
         let (queue, queued) = ordered::channel(WRITE_QUEUE);
+        let (handover, handed) = oneshot::channel();
+        // Every `close` ends the server's connections, so the first one to end starts the grace,
+        // also for a connection whose task first ran after that `close` advanced the epoch and
+        // before its abort landed.
+        let ended = close_ended(&self.state, 0);
         // The writer runs apart from this task: the server's calls hold reply paths into its queue
         // after the connection's reader has ended, and it ends when the last of them drops.
-        let writer = self.runtime.spawn(Box::pin(write_frames(writer, queued, pending())));
-        let mut reader = Lingering { reader: Some(reader), writer: Some(writer), runtime: Arc::clone(&self.runtime), timer: Arc::clone(&self.timer) };
+        drop(self.runtime.spawn(Box::pin(run_connection(writer, queued, pending(), None, handed, ended, Arc::clone(&self.timer)))));
+        let mut reader = Lingering { reading: Some(Reading::new(reader)), handover: Some(handover) };
         let connection = self.state.next_connection.fetch_add(1, Ordering::Relaxed);
         lock(&self.state.connections).insert(connection, queue.clone());
         // A connection accepted before the drain and registered after it, its TLS handshake
@@ -580,17 +664,8 @@ impl Server {
         }
         let ids = Arc::new(Mutex::new(Ids::new(Arc::clone(&self.state))));
         let path = reply_path(queue, self.codec, self.limit, Arc::clone(&ids), peer);
-        let mut read = 0usize;
         loop {
-            // Whatever becomes of the frames: one the server drops awaits nothing, and one it
-            // delivers awaits a channel that has room while the server keeps pace, so a peer that
-            // never stops writing would keep this task's thread, and `close`, whose abort lands
-            // when the task next yields, would wait on it.
-            read += 1;
-            if read.is_multiple_of(FRAMES_PER_TURN) {
-                yield_now().await;
-            }
-            let bytes = match read_frame(reader.get(), self.limit).await {
+            let bytes = match reader.get().frame(self.limit).await {
                 Ok(Some(bytes)) => bytes,
                 Ok(None) => break,
                 Err(error) => {
@@ -818,42 +893,59 @@ fn encode(codec: Codec, limit: u64, frame: &Frame) -> Result<Bytes, BoxError> {
     Ok(bytes)
 }
 
-/// One length-prefixed frame; `None` at a clean end between frames. A prefix over `limit` fails
-/// before the body is read.
-async fn read_frame(reader: &mut Reader, limit: u64) -> io::Result<Option<Vec<u8>>> {
-    let mut prefix = [0u8; 4];
-    match reader.read_exact(&mut prefix).await {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(error) => return Err(error),
-    }
-    let len = u64::from(u32::from_be_bytes(prefix));
-    if len > limit {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("a frame of {len} bytes is over the limit of {limit} bytes")));
-    }
-    let mut body = vec![0; len as usize];
-    reader.read_exact(&mut body).await?;
-    Ok(Some(body))
-}
-
-/// Writes each queued frame behind its length prefix until the queue's senders are gone or `stop`
-/// resolves, then shuts the writer.
-async fn write_frames(mut writer: Writer, mut queued: ordered::Receiver<Bytes>, stop: impl Future<Output = ()>) {
-    let mut stop = pin!(stop);
-    loop {
-        let bytes = match select(pin!(queued.recv()), stop.as_mut()).await {
-            Either::Left((Some(bytes), _)) => bytes,
-            Either::Left((None, _)) | Either::Right(((), _)) => break,
-        };
-        let prefix = (bytes.len() as u32).to_be_bytes();
-        let written = async {
-            writer.write_all(&prefix).await?;
-            writer.write_all(&bytes).await?;
-            writer.flush().await
-        };
-        if written.await.is_err() {
-            return;
+/// One connection's writing half and, once the link ends the connection, its reading half: writes
+/// each queued frame behind its length prefix until the queue's senders are gone or `end`
+/// resolves, then shuts the writer and drops `shut`; if `lingering` hands the reader over, reads
+/// and discards until the peer closes its half or a read fails. `CUT_GRACE` on `timer` after
+/// `ended` resolves, both halves drop wherever they are, which closes the socket.
+async fn run_connection(
+    writer: Writer,
+    mut queued: ordered::Receiver<Bytes>,
+    end: impl Future<Output = ()>,
+    shut: Option<oneshot::Sender<()>>,
+    lingering: oneshot::Receiver<Reading>,
+    ended: impl Future<Output = ()>,
+    timer: Arc<dyn Timer>,
+) {
+    let writing = async move {
+        let (mut writer, _shut) = (writer, shut);
+        let mut end = pin!(end);
+        loop {
+            let bytes = match select(pin!(queued.recv()), end.as_mut()).await {
+                Either::Left((Some(bytes), _)) => bytes,
+                Either::Left((None, _)) | Either::Right(((), _)) => break,
+            };
+            let prefix = (bytes.len() as u32).to_be_bytes();
+            let written = async {
+                writer.write_all(&prefix).await?;
+                writer.write_all(&bytes).await?;
+                writer.flush().await
+            };
+            if written.await.is_err() {
+                return;
+            }
         }
+        let _ = writer.close().await;
+    };
+    let reading = async move {
+        if let Ok(reading) = lingering.await {
+            reading.discard().await;
+        }
+    };
+    // Declared ahead of the connection, so the halves drop before the sleep does and a clock that
+    // sees the sleep go sees the socket closed.
+    let mut grace = None;
+    let cut = {
+        let mut connection = pin!(join(writing, reading));
+        match select(connection.as_mut(), pin!(ended)).await {
+            Either::Left(_) => false,
+            Either::Right(((), _)) => {
+                let sleep = grace.insert(timer.sleep(CUT_GRACE));
+                matches!(select(connection, sleep.as_mut()).await, Either::Right(_))
+            }
+        }
+    };
+    if cut {
+        tracing::debug!("a TCP connection was still open `CUT_GRACE` after the link's close; it is dropped");
     }
-    let _ = writer.close().await;
 }

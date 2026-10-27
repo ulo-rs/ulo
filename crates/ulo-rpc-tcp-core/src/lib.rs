@@ -10,10 +10,10 @@
 //! frame, bounded by `max_frame`; a server mapping each connection's call ids to ids of its own;
 //! the writer queue each connection's frames go out through in the order their sends were called;
 //! `goaway` at the drain, a connection registered after it included; the inbound stream ending
-//! once the draining server holds no call, the link answering later requests `unavailable`; each
-//! server connection lingering after `close` until its peer closes its half, for at most
-//! [`CUT_GRACE`] on the app's `Timer`; and a client's connections ending at `close`. A link
-//! supplies its sockets: a listener adopted from `ulo-net`'s
+//! once the draining server holds no call, the link answering later requests `unavailable`; and
+//! every connection, a server's and a client's, ending at `close` and reading what its peer still
+//! sends until the peer closes its half, the whole connection dropped [`CUT_GRACE`] after `close`
+//! ends. A link supplies its sockets: a listener adopted from `ulo-net`'s
 //! [`BoundListener`](ulo_net::BoundListener) behind [`Accept`], each accepted connection's TLS
 //! handshake in an [`Incoming`], and a connected client's two halves, all on `futures-io`'s
 //! traits. Every task the core starts is spawned on the runtime the link hands it, and every wait

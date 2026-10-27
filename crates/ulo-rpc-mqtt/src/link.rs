@@ -25,7 +25,7 @@ use ulo_rpc::__private::ClientProbe;
 use ulo_rpc::__private::HoldUntil;
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured,
+    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured, NoTimer,
     Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
 };
 use ulo_transport::{Detail, Details, ErrorKind, SHUTDOWN_MESSAGE, Turns};
@@ -309,6 +309,7 @@ impl Link for Mqtt {
             .clone()
             .or_else(|| self.default_group.clone())
             .ok_or("the MQTT link's group is unset: `listen` ran before `prepare`")?;
+        let timer = self.timer.clone().ok_or(NoTimer { link: "MQTT" })?;
         let runtime = self.runtime()?;
         let target = Target::parse(&self.url)?;
         let tls = self.tls(&target, &runtime).await?;
@@ -332,7 +333,6 @@ impl Link for Mqtt {
         });
 
         let (ready, bound) = oneshot::channel();
-        let timer = self.timer.clone().unwrap_or_else(|| Arc::new(runtime.clone()));
         let served = Arc::clone(&side);
         let event_loop = Loop::spawn(&runtime, timer, move |written| serve(served, eventloop, ready, written));
         // Until the broker answers, a `listen` dropped mid-handshake takes the event loop with it.
@@ -1049,8 +1049,9 @@ impl Lane {
         let lane = self.clone();
         Box::pin(async move {
             loop {
-                // Made and enabled before the attempt, so a take between a failed attempt and the
-                // wait wakes it.
+                // Made before the attempt, so a take between a failed attempt and the wait wakes it.
+                // `enable()` is needed only if a `notify_one` is ever added; `notify_waiters`
+                // reaches a `Notified` from its creation.
                 let mut room = pin!(lane.replies.room.notified());
                 room.as_mut().enable();
                 if let Some(outcome) = lane.try_queue(&bytes, &properties, terminal) {
@@ -1119,6 +1120,8 @@ impl Replies {
                 }
             };
             let properties = reply_properties(to.correlation, None);
+            // Tried even after an earlier answer found no room: stopping at the first would change
+            // only the order across calls, which nothing promises, so that break is unpinned.
             if client.try_publish_with_properties(to.topic.clone(), qos, false, bytes.clone(), properties.clone()).is_ok() {
                 continue;
             }
@@ -1433,6 +1436,7 @@ impl ClientSide {
         let (assigned, pkid) = oneshot::channel();
         *lock(&self.outgoing) = Some(Waiting { call, assigned });
         let queued = {
+            // A break that checks `closed` outside this lock shows only as a race, and is unpinned.
             let closed = lock(&self.closed);
             if *closed {
                 Err("the MQTT link has closed; the publish was not sent".into())

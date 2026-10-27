@@ -78,6 +78,32 @@ ulo_rpc_conformance::conformance_suite!(NatsServer; not_applicable {
     cancel_follows_its_request: "U17: the link carries a request and its `cancel` on separate lanes, and the broker may deliver the `cancel` first",
 });
 
+/// A server's link after `prepare` on an app that hands it the tokio runtime's clock, which
+/// `listen` refuses to go without.
+async fn prepared(mut link: Nats) -> Nats {
+    let app = ulo::App::builder(Root)
+        .runtime(ulo_runtime_tokio::Tokio::current())
+        .wire()
+        .expect("the app wires")
+        .connect()
+        .await
+        .expect("the app connects");
+    link.prepare(&app.handle()).await.expect("the server's link prepares");
+    link
+}
+
+struct Root;
+
+impl ulo::Module for Root {
+    fn identity(&self) -> ulo::ModuleIdentity {
+        ulo::ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ulo::ModuleDef<'_>) {
+        let _ = m;
+    }
+}
+
 /// How long the test waits for a frame the client's link should receive.
 const PATIENCE: Duration = Duration::from_secs(5);
 
@@ -88,7 +114,7 @@ const PATIENCE: Duration = Duration::from_secs(5);
 async fn a_close_cut_short_answers_only_the_calls_still_unanswered() {
     const HELD: &str = "link.unanswered";
     let broker = NatsServer::start().await;
-    let server = broker.link().group("cut_unanswered");
+    let server = prepared(broker.link().group("cut_unanswered")).await;
     let mut inbound = server.listen(&[Pattern::from(HELD)]).await.expect("the server's link listens");
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
@@ -138,7 +164,7 @@ async fn a_close_cut_short_answers_only_the_calls_still_unanswered() {
 async fn a_close_cut_short_still_answers_the_call_it_held() {
     const HELD: &str = "link.held";
     let broker = NatsServer::start().await;
-    let server = broker.link().group("cut_close");
+    let server = prepared(broker.link().group("cut_close")).await;
     let mut inbound = server.listen(&[Pattern::from(HELD)]).await.expect("the server's link listens");
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
@@ -179,7 +205,7 @@ async fn a_streamed_reply_longer_than_the_channel_arrives_whole() {
     const LONG: &str = "link.long";
     const ITEMS: u32 = 100_000;
     let broker = NatsServer::start().await;
-    let server = broker.link().group("long_stream");
+    let server = prepared(broker.link().group("long_stream")).await;
     let mut inbound = server.listen(&[Pattern::from(LONG)]).await.expect("the server's link listens");
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
@@ -223,7 +249,7 @@ async fn a_stream_waiting_on_a_full_channel_when_close_runs_ends_with_close_s_on
     const BLOCKED: &str = "link.blocked";
     let broker = NatsServer::start().await;
     let relay = Pausing::start(broker.server).await;
-    let server = Arc::new(Nats::url(format!("nats://{}", relay.addr)).group("blocked_stream"));
+    let server = Arc::new(prepared(Nats::url(format!("nats://{}", relay.addr)).group("blocked_stream")).await);
     let mut inbound = server.listen(&[Pattern::from(BLOCKED)]).await.expect("the server's link listens");
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
@@ -298,7 +324,7 @@ async fn a_terminal_frame_queued_after_waiting_ends_its_call() {
     const ENDED: &str = "link.ended";
     let broker = NatsServer::start().await;
     let relay = Pausing::start(broker.server).await;
-    let server = Nats::url(format!("nats://{}", relay.addr)).group("waited_end");
+    let server = prepared(Nats::url(format!("nats://{}", relay.addr)).group("waited_end")).await;
     let mut inbound = server.listen(&[Pattern::from(ENDED)]).await.expect("the server's link listens");
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");

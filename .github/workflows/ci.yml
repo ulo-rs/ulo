@@ -252,13 +252,13 @@ jobs:
 
   brokers:
     name: broker integration
-    # The tests that need a live broker: the five broker RPC conformance suites
-    # and the WebSocket Redis adapter's two-process test. On push, not on pull
-    # requests: each starts its broker under Docker through testcontainers, and
-    # the image pulls and the compile of six `integration` test targets cost
-    # minutes a pull request does not need to wait on. One crate per step, so a
-    # failure names its broker. The Kafka suite starts a broker container per
-    # scenario, at most four at once.
+    # The tests that need a live broker: the five broker RPC conformance suites,
+    # the NATS and MQTT links' own broker tests and the WebSocket Redis adapter's
+    # two-process test. On push, not on pull requests: each starts its broker
+    # under Docker through testcontainers, and the image pulls and the compile of
+    # eight `integration` test targets cost minutes a pull request does not need
+    # to wait on. One crate per step, so a failure names its broker. The Kafka
+    # suite starts a broker container per scenario, at most four at once.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -266,8 +266,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p ulo-rpc-nats --features integration --test conformance --locked
+      # The link's own broker tests live in its library target, which the conformance step does
+      # not run. The names are required, so a cfg that compiles them away fails the step.
+      - run: >-
+          python3 scripts/require_tests.py
+          the_task_keeping_a_cut_close_s_connection_lets_go_at_the_grace
+          the_task_keeping_a_cut_close_s_connection_lets_go_when_it_is_lost
+          a_server_s_grace_is_timed_on_the_app_s_timer
+          a_cut_close_keeps_the_connection_until_the_answer_it_waited_room_for_is_written
+          -- cargo test -p ulo-rpc-nats --features integration --lib --locked
       - run: cargo test -p ulo-rpc-redis --features integration --test conformance --locked
       - run: cargo test -p ulo-rpc-mqtt --features integration --test conformance --locked
+      - run: >-
+          python3 scripts/require_tests.py
+          room_made_between_a_failed_attempt_and_the_wait_wakes_the_reply
+          the_linger_runs_on_the_clock_the_loop_was_given
+          connecting_over_tls_does_not_stall_the_thread
+          -- cargo test -p ulo-rpc-mqtt --features integration --lib --locked
       - run: cargo test -p ulo-rpc-rabbitmq --features integration --test conformance --locked
       - run: cargo test -p ulo-rpc-kafka --features integration --test conformance --locked
       # Broadcast across two processes through the WebSocket transport's Redis adapter.

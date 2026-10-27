@@ -28,6 +28,8 @@ ulo-runtime-smol = { path = "../ulo-runtime-smol" }
 ulo-test-certs = { path = "../ulo-test-certs" }
 ulo-transport = { path = "../ulo-transport" }
 futures-executor.workspace = true
+# The lingering tests read back the buffer sizes the kernel granted their sockets.
+socket2.workspace = true
 
 [lints]
 workspace = true

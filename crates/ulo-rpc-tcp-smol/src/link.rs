@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_net::{TcpListener, TcpStream};
 use futures_rustls::TlsAcceptor;
 use futures_util::AsyncReadExt;
-use ulo::{AppHandle, BoundAddr, BoxError, Runtime};
+use ulo::{AppHandle, BoundAddr, BoxError, Runtime, Timer};
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{BoundListener, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
@@ -23,14 +23,18 @@ use ulo_rpc_tcp_core::{Accept, Core, Incoming};
 ///
 /// At `close` every connection the server accepted ends: its writer shuts its half once the
 /// answers queued before the close are written, and the link reads and discards what the peer
-/// still sends until the peer closes its half, the connection fails, or two seconds pass on the
-/// app's `Timer`, when the connection drops. `close` does not wait for that. A peer that is still
-/// writing as the server closes, and reading, receives what is written in that time and then the
-/// server's FIN, not a reset.
+/// still sends until the peer closes its half or the connection fails. Two seconds on the app's
+/// `Timer` after `close` ends, completed or cut, every connection still open drops, a writer
+/// mid-answer included, so a peer that has stopped reading loses what it has not read. `close`
+/// does not wait for that. A peer that is still writing as the server closes, and reading,
+/// receives what is written in that time and then the server's FIN, not a reset.
 ///
-/// `close` also ends every connection the link's client side opened: its socket is shut and its
-/// reply lane ends, so the calls waiting on it fail `Unavailable`. A call made afterwards connects
-/// again.
+/// `close` also ends every connection the link's client side opened: its writer shuts its half
+/// once the frames queued before the close are written, and its reply lane ends, so the calls
+/// waiting on it fail `Unavailable`. The link reads and discards what the server still sends
+/// until the server closes its half or the connection fails, for at most two seconds after `close`
+/// ends on the clock of the runtime the client hands `connect`, the app's inside an app. A call
+/// made afterwards connects again.
 ///
 /// A server's link dropped without `close`, as it is when its app drops before the close step,
 /// stops accepting: its listener closes, the connections it accepted end as at `close`, and the
@@ -117,12 +121,13 @@ impl Link for Tcp {
         self.core.listen(self.server_runtime()?, SmolListener::adopt)
     }
 
-    async fn connect(&self, runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+    async fn connect(&self, handed: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let addr = self.core.client_addr()?;
-        let runtime = self.runtime.clone().unwrap_or_else(|| Arc::clone(runtime));
+        let runtime = self.runtime.clone().unwrap_or_else(|| Arc::clone(handed));
         let stream = TcpStream::connect(addr).await?;
         let _ = stream.set_nodelay(true);
-        Ok(self.core.connect(&runtime, Box::pin(stream.clone()), Box::pin(stream)))
+        let timer = Arc::clone(handed) as Arc<dyn Timer>;
+        Ok(self.core.connect(&runtime, timer, Box::pin(stream.clone()), Box::pin(stream)))
     }
 
     async fn drain(&self) {

@@ -9057,6 +9057,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "futures-executor",
  "futures-util",
+ "socket2 0.6.5",
  "tokio",
  "tokio-rustls",
  "tokio-util",
@@ -9095,6 +9096,7 @@ dependencies = [
  "futures-executor",
  "futures-rustls",
  "futures-util",
+ "socket2 0.6.5",
  "ulo",
  "ulo-net",
  "ulo-rpc",

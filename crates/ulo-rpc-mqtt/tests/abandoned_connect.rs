@@ -74,11 +74,31 @@ async fn a_connect_dropped_before_the_broker_answers_ends_its_event_loop() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_listen_dropped_before_the_broker_answers_ends_its_event_loop() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("the broker's socket binds");
-    let link = Mqtt::url(format!("mqtt://{}", listener.local_addr().expect("the broker's socket has an address"))).group("abandoned");
+    let mut link = Mqtt::url(format!("mqtt://{}", listener.local_addr().expect("the broker's socket has an address"))).group("abandoned");
+    let app = ulo::App::builder(Root)
+        .runtime(ulo_runtime_tokio::Tokio::current())
+        .wire()
+        .expect("the app wires")
+        .connect()
+        .await
+        .expect("the app connects");
+    link.prepare(&app.handle()).await.expect("the link prepares");
     let listening = tokio::spawn(async move { link.listen(&[Pattern::from("abandoned.call")]).await.map(drop) });
     let stream = handshake_begun(&listener).await;
     listening.abort();
     let dropped: Result<Result<(), BoxError>, _> = listening.await;
     assert!(dropped.is_err_and(|join| join.is_cancelled()), "the listen finished before the broker answered");
     ended_unanswered(stream, "listen").await;
+}
+
+struct Root;
+
+impl ulo::Module for Root {
+    fn identity(&self) -> ulo::ModuleIdentity {
+        ulo::ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ulo::ModuleDef<'_>) {
+        let _ = m;
+    }
 }

@@ -28,7 +28,7 @@ use ulo_rpc::__private::ClientProbe;
 use ulo_rpc::__private::HoldUntil;
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured,
+    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured, NoTimer,
     Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
 };
 use ulo_transport::prepare::{Failures, zero_bound};
@@ -291,6 +291,7 @@ impl Link for Nats {
             .clone()
             .or_else(|| self.default_group.clone())
             .ok_or("the NATS link's queue group is unset: `listen` ran before `prepare`")?;
+        let timer = self.timer.clone().ok_or(NoTimer { link: "NATS" })?;
         let runtime = self.runtime()?;
         let servers = servers(&self.url)?;
         // The server's one connection reconnects with the options it is made with for the app's
@@ -338,7 +339,7 @@ impl Link for Nats {
             client,
             codec: self.codec,
             runtime: runtime.clone(),
-            timer: self.timer.clone().unwrap_or_else(|| Arc::new(runtime.clone())),
+            timer,
             calls: Arc::new(Calls::new()),
             replies: Arc::default(),
             ended,
@@ -787,6 +788,8 @@ impl Replies {
                     continue;
                 }
             };
+            // Tried even after an earlier answer found no room: stopping at the first would change
+            // only the order across calls, which nothing promises, so that break is unpinned.
             match queue(client, subject.clone(), bytes.clone(), Budget::Ignored) {
                 Ok(()) => {}
                 Err(Queued::Refused(error)) => {
@@ -2513,6 +2516,122 @@ mod tests {
             assert!(closed.is_some(), "the server's socket was still open at the grace, though it took writes again");
 
             let _ = caller.close().await;
+        }
+
+        /// Queues one-byte publishes on `subject` until async-nats's command channel stays full
+        /// across 50 ms, the relay reading nothing, and answers how many were queued. A one-byte
+        /// publish on a 12-byte subject is 23 bytes on the wire, so the channel's 2,048 commands
+        /// stay under async-nats's 65,535-byte write buffer: once the socket has taken the
+        /// backlog, the connection task takes every command left in the channel without reaching
+        /// that limit, and so before it writes any of them.
+        async fn filled(client: &Client, subject: &str) -> usize {
+            let mut queued = 0;
+            loop {
+                let mut round = 0;
+                while queue(client, subject.to_owned(), Bytes::from_static(b"7"), Budget::Ignored).is_ok() {
+                    round += 1;
+                    if round % 1_024 == 0 {
+                        tokio::task::yield_now().await;
+                    }
+                }
+                queued += round;
+                if round == 0 {
+                    return queued;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+
+        /// K1: a `close` cut after it queued an answer that waited for room keeps the connection
+        /// until that answer is written. The test runs on one thread, so async-nats's connection
+        /// task runs only while the test awaits, and `close` is polled only by the test, with a
+        /// waker that does nothing. The relay stops reading, so `close`'s first poll finds the
+        /// command channel full and both held calls' answers wait. The relay reads again until a
+        /// publish queued behind them is routed, which hands the first waiting answer its room,
+        /// and stops again while the channel is refilled. `close`'s second poll queues that answer
+        /// and waits for room for the second, and the cut drops it there, the second lost as a cut
+        /// loses what waits for room. The relay then reads again: the caller reads the queued
+        /// answer, and the connection closes. A keeping task that flushed before `close` ended is
+        /// answered while the relay reads the first time and lets go of its handle; async-nats,
+        /// taking the queued answer with no sender left, exits without writing it.
+        ///
+        /// A cut in `close`'s first poll, which is what a spent `shutdown_timeout` gives, does not
+        /// tell the two orders apart: no answer that waited for room is queued by then.
+        #[tokio::test]
+        async fn a_cut_close_keeps_the_connection_until_the_answer_it_waited_room_for_is_written() {
+            const REPLY: &str = "waited.reply";
+            const FLOOD: &str = "waited.flood";
+            const ROUTED: &str = "waited.routed";
+            let (server, _container) = nats().await;
+            let relay = Pausing::start(server).await;
+            let caller = async_nats::connect(server.to_string()).await.expect("the caller connects");
+            let mut replies = caller.subscribe(format!("{REPLY}.*")).await.expect("the caller subscribes to the replies");
+            let mut routed = caller.subscribe(ROUTED).await.expect("the caller subscribes to the routed mark");
+            caller.flush().await.expect("the subscriptions reach the server");
+
+            let (ended, mut closed) = watch::channel(0u64);
+            let reported = ended.clone();
+            let options = ConnectOptions::new().event_callback(move |event| {
+                if matches!(event, Event::Closed | Event::Disconnected) {
+                    reported.send_modify(|ends| *ends += 1);
+                }
+                async {}
+            });
+            let client = options.connect(relay.addr.to_string()).await.expect("the server's connection opens");
+            let filler = client.clone();
+            let side = ServerSide {
+                client,
+                codec: Codec::Json,
+                runtime: Tokio::current(),
+                // Never advanced, so the grace does not end the keeping task.
+                timer: Arc::new(Scripted::new()),
+                calls: Arc::new(Calls::new()),
+                replies: Arc::default(),
+                ended,
+                phase: watch::channel(Phase::Serving).0,
+                _roots: None,
+            };
+            let held: Vec<u64> = (0..2).map(|call| side.hold(format!("{REPLY}.{call}")).expect("the call is held before the close").0).collect();
+            let serving = link("nats://localhost:1", test_root::<25>, std::env::temp_dir);
+            lock(&serving.state).server = Some(Arc::new(side));
+
+            relay.pause();
+            let queued = filled(&filler, FLOOD).await;
+            assert!(queued >= 2_048, "the command channel filled after {queued} publishes, short of async-nats's 2,048");
+            let mut close = Box::pin(serving.close());
+            let mut polled = std::task::Context::from_waker(std::task::Waker::noop());
+            assert!(close.as_mut().poll(&mut polled).is_pending(), "the close ended in its first poll");
+            // Time for a keeping task that flushes at once to queue its flush behind the first
+            // waiting answer.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            relay.resume();
+            filler.publish(ROUTED, Bytes::new()).await.expect("the routed mark is queued");
+            let mark = tokio::time::timeout(Duration::from_secs(10), routed.next()).await;
+            assert!(matches!(mark, Ok(Some(_))), "the publish queued behind the waiting answers was not routed within 10 s");
+            // Time for that task, its flush answered, to let go of its handle.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            relay.pause();
+            let queued = filled(&filler, FLOOD).await;
+            assert!(queued >= 2_047, "the command channel refilled after {queued} publishes, short of async-nats's 2,048 less the answer's room");
+            assert!(close.as_mut().poll(&mut polled).is_pending(), "the close ended though the second answer found the channel full");
+            drop(close);
+            drop((filler, serving));
+            relay.resume();
+
+            let answer = tokio::time::timeout(Duration::from_secs(10), replies.next()).await.ok().flatten();
+            let frame = answer.map(|message| Codec::Json.decode_frame(&message.payload).expect("the answer decodes"));
+            let id = match &frame {
+                Some(Frame::Err { id, .. }) if held.contains(id) => *id,
+                _ => 0,
+            };
+            assert_eq!(
+                frame,
+                Some(Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) }),
+                "what the caller read for the held calls {held:?} once the cut close's connection took writes again"
+            );
+            let closed = tokio::time::timeout(Duration::from_secs(10), closed.changed()).await;
+            assert!(matches!(closed, Ok(Ok(()))), "the server's connection did not close once its answer was written");
         }
 
         /// A bound server's grace is timed on the app's `Timer`, which `prepare` reads, not on the
