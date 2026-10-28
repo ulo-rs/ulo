@@ -281,8 +281,8 @@ where
                 let run = migrate.run(runtime.into_arc(), (*client).clone(), bounds);
                 async move {
                     run.await.map_err(|failed| {
-                        // A restart can mend a retryable failure: another replica holds the lock,
-                        // or the connection was lost between the ping and the lock.
+                        // Retrying the start can mend a retryable failure: another replica holds
+                        // the lock, or the connection was lost between the ping and the lock.
                         if failed.is_retryable() { BoxError::from(failed) } else { BoxError::from(Permanent::new(failed)) }
                     })
                 }

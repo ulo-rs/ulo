@@ -27,6 +27,8 @@ use ulo_db::{LockTimedOut, MigrationFailed, MigrationLock, Migrations, Store, St
 
 const CONNECT_WITHIN: Duration = Duration::from_secs(41);
 const MIGRATE_WITHIN: Duration = Duration::from_secs(43);
+/// The init hook's own bound over the migrations: both waits and the module's ten-second margin.
+const HOOK_BOUND: Duration = Duration::from_secs(41 + 43 + 10);
 
 /// How long a scenario may take on the real clock before it is failed rather than left to hang.
 const CAP: Duration = Duration::from_secs(10);
@@ -46,6 +48,47 @@ fn scenario(mode: &str) -> (ScriptedTimer, Arc<AtomicBool>) {
 
 fn reached(mode: &str) {
     scenario(mode).1.store(true, Ordering::SeqCst);
+}
+
+/// Each `*-late` scenario's switch: once set, its clock refuses the late length only once it is
+/// due (see [`Late`]).
+static LATE: Mutex<Vec<(String, Arc<AtomicBool>)>> = Mutex::new(Vec::new());
+
+fn late_from(mode: &str) -> Arc<AtomicBool> {
+    let mut lates = LATE.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, armed)) = lates.iter().find(|(m, _)| m == mode) {
+        return Arc::clone(armed);
+    }
+    let armed = Arc::new(AtomicBool::new(false));
+    lates.push((mode.to_owned(), Arc::clone(&armed)));
+    armed
+}
+
+/// A scenario's [`ScriptedTimer`] whose wait of `late`, once `armed`, is refused only once it is
+/// due: the clock moves past `late` as the wait is asked, as a runtime blocked past a deadline and
+/// then shut down leaves it.
+struct Late {
+    clock: ScriptedTimer,
+    late: Duration,
+    armed: Arc<AtomicBool>,
+}
+
+impl Timer for Late {
+    fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+        self.clock.sleep(d)
+    }
+
+    fn now(&self) -> std::time::Instant {
+        self.clock.now()
+    }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
+        if d == self.late && self.armed.load(Ordering::SeqCst) {
+            self.clock.advance(d);
+            return Box::pin(std::future::ready(Err(Refused)));
+        }
+        self.clock.try_sleep(d)
+    }
 }
 
 struct Fake;
@@ -77,6 +120,9 @@ impl Store for Fake {
     fn ping(client: &String) -> BoxFuture<'static, Result<(), BoxError>> {
         if client == "lock-refused" {
             scenario(client).0.refuse(CONNECT_WITHIN);
+        }
+        if client == "lock-late" {
+            late_from(client).store(true, Ordering::SeqCst);
         }
         Box::pin(async { Ok(()) })
     }
@@ -165,6 +211,15 @@ fn start_with(mode: &'static str, drive: impl Future<Output = ()>) -> StartupErr
 
 fn start(mode: &'static str) -> StartupError {
     start_with(mode, async {})
+}
+
+/// The start of an app over `mode`'s store on its clock wrapped in [`Late`] for `late`.
+fn start_late(mode: &'static str, late: Duration) -> StartupError {
+    let timer = Late { clock: scenario(mode).0, late, armed: late_from(mode) };
+    capped(mode, async move {
+        let app = App::builder(Root(mode)).runtime(<OnTokio as Harness>::runtime()).timer(timer).wire().expect("wires");
+        app.connect().await.err().unwrap_or_else(|| panic!("{mode}: connected"))
+    })
 }
 
 /// Advances `mode`'s clock by `by` once its store has reached the wait under test and the one
@@ -304,3 +359,58 @@ fn migrations_that_pass_their_bound_stay_permanent() {
     let failed = found::<MigrationFailed>(permanent).unwrap_or_else(|| panic!("the hook did not fail with `MigrationFailed`: {error:?}"));
     assert!(!failed.is_retryable(), "{failed:?}");
 }
+
+/// A clock refusing every bound the migrations run under, `migrate_within` and the init hook's
+/// own, fails the start with the refusal, `Permanent`, under the module's `OnModuleInit` hook.
+#[test]
+fn a_clock_refusing_the_migrations_and_the_hook_bound_fails_the_start_with_the_refusal() {
+    let clock = scenario("migrate-all-refused").0;
+    clock.refuse(MIGRATE_WITHIN);
+    clock.refuse(HOOK_BOUND);
+    let error = start("migrate-all-refused");
+    let StartupError::Connect(ConnectError::Hook { hook, key, .. }) = &error else {
+        panic!("the start failed other than in a hook: {error:?}");
+    };
+    assert_eq!(*hook, ulo::HookKind::OnModuleInit);
+    // A module identified by value is named by its identity's type, the store module's options.
+    assert_eq!(key.to_string(), "Identity<String>", "the hook failure does not name the store's module");
+    refusal(&error);
+}
+
+/// A connect bound the runtime refuses once it has passed reports the expiry, retryable, at the
+/// construction bound.
+#[test]
+fn a_connect_bound_refused_after_it_passed_times_the_create_loop_out() {
+    late_from("create-late").store(true, Ordering::SeqCst);
+    let error = start_late("create-late", CONNECT_WITHIN);
+    assert!(!is_permanent(&error), "a connect bound that passed is permanent: {error}");
+    let StartupError::Connect(ConnectError::Construct { reason: FailureReason::TimedOut { after, limit }, .. }) = &error else {
+        panic!("the loop did not time out at the construction bound: {error:?}");
+    };
+    assert_eq!((*after, *limit), (CONNECT_WITHIN, Limit::Item));
+}
+
+/// A lock wait the runtime refuses once it has passed is a wait for another replica, retryable.
+#[test]
+fn a_lock_wait_refused_after_it_passed_stays_retryable() {
+    let error = start_late("lock-late", CONNECT_WITHIN);
+    assert!(!is_permanent(&error), "a lock wait that reached its bound is permanent: {error}");
+    let failed = stored(&error).downcast_ref::<MigrationFailed>().unwrap_or_else(|| panic!("the hook did not fail with `MigrationFailed`: {error:?}"));
+    assert!(failed.waited_for_lock(), "a lock wait that reached its bound is not a wait for the lock: {failed:?}");
+    assert!(failed.source.is::<LockTimedOut>(), "{failed:?}");
+}
+
+/// A `migrate_within` the runtime refuses once it has passed reports the bound passing, a
+/// permanent failure that is not the refusal.
+#[test]
+fn a_migration_bound_refused_after_it_passed_reports_the_expiry() {
+    late_from("migrate-late").store(true, Ordering::SeqCst);
+    let error = start_late("migrate-late", MIGRATE_WITHIN);
+    assert!(is_permanent(&error), "migrations past their bound are retryable: {error}");
+    let permanent: &(dyn Error + 'static) =
+        stored(&error).downcast_ref::<Permanent>().unwrap_or_else(|| panic!("the start's error is not `Permanent`: {error:?}"));
+    assert!(found::<RuntimeShutDown>(permanent).is_none(), "migrations past their bound report a refusal: {error:?}");
+    let failed = found::<MigrationFailed>(permanent).unwrap_or_else(|| panic!("the hook did not fail with `MigrationFailed`: {error:?}"));
+    assert!(!failed.is_retryable(), "{failed:?}");
+}
+

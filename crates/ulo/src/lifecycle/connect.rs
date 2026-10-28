@@ -14,7 +14,7 @@ use crate::error::{ConnectError, FailureReason, LookupError, Permanent, construc
 use crate::graph::{BindingId, FrozenBinding, Graph, ModuleId, Visible};
 use crate::hooks::{HookCx, HookKind, HookRecord};
 use crate::key::{BindingKind, Key, KeyName};
-use crate::lifecycle::run::{Cap, Outcome, run};
+use crate::lifecycle::run::{Cap, Outcome, run, shut_down};
 use crate::module::ModuleName;
 use crate::redact::{Redacted, SecretRegistry, redact};
 use crate::resolver::{Purpose, Resolver};
@@ -72,15 +72,16 @@ pub(crate) async fn build_singleton(shared: &Arc<AppShared>, id: BindingId) -> R
         Outcome::Done(Err(ConstructError::Dependency(e))) => return Err(dependency_failure(&graph, binding, e)),
         Outcome::Panicked(p) => FailureReason::Panicked(p),
         Outcome::TimedOut { after, limit } => FailureReason::TimedOut { after, limit },
+        Outcome::Refused(refused) => shut_down(&graph.secrets, refused),
     };
     Err(ConnectError::Construct { key: binding_key(binding), module: module_name(&graph, binding.origin), reason })
 }
 
 /// Runs a readiness check: attempts under the attempt bound, `retries` more after an `Err` or an
 /// attempt timeout with `backoff` between, the whole under the check bound. A panicking attempt,
-/// and one whose error carries a `Permanent`, ends the check at once, with no backoff; a backoff
-/// the `Timer` refuses ends it as `Errored` holding a `Permanent` `RuntimeShutDown`, its source
-/// the last attempt's error.
+/// one whose error carries a `Permanent`, and one whose bound the `Timer` refuses end the check at
+/// once, with no backoff; a backoff the `Timer` refuses ends it as `Errored` holding a `Permanent`
+/// `RuntimeShutDown`, its source the last attempt's error.
 /// `Readiness { key, attempts, reason }` on failure, the reason by the rules of §9.3.
 pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready: &ReadyRecord) -> Result<(), ConnectError> {
     let graph = shared.graph();
@@ -109,6 +110,7 @@ pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready:
                 Outcome::Done(Err(e)) => FailureReason::Errored(construct_error(secrets, e)),
                 Outcome::Panicked(p) => return Err(FailureReason::Panicked(p)),
                 Outcome::TimedOut { after, limit } => FailureReason::TimedOut { after, limit },
+                Outcome::Refused(refused) => return Err(shut_down(secrets, refused)),
             };
             if made > ready.retries {
                 return Err(reason);
@@ -121,13 +123,13 @@ pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready:
                 && let Err(refused) = timer.try_sleep(ready.backoff).await
             {
                 tracing::debug!(%refused, "the app's `Timer` refused a readiness check's backoff; the check is not retried");
-                // A timed-out attempt has no error to carry, and its bound may itself have ended
-                // on the refusal.
-                let shut_down = match reason {
-                    FailureReason::Errored(last) => RuntimeShutDown::after(last),
-                    _ => RuntimeShutDown::new(refused),
-                };
-                return Err(FailureReason::Errored(redact(secrets, Box::new(Permanent::new(shut_down)))));
+                // A timed-out attempt has no error to carry.
+                return Err(match reason {
+                    FailureReason::Errored(last) => {
+                        FailureReason::Errored(redact(secrets, Box::new(Permanent::new(RuntimeShutDown::after(last)))))
+                    }
+                    _ => shut_down(secrets, refused),
+                });
             }
         }
     };
@@ -137,6 +139,7 @@ pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready:
         Outcome::Done(Err(reason)) => reason,
         Outcome::Panicked(p) => FailureReason::Panicked(p),
         Outcome::TimedOut { after, limit } => FailureReason::TimedOut { after, limit },
+        Outcome::Refused(refused) => shut_down(secrets, refused),
     };
     Err(ConnectError::Readiness { key: binding_key(binding), attempts: attempts.load(Ordering::Relaxed), reason })
 }
@@ -157,6 +160,7 @@ pub(crate) async fn run_startup_hooks(
                 Some(Outcome::Done(Err(e))) => FailureReason::Errored(redact(&graph.secrets, e)),
                 Some(Outcome::Panicked(p)) => FailureReason::Panicked(p),
                 Some(Outcome::TimedOut { after, limit }) => FailureReason::TimedOut { after, limit },
+                Some(Outcome::Refused(refused)) => shut_down(&graph.secrets, refused),
             };
             return Err(ConnectError::Hook { hook: kind, key: owner_key(&graph, owner), reason });
         }

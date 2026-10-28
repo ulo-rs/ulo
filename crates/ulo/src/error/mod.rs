@@ -140,8 +140,8 @@ impl Error for PreparePanicked {}
 pub enum ConnectError {
     Construct { key: KeyName, module: ModuleName, reason: FailureReason },
     /// How the last attempt ended, `TimedOut { limit: Item }` for the whole check, or `Errored`
-    /// holding a `Permanent` [`RuntimeShutDown`](crate::RuntimeShutDown) for a backoff the
-    /// runtime refused (§9.3).
+    /// holding a `Permanent` [`RuntimeShutDown`](crate::RuntimeShutDown) for a backoff or a bound
+    /// the runtime refused (§9.3).
     Readiness { key: KeyName, attempts: u32, reason: FailureReason },
     Hook { hook: HookKind, key: KeyName, reason: FailureReason },
 }
@@ -176,7 +176,8 @@ pub enum FailureReason {
     /// Never started: `shutdown_timeout` had expired (§9.5); shutdown hooks only.
     Skipped,
     /// Returned `Err`: a construction, an init or bootstrap hook, the last attempt of a
-    /// readiness check, or a transport's `close`.
+    /// readiness check, or a transport's `close`. Also a bound the `Timer` refused, its runtime
+    /// shut down, holding a `Permanent` [`RuntimeShutDown`](crate::RuntimeShutDown).
     Errored(Redacted),
 }
 
@@ -280,8 +281,9 @@ pub enum ShutdownFailure {
     Hook { hook: HookKind, key: KeyName, reason: FailureReason },
     /// `Errored` for the transport's own error, `Panicked` for a panic in its `close`, and
     /// `TimedOut` for a `close` exceeding its bound (§9.5): `limit: ShutdownCap` with the cap's
-    /// duration when the cap bounded it, `limit: Default` with `hook_timeout` otherwise. Never
-    /// `Skipped`: every `close` starts.
+    /// duration when the cap bounded it, `limit: Default` with `hook_timeout` otherwise. A bound
+    /// the `Timer` refused is `Errored` holding a `Permanent` `RuntimeShutDown`. Never `Skipped`:
+    /// every `close` starts.
     Close { transport: TypeName, reason: FailureReason },
     /// The `App` value dropped before its shutdown's close step ended, with no `close` holding a
     /// claim on the servers, and the drop released them without their `close`. The `close`
@@ -616,11 +618,13 @@ impl fmt::Display for EndStream {
 
 impl Error for EndStream {}
 
-/// Marks a failure that retrying cannot mend: bad credentials, an unknown database, a runtime the
-/// integration does not support, a migration that failed. A readiness attempt whose error is one
-/// ends the check at once, with no further attempt and no backoff, as
+/// Marks a failure that retrying this start, with this configuration on this runtime, cannot mend:
+/// bad credentials, an unknown database, a runtime the integration does not support, a migration
+/// that failed, a runtime that has shut down ([`RuntimeShutDown`](crate::RuntimeShutDown)). A
+/// process restart brings a new runtime, which is a different start. A readiness attempt whose
+/// error is one ends the check at once, with no further attempt and no backoff, as
 /// `ConnectError::Readiness { reason: Errored(..) }`; [`is_permanent`] finds one in a
-/// `StartupError`, so `main` can tell a restart that cannot help from one that might.
+/// `StartupError`, so `main` can tell a start that retrying cannot mend from one it might.
 ///
 /// An integration wraps its own error, `Err(Permanent::new(e).into())`, wherever it returns a
 /// `BoxError`. `Display` and `source()` are the wrapped error's, so the report reads as the error
@@ -653,8 +657,9 @@ impl Error for Permanent {
     }
 }
 
-/// Whether a restart of the same build and configuration cannot succeed: the failure carries a
-/// [`Permanent`], or it is a misconfiguration by its phase.
+/// Whether retrying this start, with this configuration on this runtime, cannot succeed: the
+/// failure carries a [`Permanent`], or it is a misconfiguration by its phase. A process restart
+/// brings a new runtime, which is a different start.
 ///
 /// - `Wiring` is always permanent: the graph and the values registered into it are fixed by the
 ///   code and its configuration, which a restart reads again unchanged.
@@ -730,6 +735,9 @@ fn recognized_permanent(error: &(dyn Error + 'static), depth: usize) -> Option<b
     }
     if let Some(startup) = error.downcast_ref::<StartupError>() {
         return Some(startup_permanent(startup, depth));
+    }
+    if error.downcast_ref::<PrepareError>().is_some_and(PrepareError::is_permanent) {
+        return Some(true);
     }
     None
 }

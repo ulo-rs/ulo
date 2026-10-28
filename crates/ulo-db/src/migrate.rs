@@ -2,9 +2,9 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ulo::{BoxError, BoxFuture, Runtime, RuntimeShutDown, spawn_with};
+use ulo::{BoxError, BoxFuture, Cut, Runtime, RuntimeShutDown, spawn_with};
 
-use crate::connect::{Attached, Cut, carries_permanent, within, within_reporting};
+use crate::connect::{Attached, carries_permanent, within};
 use crate::error::{LockFailed, LockTimedOut, MigrationFailed, MigrationTimedOut, Retry, TaskFailed};
 use crate::store::Store;
 
@@ -119,7 +119,7 @@ fn run_boxed<S: MigrationLock>(
 }
 
 /// Takes the lock, runs `migrations`, releases the lock. A failure of any step is a
-/// [`MigrationFailed`], which says whether a restart can mend it:
+/// [`MigrationFailed`], which says whether retrying the start can mend it:
 ///
 /// - The wait for the lock reaching `bounds.lock`, whether the store's own wait ran out
 ///   ([`LockTimedOut`]) or this function's clock did: retryable, another replica is migrating.
@@ -142,7 +142,7 @@ pub(crate) async fn run_locked<S: MigrationLock>(
     let clock = Arc::clone(&runtime);
     let steps = async move {
         let waiting: BoxFuture<'static, _> = Box::pin(S::lock(&client, bounds.lock));
-        let guard = match within_reporting(&*clock, bounds.lock, waiting).await {
+        let guard = match ulo::timeout(&*clock, bounds.lock, waiting).await {
             Ok(Ok(guard)) => guard,
             Ok(Err(error)) => return Err(BoxError::from(LockFailed(error))),
             Err(Cut::Expired) => return Err(LockTimedOut::new(bounds.lock).into()),
@@ -151,7 +151,7 @@ pub(crate) async fn run_locked<S: MigrationLock>(
         let running = migrations.run(client);
         let ran: Result<(), BoxError> = match bounds.migrations {
             None => running.await,
-            Some(limit) => match within_reporting(&*clock, limit, running).await {
+            Some(limit) => match ulo::timeout(&*clock, limit, running).await {
                 Ok(ran) => ran,
                 // Dropped where it stands: the guard releases the lock on drop.
                 Err(Cut::Expired) => return Err(MigrationTimedOut { bound: limit }.into()),

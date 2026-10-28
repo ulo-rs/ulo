@@ -897,10 +897,10 @@ impl Limit {
 
 /// `work` bounded by `limit` on the client's runtime and by the calling execution's cancellation.
 /// An execution already cancelled fails it before `work` is polled at all, so a call's frame is
-/// never sent for it. A runtime that refuses the bound's sleep, having shut down, fails the call
-/// with [`runtime_shut_down`] rather than `Timeout`, unless its clock reads the bound as passed by
-/// then: only an elapsed bound is reported as one. Work that ends in the poll the refusal arrives
-/// in keeps its answer.
+/// never sent for it. The bound is a [`ulo::timeout_at`], asked of the clock for what is left of it
+/// before `work` is first polled, so work that blocks its thread there cannot push the wait past
+/// the bound's end. A runtime that refuses it, having shut down, fails the call with
+/// [`runtime_shut_down`] rather than `Timeout`, under the core's ties (DESIGN §3.9).
 async fn bounded<T>(
     timer: &dyn Timer,
     limit: Option<Limit>,
@@ -912,30 +912,14 @@ async fn bounded<T>(
     if let Some(exec) = within.filter(|exec| exec.is_cancelled()) {
         return Err(cancellation(exec.cancel_reason()));
     }
-    let passed = limit.map_or("the call timed out", |limit| limit.passed);
-    // The timer is armed at this arm's first poll, which can follow `work`'s: work that blocked
-    // its thread there would push a wait counted from then a full bound past the block. Armed for
-    // what is left of the bound, it fires at the bound's end, or at the first poll after a block
-    // that outlasted it.
-    let expired = async {
+    let timed = async {
         match limit {
-            Some(limit) => {
-                let left = limit.ends.saturating_duration_since(timer.now());
-                if left.is_zero() {
-                    return Ok(());
-                }
-                let slept = timer.try_sleep(left).await;
-                if slept.is_err() && timer.now() >= limit.ends {
-                    return Ok(());
-                }
-                if slept.is_err() {
-                    // `work` is polled once more first: a refusal says nothing of the work, so an
-                    // answer ready in the poll the refusal arrived in outranks it.
-                    yield_once().await;
-                }
-                slept
-            }
-            None => std::future::pending().await,
+            Some(limit) => match ulo::timeout_at(timer, limit.ends, work).await {
+                Ok(out) => out,
+                Err(ulo::Cut::Expired) => Err(RpcError::new(ErrorKind::Timeout, limit.passed)),
+                Err(ulo::Cut::Refused(refused)) => Err(runtime_shut_down(refused)),
+            },
+            None => work.await,
         }
     };
     let cancelled = async {
@@ -947,13 +931,9 @@ async fn bounded<T>(
             None => std::future::pending().await,
         }
     };
-    // Unbiased: when more than one is ready, one is picked at random.
+    // Unbiased: when both are ready, one is picked at random.
     futures_util::select! {
-        out = work.fuse() => out,
-        slept = expired.fuse() => Err(match slept {
-            Ok(()) => RpcError::new(ErrorKind::Timeout, passed),
-            Err(refused) => runtime_shut_down(refused),
-        }),
+        out = timed.fuse() => out,
         reason = cancelled.fuse() => Err(cancellation(reason)),
     }
 }
@@ -963,20 +943,6 @@ async fn bounded<T>(
 /// its source.
 fn runtime_shut_down(refused: ulo::Refused) -> RpcError {
     RpcError::new(ErrorKind::Unavailable, "the runtime timing this call has shut down").with_reason(ulo::RUNTIME_SHUT_DOWN).with_source(refused)
-}
-
-/// Pending once, waking itself, then ready.
-async fn yield_once() {
-    let mut yielded = false;
-    std::future::poll_fn(|cx| {
-        if yielded {
-            return Poll::Ready(());
-        }
-        yielded = true;
-        cx.waker().wake_by_ref();
-        Poll::Pending
-    })
-    .await;
 }
 
 /// What a call fails with when its calling execution is cancelled for `reason`.
@@ -2268,8 +2234,7 @@ mod tests {
         assert_eq!(answered.as_ref().map_err(RpcError::kind).err(), Some(ErrorKind::Timeout), "{answered:?}");
     }
 
-    /// Work ready in the poll the runtime's refusal arrives in keeps its answer, whichever arm
-    /// the unbiased race polls first.
+    /// Work ready in the poll the runtime's refusal arrives in keeps its answer.
     #[tokio::test]
     async fn work_ready_as_the_runtime_refuses_its_bound_keeps_its_answer() {
         let timer = shut_down_tokio();

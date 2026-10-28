@@ -29,7 +29,7 @@ impl fmt::Display for UnsupportedRuntime {
 
 impl Error for UnsupportedRuntime {}
 
-/// The migration step of a store module failed, and whether a restart can mend it.
+/// The migration step of a store module failed, and whether retrying the start can mend it.
 ///
 /// - [`waited_for_lock`](Self::waited_for_lock): the wait for the migration lock reached its bound
 ///   (`connect_within`). Another replica is migrating, and a restart after it finishes succeeds.
@@ -51,7 +51,7 @@ pub struct MigrationFailed {
     retry: Retry,
 }
 
-/// What a restart can do for a [`MigrationFailed`].
+/// What retrying the start can do for a [`MigrationFailed`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Retry {
     No,
@@ -71,8 +71,8 @@ impl MigrationFailed {
         self.retry == Retry::LockWait
     }
 
-    /// Whether a restart of the same build and configuration can succeed: the lock wait ran out, or
-    /// the lock step failed in a way the store does not call permanent.
+    /// Whether retrying this start, with this configuration on this runtime, can succeed: the lock
+    /// wait ran out, or the lock step failed in a way the store does not call permanent.
     pub fn is_retryable(&self) -> bool {
         self.retry != Retry::No
     }

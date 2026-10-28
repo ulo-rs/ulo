@@ -32,8 +32,8 @@ use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
 use serde::{Deserialize, Serialize};
 use tracing::{Instrument, Span};
 use ulo::{
-    AppHandle, BoxError, BoxFuture, CancelReason, Closed, DrainToken, ExecOptions, Execution, ExecutionRef, LateOutcome,
-    ModuleRef, MountedHandler, Refused, Runtime, Spawn, TaskHandle, Timer, TraceContext, TraceMode, Transport,
+    AppHandle, BoxError, BoxFuture, CancelReason, Closed, Cut, DrainToken, ExecOptions, Execution, ExecutionRef, Expiry,
+    LateOutcome, ModuleRef, MountedHandler, Refused, Runtime, Spawn, TaskHandle, Timer, TraceContext, TraceMode, Transport,
 };
 use ulo_transport::{CallError, ErrorKind, TaskSet, Tracked, Turns, span};
 use ulo_transport::__private::Watch;
@@ -1018,6 +1018,14 @@ fn poll_tick(tick: &mut Option<BoxFuture<'static, Result<(), Refused>>>, cx: &mu
     }
 }
 
+/// Ready with the `Cut` that ended `expiry`; pending forever when there is none.
+fn poll_expiry(expiry: &mut Option<Expiry<'_>>, cx: &mut Context<'_>) -> Poll<Cut> {
+    match expiry {
+        Some(expiry) => Pin::new(expiry).poll(cx),
+        None => Poll::Pending,
+    }
+}
+
 /// Ready when `sleep` has ended; pending forever when there is none.
 fn poll_sleep(sleep: &mut Option<BoxFuture<'static, ()>>, cx: &mut Context<'_>) -> Poll<()> {
     match sleep {
@@ -1189,12 +1197,14 @@ where
     let mut draining = false;
     let mut closing: Option<DisconnectReason> = None;
     let mut close_deadline: Option<BoxFuture<'static, ()>> = None;
-    // The ping ticker and the wait for a Pong are timed with `try_sleep`: on a runtime that has
-    // shut down a sleep ends at once, and the loop would ping without pause, or end the connection
-    // as `Lost` for a Pong it never waited for. A refusal of either closes the connection with
-    // 1001 and the shutdown phrase, as `RuntimeShutDown`.
+    // The ping ticker is timed with `try_sleep` and the wait for a Pong is an `Expiry`: on a
+    // runtime that has shut down a sleep ends at once, and the loop would ping without pause, or
+    // end the connection as `Lost` for a Pong it never waited for. A refusal of either closes the
+    // connection with 1001 and the shutdown phrase, as `RuntimeShutDown`, except a refusal of the
+    // Pong wait once the Pong was due on the clock, which is a Pong missed.
+    let clock: &dyn Timer = &*accept.runtime;
     let mut ping = limits.ping_interval.map(|every| accept.runtime.try_sleep(every));
-    let mut pong: Option<BoxFuture<'static, Result<(), Refused>>> = None;
+    let mut pong: Option<Expiry<'_>> = None;
     let mut shut_down = false;
     // Each listener is registered before the state it watches is read, kept until it is heard,
     // and registered again on the next turn.
@@ -1272,9 +1282,9 @@ where
                             Ok(()) => Turn::Ping,
                             Err(refused) => Turn::Refused(refused),
                         }),
-                        5 => poll_tick(&mut pong, cx).map(|waited| match waited {
-                            Ok(()) => Turn::PongMissed,
-                            Err(refused) => Turn::Refused(refused),
+                        5 => poll_expiry(&mut pong, cx).map(|cut| match cut {
+                            Cut::Expired => Turn::PongMissed,
+                            Cut::Refused(refused) => Turn::Refused(refused),
                         }),
                         6 => poll_sleep(&mut close_deadline, cx).map(|()| Turn::CloseDeadline),
                         7 if joining => joined.as_mut().poll(cx).map(|_| Turn::Woken),
@@ -1340,7 +1350,7 @@ where
                 }
                 ping = limits.ping_interval.map(|every| accept.runtime.try_sleep(every));
                 if pong.is_none() {
-                    pong = limits.pong_timeout.map(|after| accept.runtime.try_sleep(after));
+                    pong = limits.pong_timeout.map(|after| Expiry::after(clock, after));
                 }
             }
             Turn::Refused(refused) => {

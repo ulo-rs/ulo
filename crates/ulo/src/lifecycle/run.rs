@@ -3,7 +3,9 @@
 //! catches panics at the poll boundary (§3.9, §10.2).
 //!
 //! Expiry drops the future: the item stops at its current await with its own state as it was,
-//! and anything it spawned keeps running. Under `panic = "abort"` nothing can be caught.
+//! and anything it spawned keeps running. A bound the `Timer` refuses, its runtime shut down, ends
+//! the item the same way and is reported as the refusal. Under `panic = "abort"` nothing can be
+//! caught.
 
 use std::any::Any;
 use std::future::Future;
@@ -12,12 +14,13 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use crate::error::Limit;
-use crate::redact::{Redacted, SecretRegistry, redact_panic};
-use crate::timer::{Resolved, Timer, timeout};
+use crate::error::{FailureReason, Limit, Permanent};
+use crate::redact::{Redacted, SecretRegistry, redact, redact_panic};
+use crate::timer::{Cut, Refused, Resolved, RuntimeShutDown, Timer, timeout, timeout_at};
 
 /// The `shutdown_timeout` cap, counted from the trigger. A hook still running when it expires
-/// reports `TimedOut { limit: ShutdownCap, after }`, whatever its own bound was.
+/// reports `TimedOut { limit: ShutdownCap, after }`, whatever its own bound was; one whose cap the
+/// `Timer` refuses reports the refusal.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Cap {
     pub(crate) at: Instant,
@@ -35,6 +38,14 @@ pub(crate) enum Outcome<T> {
     Done(T),
     Panicked(Redacted),
     TimedOut { after: Duration, limit: Limit },
+    /// The `Timer` refused to time the item's bound or the cap, its runtime shut down.
+    Refused(Refused),
+}
+
+/// What an item whose bound the `Timer` refused reports: `Errored` holding a `Permanent`
+/// [`RuntimeShutDown`], the runtime's `Refused` as its source.
+pub(crate) fn shut_down(secrets: &SecretRegistry, refused: Refused) -> FailureReason {
+    FailureReason::Errored(redact(secrets, Box::new(Permanent::new(RuntimeShutDown::new(refused)))))
 }
 
 /// Runs `fut` under `bound` and, at shutdown, `cap`; whichever limit fires first is the one
@@ -44,7 +55,7 @@ pub(crate) enum Outcome<T> {
 /// The cap's `timeout` wraps the item and the item's own bound wraps that, and each `timeout`
 /// polls what it wraps before its sleep: the item is polled before either limit, so an item that
 /// completes on the poll where a limit fires counts as done, and the cap before the item's own
-/// bound, so a tie reports `ShutdownCap`.
+/// bound, so a tie reports `ShutdownCap`. A refusal ties as `timeout`'s does (§3.9).
 pub(crate) async fn run<F: Future>(
     timer: Option<&dyn Timer>,
     bound: Resolved,
@@ -55,21 +66,20 @@ pub(crate) async fn run<F: Future>(
     let item = CatchUnwind::new(fut);
     let capped = async {
         match (timer, cap) {
-            (Some(t), Some(c)) => {
-                timeout(t, c.at.saturating_duration_since(t.now()), item).await.map_err(|()| (c.after, Limit::ShutdownCap))
-            }
+            (Some(t), Some(c)) => timeout_at(t, c.at, item).await.map_err(|cut| (cut, c.after, Limit::ShutdownCap)),
             _ => Ok(item.await),
         }
     };
     let ended = match (timer, bound) {
-        (Some(t), Resolved::After { after, limit }) => timeout(t, after, capped).await.unwrap_or(Err((after, limit))),
+        (Some(t), Resolved::After { after, limit }) => timeout(t, after, capped).await.unwrap_or_else(|cut| Err((cut, after, limit))),
         _ => capped.await,
     };
 
     match ended {
         Ok(Ok(value)) => Outcome::Done(value),
         Ok(Err(payload)) => Outcome::Panicked(redact_panic(secrets, payload)),
-        Err((after, limit)) => Outcome::TimedOut { after, limit },
+        Err((Cut::Expired, after, limit)) => Outcome::TimedOut { after, limit },
+        Err((Cut::Refused(refused), ..)) => Outcome::Refused(refused),
     }
 }
 
@@ -183,6 +193,7 @@ mod tests {
             }
             Poll::Ready(Outcome::Done(())) => panic!("a pending item was reported done"),
             Poll::Ready(Outcome::Panicked(_)) => panic!("a pending item was reported panicked"),
+            Poll::Ready(Outcome::Refused(_)) => panic!("a clock that keeps time was reported refusing"),
             Poll::Pending => panic!("neither limit fired once both had passed"),
         }
     }
@@ -202,6 +213,7 @@ mod tests {
             Poll::Ready(Outcome::Done(value)) => assert_eq!(value, 7),
             Poll::Ready(Outcome::TimedOut { after, limit }) => panic!("a limit polled before the item: {limit:?} after {after:?}"),
             Poll::Ready(Outcome::Panicked(_)) => panic!("the item was reported panicked"),
+            Poll::Ready(Outcome::Refused(_)) => panic!("a clock that keeps time was reported refusing"),
             Poll::Pending => panic!("the item was ready and not taken"),
         }
     }

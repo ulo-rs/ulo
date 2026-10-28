@@ -8,7 +8,8 @@
 //! Bounds run on `Frozen`, whose every sleep ends at once: a check that is still pending when
 //! polled is abandoned in that same poll, so no test waits on a clock. The backoff test uses
 //! `Recorded`, which also writes down each sleep it is asked for, and `Refusing`, which refuses
-//! each one as a runtime that has shut down does.
+//! each one as a runtime that has shut down does; the refused backoff after a timed-out attempt
+//! runs on a `ScriptedTimer` refusing the backoff alone.
 
 #[macro_use]
 mod common;
@@ -17,6 +18,7 @@ use std::error::Error;
 use std::time::Duration;
 
 use common::*;
+use ulo_conformance_support::ScriptedTimer;
 use ulo::{
     App, ConnectError, Dep, FailureReason, Key, Limit, ModuleDef, Permanent, RUNTIME_SHUT_DOWN, Redacted, Refused, RuntimeShutDown,
     StartupError, is_permanent,
@@ -376,23 +378,40 @@ async fn a_backoff_the_timer_refuses_ends_the_check_with_the_refusal() {
 
 /// An attempt that timed out before the refused backoff has no error to carry: the check reports
 /// the refusal, with the runtime's `Refused` as its source, and not `TimedOut { limit: Attempt }`.
-/// `Refusing` ends every sleep at once, so the hung attempt times out on its first poll.
+/// The scripted clock refuses the backoff alone, and the test moves it past the attempt bound.
 #[tokio::test]
 async fn a_refused_backoff_after_a_timed_out_attempt_reports_the_refusal() {
-    let sleeps = SleepLog::new();
     let backoff = Duration::from_millis(7);
+    let bound = Duration::from_secs(5);
+    let clock = ScriptedTimer::new();
+    clock.refuse(backoff);
     let builder = App::builder(Mod::<A>::new(move |m| {
         m.singleton(|| async { S1 })
             .ready(|_s: Dep<S1>| std::future::pending::<Result<(), Boom>>())
             .retries(1000)
             .backoff(backoff)
-            .attempt_timeout(Duration::from_secs(5));
+            .attempt_timeout(bound);
     }))
-    .timer(Refusing::new(&sleeps));
-    let error = connect_failing(builder).await;
+    .timer(clock.clone());
+    watchdog();
+    let app = builder.wire().expect("the graph did not wire");
+    let error = within("connect", async {
+        let mut connecting = std::pin::pin!(app.connect());
+        loop {
+            tokio::select! {
+                ended = &mut connecting => break ended.err().expect("connect succeeded with a check that cannot pass"),
+                () = tokio::time::sleep(Duration::from_millis(1)) => {
+                    if clock.live(bound) > 0 {
+                        clock.advance(bound);
+                    }
+                }
+            }
+        }
+    })
+    .await;
     assert!(is_permanent(&error), "a check ended on a refused backoff is retryable: {error}");
     let (_, attempts, reason) = readiness(error);
-    assert_eq!((attempts, sleeps.count(backoff)), (1, 1), "the attempts and backoffs on a `Timer` refusing the backoff");
+    assert_eq!((attempts, clock.refused(backoff)), (1, 1), "the attempts and backoffs on a `Timer` refusing the backoff");
     let ended = shut_down(&reason);
     assert_eq!(ended.reason(), RUNTIME_SHUT_DOWN);
     assert!(ended.source().is_some_and(|e| e.is::<Refused>()), "the refusal's source is not the runtime's `Refused`: {ended:?}");

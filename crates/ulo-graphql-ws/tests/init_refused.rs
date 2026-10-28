@@ -1,6 +1,7 @@
 //! The `connection_init_timeout` watch waits on the app's timer and runs on the app's runtime, so
 //! a timer that has shut down while the runtime still spawns refuses the wait. The connection then
-//! closes with the shutdown's 1001: no time was measured, and 4408 claims the init was late.
+//! closes with the shutdown's 1001: no time was measured, and 4408 claims the init was late. A
+//! refusal that arrives once the init was due on the clock closes 4408, as the expiry does.
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -116,6 +117,39 @@ impl Spawn for Held {
 
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         self.handed.try_spawn(fut)
+    }
+}
+
+/// [`Handed`] whose wait of `INIT` is refused only once it is due: the clock moves past `INIT` as
+/// the wait is asked, as a runtime blocked past the deadline and then shut down leaves it.
+#[derive(Clone)]
+struct Late(Handed);
+
+impl Timer for Late {
+    fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+        self.0.sleep(d)
+    }
+
+    fn now(&self) -> Instant {
+        self.0.now()
+    }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        if d == INIT {
+            self.0.clock.advance(INIT);
+            return Box::pin(std::future::ready(Err(ulo::Refused)));
+        }
+        self.0.try_sleep(d)
+    }
+}
+
+impl Spawn for Late {
+    fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle {
+        self.0.spawn(fut)
+    }
+
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
+        self.0.try_spawn(fut)
     }
 }
 
@@ -248,6 +282,17 @@ async fn an_init_wait_that_elapses_closes_4408() {
     .await;
     clock.advance(INIT);
     assert_eq!(close_frame(&mut socket).await.0, 4408, "the close of an init that did not arrive in time");
+    hang_up(socket).await;
+    app.stop().await;
+}
+
+/// A refusal arriving once the init was due reports the expiry: the init was late, and the
+/// connection closes 4408.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_init_wait_refused_after_it_was_due_closes_4408() {
+    let app = start_on(Late(Handed { clock: ScriptedTimer::new(), spawn: Tokio::current() })).await;
+    let mut socket = app.connect().await;
+    assert_eq!(close_frame(&mut socket).await.0, 4408, "the close of an init wait refused once it was due");
     hang_up(socket).await;
     app.stop().await;
 }

@@ -305,11 +305,12 @@ pub enum DisconnectReason {
     /// The drain's 1001.
     Drain,
     /// An I/O error, a connection closed without a Close frame, or a Pong that missed
-    /// `pong_timeout`.
+    /// `pong_timeout`, a wait for one that the runtime refused once it was due included.
     Lost,
     /// The runtime timing the keep-alive refused a ping tick or the wait for a Pong, having shut
     /// down, and the connection closed with 1001 and the shutdown phrase. Nothing is known of the
-    /// peer: no time was measured, so no Pong was missed.
+    /// peer: no Pong was due when the refusal came. A close the gateway had already queued is
+    /// sent instead, and the connection ends `ServerClose`.
     RuntimeShutDown,
 }
 

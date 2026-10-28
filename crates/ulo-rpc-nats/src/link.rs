@@ -21,7 +21,7 @@ use rustls_native_certs::CertificateResult;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, Bound, BoxError, BoxFuture, Refused, Runtime, RuntimeShutDown, Timer};
+use ulo::{AppHandle, Bound, BoxError, BoxFuture, Permanent, Refused, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -215,10 +215,11 @@ impl Nats {
     /// `warn`; if its server upgrades the connection, async-nats reads the platform's store on the
     /// thread polling it, at that connect and at every reconnect. A `nats://` client never waits.
     /// The load goes on after an expiry, and a later wait joins it. A bound the link's runtime
-    /// refuses, having shut down, is not an expiry: a `tls://` link fails with
-    /// `ulo::RuntimeShutDown`, which a client call answers `Unavailable` with
-    /// `reason: "runtime_shut_down"`, and a `nats://` server connects without the file and logs
-    /// the refusal at `warn` under that reason. `Bound::After(Duration::ZERO)` is refused: by a
+    /// refuses, having shut down, is not an expiry unless it had passed by then: a `tls://` link
+    /// fails with `ulo::RuntimeShutDown`, as it does for a load its runtime ended unanswered, which
+    /// a client call answers `Unavailable` with `reason: "runtime_shut_down"` and a server's
+    /// `prepare` and `listen` raise inside `ulo::Permanent`, and a `nats://` server connects without
+    /// the file and logs the refusal at `warn` under that reason. `Bound::After(Duration::ZERO)` is refused: by a
     /// client when it is built (`Link::usable`), by a server in `prepare`.
     pub fn roots_timeout(mut self, timeout: Bound) -> Self {
         self.roots_timeout = timeout;
@@ -246,6 +247,13 @@ impl Nats {
             Ok(self.roots.ready(runtime))
         }
     }
+}
+
+/// A server's startup error, a `RuntimeShutDown` marked `Permanent`: this start cannot succeed on
+/// a runtime that has shut down. A client's connect answers it unmarked, which a call reads as
+/// `Unavailable` with `reason: "runtime_shut_down"`.
+fn at_startup(error: BoxError) -> BoxError {
+    if error.is::<RuntimeShutDown>() { Box::new(Permanent::new(error)) } else { error }
 }
 
 const NO_RUNTIME: &str = "the NATS link has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
@@ -287,7 +295,7 @@ impl Link for Nats {
         self.timer = app.timer().cloned();
         // A server starts its roots' load here, so over `tls://` a store that yields none fails
         // `bind` before `listen`; over `nats://` `listen` waits for it.
-        self.roots(&servers, &self.runtime()?, false).await?;
+        self.roots(&servers, &self.runtime()?, false).await.map_err(at_startup)?;
         Ok(())
     }
 
@@ -302,7 +310,7 @@ impl Link for Nats {
         let servers = servers(&self.url)?;
         // The server's one connection reconnects with the options it is made with for the app's
         // life, so it waits for the file rather than connect without it.
-        let roots = self.roots(&servers, &runtime, true).await?;
+        let roots = self.roots(&servers, &runtime, true).await.map_err(at_startup)?;
         let (ended, _) = watch::channel(0u64);
         let reported = ended.clone();
         let options = ConnectOptions::new().event_callback(move |event| {
@@ -1348,7 +1356,8 @@ impl Roots {
     /// outside the tests. `tls` is whether the link's url names a `tls://` server, constant for a
     /// link: it resolves the provider first and names `tls://` in a refusal. A load outlasting the
     /// bound is refused as a failed one is; it keeps running, and a later wait joins it. A bound
-    /// the clock refuses, its runtime shut down, fails the wait with `RuntimeShutDown`.
+    /// the clock refuses, its runtime shut down, fails the wait with `RuntimeShutDown`, and so does
+    /// a load that ended unanswered, the runtime it ran on having shut down first.
     async fn wait(&self, runtime: &Tokio, clock: &dyn Timer, tls: bool, bound: Bound) -> Result<Arc<Load>, BoxError> {
         if tls && let Err(refusal) = self.resolved.get_or_init(self.resolve) {
             return Err(Misconfigured { source: refusal.clone().into() }.into());
@@ -1357,7 +1366,8 @@ impl Roots {
         match within(clock, bound, load.wait()).await {
             Ok(Some(Ok(_))) => Ok(load),
             Ok(Some(Err(cause))) => Err(Misconfigured { source: format!("{}: {cause}", unloaded(tls)).into() }.into()),
-            Ok(None) => Err(STOPPED.into()),
+            // The load's task never finished, its runtime having shut down: the runtime refused it.
+            Ok(None) => Err(RuntimeShutDown::new(Refused).into()),
             Err(Cut::Refused(refused)) => Err(RuntimeShutDown::new(refused).into()),
             Err(Cut::Expired(after)) => Err(Misconfigured {
                 source: format!(
@@ -1385,6 +1395,7 @@ impl Roots {
             }
             Ok(None) => {
                 tracing::warn!(
+                    reason = ulo::RUNTIME_SHUT_DOWN,
                     "the NATS link's root certificates load ended without an answer, the runtime it ran on having shut down, so its server connects to its `nats://` url without them; if the server there upgrades the connection to TLS, async-nats reads the platform's store on the thread polling the connection, at that connect and at each of its reconnects"
                 );
                 None
@@ -1528,8 +1539,6 @@ fn unloaded(tls: bool) -> &'static str {
     }
 }
 
-const STOPPED: &str = "the NATS link's runtime shut down while it loaded the platform's root certificates";
-
 /// What ended a roots wait before the load answered.
 #[derive(Debug, PartialEq, Eq)]
 enum Cut {
@@ -1541,19 +1550,18 @@ enum Cut {
 
 /// `fut`'s output, or the `Cut` that ended it first: [`ROOTS_TIMEOUT`] at `Bound::Default`, none
 /// at `Bound::Unbounded`. The wait is timed on `clock`, the link's runtime outside the tests, so it
-/// is timed wherever it is polled. `fut` is polled first, so an answer already in is taken however
-/// short the bound, and in the poll a refusal arrives in.
+/// is timed wherever it is polled, as a [`ulo::timeout`] with its ties: an answer already in is
+/// taken however short the bound.
 async fn within<F: Future>(clock: &dyn Timer, bound: Bound, fut: F) -> Result<F::Output, Cut> {
     let after = match bound {
         Bound::Default => ROOTS_TIMEOUT,
         Bound::After(after) => after,
         Bound::Unbounded => return Ok(fut.await),
     };
-    match select(pin!(fut), clock.try_sleep(after)).await {
-        Either::Left((output, _)) => Ok(output),
-        Either::Right((Ok(()), _)) => Err(Cut::Expired(after)),
-        Either::Right((Err(refused), _)) => Err(Cut::Refused(refused)),
-    }
+    ulo::timeout(clock, after, fut).await.map_err(|cut| match cut {
+        ulo::Cut::Expired => Cut::Expired(after),
+        ulo::Cut::Refused(refused) => Cut::Refused(refused),
+    })
 }
 
 /// The refusal of a process whose build links more than one of rustls's crypto providers and
@@ -1728,7 +1736,7 @@ mod tests {
     }
 
     /// Root certificates loaded per test, each test's loader counting in a slot of its own.
-    static LOADS: [AtomicUsize; 32] = [const { AtomicUsize::new(0) }; 32];
+    static LOADS: [AtomicUsize; 37] = [const { AtomicUsize::new(0) }; 37];
 
     /// A store that cannot be read: rustls-native-certs reading a file that is not there, as it
     /// reads one `SSL_CERT_FILE` names.
@@ -1800,7 +1808,7 @@ mod tests {
         }
     }
 
-    static GATES: [Gate; 8] = [const { Gate::new() }; 8];
+    static GATES: [Gate; 9] = [const { Gate::new() }; 9];
 
     /// The test certificate once gate `GATE` opens or `HELD` passes, counted in `SLOT`.
     fn gated<const SLOT: usize, const GATE: usize>() -> CertificateResult {
@@ -3108,6 +3116,102 @@ mod tests {
         let ended = failed.downcast_ref::<RuntimeShutDown>().unwrap_or_else(|| panic!("the wait did not fail with `RuntimeShutDown`: {failed:?}"));
         assert_eq!(ended.reason(), ulo::RUNTIME_SHUT_DOWN);
         assert_eq!(clock.refused(BOUND), 1, "the wait asked the clock for its bound other than once");
+    }
+
+    /// [`ScriptedTimer`] whose wait of `late` is refused only once it is due: the clock moves past
+    /// `late` as the wait is asked, as a runtime blocked past a deadline and then shut down leaves it.
+    struct Late {
+        clock: ScriptedTimer,
+        late: Duration,
+    }
+
+    impl Timer for Late {
+        fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+            self.clock.sleep(d)
+        }
+
+        fn now(&self) -> Instant {
+            self.clock.now()
+        }
+
+        fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+            if d == self.late {
+                self.clock.advance(d);
+                return Box::pin(std::future::ready(Err(ulo::Refused)));
+            }
+            self.clock.try_sleep(d)
+        }
+    }
+
+    /// A `tls://` roots wait whose bound the clock refuses once it has passed reports the expiry,
+    /// `Misconfigured`, as a bound that passed does.
+    #[tokio::test]
+    async fn a_tls_roots_wait_refused_after_its_bound_passed_stays_misconfigured() {
+        const BOUND: Duration = Duration::from_secs(7);
+        let clock = Late { clock: ScriptedTimer::new(), late: BOUND };
+        let waiting = link("tls://localhost:1", gated::<32, 8>, std::env::temp_dir);
+        let waited = waiting.roots.wait(&Tokio::current(), &clock, true, Bound::After(BOUND)).await;
+        GATES[8].open();
+        let failed = waited.err().expect("a wait whose bound passed answered a load");
+        assert!(failed.is::<Misconfigured>(), "a wait refused after its bound passed is not `Misconfigured`: {failed:?}");
+    }
+
+    /// A tokio runtime's handle once the runtime has shut down.
+    fn stopped() -> Handle {
+        std::thread::spawn(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread().build().expect("a runtime to shut down");
+            let handle = runtime.handle().clone();
+            drop(runtime);
+            handle
+        })
+        .join()
+        .expect("the runtime shuts down")
+    }
+
+    /// R4: a `tls://` link whose own runtime shut down while it held the roots load fails each call
+    /// `Unavailable` with `reason: "runtime_shut_down"`, as a link whose clock refused the bound
+    /// does: one condition, one answer.
+    #[tokio::test]
+    async fn a_tls_link_whose_runtime_shut_down_holding_its_roots_load_fails_calls_runtime_shut_down() {
+        let calling = link("tls://localhost:1", test_root::<33>, std::env::temp_dir).with_handle(stopped());
+        for (kind, reason, message) in refused_calls(calling).await {
+            assert_eq!((kind, reason.as_deref()), (ErrorKind::Unavailable, Some(ulo::RUNTIME_SHUT_DOWN)), "{message}");
+        }
+        assert_eq!(LOADS[33].load(Ordering::SeqCst), 0, "the load ran on a runtime that had shut down");
+    }
+
+    /// R5: a `tls://` server's `prepare` on a runtime that has shut down raises a `RuntimeShutDown`
+    /// marked `Permanent`: this start cannot succeed on that runtime.
+    #[tokio::test]
+    async fn a_tls_prepare_on_a_shut_down_runtime_raises_a_permanent_refusal() {
+        let app = app().await;
+        let mut serving = link("tls://localhost:1", test_root::<34>, std::env::temp_dir).with_handle(stopped());
+        let failed = serving.prepare(&app.handle()).await.err().expect("a `prepare` on a runtime that had shut down answered");
+        let permanent = failed.downcast_ref::<Permanent>().unwrap_or_else(|| panic!("the refusal is not `Permanent`: {failed:?}"));
+        let inner = std::error::Error::source(permanent).expect("the `Permanent` wraps the refusal");
+        assert!(inner.is::<RuntimeShutDown>(), "the `Permanent` does not hold a `RuntimeShutDown`: {failed:?}");
+    }
+
+    /// R5: `listen`'s own roots wait raises a `RuntimeShutDown` marked `Permanent`. The link is set
+    /// up as `prepare` leaves it, with a group and the app's clock, and its runtime has shut down.
+    #[tokio::test]
+    async fn a_listen_whose_roots_load_ends_on_a_shut_down_runtime_raises_a_permanent_refusal() {
+        let mut serving = link("tls://localhost:1", test_root::<35>, std::env::temp_dir).with_handle(stopped()).group("refused");
+        serving.timer = Some(Arc::new(ScriptedTimer::new()));
+        let failed = serving.listen(&[]).await.err().expect("a listen on a runtime that had shut down answered");
+        let permanent = failed.downcast_ref::<Permanent>().unwrap_or_else(|| panic!("the refusal is not `Permanent`: {failed:?}"));
+        let inner = std::error::Error::source(permanent).expect("the `Permanent` wraps the refusal");
+        assert!(inner.is::<RuntimeShutDown>(), "the `Permanent` does not hold a `RuntimeShutDown`: {failed:?}");
+    }
+
+    /// R5 at the seam `main` reads: the `Permanent` a `tls://` server's `prepare` raises on a
+    /// runtime that has shut down survives `ulo_rpc::Server`'s `Failures` into the startup error.
+    #[tokio::test]
+    async fn a_bind_refused_on_a_shut_down_runtime_is_permanent() {
+        let serving = link("tls://localhost:1", test_root::<36>, std::env::temp_dir).with_handle(stopped());
+        let error = app().await.bind(Server::new(serving)).listen().await.err().expect("a server on a runtime that had shut down listened");
+        assert!(matches!(error, StartupError::Configure(_)), "the bind failed other than as a `Configure` refusal: {error:?}");
+        assert!(ulo::is_permanent(&error), "a bind refused on a runtime that has shut down is retryable: {error}");
     }
 
     /// The control: a `tls://` roots wait whose bound passes on a clock that keeps time is still

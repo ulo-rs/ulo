@@ -25,6 +25,20 @@ use ulo::{Bound, BoxError, PrepareEntry, PrepareError, TypeName};
 
 use crate::count::Count;
 
+/// Whether `error` or an error down its `source()` chain is a `Permanent`.
+fn carries_permanent(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut next = Some(error);
+    // A bound on the walk: a `source()` chain can be cyclic.
+    for _ in 0..32 {
+        match next {
+            Some(e) if e.is::<ulo::Permanent>() => return true,
+            Some(e) => next = e.source(),
+            None => return false,
+        }
+    }
+    false
+}
+
 /// The failures of one `prepare`, in the order found.
 #[derive(Default)]
 pub struct Failures(Vec<Failure>);
@@ -59,6 +73,7 @@ impl Failures {
     pub fn into_error(self) -> PrepareError {
         let names: Vec<TypeName> = self.0.iter().flat_map(Failure::names).copied().collect();
         let entries: Vec<PrepareEntry> = self.0.iter().flat_map(Failure::entries).collect();
+        let permanent = self.0.iter().any(|failure| failure.permanent);
         PrepareError::new(names, move |full| {
             let names = Names::new(full);
             match self.0.as_slice() {
@@ -75,6 +90,7 @@ impl Failures {
             }
         })
         .with_entries(entries)
+        .with_permanent(permanent)
     }
 
     /// `Ok(())` with no failure, otherwise [`into_error`](Self::into_error) boxed: the tail of a
@@ -109,6 +125,8 @@ pub struct Failure {
     scopes: Vec<String>,
     /// The entries of the `PrepareError` this failure came from, which it passes on whole.
     nested: Vec<PrepareEntry>,
+    /// The error it came from carried a `Permanent`, which only its text would otherwise keep.
+    permanent: bool,
 }
 
 enum Inner {
@@ -118,7 +136,7 @@ enum Inner {
 
 impl Failure {
     fn of(inner: Inner) -> Failure {
-        Failure { inner, location: None, subject: None, scopes: Vec::new(), nested: Vec::new() }
+        Failure { inner, location: None, subject: None, scopes: Vec::new(), nested: Vec::new(), permanent: false }
     }
 
     /// A failure whose text names no type.
@@ -138,11 +156,16 @@ impl Failure {
             Ok(prepared) => {
                 let names = prepared.names().to_vec();
                 let nested = prepared.entries().to_vec();
+                let permanent = prepared.is_permanent();
                 let mut failure = Failure::naming(names, move |names| prepared.text(names.full));
                 failure.nested = nested;
+                failure.permanent = permanent;
                 failure
             }
-            Err(error) => Failure::plain(error.to_string()),
+            Err(error) => {
+                let permanent = carries_permanent(&*error);
+                Failure { permanent, ..Failure::plain(error.to_string()) }
+            }
         }
     }
 

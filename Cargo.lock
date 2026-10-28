@@ -8201,6 +8201,7 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+ "ulo-conformance-support",
  "ulo-macros",
  "ulo-runtime-tokio",
 ]

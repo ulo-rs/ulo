@@ -11,7 +11,7 @@ use futures_util::future::{self, Either};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use ulo::{
-    Bound, CancelReason, Construct, ConstructError, Controller, Dep, Dependencies, Execution, ExecutionRef,
+    Bound, CancelReason, Construct, ConstructError, Controller, Cut, Dep, Dependencies, Execution, ExecutionRef, Expiry,
     FromContainer, Mount, Resolver, scope::Auto,
 };
 use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse, Outcome};
@@ -224,15 +224,15 @@ impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
             let watched = conn.clone();
             // Detached, on the app's runtime: it ends with the timeout, closing the connection
             // unless it was acknowledged first. A timer that refuses the wait, having shut down,
-            // measured no time, so the close is the shutdown's 1001 rather than 4408.
+            // before the timeout passed, closes with the shutdown's 1001 rather than 4408.
             drop(conn.runtime().spawn(Box::pin(async move {
-                let waited = timer.try_sleep(after).await;
+                let waited = Expiry::after(&*timer, after).await;
                 if state.is_acknowledged() {
                     return;
                 }
                 match waited {
-                    Ok(()) => close(&watched, &state, 4408, REASON_INIT_TIMEOUT).await,
-                    Err(refused) => {
+                    Cut::Expired => close(&watched, &state, 4408, REASON_INIT_TIMEOUT).await,
+                    Cut::Refused(refused) => {
                         tracing::debug!(%refused, "the timer bounding a graphql-transport-ws `connection_init` refused the wait, having shut down");
                         close(&watched, &state, 1001, ulo_transport::SHUTDOWN_MESSAGE).await;
                     }

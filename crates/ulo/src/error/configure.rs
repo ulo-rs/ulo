@@ -138,6 +138,7 @@ pub struct PrepareError {
     names: Vec<TypeName>,
     entries: Vec<PrepareEntry>,
     text: Box<dyn Fn(&HashSet<TypeName>) -> String + Send + Sync>,
+    permanent: bool,
 }
 
 /// One failure a [`PrepareError`] lists, as data a test or a tool reads without parsing the
@@ -199,7 +200,20 @@ impl PrepareError {
         names: impl IntoIterator<Item = TypeName>,
         text: impl Fn(&HashSet<TypeName>) -> String + Send + Sync + 'static,
     ) -> Self {
-        PrepareError { names: names.into_iter().collect(), entries: Vec::new(), text: Box::new(text) }
+        PrepareError { names: names.into_iter().collect(), entries: Vec::new(), text: Box::new(text), permanent: false }
+    }
+
+    /// Marks the failure as one retrying the start cannot mend, which
+    /// [`is_permanent`](crate::is_permanent) reads: a server whose `prepare` found a
+    /// [`Permanent`](crate::Permanent) error in a component it asked, a link's, answers one.
+    pub fn with_permanent(mut self, permanent: bool) -> Self {
+        self.permanent = permanent;
+        self
+    }
+
+    /// Whether a failure it lists is one retrying the start cannot mend.
+    pub fn is_permanent(&self) -> bool {
+        self.permanent
     }
 
     /// Sets the failures [`entries`](Self::entries) lists, in the order found, each as data.

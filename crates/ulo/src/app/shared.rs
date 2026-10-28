@@ -23,7 +23,7 @@ use crate::execution::{CancelReason, ExecOptions, ExecShared, Execution, StreamE
 use crate::graph::{BindingId, Effective, FrozenBinding, Graph, ModuleId, Visible};
 use crate::key::{BindingKind, Key, KeyName};
 use crate::lifecycle::phase::{Phase, PhaseCell};
-use crate::lifecycle::run::{Outcome, run};
+use crate::lifecycle::run::{Outcome, run, shut_down};
 use crate::lifecycle::shutdown::ShutdownCell;
 use crate::module::Module;
 use crate::module::handle::ModuleRef;
@@ -269,6 +269,7 @@ impl AppShared {
             Outcome::Done(Err(ConstructError::Failed(e))) => FailureReason::Errored(redact(secrets, e)),
             Outcome::Panicked(payload) => FailureReason::Panicked(payload),
             Outcome::TimedOut { after, limit } => FailureReason::TimedOut { after, limit },
+            Outcome::Refused(refused) => shut_down(secrets, refused),
         };
         Err(LookupError::Construct { key, reason })
     }

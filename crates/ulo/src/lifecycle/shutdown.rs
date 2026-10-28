@@ -40,10 +40,10 @@ use crate::graph::{BindingId, Graph, ModuleId};
 use crate::hooks::HookKind;
 use crate::lifecycle::connect::{HookOwner, hook_plan, hooks_of, owner_key, run_hook};
 use crate::lifecycle::phase::Phase;
-use crate::lifecycle::run::{Cap, CatchUnwind, Outcome};
+use crate::lifecycle::run::{Cap, CatchUnwind, Outcome, shut_down};
 use crate::redact::{SecretRegistry, redact, redact_panic};
 use crate::signal::Signal;
-use crate::timer::{BoxFuture, Timer, timeout};
+use crate::timer::{BoxFuture, Cut, Timer, timeout_at};
 use crate::transport::server::{DrainToken, ErasedServer};
 
 /// The one shutdown of an app: the winning trigger's signal and the outcome every `serve` and
@@ -352,6 +352,7 @@ pub(crate) async fn run_hook_step(shared: &Arc<AppShared>, kind: HookKind, signa
                 Some(Outcome::Done(Err(e))) => FailureReason::Errored(redact(&graph.secrets, e)),
                 Some(Outcome::Panicked(p)) => FailureReason::Panicked(p),
                 Some(Outcome::TimedOut { after, limit }) => FailureReason::TimedOut { after, limit },
+                Some(Outcome::Refused(refused)) => shut_down(&graph.secrets, refused),
             }
         };
         failures.push(ShutdownFailure::Hook { hook: kind, key: owner_key(&graph, owner), reason });
@@ -386,8 +387,11 @@ pub(crate) async fn drain(shared: &Arc<AppShared>, progress: &mut Progress) -> (
     let mut settled = pin!(settled);
     match (progress.drain_end.unwrap_or(DrainEnd::Now), timer) {
         (DrainEnd::Open, _) => settled.await,
+        // The window's end only ends the wait, so it runs on `sleep` (§3.9): a runtime that has shut
+        // down ends it at once.
         (DrainEnd::At(at), Some(timer)) if !at.saturating_duration_since(timer.now()).is_zero() => {
-            let _ = timeout(timer, at.saturating_duration_since(timer.now()), settled).await;
+            let mut window = timer.sleep(at.saturating_duration_since(timer.now()));
+            poll_fn(|cx| if settled.as_mut().poll(cx).is_ready() { Poll::Ready(()) } else { window.as_mut().poll(cx) }).await;
         }
         // A window with nothing left still enters each server's drain: one poll, as an expired cap
         // gives a `close`, and no more.
@@ -501,9 +505,10 @@ async fn bounded_close(server: &dyn ErasedServer, bound: CloseBound<'_>, secrets
             Poll::Ready(ended) => ended,
             Poll::Pending => return Err(FailureReason::TimedOut { after, limit: Limit::ShutdownCap }),
         },
-        CloseBound::Within { timer, until, after, limit } => match timeout(timer, until.saturating_duration_since(timer.now()), close).await {
+        CloseBound::Within { timer, until, after, limit } => match timeout_at(timer, until, close).await {
             Ok(ended) => ended,
-            Err(()) => return Err(FailureReason::TimedOut { after, limit }),
+            Err(Cut::Expired) => return Err(FailureReason::TimedOut { after, limit }),
+            Err(Cut::Refused(refused)) => return Err(shut_down(secrets, refused)),
         },
     };
     match ended {

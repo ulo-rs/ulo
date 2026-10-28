@@ -24,6 +24,8 @@ serde = { workspace = true, optional = true }
 [dev-dependencies]
 # Integration tests under `tests/` build apps on the tokio runtime; a dev-dependency cycle Cargo allows.
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `ScriptedTimer`, for the tests of a bound the runtime refuses; the same kind of cycle.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [features]

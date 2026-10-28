@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use ulo::{BoxError, BoxFuture, Permanent, Refused, Runtime, RuntimeShutDown, Spawn, TaskEnd, Timer, ValueHandle, spawn_with};
+use ulo::{BoxError, BoxFuture, Cut, Permanent, Runtime, RuntimeShutDown, Spawn, TaskEnd, Timer, ValueHandle, spawn_with};
 
 use crate::error::{TaskFailed, UnsupportedRuntime};
 use crate::store::Store;
@@ -40,7 +40,8 @@ pub(crate) fn require_tokio(runtime: &dyn Runtime, module: &'static str) -> Resu
 ///
 /// A runtime that refuses the backoff, or the bound, having shut down, fails the loop with a
 /// `Permanent` [`RuntimeShutDown`]: its source is the last attempt's error after a refused backoff,
-/// the runtime's `Refused` after a refused bound.
+/// the runtime's `Refused` after a refused bound. The bound is a [`ulo::timeout`], so a refusal that
+/// arrives once it has passed reads as the bound passing.
 pub(crate) async fn create<S: Store>(
     runtime: Arc<dyn Runtime>,
     options: S::Options,
@@ -50,13 +51,13 @@ pub(crate) async fn create<S: Store>(
     if !S::create_connects(&options) {
         return create_once::<S>(&runtime, &options).await;
     }
-    let looping: BoxFuture<'_, _> = Box::pin(create_looping::<S>(&runtime, &options, policy));
-    match within_reporting(&*runtime, policy.connect_within, looping).await {
+    let looping = create_looping::<S>(&runtime, &options, policy);
+    match ulo::timeout(&*runtime, policy.connect_within, looping).await {
         Ok(created) => created,
         Err(Cut::Refused(refused)) => Err(Permanent::new(RuntimeShutDown::new(refused)).into()),
-        // The binding's construction bound is the same length on the same clock and was armed
-        // before this future's first poll, so it has passed too, and it reports the expiry when it
-        // drops this future, in the poll this one ended in.
+        // The binding's construction bound is the same length on the same clock and started no
+        // later than this one, so it has passed too, and it reports the expiry when it drops this
+        // future, in the poll this one ended in.
         Err(Cut::Expired) => std::future::pending().await,
     }
 }
@@ -170,34 +171,5 @@ pub(crate) fn within<F: Future + Unpin>(
             return Poll::Ready(None);
         }
         Poll::Pending
-    })
-}
-
-/// What ended a [`within_reporting`] wait before its work.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Cut {
-    Expired,
-    /// The runtime refused to time the bound, having shut down.
-    Refused(Refused),
-}
-
-/// [`within`] for a bound whose expiry is reported: a bound the runtime refuses is told apart from
-/// one that passed. `work` is polled first, so an answer ready in the poll the refusal arrives in
-/// keeps it.
-pub(crate) fn within_reporting<F: Future + Unpin>(
-    runtime: &dyn Runtime,
-    bound: Duration,
-    mut work: F,
-) -> impl Future<Output = Result<F::Output, Cut>> + use<F> {
-    let mut expiry = Timer::try_sleep(runtime, bound);
-    poll_fn(move |cx: &mut Context<'_>| {
-        if let Poll::Ready(output) = Pin::new(&mut work).poll(cx) {
-            return Poll::Ready(Ok(output));
-        }
-        match expiry.as_mut().poll(cx) {
-            Poll::Ready(Ok(())) => Poll::Ready(Err(Cut::Expired)),
-            Poll::Ready(Err(refused)) => Poll::Ready(Err(Cut::Refused(refused))),
-            Poll::Pending => Poll::Pending,
-        }
     })
 }
