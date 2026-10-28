@@ -893,7 +893,10 @@ impl Limit {
 
 /// `work` bounded by `limit` on the client's runtime and by the calling execution's cancellation.
 /// An execution already cancelled fails it before `work` is polled at all, so a call's frame is
-/// never sent for it.
+/// never sent for it. A runtime that refuses the bound's sleep, having shut down, fails the call
+/// with [`runtime_shut_down`] rather than `Timeout`, unless its clock reads the bound as passed by
+/// then: only an elapsed bound is reported as one. Work that ends in the poll the refusal arrives
+/// in keeps its answer.
 async fn bounded<T>(
     timer: &dyn Timer,
     limit: Option<Limit>,
@@ -914,9 +917,19 @@ async fn bounded<T>(
         match limit {
             Some(limit) => {
                 let left = limit.ends.saturating_duration_since(timer.now());
-                if !left.is_zero() {
-                    timer.sleep(left).await;
+                if left.is_zero() {
+                    return Ok(());
                 }
+                let slept = timer.try_sleep(left).await;
+                if slept.is_err() && timer.now() >= limit.ends {
+                    return Ok(());
+                }
+                if slept.is_err() {
+                    // `work` is polled once more first: a refusal says nothing of the work, so an
+                    // answer ready in the poll the refusal arrived in outranks it.
+                    yield_once().await;
+                }
+                slept
             }
             None => std::future::pending().await,
         }
@@ -933,9 +946,32 @@ async fn bounded<T>(
     // Unbiased: when more than one is ready, one is picked at random.
     futures_util::select! {
         out = work.fuse() => out,
-        () = expired.fuse() => Err(RpcError::new(ErrorKind::Timeout, passed)),
+        slept = expired.fuse() => Err(match slept {
+            Ok(()) => RpcError::new(ErrorKind::Timeout, passed),
+            Err(refused) => runtime_shut_down(refused),
+        }),
         reason = cancelled.fuse() => Err(cancellation(reason)),
     }
+}
+
+/// What a call fails with when the runtime timing it has shut down: `Unavailable` with the reason
+/// `"runtime_shut_down"` and the runtime's [`Refused`](ulo::Refused) as its source.
+fn runtime_shut_down(refused: ulo::Refused) -> RpcError {
+    RpcError::new(ErrorKind::Unavailable, "the runtime timing this call has shut down").with_reason("runtime_shut_down").with_source(refused)
+}
+
+/// Pending once, waking itself, then ready.
+async fn yield_once() {
+    let mut yielded = false;
+    std::future::poll_fn(|cx| {
+        if yielded {
+            return Poll::Ready(());
+        }
+        yielded = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    })
+    .await;
 }
 
 /// What a call fails with when its calling execution is cancelled for `reason`.
@@ -1237,7 +1273,9 @@ impl<Res> Stream for RpcStream<Res> {
 
 /// What a caller sees, uniform across links (transports DESIGN §5.2): the server's `err` with its
 /// kind and details, or the link's own failure mapped one way everywhere. No responders, a lost
-/// link or a broker refusal is `Unavailable`; the client's timeout `Timeout`; an oversized payload
+/// link or a broker refusal is `Unavailable`; the client's timeout `Timeout`, and a client whose
+/// runtime has shut down while it timed the call `Unavailable` with `reason: "runtime_shut_down"`;
+/// an oversized payload
 /// `BadRequest` with `reason: "payload_too_large"`; a binary payload on a JSON link `BadRequest`
 /// with `reason: "binary_unsupported"`, before any I/O; a `deadline-ms` the caller set with
 /// `.header` `BadRequest` with `reason: "reserved_header"`, before any I/O; a request frame the
@@ -1289,7 +1327,8 @@ impl RpcError {
     /// The `ErrorInfo` detail's `reason`, when one is present: `"no_destination"`,
     /// `"pattern_unhandled"`, `"payload_too_large"`, `"binary_unsupported"`, `"zero_timeout"`,
     /// `"reserved_header"` for a `deadline-ms` the caller set, `"misconfigured_link"` for a link
-    /// that refused to connect as [`Misconfigured`], and the server's `"bad_deadline"` for a
+    /// that refused to connect as [`Misconfigured`], `"runtime_shut_down"` for a call whose
+    /// client's runtime refused to time it, and the server's `"bad_deadline"` for a
     /// `deadline-ms` header it cannot read.
     pub fn reason(&self) -> Option<&str> {
         self.details.iter().find_map(|detail| match detail {
@@ -1579,11 +1618,23 @@ mod tests {
         fn now(&self) -> Instant {
             self.start + *self.moved.lock().unwrap_or_else(PoisonError::into_inner)
         }
+
+        fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+            let sleep = Timer::sleep(self, d);
+            Box::pin(async move {
+                sleep.await;
+                Ok(())
+            })
+        }
     }
 
     impl ulo::Spawn for Stepped {
         fn spawn(&self, fut: BoxFuture<'static, ()>) -> ulo::TaskHandle {
             ulo::Spawn::spawn(&self.tokio, fut)
+        }
+
+        fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<ulo::TaskHandle, ulo::Refused> {
+            ulo::Spawn::try_spawn(&self.tokio, fut)
         }
     }
 
@@ -1755,11 +1806,20 @@ mod tests {
         fn now(&self) -> Instant {
             Timer::now(&self.tokio)
         }
+
+        fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+            self.sleeps.lock().unwrap_or_else(PoisonError::into_inner).push(d);
+            Timer::try_sleep(&self.tokio, d)
+        }
     }
 
     impl ulo::Spawn for Recording {
         fn spawn(&self, fut: BoxFuture<'static, ()>) -> ulo::TaskHandle {
             ulo::Spawn::spawn(&self.tokio, fut)
+        }
+
+        fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<ulo::TaskHandle, ulo::Refused> {
+            ulo::Spawn::try_spawn(&self.tokio, fut)
         }
     }
 
@@ -2127,6 +2187,77 @@ mod tests {
                 assert!(failed.message().contains(cause), "call {call} does not name the link's cause: {failed:?}");
             }
             assert_eq!(connects.load(Ordering::SeqCst), 2, "each call asks the link to connect, misconfigured {misconfigured}");
+        }
+    }
+
+    /// A tokio runtime that has shut down, as a client's runtime: it refuses every sleep.
+    fn shut_down_tokio() -> ulo_runtime_tokio::Tokio {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a runtime builds");
+        let handle = runtime.handle().clone();
+        runtime.shutdown_background();
+        ulo_runtime_tokio::Tokio::from_handle(handle)
+    }
+
+    /// N2: a call whose client's runtime has shut down cannot be timed, and fails `Unavailable`
+    /// naming the refusal rather than `Timeout`, a request and a stream's wait for a frame alike:
+    /// no time passed. The stream's opening, written in its first poll, keeps its answer.
+    #[tokio::test]
+    async fn a_call_timed_on_a_shut_down_runtime_fails_unavailable_naming_the_refusal() {
+        let client = RpcClient::of_module(Arc::new(SilentLink::default()), Bound::After(HOUR), Bound::After(HOUR), Arc::new(shut_down_tokio()));
+        let request = tokio::time::timeout(Duration::from_secs(5), client.request::<_, u32>("silent.request", &())).await;
+        let mut stream = client.stream::<_, u32>("silent.stream", &()).await.expect("the stream's opening is written in its first poll");
+        let frame = tokio::time::timeout(Duration::from_secs(5), stream.next()).await;
+        let frame = frame.map(|item| item.expect("the stream yields its end").map(drop));
+        for (what, failed) in [("the request", request.map(|r| r.map(drop))), ("the stream's wait for a frame", frame)] {
+            let failed = failed.unwrap_or_else(|_| panic!("{what} on a shut-down runtime did not end within 5s")).expect_err(what);
+            assert_eq!((failed.kind(), failed.reason()), (ErrorKind::Unavailable, Some("runtime_shut_down")), "{what}: {failed:?}");
+            assert!(failed.message().contains("runtime"), "{what} does not name the runtime: {failed:?}");
+            assert!(failed.source().is_some_and(|source| source.is::<ulo::Refused>()), "{what} does not carry the runtime's refusal: {failed:?}");
+        }
+    }
+
+    /// A clock whose bound has passed by the time its runtime refuses the sleep: the sleep moves
+    /// the clock by its length, then refuses.
+    struct RefusedLate {
+        start: Instant,
+        moved: Arc<Mutex<Duration>>,
+    }
+
+    impl Timer for RefusedLate {
+        fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+            *self.moved.lock().unwrap_or_else(PoisonError::into_inner) += d;
+            Box::pin(std::future::ready(()))
+        }
+
+        fn now(&self) -> Instant {
+            self.start + *self.moved.lock().unwrap_or_else(PoisonError::into_inner)
+        }
+
+        fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+            *self.moved.lock().unwrap_or_else(PoisonError::into_inner) += d;
+            Box::pin(std::future::ready(Err(ulo::Refused)))
+        }
+    }
+
+    /// A bound that elapsed on the client's clock before its runtime refused the sleep answers
+    /// `Timeout`: the refusal is reported only where no bound had passed.
+    #[tokio::test]
+    async fn a_bound_passed_before_the_runtime_refuses_answers_timeout() {
+        let timer = RefusedLate { start: Instant::now(), moved: Arc::default() };
+        let limit = Limit::call(Some(timer.now() + HOUR));
+        let answered = bounded(&timer, limit, None, std::future::pending::<Result<u32, RpcError>>()).await;
+        assert_eq!(answered.as_ref().map_err(RpcError::kind).err(), Some(ErrorKind::Timeout), "{answered:?}");
+    }
+
+    /// Work ready in the poll the runtime's refusal arrives in keeps its answer, whichever arm
+    /// the unbiased race polls first.
+    #[tokio::test]
+    async fn work_ready_as_the_runtime_refuses_its_bound_keeps_its_answer() {
+        let timer = shut_down_tokio();
+        let limit = Limit::call(Some(timer.now() + HOUR));
+        for round in 0..64 {
+            let answered = bounded(&timer, limit, None, std::future::ready(Ok::<u32, RpcError>(7))).await;
+            assert_eq!(answered.as_ref().ok(), Some(&7), "round {round}: the refusal outranked a ready answer: {answered:?}");
         }
     }
 }

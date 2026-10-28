@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 pub use async_executor::Executor;
 use async_executor::FallibleTask;
 use event_listener::Event;
-use ulo::{BoxFuture, RuntimeTask, TaskHandle};
+use ulo::{BoxFuture, Refused, RuntimeTask, TaskHandle};
 
 /// The app's runtime on one `async-executor` [`Executor`]: tasks are spawned on it from whichever
 /// thread asks, and run on the threads that run it (`executor.run(..)`, smol's own pattern), so a
@@ -39,9 +39,9 @@ use ulo::{BoxFuture, RuntimeTask, TaskHandle};
 /// when they stop. A task spawned on an executor nothing runs again is never polled, and an
 /// executor dropped with tasks in it drops them, each handle answering `Aborted`.
 ///
-/// A `Smol` never refuses to spawn or to time, so it keeps the core's `try_spawn` and `try_sleep`:
-/// it holds its executor, which `async-executor` gives no way to shut down, and `async-io`'s
-/// timers fire from a reactor thread that lives as long as the process.
+/// A `Smol` never refuses to spawn or to time, so its `try_spawn` and `try_sleep` answer `Ok`: it
+/// holds its executor, which `async-executor` gives no way to shut down, and `async-io`'s timers
+/// fire from a reactor thread that lives as long as the process.
 #[derive(Clone)]
 pub struct Smol {
     executor: Arc<Executor<'static>>,
@@ -191,11 +191,25 @@ impl ulo::Timer for Smol {
     fn now(&self) -> Instant {
         Instant::now()
     }
+
+    /// `sleep`, never refused: `async-io`'s reactor thread lives as long as the process.
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
+        let sleep = ulo::Timer::sleep(self, d);
+        Box::pin(async move {
+            sleep.await;
+            Ok(())
+        })
+    }
 }
 
 impl ulo::Spawn for Smol {
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle {
         TaskHandle::launch(fut, |task| Task::Running(self.executor.spawn(task).fallible()))
+    }
+
+    /// `spawn`, never refused: the held executor has no shutdown.
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused> {
+        Ok(ulo::Spawn::spawn(self, fut))
     }
 
     fn name(&self) -> &'static str {

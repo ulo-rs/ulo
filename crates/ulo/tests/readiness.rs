@@ -7,7 +7,8 @@
 //!
 //! Bounds run on `Frozen`, whose every sleep ends at once: a check that is still pending when
 //! polled is abandoned in that same poll, so no test waits on a clock. The backoff test uses
-//! `Recorded`, which also writes down each sleep it is asked for.
+//! `Recorded`, which also writes down each sleep it is asked for, and `Refusing`, which refuses
+//! each one as a runtime that has shut down does.
 
 #[macro_use]
 mod common;
@@ -322,4 +323,29 @@ async fn a_backoff_waits_between_attempts_on_the_apps_timer_and_not_after_the_la
     .expect("the second attempt passes");
     assert_eq!(sleeps.count(backoff), 1, "a passing attempt ends the waiting");
     close(app).await;
+}
+
+/// N3: a `Timer` that refuses the backoff, its runtime shut down, ends the check after the one
+/// refused wait, with the last attempt's reason, however many retries are left. Retried without
+/// the wait instead, it would run all 1001 attempts.
+#[tokio::test]
+async fn a_backoff_the_timer_refuses_ends_the_check() {
+    let sleeps = SleepLog::new();
+    let backoff = Duration::from_millis(7);
+    let tries = Count::new();
+    let t = tries.clone();
+    let builder = App::builder(Mod::<A>::new(move |m| {
+        let t = t.clone();
+        m.singleton(|| async { S1 })
+            .ready(move |_s: Dep<S1>| {
+                t.bump();
+                async { Err::<(), _>(Boom::new("down")) }
+            })
+            .retries(1000)
+            .backoff(backoff);
+    }))
+    .timer(Refusing::new(&sleeps));
+    let (_, attempts, reason) = readiness(connect_failing(builder).await);
+    assert!(matches!(reason, FailureReason::Errored(_)), "the check did not end with its last attempt's error: {reason:?}");
+    assert_eq!((attempts, sleeps.count(backoff)), (1, 1), "the attempts and backoffs on a `Timer` refusing the backoff");
 }

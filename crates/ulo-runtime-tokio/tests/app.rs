@@ -46,6 +46,14 @@ impl Timer for Frozen {
     fn now(&self) -> Instant {
         self.0
     }
+
+    fn try_sleep(&self, d: Duration) -> ulo::BoxFuture<'static, Result<(), ulo::Refused>> {
+        let sleep = ulo::Timer::sleep(self, d);
+        Box::pin(async move {
+            sleep.await;
+            Ok(())
+        })
+    }
 }
 
 struct Empty;
@@ -68,7 +76,7 @@ fn address<T: ?Sized>(value: &T) -> *const () {
 
 #[tokio::test]
 async fn a_timer_alone_binds_no_runtime() {
-    let app = connect(App::builder(Empty).timer(ulo_runtime_tokio::Timer)).await;
+    let app = connect(App::builder(Empty).timer(ulo_runtime_tokio::Timer::current())).await;
     assert!(app.get::<dyn Timer>().await.is_ok(), "`Dep<dyn Timer>` on an app given a timer");
     let runtime = app.get::<dyn Runtime>().await.map(|_| ());
     assert!(
@@ -232,7 +240,7 @@ async fn overriding_the_runtime_is_refused_naming_the_test_builder() {
 
 #[tokio::test]
 async fn overriding_the_timer_is_refused_naming_the_test_builder() {
-    let wired = TestApp::of(Empty).timer(ulo_runtime_tokio::Timer).override_value::<dyn Timer>(Arc::new(ulo_runtime_tokio::Timer)).wire();
+    let wired = TestApp::of(Empty).timer(ulo_runtime_tokio::Timer::current()).override_value::<dyn Timer>(Arc::new(ulo_runtime_tokio::Timer::current())).wire();
     let Err(StartupError::Wiring(errors)) = wired else {
         panic!("an override of `dyn Timer` wired");
     };
@@ -307,7 +315,7 @@ fn assert_runtime_missing(listened: Result<App<Serving>, StartupError>, prepared
 
 #[tokio::test]
 async fn an_app_with_a_timer_alone_is_refused_when_it_binds_a_transport() {
-    let (listened, prepared) = listen_bare(App::builder(Empty).timer(ulo_runtime_tokio::Timer)).await;
+    let (listened, prepared) = listen_bare(App::builder(Empty).timer(ulo_runtime_tokio::Timer::current())).await;
     assert_runtime_missing(listened, &prepared, "an app with a timer alone");
 }
 
@@ -330,7 +338,7 @@ async fn a_runtime_is_the_one_a_server_is_handed() {
 
 #[tokio::test]
 async fn a_timer_alone_is_enough_for_an_app_that_binds_nothing() {
-    let app = connect(App::builder(Empty).timer(ulo_runtime_tokio::Timer)).await;
+    let app = connect(App::builder(Empty).timer(ulo_runtime_tokio::Timer::current())).await;
     let app = app.listen().await.unwrap_or_else(|error| panic!("an app binding no transport was refused: {error}"));
     app.serve(async { Signal::new("test") }).await.expect("the app did not shut down");
 }

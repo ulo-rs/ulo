@@ -33,7 +33,7 @@ impl Module for Root {
 #[tokio::test(flavor = "current_thread")]
 async fn close_answers_the_requests_its_socket_already_holds() {
     let app = App::builder(Root)
-        .timer(ulo_runtime_tokio::Timer)
+        .timer(ulo_runtime_tokio::Timer::current())
         .wire()
         .expect("the app wires")
         .connect()

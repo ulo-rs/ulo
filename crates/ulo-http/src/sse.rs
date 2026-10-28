@@ -11,7 +11,7 @@ use bytes::Bytes;
 use futures_core::Stream;
 use http::header::{CACHE_CONTROL, CONTENT_TYPE, HeaderValue};
 use serde::Serialize;
-use ulo::{BoxError, BoxFuture, CancelReason, LateOutcome, MountedHandler, StreamOutcome, Timer};
+use ulo::{BoxError, BoxFuture, CancelReason, LateOutcome, MountedHandler, Refused, StreamOutcome, Timer};
 use ulo_transport::{CallError, IntoReply, IntoReplyError};
 
 use crate::body::HttpBody;
@@ -49,7 +49,8 @@ impl<S> Sse<S> {
     /// write, so a comment comes `every` after the last write or a little later, never sooner.
     /// Choose a period comfortably below the shortest proxy idle timeout in the deployment.
     ///
-    /// The period is timed by the app's `Timer`, which `HttpCx::timer` reads.
+    /// The period is timed by the app's `Timer`, which `HttpCx::timer` reads. A `Timer` whose
+    /// runtime has shut down refuses the period, and the stream writes no more comments.
     ///
     /// `Duration::ZERO` turns the keep-alive off, as leaving `keep_alive` uncalled does: a zero
     /// period would write a comment every time the stream is found waiting.
@@ -237,7 +238,7 @@ where
         let end_event = self.end_event.map(|name| EventName::new(name)).transpose().map_err(IntoReplyError::new)?;
         let body = SseBody {
             stream: Box::pin(self.stream),
-            keep_alive: self.keep_alive.map(|every| KeepAlive { every, timer: Arc::clone(cx.timer()), sleep: None }),
+            keep_alive: self.keep_alive.map(|every| KeepAlive { every, timer: Arc::clone(cx.timer()), sleep: None, refused: false }),
             end_event,
             handler: cx.matched().map(|route| route.handler.clone()),
             cx: cx.clone(),
@@ -310,7 +311,10 @@ struct KeepAlive {
     timer: Arc<dyn Timer>,
     /// The period running: started by the first poll that finds the stream pending after
     /// something was written, and dropped when something is written.
-    sleep: Option<BoxFuture<'static, ()>>,
+    sleep: Option<BoxFuture<'static, Result<(), Refused>>>,
+    /// Set once the `Timer` refused a period: the keep-alive is a ticker, and a ticker on a clock
+    /// whose sleeps end at once would write a comment on every poll.
+    refused: bool,
 }
 
 enum State {
@@ -327,13 +331,21 @@ impl KeepAlive {
     /// Whether the period passed with nothing written. A sleep is requested from the `Timer` only
     /// once the stream is found pending, so events written back to back request none.
     fn poll_due(&mut self, cx: &mut Context<'_>) -> bool {
-        let timer = &self.timer;
-        let every = self.every;
-        let sleep = self.sleep.get_or_insert_with(|| timer.sleep(every));
-        if sleep.as_mut().poll(cx).is_pending() {
+        if self.refused {
             return false;
         }
+        let timer = &self.timer;
+        let every = self.every;
+        let sleep = self.sleep.get_or_insert_with(|| timer.try_sleep(every));
+        let Poll::Ready(slept) = sleep.as_mut().poll(cx) else {
+            return false;
+        };
         self.sleep = None;
+        if let Err(refused) = slept {
+            tracing::debug!(%refused, "the runtime timing an SSE stream's keep-alive refused its period; the stream writes no more comments");
+            self.refused = true;
+            return false;
+        }
         true
     }
 
@@ -436,5 +448,34 @@ where
                 State::Done => return Poll::Ready(None),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::task::Waker;
+
+    use ulo_conformance_support::ScriptedTimer;
+
+    use super::*;
+
+    const EVERY: Duration = Duration::from_secs(15);
+
+    /// The polls after which a keep-alive still asking is taken to spin.
+    const TURNS: usize = 3;
+
+    /// N3: a `Timer` that refuses the period, its runtime shut down, ends the keep-alive: no poll
+    /// after the refusal is due or asks the clock again, a write's restart included.
+    #[test]
+    fn a_refused_period_ends_the_keep_alive() {
+        let clock = ScriptedTimer::new();
+        clock.refuse(EVERY);
+        let mut keep_alive = KeepAlive { every: EVERY, timer: Arc::new(clock.clone()), sleep: None, refused: false };
+        let mut cx = Context::from_waker(Waker::noop());
+        for poll in 0..TURNS {
+            assert!(!keep_alive.poll_due(&mut cx), "poll {poll}: the keep-alive was due on a clock refusing its period");
+            keep_alive.restart();
+        }
+        assert_eq!(clock.refused(EVERY), 1, "the periods the keep-alive asked of a clock refusing them");
     }
 }

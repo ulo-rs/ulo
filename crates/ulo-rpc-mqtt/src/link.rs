@@ -2229,6 +2229,14 @@ mod tests {
         fn now(&self) -> std::time::Instant {
             std::time::Instant::now()
         }
+
+        fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+            let sleep = Timer::sleep(self, d);
+            Box::pin(async move {
+                sleep.await;
+                Ok(())
+            })
+        }
     }
 
     /// A connection outlives `close` by [`CUT_GRACE`] on the clock its loop was given, starting as

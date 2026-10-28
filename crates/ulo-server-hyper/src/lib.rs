@@ -42,4 +42,4 @@ mod serve;
 pub use compat::FuturesIo;
 pub use listener::{Incoming, Io, Listener, ReadCount, tls_info};
 pub use rt::{RuntimeExecutor, RuntimeTimer};
-pub use serve::{Accepted, Draining, Serve, ServeConfig};
+pub use serve::{ACCEPT_BACKOFF, Accepted, Draining, Serve, ServeConfig};

@@ -127,9 +127,10 @@ jobs:
       - run: cargo test -p ulo-ws-hyper --test yield_smol --test flood_smol --locked
       - run: cargo test -p ulo-http-hyper --test flood_smol --locked
       - run: cargo test -p ulo-rpc-tcp-smol --test frame_flood --test linger_flood --test client_flood --locked
-      # The TCP link's lingering close, cut close on either side and dropped client on smol, timed
-      # on scripted clocks and sized from the buffers the kernel grants.
-      - run: cargo test -p ulo-rpc-tcp-smol --test lingering_close --test cut_grace --test server_cut_grace --test dropped_client --locked
+      # The TCP link's lingering close, cut close on either side, dropped client and reply lane
+      # whose send fails on smol, timed on scripted clocks and sized from the buffers the kernel
+      # grants.
+      - run: cargo test -p ulo-rpc-tcp-smol --test lingering_close --test cut_grace --test server_cut_grace --test dropped_client --test lane_send_failure --locked
       # A conformance suite writes each startup failure, its full error chain included, to a file
       # under target/conformance-failures/ before the test panics with it. The files are printed
       # here, so the cause is in the job log whatever else the log keeps, and kept as an artifact.

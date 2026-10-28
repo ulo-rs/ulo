@@ -18,11 +18,19 @@ impl<R: Runtime> Timer for Unnamed<R> {
     fn now(&self) -> Instant {
         Timer::now(&self.0)
     }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        Timer::try_sleep(&self.0, d)
+    }
 }
 
 impl<R: Runtime> Spawn for Unnamed<R> {
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle {
         Spawn::spawn(&self.0, fut)
+    }
+
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
+        Spawn::try_spawn(&self.0, fut)
     }
 }
 
@@ -38,6 +46,10 @@ impl<R: Runtime> Timer for Smol<R> {
     fn now(&self) -> Instant {
         Timer::now(&self.0)
     }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        Timer::try_sleep(&self.0, d)
+    }
 }
 
 impl<R: Runtime> Spawn for Smol<R> {
@@ -47,6 +59,10 @@ impl<R: Runtime> Spawn for Smol<R> {
 
     fn name(&self) -> &'static str {
         "smol"
+    }
+
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
+        Spawn::try_spawn(&self.0, fut)
     }
 }
 

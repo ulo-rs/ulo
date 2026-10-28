@@ -727,6 +727,14 @@ mod tests {
         fn now(&self) -> Instant {
             self.base + *lock(&self.at)
         }
+
+        fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+            let sleep = Timer::sleep(self, d);
+            Box::pin(async move {
+                sleep.await;
+                Ok(())
+            })
+        }
     }
 
     /// The drain ends once the app's clock passes the grace when the first send never completes,

@@ -27,7 +27,7 @@ use ulo::{BoxFuture, ExecutionRef, Refused, RuntimeTask, Signal, TaskHandle};
 /// A runtime that has shut down refuses, as a value and never a panic: `try_spawn` and
 /// `try_sleep` answer `Err(Refused)`, `spawn` drops the task unrun and its handle answers
 /// `Aborted`, a sleep ends at once, the shutdown falling before the sleep or during it, and `now`
-/// still answers.
+/// still answers. [`timer`](Self::timer) is the clock alone, refusing alike.
 #[derive(Clone, Debug)]
 pub struct Tokio {
     handle: Handle,
@@ -51,6 +51,11 @@ impl Tokio {
 
     pub fn handle(&self) -> &Handle {
         &self.handle
+    }
+
+    /// The held runtime's clock alone, for `AppBuilder::timer`.
+    pub fn timer(&self) -> Timer {
+        Timer { handle: self.handle.clone() }
     }
 
     /// `fut` run as a task on the held runtime, its output answered to whichever executor awaits
@@ -107,39 +112,51 @@ impl<T> Drop for Aborting<T> {
     }
 }
 
-/// `now` enters the held runtime, so it reads that runtime's clock, a paused one included,
-/// wherever it is called.
 impl ulo::Timer for Tokio {
     fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
-        let sleep = ulo::Timer::try_sleep(self, d);
-        Box::pin(async move {
-            let _ = sleep.await;
-        })
+        sleep_on(&self.handle, d)
     }
 
     fn now(&self) -> Instant {
-        let _entered = self.handle.enter();
-        ulo::Timer::now(&Timer)
+        now_on(&self.handle)
     }
 
-    /// The sleep runs as a task of the held runtime. tokio's timer panics when a sleep is polled
-    /// after the runtime has shut down, wherever it is polled, and a runtime drops its tasks
-    /// before it shuts its timer down, so a sleep inside one is never polled then: the runtime
-    /// drops it and the task's `JoinHandle` reports that. The deadline is read here, as
-    /// `tokio::time::sleep` reads it at its call; the task is spawned at the first poll.
     fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
-        let deadline = {
-            let _entered = self.handle.enter();
-            let now = tokio::time::Instant::now();
-            // `tokio::time::sleep`'s own answer to a duration past what an `Instant` holds.
-            now.checked_add(d).unwrap_or_else(|| now + Duration::from_secs(86400 * 365 * 30))
-        };
-        let handle = self.handle.clone();
-        Box::pin(async move {
-            // The task's future cannot panic, so an error is the runtime dropping it.
-            Aborting(handle.spawn(async move { tokio::time::sleep_until(deadline).await })).await.map_err(|_| Refused)
-        })
+        try_sleep_on(&self.handle, d)
     }
+}
+
+/// `now` enters `handle`, so it reads that runtime's clock, a paused one included, wherever it is
+/// called.
+fn now_on(handle: &Handle) -> Instant {
+    let _entered = handle.enter();
+    tokio::time::Instant::now().into_std()
+}
+
+fn sleep_on(handle: &Handle, d: Duration) -> BoxFuture<'static, ()> {
+    let sleep = try_sleep_on(handle, d);
+    Box::pin(async move {
+        let _ = sleep.await;
+    })
+}
+
+/// The sleep runs as a task of `handle`'s runtime. tokio's timer panics when a sleep is polled
+/// after the runtime has shut down, wherever it is polled, and a runtime drops its tasks before
+/// it shuts its timer down, so a sleep inside one is never polled then: the runtime drops it and
+/// the task's `JoinHandle` reports that. The deadline is read here, as `tokio::time::sleep` reads
+/// it at its call; the task is spawned at the first poll.
+fn try_sleep_on(handle: &Handle, d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
+    let deadline = {
+        let _entered = handle.enter();
+        let now = tokio::time::Instant::now();
+        // `tokio::time::sleep`'s own answer to a duration past what an `Instant` holds.
+        now.checked_add(d).unwrap_or_else(|| now + Duration::from_secs(86400 * 365 * 30))
+    };
+    let handle = handle.clone();
+    Box::pin(async move {
+        // The task's future cannot panic, so an error is the runtime dropping it.
+        Aborting(handle.spawn(async move { tokio::time::sleep_until(deadline).await })).await.map_err(|_| Refused)
+    })
 }
 
 impl ulo::Spawn for Tokio {
@@ -149,7 +166,9 @@ impl ulo::Spawn for Tokio {
 
     /// tokio offers no check for a runtime that has shut down; one drops a task inside `spawn`,
     /// so the task's `JoinHandle` answers on its first poll. The wrapper the core spawns cannot
-    /// panic and nothing has aborted the task yet, so an error there is that drop.
+    /// panic and nothing has aborted the task yet, so an error there is a shutdown dropping it.
+    /// Refused: the task was not started, or a shutdown stopped it before it finished, a worker
+    /// having polled it between `spawn` and that first poll.
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused> {
         let mut refused = false;
         let task = TaskHandle::launch(fut, |task| {
@@ -197,19 +216,51 @@ impl RuntimeTask for Task {
     fn detach(self: Box<Self>) {}
 }
 
-/// The app's clock on tokio: sleeps through `tokio::time`, and `now()` through
-/// `tokio::time::Instant::now().into_std()`, so a paused test clock (`tokio::time::pause`) drives
-/// deadlines and sleeps together, as the core requires of one `Timer`.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Timer;
+/// The clock of one tokio runtime, held by its `Handle`, without its spawning: `AppBuilder::timer`
+/// for an app that times on tokio and spawns on nothing or on another runtime. It times as
+/// [`Tokio`] times, a paused test clock (`tokio::time::pause`) driving deadlines and sleeps
+/// together, and refuses as `Tokio` refuses once its runtime has shut down: `try_sleep` answers
+/// `Err(Refused)`, a sleep ends at once, and `now` still answers.
+///
+/// Built from a runtime the caller has, [`Tokio::timer`] or [`Timer::from_handle`], or captured
+/// once with [`Timer::current`] or [`Timer::try_current`]; nothing after that looks for a runtime.
+#[derive(Clone, Debug)]
+pub struct Timer {
+    handle: Handle,
+}
+
+impl Timer {
+    /// The clock of the tokio runtime current on the calling thread. Panics outside one, at this
+    /// call, as `Handle::current` does.
+    pub fn current() -> Timer {
+        Timer { handle: Handle::current() }
+    }
+
+    /// The clock of the tokio runtime current on the calling thread, `None` outside one.
+    pub fn try_current() -> Option<Timer> {
+        Handle::try_current().ok().map(|handle| Timer { handle })
+    }
+
+    pub fn from_handle(handle: Handle) -> Timer {
+        Timer { handle }
+    }
+
+    pub fn handle(&self) -> &Handle {
+        &self.handle
+    }
+}
 
 impl ulo::Timer for Timer {
     fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
-        Box::pin(tokio::time::sleep(d))
+        sleep_on(&self.handle, d)
     }
 
     fn now(&self) -> Instant {
-        tokio::time::Instant::now().into_std()
+        now_on(&self.handle)
+    }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
+        try_sleep_on(&self.handle, d)
     }
 }
 

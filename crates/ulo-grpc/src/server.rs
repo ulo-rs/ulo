@@ -437,13 +437,16 @@ impl ulo::Server for Server {
     /// Each connection and each call's stream is polled once in this future's first poll, so a
     /// call the drain's end cancelled writes its UNAVAILABLE even when a spent cap leaves `close`
     /// that one poll; once the drain has begun the connections then get `CLOSE_GRACE` to end
-    /// before they are aborted, and a `close` the core's bound cuts aborts them all the same.
+    /// before they are aborted, and a `close` the core's bound cuts aborts them all the same. A
+    /// clock that refuses the grace, its runtime shut down, aborts them at once.
     async fn close(&self) -> Result<(), BoxError> {
         if let Some(running) = &self.running {
-            let grace = running.dispatcher.app.is_draining().then(|| running.dispatcher.timer.sleep(CLOSE_GRACE));
+            let grace = running.dispatcher.app.is_draining().then(|| running.dispatcher.timer.try_sleep(CLOSE_GRACE));
             running.serve.close_after(async move {
-                if let Some(grace) = grace {
-                    grace.await;
+                if let Some(grace) = grace
+                    && let Err(refused) = grace.await
+                {
+                    tracing::debug!(%refused, "the runtime timing the gRPC server's close refused its grace; the connections are aborted without one");
                 }
             })
             .await;

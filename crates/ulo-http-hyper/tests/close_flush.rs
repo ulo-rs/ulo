@@ -151,6 +151,14 @@ impl Timer for Held {
     fn now(&self) -> Instant {
         self.0.base
     }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        let sleep = Timer::sleep(self, d);
+        Box::pin(async move {
+            sleep.await;
+            Ok(())
+        })
+    }
 }
 
 impl Held {

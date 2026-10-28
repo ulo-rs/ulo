@@ -21,7 +21,7 @@ use rdkafka::{Offset, TopicPartitionList};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, BoxError, BoxFuture, Runtime, Timer};
+use ulo::{AppHandle, BoxError, BoxFuture, Refused, Runtime, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -510,7 +510,7 @@ async fn create_topics(base: &ClientConfig, topics: &[String], partitions: i32, 
 /// Reading the committed offsets asks the group's coordinator, which a broker that has just
 /// started, or is moving the coordinator, may not have ready: those three errors are retried
 /// within the call's own timeout (`coordinator_retried`), waiting on the app's `timer` between
-/// attempts; any other fails `bind` at once. Each broker call blocks its thread and runs on one
+/// attempts, until the timer refuses a wait; any other fails `bind` at once. Each broker call blocks its thread and runs on one
 /// of its own ([`blocking`]).
 async fn anchor(base: &ClientConfig, group: &str, topics: &[String], timer: &Arc<dyn Timer>) -> Result<(), BoxError> {
     let mut config = base.clone();
@@ -538,7 +538,7 @@ async fn anchor(base: &ClientConfig, group: &str, topics: &[String], timer: &Arc
             let every = every.clone();
             async move { blocking(move || reader.committed_offsets(every, Timeout::After(remaining)).map_err(BoxError::from)).await? }
         },
-        |backoff| timer.sleep(backoff),
+        |backoff| timer.try_sleep(backoff),
         || timer.now(),
     )
     .await?;
@@ -571,8 +571,8 @@ const RETRY_BACKOFF_MAX: Duration = Duration::from_secs(1);
 /// `attempt`, given the time left before `deadline`, retried while it fails with one of the
 /// three errors a group coordinator answers while it loads or moves, which librdkafka classes
 /// retriable, and a retry still fits before `deadline`; the last error is returned once one does
-/// not. Any other error is returned at once. `sleep` and `now` are the clock, the app's `Timer`
-/// in `anchor`.
+/// not, or once `sleep` refuses the wait before a retry, its runtime shut down. Any other error is
+/// returned at once. `sleep` and `now` are the clock, the app's `Timer` in `anchor`.
 async fn coordinator_retried<T, A, S>(
     deadline: Instant,
     mut attempt: impl FnMut(Duration) -> A,
@@ -581,7 +581,7 @@ async fn coordinator_retried<T, A, S>(
 ) -> Result<T, BoxError>
 where
     A: Future<Output = Result<T, BoxError>>,
-    S: Future<Output = ()>,
+    S: Future<Output = Result<(), Refused>>,
 {
     let mut backoff = RETRY_BACKOFF;
     loop {
@@ -589,7 +589,10 @@ where
         match &outcome {
             Err(error) if coordinator_not_ready(error) && now() + backoff < deadline => {
                 tracing::debug!(%error, ?backoff, "the Kafka group coordinator is not ready; retrying");
-                sleep(backoff).await;
+                if let Err(refused) = sleep(backoff).await {
+                    tracing::debug!(%refused, "the runtime timing the Kafka coordinator's backoff refused it; the read is not retried");
+                    return outcome;
+                }
                 backoff = (backoff * 2).min(RETRY_BACKOFF_MAX);
             }
             _ => return outcome,
@@ -1539,21 +1542,26 @@ mod tests {
 
     use super::*;
 
-    /// A clock that `sleep` advances, starting at `start`.
+    /// A clock that `sleep` advances, starting at `start`, or, `refusing`, one whose runtime has
+    /// shut down: each sleep is refused and the clock stands still.
     struct Clock {
         now: Cell<Instant>,
         slept: RefCell<Vec<Duration>>,
+        refusing: bool,
     }
 
     impl Clock {
         fn new(start: Instant) -> Self {
-            Clock { now: Cell::new(start), slept: RefCell::new(Vec::new()) }
+            Clock { now: Cell::new(start), slept: RefCell::new(Vec::new()), refusing: false }
         }
 
-        fn sleep(&self, d: Duration) -> Ready<()> {
-            self.now.set(self.now.get() + d);
+        fn sleep(&self, d: Duration) -> Ready<Result<(), Refused>> {
             self.slept.borrow_mut().push(d);
-            ready(())
+            if self.refusing {
+                return ready(Err(Refused));
+            }
+            self.now.set(self.now.get() + d);
+            ready(Ok(()))
         }
     }
 
@@ -1638,6 +1646,30 @@ mod tests {
         assert!(slept < ANCHOR_TIMEOUT, "the retries slept {slept:?}, past the {ANCHOR_TIMEOUT:?} timeout");
         assert_eq!(remaining.first(), Some(&ANCHOR_TIMEOUT), "the first attempt was not given the whole timeout");
         assert!(remaining.windows(2).all(|pair| pair[1] < pair[0]), "each attempt was not given what was left: {remaining:?}");
+    }
+
+    /// The attempts after which a loop still retrying is taken to spin: its clock stands still, so
+    /// nothing else would end it.
+    const TURNS: usize = 3;
+
+    /// N3: a clock that refuses the backoff, its runtime shut down, ends the retries after the one
+    /// refused wait, with the last error.
+    #[test]
+    fn a_refused_backoff_ends_the_retries() {
+        let start = Instant::now();
+        let clock = Clock { refusing: true, ..Clock::new(start) };
+        let mut calls = 0;
+        let outcome: Result<(), BoxError> = retried(
+            start + ANCHOR_TIMEOUT,
+            |_| {
+                calls += 1;
+                assert!(calls <= TURNS, "coordinator_retried retried {calls} times on a clock that refused every backoff");
+                Err(failing(RDKafkaErrorCode::CoordinatorNotAvailable))
+            },
+            &clock,
+        );
+        assert_eq!(code_of(&outcome), Some(RDKafkaErrorCode::CoordinatorNotAvailable), "{outcome:?}");
+        assert_eq!((calls, clock.slept.borrow().len()), (1, 1), "the attempts and backoffs on a clock refusing the backoff");
     }
 
     /// A client's `connect` failing after its reply consumer exists, against a broker in a

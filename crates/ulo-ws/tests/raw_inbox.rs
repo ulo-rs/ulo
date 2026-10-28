@@ -205,6 +205,14 @@ impl Timer for Frozen {
     fn now(&self) -> Instant {
         Instant::now()
     }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        let sleep = Timer::sleep(self, d);
+        Box::pin(async move {
+            sleep.await;
+            Ok(())
+        })
+    }
 }
 
 /// The app's clock and cap for one test.

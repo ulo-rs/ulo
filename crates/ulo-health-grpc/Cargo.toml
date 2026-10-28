@@ -19,6 +19,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `ScriptedTimer`: the clock whose refusal `tests/interval_refused.rs` reads.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
 futures-util.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
 tonic = { workspace = true, features = ["channel"] }

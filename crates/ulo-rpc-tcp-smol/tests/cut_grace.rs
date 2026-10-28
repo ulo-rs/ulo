@@ -71,11 +71,19 @@ impl<S: Spawn> Timer for Handed<S> {
     fn now(&self) -> Instant {
         self.clock.now()
     }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        Timer::try_sleep(&self.clock, d)
+    }
 }
 
 impl<S: Spawn> Spawn for Handed<S> {
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle {
         self.spawn.spawn(fut)
+    }
+
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
+        Spawn::try_spawn(&self.spawn, fut)
     }
 }
 

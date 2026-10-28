@@ -32,15 +32,34 @@ pub async fn running<R: Runtime>(rt: R) {
 /// Once `stoppable`'s runtime has shut down: `try_spawn` answers `Err(Refused)` with the future
 /// unrun, `spawn` a handle that ends `Aborted` with the future unrun, `try_sleep` `Err(Refused)` at
 /// once, `sleep` ends at once, a sleep under way at the shutdown answers `Err(Refused)`, a task
-/// pending then ends `Aborted`, and `now` answers. Every wait is timed on `rt`.
+/// pending then ends `Aborted`, and `now` answers. Each of `stoppable`'s other clocks times while
+/// the runtime runs and refuses alike once it has shut down. Every wait is timed on `rt`.
 pub async fn shut_down<R: Runtime>(rt: R, stoppable: Stoppable<R>) {
-    let Stoppable { runtime: stopped, stop } = stoppable;
+    let Stoppable { runtime: stopped, clocks, stop } = stoppable;
+    assert!(
+        !clocks.is_empty(),
+        "`Stoppable::clocks` names no clock: list each clock the runtime crate builds on this runtime, or a second value of the runtime where it is the crate's only clock"
+    );
     let pending_task = stopped.try_spawn(Box::pin(pending())).expect("a running runtime refused a spawn ahead of its shutdown");
     let mut sleeping = stopped.try_sleep(LONG);
     assert!(
         sleeping.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending(),
         "an hour's `try_sleep` ended at its first poll on a running runtime"
     );
+    let mut under_way = Vec::with_capacity(clocks.len());
+    for (name, clock) in &clocks {
+        let began = clock.now();
+        let slept = within(&rt, clock.try_sleep(SETTLE)).await;
+        let took = clock.now().saturating_duration_since(began);
+        assert_eq!(slept, Some(Ok(())), "`{name}` answered a `try_sleep` with {slept:?} while its runtime ran");
+        assert!(took >= SETTLE, "`{name}`'s `try_sleep` of {SETTLE:?} ended after {took:?} while its runtime ran");
+        let mut clock_sleeping = clock.try_sleep(LONG);
+        assert!(
+            clock_sleeping.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending(),
+            "an hour's `try_sleep` on `{name}` ended at its first poll while its runtime ran"
+        );
+        under_way.push(clock_sleeping);
+    }
     // A turn for the runtime to take up the task and the sleep before it shuts down.
     rt.sleep(SETTLE).await;
     stop();
@@ -64,4 +83,14 @@ pub async fn shut_down<R: Runtime>(rt: R, stoppable: Stoppable<R>) {
     let end = within(&rt, pending_task).await.expect("a task pending when its runtime shut down did not end");
     assert!(end.is_aborted(), "a task pending when its runtime shut down ended {end:?}");
     let _ = stopped.now();
+
+    for ((name, clock), clock_sleeping) in clocks.iter().zip(under_way) {
+        let slept = within(&rt, clock.try_sleep(LONG)).await;
+        assert_eq!(slept, Some(Err(Refused)), "`{name}` on a runtime that has shut down answered an hour's `try_sleep` with {slept:?}");
+        let slept = within(&rt, clock.sleep(LONG)).await;
+        assert!(slept.is_some(), "an hour's `sleep` on `{name}` did not end at once after its runtime shut down");
+        let slept = within(&rt, clock_sleeping).await;
+        assert_eq!(slept, Some(Err(Refused)), "a `try_sleep` on `{name}` under way when its runtime shut down answered {slept:?}");
+        let _ = clock.now();
+    }
 }

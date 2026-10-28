@@ -2336,6 +2336,14 @@ mod tests {
             fn now(&self) -> Instant {
                 lock(&self.0).now
             }
+
+            fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+                let sleep = Timer::sleep(self, d);
+                Box::pin(async move {
+                    sleep.await;
+                    Ok(())
+                })
+            }
         }
 
         /// A server's link reached through `relay` and listening on `pattern`, a caller's link

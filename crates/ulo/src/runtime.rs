@@ -30,12 +30,12 @@ pub trait Spawn: Send + Sync + 'static {
     /// `TaskEnd::Aborted`; [`try_spawn`](Self::try_spawn) tells that refusal from an abort.
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle;
 
-    /// `spawn`, answering `Err(Refused)` when the runtime has shut down, `fut` dropped unrun. The
-    /// default answers `spawn`'s handle as `Ok`, which is right for a runtime that cannot shut
-    /// down; a runtime adapter whose runtime can shut down implements it.
-    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused> {
-        Ok(self.spawn(fut))
-    }
+    /// `spawn`, answering `Err(Refused)` when the runtime has shut down. Refused: the task was not
+    /// started, or a shutdown stopped it before it finished. `fut` may have been polled, so a
+    /// refusal is no proof that none of its work ran. A runtime that cannot shut down answers
+    /// `spawn`'s handle as `Ok`. A wrapper forwards this to the runtime it wraps, as it forwards
+    /// `spawn`: answering `Ok` there drops that runtime's refusal.
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused>;
 
     /// The runtime's name, which an integration that supports one runtime reads to refuse the
     /// others at `connect` rather than look a runtime up from the thread. `ulo-runtime-tokio`
@@ -365,5 +365,53 @@ impl<T> Future for ValueHandle<T> {
             (TaskEnd::Finished, Some(value)) => Ok(value),
             (end, _) => Err(end),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::task::Waker;
+
+    use super::*;
+
+    /// A runtime that has shut down: it refuses every `try_spawn` and `try_sleep`.
+    struct ShutDown;
+
+    impl Timer for ShutDown {
+        fn sleep(&self, _d: Duration) -> BoxFuture<'static, ()> {
+            Box::pin(std::future::ready(()))
+        }
+
+        fn now(&self) -> Instant {
+            Instant::now()
+        }
+
+        fn try_sleep(&self, _d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
+            Box::pin(std::future::ready(Err(Refused)))
+        }
+    }
+
+    impl Spawn for ShutDown {
+        fn spawn(&self, _fut: BoxFuture<'static, ()>) -> TaskHandle {
+            panic!("the app's runtime answered `try_spawn` through the wrapped runtime's `spawn`, dropping its refusal")
+        }
+
+        fn try_spawn(&self, _fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused> {
+            Err(Refused)
+        }
+    }
+
+    fn refused_sleep(timer: &dyn Timer) -> Poll<Result<(), Refused>> {
+        timer.try_sleep(Duration::from_secs(3600)).as_mut().poll(&mut Context::from_waker(Waker::noop()))
+    }
+
+    /// `Dep<dyn Runtime>` and `Dep<dyn Timer>` are a `Clocked`, so a refusal it answered as `Ok`
+    /// would reach no code that reads one.
+    #[test]
+    fn the_app_s_runtime_forwards_the_refusals_of_the_runtime_it_wraps() {
+        let runtime: Arc<dyn Runtime> = Arc::new(ShutDown);
+        let clocked = Clocked::new(Arc::clone(&runtime), Arc::clone(&runtime) as Arc<dyn Timer>, Redactor::default());
+        assert!(clocked.try_spawn(Box::pin(async {})).is_err(), "the app's runtime answered a refused `try_spawn` with a handle");
+        assert_eq!(refused_sleep(&clocked), Poll::Ready(Err(Refused)), "the app's runtime answered a refused `try_sleep` otherwise");
     }
 }

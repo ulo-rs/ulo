@@ -145,6 +145,14 @@ mod tests {
         fn now(&self) -> Instant {
             *self.0.lock().unwrap()
         }
+
+        fn try_sleep(&self, d: Duration) -> crate::BoxFuture<'static, Result<(), crate::Refused>> {
+            let sleep = crate::Timer::sleep(self, d);
+            Box::pin(async move {
+                sleep.await;
+                Ok(())
+            })
+        }
     }
 
     const OWN: Duration = Duration::from_secs(2);

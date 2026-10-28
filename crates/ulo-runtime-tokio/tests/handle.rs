@@ -55,6 +55,24 @@ fn sleeps_from_a_thread_outside_any_runtime() {
 }
 
 #[test]
+fn the_clock_alone_sleeps_and_reads_its_runtime_from_a_thread_outside_any_runtime() {
+    let runtime = held_runtime();
+    let clock = ulo_runtime_tokio::Timer::from_handle(runtime.handle().clone());
+    // Polled on the plain thread too: a clock that looked up the current runtime at the poll would
+    // find none there.
+    let (answered, answer) = mpsc::channel();
+    thread::spawn(move || {
+        assert!(Handle::try_current().is_err(), "the plain thread has a tokio runtime current");
+        let began = clock.now();
+        let _ = answered.send((began, block_on(clock.try_sleep(Duration::from_millis(10)))));
+    });
+    let (began, slept) =
+        answer.recv_timeout(PATIENCE).expect("reading the clock, or creating or awaiting a sleep, on a plain thread panicked or did not end");
+    assert_eq!(slept, Ok(()), "the clock's runtime is running, yet its sleep answered {slept:?}");
+    assert!(began.elapsed() >= Duration::from_millis(10), "the sleep ended before its 10 ms had passed");
+}
+
+#[test]
 fn run_answers_on_a_thread_outside_any_runtime() {
     let runtime = held_runtime();
     let held = Tokio::from_handle(runtime.handle().clone());

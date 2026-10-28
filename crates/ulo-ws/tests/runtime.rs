@@ -38,12 +38,21 @@ impl Timer for Counting {
     fn now(&self) -> Instant {
         self.tokio.now()
     }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        Timer::try_sleep(&self.tokio, d)
+    }
 }
 
 impl Spawn for Counting {
     fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle {
         self.spawned.fetch_add(1, Ordering::SeqCst);
         self.tokio.spawn(fut)
+    }
+
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
+        self.spawned.fetch_add(1, Ordering::SeqCst);
+        Spawn::try_spawn(&self.tokio, fut)
     }
 }
 

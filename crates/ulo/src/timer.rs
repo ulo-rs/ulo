@@ -31,15 +31,9 @@ pub trait Timer: Send + Sync + 'static {
 
     /// `sleep`, answering `Err(Refused)` when the clock's runtime has shut down, before the sleep
     /// or during it. Code that would otherwise act on a deadline it can no longer keep reads this.
-    /// The default answers `sleep`'s end as `Ok`, which is right for a clock that cannot shut
-    /// down; a runtime adapter whose runtime can shut down implements it.
-    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
-        let sleep = self.sleep(d);
-        Box::pin(async move {
-            sleep.await;
-            Ok(())
-        })
-    }
+    /// A clock that cannot shut down answers `sleep`'s end as `Ok`. A wrapper forwards this to the
+    /// clock it wraps, as it forwards `sleep`: answering `Ok` there drops that clock's refusal.
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>>;
 }
 
 /// What a runtime that has shut down answers [`Timer::try_sleep`] and
@@ -226,6 +220,14 @@ mod tests {
 
         fn now(&self) -> Instant {
             Instant::now()
+        }
+
+        fn try_sleep(&self, d: Duration) -> crate::BoxFuture<'static, Result<(), crate::Refused>> {
+            let sleep = crate::Timer::sleep(self, d);
+            Box::pin(async move {
+                sleep.await;
+                Ok(())
+            })
         }
     }
 

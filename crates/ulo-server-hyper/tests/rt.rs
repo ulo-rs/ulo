@@ -99,6 +99,14 @@ impl Timer for Ahead {
     fn now(&self) -> Instant {
         Instant::now() + AHEAD
     }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        let sleep = Timer::sleep(self, d);
+        Box::pin(async move {
+            sleep.await;
+            Ok(())
+        })
+    }
 }
 
 #[test]

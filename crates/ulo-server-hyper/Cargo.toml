@@ -27,6 +27,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 ulo-runtime-smol = { path = "../ulo-runtime-smol" }
+# `ScriptedTimer`: the clock whose refusal the accept-backoff test reads.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
 async-io.workspace = true
 # The sockets the tests' own listeners accept on.
 async-net.workspace = true

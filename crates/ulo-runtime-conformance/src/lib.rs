@@ -31,7 +31,7 @@
 
 use std::future::Future;
 
-use ulo::Runtime;
+use ulo::{Runtime, Timer};
 
 pub mod cases;
 
@@ -57,6 +57,12 @@ pub trait Harness {
 /// A running runtime and what shuts it down, as [`Harness::stoppable`] answers them.
 pub struct Stoppable<R> {
     pub runtime: R,
+    /// The runtime crate's other clocks on that same runtime, each by the name a failure reports
+    /// it under, held to `runtime`'s rule: they time while it runs and refuse once it has shut
+    /// down. Never empty, so a harness that leaves its clocks out fails the scenario rather than
+    /// passing it on none: a runtime crate whose runtime is its only clock lists a second value of
+    /// the runtime.
+    pub clocks: Vec<(&'static str, Box<dyn Timer>)>,
     /// Returns once the runtime has shut down. Called from inside the future `block_on` runs.
     pub stop: Box<dyn FnOnce() + Send>,
 }

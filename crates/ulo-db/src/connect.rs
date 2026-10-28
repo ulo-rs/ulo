@@ -35,8 +35,8 @@ pub(crate) fn require_tokio(runtime: &dyn Runtime, module: &'static str) -> Resu
 /// The pool's factory: the name check, then `S::create` through `spawn_with`.
 ///
 /// For options whose `create` connects, the loop around `create` is the store's one retry loop:
-/// the module's retries and backoff, ending on `Permanent`, under the construction bound
-/// `connect_within`. For any other options a single `create` runs and `.ready` retries the ping.
+/// the module's retries and backoff, ending on `Permanent` or on a backoff the runtime refuses,
+/// under the construction bound `connect_within`. For any other options a single `create` runs and `.ready` retries the ping.
 pub(crate) async fn create<S: Store>(
     runtime: Arc<dyn Runtime>,
     options: S::Options,
@@ -60,8 +60,13 @@ pub(crate) async fn create<S: Store>(
         }
         // The error's text is left out: it can carry the URL, and nothing scrubs a log line.
         tracing::debug!(store = S::NAME, attempt = made, "creating the client failed; retrying");
-        if !policy.backoff.is_zero() {
-            Timer::sleep(&*runtime, policy.backoff).await;
+        if !policy.backoff.is_zero()
+            && let Err(refused) = Timer::try_sleep(&*runtime, policy.backoff).await
+        {
+            // On `sleep`, which ends at once on a runtime that has shut down, the retries would
+            // run without pause.
+            tracing::debug!(store = S::NAME, %refused, "the runtime refused the backoff before a retry of `create`; it is not retried");
+            return Err(error);
         }
     }
 }

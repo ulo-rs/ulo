@@ -8548,9 +8548,11 @@ dependencies = [
 name = "ulo-health"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "futures-executor",
  "futures-util",
  "tracing",
  "ulo",
+ "ulo-conformance-support",
 ]
 
 [[package]]
@@ -8563,6 +8565,7 @@ dependencies = [
  "tonic-health",
  "tracing",
  "ulo",
+ "ulo-conformance-support",
  "ulo-grpc",
  "ulo-health",
  "ulo-runtime-tokio",
@@ -8606,6 +8609,7 @@ dependencies = [
  "tower",
  "tracing",
  "ulo",
+ "ulo-conformance-support",
  "ulo-http-macros",
  "ulo-net",
  "ulo-runtime-tokio",
@@ -9177,6 +9181,7 @@ dependencies = [
  "hyper 1.11.1",
  "tracing",
  "ulo",
+ "ulo-conformance-support",
  "ulo-http",
  "ulo-net",
  "ulo-runtime-smol",
@@ -9240,6 +9245,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "ulo",
+ "ulo-conformance-support",
  "ulo-http",
  "ulo-http-conformance",
  "ulo-http-hyper",

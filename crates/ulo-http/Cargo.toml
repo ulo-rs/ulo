@@ -43,6 +43,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `ScriptedTimer`: the clock whose refusal the keep-alive's unit test reads.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
 # `futures-io`'s extension traits, through which `tests/upgraded.rs` drives an `Upgraded`.
 futures.workspace = true
 # `io-util`: tokio's extension traits, for the same tests' `tokio-io` cases.

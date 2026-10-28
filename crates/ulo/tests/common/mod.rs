@@ -244,6 +244,14 @@ impl Timer for Frozen {
     fn now(&self) -> Instant {
         self.0
     }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        let sleep = Timer::sleep(self, d);
+        Box::pin(async move {
+            sleep.await;
+            Ok(())
+        })
+    }
 }
 
 /// Unit structs the container can build, so a test can `m.provide::<S>()` without a macro.
@@ -519,6 +527,40 @@ impl Timer for Recorded {
 
     fn now(&self) -> Instant {
         self.0
+    }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        let sleep = Timer::sleep(self, d);
+        Box::pin(async move {
+            sleep.await;
+            Ok(())
+        })
+    }
+}
+
+/// [`Recorded`] on a runtime that has shut down: each sleep is written down and ends at once, and
+/// `try_sleep` answers `Err(Refused)`.
+pub struct Refusing(Instant, SleepLog);
+
+impl Refusing {
+    pub fn new(log: &SleepLog) -> Self {
+        Refusing(Instant::now() + Duration::from_secs(86_400), log.clone())
+    }
+}
+
+impl Timer for Refusing {
+    fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+        self.1.0.lock().unwrap_or_else(PoisonError::into_inner).push(d);
+        Box::pin(async {})
+    }
+
+    fn now(&self) -> Instant {
+        self.0
+    }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        self.1.0.lock().unwrap_or_else(PoisonError::into_inner).push(d);
+        Box::pin(async { Err(ulo::Refused) })
     }
 }
 

@@ -225,6 +225,10 @@ fn a_module_binding_dyn_timer_is_a_second_source() {
         fn now(&self) -> std::time::Instant {
             self.0.now()
         }
+
+        fn try_sleep(&self, d: Duration) -> ulo::BoxFuture<'static, Result<(), ulo::Refused>> {
+            Timer::try_sleep(&self.0, d)
+        }
     }
     let root = Mod::<A>::new(|m| {
         m.import(Mod::<Svc>::new(|m| {

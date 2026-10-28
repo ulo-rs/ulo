@@ -67,6 +67,8 @@ ulo-http = { path = "../ulo-http", features = ["tokio-io"] }
 # The HTTP server a gateway on the HTTP port is reached through.
 ulo-http-hyper = { path = "../ulo-http-hyper" }
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `ScriptedTimer`: the clock whose refusal `tests/ping_refused.rs` reads.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
 # `io-util`: the in-memory pipe `tests/table.rs` serves a connection over. `test-util`:
 # `tests/raw_inbox.rs` runs on a paused clock.
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros", "sync", "io-util", "test-util"] }

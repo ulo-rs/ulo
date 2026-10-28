@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::task::Poll;
 use std::time::Duration;
 
-use ulo::{BoxError, Runtime};
+use ulo::{BoxError, Refused, Runtime};
 use ulo_http::ConnInfo;
 use ulo_net::BoundListener;
 use ulo_net::rustls::ServerConfig;
@@ -275,7 +275,12 @@ async fn accept_loop<L, F, Fut>(
                     Arc::clone(&signals),
                 )));
             }
-            Woke::Accepted(Err(error)) => backoff(error, &*runtime).await,
+            Woke::Accepted(Err(error)) => {
+                if let Err(refused) = backoff(error, &*runtime).await {
+                    tracing::debug!(%refused, "the runtime timing the accept loop's backoff refused it; the loop stops accepting");
+                    break;
+                }
+            }
             Woke::Draining => break,
             Woke::Closing => {
                 connections.abort_all();
@@ -316,17 +321,21 @@ async fn accept_loop<L, F, Fut>(
 
 /// A connection the peer abandoned between its arrival and the accept is skipped at once. Any
 /// other error, running out of file descriptors above all, would fail again immediately, so the
-/// loop waits a second first, as hyper's own accept loop did.
-async fn backoff(error: io::Error, timer: &dyn Runtime) {
+/// loop waits [`ACCEPT_BACKOFF`] first, as hyper's own accept loop did. A runtime that refuses the
+/// wait, having shut down, answers `Err`, and the loop ends as the drain ends it.
+async fn backoff(error: io::Error, timer: &dyn Runtime) -> Result<(), Refused> {
     if matches!(
         error.kind(),
         io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset
     ) {
-        return;
+        return Ok(());
     }
     tracing::error!(%error, "accepting a connection failed; retrying in one second");
-    timer.sleep(Duration::from_secs(1)).await;
+    timer.try_sleep(ACCEPT_BACKOFF).await
 }
+
+/// How long the accept loop waits after an accept fails for a reason other than the peer's.
+pub const ACCEPT_BACKOFF: Duration = Duration::from_secs(1);
 
 /// How a connection's handshake ended.
 enum Handshaken<T> {

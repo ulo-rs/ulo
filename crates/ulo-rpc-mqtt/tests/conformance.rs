@@ -792,6 +792,14 @@ impl ulo::Timer for Held {
     fn now(&self) -> std::time::Instant {
         std::time::Instant::now()
     }
+
+    fn try_sleep(&self, d: Duration) -> ulo::BoxFuture<'static, Result<(), ulo::Refused>> {
+        let sleep = ulo::Timer::sleep(self, d);
+        Box::pin(async move {
+            sleep.await;
+            Ok(())
+        })
+    }
 }
 
 /// A TCP relay to `target` for one connection that, once muted, forwards what the target sends

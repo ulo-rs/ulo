@@ -151,12 +151,12 @@ impl Module for Root {
 
 /// The runtime's clock, with every sleep of [`DEADLINE`] held until the test fires it.
 #[derive(Clone)]
-struct Clock(watch::Sender<bool>);
+struct Clock(watch::Sender<bool>, ulo_runtime_tokio::Timer);
 
 impl Timer for Clock {
     fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
         if d != DEADLINE {
-            return ulo_runtime_tokio::Timer.sleep(d);
+            return self.1.sleep(d);
         }
         let mut fired = self.0.subscribe();
         Box::pin(async move {
@@ -165,7 +165,15 @@ impl Timer for Clock {
     }
 
     fn now(&self) -> Instant {
-        ulo_runtime_tokio::Timer.now()
+        self.1.now()
+    }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        let sleep = self.sleep(d);
+        Box::pin(async move {
+            sleep.await;
+            Ok(())
+        })
     }
 }
 
@@ -183,7 +191,7 @@ impl Running {
         let shared = std::sync::Arc::new(Shared::new());
         let (sender, outcome) = mpsc::unbounded_channel();
         *shared.outcome.lock().unwrap_or_else(PoisonError::into_inner) = Some(sender);
-        let clock = Clock(watch::channel(false).0);
+        let clock = Clock(watch::channel(false).0, ulo_runtime_tokio::Timer::current());
         let app = App::builder(Root(SharedHandle(std::sync::Arc::clone(&shared))))
             .runtime(ulo_runtime_tokio::Tokio::current())
             .timer(clock.clone())

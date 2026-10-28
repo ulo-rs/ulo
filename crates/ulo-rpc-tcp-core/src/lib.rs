@@ -22,4 +22,4 @@
 
 mod link;
 
-pub use link::{Accept, CUT_GRACE, Core, DEFAULT_MAX_FRAME, Incoming, Reader, Writer};
+pub use link::{ACCEPT_BACKOFF, Accept, CUT_GRACE, Core, DEFAULT_MAX_FRAME, Incoming, Reader, Writer};

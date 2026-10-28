@@ -17,5 +17,11 @@ ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
 futures-util.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+# `ScriptedTimer`: the clock whose refusal `tests/lag_refused.rs` reads.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
+# The test drives an app on its clock alone, from a plain thread.
+futures-executor.workspace = true
+
 [lints]
 workspace = true

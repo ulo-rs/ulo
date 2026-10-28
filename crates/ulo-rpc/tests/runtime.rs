@@ -101,7 +101,7 @@ impl Module for Root {
 #[tokio::test(flavor = "current_thread")]
 async fn listen_refuses_an_rpc_server_on_an_app_with_no_runtime() {
     let bound = App::builder(Root)
-        .timer(ulo_runtime_tokio::Timer)
+        .timer(ulo_runtime_tokio::Timer::current())
         .wire()
         .expect("the app wires")
         .connect()
@@ -133,7 +133,7 @@ impl Module for WithClient {
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_client_module_on_an_app_with_a_timer_alone_fails_wiring_naming_runtime() {
-    let wired = App::builder(WithClient).timer(ulo_runtime_tokio::Timer).wire();
+    let wired = App::builder(WithClient).timer(ulo_runtime_tokio::Timer::current()).wire();
     let Err(StartupError::Wiring(errors)) = wired else {
         panic!("an `RpcClientModule` on an app with a timer alone wired");
     };

@@ -27,8 +27,9 @@ use ulo_transport::{Details, ErrorKind, TaskSet};
 pub const DEFAULT_MAX_FRAME: u64 = 4 * 1024 * 1024;
 
 /// How long the accept loop waits after the OS refuses an accept, out of descriptors or memory,
-/// before it accepts again.
-const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
+/// before it accepts again. A runtime that refuses the wait, having shut down, ends the loop as the
+/// drain does.
+pub const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 
 /// Frames queued for one connection's writer ahead of the next send's wait: each send is queued at
 /// its call and waits until it is among this many the writer has not taken.
@@ -62,8 +63,8 @@ pub type Writer = Pin<Box<dyn AsyncWrite + Send>>;
 
 /// A link's listener, adopted from the socket `ulo-net` bound or inherited.
 pub trait Accept: Send + 'static {
-    /// The next connection. A failure is logged and retried after a pause, as the OS refusing an
-    /// accept for want of descriptors or memory is.
+    /// The next connection. A failure is logged and retried after [`ACCEPT_BACKOFF`], as the OS
+    /// refusing an accept for want of descriptors or memory is.
     fn accept(&mut self) -> impl Future<Output = io::Result<Incoming>> + Send;
 }
 
@@ -499,8 +500,10 @@ enum LaneEnd {
     /// The client dropped the reply lane. Its stream drops the channel's receiver ahead of the
     /// lane's own signal, so a send failing is the same drop seen first. Read as `Lost`, that send
     /// would leave the reader unhanded and a peer still writing would read a reset; no caller reads
-    /// either end, the lane being gone. Unpinned by a deterministic test: only a reader on another
-    /// worker, between the stream's two drops, reaches it.
+    /// either end, the lane being gone. A reader on another worker, between the stream's two drops,
+    /// reaches it; `a_reply_lane_whose_send_fails_hands_its_reader_on_and_the_writing_peer_reads_a_fin`
+    /// in ulo-rpc-tcp's and ulo-rpc-tcp-smol's `tests/lane_send_failure.rs` pins it, dropping the
+    /// lane inside the read that completes a frame.
     Dropped,
 }
 
@@ -644,7 +647,10 @@ impl Server {
                 Some(Ok(incoming)) => connections.spawn(self.clone().connection(incoming, deliveries.clone())),
                 Some(Err(error)) => {
                     tracing::warn!(%error, "the TCP link could not accept a connection");
-                    self.runtime.sleep(ACCEPT_BACKOFF).await;
+                    if let Err(refused) = self.runtime.try_sleep(ACCEPT_BACKOFF).await {
+                        tracing::debug!(%refused, "the runtime timing the TCP link's accept backoff refused it; the link stops accepting");
+                        break;
+                    }
                 }
                 None => {}
             }

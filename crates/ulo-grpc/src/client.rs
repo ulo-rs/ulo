@@ -339,7 +339,7 @@ mod tests {
     /// context `trace` names: `Received` is the inbound one, `Originated` is a `TraceSource`'s.
     async fn through(origin: Option<ulo::TraceOrigin>, metadata: &[(&'static str, &'static str)]) -> Result<tonic::Request<()>, tonic::Status> {
         let app = ulo::App::builder(Root)
-            .timer(ulo_runtime_tokio::Timer)
+            .timer(ulo_runtime_tokio::Timer::current())
             .wire()
             .expect("the app wires")
             .connect()

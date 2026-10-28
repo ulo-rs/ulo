@@ -69,7 +69,7 @@ impl Module for Bound {
 
 async fn connected(bound: bool) -> App<Connected> {
     App::builder(Bound(bound))
-        .timer(ulo_runtime_tokio::Timer)
+        .timer(ulo_runtime_tokio::Timer::current())
         .wire()
         .unwrap_or_else(|error| panic!("did not wire: {error}"))
         .connect()

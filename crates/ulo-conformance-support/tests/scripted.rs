@@ -1,4 +1,5 @@
-//! `ScriptedTimer` against sleeps polled by hand: what `live` and `pending_at` answer at each step.
+//! `ScriptedTimer` against sleeps polled by hand: what `live`, `pending_at` and `refused` answer at
+//! each step.
 
 use std::future::Future;
 use std::task::{Context, Poll, Waker};
@@ -70,4 +71,19 @@ fn live_counts_sleeps_until_they_drop() {
     assert_eq!(clock.live(SHORT), 1);
     drop(second);
     assert_eq!(clock.live(SHORT), 0);
+}
+
+/// A refused length is answered at once, `try_sleep` with the refusal, and counted; another length
+/// keeps its script.
+#[test]
+fn a_refused_length_ends_at_once_and_is_counted() {
+    let clock = ScriptedTimer::new();
+    clock.refuse(SHORT);
+    assert_eq!(poll(&mut clock.sleep(SHORT)), Poll::Ready(()));
+    let refused = std::pin::Pin::new(&mut clock.try_sleep(SHORT)).poll(&mut Context::from_waker(Waker::noop()));
+    assert_eq!(refused, Poll::Ready(Err(ulo::Refused)));
+    assert_eq!(clock.refused(SHORT), 2);
+    assert_eq!(clock.live(SHORT), 0, "a refused sleep is not live");
+    assert!(poll(&mut clock.sleep(LONG)).is_pending(), "a length not refused ended");
+    assert_eq!(clock.refused(LONG), 0);
 }

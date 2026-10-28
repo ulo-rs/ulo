@@ -147,10 +147,19 @@ impl<L: Listener> Backend for HyperOn<L> {
     /// the app cancels it, and the connection ends once hyper has written that. Each connection is
     /// polled once in this future's first poll, so an answer that needs no wait is written even
     /// when a spent cap leaves `close` that one poll. The wait ends as soon as no connection is
-    /// left; cut by the core's bound, the connections are aborted all the same.
+    /// left; cut by the core's bound, the connections are aborted all the same. A runtime that
+    /// refuses the wait, having shut down, has the connections aborted at once.
     async fn close(&self) -> Result<(), BoxError> {
         if let Some(bound) = &self.bound {
-            bound.serve.close_after(bound.service.runtime().sleep(FLUSH)).await;
+            let flush = bound.service.runtime().try_sleep(FLUSH);
+            bound
+                .serve
+                .close_after(async {
+                    if let Err(refused) = flush.await {
+                        tracing::debug!(%refused, "the runtime timing the HTTP server's close refused its wait; the connections are aborted without one");
+                    }
+                })
+                .await;
         }
         Ok(())
     }

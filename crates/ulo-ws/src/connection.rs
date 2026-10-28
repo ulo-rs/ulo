@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{Instrument, Span};
 use ulo::{
     AppHandle, BoxError, BoxFuture, CancelReason, Closed, DrainToken, ExecOptions, Execution, ExecutionRef, LateOutcome,
-    ModuleRef, MountedHandler, Runtime, Spawn, TaskHandle, Timer, TraceContext, TraceMode, Transport,
+    ModuleRef, MountedHandler, Refused, Runtime, Spawn, TaskHandle, Timer, TraceContext, TraceMode, Transport,
 };
 use ulo_transport::{CallError, ErrorKind, TaskSet, Tracked, Turns, span};
 use ulo_transport::__private::Watch;
@@ -1010,6 +1010,14 @@ where
     ws.close(Some(frame)).await
 }
 
+/// `poll_sleep` for a `try_sleep`: ready with its answer, a refusal included.
+fn poll_tick(tick: &mut Option<BoxFuture<'static, Result<(), Refused>>>, cx: &mut Context<'_>) -> Poll<Result<(), Refused>> {
+    match tick {
+        Some(tick) => tick.as_mut().poll(cx),
+        None => Poll::Pending,
+    }
+}
+
 /// Ready when `sleep` has ended; pending forever when there is none.
 fn poll_sleep(sleep: &mut Option<BoxFuture<'static, ()>>, cx: &mut Context<'_>) -> Poll<()> {
     match sleep {
@@ -1181,7 +1189,9 @@ where
     let mut draining = false;
     let mut closing: Option<DisconnectReason> = None;
     let mut close_deadline: Option<BoxFuture<'static, ()>> = None;
-    let mut ping = limits.ping_interval.map(|every| accept.runtime.sleep(every));
+    // The ping is a ticker, timed with `try_sleep`: on a runtime that has shut down a sleep ends at
+    // once, and the loop would ping without pause. A refused tick stops the pings.
+    let mut ping = limits.ping_interval.map(|every| accept.runtime.try_sleep(every));
     let mut pong: Option<BoxFuture<'static, ()>> = None;
     // Each listener is registered before the state it watches is read, kept until it is heard,
     // and registered again on the next turn.
@@ -1248,7 +1258,10 @@ where
                         1 => poll_listener(&mut woken, cx).map(|()| Turn::Woken),
                         2 => poll_listener(&mut progressed, cx).map(|()| Turn::Woken),
                         3 if !draining => poll_listener(&mut phase_changed, cx).map(|()| Turn::Woken),
-                        4 if closing.is_none() => poll_sleep(&mut ping, cx).map(|()| Turn::Ping),
+                        4 if closing.is_none() => poll_tick(&mut ping, cx).map(|ticked| match ticked {
+                            Ok(()) => Turn::Ping,
+                            Err(refused) => Turn::PingRefused(refused),
+                        }),
                         5 => poll_sleep(&mut pong, cx).map(|()| Turn::PongMissed),
                         6 => poll_sleep(&mut close_deadline, cx).map(|()| Turn::CloseDeadline),
                         7 if joining => joined.as_mut().poll(cx).map(|_| Turn::Woken),
@@ -1312,10 +1325,14 @@ where
                 if ws.send(Message::Ping(Bytes::new())).await.is_err() {
                     break DisconnectReason::Lost;
                 }
-                ping = limits.ping_interval.map(|every| accept.runtime.sleep(every));
+                ping = limits.ping_interval.map(|every| accept.runtime.try_sleep(every));
                 if pong.is_none() {
                     pong = limits.pong_timeout.map(|after| accept.runtime.sleep(after));
                 }
+            }
+            Turn::PingRefused(refused) => {
+                ping = None;
+                tracing::debug!(%refused, "the runtime timing a WebSocket connection's pings refused the next one; the connection pings no more");
             }
             Turn::PongMissed => break DisconnectReason::Lost,
             Turn::CloseDeadline => break closing.clone().unwrap_or(DisconnectReason::Lost),
@@ -1360,6 +1377,8 @@ enum Turn {
     /// the next turn reads the state again.
     Woken,
     Ping,
+    /// The runtime refused the ping interval's sleep, having shut down.
+    PingRefused(Refused),
     PongMissed,
     CloseDeadline,
 }

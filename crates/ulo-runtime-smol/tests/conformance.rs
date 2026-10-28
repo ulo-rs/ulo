@@ -31,5 +31,5 @@ impl Harness for OnSmol {
 
 runtime_suite!(OnSmol; not_applicable {
     a_shut_down_runtime_refuses_spawning_and_timing_without_panicking:
-        "a `Smol` holds its executor, which has no shutdown, and its timers fire from async-io's reactor thread, which lives as long as the process",
+        "smol has no runtime value that can be shut down while code still holds it",
 });

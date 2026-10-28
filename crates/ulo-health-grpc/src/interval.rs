@@ -53,7 +53,8 @@ async fn overall(readiness: &Readiness) -> ServingStatus {
 /// on a change, so an unchanged tick sends a `Watch` subscriber nothing. The bridge's
 /// before-shutdown hook aborts the task before it writes `NOT_SERVING`, which leaves that write
 /// the last; the task's own end at `Stopping` covers a hook the shutdown cap skipped, and with no interval, where
-/// there is no task to end, the server's write at the drain does.
+/// there is no task to end, the server's write at the drain does. A runtime that refuses the
+/// interval's wait, having shut down, ends the task there.
 pub(crate) async fn reevaluate(
     runtime: Arc<dyn Runtime>,
     readiness: Readiness,
@@ -72,7 +73,14 @@ pub(crate) async fn reevaluate(
             return;
         }
         match every {
-            Some(every) => ulo::Timer::sleep(&*runtime, every).await,
+            // A ticker: on `sleep`, which ends at once on a runtime that has shut down, it would
+            // evaluate without pause.
+            Some(every) => {
+                if let Err(refused) = ulo::Timer::try_sleep(&*runtime, every).await {
+                    tracing::debug!(%refused, "the runtime refused the gRPC health bridge's interval; it re-evaluates no more");
+                    return;
+                }
+            }
             // `Stopping` arrived mid-run: one more pass writes the down status.
             None if readiness.is_stopping() => {}
             None => return,

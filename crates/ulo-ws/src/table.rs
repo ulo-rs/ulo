@@ -294,9 +294,15 @@ impl GatewayTable {
     }
 
     /// Aborts every connection left, returns once their tasks have ended, and stops broadcast
-    /// delivery.
+    /// delivery. A clock that refuses the grace, its runtime shut down, aborts them at once.
     pub async fn close(&self) {
-        self.inner.tracker.close(self.inner.runtime.sleep(CLOSE_GRACE)).await;
+        let grace = self.inner.runtime.try_sleep(CLOSE_GRACE);
+        let grace = Box::pin(async move {
+            if let Err(refused) = grace.await {
+                tracing::debug!(%refused, "the runtime timing the WebSocket close refused its grace; the connections are aborted without one");
+            }
+        });
+        self.inner.tracker.close(grace).await;
         self.inner.hub.stop();
     }
 

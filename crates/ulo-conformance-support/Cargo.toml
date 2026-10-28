@@ -7,8 +7,9 @@ description = "The harness pieces the Ulo conformance suites share"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-# A dev-dependency of the suite crates and of nothing else. Cargo strips dev-dependencies when
-# publishing them, so this never needs a crates.io release.
+# A dependency of the suite crates, none of which is published, and a dev-dependency of the
+# crates whose tests run on its harnesses or time on its `ScriptedTimer`. Cargo strips
+# dev-dependencies when publishing, so this never needs a crates.io release.
 publish = false
 
 [features]

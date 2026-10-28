@@ -168,6 +168,10 @@ impl Spawn for Holding {
     fn name(&self) -> &'static str {
         self.inner.name()
     }
+
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
+        Spawn::try_spawn(&self.inner, Box::pin(Held { task: fut, done: false, hold: Arc::clone(&self.hold) }))
+    }
 }
 
 impl Timer for Holding {
@@ -177,6 +181,10 @@ impl Timer for Holding {
 
     fn now(&self) -> Instant {
         self.inner.now()
+    }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        Timer::try_sleep(&self.inner, d)
     }
 }
 

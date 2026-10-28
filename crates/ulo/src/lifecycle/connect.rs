@@ -78,7 +78,8 @@ pub(crate) async fn build_singleton(shared: &Arc<AppShared>, id: BindingId) -> R
 
 /// Runs a readiness check: attempts under the attempt bound, `retries` more after an `Err` or an
 /// attempt timeout with `backoff` between, the whole under the check bound. A panicking attempt,
-/// and one whose error carries a `Permanent`, ends the check at once, with no backoff.
+/// and one whose error carries a `Permanent`, ends the check at once, with no backoff; a backoff
+/// the `Timer` refuses ends it with the last attempt's reason.
 /// `Readiness { key, attempts, reason }` on failure, the reason by the rules of §9.3.
 pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready: &ReadyRecord) -> Result<(), ConnectError> {
     let graph = shared.graph();
@@ -111,11 +112,15 @@ pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready:
             if made > ready.retries {
                 return Err(reason);
             }
-            // Without a `Timer` there is no clock to back off on, and the retry follows at once.
-            if let Some(timer) = timer {
-                if !ready.backoff.is_zero() {
-                    timer.sleep(ready.backoff).await;
-                }
+            // Without a `Timer` there is no clock to back off on, and the retry follows at once. A
+            // `Timer` that refuses the backoff, its runtime shut down, ends the retries: on
+            // `sleep`, which ends at once there, they would run without pause.
+            if let Some(timer) = timer
+                && !ready.backoff.is_zero()
+                && let Err(refused) = timer.try_sleep(ready.backoff).await
+            {
+                tracing::debug!(%refused, "the app's `Timer` refused a readiness check's backoff; the check is not retried");
+                return Err(reason);
             }
         }
     };

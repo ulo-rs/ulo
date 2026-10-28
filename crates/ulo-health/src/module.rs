@@ -21,7 +21,8 @@ const LAG_MARGIN: Duration = Duration::from_secs(1);
 /// binding's construction error, `connect` being the first point a check's `bound` can be read.
 ///
 /// Its `BeforeApplicationShutdown` hook turns readiness false, then waits the [`lag`](Self::lag),
-/// bounded `After(lag + 1 s)` so the core's 10 s `hook_timeout` does not cut a longer lag. The hook
+/// bounded `After(lag + 1 s)` so the core's 10 s `hook_timeout` does not cut a longer lag; a
+/// `Timer` that refuses the lag, its runtime shut down, ends the hook at once. The hook
 /// belongs to the binding, which is built after every check it reads, so in the reverse connect
 /// order of the before-shutdown stage it runs ahead of every check's hooks; a lazily loaded
 /// module's hooks run ahead of it.
@@ -66,8 +67,10 @@ impl Module for HealthModule {
         m.try_singleton(|timer: Dep<dyn Timer>, checks: Many<dyn Check>| async move { build(timer, checks) })
             .before_shutdown(move |_signal: Signal, readiness: Dep<Readiness>| async move {
                 readiness.stop();
-                if !lag.is_zero() {
-                    readiness.shared.runner.timer.sleep(lag).await;
+                if !lag.is_zero()
+                    && let Err(refused) = readiness.shared.runner.timer.try_sleep(lag).await
+                {
+                    tracing::debug!(%refused, "the app's `Timer` refused the health module's lag; the shutdown goes on without it");
                 }
             })
             .timeout(lag.saturating_add(LAG_MARGIN));
