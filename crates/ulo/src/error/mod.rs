@@ -139,7 +139,9 @@ impl Error for PreparePanicked {}
 #[derive(Debug)]
 pub enum ConnectError {
     Construct { key: KeyName, module: ModuleName, reason: FailureReason },
-    /// How the last attempt ended, or `TimedOut { limit: Item }` for the whole check (§9.3).
+    /// How the last attempt ended, `TimedOut { limit: Item }` for the whole check, or `Errored`
+    /// holding a `Permanent` [`RuntimeShutDown`](crate::RuntimeShutDown) for a backoff the
+    /// runtime refused (§9.3).
     Readiness { key: KeyName, attempts: u32, reason: FailureReason },
     Hook { hook: HookKind, key: KeyName, reason: FailureReason },
 }

@@ -48,7 +48,8 @@ const REASON_UNAUTHORIZED: &str = "Unauthorized";
 ///
 /// A connection whose handshake echoed no `graphql-transport-ws` is refused with 4406, and one
 /// whose `connection_init` does not arrive within `connection_init_timeout` (3 seconds unset)
-/// closes with 4408. Each `subscribe` runs in its own execution, opened on the connection with its
+/// closes with 4408, or with 1001 and the shutdown phrase when the app's timer refuses that wait,
+/// having shut down. Each `subscribe` runs in its own execution, opened on the connection with its
 /// inputs seeded, in which the engine builds the schema's context; a query or mutation sent as a
 /// `subscribe` answers one `next`, and one the engine answers before executing, a request error
 /// or a context that cannot be built, answers `error`.
@@ -222,11 +223,19 @@ impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
             let timer = Arc::clone(conn.timer());
             let watched = conn.clone();
             // Detached, on the app's runtime: it ends with the timeout, closing the connection
-            // unless it was acknowledged first.
+            // unless it was acknowledged first. A timer that refuses the wait, having shut down,
+            // measured no time, so the close is the shutdown's 1001 rather than 4408.
             drop(conn.runtime().spawn(Box::pin(async move {
-                timer.sleep(after).await;
-                if !state.is_acknowledged() {
-                    close(&watched, &state, 4408, REASON_INIT_TIMEOUT).await;
+                let waited = timer.try_sleep(after).await;
+                if state.is_acknowledged() {
+                    return;
+                }
+                match waited {
+                    Ok(()) => close(&watched, &state, 4408, REASON_INIT_TIMEOUT).await,
+                    Err(refused) => {
+                        tracing::debug!(%refused, "the timer bounding a graphql-transport-ws `connection_init` refused the wait, having shut down");
+                        close(&watched, &state, 1001, ulo_transport::SHUTDOWN_MESSAGE).await;
+                    }
                 }
             })));
         }

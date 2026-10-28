@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use crate::app::shared::AppShared;
 use crate::binding::{Qualifier, ReadyRecord, Recipe};
 use crate::construct::ConstructError;
-use crate::error::{ConnectError, FailureReason, LookupError, construct_permanent};
+use crate::error::{ConnectError, FailureReason, LookupError, Permanent, construct_permanent};
 use crate::graph::{BindingId, FrozenBinding, Graph, ModuleId, Visible};
 use crate::hooks::{HookCx, HookKind, HookRecord};
 use crate::key::{BindingKind, Key, KeyName};
@@ -19,7 +19,7 @@ use crate::module::ModuleName;
 use crate::redact::{Redacted, SecretRegistry, redact};
 use crate::resolver::{Purpose, Resolver};
 use crate::signal::Signal;
-use crate::timer::{BoxError, BoundKind, resolve_bound};
+use crate::timer::{BoxError, BoundKind, RuntimeShutDown, resolve_bound};
 
 /// Connects `singletons` (in connect order) and the hooks of `modules` (in collection order).
 /// `App::connect` passes the whole graph; `load` passes what the lazy module brought, after
@@ -79,7 +79,8 @@ pub(crate) async fn build_singleton(shared: &Arc<AppShared>, id: BindingId) -> R
 /// Runs a readiness check: attempts under the attempt bound, `retries` more after an `Err` or an
 /// attempt timeout with `backoff` between, the whole under the check bound. A panicking attempt,
 /// and one whose error carries a `Permanent`, ends the check at once, with no backoff; a backoff
-/// the `Timer` refuses ends it with the last attempt's reason.
+/// the `Timer` refuses ends it as `Errored` holding a `Permanent` `RuntimeShutDown`, its source
+/// the last attempt's error.
 /// `Readiness { key, attempts, reason }` on failure, the reason by the rules of §9.3.
 pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready: &ReadyRecord) -> Result<(), ConnectError> {
     let graph = shared.graph();
@@ -120,7 +121,13 @@ pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready:
                 && let Err(refused) = timer.try_sleep(ready.backoff).await
             {
                 tracing::debug!(%refused, "the app's `Timer` refused a readiness check's backoff; the check is not retried");
-                return Err(reason);
+                // A timed-out attempt has no error to carry, and its bound may itself have ended
+                // on the refusal.
+                let shut_down = match reason {
+                    FailureReason::Errored(last) => RuntimeShutDown::after(last),
+                    _ => RuntimeShutDown::new(refused),
+                };
+                return Err(FailureReason::Errored(redact(secrets, Box::new(Permanent::new(shut_down)))));
             }
         }
     };

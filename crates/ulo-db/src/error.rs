@@ -38,7 +38,8 @@ impl Error for UnsupportedRuntime {}
 ///   decides, the one its `ping` uses: an error it marks `ulo::Permanent`, such as no permission to
 ///   take the lock, is not retryable and any other is.
 /// - Not retryable: a migration that failed, the migrations running past
-///   `migrate_within` once the lock was held, or a task that panicked.
+///   `migrate_within` once the lock was held, a task that panicked, or either bound refused by a
+///   runtime that has shut down, whose `source` is a `ulo::RuntimeShutDown`.
 ///
 /// The module's init hook raises a retryable failure without `ulo::Permanent`, so
 /// `ulo::is_permanent` answers false for it, and every other inside `ulo::Permanent`.

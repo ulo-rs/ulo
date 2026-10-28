@@ -49,6 +49,51 @@ impl std::fmt::Display for Refused {
 
 impl Error for Refused {}
 
+/// The reason a failure the runtime's refusal caused is reported under: by [`RuntimeShutDown`],
+/// and by a transport that answers it as a wire reason, as an RPC call's `ErrorInfo` does.
+pub const RUNTIME_SHUT_DOWN: &str = "runtime_shut_down";
+
+/// Work that ended because the runtime refused a wait, having shut down: a loop whose pacing wait
+/// was refused, or a bounded wait whose bound was. Reported where a reader learns why the work
+/// ended, in place of an elapsed bound or a loop out of attempts, neither of which happened.
+/// Retrying on a runtime that has shut down cannot succeed, so whoever raises one in a startup
+/// error raises it inside [`Permanent`](crate::Permanent).
+///
+/// `source()` is the last attempt's error for a loop ended [`after`](Self::after) one, and the
+/// runtime's [`Refused`] otherwise.
+#[derive(Debug)]
+pub struct RuntimeShutDown {
+    source: BoxError,
+}
+
+impl RuntimeShutDown {
+    pub fn new(refused: Refused) -> RuntimeShutDown {
+        RuntimeShutDown { source: Box::new(refused) }
+    }
+
+    /// A loop ended on the refusal after an attempt that failed with `last`.
+    pub fn after(last: impl Into<BoxError>) -> RuntimeShutDown {
+        RuntimeShutDown { source: last.into() }
+    }
+
+    /// [`RUNTIME_SHUT_DOWN`].
+    pub fn reason(&self) -> &'static str {
+        RUNTIME_SHUT_DOWN
+    }
+}
+
+impl std::fmt::Display for RuntimeShutDown {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the runtime has shut down")
+    }
+}
+
+impl Error for RuntimeShutDown {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&*self.source)
+    }
+}
+
 /// How long a hook, a construction or a readiness check may take.
 ///
 /// `Default` takes the app's default for that kind of item: `hook_timeout` (10 s) for a hook,

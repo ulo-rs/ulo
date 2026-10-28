@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use ulo::{BoxError, BoxFuture, Permanent, Runtime, Spawn, TaskEnd, Timer, ValueHandle, spawn_with};
+use ulo::{BoxError, BoxFuture, Permanent, Refused, Runtime, RuntimeShutDown, Spawn, TaskEnd, Timer, ValueHandle, spawn_with};
 
 use crate::error::{TaskFailed, UnsupportedRuntime};
 use crate::store::Store;
@@ -37,6 +37,10 @@ pub(crate) fn require_tokio(runtime: &dyn Runtime, module: &'static str) -> Resu
 /// For options whose `create` connects, the loop around `create` is the store's one retry loop:
 /// the module's retries and backoff, ending on `Permanent` or on a backoff the runtime refuses,
 /// under the construction bound `connect_within`. For any other options a single `create` runs and `.ready` retries the ping.
+///
+/// A runtime that refuses the backoff, or the bound, having shut down, fails the loop with a
+/// `Permanent` [`RuntimeShutDown`]: its source is the last attempt's error after a refused backoff,
+/// the runtime's `Refused` after a refused bound.
 pub(crate) async fn create<S: Store>(
     runtime: Arc<dyn Runtime>,
     options: S::Options,
@@ -46,12 +50,23 @@ pub(crate) async fn create<S: Store>(
     if !S::create_connects(&options) {
         return create_once::<S>(&runtime, &options).await;
     }
-    // No clock of the loop's own: the binding's construction bound, set to `connect_within`,
-    // drops this future at the bound, and dropping it aborts the attempt in flight.
+    let looping: BoxFuture<'_, _> = Box::pin(create_looping::<S>(&runtime, &options, policy));
+    match within_reporting(&*runtime, policy.connect_within, looping).await {
+        Ok(created) => created,
+        Err(Cut::Refused(refused)) => Err(Permanent::new(RuntimeShutDown::new(refused)).into()),
+        // The binding's construction bound is the same length on the same clock and was armed
+        // before this future's first poll, so it has passed too, and it reports the expiry when it
+        // drops this future, in the poll this one ended in.
+        Err(Cut::Expired) => std::future::pending().await,
+    }
+}
+
+/// The retries of [`create`], dropped at the connect bound, which aborts the attempt in flight.
+async fn create_looping<S: Store>(runtime: &Arc<dyn Runtime>, options: &S::Options, policy: Policy) -> Result<S::Client, BoxError> {
     let mut made: u32 = 0;
     loop {
         made = made.saturating_add(1);
-        let error = match create_once::<S>(&runtime, &options).await {
+        let error = match create_once::<S>(runtime, options).await {
             Ok(client) => return Ok(client),
             Err(error) => error,
         };
@@ -61,12 +76,12 @@ pub(crate) async fn create<S: Store>(
         // The error's text is left out: it can carry the URL, and nothing scrubs a log line.
         tracing::debug!(store = S::NAME, attempt = made, "creating the client failed; retrying");
         if !policy.backoff.is_zero()
-            && let Err(refused) = Timer::try_sleep(&*runtime, policy.backoff).await
+            && let Err(refused) = Timer::try_sleep(&**runtime, policy.backoff).await
         {
             // On `sleep`, which ends at once on a runtime that has shut down, the retries would
             // run without pause.
             tracing::debug!(store = S::NAME, %refused, "the runtime refused the backoff before a retry of `create`; it is not retried");
-            return Err(error);
+            return Err(Permanent::new(RuntimeShutDown::after(error)).into());
         }
     }
 }
@@ -139,7 +154,8 @@ impl<T> Drop for Attached<T> {
 }
 
 /// `work`'s output, or `None` once `bound` passes on the app's clock first. `work` is dropped with
-/// the returned future either way.
+/// the returned future either way. For a bound whose expiry only ends work: a runtime that has shut
+/// down ends the bound at once, which reads as the bound passing.
 pub(crate) fn within<F: Future + Unpin>(
     runtime: &dyn Runtime,
     bound: Duration,
@@ -154,5 +170,34 @@ pub(crate) fn within<F: Future + Unpin>(
             return Poll::Ready(None);
         }
         Poll::Pending
+    })
+}
+
+/// What ended a [`within_reporting`] wait before its work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Cut {
+    Expired,
+    /// The runtime refused to time the bound, having shut down.
+    Refused(Refused),
+}
+
+/// [`within`] for a bound whose expiry is reported: a bound the runtime refuses is told apart from
+/// one that passed. `work` is polled first, so an answer ready in the poll the refusal arrives in
+/// keeps it.
+pub(crate) fn within_reporting<F: Future + Unpin>(
+    runtime: &dyn Runtime,
+    bound: Duration,
+    mut work: F,
+) -> impl Future<Output = Result<F::Output, Cut>> + use<F> {
+    let mut expiry = Timer::try_sleep(runtime, bound);
+    poll_fn(move |cx: &mut Context<'_>| {
+        if let Poll::Ready(output) = Pin::new(&mut work).poll(cx) {
+            return Poll::Ready(Ok(output));
+        }
+        match expiry.as_mut().poll(cx) {
+            Poll::Ready(Ok(())) => Poll::Ready(Err(Cut::Expired)),
+            Poll::Ready(Err(refused)) => Poll::Ready(Err(Cut::Refused(refused))),
+            Poll::Pending => Poll::Pending,
+        }
     })
 }

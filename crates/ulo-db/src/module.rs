@@ -102,7 +102,9 @@ impl<S: Store> StoreModule<S> {
 
     /// The total connect bound, 30 s by default. Zero is refused at registration, a refusal the
     /// core does not make on its own bounds. It also bounds the wait for the migration lock; the
-    /// migrations have a bound of their own, [`migrate_within`](Self::migrate_within).
+    /// migrations have a bound of their own, [`migrate_within`](Self::migrate_within). A runtime
+    /// that refuses the loop's bound or the lock's, having shut down, fails the start with
+    /// `ulo::RuntimeShutDown` inside `ulo::Permanent`, in place of the bound passing.
     pub fn connect_within(mut self, d: Duration) -> Self {
         self.connect_within = d;
         self
@@ -115,7 +117,9 @@ impl<S: Store> StoreModule<S> {
         self
     }
 
-    /// The constant wait between attempts, 1 s by default.
+    /// The constant wait between attempts, 1 s by default. A runtime that refuses it, having shut
+    /// down, ends the loop with `ulo::RuntimeShutDown` inside `ulo::Permanent`, its source the last
+    /// attempt's error.
     pub fn backoff(mut self, d: Duration) -> Self {
         self.backoff = d;
         self

@@ -46,6 +46,8 @@ testcontainers.workspace = true
 # `test-util`: the `roots_timeout` test runs on a paused clock.
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "test-util"] }
 ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
+# `ScriptedTimer`, which refuses the roots wait's bound as a runtime that has shut down does.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
 # The certificate a TLS NATS server serves in the link's own tests.
 ulo-test-certs = { path = "../ulo-test-certs" }
 # `aws-lc-rs` beside async-nats's `ring`, so every test build links both of rustls's crypto

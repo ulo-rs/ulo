@@ -307,6 +307,10 @@ pub enum DisconnectReason {
     /// An I/O error, a connection closed without a Close frame, or a Pong that missed
     /// `pong_timeout`.
     Lost,
+    /// The runtime timing the keep-alive refused a ping tick or the wait for a Pong, having shut
+    /// down, and the connection closed with 1001 and the shutdown phrase. Nothing is known of the
+    /// peer: no time was measured, so no Pong was missed.
+    RuntimeShutDown,
 }
 
 /// A connection refused in the connect phase, with the close code it ends with: by kind, 1008 for

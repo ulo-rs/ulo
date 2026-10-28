@@ -162,7 +162,9 @@ impl<Q> GraphqlConfig<Q> {
 
     /// How long a subscription connection may go without `connection_init` before it closes with
     /// 4408: 3 seconds at `Bound::Default`, the reference server's; `Bound::Unbounded` waits
-    /// indefinitely. `Bound::After(Duration::ZERO)` is refused when the application wires.
+    /// indefinitely. A timer that refuses the wait, having shut down, closes the connection with
+    /// 1001 and the shutdown phrase instead. `Bound::After(Duration::ZERO)` is refused when the
+    /// application wires.
     pub fn connection_init_timeout(mut self, timeout: Bound) -> Self {
         self.connection_init_timeout = timeout;
         self

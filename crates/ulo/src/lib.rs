@@ -80,7 +80,7 @@ pub use resolver::{Entries, Entry, Resolver};
 pub use scope::{AllowedIn, HookCapable, Scope, ScopeKind};
 pub use runtime::{Runtime, RuntimeTask, Spawn, TaskEnd, TaskHandle, ValueHandle, spawn_with};
 pub use signal::Signal;
-pub use timer::{BoxError, BoxFuture, Bound, Refused, Timer};
+pub use timer::{BoxError, BoxFuture, Bound, RUNTIME_SHUT_DOWN, Refused, RuntimeShutDown, Timer};
 pub use transport::controller::{Controller, ControllerHandle, Mount, MountedHandler};
 pub use transport::enhancer::EnhancerSpec;
 pub use transport::handler::{HandlerInfo, HandlerSpec, Shape};

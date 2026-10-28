@@ -286,6 +286,7 @@ jobs:
           the_task_keeping_a_cut_close_s_connection_lets_go_when_it_is_lost
           a_server_s_grace_is_timed_on_the_app_s_timer
           a_cut_close_keeps_the_connection_until_the_answer_it_waited_room_for_is_written
+          a_nats_server_s_roots_wait_whose_bound_is_refused_logs_the_refusal
           -- cargo test -p ulo-rpc-nats --features integration --lib --locked
       - run: cargo test -p ulo-rpc-redis --features integration --test conformance --locked
       - run: cargo test -p ulo-rpc-mqtt --features integration --test conformance --locked

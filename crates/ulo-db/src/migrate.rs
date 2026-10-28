@@ -2,9 +2,9 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ulo::{BoxError, BoxFuture, Runtime, spawn_with};
+use ulo::{BoxError, BoxFuture, Runtime, RuntimeShutDown, spawn_with};
 
-use crate::connect::{Attached, carries_permanent, within};
+use crate::connect::{Attached, Cut, carries_permanent, within, within_reporting};
 use crate::error::{LockFailed, LockTimedOut, MigrationFailed, MigrationTimedOut, Retry, TaskFailed};
 use crate::store::Store;
 
@@ -128,6 +128,7 @@ fn run_boxed<S: MigrationLock>(
 ///   retryable and any other is.
 /// - Everything after the lock is held, a failing migration and `bounds.migrations` passing among
 ///   them: not retryable.
+/// - Either bound refused by the runtime, having shut down: a [`RuntimeShutDown`], not retryable.
 ///
 /// The steps run as one task on the app's runtime, so whatever the migrator spawns runs there. Both
 /// bounds are timed on the app's clock inside the task, the second starting when the lock is held,
@@ -141,18 +142,20 @@ pub(crate) async fn run_locked<S: MigrationLock>(
     let clock = Arc::clone(&runtime);
     let steps = async move {
         let waiting: BoxFuture<'static, _> = Box::pin(S::lock(&client, bounds.lock));
-        let guard = match within(&*clock, bounds.lock, waiting).await {
-            Some(Ok(guard)) => guard,
-            Some(Err(error)) => return Err(BoxError::from(LockFailed(error))),
-            None => return Err(LockTimedOut::new(bounds.lock).into()),
+        let guard = match within_reporting(&*clock, bounds.lock, waiting).await {
+            Ok(Ok(guard)) => guard,
+            Ok(Err(error)) => return Err(BoxError::from(LockFailed(error))),
+            Err(Cut::Expired) => return Err(LockTimedOut::new(bounds.lock).into()),
+            Err(Cut::Refused(refused)) => return Err(RuntimeShutDown::new(refused).into()),
         };
         let running = migrations.run(client);
         let ran: Result<(), BoxError> = match bounds.migrations {
             None => running.await,
-            Some(limit) => match within(&*clock, limit, running).await {
-                Some(ran) => ran,
+            Some(limit) => match within_reporting(&*clock, limit, running).await {
+                Ok(ran) => ran,
                 // Dropped where it stands: the guard releases the lock on drop.
-                None => return Err(MigrationTimedOut { bound: limit }.into()),
+                Err(Cut::Expired) => return Err(MigrationTimedOut { bound: limit }.into()),
+                Err(Cut::Refused(refused)) => return Err(RuntimeShutDown::new(refused).into()),
             },
         };
         let unlocking: BoxFuture<'static, ()> = S::unlock(guard);

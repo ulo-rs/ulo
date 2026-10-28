@@ -24,6 +24,8 @@ tracing.workspace = true
 # The HTTP server whose port the gateway is reached on, through `WsModule`'s hand-off.
 ulo-http-hyper = { path = "../ulo-http-hyper" }
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `ScriptedTimer`: the clock whose refusal and expiry `tests/init_refused.rs` reads.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 # `connect`: the tests speak graphql-transport-ws through a real WebSocket client.
 tokio-tungstenite = { workspace = true, features = ["connect"] }

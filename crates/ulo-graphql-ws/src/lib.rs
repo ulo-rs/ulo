@@ -6,9 +6,10 @@
 //! not fit. The gateway owns the subprotocol check (a handshake that echoed none closes 4406),
 //! `connection_init` once (a second closes 4429) with its payload kept in the session,
 //! `connection_ack`, a `subscribe` before the ack closing 4401, a duplicate `id` closing 4409, an
-//! unparseable message closing 4400, an init missing `connection_init_timeout` closing 4408,
-//! `ping` answered with `pong`, one execution per `subscribe` writing `next` items and `complete`
-//! or `error`, and `complete` from the client cancelling that execution with `ClientCancelled`.
+//! unparseable message closing 4400, an init missing `connection_init_timeout` closing 4408 (1001
+//! when the timer refuses the wait, having shut down), `ping` answered with `pong`, one execution
+//! per `subscribe` writing `next` items and `complete` or `error`, and `complete` from the client
+//! cancelling that execution with `ClientCancelled`.
 //!
 //! `ulo-graphql-http`'s `GraphqlConfig::subscriptions(path)` mounts [`GraphqlWs`] at `path`, and
 //! `GraphqlConfig::connection_init_timeout` sets its timeout.

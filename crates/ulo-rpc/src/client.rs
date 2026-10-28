@@ -839,9 +839,13 @@ fn lost() -> RpcError {
 /// A link's failure to connect, mapped one way on every link: `Unavailable`, which the next call
 /// may not meet, unless the link answered it [`Misconfigured`], which the next call meets too,
 /// save a `tls://` NATS link's roots wait that outlasted its bound, which ends once the load has.
+/// A connect whose wait the link's runtime refused, having shut down, answers a
+/// [`RuntimeShutDown`](ulo::RuntimeShutDown), which keeps its reason.
 fn connect_error(link: &str, err: BoxError) -> RpcError {
     if err.is::<Misconfigured>() {
         RpcError::new(ErrorKind::Internal, format!("the {link} link cannot connect: {err}")).with_reason("misconfigured_link")
+    } else if err.is::<ulo::RuntimeShutDown>() {
+        RpcError::new(ErrorKind::Unavailable, format!("the {link} link could not connect: {err}")).with_reason(ulo::RUNTIME_SHUT_DOWN)
     } else {
         RpcError::new(ErrorKind::Unavailable, format!("the {link} link could not connect: {err}"))
     }
@@ -955,9 +959,10 @@ async fn bounded<T>(
 }
 
 /// What a call fails with when the runtime timing it has shut down: `Unavailable` with the reason
-/// `"runtime_shut_down"` and the runtime's [`Refused`](ulo::Refused) as its source.
+/// [`RUNTIME_SHUT_DOWN`](ulo::RUNTIME_SHUT_DOWN) and the runtime's [`Refused`](ulo::Refused) as
+/// its source.
 fn runtime_shut_down(refused: ulo::Refused) -> RpcError {
-    RpcError::new(ErrorKind::Unavailable, "the runtime timing this call has shut down").with_reason("runtime_shut_down").with_source(refused)
+    RpcError::new(ErrorKind::Unavailable, "the runtime timing this call has shut down").with_reason(ulo::RUNTIME_SHUT_DOWN).with_source(refused)
 }
 
 /// Pending once, waking itself, then ready.
@@ -1274,7 +1279,8 @@ impl<Res> Stream for RpcStream<Res> {
 /// What a caller sees, uniform across links (transports DESIGN §5.2): the server's `err` with its
 /// kind and details, or the link's own failure mapped one way everywhere. No responders, a lost
 /// link or a broker refusal is `Unavailable`; the client's timeout `Timeout`, and a client whose
-/// runtime has shut down while it timed the call `Unavailable` with `reason: "runtime_shut_down"`;
+/// runtime has shut down while it timed the call, or a link whose runtime refused a wait its
+/// connect made, `Unavailable` with `reason: "runtime_shut_down"`;
 /// an oversized payload
 /// `BadRequest` with `reason: "payload_too_large"`; a binary payload on a JSON link `BadRequest`
 /// with `reason: "binary_unsupported"`, before any I/O; a `deadline-ms` the caller set with
@@ -1328,7 +1334,8 @@ impl RpcError {
     /// `"pattern_unhandled"`, `"payload_too_large"`, `"binary_unsupported"`, `"zero_timeout"`,
     /// `"reserved_header"` for a `deadline-ms` the caller set, `"misconfigured_link"` for a link
     /// that refused to connect as [`Misconfigured`], `"runtime_shut_down"` for a call whose
-    /// client's runtime refused to time it, and the server's `"bad_deadline"` for a
+    /// client's runtime refused to time it or whose link's connect answered
+    /// [`RuntimeShutDown`](ulo::RuntimeShutDown), and the server's `"bad_deadline"` for a
     /// `deadline-ms` header it cannot read.
     pub fn reason(&self) -> Option<&str> {
         self.details.iter().find_map(|detail| match detail {
@@ -2138,10 +2145,18 @@ mod tests {
         assert!(err.message().contains("the Cbor codec cannot encode the frame"), "the message should name the codec's failure, got: {err:?}");
     }
 
-    /// A link whose every connect fails: with a [`Misconfigured`] refusal, or with any other error.
+    /// A link whose every connect fails: with a [`Misconfigured`] refusal, a
+    /// [`RuntimeShutDown`](ulo::RuntimeShutDown), or any other error.
     struct FailsToConnect {
-        misconfigured: bool,
+        fails: Fails,
         connects: Arc<AtomicU64>,
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum Fails {
+        Misconfigured,
+        ShutDown,
+        Other,
     }
 
     impl Link for FailsToConnect {
@@ -2157,10 +2172,10 @@ mod tests {
 
         async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
             self.connects.fetch_add(1, Ordering::SeqCst);
-            if self.misconfigured {
-                Err(Misconfigured { source: "no root certificate loaded".into() }.into())
-            } else {
-                Err("connection refused".into())
+            match self.fails {
+                Fails::Misconfigured => Err(Misconfigured { source: "no root certificate loaded".into() }.into()),
+                Fails::ShutDown => Err(ulo::RuntimeShutDown::new(ulo::Refused).into()),
+                Fails::Other => Err("connection refused".into()),
             }
         }
 
@@ -2172,21 +2187,25 @@ mod tests {
     }
 
     /// A connect the link refuses as `Misconfigured` fails each call `Internal` with
-    /// `reason: "misconfigured_link"`, the link's cause in its message, and any other failed
+    /// `reason: "misconfigured_link"`, the link's cause in its message, one answered
+    /// `RuntimeShutDown` `Unavailable` with `reason: "runtime_shut_down"`, and any other failed
     /// connect `Unavailable`. Each call asks the link again.
     #[tokio::test]
     async fn a_misconfigured_link_fails_every_call_internal() {
-        for (misconfigured, expected) in [(true, (ErrorKind::Internal, Some("misconfigured_link"))), (false, (ErrorKind::Unavailable, None))] {
+        for (fails, expected, cause) in [
+            (Fails::Misconfigured, (ErrorKind::Internal, Some("misconfigured_link")), "no root certificate loaded"),
+            (Fails::ShutDown, (ErrorKind::Unavailable, Some(ulo::RUNTIME_SHUT_DOWN)), "the runtime has shut down"),
+            (Fails::Other, (ErrorKind::Unavailable, None), "connection refused"),
+        ] {
             let connects = Arc::new(AtomicU64::new(0));
-            let link = FailsToConnect { misconfigured, connects: Arc::clone(&connects) };
+            let link = FailsToConnect { fails, connects: Arc::clone(&connects) };
             let client = RpcClient::new(link, Arc::new(ulo_runtime_tokio::Tokio::current())).expect("the link is usable");
             for call in 0..2 {
                 let failed = client.request::<_, u32>("failing.request", &()).await.expect_err("the link never connects");
-                assert_eq!((failed.kind(), failed.reason()), expected, "call {call}, misconfigured {misconfigured}: {failed:?}");
-                let cause = if misconfigured { "no root certificate loaded" } else { "connection refused" };
+                assert_eq!((failed.kind(), failed.reason()), expected, "call {call}, {fails:?}: {failed:?}");
                 assert!(failed.message().contains(cause), "call {call} does not name the link's cause: {failed:?}");
             }
-            assert_eq!(connects.load(Ordering::SeqCst), 2, "each call asks the link to connect, misconfigured {misconfigured}");
+            assert_eq!(connects.load(Ordering::SeqCst), 2, "each call asks the link to connect, {fails:?}");
         }
     }
 
@@ -2210,7 +2229,7 @@ mod tests {
         let frame = frame.map(|item| item.expect("the stream yields its end").map(drop));
         for (what, failed) in [("the request", request.map(|r| r.map(drop))), ("the stream's wait for a frame", frame)] {
             let failed = failed.unwrap_or_else(|_| panic!("{what} on a shut-down runtime did not end within 5s")).expect_err(what);
-            assert_eq!((failed.kind(), failed.reason()), (ErrorKind::Unavailable, Some("runtime_shut_down")), "{what}: {failed:?}");
+            assert_eq!((failed.kind(), failed.reason()), (ErrorKind::Unavailable, Some(ulo::RUNTIME_SHUT_DOWN)), "{what}: {failed:?}");
             assert!(failed.message().contains("runtime"), "{what} does not name the runtime: {failed:?}");
             assert!(failed.source().is_some_and(|source| source.is::<ulo::Refused>()), "{what} does not carry the runtime's refusal: {failed:?}");
         }

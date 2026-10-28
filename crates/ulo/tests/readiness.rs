@@ -13,10 +13,14 @@
 #[macro_use]
 mod common;
 
+use std::error::Error;
 use std::time::Duration;
 
 use common::*;
-use ulo::{App, ConnectError, Dep, FailureReason, Key, Limit, ModuleDef, Permanent, StartupError};
+use ulo::{
+    App, ConnectError, Dep, FailureReason, Key, Limit, ModuleDef, Permanent, RUNTIME_SHUT_DOWN, Redacted, Refused, RuntimeShutDown,
+    StartupError, is_permanent,
+};
 
 struct A;
 struct S1;
@@ -325,11 +329,26 @@ async fn a_backoff_waits_between_attempts_on_the_apps_timer_and_not_after_the_la
     close(app).await;
 }
 
+/// The `RuntimeShutDown` a check ended with, found where the core stores it: inside the
+/// `Permanent` its `Errored` reason holds.
+fn shut_down(reason: &FailureReason) -> &RuntimeShutDown {
+    let FailureReason::Errored(stored) = reason else {
+        panic!("the check did not end as `Errored`: {reason:?}");
+    };
+    let permanent = stored.downcast_ref::<Permanent>().unwrap_or_else(|| panic!("the check's error is not `Permanent`: {reason:?}"));
+    permanent
+        .source()
+        .and_then(|inner| inner.downcast_ref::<RuntimeShutDown>())
+        .unwrap_or_else(|| panic!("the `Permanent` does not hold a `RuntimeShutDown`: {reason:?}"))
+}
+
 /// N3: a `Timer` that refuses the backoff, its runtime shut down, ends the check after the one
-/// refused wait, with the last attempt's reason, however many retries are left. Retried without
-/// the wait instead, it would run all 1001 attempts.
+/// refused wait, however many retries are left, and reports the refusal: `runtime_shut_down`,
+/// `Permanent`, the last attempt's error as its source. Retried without the wait instead, it would
+/// run all 1001 attempts; reported as the last attempt's error alone, it would read as a check out
+/// of attempts and as retryable.
 #[tokio::test]
-async fn a_backoff_the_timer_refuses_ends_the_check() {
+async fn a_backoff_the_timer_refuses_ends_the_check_with_the_refusal() {
     let sleeps = SleepLog::new();
     let backoff = Duration::from_millis(7);
     let tries = Count::new();
@@ -345,7 +364,59 @@ async fn a_backoff_the_timer_refuses_ends_the_check() {
             .backoff(backoff);
     }))
     .timer(Refusing::new(&sleeps));
-    let (_, attempts, reason) = readiness(connect_failing(builder).await);
-    assert!(matches!(reason, FailureReason::Errored(_)), "the check did not end with its last attempt's error: {reason:?}");
+    let error = connect_failing(builder).await;
+    assert!(is_permanent(&error), "a check ended on a refused backoff is retryable: {error}");
+    let (_, attempts, reason) = readiness(error);
     assert_eq!((attempts, sleeps.count(backoff)), (1, 1), "the attempts and backoffs on a `Timer` refusing the backoff");
+    let ended = shut_down(&reason);
+    assert_eq!(ended.reason(), RUNTIME_SHUT_DOWN);
+    let last = ended.source().and_then(|e| e.downcast_ref::<Redacted>()).and_then(Redacted::downcast_ref::<Boom>);
+    assert!(last.is_some(), "the refusal's source is not the last attempt's error: {ended:?}");
+}
+
+/// An attempt that timed out before the refused backoff has no error to carry: the check reports
+/// the refusal, with the runtime's `Refused` as its source, and not `TimedOut { limit: Attempt }`.
+/// `Refusing` ends every sleep at once, so the hung attempt times out on its first poll.
+#[tokio::test]
+async fn a_refused_backoff_after_a_timed_out_attempt_reports_the_refusal() {
+    let sleeps = SleepLog::new();
+    let backoff = Duration::from_millis(7);
+    let builder = App::builder(Mod::<A>::new(move |m| {
+        m.singleton(|| async { S1 })
+            .ready(|_s: Dep<S1>| std::future::pending::<Result<(), Boom>>())
+            .retries(1000)
+            .backoff(backoff)
+            .attempt_timeout(Duration::from_secs(5));
+    }))
+    .timer(Refusing::new(&sleeps));
+    let error = connect_failing(builder).await;
+    assert!(is_permanent(&error), "a check ended on a refused backoff is retryable: {error}");
+    let (_, attempts, reason) = readiness(error);
+    assert_eq!((attempts, sleeps.count(backoff)), (1, 1), "the attempts and backoffs on a `Timer` refusing the backoff");
+    let ended = shut_down(&reason);
+    assert_eq!(ended.reason(), RUNTIME_SHUT_DOWN);
+    assert!(ended.source().is_some_and(|e| e.is::<Refused>()), "the refusal's source is not the runtime's `Refused`: {ended:?}");
+}
+
+/// The control: on a clock that keeps time, a check whose retries run out on errors ends with the
+/// last attempt's error, retryable, and no `RuntimeShutDown`.
+#[tokio::test]
+async fn retries_that_run_out_on_a_running_clock_end_with_the_last_error() {
+    let sleeps = SleepLog::new();
+    let backoff = Duration::from_millis(7);
+    let builder = App::builder(Mod::<A>::new(move |m| {
+        m.singleton(|| async { S1 })
+            .ready(|_s: Dep<S1>| async { Err::<(), _>(Boom::new("down")) })
+            .retries(1)
+            .backoff(backoff);
+    }))
+    .timer(Recorded::new(&sleeps));
+    let error = connect_failing(builder).await;
+    assert!(!is_permanent(&error), "a check out of retries is permanent: {error}");
+    let (_, attempts, reason) = readiness(error);
+    assert_eq!(attempts, 2);
+    let FailureReason::Errored(last) = &reason else {
+        panic!("the check did not end with its last attempt's error: {reason:?}");
+    };
+    assert!(last.downcast_ref::<Boom>().is_some(), "the check's error is not the last attempt's: {reason:?}");
 }

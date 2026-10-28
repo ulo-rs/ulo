@@ -28,7 +28,7 @@ pub const DEFAULT_MAX_FRAME: u64 = 4 * 1024 * 1024;
 
 /// How long the accept loop waits after the OS refuses an accept, out of descriptors or memory,
 /// before it accepts again. A runtime that refuses the wait, having shut down, ends the loop as the
-/// drain does.
+/// drain does. The value is the current one, not a stability promise.
 pub const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 
 /// Frames queued for one connection's writer ahead of the next send's wait: each send is queued at

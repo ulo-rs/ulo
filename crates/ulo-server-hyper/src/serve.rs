@@ -335,6 +335,7 @@ async fn backoff(error: io::Error, timer: &dyn Runtime) -> Result<(), Refused> {
 }
 
 /// How long the accept loop waits after an accept fails for a reason other than the peer's.
+/// The value is the current one, not a stability promise.
 pub const ACCEPT_BACKOFF: Duration = Duration::from_secs(1);
 
 /// How a connection's handshake ended.
