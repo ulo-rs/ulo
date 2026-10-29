@@ -590,6 +590,7 @@ pub struct TestServer<T> {
     fail_prepare: bool,
     fail_bind: bool,
     permanent: bool,
+    shut_down: bool,
     close: CloseMode,
     on_drain: Option<OnDrain>,
     _t: PhantomData<fn() -> T>,
@@ -604,6 +605,7 @@ impl<T: Transport> TestServer<T> {
             fail_prepare: false,
             fail_bind: false,
             permanent: false,
+            shut_down: false,
             close: CloseMode::Ok,
             on_drain: None,
             _t: PhantomData,
@@ -626,6 +628,14 @@ impl<T: Transport> TestServer<T> {
         self
     }
 
+    /// `bind` fails as a transport's does when its runtime died after `prepare`: a `Permanent`
+    /// holding a `RuntimeShutDown`.
+    pub fn bind_on_a_dead_runtime(mut self) -> Self {
+        self.fail_bind = true;
+        self.shut_down = true;
+        self
+    }
+
     pub fn close_with(mut self, mode: CloseMode) -> Self {
         self.close = mode;
         self
@@ -639,6 +649,9 @@ impl<T: Transport> TestServer<T> {
 
 impl<T> TestServer<T> {
     fn refusal(&self, text: &str) -> BoxError {
+        if self.shut_down {
+            return Box::new(ulo::Permanent::new(ulo::RuntimeShutDown::new(ulo::Refused)));
+        }
         if self.permanent { Box::new(ulo::Permanent::new(Boom::new(text))) } else { Box::new(Boom::new(text)) }
     }
 }

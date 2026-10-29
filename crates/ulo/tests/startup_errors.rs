@@ -16,7 +16,9 @@ mod common;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ulo::{App, ConnectError, Dep, Permanent, PreparePanicked, Signal, StartupError, TypeName};
+use std::error::Error;
+
+use ulo::{App, ConnectError, Dep, Permanent, PreparePanicked, RuntimeShutDown, Signal, StartupError, TypeName};
 use ulo_runtime_tokio::Tokio;
 
 use common::*;
@@ -115,6 +117,25 @@ async fn a_bind_failure_closes_the_servers_already_bound_and_is_a_bind_startup_e
         ["prepare a", "prepare b", "prepare c", "bind a", "bind b", "close a"],
         "every server prepared, binding stopped at the failure, and the one already bound was closed"
     );
+}
+
+/// A runtime that dies between `prepare` and `bind` fails `bind` with a `Permanent`
+/// `RuntimeShutDown`. The core reports it as `Bind`, which must read as permanent and hand the
+/// `RuntimeShutDown` to a deployer matching on the source.
+#[tokio::test]
+async fn a_bind_that_the_dead_runtime_refused_is_permanent_and_carries_the_shutdown() {
+    let log = Log::new();
+    let error = listen_err(builder(Empty), vec![server(TestServer::<TA>::new("a", &log).bind_on_a_dead_runtime())]).await;
+
+    assert!(ulo::is_permanent(&error), "the `Permanent` is read through `Bind`: {error}");
+    let StartupError::Bind { source, .. } = &error else { panic!("expected a bind failure, got: {error}") };
+    let permanent = source.downcast_ref::<Permanent>().unwrap_or_else(|| panic!("the source is not the transport's `Permanent`: {source}"));
+    let shut_down = permanent
+        .source()
+        .and_then(|inner| inner.downcast_ref::<RuntimeShutDown>())
+        .unwrap_or_else(|| panic!("the `Permanent` does not hold a `RuntimeShutDown`: {source}"));
+    assert_eq!(shut_down.reason(), ulo::RUNTIME_SHUT_DOWN);
+    assert!(shut_down.source().is_some_and(|e| e.is::<ulo::Refused>()), "the runtime's `Refused` is the cause");
 }
 
 mod ulo_dummy {

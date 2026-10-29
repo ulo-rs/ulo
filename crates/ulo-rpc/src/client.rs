@@ -275,7 +275,7 @@ impl RpcClient {
     /// # use ulo::Bound;
     /// # use ulo_rpc::RpcClient;
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let tokio = tokio::runtime::Builder::new_current_thread().build()?;
+    /// # let tokio = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     /// # let _entered = tokio.enter();
     /// let billing = RpcClient::new(ulo_rpc_tcp::Tcp::new("10.0.0.5:7000"), Arc::new(ulo_runtime_tokio::Tokio::current()))?
     ///     .timeout(Bound::After(Duration::from_secs(2)))?;

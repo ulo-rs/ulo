@@ -213,9 +213,11 @@ impl<'t> Expiry<'t> {
         Expiry { timer, until, sleep, refused: None }
     }
 
-    /// Whether the clock reads the bound as passed, which is what a refusal arriving now is
-    /// reported as. A loop ending on another wait's refusal asks this of a bound it also holds, so
-    /// a bound that had passed by then reports its expiry whichever wait the loop polled first.
+    /// Whether the bound had expired by now, the question a refusal arriving now is answered by:
+    /// a passed bound reports its expiry and an unpassed one the refusal. A loop ending on another
+    /// wait's refusal asks this of a bound it also holds, so a pacing loop inside an enclosing
+    /// bound that had passed reports `TimedOut` rather than the refusal, whichever wait it polled
+    /// first.
     pub fn passed(&self) -> bool {
         self.until.is_some_and(|until| self.timer.now() >= until)
     }
