@@ -2981,6 +2981,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "ex-39-one-app"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "prost",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tonic-prost",
+ "ulo",
+ "ulo-build",
+ "ulo-config",
+ "ulo-conformance-support",
+ "ulo-grpc",
+ "ulo-health",
+ "ulo-health-http",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-rpc",
+ "ulo-rpc-tcp",
+ "ulo-runtime-tokio",
+ "ulo-transport",
+ "ulo-ws",
+ "ulo-ws-hyper",
+]
+
+[[package]]
 name = "ex-support"
 version = "0.0.0"
 dependencies = [

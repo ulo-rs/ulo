@@ -287,3 +287,4 @@ ex-35-db-sqlx               tokio-bound
 ex-36-db-two-instances       tokio-bound
 ex-37-db-diesel              tokio-bound
 ex-38-tracing                tokio-bound
+ex-39-one-app                tokio-bound

@@ -18,4 +18,4 @@ Read first:
 - `tests/support/memory.rs`: the exporter, 20 lines.
 - `tests/binary.rs`: runs the compiled binary with no collector listening.
 
-Next: none; this is the last example.
+Next: [39 one-app](../39-one-app), which serves all four transports in one lifecycle.

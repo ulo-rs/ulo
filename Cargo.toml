@@ -105,6 +105,7 @@ members = [
     "examples/36-db-two-instances",
     "examples/37-db-diesel",
     "examples/38-tracing",
+    "examples/39-one-app",
 ]
 exclude = [
     "integration-tests",

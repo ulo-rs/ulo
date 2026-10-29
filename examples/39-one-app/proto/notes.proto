@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package notes.v1;
+
+service Notes {
+  rpc Add(Note) returns (Count);
+  rpc Hold(Note) returns (Note);
+}
+
+message Note {
+  string text = 1;
+}
+
+message Count {
+  uint32 n = 1;
+}
