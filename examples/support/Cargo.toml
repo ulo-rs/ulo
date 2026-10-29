@@ -1,0 +1,17 @@
+[package]
+name = "ex-support"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "The HTTP client, server driver and binary runner the example tests share"
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-conformance-support = { path = "../../crates/ulo-conformance-support" }
+ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+tokio = { workspace = true, features = ["net", "io-util", "rt", "time"] }
+
+[lints]
+workspace = true

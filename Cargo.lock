@@ -2416,6 +2416,181 @@ dependencies = [
 ]
 
 [[package]]
+name = "ex-01-hello"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-02-providers"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-03-traits-and-qualifiers"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-04-collections-and-optional"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-05-scopes"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-06-modules"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-07-configured-modules"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-08-dynamic-and-lazy"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-09-lifecycle"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-10-shutdown"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-conformance-support",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-11-wiring-report"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-12-standalone"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-13-testing"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-14-without-macros"
+version = "0.0.0"
+dependencies = [
+ "ex-06-modules",
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-support"
+version = "0.0.0"
+dependencies = [
+ "tokio",
+ "ulo",
+ "ulo-conformance-support",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

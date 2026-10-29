@@ -13,6 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       # --all-features compiles the feature-gated test targets (the broker crates'
       # `integration` conformance suites) that a default build never touches, and
@@ -20,6 +22,11 @@ jobs:
       # runner's OpenSSL headers. --locked fails on a manifest/lockfile mismatch
       # instead of resolving fresh versions the repo doesn't record.
       - run: cargo check --workspace --all-features --all-targets --locked
+      # The examples under `examples/` and the helper their tests share name no doc-hidden path or
+      # item (`--self-test` runs first, inside the check), and hold themselves to the
+      # `clippy -D warnings` a user's crate is held to.
+      - run: python3 scripts/check_examples.py
+      - run: cargo clippy -p 'ex-*' --all-targets --no-deps --locked -- -D warnings
 
   runtime-levels:
     name: runtime levels
