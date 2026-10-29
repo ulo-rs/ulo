@@ -1,0 +1,5 @@
+error: an entry takes one `@` qualifier
+  --> tests/ui/module_qualifier_twice.rs:10:47
+   |
+10 | #[module(providers = [Db("primary") @ Primary @ Replica])]
+   |                                               ^

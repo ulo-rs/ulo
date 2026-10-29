@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use futures_core::stream::BoxStream;
-use ulo::{BoxError, BoxFuture, Bound, Meta, Module, ModuleDef, ModuleIdentity};
+use ulo::{BoxError, BoxFuture, Bound, Meta, Module, ModuleDef, ModuleIdentity, Timer};
 use ulo_http::Upgrades;
 use ulo_transport::Count;
 
@@ -150,7 +150,7 @@ impl BroadcastAdapter for SharedAdapter {
         self.0.publish(target, frame)
     }
 
-    fn subscribe(&self, node: NodeId) -> BoxStream<'static, (Target, Bytes)> {
-        self.0.subscribe(node)
+    fn subscribe(&self, node: NodeId, timer: Arc<dyn Timer>) -> BoxFuture<'static, Result<BoxStream<'static, (Target, Bytes)>, BoxError>> {
+        self.0.subscribe(node, timer)
     }
 }

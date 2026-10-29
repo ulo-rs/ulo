@@ -3,7 +3,7 @@
 //!
 //! Beside the suite, three tests drop the link without `close` and count, through a relay, the
 //! connections the broker still holds: each side's link, and a server's link holding a call nobody
-//! answers.
+//! answers. A fourth has the broker close every connection and shows the server's recovers.
 
 #![cfg(feature = "integration")]
 
@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use testcontainers::core::{IntoContainerPort, WaitFor};
+use testcontainers::core::{CmdWaitFor, ExecCommand, IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage};
 use ulo::{BoundAddr, Runtime};
@@ -162,4 +162,69 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connection() {
         released(&relay, what).await;
     }
     client.close().await.expect("the client's link closes");
+}
+
+/// The peer ports of the connections the broker holds, read with `rabbitmqctl`.
+async fn peer_ports(broker: &RabbitMqBroker) -> Vec<u16> {
+    let listed = rabbitmqctl(broker, &["list_connections", "-q", "--no-table-headers", "peer_port"]).await;
+    listed.split_whitespace().map(|port| port.parse().unwrap_or_else(|_| panic!("`rabbitmqctl` listed `{port}` as a peer port"))).collect()
+}
+
+/// `rabbitmqctl` in the broker's container. A CLI that hangs, which one run under load did, fails
+/// the test at `PATIENCE` rather than holding it.
+async fn rabbitmqctl(broker: &RabbitMqBroker, args: &[&str]) -> String {
+    let command = ExecCommand::new(std::iter::once("rabbitmqctl").chain(args.iter().copied())).with_cmd_ready_condition(CmdWaitFor::exit_code(0));
+    let ran = async {
+        let mut ran = broker._container.exec(command).await.unwrap_or_else(|error| panic!("`rabbitmqctl {}` failed: {}", args.join(" "), report(&error)));
+        ran.stdout_to_vec().await.unwrap_or_else(|error| panic!("`rabbitmqctl {}`'s output: {}", args.join(" "), report(&error)))
+    };
+    let stdout = tokio::time::timeout(PATIENCE, ran).await.unwrap_or_else(|_| panic!("`rabbitmqctl {}` did not finish within {PATIENCE:?}", args.join(" ")));
+    String::from_utf8_lossy(&stdout).into_owned()
+}
+
+/// Q17-P3: the server's link checks the broker on a connection without lapin's auto-recovery,
+/// closes it, and serves on one that recovers. Once `listen` returns the broker holds the server's
+/// one connection, and after the broker closes every connection the same inbound stream takes a
+/// request on a connection it had not held before and the delivery's reply path answers it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_server_s_connection_recovers_after_the_broker_closes_it() {
+    let broker = RabbitMqBroker::start().await;
+    let server = broker.link();
+    let pattern = "link.recovered";
+    let mut inbound = server.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
+    let listening = std::time::Instant::now();
+    let held = loop {
+        let held = peer_ports(&broker).await;
+        if held.len() == 1 {
+            break held;
+        }
+        assert!(listening.elapsed() < RELEASE, "the broker holds {} connections for the listening server, not one: {held:?}", held.len());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+
+    rabbitmqctl(&broker, &["close_all_connections", "the recovery test"]).await;
+
+    let client = broker.link();
+    let runtime: Arc<dyn Runtime> = Arc::new(ulo_runtime_tokio::Tokio::current());
+    let mut outbound = client.connect(&runtime).await.expect("the client's link connects");
+    let request = Frame::Req { id: 1, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+    (outbound.send)(Pattern::from(pattern), request, Some(ReplyTo { id: 1 })).await.expect("the request is published");
+    let delivery = tokio::time::timeout(PATIENCE, inbound.next())
+        .await
+        .unwrap_or_else(|_| panic!("the request did not reach the recovered server within {PATIENCE:?}"))
+        .expect("the server's inbound stream ended at the broker's close");
+    let Frame::Req { id, .. } = delivery.frame else { panic!("the server received something other than the request: {:?}", delivery.frame) };
+    let reply = delivery.reply.as_ref().expect("a request carries its reply path");
+    reply.send(Frame::Res { id, data: Data::new(b"7".as_slice()) }).await.expect("the recovered server's reply is published");
+    let answer = tokio::time::timeout(PATIENCE, outbound.replies.next())
+        .await
+        .unwrap_or_else(|_| panic!("the recovered server's reply did not arrive within {PATIENCE:?}"))
+        .expect("the client's reply lane ended");
+    assert!(matches!(&answer, Frame::Res { id: 1, data } if data.as_bytes() == b"7"), "the client received something other than the reply: {answer:?}");
+
+    let after = peer_ports(&broker).await;
+    assert!(after.iter().all(|port| !held.contains(port)), "the server's connection from before the close is still held: {held:?} then {after:?}");
+    delivery.ack.ack();
+    client.close().await.expect("the client's link closes");
+    server.close().await.expect("the server's link closes");
 }

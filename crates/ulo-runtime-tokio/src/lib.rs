@@ -9,8 +9,11 @@
 //! app.serve(ulo_runtime_tokio::shutdown_signal()).await?;
 //! ```
 
+use std::error::Error;
+use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
@@ -31,26 +34,62 @@ use ulo::{BoxFuture, ExecutionRef, Refused, RuntimeShutDown, RuntimeTask, Signal
 #[derive(Clone, Debug)]
 pub struct Tokio {
     handle: Handle,
+    io: Arc<OnceLock<bool>>,
 }
+
+/// A tokio runtime built without its IO driver (`enable_io`), asked to register a socket, which
+/// panics. Answered by [`Tokio::require_io`] as a value so a link refuses the configuration
+/// instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoIoDriver;
+
+impl fmt::Display for NoIoDriver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("the tokio runtime was built without its IO driver: call `enable_io()` (or `enable_all()`) on its `Builder`")
+    }
+}
+
+impl Error for NoIoDriver {}
 
 impl Tokio {
     /// The tokio runtime current on the calling thread. Panics outside one, at this call, as
     /// `Handle::current` does; nothing after it looks for a runtime.
     pub fn current() -> Tokio {
-        Tokio { handle: Handle::current() }
+        Tokio::from_handle(Handle::current())
     }
 
     pub fn from_handle(handle: Handle) -> Tokio {
-        Tokio { handle }
+        Tokio { handle, io: Arc::new(OnceLock::new()) }
     }
 
     /// The tokio runtime current on the calling thread, `None` outside one.
     pub fn try_current() -> Option<Tokio> {
-        Handle::try_current().ok().map(|handle| Tokio { handle })
+        Handle::try_current().ok().map(Tokio::from_handle)
     }
 
     pub fn handle(&self) -> &Handle {
         &self.handle
+    }
+
+    /// Whether sockets can register on the held runtime, as `Err(NoIoDriver)` when its builder
+    /// left out `enable_io`. tokio offers no query for the IO driver, and registering a socket on
+    /// a runtime without one panics, so the probe registers one end of a socket pair under
+    /// `catch_unwind`. A pair needs no network on Unix; elsewhere the probe is a loopback listener.
+    ///
+    /// A runtime that refuses leaves the panic hook to print its message once per `Tokio` value
+    /// (clones share the answer), and a healthy runtime prints nothing. The answer is cached, so
+    /// a later call costs a load. A probe that cannot find out, because the socket cannot be made
+    /// or the runtime has shut down, answers `Ok` and caches nothing; whatever the caller does
+    /// next reports what it meets.
+    pub fn require_io(&self) -> Result<(), NoIoDriver> {
+        let enabled = match self.io.get() {
+            Some(enabled) => *enabled,
+            None => match probe_io(&self.handle) {
+                Some(enabled) => *self.io.get_or_init(|| enabled),
+                None => true,
+            },
+        };
+        if enabled { Ok(()) } else { Err(NoIoDriver) }
     }
 
     /// The held runtime's clock alone, for `AppBuilder::timer`.
@@ -80,6 +119,31 @@ impl Tokio {
                 Err(_) => Err(RuntimeShutDown::new(Refused)),
             }
         }
+    }
+}
+
+/// `None` when the probe could not find out.
+fn probe_io(handle: &Handle) -> Option<bool> {
+    #[cfg(unix)]
+    let registered = {
+        let (probe, _peer) = std::os::unix::net::UnixStream::pair().ok()?;
+        probe.set_nonblocking(true).ok()?;
+        let _entered = handle.enter();
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tokio::net::UnixStream::from_std(probe).map(drop)))
+    };
+    #[cfg(not(unix))]
+    let registered = {
+        let probe = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).ok()?;
+        probe.set_nonblocking(true).ok()?;
+        let _entered = handle.enter();
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tokio::net::TcpListener::from_std(probe).map(drop)))
+    };
+    match registered {
+        Ok(Ok(())) => Some(true),
+        // An `Err` is the runtime's shutdown or a registration failure, neither of which says
+        // anything about the driver.
+        Ok(Err(_)) => None,
+        Err(_) => Some(false),
     }
 }
 

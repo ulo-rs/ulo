@@ -14,7 +14,7 @@ Read first:
 
 - `src/lib.rs`: the five sources in the order they layer, and `AppConfig`.
 - `src/main.rs`: where the process environment (`Env::process()`) and the explicit values enter.
-- `tests/layers.rs`: one field per winning layer, a bad file, a refused secret and `deny_unread`.
+- `tests/layers.rs`: one field per winning layer, a bad file whose every problem is reported, a refused secret among them, and `deny_unread`.
 - `tests/binary.rs`: runs the compiled binary with `PORT` set to a free port and reads `/settings` back.
 
 `ulo new` writes a project that loads its configuration this way (`crates/ulo-cli/src/templates/new`).

@@ -25,8 +25,9 @@ use crate::transport::next::Next;
 ///
 /// `Cx` wraps an `ExecutionRef` together with the call's wire data, and every clone is the same
 /// call. Everything a guard or interceptor writes goes through a shared reference and interior
-/// mutability. A reply that streams carries a clone of `Cx`, which keeps its per-execution
-/// instances and its cancellation signal alive past `intercept`'s return. A request body stream
+/// mutability. A reply that streams carries a clone of `Cx`, through which it reads the execution
+/// and observes its cancellation past `intercept`'s return; the transport holds the `Execution`,
+/// and so the per-execution instances, until the reply is written. A request body stream
 /// lives on `Cx` behind a take-once slot, not as an execution input: inputs are `Sync` and a
 /// body stream is read once.
 pub trait Transport: 'static {

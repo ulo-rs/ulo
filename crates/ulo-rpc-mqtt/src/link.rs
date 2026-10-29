@@ -292,10 +292,17 @@ impl Link for Mqtt {
     }
 
     fn usable(&self) -> Result<(), BoxError> {
-        self.runtime().map(drop)
+        self.runtime()?.require_io()?;
+        Ok(())
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
+        // `listen` binds on the link's runtime: one that has shut down, or has no IO driver, is
+        // refused here, before the configuration and before any server binds. The shutdown is
+        // asked first, since a runtime that has shut down answers nothing about its driver.
+        let runtime = self.runtime()?;
+        runtime.run(async {}).await.map_err(Permanent::new)?;
+        runtime.require_io().map_err(Permanent::new)?;
         self.usable()?;
         let target = Target::parse(&self.url)?;
         match &self.group {
@@ -303,10 +310,6 @@ impl Link for Mqtt {
             None => self.default_group = Some(share_name(&format!("{:#}", app.root().name()))),
         }
         self.timer = app.timer().cloned();
-        let runtime = self.runtime()?;
-        // `listen` connects on the link's runtime: one that has shut down is refused here, beside
-        // the configuration, before any server binds.
-        runtime.run(async {}).await.map_err(Permanent::new)?;
         // A server loads its roots here, so a store that yields none fails `bind` before `listen`.
         self.tls(&target, &runtime).await.map_err(at_startup)?;
         Ok(())

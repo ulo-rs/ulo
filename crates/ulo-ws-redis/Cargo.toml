@@ -20,8 +20,7 @@ futures-util.workspace = true
 redis = { workspace = true, features = ["tokio-rustls-comp"] }
 serde_json.workspace = true
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1" }
-# `time`: the reconnect delay of a lost subscription.
-tokio = { workspace = true, features = ["sync", "rt", "time"] }
+tokio = { workspace = true, features = ["sync", "rt"] }
 tracing.workspace = true
 
 [features]
@@ -33,6 +32,8 @@ integration = []
 # The relay helpers that start a container on a port no host listener shadows.
 ulo-rpc-conformance = { path = "../ulo-rpc-conformance" }
 ulo-ws-hyper = { path = "../ulo-ws-hyper" }
+# `ScriptedTimer`: the app's clock in the tests that time the subscription's bound.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
 futures-executor.workspace = true
 # `sink`: the test writes through `SinkExt` on each client's socket.
 futures-util = { workspace = true, features = ["sink"] }

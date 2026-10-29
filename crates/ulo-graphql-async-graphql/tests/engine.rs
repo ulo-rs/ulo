@@ -249,15 +249,19 @@ async fn a_fault_is_a_request_error_by_where_it_was_raised_not_by_its_path() {
         assert_eq!(execute(app, &engine, named).await.outcome(), Outcome::Executed, "only the selected operation's variables count");
 
         let missing = GqlRequest::new("subscription S($from: Int!) { countdown(from: $from) }");
-        let stream = app.execute(ExecOptions::new(), async |exec| engine.subscribe(missing, exec.handle())).await.expect("an execution");
-        let events = within("the stream", stream.collect::<Vec<_>>()).await;
+        let events = app
+            .execute(ExecOptions::new(), async |exec| within("the stream", engine.subscribe(missing, exec.handle()).collect::<Vec<_>>()).await)
+            .await
+            .expect("an execution");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].outcome(), Outcome::RequestError, "a missing variable in a subscription");
         assert_eq!(events[0].data(), None);
 
         let supplied = GqlRequest { variables: vars(json!({ "from": 2 })), ..GqlRequest::new("subscription S($from: Int!) { countdown(from: $from) }") };
-        let stream = app.execute(ExecOptions::new(), async |exec| engine.subscribe(supplied, exec.handle())).await.expect("an execution");
-        let events = within("the stream", stream.collect::<Vec<_>>()).await;
+        let events = app
+            .execute(ExecOptions::new(), async |exec| within("the stream", engine.subscribe(supplied, exec.handle()).collect::<Vec<_>>()).await)
+            .await
+            .expect("an execution");
         assert_eq!(events.iter().map(GqlResponse::data).collect::<Vec<_>>(), [Some(&json!({ "countdown": 2 })), Some(&json!({ "countdown": 1 }))]);
     })
     .await;

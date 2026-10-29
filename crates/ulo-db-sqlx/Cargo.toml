@@ -40,12 +40,16 @@ tracing.workspace = true
 rustls = { workspace = true, optional = true }
 
 [dev-dependencies]
+# `macros` for the `sqlx::migrate!` in the crate documentation, which an application enables the same way.
+sqlx = { workspace = true, features = ["macros"] }
 serde_json.workspace = true
 testcontainers.workspace = true
 # `support/server.rs` issues the TLS recipe's certificates.
 ulo-test-certs = { path = "../ulo-test-certs" }
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 ulo-db-conformance = { path = "../ulo-db-conformance", features = ["tokio"] }
+# `tests/wiring.rs` wires and connects on the runtime a store module requires.
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 
 [lints]
 workspace = true

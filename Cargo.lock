@@ -9017,6 +9017,7 @@ dependencies = [
  "ulo-config",
  "ulo-db",
  "ulo-db-conformance",
+ "ulo-runtime-tokio",
  "ulo-test-certs",
 ]
 
@@ -9451,6 +9452,8 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+ "tokio",
+ "ulo",
  "ulo-handler-codegen",
 ]
 
@@ -9942,6 +9945,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "ulo",
+ "ulo-conformance-support",
  "ulo-rpc-conformance",
  "ulo-runtime-tokio",
  "ulo-ws",

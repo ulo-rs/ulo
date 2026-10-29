@@ -17,8 +17,8 @@ use ulo_conformance_support::relay::{reachable, unshadowed};
 use ulo_conformance_support::{report, startup_failed};
 
 const CONTAINER: &str = "ulo-conf-ex24-redis";
-/// How long the first shout may take to cross: the second process starts its own Redis subscription.
-const BOOT: Duration = Duration::from_secs(60);
+/// How long a shout may take to cross to the other process.
+const PATIENCE: Duration = Duration::from_secs(10);
 
 async fn start_redis() -> (ContainerAsync<GenericImage>, String) {
     const PORT: u16 = 6379;
@@ -74,32 +74,17 @@ async fn a_shout_reaches_the_room_on_both_processes_and_nobody_outside_it() {
     let mut cy = client(first_addr, None).await;
     let mut dee = client(second_addr, Some("other")).await;
 
-    // A broadcast published before the other process subscribes is lost, so ada shouts again until
-    // bob, on the other process, hears one.
-    let deadline = Instant::now() + BOOT;
-    let mut sent = 0u32;
-    let heard = loop {
-        sent += 1;
-        send(&mut ada, json!({ "event": "shout", "id": sent, "data": { "room": "lobby", "text": format!("one {sent}") } })).await;
-        if let Some(text) = shouted(&mut bob, Duration::from_millis(200)).await {
-            break text;
-        }
-        assert!(Instant::now() < deadline, "none of {sent} shouts reached bob within {BOOT:?}");
-    };
-    assert!(heard.starts_with("one "), "{heard}");
+    // Each process printed its address after `listen`, which returns once its Redis subscription is
+    // live, so the first shout is heard.
+    send(&mut ada, json!({ "event": "shout", "id": 1, "data": { "room": "lobby", "text": "one" } })).await;
+    let heard = shouted(&mut bob, PATIENCE).await.unwrap_or_else(|| panic!("the first shout did not reach bob within {PATIENCE:?}"));
+    assert_eq!(heard, "one");
 
-    // Both subscriptions are in place now: bob answers once, and ada, on the first process, hears it.
+    // Bob answers once, and ada, on the first process, hears it.
     send(&mut bob, json!({ "event": "shout", "id": 1, "data": { "room": "lobby", "text": "two" } })).await;
-    let mut ada_heard = Vec::new();
-    while let Some(text) = shouted(&mut ada, Duration::from_secs(10)).await {
-        let done = text == "two";
-        ada_heard.push(text);
-        if done {
-            break;
-        }
-    }
-    assert_eq!(ada_heard.last().map(String::as_str), Some("two"), "heard {ada_heard:?}");
-    assert!(ada_heard[..ada_heard.len() - 1].iter().all(|text| text.starts_with("one ")), "{ada_heard:?}");
+    // Ada is in the room too, so she hears her own shout first.
+    assert_eq!(shouted(&mut ada, PATIENCE).await.as_deref(), Some("one"), "ada's own shout");
+    assert_eq!(shouted(&mut ada, PATIENCE).await.as_deref(), Some("two"), "bob's shout, from the other process");
 
     // Everything has been delivered to the room on both processes; cy and dee, outside it, have
     // been sent nothing ahead of a ping's answer.

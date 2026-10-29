@@ -1,0 +1,5 @@
+error: a closure binding takes no `@` qualifier; write the binding in a `ModuleDef` with `.qualified::<Q>()`, or bind a value, `Db(..) @ Primary`
+ --> tests/ui/module_qualifier_on_a_bare_closure.rs:9:40
+  |
+9 | #[module(providers = [|| Db("primary") @ Primary])]
+  |                                        ^

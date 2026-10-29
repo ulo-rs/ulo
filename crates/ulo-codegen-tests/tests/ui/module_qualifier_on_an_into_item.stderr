@@ -1,0 +1,5 @@
+error: an `into` item takes no `@` qualifier; a qualified collection is written in a `ModuleDef`, `m.contribute::<K>().qualified::<Q>()`
+  --> tests/ui/module_qualifier_on_an_into_item.rs:13:57
+   |
+13 | #[module(providers = [into dyn Plugin: [value = Metrics @ Primary]])]
+   |                                                         ^

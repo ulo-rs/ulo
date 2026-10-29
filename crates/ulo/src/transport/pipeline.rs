@@ -319,17 +319,17 @@ async fn obtain<R: ?Sized + Send + Sync + 'static>(decl: &Decl<R>, at: &Lookup<'
 /// every later call.
 async fn build_closure<R: ?Sized + Send + Sync + 'static>(closure: &ClosureDecl<R>, at: &Lookup<'_>) -> Result<Arc<R>, LookupError> {
     let slot = Slot::Closure(closure.id);
+    let key = Key::of::<R, ()>().name(BindingKind::Single);
     let built = match at.graph.closures.get(&closure.id) {
         Some(Effective::Singleton) => {
             let outside = at.resolver.without_execution();
-            at.resolver.app.closures.get_or_build(slot, || erased_build(closure, &outside)).await?
+            at.resolver.app.closures.get_or_build(slot, key, || erased_build(closure, &outside)).await?
         }
-        Some(Effective::PerExecution) => at.exec.cache.get_or_build(slot, || erased_build(closure, at.resolver)).await?,
+        Some(Effective::PerExecution) => at.exec.cache.get_or_build(slot, key, || erased_build(closure, at.resolver)).await?,
         // `None` only for a handler `wire()` did not mount; building at every call shares nothing.
         Some(Effective::Transient) | None => return (closure.build)(at.resolver).await,
     };
-    downcast_instance::<R>(&built)
-        .ok_or_else(|| LookupError::WrongType { key: Key::of::<R, ()>().name(BindingKind::Single), requested: type_name::<R>() })
+    downcast_instance::<R>(&built).ok_or_else(|| LookupError::WrongType { key, requested: type_name::<R>() })
 }
 
 async fn erased_build<R: ?Sized + Send + Sync + 'static>(closure: &ClosureDecl<R>, r: &Resolver<'_>) -> Result<Instance, LookupError> {

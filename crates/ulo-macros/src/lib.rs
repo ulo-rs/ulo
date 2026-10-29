@@ -49,6 +49,50 @@ pub fn construct(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// type, so a constant is bound by value with a block, `{ LIMITS }`. Export entries: `Type` and
 /// `reexport Type`.
 ///
+/// A qualified binding is written with the `@` that reports print for a key. `Type @ Q`
+/// (`provide::<Type>().qualified::<Q>()`), `Type as dyn Trait @ Q` (both keys qualified), `expr @ Q`
+/// and `expr? @ Q` (`value` and `try_value`, then `.qualified::<Q>()`) take it in `providers`;
+/// `Type @ Q` and `reexport Type @ Q` take it in `exports` (`export_qualified`,
+/// `reexport_qualified`). A closure binding and an `into` item take none, and a second `@` on an
+/// entry is refused:
+///
+/// ```
+/// use ulo::{App, Dep, ExecOptions, injectable, module};
+///
+/// struct Primary;
+/// struct Replica;
+///
+/// #[derive(Debug, PartialEq)]
+/// struct Db(&'static str);
+///
+/// #[module(
+///     providers = [Db("primary") @ Primary, Db("replica") @ Replica],
+///     exports = [Db @ Primary, Db @ Replica],
+/// )]
+/// struct DbModule;
+///
+/// #[injectable]
+/// struct Writer {
+///     db: Dep<Db, Primary>,
+/// }
+///
+/// #[module(imports = [DbModule], providers = [Writer])]
+/// struct AppModule;
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() {
+/// let app = App::builder(AppModule).wire().unwrap().connect().await.unwrap();
+/// assert_eq!(app.get::<Writer>().await.unwrap().db.0, "primary");
+/// # }
+/// ```
+///
+/// `#[module]` writes what a module declares: imports, bindings of a type or a value, collection
+/// contributions, controllers and exports. A module that needs a readiness check (`.ready(..)`),
+/// a closure hook (`.on_init(..)`, `.on_destroy(..)`), a qualified closure binding or collection,
+/// the `enhancer` mark or module metadata such as `ulo_http::PreDispatch` implements `Module` by
+/// hand and calls those on the `ModuleDef`; it imports and is imported by `#[module]` modules
+/// like any other.
+///
 /// The key comes first in `K: with = ..` because a closure's body extends as far as it can: in
 /// `with = |cfg| RedisCache::new(cfg) as dyn Cache`, the `as` would parse as a cast inside the
 /// body. As with `X as dyn T`, the concrete type stays bound in the module too.

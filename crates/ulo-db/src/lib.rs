@@ -35,7 +35,7 @@ mod migrate;
 mod module;
 mod store;
 
-pub use error::{LockTimedOut, MigrationFailed, UnsupportedRuntime};
+pub use error::{LazyWithMigrations, LockTimedOut, MigrationFailed, UnsupportedRuntime};
 pub use migrate::{MIGRATION_LOCK_KEY, MigrationLock, Migrations};
 pub use module::StoreModule;
 pub use store::Store;

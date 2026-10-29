@@ -16,7 +16,7 @@ use bytes::Bytes;
 use futures_core::stream::BoxStream;
 use async_broadcast::{InactiveReceiver, RecvError, Sender};
 use serde::{Deserialize, Serialize};
-use ulo::{BoxError, BoxFuture};
+use ulo::{BoxError, BoxFuture, Timer};
 
 use crate::connection::ConnId;
 
@@ -38,8 +38,16 @@ pub trait BroadcastAdapter: Send + Sync + 'static {
     fn publish(&self, target: Target, frame: Bytes) -> BoxFuture<'static, Result<(), BoxError>>;
 
     /// What every process published, this one's included, for the process `node` to deliver to
-    /// its own members.
-    fn subscribe(&self, node: NodeId) -> BoxStream<'static, (Target, Bytes)>;
+    /// its own members. The future resolves once the subscription is live, so that a broadcast
+    /// published after it resolves reaches the stream; an adapter whose subscription Redis or a
+    /// broker confirms waits for the confirmation, and fails the future, which fails the server's
+    /// `listen()` as `Bind`, when none comes within the adapter's connect bound.
+    ///
+    /// `timer` is the app's clock. An adapter times its connect bound and its pacing on it, through
+    /// `ulo::timeout` for a bound whose expiry is reported, so the wait follows the app's `Timer`
+    /// and not a clock of the adapter's own runtime. A clock that refuses, its runtime having shut
+    /// down, ends the subscription as `Permanent` `RuntimeShutDown`.
+    fn subscribe(&self, node: NodeId, timer: Arc<dyn Timer>) -> BoxFuture<'static, Result<BoxStream<'static, (Target, Bytes)>, BoxError>>;
 }
 
 /// Who a broadcast reaches.
@@ -140,11 +148,12 @@ impl BroadcastAdapter for InMemory {
         Box::pin(async { Ok(()) })
     }
 
-    fn subscribe(&self, node: NodeId) -> BoxStream<'static, (Target, Bytes)> {
-        let _ = node;
-        // Starts at the next broadcast, as a subscriber joining late should.
+    fn subscribe(&self, node: NodeId, timer: Arc<dyn Timer>) -> BoxFuture<'static, Result<BoxStream<'static, (Target, Bytes)>, BoxError>> {
+        let _ = (node, timer);
+        // Starts at the next broadcast, as a subscriber joining late should. The receiver exists
+        // when this returns, so the subscription is live before the future is polled.
         let receiver = self.inner.sender.new_receiver();
-        Box::pin(futures_util::stream::unfold(receiver, |mut receiver| async move {
+        let carried: BoxStream<'static, (Target, Bytes)> = Box::pin(futures_util::stream::unfold(receiver, |mut receiver| async move {
             loop {
                 match receiver.recv_direct().await {
                     Ok(item) => return Some((item, receiver)),
@@ -154,6 +163,7 @@ impl BroadcastAdapter for InMemory {
                     Err(RecvError::Closed) => return None,
                 }
             }
-        }))
+        }));
+        Box::pin(async move { Ok(carried) })
     }
 }

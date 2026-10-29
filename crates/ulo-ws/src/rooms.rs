@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use futures_util::StreamExt;
 use serde::Serialize;
-use ulo::{BoxError, Spawn, TaskHandle, TypeName};
+use ulo::{BoxError, Runtime, TaskHandle, Timer, TypeName};
 use ulo_transport::{Classify, ErrorKind};
 
 use crate::broadcast::{Audience, BroadcastAdapter, NodeId, Target};
@@ -104,23 +104,31 @@ impl Hub {
     }
 
     /// Starts delivering what the adapter carries to this process's members, once, as a task on
-    /// `runtime`, the app's; the task lives until [`stop`](Self::stop) or the hub's drop, the
-    /// application's last holder of it gone. Called from a server's `bind` or the hand-off's
-    /// `bound`.
-    pub(crate) fn start(self: &Arc<Self>, runtime: &dyn Spawn) {
+    /// `runtime`, the app's, whose clock times the adapter's wait, and returns once the adapter's subscription is live; the task lives
+    /// until [`stop`](Self::stop) or the hub's drop, the application's last holder of it gone. An
+    /// adapter that cannot subscribe fails this, and the server's `bind` with it. Called from a
+    /// server's `bind` or the hand-off's `bound`.
+    pub(crate) async fn start(self: &Arc<Self>, runtime: &Arc<dyn Runtime>) -> Result<(), BoxError> {
+        if self.delivery.lock().unwrap_or_else(PoisonError::into_inner).is_some() {
+            return Ok(());
+        }
+        let timer: Arc<dyn Timer> = runtime.clone();
+        let mut carried = self.adapter.subscribe(self.node, timer).await?;
         let mut delivery = self.delivery.lock().unwrap_or_else(PoisonError::into_inner);
+        // Another server's bind subscribed while this one waited; its task stays and this
+        // subscription drops.
         if delivery.is_some() {
-            return;
+            return Ok(());
         }
         let hub: Weak<Hub> = Arc::downgrade(self);
         let task = runtime.spawn(Box::pin(async move {
-            let Some(mut carried) = hub.upgrade().map(|hub| hub.adapter.subscribe(hub.node)) else { return };
             while let Some((target, frame)) = carried.next().await {
                 let Some(hub) = hub.upgrade() else { return };
                 hub.deliver(&target, &frame);
             }
         }));
         *delivery = Some(task);
+        Ok(())
     }
 
     pub(crate) fn stop(&self) {

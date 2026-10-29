@@ -313,7 +313,8 @@ fn unhandled(shared: &Arc<Shared>, incoming: Incoming, link: LinkInfo, reply: Op
 struct Call {
     shared: Arc<Shared>,
     route: Route,
-    /// Held for the call's length: the execution ends when it and every handle drop.
+    /// Held until the answer is written, a streamed reply's last item included: dropping it ends
+    /// the execution, whatever handles remain.
     exec: Execution,
     cx: RpcCx,
     arrived: Arrived,

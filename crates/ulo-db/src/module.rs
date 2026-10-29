@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::panic::Location;
 use std::time::Duration;
 
 use ulo::{Bound, BoxError, BoxFuture, Dep, Many, Module, ModuleDef, ModuleIdentity, Permanent, Runtime};
@@ -6,7 +7,7 @@ use ulo_config::{Config, ConfigError, Problems, Section};
 use ulo_health::Check;
 
 use crate::connect::{self, Policy};
-use crate::error::{LazyRefused, ZeroConnectBound, ZeroMigrateBound};
+use crate::error::{LazyRefused, LazyWithMigrations, ZeroConnectBound, ZeroMigrateBound};
 use crate::health::{QualifierTag, StoreCheck, Tag, check_name};
 use crate::migrate::{Bounds, Migrate, MigrationLock, Migrations};
 use crate::store::Store;
@@ -29,6 +30,10 @@ const HOOK_MARGIN: Duration = Duration::from_secs(10);
 /// and a different URL is another. `Module::keyed::<Q>()` gives several instances of one store.
 /// The builder settings are not part of the identity: two imports with equal options and different
 /// settings are one module, registered with the settings of the first the graph reaches.
+///
+/// The module's type is `StoreModule<S>`, so `app.module::<StoreModule<S>>()` and
+/// `app.module_keyed::<StoreModule<S>, Q>()` find it, and a report prints it as `StoreModule<S>`,
+/// with ` @ Q` when keyed.
 ///
 /// # Registration
 ///
@@ -55,9 +60,10 @@ pub struct StoreModule<S: Store> {
     pub(crate) connect_within: Duration,
     pub(crate) retries: u32,
     pub(crate) backoff: Duration,
-    pub(crate) lazy: bool,
+    pub(crate) lazy: Option<&'static Location<'static>>,
     pub(crate) health_check: bool,
     pub(crate) migrations: Option<Migrate<S>>,
+    migrate_at: Option<&'static Location<'static>>,
     pub(crate) migrate_within: Bound,
     _store: PhantomData<fn() -> S>,
 }
@@ -84,9 +90,10 @@ impl<S: Store> StoreModule<S> {
             connect_within: DEFAULT_CONNECT_WITHIN,
             retries: DEFAULT_RETRIES,
             backoff: DEFAULT_BACKOFF,
-            lazy: false,
+            lazy: None,
             health_check: true,
             migrations: None,
+            migrate_at: None,
             migrate_within: Bound::Default,
             _store: PhantomData,
         }
@@ -132,16 +139,20 @@ impl<S: Store> StoreModule<S> {
     ///
     /// Refused at registration, through `try_value` and naming the cause, when the options make
     /// `create` connect ([`Store::create_connects`]): a `mongodb+srv://` URI, whose DNS lookup is
-    /// in `create`.
+    /// in `create`. Also refused, as [`LazyWithMigrations`] naming where `.lazy()` and
+    /// `.migrate(..)` were called, when the module migrates: migrations run at the start and need
+    /// the database that a lazy module starts without.
+    #[track_caller]
     pub fn lazy(mut self) -> Self {
-        self.lazy = true;
+        self.lazy = Some(Location::caller());
         self
     }
 }
 
 impl<S: MigrationLock> StoreModule<S> {
     /// Runs `migrations` in the module's `on_init`, after connecting, under the lock. Off unless
-    /// written. A failure is `MigrationFailed`.
+    /// written. A failure is `MigrationFailed`. Refused at registration on a [`lazy`](Self::lazy)
+    /// module, as [`LazyWithMigrations`].
     ///
     /// Two waits, each with its own bound. The wait for the lock is bounded by
     /// [`connect_within`](Self::connect_within) from the moment it is requested, and running out is
@@ -152,8 +163,10 @@ impl<S: MigrationLock> StoreModule<S> {
     /// failure of the lock step is classified by the store, as its `ping` is; a failure after the
     /// lock is held is permanent. The init hook is bounded to cover both waits, so `hook_timeout`
     /// never cuts them.
+    #[track_caller]
     pub fn migrate(mut self, migrations: impl Migrations<S>) -> Self {
         self.migrations = Some(Migrate::new(migrations));
+        self.migrate_at = Some(Location::caller());
         self
     }
 
@@ -192,7 +205,7 @@ where
             Ok(options) => Identity::Options(options.clone()),
             Err(error) => Identity::Failed(self.section.path().to_owned(), error.clone()),
         };
-        ModuleIdentity::of_value(&key)
+        ModuleIdentity::of_owner::<Self, _>(&key)
     }
 
     fn register(&self, m: &mut ModuleDef<'_>) {
@@ -211,9 +224,12 @@ where
             Err(error) => Err(BoxError::from(error)),
         };
         let connects = validated.as_ref().is_ok_and(|options| S::create_connects(options));
-        if connects && self.lazy {
+        if connects && self.lazy.is_some() {
             let because = validated.as_ref().map_or("", |options| S::connects_because(options));
             m.try_value::<LazyRefused, _>(Err(LazyRefused::new(S::NAME, because)));
+        }
+        if let (Some(lazy_at), Some(migrate_at)) = (self.lazy, self.migrate_at) {
+            m.try_value::<LazyWithMigrations, _>(Err(LazyWithMigrations::new(S::NAME, lazy_at, migrate_at)));
         }
         m.try_value(validated.map(|options| StoreOptions::<S> { options, _store: PhantomData }));
 
@@ -238,7 +254,7 @@ where
                 .ready(ready_ping::<S>)
                 .retries(0)
                 .on_destroy(close::<S>);
-        } else if self.lazy {
+        } else if self.lazy.is_some() {
             client.on_destroy(close::<S>);
         } else {
             client

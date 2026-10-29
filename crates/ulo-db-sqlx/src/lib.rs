@@ -1,10 +1,20 @@
 //! SQLx stores for `ulo-db` (integrations DESIGN §4.6): [`Postgres`], [`MySql`] and [`Sqlite`] as
 //! [`Store`](ulo_db::Store)s over SQLx 0.9 with `runtime-tokio` alone.
 //!
-//! ```ignore
-//! m.import(SqlxModule::<Postgres>::from_config(&config, "database")
-//!     .migrate(sqlx::migrate!("./migrations")));
 //! ```
+//! # #[cfg(feature = "sqlite")]
+//! # fn wire(m: &mut ulo::ModuleDef<'_>, options: ulo_db_sqlx::SqliteOptions) {
+//! use ulo_db_sqlx::{Sqlite, SqlxModule};
+//!
+//! m.import(SqlxModule::<Sqlite>::from_options(options).migrate(sqlx::migrate!("./tests/migrations")));
+//! # }
+//! ```
+//!
+//! `sqlx::migrate!` is a macro of SQLx's `macros` feature, which this crate does not enable, and
+//! its expansion names `::sqlx::migrate` paths, which resolve only in a crate that depends on
+//! `sqlx` under that name. The re-export supplies neither, so the application depends on `sqlx`
+//! directly with `features = ["macros"]`; Cargo unifies that with the `sqlx` this crate
+//! re-exports, so it is one crate.
 //!
 //! The application reads a bare `Dep<sqlx::PgPool>`. This crate re-exports `sqlx`, and an
 //! application names it as `ulo_db_sqlx::sqlx`: `ulo-db-seaorm` shares the workspace's one SQLx, and

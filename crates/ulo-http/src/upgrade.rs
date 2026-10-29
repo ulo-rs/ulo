@@ -40,9 +40,12 @@ pub trait UpgradeHandler: Send + Sync + 'static {
     }
 
     /// Called once the HTTP server has bound, where a gateway's `AfterInit` runs. Work that waits
-    /// is the handler's to spawn: the server does not wait for it.
-    fn bound(&self, app: &AppHandle) {
+    /// is the handler's to spawn: the server does not wait for it. What the handler must have
+    /// before the app serves, a broadcast subscription's confirmation, it awaits here, and its
+    /// error fails the server's `bind`, which closes what the server had bound.
+    fn bound<'a>(&'a self, app: &'a AppHandle) -> BoxFuture<'a, Result<(), BoxError>> {
         let _ = app;
+        Box::pin(async { Ok(()) })
     }
 
     /// The drain: idle connections closed with 1001 at once, busy ones stop reading, finish their

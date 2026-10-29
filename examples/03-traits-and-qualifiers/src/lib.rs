@@ -1,4 +1,4 @@
-use ulo::{App, AppBuilder, Dep, Module, ModuleDef, ModuleIdentity, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, injectable, module, routes};
 
 /// A trait a provider is bound under. `Send + Sync` is what `Dep<dyn UserRepo>` requires.
 pub trait UserRepo: Send + Sync {
@@ -20,21 +20,13 @@ pub struct Replica;
 
 pub struct Db(pub &'static str);
 
-/// `#[module]` has no spelling for a qualifier, so this module is written against `ModuleDef`.
+/// `Db(..) @ Primary` binds a value under a qualifier; the exports name the same two keys, since
+/// an export leaves a module by key and `Db` alone is `Db @ ()`.
+#[module(
+    providers = [Db("primary") @ Primary, Db("replica") @ Replica],
+    exports = [Db @ Primary, Db @ Replica],
+)]
 pub struct DbModule;
-
-impl Module for DbModule {
-    fn identity(&self) -> ModuleIdentity {
-        ModuleIdentity::of_type::<Self>()
-    }
-
-    fn register(&self, m: &mut ModuleDef<'_>) {
-        m.singleton(|| async { Db("primary") }).qualified::<Primary>();
-        m.singleton(|| async { Db("replica") }).qualified::<Replica>();
-        m.export_qualified::<Db, Primary>();
-        m.export_qualified::<Db, Replica>();
-    }
-}
 
 #[injectable]
 pub struct UserController {

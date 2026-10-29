@@ -106,8 +106,9 @@ impl UpgradeHandler for Handoff {
     }
 
     /// Starts broadcast delivery and each gateway's `AfterInit` on its own task, at the first
-    /// holder's `bound` only.
-    fn bound(&self, app: &AppHandle) {
+    /// holder's `bound` only, and answers once the broadcast adapter's subscription is live. An
+    /// adapter that cannot subscribe fails it, and with it the HTTP server's `bind`.
+    fn bound<'a>(&'a self, app: &'a AppHandle) -> BoxFuture<'a, Result<(), BoxError>> {
         let _ = app;
         let table = {
             let mut slot = self.slot();
@@ -115,9 +116,14 @@ impl UpgradeHandler for Handoff {
             slot.started |= table.is_some();
             table
         };
-        if let Some(table) = table {
-            table.start();
-        }
+        Box::pin(async move {
+            let Some(table) = table else { return Ok(()) };
+            let started = table.start().await;
+            if started.is_err() {
+                self.slot().started = false;
+            }
+            started
+        })
     }
 
     fn drain(&self, token: DrainToken) -> BoxFuture<'_, ()> {

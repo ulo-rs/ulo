@@ -367,11 +367,12 @@ pub(crate) struct PreparedApp {
     pub(crate) upgrading: bool,
 }
 
-/// Each upgrade handler's `bound`, once the server has bound.
-pub(crate) fn upgrades_bound(handlers: &[Arc<dyn UpgradeHandler>], app: &AppHandle) {
+/// Each upgrade handler's `bound`, once the server has bound, in order; the first error ends it.
+pub(crate) async fn upgrades_bound(handlers: &[Arc<dyn UpgradeHandler>], app: &AppHandle) -> Result<(), BoxError> {
     for handler in handlers {
-        handler.bound(app);
+        handler.bound(app).await?;
     }
+    Ok(())
 }
 
 /// Each upgrade handler's `drain`, concurrently.
@@ -447,7 +448,13 @@ impl<B: Backend> ulo::Server for Server<B> {
         let secure = tls.is_some();
         self.backend.bind(listeners, tls, service, &self.config).await?;
         self.bound = addrs.into_iter().map(|addr| BoundAddr::new(<Http as Transport>::KEY, addr).tls(secure)).collect();
-        upgrades_bound(&self.upgrades, mounted.app());
+        if let Err(error) = upgrades_bound(&self.upgrades, mounted.app()).await {
+            // `listen()` closes the servers that bound before this one, not this one: its
+            // listeners close here.
+            let _ = self.backend.close().await;
+            self.bound.clear();
+            return Err(error);
+        }
         Ok(())
     }
 

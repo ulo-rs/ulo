@@ -8,7 +8,7 @@
 //! // `prepare`
 //! let table = GatewayTable::own_port("my_server::Server", &mounted, &defaults, &mut failures);
 //! // `bind`
-//! table.start();
+//! table.start().await?;
 //! // each upgrade request
 //! match table.handshake(head, peer).await {
 //!     Handshake::Switch(switch) => {
@@ -33,7 +33,7 @@ use futures_core::future::BoxFuture;
 
 use http::StatusCode;
 use http::request::Parts;
-use ulo::{AppHandle, Bound, DrainToken, Mounted, Runtime};
+use ulo::{AppHandle, Bound, BoxError, DrainToken, Mounted, Runtime};
 use ulo_transport::Count;
 use ulo_transport::prepare::Failures;
 
@@ -264,10 +264,13 @@ impl GatewayTable {
     }
 
     /// Starts the application's broadcast delivery, once whichever server starts it, and each
-    /// gateway's `AfterInit`, each a task on the app's runtime. A server calls it once bound.
-    pub fn start(&self) {
-        self.inner.hub.start(&*self.inner.runtime);
+    /// gateway's `AfterInit`, each a task on the app's runtime. A server calls it once bound, and
+    /// it returns once the broadcast adapter's subscription is live. The adapter's failure to
+    /// subscribe is the error, which a server returns from `bind`; no `AfterInit` has started then.
+    pub async fn start(&self) -> Result<(), BoxError> {
+        self.inner.hub.start(&self.inner.runtime).await?;
         after_init(&self.inner.gateways, &*self.inner.runtime);
+        Ok(())
     }
 
     /// The decision on one upgrade request, made from its head alone: the gateway at its path

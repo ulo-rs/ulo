@@ -272,7 +272,7 @@ impl Link for Nats {
     }
 
     fn usable(&self) -> Result<(), BoxError> {
-        self.runtime()?;
+        self.runtime()?.require_io()?;
         if let Some(zero) = zero_bound(
             "roots_timeout",
             self.roots_timeout,
@@ -286,6 +286,12 @@ impl Link for Nats {
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
+        // `listen` binds on the link's runtime: one that has shut down, or has no IO driver, is
+        // refused here, before the configuration and before any server binds. The shutdown is
+        // asked first, since a runtime that has shut down answers nothing about its driver.
+        let runtime = self.runtime()?;
+        runtime.run(async {}).await.map_err(Permanent::new)?;
+        runtime.require_io().map_err(Permanent::new)?;
         self.usable()?;
         let servers = servers(&self.url)?;
         match &self.group {
@@ -293,10 +299,6 @@ impl Link for Nats {
             None => self.default_group = Some(queue_group(&format!("{:#}", app.root().name()))),
         }
         self.timer = app.timer().cloned();
-        let runtime = self.runtime()?;
-        // `listen` connects on the link's runtime: one that has shut down is refused here, beside
-        // the configuration, before any server binds.
-        runtime.run(async {}).await.map_err(Permanent::new)?;
         // A server starts its roots' load here, so over `tls://` a store that yields none fails
         // `bind` before `listen`; over `nats://` `listen` waits for it.
         self.roots(&servers, &runtime, false).await.map_err(at_startup)?;
@@ -3163,7 +3165,7 @@ mod tests {
     /// A tokio runtime's handle once the runtime has shut down.
     fn stopped() -> Handle {
         std::thread::spawn(|| {
-            let runtime = tokio::runtime::Builder::new_current_thread().build().expect("a runtime to shut down");
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a runtime to shut down");
             let handle = runtime.handle().clone();
             drop(runtime);
             handle
@@ -3393,7 +3395,7 @@ mod tests {
         let capture = capture();
         let here = std::thread::current().id();
         let stopped = std::thread::spawn(|| {
-            let runtime = tokio::runtime::Builder::new_current_thread().build().expect("a runtime to shut down");
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a runtime to shut down");
             let handle = runtime.handle().clone();
             drop(runtime);
             handle

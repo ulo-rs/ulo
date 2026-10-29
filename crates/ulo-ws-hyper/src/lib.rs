@@ -293,8 +293,10 @@ impl<L: Listener> ulo::Server for ServerOn<L> {
         let secure = tls.is_some();
         let config = ServeConfig { handshake_timeout: connection_timeout(self.handshake_timeout), read_count: self.read_count.clone() };
         let serve = Serve::<L>::new(listeners, tls, &config, Arc::clone(mounted.runtime()))?;
+        // The subscription is live before `bind` returns. A failure drops `serve` and its
+        // listeners, so the server holds no socket.
+        table.start().await?;
         self.bound = addrs.into_iter().map(|addr| BoundAddr::new(<Ws as Transport>::KEY, addr).tls(secure)).collect();
-        table.start();
         let mut http1 = http1::Builder::new();
         http1
             .timer(RuntimeTimer::new(Arc::clone(mounted.timer())))

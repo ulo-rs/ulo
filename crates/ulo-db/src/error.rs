@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::panic::Location;
 use std::time::Duration;
 
 use ulo::{BoxError, TaskEnd};
@@ -240,3 +241,45 @@ impl fmt::Display for LazyRefused {
 }
 
 impl Error for LazyRefused {}
+
+/// `.lazy()` and `.migrate(..)` on one module, refused at registration through `try_value`: a lazy
+/// module starts without the database and the migrations need it at the start.
+#[derive(Debug)]
+pub struct LazyWithMigrations {
+    store: &'static str,
+    lazy_at: &'static Location<'static>,
+    migrate_at: &'static Location<'static>,
+}
+
+impl LazyWithMigrations {
+    pub(crate) fn new(store: &'static str, lazy_at: &'static Location<'static>, migrate_at: &'static Location<'static>) -> Self {
+        LazyWithMigrations { store, lazy_at, migrate_at }
+    }
+
+    /// The store's `Store::NAME`.
+    pub fn store(&self) -> &'static str {
+        self.store
+    }
+
+    /// Where `.lazy()` was called.
+    pub fn lazy_at(&self) -> &'static Location<'static> {
+        self.lazy_at
+    }
+
+    /// Where `.migrate(..)` was called.
+    pub fn migrate_at(&self) -> &'static Location<'static> {
+        self.migrate_at
+    }
+}
+
+impl fmt::Display for LazyWithMigrations {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "the {} store module is lazy and migrates: `.lazy()` at {} starts without the database, `.migrate(..)` at {} needs it at the start; drop one",
+            self.store, self.lazy_at, self.migrate_at
+        )
+    }
+}
+
+impl Error for LazyWithMigrations {}

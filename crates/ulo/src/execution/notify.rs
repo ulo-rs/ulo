@@ -2,9 +2,10 @@
 //! it: cancellation of one execution, and the app's stop-accepting notice.
 
 use std::future::Future;
+use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, Waker};
 
 /// Fires once and stays fired. Every listener registered before or after the fire resolves.
@@ -49,7 +50,12 @@ impl Notify {
     }
 
     pub(crate) fn listen(&self) -> Listen<'_> {
-        Listen { notify: self, slot: None }
+        Listen { notify: Source::Borrowed(self), slot: None }
+    }
+
+    /// A listener that holds the `Notify` itself, for a future that outlives its caller's borrow.
+    pub(crate) fn listen_owned(self: &Arc<Self>) -> Listen<'static> {
+        Listen { notify: Source::Owned(Arc::clone(self)), slot: None }
     }
 
     fn waiters(&self) -> MutexGuard<'_, Waiters> {
@@ -59,8 +65,24 @@ impl Notify {
 
 /// Resolves once its `Notify` has fired.
 pub(crate) struct Listen<'a> {
-    notify: &'a Notify,
+    notify: Source<'a>,
     slot: Option<usize>,
+}
+
+enum Source<'a> {
+    Borrowed(&'a Notify),
+    Owned(Arc<Notify>),
+}
+
+impl Deref for Source<'_> {
+    type Target = Notify;
+
+    fn deref(&self) -> &Notify {
+        match self {
+            Source::Borrowed(notify) => notify,
+            Source::Owned(notify) => notify,
+        }
+    }
 }
 
 impl Future for Listen<'_> {

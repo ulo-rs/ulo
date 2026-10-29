@@ -69,8 +69,7 @@ impl StreamController {
     #[ulo_http::get("/events")]
     fn events(&self, last: LastEventId, exec: ExecutionRef) -> Sse<BoxStream<'static, Event>> {
         let after = last.0.and_then(|id| id.parse().ok()).unwrap_or(0);
-        let drained = async move { exec.draining().await };
-        Sse::new(Feed::since(self.feed.clone(), after).take_until(drained).boxed()).keep_alive(KEEP_ALIVE)
+        Sse::new(Feed::since(self.feed.clone(), after).take_until(exec.draining()).boxed()).keep_alive(KEEP_ALIVE)
     }
 
     #[ulo_http::post("/events/{text}")]

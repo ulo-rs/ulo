@@ -321,7 +321,12 @@ jobs:
           a_server_on_an_app_with_no_timer_refuses_to_listen
           -- cargo test -p ulo-rpc-kafka --features integration --test no_timer --locked
       # Broadcast across two processes through the WebSocket transport's Redis adapter.
-      - run: cargo test -p ulo-ws-redis --features integration --test integration --locked
+      - run: >-
+          python3 scripts/require_tests.py
+          a_room_broadcast_reaches_the_member_on_the_other_process
+          a_broadcast_published_right_after_listen_reaches_a_member_of_the_same_process
+          listen_waits_for_the_subscription_when_redis_is_slow_to_confirm_it
+          -- cargo test -p ulo-ws-redis --features integration --test integration --locked
       # Example 24: two processes of its binary on one Redis. Required by name, since a cfg that
       # compiles the test away reports `ok. 0 passed`.
       - run: >-

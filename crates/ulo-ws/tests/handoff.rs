@@ -18,7 +18,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use bytes::Bytes;
 use futures_util::stream::BoxStream;
-use ulo::{App, BoxError, BoxFuture, ConnectError, Dep, FailureReason, Module, ModuleDef, ModuleIdentity, Signal, StartupError, injectable, routes};
+use ulo::{App, BoxError, BoxFuture, ConnectError, Dep, FailureReason, Module, ModuleDef, ModuleIdentity, Signal, StartupError, Timer, injectable, routes};
 use ulo_transport::Count;
 use ulo_ws::{
     AfterInit, BroadcastAdapter, ConnId, ConnectCx, ConnectRefused, GatewayRef, NodeId, OnConnect, Payload, Rooms, Target, WsCx, WsModule,
@@ -406,8 +406,8 @@ impl BroadcastAdapter for Refusing {
         Box::pin(async { Err(BoxError::from(REFUSAL)) })
     }
 
-    fn subscribe(&self, _node: NodeId) -> BoxStream<'static, (Target, Bytes)> {
-        Box::pin(futures_util::stream::empty())
+    fn subscribe(&self, _node: NodeId, _timer: Arc<dyn Timer>) -> BoxFuture<'static, Result<BoxStream<'static, (Target, Bytes)>, BoxError>> {
+        Box::pin(async { Ok(Box::pin(futures_util::stream::empty()) as BoxStream<'static, (Target, Bytes)>) })
     }
 }
 

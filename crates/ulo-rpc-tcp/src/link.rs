@@ -13,7 +13,7 @@ use ulo_net::{BoundListener, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Capabilities, Codec, Link, Outbound, Pattern};
 use ulo_rpc_tcp_core::{Accept, Core, Incoming, Reader, Writer};
-use ulo_runtime_tokio::Tokio;
+use ulo_runtime_tokio::{NoIoDriver, Tokio};
 
 /// The TCP link: a server binds its endpoint, a client connects to it.
 ///
@@ -52,7 +52,7 @@ use ulo_runtime_tokio::Tokio;
 /// polled on any executor or on a plain thread. A link built outside a runtime and given none
 /// refuses in `usable`, so a client is refused where it takes the link and a server's `listen()`
 /// fails, and in `connect`. A runtime built without its IO driver (`enable_io`) is refused the
-/// same way, a server's as a permanent `Configure`. A client's link also refuses in `usable` what
+/// same way ([`Tokio::require_io`]), a server's as a permanent `Configure`. A client's link also refuses in `usable` what
 /// its `connect` would refuse on every call: an endpoint that is not an IP address and port, the
 /// link resolving no host name, and `tls` set.
 pub struct Tcp {
@@ -101,23 +101,6 @@ impl Tcp {
     }
 }
 
-const NO_IO: &str = "the TCP link's tokio runtime was built without its IO driver: call `enable_io()` (or `enable_all()`) on its `Builder`";
-
-/// Whether sockets register on `handle`'s runtime. Tokio offers no query for the IO driver, and
-/// registering a socket on a runtime without one panics, so a loopback listener is registered and
-/// dropped under `catch_unwind`. A loopback address that cannot be bound says nothing about the
-/// driver and counts as enabled; `listen` then reports what it meets.
-fn io_enabled(handle: &Handle) -> bool {
-    let Ok(probe) = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)) else {
-        return true;
-    };
-    if probe.set_nonblocking(true).is_err() {
-        return true;
-    }
-    let _entered = handle.enter();
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(TcpListener::from_std(probe)))).is_ok()
-}
-
 const NO_RUNTIME: &str = "the TCP link has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
 
 impl Link for Tcp {
@@ -128,9 +111,7 @@ impl Link for Tcp {
     }
 
     fn usable(&self) -> Result<(), BoxError> {
-        if !io_enabled(self.runtime()?.handle()) {
-            return Err(NO_IO.into());
-        }
+        self.runtime()?.require_io()?;
         self.core.client_addr().map(drop)
     }
 
@@ -142,9 +123,7 @@ impl Link for Tcp {
         // any server binds, and alone, since `Core::prepare` reports its problems as text.
         if let Ok(runtime) = self.runtime() {
             runtime.run(async {}).await.map_err(Permanent::new)?;
-            if !io_enabled(runtime.handle()) {
-                return Err(Permanent::new(NO_IO).into());
-            }
+            runtime.require_io().map_err(Permanent::new)?;
         }
         self.core.prepare(usable, app.timer().cloned())
     }
@@ -195,7 +174,12 @@ struct TokioListener {
 impl TokioListener {
     fn adopt(handle: &Handle, listener: BoundListener, tls: Option<Arc<ServerConfig>>) -> io::Result<TokioListener> {
         let _entered = handle.enter();
-        Ok(TokioListener { tcp: TcpListener::from_std(listener.into_std())?, tls: tls.map(TlsAcceptor::from) })
+        let std = listener.into_std();
+        // Backstop for a probe that could not find out: registering on a runtime without its IO
+        // driver panics.
+        let tcp = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| TcpListener::from_std(std)))
+            .map_err(|_| io::Error::other(NoIoDriver))??;
+        Ok(TokioListener { tcp, tls: tls.map(TlsAcceptor::from) })
     }
 }
 

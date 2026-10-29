@@ -153,7 +153,7 @@ impl Drop for Tracked {
 }
 
 #[tokio::test]
-async fn execution_scoped_instances_are_released_when_the_last_handle_drops() {
+async fn execution_scoped_instances_are_released_when_the_execution_drops() {
     let dropped = Arc::new(AtomicUsize::new(0));
     let d = Arc::clone(&dropped);
     let app = connected(Mod::<A>::new(move |m| {
@@ -179,9 +179,10 @@ async fn execution_scoped_instances_are_released_when_the_last_handle_drops() {
         })
         .await
         .unwrap();
-    assert_eq!(dropped.load(Ordering::SeqCst), 1, "a subtask's handle keeps the execution's instances");
+    assert_eq!(dropped.load(Ordering::SeqCst), 2, "released when `execute` returns, a handle kept past it notwithstanding");
+    assert!(matches!(handle.get::<Tracked>().await, Err(LookupError::ExecutionEnded { .. })), "the handle builds no second instance");
     drop(handle);
-    assert_eq!(dropped.load(Ordering::SeqCst), 2, "released with the last handle");
+    assert_eq!(dropped.load(Ordering::SeqCst), 2);
     close(app).await;
 }
 

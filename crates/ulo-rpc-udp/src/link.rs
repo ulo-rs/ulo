@@ -206,17 +206,19 @@ impl Link for Udp {
     }
 
     fn usable(&self) -> Result<(), BoxError> {
-        self.runtime()?;
+        self.runtime()?.require_io()?;
         self.address().map(drop)
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
+        // `listen` binds on the link's runtime: one that has shut down, or has no IO driver, is
+        // refused here, before the configuration and before any server binds. The shutdown is
+        // asked first, since a runtime that has shut down answers nothing about its driver.
         let runtime = self.runtime()?;
+        runtime.run(async {}).await.map_err(Permanent::new)?;
+        runtime.require_io().map_err(Permanent::new)?;
         self.prepared = Some(self.address()?);
         self.timer = app.timer().cloned();
-        // `listen` binds on the link's runtime: one that has shut down is refused here, beside
-        // the configuration, before any server binds.
-        runtime.run(async {}).await.map_err(Permanent::new)?;
         Ok(())
     }
 

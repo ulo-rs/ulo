@@ -134,7 +134,7 @@ impl ulo::Server for PipeServer {
 
     async fn bind(&mut self, _mounted: Mounted<'_, Ws>) -> Result<(), BoxError> {
         if let Some(table) = self.table() {
-            table.start();
+            table.start().await?;
         }
         Ok(())
     }

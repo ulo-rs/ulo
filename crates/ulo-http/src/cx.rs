@@ -14,8 +14,9 @@ use crate::transport::{Http, RequestHead};
 /// the client address, a take-once body slot and an interior-mutable response-head writer.
 ///
 /// A guard reads and writes through it: `cx.head()`, `cx.extensions().insert(..)`,
-/// `cx.exec().handler()`. A handler takes it as a parameter. A streaming reply holds a clone, which
-/// keeps the execution's instances and its cancellation signal alive while the stream runs.
+/// `cx.exec().handler()`. A handler takes it as a parameter. A streaming reply holds a clone, through
+/// which it reads the execution and observes its cancellation while the stream runs; the service
+/// holds the execution itself until the body is dropped.
 #[derive(Clone)]
 pub struct HttpCx {
     pub(crate) inner: Arc<CxInner>,

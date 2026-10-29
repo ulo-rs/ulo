@@ -61,11 +61,17 @@ pub(crate) fn expand_struct(args: ModuleArgs, item: ItemStruct) -> syn::Result<T
         }
     });
     let exports = args.exports.iter().map(|export| match export {
-        ExportEntry::Export(ty) => quote_spanned! {ty.span()=>
+        ExportEntry::Export { ty, qualifier: None } => quote_spanned! {ty.span()=>
             #m.export::<#ty>();
         },
-        ExportEntry::Reexport(ty) => quote_spanned! {ty.span()=>
+        ExportEntry::Export { ty, qualifier: Some(q) } => quote_spanned! {ty.span()=>
+            #m.export_qualified::<#ty, #q>();
+        },
+        ExportEntry::Reexport { ty, qualifier: None } => quote_spanned! {ty.span()=>
             #m.reexport::<#ty>();
+        },
+        ExportEntry::Reexport { ty, qualifier: Some(q) } => quote_spanned! {ty.span()=>
+            #m.reexport_qualified::<#ty, #q>();
         },
     });
 

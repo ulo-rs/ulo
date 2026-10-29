@@ -72,8 +72,11 @@ impl ModuleIdentity {
         ModuleIdentity { label: Some(name), ..self }
     }
 
-    /// The owner type `O` with configuration `C`, which is how a `DynamicModule` is identified.
-    pub(crate) fn of_owner<O: 'static, C: Eq + Hash + Clone + Send + Sync + 'static>(config: &C) -> Self {
+    /// A module of type `O` configured by the value `config`, found by `app.module::<O>()` and
+    /// `app.module_keyed::<O, Q>()` and printed as `O`. A generic module whose configuration is
+    /// its own type's field, as a `DynamicModule` is, names itself `O` and keeps `config` for
+    /// equality.
+    pub fn of_owner<O: 'static, C: Eq + Hash + Clone + Send + Sync + 'static>(config: &C) -> Self {
         // `DefaultHasher::new` is unkeyed: equal configurations hash alike in every map holding
         // the identity. The configuration's type is hashed too, which keeps two configurations
         // of different types apart before the value comparison runs.

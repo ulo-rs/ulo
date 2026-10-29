@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ulo::{Dep, ExecOptions, Execution, LookupError, Module};
-use ulo_db::Store;
+use ulo_db::{Store, StoreModule};
 use ulo_health::HealthModule;
 
 use crate::Host;
@@ -20,9 +20,9 @@ struct Second;
 /// process-wide pool; a check name that ignores the qualifier.
 ///
 /// Two modules over the host's options, one keyed `First` and one `Second`, and the health module
-/// connect. Each qualified client resolves, to two distinct instances, and each answers a ping of
-/// its own; the unqualified client is no binding, since a keyed module requalifies its exports; and
-/// readiness reads true over two checks contributed by the store, one per instance. Last, the
+/// connect. Each instance is found by `module_keyed::<StoreModule<S>, Q>()`. Each qualified client
+/// resolves, to two distinct instances, and each answers a ping of its own; the unqualified client
+/// is no binding, since a keyed module requalifies its exports; and readiness reads true over two checks contributed by the store, one per instance. Last, the
 /// `First` client is closed through [`Store::close`] and the `Second` pinged again: distinct
 /// handles are not distinct pools, and separate pools still answer where a shared one does not.
 pub async fn two_instances<H: Host>() {
@@ -46,6 +46,14 @@ pub async fn two_instances<H: Host>() {
         .await
         .unwrap_or_else(|error| panic!("the instance keyed `Second` exports no client: {error}"));
     drop(exec);
+    for (name, found) in [
+        ("First", app.module_keyed::<StoreModule<H::Store>, First>()),
+        ("Second", app.module_keyed::<StoreModule<H::Store>, Second>()),
+    ] {
+        if let Err(error) = found {
+            panic!("the instance keyed `{name}` is not found by its module type, `StoreModule<{}>`: {error}", <H::Store as Store>::NAME);
+        }
+    }
     assert!(!Arc::ptr_eq(first.arc(), second.arc()), "the qualifiers `First` and `Second` resolve to one client");
 
     for (name, outcome) in [

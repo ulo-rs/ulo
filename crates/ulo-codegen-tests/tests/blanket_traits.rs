@@ -45,7 +45,7 @@ macro_rules! blanket {
             register_shutdown bind bind_as contribute_with check into_reply kind streams event_reply
             read on_connect on_disconnect after_init length body matches answer checked push is_empty
             controller method meta route shape dependencies handler once payload path_check host_read
-            provide value try_value contribute also_as export import global secret guard guard_arc
+            provide value try_value contribute also_as qualified export_qualified reexport_qualified export import global secret guard guard_arc
             guard_value guard_with interceptor interceptor_arc error_handler error_handler_arc
             validate codec port subprotocols refuse overflow message_limit construct
         );
@@ -98,6 +98,8 @@ macro_rules! application {
         pub struct Metrics;
 
         impl Plugin for Metrics {}
+
+        pub struct Marker;
 
         pub trait Sink: Send + Sync {}
 
@@ -201,9 +203,12 @@ macro_rules! application {
                 with = |s: Dep<Store>| { let _ = s; 7_u16 },
                 dyn Sink: with = || Drain,
                 into dyn Plugin: [with = || Metrics, value = Metrics],
+                Holder @ Marker,
+                Metrics as dyn Plugin @ Marker,
+                { 3_u32 } @ Marker,
             ],
             controllers = [Web, Chat, Bus, Counter],
-            exports = [Store],
+            exports = [Store, u32 @ Marker],
         )]
         pub struct Root;
 

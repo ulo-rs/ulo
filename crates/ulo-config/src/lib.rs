@@ -37,8 +37,20 @@
 //! [`Problem::flattened`] is `true` for it; its rendering ends with `(inside a flattened
 //! section)`.
 //!
-//! A section reports at most one leaf-type error: serde stops a struct's pass at the first error
-//! raised inside a leaf type's own `Deserialize`, and every other section still reports its own.
+//! # What a report holds
+//!
+//! The top-level keys of the type being read are sections, and each is read on its own. Every
+//! problem in every section is reported. Within a section the report holds the problems found up
+//! to the first error raised by a leaf type's own `Deserialize` (an `IpAddr` or a `Url` refusing a
+//! string): serde stops there, and nothing outside serde can resume it. A missing field is one
+//! problem, however the field's type reads its input.
+//!
+//! A section that ended on a leaf-type error cannot be given a value, nor can a missing section
+//! whose type refuses the placeholder of a field (an `IpAddr` or a `Url` refuses an empty string).
+//! The type being read stops at that section, so what it checks after it is not reported in the
+//! same load: a missing field declared after it, and the fields of a `#[serde(flatten)]` struct.
+//! A section written under a `#[serde(alias)]` key that ends on a leaf-type error is also reported
+//! missing under its field's name.
 
 mod config;
 mod de;

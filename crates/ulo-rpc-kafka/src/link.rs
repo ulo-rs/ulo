@@ -21,7 +21,7 @@ use rdkafka::{Offset, TopicPartitionList};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Refused, Runtime, Timer};
+use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Refused, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -514,7 +514,7 @@ async fn create_topics(base: &ClientConfig, topics: &[String], partitions: i32, 
 /// Reading the committed offsets asks the group's coordinator, which a broker that has just
 /// started, or is moving the coordinator, may not have ready: those three errors are retried
 /// within the call's own timeout (`coordinator_retried`), waiting on the app's `timer` between
-/// attempts, until the timer refuses a wait; any other fails `bind` at once. Each broker call blocks its thread and runs on one
+/// attempts, until the timer refuses a wait, which fails `bind` as a permanent `RuntimeShutDown`; any other fails `bind` at once. Each broker call blocks its thread and runs on one
 /// of its own ([`blocking`]).
 async fn anchor(base: &ClientConfig, group: &str, topics: &[String], timer: &Arc<dyn Timer>) -> Result<(), BoxError> {
     let mut config = base.clone();
@@ -575,7 +575,8 @@ const RETRY_BACKOFF_MAX: Duration = Duration::from_secs(1);
 /// `attempt`, given the time left before `deadline`, retried while it fails with one of the
 /// three errors a group coordinator answers while it loads or moves, which librdkafka classes
 /// retriable, and a retry still fits before `deadline`; the last error is returned once one does
-/// not, or once `sleep` refuses the wait before a retry, its runtime shut down. Any other error is
+/// not. A `sleep` that refuses the wait before a retry, its runtime shut down, ends the loop with a
+/// `Permanent` [`RuntimeShutDown`] whose source is the last attempt's error. Any other error is
 /// returned at once. `sleep` and `now` are the clock, the app's `Timer` in `anchor`.
 async fn coordinator_retried<T, A, S>(
     deadline: Instant,
@@ -595,7 +596,8 @@ where
                 tracing::debug!(%error, ?backoff, "the Kafka group coordinator is not ready; retrying");
                 if let Err(refused) = sleep(backoff).await {
                     tracing::debug!(%refused, "the runtime timing the Kafka coordinator's backoff refused it; the read is not retried");
-                    return outcome;
+                    let last = outcome.err().expect("the match arm holds an error");
+                    return Err(Permanent::new(RuntimeShutDown::after(last)).into());
                 }
                 backoff = (backoff * 2).min(RETRY_BACKOFF_MAX);
             }
@@ -1657,7 +1659,7 @@ mod tests {
     const TURNS: usize = 3;
 
     /// N3: a clock that refuses the backoff, its runtime shut down, ends the retries after the one
-    /// refused wait, with the last error.
+    /// refused wait, as a `Permanent` `RuntimeShutDown` whose source is the last attempt's error.
     #[test]
     fn a_refused_backoff_ends_the_retries() {
         let start = Instant::now();
@@ -1672,7 +1674,16 @@ mod tests {
             },
             &clock,
         );
-        assert_eq!(code_of(&outcome), Some(RDKafkaErrorCode::CoordinatorNotAvailable), "{outcome:?}");
+        let error = outcome.expect_err("the retries ended without an error");
+        let permanent = error.downcast_ref::<Permanent>().unwrap_or_else(|| panic!("the refusal is not `Permanent`: {error:?}"));
+        let shut_down = std::error::Error::source(permanent)
+            .and_then(|inner| inner.downcast_ref::<RuntimeShutDown>())
+            .unwrap_or_else(|| panic!("the `Permanent` does not hold a `RuntimeShutDown`: {error:?}"));
+        let last = std::error::Error::source(shut_down).expect("the refusal carries the last attempt's error");
+        assert!(
+            matches!(last.downcast_ref::<KafkaError>(), Some(KafkaError::MetadataFetch(RDKafkaErrorCode::CoordinatorNotAvailable))),
+            "the refusal's source is not the last attempt's error: {last:?}"
+        );
         assert_eq!((calls, clock.slept.borrow().len()), (1, 1), "the attempts and backoffs on a clock refusing the backoff");
     }
 

@@ -200,7 +200,8 @@ impl ServiceInner {
         let path = req.head.extensions.get::<OriginalPath>().map_or_else(|| req.head.uri.path(), OriginalPath::as_str);
         call_span.record(span::URL_PATH, path);
         call_span.record(span::URL_SCHEME, if req.conn.tls.is_some() { "https" } else { "http" });
-        let pipeline = self.unscoped(Arc::new(exec), req, call_span.clone(), Arc::clone(&tracking)).instrument(call_span.clone());
+        let exec = Arc::new(exec);
+        let pipeline = self.unscoped(Arc::clone(&exec), req, call_span.clone(), Arc::clone(&tracking)).instrument(call_span.clone());
         let mut response = match until_drained(pipeline, &handle).await {
             // A stream answered once the drain's end has cancelled the call would be cut at its
             // first poll, and a backend that has not yet written the head then closes the
@@ -239,7 +240,7 @@ impl ServiceInner {
             } else {
                 body.tracked(handle.clone())
             };
-            HttpBody::new(ExecBody::new(body, handle, app, permit, unwritten))
+            HttpBody::new(ExecBody::new(body, exec, handle, app, permit, unwritten))
         })
     }
 
@@ -821,6 +822,8 @@ impl http_body::Body for TimedBody {
 /// the peer.
 struct ExecBody {
     inner: HttpBody,
+    /// The execution's holder, dropped after `inner`: the execution ends once the body has.
+    _holder: Arc<Execution>,
     exec: ExecutionRef,
     /// The app, whose redaction a panic's message goes through.
     app: AppHandle,
@@ -836,9 +839,9 @@ struct ExecBody {
 }
 
 impl ExecBody {
-    fn new(inner: HttpBody, exec: ExecutionRef, app: AppHandle, permit: Permit, unwritten: bool) -> Self {
+    fn new(inner: HttpBody, holder: Arc<Execution>, exec: ExecutionRef, app: AppHandle, permit: Permit, unwritten: bool) -> Self {
         let ended = unwritten || inner.is_end_stream();
-        ExecBody { inner, exec, app, _permit: permit, ended, cancelled: None, settled: false, waiting: false }
+        ExecBody { inner, _holder: holder, exec, app, _permit: permit, ended, cancelled: None, settled: false, waiting: false }
     }
 
     /// The drain ended while the body was open: its stream is reported cut off by the drain, the

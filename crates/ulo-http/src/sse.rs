@@ -29,9 +29,16 @@ use crate::transport::Http;
 /// Like every streaming body, it is wrapped in `Tracked` by the service, so an `on_stream_end`
 /// callback learns whether it completed or was cut off.
 ///
-/// ```ignore
-/// Sse::new(self.feed.since(resume).take_until(exec.draining()))
-///     .keep_alive(Duration::from_secs(15))
+/// A handler's stream that ends at the drain, `exec` the handler's `ExecutionRef` parameter:
+///
+/// ```
+/// # use std::time::Duration;
+/// # use futures_util::{Stream, StreamExt};
+/// # use ulo::ExecutionRef;
+/// # use ulo_http::{Event, Sse};
+/// fn events(feed: impl Stream<Item = Event> + Send + 'static, exec: ExecutionRef) -> Sse<impl Stream<Item = Event> + Send + 'static> {
+///     Sse::new(feed.take_until(exec.draining())).keep_alive(Duration::from_secs(15))
+/// }
 /// ```
 pub struct Sse<S> {
     stream: S,
@@ -299,8 +306,8 @@ struct SseBody<S> {
     /// The matched route's handler, whose error handlers an `Err` item reaches. `None` for an
     /// `Sse` an error handler answered a miss with, whose item errors are written unreshaped.
     handler: Option<MountedHandler<Http>>,
-    /// Held while the stream runs, which keeps the execution's instances and its cancellation
-    /// signal alive.
+    /// Held while the stream runs, for the error handlers an `Err` item reaches and the
+    /// execution's cancellation.
     cx: HttpCx,
     state: State,
 }

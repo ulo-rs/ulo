@@ -16,7 +16,7 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use serde_json::json;
-use ulo::{App, BoundAddr, BoxError, BoxFuture, DrainToken, Module, ModuleDef, ModuleIdentity, Mounted, Server, Signal, StartupError, injectable, routes};
+use ulo::{App, BoundAddr, BoxError, BoxFuture, DrainToken, Module, ModuleDef, ModuleIdentity, Mounted, Server, Signal, StartupError, Timer, injectable, routes};
 use ulo_http::Http;
 use ulo_runtime_tokio::Tokio;
 use ulo_transport::Count;
@@ -57,14 +57,18 @@ impl BroadcastAdapter for Watched {
         self.inner.publish(target, frame)
     }
 
-    fn subscribe(&self, node: NodeId) -> BoxStream<'static, (Target, Bytes)> {
+    fn subscribe(&self, node: NodeId, timer: Arc<dyn Timer>) -> BoxFuture<'static, Result<BoxStream<'static, (Target, Bytes)>, BoxError>> {
         self.flags.subscribed.store(true, Ordering::SeqCst);
         let dropped = OnDrop(Arc::clone(&self.flags), |flags| &flags.subscription_dropped);
-        let carried = if self.stalls { futures_util::stream::pending().boxed() } else { self.inner.subscribe(node) };
-        Box::pin(carried.map(move |item| {
-            let _ = &dropped;
-            item
-        }))
+        let inner = self.inner.subscribe(node, timer);
+        let stalls = self.stalls;
+        Box::pin(async move {
+            let carried = if stalls { futures_util::stream::pending().boxed() } else { inner.await? };
+            Ok(Box::pin(carried.map(move |item| {
+                let _ = &dropped;
+                item
+            })) as BoxStream<'static, (Target, Bytes)>)
+        })
     }
 }
 

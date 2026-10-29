@@ -188,8 +188,9 @@ impl Dispatcher {
         conn.version = head.version;
         let request = Request { head, body: HttpBody::new(body), conn, upgrade: None };
         let matched = Arc::new(OnceLock::new());
+        let exec = Arc::new(exec);
         let pipeline: BoxFuture<'static, Response> = Box::pin(
-            Arc::clone(&self).unscoped(Arc::new(exec), request, call_span.clone(), Arc::clone(&matched)).instrument(call_span.clone()),
+            Arc::clone(&self).unscoped(Arc::clone(&exec), request, call_span.clone(), Arc::clone(&matched)).instrument(call_span.clone()),
         );
         let pipeline = until_drained(pipeline, handle.clone());
         let mut abandoned = CancelOnDrop(Some(handle.clone()));
@@ -210,7 +211,7 @@ impl Dispatcher {
             record_status(&call_span, Code::from_bytes(code.as_bytes()));
         }
         let tracked = response.extensions().get::<Streamed>().is_some();
-        response.map(|body| HttpBody::new(CallBody::new(body, handle, deadline, call_span, permit, tracked)))
+        response.map(|body| HttpBody::new(CallBody::new(body, exec, handle, deadline, call_span, permit, tracked)))
     }
 
     /// A deadline that passed before the call answered: the error handlers receive `Timeout`
@@ -725,8 +726,8 @@ impl http_body::Body for Buffered {
 /// stream whose items are always ready.
 struct LateItems<S> {
     stream: Pin<Box<S>>,
-    /// Held while the stream runs, which keeps the execution's instances and its cancellation
-    /// signal alive.
+    /// Held while the stream runs, for the error handlers an `Err` item reaches and the
+    /// execution's cancellation.
     cx: GrpcCx,
     state: Late,
     /// Resolves when the execution is cancelled; built when the stream first waits.
@@ -880,6 +881,8 @@ where
 /// before any of those.
 struct CallBody {
     inner: HttpBody,
+    /// The execution's holder, dropped after `inner`: the execution ends once the reply has.
+    _holder: Arc<Execution>,
     exec: ExecutionRef,
     deadline: Option<BoxFuture<'static, ()>>,
     call_span: Span,
@@ -896,6 +899,7 @@ struct CallBody {
 impl CallBody {
     fn new(
         inner: HttpBody,
+        holder: Arc<Execution>,
         exec: ExecutionRef,
         deadline: Option<BoxFuture<'static, ()>>,
         call_span: Span,
@@ -903,7 +907,8 @@ impl CallBody {
         tracked: bool,
     ) -> Self {
         let ended = inner.is_end_stream();
-        let mut body = CallBody { inner, exec, deadline, call_span, _permit: permit, ended, tracking: tracked, expired: false };
+        let mut body =
+            CallBody { inner, _holder: holder, exec, deadline, call_span, _permit: permit, ended, tracking: tracked, expired: false };
         if ended {
             body.report(false);
         }

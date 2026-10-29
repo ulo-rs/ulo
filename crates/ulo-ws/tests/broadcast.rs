@@ -2,8 +2,11 @@
 //! subscribed, in order, and one that falls more than 1024 broadcasts behind skips the oldest and
 //! goes on receiving; a publish with no subscriber succeeds.
 
+use std::sync::Arc;
+
 use bytes::Bytes;
 use futures_util::StreamExt;
+use ulo_runtime_tokio::Tokio;
 use ulo_ws::{Audience, BroadcastAdapter, InMemory, NodeId, Target};
 
 fn target() -> Target {
@@ -18,7 +21,7 @@ async fn publish(adapter: &InMemory, n: usize) {
 async fn a_subscriber_receives_what_is_published_after_it_subscribed() {
     let adapter = InMemory::new();
     publish(&adapter, 0).await;
-    let mut carried = adapter.subscribe(NodeId::current());
+    let mut carried = adapter.subscribe(NodeId::current(), Arc::new(Tokio::current())).await.expect("the in-memory adapter subscribes");
     for n in 1..=3 {
         publish(&adapter, n).await;
     }
@@ -31,7 +34,7 @@ async fn a_subscriber_receives_what_is_published_after_it_subscribed() {
 #[tokio::test]
 async fn a_subscriber_more_than_1024_behind_skips_the_oldest_and_goes_on() {
     let adapter = InMemory::new();
-    let mut carried = adapter.subscribe(NodeId::current());
+    let mut carried = adapter.subscribe(NodeId::current(), Arc::new(Tokio::current())).await.expect("the in-memory adapter subscribes");
     for n in 0..1030 {
         publish(&adapter, n).await;
     }

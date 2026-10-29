@@ -29,7 +29,7 @@ impl Module for Root {
 /// inside another's `block_on` panics.
 fn stopped() -> Handle {
     std::thread::spawn(|| {
-        let runtime = Builder::new_current_thread().build().expect("a runtime to shut down");
+        let runtime = Builder::new_current_thread().enable_all().build().expect("a runtime to shut down");
         let handle = runtime.handle().clone();
         drop(runtime);
         handle

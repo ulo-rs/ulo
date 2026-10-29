@@ -4,7 +4,7 @@ use std::any::{TypeId, type_name};
 use std::collections::HashMap;
 use std::future::{Future, poll_fn};
 use std::pin::pin;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, RwLock, Weak};
 use std::task::{Poll, Waker};
 
@@ -43,7 +43,7 @@ pub(crate) struct AppShared {
     pub(crate) closures: OnceCells,
     pub(crate) phase: PhaseCell,
     /// Fired when the app stops accepting: `draining()` on executions and handles.
-    pub(crate) draining: Notify,
+    pub(crate) draining: Arc<Notify>,
     pub(crate) live: Arc<LiveSet>,
     pub(crate) shutdown: ShutdownCell,
     /// The bound transports, set by `listen`; the shutdown sequence drains and closes them, then
@@ -69,7 +69,7 @@ impl AppShared {
             singletons: SingletonStore::default(),
             closures: OnceCells::default(),
             phase: PhaseCell::new(Phase::Wired),
-            draining: Notify::new(),
+            draining: Arc::new(Notify::new()),
             live: Arc::new(LiveSet::default()),
             shutdown: ShutdownCell::new(),
             servers: Mutex::new(Vec::new()),
@@ -125,7 +125,8 @@ impl AppShared {
     /// - an execution-scoped binding from the execution's cache, built on first read, or
     ///   `ExecutionRequired` without an execution;
     /// - a transient built fresh;
-    /// - an alias through its target, a coerced key through its source instance.
+    /// - an alias through its target, a coerced key through its source instance;
+    /// - through an execution that has ended, `ExecutionEnded` whatever the binding's scope.
     ///
     /// A build inside a call runs under `CONSTRUCT_TIMEOUT` with panics caught, and fails as
     /// `LookupError::Construct` with the reason redacted.
@@ -138,6 +139,10 @@ impl AppShared {
         let graph = Arc::clone(&r.graph);
         let binding = graph.binding(id);
         let key = key_name(binding);
+        // Whatever the scope: a read through an ended execution builds nothing for it.
+        if r.exec.is_some_and(|exec| exec.ended.load(Ordering::Acquire)) {
+            return Err(LookupError::ExecutionEnded { key });
+        }
         let built = match &binding.record.recipe {
             Recipe::Alias { target } => return self.obtain_alias(r, &graph, binding, *target).await,
             Recipe::Failed => return Err(LookupError::NotFound { key, kind: LookupKind::Binding }),
@@ -154,7 +159,7 @@ impl AppShared {
                 }
                 Effective::PerExecution => {
                     let exec = r.exec.ok_or(LookupError::ExecutionRequired { key })?;
-                    exec.cache.get_or_build(Slot::Binding(id), || self.build(r, binding, ctor, key)).await?
+                    exec.cache.get_or_build(Slot::Binding(id), key, || self.build(r, binding, ctor, key)).await?
                 }
                 Effective::Transient => self.build(r, binding, ctor, key).await?,
             },
@@ -184,7 +189,7 @@ impl AppShared {
             cache: OnceCells::default(),
             extensions: Extensions::default(),
             inputs: Seeded::default(),
-            cancel: Notify::new(),
+            cancel: Arc::new(Notify::new()),
             cancel_reason: OnceLock::new(),
             deadline: opts.deadline,
             trace_inbound: opts.trace.filter(|_| self.config.trace == TraceMode::On),
@@ -193,10 +198,10 @@ impl AppShared {
             late: AtomicBool::new(false),
             stream_end: Mutex::new(StreamEnd::default()),
             terminal,
-            live,
+            ended: AtomicBool::new(false),
         });
-        self.live.attach(&shared.live, &shared);
-        Ok(Execution { shared })
+        self.live.attach(&live, &shared);
+        Ok(Execution { shared, _live: live })
     }
 
     /// The body of every `execute`: open, run the closure against the borrowed execution, fire
@@ -384,7 +389,8 @@ struct LiveInner {
 }
 
 impl LiveSet {
-    /// Registers a new execution; the slot removes it when the execution's shared state drops.
+    /// Registers a new execution; the slot, which the `Execution` holds, removes it when the
+    /// `Execution` drops.
     pub(crate) fn enter(self: &Arc<Self>) -> LiveSlot {
         let mut inner = self.lock();
         let id = inner.next;
@@ -422,15 +428,17 @@ impl LiveSet {
     }
 
     /// Fires cancellation on every live execution and returns how many there were, and how many
-    /// of them were terminal: the drain's end (§9.5 step 4).
+    /// of them were terminal: the drain's end (§9.5 step 4). An execution whose `Execution` is
+    /// dropping has ended and is not counted.
     pub(crate) fn cancel_all(&self) -> (usize, usize) {
-        // Upgraded under the lock and released after it: dropping the last strong reference ends
-        // an execution, and its slot takes the lock.
-        let live: Vec<Arc<ExecShared>> = {
+        // Upgraded under the lock and released after it: an upgraded handle may be the last one,
+        // and what its shared state holds may drop an `Execution`, whose slot takes the lock.
+        let upgraded: Vec<Arc<ExecShared>> = {
             let mut inner = self.lock();
             inner.cancelled = true;
             inner.executions.values().filter_map(Weak::upgrade).collect()
         };
+        let live: Vec<Arc<ExecShared>> = upgraded.into_iter().filter(|exec| !exec.ended.load(Ordering::Acquire)).collect();
         for exec in &live {
             exec.cancel_with(CancelReason::Drain);
         }

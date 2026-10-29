@@ -451,6 +451,9 @@ pub enum LookupError {
     /// Single read as collection, or the reverse.
     WrongKind { key: KeyName, expected: BindingKind, found: BindingKind },
     ExecutionRequired { key: KeyName },
+    /// A read through an execution that has ended, its `Execution` dropped (§3.8): from a
+    /// subtask's `ExecutionRef`, or from a build that began before the end.
+    ExecutionEnded { key: KeyName },
     /// A runtime lookup of a key two visible exports answer (§8.2): `ModuleRef::get`, `get` in
     /// an execution opened on a module other than the root, or `by_key`. `sources` are the
     /// exporting modules. `Option<S>` propagates it.
@@ -480,6 +483,7 @@ impl fmt::Display for LookupError {
                 write!(f, "`{key}` is {}, read as {}", kind_text(*found), kind_text(*expected))
             }
             LookupError::ExecutionRequired { key } => write!(f, "`{key}` needs an execution, and none is open here"),
+            LookupError::ExecutionEnded { key } => write!(f, "`{key}` was read through an execution that has ended"),
             LookupError::Ambiguous { key, sources } => {
                 write!(f, "`{key}` is ambiguous between ")?;
                 write_list(f, sources)

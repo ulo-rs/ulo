@@ -171,7 +171,7 @@ impl ulo::Server for TableServer {
 
     async fn bind(&mut self, _mounted: Mounted<'_, Ws>) -> Result<(), BoxError> {
         if let Some(table) = self.table() {
-            table.start();
+            table.start().await?;
         }
         Ok(())
     }

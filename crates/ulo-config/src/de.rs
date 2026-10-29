@@ -11,7 +11,13 @@
 //! answered that way: the derive raises it after the fields are read, and ends the struct. It is
 //! recorded, remembered as a patch, and the pass runs again with the field supplied as a
 //! placeholder, until a pass finds nothing new. An error raised inside a leaf type's own
-//! `Deserialize` has no placeholder, so it is recorded and ends the pass: at most one per section.
+//! `Deserialize` has no placeholder, so it is recorded and ends the pass. That ends only the
+//! top-level section the leaf sits in: the driver sets the section aside with the problems found
+//! in it, and runs the pass again without it, so every other section is still read. Inside one
+//! section at most one leaf-type error is reported.
+//!
+//! A placeholder fed to a leaf type's own `Deserialize` raises an error that is no finding: the
+//! absence it stands in for is already reported, so that error is dropped unrecorded.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -31,7 +37,8 @@ use crate::problems::{Problem, Problems};
 use crate::tree::{Node, Origin, Value, join_index, join_key};
 
 /// A pass that never settles is cut here and reports what it found. Each pass adds one missing
-/// field, so this bounds the fields of one configuration that can be reported missing together.
+/// field or sets aside one section, so this bounds how many of both one configuration can report
+/// together.
 const MAX_PASSES: usize = 2048;
 
 /// The shortest secret `scrub` matches against problem messages.
@@ -139,6 +146,13 @@ struct Ctx {
     /// Fields earlier passes found missing, as (table path, field).
     patches: Vec<(String, String)>,
     new_patch: RefCell<Option<NewPatch>>,
+    /// The path the read started at; its direct children are the sections read separately.
+    root: String,
+    /// Sections set aside by earlier passes after a leaf type's own error ended them, and
+    /// top-level keys the type refused as keys (`deny_unknown_fields`).
+    skipped: Vec<String>,
+    /// The section whose read just failed outside a patch, and where its problems begin.
+    failed: RefCell<Option<(String, usize)>>,
 }
 
 struct NewPatch {
@@ -149,7 +163,7 @@ struct NewPatch {
 }
 
 impl Ctx {
-    fn new(patches: Vec<(String, String)>) -> Ctx {
+    fn new(patches: Vec<(String, String)>, root: String, skipped: Vec<String>) -> Ctx {
         Ctx {
             problems: RefCell::new(Problems::new()),
             secret_paths: RefCell::new(Vec::new()),
@@ -157,6 +171,9 @@ impl Ctx {
             consumed: RefCell::new(BTreeSet::new()),
             patches,
             new_patch: RefCell::new(None),
+            root,
+            skipped,
+            failed: RefCell::new(None),
         }
     }
 
@@ -269,8 +286,8 @@ impl<'a> NodeDeserializer<'a> {
     }
 
     fn record_error_in(&self, error: DeError, flattened: bool) -> DeError {
-        if error.recorded {
-            return error;
+        if error.recorded || matches!(self.target, Target::Absent { reported: true, .. }) {
+            return error.silenced();
         }
         let message = if matches!(error.kind, Kind::Custom) && self.ctx.under_secret(&self.path) {
             // The type's message may quote the secret it was given.
@@ -344,6 +361,7 @@ impl<'a> NodeDeserializer<'a> {
             .filter(|(parent, field)| *parent == self.path && !entries.iter().any(|(key, _)| key == field))
             .map(|(_, field)| field.clone())
             .collect();
+        let placeholders = !extras.is_empty();
         let access = TableAcc {
             ctx: self.ctx,
             base: self.path.clone(),
@@ -353,6 +371,12 @@ impl<'a> NodeDeserializer<'a> {
             pending: None,
         };
         let result = visitor.visit_map(access);
+        // Behind `flatten` a placeholder is buffered content, and the flattened type's refusal of
+        // it arrives here naming no key: the absence it stands in for is already reported.
+        let result = match result {
+            Err(error) if via_map && placeholders && !matches!(error.kind, Kind::Missing(_)) => Err(error.silenced()),
+            other => other,
+        };
         self.table_result(result, silenced, via_map)
     }
 
@@ -365,6 +389,12 @@ impl<'a> NodeDeserializer<'a> {
     /// recorded against this table's path and origin and marked as inside a flattened section.
     fn table_result<T>(&self, result: Result<T, DeError>, silenced: bool, via_map: bool) -> Result<T, DeError> {
         match result {
+            Err(DeError { kind: Kind::Missing(field), recorded: false, .. })
+                if self.path == self.ctx.root && self.ctx.skipped.contains(&join_key(&self.path, &field)) =>
+            {
+                // The section was set aside and reported; the derive cannot go on without it.
+                Err(DeError::new(Kind::Missing(field.clone()), format!("missing field `{field}`")).silenced())
+            }
             Err(DeError { kind: Kind::Missing(field), recorded: false, .. }) => {
                 let problem = (!silenced).then(|| Problem {
                     path: join_key(&self.path, &field),
@@ -668,17 +698,24 @@ impl<'de, 'a> MapAccess<'de> for TableAcc<'a> {
     type Error = DeError;
 
     fn next_key_seed<K: DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>, DeError> {
-        if let Some((key, node)) = self.entries.next() {
+        while let Some((key, node)) = self.entries.next() {
             let path = join_key(&self.base, key);
+            if self.base == self.ctx.root && self.ctx.skipped.contains(&path) {
+                continue;
+            }
             self.pending = Some((path.clone(), Target::Node(node)));
             let text: StrDeserializer<'_, DeError> = key.as_str().into_deserializer();
+            let start = self.ctx.problems.borrow().list.len();
             // A key the map's key type refuses, `abc` for a `u16`, is recorded at the key's own
             // path, so it never reaches `table_result` unrecorded and is not taken for a flattened
-            // section's. Behind `flatten` keys are read as content and do not fail here.
-            return seed
-                .deserialize(text)
-                .map(Some)
-                .map_err(|error| NodeDeserializer { ctx: self.ctx, target: Target::Node(node), path }.record_error(error));
+            // section's. Behind `flatten` keys are read as content and do not fail here. A
+            // top-level key refused, `deny_unknown_fields`'s, is set aside like a section.
+            return seed.deserialize(text).map(Some).map_err(|error| {
+                if self.base == self.ctx.root {
+                    *self.ctx.failed.borrow_mut() = Some((path.clone(), start));
+                }
+                NodeDeserializer { ctx: self.ctx, target: Target::Node(node), path }.record_error(error)
+            });
         }
         if let Some(key) = self.extras.next() {
             let target = Target::Absent { reported: true, origin: self.origin };
@@ -693,7 +730,35 @@ impl<'de, 'a> MapAccess<'de> for TableAcc<'a> {
         let Some((path, target)) = self.pending.take() else {
             return Err(DeError::new(Kind::Type, "a table value was read before its key".to_owned()).silenced());
         };
-        seed.deserialize(NodeDeserializer { ctx: self.ctx, target, path })
+        let section = (self.base == self.ctx.root).then(|| (path.clone(), self.ctx.problems.borrow().list.len()));
+        let placeholder = matches!(target, Target::Absent { reported: true, .. });
+        let here = NodeDeserializer { ctx: self.ctx, target, path: path.clone() };
+        let result = seed.deserialize(NodeDeserializer { ctx: self.ctx, target, path });
+        // A type that maps its input after reading it (`try_from`, `deserialize_with`, an untagged
+        // or internally tagged enum over buffered content) raises its refusal here, outside every
+        // deserializer of the pass: of a placeholder it is no finding, and of a value it is
+        // recorded at this key. A missing field it raises is a field of the buffered value.
+        let result = match result {
+            Err(error) if placeholder => Err(error.silenced()),
+            Err(DeError { kind: Kind::Missing(field), recorded: false, message }) => {
+                here.ctx.problems.borrow_mut().list.push(Problem {
+                    path: join_key(&here.path, &field),
+                    origin: here.origin().filter(|origin| !matches!(origin, Origin::Default)).cloned(),
+                    message: "missing required field".to_owned(),
+                    flattened: false,
+                });
+                Err(DeError::new(Kind::Missing(field), message).silenced())
+            }
+            Err(error) => Err(here.record_error(error)),
+            ok => ok,
+        };
+        if let (Err(_), Some(section)) = (&result, section)
+            && self.ctx.new_patch.borrow().is_none()
+            && !self.ctx.skipped.contains(&section.0)
+        {
+            *self.ctx.failed.borrow_mut() = Some(section);
+        }
+        result
     }
 
     fn size_hint(&self) -> Option<usize> {
@@ -773,7 +838,7 @@ fn scrub(problems: &mut Problems, secrets: &BTreeSet<String>) {
 }
 
 /// Deserialises the section at `path` as `T` inside the collector `ulo::__private::collect_secrets`
-/// installs, one pass per section, so at most one leaf-type error is reported for it. Answers the
+/// installs, with each top-level section set aside when a leaf type's own error ends it. Answers the
 /// value or the error, and the secrets either path recorded.
 pub(crate) fn section<T: DeserializeOwned>(
     config: &Config,
@@ -788,9 +853,11 @@ pub(crate) fn section<T: DeserializeOwned>(
     let mut consumed: BTreeSet<String> = BTreeSet::new();
     let mut value: Option<T> = None;
     let mut found = Problems::new();
+    let mut skipped: Vec<String> = Vec::new();
+    let mut held: Vec<Problem> = Vec::new();
 
     for _ in 0..MAX_PASSES {
-        let ctx = Ctx::new(patches.clone());
+        let ctx = Ctx::new(patches.clone(), path.to_owned(), skipped.clone());
         let target = match root {
             Some(node) => Target::Node(node),
             None => Target::Absent { reported: false, origin: None },
@@ -803,8 +870,18 @@ pub(crate) fn section<T: DeserializeOwned>(
         consumed.extend(ctx.consumed.take());
 
         let patch = ctx.new_patch.take();
+        let failed = ctx.failed.take();
         let mut pass_problems = ctx.problems.take();
         match (result, patch) {
+            (Err(error), None) if failed.is_some() => {
+                let (section, start) = failed.unwrap_or_default();
+                held.extend(pass_problems.list.split_off(start));
+                if !error.recorded {
+                    let origin = loaded.tree.get(&section).map(|node| node.origin.clone());
+                    held.push(Problem { path: section.clone(), origin, message: error.message, flattened: false });
+                }
+                skipped.push(section);
+            }
             (Err(_), Some(patch)) if !patches.iter().any(|(p, f)| *p == patch.parent && *f == patch.field) => {
                 patches.push((patch.parent, patch.field));
                 missing.extend(patch.problem);
@@ -837,6 +914,7 @@ pub(crate) fn section<T: DeserializeOwned>(
             problems.list.push(Problem { path: problem.path.clone(), origin: Some(origin), message: problem.message.clone(), flattened: false });
         }
     }
+    problems.list.extend(held);
     problems.list.extend(found.list);
     problems.list.extend(missing);
     scrub(&mut problems, &texts);

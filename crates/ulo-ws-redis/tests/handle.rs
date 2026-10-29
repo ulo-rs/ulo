@@ -18,7 +18,7 @@ fn an_adapter_built_outside_a_runtime_and_given_none_refuses_in_prepare() {
     let refused = Redis::url(URL).prepare().expect_err("an adapter with no tokio runtime prepared");
     assert!(refused.to_string().contains("`.with_handle(..)`"), "the refusal names `.with_handle(..)`: {refused}");
 
-    let runtime = tokio::runtime::Builder::new_current_thread().build().expect("a tokio runtime for the adapter");
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_io().build().expect("a tokio runtime for the adapter");
     Redis::url(URL).with_handle(runtime.handle().clone()).prepare().expect("an adapter given a handle prepares");
 }
 

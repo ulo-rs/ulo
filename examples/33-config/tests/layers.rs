@@ -81,11 +81,18 @@ fn wiring_problems(dir: &Dir) -> (String, Vec<(String, Option<Origin>)>) {
     (errors.to_string(), problems.iter().map(|p| (p.path().to_owned(), p.origin().cloned())).collect())
 }
 
-/// A file with three ill-typed values reports all three, each at its own line.
+/// A file with ill-typed values in both sections and a URL the value type refuses reports every
+/// one at its own line, and the report quotes nothing of the URL, although the type's own message
+/// does.
 #[tokio::test]
 async fn a_bad_file_reports_every_problem_with_its_file_and_line() {
     let dir = Dir::new();
-    let file = dir.write("app.toml", "greeting = \"hi\"\n[http]\nhost = \"h\"\nport = \"eighty\"\n[database]\nurl = \"postgres://u@h/d\"\npool_size = -3\ntimeout_secs = \"soon\"\n");
+    let file = dir.write(
+        "app.toml",
+        &format!(
+            "greeting = \"hi\"\n[http]\nhost = \"h\"\nport = \"eighty\"\n[database]\nurl = \"mysql://app:{SENTINEL}@db/app\"\npool_size = -3\ntimeout_secs = \"soon\"\n"
+        ),
+    );
     let at = |line, column| Some(Origin::File { path: file.to_string_lossy().as_ref().into(), line, column });
     let (report, mut problems) = wiring_problems(&dir);
     problems.sort_by(|a, b| a.0.cmp(&b.0));
@@ -94,24 +101,11 @@ async fn a_bad_file_reports_every_problem_with_its_file_and_line() {
         [
             ("database.pool_size".to_owned(), at(7, 13)),
             ("database.timeout_secs".to_owned(), at(8, 16)),
+            ("database.url".to_owned(), at(6, 7)),
             ("http.port".to_owned(), at(4, 8)),
         ]
     );
-    assert!(report.contains("3 problems") && report.contains("http.port at ") && report.contains("app.toml:4"), "{report}");
-}
-
-/// A URL the value type refuses is a problem at its line, and the report quotes nothing of it,
-/// although the type's own message does.
-#[tokio::test]
-async fn a_refused_secret_is_reported_by_path_and_line_and_never_by_value() {
-    let dir = Dir::new();
-    let file = dir.write(
-        "app.toml",
-        &format!("greeting = \"hi\"\n[http]\nhost = \"h\"\nport = 80\n[database]\nurl = \"mysql://app:{SENTINEL}@db/app\"\npool_size = 3\n"),
-    );
-    let (report, problems) = wiring_problems(&dir);
-    let origin = Some(Origin::File { path: file.to_string_lossy().as_ref().into(), line: 6, column: 7 });
-    assert_eq!(problems, [("database.url".to_owned(), origin)]);
+    assert!(report.contains("4 problems") && report.contains("http.port at ") && report.contains("app.toml:4"), "{report}");
     assert!(!report.contains(SENTINEL) && !report.contains("mysql://"), "the secret reached the report: {report}");
 }
 

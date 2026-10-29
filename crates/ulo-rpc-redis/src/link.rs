@@ -110,16 +110,20 @@ impl Link for Redis {
     }
 
     fn usable(&self) -> Result<(), BoxError> {
-        self.runtime().map(drop)
+        self.runtime()?.require_io()?;
+        Ok(())
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
         let _ = app;
+        // `listen` binds on the link's runtime: one that has shut down, or has no IO driver, is
+        // refused here, before the configuration and before any server binds. The shutdown is
+        // asked first, since a runtime that has shut down answers nothing about its driver.
+        let runtime = self.runtime()?;
+        runtime.run(async {}).await.map_err(Permanent::new)?;
+        runtime.require_io().map_err(Permanent::new)?;
         self.usable()?;
         client(&self.url)?;
-        // `listen` connects on the link's runtime: one that has shut down is refused here, beside
-        // the configuration, before any server binds.
-        self.runtime()?.run(async {}).await.map_err(Permanent::new)?;
         Ok(())
     }
 

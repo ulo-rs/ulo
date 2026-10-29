@@ -14,7 +14,7 @@ Read first:
 
 - `src/lib.rs`: the gateway, and `Root`, which picks the adapter; nothing in the handlers changes between the two.
 - `tests/rooms.rs`: one process; members of a room receive a shout, a member of another room and a connection in none do not.
-- `tests/across_processes.rs`: two processes of the binary on one Redis; run with `cargo test -p ex-24-ws-rooms --features integration --test across_processes` (needs Docker; the container is `ulo-conf-ex24-redis`). The broker CI job runs it. A broadcast published before the other process has subscribed is lost, so the test shouts again until the other process hears one.
+- `tests/across_processes.rs`: two processes of the binary on one Redis; run with `cargo test -p ex-24-ws-rooms --features integration --test across_processes` (needs Docker; the container is `ulo-conf-ex24-redis`). The broker CI job runs it. The binary prints its address after `listen`, which returns once its Redis subscription is live, so the test's first shout is heard on the other process.
 - `tests/binary.rs`: runs the compiled binary and pings it over a socket.
 
 Next: [25 rpc basics](../25-rpc-basics).

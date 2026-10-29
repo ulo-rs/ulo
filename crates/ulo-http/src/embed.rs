@@ -659,8 +659,8 @@ impl<A: Embed> ulo::Server for Embedded<A> {
         let Some(service) = self.prepared.take() else {
             return Err(BoxError::from("the embedded HTTP server was bound before it was prepared"));
         };
+        upgrades_bound(&self.upgrades, mounted.app()).await?;
         *self.shared.state() = State::Bound(service);
-        upgrades_bound(&self.upgrades, mounted.app());
         Ok(())
     }
 

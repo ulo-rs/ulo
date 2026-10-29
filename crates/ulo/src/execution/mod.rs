@@ -9,9 +9,12 @@
 //!   its deadline passes, for a standalone execution at its deadline, and for either at the end
 //!   of the drain. Completion of `execute` does not fire it. Each fires with a [`CancelReason`]
 //!   that a transport reads back to pick its rendering (transports DESIGN §2.6, X5).
-//! - **End of execution** is when the last handle drops: the per-execution cache is released
-//!   and execution-scoped instances drop then, so a streaming reply keeps its instances exactly
-//!   as long as it runs.
+//! - **End of execution** is when the [`Execution`] drops: the per-execution cache is released
+//!   and execution-scoped instances drop then, whatever [`ExecutionRef`]s remain, so an instance
+//!   holding one is no cycle. A transport holds the `Execution` until the reply is written, a
+//!   streaming body included, so a streaming reply keeps its instances exactly as long as it
+//!   runs. An `ExecutionRef` kept past the end still answers what the execution recorded, and
+//!   its `get` answers `LookupError::ExecutionEnded`.
 
 pub(crate) mod cache;
 pub(crate) mod extensions;
@@ -26,6 +29,7 @@ use std::time::Instant;
 use crate::app::shared::{AppShared, LiveSlot};
 use crate::dependency::Dep;
 use crate::error::{Closed, LookupError};
+use crate::key::{BindingKind, Key};
 use crate::execution::cache::OnceCells;
 use crate::execution::extensions::{Extensions, Seeded};
 use crate::execution::notify::{Cancelled, Draining, Notify};
@@ -36,17 +40,27 @@ use crate::resolver::{Purpose, Resolver};
 use crate::transport::handler::HandlerInfo;
 use crate::transport::server::DrainToken;
 
-/// One execution, as its holder owns it. Not `Clone`: a second holder takes [`handle`](Self::handle).
+/// One execution, as its holder owns it. Not `Clone`: anything else takes a
+/// [`handle`](Self::handle). Dropping it ends the execution (§3.8): the execution-scoped
+/// instances drop, the drain stops waiting for it, and every handle's `get` answers
+/// `LookupError::ExecutionEnded`.
 ///
 /// `Execution: Send + Sync`, and so is the `Resolver` read through it, which is what lets every
 /// read's future be `Send`.
 pub struct Execution {
     pub(crate) shared: Arc<ExecShared>,
+    /// Declared after `shared` and dropped after the cache is released, so the drain sees the end
+    /// once the execution-scoped instances are gone.
+    pub(crate) _live: LiveSlot,
 }
 
 /// A cheap-clone handle to an execution: the same methods as [`Execution`] except `seed` and
 /// `route_to`, so an input a guard or a subtask seeded could never be one the wiring pass did not
 /// see, and only the holder decides the module.
+///
+/// A handle does not keep the execution open. Kept past the end, it answers what the execution
+/// recorded, its deadline, cancellation, extensions and trace among them, and its `get` answers
+/// `LookupError::ExecutionEnded` rather than building an instance for an execution that is over.
 #[derive(Clone)]
 pub struct ExecutionRef {
     pub(crate) shared: Arc<ExecShared>,
@@ -138,7 +152,7 @@ pub(crate) struct ExecShared {
     pub(crate) cache: OnceCells,
     pub(crate) extensions: Extensions,
     pub(crate) inputs: Seeded,
-    pub(crate) cancel: Notify,
+    pub(crate) cancel: Arc<Notify>,
     /// Written once, before `cancel` fires, so a listener woken by the fire reads it.
     pub(crate) cancel_reason: OnceLock<CancelReason>,
     pub(crate) deadline: Option<Instant>,
@@ -153,9 +167,8 @@ pub(crate) struct ExecShared {
     pub(crate) stream_end: Mutex<StreamEnd>,
     /// Opened with `open_terminal`; counted in `Shutdown::terminal_skipped` when abandoned.
     pub(crate) terminal: bool,
-    /// The execution's entry in the app's live set; dropping it is the end of the execution the
-    /// drain waits for.
-    pub(crate) live: LiveSlot,
+    /// Set as the `Execution` drops, before the cache is released.
+    pub(crate) ended: AtomicBool,
 }
 
 /// The reply stream's end: the outcome once reported, and the callbacks waiting for it.
@@ -213,8 +226,8 @@ impl Execution {
         self.shared.set_trace(ctx);
     }
 
-    /// An owned clone, for a spawned subtask; it keeps the cache and the execution-scoped
-    /// instances alive until it drops.
+    /// A cheap clone, for a guard, a reply stream or a spawned subtask. It does not keep the
+    /// execution open: a subtask that should finish within the execution is awaited by its holder.
     pub fn handle(&self) -> ExecutionRef {
         ExecutionRef { shared: Arc::clone(&self.shared) }
     }
@@ -313,16 +326,20 @@ impl ExecutionRef {
         &self.shared.extensions
     }
 
-    pub fn cancelled(&self) -> Cancelled<'_> {
-        self.shared.cancelled()
+    /// Owned, unlike [`Execution::cancelled`]: the future borrows nothing from the handle, so a
+    /// stream built from a handle the handler took by value can carry it.
+    pub fn cancelled(&self) -> Cancelled<'static> {
+        Cancelled::new(self.shared.cancel.listen_owned())
     }
 
     pub fn is_cancelled(&self) -> bool {
         self.shared.cancel.is_fired()
     }
 
-    pub fn draining(&self) -> Draining<'_> {
-        self.shared.draining()
+    /// Owned, like [`cancelled`](Self::cancelled):
+    /// `stream.take_until(exec.draining())` ends a reply stream at the drain.
+    pub fn draining(&self) -> Draining<'static> {
+        Draining::new(self.shared.app.draining.listen_owned())
     }
 
     pub fn is_draining(&self) -> bool {
@@ -372,12 +389,26 @@ impl ExecutionRef {
         self.shared.late.load(Ordering::Acquire)
     }
 
+    /// As [`Execution::get`], while the execution lasts; once it has ended,
+    /// `LookupError::ExecutionEnded` naming `T`, whatever `T`'s scope.
     pub async fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Dep<T>, LookupError> {
+        if self.shared.ended.load(Ordering::Acquire) {
+            return Err(LookupError::ExecutionEnded { key: Key::of::<T, ()>().name(BindingKind::Single) });
+        }
         self.resolver().dep::<T>().await
     }
 
+    /// The resolver a transport reads through. Once the execution has ended, every read through
+    /// it answers `LookupError::ExecutionEnded`, as [`get`](Self::get) does.
     pub fn resolver(&self) -> Resolver<'_> {
         self.shared.resolver()
+    }
+}
+
+impl Drop for Execution {
+    fn drop(&mut self) {
+        self.shared.ended.store(true, Ordering::Release);
+        self.shared.cache.release();
     }
 }
 

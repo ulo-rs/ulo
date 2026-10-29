@@ -6,6 +6,9 @@
 //! | `PgUserRepo as dyn UserRepo` | `m.provide::<PgUserRepo>().also_as::<dyn UserRepo>(\|a\| a);` |
 //! | `AppConfig::from_env()?` | `m.try_value(AppConfig::from_env());` |
 //! | `expr` | `m.value(expr);` |
+//! | `PgUserRepo @ Primary` | `m.provide::<PgUserRepo>().qualified::<Primary>();` |
+//! | `PgUserRepo as dyn UserRepo @ Primary` | `m.provide::<PgUserRepo>().also_as::<dyn UserRepo>(\|a\| a).qualified::<Primary>();` |
+//! | `expr @ Primary`, `expr? @ Primary` | `m.value(expr).qualified::<Primary>();`, `m.try_value(expr).qualified::<Primary>();` |
 //! | `with = closure` | `m.with(closure)` or `m.try_with(..)`, picked by autoref over the closure's own type |
 //! | `with(singleton) = closure` | `m.singleton(..)` or `m.try_singleton(..)`, ranked the same way |
 //! | `with(execution) = closure` | `m.execution(..)` or `m.try_execution(..)` |
@@ -13,6 +16,11 @@
 //! | a bare closure | as `with = closure`: `Auto`, the same closure meaning the same thing in every position |
 //! | `K: with = closure`, `K: with(<scope>) = closure` | the same call, then `.also_as::<K>(\|a\| a)` |
 //! | `into K: [..]` | one `m.contribute::<K>()` statement per item, below |
+//!
+//! `@ Q` is the notation reports print for a key, `Db @ Primary`, written as the slot that makes
+//! one. It follows the entry, after `as dyn K` when both are written, and qualifies every key the
+//! entry binds. A closure binding (`with`, a bare closure, `K: with`) and an `into` item take no
+//! qualifier: a refusal names the `ModuleDef` call that does.
 //!
 //! Every closure is written as in `#[guards]`: a synchronous body is wrapped in `async move`, and
 //! a closure already `async` is kept. For a provider `Auto` behaves as a singleton; what differs
@@ -74,11 +82,16 @@ use crate::module_attr::module_def_param;
 use crate::shared::scope::ScopeArg;
 use crate::shared::{check_factory_params, ulo};
 
+/// The `Q` of an `@ Q` suffix. Boxed so the enums holding one stay near the size of a bare type.
+pub(crate) type Qualifier = Option<Box<Type>>;
+
 pub(crate) enum ProviderEntry {
-    Provide(Type),
-    ProvideAs { ty: Type, as_ty: Type },
-    TryValue(Expr),
-    Value(Expr),
+    /// `Type`, with the `@ Q` qualifier when written. Every entry that binds a single instance
+    /// from a type or a value carries one; a closure and a contribution do not.
+    Provide { ty: Type, qualifier: Qualifier },
+    ProvideAs { ty: Type, as_ty: Type, qualifier: Qualifier },
+    TryValue { expr: Expr, qualifier: Qualifier },
+    Value { expr: Expr, qualifier: Qualifier },
     /// `with = ..`, `with(<scope>) = ..` and a bare closure, `key` `None`; `K: with = ..` and
     /// `K: with(<scope>) = ..`, `key` `Some(K)`. `scope` is `None` for `Auto`.
     With { key: Option<Type>, scope: Option<ScopeArg>, closure: ExprClosure },
@@ -95,6 +108,12 @@ pub(crate) enum Contribution {
     With { scope: Option<ScopeArg>, closure: ExprClosure },
 }
 
+const CLOSURE_QUALIFIER: &str = "a closure binding takes no `@` qualifier; write the binding in a `ModuleDef` \
+     with `.qualified::<Q>()`, or bind a value, `Db(..) @ Primary`";
+
+const CONTRIBUTION_QUALIFIER: &str = "an `into` item takes no `@` qualifier; a qualified collection is written in a \
+     `ModuleDef`, `m.contribute::<K>().qualified::<Q>()`";
+
 const CONTRIBUTION_FORMS: &str =
     "an `into` entry is a type, `value = expr`, `with = |..| ..` or `with(<scope>) = |..| ..`";
 
@@ -105,6 +124,7 @@ impl Parse for ProviderEntry {
         if is_with(input) {
             input.parse::<Ident>()?;
             let (scope, closure) = parse_with(input)?;
+            refuse_qualifier(input, CLOSURE_QUALIFIER)?;
             return Ok(ProviderEntry::With { key: None, scope, closure });
         }
         if is_keyed_with(input) {
@@ -119,6 +139,7 @@ impl Parse for ProviderEntry {
             input.parse::<Token![:]>()?;
             input.parse::<Ident>()?;
             let (scope, closure) = parse_with(input)?;
+            refuse_qualifier(input, CLOSURE_QUALIFIER)?;
             return Ok(ProviderEntry::With { key: Some(key), scope, closure });
         }
         if is_contribution(input) {
@@ -133,7 +154,7 @@ impl Parse for ProviderEntry {
 
         let fork = input.fork();
         if fork.parse::<Type>().is_ok_and(|ty| is_type_entry(&ty))
-            && (fork.is_empty() || fork.peek(Token![,]) || fork.peek(Token![as]))
+            && (fork.is_empty() || fork.peek(Token![,]) || fork.peek(Token![as]) || fork.peek(Token![@]))
         {
             let ty: Type = input.parse()?;
             if input.peek(Token![as]) {
@@ -146,26 +167,37 @@ impl Parse for ProviderEntry {
                          a global enhancer is written `into AnyGuard<Http>: [AuthGuard]`",
                     ));
                 }
-                return Ok(ProviderEntry::ProvideAs { ty, as_ty });
+                let qualifier = parse_qualifier(input)?;
+                return Ok(ProviderEntry::ProvideAs { ty, as_ty, qualifier });
             }
-            return Ok(ProviderEntry::Provide(ty));
+            let qualifier = parse_qualifier(input)?;
+            return Ok(ProviderEntry::Provide { ty, qualifier });
         }
 
         Ok(match input.parse::<Expr>()? {
-            Expr::Try(expr) => ProviderEntry::TryValue(*expr.expr),
+            Expr::Try(expr) => ProviderEntry::TryValue { expr: *expr.expr, qualifier: parse_qualifier(input)? },
             Expr::Closure(closure) => {
                 check_factory_params(&closure)?;
+                refuse_qualifier(input, CLOSURE_QUALIFIER)?;
                 ProviderEntry::With { key: None, scope: None, closure }
             }
-            expr => ProviderEntry::Value(expr),
+            expr => ProviderEntry::Value { expr, qualifier: parse_qualifier(input)? },
         })
     }
 }
 
 impl Parse for Contribution {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let item = Self::parse_item(input)?;
+        refuse_qualifier(input, CONTRIBUTION_QUALIFIER)?;
+        Ok(item)
+    }
+}
+
+impl Contribution {
     /// `value = ..`, `with = ..` and `with(<scope>) = ..` first, then a type followed by `,` or
     /// the end.
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+    fn parse_item(input: ParseStream<'_>) -> syn::Result<Self> {
         if input.peek(Ident) && input.peek2(token::Paren) {
             let fork = input.fork();
             let key: Ident = fork.parse()?;
@@ -198,12 +230,31 @@ impl Parse for Contribution {
         }
 
         let fork = input.fork();
-        if fork.parse::<Type>().is_ok_and(|ty| !is_call(&ty)) && (fork.is_empty() || fork.peek(Token![,])) {
+        if fork.parse::<Type>().is_ok_and(|ty| !is_call(&ty)) && (fork.is_empty() || fork.peek(Token![,]) || fork.peek(Token![@])) {
             return Ok(Contribution::Type(input.parse()?));
         }
         let expr: Expr = input.parse()?;
         Err(syn::Error::new_spanned(expr, format!("{CONTRIBUTION_FORMS}; an expression is contributed with `value = ..`")))
     }
+}
+
+/// An optional `@ Q` after an entry: the qualifier type, once. A second `@` is refused here,
+/// where the first one's reader can name it.
+pub(crate) fn parse_qualifier(input: ParseStream<'_>) -> syn::Result<Qualifier> {
+    if !input.peek(Token![@]) {
+        return Ok(None);
+    }
+    input.parse::<Token![@]>()?;
+    let qualifier: Type = input.parse()?;
+    if input.peek(Token![@]) {
+        return Err(syn::Error::new(input.span(), "an entry takes one `@` qualifier"));
+    }
+    Ok(Some(Box::new(qualifier)))
+}
+
+/// An `@` where the grammar has no slot for one.
+fn refuse_qualifier(input: ParseStream<'_>, reason: &str) -> syn::Result<()> {
+    if input.peek(Token![@]) { Err(syn::Error::new(input.span(), reason)) } else { Ok(()) }
 }
 
 /// What follows `with` in a providers entry: an optional `(<scope>)`, `=`, and the closure.
@@ -250,18 +301,30 @@ impl ProviderEntry {
         let ulo = ulo();
         let m = module_def_param();
         match self {
-            ProviderEntry::Provide(ty) => quote_spanned! {ty.span()=>
-                #m.provide::<#ty>();
-            },
-            ProviderEntry::ProvideAs { ty, as_ty } => quote_spanned! {ty.span()=>
-                #m.provide::<#ty>().also_as::<#as_ty>(|a| a);
-            },
-            ProviderEntry::TryValue(expr) => quote_spanned! {expr.span()=>
-                #m.try_value(#expr);
-            },
-            ProviderEntry::Value(expr) => quote_spanned! {expr.span()=>
-                #m.value(#expr);
-            },
+            ProviderEntry::Provide { ty, qualifier } => {
+                let qualified = qualified(qualifier);
+                quote_spanned! {ty.span()=>
+                    #m.provide::<#ty>()#qualified;
+                }
+            }
+            ProviderEntry::ProvideAs { ty, as_ty, qualifier } => {
+                let qualified = qualified(qualifier);
+                quote_spanned! {ty.span()=>
+                    #m.provide::<#ty>().also_as::<#as_ty>(|a| a)#qualified;
+                }
+            }
+            ProviderEntry::TryValue { expr, qualifier } => {
+                let qualified = qualified(qualifier);
+                quote_spanned! {expr.span()=>
+                    #m.try_value(#expr)#qualified;
+                }
+            }
+            ProviderEntry::Value { expr, qualifier } => {
+                let qualified = qualified(qualifier);
+                quote_spanned! {expr.span()=>
+                    #m.value(#expr)#qualified;
+                }
+            }
             ProviderEntry::With { key, scope, closure } => {
                 let closure = wrap_async(closure);
                 let scope = scope.map_or_else(|| quote!(#ulo::scope::Auto), |scope| scope.path());
@@ -282,6 +345,15 @@ impl ProviderEntry {
                 quote!(#(#contributions)*)
             }
         }
+    }
+}
+
+/// `.qualified::<Q>()` for an entry written `@ Q`, spanned at the qualifier so a type that does
+/// not exist is reported there.
+pub(crate) fn qualified(qualifier: &Qualifier) -> TokenStream {
+    match qualifier.as_deref() {
+        Some(q) => quote_spanned!(q.span()=> .qualified::<#q>()),
+        None => TokenStream::new(),
     }
 }
 

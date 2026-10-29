@@ -22,5 +22,10 @@ syn = { workspace = true, features = ["full", "visit-mut"] }
 # for `#[routes]` and every transport attribute.
 ulo-handler-codegen = { path = "../ulo-handler-codegen", version = "=0.1.0-alpha.1" }
 
+[dev-dependencies]
+# The `#[module]` doctest wires an application.
+ulo = { path = "../ulo" }
+tokio = { workspace = true, features = ["macros", "rt"] }
+
 [lints]
 workspace = true

@@ -372,8 +372,8 @@ fn a_clock_refusing_the_migrations_and_the_hook_bound_fails_the_start_with_the_r
         panic!("the start failed other than in a hook: {error:?}");
     };
     assert_eq!(*hook, ulo::HookKind::OnModuleInit);
-    // A module identified by value is named by its identity's type, the store module's options.
-    assert_eq!(key.to_string(), "Identity<String>", "the hook failure does not name the store's module");
+    // The store module is named by its own type, whatever its options.
+    assert_eq!(key.to_string(), "StoreModule<Fake>", "the hook failure does not name the store's module");
     refusal(&error);
 }
 

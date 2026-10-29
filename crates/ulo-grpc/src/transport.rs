@@ -44,8 +44,9 @@ pub type Reply = http::Response<tonic::body::Body>;
 /// path, the request metadata, the peer, and the app's `Timer`.
 ///
 /// A guard reads the metadata through it, `cx.metadata().get("authorization")`, and passes data to
-/// the handler through `cx.extensions()`. A streaming reply holds a clone, which keeps the
-/// execution's instances and its cancellation signal alive while the stream runs.
+/// the handler through `cx.extensions()`. A streaming reply holds a clone, through which it reads
+/// the execution and observes its cancellation while the stream runs; the server holds the
+/// execution itself until the reply body is dropped.
 #[derive(Clone)]
 pub struct GrpcCx {
     pub(crate) inner: Arc<CxInner>,

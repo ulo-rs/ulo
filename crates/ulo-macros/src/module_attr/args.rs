@@ -2,7 +2,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Expr, Ident, Token, Type, bracketed};
 
-use crate::module_attr::providers::ProviderEntry;
+use crate::module_attr::providers::{ProviderEntry, Qualifier, parse_qualifier};
 
 /// `#[module(global, imports = [..], providers = [..], controllers = [..], exports = [..])]`,
 /// each key at most once, in any order.
@@ -16,10 +16,10 @@ pub(crate) struct ModuleArgs {
 }
 
 pub(crate) enum ExportEntry {
-    /// `m.export::<T>()`.
-    Export(Type),
-    /// `reexport T`: `m.reexport::<T>()`.
-    Reexport(Type),
+    /// `T`: `m.export::<T>()`; `T @ Q`: `m.export_qualified::<T, Q>()`.
+    Export { ty: Type, qualifier: Qualifier },
+    /// `reexport T`: `m.reexport::<T>()`; `reexport T @ Q`: `m.reexport_qualified::<T, Q>()`.
+    Reexport { ty: Type, qualifier: Qualifier },
 }
 
 impl Parse for ModuleArgs {
@@ -66,8 +66,10 @@ impl Parse for ExportEntry {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         if input.peek(Ident) && input.fork().parse::<Ident>().is_ok_and(|i| i == "reexport") && !input.peek2(Token![,]) {
             input.parse::<Ident>()?;
-            return Ok(ExportEntry::Reexport(input.parse()?));
+            let ty = input.parse()?;
+            return Ok(ExportEntry::Reexport { ty, qualifier: parse_qualifier(input)? });
         }
-        Ok(ExportEntry::Export(input.parse()?))
+        let ty = input.parse()?;
+        Ok(ExportEntry::Export { ty, qualifier: parse_qualifier(input)? })
     }
 }

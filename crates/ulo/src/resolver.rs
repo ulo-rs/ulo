@@ -1,6 +1,7 @@
 use std::any::{TypeId, type_name};
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use crate::app::shared::AppShared;
 use crate::binding::{Coercion, Instance, Recipe, downcast_instance};
@@ -195,7 +196,11 @@ impl<'a> Resolver<'a> {
     }
 
     fn exec_for(&self, key: Key) -> Result<&'a Arc<ExecShared>, LookupError> {
-        self.exec.ok_or(LookupError::ExecutionRequired { key: key.name(BindingKind::Single) })
+        let exec = self.exec.ok_or(LookupError::ExecutionRequired { key: key.name(BindingKind::Single) })?;
+        if exec.ended.load(Ordering::Acquire) {
+            return Err(LookupError::ExecutionEnded { key: key.name(BindingKind::Single) });
+        }
+        Ok(exec)
     }
 
     /// `instance` as `T`. A binding is stored as the type it builds; a contribution's collection

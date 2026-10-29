@@ -2,6 +2,10 @@
 //! its own `WsModule` over the Redis adapter, a room with a member connected to each, and a room
 //! broadcast from either instance reaching the member on the other. Redis runs in a container.
 //!
+//! Two further tests hold that `listen` returns only once Redis has confirmed the instance's
+//! subscription: a broadcast published straight after `listen`, with no wait, reaches a member of
+//! the same process, also when Redis is slow to confirm the subscription.
+//!
 //! The second instance is this test binary run again as a child process, through the ignored test
 //! `peer_instance`, which the parent starts with the Redis URL in `ULO_WS_REDIS_PEER`. The child
 //! prints the address its server bound and serves until its stdin closes.
@@ -10,6 +14,8 @@
 
 use std::io::{BufRead, BufReader, Read};
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -17,8 +23,9 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
-use testcontainers::{ContainerAsync, GenericImage};
-use tokio::net::TcpStream;
+use testcontainers::{ContainerAsync, GenericImage, ImageExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use ulo::app::Bound as Serving;
@@ -40,8 +47,8 @@ const ROOM: &str = "members";
 /// How long any one wait lasts before it fails the test.
 const PATIENCE: Duration = Duration::from_secs(10);
 
-/// How long the parent waits for the child to start and for both subscriptions to carry a
-/// broadcast: the child process starts its own runtime, app and Redis subscription.
+/// How long the parent waits for the child to start: the child process starts its own runtime, app
+/// and Redis subscription.
 const BOOT: Duration = Duration::from_secs(60);
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -193,12 +200,13 @@ impl Drop for Peer {
     }
 }
 
-async fn start_redis() -> (ContainerAsync<GenericImage>, String) {
+async fn start_redis(name: &str) -> (ContainerAsync<GenericImage>, String) {
     const PORT: u16 = 6379;
     let (container, addrs) = unshadowed("the Redis container", || async {
         let container = GenericImage::new("redis", "7-alpine")
             .with_exposed_port(PORT.tcp())
             .with_wait_for(WaitFor::message_on_stdout("Ready to accept connections"))
+            .with_container_name(name)
             .start()
             .await
             .unwrap_or_else(|error| startup_failed!("the Redis container did not start: {}", report(&error)));
@@ -258,42 +266,24 @@ async fn shouted(socket: &mut Socket, within: Duration) -> Option<String> {
 
 /// A room broadcast sent from either instance reaches the room's member on the other process.
 ///
-/// A broadcast published before the other instance's subscription is in place is lost, as Redis
-/// Pub/Sub delivers to the subscribers present. So the first direction shouts again every 200 ms
-/// until the member on the other process receives one, within `BOOT`; once it has, both
-/// subscriptions are in place, and the reverse direction is shown with a single broadcast.
+/// The child prints its address after `listen`, which returns once its subscription is live, so
+/// one broadcast in each direction is enough.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_room_broadcast_reaches_the_member_on_the_other_process() {
-    let (_redis, url) = start_redis().await;
+    let (_redis, url) = start_redis("ulo-conf-r24-ws-redis-peers").await;
     let local = Instance::start(&url).await;
     let peer = Peer::start(&url).await;
     let mut here = member(local.addr).await;
     let mut there = member(peer.addr).await;
 
-    let deadline = Instant::now() + BOOT;
-    let mut sent = 0u32;
-    let reached = loop {
-        sent += 1;
-        send(&mut here, json!({ "event": "shout", "data": format!("from here {sent}"), "id": sent })).await;
-        if let Some(text) = shouted(&mut there, Duration::from_millis(200)).await {
-            break text;
-        }
-        assert!(Instant::now() < deadline, "none of {sent} broadcasts from this process reached the member on the other within {BOOT:?}");
-    };
-    assert!(reached.starts_with("from here "), "the member on the other process received `{reached}`");
+    send(&mut here, json!({ "event": "shout", "data": "from here", "id": 1 })).await;
+    let reached = shouted(&mut there, PATIENCE).await;
+    assert_eq!(reached.as_deref(), Some("from here"), "the member on the other process received the broadcast");
 
     send(&mut there, json!({ "event": "shout", "data": "from there", "id": 1 })).await;
-    let deadline = tokio::time::Instant::now() + PATIENCE;
-    loop {
-        let received = shouted(&mut here, deadline.saturating_duration_since(tokio::time::Instant::now()))
-            .await
-            .unwrap_or_else(|| panic!("the broadcast from the other process did not reach this process's member within {PATIENCE:?}"));
-        // This process's member also receives its own retries; they come first.
-        if received == "from there" {
-            break;
-        }
-        assert!(received.starts_with("from here "), "this process's member received `{received}`");
-    }
+    // This process's member also receives its own broadcast, which comes first.
+    assert_eq!(shouted(&mut here, PATIENCE).await.as_deref(), Some("from here"), "this process's member received its own broadcast");
+    assert_eq!(shouted(&mut here, PATIENCE).await.as_deref(), Some("from there"), "the member on this process received the other's");
 
     let _ = here.close(None).await;
     let _ = there.close(None).await;
@@ -315,5 +305,95 @@ async fn peer_instance() {
         let _ = std::io::stdin().read_to_end(&mut rest);
     });
     let _ = tokio::time::timeout(Duration::from_secs(300), closed).await;
+    instance.stop().await;
+}
+
+/// Relays every connection to `upstream`, and on the first connection that sends a `SUBSCRIBE`
+/// holds what Redis answers after it for `delay`: the subscriber's connection and its handshake
+/// are served at once, and only the confirmation is late.
+async fn slow_subscribe_confirmation(upstream: SocketAddr, delay: Duration) -> SocketAddr {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.expect("the relay binds");
+    let addr = listener.local_addr().expect("the relay's address");
+    let delayed = Arc::new(AtomicBool::new(false));
+    tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            let delayed = Arc::clone(&delayed);
+            tokio::spawn(async move {
+                let Ok(server) = TcpStream::connect(upstream).await else { return };
+                let (mut from_client, mut to_client) = client.into_split();
+                let (mut from_server, mut to_server) = server.into_split();
+                // Set by this connection when it sends the first `SUBSCRIBE` any connection sends.
+                let holds = Arc::new(AtomicBool::new(false));
+                let marks = Arc::clone(&holds);
+                let upstream_half = tokio::spawn(async move {
+                    let mut chunk = vec![0u8; 16 * 1024];
+                    while let Ok(n) = from_client.read(&mut chunk).await {
+                        if n == 0 {
+                            break;
+                        }
+                        if chunk[..n].windows(9).any(|w| w.eq_ignore_ascii_case(b"SUBSCRIBE")) && !delayed.swap(true, Ordering::SeqCst) {
+                            marks.store(true, Ordering::SeqCst);
+                        }
+                        if to_server.write_all(&chunk[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+                let mut chunk = vec![0u8; 16 * 1024];
+                while let Ok(n) = from_server.read(&mut chunk).await {
+                    if n == 0 {
+                        break;
+                    }
+                    if holds.swap(false, Ordering::SeqCst) {
+                        tokio::time::sleep(delay).await;
+                    }
+                    if to_client.write_all(&chunk[..n]).await.is_err() {
+                        break;
+                    }
+                }
+                upstream_half.abort();
+            });
+        }
+    });
+    addr
+}
+
+/// A member's own broadcast, sent the moment its connection is up, reaches it through Redis. The
+/// instance has just returned from `listen` and nothing waits for its subscription.
+async fn shout_reaches_its_own_member(url: &str) {
+    let instance = Instance::start(url).await;
+    let mut member = member(instance.addr).await;
+    send(&mut member, json!({ "event": "shout", "data": "at once", "id": 1 })).await;
+    let received = shouted(&mut member, PATIENCE).await;
+    assert_eq!(received.as_deref(), Some("at once"), "the member received its room's broadcast");
+    let _ = member.close(None).await;
+    instance.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_broadcast_published_right_after_listen_reaches_a_member_of_the_same_process() {
+    let (_redis, url) = start_redis("ulo-conf-r24-ws-redis-fresh").await;
+    shout_reaches_its_own_member(&url).await;
+}
+
+/// Redis's answer to the subscriber's first `SUBSCRIBE` reaches it `DELAY` late, its connection
+/// served at once. A `listen` that returned before the subscription was confirmed would let the
+/// first broadcast pass unheard.
+#[tokio::test(flavor = "multi_thread")]
+async fn listen_waits_for_the_subscription_when_redis_is_slow_to_confirm_it() {
+    const DELAY: Duration = Duration::from_millis(1500);
+    let (_redis, url) = start_redis("ulo-conf-r24-ws-redis-slow").await;
+    let upstream: SocketAddr = url.trim_start_matches("redis://").parse().expect("the container's address");
+    let slow = format!("redis://{}", slow_subscribe_confirmation(upstream, DELAY).await);
+
+    let started = Instant::now();
+    let instance = Instance::start(&slow).await;
+    let listened = started.elapsed();
+    assert!(listened >= DELAY, "`listen` returned after {listened:?}, before Redis served the subscription at {DELAY:?}");
+    let mut member = member(instance.addr).await;
+    send(&mut member, json!({ "event": "shout", "data": "at once", "id": 1 })).await;
+    let received = shouted(&mut member, PATIENCE).await;
+    assert_eq!(received.as_deref(), Some("at once"), "the broadcast published straight after `listen` reached the member");
+    let _ = member.close(None).await;
     instance.stop().await;
 }

@@ -162,16 +162,20 @@ impl Link for RabbitMq {
     }
 
     fn usable(&self) -> Result<(), BoxError> {
-        self.runtime().map(drop)
+        self.runtime()?.require_io()?;
+        Ok(())
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
         let _ = app;
+        // `listen` binds on the link's runtime: one that has shut down, or has no IO driver, is
+        // refused here, before the configuration and before any server binds. The shutdown is
+        // asked first, since a runtime that has shut down answers nothing about its driver.
+        let runtime = self.runtime()?;
+        runtime.run(async {}).await.map_err(Permanent::new)?;
+        runtime.require_io().map_err(Permanent::new)?;
         self.usable()?;
         uri(&self.url)?;
-        // `listen` connects on the link's runtime: one that has shut down is refused here, beside
-        // the configuration, before any server binds.
-        self.runtime()?.run(async {}).await.map_err(Permanent::new)?;
         Ok(())
     }
 
@@ -193,6 +197,13 @@ impl Link for RabbitMq {
         let (uri, patterns, prefetch) = (uri(&self.url)?, patterns.to_vec(), self.prefetch);
         let (connection, channel, consumers, control) = runtime
             .run(async move {
+                // lapin's auto-recovery retries a first connect too, sixteen times on an
+                // exponential backoff, so a broker refusing it would hold `listen` past 30 s, and
+                // recovery cannot be turned on once a connection is up. A first connection without
+                // it reports the broker's refusal at once and is closed; the serving connection,
+                // opened after it, recovers.
+                let checked = Connection::connect_uri(uri.clone(), ConnectionProperties::default()).await?;
+                let _ = checked.close(200, "connected".into()).await;
                 let connection = Connection::connect_uri(uri, ConnectionProperties::default().enable_auto_recover()).await?;
                 match subscribe(&connection, &patterns, prefetch).await {
                     Ok((channel, consumers, control)) => Ok((connection, channel, consumers, control)),

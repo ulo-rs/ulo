@@ -11,7 +11,7 @@ categories = ["asynchronous"]
 
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-tokio = { workspace = true, features = ["rt", "time", "signal", "macros"] }
+tokio = { workspace = true, features = ["rt", "time", "signal", "macros", "net"] }
 
 [dev-dependencies]
 ulo-runtime-conformance = { path = "../ulo-runtime-conformance" }

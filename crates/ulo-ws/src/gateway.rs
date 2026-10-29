@@ -70,7 +70,8 @@ pub trait GatewayConfig: Construct {
 /// listed in a module's `controllers`, beside an import of `WsModule`.
 ///
 /// The gateway instance `on_message` runs on is resolved once per connection, in the connection
-/// phase's execution, and kept while the connection lasts. Messages reach `on_message` one at a
+/// phase's execution, and kept while the connection lasts. That execution ends with the
+/// connection phase: an `ExecutionRef` the gateway holds then answers `ExecutionEnded` to `get`. Messages reach `on_message` one at a
 /// time and in order; work that outlives a message runs in an execution the gateway opens.
 pub trait Gateway: GatewayConfig {
     /// After the connect guards admit; an `Err` refuses the connection with its close code.
