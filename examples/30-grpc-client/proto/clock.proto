@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package clock.v1;
+
+// The callee: reports the deadline it was given.
+service Clock {
+  rpc Remaining(Probe) returns (Left);
+}
+
+// The caller: asks Clock on behalf of whoever called it.
+service Front {
+  rpc Ask(Probe) returns (Left);
+}
+
+message Probe {}
+
+message Left {
+  bool has_deadline = 1;
+  uint32 millis = 2;
+}

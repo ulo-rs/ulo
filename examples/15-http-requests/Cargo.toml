@@ -1,0 +1,23 @@
+[package]
+name = "ex-15-http-requests"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-http = { path = "../../crates/ulo-http" }
+ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+ulo-transport = { path = "../../crates/ulo-transport" }
+headers.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

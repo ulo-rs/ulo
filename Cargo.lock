@@ -2580,14 +2580,299 @@ dependencies = [
 ]
 
 [[package]]
+name = "ex-15-http-requests"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "headers",
+ "serde",
+ "serde_json",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+ "ulo-transport",
+]
+
+[[package]]
+name = "ex-16-http-enhancers"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "serde_json",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-17-http-pre-dispatch"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "tower",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+ "ulo-transport",
+]
+
+[[package]]
+name = "ex-18-http-streaming"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "futures-util",
+ "tokio",
+ "ulo",
+ "ulo-conformance-support",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-19-http-uploads"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+ "ulo-transport",
+]
+
+[[package]]
+name = "ex-20-http-tls"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "tokio-rustls",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-net",
+ "ulo-runtime-tokio",
+ "ulo-test-certs",
+]
+
+[[package]]
+name = "ex-21-http-in-axum"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-conformance-support",
+ "ulo-http",
+ "ulo-http-axum",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-22-http-on-smol"
+version = "0.0.0"
+dependencies = [
+ "async-net",
+ "async-signal",
+ "ex-support",
+ "futures",
+ "futures-util",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-listener-smol",
+ "ulo-runtime-smol",
+]
+
+[[package]]
+name = "ex-23-ws-gateway"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "serde_json",
+ "tokio",
+ "ulo",
+ "ulo-conformance-support",
+ "ulo-runtime-tokio",
+ "ulo-ws",
+ "ulo-ws-hyper",
+]
+
+[[package]]
+name = "ex-24-ws-rooms"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "serde",
+ "serde_json",
+ "testcontainers",
+ "tokio",
+ "ulo",
+ "ulo-conformance-support",
+ "ulo-runtime-tokio",
+ "ulo-ws",
+ "ulo-ws-hyper",
+ "ulo-ws-redis",
+]
+
+[[package]]
+name = "ex-25-rpc-basics"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "serde",
+ "tokio",
+ "ulo",
+ "ulo-rpc",
+ "ulo-rpc-tcp",
+ "ulo-runtime-tokio",
+ "ulo-transport",
+]
+
+[[package]]
+name = "ex-26-rpc-streams"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "futures-util",
+ "tokio",
+ "ulo",
+ "ulo-rpc",
+ "ulo-rpc-tcp",
+ "ulo-runtime-tokio",
+ "ulo-transport",
+]
+
+[[package]]
+name = "ex-27-rpc-deadlines"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "serde",
+ "tokio",
+ "ulo",
+ "ulo-rpc",
+ "ulo-rpc-tcp",
+ "ulo-runtime-tokio",
+ "ulo-transport",
+]
+
+[[package]]
+name = "ex-28-rpc-links"
+version = "0.0.0"
+dependencies = [
+ "ex-25-rpc-basics",
+ "ex-support",
+ "testcontainers",
+ "tokio",
+ "ulo",
+ "ulo-conformance-support",
+ "ulo-rpc",
+ "ulo-rpc-kafka",
+ "ulo-rpc-mqtt",
+ "ulo-rpc-nats",
+ "ulo-rpc-rabbitmq",
+ "ulo-rpc-redis",
+ "ulo-rpc-tcp",
+ "ulo-runtime-tokio",
+ "ulo-transport",
+]
+
+[[package]]
+name = "ex-29-grpc-service"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "futures-util",
+ "prost",
+ "tokio",
+ "tonic",
+ "tonic-prost",
+ "tonic-types",
+ "ulo",
+ "ulo-build",
+ "ulo-grpc",
+ "ulo-runtime-tokio",
+ "ulo-transport",
+]
+
+[[package]]
+name = "ex-30-grpc-client"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "futures-util",
+ "prost",
+ "tokio",
+ "tonic",
+ "tonic-prost",
+ "tonic-types",
+ "ulo",
+ "ulo-build",
+ "ulo-grpc",
+ "ulo-runtime-tokio",
+ "ulo-transport",
+]
+
+[[package]]
+name = "ex-31-graphql"
+version = "0.0.0"
+dependencies = [
+ "async-graphql",
+ "ex-support",
+ "serde_json",
+ "tokio",
+ "ulo",
+ "ulo-graphql",
+ "ulo-graphql-async-graphql",
+ "ulo-graphql-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-32-graphql-subscriptions"
+version = "0.0.0"
+dependencies = [
+ "async-graphql",
+ "ex-support",
+ "futures-util",
+ "serde_json",
+ "tokio",
+ "ulo",
+ "ulo-conformance-support",
+ "ulo-graphql",
+ "ulo-graphql-async-graphql",
+ "ulo-graphql-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+ "ulo-transport",
+ "ulo-ws",
+]
+
+[[package]]
 name = "ex-support"
 version = "0.0.0"
 dependencies = [
+ "futures-util",
+ "serde_json",
  "tokio",
+ "tokio-tungstenite",
  "ulo",
  "ulo-conformance-support",
  "ulo-http-hyper",
  "ulo-runtime-tokio",
+ "ulo-ws-hyper",
 ]
 
 [[package]]

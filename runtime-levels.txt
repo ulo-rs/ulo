@@ -262,3 +262,22 @@ ex-11-wiring-report           tokio-bound
 ex-12-standalone              tokio-bound
 ex-13-testing                 tokio-bound
 ex-14-without-macros          tokio-bound
+ex-15-http-requests           tokio-bound
+ex-16-http-enhancers          tokio-bound
+ex-17-http-pre-dispatch       tokio-bound
+ex-18-http-streaming          tokio-bound
+ex-19-http-uploads            tokio-bound
+ex-20-http-tls                tokio-bound
+ex-21-http-in-axum            tokio-bound
+# The one example with no tokio runtime: smol's executor and sockets under the hyper backend.
+ex-22-http-on-smol            runtime-neutral+http2
+ex-23-ws-gateway             tokio-bound
+ex-24-ws-rooms               tokio-bound
+ex-31-graphql                 tokio-bound
+ex-32-graphql-subscriptions   tokio-bound
+ex-29-grpc-service            tokio-bound
+ex-30-grpc-client             tokio-bound
+ex-25-rpc-basics             tokio-bound
+ex-26-rpc-streams            tokio-bound
+ex-27-rpc-deadlines          tokio-bound
+ex-28-rpc-links              tokio-bound

@@ -1,0 +1,21 @@
+[package]
+name = "ex-27-rpc-deadlines"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-rpc = { path = "../../crates/ulo-rpc" }
+ulo-rpc-tcp = { path = "../../crates/ulo-rpc-tcp" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+ulo-transport = { path = "../../crates/ulo-transport" }
+
+[lints]
+workspace = true

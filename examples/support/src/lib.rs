@@ -3,6 +3,10 @@
 //! driver, and [`Bin`], which runs an example's compiled binary for its smoke test.
 
 mod bin;
+pub mod graphql;
+pub mod http;
+pub mod rpc;
+pub mod ws;
 
 pub use bin::{Bin, Exit, GUARD};
 

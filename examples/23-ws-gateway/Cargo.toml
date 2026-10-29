@@ -1,0 +1,21 @@
+[package]
+name = "ex-23-ws-gateway"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+ulo-ws = { path = "../../crates/ulo-ws" }
+ulo-ws-hyper = { path = "../../crates/ulo-ws-hyper" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+ulo-conformance-support = { path = "../../crates/ulo-conformance-support" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

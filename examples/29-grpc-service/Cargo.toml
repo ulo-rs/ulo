@@ -1,0 +1,29 @@
+[package]
+name = "ex-29-grpc-service"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-grpc = { path = "../../crates/ulo-grpc" }
+ulo-transport = { path = "../../crates/ulo-transport" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+futures-util.workspace = true
+# What the generated code names.
+prost.workspace = true
+tonic = { workspace = true, features = ["channel", "codegen"] }
+tonic-prost.workspace = true
+
+[build-dependencies]
+ulo-build = { path = "../../crates/ulo-build" }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+prost.workspace = true
+tonic-types.workspace = true
+
+[lints]
+workspace = true

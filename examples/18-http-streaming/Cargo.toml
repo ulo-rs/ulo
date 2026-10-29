@@ -1,0 +1,21 @@
+[package]
+name = "ex-18-http-streaming"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-http = { path = "../../crates/ulo-http" }
+ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+futures-util.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+ulo-conformance-support = { path = "../../crates/ulo-conformance-support" }
+
+[lints]
+workspace = true
