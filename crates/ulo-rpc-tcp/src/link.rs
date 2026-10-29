@@ -7,7 +7,7 @@ use tokio::runtime::Handle;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-use ulo::{AppHandle, BoundAddr, BoxError, Runtime, Timer};
+use ulo::{AppHandle, BoundAddr, BoxError, Permanent, Runtime, Timer};
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{BoundListener, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
@@ -118,6 +118,11 @@ impl Link for Tcp {
         // A server reports `usable`'s runtime refusal alone: the rest is about what a client
         // connects to, and `Core::prepare` reports the server's own endpoint.
         let usable = self.runtime().map(drop);
+        // `listen` binds on the link's runtime: one that has shut down is refused here, before
+        // any server binds, and alone, since `Core::prepare` reports its problems as text.
+        if let Ok(runtime) = self.runtime() {
+            runtime.run(async {}).await.map_err(Permanent::new)?;
+        }
         self.core.prepare(usable, app.timer().cloned())
     }
 
@@ -125,6 +130,9 @@ impl Link for Tcp {
         // The server routes by the `p` each frame carries; the socket takes every pattern.
         let _ = patterns;
         let runtime = self.runtime()?;
+        // Adopted on a runtime that has shut down, the socket fails as an I/O error naming tokio's
+        // context, which reads as the address's.
+        runtime.run(async {}).await.map_err(Permanent::new)?;
         let handle = runtime.handle().clone();
         self.core.listen(Arc::new(runtime) as Arc<dyn Runtime>, move |listener, tls| TokioListener::adopt(&handle, listener, tls))
     }

@@ -839,8 +839,8 @@ fn lost() -> RpcError {
 /// A link's failure to connect, mapped one way on every link: `Unavailable`, which the next call
 /// may not meet, unless the link answered it [`Misconfigured`], which the next call meets too,
 /// save a `tls://` NATS link's roots wait that outlasted its bound, which ends once the load has.
-/// A connect whose wait the link's runtime refused, having shut down, answers a
-/// [`RuntimeShutDown`](ulo::RuntimeShutDown), which keeps its reason.
+/// A connect the link's runtime refused, having shut down, a wait of the connect's or the connect
+/// itself, answers a [`RuntimeShutDown`](ulo::RuntimeShutDown), which keeps its reason.
 fn connect_error(link: &str, err: BoxError) -> RpcError {
     if err.is::<Misconfigured>() {
         RpcError::new(ErrorKind::Internal, format!("the {link} link cannot connect: {err}")).with_reason("misconfigured_link")

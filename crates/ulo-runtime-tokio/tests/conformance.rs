@@ -3,7 +3,7 @@
 
 use std::future::Future;
 
-use ulo_runtime_conformance::{Harness, Stoppable, runtime_suite};
+use ulo_runtime_conformance::{Harness, Run, Stoppable, runtime_suite};
 use ulo_runtime_tokio::{Timer, Tokio};
 
 struct OnTokio;
@@ -25,7 +25,8 @@ impl Harness for OnTokio {
 
     /// A multi-thread runtime, so its worker takes up what the scenario spawns before the stop,
     /// dropped on a thread of its own: dropping a runtime inside another's `block_on` panics. The
-    /// clock-only `Timer` from either constructor is held to the same refusal.
+    /// clock-only `Timer` from either constructor is held to the same refusal, and so is
+    /// `Tokio::run`.
     fn stoppable() -> Option<Stoppable<Tokio>> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
@@ -37,8 +38,13 @@ impl Harness for OnTokio {
             ("Timer::from_handle", Box::new(Timer::from_handle(runtime.handle().clone()))),
             ("Tokio::timer", Box::new(tokio.timer())),
         ];
+        let runner = tokio.clone();
+        let run: Run = Box::new(move |fut| {
+            let answer = runner.run(fut);
+            Box::pin(async move { answer.await.map_err(Into::into) })
+        });
         let stop = Box::new(move || std::thread::spawn(move || drop(runtime)).join().expect("the runtime shuts down"));
-        Some(Stoppable { runtime: tokio, clocks, stop })
+        Some(Stoppable { runtime: tokio, clocks, run, stop })
     }
 }
 

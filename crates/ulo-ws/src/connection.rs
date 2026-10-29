@@ -1200,8 +1200,8 @@ where
     // The ping ticker is timed with `try_sleep` and the wait for a Pong is an `Expiry`: on a
     // runtime that has shut down a sleep ends at once, and the loop would ping without pause, or
     // end the connection as `Lost` for a Pong it never waited for. A refusal of either closes the
-    // connection with 1001 and the shutdown phrase, as `RuntimeShutDown`, except a refusal of the
-    // Pong wait once the Pong was due on the clock, which is a Pong missed.
+    // connection with 1001 and the shutdown phrase, as `RuntimeShutDown`, except a refusal of
+    // either once the Pong was due on the clock, which is a Pong missed.
     let clock: &dyn Timer = &*accept.runtime;
     let mut ping = limits.ping_interval.map(|every| accept.runtime.try_sleep(every));
     let mut pong: Option<Expiry<'_>> = None;
@@ -1353,6 +1353,7 @@ where
                     pong = limits.pong_timeout.map(|after| Expiry::after(clock, after));
                 }
             }
+            Turn::Refused(_) if pong.as_ref().is_some_and(Expiry::passed) => break DisconnectReason::Lost,
             Turn::Refused(refused) => {
                 ping = None;
                 pong = None;

@@ -1,5 +1,5 @@
-//! A runtime that has shut down refuses to spawn and to time as a value, never a panic; a running
-//! one refuses neither.
+//! A runtime that has shut down refuses to spawn, to time and to run a future as a value, never a
+//! panic; a running one refuses neither.
 
 use std::future::pending;
 use std::sync::Arc;
@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Waker};
 use std::time::Duration;
 
-use ulo::{Refused, Runtime};
+use ulo::{Refused, Runtime, RuntimeShutDown};
 
 use super::{SETTLE, within};
 use crate::Stoppable;
@@ -35,7 +35,7 @@ pub async fn running<R: Runtime>(rt: R) {
 /// pending then ends `Aborted`, and `now` answers. Each of `stoppable`'s other clocks times while
 /// the runtime runs and refuses alike once it has shut down. Every wait is timed on `rt`.
 pub async fn shut_down<R: Runtime>(rt: R, stoppable: Stoppable<R>) {
-    let Stoppable { runtime: stopped, clocks, stop } = stoppable;
+    let Stoppable { runtime: stopped, clocks, stop, .. } = stoppable;
     assert!(
         !clocks.is_empty(),
         "`Stoppable::clocks` names no clock: list each clock the runtime crate builds on this runtime, or a second value of the runtime where it is the crate's only clock"
@@ -93,4 +93,26 @@ pub async fn shut_down<R: Runtime>(rt: R, stoppable: Stoppable<R>) {
         assert_eq!(slept, Some(Err(Refused)), "a `try_sleep` on `{name}` under way when its runtime shut down answered {slept:?}");
         let _ = clock.now();
     }
+}
+
+/// `stoppable`'s `run` answers a future's output while its runtime runs, and once the runtime has
+/// shut down answers a `RuntimeShutDown` with the future unrun. Every wait is timed on `rt`.
+pub async fn run_refused<R: Runtime>(rt: R, stoppable: Stoppable<R>) {
+    let Stoppable { run, stop, .. } = stoppable;
+    let ran = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&ran);
+    let answered = within(&rt, run(Box::pin(async move { flag.store(true, Ordering::SeqCst) })))
+        .await
+        .expect("`run` on a running runtime did not answer");
+    assert!(answered.is_ok(), "`run` on a running runtime answered {answered:?}");
+    assert!(ran.swap(false, Ordering::SeqCst), "`run` on a running runtime answered without running the future");
+    stop();
+
+    let flag = Arc::clone(&ran);
+    let answered = within(&rt, run(Box::pin(async move { flag.store(true, Ordering::SeqCst) })))
+        .await
+        .expect("`run` on a runtime that has shut down did not answer");
+    let refused = answered.expect_err("`run` on a runtime that has shut down answered the future's output");
+    assert!(refused.is::<RuntimeShutDown>(), "`run` on a runtime that has shut down answered `{refused}`, not a `RuntimeShutDown`");
+    assert!(!ran.load(Ordering::SeqCst), "`run` on a runtime that has shut down ran the future");
 }

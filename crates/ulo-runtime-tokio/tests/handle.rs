@@ -13,7 +13,7 @@ use std::time::Duration;
 use futures_executor::block_on;
 use tokio::runtime::{Builder, Handle, Runtime as TokioRuntime};
 use ulo::{Spawn, Timer};
-use ulo_runtime_tokio::{Stopped, Tokio};
+use ulo_runtime_tokio::Tokio;
 
 const PATIENCE: Duration = Duration::from_secs(5);
 
@@ -86,7 +86,7 @@ fn run_answers_on_a_thread_outside_any_runtime() {
     })
     .join()
     .expect("running a future from a plain thread panicked");
-    assert_eq!(answer, Ok(7));
+    assert_eq!(answer.ok(), Some(7));
 }
 
 #[test]
@@ -121,11 +121,13 @@ fn a_panic_in_the_task_resumes_where_the_answer_is_awaited() {
 }
 
 #[test]
-fn a_runtime_that_has_shut_down_answers_stopped() {
+fn a_runtime_that_has_shut_down_answers_runtime_shut_down() {
     let runtime = held_runtime();
     let held = Tokio::from_handle(runtime.handle().clone());
     drop(runtime);
-    assert_eq!(block_on(held.run(async { 7 })), Err(Stopped));
+    let refused = block_on(held.run(async { 7 })).expect_err("a runtime that has shut down ran the task");
+    let source = std::error::Error::source(&refused).expect("the refusal has a source");
+    assert!(source.is::<ulo::Refused>(), "the refusal's source is not the runtime's `Refused`: {source:?}");
 }
 
 /// Reports its drop.

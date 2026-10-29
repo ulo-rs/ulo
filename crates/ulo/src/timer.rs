@@ -212,6 +212,13 @@ impl<'t> Expiry<'t> {
         let sleep = (!d.is_zero()).then(|| timer.try_sleep(d));
         Expiry { timer, until, sleep, refused: None }
     }
+
+    /// Whether the clock reads the bound as passed, which is what a refusal arriving now is
+    /// reported as. A loop ending on another wait's refusal asks this of a bound it also holds, so
+    /// a bound that had passed by then reports its expiry whichever wait the loop polled first.
+    pub fn passed(&self) -> bool {
+        self.until.is_some_and(|until| self.timer.now() >= until)
+    }
 }
 
 impl Future for Expiry<'_> {
@@ -228,7 +235,7 @@ impl Future for Expiry<'_> {
         match sleep.as_mut().poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(())) => Poll::Ready(Cut::Expired),
-            Poll::Ready(Err(_)) if this.until.is_some_and(|until| this.timer.now() >= until) => Poll::Ready(Cut::Expired),
+            Poll::Ready(Err(_)) if this.passed() => Poll::Ready(Cut::Expired),
             Poll::Ready(Err(refused)) => {
                 this.refused = Some(refused);
                 cx.waker().wake_by_ref();

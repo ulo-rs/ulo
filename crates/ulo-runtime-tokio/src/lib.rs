@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
-use ulo::{BoxFuture, ExecutionRef, Refused, RuntimeTask, Signal, TaskHandle};
+use ulo::{BoxFuture, ExecutionRef, Refused, RuntimeShutDown, RuntimeTask, Signal, TaskHandle};
 
 /// The app's runtime on one tokio runtime, held by its `Handle`: tasks are spawned on that
 /// runtime, and sleeps registered with its timer, from whichever thread asks, a worker of another
@@ -66,8 +66,8 @@ impl Tokio {
     /// The task is spawned when the answer is first polled, so answers created in order and
     /// awaited in order run in order. Dropping the answer aborts the task. A panic in the task
     /// resumes where the answer is awaited. A runtime that has shut down drops the task unrun,
-    /// answered as `Err(Stopped)`.
-    pub fn run<F>(&self, fut: F) -> impl Future<Output = Result<F::Output, Stopped>> + Send + 'static
+    /// answered as `Err(RuntimeShutDown)`, its source the runtime's `Refused`.
+    pub fn run<F>(&self, fut: F) -> impl Future<Output = Result<F::Output, RuntimeShutDown>> + Send + 'static
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,
@@ -77,23 +77,11 @@ impl Tokio {
             match Aborting(handle.spawn(fut)).await {
                 Ok(output) => Ok(output),
                 Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
-                Err(_) => Err(Stopped),
+                Err(_) => Err(RuntimeShutDown::new(Refused)),
             }
         }
     }
 }
-
-/// [`Tokio::run`]'s answer when the runtime it holds has shut down before the task finished.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stopped;
-
-impl std::fmt::Display for Stopped {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the tokio runtime the task was spawned on has shut down")
-    }
-}
-
-impl std::error::Error for Stopped {}
 
 /// A task's `JoinHandle` that aborts the task when dropped.
 struct Aborting<T>(JoinHandle<T>);

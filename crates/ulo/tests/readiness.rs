@@ -8,8 +8,8 @@
 //! Bounds run on `Frozen`, whose every sleep ends at once: a check that is still pending when
 //! polled is abandoned in that same poll, so no test waits on a clock. The backoff test uses
 //! `Recorded`, which also writes down each sleep it is asked for, and `Refusing`, which refuses
-//! each one as a runtime that has shut down does; the refused backoff after a timed-out attempt
-//! runs on a `ScriptedTimer` refusing the backoff alone.
+//! each one as a runtime that has shut down does; the refused backoffs after a timed-out attempt and
+//! after the whole-check bound passed run on a `ScriptedTimer` refusing the backoff alone.
 
 #[macro_use]
 mod common;
@@ -415,6 +415,127 @@ async fn a_refused_backoff_after_a_timed_out_attempt_reports_the_refusal() {
     let ended = shut_down(&reason);
     assert_eq!(ended.reason(), RUNTIME_SHUT_DOWN);
     assert!(ended.source().is_some_and(|e| e.is::<Refused>()), "the refusal's source is not the runtime's `Refused`: {ended:?}");
+}
+
+/// A backoff refused once the whole-check bound has passed reports the bound's expiry, retryable,
+/// and not the refusal: only a bound that did not pass is reported as refused. The attempt fails
+/// in the poll that moves the clock past the bound, so its refused backoff and the bound's expiry
+/// answer together.
+#[tokio::test]
+async fn a_backoff_refused_after_the_whole_check_bound_passed_reports_the_expiry() {
+    let backoff = Duration::from_millis(7);
+    let whole = Duration::from_secs(5);
+    let late = whole + Duration::from_secs(1);
+    let clock = ScriptedTimer::new();
+    clock.refuse(backoff);
+    let attempt_clock = clock.clone();
+    let builder = App::builder(Mod::<A>::new(move |m| {
+        let attempt_clock = attempt_clock.clone();
+        m.singleton(|| async { S1 })
+            .ready(move |_s: Dep<S1>| {
+                let slept = ulo::Timer::sleep(&attempt_clock, late);
+                async move {
+                    slept.await;
+                    Err::<(), _>(Boom::new("down"))
+                }
+            })
+            .retries(1000)
+            .backoff(backoff)
+            .timeout(whole);
+    }))
+    .timer(clock.clone());
+    watchdog();
+    let app = builder.wire().expect("the graph did not wire");
+    let error = within("connect", async {
+        let mut connecting = std::pin::pin!(app.connect());
+        loop {
+            tokio::select! {
+                ended = &mut connecting => break ended.err().expect("connect succeeded with a check that cannot pass"),
+                () = tokio::time::sleep(Duration::from_millis(1)) => {
+                    if clock.live(whole) == 1 && clock.live(late) == 1 {
+                        clock.advance(late);
+                    }
+                }
+            }
+        }
+    })
+    .await;
+    assert!(!is_permanent(&error), "a check whose bound passed is permanent: {error}");
+    let (_, attempts, reason) = readiness(error);
+    assert_eq!(attempts, 1);
+    assert!(
+        matches!(reason, FailureReason::TimedOut { after, limit: Limit::Item } if after == whole),
+        "a backoff refused after the whole-check bound passed reported {reason:?}"
+    );
+    assert_eq!(clock.refused(backoff), 1, "the backoffs asked of a `Timer` refusing them");
+}
+
+/// A check under a five-second whole-check bound whose one attempt fails once the scripted clock
+/// reads `failed_at`, its backoff then refused: what `connect` fails with.
+async fn backoff_refused_at(failed_at: Duration) -> StartupError {
+    let backoff = Duration::from_millis(7);
+    let whole = Duration::from_secs(5);
+    let clock = ScriptedTimer::new();
+    clock.refuse(backoff);
+    let attempt_clock = clock.clone();
+    let builder = App::builder(Mod::<A>::new(move |m| {
+        let attempt_clock = attempt_clock.clone();
+        m.singleton(|| async { S1 })
+            .ready(move |_s: Dep<S1>| {
+                let slept = ulo::Timer::sleep(&attempt_clock, failed_at);
+                async move {
+                    slept.await;
+                    Err::<(), _>(Boom::new("down"))
+                }
+            })
+            .retries(1000)
+            .backoff(backoff)
+            .timeout(whole);
+    }))
+    .timer(clock.clone());
+    watchdog();
+    let app = builder.wire().expect("the graph did not wire");
+    within("connect", async {
+        let mut connecting = std::pin::pin!(app.connect());
+        loop {
+            tokio::select! {
+                ended = &mut connecting => break ended.err().expect("connect succeeded with a check that cannot pass"),
+                () = tokio::time::sleep(Duration::from_millis(1)) => {
+                    let armed = if failed_at == whole { clock.live(whole) == 2 } else { clock.live(whole) == 1 && clock.live(failed_at) == 1 };
+                    if armed {
+                        clock.advance(failed_at);
+                    }
+                }
+            }
+        }
+    })
+    .await
+}
+
+/// A backoff refused before the whole-check bound passes reports the refusal, `Permanent`, the
+/// last attempt's error as its source: a bound that has not passed is not reported as passing.
+#[tokio::test]
+async fn a_backoff_refused_before_the_whole_check_bound_passed_reports_the_refusal() {
+    let error = backoff_refused_at(Duration::from_secs(1)).await;
+    assert!(is_permanent(&error), "a check ended on a refused backoff is retryable: {error}");
+    let (_, attempts, reason) = readiness(error);
+    assert_eq!(attempts, 1);
+    let ended = shut_down(&reason);
+    let last = ended.source().and_then(|e| e.downcast_ref::<Redacted>()).and_then(Redacted::downcast_ref::<Boom>);
+    assert!(last.is_some(), "the refusal's source is not the last attempt's error: {ended:?}");
+}
+
+/// A backoff refused with the clock at the whole-check bound's end reports the expiry: a bound
+/// has passed once the clock reaches it, as `Expiry` reads it.
+#[tokio::test]
+async fn a_backoff_refused_at_the_whole_check_bound_reports_the_expiry() {
+    let error = backoff_refused_at(Duration::from_secs(5)).await;
+    assert!(!is_permanent(&error), "a check whose bound passed is permanent: {error}");
+    let (_, _, reason) = readiness(error);
+    assert!(
+        matches!(reason, FailureReason::TimedOut { after, limit: Limit::Item } if after == Duration::from_secs(5)),
+        "a backoff refused at the whole-check bound reported {reason:?}"
+    );
 }
 
 /// The control: on a clock that keeps time, a check whose retries run out on errors ends with the

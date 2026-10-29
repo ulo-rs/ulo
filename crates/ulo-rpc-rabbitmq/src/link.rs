@@ -18,7 +18,7 @@ use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, Consumer
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, BoxError, BoxFuture, Runtime};
+use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Runtime};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -169,6 +169,9 @@ impl Link for RabbitMq {
         let _ = app;
         self.usable()?;
         uri(&self.url)?;
+        // `listen` connects on the link's runtime: one that has shut down is refused here, beside
+        // the configuration, before any server binds.
+        self.runtime()?.run(async {}).await.map_err(Permanent::new)?;
         Ok(())
     }
 
@@ -199,7 +202,8 @@ impl Link for RabbitMq {
                     }
                 }
             })
-            .await??;
+            .await
+            .map_err(Permanent::new)??;
         let (phase, _) = watch::channel(Phase::Serving);
         let (deliveries, inbound) = mpsc::unbounded_channel();
         let (writes, queued) = ordered::channel(WRITE_QUEUE);

@@ -3,7 +3,7 @@ use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ulo::{BoxError, BoxFuture, Cut, Permanent, Runtime, RuntimeShutDown, Spawn, TaskEnd, Timer, ValueHandle, spawn_with};
 
@@ -40,8 +40,9 @@ pub(crate) fn require_tokio(runtime: &dyn Runtime, module: &'static str) -> Resu
 ///
 /// A runtime that refuses the backoff, or the bound, having shut down, fails the loop with a
 /// `Permanent` [`RuntimeShutDown`]: its source is the last attempt's error after a refused backoff,
-/// the runtime's `Refused` after a refused bound. The bound is a [`ulo::timeout`], so a refusal that
-/// arrives once it has passed reads as the bound passing.
+/// the runtime's `Refused` after a refused bound. A refusal of either that arrives once the bound
+/// has passed reads as the bound passing: the bound is a [`ulo::timeout_at`], and the loop checks
+/// the clock against the same end before it reports a refused backoff.
 pub(crate) async fn create<S: Store>(
     runtime: Arc<dyn Runtime>,
     options: S::Options,
@@ -51,8 +52,13 @@ pub(crate) async fn create<S: Store>(
     if !S::create_connects(&options) {
         return create_once::<S>(&runtime, &options).await;
     }
-    let looping = create_looping::<S>(&runtime, &options, policy);
-    match ulo::timeout(&*runtime, policy.connect_within, looping).await {
+    let ends = Timer::now(&*runtime).checked_add(policy.connect_within);
+    let looping = create_looping::<S>(&runtime, &options, policy, ends);
+    let bounded = match ends {
+        Some(ends) => ulo::timeout_at(&*runtime, ends, looping).await,
+        None => ulo::timeout(&*runtime, policy.connect_within, looping).await,
+    };
+    match bounded {
         Ok(created) => created,
         Err(Cut::Refused(refused)) => Err(Permanent::new(RuntimeShutDown::new(refused)).into()),
         // The binding's construction bound is the same length on the same clock and started no
@@ -62,8 +68,14 @@ pub(crate) async fn create<S: Store>(
     }
 }
 
-/// The retries of [`create`], dropped at the connect bound, which aborts the attempt in flight.
-async fn create_looping<S: Store>(runtime: &Arc<dyn Runtime>, options: &S::Options, policy: Policy) -> Result<S::Client, BoxError> {
+/// The retries of [`create`], dropped at the connect bound, which aborts the attempt in flight;
+/// `ends` is where that bound ends on the runtime's clock, `None` past the clock's range.
+async fn create_looping<S: Store>(
+    runtime: &Arc<dyn Runtime>,
+    options: &S::Options,
+    policy: Policy,
+    ends: Option<Instant>,
+) -> Result<S::Client, BoxError> {
     let mut made: u32 = 0;
     loop {
         made = made.saturating_add(1);
@@ -82,6 +94,11 @@ async fn create_looping<S: Store>(runtime: &Arc<dyn Runtime>, options: &S::Optio
             // On `sleep`, which ends at once on a runtime that has shut down, the retries would
             // run without pause.
             tracing::debug!(store = S::NAME, %refused, "the runtime refused the backoff before a retry of `create`; it is not retried");
+            // The bound had passed: answering the refusal in this poll would outrank its expiry,
+            // which the construction's bound reports once this future stays pending.
+            if ends.is_some_and(|ends| Timer::now(&**runtime) >= ends) {
+                return std::future::pending().await;
+            }
             return Err(Permanent::new(RuntimeShutDown::after(error)).into());
         }
     }

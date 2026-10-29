@@ -18,7 +18,7 @@ use rustls_native_certs::CertificateResult;
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, OnceCell, mpsc, oneshot, watch};
 use tokio::task::{AbortHandle, JoinHandle};
-use ulo::{AppHandle, BoxError, BoxFuture, Runtime, Timer};
+use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Refused, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -303,8 +303,12 @@ impl Link for Mqtt {
             None => self.default_group = Some(share_name(&format!("{:#}", app.root().name()))),
         }
         self.timer = app.timer().cloned();
+        let runtime = self.runtime()?;
+        // `listen` connects on the link's runtime: one that has shut down is refused here, beside
+        // the configuration, before any server binds.
+        runtime.run(async {}).await.map_err(Permanent::new)?;
         // A server loads its roots here, so a store that yields none fails `bind` before `listen`.
-        self.tls(&target, &self.runtime()?).await?;
+        self.tls(&target, &runtime).await.map_err(at_startup)?;
         Ok(())
     }
 
@@ -317,7 +321,10 @@ impl Link for Mqtt {
         let timer = self.timer.clone().ok_or(NoTimer { link: "MQTT" })?;
         let runtime = self.runtime()?;
         let target = Target::parse(&self.url)?;
-        let tls = self.tls(&target, &runtime).await?;
+        let tls = self.tls(&target, &runtime).await.map_err(at_startup)?;
+        // The event loop is spawned on the link's runtime, and one that has shut down drops it
+        // unrun, which would read as the broker not answering.
+        runtime.run(async {}).await.map_err(Permanent::new)?;
         let (client, eventloop) = AsyncClient::new(target.options(client_id(), tls), SERVER_REQUESTS);
         let shared: Vec<String> = patterns.iter().map(|pattern| format!("$share/{group}/{pattern}")).collect();
         let (phase, _) = watch::channel(Phase::Serving);
@@ -358,6 +365,8 @@ impl Link for Mqtt {
         let runtime = self.runtime()?;
         let target = Target::parse(&self.url)?;
         let tls = self.tls(&target, &runtime).await?;
+        // As in `listen`: on a runtime that has shut down the event loop would never run.
+        runtime.run(async {}).await?;
         let id = client_id();
         let reply_topic = format!("ulo/rpc/reply/{id}");
         let (client, eventloop) = AsyncClient::new(target.options(id.clone(), tls), 64);
@@ -653,7 +662,7 @@ impl Roots {
             }
             .into()),
             // Not kept: the next connect, on a runtime still running, loads them again.
-            Err(_) => Err("the MQTT link's runtime shut down while it loaded the platform's root certificates".into()),
+            Err(_) => Err(RuntimeShutDown::new(Refused).into()),
         }
     }
 }
@@ -1762,6 +1771,12 @@ fn receiver_stream<T: Send + 'static>(receiver: mpsc::UnboundedReceiver<T>) -> f
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// A server's startup error, a `RuntimeShutDown` marked `Permanent`: this start cannot succeed on
+/// a runtime that has shut down.
+fn at_startup(error: BoxError) -> BoxError {
+    if error.is::<RuntimeShutDown>() { Box::new(Permanent::new(error)) } else { error }
 }
 
 #[cfg(test)]

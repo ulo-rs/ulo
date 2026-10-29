@@ -12,7 +12,7 @@ use tokio::net::UdpSocket;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
-use ulo::{AppHandle, BoundAddr, BoxError, BoxFuture, Runtime, Timer};
+use ulo::{AppHandle, BoundAddr, BoxError, BoxFuture, Permanent, Runtime, Timer};
 use ulo_runtime_tokio::Tokio;
 use ulo_net::{Endpoint, EndpointSpec};
 use ulo_rpc::link::{Inbound, UNARY_ONLY};
@@ -211,9 +211,12 @@ impl Link for Udp {
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
-        self.runtime()?;
+        let runtime = self.runtime()?;
         self.prepared = Some(self.address()?);
         self.timer = app.timer().cloned();
+        // `listen` binds on the link's runtime: one that has shut down is refused here, beside
+        // the configuration, before any server binds.
+        runtime.run(async {}).await.map_err(Permanent::new)?;
         Ok(())
     }
 
@@ -230,7 +233,7 @@ impl Link for Udp {
             return Err(NoTimer { link: "UDP" }.into());
         };
         let runtime = self.runtime()?;
-        let socket = Arc::new(runtime.run(UdpSocket::bind(addr)).await??);
+        let socket = Arc::new(runtime.run(UdpSocket::bind(addr)).await.map_err(Permanent::new)??);
         *lock(&self.state.bound) = vec![BoundAddr::new("rpc", socket.local_addr()?)];
         *lock(&self.state.socket) = Some(Arc::clone(&socket));
         let (writes, queued) = ordered::channel(WRITE_QUEUE);

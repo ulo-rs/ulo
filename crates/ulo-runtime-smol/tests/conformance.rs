@@ -32,4 +32,6 @@ impl Harness for OnSmol {
 runtime_suite!(OnSmol; not_applicable {
     a_shut_down_runtime_refuses_spawning_and_timing_without_panicking:
         "smol has no runtime value that can be shut down while code still holds it",
+    run_on_a_shut_down_runtime_answers_runtime_shut_down:
+        "smol has no runtime value that can be shut down while code still holds it",
 });

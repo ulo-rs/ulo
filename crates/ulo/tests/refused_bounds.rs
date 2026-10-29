@@ -460,3 +460,10 @@ async fn a_cap_on_a_close_refused_after_it_passed_reports_the_cap() {
     let (failures, _) = close_failures(on(Late::new(CAP)).shutdown_timeout(CAP)).await;
     assert_eq!(timed_out(close_cut(&failures)), (CAP, Limit::ShutdownCap));
 }
+
+/// The reason a refusal is reported under is wire text: an RPC call's `ErrorInfo` carries it, so a
+/// change to it is a change to every caller's match.
+#[test]
+fn the_refusal_s_reason_reads_runtime_shut_down() {
+    assert_eq!(ulo::RUNTIME_SHUT_DOWN, "runtime_shut_down");
+}

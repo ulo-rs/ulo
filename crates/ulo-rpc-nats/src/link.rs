@@ -293,9 +293,13 @@ impl Link for Nats {
             None => self.default_group = Some(queue_group(&format!("{:#}", app.root().name()))),
         }
         self.timer = app.timer().cloned();
+        let runtime = self.runtime()?;
+        // `listen` connects on the link's runtime: one that has shut down is refused here, beside
+        // the configuration, before any server binds.
+        runtime.run(async {}).await.map_err(Permanent::new)?;
         // A server starts its roots' load here, so over `tls://` a store that yields none fails
         // `bind` before `listen`; over `nats://` `listen` waits for it.
-        self.roots(&servers, &self.runtime()?, false).await.map_err(at_startup)?;
+        self.roots(&servers, &runtime, false).await.map_err(at_startup)?;
         Ok(())
     }
 
@@ -319,7 +323,7 @@ impl Link for Nats {
             }
             async {}
         });
-        let client = runtime.run(open(servers, options, roots.as_deref().and_then(Load::path))).await??;
+        let client = runtime.run(open(servers, options, roots.as_deref().and_then(Load::path))).await.map_err(Permanent::new)??;
         self.max_payload.store(client.server_info().max_payload as u64, Ordering::Relaxed);
 
         // Every subscription is made before any lane starts, so a failure leaves nothing
@@ -1736,7 +1740,7 @@ mod tests {
     }
 
     /// Root certificates loaded per test, each test's loader counting in a slot of its own.
-    static LOADS: [AtomicUsize; 37] = [const { AtomicUsize::new(0) }; 37];
+    static LOADS: [AtomicUsize; 39] = [const { AtomicUsize::new(0) }; 39];
 
     /// A store that cannot be read: rustls-native-certs reading a file that is not there, as it
     /// reads one `SSL_CERT_FILE` names.
@@ -3212,6 +3216,44 @@ mod tests {
         let error = app().await.bind(Server::new(serving)).listen().await.err().expect("a server on a runtime that had shut down listened");
         assert!(matches!(error, StartupError::Configure(_)), "the bind failed other than as a `Configure` refusal: {error:?}");
         assert!(ulo::is_permanent(&error), "a bind refused on a runtime that has shut down is retryable: {error}");
+    }
+
+    /// A link on a runtime that has shut down answers alike on `nats://` and `tls://`: its server's
+    /// `listen()` fails `Configure`, permanent, with the refusal's text, and each client call fails
+    /// `Unavailable` with `reason: "runtime_shut_down"`, naming the link. Neither side loads its
+    /// roots.
+    #[tokio::test]
+    async fn a_link_on_a_shut_down_runtime_answers_runtime_shut_down_on_either_scheme() {
+        for url in ["nats://localhost:1", "tls://localhost:1"] {
+            let serving = link(url, test_root::<37>, std::env::temp_dir).with_handle(stopped());
+            let error = app().await.bind(Server::new(serving)).listen().await.err();
+            let error = error.unwrap_or_else(|| panic!("a `{url}` server on a runtime that had shut down listened"));
+            assert!(matches!(error, StartupError::Configure(_)), "a `{url}` server failed other than as a `Configure` refusal: {error:?}");
+            assert!(ulo::is_permanent(&error), "a `{url}` server refused on a runtime that has shut down is retryable: {error}");
+            assert!(error.to_string().contains("the runtime has shut down"), "a `{url}` server's refusal does not name the shutdown: {error}");
+            let calling = link(url, test_root::<37>, std::env::temp_dir).with_handle(stopped());
+            for (kind, reason, message) in refused_calls(calling).await {
+                assert_eq!((kind, reason.as_deref()), (ErrorKind::Unavailable, Some(ulo::RUNTIME_SHUT_DOWN)), "`{url}`: {message}");
+                assert!(message.contains("the nats link"), "a `{url}` call does not name the link: {message}");
+            }
+        }
+        assert_eq!(LOADS[37].load(Ordering::SeqCst), 0, "a link loaded its roots on a runtime that had shut down");
+    }
+
+    /// A link whose runtime shuts down after `prepare` fails `listen` with a `Permanent`
+    /// `RuntimeShutDown` on `nats://` and on `tls://`.
+    #[tokio::test]
+    async fn a_runtime_that_shuts_down_after_prepare_fails_listen_as_a_permanent_refusal() {
+        for url in ["nats://localhost:1", "tls://localhost:1"] {
+            let linked = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().expect("the link's runtime");
+            let mut serving = link(url, test_root::<38>, std::env::temp_dir).with_handle(linked.handle().clone());
+            serving.prepare(&app().await.handle()).await.unwrap_or_else(|error| panic!("a `{url}` link did not prepare: {error}"));
+            std::thread::spawn(move || drop(linked)).join().expect("the link's runtime shuts down");
+            let failed = serving.listen(&[]).await.err().unwrap_or_else(|| panic!("a `{url}` link listened on a runtime that had shut down"));
+            let permanent = failed.downcast_ref::<Permanent>().unwrap_or_else(|| panic!("a `{url}` refusal is not `Permanent`: {failed:?}"));
+            let inner = std::error::Error::source(permanent).expect("the `Permanent` wraps the refusal");
+            assert!(inner.is::<RuntimeShutDown>(), "a `{url}` `Permanent` does not hold a `RuntimeShutDown`: {failed:?}");
+        }
     }
 
     /// The control: a `tls://` roots wait whose bound passes on a clock that keeps time is still

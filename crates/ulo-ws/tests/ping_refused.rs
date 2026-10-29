@@ -3,8 +3,8 @@
 //! phrase, ending as `RuntimeShutDown`: on `sleep`, which ends at once on such a runtime, the
 //! connection would ping without pause, or end as `Lost` for a Pong nobody waited for.
 //!
-//! A refusal of the wait for a Pong that arrives once the Pong was due is a Pong missed, and ends as
-//! `Lost`.
+//! A refusal of either wait that arrives once the Pong was due is a Pong missed, and ends as `Lost`,
+//! whichever of the two the read loop polls first.
 //!
 //! The scripted clock refuses a length from the call that names it on, so a sleep armed before
 //! that call keeps its script. The client answers a Ping only on a read that begins after it, so a
@@ -12,6 +12,9 @@
 
 mod support;
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::task::{Poll, Waker};
 use std::time::{Duration, Instant};
 
 use ulo::{BoxFuture, Module, ModuleDef, ModuleIdentity, Spawn, TaskHandle, Timer, injectable, routes};
@@ -19,7 +22,7 @@ use ulo_conformance_support::ScriptedTimer;
 use ulo_runtime_tokio::Tokio;
 use ulo_ws::{Connection, DisconnectReason, OnDisconnect, WsModule};
 
-use support::{Record, Running, Socket, close_frame, hang_up, within};
+use support::{Record, Running, Socket, close_frame, hang_up, next_json, send_json, within};
 
 const PING: Duration = Duration::from_secs(7);
 
@@ -227,6 +230,142 @@ async fn a_pong_wait_refused_after_the_pong_was_due_ends_as_lost() {
     assert_eq!(ends.at_least(1, "`on_disconnect`").await, vec![DisconnectReason::Lost]);
     drop(socket);
     app.stop().await;
+}
+
+/// Waits that stay pending until [`open`](Self::open), then answer `Err(Refused)`: a runtime blocked
+/// past a deadline and then shut down, whose timer never fired for the waits armed on it.
+#[derive(Clone, Default)]
+struct Gate(Arc<GateState>);
+
+#[derive(Default)]
+struct GateState {
+    open: AtomicBool,
+    waiting: Mutex<Vec<Waker>>,
+    armed: AtomicUsize,
+}
+
+impl Gate {
+    fn wait(&self) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        self.0.armed.fetch_add(1, Ordering::SeqCst);
+        let gate = Arc::clone(&self.0);
+        Box::pin(std::future::poll_fn(move |cx| {
+            if !gate.open.load(Ordering::SeqCst) {
+                gate.waiting.lock().unwrap().push(cx.waker().clone());
+                if !gate.open.load(Ordering::SeqCst) {
+                    return Poll::Pending;
+                }
+            }
+            Poll::Ready(Err(ulo::Refused))
+        }))
+    }
+
+    fn armed(&self) -> usize {
+        self.0.armed.load(Ordering::SeqCst)
+    }
+
+    fn open(&self) {
+        self.0.open.store(true, Ordering::SeqCst);
+        let waiting = std::mem::take(&mut *self.0.waiting.lock().unwrap());
+        waiting.into_iter().for_each(Waker::wake);
+    }
+}
+
+/// [`Handed`] whose first ping tick is scripted, and whose later ticks, with `pong` set the wait
+/// for a Pong as well, wait on two gates: `ping` and `pong`. A sleep of `PONG`, the close's wait for
+/// the client's Close, ends at once, as on a runtime that has shut down.
+#[derive(Clone)]
+struct Blocked {
+    handed: Handed,
+    ticks: Arc<AtomicUsize>,
+    ping: Gate,
+    pong: Gate,
+}
+
+impl Blocked {
+    fn new(clock: ScriptedTimer) -> Blocked {
+        Blocked { handed: Handed { clock, spawn: Tokio::current() }, ticks: Arc::default(), ping: Gate::default(), pong: Gate::default() }
+    }
+}
+
+impl Timer for Blocked {
+    fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+        if d == PONG {
+            return Box::pin(std::future::ready(()));
+        }
+        self.handed.sleep(d)
+    }
+
+    fn now(&self) -> Instant {
+        self.handed.now()
+    }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        if d == PONG {
+            return self.pong.wait();
+        }
+        if d == PING && self.ticks.fetch_add(1, Ordering::SeqCst) > 0 {
+            return self.ping.wait();
+        }
+        self.handed.try_sleep(d)
+    }
+}
+
+impl Spawn for Blocked {
+    fn spawn(&self, fut: BoxFuture<'static, ()>) -> TaskHandle {
+        self.handed.spawn(fut)
+    }
+
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
+        self.handed.try_spawn(fut)
+    }
+}
+
+/// A connection on `runtime` whose first Ping went out after `echoes` echoed messages, with the
+/// Pong now due on the clock and both waits armed on their gates.
+async fn overdue(runtime: Blocked, echoes: usize) -> (Running, Record<DisconnectReason>, Socket) {
+    let clock = runtime.handed.clock.clone();
+    let (ping, pong) = (runtime.ping.clone(), runtime.pong.clone());
+    let ends = Record::new();
+    let app = Running::start_on(Root(Departures(ends.clone())), ulo_http_hyper::Server::new("127.0.0.1:0"), runtime).await;
+    let mut socket = app.connect("/ticking", &[]).await;
+    for id in 0..echoes {
+        send_json(&mut socket, &serde_json::json!({ "event": "echo", "id": id })).await;
+        next_json(&mut socket).await;
+    }
+    until("the connection's first ping tick", || clock.live(PING) == 1).await;
+    clock.advance(PING);
+    until("the second tick and the wait for the first Pong", || ping.armed() == 1 && pong.armed() == 1).await;
+    clock.advance(PONG);
+    (app, ends, socket)
+}
+
+/// A ping tick refused once the outstanding Pong was due is a Pong missed: the connection ends as
+/// `Lost`, though the wait for the Pong has not answered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ping_tick_refused_once_the_pong_was_due_ends_as_lost() {
+    let runtime = Blocked::new(ScriptedTimer::new());
+    let ping = runtime.ping.clone();
+    let (app, ends, socket) = overdue(runtime, 0).await;
+    ping.open();
+    assert_eq!(ends.at_least(1, "`on_disconnect`").await, vec![DisconnectReason::Lost]);
+    drop(socket);
+    app.stop().await;
+}
+
+/// Both waits refused in one turn once the Pong was due end as `Lost` whichever the read loop polls
+/// first: the echoes before the Ping move the turn the refusals arrive in through every branch.
+#[tokio::test(flavor = "multi_thread")]
+async fn both_waits_refused_once_the_pong_was_due_end_as_lost_in_any_poll_order() {
+    for echoes in 0..9 {
+        let runtime = Blocked::new(ScriptedTimer::new());
+        let (ping, pong) = (runtime.ping.clone(), runtime.pong.clone());
+        let (app, ends, socket) = overdue(runtime, echoes).await;
+        ping.open();
+        pong.open();
+        assert_eq!(ends.at_least(1, "`on_disconnect`").await, vec![DisconnectReason::Lost], "after {echoes} echoes");
+        drop(socket);
+        app.stop().await;
+    }
 }
 
 /// The connection a gateway's `OnConnect` handed over, for [`Closer`] to close.

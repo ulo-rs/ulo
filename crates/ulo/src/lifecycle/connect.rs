@@ -19,7 +19,7 @@ use crate::module::ModuleName;
 use crate::redact::{Redacted, SecretRegistry, redact};
 use crate::resolver::{Purpose, Resolver};
 use crate::signal::Signal;
-use crate::timer::{BoxError, BoundKind, RuntimeShutDown, resolve_bound};
+use crate::timer::{BoxError, BoundKind, Resolved, RuntimeShutDown, resolve_bound};
 
 /// Connects `singletons` (in connect order) and the hooks of `modules` (in collection order).
 /// `App::connect` passes the whole graph; `load` passes what the lazy module brought, after
@@ -81,7 +81,8 @@ pub(crate) async fn build_singleton(shared: &Arc<AppShared>, id: BindingId) -> R
 /// attempt timeout with `backoff` between, the whole under the check bound. A panicking attempt,
 /// one whose error carries a `Permanent`, and one whose bound the `Timer` refuses end the check at
 /// once, with no backoff; a backoff the `Timer` refuses ends it as `Errored` holding a `Permanent`
-/// `RuntimeShutDown`, its source the last attempt's error.
+/// `RuntimeShutDown`, its source the last attempt's error, unless the whole-check bound had passed
+/// on the clock by then, which ends it as that bound's `TimedOut`.
 /// `Readiness { key, attempts, reason }` on failure, the reason by the rules of §9.3.
 pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready: &ReadyRecord) -> Result<(), ConnectError> {
     let graph = shared.graph();
@@ -96,6 +97,13 @@ pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready:
     let resolver = Resolver::new(shared, binding.origin, None, Purpose::Lookup);
     // Read after the whole-check bound may have dropped the loop mid-attempt.
     let attempts = AtomicU32::new(0);
+    // The whole-check bound's end on the clock, read just before `run` arms it. A backoff refused
+    // once it has passed answers in the poll the bound's expiry does and would outrank it there,
+    // so the loop reports the expiry itself.
+    let whole_ends = match (timer, whole) {
+        (Some(timer), Resolved::After { after, limit }) => timer.now().checked_add(after).map(|ends| (ends, after, limit)),
+        _ => None,
+    };
 
     let checks = async {
         loop {
@@ -123,6 +131,11 @@ pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready:
                 && let Err(refused) = timer.try_sleep(ready.backoff).await
             {
                 tracing::debug!(%refused, "the app's `Timer` refused a readiness check's backoff; the check is not retried");
+                if let Some((ends, after, limit)) = whole_ends
+                    && timer.now() >= ends
+                {
+                    return Err(FailureReason::TimedOut { after, limit });
+                }
                 // A timed-out attempt has no error to carry.
                 return Err(match reason {
                     FailureReason::Errored(last) => {

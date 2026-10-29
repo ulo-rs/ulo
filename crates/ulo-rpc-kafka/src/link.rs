@@ -21,7 +21,7 @@ use rdkafka::{Offset, TopicPartitionList};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, BoxError, BoxFuture, Refused, Runtime, Timer};
+use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Refused, Runtime, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -245,6 +245,9 @@ impl Link for Kafka {
             None => self.default_group = Some(format!("{:#}", app.root().name())),
         }
         self.timer = app.timer().cloned();
+        // `listen` connects on the link's runtime: one that has shut down is refused here, beside
+        // the configuration, before any server binds.
+        self.runtime()?.run(async {}).await.map_err(Permanent::new)?;
         Ok(())
     }
 
@@ -291,7 +294,8 @@ impl Link for Kafka {
                 let producer = Detached::new(producer(&base)?);
                 Ok::<_, BoxError>((consumer, control, producer))
             })
-            .await??;
+            .await
+            .map_err(Permanent::new)??;
 
         let (phase, _) = watch::channel(Phase::Serving);
         let (deliveries, inbound) = mpsc::unbounded_channel();

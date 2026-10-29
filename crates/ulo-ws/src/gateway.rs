@@ -305,7 +305,8 @@ pub enum DisconnectReason {
     /// The drain's 1001.
     Drain,
     /// An I/O error, a connection closed without a Close frame, or a Pong that missed
-    /// `pong_timeout`, a wait for one that the runtime refused once it was due included.
+    /// `pong_timeout`, a ping tick or a wait for the Pong that the runtime refused once the Pong was
+    /// due included.
     Lost,
     /// The runtime timing the keep-alive refused a ping tick or the wait for a Pong, having shut
     /// down, and the connection closed with 1001 and the shutdown phrase. Nothing is known of the

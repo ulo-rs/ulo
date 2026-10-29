@@ -79,6 +79,14 @@ jobs:
       # and `compile_fail` reports itself ignored off rustc 1.98.1 and runs in
       # `macro diagnostics`.
       - run: cargo test --workspace --locked
+      # A harness declares a scenario not applicable by name, and the suite then reports it ignored
+      # and passes. Tokio's runtime can shut down while a value of it is held, so the two scenarios
+      # on a runtime that has shut down are required by name on it.
+      - run: >-
+          python3 scripts/require_tests.py
+          a_shut_down_runtime_refuses_spawning_and_timing_without_panicking
+          run_on_a_shut_down_runtime_answers_runtime_shut_down
+          -- cargo test -p ulo-runtime-tokio --test conformance --locked
       # actix-web's `http2` is off in a default build, and any crate in an application can turn
       # it on, so the actix suite runs once more against an h2c host, where the adapter's
       # `DrainHttp2::Reset` declaration is asserted.

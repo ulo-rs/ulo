@@ -9,7 +9,7 @@ use redis::aio::{ConnectionManager, PubSubSink, PubSubStream};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, BoxError, BoxFuture, Runtime};
+use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Runtime};
 use ulo_runtime_tokio::Tokio;
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
@@ -117,6 +117,9 @@ impl Link for Redis {
         let _ = app;
         self.usable()?;
         client(&self.url)?;
+        // `listen` connects on the link's runtime: one that has shut down is refused here, beside
+        // the configuration, before any server binds.
+        self.runtime()?.run(async {}).await.map_err(Permanent::new)?;
         Ok(())
     }
 
@@ -134,7 +137,8 @@ impl Link for Redis {
                     let (sink, stream) = subscribe(&client, &channels).await?;
                     Ok::<_, BoxError>((publisher, sink, stream))
                 })
-                .await??
+                .await
+                .map_err(Permanent::new)??
         };
 
         let (phase, _) = watch::channel(Phase::Serving);

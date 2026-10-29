@@ -2,7 +2,7 @@
 //! after a return, an abort, a panic and a drop, what [`spawn_with`](ulo::spawn_with) and a
 //! [`TaskSet`](ulo_transport::TaskSet) answer over it, and the app binding the runtime as one
 //! object that redacts a spawned task's panic with the app's secrets, and a runtime that has shut
-//! down refusing to spawn and to time without a panic. One scenario list, stamped
+//! down refusing to spawn, to time and to run a future without a panic. One scenario list, stamped
 //! per runtime by [`runtime_suite!`] from a [`Harness`] the runtime crate implements in its
 //! `tests/`.
 //!
@@ -31,7 +31,7 @@
 
 use std::future::Future;
 
-use ulo::{Runtime, Timer};
+use ulo::{BoxError, BoxFuture, Runtime, Timer};
 
 pub mod cases;
 
@@ -47,9 +47,9 @@ pub trait Harness {
     /// the runtime spawns while `fut` waits. Each scenario calls it once.
     fn block_on<F: Future>(fut: F) -> F::Output;
 
-    /// A runtime of its own, running, with what shuts it down, for the scenario on a runtime that
+    /// A runtime of its own, running, with what shuts it down, for the scenarios on a runtime that
     /// has shut down. `None` for a runtime that cannot shut down while a value of it is held,
-    /// whose suite then declares that scenario not applicable. Called inside the future
+    /// whose suite then declares those scenarios not applicable. Called inside the future
     /// `block_on` runs.
     fn stoppable() -> Option<Stoppable<Self::Runtime>>;
 }
@@ -63,9 +63,15 @@ pub struct Stoppable<R> {
     /// passing it on none: a runtime crate whose runtime is its only clock lists a second value of
     /// the runtime.
     pub clocks: Vec<(&'static str, Box<dyn Timer>)>,
+    /// Runs a future as a task on that runtime and answers its output, as `Tokio::run` does; the
+    /// scenario requires a [`RuntimeShutDown`](ulo::RuntimeShutDown) once the runtime has shut down.
+    pub run: Run,
     /// Returns once the runtime has shut down. Called from inside the future `block_on` runs.
     pub stop: Box<dyn FnOnce() + Send>,
 }
+
+/// [`Stoppable::run`]: the runtime crate's own way to run a future on its runtime, its refusal boxed.
+pub type Run = Box<dyn Fn(BoxFuture<'static, ()>) -> BoxFuture<'static, Result<(), BoxError>> + Send>;
 
 /// Stamps one `#[test]` per scenario in [`cases`] for the [`Harness`] given.
 ///
@@ -125,17 +131,24 @@ macro_rules! runtime_suite {
             a_running_runtime_refuses_neither_spawning_nor_timing => refusal::running,
         );
 
-        __ulo_runtime_conformance_stamp!(a_shut_down_runtime_refuses_spawning_and_timing_without_panicking,
-            fn a_shut_down_runtime_refuses_spawning_and_timing_without_panicking() {
-                <$harness as $crate::Harness>::block_on(async {
-                    let stoppable = <$harness as $crate::Harness>::stoppable().expect(
-                        "the harness answers no runtime that can shut down: declare \
-                         `a_shut_down_runtime_refuses_spawning_and_timing_without_panicking` not applicable with the reason",
-                    );
-                    $crate::cases::refusal::shut_down(<$harness as $crate::Harness>::runtime(), stoppable).await
-                });
-            }
+        $crate::runtime_suite!(@stoppable $harness;
+            a_shut_down_runtime_refuses_spawning_and_timing_without_panicking => refusal::shut_down,
+            run_on_a_shut_down_runtime_answers_runtime_shut_down => refusal::run_refused,
         );
+    };
+    (@stoppable $harness:ty; $($name:ident => $module:ident :: $case:ident),* $(,)?) => {
+        $(
+            __ulo_runtime_conformance_stamp!($name, fn $name() {
+                <$harness as $crate::Harness>::block_on(async {
+                    let stoppable = <$harness as $crate::Harness>::stoppable().expect(concat!(
+                        "the harness answers no runtime that can shut down: declare `",
+                        stringify!($name),
+                        "` not applicable with the reason",
+                    ));
+                    $crate::cases::$module::$case(<$harness as $crate::Harness>::runtime(), stoppable).await
+                });
+            });
+        )*
     };
     (@cases $harness:ty; $($name:ident => $module:ident :: $case:ident),* $(,)?) => {
         $(
