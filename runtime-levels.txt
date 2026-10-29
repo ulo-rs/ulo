@@ -281,3 +281,9 @@ ex-25-rpc-basics             tokio-bound
 ex-26-rpc-streams            tokio-bound
 ex-27-rpc-deadlines          tokio-bound
 ex-28-rpc-links              tokio-bound
+ex-33-config                 tokio-bound
+ex-34-health                 tokio-bound
+ex-35-db-sqlx               tokio-bound
+ex-36-db-two-instances       tokio-bound
+ex-37-db-diesel              tokio-bound
+ex-38-tracing                tokio-bound

@@ -99,6 +99,12 @@ members = [
     "examples/30-grpc-client",
     "examples/31-graphql",
     "examples/32-graphql-subscriptions",
+    "examples/33-config",
+    "examples/34-health",
+    "examples/35-db-sqlx",
+    "examples/36-db-two-instances",
+    "examples/37-db-diesel",
+    "examples/38-tracing",
 ]
 exclude = [
     "integration-tests",

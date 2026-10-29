@@ -2861,6 +2861,126 @@ dependencies = [
 ]
 
 [[package]]
+name = "ex-33-config"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "serde",
+ "serde_json",
+ "tokio",
+ "ulo",
+ "ulo-config",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-34-health"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tonic-health",
+ "ulo",
+ "ulo-conformance-support",
+ "ulo-grpc",
+ "ulo-health",
+ "ulo-health-grpc",
+ "ulo-health-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-35-db-sqlx"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "testcontainers",
+ "tokio",
+ "ulo",
+ "ulo-config",
+ "ulo-conformance-support",
+ "ulo-db-sqlx",
+ "ulo-health",
+ "ulo-health-http",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-36-db-two-instances"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "testcontainers",
+ "tokio",
+ "ulo",
+ "ulo-config",
+ "ulo-conformance-support",
+ "ulo-db-sqlx",
+ "ulo-health",
+ "ulo-health-http",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-37-db-diesel"
+version = "0.0.0"
+dependencies = [
+ "diesel",
+ "diesel-async",
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-config",
+ "ulo-db-diesel",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-38-tracing"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "prost",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tonic-prost",
+ "tracing",
+ "tracing-subscriber",
+ "ulo",
+ "ulo-build",
+ "ulo-config",
+ "ulo-grpc",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-otel",
+ "ulo-otel-otlp",
+ "ulo-rpc",
+ "ulo-rpc-tcp",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
 name = "ex-support"
 version = "0.0.0"
 dependencies = [
@@ -7619,6 +7739,7 @@ dependencies = [
  "sqlx-postgres",
  "sqlx-sqlite",
  "syn 2.0.118",
+ "thiserror 2.0.21",
  "tokio",
  "url",
 ]
