@@ -38,8 +38,21 @@ use crate::tree::{Node, Origin, Value, join_index, join_key};
 
 /// A pass that never settles is cut here and reports what it found. Each pass adds one missing
 /// field or sets aside one section, so this bounds how many of both one configuration can report
-/// together.
+/// together. A read that would add past it ends its report with the notice `truncation_notice`
+/// builds.
 const MAX_PASSES: usize = 2048;
+
+/// The final problem of a report the pass cap cut: no path, no origin, and `Problem::truncated`
+/// true. `count` is the number of problems before it.
+fn truncation_notice(count: usize) -> Problem {
+    Problem {
+        path: String::new(),
+        origin: None,
+        message: format!("the report stopped after {count} problems; fix these and read again"),
+        flattened: false,
+        truncated: true,
+    }
+}
 
 /// The shortest secret `scrub` matches against problem messages.
 const MIN_SCRUBBED: usize = 4;
@@ -150,7 +163,7 @@ struct Ctx {
     root: String,
     /// Sections set aside by earlier passes after a leaf type's own error ended them, and
     /// top-level keys the type refused as keys (`deny_unknown_fields`).
-    skipped: Vec<String>,
+    skipped: BTreeSet<String>,
     /// The section whose read just failed outside a patch, and where its problems begin.
     failed: RefCell<Option<(String, usize)>>,
 }
@@ -163,7 +176,7 @@ struct NewPatch {
 }
 
 impl Ctx {
-    fn new(patches: Vec<(String, String)>, root: String, skipped: Vec<String>) -> Ctx {
+    fn new(patches: Vec<(String, String)>, root: String, skipped: BTreeSet<String>) -> Ctx {
         Ctx {
             problems: RefCell::new(Problems::new()),
             secret_paths: RefCell::new(Vec::new()),
@@ -263,7 +276,7 @@ impl<'a> NodeDeserializer<'a> {
 
     fn record_in(&self, message: String, flattened: bool) {
         let origin = self.origin().cloned();
-        self.ctx.problems.borrow_mut().list.push(Problem { path: self.path.clone(), origin, message, flattened });
+        self.ctx.problems.borrow_mut().list.push(Problem { path: self.path.clone(), origin, message, flattened, truncated: false });
     }
 
     /// Records that this node is not what the caller asked for. A node that is absent is reported
@@ -401,6 +414,7 @@ impl<'a> NodeDeserializer<'a> {
                     origin: self.origin().filter(|origin| !matches!(origin, Origin::Default)).cloned(),
                     message: "missing required field".to_owned(),
                     flattened: false,
+                    truncated: false,
                 });
                 let message = format!("missing field `{field}`");
                 *self.ctx.new_patch.borrow_mut() = Some(NewPatch { parent: self.path.clone(), field: field.clone(), problem });
@@ -746,6 +760,7 @@ impl<'de, 'a> MapAccess<'de> for TableAcc<'a> {
                     origin: here.origin().filter(|origin| !matches!(origin, Origin::Default)).cloned(),
                     message: "missing required field".to_owned(),
                     flattened: false,
+                    truncated: false,
                 });
                 Err(DeError::new(Kind::Missing(field), message).silenced())
             }
@@ -853,10 +868,11 @@ pub(crate) fn section<T: DeserializeOwned>(
     let mut consumed: BTreeSet<String> = BTreeSet::new();
     let mut value: Option<T> = None;
     let mut found = Problems::new();
-    let mut skipped: Vec<String> = Vec::new();
+    let mut skipped: BTreeSet<String> = BTreeSet::new();
     let mut held: Vec<Problem> = Vec::new();
 
-    for _ in 0..MAX_PASSES {
+    let mut settled = false;
+    for pass in 0..=MAX_PASSES {
         let ctx = Ctx::new(patches.clone(), path.to_owned(), skipped.clone());
         let target = match root {
             Some(node) => Target::Node(node),
@@ -873,14 +889,17 @@ pub(crate) fn section<T: DeserializeOwned>(
         let failed = ctx.failed.take();
         let mut pass_problems = ctx.problems.take();
         match (result, patch) {
+            // The pass past the cap runs only to learn whether anything is left to add.
+            (Err(_), None) if failed.is_some() && pass == MAX_PASSES => break,
+            (Err(_), Some(patch)) if pass == MAX_PASSES && !patches.iter().any(|(p, f)| *p == patch.parent && *f == patch.field) => break,
             (Err(error), None) if failed.is_some() => {
                 let (section, start) = failed.unwrap_or_default();
                 held.extend(pass_problems.list.split_off(start));
                 if !error.recorded {
                     let origin = loaded.tree.get(&section).map(|node| node.origin.clone());
-                    held.push(Problem { path: section.clone(), origin, message: error.message, flattened: false });
+                    held.push(Problem { path: section.clone(), origin, message: error.message, flattened: false, truncated: false });
                 }
-                skipped.push(section);
+                skipped.insert(section);
             }
             (Err(_), Some(patch)) if !patches.iter().any(|(p, f)| *p == patch.parent && *f == patch.field) => {
                 patches.push((patch.parent, patch.field));
@@ -890,14 +909,16 @@ pub(crate) fn section<T: DeserializeOwned>(
                 missing.extend(patch.and_then(|patch| patch.problem));
                 value = Some(done);
                 found = pass_problems;
+                settled = true;
                 break;
             }
             (Err(error), _) => {
                 if !error.recorded {
                     let origin = root.map(|node| node.origin.clone());
-                    pass_problems.list.push(Problem { path: path.to_owned(), origin, message: error.message, flattened: false });
+                    pass_problems.list.push(Problem { path: path.to_owned(), origin, message: error.message, flattened: false, truncated: false });
                 }
                 found = pass_problems;
+                settled = true;
                 break;
             }
         }
@@ -911,13 +932,18 @@ pub(crate) fn section<T: DeserializeOwned>(
                 line: 0,
                 column: 0,
             });
-            problems.list.push(Problem { path: problem.path.clone(), origin: Some(origin), message: problem.message.clone(), flattened: false });
+            problems.list.push(Problem { path: problem.path.clone(), origin: Some(origin), message: problem.message.clone(), flattened: false, truncated: false });
         }
     }
     problems.list.extend(held);
     problems.list.extend(found.list);
     problems.list.extend(missing);
     scrub(&mut problems, &texts);
+    if !settled {
+        // After the scrub: the count is no secret's text.
+        let count = problems.list.len();
+        problems.list.push(truncation_notice(count));
+    }
 
     config.mark_consumed(consumed);
     let secrets: Vec<Secret<String>> = texts.into_iter().filter(|text| !text.is_empty()).map(Secret::new).collect();

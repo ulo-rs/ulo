@@ -332,7 +332,11 @@ jobs:
           the_linger_runs_on_the_clock_the_loop_was_given
           connecting_over_tls_does_not_stall_the_thread
           -- cargo test -p ulo-rpc-mqtt --features integration --lib --locked
-      - run: cargo test -p ulo-rpc-rabbitmq --features integration --test conformance --locked
+      - run: >-
+          python3 scripts/require_tests.py
+          the_server_s_connection_recovers_after_the_broker_closes_it
+          a_broker_lost_between_the_two_connections_fails_listen_at_the_bound
+          -- cargo test -p ulo-rpc-rabbitmq --features integration --test conformance --locked
       - run: cargo test -p ulo-rpc-kafka --features integration --test conformance --locked
       - run: >-
           python3 scripts/require_tests.py

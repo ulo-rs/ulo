@@ -7,7 +7,9 @@
 //! client channel in confirm mode with `mandatory` publishes, so `basic.return` maps to
 //! `Unavailable`; an unhandled event is `basic.reject`ed without requeue; a call waiting when the
 //! client's connection drops is `Unavailable`, since a direct reply-to address dies with its
-//! channel; the drain cancels the consumers (`basic.cancel`); `amqps://` selects TLS.
+//! channel; the drain cancels the consumers (`basic.cancel`); `amqps://` selects TLS. A server's
+//! `listen` and a client's connect wait for the broker at most [`RabbitMq::connect_within`], 30 s
+//! unset, and a wait that runs out fails with [`ConnectTimedOut`].
 //!
 //! ```
 //! # fn f(app: ulo::App<ulo::Connected>) {
@@ -27,4 +29,4 @@
 
 mod link;
 
-pub use link::RabbitMq;
+pub use link::{ConnectTimedOut, RabbitMq};

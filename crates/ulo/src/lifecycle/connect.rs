@@ -83,7 +83,7 @@ pub(crate) async fn build_singleton(shared: &Arc<AppShared>, id: BindingId) -> R
 /// once, with no backoff; a backoff the `Timer` refuses ends it as `Errored` holding a `Permanent`
 /// `RuntimeShutDown`, its source the last attempt's error, unless the whole-check bound had passed
 /// on the clock by then, which ends it as that bound's `TimedOut`.
-/// `Readiness { key, attempts, reason }` on failure, the reason by the rules of §9.3.
+/// `Readiness { key, module, attempts, reason }` on failure, the reason by the rules of §9.3.
 pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready: &ReadyRecord) -> Result<(), ConnectError> {
     let graph = shared.graph();
     let binding = graph.binding(id);
@@ -154,7 +154,12 @@ pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready:
         Outcome::TimedOut { after, limit } => FailureReason::TimedOut { after, limit },
         Outcome::Refused(refused) => shut_down(secrets, refused),
     };
-    Err(ConnectError::Readiness { key: binding_key(binding), attempts: attempts.load(Ordering::Relaxed), reason })
+    Err(ConnectError::Readiness {
+        key: binding_key(binding),
+        module: module_name(&graph, binding.origin),
+        attempts: attempts.load(Ordering::Relaxed),
+        reason,
+    })
 }
 
 /// Every hook of `kind` on `singletons` and `modules`, in connect order with each module's own

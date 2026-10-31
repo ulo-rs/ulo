@@ -3,8 +3,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use ulo::{App, AppBuilder, Dep, injectable, module, routes};
-use ulo_rpc::Payload;
-use ulo_transport::Classify;
+use ulo_rpc::{Classify, Payload};
 
 mod roles;
 pub use roles::{RequiresRole, RoleGuard};

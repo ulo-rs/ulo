@@ -169,3 +169,30 @@ async fn migrate_then_lazy_is_refused_the_same_way() {
     assert_eq!(refusals.len(), 1, "{errors}");
     assert_eq!((refusals[0].lazy_at().line(), refusals[0].migrate_at().line()), (lazy_line, migrate_line));
 }
+
+/// A module whose database file is absent and may not be created, so its readiness ping fails.
+fn unreachable_module(name: &str) -> SqlxModule<Sqlite> {
+    let url = format!("sqlite://{}?mode=rw", std::env::temp_dir().join(format!("ulo-absent-{}-{name}", std::process::id())).join("db.sqlite").display());
+    StoreModule::from_options(serde_json::from_value(json!({ "url": url, "max_connections": 1 })).expect("sqlite options"))
+}
+
+#[tokio::test]
+async fn two_failing_readiness_checks_name_the_module_that_owns_each() {
+    let wired = app(Root::new().import(unreachable_module("p").keyed::<Primary>())).wire().expect("the module wires");
+    let Err(StartupError::Connect(primary)) = wired.connect().await else { panic!("an unreachable Primary connected") };
+    let wired = app(Root::new().import(unreachable_module("r").keyed::<Replica>())).wire().expect("the module wires");
+    let Err(StartupError::Connect(replica)) = wired.connect().await else { panic!("an unreachable Replica connected") };
+
+    let mut seen = Vec::new();
+    for (error, owner) in [(&primary, "Primary"), (&replica, "Replica")] {
+        let ConnectError::Readiness { key, module, attempts, reason } = error else { panic!("expected a readiness failure: {error}") };
+        assert_eq!(key.key().type_name().to_string(), "Pool<Sqlite>");
+        assert_eq!(module.to_string(), format!("StoreModule<Sqlite> @ {owner}"));
+        assert_eq!(*attempts, 1);
+        assert!(matches!(reason, ulo::FailureReason::Errored(_)), "{reason}");
+        let text = error.to_string();
+        assert!(text.starts_with(&format!("readiness check of `Pool<Sqlite>` in StoreModule<Sqlite> @ {owner} failed after 1 attempt: ")), "{text}");
+        seen.push(text);
+    }
+    assert_ne!(seen[0], seen[1]);
+}

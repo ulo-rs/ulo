@@ -288,3 +288,142 @@ fn a_missing_field_of_a_tagged_enum_names_its_path() {
     let paths: Vec<_> = common::problems_of::<Tagged>(&config, "").iter().map(|p| p.path().to_owned()).collect();
     assert_eq!(paths, ["store.url", "http.port"]);
 }
+
+/// A root map of `entries` keys each holding a value `DbUrl` refuses, read as `Probe`.
+fn refused_entries(entries: usize) -> Vec<Problem> {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct Probe(std::collections::BTreeMap<String, DbUrl>);
+    let mut values = Values::new();
+    for index in 0..entries {
+        values = values.set(format!("k{index:05}"), "mysql://u@h/d");
+    }
+    let config = Config::builder().source(values).load();
+    common::problems_of::<Probe>(&config, "")
+}
+
+/// The cap on how many sections one read sets aside is 2048. Past it the report says it stopped.
+#[test]
+fn a_report_cut_at_the_pass_cap_ends_with_the_truncation_notice() {
+    let problems = refused_entries(2049);
+    let (notice, kept) = problems.split_last().expect("the report holds problems");
+    assert_eq!(kept.len(), 2048);
+    assert!(kept.iter().all(|p| !p.truncated() && p.message() == "`mysql://u@h/d` is not a postgres:// url"), "{kept:?}");
+    assert_eq!(
+        summary(std::slice::from_ref(notice)),
+        [(String::new(), None, "the report stopped after 2048 problems; fix these and read again".to_owned())]
+    );
+    assert!(notice.truncated());
+}
+
+/// The cap counts missing fields as it counts sections: a root map of 2049 entries each missing
+/// its one required field stops after 2048 and says so.
+#[test]
+fn a_report_of_missing_fields_cut_at_the_pass_cap_ends_with_the_truncation_notice() {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct Entry {
+        port: u16,
+    }
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct Probe(std::collections::BTreeMap<String, Entry>);
+    let mut values = Values::new();
+    for index in 0..2049 {
+        values = values.set(format!("k{index:05}.other"), 1);
+    }
+    let config = Config::builder().source(values).load();
+    let problems = common::problems_of::<Probe>(&config, "");
+    let (notice, kept) = problems.split_last().expect("the report holds problems");
+    assert_eq!(kept.len(), 2048);
+    assert!(kept.iter().all(|p| !p.truncated() && p.message() == "missing required field"), "{kept:?}");
+    assert_eq!(notice.message(), "the report stopped after 2048 problems; fix these and read again");
+    assert!(notice.truncated());
+}
+
+/// A report that holds every problem the cap allows is complete and carries no notice.
+#[test]
+fn a_report_exactly_at_the_pass_cap_carries_no_notice() {
+    let problems = refused_entries(2048);
+    assert_eq!(problems.len(), 2048);
+    assert!(problems.iter().all(|p| !p.truncated()));
+}
+
+#[test]
+fn a_report_below_the_pass_cap_carries_no_notice() {
+    let problems = refused_entries(3);
+    assert_eq!(
+        summary(&problems),
+        ["k00000", "k00001", "k00002"].map(|k| (k.to_owned(), Some(explicit(k)), "`mysql://u@h/d` is not a postgres:// url".to_owned()))
+    );
+    assert!(problems.iter().all(|p| !p.truncated()));
+}
+
+/// Limit (a): a section written under a `#[serde(alias)]` key that ends on a leaf-type error is
+/// also reported missing under the field's real name.
+#[test]
+fn a_section_under_an_alias_key_is_also_reported_missing_under_its_field_name() {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct Aliased {
+        #[serde(alias = "db")]
+        database: Database,
+        http: Http,
+    }
+    let config = Config::builder().source(Values::new().set("db.url", "mysql://u@h/d").set("db.pool", 5).set("http.port", 80)).load();
+    let problems = common::problems_of::<Aliased>(&config, "");
+    assert_eq!(
+        summary(&problems),
+        [
+            ("db.url".to_owned(), Some(explicit("db.url")), "invalid value, found a string".to_owned()),
+            ("database".to_owned(), Some(explicit("db.url")), "missing required field".to_owned()),
+        ]
+    );
+}
+
+/// Limit (b): a missing section whose type refuses a placeholder hides the missing fields declared
+/// after it, so with two such sections missing one is reported.
+#[test]
+fn two_missing_sections_that_refuse_a_placeholder_report_one() {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct Two {
+        database: Url,
+        cache: Url,
+    }
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct Url {
+        url: DbUrl,
+    }
+    let config = Config::builder().source(Values::new().set("other", 1)).load();
+    let problems = common::problems_of::<Two>(&config, "");
+    assert_eq!(summary(&problems), [("database".to_owned(), Some(explicit("other")), "missing required field".to_owned())]);
+}
+
+/// Limit (c): the fields of a flattened struct after a failed section are not reported.
+#[test]
+fn the_fields_of_a_flattened_struct_after_a_failed_section_are_not_reported() {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct Listen {
+        port: u16,
+    }
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct Flat {
+        database: Database,
+        #[serde(flatten)]
+        listen: Listen,
+    }
+    let config = Config::builder().source(Values::new().set("database.url", "mysql://u@h/d").set("database.pool", 5)).load();
+    assert_eq!(
+        summary(&common::problems_of::<Flat>(&config, "")),
+        [("database.url".to_owned(), Some(explicit("database.url")), "invalid value, found a string".to_owned())]
+    );
+    let healthy = Config::builder().source(Values::new().set("database.url", "postgres://u@h/d").set("database.pool", 5)).load();
+    assert_eq!(
+        summary(&common::problems_of::<Flat>(&healthy, "")),
+        [("port".to_owned(), Some(explicit("database.url")), "missing required field".to_owned())]
+    );
+}

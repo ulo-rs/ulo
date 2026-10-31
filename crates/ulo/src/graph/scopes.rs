@@ -350,7 +350,7 @@ fn execution_read(
 ) -> Option<Vec<String>> {
     let through = |id: BindingId| Some(id) != owner && graph.passes_execution(id);
     dependency.requirement.reads.iter().find_map(|read| match &read.kind {
-        ReadKind::Extension | ReadKind::Execution => Some(Vec::new()),
+        ReadKind::Extension(_) | ReadKind::Execution => Some(Vec::new()),
         ReadKind::Single(key) => match graph.lookup(module, *key) {
             Some(Visible::Input(input)) => Some(vec![format!("input `{}`", input.name(BindingKind::Single))]),
             Some(Visible::Binding(id)) if through(*id) => Some(execution_steps(graph, *id)),
@@ -506,7 +506,7 @@ impl<'g> InputWalk<'g> {
                         _ => {}
                     },
                     ReadKind::Collection(key) => roots.extend(graph.collection(*key).iter().copied()),
-                    ReadKind::Extension | ReadKind::Execution | ReadKind::Module => {}
+                    ReadKind::Extension(_) | ReadKind::Execution | ReadKind::Module => {}
                 }
             }
         }

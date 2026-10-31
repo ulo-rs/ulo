@@ -142,7 +142,10 @@ pub enum ConnectError {
     /// How the last attempt ended, `TimedOut { limit: Item }` for the whole check, or `Errored`
     /// holding a `Permanent` [`RuntimeShutDown`](crate::RuntimeShutDown) for a backoff or a bound
     /// the runtime refused (§9.3).
-    Readiness { key: KeyName, attempts: u32, reason: FailureReason },
+    ///
+    /// `module` is the module the checked binding belongs to, so two keyed modules of one type
+    /// that bind one key (`StoreModule<Sqlite> @ Primary` and `@ Replica`) read apart.
+    Readiness { key: KeyName, module: ModuleName, attempts: u32, reason: FailureReason },
     Hook { hook: HookKind, key: KeyName, reason: FailureReason },
 }
 
@@ -152,9 +155,9 @@ impl fmt::Display for ConnectError {
             ConnectError::Construct { key, module, reason } => {
                 write!(f, "failed to construct `{key}` in {module}: {reason}")
             }
-            ConnectError::Readiness { key, attempts, reason } => {
+            ConnectError::Readiness { key, module, attempts, reason } => {
                 let noun = if *attempts == 1 { "attempt" } else { "attempts" };
-                write!(f, "readiness check of `{key}` failed after {attempts} {noun}: {reason}")
+                write!(f, "readiness check of `{key}` in {module} failed after {attempts} {noun}: {reason}")
             }
             ConnectError::Hook { hook, key, reason } => write!(f, "`{hook}` hook of `{key}` failed: {reason}"),
         }
@@ -301,6 +304,9 @@ pub enum ShutdownFailure {
 pub enum ServeEnd {
     /// Returned `Err`: the transport's own error, redacted.
     Errored(Redacted),
+    /// Panicked while polled: the payload as a message, redacted. The future is dropped and not
+    /// polled again.
+    Panicked(Redacted),
     /// Returned `Ok` before the shutdown began, so nothing served that transport any more.
     Returned,
 }
@@ -328,6 +334,9 @@ impl ShutdownFailure {
                 .to_owned(),
             ShutdownFailure::Serve { transport, end: ServeEnd::Errored(reason) } => {
                 format!("transport `{}` failed while serving: {reason}", transport.written(full))
+            }
+            ShutdownFailure::Serve { transport, end: ServeEnd::Panicked(message) } => {
+                format!("transport `{}` panicked while serving: {message}", transport.written(full))
             }
             ShutdownFailure::Serve { transport, end: ServeEnd::Returned } => {
                 format!("transport `{}` stopped serving while the app was running", transport.written(full))
@@ -678,7 +687,7 @@ pub struct UndeclaredRead {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum UndeclaredWhat {
     Key(KeyName),
-    Extension,
+    Extension(TypeName),
     Execution,
 }
 
@@ -699,6 +708,14 @@ impl UndeclaredRead {
             _ => None,
         }
     }
+
+    /// The extension type read, `None` for a key or the execution.
+    pub fn extension(&self) -> Option<TypeName> {
+        match self.read {
+            UndeclaredWhat::Extension(ext) => Some(ext),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for UndeclaredRead {
@@ -711,10 +728,10 @@ impl fmt::Display for UndeclaredRead {
                  add it there (`d.field::<..>(..)` or `d.param::<..>(..)`) so wiring can check it, \
                  or read it through a `ModuleRef` after construction"
             ),
-            UndeclaredWhat::Extension => write!(
+            UndeclaredWhat::Extension(ext) => write!(
                 f,
-                "`{reader}` reads an execution extension in `construct` but its `dependencies` declares none; \
-                 add `d.field::<Ext<..>>(..)` so wiring knows it needs an execution"
+                "`{reader}` reads the execution extension `{ext}` in `construct` but its `dependencies` does not declare it; \
+                 add `d.field::<Ext<{ext}>>(..)` so wiring knows it needs an execution"
             ),
             UndeclaredWhat::Execution => write!(
                 f,

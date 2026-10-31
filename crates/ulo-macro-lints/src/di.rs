@@ -51,3 +51,29 @@ impl OnModuleInit for Clock {
         Ok(())
     }
 }
+
+/// What a braced constant in a `providers` list binds.
+#[derive(Clone, Copy)]
+pub struct Limits {
+    pub max: u32,
+}
+
+pub const LIMITS: Limits = Limits { max: 8 };
+
+/// The qualifier `Limits` is bound under a second time.
+pub struct Strict;
+
+/// The qualifier of the fallible braced entry.
+pub struct Loaded;
+
+/// What a braced fallible entry, `{ loaded_limits() }?`, binds.
+pub fn loaded_limits() -> Result<Limits, BoxError> {
+    Ok(LIMITS)
+}
+
+/// A braced constant, `{ LIMITS }`, with and without `@ Q`, and a braced fallible value,
+/// `{ .. }? @ Q`. The braces tell a value from a type and are not the lowering's to repeat:
+/// written again as the argument of `m.value(..)` or `m.try_value(..)` they trip `unused_braces`
+/// in the user's crate.
+#[ulo::module(providers = [{ LIMITS }, { LIMITS } @ Strict, { loaded_limits() }? @ Loaded])]
+pub struct BracedValues;

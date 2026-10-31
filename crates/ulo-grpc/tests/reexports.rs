@@ -52,4 +52,5 @@ fn the_detail_types_are_ulo_transports() {
     assert!(same::<ulo_grpc::Details, ulo_transport::Details>());
     assert!(same::<ulo_grpc::Detail, ulo_transport::Detail>());
     assert!(same::<ulo_grpc::FieldViolation, ulo_transport::FieldViolation>());
+    assert!(same::<ulo_grpc::details::Link, ulo_transport::Link>());
 }

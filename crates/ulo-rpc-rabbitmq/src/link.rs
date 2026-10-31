@@ -1,4 +1,6 @@
 use std::collections::{HashMap, VecDeque};
+use std::error::Error;
+use std::fmt;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -18,7 +20,7 @@ use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, Consumer
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Runtime};
+use ulo::{AppHandle, BoxError, BoxFuture, Cut, Permanent, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -55,6 +57,10 @@ const REPLY_TO: &str = "amq.rabbitmq.reply-to";
 /// The channel's prefetch when the server's `max_inflight` is `Count::Unlimited`.
 const UNLIMITED_PREFETCH: u16 = 64;
 
+/// How long a server's `listen` and a client's connect wait for the broker, unless
+/// [`RabbitMq::connect_within`] says otherwise.
+const CONNECT_WITHIN: Duration = Duration::from_secs(30);
+
 /// Frames queued for one side's writer ahead of the next send's wait: each send is queued at its call and waits until it is
 /// among this many the writer has not taken.
 const WRITE_QUEUE: usize = 64;
@@ -79,6 +85,9 @@ pub struct RabbitMq {
     pub(crate) codec: Codec,
     pub(crate) prefetch: u16,
     pub(crate) runtime: Option<Tokio>,
+    pub(crate) connect_within: Duration,
+    /// The app's clock, kept by `prepare` for `listen`.
+    pub(crate) timer: Option<Arc<dyn Timer>>,
     pub(crate) state: Mutex<State>,
     #[cfg(feature = "conformance-probe")]
     pub(crate) probe: Arc<ClientProbe>,
@@ -115,6 +124,8 @@ impl RabbitMq {
             codec: Codec::Json,
             prefetch: UNLIMITED_PREFETCH,
             runtime: Tokio::try_current(),
+            connect_within: CONNECT_WITHIN,
+            timer: None,
             state: Mutex::new(State::default()),
             #[cfg(feature = "conformance-probe")]
             probe: Arc::default(),
@@ -132,6 +143,27 @@ impl RabbitMq {
     /// `Codec::Cbor` carries raw bytes and declares `binary: true`; JSON unset.
     pub fn codec(mut self, codec: Codec) -> Self {
         self.codec = codec;
+        self
+    }
+
+    /// How long the link waits for the broker before it gives up, 30 seconds by default. On a
+    /// server it bounds the whole of `listen`: the connection that checks the broker, its close,
+    /// the serving connection opened after it, and the queues and consumers set up on that one, so
+    /// a broker lost between the two connections fails `listen` here rather than after lapin's
+    /// sixteen reconnect attempts. On a client it bounds each connect, and the call's own timeout,
+    /// five seconds unset, runs over the connect too, so with both unset a call against a silent
+    /// broker ends `Timeout` at five seconds and the next call connects again. A wait that runs out fails
+    /// with [`ConnectTimedOut`], which a server's `listen` returns as `Bind` and `RpcClient`
+    /// answers `Unavailable`. A server's wait is timed on the app's `Timer`, which `prepare`
+    /// reads, and a client's on the runtime its client was built on, the app's inside an app; a
+    /// clock whose runtime has shut down fails `listen` as `Permanent` `RuntimeShutDown` and a call
+    /// `Unavailable` with `reason: "runtime_shut_down"`. A zero bound is refused in `usable`, so
+    /// in a server's `prepare` and where a client takes the link.
+    ///
+    /// A connect that runs out leaves lapin's `lapin-io-loop` thread and its socket behind, since
+    /// lapin 4.12 has no way to cancel one (transports DESIGN §5.2).
+    pub fn connect_within(mut self, bound: Duration) -> Self {
+        self.connect_within = bound;
         self
     }
 
@@ -163,11 +195,14 @@ impl Link for RabbitMq {
 
     fn usable(&self) -> Result<(), BoxError> {
         self.runtime()?.require_io()?;
+        if self.connect_within.is_zero() {
+            return Err("the RabbitMQ link's `connect_within` is zero, so no connection to the broker could be made within it".into());
+        }
         Ok(())
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
-        let _ = app;
+        self.timer = app.timer().cloned();
         // `listen` binds on the link's runtime: one that has shut down, or has no IO driver, is
         // refused here, before the configuration and before any server binds. The shutdown is
         // asked first, since a runtime that has shut down answers nothing about its driver.
@@ -195,26 +230,34 @@ impl Link for RabbitMq {
     async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
         let runtime = self.runtime()?;
         let (uri, patterns, prefetch) = (uri(&self.url)?, patterns.to_vec(), self.prefetch);
-        let (connection, channel, consumers, control) = runtime
-            .run(async move {
-                // lapin's auto-recovery retries a first connect too, sixteen times on an
-                // exponential backoff, so a broker refusing it would hold `listen` past 30 s, and
-                // recovery cannot be turned on once a connection is up. A first connection without
-                // it reports the broker's refusal at once and is closed; the serving connection,
-                // opened after it, recovers.
-                let checked = Connection::connect_uri(uri.clone(), ConnectionProperties::default()).await?;
-                let _ = checked.close(200, "connected".into()).await;
-                let connection = Connection::connect_uri(uri, ConnectionProperties::default().enable_auto_recover()).await?;
-                match subscribe(&connection, &patterns, prefetch).await {
-                    Ok((channel, consumers, control)) => Ok((connection, channel, consumers, control)),
-                    Err(error) => {
-                        let _ = connection.close(200, "bind failed".into()).await;
-                        Err(error)
-                    }
+        // A link listening outside an app, with no `prepare`, times the wait on its own runtime.
+        let clock: Arc<dyn Timer> = match &self.timer {
+            Some(timer) => Arc::clone(timer),
+            None => Arc::new(runtime.clone()),
+        };
+        let timed_out = ConnectTimedOut { within: self.connect_within, address: address(&uri) };
+        let connecting = runtime.run(async move {
+            // lapin's auto-recovery retries a first connect too, sixteen times on an
+            // exponential backoff, so a broker refusing it would hold `listen` past 30 s, and
+            // recovery cannot be turned on once a connection is up. A first connection without
+            // it reports the broker's refusal at once and is closed; the serving connection,
+            // opened after it, recovers.
+            let checked = Connection::connect_uri(uri.clone(), ConnectionProperties::default()).await?;
+            let _ = checked.close(200, "connected".into()).await;
+            let connection = Connection::connect_uri(uri, ConnectionProperties::default().enable_auto_recover()).await?;
+            match subscribe(&connection, &patterns, prefetch).await {
+                Ok((channel, consumers, control)) => Ok((connection, channel, consumers, control)),
+                Err(error) => {
+                    let _ = connection.close(200, "bind failed".into()).await;
+                    Err(error)
                 }
-            })
-            .await
-            .map_err(Permanent::new)??;
+            }
+        });
+        let (connection, channel, consumers, control) = match ulo::timeout(&*clock, timed_out.within, connecting).await {
+            Ok(connected) => connected.map_err(Permanent::new)??,
+            Err(Cut::Expired) => return Err(timed_out.into()),
+            Err(Cut::Refused(refused)) => return Err(Permanent::new(RuntimeShutDown::new(refused)).into()),
+        };
         let (phase, _) = watch::channel(Phase::Serving);
         let (deliveries, inbound) = mpsc::unbounded_channel();
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
@@ -238,33 +281,37 @@ impl Link for RabbitMq {
         Ok(receiver_stream(inbound))
     }
 
-    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+    async fn connect(&self, client: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         // Not recovered by lapin: a direct reply-to address lives as long as its channel, so the
         // replies a recovered connection's new channel would wait for are gone. A lost connection
         // ends the reply lane instead, and `RpcClient` connects again for the next call.
         let runtime = self.runtime()?;
         let uri = uri(&self.url)?;
-        let (connection, channel, replies) = runtime
-            .run(async move {
-                let connection = Connection::connect_uri(uri, ConnectionProperties::default()).await?;
-                let channel = connection.create_channel().await?;
-                // Confirm mode is what makes a `mandatory` publish's `basic.return` reach the
-                // publisher: lapin resolves the publish's confirmation with the returned message.
-                channel.confirm_select(ConfirmSelectOptions::default()).await?;
-                channel
-                    .exchange_declare(CONTROL.into(), ExchangeKind::Fanout, ExchangeDeclareOptions::default(), FieldTable::default())
-                    .await?;
-                let replies = channel
-                    .basic_consume(
-                        REPLY_TO.into(),
-                        "".into(),
-                        BasicConsumeOptions { no_ack: true, ..Default::default() },
-                        FieldTable::default(),
-                    )
-                    .await?;
-                Ok::<_, BoxError>((connection, channel, replies))
-            })
-            .await??;
+        let timed_out = ConnectTimedOut { within: self.connect_within, address: address(&uri) };
+        let connecting = runtime.run(async move {
+            let connection = Connection::connect_uri(uri, ConnectionProperties::default()).await?;
+            let channel = connection.create_channel().await?;
+            // Confirm mode is what makes a `mandatory` publish's `basic.return` reach the
+            // publisher: lapin resolves the publish's confirmation with the returned message.
+            channel.confirm_select(ConfirmSelectOptions::default()).await?;
+            channel
+                .exchange_declare(CONTROL.into(), ExchangeKind::Fanout, ExchangeDeclareOptions::default(), FieldTable::default())
+                .await?;
+            let replies = channel
+                .basic_consume(
+                    REPLY_TO.into(),
+                    "".into(),
+                    BasicConsumeOptions { no_ack: true, ..Default::default() },
+                    FieldTable::default(),
+                )
+                .await?;
+            Ok::<_, BoxError>((connection, channel, replies))
+        });
+        let (connection, channel, replies) = match ulo::timeout(&**client, timed_out.within, connecting).await {
+            Ok(connected) => connected??,
+            Err(Cut::Expired) => return Err(timed_out.into()),
+            Err(Cut::Refused(refused)) => return Err(RuntimeShutDown::new(refused).into()),
+        };
 
         let side = Arc::new(ClientSide {
             channel,
@@ -372,6 +419,42 @@ async fn close_on(runtime: &Tokio, close: impl Future<Output = lapin::Result<()>
 fn uri(url: &str) -> Result<AMQPUri, BoxError> {
     url.parse::<AMQPUri>().map_err(|error| format!("the RabbitMQ link's url does not parse: {error}").into())
 }
+
+/// The broker's `host:port`, without the url's credentials.
+fn address(uri: &AMQPUri) -> String {
+    format!("{}:{}", uri.authority.host, uri.authority.port)
+}
+
+/// The broker did not answer within the link's [`connect_within`](RabbitMq::connect_within): a
+/// broker that accepts the connection and never completes the AMQP handshake, or one lost between
+/// a server's two connections, whose reconnect lapin retries on its own backoff. A server's
+/// `listen` fails with it as `Bind`, and `RpcClient` answers it `Unavailable`. It has no source:
+/// lapin reports no attempt's error while it is still connecting.
+#[derive(Debug)]
+pub struct ConnectTimedOut {
+    within: Duration,
+    address: String,
+}
+
+impl ConnectTimedOut {
+    /// The bound that ran out.
+    pub fn within(&self) -> Duration {
+        self.within
+    }
+
+    /// The broker's `host:port`, read from the link's url without its credentials.
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+}
+
+impl fmt::Display for ConnectTimedOut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the RabbitMQ broker at {} did not answer within the link's `connect_within` of {:?}", self.address, self.within)
+    }
+}
+
+impl Error for ConnectTimedOut {}
 
 /// Declares a queue per pattern and consumes each under the prefetch, one window for every
 /// pattern under RabbitMQ's reading of `global = true`, then this instance's own queue on the

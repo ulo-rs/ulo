@@ -29,6 +29,14 @@ pub mod span;
 #[doc(hidden)]
 pub mod __private;
 
+/// What `#[derive(Classify)]` and `#[derive(Validate)]` call, under the same name in every crate
+/// that re-exports the derives, so the generated code reaches it through whichever one the
+/// deriving crate depends on.
+#[doc(hidden)]
+pub mod __derive {
+    pub use crate::__private::validate;
+}
+
 pub use admission::{Admission, ConnectionAdmission, Permit};
 pub use count::Count;
 pub use details::{Detail, Details, FieldViolation, Link};

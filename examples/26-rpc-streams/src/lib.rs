@@ -3,8 +3,7 @@ use std::time::Duration;
 
 use futures_util::{Stream, StreamExt, stream};
 use ulo::{App, AppBuilder, Dep, Timer, injectable, module, routes};
-use ulo_rpc::{Inbound, Payload};
-use ulo_transport::Classify;
+use ulo_rpc::{Classify, Inbound, Payload};
 
 /// A streamed request item that did not decode.
 #[derive(Debug, Classify)]

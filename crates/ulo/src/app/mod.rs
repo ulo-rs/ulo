@@ -12,11 +12,11 @@ pub(crate) mod shared;
 
 use std::future::{Future, poll_fn};
 use std::marker::PhantomData;
-use std::panic::Location;
+use std::panic::{AssertUnwindSafe, Location, catch_unwind};
 use std::ops::Deref;
 use std::pin::{Pin, pin};
 use std::sync::{Arc, PoisonError};
-use std::task::Poll;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::app::shared::AppShared;
@@ -37,7 +37,7 @@ use crate::lifecycle::run::CatchUnwind;
 use crate::lifecycle::{connect, shutdown};
 use crate::module::Module;
 use crate::module::handle::ModuleRef;
-use crate::redact::{Redacted, Redactor, redact, redact_panic};
+use crate::redact::{Redacted, Redactor, SecretRegistry, redact, redact_panic};
 use crate::runtime::{Clocked, Runtime};
 use crate::signal::Signal;
 use crate::testing::TestPlan;
@@ -451,6 +451,35 @@ impl App<Connected> {
     /// with `Closed`. `execute` drops the execution when the closure's future completes, which
     /// fires no cancellation; a subtask that outlives it takes `exec.handle()`.
     ///
+    /// A stream built from the execution is consumed inside the closure: it ends when `execute`
+    /// returns, and a read it makes afterwards answers `LookupError::ExecutionEnded`.
+    ///
+    /// ```
+    /// # use ulo::{App, Connected, Dep, ExecOptions, ExecutionRef, LookupError};
+    /// # struct Clock;
+    /// /// A reply source reading through its execution on every item.
+    /// struct Ticks(ExecutionRef);
+    ///
+    /// impl Ticks {
+    ///     async fn next(&self) -> Result<Dep<Clock>, LookupError> {
+    ///         self.0.get::<Clock>().await
+    ///     }
+    /// }
+    /// # async fn f(app: App<Connected>) -> Result<(), Box<dyn std::error::Error>> {
+    /// // Consumed inside the closure: the execution is alive for every read.
+    /// app.execute(ExecOptions::new(), async |exec| {
+    ///     let ticks = Ticks(exec.handle());
+    ///     ticks.next().await.map(|_| ())
+    /// })
+    /// .await??;
+    ///
+    /// // Returned out of it: the execution has ended, and the next read is `ExecutionEnded`.
+    /// let ticks = app.execute(ExecOptions::new(), async |exec| Ticks(exec.handle())).await?;
+    /// assert!(matches!(ticks.next().await, Err(LookupError::ExecutionEnded { .. })));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     /// An inherent `async fn`, so its future is `Send` whenever the closure's future is.
     pub async fn execute<F, R>(&self, opts: ExecOptions, f: F) -> Result<R, Closed>
     where
@@ -493,7 +522,9 @@ impl App<Bound> {
     /// starts the same shutdown under a signal naming the transport: every server is drained and
     /// closed and every hook runs, and the outcome is `Err` with
     /// [`ShutdownFailure::Serve`] naming that transport listed
-    /// first, its error redacted, which every `close` caller receives too. A `serve` that ends once
+    /// first, its error redacted, which every `close` caller receives too. A `serve` that panics
+    /// is caught on each poll and ends the same way, as [`ServeEnd::Panicked`] holding the
+    /// redacted message; the other servers drain and close as for an `Err`. A `serve` that ends once
     /// the shutdown has begun is not a failure.
     pub async fn serve(self, signal: impl Future<Output = Signal> + Send) -> Result<Shutdown, ShutdownError> {
         let shared = self.shared;
@@ -515,16 +546,20 @@ impl App<Bound> {
                 }
                 for (server, slot) in servers.iter().zip(serving.iter_mut()) {
                     let Some(fut) = slot else { continue };
-                    let Poll::Ready(result) = fut.as_mut().poll(cx) else { continue };
+                    let Poll::Ready(result) = poll_serve(fut, cx, &shared.graph().secrets) else { continue };
                     *slot = None;
                     let transport = server.transport_name();
                     let (signal, end, failed) = match result {
-                        Err(error) => {
+                        Err(panic) => {
+                            let failed = format!("panicked: {panic}");
+                            (Signal::new(format!("transport `{transport}` failed: {failed}")), ServeEnd::Panicked(panic), Some(failed))
+                        }
+                        Ok(Err(error)) => {
                             let reason = redact(&shared.graph().secrets, error);
                             let failed = reason.to_string();
                             (Signal::new(format!("transport `{transport}` failed: {failed}")), ServeEnd::Errored(reason), Some(failed))
                         }
-                        Ok(()) => (Signal::new(format!("transport `{transport}` stopped serving")), ServeEnd::Returned, None),
+                        Ok(Ok(())) => (Signal::new(format!("transport `{transport}` stopped serving")), ServeEnd::Returned, None),
                     };
                     // A trigger that arrived since `triggered` was polled wins, and this end is
                     // then part of that shutdown rather than its cause.
@@ -543,17 +578,32 @@ impl App<Bound> {
         poll_fn(|cx| {
             for (server, slot) in servers.iter().zip(serving.iter_mut()) {
                 if let Some(fut) = slot
-                    && let Poll::Ready(result) = fut.as_mut().poll(cx)
+                    && let Poll::Ready(result) = poll_serve(fut, cx, &shared.graph().secrets)
                 {
                     *slot = None;
-                    if let Err(error) = result {
-                        discarded(server.transport_name(), &redact(&shared.graph().secrets, error).to_string());
+                    match result {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => discarded(server.transport_name(), &redact(&shared.graph().secrets, error).to_string()),
+                        Err(panic) => discarded(server.transport_name(), &format!("panicked: {panic}")),
                     }
                 }
             }
             closing.as_mut().poll(cx)
         })
         .await
+    }
+}
+
+/// Polls one transport's `serve` inside `catch_unwind`: a panic is that transport's failure, an
+/// `Err` holding the redacted payload. The future is dropped by the caller and never polled again.
+fn poll_serve(
+    fut: &mut BoxFuture<'_, Result<(), BoxError>>,
+    cx: &mut Context<'_>,
+    secrets: &SecretRegistry,
+) -> Poll<Result<Result<(), BoxError>, Redacted>> {
+    match catch_unwind(AssertUnwindSafe(|| fut.as_mut().poll(cx))) {
+        Ok(poll) => poll.map(Ok),
+        Err(payload) => Poll::Ready(Err(redact_panic(secrets, payload))),
     }
 }
 

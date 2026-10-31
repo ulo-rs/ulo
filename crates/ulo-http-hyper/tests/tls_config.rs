@@ -125,6 +125,18 @@ async fn a_handed_configuration_serves_https_and_the_server_adds_the_alpn_it_nee
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_further_protocol_in_the_handed_configuration_is_not_offered() {
+    let ca = Ca::new();
+    let server = start(server_config(&ca.issue(&["localhost", "127.0.0.1"]), &ca, false, &[b"acme-tls/1", b"http/1.1", b"h2"])).await.expect("the app listens");
+
+    assert_eq!(server.negotiated(&ca, &[b"acme-tls/1", b"h2", b"http/1.1"]).await.as_deref(), Some(b"h2".as_slice()), "h2 is preferred");
+    assert_eq!(server.negotiated(&ca, &[b"acme-tls/1", b"http/1.1"]).await.as_deref(), Some(b"http/1.1".as_slice()));
+    let only_further = server.get(&ca, None, &[b"acme-tls/1"]).await;
+    assert!(only_further.is_err(), "a client offering only the further protocol gets an alert, got {only_further:?}");
+    server.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_client_without_a_certificate_is_refused_and_one_with_it_is_served() {
     let ca = Ca::new();
     let server = start(server_config(&ca.issue(&["localhost", "127.0.0.1"]), &ca, true, &[])).await.expect("the app listens");

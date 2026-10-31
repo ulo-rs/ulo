@@ -340,7 +340,7 @@ impl Graph {
                 ReadKind::Collection(key) => {
                     deps.extend(self.collections.get(key).into_iter().flat_map(|ids| ids.iter().copied()));
                 }
-                ReadKind::Extension | ReadKind::Execution | ReadKind::Module => {}
+                ReadKind::Extension(_) | ReadKind::Execution | ReadKind::Module => {}
             }
         }
         deps

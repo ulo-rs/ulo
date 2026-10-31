@@ -310,7 +310,7 @@ fn binding_edges(
                     check_key(graph, binding.origin, *key, read.optional, consumer, errors, reported)
                 }
                 ReadKind::Collection(key) => Some(EdgeTarget::Collection(*key)),
-                ReadKind::Extension | ReadKind::Execution => Some(EdgeTarget::Execution),
+                ReadKind::Extension(_) | ReadKind::Execution => Some(EdgeTarget::Execution),
                 ReadKind::Module => Some(EdgeTarget::Module),
             };
             if let Some(target) = target {

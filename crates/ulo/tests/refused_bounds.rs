@@ -276,7 +276,7 @@ fn pending_check_whole() -> Mod<Root> {
 }
 
 fn readiness_failure(error: &StartupError) -> (Key, u32, &FailureReason) {
-    let StartupError::Connect(ConnectError::Readiness { key, attempts, reason }) = error else {
+    let StartupError::Connect(ConnectError::Readiness { key, attempts, reason, .. }) = error else {
         panic!("expected a readiness failure, got: {error}");
     };
     (key.key(), *attempts, reason)

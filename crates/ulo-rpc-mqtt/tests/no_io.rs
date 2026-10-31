@@ -52,6 +52,10 @@ async fn a_server_on_a_runtime_without_io_fails_listen_as_a_permanent_configure(
     // not recoverable here; the permanence flag and the text are what the report keeps.
     let prepared = entry.source.downcast_ref::<PrepareError>().unwrap_or_else(|| panic!("the entry is not a `PrepareError`: {entry}"));
     assert!(prepared.is_permanent(), "the entry is not marked permanent: {entry}");
+    let entries = prepared.entries();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0].subject(), Some(Mqtt::NAME), "the entry does not carry the link: {entries:?}");
+    assert!(entry.to_string().contains("link `mqtt`: "), "the report does not name the link: {entry}");
     assert!(entry.to_string().contains(&NoIoDriver.to_string()), "the report does not carry the `NoIoDriver` text: {entry}");
 }
 

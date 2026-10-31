@@ -38,7 +38,8 @@ impl ModuleRef {
     }
 
     /// A standalone execution resolving with this module's visibility. Refused from Draining on
-    /// with `Closed`; completion fires no cancellation (§6.3).
+    /// with `Closed`; completion fires no cancellation (§6.3). A stream built from the execution
+    /// is consumed inside the closure: it ends when `execute` returns.
     pub async fn execute<F, R>(&self, opts: ExecOptions, f: F) -> Result<R, Closed>
     where
         F: AsyncFnOnce(&Execution) -> R,

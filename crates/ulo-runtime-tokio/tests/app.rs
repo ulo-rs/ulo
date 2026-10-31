@@ -1112,12 +1112,13 @@ impl std::fmt::Display for ListenerLost {
 
 impl std::error::Error for ListenerLost {}
 
-/// A server whose `serve` waits at its gate, then ends with `fails`' answer: `Err(ListenerLost)`
-/// when set, `Ok` otherwise. Its `drain` and `close` are logged as `drain dying` and `close dying`.
+/// A server whose `serve` waits at its gate, then panics with `panic` when set, else ends with
+/// `fails`' answer: `Err(ListenerLost)` when set, `Ok` otherwise. Its `drain` and `close` are logged as `drain dying` and `close dying`.
 struct Dying {
     log: Log,
     gate: Arc<Gate>,
     fails: bool,
+    panic: Option<&'static str>,
 }
 
 impl Server for Dying {
@@ -1129,6 +1130,9 @@ impl Server for Dying {
 
     async fn serve(&self) -> Result<(), BoxError> {
         self.gate.pass().await;
+        if let Some(text) = self.panic {
+            panic!("{text}");
+        }
         if self.fails { Err(Box::new(ListenerLost)) } else { Ok(()) }
     }
 
@@ -1148,14 +1152,39 @@ impl Server for Dying {
 /// answers `Err` whose one failure is `Serve` naming the dying transport, its `end` checked by
 /// `ended`. A later `close` answers the same failure.
 async fn a_serve_that_ends(fails: bool, ended: impl Fn(&ServeEnd) -> bool) {
+    serve_that_ends(fails, None, None, ended).await;
+}
+
+/// A [`Gated`] root that also registers a secret, when given one.
+struct Secreting(Gated, Option<Secret<String>>);
+
+impl Module for Secreting {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        self.0.register(m);
+        if let Some(secret) = &self.1 {
+            m.secret(secret);
+        }
+    }
+}
+
+async fn serve_that_ends(
+    fails: bool,
+    panic: Option<&'static str>,
+    secret: Option<Secret<String>>,
+    ended: impl Fn(&ServeEnd) -> bool,
+) -> ulo::ShutdownError {
     let log = Log::default();
     let gate = Gate::new(false);
     let recording = Recording { name: "a", app: None, log: log.clone(), drain_gate: Gate::new(true), close_gate: Gate::new(true) };
-    let root = Gated { log: log.clone(), hook_gate: Gate::new(true) };
+    let root = Secreting(Gated { log: log.clone(), hook_gate: Gate::new(true) }, secret);
     let app = connect(App::builder(root).runtime(Tokio::current()))
         .await
         .bind(recording)
-        .bind(Dying { log: log.clone(), gate: Arc::clone(&gate), fails })
+        .bind(Dying { log: log.clone(), gate: Arc::clone(&gate), fails, panic })
         .listen()
         .await
         .unwrap_or_else(|error| panic!("the app did not bind: {error}"));
@@ -1182,11 +1211,27 @@ async fn a_serve_that_ends(fails: bool, ended: impl Fn(&ServeEnd) -> bool) {
     assert!(ended(end), "the failure carries another end: {end:?}");
     let again = handle.close(Signal::new("again")).await.expect_err("a close after the shutdown answered `Ok`");
     assert!(matches!(&*again.failures, [ShutdownFailure::Serve { .. }]), "a close after the shutdown answered {again}");
+    error
 }
 
 #[tokio::test]
 async fn a_transport_whose_serve_fails_closes_the_app() {
     a_serve_that_ends(true, |end| matches!(end, ServeEnd::Errored(reason) if reason.downcast_ref::<ListenerLost>().is_some())).await;
+}
+
+/// A panicking `serve` is a transport failure like an `Err`: the healthy server drains and closes,
+/// the phase reaches `Closed`, and the failure names the transport and carries the panic with the
+/// registered secret redacted.
+#[tokio::test]
+async fn a_transport_whose_serve_panics_closes_the_app() {
+    let secret = Some(Secret::new("serve-token-77f3".to_owned()));
+    let error = serve_that_ends(false, Some("the loop died holding serve-token-77f3"), secret, |end| {
+        matches!(end, ServeEnd::Panicked(message) if message.to_string() == "the loop died holding [redacted]")
+    })
+    .await;
+    assert_eq!(error.report.signal.name(), "transport `Doomed` failed: panicked: the loop died holding [redacted]");
+    let text = error.to_string();
+    assert!(text.contains("transport `Doomed` panicked while serving: the loop died holding [redacted]"), "{text}");
 }
 
 #[tokio::test]
@@ -1257,7 +1302,7 @@ async fn two_serves_ending_on_one_poll_record_the_first_bound_once() {
     for run in 0..20 {
         let log = Log::default();
         let gate = Gate::new(false);
-        let dying = |fails| Dying { log: log.clone(), gate: Arc::clone(&gate), fails };
+        let dying = |fails| Dying { log: log.clone(), gate: Arc::clone(&gate), fails, panic: None };
         let app = connect(App::builder(Signalled(log.clone())).runtime(Tokio::current()))
             .await
             .bind(DyingAs::<Doomed>(dying(true), std::marker::PhantomData))
@@ -1288,7 +1333,7 @@ async fn a_serve_failing_after_a_close_is_no_failure() {
     let (gate, hook_gate) = (Gate::new(false), Gate::new(false));
     let app = connect(App::builder(Gated { log: log.clone(), hook_gate: Arc::clone(&hook_gate) }).runtime(Tokio::current()))
         .await
-        .bind(Dying { log: log.clone(), gate: Arc::clone(&gate), fails: true })
+        .bind(Dying { log: log.clone(), gate: Arc::clone(&gate), fails: true, panic: None })
         .listen()
         .await
         .unwrap_or_else(|error| panic!("the app did not bind: {error}"));

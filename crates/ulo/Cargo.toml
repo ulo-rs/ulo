@@ -25,6 +25,10 @@ serde = { workspace = true, optional = true }
 # `ModuleDef::enhancer`'s doc example names two transports.
 ulo-http = { path = "../ulo-http" }
 ulo-rpc = { path = "../ulo-rpc" }
+# The README's quick start and its second example, compiled as doctests.
+ulo-http-hyper = { path = "../ulo-http-hyper" }
+ulo-transport = { path = "../ulo-transport" }
+serde = { workspace = true, features = ["derive"] }
 # Integration tests under `tests/` build apps on the tokio runtime; a dev-dependency cycle Cargo allows.
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 # `rt-multi-thread`: `undeclared_reads.rs` runs constructions in parallel on eight workers.

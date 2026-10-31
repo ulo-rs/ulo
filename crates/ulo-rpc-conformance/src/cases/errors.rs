@@ -10,7 +10,7 @@ use ulo_transport::ErrorKind;
 use crate::Broker;
 use crate::cases::app::{
     ADD, BOOM, CONFLICT, Fixture, GUARDED, SUBSTITUTE, SUBSTITUTE_ITEMS, SUBSTITUTED, SUBSTITUTED_STREAM, Sum,
-    UNENCODABLE, UNENCODABLE_STREAM, failed, streams, within,
+    GARBLED_STREAM, UNENCODABLE, UNENCODABLE_STREAM, failed, streams, within,
 };
 
 const WAIT: Duration = Duration::from_secs(5);
@@ -75,6 +75,13 @@ pub async fn unencodable_reply<B: Broker>() {
         match items.as_slice() {
             [Ok(1), Err(error)] if error.kind() == ErrorKind::Internal => {}
             other => panic!("expected the item `1` and then an `internal` error, got: {other:?}"),
+        }
+        // An item the link's frame encoding refuses, rather than one the codec refuses.
+        let replies = fixture.rpc().stream::<_, u32>(GARBLED_STREAM, &()).idle_timeout(Bound::After(WAIT)).await.expect("the stream opens");
+        let items: Vec<_> = within::<B, _>(WAIT * 2, "the garbled stream", replies.collect()).await;
+        match items.as_slice() {
+            [Ok(1), Err(error)] if error.kind() == ErrorKind::Internal => {}
+            other => panic!("expected the item `1` and then an `internal` error for the garbled item, got: {other:?}"),
         }
     }
     fixture.stop().await;

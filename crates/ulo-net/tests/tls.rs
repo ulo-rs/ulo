@@ -138,9 +138,11 @@ mod given_configuration {
     }
 
     #[test]
-    fn a_further_protocol_is_kept_after_the_servers() {
-        let loaded = Tls::from_config(config_with(&[b"acme-tls/1", b"h2", b"http/1.1"])).load(HTTP).expect("a superset is accepted");
-        assert_eq!(protocols(&loaded), [b"h2".as_slice(), b"http/1.1", b"acme-tls/1"]);
+    fn a_further_protocol_is_dropped_from_the_servers_list() {
+        let given = config_with(&[b"acme-tls/1", b"h2", b"http/1.1"]);
+        let loaded = Tls::from_config(Arc::clone(&given)).load(HTTP).expect("a superset is accepted");
+        assert_eq!(protocols(&loaded), HTTP);
+        assert_eq!(protocols(&given), [b"acme-tls/1".as_slice(), b"h2", b"http/1.1"], "the handed configuration is not modified");
     }
 
     fn refused(alpn: &[&[u8]], missing: &[&str]) {
@@ -193,9 +195,41 @@ mod given_configuration {
     }
 
     #[test]
-    fn a_grpc_server_needs_h2_alone() {
-        let loaded = Tls::from_config(config_with(&[b"h2", b"http/1.1"])).load(&[b"h2"]).expect("h2 is named");
-        assert_eq!(protocols(&loaded), [b"h2".as_slice(), b"http/1.1"]);
+    fn a_grpc_server_offers_h2_alone() {
+        let loaded = Tls::from_config(config_with(&[b"http/1.1", b"h2", b"acme-tls/1"])).load(&[b"h2"]).expect("h2 is named");
+        assert_eq!(protocols(&loaded), [b"h2".as_slice()]);
         assert!(matches!(Tls::from_config(config_with(&[b"http/1.1"])).load(&[b"h2"]), Err(TlsError::Alpn { .. })));
+    }
+
+    #[test]
+    fn a_ws_server_offers_http_1_1_alone() {
+        let loaded = Tls::from_config(config_with(&[b"h2", b"http/1.1"])).load(&[b"http/1.1"]).expect("http/1.1 is named");
+        assert_eq!(protocols(&loaded), [b"http/1.1".as_slice()]);
+    }
+
+    /// Runs a handshake until the server refuses or both sides finish; the server's verdict.
+    fn handshake(config: Arc<rustls::ServerConfig>, offered: &[&[u8]]) -> Result<Option<Vec<u8>>, rustls::Error> {
+        let mut server = rustls::ServerConnection::new(config).expect("the server starts");
+        let mut client = client(offered);
+        let mut wire = Vec::new();
+        while client.is_handshaking() || server.is_handshaking() {
+            wire.clear();
+            client.write_tls(&mut wire).expect("the client writes");
+            server.read_tls(&mut wire.as_slice()).expect("the server reads");
+            server.process_new_packets()?;
+            wire.clear();
+            server.write_tls(&mut wire).expect("the server writes");
+            client.read_tls(&mut wire.as_slice()).expect("the client reads");
+            let _ = client.process_new_packets();
+        }
+        Ok(server.alpn_protocol().map(<[u8]>::to_vec))
+    }
+
+    #[test]
+    fn a_client_offering_only_a_protocol_the_transport_does_not_speak_gets_an_alert() {
+        let loaded = Tls::from_config(config_with(&[b"h2", b"http/1.1"])).load(&[b"h2"]).expect("h2 is named");
+        let error = handshake(Arc::clone(&loaded), &[b"http/1.1"]).expect_err("no protocol in common");
+        assert!(matches!(error, rustls::Error::NoApplicationProtocol), "{error:?}");
+        assert_eq!(handshake(loaded, &[b"h2", b"http/1.1"]).expect("h2 in common"), Some(b"h2".to_vec()));
     }
 }

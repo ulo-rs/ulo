@@ -19,9 +19,8 @@
 
 use std::cell::Cell;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
-use ulo::{BoxError, BoxFuture, Shape};
+use ulo::{BoxError, Shape};
 use ulo_transport::{CallError, ErrorKind, IntoReply, IntoReplyError};
 
 pub use ulo_transport as transport;
@@ -29,28 +28,6 @@ pub use ulo_transport as transport;
 use crate::extract::{Message, Request, Streaming};
 use crate::method::Method;
 use crate::transport::{Grpc, GrpcCx, IntoGrpcReply, IntoGrpcStream, Reply};
-
-/// A handler's call: extraction, the controller, the handler and the reply probe, run by
-/// `dispatch` after every guard admits.
-pub type HandlerFn = Arc<dyn Fn(GrpcCx) -> BoxFuture<'static, Result<Reply, BoxError>> + Send + Sync>;
-
-/// The handler value `#[method(Marker)]` passes to `HandlerSpec::new`, read back from
-/// `MountedHandler::handler` by the server: the marker's path, and the call.
-pub struct GrpcHandler {
-    pub(crate) path: &'static str,
-    pub(crate) call: HandlerFn,
-}
-
-impl GrpcHandler {
-    /// The handler for marker `M`.
-    pub fn new<M, F>(call: F) -> Self
-    where
-        M: Method,
-        F: Fn(GrpcCx) -> BoxFuture<'static, Result<Reply, BoxError>> + Send + Sync + 'static,
-    {
-        GrpcHandler { path: M::PATH, call: Arc::new(call) }
-    }
-}
 
 /// The compile-time check of a handler against its marker: the attribute names the handler's
 /// message type and reply type at the concrete site, and the bounds fail where they differ.

@@ -409,7 +409,65 @@ async fn an_extension_read_must_be_declared_too() {
     let (_, found) = construct_refusal(refused);
     assert!(found.key().is_none(), "an extension read names no key");
     assert!(found.to_string().contains("extension"), "{found}");
+    assert_eq!(found.extension().map(|e| e.to_string()).as_deref(), Some("Cfg"));
     assert_eq!(declared, 3);
+    close(app).await;
+}
+
+struct Other;
+
+/// Declares `Ext<Cfg>`, reads `Ext<Other>`.
+struct ExtWrongType;
+
+impl Construct for ExtWrongType {
+    type Scope = PerExecution;
+
+    fn dependencies(d: &mut Dependencies) {
+        d.field::<Ext<Cfg>>("cfg");
+    }
+
+    async fn construct(r: &Resolver<'_>) -> Result<Self, ConstructError> {
+        r.ext::<Other>()?;
+        Ok(ExtWrongType)
+    }
+}
+
+/// Declares `Option<Ext<Cfg>>`, reads `Ext<Cfg>`.
+struct ExtOptionalDeclared(u32);
+
+impl Construct for ExtOptionalDeclared {
+    type Scope = PerExecution;
+
+    fn dependencies(d: &mut Dependencies) {
+        d.field::<Option<Ext<Cfg>>>("cfg");
+    }
+
+    async fn construct(r: &Resolver<'_>) -> Result<Self, ConstructError> {
+        Ok(ExtOptionalDeclared(r.ext::<Cfg>()?.0))
+    }
+}
+
+#[tokio::test]
+async fn declaring_one_extension_does_not_cover_another() {
+    let app = connects(Mod::<A>::new(|m| {
+        m.provide::<ExtWrongType>();
+        m.provide::<ExtOptionalDeclared>();
+    }))
+    .await;
+    let (refused, optional) = app
+        .execute(ExecOptions::new(), async |exec| {
+            exec.extensions().insert(Cfg(3));
+            exec.extensions().insert(Other);
+            (exec.get::<ExtWrongType>().await.err().expect("refused"), exec.get::<ExtOptionalDeclared>().await.unwrap().0)
+        })
+        .await
+        .unwrap();
+    let (_, found) = construct_refusal(refused);
+    assert_eq!(found.reader().to_string(), "ExtWrongType");
+    assert_eq!(found.extension().map(|e| e.to_string()).as_deref(), Some("Other"), "{found}");
+    assert!(found.key().is_none());
+    assert!(found.to_string().contains("Ext<Other>"), "{found}");
+    assert_eq!(optional, 3);
     close(app).await;
 }
 

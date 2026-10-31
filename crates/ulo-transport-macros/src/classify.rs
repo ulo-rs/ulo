@@ -25,18 +25,20 @@ pub(crate) struct KindArg {
 }
 
 impl KindArg {
-    /// `::ulo_transport::ErrorKind::<Variant>`, spanned at the kind word, so a type error in the
+    /// `ErrorKind::<Variant>` under the transport root, spanned at the kind word, so a type error in the
     /// generated impl points at the attribute that chose it.
     fn path(&self) -> TokenStream {
         let variant = &self.variant;
-        quote_spanned!(self.span=> ::ulo_transport::ErrorKind::#variant)
+        let root = crate::root::transport();
+        quote_spanned!(self.span=> #root::ErrorKind::#variant)
     }
 }
 
-/// `impl ::ulo_transport::Classify for <Type>`, its `classify` matching each variant to its kind.
+/// `impl Classify for <Type>`, its `classify` matching each variant to its kind.
 pub(crate) fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let input: DeriveInput = syn::parse2(input)?;
     let name = &input.ident;
+    let root = crate::root::transport();
     let default = kind_of(&input.attrs)?;
 
     let body = match &input.data {
@@ -88,8 +90,8 @@ pub(crate) fn expand(input: TokenStream) -> syn::Result<TokenStream> {
 
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
-        impl #impl_generics ::ulo_transport::Classify for #name #ty_generics #where_clause {
-            fn classify(&self) -> ::ulo_transport::ErrorKind {
+        impl #impl_generics #root::Classify for #name #ty_generics #where_clause {
+            fn classify(&self) -> #root::ErrorKind {
                 #body
             }
         }

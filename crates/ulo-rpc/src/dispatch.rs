@@ -356,7 +356,27 @@ impl Call {
                     Outcome::Expired(Some(Ok(_))) if route.kind == Kind::Event => Outcome::Expired(Some(Ok(Reply::None))),
                     outcome => outcome,
                 };
-                answer(&shared, Some(&route.handler), &handle, &cx, &reply, id, outcome, &mut deadline).await;
+                let refusal = match &outcome {
+                    Outcome::Done(Ok(reply)) => shape_mismatch(route.shape, reply),
+                    _ => None,
+                };
+                match refusal {
+                    Some(answered) => {
+                        let handler = route.handler.name();
+                        tracing::warn!(
+                            pattern = cx.pattern(),
+                            handler,
+                            declared = ?route.shape,
+                            answered,
+                            "a handler answered in a shape other than the one it declares; the call was answered `internal`"
+                        );
+                        drop(outcome);
+                        let message = format!("handler `{handler}` is declared {:?} and answered with {answered}", route.shape);
+                        let error = ErrorBody::new(ErrorKind::Internal, message, Details::new().with(reason("shape_mismatch")));
+                        send(&reply, &handle, id, Frame::Err { id, error }).await;
+                    }
+                    None => answer(&shared, Some(&route.handler), &handle, &cx, &reply, id, outcome, &mut deadline).await,
+                }
                 // Freed before the settlement: a link declaring `native_backpressure` lets its
                 // broker hand over the next request once the `Ack` settles, and that request must
                 // find the place free.
@@ -406,6 +426,17 @@ fn mismatch(arrived: Arrived, route: &Route, pattern: &str) -> Option<String> {
         Arrived::Open if !streamed || route.kind == Kind::Event => {
             Some(format!("pattern `{pattern}` takes one payload; send it with `req` or `evt`"))
         }
+        _ => None,
+    }
+}
+
+/// Whether `reply` is a stream from a handler whose declared shape answers one payload. The
+/// reverse is not refused: an interceptor or an error handler may answer a streamed call with one
+/// payload in place of the stream.
+fn shape_mismatch(declared: Shape, reply: &Reply) -> Option<&'static str> {
+    let streams = matches!(declared, Shape::ServerStreaming | Shape::Bidi);
+    match reply {
+        Reply::Many(_) if !streams => Some("a stream"),
         _ => None,
     }
 }

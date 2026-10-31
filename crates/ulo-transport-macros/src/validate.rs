@@ -7,9 +7,9 @@ use syn::{Data, DeriveInput, Expr, Fields, Ident, LitStr, Token, token};
 /// One rule on one field.
 pub(crate) enum Rule {
     /// `length(min = .., max = ..)`, either bound optional, inclusive: characters for text,
-    /// items for a collection (`ulo_transport::__private::validate::LengthProbe`).
+    /// items for a collection (`ulo_transport::__derive::validate::LengthProbe`).
     Length { min: Option<Expr>, max: Option<Expr> },
-    /// `email`: the shape `ulo_transport::__private::validate::is_email` checks, not the full
+    /// `email`: the shape `ulo_transport::__derive::validate::is_email` checks, not the full
     /// RFC 5322 grammar.
     Email,
     /// `range(min = .., max = ..)`, either bound optional, inclusive.
@@ -24,10 +24,11 @@ pub(crate) struct FieldRules {
     pub(crate) rules: Vec<Rule>,
 }
 
-/// `impl ::ulo_transport::Validate for <Type>`, collecting a `FieldViolation` per failing rule.
+/// `impl Validate for <Type>`, collecting a `FieldViolation` per failing rule.
 pub(crate) fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let input: DeriveInput = syn::parse2(input)?;
     let name = &input.ident;
+    let root = crate::root::transport();
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(named) => &named.named,
@@ -62,12 +63,12 @@ pub(crate) fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     let checks = validated.iter().flat_map(|field| field.rules.iter().map(move |rule| check(field, rule)));
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
-        impl #impl_generics ::ulo_transport::Validate for #name #ty_generics #where_clause {
-            fn validate(&self) -> ::core::result::Result<(), ::std::vec::Vec<::ulo_transport::FieldViolation>> {
+        impl #impl_generics #root::Validate for #name #ty_generics #where_clause {
+            fn validate(&self) -> ::core::result::Result<(), ::std::vec::Vec<#root::FieldViolation>> {
                 #[allow(unused_imports)]
-                use ::ulo_transport::__private::validate::{ViaChars as _, ViaItems as _};
+                use #root::__derive::validate::{ViaChars as _, ViaItems as _};
                 #[allow(unused_mut)]
-                let mut __ulo_violations: ::std::vec::Vec<::ulo_transport::FieldViolation> = ::std::vec::Vec::new();
+                let mut __ulo_violations: ::std::vec::Vec<#root::FieldViolation> = ::std::vec::Vec::new();
                 #(#checks)*
                 if ::std::vec::Vec::is_empty(&__ulo_violations) {
                     ::core::result::Result::Ok(())
@@ -82,13 +83,14 @@ pub(crate) fn expand(input: TokenStream) -> syn::Result<TokenStream> {
 /// One rule's check, pushing one violation when it fails. The bounds are evaluated once each and
 /// written into the description through `Display`.
 fn check(field: &FieldRules, rule: &Rule) -> TokenStream {
+    let root = crate::root::transport();
     let ident = &field.field;
     let wire = &field.wire;
     let span = ident.span();
     match rule {
         Rule::Length { min, max } => {
             let measured = quote_spanned! {span=>
-                (&&::ulo_transport::__private::validate::LengthProbe(&self.#ident)).__ulo_length()
+                (&&#root::__derive::validate::LengthProbe(&self.#ident)).__ulo_length()
             };
             let test = bounded(quote!(__ulo_value), wire, "length must be", min.as_ref(), max.as_ref());
             quote! {{
@@ -103,8 +105,8 @@ fn check(field: &FieldRules, rule: &Rule) -> TokenStream {
         Rule::Email => {
             let text = quote_spanned!(span=> ::core::convert::AsRef::<str>::as_ref(&self.#ident));
             quote! {
-                if !::ulo_transport::__private::validate::is_email(#text) {
-                    ::std::vec::Vec::push(&mut __ulo_violations, ::ulo_transport::FieldViolation::new(#wire, "must be an email address"));
+                if !#root::__derive::validate::is_email(#text) {
+                    ::std::vec::Vec::push(&mut __ulo_violations, #root::FieldViolation::new(#wire, "must be an email address"));
                 }
             }
         }
@@ -114,12 +116,13 @@ fn check(field: &FieldRules, rule: &Rule) -> TokenStream {
 /// `value` against inclusive bounds, written so that a value no bound orders, a float's NaN,
 /// fails.
 fn bounded(value: TokenStream, wire: &str, subject: &str, min: Option<&Expr>, max: Option<&Expr>) -> TokenStream {
+    let root = crate::root::transport();
     let violation = |template: String, args: TokenStream| {
         let template = LitStr::new(&template, proc_macro2::Span::call_site());
         quote! {
             ::std::vec::Vec::push(
                 &mut __ulo_violations,
-                ::ulo_transport::FieldViolation::new(#wire, ::std::format!(#template, #args)),
+                #root::FieldViolation::new(#wire, ::std::format!(#template, #args)),
             );
         }
     };

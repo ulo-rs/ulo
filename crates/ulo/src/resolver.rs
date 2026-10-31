@@ -13,6 +13,7 @@ use crate::execution::{ExecShared, ExecutionRef};
 use crate::graph::{BindingId, Graph, ModuleId, Visible};
 use crate::key::{BindingKind, Key};
 use crate::module::handle::ModuleRef;
+use crate::type_name::TypeName;
 
 /// The view an injection point reads through: the graph, the module whose visibility applies,
 /// and the current execution when there is one.
@@ -60,7 +61,8 @@ impl Reading {
     fn declares(&self, wanted: Wanted) -> bool {
         self.declared.iter().any(|read| match (read.kind, wanted) {
             (ReadKind::Single(a), Wanted::Single(b)) | (ReadKind::Collection(a), Wanted::Collection(b)) => a == b,
-            (ReadKind::Extension, Wanted::Extension) | (ReadKind::Execution, Wanted::Execution) => true,
+            (ReadKind::Extension(a), Wanted::Extension(b)) => a == b.id(),
+            (ReadKind::Execution, Wanted::Execution) => true,
             _ => false,
         })
     }
@@ -70,7 +72,7 @@ impl Reading {
 enum Wanted {
     Single(Key),
     Collection(Key),
-    Extension,
+    Extension(TypeName),
     Execution,
 }
 
@@ -140,7 +142,7 @@ impl<'a> Resolver<'a> {
         let what = match wanted {
             Wanted::Single(key) => UndeclaredWhat::Key(key.name(BindingKind::Single)),
             Wanted::Collection(key) => UndeclaredWhat::Key(key.name(BindingKind::Collection)),
-            Wanted::Extension => UndeclaredWhat::Extension,
+            Wanted::Extension(name) => UndeclaredWhat::Extension(name),
             Wanted::Execution => UndeclaredWhat::Execution,
         };
         let refusal = UndeclaredRead::new(reading.reader.type_name(), what);
@@ -199,7 +201,7 @@ impl<'a> Resolver<'a> {
     /// The extension `T` of the current execution.
     pub fn ext<T: Send + Sync + 'static>(&self) -> Result<Ext<T>, LookupError> {
         let key = Key::of::<T, ()>();
-        self.declared(Wanted::Extension)?;
+        self.declared(Wanted::Extension(TypeName::of::<T>()))?;
         let exec = self.exec_for(key)?;
         exec.extensions.get::<T>().map(Ext::from_arc).ok_or_else(|| not_found(key, LookupKind::Extension))
     }

@@ -4,10 +4,9 @@ use std::sync::Arc;
 use ex_25_rpc_basics::{Divide, Journal, builder};
 use ex_support::rpc::{bounded, eventually};
 use ex_support::{Served, serve};
-use ulo_rpc::{RpcClient, Server};
+use ulo_rpc::{ErrorKind, RpcClient, Server};
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
-use ulo_transport::ErrorKind;
 
 async fn start() -> Served {
     let app = builder().runtime(Tokio::current()).wire().expect("wires").connect().await.expect("connects");

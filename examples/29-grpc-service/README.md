@@ -24,6 +24,10 @@ Read first:
 - `tests/service.rs`: replies, the guard on both methods, and the details decoded from the trailer.
 - `tests/binary.rs`: the compiled binary called through the generated client, then SIGTERM.
 
+A controller written without `#[ulo_grpc::method]` mounts `ulo_grpc::GrpcHandler::new::<Marker, _, _>(call).spec(name)`,
+the path and shape read from the marker; `crates/ulo-codegen-tests/tests/grpc_hand_written.rs`
+serves one beside its attribute-written twin.
+
 Toolchain: the crates here build on Rust 1.88, the workspace floor (`cargo +1.88 check -p ex-29-grpc-service`).
 
 Next: [30 grpc-client](../30-grpc-client).

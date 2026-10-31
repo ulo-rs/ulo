@@ -7,8 +7,8 @@ use std::thread;
 
 use tokio::runtime::{Builder, Handle};
 use tokio::sync::oneshot;
-use ulo::{App, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, Signal, StartupError};
-use ulo_rpc::{RpcClient, RpcClientModule};
+use ulo::{App, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, PrepareError, Signal, StartupError};
+use ulo_rpc::{Link, RpcClient, RpcClientModule};
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
 
@@ -64,6 +64,11 @@ fn assert_refused(error: StartupError) {
     let StartupError::Configure(refused) = &error else { panic!("expected a `Configure` refusal, got: {error}") };
     assert!(refused.to_string().contains("enable_io"), "the refusal names `enable_io`: {refused}");
     assert!(ulo::is_permanent(&error), "retrying on the same runtime cannot mend it: {error}");
+    let entry = refused.iter().next().expect("the report lists the link");
+    let prepared = entry.source.downcast_ref::<PrepareError>().unwrap_or_else(|| panic!("the entry is not a `PrepareError`: {entry}"));
+    let entries = prepared.entries();
+    assert!(!entries.is_empty() && entries.iter().all(|e| e.subject() == Some(Tcp::NAME)), "the entries do not carry the link: {entries:?}");
+    assert!(entry.to_string().contains("link `tcp`: "), "the report does not name the link: {entry}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

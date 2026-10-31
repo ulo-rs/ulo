@@ -7,10 +7,9 @@ use ex_support::rpc::bounded;
 use ex_support::{Served, serve};
 use futures_util::{StreamExt, stream};
 use ulo::Bound;
-use ulo_rpc::{RpcClient, RpcError, Server};
+use ulo_rpc::{ErrorKind, RpcClient, RpcError, Server};
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
-use ulo_transport::ErrorKind;
 
 const SHORT: Duration = Duration::from_millis(150);
 

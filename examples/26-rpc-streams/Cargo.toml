@@ -10,7 +10,6 @@ ulo = { path = "../../crates/ulo" }
 ulo-rpc = { path = "../../crates/ulo-rpc" }
 ulo-rpc-tcp = { path = "../../crates/ulo-rpc-tcp" }
 ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
-ulo-transport = { path = "../../crates/ulo-transport" }
 futures-util.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 

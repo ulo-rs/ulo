@@ -26,10 +26,12 @@ pub(crate) enum Kind {
 ///
 /// The pattern is the spec's [`route`](ulo::HandlerSpec::route) and the call shape the spec's
 /// [`shape`](ulo::HandlerSpec::shape), `Unary` unless set, which a handler reading an
-/// [`Inbound<T>`](crate::Inbound) or answering [`RpcCx::reply_stream`] declares to match: the
-/// request frames a call is accepted in follow the declared shape, while the reply is written as
-/// the call answers it, so a `Reply::Many` from a handler declared `Unary` reaches a unary caller
-/// as an unexpected `item` frame, and the link's capabilities were checked against `Unary`. The server refuses, when it prepares, a handler with
+/// [`Inbound<T>`](crate::Inbound) or answering [`RpcCx::reply_stream`] declares to match. The
+/// request frames a call is accepted in follow the declared shape, and so does the reply: a
+/// `Reply::Many` from a handler declared `Unary` or `ClientStreaming` is refused where it is
+/// written; one payload answering a streaming shape is not, since an interceptor or an error
+/// handler may answer a streamed call that way. The caller gets `Internal` with the reason `shape_mismatch` and the
+/// server logs one `warn` naming the handler. The server refuses, when it prepares, a handler with
 /// no pattern or an empty one, a pattern holding whitespace or a control character, an event of
 /// any shape but `Unary`, and a shape or a binary payload the link does not carry.
 ///

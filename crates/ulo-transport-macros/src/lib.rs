@@ -1,13 +1,15 @@
 //! `#[derive(Classify)]` and `#[derive(Validate)]` for `ulo-transport` (transports DESIGN §2.2,
-//! §2.4). The generated impls name `::ulo_transport`, so a crate deriving either depends on
-//! `ulo-transport`.
+//! §2.4). The generated impls name the first of `ulo-transport`, `ulo-rpc`, `ulo-http`, `ulo-ws`
+//! and `ulo-grpc` that the deriving crate depends on, each of which exports what they call, so
+//! a crate needs no dependency beyond the transport it already uses.
 
 mod classify;
+mod root;
 mod validate;
 
 use proc_macro::TokenStream;
 
-/// `impl ::ulo_transport::Classify` from `#[classify(<kind>)]`, the kind a snake-case
+/// `impl Classify` from `#[classify(<kind>)]`, the kind a snake-case
 /// `ErrorKind` variant: `bad_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`,
 /// `unprocessable`, `too_many_requests`, `timeout`, `unavailable`, `unimplemented`, `internal`.
 ///
@@ -28,7 +30,7 @@ pub fn derive_classify(input: TokenStream) -> TokenStream {
     classify::expand(input.into()).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
-/// `impl ::ulo_transport::Validate` from `#[validate(..)]` on the fields of a struct with named
+/// `impl Validate` from `#[validate(..)]` on the fields of a struct with named
 /// fields: `length(min = .., max = ..)` on text, counted in characters, or on a collection,
 /// counted in items; `email` on a string; `range(min = .., max = ..)` on an ordered value. Bounds
 /// are inclusive, either may be left out, and a bound's value is written into the violation's

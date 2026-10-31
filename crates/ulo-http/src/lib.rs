@@ -71,6 +71,12 @@ mod transport;
 mod upgrade;
 
 pub mod config;
+/// The link a [`Detail::Help`] carries, named by [`Details`] and so re-exported. It sits under a
+/// module, as in `ulo_rpc`, where the crate root has a `Link` trait of its own.
+pub mod details {
+    #[doc(no_inline)]
+    pub use ulo_transport::Link;
+}
 pub mod embed;
 pub mod middleware;
 
@@ -95,6 +101,9 @@ pub mod stage {
 
 #[doc(hidden)]
 pub mod __private;
+
+#[doc(hidden)]
+pub use ulo_transport::__derive;
 
 pub use backend::{Backend, BackendLimits, HttpConfig};
 pub use body::{Body, HttpBody};

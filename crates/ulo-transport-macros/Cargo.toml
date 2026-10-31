@@ -13,6 +13,9 @@ categories = ["development-tools::procedural-macro-helpers"]
 proc-macro = true
 
 [dependencies]
+proc-macro-crate = "3"
+# Reads the manifest proc-macro-crate reads, to prefer a normal dependency over a dev one.
+toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
 proc-macro2.workspace = true
 quote.workspace = true
 syn = { workspace = true, features = ["full"] }

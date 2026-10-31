@@ -106,6 +106,11 @@ pub fn construct(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// A global enhancer is a contribution under a role key, `into AnyGuard<Http>: [AuthGuard]`,
 /// which the core recognises by the key's type.
 ///
+/// A `K` that is module metadata, a type implementing `ulo::Meta` such as `ulo_http::PreDispatch`
+/// or `ulo_http::Upgrades`, is not a contribution key: a transport reads it through
+/// `m.meta::<K>()`, so `into PreDispatch: [..]` fails to compile with an error naming `K`. Such a
+/// module is written by hand with `ModuleDef`.
+///
 /// `with` says how an item is built: by its closure. How long it lives is a separate argument,
 /// written as on `#[injectable]`. `with = ..` declares `Auto`: built once unless what the closure
 /// reads needs an execution, then built per execution. A provider contribution under `Auto` is a

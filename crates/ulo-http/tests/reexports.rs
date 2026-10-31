@@ -58,4 +58,5 @@ fn the_detail_types_are_ulo_transports() {
     assert!(same::<ulo_http::Details, ulo_transport::Details>());
     assert!(same::<ulo_http::Detail, ulo_transport::Detail>());
     assert!(same::<ulo_http::FieldViolation, ulo_transport::FieldViolation>());
+    assert!(same::<ulo_http::details::Link, ulo_transport::Link>());
 }

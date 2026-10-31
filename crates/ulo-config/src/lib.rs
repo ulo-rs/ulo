@@ -50,10 +50,39 @@
 //!
 //! A section that ended on a leaf-type error cannot be given a value, nor can a missing section
 //! whose type refuses the placeholder of a field (an `IpAddr` or a `Url` refuses an empty string).
-//! The type being read stops at that section, so what it checks after it is not reported in the
-//! same load: a missing field declared after it, and the fields of a `#[serde(flatten)]` struct.
-//! A section written under a `#[serde(alias)]` key that ends on a leaf-type error is also reported
-//! missing under its field's name.
+//! serde's derive stops at the first missing field in declaration order, and the leaf types that
+//! fail here also refuse a placeholder, so three cases follow:
+//!
+//! - A top-level section written under a `#[serde(alias)]` key that ends on a leaf-type error is
+//!   also reported as `missing required field` under the field's real name.
+//! - A missing section whose type refuses a placeholder hides the missing fields declared after
+//!   it: with `database` and `cache` both missing, one is reported.
+//! - The fields of a `#[serde(flatten)]` struct after a failed section are not reported.
+//!
+//! ```
+//! # use serde::Deserialize;
+//! # use ulo_config::{Config, Section};
+//! # #[derive(Deserialize)]
+//! # struct Url(#[allow(dead_code)] std::net::IpAddr);
+//! # #[derive(Deserialize)]
+//! # struct Database { #[allow(dead_code)] host: Url }
+//! # #[derive(Deserialize)]
+//! # struct Cache { #[allow(dead_code)] host: Url }
+//! #[derive(Deserialize)]
+//! struct App { #[allow(dead_code)] database: Database, #[allow(dead_code)] cache: Cache }
+//!
+//! let config = Config::builder().load();
+//! let section = Section::<App>::read(&config, "");
+//! let error = section.value().err().expect("both sections are missing");
+//! assert_eq!(error.problems().len(), 1);
+//! ```
+//!
+//! # A report the pass cap cut
+//!
+//! At most 2048 sections and missing fields are reported together. A read with more ends its
+//! report with one final problem, for which [`Problem::truncated`] is `true`: an empty path, no
+//! origin, and the message `the report stopped after N problems; fix these and read again`, N being
+//! the number of problems before it. A report that holds everything has no such problem.
 
 mod config;
 mod de;

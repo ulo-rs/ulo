@@ -7,6 +7,15 @@
 //! Every macro expands to calls on the value-level API re-exported here, which integration
 //! crates call directly.
 
+// The README blocks are compiled, not rendered: the `//!` docs above stay the crate's page.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
+
+#[cfg(doctest)]
+#[doc = include_str!("../../../README.md")]
+struct RootReadmeDoctests;
+
 mod binding;
 mod construct;
 mod dependency;

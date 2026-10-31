@@ -64,6 +64,14 @@
 //! path naming a constant reads as a type, so a constant is bound by value with a block,
 //! `{ LIMITS }`. In an `into` list an expression is written `value = expr`.
 //!
+//! Before an `into K` list's statements the lowering checks `K` with
+//! `ulo::__private::contribution_key`: a `K` implementing `ulo::Meta` is module metadata, and
+//! the check is a compile error naming it. A proc macro sees no types, so the check is a bound
+//! the compiler evaluates.
+//!
+//! A braced value, `{ LIMITS }`, is lowered as `m.value(LIMITS)`: the braces only tell a constant
+//! from a type, and kept in the call they trip `unused_braces` in the user's crate.
+//!
 //! An entry `X as <role key>` is an error: `as` binds a single instance, which the transports'
 //! walk over a role's contributions never reaches.
 //!
@@ -314,12 +322,14 @@ impl ProviderEntry {
                 }
             }
             ProviderEntry::TryValue { expr, qualifier } => {
+                let expr = unbraced(expr);
                 let qualified = qualified(qualifier);
                 quote_spanned! {expr.span()=>
                     #m.try_value(#expr)#qualified;
                 }
             }
             ProviderEntry::Value { expr, qualifier } => {
+                let expr = unbraced(expr);
                 let qualified = qualified(qualifier);
                 quote_spanned! {expr.span()=>
                     #m.value(#expr)#qualified;
@@ -342,10 +352,31 @@ impl ProviderEntry {
             }
             ProviderEntry::Contribute { into, items } => {
                 let contributions = items.iter().map(|item| item.lower(into));
-                quote!(#(#contributions)*)
+                quote_spanned! {into.span()=>
+                    {
+                        #[allow(unused_imports)]
+                        use #ulo::__private::contribution_key::{KeyArm as _, MetadataArm as _};
+                        (&#ulo::__private::contribution_key::Probe::<#into>::new()).__ulo_check_contribution_key();
+                    }
+                    #(#contributions)*
+                }
             }
         }
     }
+}
+
+/// The expression of a `{ expr }` entry, braces taken off. The braces are how a constant is told
+/// from a type in a providers list; written again as the argument of `m.value(..)` they trip
+/// rustc's `unused_braces` in the user's crate.
+fn unbraced(expr: &Expr) -> &Expr {
+    if let Expr::Block(block) = expr
+        && block.attrs.is_empty()
+        && block.label.is_none()
+        && let [syn::Stmt::Expr(inner, None)] = block.block.stmts.as_slice()
+    {
+        return inner;
+    }
+    expr
 }
 
 /// `.qualified::<Q>()` for an entry written `@ Q`, spanned at the qualifier so a type that does

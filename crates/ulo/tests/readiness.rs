@@ -30,7 +30,7 @@ struct S2;
 struct S3;
 
 fn readiness(error: StartupError) -> (Key, u32, FailureReason) {
-    let StartupError::Connect(ConnectError::Readiness { key, attempts, reason }) = error else {
+    let StartupError::Connect(ConnectError::Readiness { key, attempts, reason, .. }) = error else {
         panic!("expected a readiness failure, got: {error}");
     };
     (key.key(), attempts, reason)
@@ -115,6 +115,19 @@ async fn a_check_that_never_passes_fails_connect_after_the_retries_plus_one_atte
             "the reason is how the last attempt ended"
         );
     }
+}
+
+#[tokio::test]
+async fn a_failed_check_names_the_module_that_owns_its_binding() {
+    let error = connect_err(Mod::<A>::new(|m| {
+        m.singleton(|| async { S1 }).ready(|_s: Dep<S1>| async { Err::<(), _>(Boom::new("down")) });
+    }))
+    .await;
+    let StartupError::Connect(ref connect @ ConnectError::Readiness { ref module, .. }) = error else {
+        panic!("expected a readiness failure, got: {error}");
+    };
+    assert_eq!(module.to_string(), "Mod<A>");
+    assert!(connect.to_string().starts_with("readiness check of `S1` in Mod<A> failed after 1 attempt: "), "{connect}");
 }
 
 #[tokio::test]

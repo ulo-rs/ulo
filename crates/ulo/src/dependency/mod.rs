@@ -61,7 +61,7 @@ impl Requirement {
 
     /// The extension `T` of the current execution. Needs an execution.
     pub fn ext<T: 'static>(&mut self) {
-        self.reads.push(Read { kind: ReadKind::Extension, optional: false });
+        self.reads.push(Read { kind: ReadKind::Extension(std::any::TypeId::of::<T>()), optional: false });
     }
 
     /// The current execution itself. Needs an execution.
@@ -95,9 +95,9 @@ pub(crate) struct Read {
 pub(crate) enum ReadKind {
     Single(Key),
     Collection(Key),
-    /// An extension of the current execution, read by its type at run time; the wiring pass reads
-    /// only that it needs an execution.
-    Extension,
+    /// An extension of the current execution, by its type: the wiring pass reads only that it
+    /// needs an execution, and the undeclared-read check compares the type.
+    Extension(std::any::TypeId),
     Execution,
     Module,
 }

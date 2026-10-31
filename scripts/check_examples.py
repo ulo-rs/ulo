@@ -10,6 +10,9 @@ lists `hidden`, however it is spaced or combined. It reads the Rust sources and 
     python3 scripts/check_examples.py [ROOT]
     python3 scripts/check_examples.py --self-test
 
+It also fails when the example table of the root `README.md` (rows opening with `` | `NN-name` | ``)
+differs from the `examples/NN-name/` directories, in either direction or in order.
+
 `ROOT` is the directory holding `examples/` (default: the repository root). The real check runs the
 self-test first, so a pattern that has stopped matching a known violation fails rather than passing
 every tree. Exit status 1 on a hit, 0 on none. Standard library only.
@@ -66,7 +69,43 @@ def scan(root):
     return hits
 
 
+ROW = re.compile(r"^\| `(\d{2}-[a-z0-9-]+)` \|")
+
+
+def listing(root):
+    """Each difference between the root README's example table and the example directories."""
+    readme = root / "README.md"
+    listed = [m.group(1) for m in map(ROW.match, readme.read_text(encoding="utf-8").splitlines()) if m] if readme.is_file() else []
+    present = [d.name for d in directories(root) if d.name not in SHARED]
+    problems = [f"README.md lists `{name}`, which is no directory under examples/" for name in listed if name not in present]
+    problems += [f"examples/{name} is not listed in README.md" for name in present if name not in listed]
+    if not problems and listed != present:
+        problems.append("README.md lists the examples out of their directory order")
+    return problems
+
+
+def self_test_listing():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        for name in ("01-a", "02-b"):
+            (root / "examples" / name).mkdir(parents=True)
+        cases = {
+            "| `01-a` | x |\n| `02-b` | y |\n": 0,
+            "| `01-a` | x |\n": 1,
+            "| `01-a` | x |\n| `02-b` | y |\n| `03-c` | z |\n": 1,
+            "| `02-b` | y |\n| `01-a` | x |\n": 1,
+        }
+        for text, expected in cases.items():
+            (root / "README.md").write_text(text, encoding="utf-8")
+            if len(listing(root)) != expected:
+                print(f"self-test: listing {text!r} gave {listing(root)}", file=sys.stderr)
+                return False
+    return True
+
+
 def self_test():
+    if not self_test_listing():
+        return False
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)
         for name in ("99-sample", "support"):
@@ -92,8 +131,11 @@ def main(argv):
     hits = scan(root)
     for file, number, what in hits:
         print(f"{file.relative_to(root)}:{number}: {what}")
-    print(f"{len(directories(root))} directories scanned, {len(hits)} findings")
-    return 1 if hits else 0
+    listed = listing(root)
+    for problem in listed:
+        print(problem)
+    print(f"{len(directories(root))} directories scanned, {len(hits) + len(listed)} findings")
+    return 1 if hits or listed else 0
 
 
 if __name__ == "__main__":

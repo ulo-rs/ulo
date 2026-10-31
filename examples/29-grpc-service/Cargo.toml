@@ -8,7 +8,6 @@ publish = false
 [dependencies]
 ulo = { path = "../../crates/ulo" }
 ulo-grpc = { path = "../../crates/ulo-grpc" }
-ulo-transport = { path = "../../crates/ulo-transport" }
 ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 futures-util.workspace = true

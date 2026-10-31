@@ -1,0 +1,16 @@
+error[E0277]: `ulo_http::PreDispatch` is module metadata, not a contribution key
+ --> tests/ui/into_module_metadata_pre_dispatch.rs:6:28
+  |
+6 | #[module(providers = [into PreDispatch: [value = PreDispatch::default()]])]
+  |                            ^^^^^^^^^^^ `into` contributes to a collection; `ulo_http::PreDispatch` is read with `m.meta::<ulo_http::PreDispatch>()`
+  |
+  = help: the trait `ulo::__private::contribution_key::ModuleMetadataNotAKey` is not implemented for `ulo_http::PreDispatch`
+  = note: write this module with `ModuleDef` and configure `ulo_http::PreDispatch` through `m.meta::<ulo_http::PreDispatch>()`
+note: required by a bound in `ulo::__private::contribution_key::MetadataArm::__ulo_check_contribution_key`
+ --> $WORKSPACE/crates/ulo/src/__private.rs
+  |
+  |         fn __ulo_check_contribution_key(&self)
+  |            ---------------------------- required by a bound in this associated function
+  |         where
+  |             K: ModuleMetadataNotAKey;
+  |                ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `MetadataArm::__ulo_check_contribution_key`

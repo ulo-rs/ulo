@@ -3,24 +3,27 @@
 //!
 //! Beside the suite, three tests drop the link without `close` and count, through a relay, the
 //! connections the broker still holds: each side's link, and a server's link holding a call nobody
-//! answers. A fourth has the broker close every connection and shows the server's recovers.
+//! answers. A fourth has the broker close every connection and shows the server's recovers, and
+//! a fifth loses the broker between the server's two connections and shows `listen` fails at its
+//! `connect_within`.
 
 #![cfg(feature = "integration")]
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use testcontainers::core::{CmdWaitFor, ExecCommand, IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage};
-use ulo::{BoundAddr, Runtime};
+use ulo::{App, BoundAddr, Module, ModuleDef, ModuleIdentity, Runtime, Signal, StartupError};
 use ulo_rpc::__private::ClientProbe;
-use ulo_rpc::{CallHeaders, Data, Frame, Link, Pattern, ReplyTo};
+use ulo_rpc::{CallHeaders, Data, Frame, Link, Pattern, ReplyTo, Server};
 use ulo_rpc_conformance::{Broker, report, startup_failed};
 use ulo_rpc_conformance::relay::{Relay, reachable, unshadowed};
-use ulo_rpc_rabbitmq::RabbitMq;
+use ulo_rpc_rabbitmq::{ConnectTimedOut, RabbitMq};
+use ulo_runtime_tokio::Tokio;
 
 const PORT: u16 = 5672;
 
@@ -227,4 +230,80 @@ async fn the_server_s_connection_recovers_after_the_broker_closes_it() {
     delivery.ack.ack();
     client.close().await.expect("the client's link closes");
     server.close().await.expect("the server's link closes");
+}
+
+/// Forwards the first connection made to it to `upstream` and then stops listening, so every later
+/// connect is refused, as it is once the broker is gone. `cut_for` closes connections the relay
+/// accepts rather than refusing them, and it starts at a moment of the test's choosing, which
+/// cannot fall between `listen`'s close of its first connection and its second connect.
+fn relay_first_connection(upstream: SocketAddr) -> SocketAddr {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a loopback port");
+    let addr = listener.local_addr().expect("the relay's address");
+    std::thread::spawn(move || {
+        let Ok((client, _)) = listener.accept() else { return };
+        drop(listener);
+        let Ok(broker) = TcpStream::connect(upstream) else { return };
+        let pairs = [(client.try_clone(), broker.try_clone()), (broker.try_clone(), client.try_clone())];
+        for (from, to) in pairs {
+            let (Ok(mut from), Ok(mut to)) = (from, to) else { return };
+            std::thread::spawn(move || {
+                let _ = std::io::copy(&mut from, &mut to);
+                let _ = to.shutdown(Shutdown::Write);
+            });
+        }
+    });
+    addr
+}
+
+struct Root;
+
+impl Module for Root {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        let _ = m;
+    }
+}
+
+/// The bound the broker-lost test gives `listen`, short of lapin's backoff, whose sixteen attempts
+/// take minutes.
+const LOST_WITHIN: Duration = Duration::from_secs(3);
+
+/// How long past [`LOST_WITHIN`] the failure may take to arrive.
+const LOST_MARGIN: Duration = Duration::from_secs(5);
+
+/// Q19-P2: a broker lost after the server's first connection, which checks it and is closed, and
+/// before the serving one, fails `listen` as `Bind` at `connect_within`, carrying
+/// `ConnectTimedOut`, rather than holding it while lapin retries the serving connection's connect
+/// on its backoff. The relay carries the first connection to the broker and refuses the second.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_broker_lost_between_the_two_connections_fails_listen_at_the_bound() {
+    let broker = RabbitMqBroker::start().await;
+    let relay = relay_first_connection(broker.server);
+    let app = App::builder(Root).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
+    let link = RabbitMq::url(format!("amqp://guest:guest@{relay}/%2f")).connect_within(LOST_WITHIN);
+    let started = Instant::now();
+    // A hang is the failure: the bound is a watchdog, not a timing the link keeps.
+    let watchdog = LOST_WITHIN + LOST_MARGIN + PATIENCE;
+    let listened = tokio::time::timeout(watchdog, app.bind(Server::new(link)).listen()).await;
+    let elapsed = started.elapsed();
+    let error = match listened {
+        Err(_) => panic!("`listen` with the broker lost after its first connection did not return within {watchdog:?}"),
+        Ok(Ok(app)) => {
+            let _ = app.handle().close(Signal::new("lost")).await;
+            panic!("a server listened with its broker lost after the first connection");
+        }
+        Ok(Err(error)) => error,
+    };
+    assert!(!ulo::is_permanent(&error), "a lost broker is marked permanent, though a later start may reach it: {error}");
+    let StartupError::Bind { source, .. } = error else { panic!("expected a `Bind` failure, got: {error}") };
+    let cause = source.into_inner();
+    let timed_out = cause.downcast_ref::<ConnectTimedOut>().unwrap_or_else(|| panic!("the `Bind` does not carry `ConnectTimedOut`: {cause:?}"));
+    assert_eq!((timed_out.within(), timed_out.address()), (LOST_WITHIN, relay.to_string().as_str()));
+    assert!(
+        elapsed >= LOST_WITHIN && elapsed < LOST_WITHIN + LOST_MARGIN,
+        "`listen` failed after {elapsed:?}, not at its {LOST_WITHIN:?} bound"
+    );
 }

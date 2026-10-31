@@ -93,7 +93,7 @@ impl<L: Link> ulo::Server for Server<L> {
     async fn prepare(&mut self, mounted: Mounted<'_, Rpc>) -> Result<(), BoxError> {
         let mut failures = Failures::new();
         if let Err(error) = self.link.prepare(mounted.app()).await {
-            failures.push_error(error);
+            failures.push_link_error(L::NAME, error);
         }
         self.link.max_inflight(self.max_inflight);
         failures.extend(zero_count("max_inflight", self.max_inflight, "shed every call"));

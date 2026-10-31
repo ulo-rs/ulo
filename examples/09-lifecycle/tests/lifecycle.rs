@@ -39,7 +39,7 @@ async fn a_readiness_check_that_never_passes_fails_connect_with_the_key_attempts
     let Err(error) = builder(99).runtime(Tokio::current()).wire().unwrap().connect().await else {
         panic!("connect should fail");
     };
-    let StartupError::Connect(ConnectError::Readiness { key, attempts, reason }) = &error else {
+    let StartupError::Connect(ConnectError::Readiness { key, attempts, reason, .. }) = &error else {
         panic!("expected a readiness failure, got {error}");
     };
     assert_eq!(key.to_string(), "Link");

@@ -48,14 +48,17 @@ impl Tls {
     /// protocols the transport needs (`h2` and `http/1.1` for HTTP):
     ///
     /// - empty: the server sets the protocols it needs;
-    /// - naming every protocol the transport needs: accepted, the transport's protocols first in
-    ///   its order, then any further protocol the configuration names;
+    /// - naming every protocol the transport needs: accepted, and the server offers exactly the
+    ///   transport's protocols in its order. A further protocol the configuration names
+    ///   (`acme-tls/1`, `h3`) is dropped from that list, since a client that negotiated it
+    ///   would reach a server that cannot speak it; a client offering only such a protocol gets a
+    ///   TLS alert at the handshake;
     /// - missing one the transport needs, `h2` only or `http/1.1` only included: refused as
     ///   [`TlsError::Alpn`], which `listen` reports as `StartupError::Configure`.
     ///
     /// A transport that needs no protocol (the TCP link) takes the configuration as given. The
     /// handed `Arc` is never modified: a configuration whose protocols change is copied, with
-    /// everything else it set, and one that needs no change is used as given.
+    /// everything else it set, and one whose list already equals the transport's is used as given.
     pub fn from_config(config: Arc<ServerConfig>) -> Tls {
         Tls { source: Source::Config(config) }
     }
@@ -125,8 +128,7 @@ fn reconcile_alpn(given: &Arc<ServerConfig>, required: &[&[u8]]) -> Result<Arc<S
             missing,
         });
     }
-    let mut protocols: Vec<Vec<u8>> = required.iter().map(|protocol| protocol.to_vec()).collect();
-    protocols.extend(named.iter().filter(|n| !required.iter().any(|protocol| protocol == &n.as_slice())).cloned());
+    let protocols: Vec<Vec<u8>> = required.iter().map(|protocol| protocol.to_vec()).collect();
     if &protocols == named {
         return Ok(Arc::clone(given));
     }

@@ -704,3 +704,53 @@ impl std::fmt::Debug for CollectedSecrets {
         write!(f, "CollectedSecrets({} recorded)", self.texts.len())
     }
 }
+
+/// The check `#[module]` writes before an `into K: [..]` list: a `K` that implements
+/// [`Meta`](crate::Meta) is module metadata, which a transport reads through `m.meta::<K>()`, and
+/// a contribution to it would sit in a collection nothing reads. The `Meta` arm is ranked first
+/// by autoref and carries a method-level bound no type satisfies, so the refusal is a compile
+/// error naming `K`; any other key takes the empty arm.
+pub mod contribution_key {
+    use std::marker::PhantomData;
+
+    use crate::module::meta::Meta;
+
+    pub struct Probe<K: ?Sized>(PhantomData<fn() -> *const K>);
+
+    impl<K: ?Sized> Probe<K> {
+        pub fn new() -> Self {
+            Probe(PhantomData)
+        }
+    }
+
+    impl<K: ?Sized> Default for Probe<K> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    #[diagnostic::on_unimplemented(
+        message = "`{Self}` is module metadata, not a contribution key",
+        label = "`into` contributes to a collection; `{Self}` is read with `m.meta::<{Self}>()`",
+        note = "write this module with `ModuleDef` and configure `{Self}` through `m.meta::<{Self}>()`"
+    )]
+    pub trait ModuleMetadataNotAKey {}
+
+    pub trait MetadataArm<K: ?Sized> {
+        fn __ulo_check_contribution_key(&self)
+        where
+            K: ModuleMetadataNotAKey;
+    }
+    impl<K: Meta> MetadataArm<K> for Probe<K> {
+        fn __ulo_check_contribution_key(&self)
+        where
+            K: ModuleMetadataNotAKey,
+        {
+        }
+    }
+
+    pub trait KeyArm<K: ?Sized> {
+        fn __ulo_check_contribution_key(&self) {}
+    }
+    impl<K: ?Sized> KeyArm<K> for &Probe<K> {}
+}

@@ -68,6 +68,13 @@ impl Failures {
         self.0.push(Failure::from_error(error));
     }
 
+    /// A failure a link answered from its `prepare`, `link` being its `Link::NAME`. The report
+    /// writes it as the text behind "link `nats`: " and every entry it lists without a subject of its own
+    /// takes the name as its subject.
+    pub fn push_link_error(&mut self, link: &str, error: BoxError) {
+        self.0.push(Failure::from_error(error).in_link(link));
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -136,6 +143,9 @@ pub struct Failure {
     nested: Vec<PrepareEntry>,
     /// The error it came from carried a `Permanent`, which only its text would otherwise keep.
     permanent: bool,
+    /// The link whose `prepare` answered it, written before the text and carried as the subject
+    /// of each entry that has none.
+    link: Option<String>,
 }
 
 enum Inner {
@@ -145,7 +155,7 @@ enum Inner {
 
 impl Failure {
     fn of(inner: Inner) -> Failure {
-        Failure { inner, location: None, subject: None, scopes: Vec::new(), nested: Vec::new(), permanent: false }
+        Failure { inner, location: None, subject: None, scopes: Vec::new(), nested: Vec::new(), permanent: false, link: None }
     }
 
     /// A failure whose text names no type.
@@ -181,6 +191,13 @@ impl Failure {
     /// The source line that declared what failed.
     pub fn at(mut self, location: &'static Location<'static>) -> Failure {
         self.location = Some(location);
+        self
+    }
+
+    /// Marks the failure as a link's, `link` being its `Link::NAME`: the text is written behind
+    /// "link `nats`: ", and the entries take `link` as their subject where they have none.
+    pub fn in_link(mut self, link: impl Into<String>) -> Failure {
+        self.link = Some(link.into());
         self
     }
 
@@ -220,13 +237,23 @@ impl Failure {
     /// `PrepareError` it was made from.
     fn entries(&self) -> Vec<PrepareEntry> {
         if !self.nested.is_empty() {
-            return self.nested.clone();
+            return match &self.link {
+                None => self.nested.clone(),
+                Some(link) => self
+                    .nested
+                    .iter()
+                    .map(|entry| match entry.subject() {
+                        Some(_) => entry.clone(),
+                        None => entry.clone().about(link.clone()),
+                    })
+                    .collect(),
+            };
         }
         let mut entry = PrepareEntry::new(self.names().iter().copied()).scoped(self.scopes.iter().cloned());
         if let Some(location) = self.location {
             entry = entry.at(location);
         }
-        if let Some(subject) = &self.subject {
+        if let Some(subject) = self.subject.as_ref().or(self.link.as_ref()) {
             entry = entry.about(subject.clone());
         }
         vec![entry]
@@ -234,9 +261,13 @@ impl Failure {
 
     /// The text, each name written as `names` decides.
     pub fn text(&self, names: &Names<'_>) -> String {
-        match &self.inner {
+        let text = match &self.inner {
             Inner::Plain(text) => text.clone(),
             Inner::Naming { text, .. } => text(names),
+        };
+        match &self.link {
+            Some(link) => format!("link `{link}`: {text}"),
+            None => text,
         }
     }
 }

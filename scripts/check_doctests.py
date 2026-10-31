@@ -10,9 +10,10 @@ string rustdoc does not read as Rust although Rust was meant (`rs`, `Rust`, `IGN
 is skipped the same way, silently, and is held to the same rule. `ignore = "..."` is not rustdoc
 syntax: it warns `unexpected character` and drops the block from the test list, so the fence form
 carries no reason. Blocks of any other language, blocks that compile (`rust`, `no_run`,
-`compile_fail`, no tag) and blocks marked `text` are not touched. A README is scanned for `ignore`
-blocks only: no crate includes its README into its docs, so nothing compiles a README's `rust`
-block either.
+`compile_fail`, no tag) and blocks marked `text` are not touched. The root `README.md` is scanned
+the same way. A README's `rust` blocks compile as doctests of the crate that includes it behind
+`#[cfg(doctest)]` (`crates/ulo` includes its own README and the root one); this script checks only
+that none is skipped without a reason.
 
     python3 scripts/check_doctests.py [ROOT]
     python3 scripts/check_doctests.py --self-test
@@ -94,7 +95,7 @@ def scan(root):
     for path in sorted(root.glob("crates/*/src/**/*.rs")):
         for number, info in violations(doc_lines(path.read_text(encoding="utf-8"))):
             hits.append((path, number, info))
-    for path in sorted(root.glob("crates/*/README.md")):
+    for path in sorted([*root.glob("crates/*/README.md"), *root.glob("README.md")]):
         for number, info in violations(path.read_text(encoding="utf-8").splitlines()):
             hits.append((path, number, info))
     return hits
@@ -106,6 +107,7 @@ def self_test():
         "crates/a/src/lib.rs": "//! ```ignore\n//! let x = 1;\n//! ```\n",
         "crates/b/src/lib.rs": "/// ```rust,ignore\n/// f();\n/// ```\nfn f() {}\n",
         "crates/c/README.md": "```rust,ignore\nf();\n```\n",
+        "README.md": "```rust,ignore\nf();\n```\n",
         "crates/e/src/lib.rs": "//! ```ignore\n//! // reason: needs a live broker\n//!\n//! ```ignore\n//! b();\n//! ```\n",
         "crates/f/src/lib.rs": "//! ```ignore\n//! # // reason: todo\n//! ```\n",
         "crates/g/src/lib.rs": "//! ```ignore\n//! f(); // reason: a trailing comment on code\n//! ```\n",
@@ -114,7 +116,7 @@ def self_test():
         "crates/j/src/lib.rs": "//! ```rs\n//! f();\n//! ```\n",
         "crates/k/src/lib.rs": "//! ```IGNORE\n//! f();\n//! ```\n",
     }
-    planted = {("crates/a/src/lib.rs", 1), ("crates/b/src/lib.rs", 1), ("crates/c/README.md", 1),
+    planted = {("README.md", 1), ("crates/a/src/lib.rs", 1), ("crates/b/src/lib.rs", 1), ("crates/c/README.md", 1),
                ("crates/e/src/lib.rs", 4), ("crates/f/src/lib.rs", 1), ("crates/g/src/lib.rs", 1),
                ("crates/h/src/lib.rs", 1), ("crates/i/src/lib.rs", 1), ("crates/j/src/lib.rs", 1),
                ("crates/k/src/lib.rs", 1)}

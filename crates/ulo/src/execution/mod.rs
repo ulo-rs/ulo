@@ -412,7 +412,7 @@ impl ExecutionRef {
 impl Drop for Execution {
     fn drop(&mut self) {
         self.shared.ended.store(true, Ordering::Release);
-        self.shared.cache.release();
+        self.shared.cache.release(&self.shared.app.config.redactor);
     }
 }
 

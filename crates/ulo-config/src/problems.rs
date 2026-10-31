@@ -10,6 +10,7 @@ pub struct Problem {
     pub(crate) origin: Option<Origin>,
     pub(crate) message: String,
     pub(crate) flattened: bool,
+    pub(crate) truncated: bool,
 }
 
 impl Problem {
@@ -35,6 +36,15 @@ impl Problem {
     pub fn flattened(&self) -> bool {
         self.flattened
     }
+
+    /// Whether this is the notice that ends a report the read cut short: at most 2048 sections
+    /// and missing fields are reported together, and a read with more ends with one problem that
+    /// has an empty path, no origin and the message `the report stopped after N problems; fix
+    /// these and read again`, N being the number of problems before it. A report that holds
+    /// everything has no such problem.
+    pub fn truncated(&self) -> bool {
+        self.truncated
+    }
 }
 
 /// Every problem found, in the order found. The order is deterministic: the same failing input
@@ -58,7 +68,7 @@ impl Problems {
     /// Records a problem at `path`. Inside a section the path is relative to the section, and the
     /// section read prefixes it.
     pub fn at(&mut self, path: impl Into<String>, message: impl Into<String>) {
-        self.list.push(Problem { path: path.into(), origin: None, message: message.into(), flattened: false });
+        self.list.push(Problem { path: path.into(), origin: None, message: message.into(), flattened: false, truncated: false });
     }
 
     pub fn is_empty(&self) -> bool {
@@ -79,7 +89,7 @@ impl Problems {
     }
 
     pub(crate) fn at_origin(&mut self, path: impl Into<String>, origin: Origin, message: impl Into<String>) {
-        self.list.push(Problem { path: path.into(), origin: Some(origin), message: message.into(), flattened: false });
+        self.list.push(Problem { path: path.into(), origin: Some(origin), message: message.into(), flattened: false, truncated: false });
     }
 }
 

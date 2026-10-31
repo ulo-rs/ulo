@@ -20,8 +20,9 @@
 //! ```
 //!
 //! with the probes' traits imported anonymously and `ulo_grpc::__private` written in full. The
-//! handler value is `GrpcHandler::new::<Marker, _>(call)`, the route `Marker::PATH` and the shape
-//! `Marker::SHAPE`. A generic handler gets no hidden method: `MountFn::emit` refuses it.
+//! handler value is `ulo_grpc::GrpcHandler::new::<Marker, _, _>(call)`, the route `Marker::PATH`
+//! and the shape `Marker::SHAPE`, which the server checks against the marker the value carries. A
+//! generic handler gets no hidden method: `MountFn::emit` refuses it.
 
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
@@ -65,7 +66,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
         sig: &called,
         key: KEY,
         paths: &paths,
-        handler_value: quote!(::ulo_grpc::__private::GrpcHandler::new::<#marker, _>(#call)),
+        handler_value: quote!(::ulo_grpc::GrpcHandler::new::<#marker, _, _>(#call)),
         route: Some(quote!(<#marker as ::ulo_grpc::Method>::PATH)),
         shape: Some(quote!(<#marker as ::ulo_grpc::Method>::SHAPE)),
     }

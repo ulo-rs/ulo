@@ -2592,7 +2592,6 @@ dependencies = [
  "ulo-http",
  "ulo-http-hyper",
  "ulo-runtime-tokio",
- "ulo-transport",
 ]
 
 [[package]]
@@ -2733,7 +2732,6 @@ dependencies = [
  "ulo-rpc",
  "ulo-rpc-tcp",
  "ulo-runtime-tokio",
- "ulo-transport",
 ]
 
 [[package]]
@@ -2747,7 +2745,6 @@ dependencies = [
  "ulo-rpc",
  "ulo-rpc-tcp",
  "ulo-runtime-tokio",
- "ulo-transport",
 ]
 
 [[package]]
@@ -2798,7 +2795,6 @@ dependencies = [
  "ulo-build",
  "ulo-grpc",
  "ulo-runtime-tokio",
- "ulo-transport",
 ]
 
 [[package]]
@@ -8830,9 +8826,11 @@ dependencies = [
  "tokio",
  "tracing",
  "ulo-http",
+ "ulo-http-hyper",
  "ulo-macros",
  "ulo-rpc",
  "ulo-runtime-tokio",
+ "ulo-transport",
 ]
 
 [[package]]
@@ -9860,10 +9858,12 @@ dependencies = [
 name = "ulo-transport-macros"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 2.0.118",
  "thiserror 2.0.21",
+ "toml_edit 0.25.15+spec-1.1.0",
  "ulo-transport",
 ]
 

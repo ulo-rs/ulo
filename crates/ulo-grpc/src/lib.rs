@@ -23,13 +23,15 @@
 //! ```
 //!
 //! tonic's generated service trait is never implemented: the attribute checks the handler's
-//! signature against the marker's types and shape, and the dispatcher calls it by path. gRPC
+//! signature against the marker's types and shape, and the dispatcher calls it by path. A
+//! controller written without the attribute mounts the same handler value, a [`GrpcHandler`]. gRPC
 //! serves on its own port; nothing routes an `application/grpc` request arriving on the HTTP
 //! server's port to it.
 
 mod client;
 mod dispatch;
 mod extract;
+mod handler;
 mod health;
 mod method;
 mod pre_dispatch;
@@ -51,11 +53,22 @@ pub mod config {
     pub use ulo_transport::Count;
 }
 
+/// The link a [`Detail::Help`] carries, named by [`Details`] and so re-exported. It sits under a
+/// module, as in `ulo_rpc`, where the crate root has a `Link` trait of its own.
+pub mod details {
+    #[doc(no_inline)]
+    pub use ulo_transport::Link;
+}
+
 #[doc(hidden)]
 pub mod __private;
 
+#[doc(hidden)]
+pub use ulo_transport::__derive;
+
 pub use client::{ClientTls, GrpcClient, GrpcClientModule, GrpcEndpoint, outgoing};
 pub use extract::{Message, Request, Streaming};
+pub use handler::GrpcHandler;
 pub use health::GrpcHealth;
 pub use method::{Method, Shape};
 pub use pre_dispatch::PreDispatch;

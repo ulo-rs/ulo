@@ -4,8 +4,7 @@ use std::fmt;
 
 use futures_util::{Stream, stream};
 use ulo::{App, AppBuilder, BoxError, Guard, injectable, module, routes};
-use ulo_grpc::{Grpc, GrpcCx, Message};
-use ulo_transport::{CallError, Classify, Detail, Details, ErrorKind, FieldViolation};
+use ulo_grpc::{CallError, Classify, Detail, Details, ErrorKind, FieldViolation, Grpc, GrpcCx, Message};
 
 pub mod pb {
     ulo_grpc::include_proto!("catalog.v1");

@@ -4,8 +4,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use ulo::{App, AppBuilder, Dep, injectable, module, routes};
 use ulo_http::headers::UserAgent;
-use ulo_http::{Created, Header, Json, Path, Query, WithHeaders};
-use ulo_transport::{Classify, Valid, Validate};
+use ulo_http::{Classify, Created, Header, Json, Path, Query, Valid, Validate, WithHeaders};
 
 pub mod intake;
 

@@ -10,7 +10,7 @@ use std::time::Duration;
 use hyper::body::Incoming;
 use hyper::server::conn::http2;
 use tonic_health::ServingStatus;
-use ulo::{Bound, BoundAddr, BoxError, DrainToken, Mounted, Transport, TypeName};
+use ulo::{Bound, BoundAddr, BoxError, DrainToken, Mounted, Shape, Transport, TypeName};
 use ulo_http::stage::Stage;
 use ulo_server_hyper::{Accepted, RuntimeExecutor, RuntimeTimer, Serve, ServeConfig};
 use ulo_listener_tokio::TokioListener;
@@ -19,7 +19,7 @@ use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec
 use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
 use ulo_transport::{Admission, Count};
 
-use crate::__private::GrpcHandler;
+use crate::handler::GrpcHandler;
 use crate::dispatch::{Dispatcher, Route, builtin};
 use crate::health::GrpcHealth;
 use crate::pre_dispatch::PreDispatch;
@@ -39,11 +39,11 @@ const CLOSE_GRACE: Duration = Duration::from_millis(500);
 
 /// The core's `Server` for [`Grpc`]: `app.bind(ulo_grpc::Server::new("0.0.0.0:50051"))`.
 ///
-/// `prepare` builds the path table from the mounted handlers, refusing two handlers for one path,
-/// builds the pre-dispatch stage from `PreDispatch<Grpc>`, refuses `Count::Max(0)` on each count
-/// and `Bound::After(Duration::ZERO)` on `handshake_timeout` and `timeout_grace`, resolves the
-/// endpoints and loads TLS
-/// with ALPN `h2`. Health reports SERVING for every known service after `bind` and NOT_SERVING
+/// `prepare` builds the path table from the mounted handlers, refusing two handlers for one path
+/// and a handler whose spec's route or shape is not its method marker's, builds the pre-dispatch
+/// stage from `PreDispatch<Grpc>`, refuses `Count::Max(0)` on each count and
+/// `Bound::After(Duration::ZERO)` on `handshake_timeout` and `timeout_grace`, resolves the
+/// endpoints and loads TLS with ALPN `h2`. Health reports SERVING for every known service after `bind` and NOT_SERVING
 /// from the drain on. Reflection, `grpc.reflection.v1` and `v1alpha`, is served in debug builds
 /// and behind `reflection(true)` in release builds.
 ///
@@ -254,17 +254,36 @@ impl Who {
     }
 }
 
-/// The path table: one route per marker path, two handlers for one path refused naming both.
+/// The path table: one route per marker path, two handlers for one path refused naming both, and a
+/// handler whose spec reports another route or shape than its marker's refused naming the two.
 fn routes(mounted: &Mounted<'_, Grpc>, stage: &Stage<Grpc>, failures: &mut Failures) -> HashMap<&'static str, Arc<Route>> {
     let mut routes: HashMap<&'static str, (Arc<Route>, Who)> = HashMap::new();
     for handler in mounted.handlers() {
         let who = Who { controller: handler.controller().key().type_name(), name: handler.name() };
         let Some(grpc) = handler.handler::<GrpcHandler>() else {
             failures.push(Failure::naming(vec![who.controller], move |names| {
-                format!("{} is mounted for gRPC without a gRPC handler value", who.text(names))
+                format!("{} is mounted for gRPC with a handler value that is not a `ulo_grpc::GrpcHandler`", who.text(names))
             }));
             continue;
         };
+        let info = handler.info();
+        if info.route() != Some(grpc.path) || info.shape() != grpc.shape {
+            let reported = match info.route() {
+                Some(route) => format!("the route `{route}`"),
+                None => "no route".to_owned(),
+            };
+            let (shape, path, served) = (info.shape(), grpc.path, grpc.shape);
+            failures.push(Failure::naming(vec![who.controller], move |names| {
+                format!(
+                    "{}'s spec reports {reported} and a {} shape, and its method marker names `{path}`, a {} method; \
+                     `GrpcHandler::spec` writes both from the marker",
+                    who.text(names),
+                    shape_name(shape),
+                    shape_name(served)
+                )
+            }));
+            continue;
+        }
         if let Some((_, other)) = routes.get(grpc.path) {
             let (other, path) = (*other, grpc.path);
             failures.push(Failure::naming(vec![other.controller, who.controller], move |names| {
@@ -283,6 +302,16 @@ fn routes(mounted: &Mounted<'_, Grpc>, stage: &Stage<Grpc>, failures: &mut Failu
         routes.insert(grpc.path, (Arc::new(route), who));
     }
     routes.into_iter().map(|(path, (route, _))| (path, route)).collect()
+}
+
+fn shape_name(shape: Shape) -> &'static str {
+    match shape {
+        Shape::Unary => "unary",
+        Shape::ServerStreaming => "server-streaming",
+        Shape::ClientStreaming => "client-streaming",
+        Shape::Bidi => "bidirectional-streaming",
+        _ => "streaming",
+    }
 }
 
 /// The service a method path names, `users.v1.UserService` for `/users.v1.UserService/GetUser`.

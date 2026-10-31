@@ -58,8 +58,18 @@ pub mod config {
     pub use ulo_transport::Count;
 }
 
+/// The link a [`Detail::Help`] carries, named by [`Details`] and so re-exported. It sits under a
+/// module because `link` here has a `Link` trait at the crate root.
+pub mod details {
+    #[doc(no_inline)]
+    pub use ulo_transport::Link;
+}
+
 #[doc(hidden)]
 pub mod __private;
+
+#[doc(hidden)]
+pub use ulo_transport::__derive;
 
 pub use client::{Call, Emit, RpcClient, RpcError, RpcStream, StreamCall, UnusableLink, ZeroTimeout};
 pub use client_module::RpcClientModule;

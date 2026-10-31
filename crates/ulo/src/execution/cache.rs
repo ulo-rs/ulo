@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_lock::OnceCell;
@@ -8,6 +9,7 @@ use crate::binding::Instance;
 use crate::error::LookupError;
 use crate::graph::BindingId;
 use crate::key::KeyName;
+use crate::redact::Redactor;
 use crate::transport::enhancer::ClosureId;
 
 /// What one cell holds the instance of: a binding, or an enhancer declared by closure.
@@ -59,8 +61,20 @@ impl OnceCells {
 
     /// Drops every instance the cache holds and refuses every later read. The instances drop
     /// outside the lock: an instance's drop may read the cache, which would deadlock under it.
-    pub(crate) fn release(&self) {
+    ///
+    /// Each instance drops under `catch_unwind`: a panicking `Drop` does not stop the rest from
+    /// dropping or the execution from ending. The first panic is logged at `warn`, redacted.
+    pub(crate) fn release(&self, redactor: &Redactor) {
         let released = self.cells.lock().unwrap_or_else(PoisonError::into_inner).take();
-        drop(released);
+        let mut first = None;
+        for (_, cell) in released.into_iter().flatten() {
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(move || drop(cell))) {
+                first.get_or_insert(payload);
+            }
+        }
+        if let Some(payload) = first {
+            let message = redactor.panic(payload);
+            tracing::warn!(%message, "an execution-scoped instance panicked while it was dropped at the end of its execution");
+        }
     }
 }

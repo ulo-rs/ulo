@@ -15,7 +15,6 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures_util::future::select;
-use futures_util::stream::BoxStream;
 use futures_util::{Stream, StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use ulo::app::{Bound as Serving, Connected};
@@ -59,6 +58,7 @@ pub(crate) const SUBSTITUTED: &str = "conformance.substituted";
 pub(crate) const SUBSTITUTED_STREAM: &str = "conformance.substituted_stream";
 pub(crate) const UNENCODABLE: &str = "conformance.unencodable";
 pub(crate) const UNENCODABLE_STREAM: &str = "conformance.unencodable_stream";
+pub(crate) const GARBLED_STREAM: &str = "conformance.garbled_stream";
 pub(crate) const CONTEXT: &str = "conformance.context";
 pub(crate) const BOUNDED: &str = "conformance.bounded";
 pub(crate) const BOUNDED_TOO: &str = "conformance.bounded_too";
@@ -69,6 +69,19 @@ pub(crate) const DEADLINE_SUM: &str = "conformance.deadline_sum";
 /// A payload no codec reads: not UTF-8, so no JSON text, and a lone CBOR break code, so no CBOR
 /// item. A reply carrying it fails the link's frame encoding.
 const GARBLED: &[u8] = &[0xff];
+
+/// Encodes as the number it holds, or fails in every codec when it holds `0`.
+#[derive(Debug)]
+struct Unencodable(u32);
+
+impl Serialize for Unencodable {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            0 => Err(serde::ser::Error::custom("the conformance payload does not encode")),
+            n => serializer.serialize_u32(n),
+        }
+    }
+}
 
 /// What [`Substitute`] answers a call's `Refusal::Missing` with.
 pub(crate) const SUBSTITUTE: Sum = Sum { sum: 42 };
@@ -539,10 +552,8 @@ impl StreamController {
 
     /// One item, then a payload the link's codec cannot encode.
     #[ulo_rpc::message("conformance.unencodable_stream")]
-    async fn unencodable_stream(&self, cx: RpcCx) -> Result<Reply, Refusal> {
-        let first = cx.codec().encode(&1u32).expect("a `u32` encodes in every codec");
-        let items: BoxStream<'static, Result<Data, BoxError>> = Box::pin(stream::iter([Ok(first), Ok(Data::new(GARBLED))]));
-        Ok(Reply::Many(items))
+    async fn unencodable_stream(&self) -> impl Stream<Item = Result<Unencodable, Refusal>> {
+        stream::iter([Ok(Unencodable(1)), Ok(Unencodable(0))])
     }
 
     /// Ticks until the stream is dropped, recording the reason when it is.
@@ -629,6 +640,37 @@ impl Mounts {
     }
 }
 
+/// One item, then bytes the link's frame encoding refuses, as raw `Data`: the attribute has no
+/// form for a stream of raw `Data` items, so the handler is mounted by hand, declared
+/// `ServerStreaming`.
+pub(crate) struct GarbledStreamController;
+
+impl ulo::Construct for GarbledStreamController {
+    type Scope = ulo::scope::Auto;
+
+    fn dependencies(_: &mut ulo::Dependencies) {}
+
+    async fn construct(_: &ulo::Resolver<'_>) -> Result<Self, ulo::ConstructError> {
+        Ok(GarbledStreamController)
+    }
+}
+
+async fn garbled_stream(cx: RpcCx) -> Result<Reply, BoxError> {
+    let first = cx.codec().encode(&1u32).expect("a `u32` encodes in every codec");
+    let items: futures_util::stream::BoxStream<'static, Result<Data, BoxError>> = Box::pin(stream::iter([Ok(first), Ok(Data::new(GARBLED))]));
+    Ok(Reply::Many(items))
+}
+
+impl ulo::Controller for GarbledStreamController {
+    fn mount(m: &mut ulo::Mount<'_>) {
+        m.handler(
+            ulo::HandlerSpec::<Rpc, _>::new("garbled_stream", ulo_rpc::RpcHandler::message(garbled_stream))
+                .route(GARBLED_STREAM)
+                .shape(Shape::ServerStreaming),
+        );
+    }
+}
+
 /// Whether the link carries every streamed shape.
 pub(crate) fn streams(capabilities: &Capabilities) -> bool {
     [Shape::ServerStreaming, Shape::ClientStreaming, Shape::Bidi].iter().all(|shape| capabilities.shapes.contains(shape))
@@ -650,6 +692,7 @@ impl Module for ServerRoot {
         m.controller::<CoreController>();
         if self.mounts.streaming {
             m.controller::<StreamController>();
+            m.controller::<GarbledStreamController>();
         }
         if self.mounts.binary {
             m.controller::<BinaryController>();

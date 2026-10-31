@@ -10,7 +10,6 @@ ulo = { path = "../../crates/ulo" }
 ulo-http = { path = "../../crates/ulo-http" }
 ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
 ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
-ulo-transport = { path = "../../crates/ulo-transport" }
 futures-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

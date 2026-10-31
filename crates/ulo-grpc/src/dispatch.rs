@@ -90,7 +90,7 @@ use ulo_http::stage::{Rest, ScopedStage, Stage};
 use ulo_http::{ConnInfo, HttpBody, Request, Response};
 use ulo_transport::{Admission, CallError, ConnectionAdmission, Permit, span};
 
-use crate::__private::HandlerFn;
+use crate::handler::HandlerFn;
 use crate::pre_dispatch::StageCx;
 use crate::status::{self, code_for_http};
 use crate::trace;
