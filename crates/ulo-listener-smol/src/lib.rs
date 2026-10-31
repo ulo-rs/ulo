@@ -4,10 +4,16 @@
 //! whose reactor runs on a thread of its own, and every task the server spawns goes through the
 //! app's runtime, `ulo_runtime_smol::Smol` on a smol app.
 //!
-//! ```ignore
+//! ```
+//! # use ulo::App;
+//! # #[ulo::module]
+//! # struct AppModule;
+//! # async fn f(executor: std::sync::Arc<ulo_runtime_smol::Executor<'static>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let app = App::builder(AppModule).runtime(ulo_runtime_smol::Smol::new(executor)).wire()?.connect().await?
 //!     .bind(ulo_http_hyper::ServerOn::<ulo_listener_smol::SmolListener>::new("0.0.0.0:8080"))
 //!     .listen().await?;
+//! # let _ = app; Ok(())
+//! # }
 //! ```
 //!
 //! It adopts the sockets `ulo-net` bound or inherited, so endpoints, port 0 and socket activation

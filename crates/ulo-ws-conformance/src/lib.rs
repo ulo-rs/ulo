@@ -6,6 +6,7 @@
 //! through [`Host::serve`].
 //!
 //! ```ignore
+//! # // reason: a template for a server crate's tests/conformance.rs: it elides the host's bodies
 //! // crates/ulo-ws-hyper/tests/conformance.rs
 //! struct Standalone { read_count: ulo_ws_hyper::ReadCount }
 //!
@@ -214,6 +215,7 @@ macro_rules! startup_failed {
 /// passed:
 ///
 /// ```ignore
+/// # // reason: names a host type defined in the server crate's own tests/conformance.rs
 /// ulo_ws_conformance::ws_conformance_suite!(SmolServer; not_applicable {
 ///     subprotocol_choice: "F999: the server drops `Sec-WebSocket-Protocol` from the 101",
 /// });
@@ -229,6 +231,7 @@ macro_rules! startup_failed {
 /// served on its port:
 ///
 /// ```ignore
+/// # // reason: names a host type defined in the server crate's own tests/conformance.rs
 /// ulo_ws_conformance::ws_conformance_suite!(ActixHost; without_upgrades);
 /// ```
 #[macro_export]

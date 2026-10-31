@@ -3,6 +3,7 @@
 //! nested and fallback, stamped per host by [`http_conformance_suite!`].
 //!
 //! ```ignore
+//! # // reason: a template for an adapter crate's tests/conformance.rs: it elides the host's bodies
 //! // crates/ulo-http-axum/tests/conformance.rs
 //! struct AxumHost { /* the host server, its address, the app */ }
 //!
@@ -311,6 +312,7 @@ pub fn routing_label(routing: &Routing) -> String {
 /// passed:
 ///
 /// ```ignore
+/// # // reason: names a host type defined in the adapter crate's own tests/conformance.rs
 /// ulo_http_conformance::http_conformance_suite!(HyperHost<OnTokio>; not_applicable {
 ///     routing_extension: "the reference has no host around the app to read `Routing`",
 /// });

@@ -1,8 +1,11 @@
 //! The Redis store for `ulo-db` (integrations DESIGN §4.5, §4.6): redis-rs's `ConnectionManager`,
 //! bound bare.
 //!
-//! ```ignore
+//! ```
+//! # use ulo_db_redis::RedisModule;
+//! # fn f(m: &mut ulo::ModuleDef<'_>, config: &ulo_config::Config) {
 //! m.import(RedisModule::from_config(&config, "redis"));
+//! # }
 //! ```
 //!
 //! The manager is built with `ConnectionManager::new_lazy_with_config`, which connects nothing; the

@@ -6,6 +6,9 @@ use ulo::{App, AppBuilder, Dep, injectable, module, routes};
 use ulo_rpc::Payload;
 use ulo_transport::Classify;
 
+mod roles;
+pub use roles::{RequiresRole, RoleGuard};
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Divide {
     pub dividend: i64,
@@ -35,6 +38,10 @@ impl Journal {
         Journal(Mutex::default())
     }
 
+    pub fn clear(&self) -> usize {
+        std::mem::take(&mut *self.0.lock().expect("the journal is not poisoned")).len()
+    }
+
     pub fn entries(&self) -> Vec<String> {
         self.0.lock().expect("the journal is not poisoned").clone()
     }
@@ -45,12 +52,20 @@ pub struct Calculator {
     journal: Dep<Journal>,
 }
 
-/// A `message` answers its caller; an `event` answers nobody.
+/// A `message` answers its caller; an `event` answers nobody. `RoleGuard` guards every handler,
+/// and only those declaring `#[meta(RequiresRole(..))]` ask for anything.
 #[routes]
+#[guards(RoleGuard)]
 impl Calculator {
     #[ulo_rpc::message("calc.divide")]
     async fn divide(&self, req: Payload<Divide>) -> Result<i64, CalcError> {
         req.0.dividend.checked_div(req.0.divisor).ok_or(CalcError::DivideByZero)
+    }
+
+    #[ulo_rpc::message("calc.clear")]
+    #[meta(RequiresRole("admin"))]
+    async fn clear(&self) -> usize {
+        self.journal.clear()
     }
 
     #[ulo_rpc::event("calc.note")]
@@ -60,7 +75,7 @@ impl Calculator {
     }
 }
 
-#[module(providers = [Journal], controllers = [Calculator])]
+#[module(providers = [Journal, RoleGuard], controllers = [Calculator])]
 pub struct AppModule;
 
 /// The application, before a runtime is chosen: `main` and the tests each name theirs.

@@ -16,7 +16,15 @@ use crate::response::Response;
 /// may answer without calling `next`, which is how CORS preflight works, may fail, which is how
 /// authentication works, and may change the response on the way out.
 ///
-/// ```ignore
+/// ```
+/// # use http::HeaderMap;
+/// # use ulo::BoxError;
+/// # use ulo_http::middleware::Next;
+/// # use ulo_http::{CallError, Middleware, Request, Response};
+/// # struct ApiKeyAuth;
+/// # impl ApiKeyAuth {
+/// #     fn admits(&self, _headers: &HeaderMap) -> bool { true }
+/// # }
 /// impl Middleware for ApiKeyAuth {
 ///     async fn handle(&self, req: Request, next: Next<'_>) -> Result<Response, BoxError> {
 ///         if !self.admits(req.headers()) {

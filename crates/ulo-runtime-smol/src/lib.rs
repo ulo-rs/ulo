@@ -2,11 +2,21 @@
 //! [`Smol`], spawning on an `async-executor` [`Executor`] the caller owns and runs, and timing
 //! with `async-io`'s timers. No tokio in its tree.
 //!
-//! ```ignore
+//! ```
+//! # use std::sync::Arc;
+//! # use ulo::{App, Server, Signal};
+//! # #[ulo::module]
+//! # struct AppModule;
+//! # fn f(server: impl Server, signal: impl std::future::Future<Output = Signal> + Send) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let smol = ulo_runtime_smol::Smol::new(Arc::new(ulo_runtime_smol::Executor::new()));
 //! let app = App::builder(AppModule).runtime(smol.clone()).wire()?;
 //! // `serve` runs inside the executor, which runs every task the app spawns while it waits.
-//! smol.block_on(async { app.connect().await?.bind(server).listen().await?.serve(signal).await })?;
+//! smol.block_on(async {
+//!     app.connect().await?.bind(server).listen().await?.serve(signal).await?;
+//!     Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+//! })?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! [`Smol::block_on`] is also how a test drives a smol app: with

@@ -3,7 +3,11 @@
 //! The app's pipeline runs inside actix's single-threaded workers, so actix's per-core runtime
 //! model is kept.
 //!
-//! ```ignore
+//! ```
+//! # use ulo::App;
+//! # #[ulo::module]
+//! # struct AppModule;
+//! # async fn f() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let server = ulo_http_actix::Embedded::new().nested_at("/api");
 //! let embedded = server.handle();
 //! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
@@ -14,6 +18,8 @@
 //!         .bind(("0.0.0.0", 8080))?
 //! };
 //! ulo_http_actix::run(app, &embedded, host, ulo_runtime_tokio::shutdown_signal()).await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! actix's request payload is `!Send` while the app's body is `Send`, so the payload is pumped

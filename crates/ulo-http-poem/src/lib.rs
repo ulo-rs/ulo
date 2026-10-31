@@ -1,13 +1,21 @@
 //! Runs a `ulo` application inside a poem server (transports DESIGN §3.8): a native embedding, the
 //! adapter implementing `poem::Endpoint`, nested under a path or as the fallback.
 //!
-//! ```ignore
+//! ```
+//! # use ulo::App;
+//! # #[ulo::module]
+//! # struct AppModule;
+//! # async fn f() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//! use poem::listener::TcpListener;
+//!
 //! let server = ulo_http_poem::Embedded::new().nested_at("/api");
 //! let embedded = server.handle();
 //! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
 //!
 //! let route = poem::Route::new().nest("/api", ulo_http_poem::endpoint(&embedded));
 //! ulo_http_poem::run(app, &embedded, poem::Server::new(TcpListener::bind("0.0.0.0:3000")), route, ulo_runtime_tokio::shutdown_signal()).await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! `Route::nest` strips the prefix, so the adapter declares `STRIPS_PREFIX: true`; mounting the

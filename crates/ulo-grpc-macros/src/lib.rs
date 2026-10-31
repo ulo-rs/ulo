@@ -2,6 +2,7 @@
 //! impl, a thin layer over `ulo-handler-codegen`.
 //!
 //! ```ignore
+//! # // reason: the handler needs types generated from a .proto by the caller's build.rs
 //! #[routes]
 //! impl UsersGrpc {
 //!     #[ulo_grpc::method(pb::user_service::GetUser)]

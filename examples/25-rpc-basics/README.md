@@ -12,7 +12,8 @@ There is no HTTP request to make: the binary prints `listening on tcp://ADDR`, a
 Read first:
 
 - `src/lib.rs`: the calculator, its `Classify` error and the journal an event writes to.
-- `tests/rpc.rs`: a reply, a handler error, an event, an unhandled pattern.
+- `src/roles.rs`: a `Guard<Rpc>` reading the `#[meta(RequiresRole(..))]` a handler declares, as example 16's guard does on HTTP; `calc.clear` declares `admin`, `calc.divide` declares nothing and stays open.
+- `tests/rpc.rs`: a reply, a handler error, an event, an unhandled pattern, and the guard (no role and a wrong role are `Forbidden` and never reach the handler; `x-role: admin` is admitted).
 - `tests/binary.rs`: runs the compiled binary with `PORT` set to a free port, calls the address it prints and ends it with SIGTERM.
 
-Next: [26 rpc streams](../26-rpc-streams).
+Next: [26 rpc streams](../26-rpc-streams). The same guard generic over HTTP and RPC is [41](../41-one-guard-two-transports).

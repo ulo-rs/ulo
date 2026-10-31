@@ -9,9 +9,17 @@ type Register = Box<dyn FnOnce(&mut ModuleDef<'_>) + Send>;
 /// A module built at runtime by a function, for integration crates. Its identity is the owner
 /// type plus the configuration value, so these are still distinct Rust-typed identities.
 ///
-/// ```ignore
+/// ```
+/// # use ulo::{DynamicModule, ModuleDef};
+/// # #[derive(Clone, PartialEq, Eq, Hash)]
+/// # struct RedisConfig;
+/// # struct RedisIntegration;
+/// # struct RedisPool;
+/// # impl RedisPool {
+/// #     async fn connect(_: &RedisConfig) -> Self { RedisPool }
+/// # }
 /// pub fn redis_module(cfg: RedisConfig) -> DynamicModule {
-///     DynamicModule::new::<RedisIntegration>(cfg.clone(), move |m| {
+///     DynamicModule::new::<RedisIntegration, _>(cfg.clone(), move |m| {
 ///         m.singleton(move || { let cfg = cfg.clone(); async move { RedisPool::connect(&cfg).await } });
 ///         m.export::<RedisPool>();
 ///     })

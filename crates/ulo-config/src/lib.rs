@@ -5,7 +5,10 @@
 //! that cannot be read or parsed is recorded inside the value and reported by `wire()`, together
 //! with every missing, ill-typed or invalid value, one problem per line with its path and origin.
 //!
-//! ```ignore
+//! ```
+//! # use ulo_config::{Config, Defaults, DotEnv, Env, File, Values};
+//! # #[derive(Default, serde::Serialize)]
+//! # struct AppConfig {}
 //! let config = Config::builder()
 //!     .source(Defaults::of::<AppConfig>())
 //!     .source(File::toml("config/app.toml"))

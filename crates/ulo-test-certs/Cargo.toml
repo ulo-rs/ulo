@@ -20,3 +20,8 @@ rustls.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# The crate doc's example serves TCP over the certificate.
+ulo-rpc-tcp = { path = "../ulo-rpc-tcp" }
+ulo-net = { path = "../ulo-net" }

@@ -31,8 +31,10 @@
 //! outlives the task until the server reads again, the connection is reported lost, or the process
 //! exits: async-nats's connection task does not see its last handle go while its writes are held.
 //!
-//! ```ignore
-//! app.bind(ulo_rpc::Server::new(ulo_rpc_nats::Nats::url("nats://bus:4222")))
+//! ```
+//! # fn f(app: ulo::App<ulo::Connected>) {
+//! app.bind(ulo_rpc::Server::new(ulo_rpc_nats::Nats::url("nats://bus:4222")));
+//! # }
 //! ```
 //!
 //! On the wire a request is the payload published on the pattern's subject with a reply subject,

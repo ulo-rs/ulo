@@ -7,6 +7,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use ex_support::Bin;
+use ex_support::http::{Call, call};
 use ex_support::ws::{Socket, connect, hang_up, next, send};
 use serde_json::{Value, json};
 use testcontainers::core::{IntoContainerPort, WaitFor};
@@ -52,10 +53,15 @@ async fn client(addr: SocketAddr, room: Option<&str>) -> Socket {
 
 /// The data of the next `shouted` frame within `within`; `None` when none comes.
 async fn shouted(socket: &mut Socket, within: Duration) -> Option<String> {
+    heard(socket, "shouted", within).await
+}
+
+/// The data of the next frame of `event` within `within`, skipping acknowledgements.
+async fn heard(socket: &mut Socket, event: &str, within: Duration) -> Option<String> {
     let deadline = Instant::now() + within;
     loop {
         let frame: Value = timeout_at(deadline, next(socket)).await.ok()?;
-        if frame["event"] == "shouted" {
+        if frame["event"] == event {
             return frame["data"].as_str().map(str::to_owned);
         }
     }
@@ -77,14 +83,21 @@ async fn a_shout_reaches_the_room_on_both_processes_and_nobody_outside_it() {
     // Each process printed its address after `listen`, which returns once its Redis subscription is
     // live, so the first shout is heard.
     send(&mut ada, json!({ "event": "shout", "id": 1, "data": { "room": "lobby", "text": "one" } })).await;
-    let heard = shouted(&mut bob, PATIENCE).await.unwrap_or_else(|| panic!("the first shout did not reach bob within {PATIENCE:?}"));
-    assert_eq!(heard, "one");
+    let first_shout = shouted(&mut bob, PATIENCE).await.unwrap_or_else(|| panic!("the first shout did not reach bob within {PATIENCE:?}"));
+    assert_eq!(first_shout, "one");
 
     // Bob answers once, and ada, on the first process, hears it.
     send(&mut bob, json!({ "event": "shout", "id": 1, "data": { "room": "lobby", "text": "two" } })).await;
     // Ada is in the room too, so she hears her own shout first.
     assert_eq!(shouted(&mut ada, PATIENCE).await.as_deref(), Some("one"), "ada's own shout");
     assert_eq!(shouted(&mut ada, PATIENCE).await.as_deref(), Some("two"), "bob's shout, from the other process");
+
+    // An HTTP POST to the second process reaches the lobby member held by the first.
+    let reply = call(second_addr, Call::post("/notify/lobby").json(r#"{"text":"three"}"#)).await;
+    assert_eq!((reply.status, reply.body.as_str()), (200, "sent"));
+    for (socket, name) in [(&mut ada, "ada, on the first process"), (&mut bob, "bob, on the second")] {
+        assert_eq!(heard(socket, "notice", PATIENCE).await.as_deref(), Some("three"), "the POST's notice for {name}");
+    }
 
     // Everything has been delivered to the room on both processes; cy and dee, outside it, have
     // been sent nothing ahead of a ping's answer.

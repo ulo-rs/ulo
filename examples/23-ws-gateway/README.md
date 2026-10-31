@@ -18,7 +18,8 @@ Ctrl-C the server: the client receives close code 1001 with `the server is shutt
 Read first:
 
 - `src/lib.rs`: the gateway, `Stamp` (a `Guard<Ws>` that inserts `Speaker`), the handler taking `Ext<Speaker>`, and the paired hooks writing to `Journal`.
-- `tests/gateway.rs`: every reply carries its message's `id` and the name of the connection that sent it; each connect has its disconnect, which still reads the session; the drain's close frame, with the drain window on a scripted clock (`ScriptedTimer`).
+- `src/badge.rs`: a connect guard (`Guard<WsConnect>`) writing a `Badge` into the connect phase's extensions. That bag reaches `OnConnect` only; each message is its own execution, so `on_connect` copies the badge into the session, where the `badge` message reads it. The session is built from the upgrade head before any guard runs, so a field written later, by `on_connect` or by the connect guard itself, needs interior mutability: here a `OnceLock`.
+- `tests/gateway.rs`: every reply carries its message's `id` and the name of the connection that sent it; each connect has its disconnect, which still reads the session; the badge reaching `on_connect` and a later message; the drain's close frame, with the drain window on a scripted clock (`ScriptedTimer`).
 - `tests/binary.rs`: runs the compiled binary and talks to it over a socket.
 
 The gateway is declared `port = own`, so it needs a WebSocket server of its own, `ulo_ws_hyper::Server`; a gateway on the HTTP server's port goes through the upgrade hand-off `WsModule` registers.

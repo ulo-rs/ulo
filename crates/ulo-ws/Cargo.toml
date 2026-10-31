@@ -49,6 +49,8 @@ serde_json = { workspace = true, features = ["raw_value"] }
 tracing.workspace = true
 
 [dev-dependencies]
+# `WsModule::broadcast`'s doc example names the Redis adapter.
+ulo-ws-redis = { path = "../ulo-ws-redis" }
 # Itself with `conformance-probe`, for `tests/table.rs`.
 ulo-ws = { path = ".", features = ["conformance-probe"] }
 # The WebSocket conformance suite, which `tests/conformance.rs` runs against the hand-off, and

@@ -2,6 +2,7 @@
 //! connections for Postgres and MySQL, and for SQLite through `SyncConnectionWrapper`.
 //!
 //! ```ignore
+//! # // reason: needs diesel_migrations' embed_migrations!, which this crate does not depend on
 //! m.import(DieselModule::<Postgres>::from_config(&config, "database")
 //!     .migrate(DieselMigrations::new(diesel_migrations::embed_migrations!())));
 //! ```

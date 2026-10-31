@@ -4,10 +4,12 @@
 //! answers each upgrade request with `ulo-ws`'s handshake decision and hands each upgraded
 //! connection to its driver, which runs it on the app's runtime.
 //!
-//! ```ignore
-//! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?
-//!     .bind(ulo_ws_hyper::Server::new("0.0.0.0:9001"))
-//!     .listen().await?;
+//! ```
+//! # use ulo::{App, Connected};
+//! # async fn f(app: App<Connected>) -> Result<(), Box<dyn std::error::Error>> {
+//! let app = app.bind(ulo_ws_hyper::Server::new("0.0.0.0:9001")).listen().await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! The runtime is the listener's: [`Server`] accepts on tokio's sockets through

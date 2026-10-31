@@ -15,7 +15,8 @@ use proc_macro::TokenStream;
 /// enum as the default for variants that carry none; a variant left with no kind is a span error
 /// on it. The helper attribute is scoped to the derive, so it sits beside thiserror's `#[error]`:
 ///
-/// ```ignore
+/// ```
+/// # use ulo_transport::Classify;
 /// #[derive(Debug, thiserror::Error, Classify)]
 /// pub enum UserError {
 ///     #[error("user not found")] #[classify(not_found)] NotFound,

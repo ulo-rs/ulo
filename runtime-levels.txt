@@ -288,3 +288,5 @@ ex-36-db-two-instances       tokio-bound
 ex-37-db-diesel              tokio-bound
 ex-38-tracing                tokio-bound
 ex-39-one-app                tokio-bound
+ex-40-socket-activation      tokio-bound
+ex-41-one-guard-two-transports tokio-bound

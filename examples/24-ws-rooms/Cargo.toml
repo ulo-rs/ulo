@@ -14,7 +14,8 @@ integration = []
 ulo = { path = "../../crates/ulo" }
 ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
 ulo-ws = { path = "../../crates/ulo-ws" }
-ulo-ws-hyper = { path = "../../crates/ulo-ws-hyper" }
+ulo-http = { path = "../../crates/ulo-http" }
+ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
 ulo-ws-redis = { path = "../../crates/ulo-ws-redis" }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

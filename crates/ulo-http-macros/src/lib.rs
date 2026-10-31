@@ -3,6 +3,7 @@
 //! `ulo-handler-codegen`, and each goes on a method of a `#[routes]` impl:
 //!
 //! ```ignore
+//! # // reason: a proc-macro crate cannot depend on the crates the expansion names
 //! #[routes]
 //! impl UsersController {
 //!     #[ulo_http::get("/users/{id}")]

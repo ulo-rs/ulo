@@ -50,3 +50,26 @@ async fn a_pattern_nothing_handles_is_refused_with_its_reason() {
     assert_eq!((error.kind(), error.reason()), (ErrorKind::Unavailable, Some("pattern_unhandled")));
     server.stop().await.expect("closes");
 }
+
+#[tokio::test]
+async fn a_guard_reads_the_role_a_handler_declares_with_meta() {
+    let server = start().await;
+    let journal = server.handle.get::<Journal>().await.expect("the journal resolves");
+    bounded(client(server.addr).emit("calc.note", "one")).await.expect("published");
+    eventually("the event's handler", || journal.entries() == ["one"]).await;
+
+    let refused = bounded(client(server.addr).request::<_, usize>("calc.clear", &())).await.expect_err("no role");
+    assert_eq!((refused.kind(), refused.message()), (ErrorKind::Forbidden, "forbidden"));
+    let wrong = bounded(client(server.addr).request::<_, usize>("calc.clear", &()).header("x-role", "user")).await.expect_err("wrong role");
+    assert_eq!((wrong.kind(), wrong.message()), (ErrorKind::Forbidden, "forbidden"));
+    assert_eq!(journal.entries(), ["one"], "a refused call reached the handler");
+
+    let cleared = bounded(client(server.addr).request::<_, usize>("calc.clear", &()).header("x-role", "admin")).await.expect("admin admitted");
+    assert_eq!(cleared, 1);
+    assert!(journal.entries().is_empty());
+
+    // A handler declaring nothing is open to a caller with no role.
+    let open = bounded(client(server.addr).request::<_, i64>("calc.divide", &Divide { dividend: 9, divisor: 3 })).await.expect("open");
+    assert_eq!(open, 3);
+    server.stop().await.expect("closes");
+}

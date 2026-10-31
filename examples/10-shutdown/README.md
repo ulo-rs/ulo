@@ -14,6 +14,7 @@ Read first:
 
 - `src/lib.rs`: the two knobs, a gate that holds `/work`, and `/watch`.
 - `tests/shutdown.rs`: a request released inside the window finishes and a new connection is refused; a request held past the window is answered 503 and counted in `Shutdown::abandoned`. The window runs on a scripted clock (`ScriptedTimer`), not tokio's paused one: a running server holds timers of its own, and the paused clock jumps to them while a request is in flight.
+- `src/dying.rs` and the last test in `tests/shutdown.rs`: a hand-written `Server` beside the HTTP one whose `serve` fails. A server whose `serve` returns or fails while the app is running starts the same shutdown a signal would: the healthy server drains (a held request finishes), the phase reaches `Closed`, and `serve` returns `Err` whose one `ShutdownFailure::Serve` names the dead transport and its redacted error. A `serve` that panics is not handled this way: the panic unwinds out of `App::serve` with no drain.
 - `tests/binary.rs`: runs the compiled binary with `PORT` set to a free port, requests the address it prints and ends it with SIGTERM.
 
 Next: [11 wiring report](../11-wiring-report).

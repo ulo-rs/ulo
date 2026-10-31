@@ -1,7 +1,10 @@
 //! The MongoDB store for `ulo-db` (integrations DESIGN §4.6): `mongodb::Client`, bound bare.
 //!
-//! ```ignore
+//! ```
+//! # use ulo_db_mongodb::MongoModule;
+//! # fn f(m: &mut ulo::ModuleDef<'_>, config: &ulo_config::Config) {
 //! m.import(MongoModule::from_config(&config, "mongo"));
+//! # }
 //! ```
 //!
 //! Whether `create` connects is decided by the URI. `Client::with_options` connects nothing, but

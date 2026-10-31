@@ -1,7 +1,11 @@
 //! OTLP export over HTTP with protobuf (integrations DESIGN §6.4), the exporter `ulo-otel` takes.
 //!
-//! ```ignore
+//! ```
+//! # use ulo_otel::OtelOptions;
+//! # fn f(options: OtelOptions) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let otel = ulo_otel::Otel::new(options, ulo_otel_otlp::OtlpExporter::http())?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! The HTTP client is the crate's own over `ureq` (feature `ureq`, on by default), blocking inside

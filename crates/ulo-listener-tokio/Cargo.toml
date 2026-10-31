@@ -22,6 +22,8 @@ tokio = { workspace = true, features = ["net", "rt"] }
 tokio-rustls.workspace = true
 
 [dev-dependencies]
+# The crate doc's example binds the hyper server on this listener; a dev-dependency cycle Cargo allows.
+ulo-http-hyper = { path = "../ulo-http-hyper" }
 ulo = { path = "../ulo" }
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 ulo-test-certs = { path = "../ulo-test-certs" }

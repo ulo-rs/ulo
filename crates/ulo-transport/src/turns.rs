@@ -22,11 +22,15 @@ type Work = Pin<Box<dyn Future<Output = ()> + Send>>;
 /// The tasks of one server that its `close` gives a turn: each future wrapped by
 /// [`track`](Self::track) before it is spawned. Cheap to clone; every clone is the same set.
 ///
-/// ```ignore
+/// ```
+/// # use ulo_transport::{TaskSet, Turns};
+/// # async fn serve_connection(_io: ()) {}
+/// # fn f(mut tasks: TaskSet, io: ()) {
 /// let turns = Turns::default();
 /// tasks.spawn(turns.track(serve_connection(io)));
 /// // `close`, before any wait
 /// turns.give();
+/// # }
 /// ```
 #[derive(Clone, Default)]
 pub struct Turns {

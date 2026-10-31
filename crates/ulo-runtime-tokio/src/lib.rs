@@ -3,10 +3,17 @@
 //! and [`spawn`] and [`spawn_in`]. A tokio-based RPC link holds a `Tokio` of its own and runs its
 //! I/O there through [`Tokio::run`].
 //!
-//! ```ignore
+//! ```
+//! # use ulo::App;
+//! # #[ulo::module]
+//! # struct AppModule;
+//! # async fn f() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?;
 //! // ..
+//! # let app = app.connect().await?.listen().await?;
 //! app.serve(ulo_runtime_tokio::shutdown_signal()).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 use std::error::Error;

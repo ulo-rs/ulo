@@ -7,6 +7,8 @@ use ulo_http::headers::UserAgent;
 use ulo_http::{Created, Header, Json, Path, Query, WithHeaders};
 use ulo_transport::{Classify, Valid, Validate};
 
+pub mod intake;
+
 #[derive(Clone, Serialize)]
 pub struct Note {
     pub id: u32,
@@ -38,6 +40,9 @@ impl fmt::Display for NoteNotFound {
 
 impl std::error::Error for NoteNotFound {}
 
+/// A return type spelled as an alias of `Result` reaches the error chain as the domain error all the same.
+pub type Found = Result<Json<Note>, NoteNotFound>;
+
 #[injectable]
 pub struct Notes {
     #[injectable(default)]
@@ -67,7 +72,7 @@ impl NotesController {
     }
 
     #[ulo_http::get("/notes/{id}")]
-    fn find(&self, Path(id): Path<u32>) -> Result<Json<Note>, NoteNotFound> {
+    fn find(&self, Path(id): Path<u32>) -> Found {
         let all = self.notes.all.lock().unwrap();
         all.iter().find(|note| note.id == id).cloned().map(Json).ok_or(NoteNotFound(id))
     }
@@ -85,7 +90,7 @@ impl NotesController {
     }
 }
 
-#[module(providers = [Notes], controllers = [NotesController])]
+#[module(providers = [Notes], controllers = [NotesController, intake::IntakeController])]
 pub struct AppModule;
 
 pub fn builder() -> AppBuilder {

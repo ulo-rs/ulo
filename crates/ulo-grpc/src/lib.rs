@@ -4,6 +4,7 @@
 //! health, reflection, and client modules.
 //!
 //! ```ignore
+//! # // reason: the handler needs types generated from a .proto by the caller's build.rs
 //! // build.rs
 //! ulo_build::configure().compile(&["proto/users.proto"], &["proto"])?;
 //!

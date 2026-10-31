@@ -4,6 +4,7 @@
 //! bindings; an RPC application serves the same engine from an ordinary handler:
 //!
 //! ```ignore
+//! # // reason: names a handler on ulo-rpc, which this crate does not depend on
 //! #[ulo_rpc::message("gql")]
 //! async fn gql(&self, req: Payload<GqlRequest>, engine: Dep<dyn Engine>) -> GqlResponse { /* .. */ }
 //! ```

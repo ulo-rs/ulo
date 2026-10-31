@@ -2,6 +2,7 @@
 //! DESIGN §4.3).
 //!
 //! ```ignore
+//! # // reason: names a gateway type the caller defines
 //! rooms.to_all().emit("notice", &n).await?;
 //! rooms.gateway::<ChatGateway>().to_room("lobby").except([me]).emit("chat.message", &m).await?;
 //! rooms.to_client(id).emit("dm", &dm).await?;

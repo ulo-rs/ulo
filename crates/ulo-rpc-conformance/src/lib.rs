@@ -3,6 +3,7 @@
 //! `tests/`.
 //!
 //! ```ignore
+//! # // reason: a template for a link crate's tests/conformance.rs: it needs a live broker and elides the host's bodies
 //! // crates/ulo-rpc-nats/tests/conformance.rs
 //! struct NatsBroker { url: String }
 //!
@@ -169,6 +170,7 @@ pub trait Broker: Sized + Send + Sync + 'static {
 /// passed:
 ///
 /// ```ignore
+/// # // reason: names a link type defined in the transport crate's own tests/conformance.rs
 /// ulo_rpc_conformance::conformance_suite!(UdpLoopback; not_applicable {
 ///     recovery_after_disrupt: "UDP holds no connection to lose",
 /// });

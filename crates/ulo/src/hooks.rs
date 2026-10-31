@@ -246,8 +246,11 @@ fn not_run<T>(kind: HookKind, missing: &str) -> BoxError {
 /// concrete type implements its trait and is a no-op otherwise. `#[injectable]` emits the same
 /// probes; this macro offers them to a hand-written `Construct` impl that wants all five checked.
 ///
-/// ```ignore
+/// ```
+/// # struct Cache;
+/// # impl Cache {
 /// fn hooks(h: &mut ulo::Hooks<Self>) { ulo::hooks!(h); }
+/// # }
 /// ```
 #[macro_export]
 macro_rules! hooks {

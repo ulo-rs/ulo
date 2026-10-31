@@ -2,11 +2,19 @@
 //! owns the sockets, and the app runs as a service the host mounts, nested under a path or as its
 //! fallback.
 //!
-//! ```ignore
+//! ```
+//! # use ulo::App;
+//! # use ulo_http::MB;
+//! # #[ulo::module]
+//! # struct AppModule;
+//! # async fn f() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let server = ulo_http_axum::Embedded::new().nested_at("/api").body_limit(4 * MB);
 //! let embedded = server.handle();
 //! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
 //! let router = axum::Router::new().nest_service("/api", embedded.service());
+//! # let router: axum::Router = router;
+//! # let _ = (app, router); Ok(())
+//! # }
 //! ```
 //!
 //! [`Embedded`] is a `Server` binding nothing: `listen()` still prepares it, so the route table,

@@ -22,6 +22,9 @@ tracing.workspace = true
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
+# `ModuleDef::enhancer`'s doc example names two transports.
+ulo-http = { path = "../ulo-http" }
+ulo-rpc = { path = "../ulo-rpc" }
 # Integration tests under `tests/` build apps on the tokio runtime; a dev-dependency cycle Cargo allows.
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 # `rt-multi-thread`: `undeclared_reads.rs` runs constructions in parallel on eight workers.

@@ -8,8 +8,10 @@
 //! and the link's tasks run on the runtime it runs under, `ulo_runtime_smol::Smol` on a smol app: a server's
 //! app's, and a client's own, which `RpcClient` hands it. `Tcp::with_runtime` puts them on another.
 //!
-//! ```ignore
-//! app.bind(ulo_rpc::Server::new(ulo_rpc_tcp_smol::Tcp::new("0.0.0.0:7000")))
+//! ```
+//! # fn f(app: ulo::App<ulo::Connected>) {
+//! app.bind(ulo_rpc::Server::new(ulo_rpc_tcp_smol::Tcp::new("0.0.0.0:7000")));
+//! # }
 //! ```
 
 mod link;

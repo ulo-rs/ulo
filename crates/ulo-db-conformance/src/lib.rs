@@ -3,6 +3,7 @@
 //! `tests/`, against a real server in a container, or a file for SQLite.
 //!
 //! ```ignore
+//! # // reason: a template for a store crate's tests/conformance.rs: it needs a live server and elides the host's bodies
 //! // crates/ulo-db-sqlx/tests/conformance.rs
 //! struct PostgresHost { /* a fresh container */ }
 //!
@@ -230,6 +231,7 @@ pub trait Host: Sized + Send + Sync + 'static {
 /// `#[ignore = "not applicable: <reason>"]`:
 ///
 /// ```ignore
+/// # // reason: names a host type defined in the store crate's own tests/conformance.rs
 /// ulo_db_conformance::conformance_suite!(RedisHost; not_applicable {
 ///     migrations_run_only_on_request: "Redis has no migrator",
 /// });
@@ -241,6 +243,7 @@ pub trait Host: Sized + Send + Sync + 'static {
 /// and run with `--ignored` it fails until the store is fixed:
 ///
 /// ```ignore
+/// # // reason: names a host type defined in the store crate's own tests/conformance.rs
 /// ulo_db_conformance::conformance_suite!(MongoHost; not_applicable {}; pending {
 ///     unreachable_database_fails_at_the_bound: "pending the laziness batch, designer ruling QUESTIONS_4 Q2/Q5; that batch must un-ignore this",
 /// });

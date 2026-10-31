@@ -2,6 +2,7 @@
 //! on the methods of a `#[routes]` impl, each a thin layer over `ulo-handler-codegen`.
 //!
 //! ```ignore
+//! # // reason: a proc-macro crate cannot depend on the crates the expansion names
 //! #[routes]
 //! impl InvoicesController {
 //!     #[ulo_rpc::message("invoices.create")]

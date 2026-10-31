@@ -51,6 +51,7 @@ use crate::transport::{Http, HttpCarried, RequestHead};
 /// The pre-dispatch stage's entries one module declares:
 ///
 /// ```ignore
+/// # // reason: names tower-http layers and an application's middleware types, none of which this crate depends on
 /// m.meta::<ulo_http::PreDispatch>()
 ///     .apply_value(Cors::new().allow_origin("https://app.example").allow_credentials(true))
 ///     .apply::<RequestId>()                                           // unscoped: every request, misses included

@@ -19,3 +19,8 @@ syn = { workspace = true, features = ["full"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# `Classify`'s doc example derives through `ulo_transport`, the crate that re-exports it.
+ulo-transport = { path = "../ulo-transport" }
+thiserror = "2"

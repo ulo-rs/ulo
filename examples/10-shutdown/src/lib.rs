@@ -3,6 +3,8 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use ulo::{App, AppBuilder, Dep, ExecutionRef, injectable, module, routes};
 
+pub mod dying;
+
 /// How long in-flight executions get after the app stops accepting.
 pub const DRAIN: Duration = Duration::from_secs(5);
 /// The cap on the whole close sequence, counted from its trigger.

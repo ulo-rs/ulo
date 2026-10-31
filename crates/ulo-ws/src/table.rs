@@ -5,6 +5,7 @@
 //! socket code around these three calls.
 //!
 //! ```ignore
+//! # // reason: a fragment of a server's lifecycle: it elides the HTTP head parsing and the upgraded I/O
 //! // `prepare`
 //! let table = GatewayTable::own_port("my_server::Server", &mounted, &defaults, &mut failures);
 //! // `bind`

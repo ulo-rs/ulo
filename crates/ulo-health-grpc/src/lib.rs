@@ -1,8 +1,10 @@
 //! `grpc.health.v1` driven by `ulo-health` (integrations DESIGN §3.4).
 //!
-//! ```ignore
+//! ```
+//! # fn f(m: &mut ulo::ModuleDef<'_>) {
 //! m.import(ulo_health::HealthModule::new());
 //! m.import(ulo_health_grpc::HealthGrpc::new());
+//! # }
 //! ```
 //!
 //! The bridge imports `ulo_grpc::GrpcHealth::module()` itself, so the gRPC server serves the

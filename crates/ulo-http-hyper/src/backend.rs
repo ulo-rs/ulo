@@ -48,10 +48,14 @@ impl<L: Listener> HyperOn<L> {
     /// moves into the app: each counted at its first read, after its TLS handshake where the
     /// server has TLS.
     ///
-    /// ```ignore
+    /// ```
+    /// # use ulo::{App, Connected};
+    /// # async fn f(app: App<Connected>) -> Result<(), Box<dyn std::error::Error>> {
     /// let backend = ulo_http_hyper::Hyper::default();
     /// let read_count = backend.read_count();
     /// let app = app.bind(ulo_http_hyper::Server::with_backend("127.0.0.1:0", backend)).listen().await?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn read_count(&self) -> ReadCount {
         self.read_count.clone()

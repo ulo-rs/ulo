@@ -2,6 +2,7 @@
 //! client, with the three SQL engines' URL schemes.
 //!
 //! ```ignore
+//! # // reason: names the application's sea-orm-migration Migrator
 //! m.import(SeaOrmModule::from_config(&config, "database").migrate(SeaOrmMigrations::<Migrator>::new()));
 //! ```
 //!

@@ -70,3 +70,22 @@ async fn the_drain_closes_a_connection_with_1001_and_the_shutdown_phrase_and_its
     assert_eq!(clock.elapsed(), Duration::ZERO, "an idle connection ends the drain before its window");
     assert_eq!(journal.entries(), ["connected ada", "disconnected ada: Drain"]);
 }
+
+#[tokio::test]
+async fn what_the_connect_guard_found_reaches_on_connect_and_is_there_for_later_messages() {
+    let server = start_ws(builder()).await;
+    let mut ada = connect(server.addr, "/chat", &[("x-name", "ada"), ("x-badge", "staff")]).await;
+    let mut bob = connect(server.addr, "/chat", &[("x-name", "bob")]).await;
+
+    for (socket, id) in [(&mut ada, 1), (&mut bob, 2)] {
+        send(socket, json!({ "event": "badge", "id": id })).await;
+    }
+    assert_eq!(next(&mut ada).await, json!({ "id": 1, "data": "staff" }));
+    assert_eq!(next(&mut bob).await, json!({ "id": 2, "data": "guest" }));
+
+    send(&mut ada, json!({ "event": "badge", "id": 3 })).await;
+    assert_eq!(next(&mut ada).await, json!({ "id": 3, "data": "staff" }), "a later message lost the badge");
+    hang_up(ada).await;
+    hang_up(bob).await;
+    server.stop().await.unwrap();
+}

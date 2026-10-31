@@ -16,6 +16,7 @@ use crate::transport::{Grpc, GrpcMetadata};
 /// The gRPC pre-dispatch stage's entries one module declares:
 ///
 /// ```ignore
+/// # // reason: names tower-http, which this crate does not depend on
 /// m.meta::<ulo_grpc::PreDispatch>()
 ///     .layer(TraceLayer::new_for_grpc())
 ///     .apply_for::<ApiKeyAuth>(["/users.v1.UserService/*"]);

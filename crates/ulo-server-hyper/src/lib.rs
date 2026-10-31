@@ -10,6 +10,7 @@
 //! and starts the connection's graceful shutdown when [`Accepted::draining`] resolves.
 //!
 //! ```ignore
+//! # // reason: a fragment of a backend's serve loop: it elides the connection driver
 //! let serve = Serve::<ulo_listener_tokio::TokioListener>::new(listeners, tls, &config, Arc::clone(mounted.runtime()))?;
 //! serve.run(move |accepted: Accepted<_>| {
 //!     let builder = builder.clone();

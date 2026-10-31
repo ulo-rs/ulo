@@ -3,9 +3,12 @@
 //! hyper's I/O traits. The listener the HTTP backend, the standalone WebSocket server and the gRPC
 //! server use on tokio, and their default.
 //!
-//! ```ignore
+//! ```
+//! # async fn f(app: ulo::App<ulo::Connected>) -> Result<(), Box<dyn std::error::Error>> {
 //! // `ulo_http_hyper::Server` is the hyper backend on this listener.
 //! let app = app.bind(ulo_http_hyper::Server::new("0.0.0.0:8080")).listen().await?;
+//! # let _ = app; Ok(())
+//! # }
 //! ```
 //!
 //! It adopts the sockets `ulo-net` bound or inherited, so endpoints, port 0 and socket activation

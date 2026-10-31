@@ -3,7 +3,9 @@
 //! and [`Ca`], a test certificate authority for a test that needs a chain, such as a server
 //! verifying its client's certificate.
 //!
-//! ```ignore
+//! ```no_run
+//! # use ulo_net::{rustls::ClientConfig, Tls};
+//! # use ulo_rpc_tcp::Tcp;
 //! let cert = ulo_test_certs::localhost();
 //! let server = Tcp::new("127.0.0.1:0").tls(Tls::from_pem(cert.cert_pem(), cert.key_pem()));
 //! let client = ClientConfig::builder().with_root_certificates(cert.roots()).with_no_client_auth();

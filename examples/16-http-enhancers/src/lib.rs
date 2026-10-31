@@ -1,7 +1,9 @@
 use std::sync::Mutex;
 
-use ulo::{AnyGuard, AnyInterceptor, App, AppBuilder, BoxError, Dep, ErrorHandler, Guard, GuardRejected, Interceptor, Next, injectable, module, routes};
+use ulo::{AnyErrorHandler, AnyGuard, AnyInterceptor, App, AppBuilder, BoxError, Dep, ErrorHandler, Guard, GuardRejected, Interceptor, Next, injectable, module, routes};
 use ulo_http::{HttpBody, HttpCx, Http, Response, StatusCode};
+
+pub mod order;
 
 /// What the pipeline did, in order, so a test can read it back.
 #[injectable]
@@ -115,10 +117,16 @@ impl ReportsController {
         Trace,
         RoleGuard,
         Refusals,
+        order::Telemetry,
+        order::Method,
+        order::Controller,
+        order::Claimer,
+        order::Shape,
+        into AnyErrorHandler<Http>: [order::Shape],
         into AnyGuard<Http>: [with = |trace: Dep<Trace>| Stamp::new("global", trace)],
         into AnyInterceptor<Http>: [with = |trace: Dep<Trace>| Stamp::new("global", trace)],
     ],
-    controllers = [ReportsController],
+    controllers = [ReportsController, order::OrderedController],
 )]
 pub struct AppModule;
 

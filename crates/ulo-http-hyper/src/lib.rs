@@ -4,16 +4,24 @@
 //! builders, configured from the server's settings, and each request is converted into a
 //! `ulo_http::Request` and answered by the `AppService`. `ulo-http` owns routing.
 //!
-//! ```ignore
+//! ```
+//! # use ulo::{App, Connected};
+//! # async fn f(app: App<Connected>) -> Result<(), Box<dyn std::error::Error>> {
 //! let app = app.bind(ulo_http_hyper::Server::new("0.0.0.0:8080")).listen().await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! The runtime is the listener's: [`Server`] serves on tokio's sockets through `ulo-listener-tokio`,
 //! the default `tokio` feature, and [`ServerOn`] on any other listener, smol's through
 //! `ulo-listener-smol`:
 //!
-//! ```ignore
+//! ```
+//! # use ulo::{App, Connected};
+//! # fn f(app: App<Connected>) {
 //! let server = ulo_http_hyper::ServerOn::<ulo_listener_smol::SmolListener>::new("0.0.0.0:8080");
+//! app.bind(server);
+//! # }
 //! ```
 //!
 //! Either way the connections, HTTP/2's stream tasks and the header-read clock run on the app's

@@ -26,6 +26,7 @@ jobs:
       # item (`--self-test` runs first, inside the check), and hold themselves to the
       # `clippy -D warnings` a user's crate is held to.
       - run: python3 scripts/check_examples.py
+      - run: python3 scripts/check_doctests.py
       - run: cargo clippy -p 'ex-*' --all-targets --no-deps --locked -- -D warnings
 
   runtime-levels:

@@ -2584,6 +2584,7 @@ name = "ex-15-http-requests"
 version = "0.0.0"
 dependencies = [
  "ex-support",
+ "futures-util",
  "serde",
  "serde_json",
  "tokio",
@@ -2605,6 +2606,7 @@ dependencies = [
  "ulo-http",
  "ulo-http-hyper",
  "ulo-runtime-tokio",
+ "ulo-transport",
 ]
 
 [[package]]
@@ -2713,9 +2715,10 @@ dependencies = [
  "tokio",
  "ulo",
  "ulo-conformance-support",
+ "ulo-http",
+ "ulo-http-hyper",
  "ulo-runtime-tokio",
  "ulo-ws",
- "ulo-ws-hyper",
  "ulo-ws-redis",
 ]
 
@@ -2994,6 +2997,35 @@ dependencies = [
  "ulo-runtime-tokio",
  "ulo-ws",
  "ulo-ws-hyper",
+]
+
+[[package]]
+name = "ex-40-socket-activation"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-net",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
+name = "ex-41-one-guard-two-transports"
+version = "0.0.0"
+dependencies = [
+ "ex-support",
+ "serde_json",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-rpc",
+ "ulo-rpc-tcp",
+ "ulo-runtime-tokio",
+ "ulo-transport",
 ]
 
 [[package]]
@@ -8797,7 +8829,9 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+ "ulo-http",
  "ulo-macros",
+ "ulo-rpc",
  "ulo-runtime-tokio",
 ]
 
@@ -8823,6 +8857,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "watchexec",
+ "watchexec-events",
  "watchexec-filterer-globset",
  "watchexec-signals",
 ]
@@ -9188,6 +9223,7 @@ dependencies = [
 name = "ulo-http"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "axum",
  "bytes",
  "futures",
  "futures-core",
@@ -9208,6 +9244,8 @@ dependencies = [
  "tracing",
  "ulo",
  "ulo-conformance-support",
+ "ulo-http-axum",
+ "ulo-http-hyper",
  "ulo-http-macros",
  "ulo-net",
  "ulo-runtime-tokio",
@@ -9391,6 +9429,7 @@ dependencies = [
  "ulo",
  "ulo-conformance-support",
  "ulo-http",
+ "ulo-http-hyper",
  "ulo-net",
  "ulo-runtime-smol",
  "ulo-server-hyper",
@@ -9407,6 +9446,7 @@ dependencies = [
  "tokio-rustls",
  "ulo",
  "ulo-http",
+ "ulo-http-hyper",
  "ulo-net",
  "ulo-runtime-tokio",
  "ulo-server-hyper",
@@ -9795,6 +9835,8 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "rcgen",
  "rustls",
+ "ulo-net",
+ "ulo-rpc-tcp",
 ]
 
 [[package]]
@@ -9821,6 +9863,8 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+ "thiserror 2.0.21",
+ "ulo-transport",
 ]
 
 [[package]]
@@ -9857,6 +9901,7 @@ dependencies = [
  "ulo-ws",
  "ulo-ws-conformance",
  "ulo-ws-macros",
+ "ulo-ws-redis",
 ]
 
 [[package]]

@@ -18,7 +18,8 @@ use crate::table::GatewayDefaults;
 /// for the gateways on the HTTP server's port that a standalone server, `ulo_ws_hyper::Server`,
 /// carries for those on its own port.
 ///
-/// ```ignore
+/// ```
+/// # use ulo::module;
 /// #[module(imports = [ulo_ws::WsModule::for_root().broadcast(ulo_ws_redis::Redis::url("redis://cache:6379"))])]
 /// pub struct AppModule;
 /// ```

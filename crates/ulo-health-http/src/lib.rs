@@ -1,8 +1,10 @@
 //! The probe routes of `ulo-health` over HTTP (integrations DESIGN §3.3).
 //!
-//! ```ignore
+//! ```
+//! # fn f(m: &mut ulo::ModuleDef<'_>) {
 //! m.import(ulo_health::HealthModule::new());
 //! m.import(ulo_health_http::HealthHttp::new());
+//! # }
 //! ```
 //!
 //! Each route answers 200 when its probe passes and 503 when it does not; Kubernetes counts 200 to

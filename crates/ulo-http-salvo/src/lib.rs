@@ -1,15 +1,23 @@
 //! Runs a `ulo` application inside a salvo server (transports DESIGN §3.8): a native embedding,
 //! the adapter implementing `salvo::Handler`, nested under a path or as the catch-all.
 //!
-//! ```ignore
+//! ```
+//! # use ulo::App;
+//! # #[ulo::module]
+//! # struct AppModule;
+//! # async fn f() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//! use salvo::prelude::*;
+//!
 //! let server = ulo_http_salvo::Embedded::new().nested_at("/api");
 //! let embedded = server.handle();
 //! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
 //!
-//! let router = salvo::Router::new().push(salvo::Router::with_path("api/{**rest}").goal(ulo_http_salvo::handler(&embedded)));
+//! let router = Router::new().push(Router::with_path("api/{**rest}").goal(ulo_http_salvo::handler(&embedded)));
 //! let acceptor = salvo::conn::TcpListener::new("0.0.0.0:8080").bind().await;
-//! let server = salvo::Server::new(ulo_http_salvo::Closing::new(&embedded, acceptor));
-//! ulo_http_salvo::run(app, &embedded, server, salvo::Service::new(router), ulo_runtime_tokio::shutdown_signal()).await?;
+//! let server = Server::new(ulo_http_salvo::Closing::new(&embedded, acceptor));
+//! ulo_http_salvo::run(app, &embedded, server, Service::new(router), ulo_runtime_tokio::shutdown_signal()).await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! The server is built over [`Closing`], which drops the acceptor it wraps when the drain begins

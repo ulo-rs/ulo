@@ -5,9 +5,20 @@
 //! with Kubernetes' meanings through [`Readiness`]. A transport crate (`ulo-health-http`,
 //! `ulo-health-grpc`) serves the answers.
 //!
-//! ```ignore
+//! ```
+//! # use std::sync::Arc;
+//! # use ulo::{BoxFuture, ModuleDef};
+//! # use ulo_health::{Check, Health};
+//! # #[derive(Default)]
+//! # struct QueueCheck;
+//! # impl Check for QueueCheck {
+//! #     fn name(&self) -> &str { "queue" }
+//! #     fn check(&self) -> BoxFuture<'_, Health> { Box::pin(async { Health::Up }) }
+//! # }
+//! # fn f(m: &mut ModuleDef<'_>) {
 //! m.import(ulo_health::HealthModule::new());
 //! m.contribute::<dyn ulo_health::Check>().value(Arc::new(QueueCheck::default()));
+//! # }
 //! ```
 //!
 //! A check that does not answer within its bound is down, a probe arriving while a run is in

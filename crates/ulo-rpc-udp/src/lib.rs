@@ -6,8 +6,10 @@
 //! `Timeout` (`confirms_drain` is `false`). No TLS: DTLS is not supported, so `Udp::tls` does not
 //! exist.
 //!
-//! ```ignore
-//! app.bind(ulo_rpc::Server::new(ulo_rpc_udp::Udp::new("0.0.0.0:7001")))
+//! ```
+//! # fn f(app: ulo::App<ulo::Connected>) {
+//! app.bind(ulo_rpc::Server::new(ulo_rpc_udp::Udp::new("0.0.0.0:7001")));
+//! # }
 //! ```
 
 mod link;

@@ -3,7 +3,8 @@
 //! by construction, delivery is best effort and ordered per sender within one process, and the
 //! API is the in-memory adapter's.
 //!
-//! ```ignore
+//! ```
+//! # use ulo::module;
 //! #[module(imports = [ulo_ws::WsModule::for_root().broadcast(ulo_ws_redis::Redis::url("redis://cache:6379"))])]
 //! pub struct AppModule;
 //! ```

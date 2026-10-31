@@ -1,5 +1,5 @@
 use ulo_runtime_tokio::{Tokio, shutdown_signal};
-use ulo_ws_hyper::Server;
+use ulo_http_hyper::Server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -19,6 +19,8 @@ futures-io.workspace = true
 futures-rustls.workspace = true
 
 [dev-dependencies]
+# The crate doc's example binds the hyper server on this listener; a dev-dependency cycle Cargo allows.
+ulo-http-hyper = { path = "../ulo-http-hyper", default-features = false }
 ulo-conformance-support = { path = "../ulo-conformance-support", features = ["smol"] }
 ulo = { path = "../ulo" }
 ulo-runtime-smol = { path = "../ulo-runtime-smol" }

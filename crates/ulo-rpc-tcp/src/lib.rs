@@ -4,8 +4,10 @@
 //! call shape; `Addressed`; TLS through `ulo_net::Tls` with no ALPN; `goaway` on every connection
 //! at the drain.
 //!
-//! ```ignore
-//! app.bind(ulo_rpc::Server::new(ulo_rpc_tcp::Tcp::new("0.0.0.0:7000")))
+//! ```
+//! # fn f(app: ulo::App<ulo::Connected>) {
+//! app.bind(ulo_rpc::Server::new(ulo_rpc_tcp::Tcp::new("0.0.0.0:7000")));
+//! # }
 //! ```
 
 mod link;

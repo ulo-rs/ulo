@@ -42,6 +42,11 @@ tower.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+# The doc examples of `Server`, `config` and `embed` name a backend and a host; a dev-dependency
+# cycle Cargo allows.
+ulo-http-hyper = { path = "../ulo-http-hyper" }
+ulo-http-axum = { path = "../ulo-http-axum" }
+axum.workspace = true
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 # `ScriptedTimer`: the clock whose refusal the keep-alive's unit test reads.
 ulo-conformance-support = { path = "../ulo-conformance-support" }

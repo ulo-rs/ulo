@@ -18,6 +18,7 @@ default = ["dev"]
 # dependency tree; disable for a lean scaffolding-only install.
 dev = [
     "dep:watchexec",
+    "dep:watchexec-events",
     "dep:watchexec-filterer-globset",
     "dep:watchexec-signals",
     "dep:ignore-files",
@@ -37,6 +38,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }
 watchexec = { workspace = true, optional = true }
+watchexec-events = { workspace = true, optional = true }
 watchexec-filterer-globset = { workspace = true, optional = true }
 watchexec-signals = { workspace = true, optional = true }
 

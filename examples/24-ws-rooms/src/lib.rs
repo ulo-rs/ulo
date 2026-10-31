@@ -3,6 +3,9 @@ use ulo::{App, AppBuilder, Dep, Module, ModuleDef, ModuleIdentity, injectable, r
 use ulo_ws::{BroadcastError, Payload, Rooms, WsCx, WsModule};
 use ulo_ws_redis::Redis;
 
+mod notify;
+pub use notify::{Notice, Notifier};
+
 #[derive(Deserialize)]
 pub struct Shout {
     pub room: String,
@@ -13,7 +16,7 @@ pub struct Shout {
 pub struct Lobby;
 
 #[routes]
-#[ulo_ws::gateway(path = "/rooms", port = own)]
+#[ulo_ws::gateway(path = "/rooms")]
 impl Lobby {
     #[ulo_ws::message("join")]
     async fn join(&self, room: Payload<String>, cx: WsCx) {
@@ -49,6 +52,7 @@ impl Module for Root {
             None => m.import(WsModule::for_root()),
         };
         m.controller::<Lobby>();
+        m.controller::<Notifier>();
     }
 }
 

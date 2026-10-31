@@ -114,6 +114,7 @@ impl GrpcCx {
     /// its own.
     ///
     /// ```ignore
+    /// # // reason: a fragment of an error handler: it needs a generated message type
     /// async fn handle(&self, err: BoxError, cx: &GrpcCx) -> Result<Reply, BoxError> {
     ///     match err.downcast_ref::<CallError>().and_then(|call| call.source_as::<NotCached>()) {
     ///         Some(_) => Ok(cx.reply(Response::new(pb::User::default()).metadata("x-cache", "miss"))),

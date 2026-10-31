@@ -9,8 +9,10 @@
 //! client's connection drops is `Unavailable`, since a direct reply-to address dies with its
 //! channel; the drain cancels the consumers (`basic.cancel`); `amqps://` selects TLS.
 //!
-//! ```ignore
-//! app.bind(ulo_rpc::Server::new(ulo_rpc_rabbitmq::RabbitMq::url("amqp://guest:guest@mq:5672/%2f")))
+//! ```
+//! # fn f(app: ulo::App<ulo::Connected>) {
+//! app.bind(ulo_rpc::Server::new(ulo_rpc_rabbitmq::RabbitMq::url("amqp://guest:guest@mq:5672/%2f")));
+//! # }
 //! ```
 //!
 //! On the wire a request is the payload published to the pattern's queue with `reply_to` and

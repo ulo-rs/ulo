@@ -2,7 +2,12 @@
 //! embedding. The host owns the sockets, its own middleware wraps the app, and the app answers
 //! through `embedded.service()`, nested or as the fallback.
 //!
-//! ```ignore
+//! ```
+//! # use std::net::SocketAddr;
+//! # use ulo::App;
+//! # #[ulo::module]
+//! # struct AppModule;
+//! # async fn f(listener: tokio::net::TcpListener) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! use tower::Layer;
 //!
 //! let server = ulo_http_axum::Embedded::new().nested_at("/api").peer_addr(true);
@@ -13,6 +18,8 @@
 //!     .nest_service("/api", ulo_http_axum::HostLayer.layer(embedded.service()))
 //!     .into_make_service_with_connect_info::<SocketAddr>();
 //! ulo_http_axum::run(app, &embedded, axum::serve(listener, router), ulo_runtime_tokio::shutdown_signal()).await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! `nest_service` strips the prefix before the app sees the path. [`HostLayer`], wrapped around

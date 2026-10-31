@@ -5,8 +5,10 @@
 //! when the client's Pub/Sub connection drops; `rediss://` selects TLS
 //! under the crate's `tls` feature.
 //!
-//! ```ignore
-//! app.bind(ulo_rpc::Server::new(ulo_rpc_redis::Redis::url("redis://cache:6379")))
+//! ```
+//! # fn f(app: ulo::App<ulo::Connected>) {
+//! app.bind(ulo_rpc::Server::new(ulo_rpc_redis::Redis::url("redis://cache:6379")));
+//! # }
 //! ```
 //!
 //! On the wire every message is one whole frame in the link's codec. A `req` or `open` frame

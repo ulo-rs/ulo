@@ -61,11 +61,16 @@ where
 /// stop only once the acceptor is gone: salvo selects between accepting and its stop command in
 /// random order, and a stop read first keeps the acceptor alive until the connections end.
 ///
-/// ```ignore
+/// ```
+/// # use salvo::prelude::*;
+/// # use ulo::{app::Bound, App};
+/// # async fn f(app: App<Bound>, embedded: ulo_http_salvo::Handle, router: Router) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// let acceptor = salvo::conn::TcpListener::new("0.0.0.0:8080").bind().await;
-/// let mut server = salvo::Server::new(ulo_http_salvo::Closing::new(&embedded, acceptor));
+/// let mut server = Server::new(ulo_http_salvo::Closing::new(&embedded, acceptor));
 /// server.http1_mut().max_buf_size(64 * 1024);
-/// ulo_http_salvo::run(app, &embedded, server, salvo::Service::new(router), ulo_runtime_tokio::shutdown_signal()).await?;
+/// ulo_http_salvo::run(app, &embedded, server, Service::new(router), ulo_runtime_tokio::shutdown_signal()).await?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct Closing<A> {
     holdings: Vec<Holding>,

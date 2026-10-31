@@ -2,6 +2,7 @@
 //! `#[message("event")]` on its handler methods, each a thin layer over `ulo-handler-codegen`.
 //!
 //! ```ignore
+//! # // reason: a proc-macro crate cannot depend on the crates the expansion names
 //! #[routes]
 //! #[ulo_ws::gateway(path = "/chat", namespace = "lobby", event = "event", session = ChatSession,
 //!                   connect_guards(TokenGuard), subprotocols = ["chat.v1"])]

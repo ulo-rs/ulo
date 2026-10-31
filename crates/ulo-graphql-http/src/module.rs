@@ -23,6 +23,7 @@ use crate::controller::{EndpointSettings, GraphqlEndpoint};
 /// also needs `WsModule` imported once by the application.
 ///
 /// ```ignore
+/// # // reason: names an engine adapter crate (ulo-graphql-async-graphql) this crate does not depend on
 /// #[module(
 ///     providers = [
 ///         with = |q: Dep<QueryRoot>, s: Dep<SubscriptionRoot>| Schema::new(q, EmptyMutation, s),

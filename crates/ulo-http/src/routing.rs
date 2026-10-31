@@ -8,13 +8,20 @@ use ulo::HandlerInfo;
 /// raw path. Its presence means the app answered: a host serving the app nested or as its fallback
 /// finds none on a response it routed elsewhere.
 ///
-/// ```ignore
+/// ```
+/// # use ulo_http::Routing;
+/// # struct Metrics;
+/// # impl Metrics {
+/// #     fn record(&self, _route: &str) {}
+/// # }
+/// # fn f(response: http::Response<()>, metrics: Metrics) {
 /// match response.extensions().get::<ulo_http::Routing>() {
 ///     Some(Routing::Matched { route, .. } | Routing::Options { route }) => metrics.record(route),
 ///     Some(Routing::NotFound | Routing::MethodNotAllowed) => metrics.record("<miss>"),
 ///     Some(_) => metrics.record("<unrouted>"),
 ///     None => {} // not the app's answer
 /// }
+/// # }
 /// ```
 #[non_exhaustive]
 #[derive(Clone)]

@@ -7,6 +7,7 @@
 //! `tests/`.
 //!
 //! ```ignore
+//! # // reason: a template for a runtime crate's tests/conformance.rs: it elides the harness's bodies
 //! // crates/ulo-runtime-tokio/tests/conformance.rs
 //! struct OnTokio;
 //!
@@ -80,6 +81,7 @@ pub type Run = Box<dyn Fn(BoxFuture<'static, ()>) -> BoxFuture<'static, Result<(
 /// passed:
 ///
 /// ```ignore
+/// # // reason: names a harness type defined in the runtime crate's own tests/conformance.rs
 /// ulo_runtime_conformance::runtime_suite!(OnSmol; not_applicable {
 ///     a_shut_down_runtime_refuses_spawning_and_timing_without_panicking: "a `Smol` cannot shut down",
 /// });

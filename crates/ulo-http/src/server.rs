@@ -21,8 +21,11 @@ use crate::upgrade::{UpgradeHandler, Upgrades};
 /// it carries addresses, TLS and limits; everything a route needs it reads from the mounted
 /// handlers and module metadata.
 ///
-/// ```ignore
+/// ```
+/// # use ulo_http::config::Tls;
+/// # fn f(app: ulo::App<ulo::Connected>) -> impl Sized {
 /// app.bind(ulo_http_hyper::Server::new("0.0.0.0:8080").tls(Tls::from_pem_files("cert.pem", "key.pem")))
+/// # }
 /// ```
 ///
 /// `prepare` builds the route table and the pre-dispatch stage, parses every endpoint, loads TLS,

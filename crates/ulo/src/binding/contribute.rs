@@ -33,6 +33,7 @@ use crate::timer::BoxError;
 /// [`execution`](Self::execution) and [`transient`](Self::transient) override it.
 ///
 /// ```ignore
+/// # // reason: the fragment names transports and roles defined in downstream crates (Http, AnyGuard), and a module's builder
 /// m.contribute::<dyn Plugin>().provide::<MetricsPlugin>(|a| a);
 /// m.enhancer::<AnyGuard<Http>>().provide::<AuthGuard>(|a| a);
 /// m.contribute::<dyn HealthIndicator>()

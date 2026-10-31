@@ -90,13 +90,32 @@ pub enum PendingMany {}
 
 /// The test builder: `TestApp::of(AppModule)`, overrides, then `wire()` or `connect()`.
 ///
-/// ```ignore
+/// ```
+/// # use std::sync::Arc;
+/// # use ulo::testing::TestApp;
+/// # trait UserRepo: Send + Sync {}
+/// # #[derive(Default)]
+/// # struct InMemoryRepo;
+/// # impl UserRepo for InMemoryRepo {}
+/// # struct NullAudit;
+/// # type AuditLog = NullAudit;
+/// # #[ulo::module]
+/// # struct AppModule;
+/// # #[ulo::module]
+/// # struct BillingModule;
+/// # #[ulo::module]
+/// # struct MailModule;
+/// # #[ulo::module]
+/// # struct FakeMailModule;
+/// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
 /// let app = TestApp::of(AppModule)
 ///     .override_value::<dyn UserRepo>(Arc::new(InMemoryRepo::default()))
 ///     .override_value::<AuditLog>(Arc::new(NullAudit)).in_module::<BillingModule>()
 ///     .replace_module(MailModule, FakeMailModule)
 ///     .connect()
 ///     .await?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct TestApp<S = Settled> {
     builder: AppBuilder,

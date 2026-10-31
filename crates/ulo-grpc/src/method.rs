@@ -5,7 +5,12 @@ pub use ulo::Shape;
 
 /// One RPC method, as a generated marker type:
 ///
-/// ```ignore
+/// ```
+/// # use ulo_grpc::Shape;
+/// # #[derive(Clone, PartialEq, prost::Message)]
+/// # pub struct GetUserRequest {}
+/// # #[derive(Clone, PartialEq, prost::Message)]
+/// # pub struct User {}
 /// pub struct GetUser;
 /// impl ulo_grpc::Method for GetUser {
 ///     const PATH: &'static str = "/users.v1.UserService/GetUser";

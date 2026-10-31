@@ -341,9 +341,21 @@ impl<'a> ModuleDef<'a> {
     /// `contribute` its contributions stay providers, and an `Auto` one that needs an execution is
     /// refused as a singleton.
     ///
-    /// ```ignore
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use ulo::{injectable, AnyGuard, AnyInterceptor, BoxError, Guard, Interceptor, ModuleDef, Next, Transport};
+    /// # use ulo_http::{Http, HttpCx};
+    /// # use ulo_rpc::{Rpc, RpcCx};
+    /// # #[injectable] struct AuthGuard;
+    /// # impl Guard<Http> for AuthGuard { async fn can_activate(&self, _: &HttpCx) -> Result<bool, BoxError> { Ok(true) } }
+    /// # #[derive(Default)] struct Tracing;
+    /// # impl Interceptor<Rpc> for Tracing {
+    /// #     async fn intercept(&self, _: &RpcCx, next: Next<'_, Rpc>) -> Result<<Rpc as Transport>::Reply, BoxError> { next.run().await }
+    /// # }
+    /// # fn f(m: &mut ModuleDef<'_>) {
     /// m.enhancer::<AnyGuard<Http>>().provide::<AuthGuard>(|a| a);
     /// m.enhancer::<AnyInterceptor<Rpc>>().value(Arc::new(Tracing::default()));
+    /// # }
     /// ```
     pub fn enhancer<R: Role + ?Sized>(&mut self) -> Contribute<'_, R, (), Enhancer> {
         Contribute::for_role(&mut *self.node)

@@ -10,10 +10,15 @@ use ulo_transport::{CallError, ErrorKind};
 /// The source of the `NotFound` a request matching no route reaches the global error handlers
 /// with, which tells it apart from a handler's own `NotFound`. Only the router attaches it.
 ///
-/// ```ignore
+/// ```
+/// # use ulo_http::{MethodNotAllowed, NoRoute};
+/// # use ulo_transport::CallError;
+/// # fn f(err: &(dyn std::error::Error + 'static)) -> Option<()> {
 /// let error = err.downcast_ref::<CallError>()?;
 /// if error.source_as::<NoRoute>().is_some() { /* no route matched */ }
 /// if let Some(refused) = error.source_as::<MethodNotAllowed>() { /* refused.allow() */ }
+/// # None
+/// # }
 /// ```
 #[derive(Clone, Copy, Debug)]
 pub struct NoRoute {

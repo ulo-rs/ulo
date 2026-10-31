@@ -1,13 +1,19 @@
 //! Runs a `ulo` application inside a rocket server (transports DESIGN §3.8): a native embedding,
 //! one catch-all `rocket::route::Handler` per method, mounted at a path.
 //!
-//! ```ignore
+//! ```
+//! # use ulo::App;
+//! # #[ulo::module]
+//! # struct AppModule;
+//! # async fn f() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let server = ulo_http_rocket::Embedded::new().nested_at("/api");
 //! let embedded = server.handle();
 //! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
 //!
 //! let rocket = rocket::build().mount("/api", ulo_http_rocket::routes(&embedded));
 //! ulo_http_rocket::run(app, &embedded, rocket, ulo_runtime_tokio::shutdown_signal()).await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! rocket 0.5 is on `http` 0.2, so the adapter converts at its edge. `mount` leaves the URI whole,

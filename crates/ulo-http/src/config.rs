@@ -2,14 +2,16 @@
 //! that another `ulo` crate defines, re-exported so an application configuring HTTP imports them
 //! from one place and needs no `ulo-net` or `ulo-transport` dependency of its own:
 //!
-//! ```ignore
+//! ```
 //! use std::time::Duration;
 //! use ulo_http::config::{Bound, Count, Endpoint, Tls};
 //!
+//! # let _ =
 //! ulo_http_hyper::Server::new(Endpoint::inherited("http"))
 //!     .tls(Tls::from_pem_files("cert.pem", "key.pem"))
 //!     .max_inflight(Count::Max(256))
 //!     .header_timeout(Bound::After(Duration::from_secs(10)))
+//! # ;
 //! ```
 //!
 //! Each name is the defining crate's type, not a copy: `ulo_http::config::Count` and

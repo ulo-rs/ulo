@@ -2,6 +2,7 @@
 //! message envelope, rooms and broadcast.
 //!
 //! ```ignore
+//! # // reason: names a session type, a guard and message types the caller defines
 //! #[module(imports = [ulo_ws::WsModule::for_root()], controllers = [ChatGateway])]
 //! pub struct ChatModule;
 //!

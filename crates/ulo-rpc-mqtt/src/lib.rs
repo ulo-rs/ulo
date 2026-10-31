@@ -49,8 +49,10 @@
 //! opt-in for such a broker, declared only once the conformance drain scenario has run against it,
 //! is not built.
 //!
-//! ```ignore
-//! app.bind(ulo_rpc::Server::new(ulo_rpc_mqtt::Mqtt::url("mqtt://broker:1883")))
+//! ```
+//! # fn f(app: ulo::App<ulo::Connected>) {
+//! app.bind(ulo_rpc::Server::new(ulo_rpc_mqtt::Mqtt::url("mqtt://broker:1883")));
+//! # }
 //! ```
 //!
 //! On the wire a request is the payload published on the pattern's topic with a Response Topic

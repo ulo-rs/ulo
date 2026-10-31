@@ -82,7 +82,12 @@ fn outer_name(full: &'static str) -> &'static str {
 /// function: a type validated by `validator` implements [`Validate`](crate::Validate) by calling
 /// it.
 ///
-/// ```ignore
+/// ```
+/// # use ulo_transport::{validator_bridge, FieldViolation};
+/// # struct NewUser;
+/// # impl validator::Validate for NewUser {
+/// #     fn validate(&self) -> Result<(), validator::ValidationErrors> { Ok(()) }
+/// # }
 /// impl ulo_transport::Validate for NewUser {
 ///     fn validate(&self) -> Result<(), Vec<FieldViolation>> {
 ///         validator::Validate::validate(self).map_err(|e| validator_bridge::violations(&e))

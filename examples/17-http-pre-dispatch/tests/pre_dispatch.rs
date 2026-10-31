@@ -80,3 +80,21 @@ async fn the_tower_layer_stamps_every_answer_including_a_refusal_a_miss_and_a_pr
     assert_eq!((preflight.status, preflight.header("x-served-by")), (204, Some("ulo")), "the preflight CORS answers");
     server.stop().await.expect("closes clean");
 }
+
+#[tokio::test]
+async fn an_entrys_value_reaches_the_handler_and_its_absence_is_a_500_that_names_no_type() {
+    let (server, _) = app().await;
+
+    let present = call(server.addr, Call::get("/tenant").header("x-tenant", "acme")).await;
+    assert_eq!((present.status, present.body.as_str()), (200, "acme"));
+
+    let absent = call(server.addr, Call::get("/tenant")).await;
+    assert_eq!(absent.status, 500, "a deployment fault, not a bad request");
+    assert!(!absent.body.contains("Tenant"), "the type stays server-side: {}", absent.body);
+
+    let optional = call(server.addr, Call::get("/tenant-or-none")).await;
+    assert_eq!((optional.status, optional.body.as_str()), (200, "none"));
+    let given = call(server.addr, Call::get("/tenant-or-none").header("x-tenant", "initech")).await;
+    assert_eq!(given.body, "initech");
+    server.stop().await.expect("closes clean");
+}

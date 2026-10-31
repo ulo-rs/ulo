@@ -2,6 +2,7 @@
 //! channel connected lazily, so `connect` does no network I/O.
 //!
 //! ```ignore
+//! # // reason: names a client generated from a .proto by the caller's build.rs
 //! imports = [GrpcClientModule::<pb::UserServiceClient<Channel>>::for_root(
 //!     GrpcEndpoint::new("https://users:443").tls(ClientTls::system_roots()),
 //! ).keyed::<UsersApi>()]
@@ -107,6 +108,7 @@ impl ClientTls {
 /// deadline or a context on its own.
 ///
 /// ```ignore
+/// # // reason: needs a generated client and a live endpoint
 /// let user = users.get_user(ulo_grpc::outgoing(&exec, tonic::Request::new(query))?).await?;
 /// ```
 ///

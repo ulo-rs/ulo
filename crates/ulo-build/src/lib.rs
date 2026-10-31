@@ -5,7 +5,7 @@
 //! `ulo_grpc::include_proto!` finds them. The file descriptor set for reflection is written when
 //! asked for.
 //!
-//! ```ignore
+//! ```no_run
 //! // build.rs
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     ulo_build::configure().compile(&["proto/users.proto"], &["proto"])?;

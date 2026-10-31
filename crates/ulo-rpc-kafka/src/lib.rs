@@ -33,8 +33,10 @@
 //! and librdkafka's own threads, never the tokio runtime, whose shutdown does not wait for them,
 //! nor the process's exit.
 //!
-//! ```ignore
-//! app.bind(ulo_rpc::Server::new(ulo_rpc_kafka::Kafka::brokers("kafka:9092")))
+//! ```
+//! # fn f(app: ulo::App<ulo::Connected>) {
+//! app.bind(ulo_rpc::Server::new(ulo_rpc_kafka::Kafka::brokers("kafka:9092")));
+//! # }
 //! ```
 //!
 //! On the wire a request is the payload produced to the pattern's topic with the headers

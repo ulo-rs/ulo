@@ -36,6 +36,8 @@ use tokio::task::JoinHandle;
 use watchexec::Watchexec;
 use watchexec::command::{Command, Program, SpawnOptions};
 use watchexec::job::{Job, start_job};
+use watchexec_events::filekind::{AccessKind, AccessMode, FileEventKind};
+use watchexec_events::{Event, Tag};
 use watchexec_filterer_globset::GlobsetFilterer;
 use watchexec_signals::Signal;
 
@@ -239,7 +241,7 @@ pub async fn execute(args: DevArgs) -> Result<()> {
         if action.signals().any(|signal| matches!(signal, Signal::Interrupt | Signal::Terminate)) {
             let _ = handler_triggers.send(Trigger::Quit);
             action.quit();
-        } else if action.paths().next().is_some() {
+        } else if action.events.iter().any(changed) {
             let _ = handler_triggers.send(Trigger::Change);
         }
         action
@@ -272,6 +274,17 @@ pub async fn execute(args: DevArgs) -> Result<()> {
     supervisor.await.context("the supervisor task panicked")?;
     watched.context("the watcher task panicked")?.map_err(|error| anyhow!(error))?;
     Ok(())
+}
+
+/// Whether `event` is a change to a watched file. A read is not: on Linux the watcher reports a
+/// file opened and closed unwritten as an access event, and every `cargo build` reads the
+/// workspace's manifests, so counting reads would restart the application after each build,
+/// without end. A close after a write is kept, since some editors' saves report nothing else.
+fn changed(event: &Event) -> bool {
+    event.paths().next().is_some()
+        && !event.tags.iter().any(|tag| {
+            matches!(tag, Tag::FileEventKind(FileEventKind::Access(access)) if *access != AccessKind::Close(AccessMode::Write))
+        })
 }
 
 /// What `--listen` takes: an IP socket address, written as the application writes its endpoint,

@@ -5,7 +5,33 @@
 //! framework's server, and [`config`], the other `ulo` crates' types the two servers' builders
 //! take.
 //!
-//! ```ignore
+//! ```
+//! # use serde::Serialize;
+//! # use ulo::{guards, injectable, routes, BoxError, Dep, Guard};
+//! # use ulo_http::{CallError, ErrorKind, Http, HttpCx, Json, Path};
+//! # #[derive(Serialize)]
+//! # struct User;
+//! # #[derive(Debug, ulo_http::Classify)]
+//! # #[classify(not_found)]
+//! # struct UserError;
+//! # impl std::fmt::Display for UserError {
+//! #     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("no user") }
+//! # }
+//! # impl std::error::Error for UserError {}
+//! # #[injectable]
+//! # struct Users;
+//! # impl Users {
+//! #     async fn find(&self, _id: u64) -> Result<User, UserError> { Ok(User) }
+//! # }
+//! # #[injectable]
+//! # struct AuthGuard;
+//! # impl Guard<Http> for AuthGuard {
+//! #     async fn can_activate(&self, _cx: &HttpCx) -> Result<bool, BoxError> { Ok(true) }
+//! # }
+//! # #[injectable]
+//! # struct UsersController {
+//! #     users: Dep<Users>,
+//! # }
 //! #[routes]
 //! #[guards(http = AuthGuard)]
 //! impl UsersController {

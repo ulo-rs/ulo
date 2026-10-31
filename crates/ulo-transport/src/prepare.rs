@@ -7,13 +7,22 @@
 //! the refusals of a setting that would refuse everything it governs, with one hint per type on
 //! every transport.
 //!
-//! ```ignore
+//! ```
+//! # use ulo::Bound;
+//! # use ulo_transport::prepare::{zero_bound, zero_count, Failures};
+//! # use ulo_transport::Count;
+//! # struct Link { max_inflight: Count, ping_interval: Bound }
+//! # impl Link {
+//! # fn prepare(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let mut failures = Failures::new();
 //! failures.extend(zero_count("max_inflight", self.max_inflight, "shed every call"));
 //! failures.extend(zero_bound("ping_interval", self.ping_interval, "close every connection before its first ping"));
 //! if !failures.is_empty() {
 //!     return Err(failures.into_error().into());
 //! }
+//! # Ok(())
+//! # }
+//! # }
 //! ```
 
 use std::collections::HashSet;
