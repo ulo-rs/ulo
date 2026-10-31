@@ -4,7 +4,7 @@ use ex_34_health::{Cache, LAG, builder};
 use ex_support::{get, listen, start_on};
 use serde_json::{Value, json};
 use ulo::{Dep, Signal};
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 use ulo_health::Readiness;
 use ulo_runtime_tokio::Tokio;
 

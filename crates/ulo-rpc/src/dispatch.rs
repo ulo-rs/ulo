@@ -38,7 +38,7 @@ use ulo::{
 use ulo_transport::{Admission, CallError, Detail, Details, ErrorKind, Permit, TaskSet, Tracked, Turns, span};
 use ulo_transport::__private::Watch;
 
-use crate::__private::{HandlerFn, Kind};
+use crate::handler::{HandlerFn, Kind};
 use crate::codec::Codec;
 use crate::frame::{Data, ErrorBody, Frame};
 use crate::link::{Ack, Capabilities, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Pattern, ReplyPath};

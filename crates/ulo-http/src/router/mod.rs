@@ -17,7 +17,7 @@ use http::{HeaderValue, Method};
 use ulo::{MetaTier, Metadata, MountedHandler, TypeName};
 use ulo_transport::prepare::{Failure, Names};
 
-use crate::__private::{HandlerFn, HttpHandler};
+use crate::handler::{HandlerFn, HttpHandler};
 use crate::cx::PathParams;
 use crate::limits::{BodyLimit, Timeout};
 use crate::pre_dispatch::{ScopedStage, Stage};
@@ -73,7 +73,7 @@ pub(crate) enum Routed<'r> {
 }
 
 impl Router {
-    /// The table for `handlers`, each `HttpHandler`'s pattern joined to its controller's prefix,
+    /// The table for `handlers`, each handler's route joined to its controller's prefix,
     /// with each `Path<T>` check run against its route and each route's scoped pre-dispatch stage
     /// taken from `stage`. `mount` is the embedding's normalized prefix, empty when the app is not
     /// nested, which only the recorded route carries. Every failure is returned, not the first.
@@ -94,14 +94,20 @@ impl Router {
             let who = Who::of(handler);
             let Some(http) = handler.handler::<HttpHandler>() else {
                 errors.push(Failure::naming(vec![who.controller], move |names| {
-                    format!("{} is mounted for HTTP without an HTTP handler value", who.text(names))
+                    format!("{} is mounted for HTTP with a handler value that is not a `ulo_http::HttpHandler`", who.text(names))
                 }));
                 continue;
             };
             let info = handler.info();
+            let Some(route) = info.route() else {
+                errors.push(Failure::naming(vec![who.controller], move |names| {
+                    format!("{} is mounted for HTTP with no route; `HandlerSpec::route` sets it", who.text(names))
+                }));
+                continue;
+            };
             let text = match info.prefix() {
-                Some(prefix) => Pattern::join(prefix, http.path),
-                None => http.path.to_owned(),
+                Some(prefix) => Pattern::join(prefix, route),
+                None => route.to_owned(),
             };
             let pattern = match Pattern::parse(&text) {
                 Ok(pattern) => pattern,

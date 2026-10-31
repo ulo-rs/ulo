@@ -72,6 +72,9 @@ impl<T> Deref for Session<T> {
 impl<T: Send + Sync + 'static> FromContainer for Session<T> {
     fn describe(req: &mut Requirement) {
         req.dep(Key::of::<SessionHandle, ()>());
+        // The fallback below reads `Session<T>` as an input, which a `Construct` must declare to
+        // read; optional, because no transport seeds it and wiring must not ask for it.
+        req.optional::<ulo::Dep<Session<T>>>();
     }
 
     /// A gateway with no session, or a session of another type, answers the lookup of

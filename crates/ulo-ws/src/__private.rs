@@ -4,132 +4,23 @@
 use std::any::TypeId;
 use std::cell::Cell;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use futures_core::Stream;
 use futures_util::StreamExt;
 use serde::Serialize;
-use ulo::{BoxError, BoxFuture, Mount, Transport};
+use ulo::{BoxError, Mount, Transport};
 use ulo_transport::{CallError, ErrorKind, IntoReply};
 
 pub use ulo_transport as transport;
 
-use crate::connection::Connection;
-use crate::gateway::{
-    AfterInit, ConnectHandler, ConnectRefused, DisconnectReason, Gateway, GatewayConfig, GatewayRef, OnConnect, OnDisconnect,
-};
-use crate::transport::{ConnectCx, Reply, Ws, WsCx};
+use crate::gateway::{AfterInit, ConnectHandler, Gateway, OnConnect, OnDisconnect};
+use crate::handler::GatewayHooks;
+use crate::transport::{Reply, Ws, WsCx};
 
-/// A message handler's call: extraction, the controller, the handler and the reply probe, run by
-/// `dispatch` after every guard admits.
-pub type HandlerFn = Arc<dyn Fn(WsCx) -> BoxFuture<'static, Result<Reply, BoxError>> + Send + Sync>;
-
-/// The handler value `#[message]` passes to `HandlerSpec::new`, read back from
-/// `MountedHandler::handler` by the hand-off and the standalone server: the event and the call.
-pub struct WsHandler {
-    pub(crate) event: &'static str,
-    pub(crate) call: HandlerFn,
-}
-
-impl WsHandler {
-    pub fn new<F>(event: &'static str, call: F) -> Self
-    where
-        F: Fn(WsCx) -> BoxFuture<'static, Result<Reply, BoxError>> + Send + Sync + 'static,
-    {
-        WsHandler { event, call: Arc::new(call) }
-    }
-
-    /// Accepts a parameter's `PayloadProbe` answer and records nothing: a message's `data` stays
-    /// undecoded until a `Payload<T>` reads it, so no handler needs it marked.
-    pub fn payload(self, reads: bool) -> Self {
-        let _ = reads;
-        self
-    }
-}
-
-/// `(&&PayloadProbe::<P>::new()).reads()`: `true` for a `Payload<T>` parameter, `false` for any
-/// other, ranked by autoref at the concrete parameter type.
-pub struct PayloadProbe<P>(PhantomData<fn() -> P>);
-
-impl<P> PayloadProbe<P> {
-    pub fn new() -> Self {
-        PayloadProbe(PhantomData)
-    }
-}
-
-impl<P> Default for PayloadProbe<P> {
-    fn default() -> Self {
-        PayloadProbe::new()
-    }
-}
-
-pub trait ViaPayload {
-    fn reads(&self) -> bool;
-}
-
-impl<T> ViaPayload for &PayloadProbe<crate::envelope::Payload<T>> {
-    fn reads(&self) -> bool {
-        true
-    }
-}
-
-pub trait NotPayload {
-    fn reads(&self) -> bool;
-}
-
-impl<P> NotPayload for PayloadProbe<P> {
-    fn reads(&self) -> bool {
-        false
-    }
-}
-
-/// `OnConnect::on_connect` as the connect handler calls it.
-pub type OnConnectFn<G> = for<'a> fn(&'a G, &'a ConnectCx) -> BoxFuture<'a, Result<(), ConnectRefused>>;
-
-/// `OnDisconnect::on_disconnect` as the connection's terminal execution calls it.
-pub type OnDisconnectFn<G> = for<'a> fn(&'a G, &'a Connection, DisconnectReason) -> BoxFuture<'a, ()>;
-
-/// `AfterInit::after_init` as the hand-off's `bound` or the standalone server calls it.
-pub type AfterInitFn<G> = for<'a> fn(&'a G, GatewayRef) -> BoxFuture<'a, ()>;
-
-/// The connection hooks gateway `G` implements, found by the attribute's probes at the concrete
-/// type, since a generic default cannot see the impls.
-pub struct Hooks<G> {
-    pub(crate) on_connect: Option<OnConnectFn<G>>,
-    pub(crate) on_disconnect: Option<OnDisconnectFn<G>>,
-    pub(crate) after_init: Option<AfterInitFn<G>>,
-}
-
-impl<G> Hooks<G> {
-    pub fn new() -> Self {
-        Hooks { on_connect: None, on_disconnect: None, after_init: None }
-    }
-
-    pub fn on_connect(mut self, hook: Option<OnConnectFn<G>>) -> Self {
-        self.on_connect = hook;
-        self
-    }
-
-    pub fn on_disconnect(mut self, hook: Option<OnDisconnectFn<G>>) -> Self {
-        self.on_disconnect = hook;
-        self
-    }
-
-    pub fn after_init(mut self, hook: Option<AfterInitFn<G>>) -> Self {
-        self.after_init = hook;
-        self
-    }
-}
-
-impl<G> Default for Hooks<G> {
-    fn default() -> Self {
-        Hooks::new()
-    }
-}
-
-/// `(&&HookProbe::<Self>::new()).__ulo_on_connect()` and its two siblings: `Some` where the gateway
-/// type implements the hook's trait, `None` otherwise. Every probe method here is named `__ulo_*`,
-/// so it does not meet a user trait's method of a common name at the call (`ulo::__private`).
+/// `(&&HookProbe::<Self>::new()).__ulo_on_connect(hooks)` and its two siblings:
+/// `hooks.on_connect()` where the gateway type implements the hook's trait, `hooks` unchanged
+/// otherwise. Every probe method here is named `__ulo_*`, so it does not meet a user trait's
+/// method of a common name at the call (`ulo::__private`).
 pub struct HookProbe<G>(PhantomData<fn() -> G>);
 
 impl<G> HookProbe<G> {
@@ -145,82 +36,63 @@ impl<G> Default for HookProbe<G> {
 }
 
 pub trait ViaOnConnect<G> {
-    fn __ulo_on_connect(&self) -> Option<OnConnectFn<G>>;
+    fn __ulo_on_connect(&self, hooks: GatewayHooks<G>) -> GatewayHooks<G>;
 }
 
 impl<G: OnConnect> ViaOnConnect<G> for &HookProbe<G> {
-    fn __ulo_on_connect(&self) -> Option<OnConnectFn<G>> {
-        Some(call_on_connect::<G>)
+    fn __ulo_on_connect(&self, hooks: GatewayHooks<G>) -> GatewayHooks<G> {
+        hooks.on_connect()
     }
 }
 
 pub trait NoOnConnect<G> {
-    fn __ulo_on_connect(&self) -> Option<OnConnectFn<G>>;
+    fn __ulo_on_connect(&self, hooks: GatewayHooks<G>) -> GatewayHooks<G>;
 }
 
 impl<G> NoOnConnect<G> for HookProbe<G> {
-    fn __ulo_on_connect(&self) -> Option<OnConnectFn<G>> {
-        None
+    fn __ulo_on_connect(&self, hooks: GatewayHooks<G>) -> GatewayHooks<G> {
+        hooks
     }
 }
 
 pub trait ViaOnDisconnect<G> {
-    fn __ulo_on_disconnect(&self) -> Option<OnDisconnectFn<G>>;
+    fn __ulo_on_disconnect(&self, hooks: GatewayHooks<G>) -> GatewayHooks<G>;
 }
 
 impl<G: OnDisconnect> ViaOnDisconnect<G> for &HookProbe<G> {
-    fn __ulo_on_disconnect(&self) -> Option<OnDisconnectFn<G>> {
-        Some(call_on_disconnect::<G>)
+    fn __ulo_on_disconnect(&self, hooks: GatewayHooks<G>) -> GatewayHooks<G> {
+        hooks.on_disconnect()
     }
 }
 
 pub trait NoOnDisconnect<G> {
-    fn __ulo_on_disconnect(&self) -> Option<OnDisconnectFn<G>>;
+    fn __ulo_on_disconnect(&self, hooks: GatewayHooks<G>) -> GatewayHooks<G>;
 }
 
 impl<G> NoOnDisconnect<G> for HookProbe<G> {
-    fn __ulo_on_disconnect(&self) -> Option<OnDisconnectFn<G>> {
-        None
+    fn __ulo_on_disconnect(&self, hooks: GatewayHooks<G>) -> GatewayHooks<G> {
+        hooks
     }
 }
 
 pub trait ViaAfterInit<G> {
-    fn __ulo_after_init(&self) -> Option<AfterInitFn<G>>;
+    fn __ulo_after_init(&self, hooks: GatewayHooks<G>) -> GatewayHooks<G>;
 }
 
 impl<G: AfterInit> ViaAfterInit<G> for &HookProbe<G> {
-    fn __ulo_after_init(&self) -> Option<AfterInitFn<G>> {
-        Some(call_after_init::<G>)
+    fn __ulo_after_init(&self, hooks: GatewayHooks<G>) -> GatewayHooks<G> {
+        hooks.after_init()
     }
 }
 
 pub trait NoAfterInit<G> {
-    fn __ulo_after_init(&self) -> Option<AfterInitFn<G>>;
+    fn __ulo_after_init(&self, hooks: GatewayHooks<G>) -> GatewayHooks<G>;
 }
 
 impl<G> NoAfterInit<G> for HookProbe<G> {
-    fn __ulo_after_init(&self) -> Option<AfterInitFn<G>> {
-        None
+    fn __ulo_after_init(&self, hooks: GatewayHooks<G>) -> GatewayHooks<G> {
+        hooks
     }
-}
-
-fn call_on_connect<'a, G: OnConnect>(gateway: &'a G, cx: &'a ConnectCx) -> BoxFuture<'a, Result<(), ConnectRefused>> {
-    Box::pin(gateway.on_connect(cx))
-}
-
-fn call_on_disconnect<'a, G: OnDisconnect>(gateway: &'a G, conn: &'a Connection, why: DisconnectReason) -> BoxFuture<'a, ()> {
-    Box::pin(gateway.on_disconnect(conn, why))
-}
-
-fn call_after_init<G: AfterInit>(gateway: &G, gw: GatewayRef) -> BoxFuture<'_, ()> {
-    Box::pin(gateway.after_init(gw))
-}
-
-/// What `GatewayConfig::mount_gateway` writes for an attributed gateway: the connect handler
-/// under `WsConnect`, carrying the gateway's settings, its connect guards, its session factory and
-/// the hooks it implements. Called inside `Mount::once::<G>`.
-pub fn mount_connect<G: GatewayConfig>(m: &mut Mount<'_>, hooks: Hooks<G>) {
-    crate::gateway::mount::<G>(m, ConnectHandler::attributed(hooks));
 }
 
 /// The `Mount::once` key of a hand-written gateway's connect handler, apart from the gateway

@@ -38,7 +38,7 @@ use ulo::{
 use ulo_transport::{CallError, ErrorKind, TaskSet, Tracked, Turns, span};
 use ulo_transport::__private::Watch;
 
-use crate::__private::HandlerFn;
+use crate::handler::HandlerFn;
 use crate::broadcast::NodeId;
 use crate::codec::Codec;
 use crate::envelope::{self, Frame, Head, MessageId};

@@ -14,7 +14,7 @@ use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
 use ulo_transport::{Admission, Count, TaskSet, Turns};
 use ulo_transport::__private::Watch;
 
-use crate::__private::{Kind, RpcHandler};
+use crate::handler::{Kind, RpcHandler};
 use crate::codec::Codec;
 use crate::dispatch::{self, Route, Settling, Shared};
 use crate::frame::PayloadKind;
@@ -108,13 +108,29 @@ impl<L: Link> ulo::Server for Server<L> {
             let who = Who::of(handler);
             let Some(rpc) = handler.handler::<RpcHandler>() else {
                 failures.push(Failure::naming(vec![who.controller], move |names| {
-                    format!("{} was not mounted by `#[ulo_rpc::message]` or `#[ulo_rpc::event]`", who.text(names))
+                    format!("{} is mounted for RPC with a handler value that is not a `ulo_rpc::RpcHandler`", who.text(names))
                 }));
                 continue;
             };
-            let pattern = rpc.pattern;
+            let pattern: Arc<str> = match handler.info().route() {
+                Some(pattern) => Arc::from(pattern),
+                None => {
+                    failures.push(Failure::naming(vec![who.controller], move |names| {
+                        format!("{} is mounted for RPC with no pattern; `HandlerSpec::route` sets it", who.text(names))
+                    }));
+                    continue;
+                }
+            };
+            if let Err(reason) = check_pattern(&pattern) {
+                let pattern = Arc::clone(&pattern);
+                failures.push(Failure::naming(vec![who.controller], move |names| {
+                    format!("{} has the pattern `{pattern}`, and {reason}", who.text(names))
+                }));
+                continue;
+            }
             let shape = handler.info().shape();
             if rpc.kind == Kind::Event && shape != Shape::Unary {
+                let pattern = Arc::clone(&pattern);
                 failures.push(Failure::naming(vec![who.controller], move |names| {
                     format!(
                         "{} (pattern `{pattern}`) is an `#[event]` handler with a {} shape; an event is one payload answered by nothing",
@@ -124,6 +140,7 @@ impl<L: Link> ulo::Server for Server<L> {
                 }));
             }
             if !capabilities.shapes.contains(&shape) {
+                let pattern = Arc::clone(&pattern);
                 failures.push(Failure::naming(vec![who.controller], move |names| {
                     format!(
                         "{} (pattern `{pattern}`) is a {} handler, which the {} link does not carry",
@@ -134,6 +151,7 @@ impl<L: Link> ulo::Server for Server<L> {
                 }));
             }
             if rpc.payload == PayloadKind::Binary && !capabilities.binary {
+                let pattern = Arc::clone(&pattern);
                 failures.push(Failure::naming(vec![who.controller], move |names| {
                     format!(
                         "{} (pattern `{pattern}`) takes a binary payload, which the {} link's JSON codec cannot carry; \
@@ -143,7 +161,7 @@ impl<L: Link> ulo::Server for Server<L> {
                     )
                 }));
             }
-            match routes.entry(pattern.to_owned()) {
+            match routes.entry(pattern.to_string()) {
                 Entry::Occupied(taken) => {
                     let other = Who::of(&taken.get().handler);
                     failures.push(Failure::naming(vec![other.controller, who.controller], move |names| {
@@ -373,6 +391,19 @@ impl Who {
     fn text(&self, names: &Names<'_>) -> String {
         format!("`{}::{}`", names.of(self.controller), self.name)
     }
+}
+
+/// What `#[message]` and `#[event]` check of a pattern at compile time, checked here for one a
+/// controller wrote by hand: a subject, channel, queue or topic name is non-empty and holds no
+/// whitespace or control character, which no broker accepts in one.
+fn check_pattern(pattern: &str) -> Result<(), &'static str> {
+    if pattern.is_empty() {
+        return Err("a pattern is not empty");
+    }
+    if pattern.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err("a pattern holds no whitespace or control character");
+    }
+    Ok(())
 }
 
 fn shape_name(shape: Shape) -> &'static str {

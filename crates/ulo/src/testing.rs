@@ -10,6 +10,55 @@
 //! An override targets `T @ ()`. A binding written `.qualified::<Q>()` is reached by the same
 //! method on the pending override, after every override kind and before any scope:
 //! `.override_value::<PgPool>(fake).qualified::<Replica>().in_module::<DbModule>()`.
+//!
+//! # Time in a test
+//!
+//! [`ScriptedTimer`] is the clock for a test that pins a deadline: no sleep it hands out ends
+//! until the test advances it. It needs no runtime and no feature, so a user's test names it with
+//! `ulo` as the only dependency.
+//!
+//! A paused tokio clock (`tokio::time::pause`) is the wrong tool for an app that owns servers.
+//! It advances on its own whenever the runtime has nothing else to do, and a server waiting on a
+//! request in flight has only its own timers to run: the clock jumps to them. A request that
+//! should have taken milliseconds then measures 28 to 61 s of clock time, the drain and idle
+//! timers of the servers having fired. Hand the app a scripted clock instead, advance it
+//! where the test means time to pass, and read what the code under test is waiting on:
+//!
+//! ```
+//! use std::future::Future;
+//! use std::task::{Context, Poll, Waker};
+//! use std::time::Duration;
+//! use ulo::Timer;
+//! use ulo::testing::ScriptedTimer;
+//!
+//! let clock = ScriptedTimer::new();
+//! let grace = Duration::from_secs(30);
+//! let mut sleep = clock.sleep(grace);
+//! let mut cx = Context::from_waker(Waker::noop());
+//!
+//! // Nothing moves the clock but the test: the sleep stays pending however long it is polled.
+//! assert!(sleep.as_mut().poll(&mut cx).is_pending());
+//! assert_eq!(clock.live(grace), 1);
+//!
+//! clock.advance(Duration::from_secs(29));
+//! assert!(sleep.as_mut().poll(&mut cx).is_pending());
+//! assert_eq!(clock.pending_at(grace), Some(clock.elapsed()));
+//!
+//! clock.advance(Duration::from_secs(1));
+//! assert!(sleep.as_mut().poll(&mut cx).is_ready());
+//! drop(sleep);
+//! assert_eq!(clock.live(grace), 0);
+//! ```
+//!
+//! In a user's `Cargo.toml` nothing beyond the dependency every ulo application has is needed:
+//!
+//! ```toml
+//! [dependencies]
+//! ulo = "..."
+//! ```
+
+mod scripted;
+pub use scripted::ScriptedTimer;
 
 use std::any::{TypeId, type_name};
 use std::marker::PhantomData;

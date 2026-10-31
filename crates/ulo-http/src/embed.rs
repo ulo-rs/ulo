@@ -48,7 +48,7 @@ use ulo::{AppHandle, Bound, BoxError, BoxFuture, DrainToken, Mounted, Phase, Typ
 use ulo_transport::Count;
 use ulo_transport::prepare::{Failure, Failures};
 
-use crate::__private::HttpHandler;
+use crate::handler::HttpHandler;
 use crate::backend::HttpConfig;
 use crate::body::HttpBody;
 use crate::pre_dispatch::{Entry, PreDispatch, Step, Supply};

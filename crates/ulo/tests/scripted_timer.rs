@@ -6,7 +6,7 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use ulo::Timer;
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 
 const SHORT: Duration = Duration::from_secs(1);
 const LONG: Duration = Duration::from_secs(5);

@@ -6,7 +6,7 @@ use ex_support::ws::{close_frame, hang_up, next, send};
 use ex_support::{Served, advancing, start_on};
 use serde_json::json;
 use ulo::{Dep, Signal};
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 
 /// Waits until `n` subscriptions listen on the ticker, so a tick published next reaches them.
 async fn listening(ticker: &Dep<Ticker>, n: usize) {

@@ -8,7 +8,6 @@ description = "The HTTP client, server driver and binary runner the example test
 
 [dependencies]
 ulo = { path = "../../crates/ulo" }
-ulo-conformance-support = { path = "../../crates/ulo-conformance-support" }
 ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
 ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
 ulo-ws-hyper = { path = "../../crates/ulo-ws-hyper" }

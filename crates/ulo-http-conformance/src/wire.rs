@@ -303,8 +303,16 @@ pub(crate) struct Raw<S> {
 
 impl<S: futures_io::AsyncRead + futures_io::AsyncWrite + Unpin> Raw<S> {
     pub(crate) async fn write(&mut self, bytes: &[u8]) {
-        self.stream.write_all(bytes).await.expect("the request is written");
-        self.stream.flush().await.expect("the request is flushed");
+        self.try_write(bytes).await.expect("the request is written");
+    }
+
+    /// [`write`](Self::write) that hands the error back. For a request the host is expected to
+    /// refuse before it has read all of it: the host answers and closes while the client is still
+    /// writing, so a write fails with a broken pipe or a reset, which is correct HTTP. The scenario
+    /// then reads the answer and holds the host to it.
+    pub(crate) async fn try_write(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.stream.write_all(bytes).await?;
+        self.stream.flush().await
     }
 
     /// Reads until `needle` has arrived, answering everything read; `None` at the end of the

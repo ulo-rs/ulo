@@ -68,6 +68,11 @@ pub trait Transport: 'static {
     fn inputs(_d: &mut Inputs) {}
 }
 
+/// Decides whether a call proceeds. `Ok(true)` admits it. `Ok(false)` refuses a caller the guard
+/// knows and will not admit, as `GuardRejected`: 403 on HTTP, `PERMISSION_DENIED` on gRPC.
+/// `Err(CallError::unauthorized(..))` refuses a caller that has not authenticated: 401 with its
+/// challenge on HTTP, `UNAUTHENTICATED` on gRPC. Any other `Err` goes to the error handlers as it
+/// stands. See `ulo_transport::CallError::unauthorized` for an example.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a guard for `{T}`",
     label = "a guard for `{T}` is needed here",

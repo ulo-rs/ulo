@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use common::*;
 use ulo::{App, CancelReason, Dep, ExecOptions, Execution, ExecutionRef, Key, LookupError, Signal};
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 
 const DRAIN: Duration = Duration::from_secs(10);
 

@@ -98,6 +98,27 @@ impl CallError {
 
     /// `Unauthorized`, carrying its own `WWW-Authenticate` challenge (RFC 9110 requires one on a
     /// 401); without one the HTTP server's configured default applies, `Bearer` unless set.
+    ///
+    /// A guard picks between two refusals. `Ok(false)` says the caller is known and may not: 403 on
+    /// HTTP, `PERMISSION_DENIED` on gRPC. Failing with this says the caller has not shown who they
+    /// are: 401 with the challenge on HTTP, `UNAUTHENTICATED` on gRPC.
+    ///
+    /// ```
+    /// use ulo::{BoxError, Guard, Transport};
+    /// use ulo_transport::CallError;
+    ///
+    /// struct SignedIn;
+    ///
+    /// impl<T: Transport> Guard<T> for SignedIn {
+    ///     async fn can_activate(&self, _cx: &T::Cx) -> Result<bool, BoxError> {
+    ///         let credentials: Option<&str> = None; // read from the call's headers or metadata
+    ///         match credentials {
+    ///             None => Err(CallError::unauthorized("Bearer").into()),
+    ///             Some(token) => Ok(token == "admin"),
+    ///         }
+    ///     }
+    /// }
+    /// ```
     pub fn unauthorized(challenge: impl Into<String>) -> Self {
         let mut error = CallError::new(ErrorKind::Unauthorized, "unauthorized");
         error.challenge = Some(challenge.into());

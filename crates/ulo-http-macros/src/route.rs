@@ -1,17 +1,19 @@
 //! One HTTP handler attribute over `ulo-handler-codegen`.
 //!
 //! The expansion is the method, its `+ use<>` rewrite applied, and the three items the
-//! `__handler` protocol owes (`ulo_handler_codegen::emit::MountFn`), the handler value being
+//! `__handler` protocol owes (`ulo_handler_codegen::emit::MountFn`), the handler value being the
+//! public `ulo_http::HttpHandler` a hand-written controller builds:
 //!
 //! ```text
-//! ::ulo_http::__private::HttpHandler::new(::ulo_http::__private::Method::GET, "/users/{id}", __ulo_call)
-//!     .path_check((&&::ulo_http::__private::PathProbe::<P0>::new()).__ulo_check())
-//!     .host_read((&&::ulo_http::__private::HostProbe::<P0>::new()).__ulo_read())
-//!     /* one pair per parameter */
+//! let __ulo_h = ::ulo_http::HttpHandler::new(::ulo_http::Method::GET, __ulo_call);
+//! let __ulo_h = (&&::ulo_http::__private::PathProbe::<P0>::new()).__ulo_path(__ulo_h);
+//! let __ulo_h = (&&::ulo_http::__private::HostProbe::<P0>::new()).__ulo_host(__ulo_h);
+//! /* one pair per parameter */
 //! ```
 //!
-//! with `ViaPath`, `NotPath`, `ViaHost` and `NotHost` imported anonymously, and the route
-//! `"/users/{id}"` as `HandlerSpec::route`.
+//! with `ViaPath`, `NotPath`, `ViaHost` and `NotHost` imported anonymously, each probe calling
+//! `reads_path::<T>()` or `reads_host::<T>()` for the parameter types that read one, and the route
+//! `"/users/{id}"` as `HandlerSpec::route`, which the router reads.
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
@@ -50,7 +52,7 @@ pub(crate) fn expand(method: &'static str, attr: TokenStream, item: TokenStream)
         sig: &sig,
         key: KEY,
         paths: &paths,
-        handler_value: handler_value(method, &pattern, &sig, &paths),
+        handler_value: handler_value(method, &sig, &paths),
         route: Some(quote!(#pattern)),
         shape: None,
     }
@@ -62,26 +64,28 @@ pub(crate) fn expand(method: &'static str, attr: TokenStream, item: TokenStream)
     })
 }
 
-/// The `HttpHandler` the mount function hands `HandlerSpec::new`: the method, the pattern as
-/// written, the call closure, and one `Path<T>` probe and one `Host<T>` probe per parameter,
-/// spanned at its type. A generic handler never reaches this value: `MountFn::emit` refuses it.
-fn handler_value(method: &str, pattern: &LitStr, sig: &HandlerSig, paths: &Paths) -> TokenStream {
+/// The `HttpHandler` the mount function hands `HandlerSpec::new`: the method, the call closure,
+/// and one `Path<T>` probe and one `Host<T>` probe per parameter, spanned at its type. A generic
+/// handler never reaches this value: `MountFn::emit` refuses it.
+fn handler_value(method: &str, sig: &HandlerSig, paths: &Paths) -> TokenStream {
     let this = &paths.this;
     let method = Ident::new(method, Span::call_site());
     let call = emit::call_ident();
+    let handler = Ident::new("__ulo_h", Span::mixed_site());
     let checks = sig.params.iter().map(|param| {
         let ty = &param.ty;
         quote_spanned! {param.span=>
-            .path_check((&&#this::__private::PathProbe::<#ty>::new()).__ulo_check())
-            .host_read((&&#this::__private::HostProbe::<#ty>::new()).__ulo_read())
+            let #handler = (&&#this::__private::PathProbe::<#ty>::new()).__ulo_path(#handler);
+            let #handler = (&&#this::__private::HostProbe::<#ty>::new()).__ulo_host(#handler);
         }
     });
     quote! {
         {
             #[allow(unused_imports)]
             use #this::__private::{NotHost as _, NotPath as _, ViaHost as _, ViaPath as _};
-            #this::__private::HttpHandler::new(#this::__private::Method::#method, #pattern, #call)
-                #(#checks)*
+            let #handler = #this::HttpHandler::new(#this::Method::#method, #call);
+            #(#checks)*
+            #handler
         }
     }
 }

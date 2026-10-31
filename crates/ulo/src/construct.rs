@@ -16,6 +16,13 @@ use crate::timer::{BoxError, Bound};
 /// [`dependencies`](Construct::dependencies) and reads them in
 /// [`construct`](Construct::construct). Registration cannot override [`Construct::Scope`],
 /// which is what keeps the compile-time hook check sound.
+///
+/// The two lists must agree. The resolver `construct` reads through refuses a key or the execution
+/// that `dependencies` did not declare, and an extension when it declares none (wiring reads an
+/// extension as needing an execution, not by its type), at the type's first construction and in
+/// every build: `Errored` holding a `Permanent` [`UndeclaredRead`](crate::UndeclaredRead) that
+/// names the key and the type, even when the body discards the read's error. A `ModuleRef` or an
+/// `ExecutionRef` reads freely, inside `construct` or kept past it: its reads are runtime lookups.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a type the container can construct",
     label = "the container cannot build this",

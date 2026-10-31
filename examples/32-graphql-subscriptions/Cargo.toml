@@ -20,7 +20,6 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 [dev-dependencies]
 ex-support = { path = "../support" }
 serde_json.workspace = true
-ulo-conformance-support = { path = "../../crates/ulo-conformance-support" }
 ulo-transport = { path = "../../crates/ulo-transport" }
 
 [lints]

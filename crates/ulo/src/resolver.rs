@@ -1,12 +1,14 @@
 use std::any::{TypeId, type_name};
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
 
 use crate::app::shared::AppShared;
 use crate::binding::{Coercion, Instance, Recipe, downcast_instance};
-use crate::dependency::{Dep, Ext, Many};
-use crate::error::{LookupError, LookupKind};
+use crate::dependency::{Dep, Ext, Many, Read, ReadKind};
+use crate::error::{FailureReason, LookupError, LookupKind, Permanent, UndeclaredRead};
+use crate::error::UndeclaredWhat;
+use crate::redact::redact;
 use crate::execution::{ExecShared, ExecutionRef};
 use crate::graph::{BindingId, Graph, ModuleId, Visible};
 use crate::key::{BindingKind, Key};
@@ -26,6 +28,50 @@ pub struct Resolver<'a> {
     pub(crate) module: ModuleId,
     pub(crate) exec: Option<&'a Arc<ExecShared>>,
     pub(crate) purpose: Purpose,
+    /// Set while a hand-written or generated `Construct::construct` runs: the keys its
+    /// `dependencies` declared. A read outside them is refused (see [`Reading`]).
+    reading: OnceLock<Arc<Reading>>,
+    /// The first undeclared read made through this resolver, kept so a body that swallows the
+    /// refusal still fails its construction. A `OnceLock` rather than a `Mutex`: every
+    /// construction pays for the slot whether or not a read goes wrong.
+    violation: OnceLock<UndeclaredRead>,
+}
+
+/// What one `Construct` type declared, held by its erased constructor and checked on every read
+/// made while that type's `construct` runs.
+///
+/// The check is a scan of a short slice of `Copy` keys, made once per read. It rides on the
+/// resolver the constructor is handed rather than a task-local or a parameter, because the
+/// resolver is the one value every read already goes through and a nested construction gets its
+/// own.
+pub(crate) struct Reading {
+    reader: Key,
+    declared: Vec<Read>,
+}
+
+impl Reading {
+    pub(crate) fn of<T: crate::construct::Construct>() -> Self {
+        let mut d = crate::dependency::Dependencies::default();
+        T::dependencies(&mut d);
+        let declared = d.list.iter().flat_map(|record| record.requirement.reads.iter().copied()).collect();
+        Reading { reader: Key::of::<T, ()>(), declared }
+    }
+
+    fn declares(&self, wanted: Wanted) -> bool {
+        self.declared.iter().any(|read| match (read.kind, wanted) {
+            (ReadKind::Single(a), Wanted::Single(b)) | (ReadKind::Collection(a), Wanted::Collection(b)) => a == b,
+            (ReadKind::Extension, Wanted::Extension) | (ReadKind::Execution, Wanted::Execution) => true,
+            _ => false,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Wanted {
+    Single(Key),
+    Collection(Key),
+    Extension,
+    Execution,
 }
 
 /// Who is reading. The lifecycle runner reads the bindings its own hooks name while the app is
@@ -43,19 +89,64 @@ impl<'a> Resolver<'a> {
         exec: Option<&'a Arc<ExecShared>>,
         purpose: Purpose,
     ) -> Self {
-        Resolver { app, graph: app.graph(), module, exec, purpose }
+        Resolver { app, graph: app.graph(), module, exec, purpose, reading: OnceLock::new(), violation: OnceLock::new() }
     }
 
     /// The same view with another module's visibility: a binding is always constructed against
     /// its origin module.
     pub(crate) fn in_module(&self, module: ModuleId) -> Resolver<'a> {
-        Resolver { app: self.app, graph: Arc::clone(&self.graph), module, exec: self.exec, purpose: self.purpose }
+        Resolver {
+            app: self.app,
+            graph: Arc::clone(&self.graph),
+            module,
+            exec: self.exec,
+            purpose: self.purpose,
+            reading: OnceLock::new(),
+            violation: OnceLock::new(),
+        }
     }
 
     /// The same view outside any execution, where a read of execution data answers
     /// `ExecutionRequired`.
     pub(crate) fn without_execution(&self) -> Resolver<'a> {
-        Resolver { app: self.app, graph: Arc::clone(&self.graph), module: self.module, exec: None, purpose: self.purpose }
+        Resolver {
+            app: self.app,
+            graph: Arc::clone(&self.graph),
+            module: self.module,
+            exec: None,
+            purpose: self.purpose,
+            reading: self.reading.clone(),
+            violation: OnceLock::new(),
+        }
+    }
+
+    /// Checks every read made through this resolver against `reading`: what an erased
+    /// `Construct` runs its `construct` against. Hands `reading` back when the resolver already
+    /// carries one, which means it is serving another construction.
+    pub(crate) fn arm(&self, reading: Arc<Reading>) -> Result<(), Arc<Reading>> {
+        self.reading.set(reading)
+    }
+
+    /// The refusal recorded by this resolver, if a read went undeclared.
+    pub(crate) fn take_violation(&self) -> Option<UndeclaredRead> {
+        self.violation.get().cloned()
+    }
+
+    fn declared(&self, wanted: Wanted) -> Result<(), LookupError> {
+        let Some(reading) = self.reading.get() else { return Ok(()) };
+        if reading.declares(wanted) {
+            return Ok(());
+        }
+        let what = match wanted {
+            Wanted::Single(key) => UndeclaredWhat::Key(key.name(BindingKind::Single)),
+            Wanted::Collection(key) => UndeclaredWhat::Key(key.name(BindingKind::Collection)),
+            Wanted::Extension => UndeclaredWhat::Extension,
+            Wanted::Execution => UndeclaredWhat::Execution,
+        };
+        let refusal = UndeclaredRead::new(reading.reader.type_name(), what);
+        let _ = self.violation.set(refusal.clone());
+        let error = redact(&self.graph.secrets, Box::new(Permanent::new(refusal)));
+        Err(LookupError::Construct { key: reading.reader.name(BindingKind::Single), reason: FailureReason::Errored(error) })
     }
 
     /// An instance of one binding in this resolver's context: the stored singleton, the
@@ -83,6 +174,7 @@ impl<'a> Resolver<'a> {
     /// Every contribution to `T @ Q`, constructed now, in collection order.
     pub async fn many_qualified<T: ?Sized + Send + Sync + 'static, Q: 'static>(&self) -> Result<Many<T, Q>, LookupError> {
         let key = Key::of::<T, Q>();
+        self.declared(Wanted::Collection(key))?;
         let ids = self.contributions(key)?;
         let mut items = Vec::with_capacity(ids.len());
         // In order, one at a time: after a failure no later contribution has started.
@@ -98,13 +190,16 @@ impl<'a> Resolver<'a> {
     /// only when its [`Entry::resolve`] is awaited, which is how a transport walks a guard
     /// collection without building the guards after a refusal (§7).
     pub fn entries<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Entries<'_, T>, LookupError> {
-        let ids = self.contributions(Key::of::<T, ()>())?;
+        let key = Key::of::<T, ()>();
+        self.declared(Wanted::Collection(key))?;
+        let ids = self.contributions(key)?;
         Ok(Entries { resolver: self, ids, next: 0, _t: PhantomData })
     }
 
     /// The extension `T` of the current execution.
     pub fn ext<T: Send + Sync + 'static>(&self) -> Result<Ext<T>, LookupError> {
         let key = Key::of::<T, ()>();
+        self.declared(Wanted::Extension)?;
         let exec = self.exec_for(key)?;
         exec.extensions.get::<T>().map(Ext::from_arc).ok_or_else(|| not_found(key, LookupKind::Extension))
     }
@@ -113,6 +208,7 @@ impl<'a> Resolver<'a> {
     /// seed it answers `LookupError::NotFound` with `LookupKind::Input`.
     pub fn input<T: Send + Sync + 'static>(&self) -> Result<Dep<T>, LookupError> {
         let key = Key::of::<T, ()>();
+        self.declared(Wanted::Single(key))?;
         let exec = self.exec_for(key)?;
         exec.inputs.get::<T>().map(Dep::from_arc).ok_or_else(|| not_found(key, LookupKind::Input))
     }
@@ -125,6 +221,7 @@ impl<'a> Resolver<'a> {
 
     /// A handle to the current execution.
     pub fn execution(&self) -> Result<ExecutionRef, LookupError> {
+        self.declared(Wanted::Execution)?;
         let shared = self.exec_for(Key::of::<ExecutionRef, ()>())?;
         Ok(ExecutionRef { shared: Arc::clone(shared) })
     }
@@ -138,6 +235,7 @@ impl<'a> Resolver<'a> {
     /// The single binding or input under `key`, as `T`. The key is located and its type checked
     /// before anything is built, so a wrong `T` constructs nothing.
     async fn single<T: ?Sized + Send + Sync + 'static>(&self, key: Key) -> Result<Arc<T>, LookupError> {
+        self.declared(Wanted::Single(key))?;
         let found = self.locate(key)?;
         if key.type_id() != TypeId::of::<T>() {
             return Err(wrong_type::<T>(key, BindingKind::Single));

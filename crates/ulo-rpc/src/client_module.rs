@@ -11,8 +11,12 @@ use crate::link::Link;
 
 /// Binds `RpcClient` over link `L`, exported, usually keyed so two clients coexist:
 ///
-/// ```ignore
-/// #[module(imports = [RpcClientModule::for_root(ulo_rpc_nats::Nats::url("nats://bus:4222"))
+/// ```
+/// # use std::time::Duration;
+/// # use ulo::{Bound, module};
+/// # use ulo_rpc::RpcClientModule;
+/// # struct Billing;
+/// #[module(imports = [RpcClientModule::for_root(ulo_rpc_tcp::Tcp::new("10.0.0.5:7000"))
 ///     .timeout(Bound::After(Duration::from_secs(2)))
 ///     .keyed::<Billing>()])]
 /// pub struct OrdersModule;
@@ -56,7 +60,9 @@ impl<L: Link> RpcClientModule<L> {
     /// The client's timeout, as [`RpcClient::timeout`] sets it: the whole-call bound of every
     /// `request` and `send_stream` that sets none of its own, sent as `deadline-ms`, and the bound
     /// on every `emit`'s publish. Five seconds at `Bound::Default`, `Bound::Unbounded` for none.
-    /// It does not apply to a `stream` or `duplex` call, which is bounded only by its own
+    /// A call made `.within` an execution is sent the shorter of the execution's remaining time
+    /// and this timeout, so a caller with thirty seconds left reaches the callee with five at the
+    /// default. It does not apply to a `stream` or `duplex` call, which is bounded only by its own
     /// `idle_timeout` and `deadline`. `Bound::After(Duration::ZERO)` is refused when the app wires,
     /// as [`ZeroTimeout`].
     pub fn timeout(mut self, timeout: Bound) -> Self {

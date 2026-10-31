@@ -11,8 +11,8 @@ use ex_support::{Reply, advancing, get};
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 use ulo::Signal;
-use ulo_transport::ErrorKind;
-use ulo_conformance_support::ScriptedTimer;
+use ulo_rpc::ErrorKind;
+use ulo::testing::ScriptedTimer;
 
 struct Held {
     http: JoinHandle<Reply>,

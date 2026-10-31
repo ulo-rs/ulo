@@ -2,15 +2,16 @@
 //! expansion `#[event]` shares.
 //!
 //! The expansion is the method, its `+ use<>` rewrite applied, and the three items the
-//! `__handler` protocol owes (`ulo_handler_codegen::emit::MountFn`), the handler value being
+//! `__handler` protocol owes (`ulo_handler_codegen::emit::MountFn`), the handler value being the
+//! public `ulo_rpc::RpcHandler` a hand-written controller builds:
 //!
 //! ```text
-//! ::ulo_rpc::__private::RpcHandler::new("invoices.create", ::ulo_rpc::__private::Kind::Message, __ulo_call)
-//!     .payload((&&&::ulo_rpc::__private::PayloadKindProbe::<P0>::new()).__ulo_kind())
-//!     /* one per parameter */
+//! let __ulo_h = ::ulo_rpc::RpcHandler::message(__ulo_call);
+//! let __ulo_h = (&&&::ulo_rpc::__private::PayloadKindProbe::<P0>::new()).__ulo_payload(__ulo_h);
+//! /* one per parameter */
 //! ```
 //!
-//! and the shape `::ulo_rpc::__private::shape(false || (&&InboundProbe::<P0>::new()).__ulo_streams() || .., (&&&__ulo_reply).__ulo_streams())`,
+//! the pattern `"invoices.create"` as `HandlerSpec::route`, which the server reads, and the shape `::ulo_rpc::__private::shape(false || (&&InboundProbe::<P0>::new()).__ulo_streams() || .., (&&&__ulo_reply).__ulo_streams())`,
 //! the request side probed at each parameter's type and the reply side at the type the handler
 //! returns, through `ReplyShapeProbe` over a closure that names the handler's call and is never
 //! run, so an alias or an opaque type reads as the type it stands for. The generated call names
@@ -77,7 +78,7 @@ pub(crate) fn expand_kind(kind: Kind, attr: TokenStream, item: TokenStream) -> s
         sig: &sig,
         key: KEY,
         paths: &paths,
-        handler_value: handler_value(kind, &pattern, &sig, &paths),
+        handler_value: handler_value(kind, &sig, &paths),
         route: Some(quote!(#pattern)),
         shape: Some(shape(kind, &sig, output_span, &paths)),
     }
@@ -108,27 +109,29 @@ fn check_pattern(pattern: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// The `RpcHandler` the mount function hands `HandlerSpec::new`: the pattern, the kind, the call
-/// closure, and one payload-kind probe per parameter, spanned at its type.
-fn handler_value(kind: Kind, pattern: &LitStr, sig: &HandlerSig, paths: &Paths) -> TokenStream {
+/// The `RpcHandler` the mount function hands `HandlerSpec::new`: the kind's constructor over the
+/// call closure, then one payload-kind probe per parameter, spanned at its type.
+fn handler_value(kind: Kind, sig: &HandlerSig, paths: &Paths) -> TokenStream {
     let this = &paths.this;
     let call = emit::call_ident();
-    let kind = match kind {
-        Kind::Message => quote!(#this::__private::Kind::Message),
-        Kind::Event => quote!(#this::__private::Kind::Event),
+    let handler = Ident::new("__ulo_h", Span::mixed_site());
+    let constructor = match kind {
+        Kind::Message => quote!(#this::RpcHandler::message),
+        Kind::Event => quote!(#this::RpcHandler::event),
     };
     let probes = sig.params.iter().map(|param| {
         let ty = &param.ty;
         quote_spanned! {param.span=>
-            .payload((&&&#this::__private::PayloadKindProbe::<#ty>::new()).__ulo_kind())
+            let #handler = (&&&#this::__private::PayloadKindProbe::<#ty>::new()).__ulo_payload(#handler);
         }
     });
     quote! {
         {
             #[allow(unused_imports)]
             use #this::__private::{NotPayload as _, ViaBinary as _, ViaSerde as _};
-            #this::__private::RpcHandler::new(#pattern, #kind, #call)
-                #(#probes)*
+            let #handler = #constructor(#call);
+            #(#probes)*
+            #handler
         }
     }
 }

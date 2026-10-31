@@ -1,10 +1,12 @@
-//! Example 06 without a macro: `Construct` by hand for the providers, `Module::register` for the
-//! modules. There is no controller; an HTTP route has no macro-free spelling (see the README).
+//! Example 06 without a macro: `Construct` by hand for the providers and the controller,
+//! `Controller::mount` for its route, `Module::register` for the modules.
 
 use ulo::scope::Auto;
 use ulo::{
-    App, AppBuilder, Construct, ConstructError, Dep, Dependencies, Module, ModuleDef, ModuleIdentity, Resolver,
+    App, AppBuilder, BoxError, Construct, ConstructError, Controller, Dep, Dependencies, HandlerSpec, Module, ModuleDef,
+    ModuleIdentity, Mount, Resolver,
 };
+use ulo_http::{Http, HttpCx, HttpHandler, IntoReply, Method, Response};
 
 pub struct PasswordHasher;
 
@@ -68,6 +70,40 @@ impl Construct for InvoiceService {
     }
 }
 
+pub struct InvoiceController {
+    invoices: Dep<InvoiceService>,
+}
+
+impl InvoiceController {
+    fn open(&self) -> String {
+        self.invoices.open_for("ada")
+    }
+}
+
+impl Construct for InvoiceController {
+    type Scope = Auto;
+
+    fn dependencies(d: &mut Dependencies) {
+        d.field::<Dep<InvoiceService>>("invoices");
+    }
+
+    async fn construct(r: &Resolver<'_>) -> Result<Self, ConstructError> {
+        Ok(InvoiceController { invoices: r.dep::<InvoiceService>().await? })
+    }
+}
+
+/// What `#[ulo_http::get("/")]` on `open` writes: one GET handler at `/`, named after the method.
+impl Controller for InvoiceController {
+    fn mount(m: &mut Mount<'_>) {
+        m.handler(HandlerSpec::<Http, _>::new("open", HttpHandler::new(Method::GET, open)).route("/"));
+    }
+}
+
+async fn open(cx: HttpCx) -> Result<Response, BoxError> {
+    let controller = cx.exec().get::<InvoiceController>().await?;
+    Ok(controller.open().into_reply(&cx)?)
+}
+
 /// Reads a binding `UsersModule` does not export.
 pub struct Snooper {
     _hasher: Dep<PasswordHasher>,
@@ -109,6 +145,7 @@ impl Module for BillingModule {
     fn register(&self, m: &mut ModuleDef<'_>) {
         m.import(UsersModule);
         m.provide::<InvoiceService>();
+        m.controller::<InvoiceController>();
     }
 }
 

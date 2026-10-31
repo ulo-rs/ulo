@@ -2528,7 +2528,6 @@ dependencies = [
  "ex-support",
  "tokio",
  "ulo",
- "ulo-conformance-support",
  "ulo-http",
  "ulo-http-hyper",
  "ulo-runtime-tokio",
@@ -2576,6 +2575,7 @@ dependencies = [
  "ex-support",
  "tokio",
  "ulo",
+ "ulo-http",
  "ulo-runtime-tokio",
 ]
 
@@ -2584,7 +2584,6 @@ name = "ex-15-http-requests"
 version = "0.0.0"
 dependencies = [
  "ex-support",
- "headers",
  "serde",
  "serde_json",
  "tokio",
@@ -2619,7 +2618,6 @@ dependencies = [
  "ulo-http",
  "ulo-http-hyper",
  "ulo-runtime-tokio",
- "ulo-transport",
 ]
 
 [[package]]
@@ -2630,7 +2628,6 @@ dependencies = [
  "futures-util",
  "tokio",
  "ulo",
- "ulo-conformance-support",
  "ulo-http",
  "ulo-http-hyper",
  "ulo-runtime-tokio",
@@ -2646,7 +2643,6 @@ dependencies = [
  "ulo-http",
  "ulo-http-hyper",
  "ulo-runtime-tokio",
- "ulo-transport",
 ]
 
 [[package]]
@@ -2672,7 +2668,6 @@ dependencies = [
  "ex-support",
  "tokio",
  "ulo",
- "ulo-conformance-support",
  "ulo-http",
  "ulo-http-axum",
  "ulo-runtime-tokio",
@@ -2702,7 +2697,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "ulo",
- "ulo-conformance-support",
  "ulo-runtime-tokio",
  "ulo-ws",
  "ulo-ws-hyper",
@@ -2764,7 +2758,6 @@ dependencies = [
  "ulo-rpc",
  "ulo-rpc-tcp",
  "ulo-runtime-tokio",
- "ulo-transport",
 ]
 
 [[package]]
@@ -2785,7 +2778,6 @@ dependencies = [
  "ulo-rpc-redis",
  "ulo-rpc-tcp",
  "ulo-runtime-tokio",
- "ulo-transport",
 ]
 
 [[package]]
@@ -2850,7 +2842,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "ulo",
- "ulo-conformance-support",
  "ulo-graphql",
  "ulo-graphql-async-graphql",
  "ulo-graphql-http",
@@ -2885,7 +2876,6 @@ dependencies = [
  "tonic",
  "tonic-health",
  "ulo",
- "ulo-conformance-support",
  "ulo-grpc",
  "ulo-health",
  "ulo-health-grpc",
@@ -2994,7 +2984,6 @@ dependencies = [
  "ulo",
  "ulo-build",
  "ulo-config",
- "ulo-conformance-support",
  "ulo-grpc",
  "ulo-health",
  "ulo-health-http",
@@ -3003,7 +2992,6 @@ dependencies = [
  "ulo-rpc",
  "ulo-rpc-tcp",
  "ulo-runtime-tokio",
- "ulo-transport",
  "ulo-ws",
  "ulo-ws-hyper",
 ]
@@ -3017,7 +3005,6 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "ulo",
- "ulo-conformance-support",
  "ulo-http-hyper",
  "ulo-runtime-tokio",
  "ulo-ws-hyper",
@@ -8810,7 +8797,6 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
- "ulo-conformance-support",
  "ulo-macros",
  "ulo-runtime-tokio",
 ]

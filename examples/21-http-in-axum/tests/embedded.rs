@@ -6,7 +6,7 @@ use ex_21_http_in_axum::{Gate, builder, embedded, router};
 use ex_support::{advancing, get};
 use tokio::task::JoinHandle;
 use ulo::{AppHandle, Dep, Shutdown, Signal};
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 use ulo_runtime_tokio::Tokio;
 
 const DRAIN: Duration = Duration::from_secs(10);

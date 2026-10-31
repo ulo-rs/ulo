@@ -3,8 +3,10 @@
 //! The transport holds the [`Execution`] for a call and `execute` holds it for a standalone one;
 //! everything else holds an [`ExecutionRef`], directly or inside a transport's `Cx`. Three
 //! events are distinct:
-//! - **Draining** is the notice: it resolves when the app stops accepting, after the
-//!   before-shutdown stage.
+//! - **Draining** is the notice: it resolves as the drain begins, after the
+//!   before-shutdown stage and a moment before the servers stop accepting. No execution opens
+//!   from then on, so a request arriving in that moment is refused as the drain refuses one (503
+//!   with `Connection: close` on HTTP), not served.
 //! - **Cancellation** fires while handles are alive: for a call when the client disconnects or
 //!   its deadline passes, for a standalone execution at its deadline, and for either at the end
 //!   of the drain. Completion of `execute` does not fire it. Each fires with a [`CancelReason`]
@@ -244,7 +246,9 @@ impl Execution {
         self.shared.cancel.is_fired()
     }
 
-    /// Resolves when the app stops accepting (§9.5); false through the before-shutdown stage.
+    /// Resolves as the drain begins (§9.5), a moment before the servers stop accepting; false
+    /// through the before-shutdown stage. No execution opens from then on: a request arriving in
+    /// that moment is refused, not served.
     pub fn draining(&self) -> Draining<'_> {
         self.shared.draining()
     }

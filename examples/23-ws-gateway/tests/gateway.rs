@@ -5,7 +5,7 @@ use ex_support::ws::{close_frame, connect, hang_up, hang_up_with, next, send, st
 use ex_support::{advancing, Served};
 use serde_json::json;
 use ulo::{Dep, Signal};
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 
 async fn journal(server: &Served) -> Dep<Journal> {
     server.handle.get().await.expect("the journal is a singleton")

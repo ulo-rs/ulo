@@ -60,6 +60,9 @@ impl Otel {
     ///
     /// It exports every span the subscriber passes it, the transports' and the application's
     /// own; a span the subscriber filters out is not exported and gets no OpenTelemetry IDs.
+    /// Put a level filter ahead of it: h2 and hyper open trace-level spans, and a request through
+    /// the HTTP server exports a hundred and more of them under an unfiltered subscriber. The
+    /// crate documentation shows the subscriber with `LevelFilter::INFO`.
     pub fn layer<S>(&self) -> OpenTelemetryLayer<S, SdkTracer>
     where
         S: Subscriber + for<'span> LookupSpan<'span>,

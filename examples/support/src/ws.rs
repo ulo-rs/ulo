@@ -14,7 +14,7 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use ulo::AppBuilder;
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 use ulo_runtime_tokio::Tokio;
 use ulo_ws_hyper::Server;
 

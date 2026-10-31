@@ -16,7 +16,8 @@ use crate::construct::{Construct, ConstructError};
 use crate::dependency::Dependencies;
 use crate::hooks::HookRecord;
 use crate::key::{BindingKind, Key};
-use crate::resolver::Resolver;
+use crate::error::Permanent;
+use crate::resolver::{Reading, Resolver};
 use crate::scope::ScopeKind;
 use crate::timer::{BoxFuture, Bound};
 
@@ -61,11 +62,30 @@ where
     Arc::new(check)
 }
 
+/// The erased `T::construct`, run against a resolver that refuses a read `T::dependencies` did
+/// not declare. The refusal is the construction's failure whatever the body does with the
+/// read's error, so a body that swallows it still fails: `Permanent`, naming the key and `T`.
 pub(crate) fn erase_construct<T: Construct>() -> ErasedCtor {
-    ctor_fn(|r| {
+    let reading = Arc::new(Reading::of::<T>());
+    ctor_fn(move |r| {
+        let reading = Arc::clone(&reading);
         Box::pin(async move {
-            let value = T::construct(r).await?;
-            Ok::<_, ConstructError>(instance_of(Arc::new(value)))
+            // Every caller hands over a resolver built for this one construction; a resolver
+            // already carrying a reading gets a fresh view.
+            let fresh;
+            let scoped = match r.arm(reading) {
+                Ok(()) => r,
+                Err(reading) => {
+                    fresh = r.in_module(r.module);
+                    let _ = fresh.arm(reading);
+                    &fresh
+                }
+            };
+            let built = T::construct(scoped).await;
+            if let Some(refusal) = scoped.take_violation() {
+                return Err(ConstructError::failed(Permanent::new(refusal)));
+            }
+            Ok::<_, ConstructError>(instance_of(Arc::new(built?)))
         })
     })
 }

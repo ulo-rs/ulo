@@ -30,9 +30,7 @@ ulo-build = { path = "../../crates/ulo-build" }
 
 [dev-dependencies]
 ex-support = { path = "../support" }
-ulo-conformance-support = { path = "../../crates/ulo-conformance-support" }
 serde_json.workspace = true
-ulo-transport = { path = "../../crates/ulo-transport" }
 
 [lints]
 workspace = true

@@ -1,9 +1,9 @@
 use std::fmt;
 use std::sync::Mutex;
 
-use headers::UserAgent;
 use serde::{Deserialize, Serialize};
 use ulo::{App, AppBuilder, Dep, injectable, module, routes};
+use ulo_http::headers::UserAgent;
 use ulo_http::{Created, Header, Json, Path, Query, WithHeaders};
 use ulo_transport::{Classify, Valid, Validate};
 

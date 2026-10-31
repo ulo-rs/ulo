@@ -7,7 +7,7 @@ use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::health_client::HealthClient;
 use tonic_health::pb::HealthCheckRequest;
 use ulo::{Dep, Signal};
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 use ulo_runtime_tokio::Tokio;
 
 const PATIENCE: Duration = Duration::from_secs(10);

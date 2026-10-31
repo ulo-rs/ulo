@@ -42,7 +42,7 @@ pub(crate) struct AppShared {
     /// its first use by a call (§7).
     pub(crate) closures: OnceCells,
     pub(crate) phase: PhaseCell,
-    /// Fired when the app stops accepting: `draining()` on executions and handles.
+    /// Fired as the drain begins, ahead of the servers' own drains: `draining()` on executions and handles.
     pub(crate) draining: Arc<Notify>,
     pub(crate) live: Arc<LiveSet>,
     pub(crate) shutdown: ShutdownCell,

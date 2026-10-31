@@ -22,7 +22,7 @@ use ulo::{
     App, AppBuilder, BoxFuture, ConnectError, Dep, ExecOptions, FailureReason, HookKind, Key, Limit, LookupError, Module,
     Permanent, Refused, RuntimeShutDown, ShutdownFailure, Signal, StartupError, Timer, TypeName, is_permanent,
 };
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 use ulo_runtime_tokio::Tokio;
 
 struct Root;

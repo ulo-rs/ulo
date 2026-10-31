@@ -8,7 +8,7 @@ use ex_support::ws::{connect, hang_up, next, send};
 use ex_support::{get, send as raw};
 use serde_json::json;
 use ulo_config::Env;
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 
 #[tokio::test]
 async fn every_transport_answers_and_writes_to_the_one_store_in_the_order_they_were_bound() {

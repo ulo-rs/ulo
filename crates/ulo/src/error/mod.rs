@@ -661,6 +661,72 @@ impl Error for Permanent {
     }
 }
 
+/// A hand-written [`Construct`](crate::Construct) read a key its
+/// [`dependencies`](crate::Construct::dependencies) does not declare.
+///
+/// The wiring pass learns what a binding reads from the declaration alone, so an undeclared read
+/// escapes the missing-binding, cycle and scope checks. The first construction refuses it, in
+/// every build, as a `Permanent` failure: the declaration cannot mend itself on a retry.
+/// Generated `Construct` impls declare what they read.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct UndeclaredRead {
+    reader: TypeName,
+    read: UndeclaredWhat,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum UndeclaredWhat {
+    Key(KeyName),
+    Extension,
+    Execution,
+}
+
+impl UndeclaredRead {
+    pub(crate) fn new(reader: TypeName, read: UndeclaredWhat) -> Self {
+        UndeclaredRead { reader, read }
+    }
+
+    /// The type whose `construct` made the read.
+    pub fn reader(&self) -> TypeName {
+        self.reader
+    }
+
+    /// The key read, `None` for an extension or the execution.
+    pub fn key(&self) -> Option<KeyName> {
+        match self.read {
+            UndeclaredWhat::Key(key) => Some(key),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for UndeclaredRead {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let reader = self.reader;
+        match self.read {
+            UndeclaredWhat::Key(key) => write!(
+                f,
+                "`{reader}` reads `{key}` in `construct` but its `dependencies` does not declare it; \
+                 add it there (`d.field::<..>(..)` or `d.param::<..>(..)`) so wiring can check it, \
+                 or read it through a `ModuleRef` after construction"
+            ),
+            UndeclaredWhat::Extension => write!(
+                f,
+                "`{reader}` reads an execution extension in `construct` but its `dependencies` declares none; \
+                 add `d.field::<Ext<..>>(..)` so wiring knows it needs an execution"
+            ),
+            UndeclaredWhat::Execution => write!(
+                f,
+                "`{reader}` reads the execution in `construct` but its `dependencies` does not declare it; \
+                 add `d.field::<ExecutionRef>(..)` so wiring knows it needs an execution"
+            ),
+        }
+    }
+}
+
+impl Error for UndeclaredRead {}
+
 /// Whether retrying this start, with this configuration on this runtime, cannot succeed: the
 /// failure carries a [`Permanent`], or it is a misconfiguration by its phase. A process restart
 /// brings a new runtime, which is a different start.

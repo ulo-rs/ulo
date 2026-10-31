@@ -4,12 +4,11 @@ use std::sync::Arc;
 use http::header::{CONTENT_TYPE, HeaderValue};
 use ulo::scope::Auto;
 use ulo::{
-    BoxError, BoxFuture, Construct, ConstructError, Controller, Dep, Dependencies, HandlerSpec, Module, ModuleDef,
-    ModuleIdentity, Mount, Resolver,
+    BoxError, Construct, ConstructError, Controller, Dep, Dependencies, HandlerSpec, Module, ModuleDef, ModuleIdentity,
+    Mount, Resolver,
 };
 use ulo_health::{Readiness, Report};
-use ulo_http::__private::HttpHandler;
-use ulo_http::{Http, HttpBody, HttpCx, Method, Response, StatusCode};
+use ulo_http::{Http, HttpBody, HttpCx, HttpHandler, Method, Response, StatusCode};
 
 use crate::body::{MEDIA_TYPE, render};
 
@@ -137,10 +136,7 @@ impl<P: Kind> Construct for ProbeRoute<P> {
 
 impl<P: Kind> Controller for ProbeRoute<P> {
     fn mount(m: &mut Mount<'_>) {
-        let handler = HttpHandler::new(Method::GET, "/", |cx: HttpCx| -> BoxFuture<'static, Result<Response, BoxError>> {
-            Box::pin(answer::<P>(cx))
-        });
-        m.handler(HandlerSpec::<Http, _>::new(P::NAME, handler).route("/"));
+        m.handler(HandlerSpec::<Http, _>::new(P::NAME, HttpHandler::new(Method::GET, answer::<P>)).route("/"));
     }
 }
 

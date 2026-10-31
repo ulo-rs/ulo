@@ -9,7 +9,8 @@ use rustls::ServerConfig;
 use rustls_pki_types::pem::{self, PemObject};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
-/// A server's TLS certificate chain and private key, loaded with rustls.
+/// A server's TLS certificate chain and private key, loaded with rustls, or a rustls
+/// configuration the caller built.
 ///
 /// Nothing is read or parsed where a `Tls` is built: the server calls [`load`](Self::load) in its
 /// `prepare`, so an unreadable file, a bad certificate or a key that does not match it fails
@@ -24,6 +25,7 @@ pub struct Tls {
 enum Source {
     PemFiles { cert: PathBuf, key: PathBuf },
     Pem { cert: Vec<u8>, key: Vec<u8> },
+    Config(Arc<ServerConfig>),
 }
 
 impl Tls {
@@ -37,10 +39,36 @@ impl Tls {
         Tls { source: Source::Pem { cert: cert.into(), key: key.into() } }
     }
 
+    /// A rustls configuration built by the caller, for what the PEM constructors cannot say:
+    /// verifying client certificates (`with_client_cert_verifier`), a certificate resolver that
+    /// picks by SNI, session tickets, a crypto provider other than the default.
+    ///
+    /// The server still sets the ALPN protocols its transport needs, so HTTP/2 is not switched off
+    /// by accident. At [`load`](Self::load) the given `alpn_protocols` are read against the
+    /// protocols the transport needs (`h2` and `http/1.1` for HTTP):
+    ///
+    /// - empty: the server sets the protocols it needs;
+    /// - naming every protocol the transport needs: accepted, the transport's protocols first in
+    ///   its order, then any further protocol the configuration names;
+    /// - missing one the transport needs, `h2` only or `http/1.1` only included: refused as
+    ///   [`TlsError::Alpn`], which `listen` reports as `StartupError::Configure`.
+    ///
+    /// A transport that needs no protocol (the TCP link) takes the configuration as given. The
+    /// handed `Arc` is never modified: a configuration whose protocols change is copied, with
+    /// everything else it set, and one that needs no change is used as given.
+    pub fn from_config(config: Arc<ServerConfig>) -> Tls {
+        Tls { source: Source::Config(config) }
+    }
+
     /// Reads and parses the certificate and key, checks that they match, and builds the server
-    /// configuration with `alpn` as the protocols offered, in preference order. The server's
-    /// runtime crate builds its acceptor from it.
+    /// configuration with `alpn` as the protocols offered, in preference order. For a [`Tls`]
+    /// made by [`from_config`](Self::from_config) it reconciles the given configuration's ALPN
+    /// with `alpn` by that constructor's rule instead. The server's runtime crate builds its
+    /// acceptor from the result.
     pub fn load(&self, alpn: &[&[u8]]) -> Result<Arc<ServerConfig>, TlsError> {
+        if let Source::Config(given) = &self.source {
+            return reconcile_alpn(given, alpn);
+        }
         let (certs, key) = match &self.source {
             Source::PemFiles { cert, key } => (
                 certificates(&read(cert)?).map_err(|cause| TlsError::Certificate { path: Some(cert.clone()), cause })?,
@@ -50,6 +78,7 @@ impl Tls {
                 certificates(cert).map_err(|cause| TlsError::Certificate { path: None, cause })?,
                 private_key(key).map_err(|cause| TlsError::PrivateKey { path: None, cause })?,
             ),
+            Source::Config(_) => unreachable!("a given configuration returned above"),
         };
         // An explicit provider rather than the process default, which panics when the build
         // enables both rustls backends and nothing installed one.
@@ -78,8 +107,32 @@ impl Tls {
 fn key_path(source: &Source) -> Option<PathBuf> {
     match source {
         Source::PemFiles { key, .. } => Some(key.clone()),
-        Source::Pem { .. } => None,
+        Source::Pem { .. } | Source::Config(_) => None,
     }
+}
+
+fn reconcile_alpn(given: &Arc<ServerConfig>, required: &[&[u8]]) -> Result<Arc<ServerConfig>, TlsError> {
+    if required.is_empty() {
+        return Ok(Arc::clone(given));
+    }
+    let named = &given.alpn_protocols;
+    let missing: Vec<String> =
+        required.iter().filter(|protocol| !named.iter().any(|n| n == **protocol)).map(|protocol| String::from_utf8_lossy(protocol).into_owned()).collect();
+    if !named.is_empty() && !missing.is_empty() {
+        return Err(TlsError::Alpn {
+            required: required.iter().map(|protocol| String::from_utf8_lossy(protocol).into_owned()).collect(),
+            given: named.iter().map(|protocol| String::from_utf8_lossy(protocol).into_owned()).collect(),
+            missing,
+        });
+    }
+    let mut protocols: Vec<Vec<u8>> = required.iter().map(|protocol| protocol.to_vec()).collect();
+    protocols.extend(named.iter().filter(|n| !required.iter().any(|protocol| protocol == &n.as_slice())).cloned());
+    if &protocols == named {
+        return Ok(Arc::clone(given));
+    }
+    let mut config = ServerConfig::clone(given);
+    config.alpn_protocols = protocols;
+    Ok(Arc::new(config))
 }
 
 fn read(path: &Path) -> Result<Vec<u8>, TlsError> {
@@ -164,6 +217,10 @@ pub enum TlsError {
     /// The key PEM holds no private key, one that does not parse or is not a supported key, or one
     /// that is not the certificate's.
     PrivateKey { path: Option<PathBuf>, cause: KeyCause },
+    /// A configuration given to [`Tls::from_config`] names ALPN protocols and omits one the
+    /// transport needs. `required` is what the transport needs, `given` what the configuration
+    /// names and `missing` the part of `required` it lacks.
+    Alpn { required: Vec<String>, given: Vec<String>, missing: Vec<String> },
     /// rustls refused the configuration for another reason.
     Rustls(rustls::Error),
 }
@@ -176,6 +233,10 @@ impl fmt::Display for TlsError {
             TlsError::Certificate { path: None, cause } => write!(f, "bad TLS certificate: {cause}"),
             TlsError::PrivateKey { path: Some(path), cause } => write!(f, "bad TLS private key: `{}`: {cause}", path.display()),
             TlsError::PrivateKey { path: None, cause } => write!(f, "bad TLS private key: {cause}"),
+            TlsError::Alpn { required, given, missing } => write!(
+                f,
+                "bad TLS configuration: its ALPN protocols {given:?} lack {missing:?}, which this server needs (it offers {required:?}); leave `alpn_protocols` empty or name them all"
+            ),
             TlsError::Rustls(error) => write!(f, "TLS configuration refused: {error}"),
         }
     }

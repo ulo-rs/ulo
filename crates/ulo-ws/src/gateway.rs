@@ -23,7 +23,7 @@ use ulo::{
 use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
 use ulo_transport::{CallError, Count, ErrorKind};
 
-use crate::__private::{HandlerFn, Hooks, WsHandler};
+use crate::handler::{GatewayHooks, HandlerFn, WsHandler};
 use crate::codec::Codec;
 use crate::connection::Connection;
 use crate::envelope::Frame;
@@ -57,8 +57,11 @@ pub trait GatewayConfig: Construct {
 
     /// Mounts the gateway's connect handler under `WsConnect`, once per controller type (X15).
     /// Every `#[message]` mount function calls it; the attribute writes it with the connection
-    /// hooks the type implements, found by probing the concrete type. A hand-written gateway
-    /// writes `ulo_ws::Gateway::mount(m)`.
+    /// hooks the type implements, found by probing the concrete type. A gateway whose messages
+    /// reach [`WsHandler`](crate::WsHandler)s, written without the attribute, writes
+    /// `GatewayHooks::<Self>::new()` with a call per hook it implements, then `.mount(m)`
+    /// ([`GatewayHooks`](crate::GatewayHooks)); one implementing [`Gateway`] by hand writes
+    /// `<Self as Gateway>::mount(m)`.
     fn mount_gateway(m: &mut Mount<'_>);
 }
 
@@ -487,8 +490,8 @@ pub(crate) struct ConnectHandler {
 
 impl ConnectHandler {
     /// An attributed gateway's: the hooks its type implements, found by the attribute's probes.
-    pub(crate) fn attributed<G: GatewayConfig>(hooks: Hooks<G>) -> Self {
-        let Hooks { on_connect, on_disconnect, after_init } = hooks;
+    pub(crate) fn attributed<G: GatewayConfig>(hooks: GatewayHooks<G>) -> Self {
+        let GatewayHooks { on_connect, on_disconnect, after_init, .. } = hooks;
         let admit: AdmitFn = Arc::new(move |cx: ConnectCx| -> BoxFuture<'static, Result<ConnectReply, BoxError>> {
             Box::pin(async move {
                 let Some(hook) = on_connect else { return Ok(ConnectReply::Admitted) };
@@ -698,7 +701,8 @@ impl GatewayRuntime {
 /// name `port`, paired by controller with the message handlers mounted under `Ws`. Refused, each
 /// as one failure: a path not starting with `/`, two gateways on one path, the event field `id`
 /// or `data`, an event spelling the reserved `cancel`, two handlers for one event, message
-/// handlers on a hand-written gateway, and every zero limit.
+/// handlers on a hand-written gateway, a message handler whose value is not a `WsHandler` or
+/// whose controller mounted no gateway, and every zero limit.
 pub(crate) fn build_table(
     connects: &[MountedHandler<WsConnect>],
     messages: &[MountedHandler<Ws>],
@@ -731,24 +735,36 @@ pub(crate) fn build_table(
         }
         let mut events: HashMap<String, Event> = HashMap::new();
         for mounted in messages.iter().filter(|mounted| mounted.controller() == connect.controller()) {
-            let Some(ws) = mounted.handler::<WsHandler>() else { continue };
+            let Some(ws) = mounted.handler::<WsHandler>() else {
+                fail(format!(
+                    "its message handler `{}` is mounted with a handler value that is not a `ulo_ws::WsHandler`",
+                    mounted.name()
+                ));
+                continue;
+            };
+            let Some(event) = mounted.info().route() else {
+                fail(format!(
+                    "its message handler `{}` is mounted with no event; `HandlerSpec::route` sets it",
+                    mounted.name()
+                ));
+                continue;
+            };
             if matches!(handler.messages, Messages::Raw { .. }) {
                 fail(format!(
-                    "it implements `ulo_ws::Gateway` by hand, which reads every message raw, so its `#[message(\"{}\")]` \
-                     handler would never run",
-                    ws.event
+                    "it implements `ulo_ws::Gateway` by hand, which reads every message raw, so its `#[message(\"{event}\")]` \
+                     handler would never run"
                 ));
                 continue;
             }
-            if ws.event == "cancel" {
+            if event == "cancel" {
                 fail("`cancel` is the envelope's reserved event, and a handler spells it".to_owned());
                 continue;
             }
-            if events.contains_key(ws.event) {
-                fail(format!("two handlers answer the event `{}`", ws.event));
+            if events.contains_key(event) {
+                fail(format!("two handlers answer the event `{event}`"));
                 continue;
             }
-            events.insert(ws.event.to_owned(), Event { mounted: mounted.clone(), call: Arc::clone(&ws.call) });
+            events.insert(event.to_owned(), Event { mounted: mounted.clone(), call: Arc::clone(&ws.call) });
         }
         if let Some(taken) = table.iter().find(|taken| same_path(&taken.path, &path)) {
             let first = taken.controller;
@@ -768,6 +784,20 @@ pub(crate) fn build_table(
             connect: connect.clone(),
             events,
             live: AtomicUsize::new(0),
+        }));
+    }
+    // A message handler reaches a call only through its controller's connect handler, which
+    // `Mount::once::<G>(<G as GatewayConfig>::mount_gateway)` mounts; one whose controller mounted
+    // none would be listed by `AppHandle::handlers` and never run.
+    for mounted in messages.iter().filter(|mounted| !connects.iter().any(|connect| connect.controller() == mounted.controller())) {
+        let controller = mounted.controller().key().type_name();
+        let name = mounted.name();
+        failures.push(Failure::naming(vec![controller], move |names: &Names<'_>| {
+            format!(
+                "`{}::{name}` is mounted for WebSocket on a controller that mounted no gateway; \
+                 `m.once::<G>(<G as GatewayConfig>::mount_gateway)` mounts it",
+                names.of(controller)
+            )
         }));
     }
     table

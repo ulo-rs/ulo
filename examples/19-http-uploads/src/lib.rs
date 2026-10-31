@@ -2,9 +2,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use ulo::{App, AppBuilder, BoxError, Dep, injectable, module, routes};
-use ulo_http::{BodyLimit, Bytes, Created, KB, Multipart, Path};
+use ulo_http::{BodyLimit, Bytes, CallError, Created, ErrorKind, KB, Multipart, Path};
 use ulo_http_hyper::Server;
-use ulo_transport::{CallError, ErrorKind};
 
 /// What a body may weigh unless its route says otherwise.
 pub const SERVER_LIMIT: u64 = KB;

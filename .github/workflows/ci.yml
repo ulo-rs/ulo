@@ -251,6 +251,23 @@ jobs:
       # are compiled, not linted.
       - run: cargo clippy -p ulo-macro-lints --all-targets --no-deps --locked -- -D warnings
 
+  public-reach:
+    name: public reach
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rustdoc's JSON output is unstable, so the job pins the nightly the miri job pins, and the
+      # scanner reads the format that nightly writes; the pin moves with the miri job's.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-11
+      - uses: Swatinem/rust-cache@v2
+      # Every type a listed crate's public signatures name is reachable from that crate (DESIGN
+      # §0.7). The script self-tests on a planted unexported type first, then builds each crate's
+      # rustdoc JSON and fails on a finding `public-reach.txt` does not allow and on an allowance
+      # nothing matches.
+      - run: python3 scripts/public_reach.py check nightly-2026-10-11
+
   miri:
     name: miri
     runs-on: ubuntu-latest

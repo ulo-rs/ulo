@@ -51,10 +51,10 @@ impl<T: Validate> Validate for Path<T> {
     }
 }
 
-/// The startup check of one `Path<T>` parameter against its route, which a handler attribute
-/// records on the handler value through `ulo_http::__private::PathProbe`.
+/// The startup check of one `Path<T>` parameter against its route, which
+/// [`HttpHandler::reads_path`](crate::HttpHandler::reads_path) records on the handler value.
 #[derive(Clone, Copy)]
-pub struct PathCheck {
+pub(crate) struct PathCheck {
     pub(crate) check: fn(&[&str]) -> Result<(), String>,
     pub(crate) ty: TypeName,
 }
@@ -62,7 +62,7 @@ pub struct PathCheck {
 impl PathCheck {
     /// The check of `T`: its `Deserialize` impl against a recording deserializer, the route's
     /// parameter names given.
-    pub fn of<T: DeserializeOwned + 'static>() -> PathCheck {
+    pub(crate) fn of<T: DeserializeOwned + 'static>() -> PathCheck {
         PathCheck { check: check_path::<T>, ty: TypeName::of::<T>() }
     }
 }

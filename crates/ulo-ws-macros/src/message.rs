@@ -2,16 +2,17 @@
 //! `<Self as GatewayConfig>::mount_gateway` through the mount function's `Mount`.
 //!
 //! The expansion is the method, its `+ use<>` rewrite applied, and the three items the
-//! `__handler` protocol owes, the handler value being
+//! `__handler` protocol owes, the handler value being the public `ulo_ws::WsHandler` a hand-written
+//! gateway builds:
 //!
 //! ```text
 //! {
 //!     __ulo_m.once::<Self>(<Self as ::ulo_ws::GatewayConfig>::mount_gateway);
-//!     ::ulo_ws::__private::WsHandler::new("chat.send", __ulo_call)
+//!     ::ulo_ws::WsHandler::new(__ulo_call)
 //! }
 //! ```
 //!
-//! and the event as `HandlerSpec::route`. The generated call reaches `Param`, `controller` and the
+//! and the event as `HandlerSpec::route`, which the gateway table reads. The generated call reaches `Param`, `controller` and the
 //! reply probe through `::ulo_ws::__private::reply`, whose probe answers `()`, any `Serialize`
 //! value, a `Frame` and a stream, which `ulo-transport`'s `IntoReply`-only probe cannot.
 
@@ -57,7 +58,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
         sig: &sig,
         key: KEY,
         paths: &paths,
-        handler_value: handler_value(&event),
+        handler_value: handler_value(),
         route: Some(quote!(#event)),
         shape: None,
     }
@@ -70,13 +71,13 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
 }
 
 /// The gateway's connect handler mounted once per controller type, then the `WsHandler`.
-fn handler_value(event: &LitStr) -> TokenStream {
+fn handler_value() -> TokenStream {
     let m = emit::mount_param_ident();
     let call = emit::call_ident();
     quote! {
         {
             #m.once::<Self>(<Self as ::ulo_ws::GatewayConfig>::mount_gateway);
-            ::ulo_ws::__private::WsHandler::new(#event, #call)
+            ::ulo_ws::WsHandler::new(#call)
         }
     }
 }

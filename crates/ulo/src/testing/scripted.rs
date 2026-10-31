@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
-use ulo::{BoxFuture, Timer};
+use crate::timer::{BoxFuture, Refused, Timer};
 
 /// The app's clock for a test that pins a deadline without waiting for it: no sleep it hands out
 /// ends until [`advance`](Self::advance) has moved the clock past it. Each live sleep is counted
@@ -34,10 +34,13 @@ struct Sleep {
 }
 
 impl ScriptedTimer {
+    /// A clock at zero with no sleeps live and nothing refused.
     pub fn new() -> ScriptedTimer {
         ScriptedTimer(Arc::new(Mutex::new(Script { base: Instant::now(), at: Duration::ZERO, live: HashMap::new(), pending_at: HashMap::new(), refusing: HashMap::new(), waiting: Vec::new() })))
     }
 
+    /// Moves the clock forward and wakes every sleep waiting on it; one whose deadline is now
+    /// behind the clock ends on its next poll.
     pub fn advance(&self, by: Duration) {
         let waiting = {
             let mut script = self.lock();
@@ -119,9 +122,9 @@ impl Timer for ScriptedTimer {
         script.base + script.at
     }
 
-    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
         if self.refusing(d) {
-            return Box::pin(std::future::ready(Err(ulo::Refused)));
+            return Box::pin(std::future::ready(Err(Refused)));
         }
         let sleep = Timer::sleep(self, d);
         Box::pin(async move {

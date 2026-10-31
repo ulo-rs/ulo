@@ -5,7 +5,7 @@ use ex_support::http::{Call, call, open};
 use ex_support::{advancing, start, start_on};
 use tokio::time::sleep;
 use ulo::{Dep, Signal};
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 
 #[tokio::test]
 async fn events_reach_a_connected_client_one_at_a_time_as_they_are_published() {

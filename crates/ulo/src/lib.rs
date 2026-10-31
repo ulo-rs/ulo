@@ -56,7 +56,7 @@ pub use dependency::{Dep, Dependencies, Ext, FromContainer, Many, Requirement};
 pub use error::{
     Closed, ConfigureError, ConfigureErrors, ConnectError, DispatchStage, EndStream, FailureReason, GuardRejected,
     Limit, LoadError, LoadRefusal, LookupError, LookupKind, PanicRecovered, PrepareEntry, PrepareError, Shutdown, ShutdownError,
-    Permanent, PreparePanicked, RuntimeMissing, ServeEnd, ShutdownFailure, StartupError, is_panic, is_permanent,
+    Permanent, PreparePanicked, RuntimeMissing, ServeEnd, ShutdownFailure, StartupError, UndeclaredRead, is_panic, is_permanent,
 };
 pub use error::wiring::{BoundItem, InputOrigin, WiringError, WiringErrors};
 pub use execution::extensions::Extensions;

@@ -3,14 +3,14 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use ex_27_rpc_deadlines::{Gateway, Relayed, Runs, callee, gateway};
+use ex_27_rpc_deadlines::{Gateway, Quote, Relayed, Runs, callee, gateway};
 use ex_support::rpc::bounded;
 use ex_support::{Served, serve};
 use ulo::ExecOptions;
 use ulo_rpc::{RpcClient, Server};
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
-use ulo_transport::ErrorKind;
+use ulo_rpc::ErrorKind;
 
 async fn listen(app: ulo::AppBuilder) -> Served {
     let app = app.runtime(Tokio::current()).wire().expect("wires").connect().await.expect("connects");
@@ -72,5 +72,23 @@ async fn a_caller_with_more_time_than_the_client_s_timeout_reaches_the_callee_wi
     let left = quote.expect("answered").left_ms;
     assert!((4_000..=5_000).contains(&left), "the callee had {left} ms of a 30 s caller under a 5 s client timeout");
     gateway.stop().await.expect("closes");
+    callee.stop().await.expect("closes");
+}
+
+/// A bound set on the call itself replaces the client's five seconds, so a caller with thirty
+/// seconds left and a call bounded at twenty reaches the callee with twenty.
+#[tokio::test]
+async fn a_longer_bound_on_the_call_lifts_the_client_s_timeout() {
+    let callee = listen(callee()).await;
+    let pricing = client(callee.addr);
+
+    let long = ExecOptions::new().deadline(Instant::now() + Duration::from_secs(30));
+    let quote = callee
+        .handle
+        .execute(long, async |exec| pricing.request::<_, Quote>("price.quote", "tea").timeout(Duration::from_secs(20)).within(&exec.handle()).await)
+        .await
+        .expect("the app is open");
+    let left = quote.expect("answered").left_ms;
+    assert!((19_000..=20_000).contains(&left), "the callee had {left} ms of a 30 s caller on a call bounded at 20 s");
     callee.stop().await.expect("closes");
 }

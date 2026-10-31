@@ -99,3 +99,103 @@ fn an_unrecognised_key_file_is_refused_with_its_path() {
         other => panic!("a key file holding no key was {other:?}"),
     }
 }
+
+mod given_configuration {
+    use super::*;
+
+    const HTTP: &[&[u8]] = &[b"h2", b"http/1.1"];
+
+    fn config_with(alpn: &[&[u8]]) -> Arc<rustls::ServerConfig> {
+        let cert = localhost();
+        let loaded = Tls::from_pem(cert.cert_pem(), cert.key_pem()).load(&[]).expect("the pair loads");
+        let mut config = rustls::ServerConfig::clone(&loaded);
+        config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
+        Arc::new(config)
+    }
+
+    fn protocols(config: &rustls::ServerConfig) -> Vec<&[u8]> {
+        config.alpn_protocols.iter().map(Vec::as_slice).collect()
+    }
+
+    #[test]
+    fn a_configuration_naming_no_protocol_gets_the_ones_the_server_needs() {
+        let given = config_with(&[]);
+        let loaded = Tls::from_config(Arc::clone(&given)).load(HTTP).expect("an empty list is the server's to set");
+        assert_eq!(protocols(&loaded), HTTP);
+        assert!(given.alpn_protocols.is_empty(), "the handed configuration is not modified");
+    }
+
+    #[test]
+    fn a_configuration_naming_both_is_accepted() {
+        let loaded = Tls::from_config(config_with(HTTP)).load(HTTP).expect("both are named");
+        assert_eq!(protocols(&loaded), HTTP);
+    }
+
+    #[test]
+    fn the_servers_order_wins_over_the_configurations() {
+        let loaded = Tls::from_config(config_with(&[b"http/1.1", b"h2"])).load(HTTP).expect("both are named");
+        assert_eq!(protocols(&loaded), HTTP);
+    }
+
+    #[test]
+    fn a_further_protocol_is_kept_after_the_servers() {
+        let loaded = Tls::from_config(config_with(&[b"acme-tls/1", b"h2", b"http/1.1"])).load(HTTP).expect("a superset is accepted");
+        assert_eq!(protocols(&loaded), [b"h2".as_slice(), b"http/1.1", b"acme-tls/1"]);
+    }
+
+    fn refused(alpn: &[&[u8]], missing: &[&str]) {
+        let Err(error) = Tls::from_config(config_with(alpn)).load(HTTP) else { panic!("{alpn:?} must be refused") };
+        let TlsError::Alpn { required, given, missing: lacking } = &error else { panic!("{error:?}") };
+        assert_eq!(required, &["h2", "http/1.1"]);
+        assert_eq!(given.len(), alpn.len());
+        assert_eq!(lacking, missing);
+        // The list rendered whole: each name alone also appears in the required list the message
+        // gives beside it.
+        let text = error.to_string();
+        assert!(text.contains(&format!("{missing:?}")), "{text}");
+    }
+
+    #[test]
+    fn http_1_1_alone_would_switch_http_2_off_and_is_refused() {
+        refused(&[b"http/1.1"], &["h2"]);
+    }
+
+    #[test]
+    fn h2_alone_would_strand_http_1_1_clients_and_is_refused() {
+        refused(&[b"h2"], &["http/1.1"]);
+    }
+
+    #[test]
+    fn an_unknown_protocol_alone_is_refused() {
+        refused(&[b"acme-tls/1"], &["h2", "http/1.1"]);
+    }
+
+    #[test]
+    fn a_transport_needing_no_protocol_takes_the_configuration_as_given() {
+        let given = config_with(&[b"http/1.1"]);
+        let loaded = Tls::from_config(Arc::clone(&given)).load(&[]).expect("nothing is required");
+        assert!(Arc::ptr_eq(&given, &loaded));
+    }
+
+    #[test]
+    fn a_copy_keeps_what_the_configuration_set_besides_its_protocols() {
+        let mut config = rustls::ServerConfig::clone(&config_with(&[b"http/1.1", b"h2"]));
+        config.max_fragment_size = Some(1024);
+        config.send_tls13_tickets = 7;
+        let given = Arc::new(config);
+        let loaded = Tls::from_config(Arc::clone(&given)).load(HTTP).expect("both are named");
+        assert!(!Arc::ptr_eq(&given, &loaded), "the reordered protocols are a copy's");
+        assert!(Arc::ptr_eq(&given.session_storage, &loaded.session_storage), "session resumption's store");
+        assert!(Arc::ptr_eq(&given.ticketer, &loaded.ticketer), "the ticketer");
+        assert!(Arc::ptr_eq(&given.cert_resolver, &loaded.cert_resolver), "the certificate resolver");
+        assert_eq!((loaded.max_fragment_size, loaded.send_tls13_tickets), (Some(1024), 7));
+        assert_eq!(protocols(&given), [b"http/1.1".as_slice(), b"h2"], "the handed configuration is not modified");
+    }
+
+    #[test]
+    fn a_grpc_server_needs_h2_alone() {
+        let loaded = Tls::from_config(config_with(&[b"h2", b"http/1.1"])).load(&[b"h2"]).expect("h2 is named");
+        assert_eq!(protocols(&loaded), [b"h2".as_slice(), b"http/1.1"]);
+        assert!(matches!(Tls::from_config(config_with(&[b"http/1.1"])).load(&[b"h2"]), Err(TlsError::Alpn { .. })));
+    }
+}

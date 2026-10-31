@@ -16,6 +16,9 @@
 //! }
 //! ```
 //!
+//! The method attributes build an [`HttpHandler`] for each handler, and a controller written without
+//! them builds the same value in its `Controller::mount`.
+//!
 //! `ulo-http` owns routing, so every backend routes identically; a backend crate converts between
 //! its server and the `http` crate's types and maps the drain.
 
@@ -24,6 +27,7 @@ mod body;
 mod cors;
 mod cx;
 mod extract;
+mod handler;
 mod limits;
 mod miss;
 mod pre_dispatch;
@@ -44,6 +48,17 @@ pub mod config;
 pub mod embed;
 pub mod middleware;
 
+/// The `multer` types a [`Multipart`] read answers with: each part as a [`Field`](multipart::Field)
+/// and a failed read as an [`Error`](multipart::Error). They are reached here and not at the
+/// crate root, where `Error` would read as the crate's own:
+///
+/// ```compile_fail
+/// use ulo_http::Field;
+/// ```
+pub mod multipart {
+    pub use multer::{Error, Field};
+}
+
 /// The pre-dispatch stage as another transport runs it (X23): `ulo-grpc` builds
 /// [`Stage<Grpc>`](stage::Stage) from `mounted.module_meta::<PreDispatch<Grpc>>()` in `prepare`,
 /// takes each method path's [`ScopedStage`](stage::ScopedStage), and runs both around its
@@ -60,6 +75,7 @@ pub use body::{Body, HttpBody};
 pub use cors::{Cors, CorsError};
 pub use cx::{HttpCx, PathParams};
 pub use extract::{BodyStream, Form, Header, Host, Json, LastEventId, Multipart, Path, Query};
+pub use handler::HttpHandler;
 pub use limits::{BodyLimit, KB, MB, Timeout};
 pub use middleware::Middleware;
 pub use miss::{MethodNotAllowed, NoRoute};
@@ -77,3 +93,7 @@ pub use ulo_http_macros::{delete, get, head, options, patch, post, put};
 
 pub use bytes::Bytes;
 pub use http::{HeaderMap, HeaderValue, Method, StatusCode};
+pub use ulo_transport::{
+    CallError, Classify, Detail, Details, ErrorKind, ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Valid, Validate,
+};
+pub use {headers, http};

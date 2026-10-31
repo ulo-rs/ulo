@@ -1,10 +1,20 @@
 //! OpenTelemetry export for the spans the transports already open (integrations DESIGN §6.4).
 //!
-//! ```ignore
-//! let otel = Otel::new(OtelOptions::from_env(&Env::process())?, OtlpExporter::http())?;
-//! tracing_subscriber::registry().with(otel.layer()).init();
-//! // in the root module:
-//! m.import(otel.module());
+//! ```
+//! use tracing_subscriber::filter::LevelFilter;
+//! use tracing_subscriber::layer::SubscriberExt;
+//! use ulo_config::Env;
+//! use ulo_otel::{Exporter, Otel, OtelOptions};
+//!
+//! // `exporter` is `ulo_otel_otlp::OtlpExporter::http()` against a collector.
+//! fn install(exporter: impl Exporter) -> Result<Otel, ulo::BoxError> {
+//!     let otel = Otel::new(OtelOptions::from_env(&Env::process())?, exporter)?;
+//!     // h2 and hyper open trace-level spans: without the filter one request through the
+//!     // example chain exported 170 spans.
+//!     tracing::subscriber::set_global_default(tracing_subscriber::registry().with(LevelFilter::INFO).with(otel.layer()))?;
+//!     Ok(otel)
+//! }
+//! // in the root module: m.import(otel.module());
 //! ```
 //!
 //! `ulo_transport::span::call` opens a `tracing` span per call with OpenTelemetry's semantic

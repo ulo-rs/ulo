@@ -7,7 +7,7 @@ use ex_28_rpc_links::{Divide, Journal, bind, builder, client};
 use ex_support::rpc::eventually;
 use ulo::Signal;
 use ulo_runtime_tokio::Tokio;
-use ulo_transport::ErrorKind;
+use ulo_rpc::ErrorKind;
 
 /// A broker link's first call waits for the server's consumer to join, which Kafka makes slow.
 const FIRST_CALL: Duration = Duration::from_secs(60);

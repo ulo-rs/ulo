@@ -44,7 +44,7 @@ macro_rules! blanket {
             field param register_init register_bootstrap register_destroy register_before_shutdown
             register_shutdown bind bind_as contribute_with check into_reply kind streams event_reply
             read on_connect on_disconnect after_init length body matches answer checked push is_empty
-            controller method meta route shape dependencies handler once payload path_check host_read
+            controller method meta route shape dependencies handler once payload
             provide value try_value contribute also_as qualified export_qualified reexport_qualified export import global secret guard guard_arc
             guard_value guard_with interceptor interceptor_arc error_handler error_handler_arc
             validate codec port subprotocols refuse overflow message_limit construct

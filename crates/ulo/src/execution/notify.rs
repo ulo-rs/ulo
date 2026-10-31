@@ -158,9 +158,11 @@ impl Future for Cancelled<'_> {
     }
 }
 
-/// Resolves when the app stops accepting (§9.5), the moment transports send GOAWAY and close
-/// idle keep-alives. The same future on an execution and on an `AppHandle`, resolving at the
-/// same moment; it does not resolve during the before-shutdown stage.
+/// Resolves as the drain begins (§9.5), a moment before the servers stop accepting, send GOAWAY
+/// and close idle keep-alives: the core fires it, then hands each server its drain. No execution
+/// opens from then on, so a request arriving in that moment is refused, not served. The same future on an execution and on an
+/// `AppHandle`, resolving at the same moment; it does not resolve during the before-shutdown
+/// stage.
 pub struct Draining<'a> {
     inner: Listen<'a>,
 }

@@ -113,8 +113,15 @@ impl RpcCx {
     /// `Serialize` value is answered: what an error handler claiming an error answers with a value
     /// of its own. `Reply::None` is the empty answer.
     ///
-    /// ```ignore
-    /// async fn handle(&self, err: BoxError, cx: &RpcCx) -> Result<Reply, BoxError> {
+    /// ```
+    /// # use ulo::BoxError;
+    /// # use ulo_rpc::{Reply, RpcCx};
+    /// # use ulo_transport::CallError;
+    /// # #[derive(Debug)] struct OutOfStock { sku: String }
+    /// # impl std::fmt::Display for OutOfStock { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("out of stock") } }
+    /// # impl std::error::Error for OutOfStock {}
+    /// # #[derive(serde::Serialize)] struct Backorder { sku: String }
+    /// async fn handle(err: BoxError, cx: &RpcCx) -> Result<Reply, BoxError> {
     ///     match err.downcast_ref::<CallError>().and_then(|call| call.source_as::<OutOfStock>()) {
     ///         Some(out) => Ok(cx.reply(&Backorder { sku: out.sku.clone() })?),
     ///         None => Err(err),

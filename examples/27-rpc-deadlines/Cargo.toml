@@ -15,7 +15,6 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
 ex-support = { path = "../support" }
-ulo-transport = { path = "../../crates/ulo-transport" }
 
 [lints]
 workspace = true

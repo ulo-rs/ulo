@@ -46,12 +46,24 @@ pub async fn chunked_over_the_limit<H: Host>(mode: Mode) {
             "POST {} HTTP/1.1\r\nHost: suite\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
             host.target("/small")
         );
-        raw.write(head.as_bytes()).await;
+        // A host refusing the over-limit body answers 413 and closes while the rest is still
+        // being written, so a failed write there is not a failure: the answer is read and held to
+        // 413 below. The body within the limit is written strictly.
+        let mut frames = vec![head.into_bytes()];
         for chunk in body.as_bytes().chunks(12) {
             let chunk = std::str::from_utf8(chunk).expect("the bodies are ASCII");
-            raw.write(format!("{:x}\r\n{chunk}\r\n", chunk.len()).as_bytes()).await;
+            frames.push(format!("{:x}\r\n{chunk}\r\n", chunk.len()).into_bytes());
         }
-        raw.write(b"0\r\n\r\n").await;
+        frames.push(b"0\r\n\r\n".to_vec());
+        for frame in &frames {
+            if status == 413 {
+                if raw.try_write(frame).await.is_err() {
+                    break;
+                }
+            } else {
+                raw.write(frame).await;
+            }
+        }
         let answer = raw.read_to_close("the answer to a chunked request").await;
         assert_eq!(status_of(&answer), Some(status), "a chunked body of {} bytes: {:?}", body.len(), String::from_utf8_lossy(&answer));
         let text = String::from_utf8_lossy(&answer);

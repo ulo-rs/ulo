@@ -19,7 +19,7 @@ use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
 use ulo::app::Bound;
 use ulo::{App, AppBuilder, AppHandle, Connected, Shutdown, ShutdownError, Signal};
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 use ulo_http_hyper::Server;
 use ulo_runtime_tokio::Tokio;
 

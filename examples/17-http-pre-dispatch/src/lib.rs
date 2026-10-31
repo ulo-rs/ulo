@@ -2,8 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ulo::{App, AppBuilder, BoxError, Dep, Module, ModuleDef, ModuleIdentity, injectable, module, routes};
 use ulo_http::middleware::Next;
-use ulo_http::{Cors, HeaderValue, Method, Middleware, PreDispatch, Request, Response};
-use ulo_transport::CallError;
+use ulo_http::{CallError, Cors, HeaderValue, Method, Middleware, PreDispatch, Request, Response};
 
 /// Counts the requests the API-key entry saw.
 #[injectable]

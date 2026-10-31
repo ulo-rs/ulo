@@ -54,3 +54,7 @@ tokio-util = { workspace = true, features = ["compat"] }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "stand_in"
+required-features = ["tokio"]

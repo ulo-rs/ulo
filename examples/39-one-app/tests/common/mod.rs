@@ -10,7 +10,7 @@ use ex_support::{Served, serve};
 use tonic::transport::{Channel, Endpoint};
 use ulo::Dep;
 use ulo_config::{Env, Values};
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 use ulo_rpc::RpcClient;
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;

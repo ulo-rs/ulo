@@ -38,6 +38,18 @@ mod status;
 mod trace;
 mod transport;
 
+/// The types [`Server`]'s and [`GrpcClientModule`]'s builders take that another `ulo` crate
+/// defines, re-exported so an application configuring gRPC imports them from one place, as
+/// `ulo_http::config` does for HTTP. Each name is the defining crate's type, not a copy.
+pub mod config {
+    #[doc(no_inline)]
+    pub use ulo::Bound;
+    #[doc(no_inline)]
+    pub use ulo_net::{Endpoint, EndpointSpec, Tls};
+    #[doc(no_inline)]
+    pub use ulo_transport::Count;
+}
+
 #[doc(hidden)]
 pub mod __private;
 
@@ -49,7 +61,11 @@ pub use pre_dispatch::PreDispatch;
 pub use server::Server;
 pub use status::{code_for, code_for_http, to_status};
 pub use transport::{Grpc, GrpcCx, GrpcMetadata, IntoGrpcItem, IntoGrpcReply, IntoGrpcStream, PeerAddr, Reply, Response};
+pub use http;
 pub use ulo_grpc_macros::method;
+pub use ulo_transport::{
+    CallError, Classify, Detail, Details, ErrorKind, ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Valid, Validate,
+};
 
 /// The code `ulo-build` generated for the protobuf package `$package`: its messages, its clients
 /// and the method markers, with the encoded file descriptor set as `FILE_DESCRIPTOR_SET` when the

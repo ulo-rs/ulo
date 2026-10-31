@@ -1,12 +1,16 @@
+use std::any::TypeId;
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use futures_core::Stream;
 use futures_core::stream::BoxStream;
+use futures_util::StreamExt;
 use http::request::Parts;
 use http::{HeaderMap, Uri};
+use serde::Serialize;
 use ulo::{AppHandle, BoxError, ExecutionRef, Ext, Extensions, Inputs, LookupError, Timer, Transport};
-use ulo_transport::{ExtractError, FromCall, IntoReply, IntoReplyError};
+use ulo_transport::{CallError, ErrorKind, ExtractError, FromCall, IntoReply, IntoReplyError};
 
 use crate::connection::{ConnId, Connection};
 use crate::envelope::{Data, Frame, MessageId};
@@ -121,6 +125,38 @@ impl WsCx {
     /// The app's `Timer`, which anything timed inside a reply reads.
     pub fn timer(&self) -> &Arc<dyn Timer> {
         self.inner.conn.timer()
+    }
+
+    /// `value` as the message's answer, encoded by the gateway's codec, as a handler returning a
+    /// `Serialize` value is answered; `()` answers nothing, as `Reply::None` does.
+    pub fn reply<T: Serialize + ?Sized + 'static>(&self, value: &T) -> Result<Reply, IntoReplyError> {
+        if TypeId::of::<T>() == TypeId::of::<()>() {
+            return Ok(Reply::None);
+        }
+        self.inner.conn.inner.gateway.settings().codec.encode(value).map(Reply::One).map_err(IntoReplyError::new)
+    }
+
+    /// `items` as the message's answer stream, as a handler returning a stream is answered: each
+    /// `Ok` encoded by the gateway's codec and written as one frame. An `Err` item, or an item the
+    /// codec refuses, runs the matched handler's error handlers on the late path and ends the
+    /// stream.
+    pub fn reply_stream<S, U, E>(&self, items: S) -> Reply
+    where
+        S: Stream<Item = Result<U, E>> + Send + 'static,
+        U: Serialize + Send + 'static,
+        E: Into<CallError> + Send + 'static,
+    {
+        let codec = self.inner.conn.inner.gateway.settings().codec;
+        let frames = items.map(move |item| match item {
+            Ok(value) => codec
+                .encode(&value)
+                .map_err(|err| BoxError::from(CallError::new(ErrorKind::Internal, "internal error").with_source(err))),
+            Err(err) => {
+                let err: CallError = err.into();
+                Err(BoxError::from(err))
+            }
+        });
+        Reply::Many(Box::pin(frames))
     }
 }
 

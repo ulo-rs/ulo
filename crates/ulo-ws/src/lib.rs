@@ -21,12 +21,16 @@
 //! each upgrade request, and [`Switch::serve`] drives each connection on the upgraded stream, so
 //! both run the same steps at the same moments. Every task either starts runs on the app's
 //! runtime: the crate depends on no runtime and owns no socket.
+//!
+//! `#[message]` builds a [`WsHandler`] for each handler and `#[gateway]` mounts the connect handler
+//! through [`GatewayHooks`]; a gateway written without them builds the same values.
 
 mod broadcast;
 mod codec;
 mod connection;
 mod envelope;
 mod gateway;
+mod handler;
 mod handoff;
 mod module;
 mod rooms;
@@ -34,6 +38,16 @@ mod session;
 mod table;
 mod trace;
 mod transport;
+
+/// The types [`WsModule`]'s and [`GatewaySettings`]' builders take that another `ulo` crate
+/// defines, re-exported so an application configuring WebSocket imports them from one place, as
+/// `ulo_http::config` does for HTTP. Each name is the defining crate's type, not a copy.
+pub mod config {
+    #[doc(no_inline)]
+    pub use ulo::Bound;
+    #[doc(no_inline)]
+    pub use ulo_transport::Count;
+}
 
 #[doc(hidden)]
 pub mod __private;
@@ -46,6 +60,7 @@ pub use gateway::{
     AfterInit, CloseCodeError, ConnectRefused, DisconnectReason, Gateway, GatewayConfig, GatewayRef, GatewaySettings,
     OnConnect, OnDisconnect, Overflow, Port, Refuse,
 };
+pub use handler::{GatewayHooks, WsHandler};
 pub use module::WsModule;
 pub use rooms::{Broadcast, BroadcastError, Rooms, RoomsIn};
 pub use session::{Session, SessionFactory, SessionHandle};
@@ -53,4 +68,9 @@ pub use session::{Session, SessionFactory, SessionHandle};
 pub use table::{AnswerHold, MessagesRead};
 pub use table::{GatewayDefaults, GatewayTable};
 pub use transport::{ConnectCx, ConnectReply, ConnectionInfo, NoHandler, Reply, UpgradeHead, Ws, WsConnect, WsCx};
+pub use bytes::Bytes;
+pub use http;
+pub use ulo_transport::{
+    CallError, Classify, Detail, Details, ErrorKind, ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Valid, Validate,
+};
 pub use ulo_ws_macros::{gateway, message};

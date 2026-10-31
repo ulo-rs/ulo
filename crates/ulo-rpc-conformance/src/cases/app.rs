@@ -115,6 +115,10 @@ pub(crate) struct ProbeState {
     stalled: Mutex<Option<Option<CancelReason>>>,
     /// How many calls have reached the holding handler.
     holding: AtomicUsize,
+    /// How many `add` calls have reached their handler, and how many of their executions have
+    /// ended, counted by [`AddEnd`]'s drop.
+    adds_begun: AtomicUsize,
+    adds_ended: AtomicUsize,
     /// When the held call's handler returned its answer, which the link then publishes.
     held_answered: Mutex<Option<Instant>>,
     /// The bounded handlers' calls running now, and the most that ran at once.
@@ -202,6 +206,14 @@ impl Probe {
         *lock(&self.0.held_answered)
     }
 
+    /// Whether every `add` call that reached its handler has had its execution end, and one did.
+    pub(crate) fn adds_settled(&self) -> bool {
+        // `ended` is read first: a call beginning between the two reads only makes the pair unequal.
+        let ended = self.0.adds_ended.load(Ordering::SeqCst);
+        let begun = self.0.adds_begun.load(Ordering::SeqCst);
+        begun > 0 && begun == ended
+    }
+
     /// How many calls have reached the holding handler.
     pub(crate) fn holding(&self) -> usize {
         self.0.holding.load(Ordering::SeqCst)
@@ -258,6 +270,20 @@ impl Drop for Recorder {
         } else {
             *lock(&self.probe.0.stalled) = Some(reason);
         }
+    }
+}
+
+/// Built for the execution of each `add` call and dropped inside `Execution::drop`, after the
+/// execution is marked ended, which is the exact moment the shutdown stops counting the call
+/// abandoned.
+#[injectable(execution)]
+struct AddEnd {
+    probe: Dep<Probe>,
+}
+
+impl Drop for AddEnd {
+    fn drop(&mut self) {
+        self.probe.0.adds_ended.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -342,7 +368,8 @@ pub(crate) struct CoreController {
 #[routes]
 impl CoreController {
     #[ulo_rpc::message("conformance.add")]
-    async fn add(&self, req: Payload<Add>) -> Result<Sum, Refusal> {
+    async fn add(&self, req: Payload<Add>, _end: Dep<AddEnd>) -> Result<Sum, Refusal> {
+        self.probe.0.adds_begun.fetch_add(1, Ordering::SeqCst);
         Ok(Sum { sum: req.0.a + req.0.b })
     }
 
@@ -619,6 +646,7 @@ impl Module for ServerRoot {
 
     fn register(&self, m: &mut ModuleDef<'_>) {
         m.value(self.probe.clone());
+        m.provide::<AddEnd>();
         m.controller::<CoreController>();
         if self.mounts.streaming {
             m.controller::<StreamController>();
@@ -816,12 +844,20 @@ impl<B: Broker> Fixture<B> {
         Fixture::start_over(max_inflight, B::link).await
     }
 
-    /// [`start`](Self::start) with the server's `shutdown_timeout` set to `cap`.
+    /// [`start`](Self::start) with the server's `shutdown_timeout` set to `cap`, returned once the
+    /// readiness calls' executions have ended: a shutdown counts an execution its holder has not
+    /// yet dropped as abandoned, and the answer reaches the caller before that.
     pub(crate) async fn start_capped(cap: Duration) -> Fixture<B> {
         let broker = B::start().await;
         let server = server_capped(&broker, cap).await;
         let client = client(&broker, &[&server]).await;
         ready(&broker, &client.rpc, &[&server]).await;
+        within::<B, _>(Duration::from_secs(10), "the readiness calls' executions to end", async {
+            while !server.probe.adds_settled() {
+                sleep::<B>(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
         Fixture { broker, server, client }
     }
 

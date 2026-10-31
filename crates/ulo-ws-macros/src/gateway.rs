@@ -9,15 +9,16 @@
 //!     fn connect_guards(spec: &mut ::ulo::EnhancerSpec<::ulo_ws::WsConnect>) { spec.guard::<TokenGuard>(); }
 //!     fn session() -> ::ulo_ws::SessionFactory { ::ulo_ws::SessionFactory::default_of::<ChatSession>() }
 //!     fn mount_gateway(m: &mut ::ulo::Mount<'_>) {
-//!         let hooks = ::ulo_ws::__private::Hooks::<Self>::new()
-//!             .on_connect((&&::ulo_ws::__private::HookProbe::<Self>::new()).__ulo_on_connect())
-//!             /* on_disconnect, after_init likewise */;
-//!         ::ulo_ws::__private::mount_connect::<Self>(m, hooks);
+//!         let hooks = ::ulo_ws::GatewayHooks::<Self>::new();
+//!         let hooks = (&&::ulo_ws::__private::HookProbe::<Self>::new()).__ulo_on_connect(hooks);
+//!         /* on_disconnect, after_init likewise */
+//!         hooks.mount(m);
 //!     }
 //! }
 //! ```
 //!
-//! with the probe traits imported anonymously.
+//! with the probe traits imported anonymously, each probe calling the public `GatewayHooks` method
+//! of a hook the type implements, so the expansion is what a hand-written `GatewayConfig` writes.
 
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote, quote_spanned};
@@ -59,11 +60,11 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
                     NoAfterInit as _, NoOnConnect as _, NoOnDisconnect as _, ViaAfterInit as _, ViaOnConnect as _,
                     ViaOnDisconnect as _,
                 };
-                let __ulo_hooks = ::ulo_ws::__private::Hooks::<Self>::new()
-                    .on_connect((&&::ulo_ws::__private::HookProbe::<Self>::new()).__ulo_on_connect())
-                    .on_disconnect((&&::ulo_ws::__private::HookProbe::<Self>::new()).__ulo_on_disconnect())
-                    .after_init((&&::ulo_ws::__private::HookProbe::<Self>::new()).__ulo_after_init());
-                ::ulo_ws::__private::mount_connect::<Self>(__ulo_m, __ulo_hooks);
+                let __ulo_hooks = ::ulo_ws::GatewayHooks::<Self>::new();
+                let __ulo_hooks = (&&::ulo_ws::__private::HookProbe::<Self>::new()).__ulo_on_connect(__ulo_hooks);
+                let __ulo_hooks = (&&::ulo_ws::__private::HookProbe::<Self>::new()).__ulo_on_disconnect(__ulo_hooks);
+                let __ulo_hooks = (&&::ulo_ws::__private::HookProbe::<Self>::new()).__ulo_after_init(__ulo_hooks);
+                ::ulo_ws::GatewayHooks::mount(__ulo_hooks, __ulo_m);
             }
         }
     })

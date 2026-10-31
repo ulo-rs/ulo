@@ -3,7 +3,7 @@ mod common;
 use ex_39_one_app::LAG;
 use ex_support::{advancing, get};
 use serde_json::{Value, json};
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 
 fn body(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or_else(|e| panic!("`{text}`: {e}"))

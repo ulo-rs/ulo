@@ -2,76 +2,22 @@
 //! here change with the macros.
 
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
-use ulo::{BoxError, BoxFuture, TypeName};
 
-pub use http::Method;
 pub use ulo_transport as transport;
 
-pub use crate::extract::PathCheck;
-
-use crate::cx::HttpCx;
 use crate::extract::{Host, Path};
-use crate::response::Response;
+use crate::handler::HttpHandler;
 
 /// The seal of [`HttpCarried`](crate::HttpCarried): implemented for `Http` here and for
 /// `ulo_grpc::Grpc` in `ulo-grpc`, and by no other transport.
 pub trait Carried {}
 
-/// A route's call: extraction, the controller, the handler and the reply probe, run by `dispatch`
-/// after every guard admits.
-pub type HandlerFn = Arc<dyn Fn(HttpCx) -> BoxFuture<'static, Result<Response, BoxError>> + Send + Sync>;
-
-/// The HTTP handler value an attribute passes to `HandlerSpec::new`, which the server reads back
-/// from `MountedHandler::handler` in `prepare`: method, pattern as written, call, the `Path<T>`
-/// checks of its parameters and the `Host<T>` values they read.
-pub struct HttpHandler {
-    pub(crate) method: Method,
-    pub(crate) path: &'static str,
-    pub(crate) call: HandlerFn,
-    pub(crate) path_checks: Vec<PathCheck>,
-    pub(crate) host_reads: Vec<HostRead>,
-}
-
-impl HttpHandler {
-    pub fn new<F>(method: Method, path: &'static str, call: F) -> Self
-    where
-        F: Fn(HttpCx) -> BoxFuture<'static, Result<Response, BoxError>> + Send + Sync + 'static,
-    {
-        // A multipart error is returned as the `ExtractError` it is: `TooLarge` at the body limit,
-        // `Malformed` otherwise.
-        let call: HandlerFn = Arc::new(move |cx| {
-            let app = cx.app().clone();
-            let run = call(cx);
-            Box::pin(async move { run.await.map_err(|err| crate::render::from_multipart(err, &app)) })
-        });
-        HttpHandler { method, path, call, path_checks: Vec::new(), host_reads: Vec::new() }
-    }
-
-    /// One parameter's check, from `PathProbe`: `None` for a parameter that is not a `Path<T>`.
-    pub fn path_check(mut self, check: Option<PathCheck>) -> Self {
-        self.path_checks.extend(check);
-        self
-    }
-
-    /// One parameter's host read, from `HostProbe`: `None` for a parameter that is neither
-    /// `Host<T>` nor `Option<Host<T>>`.
-    pub fn host_read(mut self, read: Option<HostRead>) -> Self {
-        self.host_reads.extend(read);
-        self
-    }
-
-    pub(crate) fn method(&self) -> &Method {
-        &self.method
-    }
-}
-
-/// `(&&PathProbe::<P>::new()).__ulo_check()`: `Some(PathCheck::of::<T>())` for a `Path<T>`
-/// parameter, `None` for any other, ranked by autoref at the concrete parameter type, so an alias
-/// of `Path` is checked as one. Every probe method here is named `__ulo_*`, so it does not meet a
-/// user trait's method of a common name at the call (`ulo::__private`).
+/// `(&&PathProbe::<P>::new()).__ulo_path(handler)`: `handler.reads_path::<T>()` for a `Path<T>`
+/// parameter, `handler` unchanged for any other, ranked by autoref at the concrete parameter type,
+/// so an alias of `Path` is checked as one. Every probe method here is named `__ulo_*`, so it does
+/// not meet a user trait's method of a common name at the call (`ulo::__private`).
 pub struct PathProbe<P>(PhantomData<fn() -> P>);
 
 impl<P> PathProbe<P> {
@@ -87,39 +33,28 @@ impl<P> Default for PathProbe<P> {
 }
 
 pub trait ViaPath {
-    fn __ulo_check(&self) -> Option<PathCheck>;
+    fn __ulo_path(&self, handler: HttpHandler) -> HttpHandler;
 }
 
 impl<T: DeserializeOwned + 'static> ViaPath for &PathProbe<Path<T>> {
-    fn __ulo_check(&self) -> Option<PathCheck> {
-        Some(PathCheck::of::<T>())
+    fn __ulo_path(&self, handler: HttpHandler) -> HttpHandler {
+        handler.reads_path::<T>()
     }
 }
 
 pub trait NotPath {
-    fn __ulo_check(&self) -> Option<PathCheck>;
+    fn __ulo_path(&self, handler: HttpHandler) -> HttpHandler;
 }
 
 impl<P> NotPath for PathProbe<P> {
-    fn __ulo_check(&self) -> Option<PathCheck> {
-        None
+    fn __ulo_path(&self, handler: HttpHandler) -> HttpHandler {
+        handler
     }
 }
 
-/// The value type a `Host<T>` parameter reads, for the embedding's `host_extensions` check.
-#[derive(Clone, Copy, Debug)]
-pub struct HostRead {
-    pub(crate) ty: TypeName,
-}
-
-impl HostRead {
-    fn of<T: 'static>() -> Self {
-        HostRead { ty: TypeName::of::<T>() }
-    }
-}
-
-/// `(&&HostProbe::<P>::new()).__ulo_read()`: `Some` for a `Host<T>` or `Option<Host<T>>`
-/// parameter, `None` for any other, ranked by autoref as `PathProbe` is.
+/// `(&&HostProbe::<P>::new()).__ulo_host(handler)`: `handler.reads_host::<T>()` for a `Host<T>`
+/// or `Option<Host<T>>` parameter, `handler` unchanged for any other, ranked by autoref as
+/// `PathProbe` is.
 pub struct HostProbe<P>(PhantomData<fn() -> P>);
 
 impl<P> HostProbe<P> {
@@ -135,27 +70,27 @@ impl<P> Default for HostProbe<P> {
 }
 
 pub trait ViaHost {
-    fn __ulo_read(&self) -> Option<HostRead>;
+    fn __ulo_host(&self, handler: HttpHandler) -> HttpHandler;
 }
 
 impl<T: 'static> ViaHost for &HostProbe<Host<T>> {
-    fn __ulo_read(&self) -> Option<HostRead> {
-        Some(HostRead::of::<T>())
+    fn __ulo_host(&self, handler: HttpHandler) -> HttpHandler {
+        handler.reads_host::<T>()
     }
 }
 
 impl<T: 'static> ViaHost for &HostProbe<Option<Host<T>>> {
-    fn __ulo_read(&self) -> Option<HostRead> {
-        Some(HostRead::of::<T>())
+    fn __ulo_host(&self, handler: HttpHandler) -> HttpHandler {
+        handler.reads_host::<T>()
     }
 }
 
 pub trait NotHost {
-    fn __ulo_read(&self) -> Option<HostRead>;
+    fn __ulo_host(&self, handler: HttpHandler) -> HttpHandler;
 }
 
 impl<P> NotHost for HostProbe<P> {
-    fn __ulo_read(&self) -> Option<HostRead> {
-        None
+    fn __ulo_host(&self, handler: HttpHandler) -> HttpHandler {
+        handler
     }
 }

@@ -2,7 +2,7 @@ use ex_10_shutdown::{DRAIN, Gate, builder};
 use ex_support::{Reply, advancing, get, start_on};
 use tokio::task::JoinHandle;
 use ulo::{Dep, Signal};
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 
 fn request(addr: std::net::SocketAddr, path: &'static str) -> JoinHandle<Reply> {
     tokio::spawn(get(addr, path))

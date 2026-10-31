@@ -1,11 +1,17 @@
 //! The RPC client (transports DESIGN §5.4): requests, events and the streamed shapes over a link's
 //! client side, connected lazily on the first call.
 //!
-//! ```ignore
-//! self.billing.request::<_, Invoice>("invoices.create", &NewInvoice::from(order))
-//!     .header("tenant", order.tenant())
-//!     .timeout(Duration::from_secs(2))
-//!     .await
+//! ```
+//! # use std::time::Duration;
+//! # use ulo_rpc::{RpcClient, RpcError};
+//! # #[derive(serde::Serialize)] struct NewInvoice { tenant: String }
+//! # #[derive(serde::Deserialize)] struct Invoice;
+//! async fn create(billing: &RpcClient, order: &NewInvoice) -> Result<Invoice, RpcError> {
+//!     billing.request::<_, Invoice>("invoices.create", order)
+//!         .header("tenant", order.tenant.as_str())
+//!         .timeout(Duration::from_secs(2))
+//!         .await
+//! }
 //! ```
 //!
 //! One task per connection, spawned on the client's runtime, routes the link's reply lane to the
@@ -337,7 +343,10 @@ impl RpcClient {
     /// `RpcClientModule::timeout` sets it for a module's client: five seconds at `Bound::Default`,
     /// `Bound::Unbounded` for none. A `stream` or `duplex` call is bounded only by its own
     /// [`idle_timeout`](StreamCall::idle_timeout) and [`deadline`](StreamCall::deadline), so this
-    /// leaves it unbounded. This handle and the clones made from it after carry it; clones made
+    /// leaves it unbounded. A call made [`within`](Call::within) an execution is sent the shorter
+    /// of the execution's remaining time and this timeout, so a caller with more time left than
+    /// the timeout reaches the callee with the timeout. This handle and the clones made from it
+    /// after carry it; clones made
     /// before keep theirs, sharing the connection all the same.
     ///
     /// `Bound::After(Duration::ZERO)`, which would time out every call, is refused as
@@ -989,6 +998,27 @@ impl<Res> Call<Res> {
     /// `traceparent` and `tracestate`, and cancels the call when `exec` is cancelled. A call made
     /// once `exec`'s deadline has passed, or once it is cancelled, fails when it is awaited, before
     /// it connects, `Timeout` or `Unavailable`, so nothing reaches the server.
+    ///
+    /// The deadline sent is the shorter of `exec`'s remaining time and the call's own bound, its
+    /// [`timeout`](Self::timeout) or the client's, five seconds at `Bound::Default`. A caller with
+    /// thirty seconds left reaches the callee with about five on a default client, because the
+    /// client stops waiting then and the callee is not to outlive its caller.
+    ///
+    /// ```
+    /// # use std::time::Duration;
+    /// # use ulo::ExecutionRef;
+    /// # use ulo_rpc::{RpcClient, RpcError};
+    /// async fn quote(pricing: &RpcClient, exec: &ExecutionRef) -> Result<u64, RpcError> {
+    ///     // With 30 s left on `exec`, the callee is given about 5 s (the client's default
+    ///     // timeout); with 2 s left, about 2 s.
+    ///     pricing.request::<_, u64>("price.quote", "sku-1").within(exec).await
+    /// }
+    ///
+    /// async fn quote_patiently(pricing: &RpcClient, exec: &ExecutionRef) -> Result<u64, RpcError> {
+    ///     // A longer bound on the call lifts the 5 s cap; `exec`'s remaining time still applies.
+    ///     pricing.request::<_, u64>("price.quote", "sku-1").timeout(Duration::from_secs(20)).within(exec).await
+    /// }
+    /// ```
     pub fn within(mut self, exec: &ExecutionRef) -> Self {
         self.spec.within = Some(exec.clone());
         self

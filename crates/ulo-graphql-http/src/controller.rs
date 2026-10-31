@@ -9,11 +9,12 @@ use http::{Method, StatusCode};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use ulo::scope::Auto;
-use ulo::{BoxError, BoxFuture, Construct, ConstructError, Controller, Dep, Dependencies, HandlerSpec, Mount, Resolver};
+use ulo::{BoxError, Construct, ConstructError, Controller, Dep, Dependencies, HandlerSpec, Mount, Resolver};
 use ulo_graphql::{Engine, GqlError, GqlRequest, GqlResponse, Outcome};
-use ulo_http::__private::HttpHandler;
-use ulo_http::{Bytes, Http, HttpBody, HttpCx, MethodNotAllowed, Query, Response};
-use ulo_transport::{CallError, ErrorKind, ExtractError, FromCall, IntoReplyError};
+use ulo_http::{
+    Bytes, CallError, ErrorKind, ExtractError, FromCall, Http, HttpBody, HttpCx, HttpHandler, IntoReplyError, MethodNotAllowed,
+    Query, Response,
+};
 
 use crate::playground;
 
@@ -50,14 +51,8 @@ impl<Q: Send + Sync + 'static> Construct for GraphqlEndpoint<Q> {
 
 impl<Q: Send + Sync + 'static> Controller for GraphqlEndpoint<Q> {
     fn mount(m: &mut Mount<'_>) {
-        let on_get = HttpHandler::new(Method::GET, "/", |cx: HttpCx| -> BoxFuture<'static, Result<Response, BoxError>> {
-            Box::pin(get::<Q>(cx))
-        });
-        m.handler(HandlerSpec::<Http, _>::new("get", on_get).route("/"));
-        let on_post = HttpHandler::new(Method::POST, "/", |cx: HttpCx| -> BoxFuture<'static, Result<Response, BoxError>> {
-            Box::pin(post::<Q>(cx))
-        });
-        m.handler(HandlerSpec::<Http, _>::new("post", on_post).route("/"));
+        m.handler(HandlerSpec::<Http, _>::new("get", HttpHandler::new(Method::GET, get::<Q>)).route("/"));
+        m.handler(HandlerSpec::<Http, _>::new("post", HttpHandler::new(Method::POST, post::<Q>)).route("/"));
     }
 }
 

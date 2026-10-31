@@ -18,7 +18,7 @@ use std::error::Error;
 use std::time::Duration;
 
 use common::*;
-use ulo_conformance_support::ScriptedTimer;
+use ulo::testing::ScriptedTimer;
 use ulo::{
     App, ConnectError, Dep, FailureReason, Key, Limit, ModuleDef, Permanent, RUNTIME_SHUT_DOWN, Redacted, Refused, RuntimeShutDown,
     StartupError, is_permanent,

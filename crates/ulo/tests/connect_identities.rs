@@ -13,7 +13,7 @@
 mod common;
 
 use common::*;
-use ulo::scope::Singleton;
+use ulo::scope::Transient;
 use ulo::{
     ConnectError, Construct, ConstructError, Dep, Dependencies, Ext, ExecutionRef, FailureReason, FromContainer, HookKind, Key,
     LookupError, Module, Resolver, StartupError,
@@ -162,16 +162,19 @@ async fn a_failing_dependency_the_dependent_s_module_cannot_see_still_names_its_
 
 struct User;
 
-/// A singleton whose constructor reads `what` from a resolver with no execution behind it, and
-/// declares nothing, so `wire()` has no execution-needing read to refuse.
+/// A transient whose constructor reads `$declares` from a resolver with no execution behind it:
+/// declared, as the read must be, and built by `App::get` outside any execution. A singleton
+/// declaring the read would not wire.
 macro_rules! reads_without_an_execution {
-    ($name:ident, |$r:ident| $read:expr) => {
+    ($name:ident, $declares:ty, |$r:ident| $read:expr) => {
         struct $name;
 
         impl Construct for $name {
-            type Scope = Singleton;
+            type Scope = Transient;
 
-            fn dependencies(_d: &mut Dependencies) {}
+            fn dependencies(d: &mut Dependencies) {
+                d.add::<$declares>();
+            }
 
             async fn construct($r: &Resolver<'_>) -> Result<Self, ConstructError> {
                 let _ = $read.await?;
@@ -181,24 +184,22 @@ macro_rules! reads_without_an_execution {
     };
 }
 
-reads_without_an_execution!(ReadsExt, |r| async { Ext::<User>::from_container(r).await });
-reads_without_an_execution!(ReadsOptionalExt, |r| async { <Option<Ext<User>>>::from_container(r).await });
-reads_without_an_execution!(ReadsExecution, |r| async { ExecutionRef::from_container(r).await });
-reads_without_an_execution!(ReadsInput, |r| async { r.input::<User>() });
+reads_without_an_execution!(ReadsExt, Ext<User>, |r| async { Ext::<User>::from_container(r).await });
+reads_without_an_execution!(ReadsOptionalExt, Option<Ext<User>>, |r| async { <Option<Ext<User>>>::from_container(r).await });
+reads_without_an_execution!(ReadsExecution, ExecutionRef, |r| async { ExecutionRef::from_container(r).await });
+reads_without_an_execution!(ReadsInput, Dep<User>, |r| async { r.input::<User>() });
 
 async fn execution_required<S: Construct>() -> Key {
-    let error = connect_err(Mod::<Root>::new(|m| {
+    let app = connects(Mod::<Root>::new(|m| {
+        // Satisfies the `Dep<User>` the input site declares; the read itself is `r.input`.
+        m.singleton(|| async { User });
         m.provide::<S>();
     }))
     .await;
-    let StartupError::Connect(ConnectError::Construct { key: built, module, reason }) = error else {
-        panic!("expected a construction failure, got: {error}");
-    };
-    assert_eq!((built.key(), module.to_string()), (Key::of::<S, ()>(), mod_name::<Root>()));
-    let FailureReason::Errored(source) = reason else { panic!("expected an errored construction, got: {reason}") };
-    match source.downcast_ref::<LookupError>() {
-        Some(LookupError::ExecutionRequired { key }) => key.key(),
-        other => panic!("expected `ExecutionRequired`, got: {other:?}"),
+    match app.get::<S>().await {
+        Err(LookupError::ExecutionRequired { key }) => key.key(),
+        Err(other) => panic!("expected `ExecutionRequired`, got: {other}"),
+        Ok(_) => panic!("the build succeeded outside an execution"),
     }
 }
 
