@@ -1314,7 +1314,7 @@ The macro emits one assertion per injection point with `quote_spanned!`, so erro
 ```rust
 let app = TestApp::of(AppModule)
     .override_value::<dyn UserRepo>(Arc::new(InMemoryRepo::default()))
-    .override_factory(|| async { FixedClock::at(t0) })
+    .override_factory(|| async move { FixedClock::at(t0) })
     .override_try_factory(|| async { TestBus::connect().await })
     .override_value::<AuditLog>(Arc::new(NullAudit)).in_module::<BillingModule>()
     .override_value::<PgPool>(Arc::new(replica_pool)).in_module_keyed::<DbModule, Replica>()

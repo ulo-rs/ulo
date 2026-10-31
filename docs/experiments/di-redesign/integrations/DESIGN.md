@@ -62,7 +62,7 @@ The core and transport crates this layer changes, with the extension each change
 Sources are given, never found, and layer in the order added, each overriding the ones before [2]:
 
 ```rust
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct AppConfig { http: HttpOptions, database: PgOptions, api_key: Secret<String> }
 
 let config = Config::builder()

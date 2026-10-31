@@ -53,7 +53,7 @@ relies on it and how little pins it.
 | G20 | RPC: a controller cannot be injected; `RpcClientModule` injection; declared metadata; `Valid` payload | `ulo-rpc/src/client.rs`, `module/def.rs` | `ulo-rpc/tests` cover runtime/drain/deadline only | `rpc_controller_injection`, `validated_transports`, example `rpc_nats_client` |
 | G21 | One controller serving several transports; one app serving HTTP, WS, RPC and gRPC together; one `close` draining all | `Controller`/`Mount` in `ulo/src/transport/controller.rs` | no test builds more than one transport kind except `ulo-ws/tests/handoff.rs` (HTTP+WS) and `enhancers.rs` (gRPC+middleware) | `http_e2e`, `graceful_shutdown`, `an_application_is_send`, `bind_refusals`, `bind_phase_order`, examples `graceful_shutdown`, `gateway_http_bridge` |
 | G22 | Startup failure shape: `StartupError::{Wiring,Connect,Configure,Bind}`, a transport error surviving as `source`, redaction | `ulo/src/error/mod.rs` | `redacted` in runtime conformance covers task panics; no test of the variants (unverified) | `adapter_error_contract`, `bind_refusals`, `provider_startup_check` |
-| G23 | Supervision: a serve loop that dies closes the app | `ulo/src/lifecycle/run.rs` | no counterpart found; may not exist (unverified) | `serve_loop_death` |
+| G23 | Supervision: a serve loop that dies closes the app | `ulo/src/app/mod.rs` (`App<Bound>::serve`) | `App<Bound>::serve` in `crates/ulo/src/app/mod.rs` (~498-559) supervises every server's serve future; pinned by `crates/ulo-runtime-tokio/tests/app.rs` `a_transport_whose_serve_fails_closes_the_app` (:1187), `a_transport_whose_serve_returns_while_the_app_runs_closes_the_app` (:1192), `two_serves_ending_on_one_poll_record_the_first_bound_once` (:1252) and by `crates/ulo/tests/serve_discard.rs` | `serve_loop_death` |
 | G24 | Tracing: span per call, W3C propagation across transports, OTLP export | `ulo-transport` span, `ulo-otel` | `traceparent` in all tests: none; `ulo-otel` has no tests | example `rpc_tracing` (spans only) |
 | G25 | WS per-message execution scope; connect-guard bag reaching `on_connect` | `ulo-ws`, `ulo-ws-hyper` | `PerExecution` absent from `ulo-ws-conformance/src/app.rs` | `ws_execution_scope`, `ws_connect_execution` |
 | G26 | Examples with no cover anywhere: custom extractor, SSE, rooms, client, streaming, lifecycle, middleware, file upload, validation, socket activation (adoption itself is pinned by `ulo-http-hyper/tests/listeners.rs`) | as above | `examples/`: none in the new tree; templates show only the greeting | 42 master examples, appendix A1 |
@@ -97,7 +97,7 @@ Brief; the per-file evidence is in the appendix.
 | Guard/panic/unrouted as events (`guard_rejection_is_an_event`, `guard_panic_is_an_event`, `pipeline_panic_is_an_event`, `unrouted_is_an_event`, `ws_panic_recovery`) | RPC `errors::{guard_refusal,panic}`, `misses::*`; WS `close_codes::*`, `messages::*`; gRPC `replies.rs`; HTTP `errors::recovered` |
 | DB module startup checks (`provider_startup_check`) | `ulo-db-conformance` `connect::*`, `health`, `lazy`, `keyed`, `migrate` via each `ulo-db-*/tests/conformance.rs` |
 | Examples `hello_world`, `websocket_chat`, `rpc_controller`, `rpc_udp`, `rpc_nats` | the `ulo new` templates for `http`, `ws`, `rpc-*`, built and tested by CI `template-matrix` |
-| Four adapter proofs of concept | per-crate `conformance.rs`/`ws_conformance.rs` (they remain examples the explainer asks of each installable crate: Q7) |
+| Four adapter proofs of concept | per-crate `conformance.rs`/`ws_conformance.rs`: the HTTP conformance suite runs against every adapter, and example 21 shows embedding |
 
 `coverage_ledger.rs` (the "every crate is proved somewhere" assertion) has no owner now: `ci.yml`
 asserts nothing per crate, its `suite` column means "registered in integration-tests", and it names
@@ -105,8 +105,8 @@ the removed `ulo-db-prisma`. Whether the question is still worth asking is for t
 
 ## 4. Totals
 
-Appendix rows (mixed files split): GAP 95, COVERED 67, DROPPED 15,
-UNKNOWN 7. GAP means a concept that survives and has no cover; consecutive rows often
+Appendix rows (mixed files split): GAP 91, COVERED 68, DROPPED 15,
+UNKNOWN 6. GAP means a concept that survives and has no cover; consecutive rows often
 repeat one concept, so section 1 holds 26 distinct gaps. Master inventory: 42 examples, 132 test
 files under `integration-tests/tests/integration/` (548 `#[test]`/`#[tokio::test]` attributes).
 
@@ -145,8 +145,8 @@ Open questions: Q1 where core tests live (`crates/ulo/tests` with a runtime dev-
 become workspace members or get CI jobs; Q3 whether `import_cycle`'s "modules may import each other"
 is still intended (`graph/cycles.rs` reports import cycles as errors); Q4 whether a per-crate
 "ran a test" ledger is wanted (`scripts/ran_a_test.py` is the existing definition); Q5 examples owed
-by the six DB, two GraphQL and health crates; Q6 whether `serve_loop_death` is a live guarantee;
-Q7 one example per HTTP host or none; Q8 `docs/explainers/testing-and-examples.md` and
+by the six DB, two GraphQL and health crates; Q6 whether `serve_loop_death` is a live guarantee
+(it is: `App<Bound>::serve` and the tests named in its row); Q8 `docs/explainers/testing-and-examples.md` and
 `crates/ulo/TOWER_COMPAT.md` still describe the master layout.
 
 ## Appendix: per-file table
@@ -173,10 +173,6 @@ crate" half of `examples/README.md` has no content on this branch either.
 
 | Old file | Demonstrates | Status | Concept in new framework | Redundancy | Evidence / new home |
 | --- | --- | --- | --- | --- | --- |
-| `actix_poc.rs` | actix adapter: buffered request body, 256 KiB cap, WS | **GAP** | yes: `ulo-http-actix` | one of four adapter smoke files that differ by one line | becomes `crates/ulo-http-actix/examples/hello.rs`, the one example the explainer requires of a crate users install; limits are pinned by `ulo-http-actix/tests/conformance.rs` |
-| `poem_poc.rs` | poem adapter smoke | **GAP** | yes | as above | `crates/ulo-http-poem/examples/hello.rs`; `ulo-http-poem/tests/{conformance,ws_conformance}.rs` pin behaviour |
-| `rocket_poc.rs` | rocket adapter smoke | **GAP** | yes | as above | `crates/ulo-http-rocket/examples/hello.rs` |
-| `salvo_poc.rs` | salvo adapter smoke | **GAP** | yes | as above | `crates/ulo-http-salvo/examples/hello.rs`; axum gets the same from the template |
 | `build.rs` | compiles `proto/` for the gRPC examples | **GAP** | yes: `ulo-build` | none | follows `grpc_service.rs`; template `grpc/build.rs` is the shape |
 | `proto/` | protos for two gRPC examples | **GAP** | yes | `templates/new/grpc/greeter.proto` | travels with the gRPC example |
 | `config_module.rs` | typed config from env with defaults, injected anywhere | **GAP** | yes, new API: `ulo-config` `Config`, `Env`, `File`, `Values` | template reads `config/app.toml` + env prefix, but shows no struct with defaults/secrets | `crates/ulo-config/examples/config.rs`; `#[derive(Config)]`, `ConfigModule::<T>::new()` panic-on-failure no longer apply (`ulo-config/src/module.rs`) |
@@ -316,7 +312,7 @@ Status per row; GAP rows name the new API where known.
 | `sse_adapter_conformance.rs` | each adapter serves endless SSE; refusal for collecting adapters | **COVERED** | `ulo-http-conformance` app route `endless` with `Probe`/`Timer`, run by every `crates/ulo-http-*/tests/conformance.rs`; refusal-by-declaration is in `EmbedLimits` (`Host::limits`) |
 | `cancellation.rs` | disconnect drops handler future; body drop cancels feeding work | **COVERED** | `ulo-http-conformance/src/cases/disconnect.rs` `mid_stream`; `ulo-http/tests/post_deadline_body.rs`, `stream_end.rs`; `dropped.rs` in each adapter crate |
 | `graceful_shutdown.rs` | `close()` closes WS, stops HTTP, runs destroy hook | **COVERED** | `ulo-http-conformance` drain (`http1`, `http2`, `goaway`), `ulo-ws/tests/handoff.rs` `the_drain_closes_a_same_port_connection_with_going_away`, `ulo-runtime-tokio/tests/app.rs`; one cross-transport version stays in IT (section 5) |
-| `serve_loop_death.rs` | a dead serve loop closes the app | **UNKNOWN** | no serve-loop supervision found in `crates/ulo/src/lifecycle/run.rs` by name; read `run.rs`/`shutdown.rs` before deciding PORT to IT (unverified) |
+| `serve_loop_death.rs` | a dead serve loop closes the app | **COVERED** | `App<Bound>::serve` (`crates/ulo/src/app/mod.rs` ~498-559) closes the app when a serve ends; pinned by `crates/ulo-runtime-tokio/tests/app.rs` :1187, :1192 and :1252 and by `crates/ulo/tests/serve_discard.rs` (`CORE_TEST_PLAN.md` section 3 records the same) |
 | `bind_refusals.rs` | refuse-or-none bind: failing transport fails bind and releases sockets; no-adapter declarations refused | **GAP** | IT `bind_refusals.rs` for the first two cases (two real transports); the three "no adapter" cases DELETE, controllers without a server are now `StartupError::Configure` (`error/mod.rs:37`) — pin one in CORE `startup_errors.rs` |
 | `bind_phase_order.rs` | all registration before any socket | **GAP** | folded into IT `bind_refusals.rs`; per-server ordering: `ulo-ws-hyper/tests/prepare.rs` |
 | `adapter_error_contract.rs` | adapter error survives as `source` | **GAP** | CORE `startup_errors.rs` with a stub `Server`; `StartupError::Bind { transport, source: Redacted }` is the new shape |
