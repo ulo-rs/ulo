@@ -9,6 +9,8 @@
 //! file builds nothing.
 
 #![cfg(any(target_os = "linux", target_os = "macos"))]
+// The macOS thread count calls `proc_pidinfo`; the one place this file uses `unsafe`.
+#![allow(unsafe_code)]
 
 use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
@@ -85,7 +87,6 @@ fn lapin_threads() -> usize {
 /// The process's threads named `lapin-io-loop`, listed by `PROC_PIDLISTTHREADS` and each named by
 /// `PROC_PIDTHREADINFO`. A thread that ends between the two answers nothing and is not counted.
 #[cfg(target_os = "macos")]
-#[allow(unsafe_code, reason = "libproc is the one macOS interface naming another thread of the process")]
 fn lapin_threads() -> usize {
     use std::ffi::CStr;
     use std::mem::size_of;

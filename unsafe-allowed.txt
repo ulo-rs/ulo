@@ -24,3 +24,7 @@ crates/ulo-server-hyper/src/compat.rs pure-rust
 # `OwnedFd::from_raw_fd`) and reading a socket's listen state through `getsockopt` where socket2
 # does not.
 crates/ulo-net/src/activation.rs syscall its tests open a socket, which Miri refuses under isolation, and without isolation Miri stops at `getsockopt(SO_TYPE)`, an option it does not implement
+
+# Counting the process's threads by name on macOS through `proc_pidinfo`, the one interface that
+# names another thread; the test proves a RabbitMQ client leaves one `lapin-io-loop` thread.
+crates/ulo-rpc-rabbitmq/tests/one_connect.rs syscall `proc_pidinfo` is a Darwin system call, which Miri cannot execute, and the file builds nothing on Linux
