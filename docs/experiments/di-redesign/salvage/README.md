@@ -9,9 +9,10 @@ The campaign was written against the old framework, and the rebuild changed cour
 | Path | Holds |
 | --- | --- |
 | `source/` | The campaign folder, copied unchanged (51 files). |
-| `adrs/` | ADRs 0052 to 0054, restored from the unreachable commit `9d3fb9c2` (the old HTTP audit branch). |
 | `<subject>.md` | One record per subject, below. |
 | `QUESTIONS_SALVAGE.md` | The questions that cross subjects, for the designer. |
+
+ADRs 0052 to 0054, found on an unreachable commit (`9d3fb9c2`, the old HTTP audit branch), are in `docs/adr/` marked withdrawn.
 
 The 25 old snapshot and backup branches were archived to `old-build-branches-2026-11-01.bundle` beside the repository, 5.5 MB, outside git history here.
 

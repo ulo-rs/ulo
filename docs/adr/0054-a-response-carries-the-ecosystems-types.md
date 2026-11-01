@@ -1,6 +1,6 @@
 # 0054 — A response's status and headers are the ecosystem's types
 
-Status: proposed
+Status: withdrawn; never merged, the route table, the problem-details body and the response types are decided in `docs/experiments/di-redesign/transports/DESIGN.md`
 
 Replaces `HttpResponse.status: u16` with `http::StatusCode` and
 `HttpResponse.headers: Vec<(String, String)>` with `http::HeaderMap`, so a response cannot carry a

@@ -1,6 +1,6 @@
 # 0055 — The pipeline's order is the order that was written
 
-Status: proposed
+Status: superseded by `docs/experiments/di-redesign/DESIGN.md` §7, Enhancers and roles, and `docs/experiments/di-redesign/transports/DESIGN.md` §3.3
 
 An enhancer declaration runs in the order written, whatever spelling each entry uses; the error
 chain sits above the interceptors on every transport; a guard answers `Result<(), E>`; and the

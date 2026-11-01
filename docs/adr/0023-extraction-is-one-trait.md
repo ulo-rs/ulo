@@ -1,6 +1,6 @@
 # 0023 — Extraction is one trait, and body-freedom is a convention
 
-Status: accepted
+Status: superseded by `docs/experiments/di-redesign/transports/DESIGN.md` §2.2, Parameters and extraction
 
 ## Context
 

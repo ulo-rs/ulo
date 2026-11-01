@@ -1,6 +1,6 @@
 # 0053 — The HTTP error body is RFC 9457 problem details
 
-Status: proposed
+Status: withdrawn; never merged, the route table, the problem-details body and the response types are decided in `docs/experiments/di-redesign/transports/DESIGN.md`
 
 Replaces `{statusCode, message, error, details?}` served as `application/json` with RFC 9457
 problem details served as `application/problem+json`, in the change that collapses the six

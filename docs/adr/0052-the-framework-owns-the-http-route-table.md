@@ -1,6 +1,6 @@
 # 0052 — The framework owns the HTTP route table
 
-Status: proposed
+Status: withdrawn; never merged, the route table, the problem-details body and the response types are decided in `docs/experiments/di-redesign/transports/DESIGN.md`
 
 Replaces per-route registration on `HttpAdapter` with one dispatch entry the adapter calls per
 request, so route matching, the miss, and everything decided from the route table happen once in
