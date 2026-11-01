@@ -48,7 +48,6 @@ suite instead of one copy per implementor, and how to find a gap rather than a r
 2. Write `tests/integration/<contract>.rs`.
 3. Declare it: `mod <contract>;` in `tests/integration/main.rs`. Without this line the file is
    compiled by nothing and run by nothing, and cargo reports neither.
-4. Update the crate's line in `coverage_ledger.rs`, which fails until it matches the tree.
 
 ## What a file is called, and what it opens with
 
@@ -57,8 +56,7 @@ The file name is the contract, not the subject and not the project phase that pr
 can decode is a name that stops being read.
 
 Every file opens with a `//!` header saying what it proves and, where it is not obvious, what
-failure the test exists to catch. `coverage_ledger.rs` enforces the header's presence; the header's
-usefulness is on the author. The one to copy is a conformance suite — it states the contract, names
+failure the test exists to catch. The header's usefulness is on the author. The one to copy is a conformance suite — it states the contract, names
 the cases that discriminate, and says which adapter is the exception and why.
 
 ## Shared helpers
@@ -71,9 +69,3 @@ the cases that discriminate, and says which adapter is the exception and why.
 | `ExecutionOrder` | Record what ran, in what order, across an enhancer chain |
 | `panic_message` | Read the message out of a recovered panic |
 | `NotServed` | A gRPC stub for tests that need a service declared but never dialled |
-
-## The ledger
-
-`coverage_ledger.rs` asserts that every crate under `crates/` is proved somewhere, that every
-example is reachable from an index, and that this file's claims about registration are true of the
-tree. It carries the reasoning.

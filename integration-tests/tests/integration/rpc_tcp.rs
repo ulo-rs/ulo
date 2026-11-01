@@ -1048,6 +1048,7 @@ static SCOPED_BUILDS: AtomicUsize = AtomicUsize::new(0);
 /// that used to be reachable only on HTTP.
 #[injectable(scope = "execution")]
 pub struct PerCall {
+    #[default(0)]
     id: usize,
 }
 
@@ -1071,7 +1072,7 @@ impl PerCall {
 #[injectable(scope = "execution")]
 pub struct ScopedGuardA {
     #[inject]
-    scoped: Arc<PerCall>,
+    scoped: PerCall,
 }
 
 #[async_trait]
@@ -1085,7 +1086,7 @@ impl Guard<RpcContext> for ScopedGuardA {
 #[injectable(scope = "execution")]
 pub struct ScopedGuardB {
     #[inject]
-    scoped: Arc<PerCall>,
+    scoped: PerCall,
 }
 
 #[async_trait]
@@ -1168,6 +1169,7 @@ static CALL_IDS: AtomicUsize = AtomicUsize::new(0);
 
 #[injectable(scope = "execution")]
 pub struct CallScoped {
+    #[default(0)]
     id: usize,
 }
 
@@ -1192,7 +1194,7 @@ pub struct GuardSaw(usize);
 #[injectable(scope = "execution")]
 pub struct CallScopedGuard {
     #[inject]
-    scoped: Arc<CallScoped>,
+    scoped: CallScoped,
 }
 
 #[async_trait]
@@ -1209,7 +1211,8 @@ static PER_CALL_CONTROLLER_BUILDS: AtomicUsize = AtomicUsize::new(0);
 #[controller(scope = "execution")]
 pub struct PerCallRpcController {
     #[inject]
-    scoped: Arc<CallScoped>,
+    scoped: CallScoped,
+    #[default(0)]
     build: usize,
 }
 
@@ -1217,7 +1220,7 @@ pub struct PerCallRpcController {
 #[use_guards(CallScopedGuard)]
 impl PerCallRpcController {
     #[new]
-    pub fn new(scoped: Arc<CallScoped>) -> Self {
+    pub fn new(scoped: CallScoped) -> Self {
         Self {
             scoped,
             build: PER_CALL_CONTROLLER_BUILDS.fetch_add(1, Ordering::SeqCst),
@@ -1242,6 +1245,7 @@ static SINGLETON_CONTROLLER_BUILDS: AtomicUsize = AtomicUsize::new(0);
 
 #[controller]
 pub struct SingletonRpcController {
+    #[default(0)]
     build: usize,
 }
 
@@ -1344,14 +1348,15 @@ static ELEVATED_CONTROLLER_BUILDS: AtomicUsize = AtomicUsize::new(0);
 #[controller]
 pub struct ElevatedRpcController {
     #[inject]
-    scoped: Arc<CallScoped>,
+    scoped: CallScoped,
+    #[default(0)]
     build: usize,
 }
 
 #[patterns]
 impl ElevatedRpcController {
     #[new]
-    pub fn new(scoped: Arc<CallScoped>) -> Self {
+    pub fn new(scoped: CallScoped) -> Self {
         Self {
             scoped,
             build: ELEVATED_CONTROLLER_BUILDS.fetch_add(1, Ordering::SeqCst),

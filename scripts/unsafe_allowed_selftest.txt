@@ -1,0 +1,35 @@
+# Planted lines for `scripts/unsafe_allowed.py`, which runs the rules of `unsafe-allowed.txt`'s
+# grammar over this file before `check` and before `miri`, and fails unless each line under an
+# `# expect: <finding>` comment is refused with a finding containing that text and nothing else,
+# and every other line passes. Only the grammar is checked here: the paths name no file.
+#
+# `<whitespace>` stands for a space, a tab, a no-break space and a space, so the plant survives an
+# editor that strips trailing whitespace.
+
+# A `syscall` entry with no reason.
+# expect: gives the reason Miri cannot execute it
+planted/syscall_no_reason.rs syscall
+
+# A `syscall` entry whose reason is whitespace alone.
+# expect: gives the reason Miri cannot execute it
+planted/syscall_whitespace_reason.rs syscall<whitespace>
+
+# A `pure-rust` entry with something after the word, a reason that would otherwise be dropped.
+# expect: takes no reason
+planted/pure_with_reason.rs pure-rust Miri runs its tests
+
+# An unknown kind word.
+# expect: is no kind
+planted/unknown_kind.rs pure
+
+# No kind at all.
+# expect: has no kind
+planted/no_kind.rs
+
+# The valid forms, which must pass.
+planted/pure.rs pure-rust
+planted/syscall.rs syscall its tests open a socket, which Miri refuses under isolation
+
+# A path listed twice.
+# expect: is listed again
+planted/pure.rs pure-rust

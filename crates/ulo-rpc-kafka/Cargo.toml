@@ -1,34 +1,47 @@
 [package]
 name = "ulo-rpc-kafka"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Apache Kafka transport adapter for the Ulo RPC gateway"
+description = "The Kafka link for Ulo RPC: consumer groups, a reply topic and correlation headers"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-keywords = ["ulo", "kafka", "rpc", "framework", "adapter"]
+keywords = ["ulo", "rpc", "kafka"]
 categories = ["network-programming"]
 
 [features]
-# Gates tests that need a live Kafka broker (via testcontainers + Docker).
+# `security.protocol=SSL`, selected by an `ssl://` broker entry, through librdkafka's OpenSSL.
+tls = ["rdkafka/ssl"]
+# Builds `tests/conformance.rs`, which starts a Kafka broker in a container per scenario and so
+# needs a running Docker daemon.
 integration = []
+# For the conformance suite; not an application feature. It builds the link's `probe()`, through
+# which the suite's held-`cancel` scenarios read the client's table, withhold the server's
+# `opened` and shorten the link's hold, and turns on `ulo-rpc`'s `conformance-probe`. The tests
+# enable it through this crate's dev-dependency on itself.
+conformance-probe = ["ulo-rpc/conformance-probe"]
 
 [dependencies]
-ulo = { path = "../ulo", default-features = false }
-rdkafka = "0.39"
-tokio = { workspace = true, features = ["full"] }
-serde_json.workspace = true
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+bytes.workspace = true
+futures-core.workspace = true
+futures-util.workspace = true
+rdkafka.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "macros", "time"] }
 tracing.workspace = true
-futures = { workspace = true, features = ["async-await", "executor"] }
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-ulo-rpc-conformance = { path = "../ulo-rpc-conformance" }
+# Itself with `conformance-probe`, for `tests/conformance.rs`.
+ulo-rpc-kafka = { path = ".", features = ["conformance-probe"] }
+futures-executor.workspace = true
 testcontainers.workspace = true
-testcontainers-modules = { workspace = true, features = ["kafka"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-tokio-stream.workspace = true
-anyhow.workspace = true
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
-ulo-macros = { path = "../ulo-macros" }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
+
+[lints]
+workspace = true

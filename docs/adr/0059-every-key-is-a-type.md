@@ -1,6 +1,6 @@
 # 0059 — Every key is a type
 
-Status: proposed
+Status: superseded by `docs/experiments/di-redesign/DESIGN.md` §3.1, Keys and qualifiers
 
 A key to the container is a type. A type is its own key, and a second slot for a type, or a named
 slot for a role, is a marker type that names what it holds through the `Key` trait. Strings are not

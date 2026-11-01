@@ -1,12 +1,131 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/*",
+    "crates/ulo",
+    "crates/ulo-macros",
+    "crates/ulo-handler-codegen",
+    "crates/ulo-transport",
+    "crates/ulo-reexport-ws",
+    "crates/ulo-reexport-rpc",
+    "crates/ulo-reexport-grpc",
+    "crates/ulo-transport-macros",
+    "crates/ulo-net",
+    "crates/ulo-runtime-tokio",
+    "crates/ulo-runtime-smol",
+    "crates/ulo-runtime-conformance",
+    "crates/ulo-test-certs",
+    "crates/ulo-server-hyper",
+    "crates/ulo-listener-tokio",
+    "crates/ulo-listener-smol",
+    "crates/ulo-http",
+    "crates/ulo-http-macros",
+    "crates/ulo-http-hyper",
+    "crates/ulo-http-axum",
+    "crates/ulo-http-salvo",
+    "crates/ulo-http-poem",
+    "crates/ulo-http-actix",
+    "crates/ulo-http-rocket",
+    "crates/ulo-http-conformance",
+    "crates/ulo-ws",
+    "crates/ulo-ws-hyper",
+    "crates/ulo-ws-conformance",
+    "crates/ulo-ws-macros",
+    "crates/ulo-ws-redis",
+    "crates/ulo-rpc",
+    "crates/ulo-rpc-macros",
+    "crates/ulo-rpc-tcp-core",
+    "crates/ulo-rpc-tcp",
+    "crates/ulo-rpc-tcp-smol",
+    "crates/ulo-rpc-udp",
+    "crates/ulo-rpc-nats",
+    "crates/ulo-rpc-redis",
+    "crates/ulo-rpc-rabbitmq",
+    "crates/ulo-rpc-mqtt",
+    "crates/ulo-rpc-kafka",
+    "crates/ulo-rpc-conformance",
+    "crates/ulo-grpc",
+    "crates/ulo-grpc-macros",
+    "crates/ulo-build",
+    "crates/ulo-codegen-tests",
+    "crates/ulo-macro-lints",
+    "crates/ulo-graphql",
+    "crates/ulo-graphql-http",
+    "crates/ulo-graphql-ws",
+    "crates/ulo-graphql-async-graphql",
+    "crates/ulo-graphql-juniper",
+    "crates/ulo-cli",
+    "crates/ulo-config",
+    "crates/ulo-health",
+    "crates/ulo-health-http",
+    "crates/ulo-health-grpc",
+    "crates/ulo-db",
+    "crates/ulo-db-sqlx",
+    "crates/ulo-db-sqlx-smol-probe",
+    "crates/ulo-db-seaorm",
+    "crates/ulo-db-diesel",
+    "crates/ulo-db-mongodb",
+    "crates/ulo-db-redis",
+    "crates/ulo-db-conformance",
+    "crates/ulo-conformance-support",
+    "crates/ulo-otel",
+    "crates/ulo-otel-otlp",
+    "examples/support",
+    "examples/01-hello",
+    "examples/02-providers",
+    "examples/03-traits-and-qualifiers",
+    "examples/04-collections-and-optional",
+    "examples/05-scopes",
+    "examples/06-modules",
+    "examples/07-configured-modules",
+    "examples/08-dynamic-and-lazy",
+    "examples/09-lifecycle",
+    "examples/10-shutdown",
+    "examples/11-wiring-report",
+    "examples/12-standalone",
+    "examples/13-testing",
+    "examples/14-without-macros",
+    "examples/15-http-requests",
+    "examples/16-http-enhancers",
+    "examples/17-http-pre-dispatch",
+    "examples/18-http-streaming",
+    "examples/19-http-uploads",
+    "examples/20-http-tls",
+    "examples/21-http-in-axum",
+    "examples/22-http-on-smol",
+    "examples/25-rpc-basics",
+    "examples/26-rpc-streams",
+    "examples/27-rpc-deadlines",
+    "examples/28-rpc-links",
+    "examples/23-ws-gateway",
+    "examples/24-ws-rooms",
+    "examples/29-grpc-service",
+    "examples/30-grpc-client",
+    "examples/31-graphql",
+    "examples/32-graphql-subscriptions",
+    "examples/33-config",
+    "examples/34-health",
+    "examples/35-db-sqlx",
+    "examples/36-db-two-instances",
+    "examples/37-db-diesel",
+    "examples/38-tracing",
+    "examples/39-one-app",
+    "examples/40-socket-activation",
+    "examples/41-one-guard-two-transports",
+]
+exclude = [
     "integration-tests",
     "examples",
 ]
 
+# `unsafe` is refused in every member but in the modules `unsafe-allowed.txt` lists, each of which
+# opts out with `#![allow(unsafe_code)]` at its top. `deny` rather than `forbid`, since `forbid`
+# cannot be relaxed for one module; `scripts/unsafe_allowed.py` fails CI on an opt-out the list
+# does not name, and on a member that does not inherit this table.
+[workspace.lints.rust]
+unsafe_code = "deny"
+
 [workspace.package]
+version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -14,25 +133,122 @@ repository = "https://github.com/ulo-rs/ulo"
 homepage = "https://github.com/ulo-rs/ulo"
 
 [workspace.dependencies]
+actix-http = { version = "3", default-features = false }
+actix-service = "2"
+actix-web = { version = "4", default-features = false }
 anyhow = "1.0.95"
+async-broadcast = "0.7"
+async-executor = "1.14"
+async-graphql = { version = "7", default-features = false }
+async-io = "2.6"
+async-lock = "3.4"
+async-nats = { version = "0.46", default-features = false }
+async-net = "2"
 async-trait = "0.1.86"
+async-tungstenite = { version = "0.33", default-features = false }
+axum = { version = "0.8", default-features = false }
+base64 = "0.22"
 bytes = "1"
+ciborium = "0.2"
+command-fds = "0.3.3"
+# `rt_tokio_1`, which `ulo-db-diesel` enables, is the only runtime feature it takes.
+deadpool = { version = "0.13", default-features = false, features = ["managed"] }
+diesel = { version = "2.3", default-features = false }
+diesel-async = { version = "0.9", default-features = false }
+diesel_migrations = "2.3"
+event-listener = "5.4"
 futures = { version = "0.3", default-features = false, features = ["std"] }
+futures-channel = "0.3"
+futures-core = "0.3"
+futures-executor = "0.3"
+futures-io = "0.3"
+# `ring`, the provider `rustls` is built with here.
+futures-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 futures-timer = "3"
 futures-util = "0.3"
+h2 = "0.4"
+headers = "0.4"
 http = "1"
+http-body = "1"
 http-body-util = "0.1"
+httparse = "1"
+hyper = "1"
+hyper-util = "0.1"
+ignore-files = "3.0.5"
+jsonc-parser = "0.34"
+juniper = "0.16"
+lapin = "4"
+libc = "0.2"
+# The store crate enables the TLS and DNS features it needs.
+mongodb = { version = "3.9", default-features = false }
+multer = "3"
+# `trace` alone and no runtime feature, so the tree holds no tokio.
+opentelemetry = { version = "0.33.1", default-features = false }
+opentelemetry-http = { version = "0.33.1", default-features = false }
+opentelemetry-otlp = { version = "0.33.1", default-features = false }
+opentelemetry_sdk = { version = "0.33.1", default-features = false }
 parking_lot = "0.12"
-redis = "1"
+percent-encoding = "2"
+pin-project-lite = "0.2"
+piper = "0.2"
+poem = { version = "3.1", default-features = false }
+proc-macro2 = "1.0.92"
+prost = "0.14"
+prost-build = "0.14"
+prost-types = "0.14"
+protoc-bin-vendored = "3.2"
+quote = "1.0.38"
+# Test certificates, made per run by `ulo-test-certs`, a dev-dependency only; `ring`, the provider
+# `rustls` is built with here.
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
+rdkafka = "0.39"
+redis = { version = "1", features = ["aio", "tokio-comp"] }
 reqwest = { version = "0.13", default-features = false }
+rmp-serde = "1"
+rocket = { version = "0.5", default-features = false }
+rumqttc = "0.25"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-native-certs = "0.8"
+rustls-platform-verifier = "0.7"
+rustls-pki-types = "1.9"
+salvo = { version = "0.92", default-features = false }
+# `saphyr-parser` is its own entry because `saphyr` re-exports none of its events.
+saphyr = "0.2"
+saphyr-parser = "0.2"
+sea-orm = { version = "2.0", default-features = false }
+sea-orm-migration = { version = "2.0", default-features = false }
 serde = "1.0.217"
 serde_json = "1.0.137"
+socket2 = "0.6"
+# One entry shared by `ulo-db-sqlx` and `ulo-db-seaorm`, so a build holds one SQLx.
+sqlx = { version = "0.9", default-features = false }
+syn = "2.0.94"
 testcontainers = "0.27.3"
 testcontainers-modules = "0.15.0"
 tokio = { version = "1.47", default-features = false }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 tokio-stream = "0.1"
-tokio-tungstenite = "0.28"
+tokio-tungstenite = { version = "0.28", default-features = false }
+tokio-util = { version = "0.7", default-features = false }
+toml = { version = "1", default-features = false }
+tonic = { version = "0.14", default-features = false }
+tonic-health = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+tonic-reflection = "0.14"
+tonic-types = "0.14"
 tower = { version = "0.5", default-features = false }
 tracing = "0.1"
+tracing-opentelemetry = { version = "0.34.0", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false }
+trybuild = "1.0.110"
+# Pinned exactly: `ulo-otel-otlp` sets its rustls provider through `TlsConfig::unversioned_rustls_crypto_provider`,
+# outside ureq's semver guarantee, so a bump is a deliberate change.
+ureq = { version = "=3.4.2", default-features = false }
 uuid = "1.11"
 validator = "0.20.0"
+watchexec = "8.2"
+watchexec-events = "6.1"
+watchexec-filterer-globset = "8.0"
+watchexec-filterer-ignore = "7.0"
+watchexec-signals = "5.0"

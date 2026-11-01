@@ -1,0 +1,583 @@
+//! Shutdown: one event per app, three triggers, one outcome for every receiver (§9.5). The
+//! triggers are `serve`'s signal, a `close`, and a transport's `serve` ending while the app runs,
+//! which `serve` reports as the outcome's first failure, `ShutdownFailure::Serve`.
+//!
+//! The sequence:
+//! 1. `BeforeApplicationShutdown(signal)` hooks, reverse connect order, while the app serves.
+//! 2. Stop accepting: phase Draining, `draining()` fires, each transport's `Server::drain`
+//!    receives a `DrainToken`.
+//! 3. Drain: wait for live executions to end on their own, up to `drain_timeout` (zero without a
+//!    `Timer`) or the earlier expiry of the cap.
+//! 4. Cancel and abandon the rest, counting them in `Shutdown::abandoned`.
+//! 5. `OnModuleDestroy` hooks, reverse connect order; phase Destroying from the first.
+//! 6. Transports close their sockets, every `close` at once, each bounded by what is left of the
+//!    cap, or by `hook_timeout` when no cap is set, their failures recorded in bind order. The app then
+//!    lets go of its servers. For an app that never reaches this step, the `App` value's drop
+//!    lets go of them when no `close` holds a claim, and the last claim's drop otherwise; that
+//!    release moves the phase to `Closed` and fires `draining()`. A `close` whose claim finds the
+//!    servers released that way runs none of the steps and answers `ShutdownFailure::Dropped`.
+//! 7. `OnApplicationShutdown(signal)` hooks, reverse connect order.
+//!
+//! Lazily loaded modules come first in every hook step, in reverse load order. A failing step
+//! never stops the sequence. When `shutdown_timeout` expires, hooks not yet run are `Skipped`, a
+//! hook mid-run is dropped as `TimedOut { limit: ShutdownCap }`, and an open drain ends at once.
+//! Stop accepting still runs, and each `close` still starts with nothing left of the cap: one that
+//! does not finish on its first poll is dropped and recorded as `ShutdownFailure::Close` with
+//! `TimedOut { limit: ShutdownCap }`.
+
+use std::future::{Future, poll_fn};
+use std::pin::{Pin, pin};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::task::Poll;
+use std::time::{Duration, Instant};
+
+use async_lock::OnceCell;
+
+use crate::app::shared::AppShared;
+use crate::error::{FailureReason, Limit, Shutdown, ShutdownError, ShutdownFailure};
+use crate::execution::notify::{Listen, Notify};
+use crate::graph::{BindingId, Graph, ModuleId};
+use crate::hooks::HookKind;
+use crate::lifecycle::connect::{HookOwner, hook_plan, hooks_of, owner_key, run_hook};
+use crate::lifecycle::phase::Phase;
+use crate::lifecycle::run::{Cap, CatchUnwind, Outcome, shut_down};
+use crate::redact::{SecretRegistry, redact, redact_panic};
+use crate::signal::Signal;
+use crate::timer::{BoxFuture, Cut, Timer, timeout_at};
+use crate::transport::server::{DrainToken, ErasedServer};
+
+/// The one shutdown of an app: the winning trigger's signal and the outcome every `serve` and
+/// `close` caller receives.
+pub(crate) struct ShutdownCell {
+    trigger: Mutex<Trigger>,
+    triggered: Notify,
+    outcome: OnceCell<Result<Shutdown, ShutdownError>>,
+    /// Where the sequence stands. A caller whose future is dropped mid-sequence leaves it here,
+    /// and the next `serve` or `close` caller to take over the outcome resumes from it, so no
+    /// hook runs twice.
+    progress: async_lock::Mutex<Progress>,
+    /// Who lets go of the servers once the `App` value has dropped: its drop, or the last `close`
+    /// claim to drop.
+    release: Mutex<Release>,
+}
+
+/// The winning trigger's signal and, for a transport's `serve` that ended while the app ran, the
+/// failure it records. One lock holds both, so the trigger that wins is the one whose cause the
+/// sequence reports.
+#[derive(Default)]
+struct Trigger {
+    signal: Option<Signal>,
+    /// Taken by the sequence's first step, which lists it first among the failures.
+    cause: Option<ShutdownFailure>,
+}
+
+/// Whether the `App` value has dropped, how many `close` claims are held, whether a drop has
+/// released the servers, and whether the close step has ended. One lock holds all four, so the
+/// drop and a claim taken or dropped on another thread see each other's change.
+#[derive(Default)]
+struct Release {
+    app_dropped: bool,
+    closing: usize,
+    /// Set when the count reaches zero with the `App` value dropped, by its drop or the last
+    /// claim's. A claim answering `Dropped` still counts, so the count alone cannot tell a later
+    /// claim that the servers are gone.
+    released: bool,
+    servers_closed: bool,
+}
+
+impl ShutdownCell {
+    pub(crate) fn new() -> Self {
+        ShutdownCell {
+            trigger: Mutex::new(Trigger::default()),
+            triggered: Notify::new(),
+            outcome: OnceCell::new(),
+            progress: async_lock::Mutex::new(Progress::default()),
+            release: Mutex::new(Release::default()),
+        }
+    }
+
+    /// Records `signal` if no trigger has arrived yet; `true` when this call won.
+    pub(crate) fn trigger(&self, signal: Signal) -> bool {
+        self.trigger_with(signal, None)
+    }
+
+    /// [`trigger`](Self::trigger), recording `cause` with the signal when this call wins: a
+    /// transport's `serve` that ended while the app ran. A losing call drops `cause`, the shutdown
+    /// it would have started having started already.
+    pub(crate) fn trigger_with(&self, signal: Signal, cause: Option<ShutdownFailure>) -> bool {
+        {
+            let mut trigger = self.trigger.lock().unwrap_or_else(PoisonError::into_inner);
+            if trigger.signal.is_some() {
+                return false;
+            }
+            trigger.signal = Some(signal);
+            trigger.cause = cause;
+        }
+        self.triggered.fire();
+        true
+    }
+
+    /// Resolves once any trigger has arrived; `serve` races it against its own signal.
+    pub(crate) fn triggered(&self) -> Listen<'_> {
+        self.triggered.listen()
+    }
+
+    pub(crate) fn winning_signal(&self) -> Option<Signal> {
+        self.trigger.lock().unwrap_or_else(PoisonError::into_inner).signal.clone()
+    }
+
+    fn take_cause(&self) -> Option<ShutdownFailure> {
+        self.trigger.lock().unwrap_or_else(PoisonError::into_inner).cause.take()
+    }
+}
+
+/// The sequence's position, kept across a dropped runner.
+#[derive(Default)]
+pub(crate) struct Progress {
+    stage: Stage,
+    cap: Option<Cap>,
+    /// The step under way, as the hooks it runs in order, or nothing between hook steps.
+    plan: Option<Vec<(HookOwner, usize)>>,
+    /// How many hooks of `plan`, or transports of the close step, have started. One that started
+    /// is never started again.
+    cursor: usize,
+    accepting_stopped: bool,
+    drain_end: Option<DrainEnd>,
+    failures: Vec<ShutdownFailure>,
+    abandoned: usize,
+    terminal_abandoned: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Stage {
+    #[default]
+    Trigger,
+    BeforeShutdown,
+    Drain,
+    Destroy,
+    Close,
+    Shutdown,
+    Done,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DrainEnd {
+    Now,
+    At(Instant),
+    /// A drain window too long to put on the clock, with no cap to end it sooner.
+    Open,
+}
+
+/// A `close` on the app or on any handle. The claim on the servers is taken at this call; the
+/// trigger, starting the shutdown if none has started, at the returned future's first poll, which
+/// then waits for the one outcome.
+///
+/// A claim taken once a drop has released the servers, the close step not ended, runs no step and
+/// answers `ShutdownFailure::Dropped`, as does every claim after it.
+pub(crate) fn close(
+    shared: &Arc<AppShared>,
+    signal: Signal,
+) -> impl Future<Output = Result<Shutdown, ShutdownError>> + Send + use<> {
+    let claim = Closing::claim(shared);
+    async move {
+        if claim.dropped {
+            return Err(dropped(&claim.shared, signal));
+        }
+        claim.shared.shutdown.trigger(signal.clone());
+        run_sequence(&claim.shared, signal).await
+    }
+}
+
+/// One `close`'s claim on the servers, from the call until its future ends or drops, polled or
+/// not. Once the `App` value has dropped, the last claim to drop lets go of the servers: after a
+/// sequence that ran its close step the list is already empty, and a `close` dropped before that
+/// step releases them unclosed, as the `App` value's drop would have.
+struct Closing {
+    shared: Arc<AppShared>,
+    /// The servers were released by a drop before this claim: see [`close`].
+    dropped: bool,
+}
+
+impl Closing {
+    fn claim(shared: &Arc<AppShared>) -> Self {
+        let mut release = shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner);
+        let dropped = release.released && !release.servers_closed;
+        release.closing += 1;
+        Closing { shared: Arc::clone(shared), dropped }
+    }
+}
+
+impl Drop for Closing {
+    fn drop(&mut self) {
+        let released = {
+            let mut release = self.shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner);
+            release.closing -= 1;
+            released_by_drop(&self.shared, &mut release)
+        };
+        if let Some(unclosed) = released {
+            after_release(&self.shared, unclosed);
+        }
+    }
+}
+
+/// Read and changed under the release lock, once the `App` value's drop or a claim's drop has
+/// changed it: `None` while the `App` value lives or a claim is held. Otherwise the servers are
+/// released, and the answer says whether the close step had not ended; for that release the phase
+/// moves to `Closed` here, under the lock, so a claim that answers `Dropped` is never followed by
+/// a read of an earlier phase.
+fn released_by_drop(shared: &AppShared, release: &mut Release) -> Option<bool> {
+    if !release.app_dropped || release.closing != 0 {
+        return None;
+    }
+    release.released = true;
+    let unclosed = !release.servers_closed;
+    if unclosed {
+        shared.phase.advance(Phase::Closed);
+    }
+    Some(unclosed)
+}
+
+/// Outside the release lock, after [`released_by_drop`] answered `Some(unclosed)`: fires
+/// `draining()` for a release that ran no close step, so a loop awaiting it through a kept handle
+/// wakes, then lets go of the servers. The fire comes after the lock, since a waker may poll a task
+/// inside `wake`, and that task's `close` takes the lock.
+fn after_release(shared: &AppShared, unclosed: bool) {
+    if unclosed {
+        shared.draining.fire();
+    }
+    release_servers(shared);
+}
+
+/// What a `close` answers once a drop has released the servers before the close step ended.
+fn dropped(shared: &AppShared, signal: Signal) -> ShutdownError {
+    let signal = shared.shutdown.winning_signal().unwrap_or(signal);
+    ShutdownError { report: Shutdown { signal, abandoned: 0, terminal_skipped: 0 }, failures: Arc::from([ShutdownFailure::Dropped]) }
+}
+
+/// The `App` value's drop: lets go of the servers at once, or, with a `close` claim held, leaves
+/// them to it. A release before the close step ended moves the phase to `Closed` and fires
+/// `draining()`.
+pub(crate) fn app_dropped(shared: &AppShared) {
+    let released = {
+        let mut release = shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner);
+        release.app_dropped = true;
+        released_by_drop(shared, &mut release)
+    };
+    if let Some(unclosed) = released {
+        after_release(shared, unclosed);
+    }
+}
+
+/// Runs the seven steps once, for the winning signal, and stores the outcome. Whoever runs it
+/// is the trigger's caller: `serve` when its signal won, otherwise the first `close`. A caller
+/// arriving while it runs waits for the same outcome.
+pub(crate) async fn run_sequence(shared: &Arc<AppShared>, signal: Signal) -> Result<Shutdown, ShutdownError> {
+    shared.shutdown.trigger(signal.clone());
+    let signal = shared.shutdown.winning_signal().unwrap_or(signal);
+    shared.shutdown.outcome.get_or_init(|| sequence(shared, signal)).await.clone()
+}
+
+async fn sequence(shared: &Arc<AppShared>, signal: Signal) -> Result<Shutdown, ShutdownError> {
+    let mut progress = shared.shutdown.progress.lock().await;
+    let p = &mut *progress;
+
+    if p.stage == Stage::Trigger {
+        p.failures.extend(shared.shutdown.take_cause());
+        // The cap starts at the trigger, where the orchestrator's grace period starts too.
+        p.cap = cap_from_now(shared.config.timer.as_deref(), shared.config.shutdown_timeout);
+        shared.phase.advance(Phase::Stopping);
+        p.stage = Stage::BeforeShutdown;
+    }
+    if p.stage == Stage::BeforeShutdown {
+        run_hook_step(shared, HookKind::BeforeApplicationShutdown, &signal, p).await;
+        p.stage = Stage::Drain;
+    }
+    if p.stage == Stage::Drain {
+        let (abandoned, terminal) = drain(shared, p).await;
+        p.abandoned = abandoned;
+        p.terminal_abandoned = terminal;
+        p.stage = Stage::Destroy;
+    }
+    if p.stage == Stage::Destroy {
+        shared.phase.advance(Phase::Destroying);
+        run_hook_step(shared, HookKind::OnModuleDestroy, &signal, p).await;
+        p.stage = Stage::Close;
+    }
+    if p.stage == Stage::Close {
+        close_servers(shared, p).await;
+        shared.shutdown.release.lock().unwrap_or_else(PoisonError::into_inner).servers_closed = true;
+        release_servers(shared);
+        p.stage = Stage::Shutdown;
+    }
+    if p.stage == Stage::Shutdown {
+        run_hook_step(shared, HookKind::OnApplicationShutdown, &signal, p).await;
+        shared.phase.advance(Phase::Closed);
+        p.stage = Stage::Done;
+    }
+
+    // Read last: a terminal execution refused during the destroy, close or shutdown steps
+    // counts too.
+    let terminal_skipped = p.terminal_abandoned.saturating_add(shared.phase.terminal_refused());
+    let report = Shutdown { signal, abandoned: p.abandoned, terminal_skipped };
+    if p.failures.is_empty() {
+        Ok(report)
+    } else {
+        Err(ShutdownError { report, failures: Arc::from(std::mem::take(&mut p.failures)) })
+    }
+}
+
+/// One shutdown hook step over every binding and module, in reverse connect order, each hook
+/// under its own bound and the cap. Failures are appended; the step never stops early.
+pub(crate) async fn run_hook_step(shared: &Arc<AppShared>, kind: HookKind, signal: &Signal, progress: &mut Progress) {
+    let graph = shared.graph();
+    let timer = shared.config.timer.as_deref();
+    let Progress { plan: slot, cursor, failures, cap, .. } = progress;
+    let cap = *cap;
+    let signal = matches!(kind, HookKind::BeforeApplicationShutdown | HookKind::OnApplicationShutdown).then_some(signal);
+    let plan = slot.get_or_insert_with(|| shutdown_plan(&graph, kind));
+
+    while let Some(&(owner, index)) = plan.get(*cursor) {
+        *cursor += 1;
+        let Some(hook) = hooks_of(&graph, owner).get(index) else { continue };
+        let expired = match (cap, timer) {
+            (Some(cap), Some(timer)) => cap.expired(timer),
+            _ => false,
+        };
+        let reason = if expired {
+            FailureReason::Skipped
+        } else {
+            match run_hook(shared, &graph, owner, hook, signal, cap).await {
+                None | Some(Outcome::Done(Ok(()))) => continue,
+                // A closure hook whose dependency read failed: the hook itself returns `()`.
+                Some(Outcome::Done(Err(e))) => FailureReason::Errored(redact(&graph.secrets, e)),
+                Some(Outcome::Panicked(p)) => FailureReason::Panicked(p),
+                Some(Outcome::TimedOut { after, limit }) => FailureReason::TimedOut { after, limit },
+                Some(Outcome::Refused(refused)) => shut_down(&graph.secrets, refused),
+            }
+        };
+        failures.push(ShutdownFailure::Hook { hook: kind, key: owner_key(&graph, owner), reason });
+    }
+    *slot = None;
+    *cursor = 0;
+}
+
+/// Steps 2 to 4: stop accepting, the drain, then cancel and abandon. Answers
+/// `(abandoned, terminal abandoned)` for the report.
+///
+/// Each transport's `Server::drain` future runs inside the drain window beside the wait for live
+/// executions: the window ends once every one of them has completed and no execution is live,
+/// or at its deadline, where a transport's unfinished drain future is dropped.
+pub(crate) async fn drain(shared: &Arc<AppShared>, progress: &mut Progress) -> (usize, usize) {
+    let timer = shared.config.timer.as_deref();
+    let servers = servers_of(shared);
+    let mut drains: Vec<BoxFuture<'_, ()>> = Vec::new();
+    if !progress.accepting_stopped {
+        progress.accepting_stopped = true;
+        shared.phase.advance(Phase::Draining);
+        shared.draining.fire();
+        progress.drain_end = Some(drain_end(timer, shared.config.drain(), progress.cap));
+        let token = DrainToken::new();
+        drains = servers.iter().map(|server| server.drain(token.clone())).collect();
+    }
+
+    let settled = async {
+        settle(drains).await;
+        shared.live.until_empty().await;
+    };
+    let mut settled = pin!(settled);
+    match (progress.drain_end.unwrap_or(DrainEnd::Now), timer) {
+        (DrainEnd::Open, _) => settled.await,
+        // The window's end only ends the wait, so it runs on `sleep` (§3.9): a runtime that has shut
+        // down ends it at once.
+        (DrainEnd::At(at), Some(timer)) if !at.saturating_duration_since(timer.now()).is_zero() => {
+            let mut window = timer.sleep(at.saturating_duration_since(timer.now()));
+            poll_fn(|cx| if settled.as_mut().poll(cx).is_ready() { Poll::Ready(()) } else { window.as_mut().poll(cx) }).await;
+        }
+        // A window with nothing left still enters each server's drain: one poll, as an expired cap
+        // gives a `close`, and no more.
+        _ => {
+            let _ = poll_fn(|cx| Poll::Ready(settled.as_mut().poll(cx))).await;
+        }
+    }
+
+    // Ending the drain before cancelling refuses a terminal execution that would otherwise open
+    // after the cancellation and outlive it uncounted.
+    shared.phase.end_drain();
+    shared.live.cancel_all()
+}
+
+async fn settle(mut pending: Vec<BoxFuture<'_, ()>>) {
+    poll_fn(|cx| {
+        pending.retain_mut(|f| f.as_mut().poll(cx).is_pending());
+        if pending.is_empty() { Poll::Ready(()) } else { Poll::Pending }
+    })
+    .await
+}
+
+/// Step 6: every `close` at once, each under its own bound, so a server waiting out its grace does
+/// not hold back the next one. A `close` that exceeds its bound is dropped and recorded as
+/// `TimedOut`: `limit: ShutdownCap` with the cap's duration when bounded by the cap,
+/// `limit: Default` with `hook_timeout` otherwise. The failures are recorded in bind order once
+/// every `close` has ended, whichever ended first, so the report reads the same on every run.
+///
+/// The closes start in reverse bind order, the first poll of each in that order. Every bound is
+/// taken as the step starts, all of them then ending where the cap ends. Without a `Timer`
+/// there is neither bound, and `close` runs unbounded.
+async fn close_servers(shared: &Arc<AppShared>, progress: &mut Progress) {
+    let servers = servers_of(shared);
+    // A runner dropped mid-step started every close already; its successor starts none again.
+    if progress.cursor >= servers.len() {
+        progress.cursor = 0;
+        return;
+    }
+    progress.cursor = servers.len();
+    let graph = shared.graph();
+    let timer = shared.config.timer.as_deref();
+    let hook_timeout = shared.config.defaults().map(|defaults| defaults.hook_timeout);
+    let closes: Vec<_> = servers
+        .iter()
+        .rev()
+        .map(|server| Box::pin(bounded_close(&**server, close_bound(timer, progress.cap, hook_timeout), &graph.secrets)))
+        .collect();
+    let mut ended = join_all(closes).await;
+    // `ended` follows the reverse bind order the closes started in.
+    ended.reverse();
+    for (server, ended) in servers.iter().zip(ended) {
+        if let Err(reason) = ended {
+            progress.failures.push(ShutdownFailure::Close { transport: server.transport_name(), reason });
+        }
+    }
+    progress.cursor = 0;
+}
+
+/// Every future of `futures` polled until it ends, each in its turn on every poll, answering
+/// their outputs in the order given.
+async fn join_all<F: Future + Unpin>(futures: Vec<F>) -> Vec<F::Output> {
+    let mut pending: Vec<Option<F>> = futures.into_iter().map(Some).collect();
+    let mut outputs: Vec<Option<F::Output>> = pending.iter().map(|_| None).collect();
+    poll_fn(|cx| {
+        for (slot, output) in pending.iter_mut().zip(outputs.iter_mut()) {
+            if let Some(future) = slot
+                && let Poll::Ready(out) = Pin::new(future).poll(cx)
+            {
+                *output = Some(out);
+                *slot = None;
+            }
+        }
+        if pending.iter().all(Option::is_none) { Poll::Ready(()) } else { Poll::Pending }
+    })
+    .await;
+    outputs.into_iter().flatten().collect()
+}
+
+enum CloseBound<'t> {
+    Unbounded,
+    /// The cap has expired: the `close` gets its first poll and no more.
+    Expired { after: Duration },
+    /// `until` is fixed when the step starts, the same instant for every `close` under the cap, so
+    /// a `close` whose first poll comes after a slow one before it is not given longer; `after`
+    /// is the duration the failure reports.
+    Within { timer: &'t dyn Timer, until: Instant, after: Duration, limit: Limit },
+}
+
+fn close_bound<'t>(timer: Option<&'t dyn Timer>, cap: Option<Cap>, hook_timeout: Option<Duration>) -> CloseBound<'t> {
+    let Some(timer) = timer else { return CloseBound::Unbounded };
+    match (cap, hook_timeout) {
+        (Some(cap), _) if cap.expired(timer) => CloseBound::Expired { after: cap.after },
+        (Some(cap), _) => CloseBound::Within { timer, until: cap.at, after: cap.after, limit: Limit::ShutdownCap },
+        // A `hook_timeout` past the clock's range never fires.
+        (None, Some(after)) => match timer.now().checked_add(after) {
+            Some(until) => CloseBound::Within { timer, until, after, limit: Limit::Default },
+            None => CloseBound::Unbounded,
+        },
+        (None, None) => CloseBound::Unbounded,
+    }
+}
+
+/// The `close` is polled before the bound, so one that completes on the poll where the bound
+/// fires counts as closed. The call happens inside the caught future, so a `close` that panics
+/// before returning its future is caught too.
+async fn bounded_close(server: &dyn ErasedServer, bound: CloseBound<'_>, secrets: &SecretRegistry) -> Result<(), FailureReason> {
+    let mut close = CatchUnwind::new(async move { server.close().await });
+    let ended = match bound {
+        CloseBound::Unbounded => close.await,
+        CloseBound::Expired { after } => match poll_fn(|cx| Poll::Ready(Pin::new(&mut close).poll(cx))).await {
+            Poll::Ready(ended) => ended,
+            Poll::Pending => return Err(FailureReason::TimedOut { after, limit: Limit::ShutdownCap }),
+        },
+        CloseBound::Within { timer, until, after, limit } => match timeout_at(timer, until, close).await {
+            Ok(ended) => ended,
+            Err(Cut::Expired) => return Err(FailureReason::TimedOut { after, limit }),
+            Err(Cut::Refused(refused)) => return Err(shut_down(secrets, refused)),
+        },
+    };
+    match ended {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(FailureReason::Errored(redact(secrets, e))),
+        Err(payload) => Err(FailureReason::Panicked(redact_panic(secrets, payload))),
+    }
+}
+
+/// Lets go of the app's servers: at the end of the close step; when the `App` value drops with no
+/// `close` claim held; and, once the `App` value has dropped, when the last claim drops, its
+/// `close` ended, abandoned or never polled. Every call after the first finds the list empty. A server keeping
+/// the `AppHandle` its `prepare` was handed holds the app, and the app holds its servers, so
+/// neither would drop while the app kept them: once released, each server drops with its last
+/// other holder, `serve` returning or the `App` value dropping, and the app's shared state with
+/// its last handle.
+///
+/// It runs inside drops: it neither awaits nor waits on another task, and reads a poisoned lock
+/// through.
+pub(crate) fn release_servers(shared: &AppShared) {
+    let released = std::mem::take(&mut *shared.servers.lock().unwrap_or_else(PoisonError::into_inner));
+    // Dropped after the lock is released: a server whose drop read the app's servers would
+    // otherwise wait on it forever.
+    drop(released);
+}
+
+fn servers_of(shared: &AppShared) -> Vec<Arc<dyn ErasedServer>> {
+    shared.servers.lock().unwrap_or_else(PoisonError::into_inner).clone()
+}
+
+/// The hooks of `kind` in the order shutdown runs them: each group of lazily loaded modules,
+/// latest load first, then the base graph, each group in the exact reverse of its startup order.
+fn shutdown_plan(graph: &Graph, kind: HookKind) -> Vec<(HookOwner, usize)> {
+    let mut loads: Vec<Option<u32>> = graph.modules.iter().map(|m| m.loaded).collect();
+    loads.sort_unstable();
+    loads.dedup();
+
+    let mut entries = Vec::new();
+    // `None`, the base graph, sorts first, so the reverse visits it last.
+    for load in loads.into_iter().rev() {
+        let singletons: Vec<BindingId> = graph
+            .connect_order
+            .iter()
+            .copied()
+            .filter(|&id| graph.module(graph.binding(id).origin).loaded == load)
+            .collect();
+        let modules: Vec<ModuleId> = graph.modules.iter().filter(|m| m.loaded == load).map(|m| m.id).collect();
+        for owner in hook_plan(graph, &singletons, &modules).into_iter().rev() {
+            for (index, hook) in hooks_of(graph, owner).iter().enumerate().rev() {
+                if hook.kind == kind {
+                    entries.push((owner, index));
+                }
+            }
+        }
+    }
+    entries
+}
+
+fn cap_from_now(timer: Option<&dyn Timer>, limit: Option<Duration>) -> Option<Cap> {
+    let (timer, after) = (timer?, limit?);
+    Some(Cap { at: timer.now().checked_add(after)?, after })
+}
+
+fn drain_end(timer: Option<&dyn Timer>, window: Duration, cap: Option<Cap>) -> DrainEnd {
+    let Some(timer) = timer else { return DrainEnd::Now };
+    match (timer.now().checked_add(window), cap) {
+        (Some(at), Some(cap)) => DrainEnd::At(at.min(cap.at)),
+        (Some(at), None) => DrainEnd::At(at),
+        (None, Some(cap)) => DrainEnd::At(cap.at),
+        (None, None) => DrainEnd::Open,
+    }
+}

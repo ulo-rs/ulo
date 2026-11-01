@@ -1,0 +1,81 @@
+error[E0277]: `Rc<u8>` cannot be sent between threads safely
+ --> tests/ui/dep_of_a_non_send_type.rs:9:12
+  |
+9 |     cache: Dep<Rc<u8>>,
+  |            ^^^ `Rc<u8>` cannot be sent between threads safely
+  |
+  = help: the trait `Send` is not implemented for `Rc<u8>`
+help: the trait `FromContainer` is conditionally implemented for `Dep<T, Q>`
+ --> $WORKSPACE/crates/ulo/src/dependency/dep.rs
+  |
+  | impl<T: ?Sized + Send + Sync + 'static, Q: 'static> FromContainer for Dep<T, Q> {
+  | ^^^^^^^^^^^^^^^^^----^^^----^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |                  |      |
+  |                  |      unsatisfied requirement introduced here: `Rc<u8>: Sync`
+  |                  unsatisfied requirement introduced here: `Rc<u8>: Send`
+  = note: required for `Dep<Rc<u8>>` to implement `FromContainer`
+
+error[E0277]: `Rc<u8>` cannot be shared between threads safely
+ --> tests/ui/dep_of_a_non_send_type.rs:9:12
+  |
+9 |     cache: Dep<Rc<u8>>,
+  |            ^^^ `Rc<u8>` cannot be shared between threads safely
+  |
+  = help: the trait `Sync` is not implemented for `Rc<u8>`
+help: the trait `FromContainer` is conditionally implemented for `Dep<T, Q>`
+ --> $WORKSPACE/crates/ulo/src/dependency/dep.rs
+  |
+  | impl<T: ?Sized + Send + Sync + 'static, Q: 'static> FromContainer for Dep<T, Q> {
+  | ^^^^^^^^^^^^^^^^^----^^^----^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |                  |      |
+  |                  |      unsatisfied requirement introduced here: `Rc<u8>: Sync`
+  |                  unsatisfied requirement introduced here: `Rc<u8>: Send`
+  = note: required for `Dep<Rc<u8>>` to implement `FromContainer`
+
+error[E0277]: `Rc<u8>` cannot be shared between threads safely
+ --> tests/ui/dep_of_a_non_send_type.rs:8:8
+  |
+8 | struct Orders {
+  |        ^^^^^^ `Rc<u8>` cannot be shared between threads safely
+  |
+  = help: the trait `Sync` is not implemented for `Rc<u8>`
+  = note: required for `Arc<Rc<u8>>` to implement `Sync`
+note: required because it appears within the type `Dep<Rc<u8>>`
+ --> $WORKSPACE/crates/ulo/src/dependency/dep.rs
+  |
+  | pub struct Dep<T: ?Sized, Q = ()> {
+  |            ^^^
+note: required because it appears within the type `Orders`
+ --> tests/ui/dep_of_a_non_send_type.rs:8:8
+  |
+8 | struct Orders {
+  |        ^^^^^^
+note: required by a bound in `ulo::Construct`
+ --> $WORKSPACE/crates/ulo/src/construct.rs
+  |
+  | pub trait Construct: Sized + Send + Sync + 'static {
+  |                                     ^^^^ required by this bound in `Construct`
+
+error[E0277]: `Rc<u8>` cannot be sent between threads safely
+ --> tests/ui/dep_of_a_non_send_type.rs:8:8
+  |
+8 | struct Orders {
+  |        ^^^^^^ `Rc<u8>` cannot be sent between threads safely
+  |
+  = help: the trait `Send` is not implemented for `Rc<u8>`
+  = note: required for `Arc<Rc<u8>>` to implement `Sync`
+note: required because it appears within the type `Dep<Rc<u8>>`
+ --> $WORKSPACE/crates/ulo/src/dependency/dep.rs
+  |
+  | pub struct Dep<T: ?Sized, Q = ()> {
+  |            ^^^
+note: required because it appears within the type `Orders`
+ --> tests/ui/dep_of_a_non_send_type.rs:8:8
+  |
+8 | struct Orders {
+  |        ^^^^^^
+note: required by a bound in `ulo::Construct`
+ --> $WORKSPACE/crates/ulo/src/construct.rs
+  |
+  | pub trait Construct: Sized + Send + Sync + 'static {
+  |                                     ^^^^ required by this bound in `Construct`

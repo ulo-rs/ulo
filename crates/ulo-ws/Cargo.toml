@@ -1,0 +1,81 @@
+[package]
+name = "ulo-ws"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The WebSocket transport for Ulo: gateways, sessions, rooms and broadcast, on the HTTP server's port or its own"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "websocket", "gateway", "framework"]
+categories = ["web-programming::websocket", "asynchronous"]
+
+[features]
+# For the conformance tests; not an application feature. It exports `MessagesRead` and
+# `GatewayDefaults::messages_read`, the count of data messages a server's connections read off
+# their sockets, which `ulo-ws-hyper`'s load-shedding test holds to its bound, and `AnswerHold` and
+# `GatewayDefaults::answer_hold`, a wait before each answer is queued, which `tests/table.rs`
+# holds open to order two answers under `max_inflight = 1`; without it the read loop counts
+# nothing and no answer waits. The tests enable it through this crate's dev-dependency on itself.
+conformance-probe = []
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo-ws-macros = { path = "../ulo-ws-macros", version = "=0.1.0-alpha.1" }
+# The in-memory adapter's channel: a sender that never waits and a subscriber that falls behind
+# skipping the oldest, without a runtime.
+async-broadcast.workspace = true
+# `handshake`: the accept key the 101 carries. `futures-03-sink`: the connection writes through
+# `SinkExt` on the WebSocket stream.
+async-tungstenite = { workspace = true, features = ["handshake", "futures-03-sink"] }
+bytes.workspace = true
+# The wake-ups of the outbound queue, the read loop and the drain, without a runtime.
+event-listener.workspace = true
+# A hand-written gateway's inbox.
+futures-channel.workspace = true
+futures-core.workspace = true
+# The I/O traits a connection is read and written through.
+futures-io.workspace = true
+# `sink`: `SinkExt` on the WebSocket stream.
+futures-util = { workspace = true, features = ["sink"] }
+http.workspace = true
+rmp-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
+# `raw_value`: a message's `id` is echoed byte for byte, and its `data` decoded only when a
+# handler reads it.
+serde_json = { workspace = true, features = ["raw_value"] }
+tracing.workspace = true
+
+[dev-dependencies]
+# `WsModule::broadcast`'s doc example names the Redis adapter.
+ulo-ws-redis = { path = "../ulo-ws-redis" }
+# Itself with `conformance-probe`, for `tests/table.rs`.
+ulo-ws = { path = ".", features = ["conformance-probe"] }
+# The WebSocket conformance suite, which `tests/conformance.rs` runs against the hand-off, and
+# `conformance_smol.rs` and `conformance_pipe.rs` on smol.
+ulo-ws-conformance = { path = "../ulo-ws-conformance" }
+# `smol`: `OnSmol`, the runtime half both smol hosts run their scenarios on.
+ulo-http-conformance = { path = "../ulo-http-conformance", features = ["smol"] }
+ulo-listener-smol = { path = "../ulo-listener-smol" }
+ulo-runtime-smol = { path = "../ulo-runtime-smol" }
+async-net.workspace = true
+# The pipe host's request heads, and the in-memory pipe it serves a connection over.
+httparse.workspace = true
+piper.workspace = true
+# `tokio-io`: `tests/table.rs` hands the driver one end of a tokio pipe through `Upgraded::from_tokio`.
+ulo-http = { path = "../ulo-http", features = ["tokio-io"] }
+# The HTTP server a gateway on the HTTP port is reached through.
+ulo-http-hyper = { path = "../ulo-http-hyper" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `ScriptedTimer`: the clock whose refusal `tests/ping_refused.rs` reads.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
+# `io-util`: the in-memory pipe `tests/table.rs` serves a connection over. `test-util`:
+# `tests/raw_inbox.rs` runs on a paused clock.
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "macros", "sync", "io-util", "test-util"] }
+# `connect`: the tests drive each gateway through a real WebSocket client.
+tokio-tungstenite = { workspace = true, features = ["connect"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,5 @@
+error: no constructor: name it `new`, or mark the fn that builds the type #[construct]
+  --> tests/ui/no_constructor.rs:10:6
+   |
+10 | impl Orders {
+   |      ^^^^^^

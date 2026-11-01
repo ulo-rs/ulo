@@ -1,0 +1,1591 @@
+// Probe crate for REFINEMENTS.md and SHUTDOWN_REVIEW.md. Each src/bin file is one probe; a *_fails.rs file's compile error is its result.
+// Run on rustc 1.88.0 and 1.98.1.
+
+// ==== Cargo.toml ====
+[package]
+name = "fable-redesign"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+
+# A crate of its own, outside the ulo workspace.
+[workspace]
+
+// ==== src/lib.rs ====
+
+// ==== src/bin/p01_closure_unsize.rs ====
+//! P01: `|a| a` as an unsizing coercion at a closure's return when the expected type comes
+//! from `F: FnOnce(Arc<T>) -> Arc<U>` with `U` a `dyn Trait` named by turbofish.
+//! Also: the stored erased coercion end to end, and the role twin (`dyn ErasedGuard<Http>`).
+use std::any::Any;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+pub trait Cache: Send + Sync { fn name(&self) -> &'static str; }
+pub struct RedisCache;
+impl Cache for RedisCache { fn name(&self) -> &'static str { "redis" } }
+
+type Erased = Arc<dyn Any + Send + Sync>;
+type Coercion = Box<dyn Fn(Erased) -> Box<dyn Any + Send + Sync> + Send + Sync>;
+
+pub struct Handle<T> { coercions: Vec<Coercion>, _t: std::marker::PhantomData<fn() -> T> }
+
+impl<T: Send + Sync + 'static> Handle<T> {
+    pub fn new() -> Self { Self { coercions: Vec::new(), _t: std::marker::PhantomData } }
+    pub fn also_as<U, F>(mut self, f: F) -> Self
+    where
+        U: ?Sized + Send + Sync + 'static,
+        F: Fn(Arc<T>) -> Arc<U> + Send + Sync + 'static,
+    {
+        self.coercions.push(Box::new(move |slot: Erased| {
+            let concrete: Arc<T> = slot.downcast::<T>().expect("slot holds T");
+            let widened: Arc<U> = f(concrete);
+            Box::new(widened)
+        }));
+        self
+    }
+}
+
+// The role twin: a non-dyn-compatible trait with an RPITIT method, erased by a blanket impl.
+pub trait Transport: 'static { type Cx: Send; }
+pub struct Http;
+impl Transport for Http { type Cx = String; }
+pub trait Guard<T: Transport>: Send + Sync + 'static {
+    fn can_activate(&self, cx: &mut T::Cx) -> impl Future<Output = bool> + Send;
+}
+pub trait ErasedGuard<T: Transport>: Send + Sync + 'static {
+    fn can_activate<'a>(&'a self, cx: &'a mut T::Cx) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+}
+impl<T: Transport, G: Guard<T>> ErasedGuard<T> for G {
+    fn can_activate<'a>(&'a self, cx: &'a mut T::Cx) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(Guard::can_activate(self, cx))
+    }
+}
+pub type AnyGuard<T> = dyn ErasedGuard<T>;
+pub struct AuthGuard;
+impl Guard<Http> for AuthGuard {
+    async fn can_activate(&self, cx: &mut String) -> bool { cx.push('!'); true }
+}
+
+fn main() {
+    let h = Handle::<RedisCache>::new().also_as::<dyn Cache, _>(|a| a);
+    let slot: Erased = Arc::new(RedisCache);
+    let boxed = (h.coercions[0])(slot);
+    let cache: Arc<dyn Cache> = *boxed.downcast::<Arc<dyn Cache>>().expect("Arc<dyn Cache>");
+    println!("also_as: {}", cache.name());
+
+    let g = Handle::<AuthGuard>::new().also_as::<AnyGuard<Http>, _>(|a| a);
+    let boxed = (g.coercions[0])(Arc::new(AuthGuard));
+    let guard: Arc<AnyGuard<Http>> = *boxed.downcast::<Arc<AnyGuard<Http>>>().expect("Arc<AnyGuard<Http>>");
+    let mut cx = String::from("cx");
+    let fut = guard.can_activate(&mut cx);
+    let admitted = pollster_lite(fut);
+    println!("role twin: admitted={admitted} cx={cx}");
+}
+
+fn pollster_lite<F: Future>(fut: F) -> F::Output {
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    fn clone(_: *const ()) -> RawWaker { RawWaker::new(std::ptr::null(), &VT) }
+    fn noop(_: *const ()) {}
+    static VT: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VT)) };
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = std::pin::pin!(fut);
+    loop { if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; } }
+}
+
+// ==== src/bin/p01b_closure_unsize_fails.rs ====
+//! P01b: the same `|a| a` when the type does not implement the trait. Expected: E0277 at the
+//! closure, naming the missing impl. Records what the user reads.
+use std::sync::Arc;
+pub trait Cache: Send + Sync {}
+pub struct NotCache;
+pub fn also_as<T, U, F>(_f: F) where U: ?Sized, F: FnOnce(Arc<T>) -> Arc<U> {}
+fn main() {
+    also_as::<NotCache, dyn Cache, _>(|a| a);
+}
+
+// ==== src/bin/p01c_apit_turbofish.rs ====
+//! P01c: the design writes `also_as::<dyn UserRepo>(|a| a)` with one type argument, so the
+//! closure's type must be an argument-position `impl Trait` (explicit generic args beside APIT,
+//! stable 1.63). Expected: compiles, and the coercion still happens at the closure's return.
+use std::sync::Arc;
+pub trait UserRepo: Send + Sync { fn n(&self) -> u8; }
+pub struct PgUserRepo; impl UserRepo for PgUserRepo { fn n(&self) -> u8 { 3 } }
+pub struct Handle<T>(std::marker::PhantomData<fn() -> T>);
+impl<T: Send + Sync + 'static> Handle<T> {
+    pub fn also_as<U: ?Sized + Send + Sync + 'static>(self, f: impl Fn(Arc<T>) -> Arc<U> + Send + Sync + 'static) -> Arc<U>
+    where T: Default { f(Arc::new(T::default())) }
+}
+impl Default for PgUserRepo { fn default() -> Self { PgUserRepo } }
+fn main() {
+    let repo: Arc<dyn UserRepo> = Handle::<PgUserRepo>(Default::default()).also_as::<dyn UserRepo>(|a| a);
+    println!("apit turbofish: {}", repo.n());
+}
+
+// ==== src/bin/p02a_factory_output_fails.rs ====
+//! P02a: "a Result output is fallible" as two blanket impls over `T` and `Result<T, E>`.
+//! Expected: E0119.
+pub trait FactoryOutput { type Value; fn into_result(self) -> Result<Self::Value, String>; }
+impl<T> FactoryOutput for T { type Value = T; fn into_result(self) -> Result<T, String> { Ok(self) } }
+impl<T, E: ToString> FactoryOutput for Result<T, E> {
+    type Value = T;
+    fn into_result(self) -> Result<T, String> { self.map_err(|e| e.to_string()) }
+}
+fn main() {}
+
+// ==== src/bin/p02b_factory_marker_fails.rs ====
+//! P02b: the marker-parameter escape from E0119. The impls no longer overlap, but a
+//! `Result<T, E>` output satisfies both, so `M` is ambiguous at the call. Expected: E0283/E0282.
+use std::future::Future;
+pub struct Plain; pub struct Fallible;
+pub trait FactoryOutput<M> { type Value; }
+impl<T> FactoryOutput<Plain> for T { type Value = T; }
+impl<T, E> FactoryOutput<Fallible> for Result<T, E> { type Value = T; }
+pub fn singleton<F, Fut, O, M>(_f: F) where F: Fn() -> Fut, Fut: Future<Output = O>, O: FactoryOutput<M> {}
+fn main() {
+    singleton(|| async { 1u32 });
+    singleton(|| async { Ok::<u32, String>(1) });
+}
+
+// ==== src/bin/p02c_factory_autoref.rs ====
+//! P02c: autoref rank over the closure's concrete type, the mechanism a macro could use when
+//! it sees the call site. `(&Probe(f)).kind()` reaches the fallible arm for a `Result` future
+//! and falls back to the plain arm otherwise. Expected: compiles, prints "fallible" then "plain".
+use std::future::Future;
+pub struct Probe<F>(pub F);
+pub trait FallibleKind { fn kind(&self) -> &'static str { "fallible" } }
+pub trait PlainKind { fn kind(&self) -> &'static str { "plain" } }
+impl<F, Fut, T, E> FallibleKind for Probe<F> where F: Fn() -> Fut, Fut: Future<Output = Result<T, E>> {}
+impl<F> PlainKind for &Probe<F> {}
+fn main() {
+    let fallible = || async { Ok::<u32, String>(1) };
+    let plain = || async { 1u32 };
+    println!("{}", (&Probe(fallible)).kind());
+    println!("{}", (&Probe(plain)).kind());
+}
+
+// ==== src/bin/p03_hook_supertrait.rs ====
+//! P03: `trait OnModuleInit: Construct<Scope: HookCapable>` as a supertrait with an
+//! associated-type bound; a user's `async fn` in an impl of a trait declaring
+//! `-> impl Future<Output = ..> + Send`. Expected: compiles.
+use std::future::Future;
+mod sealed { pub trait Sealed {} }
+pub trait Scope: sealed::Sealed + 'static {}
+pub struct Singleton; pub struct PerExecution; pub struct Auto;
+impl sealed::Sealed for Singleton {} impl Scope for Singleton {}
+impl sealed::Sealed for PerExecution {} impl Scope for PerExecution {}
+impl sealed::Sealed for Auto {} impl Scope for Auto {}
+
+#[diagnostic::on_unimplemented(
+    message = "lifecycle hooks are only allowed on singletons",
+    label = "`{Self}` scope cannot have hooks",
+    note = "remove the scope argument from #[injectable], or move the hook to a singleton"
+)]
+pub trait HookCapable: Scope {}
+impl HookCapable for Singleton {} impl HookCapable for Auto {}
+
+pub trait Construct: Sized + Send + Sync + 'static { type Scope: Scope; }
+pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+pub trait OnModuleInit: Construct<Scope: HookCapable> {
+    fn on_module_init(&self) -> impl Future<Output = Result<(), BoxError>> + Send;
+}
+
+pub struct Cache;
+impl Construct for Cache { type Scope = Auto; }
+impl OnModuleInit for Cache {
+    async fn on_module_init(&self) -> Result<(), BoxError> { Ok(()) }
+}
+
+fn assert_send<F: Future + Send>(_: F) {}
+fn main() {
+    let c = Cache;
+    assert_send(c.on_module_init());
+    println!("ok");
+}
+
+// ==== src/bin/p03b_hook_on_execution_fails.rs ====
+//! P03b: a hook on an explicitly execution-scoped type. Expected: E0277 at the impl, carrying
+//! the `HookCapable` message with `{Self}` rendered as `PerExecution`.
+use std::future::Future;
+mod sealed { pub trait Sealed {} }
+pub trait Scope: sealed::Sealed + 'static {}
+pub struct Singleton; pub struct PerExecution;
+impl sealed::Sealed for Singleton {} impl Scope for Singleton {}
+impl sealed::Sealed for PerExecution {} impl Scope for PerExecution {}
+#[diagnostic::on_unimplemented(
+    message = "lifecycle hooks are only allowed on singletons",
+    label = "`{Self}` scope cannot have hooks",
+    note = "remove the scope argument from #[injectable], or move the hook to a singleton"
+)]
+pub trait HookCapable: Scope {}
+impl HookCapable for Singleton {}
+pub trait Construct: Sized + Send + Sync + 'static { type Scope: Scope; }
+pub trait OnModuleInit: Construct<Scope: HookCapable> {
+    fn on_module_init(&self) -> impl Future<Output = ()> + Send;
+}
+pub struct AuditContext;
+impl Construct for AuditContext { type Scope = PerExecution; }
+impl OnModuleInit for AuditContext {
+    async fn on_module_init(&self) {}
+}
+fn main() {}
+
+// ==== src/bin/p03c_hook_not_send_fails.rs ====
+//! P03c: an `async fn` in the impl whose body holds a `!Send` value across an await, against a
+//! trait declaring `+ Send`. Expected: E0277 naming the `Rc`, at the impl's fn.
+use std::future::Future;
+use std::rc::Rc;
+pub trait OnModuleInit { fn on_module_init(&self) -> impl Future<Output = ()> + Send; }
+pub struct Cache;
+impl OnModuleInit for Cache {
+    async fn on_module_init(&self) {
+        let rc = Rc::new(1);
+        std::future::ready(()).await;
+        let _ = rc;
+    }
+}
+fn main() {}
+
+// ==== src/bin/p04_hooks_autoref.rs ====
+//! P04: `Construct::hooks` filled by autoref probing inside a generated impl with concrete
+//! `Self`, storing `for<'a> Fn(&'a T) -> BoxFuture<'a, _>` closures. Expected: compiles; the
+//! type with the impl registers one hook, the type without registers none.
+use std::future::Future;
+use std::pin::Pin;
+pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+pub trait Scope: 'static {} pub struct Auto; impl Scope for Auto {}
+pub trait HookCapable: Scope {} impl HookCapable for Auto {}
+pub trait Construct: Sized + Send + Sync + 'static { type Scope: Scope; fn hooks(_h: &mut Hooks<Self>) {} }
+pub trait OnModuleInit: Construct<Scope: HookCapable> {
+    fn on_module_init(&self) -> impl Future<Output = Result<(), BoxError>> + Send;
+}
+pub struct Hooks<T> { pub init: Vec<Box<dyn for<'a> Fn(&'a T) -> BoxFuture<'a, Result<(), BoxError>> + Send + Sync>> }
+impl<T> Hooks<T> {
+    pub fn on_init<F>(&mut self, f: F) where F: for<'a> Fn(&'a T) -> BoxFuture<'a, Result<(), BoxError>> + Send + Sync + 'static {
+        self.init.push(Box::new(f));
+    }
+}
+
+// The probe pair the macro emits: `&HookProbe<T>` reaches the registering arm only when
+// `T: OnModuleInit`; otherwise method resolution autorefs to the no-op arm.
+pub struct HookProbe<T>(std::marker::PhantomData<fn() -> T>);
+pub trait RegisterInit<T> { fn register_init(&self, h: &mut Hooks<T>); }
+pub trait NoInit<T> { fn register_init(&self, _h: &mut Hooks<T>) {} }
+impl<T: OnModuleInit> RegisterInit<T> for HookProbe<T> {
+    fn register_init(&self, h: &mut Hooks<T>) { h.on_init(|s| Box::pin(s.on_module_init())); }
+}
+impl<T> NoInit<T> for &HookProbe<T> {}
+
+pub struct Cache;
+impl Construct for Cache {
+    type Scope = Auto;
+    fn hooks(h: &mut Hooks<Self>) { (&HookProbe::<Self>(Default::default())).register_init(h); }
+}
+impl OnModuleInit for Cache {
+    async fn on_module_init(&self) -> Result<(), BoxError> { println!("cache init ran"); Ok(()) }
+}
+pub struct Plain;
+impl Construct for Plain {
+    type Scope = Auto;
+    fn hooks(h: &mut Hooks<Self>) { (&HookProbe::<Self>(Default::default())).register_init(h); }
+}
+
+fn main() {
+    let mut hc = Hooks::<Cache> { init: Vec::new() };
+    Cache::hooks(&mut hc);
+    let mut hp = Hooks::<Plain> { init: Vec::new() };
+    Plain::hooks(&mut hp);
+    println!("cache hooks={} plain hooks={}", hc.init.len(), hp.init.len());
+    let c = Cache;
+    let _ = fable_redesign_poll(hc.init[0](&c));
+}
+fn fable_redesign_poll<F: Future>(fut: F) -> F::Output {
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    fn clone(_: *const ()) -> RawWaker { RawWaker::new(std::ptr::null(), &VT) }
+    fn noop(_: *const ()) {}
+    static VT: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VT)) };
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = std::pin::pin!(fut);
+    loop { if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; } }
+}
+
+// ==== src/bin/p05_site_read_erased.rs ====
+//! P05: `Site::read(r: &Resolver<'_>) -> impl Future + Send` borrowing the resolver; `Option<S>`
+//! forwarding; a generated `Construct::construct` awaiting two sites; and the erased constructor
+//! slot the registry must hold, `for<'a> Fn(&'a Resolver<'a>) -> BoxFuture<'a, _>`.
+//! Expected: compiles, with `Resolver: Sync` required for the future to be `Send`.
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+pub struct Execution { pub extensions: HashMap<TypeId, Arc<dyn Any + Send + Sync>> }
+pub struct Resolver<'e> { pub store: &'e HashMap<TypeId, Arc<dyn Any + Send + Sync>>, pub exec: Option<&'e Execution> }
+#[derive(Debug)] pub enum ResolveError { NotFound(&'static str), ExecutionRequired(&'static str) }
+
+pub trait Site: Sized + Send + 'static {
+    fn describe(d: &mut Vec<&'static str>);
+    fn read(r: &Resolver<'_>) -> impl Future<Output = Result<Self, ResolveError>> + Send;
+}
+pub struct Dep<T: ?Sized>(pub Arc<T>);
+impl<T: ?Sized + Send + Sync + 'static> Site for Dep<T> {
+    fn describe(d: &mut Vec<&'static str>) { d.push(std::any::type_name::<T>()); }
+    async fn read(r: &Resolver<'_>) -> Result<Self, ResolveError> {
+        let slot = r.store.get(&TypeId::of::<T>()).ok_or(ResolveError::NotFound(std::any::type_name::<T>()))?;
+        Ok(Dep(slot.clone().downcast::<Arc<T>>().map(|a| (*a).clone()).map_err(|_| ResolveError::NotFound("kind"))?))
+    }
+}
+pub struct Ext<T>(pub Arc<T>);
+impl<T: Send + Sync + 'static> Site for Ext<T> {
+    fn describe(d: &mut Vec<&'static str>) { d.push("ext"); }
+    async fn read(r: &Resolver<'_>) -> Result<Self, ResolveError> {
+        let e = r.exec.ok_or(ResolveError::ExecutionRequired(std::any::type_name::<T>()))?;
+        let v = e.extensions.get(&TypeId::of::<T>()).ok_or(ResolveError::NotFound("ext"))?;
+        Ok(Ext(v.clone().downcast::<T>().map_err(|_| ResolveError::NotFound("ext kind"))?))
+    }
+}
+impl<S: Site> Site for Option<S> {
+    fn describe(d: &mut Vec<&'static str>) { S::describe(d); d.push("(optional)"); }
+    async fn read(r: &Resolver<'_>) -> Result<Self, ResolveError> {
+        match S::read(r).await { Ok(s) => Ok(Some(s)), Err(ResolveError::NotFound(_)) => Ok(None), Err(e) => Err(e) }
+    }
+}
+
+pub trait Construct: Sized + Send + Sync + 'static {
+    fn sites(s: &mut Vec<&'static str>);
+    fn construct(r: &Resolver<'_>) -> impl Future<Output = Result<Self, ResolveError>> + Send;
+}
+pub struct Repo;
+pub struct CurrentUser(pub &'static str);
+pub struct Service { pub repo: Dep<Repo>, pub user: Option<Ext<CurrentUser>> }
+impl Construct for Service {
+    fn sites(s: &mut Vec<&'static str>) { <Dep<Repo>>::describe(s); <Option<Ext<CurrentUser>>>::describe(s); }
+    async fn construct(r: &Resolver<'_>) -> Result<Self, ResolveError> {
+        let repo = <Dep<Repo>>::read(r).await?;
+        let user = <Option<Ext<CurrentUser>>>::read(r).await?;
+        Ok(Service { repo, user })
+    }
+}
+
+// The registry slot, and the helper that erases a `Construct` type into it. A closure written
+// inline at the slot does not get the HRTB signature; the helper's declared type does.
+pub type ErasedCtor = Arc<dyn for<'a> Fn(&'a Resolver<'a>) -> BoxFuture<'a, Result<Arc<dyn Any + Send + Sync>, ResolveError>> + Send + Sync>;
+pub fn erase<T: Construct>() -> ErasedCtor {
+    Arc::new(|r| Box::pin(async move { T::construct(r).await.map(|v| Arc::new(Arc::new(v)) as Arc<dyn Any + Send + Sync>) }))
+}
+
+fn main() {
+    let mut store: HashMap<TypeId, Arc<dyn Any + Send + Sync>> = HashMap::new();
+    store.insert(TypeId::of::<Repo>(), Arc::new(Arc::new(Repo)));
+    let mut sites = Vec::new(); Service::sites(&mut sites);
+    println!("sites: {sites:?}");
+    let exec = Execution { extensions: HashMap::new() };
+    let r = Resolver { store: &store, exec: Some(&exec) };
+    let ctor = erase::<Service>();
+    let fut = ctor(&r);
+    fn assert_send<F: Future + Send>(f: F) -> F { f }
+    let built = block_on(assert_send(fut)).expect("built");
+    let svc = built.downcast::<Arc<Service>>().expect("Arc<Service>");
+    println!("service built; user present={}", svc.user.is_some());
+}
+fn block_on<F: Future>(fut: F) -> F::Output {
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    fn clone(_: *const ()) -> RawWaker { RawWaker::new(std::ptr::null(), &VT) }
+    fn noop(_: *const ()) {}
+    static VT: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VT)) };
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = std::pin::pin!(fut);
+    loop { if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; } }
+}
+
+// ==== src/bin/p05b_execution_sync_fails.rs ====
+//! P05b: a site's `read` holds `&Resolver<'_>` (and through it `&Execution`) across an await in
+//! a `Send` future. A `Cell` inside the execution, standing for any `!Sync` seeded input,
+//! makes the constructor future `!Send`. Expected: E0277 naming the `Cell`.
+use std::cell::Cell;
+use std::future::Future;
+pub struct Execution { pub counter: Cell<u32> }
+pub struct Resolver<'e> { pub exec: &'e Execution }
+pub trait Site: Sized + Send + 'static {
+    fn read(r: &Resolver<'_>) -> impl Future<Output = Self> + Send;
+}
+pub struct Marker;
+impl Site for Marker {
+    async fn read(r: &Resolver<'_>) -> Self { std::future::ready(()).await; r.exec.counter.set(1); Marker }
+}
+fn main() {}
+
+// ==== src/bin/p06_allowed_in_fails.rs ====
+//! P06: the per-site `AllowedIn<S>` assertion as the macro would emit it, with the design's
+//! message. Expected: E0277 at the assertion; records what `{Self}` renders to (the site type,
+//! not the declaring type) and whether `{S}` is available.
+use std::sync::Arc;
+pub struct Singleton; pub struct PerExecution;
+pub trait Scope {} impl Scope for Singleton {} impl Scope for PerExecution {}
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot read per-execution data",
+    label = "a `{S}` type cannot read this site",
+    note = "declare the type #[injectable(execution)] or #[injectable(transient)]"
+)]
+pub trait AllowedIn<S: Scope> {}
+pub struct Dep<T: ?Sized>(Arc<T>);
+pub struct Ext<T>(Arc<T>);
+impl<T: ?Sized, S: Scope> AllowedIn<S> for Dep<T> {}
+impl<T> AllowedIn<PerExecution> for Ext<T> {}
+pub struct CurrentUser;
+pub struct ReportService { user: Ext<CurrentUser>, repo: Dep<String> }
+const _: () = {
+    fn assert_allowed<S: AllowedIn<Singleton>>() {}
+    let _ = assert_allowed::<Ext<CurrentUser>>;
+    let _ = assert_allowed::<Dep<String>>;
+};
+fn main() { let _ = ReportService { user: Ext(Arc::new(CurrentUser)), repo: Dep(Arc::new(String::new())) }; }
+
+// ==== src/bin/p07_two_notes_fails.rs ====
+//! P07: two `note =` entries in one `#[diagnostic::on_unimplemented]`, with `{Self}` inside a
+//! note. Expected: E0277 printing both notes (or a warning that the second is ignored).
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not an injection site",
+    label = "the container cannot provide this",
+    note = "write `Dep<{Self}>` to share the container's instance",
+    note = "or set it inside the #[construct] fn / mark the field #[injectable(default)]"
+)]
+pub trait Site: Sized + Send + 'static {}
+pub struct PgPool;
+fn assert_site<S: Site>() {}
+fn main() { assert_site::<PgPool>(); }
+
+// ==== src/bin/p08_typeid_dyn.rs ====
+//! P08: `dyn Repo` and `dyn Repo + Send + Sync` are distinct `TypeId`s even when `Repo` has
+//! the auto traits as supertraits, so they are two keys. Also: the `type_name` strings the
+//! wiring error would print for each. Expected: two ids, two names.
+use std::any::{type_name, TypeId};
+pub trait Repo: Send + Sync {}
+fn main() {
+    let a = TypeId::of::<dyn Repo>();
+    let b = TypeId::of::<dyn Repo + Send + Sync>();
+    println!("same TypeId: {}", a == b);
+    println!("{} | {}", type_name::<dyn Repo>(), type_name::<dyn Repo + Send + Sync>());
+}
+
+// ==== src/bin/p08b_shareable_diag_fails.rs ====
+//! P08b: whether a `Send + Sync` requirement on `Dep<T>` can carry a `what to write` hint via a
+//! blanket-implemented wrapper trait with `on_unimplemented`. Expected: E0277; records whether
+//! the wrapper's note is printed or only the auto-trait's own message.
+use std::sync::Arc;
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be shared by the container",
+    note = "add `Send + Sync` as supertraits of the trait, or spell the site `Dep<dyn Trait + Send + Sync>` on both the binding and the site"
+)]
+pub trait Shareable {}
+impl<T: ?Sized + Send + Sync> Shareable for T {}
+pub struct Dep<T: ?Sized + Shareable>(Arc<T>);
+pub trait Repo {}
+pub struct Svc { repo: Dep<dyn Repo> }
+fn main() {}
+
+// ==== src/bin/p09_register_qmark_fails.rs ====
+//! P09: `providers = [AppConfig::from_env()?]` inside a synchronous `register(&self, ..)` that
+//! returns `()`. Expected: E0277, `?` in a function returning `()`.
+pub struct ModuleDef;
+impl ModuleDef { pub fn value<T>(&mut self, _v: T) {} }
+pub struct AppConfig;
+impl AppConfig { pub fn from_env() -> Result<Self, String> { Ok(AppConfig) } }
+pub trait Module { fn register(&self, m: &mut ModuleDef); }
+pub struct ConfigModule;
+impl Module for ConfigModule {
+    fn register(&self, m: &mut ModuleDef) { m.value(AppConfig::from_env()?); }
+}
+fn main() {}
+
+// ==== src/bin/p10_execute_closure.rs ====
+//! P10: `app.execute(opts, |exec| async move { exec.get().await })`. A plain closure returning
+//! an `async move` block cannot borrow its `&Execution` argument into the future; an `async`
+//! closure under an `AsyncFnOnce` bound (stable 1.85) can, and an owned handle needs neither.
+//! Expected: compiles; the failing shape is in p10b.
+use std::future::Future;
+use std::sync::Arc;
+pub struct Execution { pub name: &'static str }
+impl Execution { pub async fn get(&self) -> Result<&'static str, ()> { Ok(self.name) } }
+#[derive(Clone)] pub struct ExecutionRef(Arc<Execution>);
+impl ExecutionRef { pub async fn get(&self) -> Result<&'static str, ()> { self.0.get().await } }
+
+pub async fn execute_async_closure<F, R>(f: F) -> R where F: AsyncFnOnce(&Execution) -> R {
+    let exec = Execution { name: "borrowed" };
+    f(&exec).await
+}
+pub async fn execute_owned<F, Fut, R>(f: F) -> R where F: FnOnce(ExecutionRef) -> Fut, Fut: Future<Output = R> {
+    let exec = ExecutionRef(Arc::new(Execution { name: "owned" }));
+    let out = f(exec.clone()).await;
+    drop(exec);
+    out
+}
+fn main() {
+    let a = block_on(execute_async_closure(async |exec| { exec.get().await }));
+    let b = block_on(execute_owned(|exec| async move { exec.get().await }));
+    println!("{a:?} {b:?}");
+}
+fn block_on<F: Future>(fut: F) -> F::Output {
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    fn clone(_: *const ()) -> RawWaker { RawWaker::new(std::ptr::null(), &VT) }
+    fn noop(_: *const ()) {}
+    static VT: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VT)) };
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = std::pin::pin!(fut);
+    loop { if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; } }
+}
+
+// ==== src/bin/p10b_execute_borrow_fails.rs ====
+//! P10b: the design's spelling, `|exec| async move { .. }`, with `exec: &Execution`.
+//! Expected: a lifetime error (the returned future borrows the closure's argument).
+use std::future::Future;
+pub struct Execution { pub name: &'static str }
+impl Execution { pub async fn get(&self) -> Result<&'static str, ()> { Ok(self.name) } }
+pub async fn execute<F, Fut, R>(f: F) -> R where F: FnOnce(&Execution) -> Fut, Fut: Future<Output = R> {
+    let exec = Execution { name: "borrowed" };
+    f(&exec).await
+}
+fn main() { let _ = execute(|exec| async move { exec.get().await }); }
+
+// ==== src/bin/p11_key_names_const.rs ====
+//! P11: `Key { ty, qualifier, names: &'static KeyNames }` built per `(T, Q)` instantiation.
+//! `type_name` is not a `const fn` on stable (first run: "not yet stable as a const fn" at an
+//! inline `const` block), and a `static` inside a generic fn is shared across instantiations, so
+//! `&'static KeyNames` has no stable spelling. `type_name` returns `&'static str` at runtime, so
+//! two `&'static str` fields carry the same information. Expected: compiles, unequal keys print.
+use std::any::{type_name, TypeId};
+use std::hash::{Hash, Hasher};
+#[derive(Clone, Copy)]
+pub struct Key { ty: TypeId, qualifier: TypeId, ty_name: &'static str, q_name: &'static str }
+impl PartialEq for Key { fn eq(&self, o: &Self) -> bool { self.ty == o.ty && self.qualifier == o.qualifier } }
+impl Eq for Key {}
+impl Hash for Key { fn hash<H: Hasher>(&self, h: &mut H) { self.ty.hash(h); self.qualifier.hash(h); } }
+impl Key {
+    pub fn of<T: ?Sized + 'static, Q: 'static>() -> Key {
+        Key { ty: TypeId::of::<T>(), qualifier: TypeId::of::<Q>(), ty_name: type_name::<T>(), q_name: type_name::<Q>() }
+    }
+}
+impl std::fmt::Display for Key {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.qualifier == TypeId::of::<()>() { write!(f, "{}", self.ty_name) } else { write!(f, "{} @ {}", self.ty_name, self.q_name) }
+    }
+}
+pub struct PgPool; pub struct Replica; pub trait Plugin {}
+fn main() {
+    let a = Key::of::<PgPool, ()>(); let b = Key::of::<PgPool, Replica>(); let c = Key::of::<dyn Plugin, ()>();
+    println!("{a} | {b} | {c} | a==b {}", a == b);
+}
+
+// ==== src/bin/p12_factory_arity_coerce.rs ====
+//! P12: one `singleton(f)` over closures of arity 0, 1 and 2 whose parameters are sites, with
+//! the output key taken from the future's output; the two-closure
+//! `contribute::<dyn HI>().singleton(factory, |a| a)` where `T` is inferred from the first
+//! closure before the second is checked; and a builder chain `.ready(..).retries(..).timeout(..)
+//! .on_destroy(..)`. Expected: compiles; sites are described from the parameter types.
+use std::future::Future;
+use std::marker::PhantomData;
+use std::sync::Arc;
+
+pub trait Site: Sized + Send + 'static { fn describe(d: &mut Vec<&'static str>); }
+pub struct Dep<T: ?Sized>(pub Arc<T>);
+impl<T: ?Sized + Send + Sync + 'static> Site for Dep<T> { fn describe(d: &mut Vec<&'static str>) { d.push(std::any::type_name::<T>()); } }
+
+pub trait Factory<Args>: Send + Sync + 'static {
+    type Output: Send + Sync + 'static;
+    fn describe(d: &mut Vec<&'static str>);
+}
+impl<F, Fut> Factory<()> for F where F: Fn() -> Fut + Send + Sync + 'static, Fut: Future + Send, Fut::Output: Send + Sync + 'static {
+    type Output = Fut::Output;
+    fn describe(_d: &mut Vec<&'static str>) {}
+}
+impl<F, Fut, A> Factory<(A,)> for F where A: Site, F: Fn(A) -> Fut + Send + Sync + 'static, Fut: Future + Send, Fut::Output: Send + Sync + 'static {
+    type Output = Fut::Output;
+    fn describe(d: &mut Vec<&'static str>) { A::describe(d); }
+}
+impl<F, Fut, A, B> Factory<(A, B)> for F where A: Site, B: Site, F: Fn(A, B) -> Fut + Send + Sync + 'static, Fut: Future + Send, Fut::Output: Send + Sync + 'static {
+    type Output = Fut::Output;
+    fn describe(d: &mut Vec<&'static str>) { A::describe(d); B::describe(d); }
+}
+
+pub struct SingletonHandle<T> { pub sites: Vec<&'static str>, pub hooks: Vec<&'static str>, _t: PhantomData<fn() -> T> }
+impl<T> SingletonHandle<T> {
+    pub fn ready<Args, F: Factory<Args>>(mut self, _check: F) -> Self { self.hooks.push("ready"); self }
+    pub fn retries(mut self, _n: u32) -> Self { self.hooks.push("retries"); self }
+    pub fn timeout(mut self, _d: std::time::Duration) -> Self { self.hooks.push("timeout"); self }
+    pub fn on_destroy<Args, F: Factory<Args>>(mut self, _f: F) -> Self { self.hooks.push("on_destroy"); self }
+}
+pub struct ModuleDef;
+impl ModuleDef {
+    pub fn singleton<Args, F: Factory<Args>>(&mut self, _f: F) -> SingletonHandle<F::Output> {
+        let mut sites = Vec::new(); F::describe(&mut sites);
+        SingletonHandle { sites, hooks: Vec::new(), _t: PhantomData }
+    }
+    pub fn contribute<U: ?Sized + Send + Sync + 'static>(&mut self) -> Contribute<U> { Contribute(PhantomData) }
+}
+pub struct Contribute<U: ?Sized>(PhantomData<fn() -> U>);
+impl<U: ?Sized + Send + Sync + 'static> Contribute<U> {
+    pub fn singleton<Args, F, C>(self, _f: F, _c: C) -> Vec<&'static str>
+    where F: Factory<Args>, C: Fn(Arc<F::Output>) -> Arc<U> + Send + Sync + 'static {
+        let mut d = Vec::new(); F::describe(&mut d); d
+    }
+}
+
+pub struct DbConfig { pub url: String } pub struct PgPool; pub struct Clock;
+pub trait HealthIndicator: Send + Sync {} pub struct PgHealth(Dep<PgPool>); impl HealthIndicator for PgHealth {}
+fn main() {
+    let mut m = ModuleDef;
+    let h0 = m.singleton(|| async { PgPool });
+    let h1 = m.singleton(|cfg: Dep<DbConfig>| async move { let _ = &cfg.0.url; PgPool });
+    let h2 = m.singleton(|_p: Dep<PgPool>, _c: Dep<Clock>| async move { 7u32 });
+    let chained = m.singleton(|cfg: Dep<DbConfig>| async move { let _ = cfg; PgPool })
+        .ready(|_pool: Dep<PgPool>| async move { Ok::<(), String>(()) })
+        .retries(5).timeout(std::time::Duration::from_secs(10))
+        .on_destroy(|_pool: Dep<PgPool>| async move {});
+    let contributed = m.contribute::<dyn HealthIndicator>().singleton(|pool: Dep<PgPool>| async move { PgHealth(pool) }, |a| a);
+    println!("h0 {:?} h1 {:?} h2 {:?} chain {:?} contributed {:?}", h0.sites, h1.sites, h2.sites, chained.hooks, contributed);
+}
+
+// ==== src/bin/p12b_factory_unannotated_fails.rs ====
+//! P12b: the same `singleton(f)` with an unannotated closure parameter. Expected: the site type
+//! cannot be inferred (E0282/E0283), so every factory parameter must be written with its type.
+use std::future::Future;
+use std::sync::Arc;
+pub trait Site: Sized + Send + 'static {}
+pub struct Dep<T: ?Sized>(pub Arc<T>);
+impl<T: ?Sized + Send + Sync + 'static> Site for Dep<T> {}
+pub trait Factory<Args> { type Output; }
+impl<F, Fut, A> Factory<(A,)> for F where A: Site, F: Fn(A) -> Fut, Fut: Future { type Output = Fut::Output; }
+pub fn singleton<Args, F: Factory<Args>>(_f: F) {}
+pub struct PgPool;
+fn main() { singleton(|cfg| async move { let _ = cfg; PgPool }); }
+
+// ==== src/bin/p13_reply_static.rs ====
+//! P13: `Transport::Reply: Send` with no written `'static`, boxed into a `'static` future after
+//! `intercept` returns. Compiles: `Transport: 'static` makes `<T as Transport>::Reply: 'static`
+//! by the projection-outlives rule, so a reply can never borrow the context it was made in.
+use std::future::Future;
+use std::pin::Pin;
+pub trait Transport: 'static { type Cx: Send; type Reply: Send; }
+pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+pub fn finish<T: Transport>(reply: T::Reply) -> Pin<Box<dyn Future<Output = T::Reply> + Send + 'static>> {
+    Box::pin(async move { reply })
+}
+fn main() {}
+
+// ==== src/bin/p14_execute_send.rs ====
+//! P14: `execute` as an inherent `async fn` bounded `F: AsyncFnOnce(&Execution) -> R`, called
+//! from a concrete site as `app.execute(async |exec| ..)`. The returned future is `Send` through
+//! auto-trait leakage whenever the caller's closure future is: `F` is concrete at the call, so
+//! `F::CallOnceFuture` is known. Expected: compiles; the trait-method twin is in p14b.
+use std::future::Future;
+use std::sync::Arc;
+
+pub struct Execution { inner: Arc<Inner> }
+struct Inner { name: &'static str }
+impl Execution {
+    pub async fn get(&self) -> Result<&'static str, ()> { Ok(self.inner.name) }
+    pub fn handle(&self) -> ExecutionRef { ExecutionRef(self.inner.clone()) }
+}
+#[derive(Clone)]
+pub struct ExecutionRef(Arc<Inner>);
+impl ExecutionRef { pub fn name(&self) -> &'static str { self.0.name } }
+
+pub struct App;
+impl App {
+    pub async fn execute<F, R>(&self, f: F) -> R
+    where
+        F: AsyncFnOnce(&Execution) -> R,
+    {
+        let exec = Execution { inner: Arc::new(Inner { name: "borrowed" }) };
+        let out = f(&exec).await;
+        drop(exec);
+        out
+    }
+}
+
+fn assert_send<T: Send>(_: &T) {}
+
+fn main() {
+    let app = App;
+    let fut = app.execute(async |exec| {
+        let name = exec.get().await;
+        let h = exec.handle();
+        (name, h.name())
+    });
+    assert_send(&fut);
+    let out = block_on(fut);
+    println!("{out:?}");
+}
+
+fn block_on<F: Future>(fut: F) -> F::Output {
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    fn clone(_: *const ()) -> RawWaker { RawWaker::new(std::ptr::null(), &VT) }
+    fn noop(_: *const ()) {}
+    static VT: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VT)) };
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = std::pin::pin!(fut);
+    loop { if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; } }
+}
+
+// ==== src/bin/p14b_execute_trait_send_fails.rs ====
+//! P14b: the same `execute` as a trait method. A trait has to write the `Send` bound on its
+//! returned future, and the impl's body then needs `F`'s call future to be `Send` for every `F`,
+//! which no stable bound can state: the only name for it is the unstable
+//! `AsyncFnOnce::CallOnceFuture`. Expected: two errors, the future not `Send` at the impl, and
+//! E0658 on the bound that names the associated type.
+use std::future::Future;
+
+pub struct Execution { pub name: &'static str }
+impl Execution { pub async fn get(&self) -> Result<&'static str, ()> { Ok(self.name) } }
+
+pub trait Exec {
+    fn execute<F, R>(&self, f: F) -> impl Future<Output = R> + Send
+    where
+        F: AsyncFnOnce(&Execution) -> R + Send,
+        R: Send;
+}
+
+pub struct App;
+impl Exec for App {
+    fn execute<F, R>(&self, f: F) -> impl Future<Output = R> + Send
+    where
+        F: AsyncFnOnce(&Execution) -> R + Send,
+        R: Send,
+    {
+        async move {
+            let exec = Execution { name: "borrowed" };
+            f(&exec).await
+        }
+    }
+}
+
+pub trait ExecBounded {
+    fn execute<F, R>(&self, f: F) -> impl Future<Output = R> + Send
+    where
+        F: AsyncFnOnce(&Execution) -> R + Send,
+        for<'a> <F as AsyncFnOnce<(&'a Execution,)>>::CallOnceFuture: Send,
+        R: Send;
+}
+
+fn main() {}
+
+// ==== src/bin/p15_timer_dyn.rs ====
+//! P15: a `Timer` trait reachable as `Dep<dyn Timer>`. `sleep` returns a boxed future, which is
+//! what makes the trait dyn-compatible; the core's `timeout` combinator is built from `sleep`
+//! alone with no runtime; a service holding `Dep<dyn Timer>` has a `Send` hook future; and the
+//! `dyn Timer` key is compared with `dyn Timer + Send + Sync`. Expected: compiles and runs.
+use std::any::TypeId;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::Poll;
+use std::time::Duration;
+
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// The one method the core needs. `Send + Sync` supertraits make `dyn Timer` satisfy `Dep`'s bound.
+pub trait Timer: Send + Sync + 'static {
+    fn sleep(&self, d: Duration) -> BoxFuture<'static, ()>;
+}
+
+pub struct Dep<T: ?Sized>(Arc<T>);
+impl<T: ?Sized + Send + Sync + 'static> Dep<T> { pub fn from_arc(a: Arc<T>) -> Self { Dep(a) } }
+impl<T: ?Sized> std::ops::Deref for Dep<T> { type Target = T; fn deref(&self) -> &T { &self.0 } }
+
+#[derive(Debug)]
+pub struct TimedOut;
+/// Built from `sleep` only: `sleep_until` is `sleep(deadline - Instant::now())`, and this select needs no runtime.
+pub async fn timeout<F: Future>(timer: &dyn Timer, d: Duration, fut: F) -> Result<F::Output, TimedOut> {
+    let mut fut = Box::pin(fut);
+    let mut sleep = timer.sleep(d);
+    std::future::poll_fn(|cx| {
+        if let Poll::Ready(v) = fut.as_mut().poll(cx) { return Poll::Ready(Ok(v)); }
+        if let Poll::Ready(()) = sleep.as_mut().poll(cx) { return Poll::Ready(Err(TimedOut)); }
+        Poll::Pending
+    })
+    .await
+}
+
+// Two runtime adapters: one whose sleep never ends, one whose sleep ends at once.
+pub struct NeverTimer;
+impl Timer for NeverTimer { fn sleep(&self, _d: Duration) -> BoxFuture<'static, ()> { Box::pin(std::future::pending()) } }
+pub struct InstantTimer;
+impl Timer for InstantTimer { fn sleep(&self, _d: Duration) -> BoxFuture<'static, ()> { Box::pin(std::future::ready(())) } }
+
+// The user's example: a service that sleeps in its before-shutdown hook through the binding.
+pub struct Discovery { timer: Dep<dyn Timer> }
+impl Discovery {
+    pub async fn before_application_shutdown(&self) { self.timer.sleep(Duration::from_secs(5)).await }
+}
+fn assert_send<F: Future + Send>(_: F) {}
+
+fn main() {
+    let bound: Arc<dyn Timer> = Arc::new(InstantTimer);           // what the builder's `.timer(..)` binds
+    let dep = Dep::<dyn Timer>::from_arc(bound);
+    let discovery = Discovery { timer: dep };
+    assert_send(discovery.before_application_shutdown());
+    poll(discovery.before_application_shutdown());
+
+    let ok = poll(timeout(&NeverTimer, Duration::from_secs(1), std::future::ready(5u8)));
+    let late = poll(timeout(&InstantTimer, Duration::from_secs(1), std::future::pending::<u8>()));
+    println!("timeout: finished={ok:?} expired={late:?}");
+    println!(
+        "TypeId dyn Timer == dyn Timer + Send + Sync: {}",
+        TypeId::of::<dyn Timer>() == TypeId::of::<dyn Timer + Send + Sync>()
+    );
+}
+
+fn poll<F: Future>(fut: F) -> F::Output {
+    use std::task::{Context, RawWaker, RawWakerVTable, Waker};
+    fn clone(_: *const ()) -> RawWaker { RawWaker::new(std::ptr::null(), &VT) }
+    fn noop(_: *const ()) {}
+    static VT: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VT)) };
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = std::pin::pin!(fut);
+    loop { if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) { return v; } }
+}
+
+// ==== src/bin/p15b_timer_rpitit_fails.rs ====
+//! P15b: the same `Timer` with `sleep` written `-> impl Future<Output = ()> + Send`. Expected:
+//! fails, E0038 — `dyn Timer` cannot be formed, so no `Dep<dyn Timer>` binding can exist.
+use std::future::Future;
+use std::sync::Arc;
+use std::time::Duration;
+
+pub trait Timer: Send + Sync + 'static {
+    fn sleep(&self, d: Duration) -> impl Future<Output = ()> + Send;
+}
+pub struct InstantTimer;
+impl Timer for InstantTimer { async fn sleep(&self, _d: Duration) {} }
+
+fn main() {
+    let _bound: Arc<dyn Timer> = Arc::new(InstantTimer);
+}
+
+// ==== src/bin/p16_hook_timeout_const.rs ====
+//! P16: `const TIMEOUT: Option<Duration>` with a default on a hook trait that also declares an
+//! RPITIT method; two hook traits on one type each carry their own `TIMEOUT`; the generated
+//! `Hooks<T>` registration reads the const through the autoref arm and stores it beside the
+//! closure. Expected: compiles on 1.88 and 1.98; prints `Some(10s)` for the override, `None`
+//! for the default, and no hooks for the type without impls.
+use std::future::Future;
+use std::pin::Pin;
+use std::time::Duration;
+pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+pub trait Construct: Sized + Send + Sync + 'static { fn hooks(_h: &mut Hooks<Self>) {} }
+
+pub trait OnModuleInit: Construct {
+    /// `None` means the app's `hook_timeout`.
+    const TIMEOUT: Option<Duration> = None;
+    fn on_module_init(&self) -> impl Future<Output = Result<(), BoxError>> + Send;
+}
+pub trait OnModuleDestroy: Construct {
+    const TIMEOUT: Option<Duration> = None;
+    fn on_module_destroy(&self) -> impl Future<Output = ()> + Send;
+}
+
+pub struct Hook<T, O> {
+    pub timeout: Option<Duration>,
+    pub run: Box<dyn for<'a> Fn(&'a T) -> BoxFuture<'a, O> + Send + Sync>,
+}
+pub struct Hooks<T> { pub init: Option<Hook<T, Result<(), BoxError>>>, pub destroy: Option<Hook<T, ()>> }
+
+pub struct HookProbe<T>(std::marker::PhantomData<fn() -> T>);
+pub trait RegisterInit<T> { fn register_init(&self, h: &mut Hooks<T>); }
+pub trait NoInit<T> { fn register_init(&self, _h: &mut Hooks<T>) {} }
+impl<T: OnModuleInit> RegisterInit<T> for HookProbe<T> {
+    fn register_init(&self, h: &mut Hooks<T>) {
+        h.init = Some(Hook { timeout: <T as OnModuleInit>::TIMEOUT, run: Box::new(|s| Box::pin(s.on_module_init())) });
+    }
+}
+impl<T> NoInit<T> for &HookProbe<T> {}
+pub trait RegisterDestroy<T> { fn register_destroy(&self, h: &mut Hooks<T>); }
+pub trait NoDestroy<T> { fn register_destroy(&self, _h: &mut Hooks<T>) {} }
+impl<T: OnModuleDestroy> RegisterDestroy<T> for HookProbe<T> {
+    fn register_destroy(&self, h: &mut Hooks<T>) {
+        h.destroy = Some(Hook { timeout: <T as OnModuleDestroy>::TIMEOUT, run: Box::new(|s| Box::pin(s.on_module_destroy())) });
+    }
+}
+impl<T> NoDestroy<T> for &HookProbe<T> {}
+
+pub struct Cache;
+impl Construct for Cache {
+    fn hooks(h: &mut Hooks<Self>) {
+        let p = HookProbe::<Self>(Default::default());
+        (&p).register_init(h);
+        (&p).register_destroy(h);
+    }
+}
+impl OnModuleInit for Cache {
+    const TIMEOUT: Option<Duration> = Some(Duration::from_secs(10));
+    async fn on_module_init(&self) -> Result<(), BoxError> { Ok(()) }
+}
+impl OnModuleDestroy for Cache {
+    async fn on_module_destroy(&self) {}
+}
+pub struct Plain;
+impl Construct for Plain {
+    fn hooks(h: &mut Hooks<Self>) {
+        let p = HookProbe::<Self>(Default::default());
+        (&p).register_init(h);
+        (&p).register_destroy(h);
+    }
+}
+
+fn main() {
+    let mut hc = Hooks::<Cache> { init: None, destroy: None };
+    Cache::hooks(&mut hc);
+    let mut hp = Hooks::<Plain> { init: None, destroy: None };
+    Plain::hooks(&mut hp);
+    println!(
+        "cache init={:?} destroy={:?}",
+        hc.init.as_ref().map(|h| h.timeout),
+        hc.destroy.as_ref().map(|h| h.timeout)
+    );
+    println!("plain init={} destroy={}", hp.init.is_some(), hp.destroy.is_some());
+}
+
+// ==== src/bin/p17_item_builder_chain.rs ====
+//! P17: one binding-handle type with a state parameter naming the item the last call wrote.
+//! `.timeout` exists only after `.ready(..)` or an `on_*`; `.retries`/`.backoff` only after
+//! `.ready(..)`; every other method is written once on `Handle<T, K>` and moves the handle to
+//! the next state, so no sub-builder repeats the method list. The chain is the response's, plus
+//! the module hook `m.on_init(..).timeout(..)`. Expected: compiles; prints each item's timeout.
+use std::future::Future;
+use std::marker::PhantomData;
+use std::sync::Arc;
+use std::time::Duration;
+
+pub struct Dep<T: ?Sized>(pub Arc<T>);
+pub trait Factory<Args>: Send + Sync + 'static {}
+impl<F, Fut> Factory<()> for F where F: Fn() -> Fut + Send + Sync + 'static, Fut: Future + Send {}
+impl<F, Fut, A> Factory<(A,)> for F where F: Fn(A) -> Fut + Send + Sync + 'static, Fut: Future + Send {}
+
+#[derive(Debug, Default)]
+pub struct Item { pub name: &'static str, pub timeout: Option<Duration>, pub retries: u32 }
+
+pub struct NoItem;
+pub struct ReadyItem;
+pub struct HookItem;
+#[diagnostic::on_unimplemented(
+    message = "`.timeout(..)` needs an item to apply to",
+    note = "write it after `.ready(..)` or after an `on_*` hook"
+)]
+pub trait HasTimeout {}
+impl HasTimeout for ReadyItem {}
+impl HasTimeout for HookItem {}
+
+pub struct Handle<T, K = NoItem> { pub items: Vec<Item>, _s: PhantomData<fn() -> (T, K)> }
+impl<T, K> Handle<T, K> {
+    fn with<K2>(mut self, name: &'static str) -> Handle<T, K2> {
+        self.items.push(Item { name, ..Default::default() });
+        Handle { items: self.items, _s: PhantomData }
+    }
+    fn last(&mut self) -> &mut Item { self.items.last_mut().expect("an item was written") }
+    pub fn ready<Args, F: Factory<Args>>(self, _check: F) -> Handle<T, ReadyItem> { self.with("ready") }
+    pub fn on_init<Args, F: Factory<Args>>(self, _f: F) -> Handle<T, HookItem> { self.with("on_init") }
+    pub fn on_destroy<Args, F: Factory<Args>>(self, _f: F) -> Handle<T, HookItem> { self.with("on_destroy") }
+    pub fn before_shutdown<Args, F: Factory<Args>>(self, _f: F) -> Handle<T, HookItem> { self.with("before_shutdown") }
+    pub fn on_shutdown<Args, F: Factory<Args>>(self, _f: F) -> Handle<T, HookItem> { self.with("on_shutdown") }
+    /// A method that writes no timed item leaves the chain with nothing for `.timeout` to apply to.
+    pub fn also_as<U: ?Sized + 'static>(self) -> Handle<T, NoItem> { Handle { items: self.items, _s: PhantomData } }
+}
+impl<T, K: HasTimeout> Handle<T, K> {
+    pub fn timeout(mut self, d: Duration) -> Self { self.last().timeout = Some(d); self }
+}
+impl<T> Handle<T, ReadyItem> {
+    pub fn retries(mut self, n: u32) -> Self { self.last().retries = n; self }
+    pub fn backoff(self, _d: Duration) -> Self { self }
+}
+
+pub struct ModuleDef { pub hooks: Vec<Item> }
+pub struct ModuleHook<'m> { def: &'m mut ModuleDef }
+impl ModuleDef {
+    pub fn singleton<Args, F: Factory<Args>>(&mut self, _f: F) -> Handle<PgPool> { Handle { items: Vec::new(), _s: PhantomData } }
+    pub fn on_init<Args, F: Factory<Args>>(&mut self, _f: F) -> ModuleHook<'_> {
+        self.hooks.push(Item { name: "module on_init", ..Default::default() });
+        ModuleHook { def: self }
+    }
+}
+impl<'m> ModuleHook<'m> {
+    pub fn timeout(self, d: Duration) -> Self {
+        let Self { def } = self;
+        def.hooks.last_mut().expect("a hook was written").timeout = Some(d);
+        ModuleHook { def }
+    }
+}
+
+pub struct PgPool;
+pub struct UserService;
+fn secs(n: u64) -> Duration { Duration::from_secs(n) }
+
+fn main() {
+    let mut m = ModuleDef { hooks: Vec::new() };
+    let h = m.singleton(|| async { PgPool })
+        .ready(|_pool: Dep<PgPool>| async move { Ok::<(), String>(()) }).retries(5).timeout(secs(10))   // the check's timeout
+        .on_destroy(|_pool: Dep<PgPool>| async move {}).timeout(secs(3));                              // the hook's timeout
+    let h2 = m.singleton(|| async { PgPool })
+        .ready(|_pool: Dep<PgPool>| async move { Ok::<(), String>(()) })
+        .on_destroy(|_pool: Dep<PgPool>| async move {}).timeout(secs(1))
+        .also_as::<dyn Send>();                                                                       // state back to NoItem
+    m.on_init(|_u: Dep<UserService>| async move {}).timeout(secs(2));
+    println!("binding: {:?}", h.items);
+    println!("binding2: {:?}", h2.items);
+    println!("module: {:?}", m.hooks);
+}
+
+// ==== src/bin/p17b_timeout_without_item_fails.rs ====
+//! P17b: `.timeout(..)` on a handle whose last call wrote no timed item (`NoItem`). Expected:
+//! fails, E0599 — the method exists, but `NoItem: HasTimeout` is unsatisfied. Records whether
+//! the `on_unimplemented` text reaches an E0599 note.
+use std::future::Future;
+use std::marker::PhantomData;
+use std::time::Duration;
+
+pub trait Factory<Args>: Send + Sync + 'static {}
+impl<F, Fut> Factory<()> for F where F: Fn() -> Fut + Send + Sync + 'static, Fut: Future + Send {}
+
+pub struct NoItem;
+pub struct HookItem;
+#[diagnostic::on_unimplemented(
+    message = "`.timeout(..)` needs an item to apply to",
+    note = "write it after `.ready(..)` or after an `on_*` hook"
+)]
+pub trait HasTimeout {}
+impl HasTimeout for HookItem {}
+
+pub struct Handle<T, K = NoItem> { _s: PhantomData<fn() -> (T, K)> }
+impl<T, K: HasTimeout> Handle<T, K> {
+    pub fn timeout(self, _d: Duration) -> Self { self }
+}
+pub struct ModuleDef;
+impl ModuleDef {
+    pub fn singleton<Args, F: Factory<Args>>(&mut self, _f: F) -> Handle<PgPool> { Handle { _s: PhantomData } }
+}
+pub struct PgPool;
+
+fn main() {
+    let mut m = ModuleDef;
+    let _h = m.singleton(|| async { PgPool }).timeout(Duration::from_secs(1));
+}
+
+// ==== src/bin/p17c_retries_on_hook_fails.rs ====
+//! P17c: `.retries(..)` after `.on_destroy(..)`: the handle is in `HookItem` and `retries` is
+//! defined on `Handle<T, ReadyItem>` only. Expected: fails, E0599 no method `retries`.
+use std::future::Future;
+use std::marker::PhantomData;
+
+pub trait Factory<Args>: Send + Sync + 'static {}
+impl<F, Fut> Factory<()> for F where F: Fn() -> Fut + Send + Sync + 'static, Fut: Future + Send {}
+
+pub struct NoItem;
+pub struct ReadyItem;
+pub struct HookItem;
+
+pub struct Handle<T, K = NoItem> { _s: PhantomData<fn() -> (T, K)> }
+impl<T, K> Handle<T, K> {
+    pub fn on_destroy<Args, F: Factory<Args>>(self, _f: F) -> Handle<T, HookItem> { Handle { _s: PhantomData } }
+}
+impl<T> Handle<T, ReadyItem> {
+    pub fn retries(self, _n: u32) -> Self { self }
+}
+pub struct ModuleDef;
+impl ModuleDef {
+    pub fn singleton<Args, F: Factory<Args>>(&mut self, _f: F) -> Handle<PgPool> { Handle { _s: PhantomData } }
+}
+pub struct PgPool;
+
+fn main() {
+    let mut m = ModuleDef;
+    let _h = m.singleton(|| async { PgPool }).on_destroy(|| async {}).retries(5);
+}
+
+// ==== src/bin/p18_drain_token.rs ====
+//! P18: `open_terminal` behind a capability only the core constructs. `DrainToken` has a private
+//! field and no public constructor; the core hands one to `Server::drain` when Draining begins,
+//! and `Execution::open_terminal` requires it. A transport in another module reaches it through
+//! `drain`; user code in a third module has no expression that produces one (P18b). The phase
+//! check stays in `open_terminal`, so the token is a proof of who, not of when. Expected: compiles.
+mod core {
+    #[derive(Clone)]
+    pub struct DrainToken(());
+
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    pub enum Phase { Running, Stopping, Draining, Destroying }
+    pub struct App { pub phase: Phase }
+    pub struct Closed;
+    pub struct Execution { pub terminal: bool }
+
+    impl Execution {
+        pub fn open(app: &App) -> Result<Execution, Closed> {
+            match app.phase {
+                Phase::Running | Phase::Stopping => Ok(Execution { terminal: false }),
+                Phase::Draining | Phase::Destroying => Err(Closed),
+            }
+        }
+        pub fn open_terminal(_proof: &DrainToken, app: &App) -> Result<Execution, Closed> {
+            match app.phase {
+                Phase::Running | Phase::Stopping | Phase::Draining => Ok(Execution { terminal: true }),
+                Phase::Destroying => Err(Closed),
+            }
+        }
+    }
+
+    pub trait Server {
+        /// The token is owned, so a transport can hand a clone to each connection task for the
+        /// length of the drain window.
+        fn drain(&self, app: &App, token: DrainToken) -> usize;
+    }
+
+    pub fn run_drain(app: &mut App, servers: &[&dyn Server]) -> usize {
+        app.phase = Phase::Draining;
+        let token = DrainToken(());
+        servers.iter().map(|s| s.drain(app, token.clone())).sum()
+    }
+}
+
+mod fw_ws {
+    use super::core::*;
+    use std::cell::RefCell;
+    pub struct WsServer { pub connections: usize, pub kept: RefCell<Option<DrainToken>> }
+    impl Server for WsServer {
+        fn drain(&self, app: &App, token: DrainToken) -> usize {
+            *self.kept.borrow_mut() = Some(token.clone());
+            // Every connection is closed with 1001; each disconnect handler is a terminal execution.
+            (0..self.connections)
+                .filter(|_| Execution::open_terminal(&token, app).is_ok_and(|e| e.terminal))
+                .count()
+        }
+    }
+    impl WsServer {
+        /// A disconnect that arrives after the drain: the token is still held, the phase refuses.
+        pub fn late_disconnect(&self, app: &App) -> bool {
+            let kept = self.kept.borrow();
+            Execution::open_terminal(kept.as_ref().expect("drained"), app).is_ok()
+        }
+    }
+}
+
+mod user {
+    use super::core::*;
+    pub fn job(app: &App) -> Result<Execution, Closed> { Execution::open(app) }
+}
+
+fn main() {
+    use core::Phase;
+    let mut app = core::App { phase: Phase::Running };
+    assert!(user::job(&app).is_ok());
+    app.phase = Phase::Stopping;                       // before-shutdown hooks running, traffic flowing
+    assert!(user::job(&app).is_ok());
+    let ws = fw_ws::WsServer { connections: 3, kept: Default::default() };
+    let opened = core::run_drain(&mut app, &[&ws]);
+    assert!(user::job(&app).is_err());
+    app.phase = Phase::Destroying;
+    let late = ws.late_disconnect(&app);
+    println!("terminal executions opened during drain={opened}; opened after it with the kept token={late}");
+}
+
+// ==== src/bin/p18b_drain_token_forged_fails.rs ====
+//! P18b: user code writing the token itself. Expected: fails, E0423 — the tuple struct's field is
+//! private, so the one spelling that would build a `DrainToken` outside the core is refused.
+mod core {
+    #[derive(Clone)]
+    pub struct DrainToken(());
+    pub struct App;
+    pub struct Execution;
+    impl Execution {
+        pub fn open_terminal(_proof: &DrainToken, _app: &App) -> Execution { Execution }
+    }
+}
+
+mod user {
+    use super::core::*;
+    pub fn sneak(app: &App) -> Execution {
+        let forged = DrainToken(());
+        Execution::open_terminal(&forged, app)
+    }
+}
+
+fn main() { let _ = user::sneak(&core::App); }
+
+// ==== src/bin/p19_bounded_state.rs ====
+//! P19: a handle item's bound is written once. The state parameter names the item written last
+//! and whether its bound is written: `.timeout(..)` and `.unbounded()` exist on an item in `Open`
+//! and return it in `Set`, which has neither. A readiness item has two slots, the whole check and
+//! one attempt, each written once in either order; `.unbounded()` takes both and exists only while
+//! both are open. The handle keeps the construction's state as a third parameter, so `also_as` and
+//! `qualified` return to the binding as it was left and its bound is written once wherever the
+//! handle is on it. Expected: compiles; prints each item's bounds.
+use std::future::Future;
+use std::marker::PhantomData;
+use std::sync::Arc;
+use std::time::Duration;
+
+pub struct Dep<T: ?Sized>(pub Arc<T>);
+pub trait Factory<Args>: Send + Sync + 'static {}
+impl<F, Fut> Factory<()> for F where F: Fn() -> Fut + Send + Sync + 'static, Fut: Future + Send {}
+impl<F, Fut, A> Factory<(A,)> for F where F: Fn(A) -> Fut + Send + Sync + 'static, Fut: Future + Send {}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum Bound { #[default] Default, After(Duration), Unbounded }
+#[derive(Debug, Default)]
+pub struct Item { pub name: &'static str, pub bound: Bound, pub attempt: Bound, pub retries: u32 }
+
+pub struct Open;
+pub struct Set;
+pub struct Construction<B>(PhantomData<B>);
+pub struct HookItem<B>(PhantomData<B>);
+pub struct ReadyItem<W, A>(PhantomData<(W, A)>);
+
+/// Which `Item` the state's bound methods write: the construction is the first item, every
+/// other state the last.
+pub trait Slot { fn slot(items: &mut [Item]) -> &mut Item; }
+impl<B> Slot for Construction<B> { fn slot(items: &mut [Item]) -> &mut Item { items.first_mut().expect("the binding") } }
+impl<B> Slot for HookItem<B> { fn slot(items: &mut [Item]) -> &mut Item { items.last_mut().expect("an item") } }
+impl<W, A> Slot for ReadyItem<W, A> { fn slot(items: &mut [Item]) -> &mut Item { items.last_mut().expect("an item") } }
+
+/// `.timeout(..)` on an item in `Open`: the item's next state, and the construction's.
+pub trait Timeout<C>: Slot { type Item; type Construction; }
+impl Timeout<Open> for Construction<Open> { type Item = Construction<Set>; type Construction = Set; }
+impl<C> Timeout<C> for HookItem<Open> { type Item = HookItem<Set>; type Construction = C; }
+impl<A, C> Timeout<C> for ReadyItem<Open, A> { type Item = ReadyItem<Set, A>; type Construction = C; }
+
+/// `.unbounded()`: on readiness only while both slots are open, and it closes both.
+pub trait Unbounded<C>: Slot { type Item; type Construction; }
+impl Unbounded<Open> for Construction<Open> { type Item = Construction<Set>; type Construction = Set; }
+impl<C> Unbounded<C> for HookItem<Open> { type Item = HookItem<Set>; type Construction = C; }
+impl<C> Unbounded<C> for ReadyItem<Open, Open> { type Item = ReadyItem<Set, Set>; type Construction = C; }
+
+/// `.attempt_timeout(..)`: the readiness item's second slot, written once.
+pub trait AttemptTimeout: Slot { type Item; }
+impl<W> AttemptTimeout for ReadyItem<W, Open> { type Item = ReadyItem<W, Set>; }
+
+pub struct Handle<T, K, C = Open> { pub items: Vec<Item>, _s: PhantomData<fn() -> (T, K, C)> }
+impl<T, K, C> Handle<T, K, C> {
+    fn to<K2, C2>(self) -> Handle<T, K2, C2> { Handle { items: self.items, _s: PhantomData } }
+    fn with<K2>(mut self, name: &'static str) -> Handle<T, K2, C> {
+        self.items.push(Item { name, ..Default::default() });
+        self.to()
+    }
+    pub fn ready<Args, F: Factory<Args>>(self, _check: F) -> Handle<T, ReadyItem<Open, Open>, C> { self.with("ready") }
+    pub fn on_init<Args, F: Factory<Args>>(self, _f: F) -> Handle<T, HookItem<Open>, C> { self.with("on_init") }
+    pub fn on_destroy<Args, F: Factory<Args>>(self, _f: F) -> Handle<T, HookItem<Open>, C> { self.with("on_destroy") }
+    /// Back to the binding, in the construction state the handle remembers.
+    pub fn also_as<U: ?Sized + 'static>(self) -> Handle<T, Construction<C>, C> { self.to() }
+    pub fn qualified<Q: 'static>(self) -> Handle<T, Construction<C>, C> { self.to() }
+}
+impl<T, K: Timeout<C>, C> Handle<T, K, C> {
+    pub fn timeout(mut self, d: Duration) -> Handle<T, K::Item, K::Construction> {
+        K::slot(&mut self.items).bound = Bound::After(d);
+        self.to()
+    }
+}
+impl<T, K: Unbounded<C>, C> Handle<T, K, C> {
+    pub fn unbounded(mut self) -> Handle<T, K::Item, K::Construction> {
+        let item = K::slot(&mut self.items);
+        item.bound = Bound::Unbounded;
+        item.attempt = Bound::Unbounded;
+        self.to()
+    }
+}
+impl<T, K: AttemptTimeout, C> Handle<T, K, C> {
+    pub fn attempt_timeout(mut self, d: Duration) -> Handle<T, K::Item, C> {
+        K::slot(&mut self.items).attempt = Bound::After(d);
+        self.to()
+    }
+}
+/// Not bounds: available in every readiness state, `Set` and `Unbounded` included.
+impl<T, W, A, C> Handle<T, ReadyItem<W, A>, C> {
+    pub fn retries(mut self, n: u32) -> Self { self.items.last_mut().expect("the check").retries = n; self }
+    pub fn backoff(self, _d: Duration) -> Self { self }
+}
+
+pub struct ModuleDef;
+impl ModuleDef {
+    pub fn singleton<Args, F: Factory<Args>>(&mut self, _f: F) -> Handle<PgPool, Construction<Open>> {
+        Handle { items: vec![Item { name: "construction", ..Default::default() }], _s: PhantomData }
+    }
+}
+
+pub struct PgPool;
+pub struct Replica;
+fn secs(n: u64) -> Duration { Duration::from_secs(n) }
+
+fn main() {
+    let mut m = ModuleDef;
+    let h1 = m.singleton(|| async { PgPool })
+        .also_as::<dyn Send>()
+        .timeout(secs(20))                                                      // the construction, after a return to the binding
+        .ready(|_pool: Dep<PgPool>| async move { Ok::<(), String>(()) })
+        .retries(5).attempt_timeout(secs(2)).timeout(secs(10)).backoff(secs(1)) // both slots; retries/backoff around them
+        .on_destroy(|_pool: Dep<PgPool>| async move {}).unbounded()
+        .qualified::<Replica>();                                                // back to the binding, construction already `Set`
+    let h2 = m.singleton(|| async { PgPool })
+        .ready(|_pool: Dep<PgPool>| async move { Ok::<(), String>(()) })
+        .timeout(secs(10)).attempt_timeout(secs(2))                             // the other order
+        .on_init(|_pool: Dep<PgPool>| async move {}).timeout(secs(1));
+    let h3 = m.singleton(|| async { PgPool })
+        .ready(|_pool: Dep<PgPool>| async move { Ok::<(), String>(()) })
+        .unbounded().retries(3)                                                 // retries keeps its meaning under `.unbounded()`
+        .on_destroy(|_pool: Dep<PgPool>| async move {});                        // left at `Default`
+    println!("h1: {:?}", h1.items);
+    println!("h2: {:?}", h2.items);
+    println!("h3: {:?}", h3.items);
+}
+
+// ==== src/bin/p19b_second_timeout_fails.rs ====
+//! P19b: a second bound on one item. Two sites: `.timeout` twice on the readiness check, and the
+//! construction's `.timeout` after `also_as` returned to a binding whose bound is already written.
+//! Expected: fails, two E0599, each on the second `timeout`, naming the handle type the method
+//! exists on.
+use std::future::Future;
+use std::marker::PhantomData;
+use std::time::Duration;
+
+pub trait Factory<Args>: Send + Sync + 'static {}
+impl<F, Fut> Factory<()> for F where F: Fn() -> Fut + Send + Sync + 'static, Fut: Future + Send {}
+
+pub struct Open;
+pub struct Set;
+pub struct Construction<B>(PhantomData<B>);
+pub struct ReadyItem<W, A>(PhantomData<(W, A)>);
+
+pub trait Timeout<C> { type Item; type Construction; }
+impl Timeout<Open> for Construction<Open> { type Item = Construction<Set>; type Construction = Set; }
+impl<A, C> Timeout<C> for ReadyItem<Open, A> { type Item = ReadyItem<Set, A>; type Construction = C; }
+
+pub struct Handle<T, K, C = Open> { _s: PhantomData<fn() -> (T, K, C)> }
+impl<T, K, C> Handle<T, K, C> {
+    fn to<K2, C2>(self) -> Handle<T, K2, C2> { Handle { _s: PhantomData } }
+    pub fn ready<Args, F: Factory<Args>>(self, _check: F) -> Handle<T, ReadyItem<Open, Open>, C> { self.to() }
+    pub fn also_as<U: ?Sized + 'static>(self) -> Handle<T, Construction<C>, C> { self.to() }
+}
+impl<T, K: Timeout<C>, C> Handle<T, K, C> {
+    pub fn timeout(self, _d: Duration) -> Handle<T, K::Item, K::Construction> { self.to() }
+}
+
+pub struct ModuleDef;
+impl ModuleDef {
+    pub fn singleton<Args, F: Factory<Args>>(&mut self, _f: F) -> Handle<PgPool, Construction<Open>> { Handle { _s: PhantomData } }
+}
+pub struct PgPool;
+fn secs(n: u64) -> Duration { Duration::from_secs(n) }
+
+fn main() {
+    let mut m = ModuleDef;
+    let _twice = m.singleton(|| async { PgPool })
+        .ready(|| async { Ok::<(), String>(()) })
+        .timeout(secs(10))
+        .timeout(secs(5));
+    let _again = m.singleton(|| async { PgPool })
+        .timeout(secs(20))
+        .ready(|| async { Ok::<(), String>(()) })
+        .also_as::<dyn Send>()
+        .timeout(secs(30));
+}
+
+// ==== src/bin/p19c_unbounded_beside_bound_fails.rs ====
+//! P19c: `.unbounded()` beside an explicit bound on a readiness check, in both orders:
+//! `.attempt_timeout(..).unbounded()` and `.unbounded().attempt_timeout(..)`. Expected: fails, two
+//! E0599, on `unbounded` and on `attempt_timeout`.
+use std::future::Future;
+use std::marker::PhantomData;
+use std::time::Duration;
+
+pub trait Factory<Args>: Send + Sync + 'static {}
+impl<F, Fut> Factory<()> for F where F: Fn() -> Fut + Send + Sync + 'static, Fut: Future + Send {}
+
+pub struct Open;
+pub struct Set;
+pub struct Construction<B>(PhantomData<B>);
+pub struct ReadyItem<W, A>(PhantomData<(W, A)>);
+
+pub trait Unbounded<C> { type Item; type Construction; }
+impl<C> Unbounded<C> for ReadyItem<Open, Open> { type Item = ReadyItem<Set, Set>; type Construction = C; }
+pub trait AttemptTimeout { type Item; }
+impl<W> AttemptTimeout for ReadyItem<W, Open> { type Item = ReadyItem<W, Set>; }
+
+pub struct Handle<T, K, C = Open> { _s: PhantomData<fn() -> (T, K, C)> }
+impl<T, K, C> Handle<T, K, C> {
+    fn to<K2, C2>(self) -> Handle<T, K2, C2> { Handle { _s: PhantomData } }
+    pub fn ready<Args, F: Factory<Args>>(self, _check: F) -> Handle<T, ReadyItem<Open, Open>, C> { self.to() }
+}
+impl<T, K: Unbounded<C>, C> Handle<T, K, C> {
+    pub fn unbounded(self) -> Handle<T, K::Item, K::Construction> { self.to() }
+}
+impl<T, K: AttemptTimeout, C> Handle<T, K, C> {
+    pub fn attempt_timeout(self, _d: Duration) -> Handle<T, K::Item, C> { self.to() }
+}
+
+pub struct ModuleDef;
+impl ModuleDef {
+    pub fn singleton<Args, F: Factory<Args>>(&mut self, _f: F) -> Handle<PgPool, Construction<Open>> { Handle { _s: PhantomData } }
+}
+pub struct PgPool;
+fn secs(n: u64) -> Duration { Duration::from_secs(n) }
+
+fn main() {
+    let mut m = ModuleDef;
+    let _after = m.singleton(|| async { PgPool })
+        .ready(|| async { Ok::<(), String>(()) })
+        .attempt_timeout(secs(2))
+        .unbounded();
+    let _before = m.singleton(|| async { PgPool })
+        .ready(|| async { Ok::<(), String>(()) })
+        .unbounded()
+        .attempt_timeout(secs(2));
+}
+
+// ==== src/bin/p20_redacted.rs ====
+//! P20: `Redacted` enforces what it claims. Built from a domain error whose message carries a
+//! credential, it prints only the redacted text under `{}` and `{:?}`, answers `None` from
+//! `source()` so a chain-walking reporter never reaches the original, answers
+//! `downcast_ref::<TenantNotFound>()` with `Some` through an outer `LookupError`, gives the
+//! original back through `into_inner`, and is `Send + Sync + 'static`, so it sits in a `BoxError`.
+//! Expected: compiles; every assertion holds; prints the two renderings and the mapped status.
+use std::error::Error;
+use std::fmt;
+
+pub type BoxError = Box<dyn Error + Send + Sync + 'static>;
+
+pub struct Redacted { inner: BoxError, text: String }
+
+impl Redacted {
+    pub fn downcast_ref<E: Error + 'static>(&self) -> Option<&E> { self.inner.downcast_ref::<E>() }
+    pub fn into_inner(self) -> BoxError { self.inner }
+}
+impl fmt::Display for Redacted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(&self.text) }
+}
+impl fmt::Debug for Redacted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(&self.text) }
+}
+impl Error for Redacted {
+    fn source(&self) -> Option<&(dyn Error + 'static)> { None }
+}
+
+/// The one function every outside error passes through: the graph's registered secrets, then
+/// the URL-userinfo strip as a backstop for a secret that was never registered.
+pub fn redact(inner: BoxError, secrets: &[&str]) -> Redacted {
+    let mut text = inner.to_string();
+    for s in secrets { text = text.replace(s, "[redacted]"); }
+    Redacted { inner, text: strip_userinfo(&text) }
+}
+
+fn strip_userinfo(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("://") {
+        let (head, tail) = rest.split_at(at + 3);
+        out.push_str(head);
+        let authority_end = tail.find(|c: char| c == '/' || c.is_whitespace()).unwrap_or(tail.len());
+        let (authority, after) = tail.split_at(authority_end);
+        match authority.rfind('@') {
+            Some(i) => { out.push_str("[redacted]@"); out.push_str(&authority[i + 1..]); }
+            None => out.push_str(authority),
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+#[derive(Debug)]
+pub struct TenantNotFound { pub tenant: String, pub url: String }
+impl fmt::Display for TenantNotFound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "tenant {} not found at {}", self.tenant, self.url)
+    }
+}
+impl Error for TenantNotFound {}
+
+#[derive(Debug)]
+pub enum FailureReason { Errored(Redacted) }
+
+/// The outer error an error handler receives inside a `BoxError`; its `source()` is the `Redacted`.
+#[derive(Debug)]
+pub enum LookupError { Construct { key: &'static str, reason: FailureReason } }
+impl fmt::Display for LookupError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self { LookupError::Construct { key, .. } => write!(f, "building `{key}` inside the call failed") }
+    }
+}
+impl Error for LookupError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self { LookupError::Construct { reason: FailureReason::Errored(r), .. } => Some(r) }
+    }
+}
+
+/// A reporter of the kind that prints every link of the chain.
+fn report(e: &dyn Error) -> String {
+    let mut s = e.to_string();
+    let mut cur = e.source();
+    while let Some(next) = cur { s.push_str(": "); s.push_str(&next.to_string()); cur = next.source(); }
+    s
+}
+
+/// An error handler: a `BoxError` in, a status out.
+fn handle(err: &BoxError) -> u16 {
+    match err.downcast_ref::<LookupError>() {
+        Some(LookupError::Construct { reason: FailureReason::Errored(r), .. }) if r.downcast_ref::<TenantNotFound>().is_some() => 404,
+        _ => 500,
+    }
+}
+
+fn assert_send_sync_static<T: Send + Sync + 'static>() {}
+
+fn main() {
+    const URL: &str = "postgres://admin:hunter2@db:5432/app";
+    let original = TenantNotFound { tenant: "acme".into(), url: URL.into() };
+    let original_text = original.to_string();
+    let redacted = redact(Box::new(original), &[]);                 // the secret was never registered: the strip alone
+
+    let display = format!("{redacted}");
+    let debug = format!("{redacted:?}");
+    assert_eq!(display, "tenant acme not found at postgres://[redacted]@db:5432/app");
+    assert_eq!(debug, display);
+    for s in ["hunter2", "admin"] { assert!(!display.contains(s) && !debug.contains(s), "{s} leaked"); }
+    assert!(redacted.source().is_none());
+    assert!(redacted.downcast_ref::<TenantNotFound>().is_some());
+
+    let lookup = LookupError::Construct { key: "TenantCtx", reason: FailureReason::Errored(redacted) };
+    let chain = report(&lookup);
+    assert!(!chain.contains("hunter2"), "the chain reporter reached the original");
+    let via_debug = format!("{lookup:?}");                          // the derived Debug of the outer error formats the `Redacted` through its own `Debug`
+    assert!(!via_debug.contains("hunter2"), "a derived Debug reached the original");
+
+    let boxed: BoxError = Box::new(lookup);
+    let status = handle(&boxed);
+    assert_eq!(status, 404);
+
+    let Ok(lookup) = boxed.downcast::<LookupError>() else { unreachable!() };
+    let LookupError::Construct { reason: FailureReason::Errored(redacted), .. } = *lookup;
+    let inner = redacted.into_inner();
+    assert_eq!(inner.to_string(), original_text);                   // the original, unredacted, for the caller that asked for it
+    assert!(inner.downcast_ref::<TenantNotFound>().is_some());
+
+    assert_send_sync_static::<Redacted>();
+    let _: BoxError = Box::new(redact(Box::new(TenantNotFound { tenant: "x".into(), url: URL.into() }), &["hunter2"]));
+
+    println!("display: {display}");
+    println!("chain:   {chain}");
+    println!("status:  {status}");
+}
+

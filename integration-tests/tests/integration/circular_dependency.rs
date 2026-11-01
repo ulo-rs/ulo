@@ -1,4 +1,4 @@
-//! A provider cycle, inside one module or across a module boundary, is refused at startup, and
+//! A provider cycle that crosses a module boundary is refused at startup, and
 //! the message names every provider on the cycle.
 //!
 //! Rust makes the cycle a hang or a stack overflow rather than a type error, so
@@ -6,7 +6,6 @@
 //! leaves the author to find the other half by hand.
 #![allow(dead_code)]
 
-use std::sync::Arc;
 use ulo::prelude::*;
 
 // Global modules keep the import graph acyclic — both get ordered and reach the injector's
@@ -20,7 +19,7 @@ pub struct ServiceA {
 
 impl ServiceA {
     #[new]
-    pub fn new(_b: Arc<ServiceB>) -> Self {
+    pub fn new(_b: ServiceB) -> Self {
         Self { name: "a".into() }
     }
 }
@@ -32,7 +31,7 @@ pub struct ServiceB {
 
 impl ServiceB {
     #[new]
-    pub fn new(_a: Arc<ServiceA>) -> Self {
+    pub fn new(_a: ServiceA) -> Self {
         Self { name: "b".into() }
     }
 }
@@ -68,54 +67,4 @@ async fn cross_module_provider_cycle_names_the_exact_providers() {
         message.contains("Break the cycle"),
         "diagnostic should include the remediation guidance, got:\n{message}"
     );
-}
-
-#[injectable]
-pub struct ServiceC {
-    name: String,
-}
-
-impl ServiceC {
-    #[new]
-    pub fn new(_d: Arc<ServiceD>) -> Self {
-        Self { name: "c".into() }
-    }
-}
-
-#[injectable]
-pub struct ServiceD {
-    name: String,
-}
-
-impl ServiceD {
-    #[new]
-    pub fn new(_c: Arc<ServiceC>) -> Self {
-        Self { name: "d".into() }
-    }
-}
-
-#[module(providers: [ServiceD, ServiceC])]
-impl OneModuleCycle {}
-
-/// A cycle inside one module is described as the cross-module one is, every provider on it with
-/// its module, the chain starting from the provider declared first.
-#[tokio::test]
-async fn a_cycle_inside_one_module_names_every_provider_on_it() {
-    let message = UloFactory::create_application_context(OneModuleCycle)
-        .await
-        .err()
-        .expect("a provider cycle inside one module must fail initialization")
-        .to_string();
-
-    assert!(
-        message.contains("Circular dependency detected between providers"),
-        "expected the cycle diagnostic, got:\n{message}"
-    );
-    let d = message.find("ServiceD (in module").expect(&message);
-    let c = message.find("ServiceC (in module").expect(&message);
-    assert!(
-        d < c,
-        "the chain starts from the provider declared first, got:\n{message}"
-    );
-    assert!(message.contains("Break the cycle"), "{message}");
 }

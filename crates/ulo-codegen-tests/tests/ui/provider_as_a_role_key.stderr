@@ -1,0 +1,5 @@
+error: a role key takes contributions, and `as` binds a single instance; a global enhancer is written `into AnyGuard<Http>: [AuthGuard]`
+  --> tests/ui/provider_as_a_role_key.rs:15:36
+   |
+15 | #[module(providers = [AuthGuard as ulo::AnyGuard<Http>])]
+   |                                    ^^^^^^^^^^^^^^^^^^^

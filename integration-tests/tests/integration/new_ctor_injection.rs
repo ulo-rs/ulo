@@ -34,7 +34,7 @@ pub struct Server {
 
 impl Server {
     #[new]
-    fn new(config: Arc<ConfigService>) -> Self {
+    fn new(config: ConfigService) -> Self {
         Self {
             port: config.port(),
         }
@@ -54,7 +54,7 @@ pub struct PortGuard {
 
 impl PortGuard {
     #[new]
-    fn new(config: Arc<ConfigService>) -> Self {
+    fn new(config: ConfigService) -> Self {
         Self {
             threshold: config.port(),
         }
@@ -82,7 +82,7 @@ pub struct ReqServer {
 
 impl ReqServer {
     #[new]
-    fn new(config: Arc<ConfigService>) -> Self {
+    fn new(config: ConfigService) -> Self {
         Self {
             port: config.port(),
         }
@@ -103,7 +103,7 @@ pub struct ReqFacade {
 
 impl ReqFacade {
     #[new]
-    fn new(inner: Arc<ReqServer>) -> Self {
+    fn new(inner: ReqServer) -> Self {
         Self { port: inner.port() }
     }
 
@@ -120,7 +120,7 @@ pub struct TransientServer {
 
 impl TransientServer {
     #[new]
-    fn new(config: Arc<ConfigService>) -> Self {
+    fn new(config: ConfigService) -> Self {
         Self {
             port: config.port(),
         }
@@ -145,7 +145,7 @@ pub struct ConnHolder {
 
 impl ConnHolder {
     #[new]
-    fn new(config: Arc<ConfigService>) -> Self {
+    fn new(config: ConfigService) -> Self {
         Self {
             handle: Handle(format!("conn:{}", config.port())),
         }
@@ -165,7 +165,7 @@ pub struct ExplicitInjectServer {
 
 impl ExplicitInjectServer {
     #[new]
-    fn new(#[inject] config: Arc<ConfigService>) -> Self {
+    fn new(#[inject] config: ConfigService) -> Self {
         Self {
             port: config.port(),
         }
@@ -193,9 +193,9 @@ impl ApiController {
 #[controller("/req")]
 pub struct ReqController {
     #[inject]
-    server: Arc<ReqServer>,
+    server: ReqServer,
     #[inject]
-    facade: Arc<ReqFacade>,
+    facade: ReqFacade,
 }
 
 #[routes]
@@ -235,7 +235,7 @@ async fn new_ctor_injects_without_storing() {
         .unwrap();
 
     // Server was built via Self::new(config) — config injected, only port kept.
-    let server = app
+    let server: Server = app
         .get::<Server>()
         .await
         .expect("Server resolves via #[new]");
@@ -276,7 +276,7 @@ async fn new_ctor_transient_scope_resolves() {
         .await
         .unwrap();
     // Transient is resolvable through the application context; the constructor must have run.
-    let t = app
+    let t: TransientServer = app
         .get::<TransientServer>()
         .await
         .expect("TransientServer resolves via #[new]");
@@ -324,7 +324,7 @@ async fn new_ctor_builds_non_default_field() {
         .unwrap();
     // `Handle` has no `Default`; the field is built solely by the constructor. Resolving proves the
     // dead field-injection path compiles without a `Default` bound and the constructor runs.
-    let holder = app
+    let holder: ConnHolder = app
         .get::<ConnHolder>()
         .await
         .expect("ConnHolder resolves via #[new] despite a non-Default field");
@@ -336,7 +336,7 @@ async fn new_ctor_strips_inject_attr_from_params() {
     let app = UloFactory::create_application_context(NewCtorModule)
         .await
         .unwrap();
-    let server = app
+    let server: ExplicitInjectServer = app
         .get::<ExplicitInjectServer>()
         .await
         .expect("ExplicitInjectServer resolves via #[new] with an #[inject] parameter");
@@ -351,16 +351,14 @@ fn _arc_marker(_: Arc<()>) {}
 // stripped like the bare one — unmatched it is neither token-routed nor removed.
 #[tokio::test]
 async fn new_ctor_path_qualified_inject_token() {
-    ulo::key!(Greeting: String);
-
     #[injectable]
     pub struct Greeter {
-        greeting: Arc<String>,
+        greeting: String,
     }
 
     impl Greeter {
         #[new]
-        fn new(#[ulo::inject(Greeting)] greeting: Arc<String>) -> Self {
+        fn new(#[ulo::inject("GREETING")] greeting: String) -> Self {
             Self { greeting }
         }
 
@@ -370,7 +368,7 @@ async fn new_ctor_path_qualified_inject_token() {
     }
 
     #[module(providers: [
-        ulo::provide!(Greeting => "hello".to_string()),
+        ulo::provider_value!("GREETING", "hello".to_string()),
         Greeter,
     ])]
     struct GreetModule {}
@@ -378,6 +376,6 @@ async fn new_ctor_path_qualified_inject_token() {
     let app = UloFactory::create_application_context(GreetModule)
         .await
         .unwrap();
-    let greeter = app.get::<Greeter>().await.expect("Greeter resolves");
+    let greeter: Greeter = app.get::<Greeter>().await.expect("Greeter resolves");
     assert_eq!(greeter.greeting(), "hello");
 }

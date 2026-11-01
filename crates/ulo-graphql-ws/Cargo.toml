@@ -1,0 +1,34 @@
+[package]
+name = "ulo-graphql-ws"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "GraphQL subscriptions for Ulo over graphql-transport-ws, a WebSocket gateway over any engine"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "graphql", "websocket", "subscriptions"]
+categories = ["web-programming::websocket"]
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-graphql = { path = "../ulo-graphql", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.1" }
+futures-util.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# The HTTP server whose port the gateway is reached on, through `WsModule`'s hand-off.
+ulo-http-hyper = { path = "../ulo-http-hyper" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `ScriptedTimer`: the clock whose refusal and expiry `tests/init_refused.rs` reads.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+# `connect`: the tests speak graphql-transport-ws through a real WebSocket client.
+tokio-tungstenite = { workspace = true, features = ["connect"] }
+
+[lints]
+workspace = true

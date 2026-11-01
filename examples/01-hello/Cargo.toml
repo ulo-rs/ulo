@@ -1,0 +1,19 @@
+[package]
+name = "ex-01-hello"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-http = { path = "../../crates/ulo-http" }
+ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+
+[lints]
+workspace = true

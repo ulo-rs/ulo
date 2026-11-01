@@ -10,7 +10,6 @@
 
 use crate::common::TestServer;
 use serial_test::serial;
-use std::sync::Arc;
 use ulo::async_trait;
 use ulo::enhancer::Guard;
 use ulo::http::HttpContext;
@@ -32,7 +31,7 @@ impl AuthService {
 #[injectable]
 pub struct AdminGuard {
     #[inject]
-    auth: Arc<AuthService>,
+    auth: AuthService,
 }
 
 #[async_trait]

@@ -1,0 +1,24 @@
+[package]
+name = "ulo-runtime-conformance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The conformance suite every Ulo runtime runs"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# A dev-dependency of the runtime crates and of nothing else. Cargo strips dev-dependencies when
+# publishing them, so this never needs a crates.io release.
+publish = false
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+# The runtime-free oneshot and unbounded channels the scenarios signal through. The suite names no
+# runtime: each runtime crate's `Harness` brings its own executor.
+futures.workspace = true
+# The recording subscriber the scenario reading the core's `warn` installs.
+tracing.workspace = true
+
+[lints]
+workspace = true

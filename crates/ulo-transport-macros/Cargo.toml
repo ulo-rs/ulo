@@ -1,0 +1,29 @@
+[package]
+name = "ulo-transport-macros"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Derives for Ulo's transport-neutral error and validation traits"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["development-tools::procedural-macro-helpers"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro-crate = "3"
+# Reads the manifest proc-macro-crate reads, to prefer a normal dependency over a dev one.
+toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
+proc-macro2.workspace = true
+quote.workspace = true
+syn = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# `Classify`'s doc example derives through `ulo_transport`, the crate that re-exports it.
+ulo-transport = { path = "../ulo-transport" }
+thiserror = "2"

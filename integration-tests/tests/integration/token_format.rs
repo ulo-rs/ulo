@@ -1,14 +1,14 @@
 //! One token format across every registration and lookup path.
 //!
 //! A provider registered under its canonical `type_name` must be reachable from
-//! every path that derives a token from a type: a bare `#[inject]` field, a
-//! factory closure's parameter, and `resolve::<T>()` on the app. Generic written
-//! types are where the paths can disagree — each test pins one pair.
+//! every path that derives a token from a type: a bare `#[inject]` field, an
+//! explicit `#[inject(Type)]`, a `provider_factory!` closure dependency, and
+//! `resolve::<T>()` on the app. Generic written types are where the paths can
+//! disagree — each test pins one pair.
 
-use std::sync::Arc;
 use ulo::UloFactory;
 use ulo::di::Execution;
-use ulo::{injectable, key, module, provide};
+use ulo::{injectable, module, provider_factory, provider_value};
 use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Clone)]
@@ -25,12 +25,12 @@ mod bare_inject_generic {
     #[injectable]
     pub struct Consumer {
         #[inject]
-        pub handle: Arc<Handle<Marker>>,
+        pub handle: Handle<Marker>,
     }
 
     #[module(
         providers: [
-            provide!(async || Handle(Marker)),
+            provider_value!(Handle<Marker>, Handle(Marker)),
             Consumer,
         ],
     )]
@@ -83,12 +83,10 @@ mod resolve_generic {
 mod factory_dep_generic {
     use super::*;
 
-    key!(ConfiguredName: String);
-
     #[module(
         imports: [ConfigModule::<TokenTestConfig>::from_env().unwrap()],
         providers: [
-            provide!(ConfiguredName => async |cfg: Arc<ConfigService<TokenTestConfig>>| {
+            provider_factory!("CONFIGURED_NAME", |cfg: ConfigService<TokenTestConfig>| {
                 cfg.get_ref().name.clone()
             }),
         ],
@@ -101,11 +99,46 @@ mod factory_dep_generic {
             .await
             .expect("the closure's `ConfigService<TokenTestConfig>` dep must be found");
 
-        let name = app
-            .get_key::<ConfiguredName>()
+        let name: String = app
+            .get_by_token("CONFIGURED_NAME")
             .await
             .expect("the factory built from its dep");
-        assert_eq!(*name, "token-test");
+        assert_eq!(name, "token-test");
+    }
+}
+
+/// `#[inject(Type)]` and bare `#[inject]` on the same written type must agree.
+mod explicit_inject_generic {
+    use super::*;
+
+    #[injectable]
+    pub struct Consumer {
+        #[inject(ConfigService<TokenTestConfig>)]
+        pub explicit: ConfigService<TokenTestConfig>,
+        #[inject]
+        pub bare: ConfigService<TokenTestConfig>,
+    }
+
+    #[module(
+        imports: [ConfigModule::<TokenTestConfig>::from_env().unwrap()],
+        providers: [Consumer],
+    )]
+    impl TestModule {}
+
+    #[tokio::test]
+    async fn explicit_and_bare_inject_agree_on_the_token() {
+        let app = UloFactory::create(TestModule)
+            .await
+            .expect("both spellings must find the one registration");
+
+        let consumer = app
+            .resolve::<Consumer>(&Execution::standalone())
+            .await
+            .unwrap();
+        assert_eq!(
+            consumer.explicit.get_ref().name,
+            consumer.bare.get_ref().name
+        );
     }
 }
 
@@ -125,7 +158,7 @@ mod qualified_path_inject {
     #[injectable]
     pub struct Consumer {
         #[inject]
-        pub service: Arc<helpers::Service>,
+        pub service: helpers::Service,
     }
 
     #[module(
@@ -147,26 +180,29 @@ mod qualified_path_inject {
     }
 }
 
-/// A marker is a key like any other: the `_key` lookups take it, and its `Value` fixes the result
-/// type.
-mod marker_lookup {
+/// A `Token` const is a key like any other: the by-token lookup APIs accept it
+/// directly.
+mod const_token_lookup {
     use super::*;
+    use ulo::di::Token;
 
-    key!(NamedValue: String);
+    const NAMED_VALUE: Token<String> = Token::new("NAMED_VALUE");
 
     #[module(
-        providers: [provide!(NamedValue => "held".to_string())],
+        providers: [provider_value!("NAMED_VALUE", "held".to_string())],
     )]
     impl TestModule {}
 
     #[tokio::test]
-    async fn a_marker_reaches_its_registration() {
+    async fn a_token_const_reaches_a_string_registration() {
         let app = UloFactory::create(TestModule).await.unwrap();
 
-        let value = app
-            .get_key::<NamedValue>()
+        // The const's parameter fixes the result type: binding this to anything
+        // but String is a compile error.
+        let value: String = app
+            .get_by_token(NAMED_VALUE)
             .await
-            .expect("the marker names the same key the registration used");
-        assert_eq!(*value, "held");
+            .expect("the const names the same key the registration used");
+        assert_eq!(value, "held");
     }
 }

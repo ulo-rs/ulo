@@ -1,34 +1,44 @@
 [package]
 name = "ulo-db-redis"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Redis integration for the Ulo framework"
+description = "Redis store for Ulo: a ConnectionManager with the shared connect and health policy, tokio-comp alone"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+keywords = ["ulo", "redis", "database"]
+categories = ["database"]
 
 [features]
-health = ["dep:ulo-health", "dep:serde_json", "dep:futures"]
-integration = ["health"]
+# Builds `tests/conformance.rs`, which starts a server in a container per scenario and so needs a
+# running Docker daemon.
+integration = []
+# `rediss://`, through rustls with the webpki roots, as `ulo-rpc-redis`'s `tls` feature does.
+tls = ["redis/tokio-rustls-comp", "redis/tls-rustls-webpki-roots"]
+
+# Compiles redis-rs's `smol-comp` in beside `tokio-comp`, which is what makes `prefer_tokio()` exist.
+# The crate then calls it once per process and logs a refusal at `warn`. The two rustls features ride along
+# because redis-rs 1.7.1 does not compile `smol-comp` once any crate in the build turns on `tls-rustls`
+# (this crate's `tls`, or `ulo-rpc-redis`'s) without `smol-rustls-comp`, which in turn needs
+# `tokio-rustls-comp`; `smol-comp` alone compiles. So the feature also compiles rustls in.
+smol-comp = ["redis/smol-comp", "redis/smol-rustls-comp", "redis/tokio-rustls-comp"]
 
 [dependencies]
-ulo = { path = "../ulo", default-features = false }
-# Timer for the startup check's retry delay. Executor-independent, so core stays free of a
-# runtime and this crate does not acquire one either.
-futures-timer.workspace = true
-redis = { workspace = true, features = ["tokio-comp", "connection-manager"] }
-async-trait.workspace = true
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
+ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
+ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.1" }
+# The workspace entry brings `aio` and `tokio-comp`, the one runtime feature this crate takes.
+redis = { workspace = true, features = ["connection-manager"] }
+serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
-ulo-health = { path = "../ulo-health", default-features = false, optional = true }
-serde_json = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
 
 [dev-dependencies]
-redis = { workspace = true, features = ["tokio-comp", "connection-manager"] }
+serde_json.workspace = true
 testcontainers.workspace = true
-testcontainers-modules = { workspace = true, features = ["redis"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-ulo-http-axum = { path = "../ulo-http-axum" }
-reqwest = { workspace = true, features = ["json"] }
-anyhow.workspace = true
+# `support/server.rs` issues the TLS recipe's certificates.
+ulo-test-certs = { path = "../ulo-test-certs" }
+ulo-db-conformance = { path = "../ulo-db-conformance", features = ["tokio"] }
+
+[lints]
+workspace = true

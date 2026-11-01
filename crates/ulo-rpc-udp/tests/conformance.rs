@@ -1,97 +1,44 @@
-//! The shared RPC conformance suite, against this crate's own adapter.
-//!
-//! The cases live in `ulo-rpc-conformance`; this file supplies the `Broker`, which for udp is the
-//! adapter on a socket bound here. Datagrams pass through a proxy this file owns, which is what a
-//! disruption cuts: udp has no connection, and the proxy drops every datagram for longer than the
-//! client's call timeout, then forwards again. Nothing here needs a container.
+//! The RPC conformance suite over the UDP link, each scenario against a server on a port of its
+//! own. The link declares unary calls alone and a 65,507-byte frame, so the streamed scenarios
+//! and the binary one assert the startup refusals, and the oversized one the client's refusal
+//! one byte over the datagram. The recovery scenario is declared not applicable.
 
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::net::{Ipv4Addr, SocketAddr};
 
-use tokio::task::JoinHandle;
-use ulo_rpc_conformance::Broker;
-use ulo_rpc_udp::{UdpAdapter, UdpClientTransport};
+use ulo::BoundAddr;
+use ulo_rpc_conformance::{Broker, startup_failed};
+use ulo_rpc_udp::Udp;
 
-struct UdpBroker {
-    /// The socket the adapter serves on, handed over by the first `adapter` call.
-    server: Mutex<Option<std::net::UdpSocket>>,
-    proxy_port: u16,
-    severed: Arc<AtomicBool>,
-    _forward: JoinHandle<()>,
-}
+struct Loopback;
 
-impl Broker for UdpBroker {
-    type Adapter = UdpAdapter;
-    type Transport = UdpClientTransport;
+impl Broker for Loopback {
+    type Harness = ulo_rpc_conformance::OnTokio;
+    type Link = Udp;
 
     async fn start() -> Self {
-        let server = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        let server_addr = server.local_addr().unwrap();
-        let proxy = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let proxy_port = proxy.local_addr().unwrap().port();
-
-        let severed = Arc::new(AtomicBool::new(false));
-        let forward = {
-            let severed = severed.clone();
-            tokio::spawn(async move {
-                let mut buf = vec![0u8; 65_535];
-                let mut client: Option<SocketAddr> = None;
-                while let Ok((n, from)) = proxy.recv_from(&mut buf).await {
-                    if severed.load(Ordering::SeqCst) {
-                        continue;
-                    }
-                    let to = if from == server_addr {
-                        match client {
-                            Some(client) => client,
-                            None => continue,
-                        }
-                    } else {
-                        client = Some(from);
-                        server_addr
-                    };
-                    let _ = proxy.send_to(&buf[..n], to).await;
-                }
-            })
-        };
-
-        Self {
-            server: Mutex::new(Some(server)),
-            proxy_port,
-            severed,
-            _forward: forward,
-        }
+        Loopback
     }
 
-    /// The first instance serves on the socket the proxy forwards to. A second instance on one
-    /// broker gets a socket of its own that nothing sends to: a socket transport has no fan-out,
-    /// and a client sends to one server.
-    fn adapter(&self) -> Self::Adapter {
-        let socket = self
-            .server
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap_or_else(|| std::net::UdpSocket::bind("127.0.0.1:0").unwrap());
-        UdpAdapter::from_socket(socket)
+    /// Port 0: the OS chooses the server's port as it binds.
+    fn link(&self) -> Udp {
+        Udp::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
     }
 
-    fn transport(&self) -> Self::Transport {
-        UdpClientTransport::new("127.0.0.1", self.proxy_port).with_timeout(Duration::from_secs(2))
+    /// Aimed at the address the server bound.
+    fn client_link(&self, server: &[BoundAddr]) -> Udp {
+        let [bound] = server else { startup_failed!("expected one bound server address, got {server:?}") };
+        Udp::new(bound.addr)
     }
 
-    /// Drop every datagram for longer than the client's call timeout, then forward again. Returns
-    /// before the window closes, so the case's next call lands in it.
-    async fn disrupt(&self) {
-        self.severed.store(true, Ordering::SeqCst);
-        let severed = self.severed.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            severed.store(false, Ordering::SeqCst);
-        });
-    }
+    /// UDP holds no connection to sever, and the recovery scenario is declared not applicable.
+    async fn disrupt(&self) {}
 }
 
-ulo_rpc_conformance::conformance_suite!(UdpBroker);
+ulo_rpc_conformance::conformance_suite!(Loopback; not_applicable {
+    recovery_after_disrupt: "UDP holds no connection to lose",
+    cancel_follows_its_request: "datagrams arrive in any order, so a `cancel` may overtake its request",
+    cancel_before_opened: "UDP carries no streamed request",
+    a_late_opened_releases_the_held_cancel: "UDP carries no streamed request",
+    a_held_cancel_is_dropped_when_its_hold_runs_out: "UDP carries no streamed request",
+    a_held_cancel_lasts_until_its_call_s_deadline: "UDP carries no streamed request",
+});

@@ -10,29 +10,13 @@ constraint or trade-off that isn't visible from the resulting code, or (c) recor
 
 ## Format
 
-Lightweight [MADR](https://adr.github.io/madr/): context → decision → consequences. Numbered, and
-never renumbered or removed. A superseded ADR stays in place with its status changed and a pointer
-to the successor — the history is part of the value.
+Lightweight [MADR](https://adr.github.io/madr/): context → decision → consequences. Numbered,
+append-only. A superseded ADR stays in place with its status changed and a pointer to the successor —
+the history is part of the value.
 
-## After acceptance
+## Status of the series
 
-An accepted record is not rewritten to track the code. Its own text takes two edits: a successor's
-pointer, and the correction of a clause that was wrong when written. What changed decides which:
-
-- **The decision.** A later ADR that refines the whole decision adds a pointer under its title,
-  above the body, so a reader meets it before the older text: 0048 carries one to 0049, which moved
-  the boundary 0048 drew. One that supersedes a section adds the pointer at that section, and one
-  that revisits a consequence adds it where the older record draws the consequence. One that
-  supersedes the record changes its status to name the successor.
-- **A name.** A type, variant, method or term renamed since is left as written, and the change that
-  renamed it carries the mapping. Editing the prose to follow a rename turns a record of a decision
-  into a description of the present.
-- **A clause that was wrong when written**, such as a claim about code that did not yet exist, is
-  corrected in place by the change that finds it.
-
-A rename that touches every record's paths, as the framework's own did, is recorded as an ADR of its
-own (0044) and applied across the records in the same pull request, so they stay greppable against
-the code.
+The series is closed. Decisions are recorded in the designs under `docs/experiments/di-redesign/` (the core `DESIGN.md`, `transports/DESIGN.md` and `integrations/DESIGN.md`) and in their decision lists. No ADR is deleted: a record that a design replaced says *superseded* and points to the section that replaced it, and a record that was proposed and never merged says *withdrawn*. Records 0052 to 0054 were proposed on a branch that was never merged; they sit here so the numbering has no gap.
 
 ## Index
 
@@ -58,7 +42,7 @@ the code.
 - [0020 — Declared metadata reaches every transport, and wire fields are headers](0020-declared-metadata-and-wire-headers.md)
 - [0021 — Cancellation signals the tail, because the handler is already covered](0021-cancellation-signals-the-tail.md)
 - [0022 — An execution need not have a transport](0022-an-execution-without-a-transport.md)
-- [0023 — Extraction is one trait, and body-freedom is a convention](0023-extraction-is-one-trait.md)
+- [0023 — Extraction is one trait, and body-freedom is a convention](0023-extraction-is-one-trait.md) (superseded)
 - [0024 — An application binds every transport it declares, or none](0024-bind-every-declared-transport-or-none.md)
 - [0025 — An API is infallible only where its call site cannot hold an error](0025-infallible-only-where-the-call-site-cannot-hold-an-error.md)
 - [0026 — Connectivity is verified by an explicit check, not by the driver's own dial](0026-startup-checks-are-explicit-and-uniform.md)
@@ -87,8 +71,11 @@ the code.
 - [0049 — An answer is an envelope and a cardinality](0049-an-answer-is-an-envelope-and-a-cardinality.md)
 - [0050 — What a handler may return is a type](0050-what-a-handler-may-return-is-a-type.md)
 - [0051 — An application is Send](0051-an-application-is-send.md)
-- [0055 — The pipeline's order is the order that was written](0055-the-pipelines-order.md)
-- [0056 — One role per position: the pre-dispatch role reaches every transport](0056-the-pre-dispatch-role.md)
-- [0057 — The container answers an ambiguous question, or refuses it](0057-the-container-answers-or-refuses.md)
-- [0058 — A provider declaration is a value, written through one macro](0058-a-provider-declaration-is-a-value.md)
-- [0059 — Every key is a type](0059-every-key-is-a-type.md)
+- [0052 — The framework owns the HTTP route table](0052-the-framework-owns-the-http-route-table.md) (withdrawn)
+- [0053 — The HTTP error body is RFC 9457 problem details](0053-the-http-error-body-is-problem-details.md) (withdrawn)
+- [0054 — A response's status and headers are the ecosystem's types](0054-a-response-carries-the-ecosystems-types.md) (withdrawn)
+- [0055 — The pipeline's order is the order that was written](0055-the-pipelines-order.md) (superseded)
+- [0056 — One role per position: the pre-dispatch role reaches every transport](0056-the-pre-dispatch-role.md) (superseded)
+- [0057 — The container answers an ambiguous question, or refuses it](0057-the-container-answers-or-refuses.md) (superseded)
+- [0058 — A provider declaration is a value, written through one macro](0058-a-provider-declaration-is-a-value.md) (superseded)
+- [0059 — Every key is a type](0059-every-key-is-a-type.md) (superseded)

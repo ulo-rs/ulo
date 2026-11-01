@@ -2,10 +2,6 @@
 
 Status: accepted
 
-> Refined: `ProviderFactory::build` and `ControllerFactory::build` answer `BuildResult`, and a
-> failed build reaches the caller of `create` as `StartupError::BuildFailed`, naming what failed
-> and its module. *Provider construction still panics* below describes the SPI before that change.
-
 ## Context
 
 One error class had three different fates, decided by nothing but which function it occurred in.

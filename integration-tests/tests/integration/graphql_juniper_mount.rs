@@ -52,7 +52,7 @@ fn graphql_at(
 
 #[injectable]
 pub struct Consumer {
-    #[inject]
+    #[inject("GraphQLService")]
     pub svc: Svc,
 }
 

@@ -1,0 +1,4 @@
+# Read by `main` at startup and layered under the environment: `APP_SERVER__@@env_key@@`
+# overrides `server.@@key@@`.
+[server]
+@@key@@ = "@@value@@"

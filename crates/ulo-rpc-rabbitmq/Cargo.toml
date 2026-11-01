@@ -1,30 +1,46 @@
 [package]
 name = "ulo-rpc-rabbitmq"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "RabbitMQ (AMQP) transport adapter for the Ulo RPC gateway"
+description = "The RabbitMQ (AMQP 0-9-1) link for Ulo RPC: queues, reply_to and correlation_id, confirms"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-keywords = ["ulo", "rabbitmq", "amqp", "rpc", "adapter"]
+keywords = ["ulo", "rpc", "rabbitmq"]
 categories = ["network-programming"]
 
-[features]
-# Gates tests that need a live RabbitMQ (via testcontainers + Docker).
-integration = []
-
 [dependencies]
-ulo = { path = "../ulo", default-features = false }
-lapin = "4"
-tokio = { workspace = true, features = ["full"] }
-serde_json.workspace = true
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+bytes.workspace = true
+futures-core.workspace = true
+futures-util.workspace = true
+# lapin's default `rustls` feature is what `amqps://` connects through.
+lapin.workspace = true
+tokio = { workspace = true, features = ["sync", "rt"] }
 tracing.workspace = true
-futures = { workspace = true, features = ["async-await", "executor"] }
+uuid = { workspace = true, features = ["v4"] }
+
+[features]
+# Builds `tests/conformance.rs`, which starts a RabbitMQ broker in a container per scenario and so needs
+# a running Docker daemon.
+integration = []
+# For the conformance suite; not an application feature. It builds the link's `probe()`, through
+# which the suite's held-`cancel` scenarios read the client's table, withhold the server's
+# `opened` and shorten the link's hold, and turns on `ulo-rpc`'s `conformance-probe`. The tests
+# enable it through this crate's dev-dependency on itself.
+conformance-probe = ["ulo-rpc/conformance-probe"]
 
 [dev-dependencies]
-ulo-rpc-conformance = { path = "../ulo-rpc-conformance" }
+# Itself with `conformance-probe`, for `tests/conformance.rs`.
+ulo-rpc-rabbitmq = { path = ".", features = ["conformance-probe"] }
+futures-executor.workspace = true
 testcontainers.workspace = true
-testcontainers-modules = { workspace = true, features = ["rabbitmq"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-tokio-stream.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
+
+[lints]
+workspace = true

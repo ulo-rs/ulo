@@ -9,7 +9,6 @@
 //! Test:      curl -H 'authorization: Bearer alice-token' http://127.0.0.1:3000/orders
 //!            curl http://127.0.0.1:3000/orders
 
-use std::sync::Arc;
 use ulo::async_trait;
 use ulo::enhancer::Guard;
 use ulo::http::HttpContext;
@@ -76,7 +75,7 @@ impl AuditLog {
 #[injectable(scope = "execution")]
 pub struct OrderService {
     #[inject]
-    audit: Arc<AuditLog>,
+    audit: AuditLog,
 }
 
 impl OrderService {
@@ -88,7 +87,7 @@ impl OrderService {
 #[controller("/orders")]
 pub struct OrderController {
     #[inject]
-    orders: Arc<OrderService>,
+    orders: OrderService,
     #[inject]
     user: Extension<CurrentUser>,
 }
@@ -112,11 +111,11 @@ impl OrderController {
     }
 }
 
-// `Extension<CurrentUser>` needs no declaration: every injection site above reads the
-// same per-request value from the execution's bag.
+// `Extension::<CurrentUser>` registers the payload type; every injection site
+// above resolves to the same per-request value.
 #[module(
     controllers: [OrderController],
-    providers: [AuthGuard, AuditLog, OrderService]
+    providers: [Extension::<CurrentUser>, AuthGuard, AuditLog, OrderService]
 )]
 impl AppModule {}
 

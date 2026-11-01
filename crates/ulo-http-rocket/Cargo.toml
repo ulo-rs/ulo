@@ -1,32 +1,34 @@
 [package]
 name = "ulo-http-rocket"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Rocket adapter for the Ulo framework"
+description = "Runs a Ulo application inside a rocket server, mounted as catch-all routes"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-keywords = ["ulo", "rocket", "web", "framework", "adapter"]
+keywords = ["ulo", "rocket", "embedding", "web"]
 categories = ["web-programming::http-server"]
 
 [dependencies]
-ulo = { path = "../ulo", default-features = false }
-rocket = "0.5"
-rocket_ws = "0.1"
-tokio = { workspace = true, features = ["full"] }
-tracing.workspace = true
-serde_json.workspace = true
-futures-util.workspace = true
-http.workspace = true
-http-body-util.workspace = true
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+# `tokio-io`: rocket's `IoStream` implements tokio's traits.
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1", features = ["tokio-io"] }
 bytes.workspace = true
-tokio-util = { version = "0.7", features = ["io"] }
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+rocket = { workspace = true, features = ["http2"] }
+tokio = { workspace = true, features = ["io-util", "sync"] }
+tracing.workspace = true
 
 [dev-dependencies]
-reqwest = { workspace = true, features = ["json"] }
-tokio-tungstenite.workspace = true
-ulo-macros = { path = "../ulo-macros" }
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
-futures-util.workspace = true
+ulo-http-conformance = { path = "../ulo-http-conformance", features = ["rocket", "tokio"] }
+# `tests/ws_conformance.rs`: the WebSocket suite against `WsModule`'s hand-off inside rocket.
+ulo-ws-conformance = { path = "../ulo-ws-conformance" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+ulo-ws = { path = "../ulo-ws" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync"] }
+
+[lints]
+workspace = true

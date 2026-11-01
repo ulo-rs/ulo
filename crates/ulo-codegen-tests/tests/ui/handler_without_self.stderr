@@ -1,0 +1,23 @@
+error: a handler is a method: it takes `&self`, or `self: Arc<Self>` for a reply that outlives the call
+  --> tests/ui/handler_without_self.rs:13:8
+   |
+13 |     fn status() -> &'static str {
+   |        ^^^^^^
+
+error[E0599]: no associated function or constant named `__ulo_mount_status` found for struct `Status` in the current scope
+  --> tests/ui/handler_without_self.rs:13:8
+   |
+ 8 | struct Status;
+   | ------------- associated function or constant `__ulo_mount_status` not found for this struct
+...
+13 |     fn status() -> &'static str {
+   |        ^^^^^^ associated function or constant not found in `Status`
+
+error[E0599]: no associated function or constant named `__ULO_CHECKS_status` found for struct `Status` in the current scope
+  --> tests/ui/handler_without_self.rs:13:8
+   |
+ 8 | struct Status;
+   | ------------- associated function or constant `__ULO_CHECKS_status` not found for this struct
+...
+13 |     fn status() -> &'static str {
+   |        ^^^^^^ associated function or constant not found in `Status`

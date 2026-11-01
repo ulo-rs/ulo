@@ -1,0 +1,5 @@
+error: a field takes `#[injectable(default)]` alone, which sets it from `Default`; every other field is injected
+ --> tests/ui/bad_field_attribute.rs:8:5
+  |
+8 |     #[injectable(singleton)]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^

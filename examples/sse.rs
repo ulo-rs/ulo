@@ -23,7 +23,6 @@
 //!   es.onmessage = (e) => console.log(e.data);
 
 use std::pin::Pin;
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures::Stream;
@@ -78,7 +77,7 @@ impl EventsService {
 #[controller("/sse")]
 pub struct SseController {
     #[inject]
-    events: Arc<EventsService>,
+    events: EventsService,
 }
 
 #[routes]

@@ -1,7 +1,6 @@
-//! `GraphQLModule` exports its service under the service's type; a module that
-//! imports it injects the service by that type. Export-instance resolution keys
-//! on the provider's own token, so the declared export and the built instance
-//! meet.
+//! `GraphQLModule` exports `"GraphQLService"`; a module that imports it can
+//! inject the service. Export-instance resolution keys on the provider's own
+//! token, so the declared export and the built instance meet.
 
 use ulo::UloFactory;
 use ulo::di::Execution;
@@ -23,7 +22,7 @@ type Svc = GraphQLService<Query, EmptyMutation, EmptySubscription, DefaultContex
 
 #[injectable]
 pub struct Consumer {
-    #[inject]
+    #[inject("GraphQLService")]
     pub svc: Svc,
 }
 

@@ -1,12 +1,11 @@
 //! `ModuleRef` resolves providers at runtime, scoped to the module that handed
 //! it out.
 //!
-//! Resolving in the module's own scope is the point: a handle that searched every module would
-//! satisfy every lookup and erase the module boundary, so the refusals matter
-//! more than the successes. Execution-scoped resolution through a handle
+//! Strict resolution is the point: a handle that fell back to the global store
+//! would satisfy every lookup and erase the module boundary, so the refusals
+//! matter more than the successes. Execution-scoped resolution through a handle
 //! is covered too — it needs an execution to resolve into, and asking without
 //! one is a refusal rather than a panic.
-use std::sync::Arc;
 use ulo::prelude::*;
 use uuid::Uuid;
 
@@ -62,27 +61,30 @@ pub struct PluginLoader {
 }
 
 impl PluginLoader {
-    /// The current module only (the default)
-    pub async fn load_service_here(&self) -> Option<Arc<DatabaseService>> {
+    /// Test strict mode (default) - only searches current module
+    pub async fn load_service_strict(&self) -> Option<DatabaseService> {
         self.module_ref.get::<DatabaseService>().await.ok()
     }
 
-    /// Everything visible to the module: its own, its imports' exports, the globals
-    pub async fn load_service_visible(&self) -> Option<Arc<CacheService>> {
-        self.module_ref.get::<CacheService>().visible().await.ok()
+    /// Test global mode - searches current module first, then globally
+    pub async fn load_service_global(&self) -> Option<CacheService> {
+        self.module_ref.get::<CacheService>().global().await.ok()
     }
 
-    /// A provider of another module, which the current module alone does not hold
-    pub async fn load_cache_here(&self) -> Option<Arc<CacheService>> {
+    /// Test strict mode should fail for non-local service
+    pub async fn load_cache_strict(&self) -> Option<CacheService> {
         self.module_ref.get::<CacheService>().await.ok()
     }
 
-    /// Resolution through a key, in the current module
-    pub async fn load_by_key_here(&self) -> Option<Arc<DatabaseService>> {
-        self.module_ref.get_key::<DatabaseService>().await.ok()
+    /// Test token-based resolution with strict mode
+    pub async fn load_by_token_strict(&self, token: &str) -> Option<DatabaseService> {
+        self.module_ref
+            .get_by_token::<DatabaseService>(token)
+            .await
+            .ok()
     }
 
-    pub async fn load_request_scoped(&self) -> Result<Arc<RequestScopedService>, String> {
+    pub async fn load_request_scoped(&self) -> Result<RequestScopedService, String> {
         self.module_ref
             .get::<RequestScopedService>()
             .await
@@ -92,7 +94,7 @@ impl PluginLoader {
     pub async fn resolve_request_scoped(
         &self,
         execution: &Execution,
-    ) -> Result<Arc<RequestScopedService>, String> {
+    ) -> Result<RequestScopedService, String> {
         self.module_ref
             .resolve::<RequestScopedService>(execution)
             .await
@@ -127,7 +129,7 @@ impl Module2 {}
 impl AppModule {}
 
 #[tokio::test]
-async fn test_module_ref_resolves_its_own_provider() {
+async fn test_module_ref_strict_mode() {
     let app = UloFactory::create(AppModule).await.unwrap();
 
     // Get PluginLoader from Module1
@@ -136,17 +138,17 @@ async fn test_module_ref_resolves_its_own_provider() {
         .await
         .expect("PluginLoader should be available");
 
-    // DatabaseService is the current module's own provider
+    // Test strict mode - should successfully get DatabaseService from same module
     let db_service = plugin_loader
-        .load_service_here()
+        .load_service_strict()
         .await
-        .expect("Should resolve DatabaseService from its own module");
+        .expect("Should resolve DatabaseService in strict mode");
 
     assert_eq!(db_service.connection_string, "postgres://localhost:5432");
 }
 
 #[tokio::test]
-async fn test_module_ref_visible_reaches_a_global_export() {
+async fn test_module_ref_global_mode() {
     let app = UloFactory::create(AppModule).await.unwrap();
 
     let plugin_loader = app
@@ -154,17 +156,17 @@ async fn test_module_ref_visible_reaches_a_global_export() {
         .await
         .expect("PluginLoader should be available");
 
-    // CacheService is a global module's export, visible to every module
+    // Test global mode - should find CacheService from global module
     let cache_service = plugin_loader
-        .load_service_visible()
+        .load_service_global()
         .await
-        .expect("Should resolve CacheService through .visible()");
+        .expect("Should resolve CacheService in global mode");
 
     assert_eq!(cache_service.host, "redis://localhost:6379");
 }
 
 #[tokio::test]
-async fn test_module_ref_misses_another_modules_provider() {
+async fn test_module_ref_strict_mode_fails_for_non_local_provider() {
     let app = UloFactory::create(AppModule).await.unwrap();
 
     let plugin_loader = app
@@ -172,17 +174,17 @@ async fn test_module_ref_misses_another_modules_provider() {
         .await
         .expect("PluginLoader should be available");
 
-    // CacheService is another module's provider, so the current module alone does not hold it
-    let result = plugin_loader.load_cache_here().await;
+    // Test strict mode - should FAIL to get CacheService (it's in a different module)
+    let result = plugin_loader.load_cache_strict().await;
 
     assert!(
         result.is_none(),
-        "Should fail to resolve CacheService from the current module alone (different module)"
+        "Should fail to resolve CacheService in strict mode (different module)"
     );
 }
 
 #[tokio::test]
-async fn test_module_ref_resolves_a_type_as_its_own_key() {
+async fn test_module_ref_token_based_resolution() {
     let app = UloFactory::create(AppModule).await.unwrap();
 
     let plugin_loader = app
@@ -190,11 +192,12 @@ async fn test_module_ref_resolves_a_type_as_its_own_key() {
         .await
         .expect("PluginLoader should be available");
 
-    // A type written as a key names its own slot
+    // Test token-based resolution with type name
+    let db_token = std::any::type_name::<DatabaseService>();
     let db_service = plugin_loader
-        .load_by_key_here()
+        .load_by_token_strict(db_token)
         .await
-        .expect("Should resolve DatabaseService by its key");
+        .expect("Should resolve DatabaseService by token");
 
     assert_eq!(db_service.connection_string, "postgres://localhost:5432");
 }
@@ -240,11 +243,11 @@ async fn test_module_ref_singleton_behavior() {
 
     // Both should resolve the same service instance (since DatabaseService is singleton)
     let db1 = plugin_loader1
-        .load_service_here()
+        .load_service_strict()
         .await
         .expect("Should resolve");
     let db2 = plugin_loader2
-        .load_service_here()
+        .load_service_strict()
         .await
         .expect("Should resolve");
 
@@ -267,7 +270,7 @@ async fn test_module_ref_works_from_any_thread() {
             .enable_all()
             .build()
             .unwrap()
-            .block_on(plugin_loader.load_service_here())
+            .block_on(plugin_loader.load_service_strict())
     })
     .join()
     .expect("thread should not panic");

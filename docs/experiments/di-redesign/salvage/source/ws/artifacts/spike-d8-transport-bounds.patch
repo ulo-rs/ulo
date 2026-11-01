@@ -1,0 +1,170 @@
+diff --git a/crates/ulo-http-axum/src/lib.rs b/crates/ulo-http-axum/src/lib.rs
+index 352b375f..07d97f1c 100644
+--- a/crates/ulo-http-axum/src/lib.rs
++++ b/crates/ulo-http-axum/src/lib.rs
+@@ -38,3 +38,29 @@ pub use tokio_sender::TokioSender;
+ pub use ulo::http::HttpAdapter;
+ 
+ pub use ulo::ws::WsAdapter;
++
++// ── D8 SPIKE (temporary) ────────────────────────────────────────────────────
++// Proves the split halves carry the bounds a core-owned connection loop needs.
++#[cfg(test)]
++mod d8_spike {
++    #[allow(dead_code)]
++    fn assert_send_static<T: Send + 'static>() {}
++
++    #[allow(dead_code)]
++    fn generic_core_loop<S, K, M, E>(_read: S, _write: K)
++    where
++        S: futures_util::Stream<Item = Result<M, E>> + Send + 'static,
++        K: futures_util::Sink<M> + Send + 'static,
++        M: Send + 'static,
++        E: Send + 'static,
++    {
++    }
++
++    #[test]
++    fn split_halves_are_send_static() {
++        assert_send_static::<futures_util::stream::SplitStream<axum::extract::ws::WebSocket>>();
++        assert_send_static::<
++            futures_util::stream::SplitSink<axum::extract::ws::WebSocket, axum::extract::ws::Message>,
++        >();
++    }
++}
+diff --git a/crates/ulo-http-poem/src/lib.rs b/crates/ulo-http-poem/src/lib.rs
+index 540b6a0b..5b8fc3d4 100644
+--- a/crates/ulo-http-poem/src/lib.rs
++++ b/crates/ulo-http-poem/src/lib.rs
+@@ -103,3 +103,29 @@ pub use tokio_sender::TokioSender;
+ pub use ulo::http::HttpAdapter;
+ 
+ pub use ulo::ws::WsAdapter;
++
++// ── D8 SPIKE (temporary) ────────────────────────────────────────────────────
++// Proves the split halves carry the bounds a core-owned connection loop needs.
++#[cfg(test)]
++mod d8_spike {
++    #[allow(dead_code)]
++    fn assert_send_static<T: Send + 'static>() {}
++
++    #[allow(dead_code)]
++    fn generic_core_loop<S, K, M, E>(_read: S, _write: K)
++    where
++        S: futures_util::Stream<Item = Result<M, E>> + Send + 'static,
++        K: futures_util::Sink<M> + Send + 'static,
++        M: Send + 'static,
++        E: Send + 'static,
++    {
++    }
++
++    #[test]
++    fn split_halves_are_send_static() {
++        assert_send_static::<futures_util::stream::SplitStream<poem::web::websocket::WebSocketStream>>();
++        assert_send_static::<
++            futures_util::stream::SplitSink<poem::web::websocket::WebSocketStream, poem::web::websocket::Message>,
++        >();
++    }
++}
+diff --git a/crates/ulo-http-rocket/src/lib.rs b/crates/ulo-http-rocket/src/lib.rs
+index 0e8d149c..138825d1 100644
+--- a/crates/ulo-http-rocket/src/lib.rs
++++ b/crates/ulo-http-rocket/src/lib.rs
+@@ -109,3 +109,29 @@ pub use rocket_adapter::RocketAdapter;
+ pub use tokio_sender::TokioSender;
+ 
+ pub use ulo::http::HttpAdapter;
++
++// ── D8 SPIKE (temporary) ────────────────────────────────────────────────────
++// Proves the split halves carry the bounds a core-owned connection loop needs.
++#[cfg(test)]
++mod d8_spike {
++    #[allow(dead_code)]
++    fn assert_send_static<T: Send + 'static>() {}
++
++    #[allow(dead_code)]
++    fn generic_core_loop<S, K, M, E>(_read: S, _write: K)
++    where
++        S: futures_util::Stream<Item = Result<M, E>> + Send + 'static,
++        K: futures_util::Sink<M> + Send + 'static,
++        M: Send + 'static,
++        E: Send + 'static,
++    {
++    }
++
++    #[test]
++    fn split_halves_are_send_static() {
++        assert_send_static::<futures_util::stream::SplitStream<rocket_ws::stream::DuplexStream>>();
++        assert_send_static::<
++            futures_util::stream::SplitSink<rocket_ws::stream::DuplexStream, rocket_ws::Message>,
++        >();
++    }
++}
+diff --git a/crates/ulo-http-salvo/src/lib.rs b/crates/ulo-http-salvo/src/lib.rs
+index 07de5e87..098ca554 100644
+--- a/crates/ulo-http-salvo/src/lib.rs
++++ b/crates/ulo-http-salvo/src/lib.rs
+@@ -95,3 +95,29 @@ pub use tokio_sender::TokioSender;
+ pub use ulo::http::HttpAdapter;
+ 
+ pub use ulo::ws::WsAdapter;
++
++// ── D8 SPIKE (temporary) ────────────────────────────────────────────────────
++// Proves the split halves carry the bounds a core-owned connection loop needs.
++#[cfg(test)]
++mod d8_spike {
++    #[allow(dead_code)]
++    fn assert_send_static<T: Send + 'static>() {}
++
++    #[allow(dead_code)]
++    fn generic_core_loop<S, K, M, E>(_read: S, _write: K)
++    where
++        S: futures_util::Stream<Item = Result<M, E>> + Send + 'static,
++        K: futures_util::Sink<M> + Send + 'static,
++        M: Send + 'static,
++        E: Send + 'static,
++    {
++    }
++
++    #[test]
++    fn split_halves_are_send_static() {
++        assert_send_static::<futures_util::stream::SplitStream<salvo::websocket::WebSocket>>();
++        assert_send_static::<
++            futures_util::stream::SplitSink<salvo::websocket::WebSocket, salvo::websocket::Message>,
++        >();
++    }
++}
+diff --git a/crates/ulo-ws-tungstenite/src/lib.rs b/crates/ulo-ws-tungstenite/src/lib.rs
+index 82749d5a..d2605644 100644
+--- a/crates/ulo-ws-tungstenite/src/lib.rs
++++ b/crates/ulo-ws-tungstenite/src/lib.rs
+@@ -20,3 +20,29 @@
+ mod adapter;
+ 
+ pub use adapter::TungsteniteAdapter;
++
++// ── D8 SPIKE (temporary) ────────────────────────────────────────────────────
++// Proves the split halves carry the bounds a core-owned connection loop needs.
++#[cfg(test)]
++mod d8_spike {
++    #[allow(dead_code)]
++    fn assert_send_static<T: Send + 'static>() {}
++
++    #[allow(dead_code)]
++    fn generic_core_loop<S, K, M, E>(_read: S, _write: K)
++    where
++        S: futures_util::Stream<Item = Result<M, E>> + Send + 'static,
++        K: futures_util::Sink<M> + Send + 'static,
++        M: Send + 'static,
++        E: Send + 'static,
++    {
++    }
++
++    #[test]
++    fn split_halves_are_send_static() {
++        assert_send_static::<futures_util::stream::SplitStream<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>>>();
++        assert_send_static::<
++            futures_util::stream::SplitSink<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>, tokio_tungstenite::tungstenite::Message>,
++        >();
++    }
++}

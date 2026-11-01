@@ -1,0 +1,297 @@
+# Every workspace member's runtime level, one entry per line: the crate, its level, and the cargo
+# feature flags its normal dependency tree is read with; a crate checked at two feature sets has
+# two entries. `scripts/runtime_levels.py` fails CI on an entry off its level and on a member with
+# no entry, so a new crate is classified before it merges. The levels are the transports DESIGN's
+# §8, "Two levels of runtime independence":
+#
+#   runtime-free           no `tokio` crate in the tree, so a plug point is implemented without it.
+#   runtime-neutral        tokio only with `default` (empty) and `sync`, which hyper brings; no
+#                          reactor, executor or timer, so the crate runs on any runtime.
+#   runtime-neutral+http2  the same, plus `io-util` and `bytes`, which h2 brings on the HTTP/2 path.
+#   tokio-bound            runs on tokio; listed so no member goes unclassified, and not checked.
+#
+# In both runtime-neutral sets tokio arrives only through hyper, h2 or tokio-util: a package that
+# depends on tokio directly fails the entry unless it is one of those three, and a workspace member
+# that depends on tokio-util directly fails it unless a line `<crate> direct-tokio-util <reason>`
+# names the member. A `direct-tokio-util` line no runtime-neutral tree uses fails too.
+#
+# A runtime-free crate is read with `--all-features` unless a feature of its own brings tokio, so a
+# feature added later is checked without this file changing.
+
+# The core: timing through `Timer`, spawning through `Spawn`, every DI and lifecycle plug point.
+ulo                           runtime-free           --all-features
+
+# The core's attribute macros, compiled into every application's tree.
+ulo-macros                    runtime-free           --all-features
+
+# The handler protocol every transport's attribute macro is written against.
+ulo-handler-codegen           runtime-free           --all-features
+
+# The transport-neutral call, reply and error traits.
+ulo-transport                 runtime-free           --all-features
+
+# The derives for `ulo-transport`'s error and validation traits.
+ulo-transport-macros          runtime-free           --all-features
+
+# `std::net` sockets, socket activation and TLS up to rustls's `ServerConfig`.
+ulo-net                       runtime-free           --all-features
+
+# The second runtime, on `async-executor` and `async-io`.
+ulo-runtime-smol                      runtime-free           --all-features
+
+# The runtime suite, which any `Runtime` implementation runs.
+ulo-runtime-conformance       runtime-free           --all-features
+
+# Certificates generated with `rcgen` for the TLS tests, reached through dev-dependencies alone.
+ulo-test-certs                runtime-free           --all-features
+
+# The HTTP hub, which spawns nothing, at default features: its `tokio-io` feature brings tokio's
+# I/O traits for `Upgraded`, and with them `tokio` with `sync`.
+ulo-http                      runtime-free
+
+# The HTTP route attributes.
+ulo-http-macros               runtime-free           --all-features
+
+# The WebSocket hub: `async-tungstenite` over `futures-io`, every task on the app's `Runtime`.
+ulo-ws                        runtime-free           --all-features
+
+# The WebSocket gateway attributes.
+ulo-ws-macros                 runtime-free           --all-features
+
+# The WebSocket suite, its client over the host's `futures-io` stream on the host's runtime.
+ulo-ws-conformance            runtime-free           --all-features
+
+# The RPC hub, where the `Link` SPI lives, on the app's `Runtime`.
+ulo-rpc                       runtime-free           --all-features
+
+# The RPC pattern attributes.
+ulo-rpc-macros                runtime-free           --all-features
+
+# The TCP wire over `futures-io`, on the runtime a link hands it.
+ulo-rpc-tcp-core              runtime-free           --all-features
+
+# The smol TCP link: `async-net`'s sockets and `futures-rustls` over `ulo-rpc-tcp-core`.
+ulo-rpc-tcp-smol              runtime-free           --all-features
+
+# The RPC suite at default features: its `tokio` feature brings the tokio harness.
+ulo-rpc-conformance           runtime-free
+
+# The RPC suite with its smol harness, as the smol CI job runs it.
+ulo-rpc-conformance           runtime-free           --features smol
+
+# The transport-neutral GraphQL hub, where the `Engine` SPI lives.
+ulo-graphql                   runtime-free           --all-features
+
+# GraphQL over HTTP, which depends on `ulo-graphql-ws` and so on `ulo-ws`.
+ulo-graphql-http              runtime-free           --all-features
+
+# graphql-transport-ws, spawning through `Connection::runtime`.
+ulo-graphql-ws                runtime-free           --all-features
+
+# The async-graphql engine; async-graphql at the features it is used with brings no runtime.
+ulo-graphql-async-graphql     runtime-free           --all-features
+
+# The juniper engine; juniper brings no runtime.
+ulo-graphql-juniper           runtime-free           --all-features
+
+# The gRPC method attribute, a proc-macro crate with no runtime of its own.
+ulo-grpc-macros               runtime-free           --all-features
+
+# The gRPC build-script code generator, run at build time with no runtime of its own.
+ulo-build                     runtime-free           --all-features
+
+# The accept loop and the `Listener` plug point, on hyper with no features: tokio with `sync`.
+ulo-server-hyper               runtime-neutral        --all-features
+
+# The smol listener, adopting `ulo-net`'s sockets behind `ulo-server-hyper`.
+ulo-listener-smol               runtime-neutral        --all-features
+
+# The WebSocket server without its default `tokio` feature, which brings `ulo-listener-tokio`;
+# HTTP/1.1 alone, so it reads as `ulo-server-hyper` does.
+ulo-ws-hyper                  runtime-neutral        --no-default-features
+
+# The same crate at its default features, on the tokio listener.
+ulo-ws-hyper                  tokio-bound
+
+# The HTTP backend without its default `tokio` feature, which brings `ulo-listener-tokio`; it serves
+# HTTP/2, so h2 brings `io-util` and `bytes`.
+ulo-http-hyper                runtime-neutral+http2  --no-default-features
+
+# The same crate at its default features, on the tokio listener.
+ulo-http-hyper                tokio-bound
+
+# The HTTP suite at default features, its client hyper's and h2's: its `tokio` and `rocket`
+# features bring their hosts' runtimes.
+ulo-http-conformance          runtime-neutral+http2
+
+# The HTTP suite with its smol harness, as the smol CI job runs it.
+ulo-http-conformance          runtime-neutral+http2  --features smol
+
+# The suite's GOAWAY scenario drives `h2`'s client over the host's `futures-io` stream, and h2 reads
+# tokio's I/O traits; the adapter between them is tokio-util's or one implementing tokio's traits,
+# which would name tokio directly.
+ulo-http-conformance          direct-tokio-util      `compat`, the host's stream as the tokio I/O h2's client reads
+
+# The tokio runtime.
+ulo-runtime-tokio                     tokio-bound
+
+# The tokio listener, adopting into tokio's reactor through `TcpListener::from_std`.
+ulo-listener-tokio              tokio-bound
+
+# The axum embedding: axum runs on tokio.
+ulo-http-axum                 tokio-bound
+
+# The actix embedding: actix-web runs on its own tokio-based runtime.
+ulo-http-actix                tokio-bound
+
+# The salvo embedding: salvo runs on tokio.
+ulo-http-salvo                tokio-bound
+
+# The poem embedding: poem runs on tokio.
+ulo-http-poem                 tokio-bound
+
+# The rocket embedding: rocket runs on tokio.
+ulo-http-rocket               tokio-bound
+
+# The tokio TCP link, holding a tokio runtime of its own.
+ulo-rpc-tcp                   tokio-bound
+
+# The UDP link, on tokio's sockets.
+ulo-rpc-udp                   tokio-bound
+
+# The NATS link, on `async-nats`.
+ulo-rpc-nats                  tokio-bound
+
+# The Redis link, on `redis` with `tokio-comp`.
+ulo-rpc-redis                 tokio-bound
+
+# The RabbitMQ link, on `lapin`.
+ulo-rpc-rabbitmq              tokio-bound
+
+# The MQTT link, on `rumqttc`.
+ulo-rpc-mqtt                  tokio-bound
+
+# The Kafka link, on `rdkafka`'s tokio integration.
+ulo-rpc-kafka                 tokio-bound
+
+# The WebSocket broadcast adapter over Redis, holding a tokio runtime of its own.
+ulo-ws-redis                  tokio-bound
+
+# gRPC, on tonic, which depends on tokio, and on `ulo-listener-tokio`.
+ulo-grpc                      tokio-bound
+
+# The generated gRPC code compiled and served, on `ulo-grpc`.
+ulo-codegen-tests             tokio-bound
+
+# Each derives `Classify` and `Validate` through one transport crate alone; its tree is that crate's.
+ulo-reexport-ws               runtime-free           --all-features
+ulo-reexport-rpc              runtime-free           --all-features
+ulo-reexport-grpc             tokio-bound
+
+# Every macro expanded in one crate for clippy, the gRPC ones on `ulo-grpc`.
+ulo-macro-lints               tokio-bound
+
+# The `ulo` command, whose `ulo dev` watches and restarts through `watchexec`, on tokio.
+ulo-cli                       tokio-bound
+
+# Configuration: serde and the file parsers, every file read in `main`.
+ulo-config                    runtime-free           --all-features
+
+# The check, the probes and the readiness state; its bounds run on the app's `Timer`.
+ulo-health                    runtime-free           --all-features
+
+# The three probe routes at `ulo-http`'s default features, without its `tokio-io` feature.
+ulo-health-http               runtime-free           --all-features
+
+# The `grpc.health.v1` bridge, on `ulo-grpc`, which is on tonic.
+ulo-health-grpc               tokio-bound
+
+# The store policy over the core's `Runtime` and `Timer`; it names no driver.
+ulo-db                        runtime-free           --all-features
+
+# The SQLx stores: SQLx with `runtime-tokio` alone.
+ulo-db-sqlx                   tokio-bound
+
+# SQLx built with `runtime-smol` beside `runtime-tokio`, for `tests/smol_drop.rs` alone; it is
+# its own crate so that `ulo-db-sqlx`'s test targets build SQLx as production does.
+ulo-db-sqlx-smol-probe        tokio-bound
+
+# The SeaORM store, on SQLx.
+ulo-db-seaorm                 tokio-bound
+
+# The Diesel store, on diesel-async and tokio's blocking pool.
+ulo-db-diesel                 tokio-bound
+
+# The MongoDB store: the driver supports tokio alone in 3.x.
+ulo-db-mongodb                tokio-bound
+
+# The Redis store, on `redis` with `tokio-comp`.
+ulo-db-redis                  tokio-bound
+
+# The database suite at default features: its `tokio` feature brings the tokio harness.
+ulo-db-conformance            runtime-free
+
+# The harness pieces both suites share, at default features: its `tokio` and `smol` features bring
+# the two harnesses.
+ulo-conformance-support       runtime-free
+
+# The shared harness with its smol half, as the smol CI job runs it.
+ulo-conformance-support       runtime-free           --features smol
+
+# The OpenTelemetry layer; `opentelemetry_sdk` with `trace` alone brings no tokio, and no feature of
+# this crate enables an `rt-*` feature.
+ulo-otel                      runtime-free           --all-features
+
+# The OTLP exporter at default features: the HTTP client over `ureq` brings no tokio.
+ulo-otel-otlp                 runtime-free
+
+# The same crate with reqwest's blocking client alone, which brings tokio on a thread of its own,
+# and with both clients.
+ulo-otel-otlp                 tokio-bound            --no-default-features --features reqwest-blocking
+ulo-otel-otlp                 tokio-bound            --all-features
+
+# The example catalogue (`examples/NN-name`) and its shared test client: applications on tokio,
+# listed so no member goes unclassified.
+ex-support                    tokio-bound
+ex-01-hello                   tokio-bound
+ex-02-providers               tokio-bound
+ex-03-traits-and-qualifiers   tokio-bound
+ex-04-collections-and-optional tokio-bound
+ex-05-scopes                  tokio-bound
+ex-06-modules                 tokio-bound
+ex-07-configured-modules      tokio-bound
+ex-08-dynamic-and-lazy        tokio-bound
+ex-09-lifecycle               tokio-bound
+ex-10-shutdown                tokio-bound
+ex-11-wiring-report           tokio-bound
+ex-12-standalone              tokio-bound
+ex-13-testing                 tokio-bound
+ex-14-without-macros          tokio-bound
+ex-15-http-requests           tokio-bound
+ex-16-http-enhancers          tokio-bound
+ex-17-http-pre-dispatch       tokio-bound
+ex-18-http-streaming          tokio-bound
+ex-19-http-uploads            tokio-bound
+ex-20-http-tls                tokio-bound
+ex-21-http-in-axum            tokio-bound
+# The one example with no tokio runtime: smol's executor and sockets under the hyper backend.
+ex-22-http-on-smol            runtime-neutral+http2
+ex-23-ws-gateway             tokio-bound
+ex-24-ws-rooms               tokio-bound
+ex-31-graphql                 tokio-bound
+ex-32-graphql-subscriptions   tokio-bound
+ex-29-grpc-service            tokio-bound
+ex-30-grpc-client             tokio-bound
+ex-25-rpc-basics             tokio-bound
+ex-26-rpc-streams            tokio-bound
+ex-27-rpc-deadlines          tokio-bound
+ex-28-rpc-links              tokio-bound
+ex-33-config                 tokio-bound
+ex-34-health                 tokio-bound
+ex-35-db-sqlx               tokio-bound
+ex-36-db-two-instances       tokio-bound
+ex-37-db-diesel              tokio-bound
+ex-38-tracing                tokio-bound
+ex-39-one-app                tokio-bound
+ex-40-socket-activation      tokio-bound
+ex-41-one-guard-two-transports tokio-bound

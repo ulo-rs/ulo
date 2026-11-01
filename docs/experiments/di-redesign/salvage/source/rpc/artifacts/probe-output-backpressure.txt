@@ -1,0 +1,12 @@
+PROBE[fast consumer, no pacing]
+  t=1s produced=36114 consumed=36112 gap=2 (~2 KiB held)
+  t=2s produced=72816 consumed=72814 gap=2 (~2 KiB held)
+  t=3s produced=108950 consumed=108948 gap=2 (~2 KiB held)
+  t=4s produced=145040 consumed=145038 gap=2 (~2 KiB held)
+  final produced=145040 consumed=145038 gap=2 rss 16272->17120 KiB (delta 848 KiB)
+PROBE[slow consumer, 1 item/100ms]
+  t=1s produced=36322 consumed=10 gap=36312 (~36312 KiB held)
+  t=2s produced=72633 consumed=20 gap=72613 (~72613 KiB held)
+  t=3s produced=108847 consumed=30 gap=108817 (~108817 KiB held)
+  t=4s produced=145151 consumed=40 gap=145111 (~145111 KiB held)
+  final produced=145151 consumed=40 gap=145111 rss 18176->176000 KiB (delta 157824 KiB)

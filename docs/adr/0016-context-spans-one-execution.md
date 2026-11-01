@@ -147,8 +147,6 @@ it enforced — exclusivity — was never the property worth having.
 
 ### The answer is returned, never written
 
-Superseded for `Pipe` by [ADR-0027](0027-extraction-is-the-pipe-seam.md), which removes the role.
-
 `Interceptor` and `Pipe` gain the result type middleware and error handlers already have:
 
 ```rust

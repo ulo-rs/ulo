@@ -1,0 +1,33 @@
+[package]
+name = "ex-28-rpc-links"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+# Builds `tests/brokers.rs`, which starts NATS, Redis, Mosquitto, RabbitMQ and Kafka in containers
+# and needs a running Docker daemon.
+integration = []
+
+[dependencies]
+ex-25-rpc-basics = { path = "../25-rpc-basics" }
+ulo = { path = "../../crates/ulo" }
+ulo-rpc = { path = "../../crates/ulo-rpc" }
+ulo-rpc-kafka = { path = "../../crates/ulo-rpc-kafka" }
+ulo-rpc-mqtt = { path = "../../crates/ulo-rpc-mqtt" }
+ulo-rpc-nats = { path = "../../crates/ulo-rpc-nats" }
+ulo-rpc-rabbitmq = { path = "../../crates/ulo-rpc-rabbitmq" }
+ulo-rpc-redis = { path = "../../crates/ulo-rpc-redis" }
+ulo-rpc-tcp = { path = "../../crates/ulo-rpc-tcp" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+ulo-conformance-support = { path = "../../crates/ulo-conformance-support" }
+testcontainers.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net"] }
+
+[lints]
+workspace = true

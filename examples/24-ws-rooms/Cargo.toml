@@ -1,0 +1,31 @@
+[package]
+name = "ex-24-ws-rooms"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+# Builds `tests/across_processes.rs`, which starts a Redis server in a container and needs a
+# running Docker daemon.
+integration = []
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+ulo-ws = { path = "../../crates/ulo-ws" }
+ulo-http = { path = "../../crates/ulo-http" }
+ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
+ulo-ws-redis = { path = "../../crates/ulo-ws-redis" }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+ulo-conformance-support = { path = "../../crates/ulo-conformance-support" }
+serde_json.workspace = true
+testcontainers.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net"] }
+
+[lints]
+workspace = true

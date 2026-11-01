@@ -1,0 +1,104 @@
+use std::sync::Arc;
+
+use ulo::{Dep, ExecOptions, Execution, LookupError, Module};
+use ulo_db::{Store, StoreModule};
+use ulo_health::HealthModule;
+
+use crate::Host;
+use crate::cases::{
+    Client, Root, builder, closed, connected, describe, readiness, readiness_reads, store, store_check_names, store_checks,
+};
+
+/// The first keyed instance's qualifier.
+struct First;
+
+/// The second keyed instance's qualifier.
+struct Second;
+
+/// Two keyed instances stay separate: two pools and two checks with distinct names. Planted breaks:
+/// two qualifiers resolving to one instance; a store whose `create` hands both instances one
+/// process-wide pool; a check name that ignores the qualifier.
+///
+/// Two modules over the host's options, one keyed `First` and one `Second`, and the health module
+/// connect. Each instance is found by `module_keyed::<StoreModule<S>, Q>()`. Each qualified client
+/// resolves, to two distinct instances, and each answers a ping of its own; the unqualified client
+/// is no binding, since a keyed module requalifies its exports; and readiness reads true over two checks contributed by the store, one per instance. Last, the
+/// `First` client is closed through [`Store::close`] and the `Second` pinged again: distinct
+/// handles are not distinct pools, and separate pools still answer where a shared one does not.
+pub async fn two_instances<H: Host>() {
+    let host = H::start().await;
+    let root = Root::new()
+        .import(store::<H>(host.options()).keyed::<First>())
+        .import(store::<H>(host.options()).keyed::<Second>())
+        .import(HealthModule::new());
+    let app = connected(builder::<H>(root), "the app with two keyed instances").await;
+
+    let exec = Execution::open(&app.handle().root(), ExecOptions::new())
+        .unwrap_or_else(|closed| crate::startup_failed!("a standalone execution was refused: {closed}"));
+    let first: Dep<Client<H>, First> = exec
+        .resolver()
+        .dep_qualified::<Client<H>, First>()
+        .await
+        .unwrap_or_else(|error| panic!("the instance keyed `First` exports no client: {error}"));
+    let second: Dep<Client<H>, Second> = exec
+        .resolver()
+        .dep_qualified::<Client<H>, Second>()
+        .await
+        .unwrap_or_else(|error| panic!("the instance keyed `Second` exports no client: {error}"));
+    drop(exec);
+    for (name, found) in [
+        ("First", app.module_keyed::<StoreModule<H::Store>, First>()),
+        ("Second", app.module_keyed::<StoreModule<H::Store>, Second>()),
+    ] {
+        if let Err(error) = found {
+            panic!("the instance keyed `{name}` is not found by its module type, `StoreModule<{}>`: {error}", <H::Store as Store>::NAME);
+        }
+    }
+    assert!(!Arc::ptr_eq(first.arc(), second.arc()), "the qualifiers `First` and `Second` resolve to one client");
+
+    for (name, outcome) in [
+        ("First", <H::Store as Store>::ping(&*first).await),
+        ("Second", <H::Store as Store>::ping(&*second).await),
+    ] {
+        if let Err(error) = outcome {
+            panic!("the client keyed `{name}` did not answer a ping: {}", crate::report(&*error));
+        }
+    }
+
+    match app.get::<Client<H>>().await {
+        Err(LookupError::NotFound { .. }) => {}
+        Err(other) => panic!("the unqualified client beside two keyed instances is not a missing binding: {other}"),
+        Ok(_) => panic!("an unqualified client is bound beside two keyed instances, whose exports are requalified"),
+    }
+
+    let readiness = readiness(&app).await;
+    let (up, report) = readiness_reads::<H>(&readiness, true, host.budget().settle).await;
+    assert!(up, "readiness did not read true over the two instances: {}", describe(&report));
+    assert_eq!(
+        store_checks::<H::Store>(&report),
+        2,
+        "the two keyed instances did not contribute a check each: {}",
+        describe(&report)
+    );
+
+    let names = store_check_names::<H::Store>(&report);
+    assert!(
+        names.len() == 2 && names[0] != names[1],
+        "the two keyed instances contribute checks that print alike, {names:?}: a health body lists them by name"
+    );
+    for qualifier in ["First", "Second"] {
+        assert!(
+            names.iter().any(|name| name.contains(qualifier)),
+            "no check names the instance keyed `{qualifier}`: {names:?}"
+        );
+    }
+
+    <H::Store as Store>::close((*first).clone()).await;
+    if let Err(error) = <H::Store as Store>::ping(&*second).await {
+        panic!(
+            "the client keyed `Second` stopped answering when the client keyed `First` was closed: the instances share a pool: {}",
+            crate::report(&*error)
+        );
+    }
+    closed(app, "the app with two keyed instances").await;
+}

@@ -1,0 +1,58 @@
+[package]
+name = "ulo-codegen-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The generated code of ulo-build and #[ulo_grpc::method], compiled and served, and the compile-fail checks the attributes emit"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# Tests only: nothing depends on it, and it is never released.
+publish = false
+
+[dependencies]
+ulo-grpc = { path = "../ulo-grpc", version = "=0.1.0-alpha.1" }
+# What the code `ulo-build` writes names: tonic's client over a channel, the prost messages and
+# their codec.
+prost.workspace = true
+# The well-known types `probe.proto` imports, other than `Empty`.
+prost-types.workspace = true
+tonic = { workspace = true, features = ["channel", "codegen"] }
+tonic-prost.workspace = true
+
+[dev-dependencies]
+ulo = { path = "../ulo" }
+ulo-http = { path = "../ulo-http" }
+ulo-rpc = { path = "../ulo-rpc" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+ulo-transport = { path = "../ulo-transport" }
+# The WebSocket handler the X24 fixture puts HTTP metadata on.
+ulo-ws = { path = "../ulo-ws" }
+futures-util.workspace = true
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+# A plain HTTP/2 client, which enforces no `grpc-timeout` of its own, for the deadline tests.
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "http2", "tokio"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "sync", "net", "io-util"] }
+# The events a test captures through a subscriber of its own.
+tracing.workspace = true
+# The clients of the health and reflection services the server answers.
+tonic-health.workspace = true
+tonic-reflection.workspace = true
+trybuild.workspace = true
+# O2: the details a status carries, TLS served and dialled, and the four transports in one app.
+tonic-types.workspace = true
+serde_json.workspace = true
+tokio-tungstenite = { workspace = true, features = ["connect"] }
+ulo-http-hyper = { path = "../ulo-http-hyper" }
+ulo-net = { path = "../ulo-net" }
+ulo-rpc-tcp = { path = "../ulo-rpc-tcp" }
+ulo-ws-hyper = { path = "../ulo-ws-hyper" }
+ulo-test-certs = { path = "../ulo-test-certs" }
+
+[build-dependencies]
+ulo-build = { path = "../ulo-build", version = "=0.1.0-alpha.1" }
+
+[lints]
+workspace = true

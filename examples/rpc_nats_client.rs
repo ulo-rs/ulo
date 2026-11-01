@@ -25,7 +25,6 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::Arc;
 use ulo::extract::Payload;
 use ulo::{
     UloFactory, controller, get,
@@ -34,7 +33,7 @@ use ulo::{
     injectable, module, post, routes,
     rpc::RpcClient,
 };
-use ulo_macros::{new, patterns, provide};
+use ulo_macros::{new, patterns, provider_value};
 
 // ============================================================================
 // DTOs
@@ -88,12 +87,12 @@ impl OrdersService {
 #[controller]
 pub struct OrdersRpcController {
     #[inject]
-    service: Arc<OrdersService>,
+    service: OrdersService,
 }
 #[patterns]
 impl OrdersRpcController {
     #[new]
-    pub fn new(service: Arc<OrdersService>) -> Self {
+    pub fn new(service: OrdersService) -> Self {
         Self { service }
     }
 
@@ -124,14 +123,11 @@ impl OrdersRpcController {
 // HTTP controller — uses RpcClient to call the NATS handlers above
 // ============================================================================
 
-// The slot the client is registered under, beside any other `RpcClient` the application holds.
-ulo::key!(pub OrderServiceClient: RpcClient);
-
 #[controller("/order")]
 pub struct OrdersHttpController {
-    // Injected through the marker the module registers the client under.
-    #[inject(OrderServiceClient)]
-    client: Arc<RpcClient>,
+    // Injected by the "ORDER_SERVICE_CLIENT" token registered in the module.
+    #[inject("ORDER_SERVICE_CLIENT")]
+    client: RpcClient,
 }
 
 #[routes]
@@ -174,10 +170,11 @@ impl OrdersHttpController {
 // ============================================================================
 
 #[module(
-    providers: [OrdersService,
-        provide!(OrderServiceClient => ulo::rpc::RpcClient::new(
-            ulo_rpc_nats::NatsClientTransport::new("nats://127.0.0.1:4222"),
-        ))],
+    providers: [OrdersService, // Register the RpcClient under a named token so it can be injected.
+        provider_value!(
+            "ORDER_SERVICE_CLIENT",
+            ulo::rpc::RpcClient::new(ulo_rpc_nats::NatsClientTransport::new("nats://127.0.0.1:4222"))
+        )],
     controllers: [OrdersHttpController, OrdersRpcController],
 )]
 struct OrdersModule;

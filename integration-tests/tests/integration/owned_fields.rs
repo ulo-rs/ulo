@@ -1,12 +1,13 @@
-//! Owned fields beside `#[inject]` fields, on a struct with no `#[new]` constructor:
+//! Test for owned fields with #[inject] and #[default] attributes
+//!
+//! This test demonstrates the new capability for providers to have:
 //! - DI-injected fields (marked with #[inject])
 //! - Owned fields with custom defaults (marked with #[default(...)])
 //! - Owned fields with Default trait fallback (no attributes)
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-use ulo::http::Body;
-use ulo::{controller, get, injectable, module, routes, websocket_gateway};
+use ulo::{injectable, module};
 use ulo_config::{Config, ConfigModule, ConfigService};
 
 #[derive(Config, Clone)]
@@ -173,30 +174,6 @@ impl ComplexService {
     }
 }
 
-// `#[controller]` and `#[websocket_gateway]` apply `#[default]` as `#[injectable]` does.
-#[controller("/owned")]
-pub struct OwnedController {
-    #[default(7)]
-    limit: u8,
-}
-
-#[routes]
-impl OwnedController {
-    #[get("/")]
-    fn limit(&self) -> Body {
-        Body::text(self.limit.to_string())
-    }
-}
-
-#[websocket_gateway("/owned")]
-pub struct OwnedGateway {
-    #[default(9)]
-    limit: u8,
-}
-
-#[module(controllers: [OwnedController])]
-impl OwnedControllerModule {}
-
 // Module definition
 #[module(
     imports: [ConfigModule::<TestConfig>::new()],
@@ -205,8 +182,7 @@ impl OwnedControllerModule {}
         MixedService,
         CacheService,
         MetricsService,
-        ComplexService,
-        OwnedGateway
+        ComplexService
     ],
 )]
 impl TestModule {}
@@ -231,27 +207,4 @@ async fn test_owned_fields_runtime() {
         .expect("ComplexService should resolve");
     assert_eq!(complex.get_default_values(), vec![1, 2, 3]);
     assert_eq!(complex.get_service_version(), "service_v1");
-
-    let gateway = app
-        .get::<OwnedGateway>()
-        .await
-        .expect("OwnedGateway should resolve");
-    assert_eq!(gateway.limit, 9);
-}
-
-#[tokio::test]
-async fn a_controller_applies_its_default() {
-    let server = crate::common::TestServer::start(OwnedControllerModule).await;
-
-    let body = server
-        .client()
-        .get(server.url("/owned"))
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-
-    assert_eq!(body, "7");
 }

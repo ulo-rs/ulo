@@ -1,0 +1,18 @@
+[package]
+name = "ulo-reexport-ws"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Derives Classify and Validate through ulo-ws alone, to pin the re-exports the derives' output names"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# Tests only: it exists to depend on exactly one transport crate, which no test inside that crate
+# or inside ulo-codegen-tests can, since both also depend on ulo-transport.
+publish = false
+
+[dependencies]
+ulo-ws = { path = "../ulo-ws" }
+
+[lints]
+workspace = true

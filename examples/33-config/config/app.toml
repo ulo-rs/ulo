@@ -1,0 +1,9 @@
+greeting = "hello from the file"
+
+[http]
+host = "10.0.0.1"
+port = 4000
+
+[database]
+url = "postgres://app:file-secret@db.internal/app"
+pool_size = 10

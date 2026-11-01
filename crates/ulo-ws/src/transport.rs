@@ -1,0 +1,338 @@
+use std::any::TypeId;
+use std::fmt;
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use futures_core::Stream;
+use futures_core::stream::BoxStream;
+use futures_util::StreamExt;
+use http::request::Parts;
+use http::{HeaderMap, Uri};
+use serde::Serialize;
+use ulo::{AppHandle, BoxError, ExecutionRef, Ext, Extensions, Inputs, LookupError, Timer, Transport};
+use ulo_transport::{CallError, ErrorKind, ExtractError, FromCall, IntoReply, IntoReplyError};
+
+use crate::connection::{ConnId, Connection};
+use crate::envelope::{Data, Frame, MessageId};
+use crate::gateway::ConnectRefused;
+use crate::session::SessionHandle;
+
+/// The WebSocket message transport, key `"ws"`: one execution per message a gateway's
+/// `#[message]` handler answers. `#[guards(ws = ..)]` scopes an entry to its handlers.
+///
+/// Its inputs, [`ConnectionInfo`], [`UpgradeHead`] and [`SessionHandle`], are declared by `Ws`
+/// and by [`WsConnect`], each naming the other (X19), so a service reading them serves both
+/// phases.
+pub struct Ws;
+
+impl Transport for Ws {
+    const KEY: &'static str = "ws";
+    const READS_PREFIX: bool = true;
+
+    type Cx = WsCx;
+    type Reply = Reply;
+
+    fn inputs(d: &mut Inputs) {
+        d.input::<ConnectionInfo>()
+            .also_seeded_by::<WsConnect>()
+            .input::<UpgradeHead>()
+            .also_seeded_by::<WsConnect>()
+            .input::<SessionHandle>()
+            .also_seeded_by::<WsConnect>();
+    }
+}
+
+/// The connection phase, key `"ws_connect"`: one execution per connection, after the 101 (or
+/// before it under `refuse = handshake`), running the gateway's connect guards through `dispatch`
+/// and then `OnConnect`. `ulo-ws` mounts the one connect handler per gateway itself; no method
+/// carries the key, so `#[guards(ws_connect = ..)]` on an impl fails X1's key assertion and
+/// `connect_guards(..)` on the gateway attribute is the spelling.
+pub struct WsConnect;
+
+impl Transport for WsConnect {
+    const KEY: &'static str = "ws_connect";
+    const READS_PREFIX: bool = true;
+    /// The connect handler resolves the gateway in the connection phase's execution only to call
+    /// a hook: `OnConnect` for an attributed gateway, `Gateway::on_connect` for a hand-written
+    /// one, whose instance that execution then keeps for the connection's messages. An attributed
+    /// gateway with no `OnConnect` is not built at connect, so one whose dependencies need a
+    /// message's execution, an `Ext` a message guard writes, connects. A failure to build the gateway at
+    /// connect passes through the connect interceptors, as any error from the hook does.
+    const BUILDS_CONTROLLER: bool = false;
+
+    type Cx = ConnectCx;
+    type Reply = ConnectReply;
+
+    fn inputs(d: &mut Inputs) {
+        d.input::<ConnectionInfo>()
+            .also_seeded_by::<Ws>()
+            .input::<UpgradeHead>()
+            .also_seeded_by::<Ws>()
+            .input::<SessionHandle>()
+            .also_seeded_by::<Ws>();
+    }
+}
+
+/// One message's context: `Clone + Send + Sync`, every clone the same message. The execution, the
+/// connection, the event and the message's `id`, and the app's `Timer`.
+#[derive(Clone)]
+pub struct WsCx {
+    pub(crate) inner: Arc<CxInner>,
+}
+
+pub(crate) struct CxInner {
+    pub(crate) exec: ExecutionRef,
+    pub(crate) conn: Connection,
+    pub(crate) event: String,
+    pub(crate) id: Option<MessageId>,
+    /// The message's `data`, undecoded until a `Payload<T>` reads it.
+    pub(crate) data: Data,
+}
+
+impl WsCx {
+    pub fn exec(&self) -> &ExecutionRef {
+        &self.inner.exec
+    }
+
+    pub fn extensions(&self) -> &Extensions {
+        self.inner.exec.extensions()
+    }
+
+    /// The extension `T` a guard wrote, as `Ext<T>` reads it.
+    pub fn ext<T: Send + Sync + 'static>(&self) -> Result<Ext<T>, LookupError> {
+        self.inner.exec.resolver().ext::<T>()
+    }
+
+    /// The connection the message arrived on.
+    pub fn conn(&self) -> &Connection {
+        &self.inner.conn
+    }
+
+    /// The event the message named, under the gateway's event field.
+    pub fn event(&self) -> &str {
+        &self.inner.event
+    }
+
+    /// The message's `id`, echoed on its answer; `None` for a fire-and-forget message.
+    pub fn id(&self) -> Option<&MessageId> {
+        self.inner.id.as_ref()
+    }
+
+    pub fn app(&self) -> &AppHandle {
+        self.inner.conn.app()
+    }
+
+    /// The app's `Timer`, which anything timed inside a reply reads.
+    pub fn timer(&self) -> &Arc<dyn Timer> {
+        self.inner.conn.timer()
+    }
+
+    /// `value` as the message's answer, encoded by the gateway's codec, as a handler returning a
+    /// `Serialize` value is answered; `()` answers nothing, as `Reply::None` does.
+    pub fn reply<T: Serialize + ?Sized + 'static>(&self, value: &T) -> Result<Reply, IntoReplyError> {
+        if TypeId::of::<T>() == TypeId::of::<()>() {
+            return Ok(Reply::None);
+        }
+        self.inner.conn.inner.gateway.settings().codec.encode(value).map(Reply::One).map_err(IntoReplyError::new)
+    }
+
+    /// `items` as the message's answer stream, as a handler returning a stream is answered: each
+    /// `Ok` encoded by the gateway's codec and written as one frame. An `Err` item, or an item the
+    /// codec refuses, runs the matched handler's error handlers on the late path and ends the
+    /// stream.
+    pub fn reply_stream<S, U, E>(&self, items: S) -> Reply
+    where
+        S: Stream<Item = Result<U, E>> + Send + 'static,
+        U: Serialize + Send + 'static,
+        E: Into<CallError> + Send + 'static,
+    {
+        let codec = self.inner.conn.inner.gateway.settings().codec;
+        let frames = items.map(move |item| match item {
+            Ok(value) => codec
+                .encode(&value)
+                .map_err(|err| BoxError::from(CallError::new(ErrorKind::Internal, "internal error").with_source(err))),
+            Err(err) => {
+                let err: CallError = err.into();
+                Err(BoxError::from(err))
+            }
+        });
+        Reply::Many(Box::pin(frames))
+    }
+}
+
+/// The context as a handler parameter, `cx: WsCx`, as `HttpCx` is on HTTP.
+impl FromCall<Ws> for WsCx {
+    async fn from_call(cx: &WsCx) -> Result<Self, ExtractError> {
+        Ok(cx.clone())
+    }
+}
+
+impl AsRef<ExecutionRef> for WsCx {
+    fn as_ref(&self) -> &ExecutionRef {
+        &self.inner.exec
+    }
+}
+
+/// The connection phase's context: the execution, the connection, the upgrade request's head.
+/// A connect guard reads the head and writes what it learns into the extensions, which
+/// `OnConnect` and the session factory read.
+#[derive(Clone)]
+pub struct ConnectCx {
+    pub(crate) inner: Arc<ConnectInner>,
+}
+
+pub(crate) struct ConnectInner {
+    pub(crate) exec: ExecutionRef,
+    pub(crate) conn: Connection,
+}
+
+impl ConnectCx {
+    pub fn exec(&self) -> &ExecutionRef {
+        &self.inner.exec
+    }
+
+    pub fn extensions(&self) -> &Extensions {
+        self.inner.exec.extensions()
+    }
+
+    pub fn ext<T: Send + Sync + 'static>(&self) -> Result<Ext<T>, LookupError> {
+        self.inner.exec.resolver().ext::<T>()
+    }
+
+    pub fn conn(&self) -> &Connection {
+        &self.inner.conn
+    }
+
+    /// The upgrade request's head as the client sent it.
+    pub fn head(&self) -> &UpgradeHead {
+        self.inner.conn.head()
+    }
+
+    pub fn app(&self) -> &AppHandle {
+        self.inner.conn.app()
+    }
+
+    pub fn timer(&self) -> &Arc<dyn Timer> {
+        self.inner.conn.timer()
+    }
+}
+
+impl AsRef<ExecutionRef> for ConnectCx {
+    fn as_ref(&self) -> &ExecutionRef {
+        &self.inner.exec
+    }
+}
+
+/// What a message handler answers, and what an interceptor's `next.run()` returns: nothing, one
+/// frame, or a stream of frames (transports DESIGN §4.1). A single answer is written
+/// `{"id","data"}`, each streamed item likewise and the end `{"id","complete":true}`; an `Err` item
+/// runs `dispatch_late` and is written `{"id","error":{..}}`, which ends the stream. The
+/// dispatcher tracks a stream for its end once it writes it as the message's reply: a stream an
+/// interceptor discards reports nothing to `on_stream_end`, and the one written reports
+/// `Completed` at its `complete`, `CutOff` otherwise.
+pub enum Reply {
+    None,
+    One(Frame),
+    Many(BoxStream<'static, Result<Frame, BoxError>>),
+}
+
+/// A reply built by hand, an interceptor's own answer included, as it stands.
+impl IntoReply<Ws> for Reply {
+    fn into_reply(self, cx: &WsCx) -> Result<Reply, IntoReplyError> {
+        let _ = cx;
+        Ok(self)
+    }
+}
+
+impl fmt::Debug for Reply {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Reply::None => f.write_str("Reply::None"),
+            Reply::One(frame) => f.debug_tuple("Reply::One").field(frame).finish(),
+            Reply::Many(_) => f.write_str("Reply::Many(..)"),
+        }
+    }
+}
+
+/// What the connection phase answers: admitted, or refused with a close code (after the 101) or
+/// a 401 or 403 (before it, under `refuse = handshake`). A guard's refusal and an error reach the
+/// error handlers first; unclaimed, the kind picks the close code (transports DESIGN §4.2).
+#[derive(Debug)]
+pub enum ConnectReply {
+    Admitted,
+    Refused(ConnectRefused),
+}
+
+/// The source of the `Unimplemented` an event nothing handles raises through `recover(None, ..)`:
+/// `err.downcast_ref::<CallError>()?.source_as::<NoHandler>()` tells it from a handler's own
+/// `Unimplemented`, as `ulo_http::NoRoute` does for HTTP's 404.
+#[derive(Debug)]
+pub struct NoHandler {
+    pub(crate) event: String,
+}
+
+impl NoHandler {
+    /// The event the message named.
+    pub fn event(&self) -> &str {
+        &self.event
+    }
+}
+
+impl fmt::Display for NoHandler {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "no handler for event `{}`", self.event)
+    }
+}
+
+impl std::error::Error for NoHandler {}
+
+/// The connection, as an execution input seeded into the connect phase, every message and
+/// `on_disconnect`: `Dep<ConnectionInfo>` in an execution-scoped service.
+#[derive(Clone, Debug)]
+pub struct ConnectionInfo {
+    pub(crate) peer: Option<SocketAddr>,
+    pub(crate) path: Arc<str>,
+    pub(crate) id: ConnId,
+}
+
+impl ConnectionInfo {
+    /// The peer's address; behind a proxy, the proxy's.
+    pub fn peer(&self) -> Option<SocketAddr> {
+        self.peer
+    }
+
+    /// The gateway path the connection upgraded on.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// The connection's id, which `Rooms::to_client` addresses.
+    pub fn id(&self) -> ConnId {
+        self.id
+    }
+}
+
+/// The upgrade request's head as the client sent it, as an execution input: a session factory
+/// reads a token from it, `session_with = |head: Dep<UpgradeHead>| ..`.
+#[derive(Clone, Debug)]
+pub struct UpgradeHead {
+    pub(crate) parts: Arc<Parts>,
+    /// The name the handshake echoed in `Sec-WebSocket-Protocol`.
+    pub(crate) subprotocol: Option<Arc<str>>,
+}
+
+impl UpgradeHead {
+    pub fn uri(&self) -> &Uri {
+        &self.parts.uri
+    }
+
+    pub fn headers(&self) -> &HeaderMap {
+        &self.parts.headers
+    }
+
+    /// The `Sec-WebSocket-Protocol` the handshake echoed, `None` when the gateway lists none the
+    /// client offered.
+    pub fn subprotocol(&self) -> Option<&str> {
+        self.subprotocol.as_deref()
+    }
+}

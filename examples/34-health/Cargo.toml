@@ -1,0 +1,25 @@
+[package]
+name = "ex-34-health"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-grpc = { path = "../../crates/ulo-grpc" }
+ulo-health = { path = "../../crates/ulo-health" }
+ulo-health-grpc = { path = "../../crates/ulo-health-grpc" }
+ulo-health-http = { path = "../../crates/ulo-health-http" }
+ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+serde_json.workspace = true
+tonic = { workspace = true, features = ["channel"] }
+tonic-health.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,34 @@
+[package]
+name = "ulo-graphql-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "GraphQL over HTTP for Ulo: the endpoint controller, its status rules and the playground"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "graphql", "http", "framework"]
+categories = ["web-programming::http-server"]
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-graphql = { path = "../ulo-graphql", version = "=0.1.0-alpha.1" }
+ulo-graphql-ws = { path = "../ulo-graphql-ws", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+http.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+ulo-net = { path = "../ulo-net" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `WsModule`, which the application imports once for the subscription gateway to be reachable.
+ulo-ws = { path = "../ulo-ws" }
+futures-util.workspace = true
+http-body.workspace = true
+# `macros`, `rt`, `time`, `sync`: `#[tokio::test]` and the real-clock deadline each call runs under.
+tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
+
+[lints]
+workspace = true

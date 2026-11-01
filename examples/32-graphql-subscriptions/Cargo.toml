@@ -1,0 +1,26 @@
+[package]
+name = "ex-32-graphql-subscriptions"
+version = "0.0.0"
+edition.workspace = true
+rust-version = "1.89"
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-graphql = { path = "../../crates/ulo-graphql" }
+ulo-graphql-http = { path = "../../crates/ulo-graphql-http" }
+ulo-graphql-async-graphql = { path = "../../crates/ulo-graphql-async-graphql" }
+ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+ulo-ws = { path = "../../crates/ulo-ws" }
+async-graphql = { workspace = true }
+futures-util.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+serde_json.workspace = true
+ulo-transport = { path = "../../crates/ulo-transport" }
+
+[lints]
+workspace = true

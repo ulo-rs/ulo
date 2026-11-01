@@ -5,7 +5,6 @@
 //! factory (the guard) and the controller. Both build in the execution and reach
 //! its cache, so the guard and the handler see the same construction.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::common::TestServer;
@@ -36,7 +35,7 @@ impl RequestId {
 #[injectable(scope = "execution")]
 pub struct RecordingGuard {
     #[inject]
-    request_id: Arc<RequestId>,
+    request_id: RequestId,
 }
 
 #[async_trait]
@@ -50,7 +49,7 @@ impl Guard<HttpContext> for RecordingGuard {
 #[controller("/scope")]
 pub struct ScopeController {
     #[inject]
-    request_id: Arc<RequestId>,
+    request_id: RequestId,
 }
 
 #[routes]

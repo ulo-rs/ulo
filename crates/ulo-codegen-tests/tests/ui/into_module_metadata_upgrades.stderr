@@ -1,0 +1,16 @@
+error[E0277]: `Upgrades` is module metadata, not a contribution key
+ --> tests/ui/into_module_metadata_upgrades.rs:6:28
+  |
+6 | #[module(providers = [into Upgrades: [value = Upgrades::default()]])]
+  |                            ^^^^^^^^ `into` contributes to a collection; `Upgrades` is read with `m.meta::<Upgrades>()`
+  |
+  = help: the trait `ulo::__private::contribution_key::ModuleMetadataNotAKey` is not implemented for `Upgrades`
+  = note: write this module with `ModuleDef` and configure `Upgrades` through `m.meta::<Upgrades>()`
+note: required by a bound in `ulo::__private::contribution_key::MetadataArm::__ulo_check_contribution_key`
+ --> $WORKSPACE/crates/ulo/src/__private.rs
+  |
+  |         fn __ulo_check_contribution_key(&self)
+  |            ---------------------------- required by a bound in this associated function
+  |         where
+  |             K: ModuleMetadataNotAKey;
+  |                ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `MetadataArm::__ulo_check_contribution_key`

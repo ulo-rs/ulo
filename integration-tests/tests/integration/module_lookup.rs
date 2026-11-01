@@ -5,7 +5,7 @@
 use ulo::UloFactory;
 use ulo::di::DynamicModule;
 use ulo::di::ResolutionError;
-use ulo::{injectable, key, module, provide};
+use ulo::{injectable, module, provider_value};
 use ulo_config::{Config, ConfigModule, ConfigService};
 use ulo_graphql_async_graphql::async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
 use ulo_graphql_async_graphql::{DefaultContextBuilder, GraphQLModule};
@@ -49,12 +49,10 @@ fn gql(
     GraphQLModule::for_root(schema, DefaultContextBuilder).with_path(path)
 }
 
-key!(LookupValue: u32);
-
 fn dynamic() -> DynamicModule {
     DynamicModule::builder("LookupDyn")
-        .provider(provide!(LookupValue => 7u32))
-        .export::<LookupValue>()
+        .provider_factory(provider_value!("LOOKUP_VALUE", 7u32))
+        .export_token("LOOKUP_VALUE")
         .build()
 }
 
@@ -70,22 +68,22 @@ fn dynamic() -> DynamicModule {
 impl AppModule {}
 
 /// A `#[module]` type is its identity: the handle resolves that module's
-/// providers and, by default, nothing from other modules.
+/// providers and, in strict mode, nothing from other modules.
 #[tokio::test]
 async fn a_static_module_is_found_by_type() {
     let app = UloFactory::create(AppModule).await.unwrap();
 
     let feature = app.get_module::<FeatureModule>().await.unwrap();
-    let service = feature.get::<FeatureService>().await.unwrap();
+    let service: FeatureService = feature.get().await.unwrap();
     assert_eq!(service.label, "feature");
 
     match feature.get::<RootService>().await.err() {
         Some(ResolutionError::ProviderNotFound { module, .. }) => assert_eq!(
             module.as_deref().map(|m| m.contains("FeatureModule")),
             Some(true),
-            "a lookup in the current module reports the one module it searched"
+            "strict mode reports the one module it searched"
         ),
-        other => panic!("a lookup stays inside the module's scope, got: {other:?}"),
+        other => panic!("strict mode stays inside the module's scope, got: {other:?}"),
     }
 }
 
@@ -98,7 +96,7 @@ async fn a_generic_module_is_found_by_type() {
         .get_module::<ConfigModule<LookupConfig>>()
         .await
         .unwrap();
-    let service = config.get::<ConfigService<LookupConfig>>().await.unwrap();
+    let service: ConfigService<LookupConfig> = config.get().await.unwrap();
     assert_eq!(service.get_ref().name, "lookup");
 }
 
@@ -173,8 +171,8 @@ async fn a_dynamic_module_is_found_by_its_base() {
     let app = UloFactory::create(AppModule).await.unwrap();
 
     let dyn_module = app.get_module_by_id("LookupDyn").await.unwrap();
-    let value = dyn_module.get_key::<LookupValue>().await.unwrap();
-    assert_eq!(*value, 7);
+    let value: u32 = dyn_module.get_by_token("LOOKUP_VALUE").await.unwrap();
+    assert_eq!(value, 7);
 }
 
 /// The full key an ambiguity error prints is an address: identity derives

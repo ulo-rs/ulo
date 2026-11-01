@@ -1,326 +1,104 @@
-//! # ulo-config
+//! Layered configuration (integrations DESIGN §2).
 //!
-//! Configuration management for the Ulo framework with type-safe environment variable loading.
+//! The application builds a [`Config`] in `main` from sources it names, each overriding the ones
+//! before it, and hands it to the modules that read it. [`ConfigBuilder::load`] never fails: a source
+//! that cannot be read or parsed is recorded inside the value and reported by `wire()`, together
+//! with every missing, ill-typed or invalid value, one problem per line with its path and origin.
 //!
-//! ## Features
-//!
-//! - **Declarative configuration** using derive macros
-//! - **Automatic environment variable mapping** with sensible defaults
-//! - **Type-safe parsing** with helpful error messages
-//! - **Validation support** (optional, with `validator` crate)
-//! - **Multi-environment support** (.env.development, .env.production, etc.)
-//! - **Nested configuration** for complex structures
-//!
-//! ## Basic Usage
-//!
-//! ```rust
-//! use ulo_config::{Config, ConfigModule};
-//!
-//! #[derive(Config, Clone)]
-//! pub struct AppConfig {
-//!     #[env("DATABASE_URL")]
-//!     pub database_url: String,
-//!
-//!     #[env("PORT")]
-//!     #[default(3000u16)]
-//!     pub port: u16,
-//!
-//!     #[default("127.0.0.1".to_string())]
-//!     pub host: String,
-//! }
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // SAFETY: no other thread is running in this example.
-//! unsafe {
-//!     std::env::set_var("DATABASE_URL", "postgres://localhost/mydb");
-//!     std::env::set_var("PORT", "8080");
-//! }
-//!
-//! let config = ConfigModule::<AppConfig>::from_env()?;
-//! assert_eq!(config.get().database_url, "postgres://localhost/mydb");
-//! assert_eq!(config.get().port, 8080);
-//! assert_eq!(config.get().host, "127.0.0.1");
-//! # Ok(())
-//! # }
+//! ```
+//! # use ulo_config::{Config, Defaults, DotEnv, Env, File, Values};
+//! # #[derive(Default, serde::Serialize)]
+//! # struct AppConfig {}
+//! let config = Config::builder()
+//!     .source(Defaults::of::<AppConfig>())
+//!     .source(File::toml("config/app.toml"))
+//!     .source(DotEnv::file(".env").optional())
+//!     .source(Env::process().prefix("APP_").separator("__"))
+//!     .source(Values::new().set("http.port", 8080))
+//!     .load();
 //! ```
 //!
-//! ## Environment Variable Mapping
+//! No source is found on its own: the process environment is read only by `Env::process()`, and a
+//! `.env` file is read into the layer and never into the process environment.
 //!
-//! By default, field names are converted to SCREAMING_SNAKE_CASE:
+//! # What an error prints
 //!
-//! ```rust
-//! use ulo_config::Config;
+//! A type or value problem is rendered from the kind of the value found and never the value, under
+//! every path, buffered content behind `#[serde(flatten)]` and `#[serde(untagged)]` included. A
+//! leaf type's own `Error::custom` message is printed as that type wrote it, except under the path
+//! of a [`Secret`](ulo::Secret), where only the path and kind are printed. Under `flatten` or
+//! `untagged` a `Secret` is still registered, and no path is known to be a secret's, so a message
+//! its inner type raises is checked afterwards against the text of every secret the section
+//! collected: a message containing one is replaced by `invalid value`. That holds only for a
+//! secret whose inner type read its input as a scalar before it failed. The same pass reads the
+//! messages of failed sources, which a parser may write with the offending line quoted. A secret
+//! shorter than four characters is registered but matched against no message, these or the
+//! graph's: a text that short is contained in most of them.
 //!
-//! #[derive(Config, Clone)]
-//! pub struct AppConfig {
-//!     // Uses LOG_LEVEL env var (auto-converted from field name)
-//!     #[default("info".to_string())]
-//!     pub log_level: String,
+//! Under `flatten` serde gives an error in the buffered content no key. Such a problem is reported
+//! at the path and origin of the struct that holds the `flatten`, never at a sibling field's, and
+//! [`Problem::flattened`] is `true` for it; its rendering ends with `(inside a flattened
+//! section)`.
 //!
-//!     // Uses MAX_CONNECTIONS env var
-//!     #[default(100usize)]
-//!     pub max_connections: usize,
-//! }
+//! # What a report holds
+//!
+//! The top-level keys of the type being read are sections, and each is read on its own. Every
+//! problem in every section is reported. Within a section the report holds the problems found up
+//! to the first error raised by a leaf type's own `Deserialize` (an `IpAddr` or a `Url` refusing a
+//! string): serde stops there, and nothing outside serde can resume it. A missing field is one
+//! problem, however the field's type reads its input.
+//!
+//! A section that ended on a leaf-type error cannot be given a value, nor can a missing section
+//! whose type refuses the placeholder of a field (an `IpAddr` or a `Url` refuses an empty string).
+//! serde's derive stops at the first missing field in declaration order, and the leaf types that
+//! fail here also refuse a placeholder, so three cases follow:
+//!
+//! - A top-level section written under a `#[serde(alias)]` key that ends on a leaf-type error is
+//!   also reported as `missing required field` under the field's real name.
+//! - A missing section whose type refuses a placeholder hides the missing fields declared after
+//!   it: with `database` and `cache` both missing, one is reported.
+//! - The fields of a `#[serde(flatten)]` struct after a failed section are not reported.
+//!
+//! ```
+//! # use serde::Deserialize;
+//! # use ulo_config::{Config, Section};
+//! # #[derive(Deserialize)]
+//! # struct Url(#[allow(dead_code)] std::net::IpAddr);
+//! # #[derive(Deserialize)]
+//! # struct Database { #[allow(dead_code)] host: Url }
+//! # #[derive(Deserialize)]
+//! # struct Cache { #[allow(dead_code)] host: Url }
+//! #[derive(Deserialize)]
+//! struct App { #[allow(dead_code)] database: Database, #[allow(dead_code)] cache: Cache }
+//!
+//! let config = Config::builder().load();
+//! let section = Section::<App>::read(&config, "");
+//! let error = section.value().err().expect("both sections are missing");
+//! assert_eq!(error.problems().len(), 1);
 //! ```
 //!
-//! ## Optional Fields
+//! # A report the pass cap cut
 //!
-//! Use `Option<T>` for optional configuration:
-//!
-//! ```rust
-//! use ulo_config::Config;
-//!
-//! #[derive(Config, Clone)]
-//! pub struct AppConfig {
-//!     // Optional field - won't error if REDIS_URL is missing
-//!     #[env("REDIS_URL")]
-//!     pub redis_url: Option<String>,
-//! }
-//! ```
-//!
-//! ## Nested Configuration
-//!
-//! ```rust
-//! use ulo_config::Config;
-//!
-//! #[derive(Config, Clone)]
-//! pub struct DatabaseConfig {
-//!     #[env("DB_HOST")]
-//!     #[default("localhost".to_string())]
-//!     pub host: String,
-//!
-//!     #[env("DB_PORT")]
-//!     #[default(5432u16)]
-//!     pub port: u16,
-//! }
-//!
-//! #[derive(Config, Clone)]
-//! pub struct AppConfig {
-//!     #[env("PORT")]
-//!     #[default(3000u16)]
-//!     pub port: u16,
-//!
-//!     // Nested config - handled automatically
-//!     #[nested]
-//!     pub database: DatabaseConfig,
-//! }
-//! ```
-//!
-//! ## Validation (Optional)
-//!
-//! Add the `validator` crate and derive `Validate` alongside `Config`. Fields
-//! carrying `#[validate(...)]` are checked when the config loads, before the app
-//! starts. Validation is keyed off the attributes themselves — a config without
-//! any `#[validate]` attrs never references `validator`, so configs that don't
-//! opt in pull in nothing.
-//!
-//! ```toml
-//! [dependencies]
-//! ulo-config = "0.1"
-//! validator = { version = "0.20", features = ["derive"] }
-//! ```
-//!
-//! ```rust,ignore
-//! use ulo_config::Config;
-//! use validator::Validate;
-//!
-//! #[derive(Config, Validate, Clone)]
-//! pub struct AppConfig {
-//!     #[env("DATABASE_URL")]
-//!     #[validate(url)]
-//!     pub database_url: String,
-//!
-//!     #[env("PORT")]
-//!     #[default(3000)]
-//!     #[validate(range(min = 1, max = 65535))]
-//!     pub port: u16,
-//! }
-//! ```
-//!
-//! ## Multi-Environment Support
-//!
-//! ```rust,ignore
-//! use ulo_config::{ConfigModule, Environment};
-//!
-//! // Loads from .env.development, .env.production, or .env.test
-//! let config = ConfigModule::<AppConfig>::from_env_file(Environment::current())?;
-//!
-//! // Or explicitly specify:
-//! let config = ConfigModule::<AppConfig>::from_env_file(Environment::Production)?;
-//! ```
+//! At most 2048 sections and missing fields are reported together. A read with more ends its
+//! report with one final problem, for which [`Problem::truncated`] is `true`: an empty path, no
+//! origin, and the message `the report stopped after N problems; fix these and read again`, N being
+//! the number of problems before it. The error's header counts only the problems before the notice
+//! and says so, `(2048 problems, truncated)`. A report that holds everything has no such problem.
 
-use std::env;
-use std::path::PathBuf;
-use std::sync::Arc;
+mod config;
+mod de;
+mod error;
+mod format;
+mod module;
+mod problems;
+mod section;
+mod source;
+mod tree;
 
-// Re-export the derive macro
-pub use ulo_macros::Config;
-
-mod config_service;
-pub use config_service::{ConfigService, ConfigServiceFactory};
-
-/// Configuration module that handles loading and validation
-pub struct ConfigModule<T: Config> {
-    config: Arc<T>,
-}
-
-impl<T: Config> ConfigModule<T> {
-    /// Create a new ConfigModule and load configuration immediately
-    ///
-    /// This is called automatically when the module is imported in a Ulo module.
-    /// The configuration is loaded eagerly and stored in the module instance.
-    ///
-    /// # Panics
-    ///
-    /// Panics if loading or validation fails, so a misconfigured process stops
-    /// before it serves anything. Use [`from_env`](Self::from_env) to handle the
-    /// failure instead.
-    pub fn new() -> Self {
-        // Load config eagerly
-        let config = T::load_from_env().unwrap_or_else(|e| {
-            panic!(
-                "failed to load config `{}`: {e}",
-                std::any::type_name::<T>()
-            )
-        });
-
-        // Validate config
-        config.validate().unwrap_or_else(|e| {
-            panic!(
-                "config `{}` failed validation: {e}",
-                std::any::type_name::<T>()
-            )
-        });
-
-        Self {
-            config: Arc::new(config),
-        }
-    }
-
-    /// Load configuration from environment variables
-    pub fn from_env() -> Result<Self, ConfigError> {
-        let config = T::load_from_env()?;
-        config.validate()?;
-        Ok(Self {
-            config: Arc::new(config),
-        })
-    }
-
-    /// Load from .env file(s)
-    pub fn from_file(path: impl Into<PathBuf>) -> Result<Self, ConfigError> {
-        dotenv::from_path(path.into())?;
-        Self::from_env()
-    }
-
-    /// Load with environment-specific file
-    /// e.g., .env.development, .env.production
-    pub fn from_env_file(env: Environment) -> Result<Self, ConfigError> {
-        let env_file = match env {
-            Environment::Development => ".env.development",
-            Environment::Production => ".env.production",
-            Environment::Test => ".env.test",
-            Environment::Custom(name) => return Self::from_file(format!(".env.{}", name)),
-        };
-
-        Self::from_file(env_file)
-    }
-
-    /// Get the configuration instance
-    pub fn get(&self) -> T {
-        (*self.config).clone()
-    }
-
-    /// Get a reference to the configuration
-    pub fn get_ref(&self) -> &T {
-        &self.config
-    }
-}
-
-// Implement ModuleMetadata for DI system integration
-impl<T: Config> ulo::di::ModuleMetadata for ConfigModule<T> {
-    fn identity(&self) -> ulo::di::ModuleIdentity {
-        ulo::di::ModuleIdentity::of_type::<Self>()
-    }
-
-    fn imports(&self) -> Option<Vec<Box<dyn ulo::di::ModuleMetadata>>> {
-        None
-    }
-
-    fn controllers(&self) -> Option<Vec<Box<dyn ulo::dispatch::ControllerFactory>>> {
-        None
-    }
-
-    fn providers(&self) -> Option<Vec<Box<dyn ulo::spi::ProviderFactory>>> {
-        Some(vec![Box::new(ConfigServiceFactory::<T>::with_config(
-            self.config.clone(),
-        ))])
-    }
-
-    fn exports(&self) -> Option<Vec<String>> {
-        Some(vec![ulo::di::token_of::<ConfigService<T>>()])
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Environment {
-    Development,
-    Production,
-    Test,
-    Custom(String),
-}
-
-impl Environment {
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "development" | "dev" => Self::Development,
-            "production" | "prod" => Self::Production,
-            "test" => Self::Test,
-            custom => Self::Custom(custom.to_string()),
-        }
-    }
-
-    pub fn current() -> Self {
-        env::var("NODE_ENV")
-            .or_else(|_| env::var("APP_ENV"))
-            .map(|e| Self::from_str(&e))
-            .unwrap_or(Self::Development)
-    }
-}
-
-/// Trait for configuration validation
-pub trait Validate {
-    fn validate(&self) -> Result<(), ConfigError>;
-}
-
-/// Combined trait for configuration types
-///
-/// This trait is automatically implemented for any type that implements
-/// both `FromEnv` and `Validate`. You don't need to implement this manually.
-pub trait Config: FromEnv + Validate + Clone + Send + Sync + 'static {}
-
-// Blanket implementation for any type that satisfies the bounds
-impl<T> Config for T where T: FromEnv + Validate + Clone + Send + Sync + 'static {}
-
-/// Configuration errors
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigError {
-    #[error("Environment variable '{0}' not found")]
-    MissingEnvVar(String),
-
-    #[error("Failed to parse environment variable '{key}': {message}")]
-    ParseError { key: String, message: String },
-
-    #[error("Validation failed: {0}")]
-    ValidationError(String),
-
-    #[error("Failed to load .env file: {0}")]
-    DotenvError(#[from] dotenv::Error),
-
-    #[error("Multiple validation errors: {0:?}")]
-    MultipleErrors(Vec<String>),
-}
-
-/// Trait for loading configuration from environment
-pub trait FromEnv: Sized {
-    fn load_from_env() -> Result<Self, ConfigError>;
-}
+pub use config::{Config, ConfigBuilder};
+pub use error::ConfigError;
+pub use module::ConfigModule;
+pub use problems::{Problem, Problems};
+pub use section::Section;
+pub use source::{Defaults, DotEnv, Env, File, Layer, Scalar, Source, TypeDefaults, Values};
+pub use tree::Origin;

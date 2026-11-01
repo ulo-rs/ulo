@@ -54,7 +54,7 @@ impl MixedService {
     }
 }
 
-// Test 4: a `#[new]` constructor not named `new`
+// Test 4: New syntax with custom init
 #[injectable]
 pub struct CustomInitService {
     #[inject]

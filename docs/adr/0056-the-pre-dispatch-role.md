@@ -1,6 +1,6 @@
 # 0056 — One role per position: the pre-dispatch role reaches every transport
 
-Status: proposed
+Status: superseded by `docs/experiments/di-redesign/transports/DESIGN.md` §3.3, Pre-dispatch
 
 Supersedes the middleware half of [ADR-0007](0007-pre-routing-global-chain.md): `Middleware`
 narrows to the one anchor where its signature is right, before dispatch, and reaches RPC, WebSocket

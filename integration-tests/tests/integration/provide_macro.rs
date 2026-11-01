@@ -1,13 +1,11 @@
-//! `provide!` registers a provider under a marker, reading the form from the
-//! source's syntax and taking it from a keyword when told.
+//! `provide!` registers a provider under a string token, inferring the form
+//! from the expression and taking it from a marker when told.
 //!
-//! Reading the syntax is the part that can be wrong without being loud: a value
+//! Auto-detection is the part that can be wrong without being loud: a value
 //! read as a factory, or the reverse, still registers a provider and still
-//! resolves. Each form — an inline value, an inline closure, a bare type name,
-//! `alias`, `value`, `factory` — is asserted against what it produced, not
-//! merely that it produced something.
+//! resolves. Each marker — `value()`, `factory()`, `existing()`, `provider()` —
+//! is asserted against what it produced, not merely that it produced something.
 use crate::common::TestServer;
-use std::sync::Arc;
 use std::time::Duration;
 use ulo::http::Body;
 use ulo::{controller, get, injectable, module, new, provide, routes};
@@ -52,43 +50,34 @@ impl CacheService {
 
 #[tokio::test]
 async fn provide_macro_patterns() {
-    ulo::key!(ApiKey: String);
-    ulo::key!(Port: u16);
-    ulo::key!(Timeout: Duration);
-    ulo::key!(MaxConnections: i32);
-    ulo::key!(Logger: String);
-    ulo::key!(PrimaryDb: DatabaseService);
-    ulo::key!(CacheAlias: CacheService);
-    ulo::key!(ExplicitValue: String);
-    ulo::key!(ExplicitFactory: String);
     #[injectable]
     pub struct AppService {
-        #[inject(ApiKey)]
-        api_key: Arc<String>,
+        #[inject("API_KEY")]
+        api_key: String,
 
-        #[inject(Port)]
-        port: Arc<u16>,
+        #[inject("PORT")]
+        port: u16,
 
-        #[inject(Timeout)]
-        timeout: Arc<Duration>,
+        #[inject("TIMEOUT")]
+        timeout: Duration,
 
-        #[inject(MaxConnections)]
-        max_connections: Arc<i32>,
+        #[inject("MAX_CONNECTIONS")]
+        max_connections: i32,
 
-        #[inject(Logger)]
-        logger: Arc<String>,
+        #[inject("LOGGER")]
+        logger: String,
 
-        #[inject(PrimaryDb)]
-        database: Arc<DatabaseService>,
+        #[inject("PRIMARY_DB")]
+        database: DatabaseService,
 
-        #[inject(CacheAlias)]
-        cache: Arc<CacheService>,
+        #[inject("CACHE_ALIAS")]
+        cache: CacheService,
 
-        #[inject(ExplicitValue)]
-        explicit_value: Arc<String>,
+        #[inject("EXPLICIT_VALUE")]
+        explicit_value: String,
 
-        #[inject(ExplicitFactory)]
-        explicit_factory: Arc<String>,
+        #[inject("EXPLICIT_FACTORY")]
+        explicit_factory: String,
     }
     impl AppService {
         pub fn get_info(&self) -> String {
@@ -110,7 +99,7 @@ async fn provide_macro_patterns() {
     #[controller("/app")]
     pub struct AppController {
         #[inject]
-        app: Arc<AppService>,
+        app: AppService,
     }
 
     #[routes]
@@ -127,26 +116,28 @@ async fn provide_macro_patterns() {
             DatabaseService,
             CacheService,
 
-            // An inline expression is a value
-            provide!(ApiKey => "secret_key".to_string()),
-            provide!(Port => 8080_u16),
-            provide!(Timeout => Duration::from_secs(30)),
+            // Literals auto-detected as value providers
+            provide!("API_KEY", "secret_key".to_string()),
+            provide!("PORT", 8080_u16),
+            provide!("TIMEOUT", Duration::from_secs(30)),
 
-            // An inline closure is a factory
-            provide!(MaxConnections => async || 100_i32),
-            provide!(Logger => async |config: Arc<ConfigService>| {
+            // Closures auto-detected as factory providers
+            provide!("MAX_CONNECTIONS", || 100_i32),
+            provide!("LOGGER", |config: ConfigService| {
                 format!("logger:{}", config.env)
             }),
 
-            // A bare name is the type's own declaration, here under a key
-            provide!(PrimaryDb => DatabaseService),
+            // provider() required - registers type under custom token
+            provide!("PRIMARY_DB", provider(DatabaseService)),
 
-            // `alias` is a second name for an existing binding
-            provide!(CacheAlias => alias CacheService),
+            // existing() required - creates alias to existing provider
+            provide!("CACHE_ALIAS", existing(CacheService)),
 
-            // `value` and `factory` name the form where the syntax would too
-            provide!(ExplicitValue => value "explicit".to_string()),
-            provide!(ExplicitFactory => factory async || "factory_result".to_string()),
+            // value() optional - explicit marker for clarity
+            provide!("EXPLICIT_VALUE", value("explicit".to_string())),
+
+            // factory() optional - explicit marker for clarity
+            provide!("EXPLICIT_FACTORY", factory(|| "factory_result".to_string())),
 
             AppService,
         ],

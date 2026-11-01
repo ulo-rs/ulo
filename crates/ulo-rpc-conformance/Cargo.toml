@@ -1,20 +1,41 @@
 [package]
 name = "ulo-rpc-conformance"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Shared conformance suite for ulo's RPC transports"
+description = "The conformance suite every Ulo RPC link runs"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-# A dev-dependency of the transport crates and of nothing else. Cargo strips
-# dev-dependencies when publishing them, so this never needs a crates.io release.
+# A dev-dependency of the link crates and of nothing else. Cargo strips dev-dependencies when
+# publishing them, so this never needs a crates.io release.
 publish = false
 
+[features]
+# `OnTokio`, the runtime half of every link built on tokio.
+tokio = ["ulo-conformance-support/tokio"]
+# `OnSmol`, the runtime half of a link on smol: an `async-executor` `Executor` per scenario.
+smol = ["ulo-conformance-support/smol"]
+
 [dependencies]
-ulo = { path = "../ulo", default-features = false }
-ulo-macros = { path = "../ulo-macros" }
-futures = { workspace = true, features = ["async-await"] }
-serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
-tokio-stream.workspace = true
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+# `conformance-probe`: `Broker::probe` names the broker links' `ClientProbe`.
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1", features = ["conformance-probe"] }
+# The harness pieces shared with the database suite; this crate re-exports them at their old paths.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+# `serde` lets the binary scenario send and receive `Bytes` as raw bytes.
+bytes = { workspace = true, features = ["serde"] }
+# The plain-thread scenario drives its client with `block_on`, which needs no runtime.
+futures-executor.workspace = true
+futures-util.workspace = true
+serde = { workspace = true, features = ["derive"] }
+
+# Runs where both harnesses are built: `--features tokio,smol`, or a workspace build, where the link
+# crates turn both on.
+[[test]]
+name = "harness"
+required-features = ["tokio", "smol"]
+
+[lints]
+workspace = true

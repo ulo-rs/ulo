@@ -1,89 +1,50 @@
-//! The shared RPC conformance suite, against this crate's own adapter.
-//!
-//! The cases live in `ulo-rpc-conformance`; this file supplies the `Broker`, which for tcp is the
-//! adapter on a socket bound here. The client reaches it through a proxy this file owns, which is
-//! what a disruption cuts: the proxy drops every connection it carries, the client's read half sees
-//! EOF, and the next call reconnects. Nothing here needs a container.
+//! The RPC conformance suite over the TCP link, each scenario against a server on a port of its
+//! own, the client reaching it through a relay that `disrupt` cuts.
 
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::net::{Ipv4Addr, SocketAddr};
 
-use tokio::task::JoinHandle;
-use ulo_rpc_conformance::Broker;
-use ulo_rpc_tcp::{TcpAdapter, TcpClientTransport};
+use ulo::BoundAddr;
+use ulo_rpc_conformance::relay::Relay;
+use ulo_rpc_conformance::{Broker, startup_failed};
+use ulo_rpc_tcp::Tcp;
 
-struct TcpBroker {
-    /// The socket the adapter serves on, handed over by the first `adapter` call.
-    server: Mutex<Option<std::net::TcpListener>>,
-    proxy_port: u16,
-    /// One task per proxied connection, holding both of its sockets.
-    connections: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    _accept: JoinHandle<()>,
+struct Loopback {
+    relay: Relay,
 }
 
-impl Broker for TcpBroker {
-    type Adapter = TcpAdapter;
-    type Transport = TcpClientTransport;
+impl Broker for Loopback {
+    type Harness = ulo_rpc_conformance::OnTokio;
+    type Link = Tcp;
 
+    /// The relay, listening on a port of its own; it learns the server's address from
+    /// `client_link`, once the server is bound.
     async fn start() -> Self {
-        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let server_port = server.local_addr().unwrap().port();
-        let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let proxy_port = proxy.local_addr().unwrap().port();
-
-        let connections: Arc<Mutex<Vec<JoinHandle<()>>>> = Arc::default();
-        let accept = {
-            let connections = connections.clone();
-            tokio::spawn(async move {
-                while let Ok((mut client, _)) = proxy.accept().await {
-                    let connection = tokio::spawn(async move {
-                        let Ok(mut upstream) =
-                            tokio::net::TcpStream::connect(("127.0.0.1", server_port)).await
-                        else {
-                            return;
-                        };
-                        let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
-                    });
-                    connections.lock().unwrap().push(connection);
-                }
-            })
-        };
-
-        Self {
-            server: Mutex::new(Some(server)),
-            proxy_port,
-            connections,
-            _accept: accept,
-        }
+        Loopback { relay: Relay::without_upstream().await }
     }
 
-    /// The first instance serves on the socket the proxy forwards to. A second instance on one
-    /// broker gets a socket of its own that nothing is connected to: a socket transport has no
-    /// fan-out, and a client talks to one server.
-    fn adapter(&self) -> Self::Adapter {
-        let listener = self
-            .server
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap_or_else(|| std::net::TcpListener::bind("127.0.0.1:0").unwrap());
-        TcpAdapter::from_listener(listener)
+    /// Port 0: the OS chooses the server's port as it binds.
+    fn link(&self) -> Tcp {
+        Tcp::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
     }
 
-    fn transport(&self) -> Self::Transport {
-        TcpClientTransport::new("127.0.0.1", self.proxy_port).with_timeout(Duration::from_secs(2))
+    /// Through the relay, aimed at the address the server bound.
+    fn client_link(&self, server: &[BoundAddr]) -> Tcp {
+        let [bound] = server else { startup_failed!("expected one bound server address, got {server:?}") };
+        self.relay.forward_to(bound.addr);
+        Tcp::new(self.relay.addr())
     }
 
-    /// Drop every proxied connection: both sockets close, the client's reader sees EOF, and the
-    /// server's per-connection task ends.
     async fn disrupt(&self) {
-        for connection in self.connections.lock().unwrap().drain(..) {
-            connection.abort();
-        }
-        // Lets the aborts run and the client's reader see EOF before the case's next call;
-        // without it the next call goes out on the dead connection and waits out its timeout.
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        self.relay.cut().await;
+    }
+
+    async fn client_connections(&self) -> Option<usize> {
+        Some(self.relay.open().await)
     }
 }
 
-ulo_rpc_conformance::conformance_suite!(TcpBroker);
+ulo_rpc_conformance::conformance_suite!(Loopback; not_applicable {
+    a_late_opened_releases_the_held_cancel: "U17: a request and its control frames share one ordered lane, so the link holds no `cancel` for an `opened`",
+    a_held_cancel_is_dropped_when_its_hold_runs_out: "U17: a request and its control frames share one ordered lane, so the link holds no `cancel` for an `opened`",
+    a_held_cancel_lasts_until_its_call_s_deadline: "U17: a request and its control frames share one ordered lane, so the link holds no `cancel` for an `opened`",
+});

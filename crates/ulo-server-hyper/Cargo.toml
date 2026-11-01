@@ -1,0 +1,42 @@
+[package]
+name = "ulo-server-hyper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The accept loop Ulo's hyper servers share: one task per connection, the handshake timeout and the drain, over a listener a runtime crate supplies"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "hyper", "server", "tls"]
+categories = ["network-programming", "web-programming::http-server"]
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+# `ConnInfo` and `TlsInfo`, what each accepted connection reports.
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+# `TaskSet`, the connection tasks spawned through the app's runtime, and `Watch`, the drain's
+# signal, neither needing a runtime of its own.
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+futures-io.workspace = true
+http.workspace = true
+# The I/O, executor and timer traits a connection is served through. No features: the protocol
+# builders are the servers'.
+hyper.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+ulo-runtime-smol = { path = "../ulo-runtime-smol" }
+# `ScriptedTimer`: the clock whose refusal the accept-backoff test reads.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
+async-io.workspace = true
+# The sockets the tests' own listeners accept on.
+async-net.workspace = true
+bytes.workspace = true
+futures.workspace = true
+http-body-util.workspace = true
+# The HTTP/1.1 and HTTP/2 connections the tests serve and the client that reads them.
+hyper = { workspace = true, features = ["server", "client", "http1", "http2"] }
+
+[lints]
+workspace = true

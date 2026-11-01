@@ -5,7 +5,6 @@
 //! negative as much as positive: a provider not exported must not resolve from
 //! an importing module, and a nested import must not flatten the tree.
 use crate::common::TestServer;
-use std::sync::Arc;
 use ulo::di::ModuleRef;
 use ulo::http::Body;
 use ulo::{controller, get, injectable, module, routes};
@@ -29,7 +28,7 @@ async fn global_modules_attribute_syntax() {
     #[injectable]
     pub struct LocalService {
         #[inject]
-        global: Arc<GlobalService>,
+        global: GlobalService,
     }
     impl LocalService {
         pub fn get_message(&self) -> String {
@@ -40,7 +39,7 @@ async fn global_modules_attribute_syntax() {
     #[controller("")]
     pub struct TestController {
         #[inject]
-        service: Arc<LocalService>,
+        service: LocalService,
     }
 
     #[routes]
@@ -130,7 +129,7 @@ async fn nested_module_imports() {
     #[injectable]
     pub struct FeatureService {
         #[inject]
-        db: Arc<DatabaseService>,
+        db: DatabaseService,
     }
     impl FeatureService {
         pub fn get_data(&self) -> String {
@@ -148,7 +147,7 @@ async fn nested_module_imports() {
     #[controller("")]
     pub struct TestController {
         #[inject]
-        feature: Arc<FeatureService>,
+        feature: FeatureService,
     }
 
     #[routes]
@@ -199,7 +198,7 @@ async fn module_exports_selective_providers() {
     #[injectable]
     pub struct ConsumerService {
         #[inject]
-        public: Arc<PublicService>,
+        public: PublicService,
     }
     impl ConsumerService {
         pub fn get_data(&self) -> String {
@@ -210,7 +209,7 @@ async fn module_exports_selective_providers() {
     #[controller("")]
     pub struct TestController {
         #[inject]
-        consumer: Arc<ConsumerService>,
+        consumer: ConsumerService,
     }
 
     #[routes]
@@ -252,7 +251,7 @@ async fn module_struct_syntax() {
     #[controller("")]
     pub struct TestController {
         #[inject]
-        service: Arc<TestService>,
+        service: TestService,
     }
 
     #[routes]

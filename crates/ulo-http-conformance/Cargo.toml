@@ -1,0 +1,60 @@
+[package]
+name = "ulo-http-conformance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The embedding conformance suite every Ulo HTTP host runs, the hyper backend as the reference"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# A dev-dependency of the adapter crates and of nothing else.
+publish = false
+
+[features]
+# `OnTokio`, the runtime half every tokio host names, and `Counted` over tokio's I/O traits, which
+# an embedding host wraps its listener's streams in.
+tokio = ["dep:ulo-runtime-tokio", "dep:ulo-listener-tokio", "dep:tokio"]
+# `OnSmol`, the runtime half of a host on smol: an `async-executor` `Executor` per scenario,
+# `ulo-listener-smol`'s listener and `async-net`'s sockets.
+smol = ["dep:ulo-runtime-smol", "dep:ulo-listener-smol", "dep:async-net"]
+# The test fairing through which the suite reads `Routing` from rocket's request-local cache.
+rocket = ["dep:rocket"]
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+# The reference host, on the listener a host's runtime half names.
+ulo-http-hyper = { path = "../ulo-http-hyper", version = "=0.1.0-alpha.1", default-features = false }
+# `FuturesIo` and `RuntimeExecutor`: the suite's client over a host's `futures-io` stream, its
+# HTTP/2 tasks on the app's runtime.
+ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.1" }
+ulo-listener-smol = { path = "../ulo-listener-smol", version = "=0.1.0-alpha.1", optional = true }
+ulo-listener-tokio = { path = "../ulo-listener-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo-runtime-smol = { path = "../ulo-runtime-smol", version = "=0.1.0-alpha.1", optional = true }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+async-net = { workspace = true, optional = true }
+bytes.workspace = true
+futures-channel.workspace = true
+# `io`: the raw HTTP/1.1 exchanges and the echo upgrade handler, over `futures-io`.
+futures-util = { workspace = true, features = ["io"] }
+futures-io.workspace = true
+# An HTTP/2 client that sees the GOAWAY frame itself, which hyper's client does not expose.
+h2.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+# The suite's HTTP/1.1 and HTTP/2 client, driven over the host's stream.
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
+rocket = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+# `rt-multi-thread` and `net`: `OnTokio`'s runtime and its client's socket.
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time"], optional = true }
+# `compat`: the host's `futures-io` stream as tokio's I/O traits, the ones `h2` reads.
+tokio-util = { workspace = true, features = ["compat"] }
+
+[lints]
+workspace = true
+
+[[test]]
+name = "stand_in"
+required-features = ["tokio"]

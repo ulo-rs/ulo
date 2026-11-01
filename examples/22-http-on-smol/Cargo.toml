@@ -1,0 +1,24 @@
+[package]
+name = "ex-22-http-on-smol"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-http = { path = "../../crates/ulo-http" }
+ulo-http-hyper = { path = "../../crates/ulo-http-hyper", default-features = false }
+ulo-listener-smol = { path = "../../crates/ulo-listener-smol" }
+ulo-runtime-smol = { path = "../../crates/ulo-runtime-smol" }
+# The OS signal that ends `serve`; the smol crates ship no equivalent of tokio's `shutdown_signal`.
+async-signal = "0.2"
+futures-util.workspace = true
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+async-net.workspace = true
+futures.workspace = true
+
+[lints]
+workspace = true

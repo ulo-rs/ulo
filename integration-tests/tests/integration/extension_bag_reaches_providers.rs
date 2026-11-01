@@ -8,7 +8,6 @@
 //! claim that still passes when scope is wrong, since a singleton returns
 //! whichever request populated it first.
 
-use std::sync::Arc;
 use ulo::http::{Body, Request};
 use ulo::{UloFactory, controller, get, injectable, module, new, routes};
 // ===== 1. Define types to store in extensions =====
@@ -19,7 +18,7 @@ pub struct UserId(String);
 #[derive(Clone, Debug)]
 pub struct RequestId(String);
 
-// ===== 2. Execution-scoped provider built from the request =====
+// ===== 2. Execution-scoped provider using from_request =====
 
 #[injectable(scope = "execution")]
 pub struct RequestContext {
@@ -29,7 +28,9 @@ pub struct RequestContext {
 }
 
 impl RequestContext {
-    /// Built per request from the injected `Request`, an execution-scoped injectable.
+    /// Built per request from the injected `Request` — the modern replacement for the old
+    /// `init = "from_request"` magic: `Request` is an execution-scoped injectable, so `#[new]` resolves
+    /// it and the constructor reads the same request extensions.
     #[new]
     fn new(req: Request) -> Self {
         let user_id = req
@@ -87,9 +88,9 @@ impl UserService {
 #[controller("/users")]
 pub struct UserController {
     #[inject]
-    context: Arc<RequestContext>, // Execution-scoped context
+    context: RequestContext, // Execution-scoped context
     #[inject]
-    user_service: Arc<UserService>, // Singleton service
+    user_service: UserService, // Singleton service
 }
 
 #[routes]

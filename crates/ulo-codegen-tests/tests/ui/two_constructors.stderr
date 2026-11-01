@@ -1,0 +1,5 @@
+error: a second #[construct] fn; a type has one constructor, so mark one fn only
+  --> tests/ui/two_constructors.rs:15:5
+   |
+15 |     #[construct]
+   |     ^^^^^^^^^^^^

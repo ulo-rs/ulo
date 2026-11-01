@@ -21,7 +21,6 @@
 //! Every connected WebSocket client receives the message.
 
 use serde::Deserialize;
-use std::sync::Arc;
 use ulo::http::Body;
 use ulo::http::extract::Json;
 use ulo::prelude::*;
@@ -69,7 +68,7 @@ struct NotifyPayload {
 #[controller("/notify")]
 pub struct NotifyController {
     #[inject]
-    gateway: Arc<NotificationGateway>,
+    gateway: NotificationGateway,
 }
 
 #[routes]

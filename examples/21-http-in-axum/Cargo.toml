@@ -1,0 +1,20 @@
+[package]
+name = "ex-21-http-in-axum"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-http = { path = "../../crates/ulo-http" }
+ulo-http-axum = { path = "../../crates/ulo-http-axum" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+axum = { workspace = true, features = ["tokio", "http1"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync"] }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+
+[lints]
+workspace = true

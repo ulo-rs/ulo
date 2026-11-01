@@ -1,0 +1,29 @@
+[package]
+name = "ulo-health-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The Kubernetes probe routes for Ulo health: liveness, readiness and startup over HTTP, answered 200 or 503 with an application/health+json body"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "health", "http", "kubernetes"]
+categories = ["web-programming"]
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-health = { path = "../ulo-health", version = "=0.1.0-alpha.1" }
+# Default features: its `tokio-io` feature would bring tokio into a crate that is runtime-free.
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+# The `Content-Type` header name, which `ulo-http` does not re-export.
+http.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+ulo-net = { path = "../ulo-net" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+http-body-util.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
+
+[lints]
+workspace = true

@@ -7,7 +7,6 @@
 //! requests correctly and both are wrong.
 use crate::common::TestServer;
 use serial_test::serial;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use ulo::http::Body;
 use ulo::{controller, get, injectable, module, new, routes};
@@ -39,7 +38,7 @@ async fn singleton_providers_created_once_across_requests() {
     #[controller("/")]
     pub struct TestController {
         #[inject]
-        service: Arc<SingletonService>,
+        service: SingletonService,
     }
 
     #[routes]
@@ -106,7 +105,7 @@ async fn transient_providers_create_unique_instances_per_injection() {
     #[controller("/")]
     pub struct TestController {
         #[inject]
-        service: Arc<MultiService>,
+        service: MultiService,
     }
 
     #[routes]
@@ -154,7 +153,7 @@ async fn field_injection_with_inject_attribute() {
     #[injectable]
     pub struct ServiceWithDeps {
         #[inject]
-        dep: Arc<DependencyService>,
+        dep: DependencyService,
     }
     impl ServiceWithDeps {
         pub fn get_value(&self) -> i32 {
@@ -165,7 +164,7 @@ async fn field_injection_with_inject_attribute() {
     #[controller("/")]
     pub struct TestController {
         #[inject]
-        service: Arc<ServiceWithDeps>,
+        service: ServiceWithDeps,
     }
 
     #[routes]
@@ -207,7 +206,7 @@ async fn field_injection_with_default_fallback() {
     #[controller("/")]
     pub struct TestController {
         #[inject]
-        service: Arc<ServiceWithDefault>,
+        service: ServiceWithDefault,
     }
 
     #[routes]
@@ -249,7 +248,7 @@ async fn config_service_injection_in_providers() {
     #[controller("/")]
     pub struct TestController {
         #[inject]
-        service: Arc<ServiceWithConfig>,
+        service: ServiceWithConfig,
     }
 
     #[routes]
@@ -294,7 +293,7 @@ async fn new_attribute_syntax() {
     #[controller("/")]
     pub struct TestController {
         #[inject]
-        service: Arc<NewSyntaxService>,
+        service: NewSyntaxService,
     }
 
     #[routes]
@@ -316,4 +315,28 @@ async fn new_attribute_syntax() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
+}
+
+// A user-supplied Clone derive suppresses the one #[injectable] adds; the qualified
+// spelling must count too, or the two derives collide as conflicting implementations.
+#[tokio::test]
+async fn injectable_accepts_path_qualified_clone_derive() {
+    #[injectable]
+    #[derive(std::clone::Clone)]
+    pub struct QualifiedCloneService {
+        #[default(7_u32)]
+        value: u32,
+    }
+
+    #[module(providers: [QualifiedCloneService])]
+    struct QualifiedCloneModule {}
+
+    let app = ulo::UloFactory::create_application_context(QualifiedCloneModule)
+        .await
+        .unwrap();
+    let svc: QualifiedCloneService = app
+        .get::<QualifiedCloneService>()
+        .await
+        .expect("resolves with a user-supplied qualified Clone derive");
+    assert_eq!(svc.value, 7);
 }

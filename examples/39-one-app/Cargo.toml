@@ -1,0 +1,36 @@
+[package]
+name = "ex-39-one-app"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-config = { path = "../../crates/ulo-config" }
+ulo-grpc = { path = "../../crates/ulo-grpc" }
+ulo-health = { path = "../../crates/ulo-health" }
+ulo-health-http = { path = "../../crates/ulo-health-http" }
+ulo-http = { path = "../../crates/ulo-http" }
+ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
+ulo-rpc = { path = "../../crates/ulo-rpc" }
+ulo-rpc-tcp = { path = "../../crates/ulo-rpc-tcp" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+ulo-ws = { path = "../../crates/ulo-ws" }
+ulo-ws-hyper = { path = "../../crates/ulo-ws-hyper" }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
+# What the generated gRPC code names.
+prost.workspace = true
+tonic = { workspace = true, features = ["channel", "codegen"] }
+tonic-prost.workspace = true
+
+[build-dependencies]
+ulo-build = { path = "../../crates/ulo-build" }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

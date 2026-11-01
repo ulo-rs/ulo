@@ -1,6 +1,6 @@
 [package]
 name = "ulo"
-version = "0.2.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 keywords = ["http", "web", "framework"]
@@ -11,38 +11,31 @@ repository.workspace = true
 homepage.workspace = true
 readme = "README.md"
 
-[features]
-default = ["logger"]
-logger = ["dep:tracing-subscriber"]
-tower-compat = ["dep:tower"]
-
 [dependencies]
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
-rustc-hash = "2.1"
-indexmap = "2"
-async-trait.workspace = true
-validator.workspace = true
-serde_urlencoded = "0.7"
-thiserror = "2.0"
-parking_lot.workspace = true
-event-listener = "5"
-base64 = "0.22"
-futures.workspace = true
-bytes.workspace = true
-http-body = "1"
-http-body-util.workspace = true
-ulo-macros = { path = "../ulo-macros" }
-uuid = { workspace = true, features = ["v4"] }
-http.workspace = true
-tower = { workspace = true, features = ["util"], optional = true }
+# The runtime-free async once-cell behind the per-execution cache and the shutdown outcome.
+async-lock = "3.4"
+ulo-macros = { path = "../ulo-macros", version = "=0.1.0-alpha.1" }
+# The `warn` for a panic raised while a spawned task's future is dropped, which no caller is
+# waiting to receive.
 tracing.workspace = true
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
-multer = "3"
+# `Secret<T>: Deserialize` behind the `serde` feature, for `ulo-config` (integrations I3).
+serde = { workspace = true, optional = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["full"] }
-# Drives the `StartupCheck` tests: it takes no runtime, so proving that needs an executor rather
-# than a runtime.
-futures-executor = "0.3"
-reqwest = { workspace = true, features = ["json"] }
+# `ModuleDef::enhancer`'s doc example names two transports.
+ulo-http = { path = "../ulo-http" }
+ulo-rpc = { path = "../ulo-rpc" }
+# The README's quick start and its second example, compiled as doctests.
+ulo-http-hyper = { path = "../ulo-http-hyper" }
+ulo-transport = { path = "../ulo-transport" }
+serde = { workspace = true, features = ["derive"] }
+# Integration tests under `tests/` build apps on the tokio runtime; a dev-dependency cycle Cargo allows.
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `rt-multi-thread`: `undeclared_reads.rs` runs constructions in parallel on eight workers.
+tokio = { workspace = true, features = ["rt", "macros", "rt-multi-thread"] }
+
+[features]
+serde = ["dep:serde"]
+
+[lints]
+workspace = true

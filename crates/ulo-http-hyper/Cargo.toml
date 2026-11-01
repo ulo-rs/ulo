@@ -1,0 +1,62 @@
+[package]
+name = "ulo-http-hyper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The hyper backend for Ulo's HTTP transport, the reference server"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "hyper", "web", "framework", "backend"]
+categories = ["web-programming::http-server"]
+
+[features]
+default = ["tokio"]
+# The tokio listener and the `Hyper` and `Server` aliases over it. Off, the backend serves on the
+# listener a caller names, `HyperOn<L>` and `ServerOn<L>`, and no tokio runtime crate is built.
+tokio = ["dep:ulo-listener-tokio"]
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+# The accept loop, the handshake timeout and the drain, shared with the gRPC and WebSocket servers,
+# and hyper's executor, timer and I/O over the app's runtime.
+ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.1" }
+ulo-listener-tokio = { path = "../ulo-listener-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+futures-util.workspace = true
+http.workspace = true
+# The connection builders, configured from the server's settings, and the per-request upgrade
+# future. hyper-util's `auto` builder takes no runtime feature.
+hyper = { workspace = true, features = ["server", "http1", "http2"] }
+hyper-util = { workspace = true, features = ["server-auto"] }
+tracing.workspace = true
+
+[dev-dependencies]
+ulo-http-conformance = { path = "../ulo-http-conformance", features = ["tokio", "smol"] }
+ulo-listener-smol = { path = "../ulo-listener-smol" }
+# `starvation`: the one-thread executor, ticker and watchdog the flood tests run in.
+ulo-conformance-support = { path = "../ulo-conformance-support", features = ["smol"] }
+ulo-runtime-smol = { path = "../ulo-runtime-smol" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+async-io.workspace = true
+async-net.workspace = true
+futures.workspace = true
+futures-rustls.workspace = true
+futures-util.workspace = true
+# The problem document `tests/drain_abandoned.rs` reads off the wire.
+serde_json.workspace = true
+# `tests/listeners.rs` hands a child process its socket as descriptor 3.
+command-fds.workspace = true
+# `net` and `io-util`: the raw HTTP/1.1 client the route-timeout tests read a response with.
+# `sync`: what `tests/close_flush.rs` waits on.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time", "sync"] }
+# The in-memory connection `tests/close_flush.rs` serves its flood over.
+piper.workspace = true
+# The TLS client `tests/tls.rs` connects with, and the certificate it trusts.
+tokio-rustls.workspace = true
+ulo-test-certs = { path = "../ulo-test-certs" }
+
+[lints]
+workspace = true

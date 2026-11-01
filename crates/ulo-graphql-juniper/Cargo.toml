@@ -1,23 +1,27 @@
 [package]
 name = "ulo-graphql-juniper"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+description = "The juniper engine for Ulo's GraphQL bindings"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Juniper GraphQL integration for the Ulo framework"
-keywords = ["graphql", "juniper", "ulo", "web", "framework"]
-categories = ["web-programming", "asynchronous"]
+keywords = ["ulo", "graphql", "juniper"]
+categories = ["web-programming"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "0.2.0", default-features = false }
-ulo-macros = { path = "../ulo-macros", version = "0.2.0" }
-juniper = "0.16"
-async-trait.workspace = true
-serde = { workspace = true, features = ["derive"] }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-graphql = { path = "../ulo-graphql", version = "=0.1.0-alpha.1" }
+futures.workspace = true
+juniper = { workspace = true, features = ["schema-language"] }
 serde_json.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-ulo-http-axum = { path = "../ulo-http-axum", version = "0.1.0" }
-tokio = { workspace = true, features = ["full"] }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `macros` and `rt`: `#[tokio::test]`, the one runtime the app is given; `time`: the deadline each test runs under.
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+
+[lints]
+workspace = true

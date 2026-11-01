@@ -1,0 +1,20 @@
+error[E0277]: lifecycle hooks are only allowed on singletons
+ --> tests/ui/hook_on_transient_type.rs:9:6
+  |
+9 | impl OnModuleDestroy for Scratch {
+  |      ^^^^^^^^^^^^^^^ `ulo::scope::Transient` scope cannot have hooks
+  |
+  = help: the trait `HookCapable` is not implemented for `ulo::scope::Transient`
+  = note: remove the scope argument from #[injectable], or move the hook to a singleton
+help: the following other types implement trait `HookCapable`
+ --> $WORKSPACE/crates/ulo/src/scope.rs
+  |
+  | impl HookCapable for Singleton {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ulo::scope::Singleton`
+  | impl HookCapable for Auto {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^ `ulo::scope::Auto`
+note: required by a bound in `ulo::OnModuleDestroy`
+ --> $WORKSPACE/crates/ulo/src/hooks.rs
+  |
+  | pub trait OnModuleDestroy: Construct<Scope: HookCapable> {
+  |                                             ^^^^^^^^^^^ required by this bound in `OnModuleDestroy`

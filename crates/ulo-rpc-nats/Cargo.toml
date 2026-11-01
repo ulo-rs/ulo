@@ -1,31 +1,59 @@
 [package]
 name = "ulo-rpc-nats"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "NATS transport adapter for the Ulo RPC gateway"
+description = "The NATS link for Ulo RPC: queue-group subscriptions, inbox replies, no-responders"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-keywords = ["ulo", "nats", "rpc", "framework", "adapter"]
+keywords = ["ulo", "rpc", "nats"]
 categories = ["network-programming"]
 
-[features]
-# Gates tests that need a live NATS (via testcontainers + Docker).
-integration = []
-
 [dependencies]
-ulo = { path = "../ulo", default-features = false }
-async-nats = "0.46"
-tokio = { workspace = true, features = ["full"] }
-serde_json.workspace = true
-tracing.workspace = true
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+# Encodes the platform's root certificates as the PEM file a `tls://` link hands async-nats.
+base64.workspace = true
 bytes.workspace = true
-futures = { workspace = true, features = ["async-await", "executor"] }
+futures-core.workspace = true
+futures-util.workspace = true
+# `ring` is async-nats's TLS provider, which it refuses to compile without, so `tls://` works in
+# every build.
+async-nats = { workspace = true, features = ["ring"] }
+# The platform's root certificates, loaded once per process while any link holds them, off the runtime's workers.
+rustls-native-certs.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "macros"] }
+tracing.workspace = true
+
+[features]
+# Builds `tests/conformance.rs`, which starts a NATS server in a container per scenario and so needs
+# a running Docker daemon.
+integration = []
+# For the conformance suite; not an application feature. It builds the link's `probe()`, through
+# which the suite's held-`cancel` scenarios read the client's table, withhold the server's
+# `opened` and shorten the link's hold, and turns on `ulo-rpc`'s `conformance-probe`. The tests
+# enable it through this crate's dev-dependency on itself.
+conformance-probe = ["ulo-rpc/conformance-probe"]
 
 [dev-dependencies]
-ulo-rpc-conformance = { path = "../ulo-rpc-conformance" }
+# Itself with `conformance-probe`, for `tests/conformance.rs`.
+ulo-rpc-nats = { path = ".", features = ["conformance-probe"] }
+futures-executor.workspace = true
 testcontainers.workspace = true
-testcontainers-modules = { workspace = true, features = ["nats"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-tokio-stream.workspace = true
+# `test-util`: the `roots_timeout` test runs on a paused clock.
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "test-util"] }
+ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
+# `ScriptedTimer`, which refuses the roots wait's bound as a runtime that has shut down does.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
+# The certificate a TLS NATS server serves in the link's own tests.
+ulo-test-certs = { path = "../ulo-test-certs" }
+# `aws-lc-rs` beside async-nats's `ring`, so every test build links both of rustls's crypto
+# providers, as an application linking this link and the MQTT one does: `tests/two_providers.rs`
+# installs neither and holds the link's refusal, and the link's own tests install `ring`.
+rustls = { workspace = true, features = ["aws-lc-rs"] }
+
+[lints]
+workspace = true

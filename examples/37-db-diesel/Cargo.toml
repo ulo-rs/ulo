@@ -1,0 +1,24 @@
+[package]
+name = "ex-37-db-diesel"
+version = "0.0.0"
+edition.workspace = true
+rust-version = "1.89"
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-config = { path = "../../crates/ulo-config" }
+ulo-db-diesel = { path = "../../crates/ulo-db-diesel", features = ["sqlite"] }
+ulo-http = { path = "../../crates/ulo-http" }
+ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+diesel = { workspace = true, features = ["sqlite"] }
+diesel-async = { workspace = true, features = ["sqlite"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+
+[lints]
+workspace = true

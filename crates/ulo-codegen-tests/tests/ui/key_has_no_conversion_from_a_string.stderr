@@ -1,0 +1,5 @@
+error[E0277]: the trait bound `Key: From<&str>` is not satisfied
+ --> tests/ui/key_has_no_conversion_from_a_string.rs:7:14
+  |
+7 |     let _ = <Key as From<&str>>::from("primary");
+  |              ^^^ the trait `From<&str>` is not implemented for `Key`

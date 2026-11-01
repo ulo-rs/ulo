@@ -1,0 +1,17 @@
+error[E0277]: `NotAGuard` is not a guard for `Http`
+  --> tests/ui/enhancer_without_its_role_trait.rs:14:14
+   |
+14 |     #[guards(NotAGuard)]
+   |              ^^^^^^^^^ a guard for `Http` is needed here
+   |
+help: the trait `ulo::Guard<Http>` is not implemented for `NotAGuard`
+  --> tests/ui/enhancer_without_its_role_trait.rs:6:1
+   |
+ 6 | struct NotAGuard;
+   | ^^^^^^^^^^^^^^^^
+   = note: implement `Guard<Http>` for `NotAGuard`
+note: required by a bound in `list`
+  --> tests/ui/enhancer_without_its_role_trait.rs:15:14
+   |
+15 |     async fn list(&self) -> &'static str {
+   |              ^^^^ required by this bound in `list`

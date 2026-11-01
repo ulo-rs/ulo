@@ -1,0 +1,17 @@
+error[E0277]: the trait bound `Memory: Repo` is not satisfied
+  --> tests/ui/trait_binding_non_implementor.rs:10:23
+   |
+10 | #[module(providers = [Memory as dyn Repo])]
+   |                       ^^^^^^ unsatisfied trait bound
+   |
+help: the trait `Repo` is not implemented for `Memory`
+  --> tests/ui/trait_binding_non_implementor.rs:8:1
+   |
+ 8 | struct Memory;
+   | ^^^^^^^^^^^^^
+help: this trait has no implementations, consider adding one
+  --> tests/ui/trait_binding_non_implementor.rs:5:1
+   |
+ 5 | trait Repo: Send + Sync {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^
+   = note: required for the cast from `Arc<Memory>` to `Arc<dyn Repo>`

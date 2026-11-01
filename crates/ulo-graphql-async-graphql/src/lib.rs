@@ -1,146 +1,226 @@
-//! # ulo-graphql-async-graphql
+//! The async-graphql engine for `ulo-graphql` (transports DESIGN §7): [`AsyncGraphql<S, C>`], bound
+//! under the SPI key, `AsyncGraphql<ApiSchema, GqlContext> as dyn Engine`.
 //!
-//! async-graphql integration for the Ulo framework.
+//! The context type is a parameter of the adapter, since async-graphql takes context as
+//! `Request::data(D)` for any `D` and no adapter can know the application's by convention. Per
+//! call the adapter resolves `C` in the call's execution and inserts it as `Dep<C>` with
+//! `Request::data`, and inserts the `ExecutionRef` itself as a second `data`, which [`dep`] reads.
+//! A resolver reads the context with `ctx.data::<Dep<GqlContext>>()`.
 //!
-//! This crate provides seamless integration between [async-graphql](https://github.com/async-graphql/async-graphql)
-//! and the [Ulo](https://github.com/ulo-rs/ulo) web framework, enabling you to build
-//! type-safe GraphQL APIs with dependency injection, middleware, guards, and all Ulo features.
+//! # Variables of the wrong type
 //!
-//! ## Features
-//!
-//! - **Full async-graphql support** - Use all async-graphql features natively
-//! - **Dependency Injection** - Inject Ulo services into your context builders
-//! - **User-controlled context** - Build GraphQL context however you want
-//! - **Guards & Interceptors** - Use Ulo's guards and interceptors with GraphQL
-//! - **GraphQL Playground** - Built-in playground for development
-//! - **Zero overhead** - Compiles to native async-graphql code
-//!
-//! ## Quick Start
-//!
-//! ```ignore
-//! use ulo::{module, UloFactory};
-//! use ulo_http_axum::AxumAdapter;
-//! use ulo_graphql_async_graphql::{GraphQLModule, DefaultContextBuilder, async_graphql::*};
-//!
-//! struct Query;
-//!
-//! #[Object]
-//! impl Query {
-//!     async fn hello(&self) -> &str {
-//!         "Hello, world!"
-//!     }
-//! }
-//!
-//! fn build_graphql_module()
-//! -> GraphQLModule<Query, EmptyMutation, EmptySubscription, DefaultContextBuilder> {
-//!     let schema = Schema::build(Query, EmptyMutation, EmptySubscription).finish();
-//!     GraphQLModule::for_root(schema, DefaultContextBuilder)
-//! }
-//!
-//! #[module(imports: [build_graphql_module()], controllers: [], providers: [], exports: [])]
-//! impl AppModule {}
-//!
-//! #[tokio::main]
-//! async fn main() {
-//!     let mut app = UloFactory::new()
-//!         .create_with(AppModule)
-//!         .await
-//!         .unwrap();
-//!     app.use_http_adapter(AxumAdapter::new(), ("127.0.0.1", 3000)).unwrap();
-//!     app.start().await.unwrap();
-//! }
-//! ```
-//!
-//! ## Custom Context
-//!
-//! Build GraphQL context with access to Ulo's DI system:
-//!
-//! ```ignore
-//! use ulo_graphql_async_graphql::{ContextBuilder, async_graphql::Data};
-//! use ulo::http::HttpRequest;
-//! use ulo::injectable;
-//! use async_trait::async_trait;
-//!
-//! #[injectable]
-//! pub struct MyContextBuilder {
-//!     #[inject]
-//!     auth_service: Arc<AuthService>,
-//!     #[inject]
-//!     db_pool: Arc<DatabasePool>,
-//! }
-//!
-//! #[async_trait]
-//! impl ContextBuilder for MyContextBuilder {
-//!     async fn build(&self, req: &HttpRequest) -> Data {
-//!         let mut data = Data::default();
-//!
-//!         // Add HTTP request
-//!         data.insert(req.clone());
-//!
-//!         // Add user from auth service (DI!)
-//!         if let Some(user) = self.auth_service.verify_token(req) {
-//!             data.insert(user);
-//!         }
-//!
-//!         // Add database pool
-//!         data.insert(self.db_pool.clone());
-//!
-//!         data
-//!     }
-//! }
-//! ```
-//!
-//! ## Accessing Context in Resolvers
-//!
-//! ```ignore
-//! use async_graphql::{Object, Context, Result};
-//!
-//! struct Query;
-//!
-//! #[Object]
-//! impl Query {
-//!     async fn me(&self, ctx: &Context<'_>) -> Result<User> {
-//!         // Get user from context (added by auth middleware/guard)
-//!         let user = ctx.data::<User>()?;
-//!         Ok(user.clone())
-//!     }
-//!
-//!     async fn user(&self, ctx: &Context<'_>, id: i32) -> Result<User> {
-//!         // Get DI service from context
-//!         let db_pool = ctx.data::<Arc<DatabasePool>>()?;
-//!         db_pool.find_user(id).await
-//!     }
-//! }
-//! ```
+//! A required variable that is absent or `null` is answered before the schema runs, as a request
+//! error, as `ulo-graphql-juniper` answers it. A variable of the wrong type is not: an `Int`
+//! given a string, say. async-graphql coerces a variable when the field reading it resolves, so
+//! the request executes and the response is an executed result whose error carries the `path` of
+//! that field, where `ulo-graphql-juniper` answers a request error with no `data`. The two
+//! engines differ here, and a client that branches on `Outcome::RequestError` sees the fault only
+//! from juniper. Closing the gap in this adapter means coercing every supplied variable against
+//! the declared types, which is async-graphql's own job; the difference is filed upstream
+//! (`FRAMEWORK_GAPS.md` F464) and stays until async-graphql coerces before it executes.
 
-mod context_builder;
-mod graphql_controller;
-mod graphql_module;
-mod graphql_service;
-mod graphql_service_factory;
-mod subscription_context_builder;
-mod subscription_gateway;
-mod subscription_gateway_factory;
+use std::marker::PhantomData;
+use std::sync::Arc;
 
-// Re-export key types
-pub use context_builder::{ContextBuilder, DefaultContextBuilder};
-pub use graphql_module::GraphQLModule;
-pub use graphql_service::GraphQLService;
-pub use subscription_context_builder::{
-    DefaultSubscriptionContextBuilder, SubscriptionContextBuilder,
-};
+use async_graphql::http::GraphiQLSource;
+use async_graphql::parser::types::DocumentOperations;
+use async_graphql::{ObjectType, Schema, ServerError, SubscriptionType, Variables};
+use futures_util::{StreamExt, future, stream};
+use serde_json::{Map, Value};
+use ulo::scope::Auto;
+use ulo::{BoxFuture, Construct, ConstructError, Dep, Dependencies, ExecutionRef, ModuleRef, Resolver};
+use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse, Location};
 
-// Re-export async-graphql for convenience
-pub use async_graphql;
+/// The engine over schema `S`, read as `Dep<S>`, with context type `C`, resolved per call from the
+/// execution: `C` is an execution-scoped `#[injectable]` reading `Option<Ext<CurrentUser>>`,
+/// `Dep<Loaders>` and `Option<Dep<RequestHead>>`, the last `Some` over HTTP alone.
+///
+/// `C` is resolved with the visibility of the module that binds the engine, inside the call's
+/// execution, so it need not be exported to the module serving the endpoint. Its binding is read
+/// at each call, not checked when the application wires: a context that is not bound fails each
+/// call with a request error and an `error` log line.
+pub struct AsyncGraphql<S, C> {
+    pub(crate) schema: Dep<S>,
+    pub(crate) _context: PhantomData<fn() -> C>,
+    module: ModuleRef,
+}
 
-/// Prelude module with common imports
-pub mod prelude {
-    pub use crate::{
-        ContextBuilder, DefaultContextBuilder, DefaultSubscriptionContextBuilder, GraphQLModule,
-        GraphQLService, SubscriptionContextBuilder,
+impl<S: Send + Sync + 'static, C: Send + Sync + 'static> Construct for AsyncGraphql<S, C> {
+    type Scope = Auto;
+
+    fn dependencies(d: &mut Dependencies) {
+        d.add::<Dep<S>>().add::<ModuleRef>();
+    }
+
+    async fn construct(r: &Resolver<'_>) -> Result<Self, ConstructError> {
+        Ok(AsyncGraphql { schema: r.dep::<S>().await?, _context: PhantomData, module: r.module() })
+    }
+}
+
+impl<Q, M, Sub, C> Engine for AsyncGraphql<Schema<Q, M, Sub>, C>
+where
+    Q: ObjectType + 'static,
+    M: ObjectType + 'static,
+    Sub: SubscriptionType + 'static,
+    C: Send + Sync + 'static,
+{
+    fn execute(&self, req: GqlRequest, exec: ExecutionRef) -> BoxFuture<'static, GqlResponse> {
+        let schema = (*self.schema).clone();
+        let module = self.module.clone();
+        Box::pin(async move {
+            match request::<C>(&module, req, exec).await {
+                Ok(request) => response_of(schema.execute(request).await),
+                Err(response) => response,
+            }
+        })
+    }
+
+    fn subscribe(&self, req: GqlRequest, exec: ExecutionRef) -> BoxStream<'static, GqlResponse> {
+        let schema = (*self.schema).clone();
+        let module = self.module.clone();
+        stream::once(async move { request::<C>(&module, req, exec).await })
+            .flat_map(move |prepared| match prepared {
+                // `execute_stream` borrows the schema for its stream; the session-data form owns a
+                // clone, which a stream outliving this closure needs.
+                Ok(request) => schema.execute_stream_with_session_data(request, Default::default()).map(response_of).boxed(),
+                Err(response) => stream::once(future::ready(response)).boxed(),
+            })
+            .boxed()
+    }
+
+    fn sdl(&self) -> String {
+        self.schema.sdl()
+    }
+
+    /// async-graphql's `GraphiQLSource`.
+    fn playground_html(&self, endpoint: &str, subscriptions: Option<&str>) -> Option<String> {
+        let source = GraphiQLSource::build().endpoint(endpoint);
+        let source = match subscriptions {
+            Some(subscriptions) => source.subscription_endpoint(subscriptions),
+            None => source,
+        };
+        Some(source.finish())
+    }
+}
+
+/// `T` from the call's execution, inside a resolver: `ctx.data::<ExecutionRef>()?.get::<T>()`.
+///
+/// It resolves with the execution's visibility, which is that of the module serving the endpoint
+/// or the gateway; a binding only the engine's module sees is read through a field of the context
+/// instead. A failed lookup is logged and answers the resolver an error whose message is withheld.
+pub async fn dep<T: ?Sized + Send + Sync + 'static>(ctx: &async_graphql::Context<'_>) -> async_graphql::Result<Dep<T>> {
+    let exec = ctx.data::<ExecutionRef>()?;
+    exec.get::<T>().await.map_err(|error| {
+        tracing::error!(%error, "a resolver's dependency could not be resolved");
+        let mut withheld = async_graphql::Error::new("internal error");
+        withheld.source = Some(Arc::new(error));
+        withheld
+    })
+}
+
+/// The async-graphql request for `req`, carrying the call's context and its execution. A context
+/// that cannot be built is answered `Failed`: nothing executed, and the fault is the server's.
+async fn request<C: Send + Sync + 'static>(
+    module: &ModuleRef,
+    req: GqlRequest,
+    exec: ExecutionRef,
+) -> Result<async_graphql::Request, GqlResponse> {
+    let context = match module.with_execution(&exec).get::<C>().await {
+        Ok(context) => context,
+        Err(error) => {
+            tracing::error!(%error, "the GraphQL context could not be built");
+            return Err(GqlResponse::failed(vec![GqlError::new("the request's context could not be built")]));
+        }
     };
-    pub use async_graphql::{
-        Context, EmptyMutation, EmptySubscription, Enum, InputObject, Interface, Object, Schema,
-        SimpleObject, Subscription, Union,
+    let supplied = req.variables.unwrap_or_default();
+    let mut request = async_graphql::Request::new(req.query);
+    if let Some(name) = req.operation_name {
+        request = request.operation_name(name);
+    }
+    if let Some(errors) = missing_variables(&mut request, &supplied) {
+        return Err(GqlResponse::request_error(errors));
+    }
+    request = request.variables(Variables::from_json(Value::Object(supplied)));
+    for (name, value) in req.extensions.unwrap_or_default() {
+        match async_graphql::Value::from_json(value) {
+            Ok(value) => {
+                request.extensions.0.insert(name, value);
+            }
+            Err(_) => {
+                return Err(GqlResponse::request_error(vec![GqlError::new(format!(
+                    "the extension `{name}` is not a GraphQL value"
+                ))]));
+            }
+        }
+    }
+    Ok(request.data(context).data(exec))
+}
+
+/// The errors of GraphQL's variable coercion (CoerceVariableValues) that `supplied` fails against
+/// the operation `request` selects: a variable of a non-null type with no default that is absent
+/// or `null`. `None` when coercion passes, or when the document does not parse or select one
+/// operation, which the schema reports itself.
+///
+/// async-graphql coerces a variable when the field reading it resolves, so it reports the fault
+/// with that field's `path` and nothing in the error tells it from a resolver's. The document is
+/// parsed here once and cached on the request, which the schema then reuses.
+fn missing_variables(request: &mut async_graphql::Request, supplied: &Map<String, Value>) -> Option<Vec<GqlError>> {
+    let operation_name = request.operation_name.clone();
+    let document = request.parsed_query().ok()?;
+    let operation = match (&document.operations, operation_name.as_deref()) {
+        (DocumentOperations::Single(operation), None) => &operation.node,
+        (DocumentOperations::Multiple(operations), Some(name)) => &operations.get(name)?.node,
+        (DocumentOperations::Multiple(operations), None) if operations.len() == 1 => &operations.values().next()?.node,
+        _ => return None,
     };
+    let errors: Vec<GqlError> = operation
+        .variable_definitions
+        .iter()
+        .filter(|definition| {
+            let definition = &definition.node;
+            let absent = supplied.get(definition.name.node.as_str()).is_none_or(Value::is_null);
+            absent && !definition.var_type.node.nullable && definition.default_value.is_none()
+        })
+        .map(|definition| {
+            let name = &definition.node.name.node;
+            let mut error = GqlError::new(format!("Variable \"${name}\" of required type \"{}\" was not provided.", definition.node.var_type.node));
+            error.locations = vec![Location { line: definition.pos.line as u32, column: definition.pos.column as u32 }];
+            error
+        })
+        .collect();
+    (!errors.is_empty()).then_some(errors)
+}
+
+/// async-graphql's response as a `GqlResponse`.
+///
+/// async-graphql answers a request that failed before execution as a response whose `data` is
+/// `null` and whose errors carry no `path`, a field error always naming its field, so that is how
+/// a request error is told from an executed request whose data is `null`. Variable coercion is the
+/// exception, which [`missing_variables`] answers before the schema runs.
+fn response_of(response: async_graphql::Response) -> GqlResponse {
+    let errors: Vec<GqlError> = response.errors.iter().map(error_of).collect();
+    let before_execution =
+        response.data == async_graphql::Value::Null && !response.errors.is_empty() && response.errors.iter().all(|e| e.path.is_empty());
+    let extensions: Map<String, Value> = response
+        .extensions
+        .into_iter()
+        .filter_map(|(name, value)| value.into_json().ok().map(|value| (name, value)))
+        .collect();
+    let mut out = if before_execution {
+        GqlResponse::request_error(errors)
+    } else {
+        GqlResponse::executed(response.data.into_json().unwrap_or(Value::Null), errors)
+    };
+    if !extensions.is_empty() {
+        out = out.with_extensions(Value::Object(extensions));
+    }
+    out
+}
+
+/// One error as the specification's response format writes it: async-graphql serializes its
+/// `ServerError` in that format already.
+fn error_of(error: &ServerError) -> GqlError {
+    serde_json::to_value(error)
+        .and_then(serde_json::from_value::<GqlError>)
+        .unwrap_or_else(|_| GqlError::new(error.message.clone()))
 }

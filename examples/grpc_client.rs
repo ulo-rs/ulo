@@ -22,10 +22,9 @@
 //! ```
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use ulo::http::Body;
-use ulo::{UloFactory, module, provide};
+use ulo::{UloFactory, module, provider_factory};
 use ulo_http_axum::AxumAdapter;
 use ulo_macros::{controller, get, grpc_methods, new, routes};
 
@@ -43,18 +42,18 @@ const GRPC_ADDR: &str = "127.0.0.1:50051";
 
 #[controller("/orders")]
 pub struct OrdersGateway {
-    /// Injected by type, as the one client the module declares. A clone of
-    /// `OrdersClient<Channel>` shares the connection, so a handler clones it
-    /// out of the `Arc` to get the `&mut` tonic wants.
+    /// Injected by type. `OrdersClient<Channel>` is cheap to clone — the
+    /// clone shares the connection — so a handler clones it to get the `&mut`
+    /// tonic wants.
     #[inject]
-    orders: Arc<OrdersClient<Channel>>,
+    orders: OrdersClient<Channel>,
 }
 
 #[routes]
 impl OrdersGateway {
     #[get("/place")]
     async fn place(&self) -> Body {
-        let mut orders = (*self.orders).clone();
+        let mut orders = self.orders.clone();
         match orders
             .create(orders_pb::CreateOrderRequest {
                 item: "keyboard".to_string(),
@@ -109,7 +108,7 @@ impl OrdersService {
 
 #[module(
     controllers: [OrdersGateway, OrdersService],
-    providers: [provide!(async || {
+    providers: [provider_factory!(OrdersClient<Channel>, || {
         // `connect_lazy` dials on the first call rather than here, so a peer
         // that is not up yet cannot fail startup.
         let channel = Channel::from_static("http://127.0.0.1:50051").connect_lazy();

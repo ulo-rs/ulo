@@ -1,97 +1,79 @@
-// Tests: conformance with the HTTP adapter SPI is proved once for all five
-// adapters in `integration-tests` — the `*_conformance` suites, each
-// instantiated per adapter. This crate's `tests/` covers only what is
-// salvo's: body streaming, and WebSocket upgrade on both port modes.
-
-//! # ulo-http-salvo
+//! Runs a `ulo` application inside a salvo server (transports DESIGN §3.8): a native embedding,
+//! the adapter implementing `salvo::Handler`, nested under a path or as the catch-all.
 //!
-//! [Salvo](https://salvo.rs) adapter for the ulo framework. Implements both
-//! `HttpAdapter` and `WsAdapter`, so a single adapter type covers HTTP
-//! routes, same-port WebSocket upgrades, and separate-port WebSocket servers.
+//! ```
+//! # use ulo::App;
+//! # #[ulo::module]
+//! # struct AppModule;
+//! # async fn f() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//! use salvo::prelude::*;
 //!
-//! ## Usage
+//! let server = ulo_http_salvo::Embedded::new().nested_at("/api");
+//! let embedded = server.handle();
+//! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
 //!
-//! ```ignore
-//! use ulo_http_salvo::SalvoAdapter;
-//!
-//! #[tokio::main]
-//! async fn main() {
-//!     let mut app = UloFactory::new()
-//!         .create_with(AppModule)
-//!         .await
-//!         .unwrap();
-//!     app.use_http_adapter(SalvoAdapter::new(), ("127.0.0.1", 3000)).unwrap();
-//!     // Only needed for `#[websocket_gateway(port = N)]` gateways.
-//!     app.use_websocket_adapter(SalvoAdapter::new()).unwrap();
-//!     app.start().await.unwrap();
-//! }
+//! let router = Router::new().push(Router::with_path("api/{**rest}").goal(ulo_http_salvo::handler(&embedded)));
+//! let acceptor = salvo::conn::TcpListener::new("0.0.0.0:8080").bind().await;
+//! let server = Server::new(ulo_http_salvo::Closing::new(&embedded, acceptor));
+//! ulo_http_salvo::run(app, &embedded, server, Service::new(router), ulo_runtime_tokio::shutdown_signal()).await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
-//! ## Routing
+//! The server is built over [`Closing`], which drops the acceptor it wraps when the drain begins
+//! and so closes its listener; `run`'s parameter type, `salvo::Server<Closing<A>>`, requires it,
+//! and `run` refuses one built from another embedding's handle.
+//! The rest of the server is configured as usual, `with_http_builder`, `http1_mut`, `http2_mut`
+//! and `fuse_factory` included.
 //!
-//! Ulo and salvo share `{param}` path syntax, so routes mount unchanged.
-//! Express-style `:param` segments are rewritten at bind time for callers of
-//! the raw adapter SPI — the route macros reject that syntax. A catch-all
-//! fallback is registered at `{**rest}` to produce the standard ulo 404
-//! response for unmatched paths, with the global middleware chain applied.
+//! salvo hands its handler the full path, so the adapter declares `STRIPS_PREFIX: false` and the
+//! app strips `.nested_at` itself; a request it receives outside the prefix is answered as the
+//! app's 404 and logged at `warn` once. What it declares: the peer address from
+//! `Request::remote_addr`; upgrades through `OnUpgrade` left in the extensions; no miss
+//! forwarding; host extensions copied from `Request::extensions`, a value a middleware put in the
+//! `Depot` crossing through a `forward` copy over [`SalvoRequest`]; no TLS info; streamed bodies; a
+//! dropped body observed at the disconnect.
 //!
-//! ## HTTP methods
-//!
-//! GET, POST, PUT, DELETE, PATCH, HEAD, and OPTIONS dispatch through salvo's
-//! corresponding `Router` filters. TRACE and CONNECT are attached via
-//! `Router::goal()` because salvo's `Router` does not expose `.trace()` or
-//! `.connect()` — the handler runs on a path match regardless of method, so
-//! routes intended for TRACE/CONNECT should not share a path with handlers
-//! that expect exact-method dispatch.
-//!
-//! ## Request bodies
-//!
-//! Request bodies are forwarded as a stream rather than buffered. Ulo's
-//! `BodyStream` extractor receives frames frame-by-frame; `Bytes`, `Json`,
-//! and friends call `RequestBody::collect` which drains the stream on demand.
-//! Salvo's default 64 KiB body cache (used by `Request::payload`) is bypassed
-//! — there is no built-in size limit on what reaches the handler.
-//!
-//! ## Response bodies
-//!
-//! Ulo's [`Body::stream`](ulo::http::Body::stream) is forwarded to
-//! salvo as `ResBody::Boxed`, so chunks reach the client incrementally. SSE
-//! and other long-lived streaming responses work without buffering.
-//!
-//! ## WebSockets
-//!
-//! - **Same-port** upgrades go through salvo's `WebSocketUpgrade` on the HTTP
-//!   listener. Sub-protocols (`Sec-WebSocket-Protocol`) are negotiated by
-//!   echoing the first protocol the client offers.
-//! - **Separate-port** gateways (`#[websocket_gateway(port = N)]`) bind their
-//!   own salvo server on the requested port. `port = 0` lets the OS assign a
-//!   distinct listener.
-//! - Outbound messages are buffered through a 32-slot mpsc channel per
-//!   connection, then written to the salvo socket from a dedicated write
-//!   task. Streaming handler outputs (`Items::Many`) run as
-//!   spawned tasks that are aborted when the read loop ends.
-//!
-//! ## Graceful shutdown
-//!
-//! `app.close()` flips a shared `tokio::sync::watch` channel, which a
-//! per-server task observes and forwards to
-//! `salvo::Server::handle().stop_graceful(None)`. Both the HTTP server and
-//! every separate-port WS listener stop in response to a single signal.
-//!
-//! ## Bind failures
-//!
-//! Bind failures (port in use, permission denied, etc.) surface as errors
-//! from `app.start()` — the framework's intentional fail-fast behavior.
-//! Adapter types themselves never panic at runtime; transport-level errors
-//! flow through `tracing::debug` and `tracing::warn` events.
+//! Built-in forwards: `OriginalPath`, from `req.uri().path()`. The app's response, `Routing`
+//! included, goes into salvo's response extensions, where a hoop after the handler reads it.
 
-mod salvo_adapter;
-mod salvo_websocket_adapter;
-pub(crate) mod tokio_sender;
+mod handler;
+mod run;
 
-pub use salvo_adapter::SalvoAdapter;
-pub use tokio_sender::TokioSender;
+use ulo_http::embed::{Embed, EmbedLimits, OriginalPath};
 
-pub use ulo::http::HttpAdapter;
+pub use handler::{SalvoHandler, handler};
+pub use run::{Closing, run};
 
-pub use ulo::ws::WsAdapter;
+/// The salvo host.
+pub struct Salvo;
+
+impl Embed for Salvo {
+    const NAME: &'static str = "salvo";
+
+    const STRIPS_PREFIX: bool = false;
+
+    type HostRequest<'r> = SalvoRequest<'r>;
+
+    fn limits() -> EmbedLimits {
+        EmbedLimits::NONE.forward_miss(false).tls_info(false)
+    }
+
+    fn builtin_forwards(embedded: ulo_http::embed::Embedded<Self>) -> ulo_http::embed::Embedded<Self> {
+        embedded.forward(|req: &SalvoRequest<'_>| Some(OriginalPath::from(req.request.uri())))
+    }
+}
+
+/// The salvo request as a `forward` copy reads it: the request and the `Depot` beside it, where
+/// salvo middleware conventionally stores what it learned.
+#[derive(Clone, Copy)]
+pub struct SalvoRequest<'r> {
+    pub request: &'r salvo::Request,
+    pub depot: &'r salvo::Depot,
+}
+
+/// The embedding server for salvo, `ulo_http::embed::Embedded<Salvo>`.
+pub type Embedded = ulo_http::embed::Embedded<Salvo>;
+
+/// Its handle, `ulo_http::embed::Handle<Salvo>`.
+pub type Handle = ulo_http::embed::Handle<Salvo>;

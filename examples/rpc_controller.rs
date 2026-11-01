@@ -28,7 +28,6 @@
 //   # fire-and-forget (no id → no reply regardless of outcome)
 //   echo '{"pattern":"order.shipped","data":{"order_id":1001}}' | nc 127.0.0.1 4000
 
-use std::sync::Arc;
 use ulo::UloFactory;
 use ulo_macros::{controller, injectable, module, new, patterns};
 
@@ -56,12 +55,12 @@ impl OrdersService {
 #[controller]
 pub struct OrdersController {
     #[inject]
-    service: Arc<OrdersService>,
+    service: OrdersService,
 }
 #[patterns]
 impl OrdersController {
     #[new]
-    pub fn new(service: Arc<OrdersService>) -> Self {
+    pub fn new(service: OrdersService) -> Self {
         Self { service }
     }
 

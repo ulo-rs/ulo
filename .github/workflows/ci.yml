@@ -2,39 +2,60 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [experiment/di-redesign]
   pull_request:
+    branches: [experiment/di-redesign]
 
 jobs:
-  rustfmt:
-    name: rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --all --check
-
   check:
     name: check (all features, all targets)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      # --all-features compiles the feature-gated test targets (e.g. the DB
-      # crates' `integration` health tests) that a default build never touches.
-      # --locked fails on a manifest/lockfile mismatch instead of silently
-      # resolving fresh versions the repo doesn't record.
+      # --all-features compiles the feature-gated test targets (the broker crates'
+      # `integration` conformance suites) that a default build never touches, and
+      # the `tls` features, of which ulo-rpc-kafka's builds librdkafka against the
+      # runner's OpenSSL headers. --locked fails on a manifest/lockfile mismatch
+      # instead of resolving fresh versions the repo doesn't record.
       - run: cargo check --workspace --all-features --all-targets --locked
+      # The examples under `examples/` and the helper their tests share name no doc-hidden path or
+      # item (`--self-test` runs first, inside the check), and hold themselves to the
+      # `clippy -D warnings` a user's crate is held to.
+      - run: python3 scripts/check_examples.py
+      - run: python3 scripts/check_doctests.py
+      - run: cargo clippy -p 'ex-*' --all-targets --no-deps --locked -- -D warnings
+
+  runtime-levels:
+    name: runtime levels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # The registry alone: `cargo tree` downloads every crate in the lock to read its manifest,
+      # about 90 s cold, and compiles nothing.
+      - uses: Swatinem/rust-cache@v2
+      # Each member held to its level in `runtime-levels.txt` (transports DESIGN §8): no tokio in a
+      # runtime-free crate's tree; in a runtime-neutral one no tokio feature beyond `sync`, and
+      # `io-util` and `bytes` on the HTTP/2 path; and no member without an entry. A job of its own
+      # rather than a step in `check`, so a crate leaving its level fails under its own name and
+      # does not stop the compile from reporting.
+      - run: python3 scripts/runtime_levels.py --locked
+      # One `sqlx` and one `sqlx-core` in the workspace's own tree: `ulo-db-sqlx` hands its pool to
+      # SeaORM's connector, which needs both to name the same SQLx. Reads `cargo tree` too, so it
+      # shares this job's registry cache; `--self-test` inside it refuses a reader that has stopped
+      # recognising the tree.
+      - run: python3 scripts/one_sqlx.py --locked
 
   docs:
     name: docs
     runs-on: ubuntu-latest
     env:
-      # Broken intra-doc links are warnings by default, so they rot unnoticed:
-      # every one this gate was written for dated from an earlier rename.
+      # Broken intra-doc links are warnings by default and go unnoticed until a
+      # reader follows one.
       RUSTDOCFLAGS: -D warnings
     steps:
       - uses: actions/checkout@v4
@@ -56,64 +77,96 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # Hermetic suites only — everything here runs against localhost with no
-      # external services. Broker and DB crates keep their service-dependent
-      # tests behind feature gates and are compile-checked in the check job;
-      # the four broker conformance suites that take seconds run in the
-      # `conformance` job on push to master.
-      - run: cargo test -p ulo --lib --locked
-      - run: cargo test -p integration-tests --locked
-      # The build-script companion: pure functions over tonic's generated text.
-      - run: cargo test -p ulo-build --locked
-      # Startup-failure reporting and connection-string redaction for the database modules.
-      # Hermetic: no server is contacted. Their service-dependent suites stay behind the
-      # `integration` feature and are compile-checked by the job above.
-      - run: cargo test -p ulo-db-seaorm -p ulo-db-redis -p ulo-db-mongodb --lib --test startup --locked
-      - run: cargo test -p ulo-db-sqlx --features postgres --lib --test startup --locked
-      - run: cargo test -p ulo-db-diesel --features postgres --lib --test startup --locked
-      # Prisma has no server to reach: `for_root` takes a closure producing the
-      # generated client, so its whole surface is registration.
-      - run: cargo test -p ulo-db-prisma --locked
-      # Each crate's own hermetic suite. Named explicitly rather than with
-      # `--workspace`, which would pull in every service-gated target. Before this
-      # line existed the `check` job compiled these and nothing ran them, so they
-      # could stop being true but never start failing. The adapter suites are the
-      # only proof that WebSocket upgrade works on poem, salvo and rocket, and
-      # that actix collects a request body rather than streaming it.
-      - run: >
-          cargo test --locked --lib --tests
-          -p ulo-config -p ulo-health -p ulo-cli
-          -p ulo-http-axum -p ulo-http-actix -p ulo-http-poem
-          -p ulo-http-salvo -p ulo-http-rocket
-          -p ulo-rpc-tcp -p ulo-rpc-udp -p ulo-rpc-nats -p ulo-rpc-redis
-          -p ulo-rpc-rabbitmq -p ulo-rpc-mqtt -p ulo-rpc-kafka
-          -p ulo-ws-tungstenite -p ulo-ws-redis -p ulo-grpc
-      # ulo-macros' unit tests only. Its `diagnostics` target compares rustc's
-      # rendering and runs on a pinned compiler in the job below, so that a
-      # reworded diagnostic cannot fail an unrelated pull request here.
-      - run: cargo test -p ulo-macros --lib --locked
-      # Doc examples compile in no other job: `--all-targets` skips them and the
-      # docs job renders without running them. Only examples not marked `ignore`
-      # are covered.
-      - run: cargo test --workspace --all-features --doc --locked
+      # ex-37-db-diesel links SQLite. The workspace build gets a bundled copy through another
+      # crate's feature unification; this keeps the example building if that changes.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+      # Hermetic suites only: everything here runs against localhost. That covers
+      # the HTTP conformance suites against hyper and the five adapters, the RPC
+      # suites on both TCP links and on UDP, the WebSocket and gRPC tests, and
+      # ulo-codegen-tests, whose build script runs ulo-build with the vendored
+      # protoc. Two targets
+      # compile to nothing here: the broker conformance suites carry
+      # `#![cfg(feature = "integration")]` and run in `broker integration`,
+      # and `compile_fail` reports itself ignored off rustc 1.98.1 and runs in
+      # `macro diagnostics`.
+      - run: cargo test --workspace --locked
+      # A harness declares a scenario not applicable by name, and the suite then reports it ignored
+      # and passes. Tokio's runtime can shut down while a value of it is held, so the two scenarios
+      # on a runtime that has shut down are required by name on it.
+      - run: >-
+          python3 scripts/require_tests.py
+          a_shut_down_runtime_refuses_spawning_and_timing_without_panicking
+          run_on_a_shut_down_runtime_answers_runtime_shut_down
+          -- cargo test -p ulo-runtime-tokio --test conformance --locked
+      # actix-web's `http2` is off in a default build, and any crate in an application can turn
+      # it on, so the actix suite runs once more against an h2c host, where the adapter's
+      # `DrainHttp2::Reset` declaration is asserted.
+      - run: cargo test -p ulo-http-actix --features conformance-http2 --test conformance_http2 --locked
+      # A conformance suite writes each startup failure, its full error chain included, to a file
+      # under target/conformance-failures/ before the test panics with it. The files are printed
+      # here, so the cause is in the job log whatever else the log keeps, and kept as an artifact.
+      - name: print conformance startup failures
+        if: failure()
+        run: |
+          shopt -s nullglob
+          files=(target/conformance-failures/*)
+          if [ ${#files[@]} -eq 0 ]; then echo "no startup failure was written"; fi
+          for file in "${files[@]}"; do echo "==> $file"; cat "$file"; echo; done
+      - name: upload conformance startup failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-failures-test
+          path: target/conformance-failures/
+          if-no-files-found: ignore
 
-  conformance:
-    name: rpc conformance (brokers)
-    # On push to master, not on pull requests: the four suites start their
-    # brokers under Docker, and their harness time is about a minute together,
-    # with the compile of four `integration` test targets and four image pulls
-    # on top. Kafka is not here: its suite takes minutes where these take
-    # seconds. `make conformance-kafka` runs it and carries the figures.
-    if: github.event_name == 'push'
+  smol:
+    name: smol
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p ulo-rpc-nats --features integration --test conformance --locked
-      - run: cargo test -p ulo-rpc-redis --features integration --test conformance --locked
-      - run: cargo test -p ulo-rpc-mqtt --features integration --test conformance --locked
-      - run: cargo test -p ulo-rpc-rabbitmq --features integration --test conformance --locked
+      # The suites on smol, with smol's sockets and no tokio runtime. `test` runs them too, inside
+      # `cargo test --workspace`; this job names each one, so the smol runs are visible as their own
+      # result. The runtime suite on `ulo_runtime_smol::Smol`, its executor run by four threads.
+      - run: cargo test -p ulo-runtime-smol --test conformance --locked
+      # The HTTP suite against the hyper backend on `ulo-listener-smol`.
+      - run: cargo test -p ulo-http-hyper --test conformance_smol --locked
+      # The WebSocket suite against the standalone server on smol, the HTTP port of the hyper
+      # backend on smol, and the pipe host, which has no socket and no hyper.
+      - run: cargo test -p ulo-ws-hyper --test conformance_smol --locked
+      - run: cargo test -p ulo-ws --test conformance_smol --test conformance_pipe --locked
+      # The RPC suite against the smol TCP link, plain, CBOR and TLS.
+      - run: cargo test -p ulo-rpc-tcp-smol --test conformance --test conformance_cbor --test conformance_tls --locked
+      # The starvation cases, each on a one-thread smol executor beside a ticker under a watchdog
+      # (transports DESIGN §3.7): the listener's read budget, the WebSocket read and refusal
+      # loops, hyper's HTTP/2 loop, and the TCP core's frame loop, linger and reply reader.
+      - run: cargo test -p ulo-listener-smol --test read_budget --locked
+      - run: cargo test -p ulo-ws-hyper --test yield_smol --test flood_smol --locked
+      - run: cargo test -p ulo-http-hyper --test flood_smol --locked
+      - run: cargo test -p ulo-rpc-tcp-smol --test frame_flood --test linger_flood --test client_flood --locked
+      # The TCP link's lingering close, cut close on either side, dropped client and reply lane
+      # whose send fails on smol, timed on scripted clocks and sized from the buffers the kernel
+      # grants.
+      - run: cargo test -p ulo-rpc-tcp-smol --test lingering_close --test cut_grace --test server_cut_grace --test dropped_client --test lane_send_failure --locked
+      # A conformance suite writes each startup failure, its full error chain included, to a file
+      # under target/conformance-failures/ before the test panics with it. The files are printed
+      # here, so the cause is in the job log whatever else the log keeps, and kept as an artifact.
+      - name: print conformance startup failures
+        if: failure()
+        run: |
+          shopt -s nullglob
+          files=(target/conformance-failures/*)
+          if [ ${#files[@]} -eq 0 ]; then echo "no startup failure was written"; fi
+          for file in "${files[@]}"; do echo "==> $file"; cat "$file"; echo; done
+      - name: upload conformance startup failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-failures-smol
+          path: target/conformance-failures/
+          if-no-files-found: ignore
 
   msrv-matrix:
     name: msrv matrix
@@ -124,7 +177,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       # Read from the manifests rather than listed here, so a crate that changes
-      # its floor moves between legs without this file being touched.
+      # its floor moves between legs without this file being touched. Today the
+      # legs are 1.88 (the workspace), 1.89 (ulo-graphql-async-graphql) and 1.92
+      # (ulo-http-salvo), each floor set by that crate's dependencies.
       - id: read
         run: |
           v=$(cargo metadata --no-deps --format-version 1 \
@@ -155,48 +210,282 @@ jobs:
             | tr '\n' ' ')
           test -n "$pkgs" || { echo "no crate declares ${{ matrix.rust }}"; exit 1; }
           echo "checking: $pkgs"
-          cargo check --all-features --locked $pkgs
+          cargo check --all-features --all-targets --locked $pkgs
 
   diagnostics:
     name: macro diagnostics
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Pinned on purpose, and the one pin in this file that is not read from a
-      # manifest. `tests/diagnostics/*.stderr` records rustc's rendering as well
-      # as the macros' own text, and rustc rewords its half roughly once every
-      # three minor versions: on `stable` that arrives as a red build on a pull
-      # request that changed nothing related. Bumping this version is its own
-      # change, where the snapshot diff is the thing being reviewed — which is
-      # when a diagnostic that got worse is actually noticed.
+      # Pinned on purpose, one of the four pins in this file that are not read from
+      # a manifest; `generated code lints`, `template matrix` and `miri` hold the others. `tests/ui/*.stderr` records rustc's rendering as well as the
+      # attributes' own text, and rustc rewords its half roughly once every three
+      # minor versions: on `stable` that arrives as a red build on a pull request
+      # that changed nothing related. ulo-codegen-tests' build script sets
+      # `cfg(ulo_snapshot_rustc)` only on this version, and the test is ignored
+      # without it, so a drifted pin reports `1 ignored` rather than failing.
+      # Bumping the version is its own change, where the snapshot diff is the
+      # thing being reviewed.
       #
       # Regenerate after an intended change, on this same version:
-      #     TRYBUILD=overwrite cargo test -p ulo-macros --test diagnostics
+      #     TRYBUILD=overwrite cargo +1.98.1 test -p ulo-codegen-tests --test compile_fail
       - uses: dtolnay/rust-toolchain@1.98.1
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p ulo-macros --test diagnostics --locked
+      - run: cargo test -p ulo-codegen-tests --test compile_fail --locked
 
-  scaffold:
-    name: cli scaffold
+  generated-lints:
+    name: generated code lints
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned to a stable release, so a lint a new clippy adds cannot turn this job red on a
+      # change unrelated to the macros. The pin is bumped deliberately, in a commit of its own
+      # that also fixes whatever new lints the release trips in generated code.
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # What the attribute and derive macros and ulo-build write lands in the user's crate, so a
+      # lint it trips fails a user's `clippy -D warnings` on code the user cannot change.
+      # ulo-macro-lints expands every one of them and holds almost nothing else, so a warning
+      # here names generated code. --no-deps lints that crate alone: the framework's own crates
+      # are compiled, not linted.
+      - run: cargo clippy -p ulo-macro-lints --all-targets --no-deps --locked -- -D warnings
+
+  public-reach:
+    name: public reach
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rustdoc's JSON output is unstable, so the job pins the nightly the miri job pins, and the
+      # scanner reads the format that nightly writes; the pin moves with the miri job's.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-11
+      - uses: Swatinem/rust-cache@v2
+      # Every type a listed crate's public signatures name is reachable from that crate (DESIGN
+      # §0.7). The script self-tests on a planted unexported type first, then builds each crate's
+      # rustdoc JSON and fails on a finding `public-reach.txt` does not allow and on an allowance
+      # nothing matches.
+      - run: python3 scripts/public_reach.py check nightly-2026-10-11
+
+  miri:
+    name: miri
+    runs-on: ubuntu-latest
+    env:
+      MIRI_TOOLCHAIN: nightly-2026-10-11
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned to one nightly, so a Miri change cannot turn this job red on a change unrelated to
+      # `unsafe`; the pin is bumped in a commit of its own.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-11
+          components: miri, rust-src
+      # `unsafe` only where `unsafe-allowed.txt` lists it: the workspace denies `unsafe_code`, a
+      # listed module opts out with `#![allow(unsafe_code)]`, and this fails on `unsafe` or a
+      # relaxed `unsafe_code` anywhere else, on a member that does not inherit the workspace's
+      # lints, on a listed file that does not opt out, and on an entry whose kind is missing or
+      # unknown, a `syscall` entry with no reason or one of whitespace alone, or a `pure-rust`
+      # entry with anything after the word. It first runs those rules over the planted lines in
+      # `scripts/unsafe_allowed_selftest.txt` and fails unless each is refused. Before the cache,
+      # so it fails fast.
+      - run: python3 scripts/unsafe_allowed.py check
+      - uses: Swatinem/rust-cache@v2
+      # Miri over each `pure-rust` entry's tests: a module's own tests by its path, a listed test
+      # target whole. It fails when Miri fails or runs none of an entry's tests, ignored ones not
+      # counting, and prints each `syscall` entry it skips with the reason Miri cannot execute it.
+      - run: python3 scripts/unsafe_allowed.py miri
+
+  brokers:
+    name: broker integration
+    # The tests that need a live broker: the five broker RPC conformance suites,
+    # the NATS and MQTT links' own broker tests, the WebSocket Redis adapter's
+    # two-process test and examples 24 and 28; and Kafka's `NoTimer` refusal, which
+    # needs none and is required by name, as the NATS and MQTT lib tests are. On push,
+    # not on pull requests: each starts its broker under Docker through testcontainers,
+    # and the image pulls and the compile of every `integration` test target cost
+    # minutes a pull request does not need to wait on. One crate per step, so a failure names its broker. The Kafka
+    # suite starts a broker container per scenario, at most four at once.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build -p ulo-cli --locked
-      # `ulo new` output pins published crate versions; patching them to the
-      # checkout verifies the templates against the code under review. A version
-      # bump that forgets to update the templates fails here loudly.
-      - name: scaffold a project and compile it
+      - run: cargo test -p ulo-rpc-nats --features integration --test conformance --locked
+      # The link's own broker tests live in its library target, which the conformance step does
+      # not run. The names are required, so a cfg that compiles them away fails the step.
+      - run: >-
+          python3 scripts/require_tests.py
+          the_task_keeping_a_cut_close_s_connection_lets_go_at_the_grace
+          the_task_keeping_a_cut_close_s_connection_lets_go_when_it_is_lost
+          a_server_s_grace_is_timed_on_the_app_s_timer
+          a_cut_close_keeps_the_connection_until_the_answer_it_waited_room_for_is_written
+          a_nats_server_s_roots_wait_whose_bound_is_refused_logs_the_refusal
+          -- cargo test -p ulo-rpc-nats --features integration --lib --locked
+      - run: cargo test -p ulo-rpc-redis --features integration --test conformance --locked
+      - run: cargo test -p ulo-rpc-mqtt --features integration --test conformance --locked
+      - run: >-
+          python3 scripts/require_tests.py
+          room_made_between_a_failed_attempt_and_the_wait_wakes_the_reply
+          the_linger_runs_on_the_clock_the_loop_was_given
+          connecting_over_tls_does_not_stall_the_thread
+          -- cargo test -p ulo-rpc-mqtt --features integration --lib --locked
+      - run: >-
+          python3 scripts/require_tests.py
+          the_server_s_connection_recovers_after_the_broker_closes_it
+          a_broker_lost_between_the_two_connections_fails_listen_at_the_bound
+          a_call_that_gives_up_leaves_the_connect_to_the_next_call
+          a_connect_finished_after_its_call_gave_up_is_taken_by_the_next_call
+          a_client_dropped_holding_an_untaken_connection_closes_it
+          -- cargo test -p ulo-rpc-rabbitmq --features integration --test conformance --locked
+      - run: cargo test -p ulo-rpc-kafka --features integration --test conformance --locked
+      - run: >-
+          python3 scripts/require_tests.py
+          a_server_on_an_app_with_no_timer_refuses_to_listen
+          -- cargo test -p ulo-rpc-kafka --features integration --test no_timer --locked
+      # Broadcast across two processes through the WebSocket transport's Redis adapter.
+      - run: >-
+          python3 scripts/require_tests.py
+          a_room_broadcast_reaches_the_member_on_the_other_process
+          a_broadcast_published_right_after_listen_reaches_a_member_of_the_same_process
+          listen_waits_for_the_subscription_when_redis_is_slow_to_confirm_it
+          -- cargo test -p ulo-ws-redis --features integration --test integration --locked
+      # Example 24: two processes of its binary on one Redis. Required by name, since a cfg that
+      # compiles the test away reports `ok. 0 passed`.
+      - run: >-
+          python3 scripts/require_tests.py
+          a_shout_reaches_the_room_on_both_processes_and_nobody_outside_it
+          -- cargo test -p ex-24-ws-rooms --features integration --test across_processes --locked
+      # Example 28: example 25's handlers over each broker. Required by name, since a cfg that
+      # compiles the tests away reports `ok. 0 passed`.
+      - run: >-
+          python3 scripts/require_tests.py
+          the_handlers_answer_over_nats
+          the_handlers_answer_over_redis
+          the_handlers_answer_over_mqtt
+          the_handlers_answer_over_rabbitmq
+          the_handlers_answer_over_kafka
+          -- cargo test -p ex-28-rpc-links --features integration --test brokers --locked
+      # A conformance suite writes each startup failure, its full error chain included, to a file
+      # under target/conformance-failures/ before the test panics with it. The files are printed
+      # here, so the cause is in the job log whatever else the log keeps, and kept as an artifact.
+      - name: print conformance startup failures
+        if: failure()
         run: |
-          cd "$RUNNER_TEMP"
-          "$GITHUB_WORKSPACE/target/debug/ulo" new scaffold-smoke
-          cd scaffold-smoke
-          "$GITHUB_WORKSPACE/target/debug/ulo" generate resource user
-          cat >> Cargo.toml <<EOF
-          [patch.crates-io]
-          ulo = { path = "$GITHUB_WORKSPACE/crates/ulo" }
-          ulo-macros = { path = "$GITHUB_WORKSPACE/crates/ulo-macros" }
-          ulo-http-axum = { path = "$GITHUB_WORKSPACE/crates/ulo-http-axum" }
-          EOF
-          cargo check
+          shopt -s nullglob
+          files=(target/conformance-failures/*)
+          if [ ${#files[@]} -eq 0 ]; then echo "no startup failure was written"; fi
+          for file in "${files[@]}"; do echo "==> $file"; cat "$file"; echo; done
+      - name: upload conformance startup failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-failures-brokers
+          path: target/conformance-failures/
+          if-no-files-found: ignore
+
+  template-matrix-plan:
+    name: template matrix plan
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+      projects: ${{ steps.list.outputs.projects }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A pull request's diff against its base needs the base's history.
+          fetch-depth: 0
+      # Every push runs the matrix. A pull request runs it when it touches the CLI, whose templates
+      # are the thing under test, or the scripts that run them.
+      - id: gate
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          run=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            run=false
+            if git diff --name-only "origin/$BASE...HEAD" | grep -Eq '^(crates/ulo-cli/|scripts/)'; then
+              run=true
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+      # The legs are the script's own list, so a project added to the matrix is run without this
+      # file being touched. The list is always non-empty: an empty matrix is an error in Actions,
+      # and the job below is skipped through `run` instead.
+      - id: list
+        run: |
+          projects=$(python3 scripts/template_matrix.py --list | jq -R . | jq -sc .)
+          echo "projects=$projects" >> "$GITHUB_OUTPUT"
+          echo "projects: $projects"
+
+  template-matrix:
+    name: template matrix ${{ matrix.project }}
+    needs: template-matrix-plan
+    if: needs.template-matrix-plan.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(needs.template-matrix-plan.outputs.projects) }}
+    steps:
+      - uses: actions/checkout@v4
+      # The pin of `generated code lints`, and bumped with it: a project the CLI writes is held to
+      # the same clippy a user's crate is held to. The generated manifests declare rust-version
+      # 1.88 to 1.94, all below it.
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: clippy
+      # cmake builds librdkafka for `rpc-kafka`; libsqlite3-dev is what `diesel-sqlite` links.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake libsqlite3-dev
+      # The generated projects build into target/template-matrix, which the script shares between
+      # them; the key is the project, since each leg's third-party tree differs.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target/template-matrix"
+          key: ${{ matrix.project }}
+      # `ulo new` into a temporary directory, the workspace's crates patched in over crates.io,
+      # then `cargo test --locked` and `cargo clippy --all-targets --locked -- -D warnings`. A
+      # project whose tests print no `test <name> ... ok` line fails, as `unsafe_allowed.py miri`
+      # fails an entry that ran none: both count with `scripts/ran_a_test.py`. A failing project's
+      # whole log is printed. Before the build, the script's checks run against planted output.
+      - run: python3 scripts/template_matrix.py --self-test
+      - run: python3 scripts/template_matrix.py "${{ matrix.project }}"
+
+  store-conformance:
+    name: store conformance
+    # The database conformance suites against real servers: Postgres, MySQL, MongoDB and Redis
+    # start under Docker through testcontainers, and a run pulls their images. On push, not on
+    # pull requests, as `broker integration` is. SQLite needs only a file.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
+      - uses: Swatinem/rust-cache@v2
+      # One crate per step, so a failure names its store. Each invokes `ulo-db-conformance`.
+      - run: cargo test -p ulo-db-sqlx --features postgres,mysql,sqlite,integration --test conformance --test lock_wait --test root_cert --locked
+      # `tls` needs `mysql` as well: the test is gated on all three and compiles to nothing
+      # without it. A server issued a certificate by a test CA, connected through rustls.
+      - run: cargo test -p ulo-db-sqlx --features mysql,tls,integration --test tls --locked
+      - run: cargo test -p ulo-db-seaorm --features postgres,mysql,sqlite,integration --test conformance --locked
+      - run: cargo test -p ulo-db-diesel --features postgres,mysql,sqlite,integration --test conformance --locked
+      - run: cargo test -p ulo-db-mongodb --features integration --test conformance --locked
+      - run: cargo test -p ulo-db-redis --features integration --test conformance --locked
+      # Examples 35 and 36: one Postgres container each, and a second for each binary. Required by
+      # name, since a cfg that compiles the tests away reports `ok. 0 passed`.
+      - run: >-
+          python3 scripts/require_tests.py
+          the_migration_runs_at_start_and_a_note_goes_through_the_injected_pool
+          a_lazy_store_is_not_ready_until_its_first_ping_reaches_the_database
+          the_binary_migrates_serves_notes_and_exits_clean_on_sigterm
+          -- cargo test -p ex-35-db-sqlx --features integration --locked
+      - run: >-
+          python3 scripts/require_tests.py
+          each_repository_reads_its_own_database_and_a_replica_outage_names_the_replica
+          the_binary_serves_both_databases_and_exits_clean_on_sigterm
+          -- cargo test -p ex-36-db-two-instances --features integration --locked

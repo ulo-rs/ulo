@@ -1,0 +1,29 @@
+[package]
+name = "ulo-net"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Endpoints, socket activation, TLS loading and bound addresses for Ulo transports"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["network-programming"]
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true, features = ["std"] }
+# `FD_CLOEXEC` on an inherited socket and the socket's type check, which std does not expose.
+socket2 = { workspace = true, features = ["all"] }
+tracing = { workspace = true }
+
+# The listen-state read on the Unix targets where socket2 has no `is_listener`.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+# The certificate `tests/tls.rs` serves, made when the tests run.
+ulo-test-certs = { path = "../ulo-test-certs" }
+
+[lints]
+workspace = true

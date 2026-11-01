@@ -1,0 +1,36 @@
+[package]
+name = "ex-36-db-two-instances"
+version = "0.0.0"
+edition.workspace = true
+rust-version = "1.94"
+publish = false
+
+[features]
+# Builds `tests/instances.rs`, which starts a Postgres container and needs a running Docker daemon, and
+# the second test of `tests/binary.rs`.
+integration = []
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-config = { path = "../../crates/ulo-config" }
+ulo-db-sqlx = { path = "../../crates/ulo-db-sqlx", features = ["postgres"] }
+ulo-health = { path = "../../crates/ulo-health" }
+ulo-health-http = { path = "../../crates/ulo-health-http" }
+ulo-http = { path = "../../crates/ulo-http" }
+ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+serde = { workspace = true, features = ["derive"] }
+# Only to switch on `macros`, for `sqlx::migrate!`: `ulo_db_sqlx::sqlx` is this same crate, and
+# `ulo-db-sqlx` enables `migrate` but not `macros`.
+sqlx = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+ex-support = { path = "../support" }
+ulo-conformance-support = { path = "../../crates/ulo-conformance-support" }
+serde_json.workspace = true
+testcontainers.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,59 @@
+[package]
+name = "ulo-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The HTTP transport for Ulo: routing, extractors, responses, SSE, pre-dispatch middleware, the backend SPI and the embedding surface"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "http", "web", "framework"]
+categories = ["web-programming::http-server", "asynchronous"]
+
+[features]
+# `Upgraded` built from and implementing tokio's I/O traits as well as `futures-io`'s, for a
+# backend, an embedding adapter or an upgrade handler written against tokio.
+tokio-io = ["dep:tokio", "dep:tokio-util"]
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-http-macros = { path = "../ulo-http-macros", version = "=0.1.0-alpha.1" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+bytes.workspace = true
+futures-core.workspace = true
+# The I/O traits an upgraded connection implements.
+futures-io.workspace = true
+futures-util.workspace = true
+headers.workspace = true
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+multer.workspace = true
+percent-encoding.workspace = true
+pin-project-lite.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+# `tokio-io`: tokio's I/O traits on `Upgraded`, through `tokio-util`'s `compat` layer. Every
+# clock is the app's `Timer`.
+tokio = { workspace = true, optional = true }
+tokio-util = { workspace = true, features = ["compat"], optional = true }
+tower.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# The doc examples of `Server`, `config` and `embed` name a backend and a host; a dev-dependency
+# cycle Cargo allows.
+ulo-http-hyper = { path = "../ulo-http-hyper" }
+ulo-http-axum = { path = "../ulo-http-axum" }
+axum.workspace = true
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `ScriptedTimer`: the clock whose refusal the keep-alive's unit test reads.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
+# `futures-io`'s extension traits, through which `tests/upgraded.rs` drives an `Upgraded`.
+futures.workspace = true
+# `io-util`: tokio's extension traits, for the same tests' `tokio-io` cases.
+tokio = { workspace = true, features = ["macros", "rt", "time", "sync", "io-util"] }
+
+[lints]
+workspace = true

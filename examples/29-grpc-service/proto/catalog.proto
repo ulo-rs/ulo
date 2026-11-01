@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package catalog.v1;
+
+service Catalog {
+  rpc GetItem(GetItemRequest) returns (Item);
+  rpc ListItems(ListItemsRequest) returns (stream Item);
+}
+
+message GetItemRequest {
+  string id = 1;
+}
+
+message ListItemsRequest {
+  uint32 limit = 1;
+}
+
+message Item {
+  string id = 1;
+  string name = 2;
+}

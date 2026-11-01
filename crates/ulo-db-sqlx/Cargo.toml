@@ -1,41 +1,55 @@
 [package]
 name = "ulo-db-sqlx"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
-description = "SQLx integration for the Ulo framework"
+# SQLx 0.9.0 and `sqlx-sqlite` declare 1.94, as `ulo-http-salvo` declares 1.92.
+rust-version = "1.94"
+description = "SQLx stores for Ulo: Postgres, MySQL and SQLite pools with the shared connect, health and migration-lock policy"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+keywords = ["ulo", "sqlx", "postgres", "mysql", "sqlite"]
+categories = ["database"]
 
 [features]
-default = []
+default = ["tls"]
+# TLS through rustls over ring with the platform's roots: ring is the provider the workspace's
+# `rustls` entry is built with, so no second provider is added. No `mysql-rsa`: over TLS
+# `caching_sha2_password`'s full authentication needs no RSA key exchange.
+tls = ["sqlx/tls-rustls-ring-native-roots", "dep:rustls"]
 postgres = ["sqlx/postgres"]
 mysql = ["sqlx/mysql"]
 sqlite = ["sqlx/sqlite"]
-runtime-tokio-rustls = ["sqlx/runtime-tokio-rustls"]
-runtime-tokio-native-tls = ["sqlx/runtime-tokio-native-tls"]
-health = ["dep:ulo-health", "dep:serde_json", "dep:futures"]
-integration = ["health", "postgres", "runtime-tokio-rustls"]
+# Builds the Postgres and MySQL halves of `tests/conformance.rs`, which start a server in a container
+# per scenario and so need a running Docker daemon. The SQLite half needs only a file.
+integration = []
 
 [dependencies]
-ulo = { path = "../ulo", default-features = false }
-# Timer for the startup check's retry delay. Executor-independent, so core stays free of a
-# runtime and this crate does not acquire one either.
-futures-timer.workspace = true
-sqlx = { version = "0.8", default-features = false }
-async-trait.workspace = true
-parking_lot.workspace = true
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
+ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
+ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.1" }
+# `runtime-tokio` alone: SQLx with both runtime features picks at every spawn, and the name check in
+# `ulo-db` guarantees a tokio context on every path that runs a query.
+sqlx = { workspace = true, features = ["runtime-tokio", "migrate"] }
+serde = { workspace = true, features = ["derive"] }
+# The SQLite migration lock waits on a thread of its own and answers through a oneshot.
+futures-channel.workspace = true
 tracing.workspace = true
-ulo-health = { path = "../ulo-health", default-features = false, optional = true }
-serde_json = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
+# The type of a refused server certificate, which SQLx hands back inside an I/O error; SQLx's own
+# rustls, so no second copy or provider.
+rustls = { workspace = true, optional = true }
 
 [dev-dependencies]
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls"], default-features = false }
+# `macros` for the `sqlx::migrate!` in the crate documentation, which an application enables the same way.
+sqlx = { workspace = true, features = ["macros"] }
+serde_json.workspace = true
 testcontainers.workspace = true
-testcontainers-modules = { workspace = true, features = ["postgres"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-ulo-http-axum = { path = "../ulo-http-axum" }
-reqwest = { workspace = true, features = ["json"] }
-anyhow.workspace = true
+# `support/server.rs` issues the TLS recipe's certificates.
+ulo-test-certs = { path = "../ulo-test-certs" }
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+ulo-db-conformance = { path = "../ulo-db-conformance", features = ["tokio"] }
+# `tests/wiring.rs` wires and connects on the runtime a store module requires.
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+
+[lints]
+workspace = true

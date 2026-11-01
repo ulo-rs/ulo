@@ -1,6 +1,6 @@
 # 0057 — The container answers an ambiguous question, or refuses it
 
-Status: accepted
+Status: superseded by `docs/experiments/di-redesign/DESIGN.md` §4, Bindings, §8.2, Visibility, and §9.2, Order
 
 A key is single-bound unless declared multi, and a second single binding, or a single binding beside
 an `into` contribution, is refused naming both. A runtime lookup that widens past its module reaches

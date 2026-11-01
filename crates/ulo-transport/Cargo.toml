@@ -1,0 +1,33 @@
+[package]
+name = "ulo-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Transport-neutral extraction, replies, errors, validation and load shedding for Ulo transports"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["asynchronous", "network-programming", "web-programming"]
+
+[features]
+# A bridge from the `validator` crate's rules to `Validate`, for teams that already use it.
+validator = ["dep:validator"]
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-transport-macros = { path = "../ulo-transport-macros", version = "=0.1.0-alpha.1" }
+# The runtime-free semaphore behind `Admission`, the one the core already uses.
+async-lock.workspace = true
+# `Watch`'s wake-up, without a runtime.
+event-listener.workspace = true
+futures-core.workspace = true
+# `FuturesUnordered`, which `TaskSet` holds its handles in.
+futures-util.workspace = true
+pin-project-lite.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tracing.workspace = true
+validator = { workspace = true, optional = true }
+
+[lints]
+workspace = true

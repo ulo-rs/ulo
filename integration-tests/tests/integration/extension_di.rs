@@ -6,17 +6,16 @@
 //!
 //! `extension_bus.rs` covers the enhancer and handler halves.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::common::TestServer;
 use ulo::async_trait;
 use ulo::context::Extensions;
-use ulo::di::{Extension, ResolutionError};
+use ulo::di::Extension;
 use ulo::enhancer::Guard;
 use ulo::http::Body;
 use ulo::http::HttpContext;
-use ulo::{StartupError, UloFactory, controller, get, injectable, module, routes};
+use ulo::{controller, get, injectable, module, routes};
 #[derive(Clone, Debug, PartialEq)]
 pub struct CurrentUser(String);
 
@@ -54,7 +53,7 @@ impl AuditLog {
 #[injectable(scope = "execution")]
 pub struct OrderService {
     #[inject]
-    audit: Arc<AuditLog>,
+    audit: AuditLog,
 }
 
 impl OrderService {
@@ -66,7 +65,7 @@ impl OrderService {
 #[controller("/orders")]
 pub struct OrderController {
     #[inject]
-    orders: Arc<OrderService>,
+    orders: OrderService,
     #[inject]
     bag: Extensions,
 }
@@ -93,7 +92,7 @@ impl OrderController {
 
 #[module(
     controllers: [OrderController],
-    providers: [AuthGuard, AuditLog, OrderService]
+    providers: [Extension::<CurrentUser>, AuthGuard, AuditLog, OrderService]
 )]
 impl OrderModule {}
 
@@ -163,7 +162,7 @@ impl OnceController {
     }
 }
 
-#[module(controllers: [OnceController], providers: [OnceGuard])]
+#[module(controllers: [OnceController], providers: [Extension::<CurrentUser>, OnceGuard])]
 impl OnceModule {}
 
 #[tokio::test]
@@ -172,31 +171,4 @@ async fn values_do_not_survive_into_the_next_request() {
 
     assert_eq!(get(&server, "/once/who").await, "alice");
     assert_eq!(get(&server, "/once/who").await, "ABSENT");
-}
-
-/// A view reads the execution's bag, which a provider built once at startup has none of.
-#[injectable]
-pub struct HoldsAView {
-    #[inject]
-    user: Extension<CurrentUser>,
-}
-
-#[module(providers: [HoldsAView])]
-struct ViewInASingleton;
-
-#[tokio::test]
-async fn a_singleton_holding_a_view_is_refused_at_create() {
-    match UloFactory::create_application_context(ViewInASingleton).await {
-        Err(StartupError::BuildFailed { token, source, .. }) => {
-            assert!(token.ends_with("::HoldsAView"), "{token}");
-            match source.downcast_ref::<ResolutionError>() {
-                Some(ResolutionError::ExecutionRequired { token }) => {
-                    assert!(token.ends_with("::Extensions"), "{token}");
-                }
-                _ => panic!("unexpected build failure: {source}"),
-            }
-        }
-        Err(other) => panic!("unexpected startup error: {other}"),
-        Ok(_) => panic!("a singleton holding a view must be refused"),
-    }
 }

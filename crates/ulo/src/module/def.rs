@@ -1,0 +1,611 @@
+use std::any::{Any, type_name};
+use std::fmt;
+use std::marker::PhantomData;
+use std::panic::Location;
+use std::sync::Arc;
+use std::time::Duration;
+
+use crate::binding::alias::{Alias, Input};
+use crate::binding::contribute::{Contribute, Enhancer};
+use crate::binding::factory::{
+    Factory, ShutdownFactory, erase_destroy_hook, erase_factory, erase_init_hook, erase_signalled_hook,
+    erase_try_factory,
+};
+use crate::binding::handle::{Binding, Handle, Open, Set};
+use crate::binding::{BindingRecord, Qualifier, Recipe, erase_construct, instance_of};
+use crate::construct::Construct;
+use crate::dependency::Dependencies;
+use crate::hooks::{HookFn, HookKind, HookRecord, erase_trait_hooks};
+use crate::key::{BindingKind, Key};
+use crate::module::Module;
+use crate::module::ModuleIdentity;
+use crate::module::meta::{Meta, MetaMap};
+use crate::redact::Secret;
+use crate::scope::{Auto, PerExecution, Scope, ScopeKind, Singleton, Transient};
+use crate::timer::{BoxError, Bound};
+use crate::transport::Role;
+use crate::transport::controller::{Controller, ControllerHandle, ControllerRecord};
+use crate::type_name::TypeName;
+
+/// What `Module::register` writes into: imports, bindings, contributions, controllers, exports,
+/// inputs, module hooks, secrets and typed metadata. Registration is synchronous and free of
+/// I/O; nothing is built until `connect`.
+///
+/// Every method records its caller's source location, which the wiring errors print.
+pub struct ModuleDef<'a> {
+    pub(crate) node: &'a mut ModuleNode,
+}
+
+impl<'a> ModuleDef<'a> {
+    pub(crate) fn new(node: &'a mut ModuleNode) -> Self {
+        ModuleDef { node }
+    }
+
+    /// Imports `module`: this module sees its exports. Two imports of an equal identity, from
+    /// anywhere in the graph, are one module.
+    pub fn import<M: Module>(&mut self, module: M) {
+        self.node.imports.push(ImportRecord { module: Box::new(module) });
+    }
+
+    /// Makes this module's exports visible to every module.
+    pub fn global(&mut self) {
+        self.node.global = true;
+    }
+
+    /// Exports the binding `T @ ()`. An export is the only way a binding leaves its module. The
+    /// module must bind `T` itself, or `wire()` reports `ExportNotBound`; a key an import
+    /// provides leaves through [`reexport`](Self::reexport).
+    #[track_caller]
+    pub fn export<T: ?Sized + 'static>(&mut self) {
+        self.push_export(Key::of::<T, ()>(), false, Location::caller());
+    }
+
+    /// Exports the binding `T @ Q`.
+    #[track_caller]
+    pub fn export_qualified<T: ?Sized + 'static, Q: 'static>(&mut self) {
+        self.push_export(Key::of::<T, Q>(), false, Location::caller());
+    }
+
+    /// Re-exports `T @ ()` from an import. Allowed only for a key this module can see
+    /// unambiguously.
+    #[track_caller]
+    pub fn reexport<T: ?Sized + 'static>(&mut self) {
+        self.push_export(Key::of::<T, ()>(), true, Location::caller());
+    }
+
+    #[track_caller]
+    pub fn reexport_qualified<T: ?Sized + 'static, Q: 'static>(&mut self) {
+        self.push_export(Key::of::<T, Q>(), true, Location::caller());
+    }
+
+    /// Registers a secret this module holds, so the redaction function replaces it in every
+    /// error this graph reports. Registration is per graph, never process-wide.
+    pub fn secret<T: fmt::Display>(&mut self, secret: &Secret<T>) {
+        self.node.secrets.push(secret.expose().to_string());
+    }
+
+    /// Typed per-module metadata a transport reads, such as `ulo-http`'s middleware
+    /// configuration: `m.meta::<Middleware>().apply::<RequestLogger>().for_routes([..])`.
+    pub fn meta<T: Meta>(&mut self) -> &mut T {
+        self.node.meta.get_or_default::<T>()
+    }
+
+    /// The module's own init hook, run after the init hooks of its providers.
+    #[track_caller]
+    pub fn on_init<Args, F, E>(&mut self, hook: F) -> ModuleHook<'_>
+    where
+        F: Factory<Args, Output = Result<(), E>>,
+        E: Into<BoxError> + Send + 'static,
+    {
+        let location = Location::caller();
+        let dependencies = factory_dependencies::<Args, F>();
+        self.push_hook(HookKind::OnModuleInit, erase_init_hook::<Args, F, E>(hook), dependencies, location)
+    }
+
+    #[track_caller]
+    pub fn on_destroy<Args, F>(&mut self, hook: F) -> ModuleHook<'_>
+    where
+        F: Factory<Args, Output = ()>,
+    {
+        let location = Location::caller();
+        let dependencies = factory_dependencies::<Args, F>();
+        self.push_hook(HookKind::OnModuleDestroy, erase_destroy_hook::<Args, F>(hook), dependencies, location)
+    }
+
+    #[track_caller]
+    pub fn before_shutdown<Args, F>(&mut self, hook: F) -> ModuleHook<'_>
+    where
+        F: ShutdownFactory<Args>,
+    {
+        let location = Location::caller();
+        let dependencies = shutdown_dependencies::<Args, F>();
+        self.push_hook(HookKind::BeforeApplicationShutdown, erase_signalled_hook::<Args, F>(hook), dependencies, location)
+    }
+
+    #[track_caller]
+    pub fn on_shutdown<Args, F>(&mut self, hook: F) -> ModuleHook<'_>
+    where
+        F: ShutdownFactory<Args>,
+    {
+        let location = Location::caller();
+        let dependencies = shutdown_dependencies::<Args, F>();
+        self.push_hook(HookKind::OnApplicationShutdown, erase_signalled_hook::<Args, F>(hook), dependencies, location)
+    }
+
+    /// A `Construct` type under its own key, with its declared scope, `CONSTRUCT_TIMEOUT` and
+    /// trait hooks. The trait const writes the construction's bound, so the handle starts `Set`.
+    #[track_caller]
+    pub fn provide<T: Construct>(&mut self) -> Handle<'_, T, Binding<T::Scope, Set>> {
+        let location = Location::caller();
+        let mut dependencies = Dependencies::default();
+        T::dependencies(&mut dependencies);
+        let mut record = construct_record::<T>(Recipe::Construct(erase_construct::<T>()), dependencies, location);
+        record.construct_bound = T::CONSTRUCT_TIMEOUT;
+        Handle::new(self.push(record))
+    }
+
+    /// A `Construct` type built by `factory` instead of `T::construct`: keyed by `T`, with
+    /// `T::Scope` and `T::hooks`, which a plain factory never runs. The factory's parameters are
+    /// the binding's dependencies; `T::dependencies` describes a constructor that does not run.
+    #[track_caller]
+    pub fn provide_with<T: Construct, Args>(
+        &mut self,
+        factory: impl Factory<Args, Output = T>,
+    ) -> Handle<'_, T, Binding<T::Scope, Open>> {
+        let location = Location::caller();
+        let dependencies = dependencies_of::<Args, _>(&factory);
+        let record = construct_record::<T>(Recipe::Factory(erase_factory::<Args, _>(factory)), dependencies, location);
+        Handle::new(self.push(record))
+    }
+
+    #[track_caller]
+    pub fn try_provide_with<T: Construct, Args, E>(
+        &mut self,
+        factory: impl Factory<Args, Output = Result<T, E>>,
+    ) -> Handle<'_, T, Binding<T::Scope, Open>>
+    where
+        E: Into<BoxError> + Send + 'static,
+    {
+        let location = Location::caller();
+        let dependencies = dependencies_of::<Args, _>(&factory);
+        let ctor = erase_try_factory::<Args, _, T, E>(factory);
+        let record = construct_record::<T>(Recipe::Factory(ctor), dependencies, location);
+        Handle::new(self.push(record))
+    }
+
+    /// A value under the key of its own type, a `Result` included.
+    ///
+    /// A `Secret<String>` or a `Secret<&'static str>` bound here is registered for redaction. Any
+    /// other `Secret<T>` needs `m.secret(&s)` beside it, or its text stays visible in reports.
+    #[track_caller]
+    pub fn value<T: Send + Sync + 'static>(&mut self, value: T) -> Handle<'_, T, Binding<Singleton, Set>> {
+        let location = Location::caller();
+        self.register_secret(&value);
+        let record = value_record::<T>(Recipe::Value(instance_of(Arc::new(value))), location);
+        Handle::new(self.push(record))
+    }
+
+    /// The lowering of `expr?` in a `#[module]` providers list. An `Err` is recorded, redacted,
+    /// under a `WiringErrors` entry naming the module and the key; `register` carries on.
+    #[track_caller]
+    pub fn try_value<T, E>(&mut self, value: Result<T, E>) -> Handle<'_, T, Binding<Singleton, Set>>
+    where
+        T: Send + Sync + 'static,
+        E: Into<BoxError>,
+    {
+        let location = Location::caller();
+        let recipe = match value {
+            Ok(value) => {
+                self.register_secret(&value);
+                Recipe::Value(instance_of(Arc::new(value)))
+            }
+            Err(error) => {
+                self.node.failures.push(ValueFailure { error: error.into(), location });
+                Recipe::Failed
+            }
+        };
+        Handle::new(self.push(value_record::<T>(recipe, location)))
+    }
+
+    /// A binding built by an async factory whose parameters are injection points, with `Auto`
+    /// scope; the future's output is the key. The lowering of `with = closure`, and of a bare
+    /// closure, in a `#[module]` providers list (§3.3, §4).
+    ///
+    /// For a provider `Auto` behaves as a singleton, so what it builds is what
+    /// [`singleton`](Self::singleton) builds; what differs is the record: the needs-execution pass
+    /// names `with(execution)` in its hint for one that reads execution data, and the hooks rule
+    /// reads it as a singleton's.
+    #[track_caller]
+    pub fn with<Args, F>(&mut self, factory: F) -> Handle<'_, F::Output, Binding<Auto, Open>>
+    where
+        F: Factory<Args>,
+        F::Output: Send + Sync + 'static,
+    {
+        let location = Location::caller();
+        let dependencies = factory_dependencies::<Args, F>();
+        let ctor = erase_factory::<Args, F>(factory);
+        Handle::new(self.push(factory_record::<Auto, F::Output>(ctor, dependencies, location)))
+    }
+
+    /// [`with`](Self::with) for a factory returning a `Result`; the `Ok` type is the key and an
+    /// `Err` fails the construction as [`try_singleton`](Self::try_singleton)'s does.
+    #[track_caller]
+    pub fn try_with<Args, F, T, E>(&mut self, factory: F) -> Handle<'_, T, Binding<Auto, Open>>
+    where
+        F: Factory<Args, Output = Result<T, E>>,
+        T: Send + Sync + 'static,
+        E: Into<BoxError> + Send + 'static,
+    {
+        let location = Location::caller();
+        let dependencies = factory_dependencies::<Args, F>();
+        let ctor = erase_try_factory::<Args, F, T, E>(factory);
+        Handle::new(self.push(factory_record::<Auto, T>(ctor, dependencies, location)))
+    }
+
+    /// A singleton built by an async factory whose parameters are injection points; the
+    /// future's output is the key.
+    #[track_caller]
+    pub fn singleton<Args, F>(&mut self, factory: F) -> Handle<'_, F::Output, Binding<Singleton, Open>>
+    where
+        F: Factory<Args>,
+        F::Output: Send + Sync + 'static,
+    {
+        let location = Location::caller();
+        let dependencies = factory_dependencies::<Args, F>();
+        let ctor = erase_factory::<Args, F>(factory);
+        Handle::new(self.push(factory_record::<Singleton, F::Output>(ctor, dependencies, location)))
+    }
+
+    /// A singleton whose factory returns a `Result`; the `Ok` type is the key and an `Err`
+    /// fails `connect` as `ConnectError::Construct { reason: Errored }`.
+    #[track_caller]
+    pub fn try_singleton<Args, F, T, E>(&mut self, factory: F) -> Handle<'_, T, Binding<Singleton, Open>>
+    where
+        F: Factory<Args, Output = Result<T, E>>,
+        T: Send + Sync + 'static,
+        E: Into<BoxError> + Send + 'static,
+    {
+        let location = Location::caller();
+        let dependencies = factory_dependencies::<Args, F>();
+        let ctor = erase_try_factory::<Args, F, T, E>(factory);
+        Handle::new(self.push(factory_record::<Singleton, T>(ctor, dependencies, location)))
+    }
+
+    #[track_caller]
+    pub fn execution<Args, F>(&mut self, factory: F) -> Handle<'_, F::Output, Binding<PerExecution, Open>>
+    where
+        F: Factory<Args>,
+        F::Output: Send + Sync + 'static,
+    {
+        let location = Location::caller();
+        let dependencies = factory_dependencies::<Args, F>();
+        let ctor = erase_factory::<Args, F>(factory);
+        Handle::new(self.push(factory_record::<PerExecution, F::Output>(ctor, dependencies, location)))
+    }
+
+    /// An execution-scoped binding whose factory returns a `Result`; an `Err` inside a call
+    /// reports as `LookupError::Construct { reason: Errored }`.
+    #[track_caller]
+    pub fn try_execution<Args, F, T, E>(&mut self, factory: F) -> Handle<'_, T, Binding<PerExecution, Open>>
+    where
+        F: Factory<Args, Output = Result<T, E>>,
+        T: Send + Sync + 'static,
+        E: Into<BoxError> + Send + 'static,
+    {
+        let location = Location::caller();
+        let dependencies = factory_dependencies::<Args, F>();
+        let ctor = erase_try_factory::<Args, F, T, E>(factory);
+        Handle::new(self.push(factory_record::<PerExecution, T>(ctor, dependencies, location)))
+    }
+
+    #[track_caller]
+    pub fn transient<Args, F>(&mut self, factory: F) -> Handle<'_, F::Output, Binding<Transient, Open>>
+    where
+        F: Factory<Args>,
+        F::Output: Send + Sync + 'static,
+    {
+        let location = Location::caller();
+        let dependencies = factory_dependencies::<Args, F>();
+        let ctor = erase_factory::<Args, F>(factory);
+        Handle::new(self.push(factory_record::<Transient, F::Output>(ctor, dependencies, location)))
+    }
+
+    #[track_caller]
+    pub fn try_transient<Args, F, T, E>(&mut self, factory: F) -> Handle<'_, T, Binding<Transient, Open>>
+    where
+        F: Factory<Args, Output = Result<T, E>>,
+        T: Send + Sync + 'static,
+        E: Into<BoxError> + Send + 'static,
+    {
+        let location = Location::caller();
+        let dependencies = factory_dependencies::<Args, F>();
+        let ctor = erase_try_factory::<Args, F, T, E>(factory);
+        Handle::new(self.push(factory_record::<Transient, T>(ctor, dependencies, location)))
+    }
+
+    /// Contributions to the collection `U`, from this and any other module. Under a role key a
+    /// mounted handler's transport reads, or one any module contributes to through
+    /// [`enhancer`](Self::enhancer), each is an enhancer; otherwise each is a provider
+    /// contribution, `Auto` meaning singleton.
+    pub fn contribute<U: ?Sized + Send + Sync + 'static>(&mut self) -> Contribute<'_, U> {
+        Contribute::new(&mut *self.node)
+    }
+
+    /// Global enhancers: contributions to the role key `R`, through the builder
+    /// [`contribute`](Self::contribute) returns, marked so that it has no `qualified`. An `Auto`
+    /// enhancer is a singleton when nothing below it needs an execution and is built per call
+    /// otherwise (§3.3). Stack order puts the global level first, in collection order (§7).
+    ///
+    /// A contribution through `contribute` under a role key a mounted handler's transport reads
+    /// is an enhancer too. This entry is what marks a role key no mounted handler reads: through
+    /// `contribute` its contributions stay providers, and an `Auto` one that needs an execution is
+    /// refused as a singleton.
+    ///
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use ulo::{injectable, AnyGuard, AnyInterceptor, BoxError, Guard, Interceptor, ModuleDef, Next, Transport};
+    /// # use ulo_http::{Http, HttpCx};
+    /// # use ulo_rpc::{Rpc, RpcCx};
+    /// # #[injectable] struct AuthGuard;
+    /// # impl Guard<Http> for AuthGuard { async fn can_activate(&self, _: &HttpCx) -> Result<bool, BoxError> { Ok(true) } }
+    /// # #[derive(Default)] struct Tracing;
+    /// # impl Interceptor<Rpc> for Tracing {
+    /// #     async fn intercept(&self, _: &RpcCx, next: Next<'_, Rpc>) -> Result<<Rpc as Transport>::Reply, BoxError> { next.run().await }
+    /// # }
+    /// # fn f(m: &mut ModuleDef<'_>) {
+    /// m.enhancer::<AnyGuard<Http>>().provide::<AuthGuard>(|a| a);
+    /// m.enhancer::<AnyInterceptor<Rpc>>().value(Arc::new(Tracing::default()));
+    /// # }
+    /// ```
+    pub fn enhancer<R: Role + ?Sized>(&mut self) -> Contribute<'_, R, (), Enhancer> {
+        Contribute::for_role(&mut *self.node)
+    }
+
+    /// The key `T @ Q` as a second name for an existing binding of `T`, named in `.of::<Existing>()`.
+    pub fn alias<T: ?Sized + Send + Sync + 'static, Q: 'static>(&mut self) -> Alias<'_, T, Q> {
+        Alias::new(&mut *self.node)
+    }
+
+    /// An execution input, declared by a transport's own global module.
+    pub fn input<T: Send + Sync + 'static>(&mut self) -> Input<'_, T> {
+        Input::new(&mut *self.node)
+    }
+
+    /// A controller: a `Construct` type whose handlers `C::mount` declares. With `Auto` scope it
+    /// is built per call when anything below it needs an execution.
+    ///
+    /// The handle sets a runtime prefix for every route and gateway path of the controller,
+    /// `m.controller::<GraphqlEndpoint>().at(config.path.clone())` (transports DESIGN §2.5, X3);
+    /// dropped, the controller has none.
+    #[track_caller]
+    pub fn controller<C: Controller>(&mut self) -> ControllerHandle<'_> {
+        let location = Location::caller();
+        let mut dependencies = Dependencies::default();
+        C::dependencies(&mut dependencies);
+        let mut record = construct_record::<C>(Recipe::Construct(erase_construct::<C>()), dependencies, location);
+        record.construct_bound = C::CONSTRUCT_TIMEOUT;
+        record.controller = true;
+        let binding = self.node.bindings.len();
+        self.node.bindings.push(record);
+        self.node.controllers.push(ControllerRecord { binding, mount: C::mount, prefix: None });
+        let index = self.node.controllers.len() - 1;
+        ControllerHandle { record: &mut self.node.controllers[index] }
+    }
+
+    /// Marks this module as the inner module of a `Keyed<Q, M>`. A `Keyed` around another calls
+    /// this from the outside in, so a second call is a nested key: the first call's qualifier is
+    /// the one the identity carries, and the last one's the one the exports leave under.
+    pub(crate) fn keyed_by(&mut self, qualifier: Qualifier) {
+        if let Some(earlier) = self.node.keyed {
+            let outer = self.node.nested_keyed.map_or(earlier, |(outer, _)| outer);
+            self.node.nested_keyed = Some((outer, qualifier));
+        }
+        self.node.keyed = Some(qualifier);
+    }
+
+    /// The qualifier of the nearest keyed module on the path from this one upward: this module's
+    /// own `Module::keyed::<Q>()` when it is keyed, else the nearest keyed ancestor that imports
+    /// it, directly or through others. `None` when neither is keyed. A store inside an application
+    /// module keyed `Primary` reads `Primary`, and a store keyed on its own reads its own key before
+    /// any ancestor's.
+    ///
+    /// The name is a [`TypeName`]: `{}` prints it short and `{:#}` in full, and
+    /// [`TypeName::colliding`] over every qualifier a report prints decides which are written in
+    /// full. The qualifier is set before this module's `register` runs, so a module can name what
+    /// it contributes after its instance, as a store's health check does.
+    ///
+    /// A module reached by several importers is registered once, under the path that reached it
+    /// first, so the ancestor it reads is that path's. Two importers keyed differently importing
+    /// an equal module give one instance, not two. A module loaded lazily reads only its own key:
+    /// its importer lives in a graph that is already frozen.
+    pub fn qualifier(&self) -> Option<TypeName> {
+        self.node.keyed.or(self.node.inherited_keyed).map(|qualifier| TypeName::from_parts(qualifier.id, qualifier.name))
+    }
+
+    fn push(&mut self, record: BindingRecord) -> &mut BindingRecord {
+        let index = self.node.bindings.len();
+        self.node.bindings.push(record);
+        &mut self.node.bindings[index]
+    }
+
+    fn push_export(&mut self, key: Key, reexport: bool, location: &'static Location<'static>) {
+        self.node.exports.push(ExportRecord { key, reexport, location });
+    }
+
+    fn push_hook(
+        &mut self,
+        kind: HookKind,
+        run: HookFn,
+        dependencies: Dependencies,
+        location: &'static Location<'static>,
+    ) -> ModuleHook<'_> {
+        self.node.hooks.push(HookRecord { kind, bound: Bound::Default, bound_at: None, run, dependencies, location });
+        ModuleHook::new(&mut *self.node)
+    }
+
+    /// A generic value is recognized as a secret only by a downcast to a type named here, a
+    /// `Secret<String>` or a `Secret<&'static str>`; any other `Secret<T>` bound by value is
+    /// registered with `m.secret(..)`.
+    fn register_secret(&mut self, value: &dyn Any) {
+        if let Some(secret) = value.downcast_ref::<Secret<String>>() {
+            self.node.secrets.push(secret.expose().clone());
+        } else if let Some(secret) = value.downcast_ref::<Secret<&'static str>>() {
+            self.node.secrets.push((*secret.expose()).to_owned());
+        }
+    }
+}
+
+/// A binding built by `T::construct` or by a factory standing in for it: `T::Scope` and
+/// `T::hooks` either way.
+fn construct_record<T: Construct>(recipe: Recipe, dependencies: Dependencies, location: &'static Location<'static>) -> BindingRecord {
+    let kind = <T::Scope as Scope>::KIND;
+    let mut record = BindingRecord::new(Key::of::<T, ()>(), type_name::<T>(), BindingKind::Single, kind, recipe, dependencies, location);
+    record.hooks = erase_trait_hooks::<T>(location);
+    record.constructs = true;
+    record
+}
+
+fn factory_record<S: Scope, T: 'static>(
+    ctor: crate::binding::ErasedCtor,
+    dependencies: Dependencies,
+    location: &'static Location<'static>,
+) -> BindingRecord {
+    BindingRecord::new(Key::of::<T, ()>(), type_name::<T>(), BindingKind::Single, S::KIND, Recipe::Factory(ctor), dependencies, location)
+}
+
+fn value_record<T: 'static>(recipe: Recipe, location: &'static Location<'static>) -> BindingRecord {
+    BindingRecord::new(
+        Key::of::<T, ()>(),
+        type_name::<T>(),
+        BindingKind::Single,
+        ScopeKind::Singleton,
+        recipe,
+        Dependencies::default(),
+        location,
+    )
+}
+
+fn factory_dependencies<Args, F: Factory<Args>>() -> Dependencies {
+    let mut dependencies = Dependencies::default();
+    <F as Factory<Args>>::dependencies(&mut dependencies);
+    dependencies
+}
+
+fn dependencies_of<Args, F: Factory<Args>>(_factory: &F) -> Dependencies {
+    factory_dependencies::<Args, F>()
+}
+
+fn shutdown_dependencies<Args, F: ShutdownFactory<Args>>() -> Dependencies {
+    let mut dependencies = Dependencies::default();
+    <F as ShutdownFactory<Args>>::dependencies(&mut dependencies);
+    dependencies
+}
+
+/// The handle a module hook returns: its bound is written once, with `.timeout(..)` or
+/// `.unbounded()`, or left at `Default`. A wiring error about the bound names the call that wrote
+/// it, and a zero `.timeout(..)` is refused at `wire()`.
+pub struct ModuleHook<'m, B = Open> {
+    node: &'m mut ModuleNode,
+    _b: PhantomData<B>,
+}
+
+impl<'m> ModuleHook<'m, Open> {
+    pub(crate) fn new(node: &'m mut ModuleNode) -> Self {
+        ModuleHook { node, _b: PhantomData }
+    }
+
+    #[track_caller]
+    pub fn timeout(self, d: Duration) -> ModuleHook<'m, Set> {
+        self.write(Bound::After(d), Location::caller())
+    }
+
+    #[track_caller]
+    pub fn unbounded(self) -> ModuleHook<'m, Set> {
+        self.write(Bound::Unbounded, Location::caller())
+    }
+
+    fn write(self, bound: Bound, at: &'static Location<'static>) -> ModuleHook<'m, Set> {
+        if let Some(hook) = self.node.hooks.last_mut() {
+            hook.bound = bound;
+            hook.bound_at = Some(at);
+        }
+        ModuleHook { node: self.node, _b: PhantomData }
+    }
+}
+
+/// One module as `register` left it: everything the graph needs to deduplicate, order, check
+/// and freeze it.
+pub(crate) struct ModuleNode {
+    pub(crate) identity: ModuleIdentity,
+    pub(crate) global: bool,
+    /// Set inside `Keyed<Q, M>`: unqualified exports leave the boundary as `T @ Q`.
+    pub(crate) keyed: Option<Qualifier>,
+    /// `(outer, inner)` for a `Keyed` around another `Keyed`, which `wire()` refuses: the identity
+    /// carries `outer` and the exports `inner`.
+    pub(crate) nested_keyed: Option<(Qualifier, Qualifier)>,
+    /// The nearest keyed ancestor on the import path that first reached this module, for
+    /// `ModuleDef::qualifier`. It changes no export.
+    pub(crate) inherited_keyed: Option<Qualifier>,
+    /// Queued by `import` and registered by the graph after `register` returns, in the order
+    /// written; the order is part of collection order.
+    pub(crate) imports: Vec<ImportRecord>,
+    /// Declaration order is the tie-break inside a module.
+    pub(crate) bindings: Vec<BindingRecord>,
+    /// Indices into `bindings` of the contributions written through `ModuleDef::enhancer`, in
+    /// ascending order. Freezing gives them `Role::Enhancer`, and their key's type marks every
+    /// contribution under it as an enhancer.
+    pub(crate) enhancers: Vec<usize>,
+    pub(crate) exports: Vec<ExportRecord>,
+    pub(crate) controllers: Vec<ControllerRecord>,
+    pub(crate) inputs: Vec<InputRecord>,
+    /// The module's own hooks, run after those of its providers.
+    pub(crate) hooks: Vec<HookRecord>,
+    pub(crate) meta: MetaMap,
+    pub(crate) secrets: Vec<String>,
+    /// `try_value` errors, redacted when `wire()` reports them.
+    pub(crate) failures: Vec<ValueFailure>,
+}
+
+impl ModuleNode {
+    pub(crate) fn new(identity: ModuleIdentity) -> Self {
+        ModuleNode {
+            identity,
+            global: false,
+            keyed: None,
+            nested_keyed: None,
+            inherited_keyed: None,
+            imports: Vec::new(),
+            bindings: Vec::new(),
+            enhancers: Vec::new(),
+            exports: Vec::new(),
+            controllers: Vec::new(),
+            inputs: Vec::new(),
+            hooks: Vec::new(),
+            meta: MetaMap::default(),
+            secrets: Vec::new(),
+            failures: Vec::new(),
+        }
+    }
+}
+
+pub(crate) struct ImportRecord {
+    pub(crate) module: Box<dyn Module>,
+}
+
+pub(crate) struct ExportRecord {
+    /// As written inside the module; a keyed module requalifies an unqualified key at freeze.
+    pub(crate) key: Key,
+    pub(crate) reexport: bool,
+    pub(crate) location: &'static Location<'static>,
+}
+
+pub(crate) struct InputRecord {
+    pub(crate) key: Key,
+    pub(crate) seeder: TypeName,
+    pub(crate) location: &'static Location<'static>,
+}
+
+pub(crate) struct ValueFailure {
+    pub(crate) error: BoxError,
+    pub(crate) location: &'static Location<'static>,
+}

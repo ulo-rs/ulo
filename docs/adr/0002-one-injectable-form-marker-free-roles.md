@@ -23,10 +23,6 @@ A provider is a plain struct plus its normal `impl`s. One attribute, no restatem
   fields are owned state, `#[injectable(scope = "request" | "transient")]` sets scope. Because it is an
   attribute (it re-emits the item) rather than a derive, it supplies the `Clone` impl the container
   needs — the struct carries no derive ceremony.
-
-  Revisited by [ADR-0058](0058-a-provider-declaration-is-a-value.md), which reads a shared binding
-  as `Arc<K::Value>`: the container clones no instance, and the attribute adds no `Clone` impl,
-  which the paragraph on attributes and derives below gives as its reason.
 - A constructor is a `fn` tagged `#[new]`; a lifecycle hook is a `fn` tagged `#[on_module_init]` (etc.).
   See [0001](0001-dispatch-not-detect-autoref-bridge.md) for how these reach the struct macro.
 - An enhancer is a provider that implements the role trait — `impl Guard<HttpContext> for Foo` *is* the
@@ -34,11 +30,6 @@ A provider is a plain struct plus its normal `impl`s. One attribute, no restatem
   is no `#[guard]` / `#[interceptor]` / `#[pipe]` / `#[error_handler]` / `#[middleware]` marker. The
   context type in the trait (`HttpContext` vs `WsContext` …) names the transport, so that isn't
   restated either.
-
-  Superseded for a declared value or factory by
-  [ADR-0058](0058-a-provider-declaration-is-a-value.md): its role comes from the key it is bound
-  under, not from probing the value. An `#[injectable]` type's roles are still detected from its
-  trait impls.
 
 Why `#[injectable]` is an attribute, not a `#[derive]`: a derive receives the struct with its
 `#[derive(...)]` list stripped — it can neither see a sibling `Clone` nor add one without risking a

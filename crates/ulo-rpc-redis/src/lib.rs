@@ -1,30 +1,25 @@
-// Tests: `tests/conformance.rs` implements `ulo_rpc_conformance::Broker`
-// and stamps out the shared RPC case set. It needs a live Redis from
-// testcontainers, so it is gated behind the `integration` feature; without
-// it the file compiles to nothing and cargo reports a clean run of none:
-//
-//     cargo test -p ulo-rpc-redis --features integration
-//
-// A case belongs in `ulo-rpc-conformance` when every transport owes it,
-// and here only when it is specific to this one.
-
-//! Redis Pub/Sub transport for the Ulo RPC gateway.
+//! The Redis link for `ulo-rpc` (transports DESIGN §5.3): Pub/Sub on each pattern, the whole
+//! frame as the message, replies on a per-client reply channel. At-most-once; ordered per
+//! channel; `FanOut`, documented, the client dropping a second reply for an `id` it already
+//! answered. A request too runs its handler on every server instance subscribed to its pattern,
+//! so the request side supports one server instance: the link declares
+//! `delivers_requests_once: false`, and a server mounting a request handler on it logs a `warn`
+//! saying so. A `PUBLISH` receiver count of zero maps to `Unavailable`, and so does a call waiting
+//! when the client's Pub/Sub connection drops; `rediss://` selects TLS
+//! under the crate's `tls` feature.
 //!
-//! Redis Pub/Sub has no native request-reply: a publisher cannot address a
-//! reply back to the caller the way NATS does with a reply-to inbox. This
-//! transport emulates it with a correlation-keyed reply channel carried inside
-//! a JSON request envelope. The envelope is also where per-call `metadata`
-//! rides, since Redis Pub/Sub frames carry no headers of their own.
+//! ```
+//! # fn f(app: ulo::App<ulo::Connected>) {
+//! app.bind(ulo_rpc::Server::new(ulo_rpc_redis::Redis::url("redis://cache:6379")));
+//! # }
+//! ```
 //!
-//! - [`RedisAdapter`] — server side; subscribes one channel per registered
-//!   pattern and publishes replies to the channel named in the request.
-//! - [`RedisClientTransport`] — client side; runs a single background
-//!   reply-router subscribed to all its in-flight reply channels at once.
+//! On the wire every message is one whole frame in the link's codec. A `req` or `open` frame
+//! carries the caller's reply channel in its headers as `ulo-reply`, which the server removes
+//! before a handler reads them; `in`, `in_end` and `cancel` frames travel on `ulo:rpc:control`,
+//! which every server subscribes to. A caller's frame ids are offset by a random base of its own,
+//! so two callers never name the same call.
 
-mod redis_adapter;
-mod redis_client_transport;
-mod wire;
+mod link;
 
-pub use redis_adapter::RedisAdapter;
-pub use redis_client_transport::RedisClientTransport;
-pub use ulo::rpc::{RpcAdapter, RpcClient, RpcClientTransport};
+pub use link::Redis;

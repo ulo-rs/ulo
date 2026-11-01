@@ -1,0 +1,5 @@
+error: a closure binding takes no `@` qualifier; write the binding in a `ModuleDef` with `.qualified::<Q>()`, or bind a value, `Db(..) @ Primary`
+  --> tests/ui/module_qualifier_on_a_keyed_closure.rs:13:49
+   |
+13 | #[module(providers = [dyn Sink: with = || Drain @ Primary])]
+   |                                                 ^

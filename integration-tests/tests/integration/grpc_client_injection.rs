@@ -9,14 +9,13 @@
 #![allow(dead_code)]
 
 use std::pin::Pin;
-use std::sync::Arc;
 use std::time::Duration;
 
 use crate::common::NotServed;
 use futures_util::Stream;
 use ulo::extract::Payload;
 use ulo::grpc::extract::Inbound;
-use ulo::{UloFactory, module, provide};
+use ulo::{UloFactory, module, provider_factory};
 use ulo_macros::{controller, get, grpc_methods, new, routes};
 
 mod probe_pb {
@@ -90,14 +89,14 @@ impl ProbeServerModule {}
 #[controller("/probe")]
 pub struct CallerController {
     #[inject]
-    orders: Arc<OrdersClient<tonic::transport::Channel>>,
+    orders: OrdersClient<tonic::transport::Channel>,
 }
 
 #[routes]
 impl CallerController {
     #[get("/place")]
     async fn place(&self) -> ulo::http::Body {
-        let mut orders = (*self.orders).clone();
+        let mut orders = self.orders.clone();
         let reply = orders
             .create(probe_pb::CreateOrderRequest {
                 item: "keyboard".to_string(),
@@ -113,7 +112,7 @@ static PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0)
 
 #[module(
     controllers: [CallerController],
-    providers: [provide!(async || {
+    providers: [provider_factory!(OrdersClient<tonic::transport::Channel>, || {
         let port = PORT.load(std::sync::atomic::Ordering::SeqCst);
         // Lazy: no I/O in the factory, so DI construction cannot block on a peer.
         let channel = tonic::transport::Endpoint::from_shared(format!("http://127.0.0.1:{port}"))

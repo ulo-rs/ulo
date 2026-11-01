@@ -1,6 +1,6 @@
 # 0058 — A provider declaration is a value, written through one macro
 
-Status: accepted
+Status: superseded by `docs/experiments/di-redesign/DESIGN.md` §4, Bindings, and §8.1, Declaring modules
 
 A provider is declared by `provide!(key => source)`, one macro whose every form builds a value a
 public constructor of the value API also builds, so the builder and a function building declarations

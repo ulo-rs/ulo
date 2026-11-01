@@ -18,7 +18,7 @@ use ulo::http::HttpResponse;
 use ulo::http::middleware::{Middleware, MiddlewareResult, NextHandle};
 use ulo::http::{Body, RequestPart};
 use ulo::{
-    controller, get, injectable, module, new, provide, routes, use_guards, use_interceptors,
+    controller, get, injectable, module, new, provider_value, routes, use_guards, use_interceptors,
 };
 // ---- shared tracker -----------------------------------------------------------
 // Tests are serial; all share the same Arc via clone. Each test calls clear()
@@ -59,11 +59,11 @@ impl ExecutionTracker {
 
 #[injectable]
 pub struct AuthService {
-    tracker: Arc<ExecutionTracker>,
+    tracker: ExecutionTracker,
 }
 impl AuthService {
     #[new]
-    pub fn new(tracker: Arc<ExecutionTracker>) -> Self {
+    pub fn new(tracker: ExecutionTracker) -> Self {
         Self { tracker }
     }
 
@@ -82,11 +82,11 @@ impl AuthService {
 
 #[injectable]
 pub struct RequestTrackingMiddleware {
-    tracker: Arc<ExecutionTracker>,
+    tracker: ExecutionTracker,
 }
 impl RequestTrackingMiddleware {
     #[new]
-    pub fn new(tracker: Arc<ExecutionTracker>) -> Self {
+    pub fn new(tracker: ExecutionTracker) -> Self {
         Self { tracker }
     }
 }
@@ -105,11 +105,11 @@ impl Middleware for RequestTrackingMiddleware {
 
 #[injectable]
 pub struct HeaderValidationMiddleware {
-    auth_service: Arc<AuthService>,
+    auth_service: AuthService,
 }
 impl HeaderValidationMiddleware {
     #[new]
-    pub fn new(auth_service: Arc<AuthService>) -> Self {
+    pub fn new(auth_service: AuthService) -> Self {
         Self { auth_service }
     }
 }
@@ -134,11 +134,11 @@ impl Middleware for HeaderValidationMiddleware {
 
 #[injectable]
 pub struct AdminGuard {
-    auth_service: Arc<AuthService>,
+    auth_service: AuthService,
 }
 impl AdminGuard {
     #[new]
-    pub fn new(auth_service: Arc<AuthService>) -> Self {
+    pub fn new(auth_service: AuthService) -> Self {
         Self { auth_service }
     }
 }
@@ -153,11 +153,11 @@ impl Guard<HttpContext> for AdminGuard {
 
 #[injectable]
 pub struct UserGuard {
-    auth_service: Arc<AuthService>,
+    auth_service: AuthService,
 }
 impl UserGuard {
     #[new]
-    pub fn new(auth_service: Arc<AuthService>) -> Self {
+    pub fn new(auth_service: AuthService) -> Self {
         Self { auth_service }
     }
 }
@@ -174,11 +174,11 @@ impl Guard<HttpContext> for UserGuard {
 
 #[injectable]
 pub struct LoggingInterceptor {
-    tracker: Arc<ExecutionTracker>,
+    tracker: ExecutionTracker,
 }
 impl LoggingInterceptor {
     #[new]
-    pub fn new(tracker: Arc<ExecutionTracker>) -> Self {
+    pub fn new(tracker: ExecutionTracker) -> Self {
         Self { tracker }
     }
 }
@@ -199,11 +199,11 @@ impl Interceptor<HttpContext, HttpHandlerResult> for LoggingInterceptor {
 
 #[injectable]
 pub struct TimingInterceptor {
-    tracker: Arc<ExecutionTracker>,
+    tracker: ExecutionTracker,
 }
 impl TimingInterceptor {
     #[new]
-    pub fn new(tracker: Arc<ExecutionTracker>) -> Self {
+    pub fn new(tracker: ExecutionTracker) -> Self {
         Self { tracker }
     }
 }
@@ -226,13 +226,13 @@ impl Interceptor<HttpContext, HttpHandlerResult> for TimingInterceptor {
 
 #[controller("/api")]
 pub struct EnhancerTestController {
-    tracker: Arc<ExecutionTracker>,
+    tracker: ExecutionTracker,
 }
 
 #[routes]
 impl EnhancerTestController {
     #[new]
-    pub fn new(tracker: Arc<ExecutionTracker>) -> Self {
+    pub fn new(tracker: ExecutionTracker) -> Self {
         Self { tracker }
     }
 
@@ -264,7 +264,7 @@ impl EnhancerTestController {
 #[module(
     controllers: [EnhancerTestController],
     providers: [
-        provide!(get_tracker()),
+        provider_value!(ExecutionTracker, get_tracker()),
         AuthService,
         AdminGuard,
         UserGuard,

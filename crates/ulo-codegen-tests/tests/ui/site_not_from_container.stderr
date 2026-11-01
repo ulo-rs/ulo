@@ -1,0 +1,16 @@
+error[E0277]: `String` cannot be obtained from the container
+ --> tests/ui/site_not_from_container.rs:7:12
+  |
+7 |     table: String,
+  |            ^^^^^^ the container cannot provide this
+  |
+  = help: the trait `FromContainer` is not implemented for `String`
+  = note: write `Dep<String>` to share the container's instance
+  = note: or set it inside the #[construct] fn / mark the field #[injectable(default)]
+  = help: the following other types implement trait `FromContainer`:
+            Dep<T, Q>
+            ExecutionRef
+            Ext<T>
+            Many<T, Q>
+            ModuleRef
+            Option<S>

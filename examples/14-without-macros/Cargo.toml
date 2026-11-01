@@ -1,0 +1,20 @@
+[package]
+name = "ex-14-without-macros"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ulo = { path = "../../crates/ulo" }
+ulo-http = { path = "../../crates/ulo-http" }
+ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+# Example 06, written with the macros: the tests run one body against both.
+ex-06-modules = { path = "../06-modules" }
+ex-support = { path = "../support" }
+
+[lints]
+workspace = true

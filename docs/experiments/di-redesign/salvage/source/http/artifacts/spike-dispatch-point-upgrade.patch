@@ -1,0 +1,230 @@
+diff --git a/crates/ulo-http-poem/src/poem_adapter.rs b/crates/ulo-http-poem/src/poem_adapter.rs
+index e17b1f6e..73700fdc 100644
+--- a/crates/ulo-http-poem/src/poem_adapter.rs
++++ b/crates/ulo-http-poem/src/poem_adapter.rs
+@@ -205,6 +205,31 @@ fn poem_response_to_ulo(res: PoemResponse) -> HttpResponse {
+     }
+ }
+ 
++/// SPIKE: stands in for `Dispatched`. The decision is taken by code that sees
++/// only the framework-side `HttpRequest`, never a poem type.
++enum SpikeDispatched {
++    /// Core matched an ordinary route (the spike lets poem's router serve it).
++    Respond,
++    /// Core matched a WebSocket path and hands back the callbacks.
++    Upgrade(Arc<WsConnectionCallbacks>),
++}
++
++/// SPIKE: stands in for `ServeContext::dispatch`.
++fn spike_dispatch(
++    ws_routes: &[(String, Arc<WsConnectionCallbacks>)],
++    req: &HttpRequest,
++) -> SpikeDispatched {
++    if req.method() == http::Method::GET {
++        let path = req.uri().path().to_string();
++        for (pattern, callbacks) in ws_routes {
++            if pattern.as_str() == path.as_str() {
++                return SpikeDispatched::Upgrade(callbacks.clone());
++            }
++        }
++    }
++    SpikeDispatched::Respond
++}
++
+ /// Poem endpoint that bridges a single ulo HTTP route.
+ struct UloEndpoint {
+     handler: Arc<dyn RequestHandler>,
+@@ -243,6 +268,8 @@ fn to_poem_path(path: &str) -> String {
+ struct GlobalChainEndpoint {
+     inner: Arc<BoxEndpoint<'static, PoemResponse>>,
+     ctx: Arc<ServeContext>,
++    // SPIKE: no WS route is mounted on poem's router any more.
++    ws_routes: Arc<Vec<(String, Arc<WsConnectionCallbacks>)>>,
+ }
+ 
+ impl Endpoint for GlobalChainEndpoint {
+@@ -268,11 +295,16 @@ impl Endpoint for GlobalChainEndpoint {
+         // WebSocket upgrade slot — so the chain's output is written back onto
+         // the original request instead of rebuilding one.
+         let inner = self.inner.clone();
++        let ws_routes = self.ws_routes.clone();
+ 
+         let http_res = self
+             .ctx
+             .execute(http_req, move |treq| {
+                 Box::pin(async move {
++                    // SPIKE: the answer is decided here, from the framework's
++                    // own request, before any poem routing runs.
++                    let decision = spike_dispatch(&ws_routes, &treq);
++
+                     let (parts, body) = treq.into_parts();
+                     req.set_method(parts.method);
+                     *req.uri_mut() = parts.uri;
+@@ -281,6 +313,32 @@ impl Endpoint for GlobalChainEndpoint {
+                     *req.extensions_mut() = parts.extensions;
+                     req.set_body(ulo_body_to_poem(body));
+ 
++                    // SPIKE: the upgrade runs from the poem shell retained
++                    // across the decision, with no mounted route involved.
++                    if let SpikeDispatched::Upgrade(callbacks) = decision {
++                        let ws_parts = extract_parts(&req);
++                        let requested_protocol = ws_parts
++                            .headers
++                            .get("sec-websocket-protocol")
++                            .and_then(|v| v.to_str().ok())
++                            .map(|s| s.to_owned());
++                        return match WebSocket::from_request_without_body(&req).await {
++                            Ok(ws) => {
++                                let ws = match requested_protocol {
++                                    Some(p) => ws.protocols([p]),
++                                    None => ws,
++                                };
++                                poem_response_to_ulo(
++                                    ws.on_upgrade(move |stream| async move {
++                                        run_ws_connection(stream, callbacks, ws_parts).await;
++                                    })
++                                    .into_response(),
++                                )
++                            }
++                            Err(e) => json_error_response(400, format!("upgrade refused: {e}")),
++                        };
++                    }
++
+                     // For the unmatched-path 404 below — name the path the
+                     // router actually matched on (post-rewrite).
+                     let method = req.method().as_str().to_uppercase();
+@@ -501,14 +559,12 @@ impl HttpAdapter for PoemAdapter {
+         for (path, route_method) in build_method_routes(routes) {
+             route = route.at(to_poem_path(&path), route_method);
+         }
+-        for (path, callbacks) in ws_routes {
+-            let ws_endpoint = UloWsEndpoint { callbacks };
+-            route = route.at(to_poem_path(&path), ws_endpoint);
+-        }
+-
++        // SPIKE: deliberately not mounted. Nothing but the dispatch decision
++        // can serve the upgrade now.
+         let service = GlobalChainEndpoint {
+             inner: Arc::new(route.boxed()),
+             ctx: Arc::new(ctx),
++            ws_routes: Arc::new(ws_routes),
+         };
+ 
+         let addr = target.to_string();
+diff --git a/crates/ulo-http-salvo/src/salvo_adapter.rs b/crates/ulo-http-salvo/src/salvo_adapter.rs
+index 811d218e..605b5fb8 100644
+--- a/crates/ulo-http-salvo/src/salvo_adapter.rs
++++ b/crates/ulo-http-salvo/src/salvo_adapter.rs
+@@ -340,6 +340,8 @@ impl Handler for UloFallbackHandler {
+ struct GlobalChainHandler {
+     inner: Arc<salvo::Service>,
+     ctx: Arc<ServeContext>,
++    // SPIKE: no WS route is pushed onto salvo's router any more.
++    ws_routes: Arc<Vec<(String, Arc<WsConnectionCallbacks>)>>,
+ }
+ 
+ #[salvo_async_trait]
+@@ -360,11 +362,16 @@ impl Handler for GlobalChainHandler {
+         let http_req = HttpRequest::from_parts(parts, body);
+ 
+         let inner = self.inner.clone();
++        let ws_routes = self.ws_routes.clone();
+ 
+         let http_res = self
+             .ctx
+             .execute(http_req, move |treq| {
+                 Box::pin(async move {
++                    // SPIKE: decided from the framework's request, before any
++                    // salvo routing runs.
++                    let decision = spike_dispatch(&ws_routes, &treq);
++
+                     let mut sreq = owned;
+                     let (parts, body) = treq.into_parts();
+                     *sreq.method_mut() = parts.method;
+@@ -374,6 +381,35 @@ impl Handler for GlobalChainHandler {
+                     sreq.extensions_mut()
+                         .insert(CarriedBody(Arc::new(std::sync::Mutex::new(Some(body)))));
+ 
++                    // SPIKE: the upgrade runs from the request owned across
++                    // the decision, into a response built here — no mounted
++                    // route is involved.
++                    if let SpikeDispatched::Upgrade(callbacks) = decision {
++                        let ws_parts = build_request_part(&sreq);
++                        let requested_protocol = ws_parts
++                            .headers
++                            .get("sec-websocket-protocol")
++                            .and_then(|v| v.to_str().ok())
++                            .map(|s| s.to_owned());
++                        let mut upgrade = WebSocketUpgrade::new();
++                        let proto_storage;
++                        if let Some(p) = requested_protocol {
++                            proto_storage = [p];
++                            let proto_refs: [&str; 1] = [proto_storage[0].as_str()];
++                            upgrade = upgrade.protocols(&proto_refs);
++                        }
++                        let mut sres = SalvoResponse::new();
++                        if let Err(e) = upgrade
++                            .upgrade(&mut sreq, &mut sres, move |ws| async move {
++                                run_ws_connection(ws, callbacks, ws_parts).await;
++                            })
++                            .await
++                        {
++                            tracing::debug!("WebSocket upgrade failed: {}", e);
++                        }
++                        return salvo_response_to_ulo(sres);
++                    }
++
+                     let handler = inner.hyper_handler(
+                         sreq.local_addr().clone(),
+                         sreq.remote_addr().clone(),
+@@ -390,6 +426,28 @@ impl Handler for GlobalChainHandler {
+     }
+ }
+ 
++/// SPIKE: stands in for `Dispatched`.
++enum SpikeDispatched {
++    Respond,
++    Upgrade(Arc<WsConnectionCallbacks>),
++}
++
++/// SPIKE: stands in for `ServeContext::dispatch` — sees only the ulo request.
++fn spike_dispatch(
++    ws_routes: &[(String, Arc<WsConnectionCallbacks>)],
++    req: &HttpRequest,
++) -> SpikeDispatched {
++    if req.method() == http::Method::GET {
++        let path = req.uri().path().to_string();
++        for (pattern, callbacks) in ws_routes {
++            if pattern.as_str() == path.as_str() {
++                return SpikeDispatched::Upgrade(callbacks.clone());
++            }
++        }
++    }
++    SpikeDispatched::Respond
++}
++
+ /// Salvo handler that performs a same-port WebSocket upgrade and runs the ulo callbacks.
+ struct UloWsHandler {
+     callbacks: Arc<WsConnectionCallbacks>,
+@@ -571,11 +629,8 @@ impl HttpAdapter for SalvoAdapter {
+             let sub = attach_method(Router::with_path(salvo_path), method, ulo_handler);
+             router = router.push(sub);
+         }
+-        for (path, callbacks) in ws_routes {
+-            let salvo_path = to_salvo_path(&path);
+-            let ws_handler = UloWsHandler { callbacks };
+-            router = router.push(Router::with_path(salvo_path).goal(ws_handler));
+-        }
++        // SPIKE: deliberately not mounted.
++
+         let fallback = UloFallbackHandler {
+             routes: route_table,
+         };
+@@ -584,6 +639,7 @@ impl HttpAdapter for SalvoAdapter {
+         let chain = GlobalChainHandler {
+             inner: Arc::new(salvo::Service::new(router)),
+             ctx: Arc::new(ctx),
++            ws_routes: Arc::new(ws_routes),
+         };
+         let router = Router::with_path("{**rest}").goal(chain);
+ 

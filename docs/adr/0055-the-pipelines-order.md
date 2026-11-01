@@ -1,11 +1,6 @@
 # 0055 — The pipeline's order is the order that was written
 
-Status: proposed
-
-Refined by [ADR-0058](0058-a-provider-declaration-is-a-value.md) and
-[ADR-0059](0059-every-key-is-a-type.md): in the `#[use_*]` attributes a bare path is a type, the
-enhancer's own or a marker naming a slot, and a value held in a `const` is written `value X`, one
-held in a `static` `value &X`.
+Status: superseded by `docs/experiments/di-redesign/DESIGN.md` §7, Enhancers and roles, and `docs/experiments/di-redesign/transports/DESIGN.md` §3.3
 
 An enhancer declaration runs in the order written, whatever spelling each entry uses; the error
 chain sits above the interceptors on every transport; a guard answers `Result<(), E>`; and the

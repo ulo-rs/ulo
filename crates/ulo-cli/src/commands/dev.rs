@@ -1,93 +1,70 @@
-use anyhow::{Context, Result, anyhow};
-use colored::*;
-use std::ffi::OsString;
-use std::path::PathBuf;
-use std::sync::Arc;
+//! `ulo dev`: watch, rebuild, restart (transports DESIGN §9).
+//!
+//! Each change rebuilds with `cargo build` while the running application keeps serving; only a
+//! build that succeeds stops it, with SIGTERM and a grace period, and starts the new binary. A
+//! failed build leaves the running application in place.
+//!
+//! With `--listen ADDR` the command binds the address itself and passes the socket to each child
+//! as descriptor 3 through the socket-activation protocol: `LISTEN_FDS=1`, `LISTEN_FDNAMES` naming
+//! the address, and `LISTEN_PID` set by the `ulo __exec` trampoline the child is started through.
+//! Each child receives a duplicate made where the command decides to start it, before anything is
+//! stopped: a duplicate that cannot be made fails that start, reported in red, the running
+//! application keeps serving, and the next change tries again. No child is told `LISTEN_FDS=1`
+//! without the socket at descriptor 3.
+//! Every child runs under `ULO_DEV=1`, under which `EndpointSpec::resolve` in the child resolves an
+//! `Endpoint::Addr` equal to the held address to the inherited socket, so the application's `main`
+//! is the same in development and production. While no child accepts, connections queue in the
+//! held socket's backlog instead of being refused.
+//!
+//! UDP is outside `--listen`: the activation adopts listening TCP sockets alone, so a UDP link
+//! binds its address itself and restarts without holding it. Socket holding is Unix-only; on other
+//! platforms `--listen` is ignored with a warning and a client can see a refused connection during
+//! a restart.
+
+use std::net::{SocketAddr, TcpListener};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow, bail};
+use colored::Colorize;
+use serde::Deserialize;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use watchexec::Watchexec;
 use watchexec::command::{Command, Program, SpawnOptions};
-use watchexec_events::{Event, Priority};
+use watchexec::job::{Job, start_job};
+use watchexec_events::filekind::{AccessKind, AccessMode, FileEventKind};
+use watchexec_events::{Event, Tag};
 use watchexec_filterer_globset::GlobsetFilterer;
 use watchexec_signals::Signal;
 
-/// SIGTERM-to-SIGKILL grace when stopping the app. Generated apps have no
-/// signal handlers and exit immediately; apps that wire shutdown_handle()
-/// get this long to drain.
+/// SIGTERM-to-SIGKILL grace when stopping the application. An application past it is killed
+/// mid-drain, which a development restart accepts in exchange for not waiting out the app's own
+/// drain window on every save.
 const STOP_GRACE: Duration = Duration::from_secs(2);
 
-/// Where the passed socket lands in the child, per the systemd socket-activation
-/// convention that `listenfd` reads.
+/// Read by `ulo-net`'s `EndpointSpec::resolve`.
+const DEV_VAR: &str = "ULO_DEV";
+
+/// The descriptor the child reads the passed socket from, per the socket-activation protocol.
 #[cfg(unix)]
 const LISTEN_FD: std::os::fd::RawFd = 3;
 
-/// Bind the socket the supervisor keeps across restarts.
-///
-/// A bare port is accepted as shorthand for localhost.
+/// Has the child `command` spawns find `source` at descriptor `target`, without `FD_CLOEXEC`, so
+/// it survives the child's exec and the trampoline's. The command owns `source` until it is
+/// dropped, so the descriptor is open when the child forks. `command-fds` does the placement
+/// between fork and exec: `dup2` from another descriptor, and clearing `FD_CLOEXEC` when `source`
+/// already is `target`, where `dup2` onto itself would leave the flag set.
 #[cfg(unix)]
-fn bind_held_socket(spec: &str) -> Result<std::net::TcpListener> {
-    let addr = if spec.contains(':') {
-        spec.to_string()
-    } else {
-        format!("127.0.0.1:{spec}")
-    };
-    std::net::TcpListener::bind(&addr).with_context(|| format!("Failed to bind {addr}"))
-}
+fn place_fd(command: &mut std::process::Command, source: std::os::fd::OwnedFd, target: std::os::fd::RawFd) {
+    use command_fds::{CommandFdExt, FdMapping};
 
-/// Put `source_fd` at [`LISTEN_FD`] so it survives the coming exec.
-///
-/// Runs between fork and exec, so everything it calls must be
-/// async-signal-safe; `dup2` and `fcntl` are.
-///
-/// # Safety
-///
-/// Call only in that window, where the process is single-threaded and no
-/// allocation or locking may happen.
-#[cfg(unix)]
-unsafe fn place_listen_fd(source_fd: std::os::fd::RawFd) -> std::io::Result<()> {
-    if source_fd == LISTEN_FD {
-        // dup2 does nothing when both descriptors are equal, and in particular
-        // leaves FD_CLOEXEC set — which would close the socket at exec. Clear
-        // it directly instead.
-        let flags = unsafe { libc::fcntl(LISTEN_FD, libc::F_GETFD) };
-        if flags == -1
-            || unsafe { libc::fcntl(LISTEN_FD, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } == -1
-        {
-            return Err(std::io::Error::last_os_error());
-        }
-    } else if unsafe { libc::dup2(source_fd, LISTEN_FD) } == -1 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // The descriptor now carries no FD_CLOEXEC, so it survives this exec and
-    // the one cargo does for the application binary.
-    Ok(())
-}
-
-/// Hand the held socket to every process this job spawns.
-///
-/// `LISTEN_PID` stays unset on purpose: the socket is claimed by the
-/// application, which `cargo run` spawns as a grandchild, so no pid announced
-/// here could match the process that reads it. `listenfd` skips the pid check
-/// when the variable is absent.
-#[cfg(unix)]
-fn install_socket_hook(job: &watchexec::job::Job, socket: Arc<std::net::TcpListener>) {
-    use std::os::fd::AsRawFd;
-
-    job.set_spawn_hook(move |command, _| {
-        // Keep the listener owned by the closure: the child inherits a
-        // duplicate, and the original must outlive every restart.
-        let source_fd = socket.as_raw_fd();
-        let command = command.command_mut();
-        command
-            .env("LISTEN_FDS", "1")
-            .env("LISTEN_FDS_FIRST_FD", LISTEN_FD.to_string())
-            .env_remove("LISTEN_PID");
-
-        // SAFETY: pre_exec runs its closure in exactly the window
-        // place_listen_fd requires.
-        unsafe {
-            command.pre_exec(move || place_listen_fd(source_fd));
-        }
-    });
+    command
+        .fd_mappings(vec![FdMapping { parent_fd: source, child_fd: target }])
+        .expect("one mapping cannot collide with another");
 }
 
 #[derive(clap::Args)]
@@ -120,15 +97,15 @@ pub struct DevArgs {
     #[arg(long)]
     no_default_features: bool,
 
-    /// A cargo flag this command does not mirror, forwarded as given. Repeat
-    /// once per argument: `--cargo-arg --timings --cargo-arg --offline`.
+    /// A cargo flag this command does not mirror, forwarded as given. Repeat once per argument:
+    /// `--cargo-arg --timings --cargo-arg --offline`.
     #[arg(long, value_name = "ARG", allow_hyphen_values = true)]
     cargo_arg: Vec<String>,
 
-    /// Hold the listening socket here and pass it to every restart, so
-    /// requests arriving mid-rebuild queue instead of being refused. The
-    /// application must adopt the inherited socket (see the socket_activation
-    /// example); one that binds its own will fail with "address in use".
+    /// Hold a listening TCP socket on this address across restarts and pass it to every child,
+    /// so connections arriving mid-restart queue instead of being refused. An endpoint the
+    /// application writes as the same address (`Server::new("0.0.0.0:8080")` for
+    /// `--listen 0.0.0.0:8080`) adopts it. UDP is not supported. Unix only.
     #[arg(long, value_name = "ADDR")]
     listen: Option<String>,
 
@@ -138,135 +115,139 @@ pub struct DevArgs {
 }
 
 impl DevArgs {
-    /// Assemble the cargo invocation the watcher restarts.
-    ///
-    /// Cargo stops reading flags at the `--`, so everything selecting what to
-    /// build has to precede it and everything after it belongs to the
-    /// application binary.
-    fn cargo_args(&self) -> Vec<String> {
-        let mut cargo_args = vec!["run".to_string()];
+    /// The `cargo build` invocation each change runs. The application's arguments are not cargo's:
+    /// they go to the child.
+    fn build_args(&self) -> Vec<String> {
+        let mut args = vec!["build".to_string(), "--message-format=json-render-diagnostics".to_string()];
         if self.release {
-            cargo_args.push("--release".to_string());
+            args.push("--release".to_string());
         }
-        for (flag, selection) in [
-            ("--package", &self.package),
-            ("--bin", &self.bin),
-            ("--example", &self.example),
-        ] {
+        for (flag, selection) in [("--package", &self.package), ("--bin", &self.bin), ("--example", &self.example)] {
             if let Some(name) = selection {
-                cargo_args.push(flag.to_string());
-                cargo_args.push(name.clone());
+                args.push(flag.to_string());
+                args.push(name.clone());
             }
         }
         for features in &self.features {
-            cargo_args.push("--features".to_string());
-            cargo_args.push(features.clone());
+            args.push("--features".to_string());
+            args.push(features.clone());
         }
         if self.all_features {
-            cargo_args.push("--all-features".to_string());
+            args.push("--all-features".to_string());
         }
         if self.no_default_features {
-            cargo_args.push("--no-default-features".to_string());
+            args.push("--no-default-features".to_string());
         }
-        cargo_args.extend(self.cargo_arg.iter().cloned());
-        if !self.args.is_empty() {
-            cargo_args.push("--".to_string());
-            cargo_args.extend(self.args.iter().cloned());
-        }
-        cargo_args
+        args.extend(self.cargo_arg.iter().cloned());
+        args
     }
 }
 
-pub async fn execute(args: DevArgs) -> Result<()> {
-    let project_root = std::env::current_dir().context("Failed to read current directory")?;
-    if !project_root.join("Cargo.toml").exists() {
-        return Err(anyhow!(
-            "No Cargo.toml in {} — run `ulo dev` from the project root",
-            project_root.display()
-        ));
+/// The socket `--listen` holds for the whole session. Every child receives a duplicate at
+/// descriptor 3; this one stays open across restarts, which is what keeps the backlog accepting.
+#[cfg_attr(not(unix), allow(dead_code))]
+struct Held {
+    listener: TcpListener,
+    addr: SocketAddr,
+    name: String,
+}
+
+/// Makes the duplicate of the held socket one child receives. A seam, so a test can fail it.
+type Duplicate = fn(&TcpListener) -> std::io::Result<TcpListener>;
+
+fn duplicate(listener: &TcpListener) -> std::io::Result<TcpListener> {
+    listener.try_clone()
+}
+
+/// The duplicate for the next child, filled where the command decides to start one and taken
+/// once by the spawn that starts it; each fill closes a duplicate no spawn took.
+#[derive(Clone, Default)]
+struct Handoff(Arc<Mutex<Option<TcpListener>>>);
+
+impl Handoff {
+    fn fill(&self, socket: Option<TcpListener>) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = socket;
     }
 
-    let cargo_args = args.cargo_args();
-    let display_command = format!("cargo {}", cargo_args.join(" "));
+    #[cfg_attr(not(unix), allow(dead_code))]
+    fn take(&self) -> Option<TcpListener> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).take()
+    }
+}
 
-    // grouped: cargo run spawns the app as a grandchild; signalling the
-    // process group is the only way the stop reaches it.
-    let command = Arc::new(Command {
-        program: Program::Exec {
-            prog: "cargo".into(),
-            args: cargo_args,
-        },
-        options: SpawnOptions {
-            grouped: true,
-            ..Default::default()
-        },
+/// What every build and every start reads.
+struct Plan {
+    root: PathBuf,
+    build_args: Vec<String>,
+    bin: Option<String>,
+    example: Option<String>,
+    app_args: Vec<String>,
+    held: Option<Arc<Held>>,
+    duplicate: Duplicate,
+    /// This binary, which starts each child as `ulo __exec -- <child>` when a socket is held.
+    trampoline: Option<PathBuf>,
+}
+
+enum Trigger {
+    Change,
+    Quit,
+}
+
+pub async fn execute(args: DevArgs) -> Result<()> {
+    let root = std::env::current_dir().context("cannot read the current directory")?;
+    if !root.join("Cargo.toml").exists() {
+        bail!("no Cargo.toml in {}; run `ulo dev` from the project root", root.display());
+    }
+
+    let held = match args.listen.as_deref() {
+        Some(spec) => hold(listen_addr(spec)?)?,
+        None => None,
+    };
+    let trampoline = match held {
+        Some(_) => Some(std::env::current_exe().context("cannot locate the `ulo` binary for the `__exec` trampoline")?),
+        None => None,
+    };
+    let build_args = args.build_args();
+    let display_command = format!("cargo {}", build_args.join(" "));
+    let plan = Arc::new(Plan {
+        root: root.clone(),
+        build_args,
+        bin: args.bin,
+        example: args.example,
+        app_args: args.args,
+        held,
+        duplicate,
+        trampoline,
     });
 
-    let (ignore_files, ignore_errors) = ignore_files::from_origin(project_root.as_path()).await;
-    for err in ignore_errors {
-        eprintln!("{}", format!("[ulo dev] ignore file: {err}").yellow());
+    let (ignore_files, ignore_errors) = ignore_files::from_origin(root.as_path()).await;
+    for error in ignore_errors {
+        eprintln!("{}", format!("[ulo dev] ignore file: {error}").yellow());
     }
-
     let filterer = GlobsetFilterer::new(
-        &project_root,
+        &root,
         std::iter::empty::<(String, Option<PathBuf>)>(),
-        [
-            ("**/target/**".to_string(), None),
-            ("**/.git/**".to_string(), None),
-        ],
+        [("**/target/**".to_string(), None), ("**/.git/**".to_string(), None)],
         std::iter::empty::<PathBuf>(),
         ignore_files,
-        ["rs", "toml"].map(OsString::from),
+        ["rs", "toml"].map(std::ffi::OsString::from),
     )
     .await
-    .context("Failed to build the file filter")?;
+    .context("cannot build the file filter")?;
 
-    // Annotated because the arm that produces a socket is compiled out on
-    // platforms without descriptor passing.
-    let held_socket: Option<Arc<std::net::TcpListener>> = match args.listen.as_deref() {
-        None => None,
-        #[cfg(unix)]
-        Some(spec) => Some(Arc::new(bind_held_socket(spec)?)),
-        #[cfg(not(unix))]
-        Some(_) => {
-            return Err(anyhow!(
-                "--listen needs Unix file-descriptor passing and is not supported on this platform"
-            ));
-        }
-    };
-
-    let job_id = watchexec::Id::default();
-    #[cfg(unix)]
-    let hook_socket = held_socket.clone();
+    let (triggers, received) = mpsc::unbounded_channel();
+    let handler_triggers = triggers.clone();
     let wx = Watchexec::new(move |mut action| {
-        if action
-            .signals()
-            .any(|sig| matches!(sig, Signal::Interrupt | Signal::Terminate))
-        {
-            eprintln!("{}", "[ulo dev] stopping".dimmed());
-            action.quit_gracefully(Signal::Terminate, STOP_GRACE);
-            return action;
+        if action.signals().any(|signal| matches!(signal, Signal::Interrupt | Signal::Terminate)) {
+            let _ = handler_triggers.send(Trigger::Quit);
+            action.quit();
+        } else if action.events.iter().any(changed) {
+            let _ = handler_triggers.send(Trigger::Change);
         }
-
-        if action.paths().next().is_some() {
-            eprintln!("{}", "[ulo dev] change detected, restarting".dimmed());
-        }
-        let is_new = action.get_job(job_id).is_none();
-        let job = action.get_or_create_job(job_id, || command.clone());
-
-        #[cfg(unix)]
-        if let Some(socket) = hook_socket.clone().filter(|_| is_new) {
-            install_socket_hook(&job, socket);
-        }
-        #[cfg(not(unix))]
-        let _ = is_new;
-
-        job.restart_with_signal(Signal::Terminate, STOP_GRACE);
         action
     })
-    .map_err(|e| anyhow!(e))?;
-
-    wx.config.pathset([project_root.clone()]);
+    .map_err(|error| anyhow!(error))?;
+    wx.config.pathset([root.clone()]);
     wx.config.throttle(Duration::from_millis(250));
     wx.config.filterer(filterer);
     wx.config.on_error(|hook| {
@@ -275,214 +256,735 @@ pub async fn execute(args: DevArgs) -> Result<()> {
 
     eprintln!(
         "{}",
-        format!(
-            "[ulo dev] watching {} — running `{}` (Ctrl-C to stop)",
-            project_root.display(),
-            display_command
-        )
-        .green()
+        format!("[ulo dev] watching {}; building with `{display_command}` (Ctrl-C to stop)", root.display()).green()
     );
-    if let Some(socket) = &held_socket {
-        let addr = socket
-            .local_addr()
-            .map(|a| a.to_string())
-            .unwrap_or_else(|_| "?".to_string());
+    if let Some(held) = &plan.held {
+        let local = held.listener.local_addr().map_or_else(|_| held.addr.to_string(), |addr| addr.to_string());
         eprintln!(
             "{}",
-            format!("[ulo dev] holding {addr} — passing it to each restart").green()
+            format!("[ulo dev] holding {local} across restarts; an endpoint written `{}` adopts it", held.addr).green()
         );
     }
 
-    // The action handler only runs on events; seed one so the app starts
-    // before the first file change.
-    wx.send_event(Event::default(), Priority::Urgent)
-        .await
-        .map_err(|e| anyhow!(e))?;
-
-    wx.main()
-        .await
-        .context("Watcher task panicked")?
-        .map_err(|e| anyhow!(e))?;
+    // The supervisor builds and starts the application without waiting for a first change.
+    let supervisor = tokio::spawn(supervise(plan, received));
+    let watched = wx.main().await;
+    // A watcher that ended on an error rather than a signal still owes the child its stop.
+    let _ = triggers.send(Trigger::Quit);
+    supervisor.await.context("the supervisor task panicked")?;
+    watched.context("the watcher task panicked")?.map_err(|error| anyhow!(error))?;
     Ok(())
 }
 
-#[cfg(test)]
-mod cargo_invocation {
-    use super::DevArgs;
-    use clap::Parser;
+/// Whether `event` is a change to a watched file. A read is not: on Linux the watcher reports a
+/// file opened and closed unwritten as an access event, and every `cargo build` reads the
+/// workspace's manifests, so counting reads would restart the application after each build,
+/// without end. A close after a write is kept, since some editors' saves report nothing else.
+fn changed(event: &Event) -> bool {
+    event.paths().next().is_some()
+        && !event.tags.iter().any(|tag| {
+            matches!(tag, Tag::FileEventKind(FileEventKind::Access(access)) if *access != AccessKind::Close(AccessMode::Write))
+        })
+}
 
-    /// `DevArgs` is a flattened subcommand, so a parser has to host it before
-    /// the flag surface can be exercised.
-    #[derive(Parser)]
-    struct Harness {
-        #[command(flatten)]
-        dev: DevArgs,
-    }
-
-    fn cargo_args(flags: &[&str]) -> Vec<String> {
-        let argv = std::iter::once("ulo-dev").chain(flags.iter().copied());
-        Harness::try_parse_from(argv)
-            .expect("flags should parse")
-            .dev
-            .cargo_args()
-    }
-
-    #[test]
-    fn no_flags_run_the_package_default() {
-        assert_eq!(cargo_args(&[]), ["run"]);
-    }
-
-    #[test]
-    fn target_selection_reaches_cargo() {
-        assert_eq!(
-            cargo_args(&["-p", "my-app", "--bin", "server"]),
-            ["run", "--package", "my-app", "--bin", "server"]
+/// What `--listen` takes: an IP socket address, written as the application writes its endpoint,
+/// with an optional `tcp://` in front.
+fn listen_addr(spec: &str) -> Result<SocketAddr> {
+    if let Some(addr) = spec.strip_prefix("udp://") {
+        bail!(
+            "`--listen {spec}`: UDP is outside `--listen`; the application adopts listening TCP sockets alone, so a UDP link binds `{addr}` itself and restarts without holding it"
         );
     }
-
-    #[test]
-    fn feature_selection_reaches_cargo() {
-        assert_eq!(
-            cargo_args(&[
-                "-F",
-                "tls",
-                "--features",
-                "metrics",
-                "--no-default-features"
-            ]),
-            [
-                "run",
-                "--features",
-                "tls",
-                "--features",
-                "metrics",
-                "--no-default-features"
-            ]
+    let text = spec.strip_prefix("tcp://").unwrap_or(spec);
+    if text.parse::<u16>().is_ok() {
+        bail!(
+            "`--listen {spec}` names a port alone; write the address the application listens on, such as `0.0.0.0:{text}` or `127.0.0.1:{text}`, since the held socket goes to the endpoint written as that address"
         );
     }
+    text.parse::<SocketAddr>()
+        .map_err(|_| anyhow!("`--listen {spec}` is not a socket address such as `0.0.0.0:8080`"))
+}
 
-    /// Cargo stops reading its own flags at the `--`, so a cargo flag placed
-    /// after it reaches the application binary instead — where an unknown
-    /// argument is the application's error to report, not cargo's.
-    #[test]
-    fn cargo_flags_precede_the_app_separator() {
-        let args = cargo_args(&["--example", "demo", "--", "--config", "local.toml"]);
+#[cfg(unix)]
+fn hold(addr: SocketAddr) -> Result<Option<Arc<Held>>> {
+    let listener = std::net::TcpListener::bind(addr).with_context(|| format!("cannot listen on {addr}"))?;
+    Ok(Some(Arc::new(Held { listener, addr, name: socket_name(addr) })))
+}
 
-        assert_eq!(
-            args,
-            ["run", "--example", "demo", "--", "--config", "local.toml"]
-        );
+#[cfg(not(unix))]
+fn hold(addr: SocketAddr) -> Result<Option<Arc<Held>>> {
+    eprintln!(
+        "{}",
+        format!(
+            "[ulo dev] --listen {addr} is ignored: holding a socket across restarts needs Unix descriptor passing, so the application binds {addr} itself and a client can see a refused connection during a restart"
+        )
+        .yellow()
+    );
+    Ok(None)
+}
+
+/// The `LISTEN_FDNAMES` name of the socket held on `addr`: the address's text with `%` written
+/// `%25` and `:` written `%3A`, since `LISTEN_FDNAMES` separates names with `:`. `ulo-net`'s
+/// `EndpointSpec::resolve` derives the same name from the application's endpoint.
+#[cfg(unix)]
+fn socket_name(addr: SocketAddr) -> String {
+    let text = addr.to_string();
+    let mut name = String::with_capacity(text.len() + 2);
+    for c in text.chars() {
+        match c {
+            '%' => name.push_str("%25"),
+            ':' => name.push_str("%3A"),
+            c => name.push(c),
+        }
+    }
+    name
+}
+
+/// The application as currently started, the binary it was started from, and where the next
+/// restart leaves the held socket's duplicate for its spawn.
+struct Running {
+    job: Job,
+    task: JoinHandle<()>,
+    executable: PathBuf,
+    handoff: Handoff,
+}
+
+enum Built {
+    Binary(PathBuf),
+    /// Cargo reported the failure on stderr already.
+    Failed,
+}
+
+/// Builds on start and after every change, and replaces the running application once a build
+/// succeeds. Returns on `Trigger::Quit` after stopping the application.
+async fn supervise(plan: Arc<Plan>, mut triggers: mpsc::UnboundedReceiver<Trigger>) {
+    let mut running: Option<Running> = None;
+    let mut stale = true;
+    'session: loop {
+        if stale {
+            stale = false;
+            eprintln!("{}", "[ulo dev] building".dimmed());
+            let outcome = {
+                let build = build(&plan);
+                tokio::pin!(build);
+                loop {
+                    tokio::select! {
+                        outcome = &mut build => break outcome,
+                        trigger = triggers.recv() => match trigger {
+                            Some(Trigger::Change) => stale = true,
+                            // Dropping the build future kills cargo.
+                            Some(Trigger::Quit) | None => break 'session,
+                        },
+                    }
+                }
+            };
+            // A change during the build leaves the binary behind the source: build again before
+            // replacing the application.
+            if stale {
+                continue;
+            }
+            match outcome {
+                Ok(Built::Binary(executable)) => {
+                    if let Err(error) = start(&plan, &mut running, executable).await {
+                        eprintln!("{}", failure(&error));
+                    }
+                }
+                Ok(Built::Failed) if running.is_some() => {
+                    eprintln!("{}", "[ulo dev] build failed; the running application keeps serving".red());
+                }
+                Ok(Built::Failed) => eprintln!("{}", "[ulo dev] build failed; waiting for a change".red()),
+                Err(error) => eprintln!("{}", failure(&error)),
+            }
+        }
+        match triggers.recv().await {
+            Some(Trigger::Change) => {
+                eprintln!("{}", "[ulo dev] change detected".dimmed());
+                stale = true;
+            }
+            Some(Trigger::Quit) | None => break,
+        }
+    }
+    eprintln!("{}", "[ulo dev] stopping".dimmed());
+    if let Some(running) = running {
+        stop(running).await;
+    }
+}
+
+/// One `cargo build`, and the binary it produced for this session's selection.
+async fn build(plan: &Plan) -> Result<Built> {
+    let mut cargo = tokio::process::Command::new("cargo");
+    cargo
+        .args(&plan.build_args)
+        .current_dir(&plan.root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true);
+    let mut child = cargo.spawn().context("cannot start `cargo build`")?;
+    let stdout = child.stdout.take().ok_or_else(|| anyhow!("`cargo build` has no output to read"))?;
+
+    let mut artifacts = Vec::new();
+    let mut lines = BufReader::new(stdout).lines();
+    while let Some(line) = lines.next_line().await.context("cannot read `cargo build`'s output")? {
+        // Lines that are not artifact messages, or not JSON at all, carry nothing this reads.
+        let Ok(message) = serde_json::from_str::<Message>(&line) else { continue };
+        if message.reason != "compiler-artifact" {
+            continue;
+        }
+        if let (Some(package_id), Some(target), Some(executable)) = (message.package_id, message.target, message.executable) {
+            artifacts.push(Artifact { package_id, kind: target.kind, name: target.name, executable });
+        }
+    }
+    let status = child.wait().await.context("cannot wait for `cargo build`")?;
+    if !status.success() {
+        return Ok(Built::Failed);
+    }
+    pick(plan, artifacts).await.map(Built::Binary)
+}
+
+/// A line of `cargo build --message-format=json-render-diagnostics`.
+#[derive(Deserialize)]
+struct Message {
+    reason: String,
+    #[serde(default)]
+    package_id: Option<String>,
+    #[serde(default)]
+    target: Option<Target>,
+    #[serde(default)]
+    executable: Option<PathBuf>,
+}
+
+#[derive(Deserialize)]
+struct Target {
+    kind: Vec<String>,
+    name: String,
+}
+
+struct Artifact {
+    package_id: String,
+    kind: Vec<String>,
+    name: String,
+    executable: PathBuf,
+}
+
+impl Artifact {
+    fn is(&self, kind: &str) -> bool {
+        self.kind.iter().any(|k| k == kind)
+    }
+}
+
+/// The binary `cargo run` would run for the same selection: the named binary or example, the
+/// only binary built, or the one a package names in `default-run`.
+async fn pick(plan: &Plan, artifacts: Vec<Artifact>) -> Result<PathBuf> {
+    let named = match (&plan.example, &plan.bin) {
+        (Some(name), _) => Some(("example", name)),
+        (None, Some(name)) => Some(("bin", name)),
+        (None, None) => None,
+    };
+    if let Some((kind, name)) = named {
+        return artifacts
+            .into_iter()
+            .find(|artifact| artifact.is(kind) && artifact.name == *name)
+            .map(|artifact| artifact.executable)
+            .ok_or_else(|| anyhow!("`cargo build` reported no {kind} named `{name}`"));
     }
 
-    #[test]
-    fn unmirrored_flags_pass_through_verbatim() {
-        assert_eq!(
-            cargo_args(&["--cargo-arg", "--timings", "--cargo-arg", "--offline"]),
-            ["run", "--timings", "--offline"]
-        );
+    let bins: Vec<Artifact> = artifacts.into_iter().filter(|artifact| artifact.is("bin")).collect();
+    if let [only] = bins.as_slice() {
+        return Ok(only.executable.clone());
     }
+    if bins.is_empty() {
+        bail!("`cargo build` produced no binary to run; select one with `--bin` or `--example`");
+    }
+    let defaults = default_runs(&plan.root).await?;
+    let mut chosen = bins
+        .iter()
+        .filter(|artifact| defaults.iter().any(|(id, name)| *id == artifact.package_id && *name == artifact.name));
+    match (chosen.next(), chosen.next()) {
+        (Some(artifact), None) => Ok(artifact.executable.clone()),
+        _ => {
+            let names: Vec<&str> = bins.iter().map(|artifact| artifact.name.as_str()).collect();
+            bail!(
+                "`cargo build` produced {} binaries ({}); choose one with `--bin`, or name it in the package's `default-run`",
+                bins.len(),
+                names.join(", ")
+            )
+        }
+    }
+}
 
-    /// Cargo refuses the pair too, but only after the watcher has started and
-    /// on every restart after that.
-    #[test]
-    fn refuses_a_binary_and_an_example_together() {
-        assert!(
-            Harness::try_parse_from(["ulo-dev", "--bin", "server", "--example", "demo"]).is_err(),
-            "a run has one target"
-        );
+/// Each package's `default-run`, keyed by the package ID cargo's artifact messages carry.
+async fn default_runs(root: &Path) -> Result<Vec<(String, String)>> {
+    let output = tokio::process::Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stderr(Stdio::inherit())
+        .output()
+        .await
+        .context("cannot run `cargo metadata`")?;
+    if !output.status.success() {
+        bail!("`cargo metadata` failed");
+    }
+    let metadata: Metadata = serde_json::from_slice(&output.stdout).context("cannot read `cargo metadata`'s output")?;
+    Ok(metadata
+        .packages
+        .into_iter()
+        .filter_map(|package| package.default_run.map(|name| (package.id, name)))
+        .collect())
+}
+
+#[derive(Deserialize)]
+struct Metadata {
+    packages: Vec<MetadataPackage>,
+}
+
+#[derive(Deserialize)]
+struct MetadataPackage {
+    id: String,
+    #[serde(default)]
+    default_run: Option<String>,
+}
+
+/// A failure of a build or a start, as `ulo dev` reports it.
+fn failure(error: &anyhow::Error) -> colored::ColoredString {
+    format!("[ulo dev] {error:#}").red()
+}
+
+/// Replaces the running application with `executable`: SIGTERM to the old one's process group,
+/// SIGKILL after [`STOP_GRACE`], then the new one on the same held socket.
+///
+/// The held socket's duplicate is made first, before anything is stopped, where its failure can
+/// still call the start off: the error is returned, the running application keeps serving, and the
+/// next change tries again.
+async fn start(plan: &Plan, running: &mut Option<Running>, executable: PathBuf) -> Result<()> {
+    let socket = match &plan.held {
+        Some(held) => Some((plan.duplicate)(&held.listener).with_context(|| {
+            let kept = if running.is_some() { "; the running application keeps serving" } else { "" };
+            format!("cannot duplicate the held socket for {}, so it was not started{kept}, and the next change tries again", executable.display())
+        })?),
+        None => None,
+    };
+    if let Some(current) = running.as_ref().filter(|current| current.executable == executable) {
+        eprintln!("{}", "[ulo dev] restarting".dimmed());
+        current.handoff.fill(socket);
+        // Stops the old process if it is still running, then starts the new one; a binary that
+        // keeps its path keeps its job. Awaited until the spawn has taken the duplicate, so the
+        // next restart cannot fill the handoff before this one's spawn reads it.
+        current.job.restart_with_signal(Signal::Terminate, STOP_GRACE).await;
+        return Ok(());
+    }
+    if let Some(old) = running.take() {
+        stop(old).await;
+    }
+    eprintln!("{}", format!("[ulo dev] starting {}", executable.display()).dimmed());
+    let command = Arc::new(child_command(plan, &executable)?);
+    let (job, task) = start_job(command);
+    let handoff = Handoff::default();
+    install_spawn_hook(&job, plan.held.clone(), handoff.clone());
+    drop(job.set_error_handler(|error| match error.get() {
+        Some(error) => eprintln!("{}", format!("[ulo dev] cannot start the application: {error}").red()),
+        None => eprintln!("{}", "[ulo dev] cannot start the application".red()),
+    }));
+    handoff.fill(socket);
+    job.start().await;
+    *running = Some(Running { job, task, executable, handoff });
+    Ok(())
+}
+
+async fn stop(running: Running) {
+    running.job.stop_with_signal(Signal::Terminate, STOP_GRACE).await;
+    running.job.delete_now().await;
+    let _ = running.task.await;
+}
+
+/// The child: `executable` itself, or, when a socket is held, `ulo __exec -- executable`, which
+/// sets `LISTEN_PID` after the exec where setting it is safe.
+fn child_command(plan: &Plan, executable: &Path) -> Result<Command> {
+    let program = match &plan.trampoline {
+        Some(ulo) => {
+            let executable = executable
+                .to_str()
+                .ok_or_else(|| anyhow!("the binary path {} is not UTF-8", executable.display()))?;
+            let mut args = vec!["__exec".to_string(), "--".to_string(), executable.to_string()];
+            args.extend(plan.app_args.iter().cloned());
+            Program::Exec { prog: ulo.clone(), args }
+        }
+        None => Program::Exec { prog: executable.to_path_buf(), args: plan.app_args.clone() },
+    };
+    // Grouped, so the stop reaches whatever the application spawned, and so the terminal's Ctrl-C
+    // reaches this command alone, which then stops the application in order.
+    Ok(Command { program, options: SpawnOptions { grouped: true, ..Default::default() } })
+}
+
+/// Sets each child's environment and, with a held socket, has each spawn place it at descriptor
+/// 3. Installed once per job; the job calls both before every spawn.
+fn install_spawn_hook(job: &Job, held: Option<Arc<Held>>, handoff: Handoff) {
+    drop(job.set_spawn_hook(move |command, _| {
+        let command = command.command_mut();
+        // The trampoline sets `LISTEN_PID`; one inherited from this command's own environment
+        // names this process, not the child. The socket's variables are set by the spawn that
+        // places it, and only there.
+        command.env(DEV_VAR, "1").env_remove("LISTEN_PID").env_remove("LISTEN_FDS").env_remove("LISTEN_FDNAMES");
+    }));
+    #[cfg(unix)]
+    if let Some(held) = held {
+        // Not awaited: the job handles its controls in order, so the function is in place before
+        // the start `start` sends next.
+        drop(job.set_spawn_fn(spawn_with_socket(handoff, held.name.clone())));
+    }
+    #[cfg(not(unix))]
+    let _ = (held, handoff);
+}
+
+/// The spawn of a job whose children receive the held socket. It takes the duplicate `start` left
+/// in `handoff`, places it at descriptor 3 and announces it; finding none, it fails the spawn,
+/// which the job reports and starts nothing for, since `LISTEN_FDS=1` with nothing placed hands the
+/// child whatever it inherited at descriptor 3. The spawn hook cannot refuse a start; this can.
+#[cfg(unix)]
+fn spawn_with_socket(
+    handoff: Handoff,
+    name: String,
+) -> impl Fn(&mut tokio::process::Command) -> std::io::Result<tokio::process::Child> + Send + Sync + 'static {
+    move |command| {
+        let socket = handoff
+            .take()
+            .ok_or_else(|| std::io::Error::other("no duplicate of the held socket was made for this start"))?;
+        // The command owns the duplicate and closes it once it has spawned; the held socket
+        // outlives every restart.
+        place_fd(command.as_std_mut(), socket.into(), LISTEN_FD);
+        command.env("LISTEN_FDS", "1").env("LISTEN_FDNAMES", &name);
+        command.spawn()
     }
 }
 
 #[cfg(all(test, unix))]
-mod socket_handoff {
-    use super::{LISTEN_FD, place_listen_fd};
+mod tests {
     use std::net::TcpListener;
-    use std::os::fd::{AsRawFd, RawFd};
-    use std::sync::Mutex;
+    use std::os::fd::{AsRawFd, OwnedFd, RawFd};
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
-    /// Descriptor 3 is process-wide, so the cases cannot run concurrently.
-    static FD_SLOT: Mutex<()> = Mutex::new(());
+    use super::{Duplicate, Handoff, Held, LISTEN_FD, Plan, Running, duplicate, failure, place_fd, socket_name, spawn_with_socket, start, stop};
 
-    fn cloexec_set(fd: RawFd) -> bool {
-        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-        assert_ne!(flags, -1, "fd {fd} is not open");
-        flags & libc::FD_CLOEXEC != 0
+    /// The descriptor the child checks.
+    const CHILD_FD: &str = "ULO_DEV_PLACEMENT_FD";
+    /// The inode the socket at that descriptor must carry.
+    const CHILD_INO: &str = "ULO_DEV_PLACEMENT_INO";
+    /// What the child prints when the descriptor is the socket.
+    const PLACED: &str = "ulo-placement: placed";
+
+    /// The inode of the file open at `fd` in this process, read through `/dev/fd`.
+    fn inode(fd: RawFd) -> u64 {
+        std::fs::metadata(format!("/dev/fd/{fd}")).expect("the socket's own descriptor").ino()
     }
 
-    /// Port `fd` is bound to, or `None` when it is closed or not a socket.
-    ///
-    /// Comparing this against the original listener identifies the socket,
-    /// which a "is it a socket" check alone would not.
-    fn socket_port(fd: RawFd) -> Option<u16> {
-        let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
-        let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
-        let rc =
-            unsafe { libc::getsockname(fd, &mut addr as *mut _ as *mut libc::sockaddr, &mut len) };
-        (rc == 0).then(|| u16::from_be(addr.sin_port))
+    /// A listening socket at a descriptor other than [`LISTEN_FD`], the others bound on the way
+    /// to it left open until it is.
+    fn socket_not_at_listen_fd() -> TcpListener {
+        let mut skipped = Vec::new();
+        loop {
+            let socket = TcpListener::bind("127.0.0.1:0").expect("a port");
+            if socket.as_raw_fd() != LISTEN_FD {
+                return socket;
+            }
+            skipped.push(socket);
+        }
     }
 
-    /// Run `body` with descriptor 3 restored afterwards, so moving a socket
-    /// into it cannot disturb the test harness.
-    fn with_listen_fd_slot<T>(body: impl FnOnce() -> T) -> T {
-        let _guard = FD_SLOT.lock().unwrap_or_else(|e| e.into_inner());
-        let saved = unsafe { libc::fcntl(LISTEN_FD, libc::F_DUPFD_CLOEXEC, 30) };
-        let out = body();
-        unsafe {
-            if saved >= 0 {
-                libc::dup2(saved, LISTEN_FD);
-                libc::close(saved);
-            } else {
-                libc::close(LISTEN_FD);
+    /// This test binary run again as `placement_child`, checking descriptor `target` against
+    /// `socket`, with `place` given the command: what the child printed.
+    fn child_sees(socket: TcpListener, target: RawFd, place: impl FnOnce(&mut Command, OwnedFd)) -> String {
+        let ino = inode(socket.as_raw_fd());
+        let mut command = Command::new(std::env::current_exe().expect("the test binary's path"));
+        command
+            .args(["--exact", "commands::dev::tests::placement_child", "--ignored", "--nocapture", "--test-threads=1"])
+            .env(CHILD_FD, target.to_string())
+            .env(CHILD_INO, ino.to_string())
+            .stdin(Stdio::null())
+            .stderr(Stdio::inherit());
+        place(&mut command, OwnedFd::from(socket));
+        let output = command.output().expect("the child runs");
+        assert!(output.status.success(), "the child exited with {}", output.status);
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    /// The socket placed at descriptor 3 from another descriptor, the `dup2` case.
+    #[test]
+    fn a_socket_is_placed_at_descriptor_3() {
+        let seen = child_sees(socket_not_at_listen_fd(), LISTEN_FD, |command, socket| place_fd(command, socket, LISTEN_FD));
+        assert!(seen.contains(PLACED), "the child's descriptor 3: {seen}");
+    }
+
+    /// The socket placed at the descriptor it already is in this process: std opened it with
+    /// `FD_CLOEXEC`, which `dup2` onto itself leaves set, so only a placement that clears the flag
+    /// keeps it across the exec.
+    #[test]
+    fn a_socket_already_at_its_target_survives_the_exec() {
+        let socket = socket_not_at_listen_fd();
+        let fd = socket.as_raw_fd();
+        let seen = child_sees(socket, fd, |command, socket| place_fd(command, socket, fd));
+        assert!(seen.contains(PLACED), "the child's descriptor {fd}, the socket's own number: {seen}");
+    }
+
+    /// The check's control: a duplicate held open in this process across the spawn, and not
+    /// placed, is closed at the exec by its `FD_CLOEXEC`, and the child does not find it.
+    #[test]
+    fn without_a_placement_the_child_does_not_find_the_socket() {
+        let socket = socket_not_at_listen_fd();
+        let held = socket.try_clone().expect("a duplicate of the socket");
+        let fd = held.as_raw_fd();
+        let seen = child_sees(socket, fd, |_, socket| drop(socket));
+        assert!(seen.contains("ulo-placement:") && !seen.contains(PLACED), "the child's descriptor {fd}, never placed: {seen}");
+        drop(held);
+    }
+
+    /// A duplicate that fails as one does when this process is out of descriptors: EMFILE, 24 on
+    /// Linux and macOS.
+    fn out_of_descriptors(_: &TcpListener) -> std::io::Result<TcpListener> {
+        Err(std::io::Error::from_raw_os_error(24))
+    }
+
+    /// A directory of the test's own, holding the application `ulo dev` starts: a script that
+    /// appends one line per start to `starts`, naming whether descriptor 3 is open, what
+    /// `LISTEN_FDS` says and its process ID, then sleeps until it is stopped.
+    struct Application {
+        dir: PathBuf,
+        script: PathBuf,
+        starts: PathBuf,
+    }
+
+    impl Application {
+        fn new(test: &str) -> Application {
+            let dir = std::env::temp_dir().join(format!("ulo-dev-{test}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("the test's directory");
+            let script = dir.join("app.sh");
+            std::fs::write(
+                &script,
+                "#!/bin/sh\n\
+                 if [ -e /dev/fd/3 ]; then held=socket; else held=none; fi\n\
+                 echo \"start $held ${LISTEN_FDS:-unset} $$\" >> \"$1\"\n\
+                 exec sleep 30 >/dev/null 2>&1\n",
+            )
+            .expect("the application script");
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("the script's mode");
+            let starts = dir.join("starts");
+            Application { dir, script, starts }
+        }
+
+        /// A plan holding a socket on a port of the OS's choosing, its duplicates made by
+        /// `duplicate`, starting the script directly rather than through `ulo __exec`.
+        fn plan(&self, duplicate: Duplicate) -> Plan {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+            let addr = listener.local_addr().expect("the held socket's address");
+            Plan {
+                root: self.dir.clone(),
+                build_args: Vec::new(),
+                bin: None,
+                example: None,
+                app_args: vec![self.starts.to_str().expect("a UTF-8 path").to_owned()],
+                held: Some(Arc::new(Held { listener, addr, name: socket_name(addr) })),
+                duplicate,
+                trampoline: None,
             }
         }
-        out
+
+        /// The lines the starts so far wrote, each without its process ID.
+        fn starts(&self) -> Vec<String> {
+            self.lines().iter().map(|line| line.rsplit_once(' ').map_or(line.as_str(), |(start, _)| start).to_owned()).collect()
+        }
+
+        fn lines(&self) -> Vec<String> {
+            std::fs::read_to_string(&self.starts).map(|text| text.lines().map(str::to_owned).collect()).unwrap_or_default()
+        }
+
+        /// The lines once `count` starts have written theirs, failing after ten seconds.
+        async fn after_starts(&self, count: usize) -> Vec<String> {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let starts = self.starts();
+                if starts.len() >= count || Instant::now() >= deadline {
+                    return starts;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
     }
 
+    impl Drop for Application {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    /// How long a child that was started has to write its line before the test reads none.
+    const NO_START: Duration = Duration::from_millis(500);
+
+    /// A duplicate that cannot be made fails the start where `ulo dev` decides on it: the report
+    /// is red and names the OS error, no child starts, a running application keeps serving, and
+    /// the next start, its duplicate made, starts the child with the socket.
+    #[tokio::test]
+    async fn a_failed_duplicate_starts_no_child_and_names_the_os_error() {
+        let application = Application::new("failed-duplicate");
+        let mut plan = application.plan(out_of_descriptors);
+        let mut running: Option<Running> = None;
+
+        let error = start(&plan, &mut running, application.script.clone()).await.expect_err("a start whose duplicate failed");
+        let report = failure(&error);
+        assert_eq!(report.fgcolor, Some(colored::Color::Red), "the report's colour");
+        assert!(report.input.contains("Too many open files (os error 24)"), "the report does not name the OS error: {}", report.input);
+        assert!(running.is_none(), "a job was made for a start whose duplicate failed");
+        tokio::time::sleep(NO_START).await;
+        assert_eq!(application.starts(), Vec::<String>::new(), "a child started though its duplicate failed");
+
+        plan.duplicate = duplicate;
+        start(&plan, &mut running, application.script.clone()).await.expect("the next start");
+        assert_eq!(application.after_starts(1).await, ["start socket 1"], "the next start, its duplicate made");
+
+        plan.duplicate = out_of_descriptors;
+        let error = start(&plan, &mut running, application.script.clone()).await.expect_err("a restart whose duplicate failed");
+        let report = failure(&error).input;
+        assert!(
+            report.contains("Too many open files (os error 24)") && report.contains("the running application keeps serving"),
+            "the restart's report: {report}"
+        );
+        tokio::time::sleep(NO_START).await;
+        assert_eq!(application.starts(), ["start socket 1"], "a restart whose duplicate failed started a child");
+
+        stop(running.take().expect("the running application")).await;
+    }
+
+    /// The spawn of a job passing the held socket takes the duplicate left for it once: with one,
+    /// the child is told `LISTEN_FDS=1`; with none, the spawn fails and no child starts.
+    #[tokio::test]
+    async fn a_spawn_with_no_duplicate_left_for_it_starts_nothing() {
+        let held = TcpListener::bind("127.0.0.1:0").expect("a port");
+        let handoff = Handoff::default();
+        let spawn = spawn_with_socket(handoff.clone(), "held".to_owned());
+
+        let mut command = tokio::process::Command::new("/usr/bin/true");
+        let refused = spawn(&mut command).expect_err("a spawn with no duplicate left for it");
+        assert!(refused.to_string().contains("no duplicate of the held socket"), "the spawn's error: {refused}");
+        let announced = command.as_std().get_envs().any(|(name, _)| name == "LISTEN_FDS");
+        assert!(!announced, "a spawn with no duplicate set `LISTEN_FDS`");
+
+        handoff.fill(Some(held.try_clone().expect("a duplicate")));
+        let mut command = tokio::process::Command::new("/usr/bin/true");
+        let mut child = spawn(&mut command).expect("a spawn with its duplicate");
+        let announced = command.as_std().get_envs().find(|(name, _)| *name == "LISTEN_FDS").and_then(|(_, value)| value);
+        assert_eq!(announced, Some(std::ffi::OsStr::new("1")), "the child's `LISTEN_FDS`");
+        assert!(child.wait().await.expect("the child ends").success());
+        assert!(handoff.take().is_none(), "the spawn left its duplicate in the handoff");
+    }
+
+    /// Open descriptors in this process, `/proc/self/fd` on Linux and `/dev/fd` on macOS. The
+    /// listing's own descriptor is among them every time.
+    fn open_descriptors() -> usize {
+        let dir = if Path::new("/proc/self/fd").is_dir() { "/proc/self/fd" } else { "/dev/fd" };
+        std::fs::read_dir(dir).expect("the descriptor listing").count()
+    }
+
+    /// Restarting the application leaves this process's descriptors as they were: each child's
+    /// duplicate is closed once it has spawned. Run in a child process of its own, since the other
+    /// tests open descriptors while it counts.
     #[test]
-    fn places_the_socket_where_the_child_reads_it() {
-        with_listen_fd_slot(|| {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let port = listener.local_addr().unwrap().port();
-            // Hold the source well away from the target slot so the branch
-            // under test is the copying one.
-            let source = unsafe { libc::fcntl(listener.as_raw_fd(), libc::F_DUPFD, 20) };
-            assert!(source >= 20, "could not place the source descriptor");
+    fn restarts_leave_the_descriptor_count_unchanged() {
+        let output = Command::new(std::env::current_exe().expect("the test binary's path"))
+            .args(["--exact", "commands::dev::tests::restart_leak_child", "--ignored", "--nocapture", "--test-threads=1"])
+            .env(LEAK_CHILD, "1")
+            .stdin(Stdio::null())
+            .output()
+            .expect("the child runs");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success() && stdout.contains(UNCHANGED), "the child exited with {}:\n{stdout}\n{stderr}", output.status);
+    }
 
-            unsafe { place_listen_fd(source) }.unwrap();
+    /// Set for the child process the leak test starts.
+    const LEAK_CHILD: &str = "ULO_DEV_LEAK_CHILD";
+    /// What that child prints when the count held.
+    const UNCHANGED: &str = "ulo-leak: unchanged";
+    /// How many restarts the leak test counts across.
+    const RESTARTS: usize = 5;
 
-            assert_eq!(socket_port(LISTEN_FD), Some(port), "not the held socket");
-            assert!(
-                !cloexec_set(LISTEN_FD),
-                "a descriptor marked close-on-exec never reaches the application"
-            );
-            unsafe { libc::close(source) };
+    /// The leak test's child: starts the application, counts this process's descriptors, restarts
+    /// it [`RESTARTS`] times back to back, and counts again once every start has written its line.
+    #[test]
+    #[ignore = "the child process of the leak test; does nothing unless it starts it"]
+    fn restart_leak_child() {
+        if std::env::var_os(LEAK_CHILD).is_none() {
+            return;
+        }
+        let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("a runtime");
+        runtime.block_on(async {
+            let application = Application::new("restart-leak");
+            let plan = application.plan(duplicate);
+            let mut running: Option<Running> = None;
+            start(&plan, &mut running, application.script.clone()).await.expect("the first start");
+            assert_eq!(application.after_starts(1).await.len(), 1, "the first start wrote no line");
+            let before = open_descriptors();
+            // Each restart waits for the last child's line, since a restart's SIGTERM can reach a
+            // child before it writes one.
+            for restart in 1..=RESTARTS {
+                start(&plan, &mut running, application.script.clone()).await.expect("a restart");
+                assert_eq!(application.after_starts(restart + 1).await.len(), restart + 1, "restart {restart} wrote no line");
+            }
+            let starts = application.starts();
+            let after = open_descriptors();
+            stop(running.take().expect("the running application")).await;
+            assert_eq!(starts, vec!["start socket 1"; RESTARTS + 1], "each start's line");
+            println!("ulo-leak: {before} descriptors open before {RESTARTS} restarts, {after} after");
+            assert_eq!(after, before, "descriptors open after {RESTARTS} restarts against before");
+            println!("{UNCHANGED}");
         });
     }
 
-    /// `dup2` returns success without doing anything when both descriptors are
-    /// equal, so the close-on-exec flag survives and the socket dies at exec.
-    /// Whether the held socket lands on descriptor 3 depends on how many the
-    /// watcher already holds, which makes this silent whenever it happens.
+    /// Restarts issued back to back each wait for their spawn to take the duplicate left for it,
+    /// so the last leaves a child running with the socket. A restart filling the handoff before
+    /// the previous one's spawn read it would leave a later spawn none, and no child.
+    #[tokio::test]
+    async fn back_to_back_restarts_leave_a_child_running_with_the_socket() {
+        let application = Application::new("back-to-back");
+        let plan = application.plan(duplicate);
+        let mut running: Option<Running> = None;
+        start(&plan, &mut running, application.script.clone()).await.expect("the first start");
+        assert_eq!(application.after_starts(1).await.len(), 1, "the first start wrote no line");
+        for _ in 0..4 {
+            start(&plan, &mut running, application.script.clone()).await.expect("a restart");
+        }
+        // Settled once no line has been added for a while: a child a restart stopped writes none
+        // after it.
+        let mut lines = application.lines();
+        loop {
+            tokio::time::sleep(NO_START).await;
+            let now = application.lines();
+            if now == lines {
+                break;
+            }
+            lines = now;
+        }
+        let last = lines.last().expect("a line").clone();
+        let (start_line, pid) = last.rsplit_once(' ').expect("a line ending in its process ID");
+        let alive = Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).status().expect("`kill` runs").success();
+        stop(running.take().expect("the running application")).await;
+        assert_eq!(start_line, "start socket 1", "the last child's line");
+        assert!(alive, "the last child to start, {pid}, was not running once the restarts settled: {lines:?}");
+    }
+
+    /// The child: reports whether the descriptor `ULO_DEV_PLACEMENT_FD` names is the socket whose
+    /// inode `ULO_DEV_PLACEMENT_INO` gives.
     #[test]
-    fn clears_close_on_exec_when_the_socket_already_occupies_the_slot() {
-        with_listen_fd_slot(|| {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let port = listener.local_addr().unwrap().port();
-            assert_ne!(
-                unsafe { libc::dup2(listener.as_raw_fd(), LISTEN_FD) },
-                -1,
-                "could not move the socket into the slot"
-            );
-            // Restore the close-on-exec flag dup2 just cleared, so the socket
-            // sits in the slot exactly as one bound in this process would.
-            let flags = unsafe { libc::fcntl(LISTEN_FD, libc::F_GETFD) };
-            unsafe { libc::fcntl(LISTEN_FD, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
-            assert!(cloexec_set(LISTEN_FD), "precondition");
-
-            unsafe { place_listen_fd(LISTEN_FD) }.unwrap();
-
-            assert_eq!(socket_port(LISTEN_FD), Some(port), "the socket was lost");
-            assert!(!cloexec_set(LISTEN_FD));
-        });
+    #[ignore = "the child process of the placement tests; does nothing unless they start it"]
+    fn placement_child() {
+        let (Ok(fd), Ok(ino)) = (std::env::var(CHILD_FD), std::env::var(CHILD_INO)) else { return };
+        match std::fs::metadata(format!("/dev/fd/{fd}")) {
+            Ok(meta) if meta.file_type().is_socket() && meta.ino().to_string() == ino => println!("{PLACED}"),
+            Ok(meta) => println!("ulo-placement: descriptor {fd} is another file, inode {}", meta.ino()),
+            Err(error) => println!("ulo-placement: descriptor {fd} is closed: {error}"),
+        }
     }
 }

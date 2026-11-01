@@ -1,0 +1,29 @@
+[package]
+name = "ulo-health-grpc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The grpc.health.v1 bridge for Ulo health: the overall status written from readiness at lifecycle transitions and on an interval, through tonic-health"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["ulo", "health", "grpc", "kubernetes"]
+categories = ["network-programming"]
+
+[dependencies]
+ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo-grpc = { path = "../ulo-grpc", version = "=0.1.0-alpha.1" }
+ulo-health = { path = "../ulo-health", version = "=0.1.0-alpha.1" }
+tonic-health.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `ScriptedTimer`: the clock whose refusal `tests/interval_refused.rs` reads.
+ulo-conformance-support = { path = "../ulo-conformance-support" }
+futures-util.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
+tonic = { workspace = true, features = ["channel"] }
+
+[lints]
+workspace = true

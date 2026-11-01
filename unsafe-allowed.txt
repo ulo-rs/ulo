@@ -1,0 +1,26 @@
+# The modules allowed to opt out of the workspace's `unsafe_code = "deny"`, one source file per
+# line, each opting out with `#![allow(unsafe_code)]` at its top. `scripts/unsafe_allowed.py check`
+# fails CI on `unsafe` or a relaxed `unsafe_code` level in any other file, and on a listed file
+# that does not opt out. Keep it short: an entry is a module whose `unsafe` has no safe equivalent.
+#
+# Each entry is `<path> <kind>`, the kind one of two:
+#
+#   pure-rust           Miri executes the `unsafe`, so the `miri` job runs the module's tests under
+#                       Miri, and fails when Miri runs none of them.
+#   syscall <reason>    the `unsafe` calls into the operating system, which Miri cannot execute;
+#                       the reason says what Miri stops at. The `miri` job prints the entry and
+#                       its reason and skips it, and the module rests on its safety comments and
+#                       its ordinary tests.
+#
+# The check refuses an entry with no kind or an unknown one, a `syscall` entry with no reason, and
+# a `pure-rust` entry with anything after the word; `scripts/unsafe_allowed_selftest.txt` plants
+# one line of each, which every run must refuse.
+
+# `FuturesIo`: handing hyper's uninitialized read buffer to a `futures-io` reader, through
+# `ReadBufCursor::as_mut` and `advance`.
+crates/ulo-server-hyper/src/compat.rs pure-rust
+
+# Adopting the descriptors a supervisor hands down (`BorrowedFd::borrow_raw`,
+# `OwnedFd::from_raw_fd`) and reading a socket's listen state through `getsockopt` where socket2
+# does not.
+crates/ulo-net/src/activation.rs syscall its tests open a socket, which Miri refuses under isolation, and without isolation Miri stops at `getsockopt(SO_TYPE)`, an option it does not implement

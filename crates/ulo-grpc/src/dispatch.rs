@@ -1,0 +1,1043 @@
+//! The `:path` dispatcher (transports DESIGN §6.1): one service routing each call to its marker's
+//! handler by path. A path off the table answers UNIMPLEMENTED, offered to no error handler.
+//! `grpc-timeout` is parsed here into the execution's deadline.
+//!
+//! Per call, in order:
+//! 1. A `grpc-timeout` off the specification's grammar: INTERNAL, as grpc-go answers it, the
+//!    message quoting up to 64 characters of the value. No execution opens and nothing of the
+//!    pipeline runs: running the call unbounded would lose the bound its caller asked for, and the
+//!    refusal is permanent, so it comes before a capacity refusal a caller would retry.
+//!    A zero `grpc-timeout`, in any unit, is a budget already spent, the value a caller passing
+//!    its own remaining time down arrives at: DEADLINE_EXCEEDED, as grpc-go answers it, at the
+//!    same point and with nothing run.
+//! 2. Over the server's or the connection's in-flight bound: UNAVAILABLE.
+//! 3. `Execution::open` at the root module, its deadline the caller's `grpc-timeout`. Refused
+//!    during the drain: UNAVAILABLE, answered directly, no pre-dispatch stage.
+//! 4. The inputs `GrpcMetadata` and `PeerAddr` seeded as the client sent them, and the
+//!    `ulo_transport::span::call` span entered, named `package.Service/Method`.
+//! 5. The unscoped pre-dispatch entries of `PreDispatch<Grpc>`, in order.
+//! 6. The path routed: a handler's path routes the execution to the controller's module and runs
+//!    the scoped entries, then `ulo::dispatch`; the health and reflection services answer their
+//!    own paths; any other path runs the scoped entries whose scope matches it, their failures
+//!    offered to the global error handlers alone, then answers UNIMPLEMENTED, so a caller an
+//!    entry refuses is refused alike whether or not the method exists.
+//! 7. An error no handler claims rendered as a status: a `tonic::Status` as it stands,
+//!    DEADLINE_EXCEEDED when the deadline cancelled the call, any other error by its kind.
+//! 8. A response a pre-dispatch entry answered with an HTTP status other than 200 translated by
+//!    the gRPC specification's HTTP-to-status table.
+//!
+//! A call still running when the drain's end cancels its execution with `CancelReason::Drain` is
+//! dropped at its await and answers UNAVAILABLE, "the server is shutting down", unless the handler
+//! answered in the poll the cancellation woke it in. A reply stream still open then ends with the
+//! same status in its trailers, after any item ready in the poll the cancellation woke it in, as
+//! one still open when its deadline passes ends with DEADLINE_EXCEEDED.
+//!
+//! The whole of it is raced against the deadline: when the deadline passes first, the pipeline is
+//! dropped at its await, the execution cancelled with `CancelReason::Deadline`, and the error
+//! handlers receive `Timeout` under `Server::timeout_grace`, the matched handler's tiers then the
+//! global ones, or the global ones alone when the deadline passed before routing. What they
+//! answer, or the error they return rendered as it stands, is the reply; unclaimed, or with no
+//! answer by the end of the grace, the call answers DEADLINE_EXCEEDED. A reply they answer is
+//! delivered only as a single reply: its body is read under the same grace, and one carrying a
+//! second message, or not ended when the grace runs out, is dropped for DEADLINE_EXCEEDED, logged
+//! at `warn` as a stream. When the reply comes first,
+//! the deadline moves into its body, which ends with DEADLINE_EXCEEDED trailers, offered to no
+//! error handler, if the deadline passes while it streams. A unary reply whose message has been
+//! written ends with its own trailers: the deadline ends only a body still waiting for its message.
+//!
+//! A reply stream reports its end where the dispatcher writes it, at the frames of the body
+//! ([`CallBody`]): `encode_stream` marks the reply it builds, and the outermost body of a marked
+//! reply reports `Completed` once it writes trailers carrying `grpc-status: 0`, and `CutOff` for
+//! trailers with any other status, an `Err` item's included, or for a drop before its trailers,
+//! once, whichever comes first. A marked reply an interceptor discards is never written and reports
+//! nothing; one the error handlers answered after a passed deadline was the reply and, dropped
+//! unwritten, reports `CutOff(Deadline)`.
+//!
+//! The dispatcher is built on tonic's codec layer, the pieces `tonic::server::Grpc` composes:
+//! `tonic::Streaming::new_request` decodes a request in the extractors, after the guards have
+//! admitted, and `EncodeBody::new_server` encodes a reply into the response every interceptor
+//! sees. `Grpc::unary` and its siblings decode, call and encode in one call whose service answers
+//! an unencoded message, which would leave the interceptors no encoded reply to read and decode a
+//! message before the guards run.
+
+use std::collections::HashMap;
+use std::convert::Infallible;
+use std::fmt;
+use std::future::{Future, poll_fn};
+use std::net::SocketAddr;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::task::{Context, Poll, ready};
+use std::time::Duration;
+
+use bytes::{Bytes, BytesMut};
+use futures_core::Stream;
+use http::header::{CONTENT_TYPE, HeaderName, HeaderValue};
+use http::{HeaderMap, StatusCode};
+use http_body::{Body as _, Frame, SizeHint};
+use hyper::body::Incoming;
+use tonic::codec::{BufferSettings, EncodeBody, SingleMessageCompressionOverride};
+use tonic::metadata::MetadataMap;
+use tonic::server::NamedService;
+use tonic::{Code, Status};
+use tonic_prost::ProstEncoder;
+use tower::ServiceExt;
+use tracing::{Instrument, Span, field};
+use ulo::{
+    AppHandle, BoxError, BoxFuture, CancelReason, ExecOptions, Execution, ExecutionRef, LateOutcome, MountedHandler,
+    StreamOutcome, Timer, TraceMode, Transport,
+};
+use ulo_http::stage::{Rest, ScopedStage, Stage};
+use ulo_http::{ConnInfo, HttpBody, Request, Response};
+use ulo_transport::{Admission, CallError, ConnectionAdmission, Permit, span};
+
+use crate::handler::HandlerFn;
+use crate::pre_dispatch::StageCx;
+use crate::status::{self, code_for_http};
+use crate::trace;
+use crate::transport::{CxInner, Grpc, GrpcCx, GrpcMetadata, IntoGrpcItem, PeerAddr, Reply};
+
+const GRPC_STATUS: HeaderName = HeaderName::from_static("grpc-status");
+const GRPC_ENCODING: HeaderName = HeaderName::from_static("grpc-encoding");
+const GRPC_ACCEPT_ENCODING: HeaderName = HeaderName::from_static("grpc-accept-encoding");
+const GRPC_TIMEOUT: HeaderName = HeaderName::from_static("grpc-timeout");
+
+/// The headers a reply's metadata never sets: the protocol's own, which the reply and its
+/// trailers write.
+const RESERVED: [&str; 8] = [
+    "te",
+    "content-type",
+    "content-length",
+    "grpc-status",
+    "grpc-message",
+    "grpc-message-type",
+    "grpc-status-details-bin",
+    "grpc-encoding",
+];
+
+/// A service the server answers beside the handlers, health and reflection, called with the
+/// request as the unscoped pre-dispatch entries left it.
+pub(crate) type Builtin = Arc<dyn Fn(http::Request<HttpBody>) -> BoxFuture<'static, Reply> + Send + Sync>;
+
+/// Everything a call reads, built once in `prepare`.
+pub(crate) struct Dispatcher {
+    pub(crate) app: AppHandle,
+    pub(crate) timer: Arc<dyn Timer>,
+    pub(crate) routes: HashMap<&'static str, Arc<Route>>,
+    /// By service name, `grpc.health.v1.Health`.
+    pub(crate) builtins: Vec<(&'static str, Builtin)>,
+    pub(crate) stage: Stage<Grpc>,
+    pub(crate) admission: Admission,
+    /// The per-connection in-flight bound, `None` for none.
+    pub(crate) per_connection: Option<usize>,
+    /// `Server::timeout_grace` as a duration; `None` waits for the error handlers.
+    pub(crate) grace: Option<Duration>,
+}
+
+/// One method path's handler, as `prepare` built it.
+pub(crate) struct Route {
+    pub(crate) handler: MountedHandler<Grpc>,
+    pub(crate) call: HandlerFn,
+    /// The pre-dispatch entries whose scope covers the path, composed once.
+    pub(crate) stage: Arc<ScopedStage<Grpc>>,
+}
+
+impl Dispatcher {
+    /// One connection's in-flight bound, nested in the server's.
+    pub(crate) fn connection(&self) -> ConnectionAdmission {
+        self.admission.connection(self.per_connection)
+    }
+
+    /// Answers one call; never fails, an error being answered as a status.
+    pub(crate) async fn call(self: Arc<Self>, req: http::Request<Incoming>, conn: ConnInfo, admission: ConnectionAdmission) -> Response {
+        let timeout = match grpc_timeout(req.headers()) {
+            Ok(timeout) => timeout,
+            Err(refused) => return status_response(refused),
+        };
+        if timeout == Some(Duration::ZERO) {
+            return status_response(status::deadline_exceeded());
+        }
+        let Some(permit) = admission.try_admit() else {
+            return status_response(Status::unavailable("the server is at its in-flight limit"));
+        };
+        let mut opts = ExecOptions::new();
+        if let Some(deadline) = timeout.and_then(|after| self.timer.now().checked_add(after)) {
+            opts = opts.deadline(deadline);
+        }
+        // Read before `into_parts` below consumes the headers. A `tracestate` with no
+        // `traceparent` is discarded (W3C Trace Context §4.2).
+        if self.app.trace_mode() == TraceMode::On
+            && req.headers().contains_key(trace::TRACEPARENT)
+            && let Some(ctx) = trace::extract(req.headers())
+        {
+            opts = opts.trace(ctx);
+        }
+        let Ok(exec) = Execution::open(&self.app.root(), opts) else {
+            return status_response(Status::unavailable(SHUTTING_DOWN));
+        };
+        let (head, body) = req.into_parts();
+        let metadata = GrpcMetadata::from_headers(&head.headers);
+        exec.seed(metadata.clone());
+        if let Some(peer) = conn.peer {
+            exec.seed(PeerAddr(peer));
+        }
+        let path: Arc<str> = Arc::from(head.uri.path());
+        let peer = conn.peer;
+        let call_span = call_span(&self.app, &exec, head.uri.path());
+        let handle = exec.handle();
+        let mut conn = conn;
+        conn.version = head.version;
+        let request = Request { head, body: HttpBody::new(body), conn, upgrade: None };
+        let matched = Arc::new(OnceLock::new());
+        let exec = Arc::new(exec);
+        let pipeline: BoxFuture<'static, Response> = Box::pin(
+            Arc::clone(&self).unscoped(Arc::clone(&exec), request, call_span.clone(), Arc::clone(&matched)).instrument(call_span.clone()),
+        );
+        let pipeline = until_drained(pipeline, handle.clone());
+        let mut abandoned = CancelOnDrop(Some(handle.clone()));
+        let (response, deadline) = match timeout {
+            None => (pipeline.await, None),
+            Some(after) => match race(pipeline, self.timer.sleep(after), &handle).await {
+                Raced::Done(response, deadline) => (response, deadline),
+                Raced::Expired => {
+                    let handler = matched.get().cloned();
+                    let expired = self.expired(&handle, path, metadata, peer, handler).instrument(call_span.clone()).await;
+                    (expired, None)
+                }
+            },
+        };
+        abandoned.0 = None;
+        let response = as_grpc(response);
+        if let Some(code) = response.headers().get(GRPC_STATUS) {
+            record_status(&call_span, Code::from_bytes(code.as_bytes()));
+        }
+        let tracked = response.extensions().get::<Streamed>().is_some();
+        response.map(|body| HttpBody::new(CallBody::new(body, exec, handle, deadline, call_span, permit, tracked)))
+    }
+
+    /// A deadline that passed before the call answered: the error handlers receive `Timeout`
+    /// with a context built from the call's path, metadata and peer, no request. What they answer,
+    /// if it is a single reply ([`single`]), or the error they return rendered as it stands, is the
+    /// reply; with none by the end of the grace, DEADLINE_EXCEEDED is. `handler` is the handler
+    /// routing matched, `None` when the deadline passed before routing, which leaves the global
+    /// error handlers alone.
+    async fn expired(
+        &self,
+        exec: &ExecutionRef,
+        path: Arc<str>,
+        metadata: GrpcMetadata,
+        peer: Option<SocketAddr>,
+        handler: Option<MountedHandler<Grpc>>,
+    ) -> Response {
+        let cx = self.context(exec, Arc::clone(&path), metadata, peer, handler.clone(), None);
+        let recovering = ulo::recover(handler.as_ref(), exec, &cx, BoxError::from(status::timed_out()));
+        let mut grace = self.grace.map(|grace| self.timer.sleep(grace));
+        let Some(outcome) = within(recovering, grace.as_mut()).await else {
+            return status_response(status::deadline_exceeded());
+        };
+        match outcome {
+            Ok(reply) => {
+                let streamed = reply.extensions().get::<Streamed>().is_some();
+                let written = match single(reply, grace.as_mut()).await {
+                    Ok(reply) => reply,
+                    Err(()) => {
+                        tracing::warn!(
+                            path = &*path,
+                            "an error handler answered a timed-out call with a stream; the stream was ended at the deadline"
+                        );
+                        status_response(status::deadline_exceeded())
+                    }
+                };
+                // The error handlers answered with this stream, so it was the reply: dropped
+                // unwritten, or replaced by a status, it reports `CutOff(Deadline)`.
+                if streamed && written.extensions().get::<Streamed>().is_none() {
+                    exec.report_stream_end(StreamOutcome::CutOff(exec.cancel_reason()));
+                }
+                written
+            }
+            Err(err) => status_response(status::render_as_is(err)),
+        }
+    }
+
+    /// The unscoped sub-step, routing after it. Routing records the handler it matched in
+    /// `matched`, for the error handlers of a deadline that passes after it.
+    fn unscoped(
+        self: Arc<Self>,
+        exec: Arc<Execution>,
+        req: Request,
+        call_span: Span,
+        matched: Arc<OnceLock<MountedHandler<Grpc>>>,
+    ) -> BoxFuture<'static, Response> {
+        let host = (!self.stage.is_empty()).then(|| StageCx::new(&self, exec.handle(), &req, None));
+        let this = Arc::clone(&self);
+        let end: Rest = Box::new(move |req| this.route(exec, req, call_span, matched));
+        match host {
+            Some(host) => self.stage.run(Arc::new(host), req, end),
+            None => end(req),
+        }
+    }
+
+    fn route(
+        self: Arc<Self>,
+        exec: Arc<Execution>,
+        req: Request,
+        call_span: Span,
+        matched: Arc<OnceLock<MountedHandler<Grpc>>>,
+    ) -> BoxFuture<'static, Response> {
+        Box::pin(async move {
+            if let Some(route) = self.routes.get(req.path()).map(Arc::clone) {
+                let _ = matched.set(route.handler.clone());
+                exec.route_to(route.handler.module());
+                call_span.record(span::HANDLER, field::display(HandlerName(&route.handler)));
+                return self.scoped(exec.handle(), req, route).await;
+            }
+            let builtin = service_of(req.path())
+                .and_then(|service| self.builtins.iter().find(|(name, _)| *name == service))
+                .map(|(_, builtin)| Arc::clone(builtin));
+            if let Some(builtin) = builtin {
+                let Request { head, body, .. } = req;
+                return (*builtin)(http::Request::from_parts(head, body)).await.map(HttpBody::new);
+            }
+            self.unrouted(exec.handle(), req).await
+        })
+    }
+
+    /// The scoped entries whose scope matches the path of a call no handler answers, then
+    /// UNIMPLEMENTED. Their failures are offered to the global error handlers alone, no handler
+    /// having matched.
+    fn unrouted(self: &Arc<Self>, exec: ExecutionRef, req: Request) -> BoxFuture<'static, Response> {
+        let end: Rest = Box::new(|req| {
+            Box::pin(std::future::ready(status_response(Status::unimplemented(format!("this server has no method `{}`", req.path())))))
+        });
+        let unrouted = self.stage.unrouted();
+        if unrouted.is_empty() {
+            return end(req);
+        }
+        let host = StageCx::new(self, exec, &req, None);
+        unrouted.run(Arc::new(host), req, end)
+    }
+
+    /// The scoped sub-step, `dispatch` after it.
+    fn scoped(self: &Arc<Self>, exec: ExecutionRef, req: Request, route: Arc<Route>) -> BoxFuture<'static, Response> {
+        if route.stage.is_empty() {
+            return self.dispatch(exec, req, route);
+        }
+        let host = StageCx::new(self, exec.clone(), &req, Some(route.handler.clone()));
+        let stage = Arc::clone(&route.stage);
+        let this = Arc::clone(self);
+        let end: Rest = Box::new(move |req| this.dispatch(exec, req, route));
+        stage.run(Arc::new(host), req, end)
+    }
+
+    fn dispatch(self: &Arc<Self>, exec: ExecutionRef, req: Request, route: Arc<Route>) -> BoxFuture<'static, Response> {
+        let this = Arc::clone(self);
+        Box::pin(async move {
+            if let Some(refused) = unsupported_encoding(req.headers()) {
+                return refused;
+            }
+            let Request { head, body, conn, .. } = req;
+            let cx = this.context(
+                &exec,
+                Arc::from(head.uri.path()),
+                GrpcMetadata::from_headers(&head.headers),
+                conn.peer,
+                Some(route.handler.clone()),
+                Some(body),
+            );
+            let call = Arc::clone(&route.call);
+            let reply = match ulo::dispatch(&route.handler, &exec, &cx, move |cx| (*call)(cx)).await {
+                Ok(reply) => reply,
+                Err(err) => status_reply(status::render(err, &exec)),
+            };
+            reply.map(HttpBody::new)
+        })
+    }
+
+    /// A call's context, as `dispatch` and the error handlers read it.
+    pub(crate) fn context(
+        &self,
+        exec: &ExecutionRef,
+        path: Arc<str>,
+        metadata: GrpcMetadata,
+        peer: Option<SocketAddr>,
+        handler: Option<MountedHandler<Grpc>>,
+        body: Option<HttpBody>,
+    ) -> GrpcCx {
+        GrpcCx::new(CxInner {
+            exec: exec.clone(),
+            app: self.app.clone(),
+            timer: Arc::clone(&self.timer),
+            path,
+            metadata,
+            peer,
+            handler,
+            body: Mutex::new(body),
+        })
+    }
+}
+
+/// The health or reflection service `service`, by the name its paths start with.
+pub(crate) fn builtin<S>(service: S) -> (&'static str, Builtin)
+where
+    S: tower::Service<http::Request<HttpBody>, Response = Reply, Error = Infallible> + NamedService + Clone + Send + 'static,
+    S::Future: Send + 'static,
+{
+    // A tonic server is `Send` and not always `Sync`; each call clones it out of the lock.
+    let service = Mutex::new(service);
+    let call: Builtin = Arc::new(move |request| {
+        let service = service.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        Box::pin(async move {
+            match service.oneshot(request).await {
+                Ok(reply) => reply,
+                Err(never) => match never {},
+            }
+        })
+    });
+    (S::NAME, call)
+}
+
+/// One message as a reply: status 200, `application/grpc`, `metadata` in the headers, the message
+/// in one data frame, and `grpc-status: 0` in the trailers.
+pub(crate) fn encode_one<T: prost::Message + Default + Send + 'static>(message: T, metadata: MetadataMap) -> Reply {
+    let messages = futures_util::stream::once(futures_util::future::ready(Ok::<T, Status>(message)));
+    let body = EncodeBody::new_server(
+        ProstEncoder::<T>::new(BufferSettings::default()),
+        messages,
+        None,
+        SingleMessageCompressionOverride::default(),
+        None,
+    );
+    with_metadata(tonic::body::Body::new(body), metadata)
+}
+
+/// A stream as a reply, marked [`Streamed`] for [`CallBody`] to report its end once it is written.
+/// An `Err` item runs the matched handler's error handlers through `ulo::dispatch_late` and,
+/// unless they end the stream with `EndStream`, is written as the trailers `grpc-status`,
+/// `grpc-message` and `grpc-status-details-bin`, which end the stream: once data frames are sent,
+/// the status travels in the trailers.
+pub(crate) fn encode_stream<S>(stream: S, metadata: MetadataMap, cx: &GrpcCx) -> Reply
+where
+    S: Stream + Send + 'static,
+    S::Item: IntoGrpcItem,
+{
+    // A stream built once the deadline has passed is the error handlers' answer to it, which
+    // `single` reads under the grace; the deadline ends only a stream it finds running.
+    let settled = cx.exec().cancel_reason() == Some(CancelReason::Deadline);
+    let items = LateItems { stream: Box::pin(stream), cx: cx.clone(), state: Late::Streaming, cancelled: None, waiting: false, settled };
+    let body = EncodeBody::new_server(
+        ProstEncoder::<<S::Item as IntoGrpcItem>::Message>::new(BufferSettings::default()),
+        items,
+        None,
+        SingleMessageCompressionOverride::default(),
+        None,
+    );
+    let mut reply = with_metadata(tonic::body::Body::new(body), metadata);
+    reply.extensions_mut().insert(Streamed);
+    reply
+}
+
+/// In a reply's extensions: the reply is a stream `encode_stream` built, whose end the outermost
+/// body reports.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Streamed;
+
+fn with_metadata(body: tonic::body::Body, metadata: MetadataMap) -> Reply {
+    let mut reply = Reply::new(body);
+    let headers = reply.headers_mut();
+    for (name, value) in metadata.into_headers().iter() {
+        if !RESERVED.contains(&name.as_str()) {
+            headers.append(name.clone(), value.clone());
+        }
+    }
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/grpc"));
+    reply
+}
+
+/// `status` as a trailers-only reply.
+pub(crate) fn status_reply(status: Status) -> Reply {
+    status.into_http()
+}
+
+/// The one phrase every refusal of a call because the server is draining or closing carries
+/// (transports DESIGN decision 56).
+const SHUTTING_DOWN: &str = ulo_transport::SHUTDOWN_MESSAGE;
+
+/// `pipeline` until it answers, or until the drain's end cancels the call with
+/// `CancelReason::Drain` while it is still running: then the pipeline is dropped at its current
+/// await, a handler's future reading `Drain` from its execution, and the call answers UNAVAILABLE.
+/// The pipeline is polled first, so a handler that observes the cancellation and answers in the
+/// poll it wakes in is answered as it chose. A cancellation for any other reason is left to the
+/// pipeline.
+fn until_drained(mut pipeline: BoxFuture<'static, Response>, exec: ExecutionRef) -> BoxFuture<'static, Response> {
+    Box::pin(async move {
+        // The listener lives across polls: a wait dropped between them would never wake.
+        let mut cancelled: Option<BoxFuture<'static, ()>> = Some(Box::pin({
+            let exec = exec.clone();
+            async move { exec.cancelled().await }
+        }));
+        poll_fn(move |cx| {
+            if let Poll::Ready(response) = pipeline.as_mut().poll(cx) {
+                return Poll::Ready(response);
+            }
+            if cancelled.as_mut().is_some_and(|cancelled| cancelled.as_mut().poll(cx).is_ready()) {
+                if exec.cancel_reason() == Some(CancelReason::Drain) {
+                    return Poll::Ready(status_response(Status::unavailable(SHUTTING_DOWN)));
+                }
+                cancelled = None;
+            }
+            Poll::Pending
+        })
+        .await
+    })
+}
+
+/// `status` as a trailers-only response.
+pub(crate) fn status_response(status: Status) -> Response {
+    status.into_http()
+}
+
+/// `response` as a gRPC response: one with HTTP status 200 is left as it is; any other, which a
+/// pre-dispatch entry answered, becomes a trailers-only response with the code the gRPC
+/// specification's table gives its status, keeping its headers beside the protocol's own.
+fn as_grpc(response: Response) -> Response {
+    let status = response.status();
+    if status == StatusCode::OK {
+        return response;
+    }
+    let (parts, _) = response.into_parts();
+    let mut translated = status_response(Status::new(code_for_http(status), format!("a pre-dispatch entry answered HTTP {status}")));
+    let headers = translated.headers_mut();
+    for (name, value) in &parts.headers {
+        if !RESERVED.contains(&name.as_str()) {
+            headers.append(name.clone(), value.clone());
+        }
+    }
+    translated
+}
+
+/// UNIMPLEMENTED with `grpc-accept-encoding: identity` for a request compressed with an encoding
+/// this server does not decompress, which the gRPC compression specification prescribes; `None`
+/// for an uncompressed request.
+fn unsupported_encoding(headers: &HeaderMap) -> Option<Response> {
+    let encoding = headers.get(GRPC_ENCODING)?;
+    if encoding.as_bytes() == b"identity" {
+        return None;
+    }
+    let message = format!("this server does not decompress `{}`", String::from_utf8_lossy(encoding.as_bytes()));
+    let mut response = status_response(Status::unimplemented(message));
+    response.headers_mut().insert(GRPC_ACCEPT_ENCODING, HeaderValue::from_static("identity"));
+    Some(response)
+}
+
+/// How much of a `grpc-timeout` off the grammar the refusal quotes back, as RPC's `bad_deadline`
+/// quotes a `deadline-ms`.
+const QUOTED: usize = 64;
+
+/// The caller's `grpc-timeout`: `Ok(None)` when absent, and INTERNAL, grpc-go's code for the same
+/// value, when it is off the grammar of gRPC over HTTP/2, at most eight ASCII digits followed by one
+/// of `H`, `M`, `S`, `m`, `u` and `n`. A zero amount is on the grammar's digits and read as
+/// `Duration::ZERO`, which `Dispatcher::call` answers DEADLINE_EXCEEDED.
+pub(crate) fn grpc_timeout(headers: &HeaderMap) -> Result<Option<Duration>, Status> {
+    let Some(value) = headers.get(GRPC_TIMEOUT) else { return Ok(None) };
+    match value.to_str().ok().and_then(parse_timeout) {
+        Some(timeout) => Ok(Some(timeout)),
+        None => {
+            let text = String::from_utf8_lossy(value.as_bytes());
+            let quoted: String = text.chars().take(QUOTED).collect();
+            let cut = if quoted.len() < text.len() { ", cut short" } else { "" };
+            Err(Status::internal(format!(
+                "the call's `grpc-timeout` is {quoted:?}{cut}, which is not at most eight ASCII digits followed by one of `H`, `M`, `S`, `m`, `u` and `n`"
+            )))
+        }
+    }
+}
+
+fn parse_timeout(text: &str) -> Option<Duration> {
+    let unit_at = text.len().checked_sub(1)?;
+    if !text.is_char_boundary(unit_at) {
+        return None;
+    }
+    let (digits, unit) = text.split_at(unit_at);
+    if digits.is_empty() || digits.len() > 8 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let amount: u64 = digits.parse().ok()?;
+    Some(match unit {
+        "H" => Duration::from_secs(amount * 3600),
+        "M" => Duration::from_secs(amount * 60),
+        "S" => Duration::from_secs(amount),
+        "m" => Duration::from_millis(amount),
+        "u" => Duration::from_micros(amount),
+        "n" => Duration::from_nanos(amount),
+        _ => return None,
+    })
+}
+
+/// The span for a call to `path`: named `package.Service/Method`, with `rpc.system = "grpc"`,
+/// `rpc.service` and `rpc.method`, started on `exec`'s trace context.
+fn call_span(app: &AppHandle, exec: &Execution, path: &str) -> Span {
+    let name = path.strip_prefix('/').unwrap_or(path);
+    let call_span = span::call(app, exec, span::Kind::Server, <Grpc as Transport>::KEY, name, None);
+    call_span.record(span::RPC_SYSTEM, "grpc");
+    if let Some((service, method)) = name.split_once('/') {
+        call_span.record(span::RPC_SERVICE, service);
+        call_span.record(span::RPC_METHOD, method);
+    }
+    call_span
+}
+
+fn record_status(call_span: &Span, code: Code) {
+    call_span.record(span::RPC_GRPC_STATUS_CODE, i32::from(code));
+    trace::record_status(call_span, code);
+}
+
+/// `users.v1.UserService` for the path `/users.v1.UserService/GetUser`.
+fn service_of(path: &str) -> Option<&str> {
+    path.strip_prefix('/')?.split_once('/').map(|(service, _)| service)
+}
+
+/// The span's `ulo.handler`: `UsersGrpc::get_user`.
+struct HandlerName<'a>(&'a MountedHandler<Grpc>);
+
+impl fmt::Display for HandlerName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}::{}", self.0.controller(), self.0.name())
+    }
+}
+
+/// Fires `CancelReason::ClientCancelled` when the call's future is dropped before it answered: a
+/// caller resetting its stream drops it there.
+struct CancelOnDrop(Option<ExecutionRef>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if let Some(exec) = self.0.take() {
+            exec.cancel_with(CancelReason::ClientCancelled);
+        }
+    }
+}
+
+enum Raced {
+    /// The pipeline answered first; the sleep, still pending, goes on with the body.
+    Done(Response, Option<BoxFuture<'static, ()>>),
+    Expired,
+}
+
+/// `pipeline` raced against the call's deadline. The pipeline is polled first, so an answer ready
+/// in the poll the sleep fires in counts as answered; when the sleep wins, `exec` is cancelled
+/// with `CancelReason::Deadline` and the pipeline then dropped at its current await, so a handler's
+/// future dropped there reads the reason.
+async fn race(mut pipeline: BoxFuture<'static, Response>, sleep: BoxFuture<'static, ()>, exec: &ExecutionRef) -> Raced {
+    let mut sleep = Some(sleep);
+    poll_fn(move |cx| {
+        if let Poll::Ready(response) = pipeline.as_mut().poll(cx) {
+            return Poll::Ready(Raced::Done(response, sleep.take()));
+        }
+        match sleep.as_mut().map(|sleep| sleep.as_mut().poll(cx)) {
+            Some(Poll::Ready(())) => {
+                exec.cancel_with(CancelReason::Deadline);
+                Poll::Ready(Raced::Expired)
+            }
+            _ => Poll::Pending,
+        }
+    })
+    .await
+}
+
+/// `fut` raced against the grace, polled first: `None` when the grace runs out, `fut` dropped at
+/// its current await. With no grace, `fut` runs to its end.
+async fn within<F: Future>(fut: F, grace: Option<&mut BoxFuture<'static, ()>>) -> Option<F::Output> {
+    match grace {
+        Some(sleep) => {
+            tokio::select! {
+                biased;
+                output = fut => Some(output),
+                () = sleep => None,
+            }
+        }
+        None => Some(fut.await),
+    }
+}
+
+/// The error handlers' reply to a passed deadline, as the response to write when it is a single
+/// reply: a trailers-only status, or a body carrying at most one message that ends within the
+/// grace. The body is read whole and written as read; one failing while it is read answers
+/// DEADLINE_EXCEEDED. `Err` for a stream: a body whose bytes run past its first message, or one
+/// still open when the grace runs out, dropped unwritten.
+///
+/// A message is read off its gRPC length prefix, not off the reply's construction: on the wire a
+/// server stream of one message and a unary reply are the same bytes, and `Reply` is an erased
+/// response, whether `GrpcCx::reply`, `GrpcCx::reply_stream` or a hand-written body built it.
+async fn single(reply: Reply, mut grace: Option<&mut BoxFuture<'static, ()>>) -> Result<Response, ()> {
+    let (parts, mut body) = reply.into_parts();
+    if body.is_end_stream() {
+        return Ok(Response::from_parts(parts, HttpBody::new(body)));
+    }
+    let mut data = BytesMut::new();
+    let mut trailers = None;
+    loop {
+        let next = poll_fn(|cx| Pin::new(&mut body).poll_frame(cx));
+        let Some(frame) = within(next, grace.as_deref_mut()).await.ok_or(())? else { break };
+        let frame = match frame {
+            Ok(frame) => frame,
+            Err(err) => {
+                tracing::debug!(error = %err, "the reply an error handler answered a timed-out call with failed while it was read");
+                return Ok(status_response(status::deadline_exceeded()));
+            }
+        };
+        match frame.into_data() {
+            Ok(bytes) => {
+                data.extend_from_slice(&bytes);
+                if past_first_message(&data) {
+                    return Err(());
+                }
+            }
+            Err(frame) => {
+                trailers = frame.into_trailers().ok();
+                break;
+            }
+        }
+    }
+    let body = Buffered { data: Some(data.freeze()).filter(|data| !data.is_empty()), trailers };
+    Ok(Response::from_parts(parts, HttpBody::new(body)))
+}
+
+/// Whether `data`, the start of a reply body, holds a byte after its first length-prefixed
+/// message: a compressed-flag byte and a four-byte big-endian length, then that many bytes.
+fn past_first_message(data: &[u8]) -> bool {
+    match data {
+        [_, a, b, c, d, rest @ ..] => rest.len() > u32::from_be_bytes([*a, *b, *c, *d]) as usize,
+        _ => false,
+    }
+}
+
+/// A reply body read whole: its data in one frame, then its trailers.
+struct Buffered {
+    data: Option<Bytes>,
+    trailers: Option<HeaderMap>,
+}
+
+impl http_body::Body for Buffered {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        let this = self.get_mut();
+        if let Some(data) = this.data.take() {
+            return Poll::Ready(Some(Ok(Frame::data(data))));
+        }
+        Poll::Ready(this.trailers.take().map(|trailers| Ok(Frame::trailers(trailers))))
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.data.is_none() && self.trailers.is_none()
+    }
+}
+
+/// A reply stream's items with the late path for an `Err` item. A stream still open when the
+/// drain's end cancels the call with `CancelReason::Drain` ends with UNAVAILABLE and the shutdown
+/// phrase in its trailers, and one still open when its deadline passes with DEADLINE_EXCEEDED. The
+/// stream is polled before the cancellation, so an item ready in the poll the cancellation wakes
+/// is written; a wait that begins once the call is cancelled takes no further item, which ends a
+/// stream whose items are always ready.
+struct LateItems<S> {
+    stream: Pin<Box<S>>,
+    /// Held while the stream runs, for the error handlers an `Err` item reaches and the
+    /// execution's cancellation.
+    cx: GrpcCx,
+    state: Late,
+    /// Resolves when the execution is cancelled; built when the stream first waits.
+    cancelled: Option<BoxFuture<'static, ()>>,
+    /// The last poll of the stream answered `Pending`: the next poll continues that wait.
+    waiting: bool,
+    /// The execution was cancelled, by neither the drain nor the deadline: the stream runs on
+    /// unwatched.
+    settled: bool,
+}
+
+enum Late {
+    Streaming,
+    /// An `Err` item in the error handlers, with the canonical form of the original kept for an
+    /// error handler answering `Ok`.
+    Recovering { original: CallError, outcome: BoxFuture<'static, LateOutcome> },
+    Done,
+}
+
+impl<S> LateItems<S> {
+    /// The status that ends the stream for `error`; its non-zero trailers report the stream cut
+    /// off.
+    fn failed(&self, error: BoxError) -> Status {
+        status::render(error, self.cx.exec())
+    }
+
+    /// The status that ends the stream for the execution's cancellation: the drain's and the
+    /// deadline's end it, any other leaves it to run.
+    fn ending(&self) -> Option<Status> {
+        match self.cx.exec().cancel_reason() {
+            Some(CancelReason::Drain) => Some(Status::unavailable(SHUTTING_DOWN)),
+            Some(CancelReason::Deadline) => Some(status::deadline_exceeded()),
+            _ => None,
+        }
+    }
+
+    /// The status that ends the stream once the cancellation listener resolves, polled when the
+    /// stream answered `Pending`. A cancellation that does not end the stream leaves it to run on,
+    /// and a resolved listener is not polled again.
+    fn cancelled(&mut self, cx: &mut Context<'_>) -> Option<Status> {
+        if self.settled {
+            return None;
+        }
+        let exec = self.cx.exec();
+        let cancelled = self.cancelled.get_or_insert_with(|| {
+            let exec = exec.clone();
+            Box::pin(async move { exec.cancelled().await })
+        });
+        if cancelled.as_mut().poll(cx).is_pending() {
+            return None;
+        }
+        let ending = self.ending();
+        if ending.is_none() {
+            self.settled = true;
+            self.cancelled = None;
+        }
+        ending
+    }
+}
+
+impl<S> Stream for LateItems<S>
+where
+    S: Stream,
+    S::Item: IntoGrpcItem,
+{
+    type Item = Result<<S::Item as IntoGrpcItem>::Message, Status>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        if matches!(this.state, Late::Streaming) && !this.settled && !this.waiting
+            && let Some(ending) = this.ending()
+        {
+            this.state = Late::Done;
+            return Poll::Ready(Some(Err(ending)));
+        }
+        loop {
+            match &mut this.state {
+                Late::Streaming => {
+                    let item = match this.stream.as_mut().poll_next(cx) {
+                        Poll::Ready(item) => item,
+                        Poll::Pending => {
+                            this.waiting = true;
+                            if let Some(ending) = this.cancelled(cx) {
+                                this.state = Late::Done;
+                                return Poll::Ready(Some(Err(ending)));
+                            }
+                            return Poll::Pending;
+                        }
+                    };
+                    this.waiting = false;
+                    match item {
+                        Some(item) => match item.into_grpc_item() {
+                            Ok(message) => return Poll::Ready(Some(Ok(message))),
+                            Err(error) => {
+                                let original = error.summary();
+                                match this.cx.inner.handler.clone() {
+                                    Some(handler) => {
+                                        let exec = this.cx.exec().clone();
+                                        let call_cx = this.cx.clone();
+                                        let outcome: BoxFuture<'static, LateOutcome> = Box::pin(async move {
+                                            ulo::dispatch_late(&handler, &exec, &call_cx, BoxError::from(error)).await
+                                        });
+                                        this.state = Late::Recovering { original, outcome };
+                                    }
+                                    None => {
+                                        this.state = Late::Done;
+                                        return Poll::Ready(Some(Err(this.failed(BoxError::from(error)))));
+                                    }
+                                }
+                            }
+                        },
+                        None => {
+                            this.state = Late::Done;
+                            return Poll::Ready(None);
+                        }
+                    }
+                }
+                Late::Recovering { original, outcome } => {
+                    let error: BoxError = match ready!(outcome.as_mut().poll(cx)) {
+                        LateOutcome::End => {
+                            this.state = Late::Done;
+                            return Poll::Ready(None);
+                        }
+                        LateOutcome::Render(error) => error,
+                        LateOutcome::Ignored => {
+                            tracing::warn!(
+                                handler = this.cx.inner.handler.as_ref().map(|handler| handler.name()),
+                                "an error handler answered `Ok` to an error raised after the reply stream began; its reply is dropped and the original error is written"
+                            );
+                            Box::new(original.summary())
+                        }
+                        _ => Box::new(original.summary()),
+                    };
+                    this.state = Late::Done;
+                    return Poll::Ready(Some(Err(this.failed(error))));
+                }
+                Late::Done => return Poll::Ready(None),
+            }
+        }
+    }
+}
+
+/// The outermost reply body: it keeps the execution and the in-flight permit until hyper drops it,
+/// carries the deadline a reply answered before, and records the trailers' `grpc-status` on the
+/// span. A drop before the body's end is the caller abandoning the call, which fires
+/// `CancelReason::ClientCancelled`.
+///
+/// For a reply `encode_stream` marked it reports the stream's end, once: `Completed` as it writes
+/// trailers carrying `grpc-status: 0`; `CutOff` with the execution's reason as it writes trailers
+/// carrying any other status, as the body ends without trailers or fails, or as it is dropped
+/// before any of those.
+struct CallBody {
+    inner: HttpBody,
+    /// The execution's holder, dropped after `inner`: the execution ends once the reply has.
+    _holder: Arc<Execution>,
+    exec: ExecutionRef,
+    deadline: Option<BoxFuture<'static, ()>>,
+    call_span: Span,
+    _permit: Permit,
+    ended: bool,
+    /// The reply is a marked stream whose end is still to be reported.
+    tracking: bool,
+    /// The deadline passed on a poll that also yielded a frame: the next poll ends the body with
+    /// DEADLINE_EXCEEDED, unless it is a reply that is not a marked stream and that poll yields
+    /// its trailers.
+    expired: bool,
+}
+
+impl CallBody {
+    fn new(
+        inner: HttpBody,
+        holder: Arc<Execution>,
+        exec: ExecutionRef,
+        deadline: Option<BoxFuture<'static, ()>>,
+        call_span: Span,
+        permit: Permit,
+        tracked: bool,
+    ) -> Self {
+        let ended = inner.is_end_stream();
+        let mut body =
+            CallBody { inner, _holder: holder, exec, deadline, call_span, _permit: permit, ended, tracking: tracked, expired: false };
+        if ended {
+            body.report(false);
+        }
+        body
+    }
+
+    /// Reports the marked stream's end, once: `Completed` when `clean`, `CutOff` otherwise.
+    fn report(&mut self, clean: bool) {
+        if std::mem::take(&mut self.tracking) {
+            let outcome = if clean { StreamOutcome::Completed } else { StreamOutcome::CutOff(self.exec.cancel_reason()) };
+            self.exec.report_stream_end(outcome);
+        }
+    }
+
+    /// Ends the body with `status` in its trailers, the rest of the reply dropped unwritten.
+    fn end_with(&mut self, status: Status) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+        self.ended = true;
+        self.deadline = None;
+        self.report(status.code() == Code::Ok);
+        record_status(&self.call_span, status.code());
+        drop(std::mem::take(&mut self.inner));
+        let mut trailers = HeaderMap::new();
+        if let Err(unwritable) = status.add_header(&mut trailers) {
+            tracing::warn!(error = %unwritable, "a status could not be written as trailers");
+        }
+        Poll::Ready(Some(Ok(Frame::trailers(trailers))))
+    }
+}
+
+impl http_body::Body for CallBody {
+    type Data = Bytes;
+    type Error = BoxError;
+
+    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+        let this = self.get_mut();
+        if this.ended {
+            return Poll::Ready(None);
+        }
+        if this.expired && this.tracking {
+            return this.end_with(status::deadline_exceeded());
+        }
+        // The deadline is observed before the body is polled and acted on after it: a frame the
+        // body yields in the poll the deadline passes in goes out, and a marked stream, which
+        // reads the cancellation at its next wait, takes no item after the one that poll found
+        // ready. A reply that is not a marked stream may be a unary one, whose message has been
+        // written and which ends with its own trailers; the next poll lets those through and
+        // ends anything else with DEADLINE_EXCEEDED.
+        let mut passed = false;
+        if let Some(deadline) = this.deadline.as_mut()
+            && deadline.as_mut().poll(cx).is_ready()
+        {
+            this.deadline = None;
+            this.exec.cancel_with(CancelReason::Deadline);
+            passed = true;
+        }
+        // A reply stream that panics is ended here rather than in hyper's connection task.
+        let polled = match catch_unwind(AssertUnwindSafe(|| Pin::new(&mut this.inner).poll_frame(cx))) {
+            Ok(polled) => polled,
+            Err(_) => {
+                tracing::error!("a gRPC reply body panicked while it was written; it ends with INTERNAL");
+                this.exec.report_stream_end(StreamOutcome::CutOff(this.exec.cancel_reason()));
+                let panicked = std::mem::take(&mut this.inner);
+                // A stream that panicked may panic again in its drop.
+                let _ = catch_unwind(AssertUnwindSafe(move || drop(panicked)));
+                return this.end_with(Status::internal("internal error"));
+            }
+        };
+        match &polled {
+            Poll::Ready(Some(Ok(frame))) => {
+                if let Some(trailers) = frame.trailers_ref() {
+                    let code = trailers.get(GRPC_STATUS).map(|code| Code::from_bytes(code.as_bytes()));
+                    if let Some(code) = code {
+                        record_status(&this.call_span, code);
+                    }
+                    this.ended = true;
+                    this.report(code == Some(Code::Ok));
+                } else if this.inner.is_end_stream() {
+                    this.ended = true;
+                    this.report(false);
+                }
+            }
+            Poll::Ready(Some(Err(_)) | None) => {
+                this.ended = true;
+                this.report(false);
+            }
+            Poll::Pending => {}
+        }
+        if this.ended {
+            this.deadline = None;
+        } else if this.expired || (passed && polled.is_pending()) {
+            return this.end_with(status::deadline_exceeded());
+        } else if passed {
+            this.expired = true;
+        }
+        polled
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.ended || self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+impl Drop for CallBody {
+    // The reason is written before the report, which reads it.
+    fn drop(&mut self) {
+        if !self.ended {
+            self.exec.cancel_with(CancelReason::ClientCancelled);
+        }
+        self.report(false);
+    }
+}

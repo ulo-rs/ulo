@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package pricing.v1;
+
+// The last hop: prices a sku and reports the trace context its own call carried.
+service Pricing {
+  rpc Quote(QuoteRequest) returns (Price);
+}
+
+message QuoteRequest {
+  string sku = 1;
+}
+
+message Price {
+  uint32 cents = 1;
+  string traceparent = 2;
+}

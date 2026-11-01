@@ -1,0 +1,19 @@
+error[E0277]: `HttpOnly` is not a guard for `Rpc`
+  --> tests/ui/controller_enhancer_for_another_transport.rs:21:10
+   |
+21 | #[guards(HttpOnly)]
+   |          ^^^^^^^^ a guard for `Rpc` is needed here
+   |
+   = note: implement `Guard<Rpc>` for `HttpOnly`
+help: the trait `Guard<Rpc>` is not implemented for `HttpOnly`
+      but trait `Guard<Http>` is implemented for it
+  --> tests/ui/controller_enhancer_for_another_transport.rs:11:1
+   |
+11 | impl Guard<Http> for HttpOnly {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `Http`, found `Rpc`
+note: required by a bound in `Orders::__ulo_mount_get::get`
+  --> tests/ui/controller_enhancer_for_another_transport.rs:29:14
+   |
+29 |     async fn get(&self, id: Payload<u64>) -> u64 {
+   |              ^^^ required by this bound in `get`

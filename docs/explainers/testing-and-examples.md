@@ -182,14 +182,13 @@ found in the other direction: **enumerate what a surface promises — every usag
 guarantee, every failure and interruption path — then map tests onto the promises.** A promise with no
 test is the missing test; a test pinning no promise is the redundant one.
 
-`integration-tests/tests/integration/coverage_ledger.rs` answers a narrower question. It proves
-every crate is tested *somewhere* and that the bookkeeping about where is true. It cannot tell
-whether those tests pin anything worth pinning. That judgment is the per-surface pass above, and one
-surface at a time is enough.
+CI answers a narrower question: it fails any job that runs no tests. That says a crate is tested
+*somewhere* and nothing about whether those tests pin anything worth pinning. That judgment is the
+per-surface pass above, and one surface at a time is enough.
 
 ## Adding a crate
 
-Four steps, in order. The first three decide where its tests go; the fourth records the decision.
+Three steps, in order; they decide where its tests go.
 
 1. **Does it implement a framework trait that other crates also implement?** Add a line to the
    relevant conformance suite. Its own `tests/` then covers only what it does differently, and that
@@ -200,8 +199,3 @@ Four steps, in order. The first three decide where its tests go; the fourth reco
 3. **Is it pure logic?** `#[cfg(test)]` under `src/`, plus the shared suite if its output only means
    anything inside a running application — that is why `ulo-macros` is registered there despite
    having no `tests/` of its own.
-4. **Record it** in `coverage_ledger.rs`. The test fails until the line is there and matches the
-   tree.
-
-A crate that reaches step 4 with nothing to declare is a crate with no tests, which the ledger accepts
-only against a written reason.

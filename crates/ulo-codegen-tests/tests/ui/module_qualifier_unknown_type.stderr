@@ -1,0 +1,5 @@
+error[E0425]: cannot find type `Primary` in this scope
+ --> tests/ui/module_qualifier_unknown_type.rs:7:39
+  |
+7 | #[module(providers = [Db("primary") @ Primary])]
+  |                                       ^^^^^^^ not found in this scope

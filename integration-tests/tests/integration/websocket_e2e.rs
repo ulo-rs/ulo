@@ -28,7 +28,6 @@
 use crate::common::TestServer;
 use futures_util::{SinkExt, StreamExt};
 use serial_test::serial;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use ulo::UloFactory;
 use ulo::dispatch::Items;
@@ -304,7 +303,7 @@ impl EventGateway {
 #[controller("/trigger")]
 pub struct TriggerController {
     #[inject]
-    gateway: Arc<EventGateway>,
+    gateway: EventGateway,
 }
 
 #[routes]

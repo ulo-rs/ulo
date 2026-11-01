@@ -1,256 +1,250 @@
-use anyhow::{Context, Result, anyhow};
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+use clap::ValueEnum;
 use colored::Colorize;
-use regex::Regex;
-use std::path::PathBuf;
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
+
+use super::{is_keyword, render};
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(clap::Args)]
 pub struct GenerateArgs {
-    resource_type: String,
+    /// What to generate
+    #[arg(value_enum)]
+    kind: Kind,
+
+    /// The name, a Rust identifier in any case: `users`, `UserProfile`, `user_profile`
     name: String,
+
+    /// The transport a controller serves; only `controller` takes it
+    #[arg(long, value_enum)]
+    transport: Option<ControllerTransport>,
 }
 
-pub async fn execute(args: GenerateArgs) -> anyhow::Result<()> {
-    match args.resource_type.to_lowercase().as_str() {
-        "resource" => generate_resource(&args.name).await,
-        _ => Err(anyhow!("Invalid resource type")),
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum Kind {
+    /// A module: `src/<name>_module.rs`
+    Module,
+    /// An injectable service: `src/<name>.rs`
+    Provider,
+    /// Handlers on a transport: `src/<name>_controller.rs`
+    Controller,
+    /// A WebSocket gateway: `src/<name>_gateway.rs`
+    Gateway,
+    /// A GraphQL root object: `src/<name>_resolver.rs`
+    Resolver,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum ControllerTransport {
+    Http,
+    Rpc,
+}
+
+/// A name in the spellings the templates need.
+struct Names {
+    pascal: String,
+    snake: String,
+    /// The snake name with `-` between its words, for an HTTP path.
+    route: String,
+    /// The Pascal name with its first letter lowered, GraphQL's field spelling.
+    field: String,
+}
+
+/// What `ulo generate` wrote, and what its author does next.
+struct Generated {
+    file_stem: String,
+    template: &'static str,
+    /// The crates the file needs beyond a `ulo new` project's, as `Cargo.toml` lines.
+    requires: Vec<String>,
+    /// The lines that register it, to paste into the module that serves it.
+    registration: Vec<String>,
+}
+
+pub async fn execute(args: GenerateArgs) -> Result<()> {
+    if args.transport.is_some() && args.kind != Kind::Controller {
+        bail!("`--transport` applies to `controller` alone");
     }
-}
-
-async fn generate_resource(name: &str) -> anyhow::Result<()> {
-    let base_path = PathBuf::from("src").join("app").join(name);
-
-    create_resource_structure(&base_path).await?;
-
-    generate_resource_files(&base_path, name).await?;
-
-    update_app_module(name).await?;
-
-    update_mod_file(name).await?;
-
-    println!(
-        "{}",
-        format!("✅ Successfully generated resource '{}'!", name).green()
-    );
-
-    Ok(())
-}
-
-async fn create_resource_structure(base_path: &PathBuf) -> Result<()> {
-    fs::create_dir_all(base_path)
-        .await
-        .context("Failed to create resource directory")?;
-    Ok(())
-}
-
-async fn generate_resource_files(base_path: &PathBuf, name: &str) -> Result<()> {
-    let snake_case = to_snake_case(name);
-    let upper_case_first_letter = to_upper_case_first_letter(name);
-
-    let service_name = format!("{}Service", &upper_case_first_letter);
-    let controller_name = format!("{}Controller", &upper_case_first_letter);
-    let module_name = format!("{}Module", &upper_case_first_letter);
-    let service_name_snake_case = format!("{}_service", &snake_case);
-    let controller_name_snake_case = format!("{}_controller", &snake_case);
-    let module_name_snake_case = format!("{}_module", &snake_case);
-
-    let path_controller = format!("{}.controller.rs", name);
-    let path_service = format!("{}.service.rs", name);
-    let path_module = format!("{}.module.rs", name);
-
-    let replacements: &[(&str, &str); 10] = &[
-        ("resource_name", &snake_case),
-        ("RESOURCE_NAME_SERVICE", &service_name),
-        ("RESOURCE_NAME_CONTROLLER", &controller_name),
-        ("RESOURCE_NAME_MODULE", &module_name),
-        ("resource_name_service", &service_name_snake_case),
-        ("resource_name_controller", &controller_name_snake_case),
-        ("resource_name_module", &module_name_snake_case),
-        ("path_module", &path_module),
-        ("path_controller", &path_controller),
-        ("path_service", &path_service),
-    ];
-
-    write_template_file(
-        base_path,
-        &format!("{}.module.rs", name),
-        include_str!("../templates/generate/resource.module.rs"),
-        replacements,
-    )
-    .await?;
-
-    write_template_file(
-        base_path,
-        &format!("{}.controller.rs", name),
-        include_str!("../templates/generate/resource.controller.rs"),
-        replacements,
-    )
-    .await?;
-
-    write_template_file(
-        base_path,
-        &format!("{}.service.rs", name),
-        include_str!("../templates/generate/resource.service.rs"),
-        replacements,
-    )
-    .await?;
-
-    write_template_file(
-        base_path,
-        "mod.rs",
-        include_str!("../templates/generate/mod.rs"),
-        replacements,
-    )
-    .await?;
-
-    Ok(())
-}
-
-async fn write_template_file(
-    base_path: &PathBuf,
-    filename: &str,
-    template: &str,
-    replacements: &[(&str, &str)],
-) -> Result<()> {
-    let path = base_path.join(filename);
-    let mut content = template.to_string();
-
-    for (placeholder, value) in replacements {
-        content = content.replace(placeholder, value);
+    let names = names(&args.name)?;
+    let generated = generated(args.kind, args.transport, &names);
+    if is_keyword(&generated.file_stem) {
+        bail!("'{}' is a Rust keyword and cannot name a module", generated.file_stem);
     }
+    let content = render(
+        generated.template,
+        &[
+            ("pascal", names.pascal.as_str()),
+            ("snake", names.snake.as_str()),
+            ("route", names.route.as_str()),
+            ("pattern", names.snake.as_str()),
+            ("field", names.field.as_str()),
+        ],
+    )?;
 
-    if content.contains("{{") || content.contains("}}") {
-        return Err(anyhow!(
-            "Template placeholders not fully replaced in {}",
-            filename
-        ));
+    let source = PathBuf::from("src");
+    if !fs::try_exists(&source).await.unwrap_or(false) {
+        bail!("There is no `src` directory here; run `ulo generate` from the project's root");
     }
+    let path = source.join(format!("{}.rs", generated.file_stem));
+    write_new(&path, &content).await?;
 
-    fs::write(&path, content)
-        .await
-        .context(format!("Failed to write {}", path.display()))?;
-
-    Ok(())
-}
-
-async fn update_app_module(resource_name: &str) -> Result<()> {
-    let snake_case = to_snake_case(resource_name);
-    let upper_case_first_letter = to_upper_case_first_letter(resource_name);
-    let app_module_path = PathBuf::from("src").join("app").join("app.module.rs");
-
-    let mut content = fs::read_to_string(&app_module_path)
-        .await
-        .context("Failed to read app.module.rs")?;
-
-    let module_import = format!("use super::{}::{}_module::*;", resource_name, snake_case);
-    if !content.contains(&module_import) {
-        content = content.replacen(
-            "use ulo::prelude::*;",
-            &format!("use ulo::prelude::*;\n{}", module_import),
-            1,
-        );
+    println!("{}", format!("Created {}", path.display()).green());
+    println!("\nDeclare it where the project's modules are, usually src/main.rs:\n    mod {};", generated.file_stem);
+    println!("\nRegister it in the module that serves it:");
+    for line in &generated.registration {
+        println!("    {line}");
     }
-
-    let module_insert = format!("{}Module", upper_case_first_letter);
-    if !content.contains(&module_insert) {
-        content = add_module_to_imports(&content, &module_insert);
-    }
-
-    fs::write(&app_module_path, content)
-        .await
-        .context("Failed to update app.module.rs")?;
-
-    Ok(())
-}
-
-async fn update_mod_file(resource_name: &str) -> Result<()> {
-    let snake_case = to_snake_case(resource_name);
-    let mod_path = PathBuf::from("src").join("app").join("mod.rs");
-    let mut content = fs::read_to_string(&mod_path)
-        .await
-        .context("Failed to read mod.rs")?;
-
-    let mod_insert = format!(r#"#[path = "{}/mod.rs"]"#, snake_case);
-    if !content.contains(&mod_insert) {
-        let part1 = format!(r#"#[path = "{}/mod.rs"]"#, snake_case);
-        let part2 = format!("pub mod {};", snake_case);
-        let part3 = r#"#[path = "app.module.rs"]"#;
-        let output = format!("{}\n{}\n\n{}", part1, part2, part3);
-        content = content.replacen(r#"#[path = "app.module.rs"]"#, &output, 1);
-    }
-
-    fs::write(&mod_path, content)
-        .await
-        .context("Failed to update mod.rs")?;
-
-    Ok(())
-}
-
-fn add_module_to_imports(content: &str, module_name: &str) -> String {
-    let regex_module = Regex::new(r"(?s)imports:\s*\[(.*?)\]").unwrap();
-    let imports_content = regex_module
-        .captures(content)
-        .and_then(|cap| cap.get(1))
-        .map(|m| m.as_str())
-        .unwrap();
-
-    let mut modules: Vec<&str> = imports_content
-        .split(',')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    modules.push(module_name);
-
-    let new_imports = format!("imports: [\n    {},\n  ]", modules.join(",\n    "));
-    let output = regex_module.replace(content, new_imports);
-    output.to_string()
-}
-
-fn _to_pascal_case(s: &str) -> String {
-    let mut result = String::new();
-    for part in s.split('_') {
-        let mut chars = part.chars();
-        if let Some(first) = chars.next() {
-            result.push(first.to_ascii_uppercase());
-            result.extend(chars.as_str().to_ascii_lowercase().chars());
+    if !generated.requires.is_empty() {
+        println!("\nIt needs these in Cargo.toml:");
+        for line in &generated.requires {
+            println!("    {line}");
         }
     }
-    result
+    Ok(())
 }
 
-fn to_upper_case_first_letter(s: &str) -> String {
-    let mut chars = s.chars();
-    if let Some(first) = chars.next() {
-        return format!("{}{}", first.to_ascii_uppercase(), chars.as_str());
+/// The file's stem, template, requirements and registration for `kind`.
+fn generated(kind: Kind, transport: Option<ControllerTransport>, names: &Names) -> Generated {
+    let Names { pascal, snake, .. } = names;
+    match kind {
+        Kind::Module => Generated {
+            file_stem: format!("{snake}_module"),
+            template: include_str!("../templates/generate/module.rs"),
+            requires: Vec::new(),
+            registration: vec![format!("m.import(crate::{snake}_module::{pascal}Module);")],
+        },
+        Kind::Provider => Generated {
+            file_stem: snake.clone(),
+            template: include_str!("../templates/generate/provider.rs"),
+            requires: Vec::new(),
+            registration: vec![format!("m.provide::<crate::{snake}::{pascal}>();")],
+        },
+        Kind::Controller => {
+            let (template, requires) = match transport.unwrap_or(ControllerTransport::Http) {
+                ControllerTransport::Http => {
+                    (include_str!("../templates/generate/controller_http.rs"), format!("ulo-http = \"={VERSION}\""))
+                }
+                ControllerTransport::Rpc => {
+                    (include_str!("../templates/generate/controller_rpc.rs"), format!("ulo-rpc = \"={VERSION}\""))
+                }
+            };
+            Generated {
+                file_stem: format!("{snake}_controller"),
+                template,
+                requires: vec![requires],
+                registration: vec![format!("m.controller::<crate::{snake}_controller::{pascal}Controller>();")],
+            }
+        }
+        Kind::Gateway => Generated {
+            file_stem: format!("{snake}_gateway"),
+            template: include_str!("../templates/generate/gateway.rs"),
+            requires: vec![format!("ulo-ws = \"={VERSION}\"")],
+            // A gateway on the HTTP server's port is reachable only once `WsModule` is imported,
+            // which is once per application and not once per gateway.
+            registration: vec![
+                format!("m.controller::<crate::{snake}_gateway::{pascal}Gateway>();"),
+                "m.import(ulo_ws::WsModule::for_root()); // once per application".to_owned(),
+            ],
+        },
+        Kind::Resolver => Generated {
+            file_stem: format!("{snake}_resolver"),
+            template: include_str!("../templates/generate/resolver.rs"),
+            requires: vec!["async-graphql = \"7\"".to_owned()],
+            registration: vec![format!(
+                "// add crate::{snake}_resolver::{pascal}Resolver to the query root's #[derive(MergedObject)]"
+            )],
+        },
     }
-    s.to_string()
 }
 
-fn to_snake_case(input: &str) -> String {
-    let mut snake_case = String::new();
-    let mut chars = input.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c.is_uppercase() {
-            if !snake_case.is_empty() {
-                snake_case.push('_');
-            }
-            snake_case.push(c.to_ascii_lowercase());
-        } else if c == ' ' {
-            if !snake_case.is_empty() && snake_case.chars().last() != Some('_') {
-                snake_case.push('_');
-            }
-        } else {
-            snake_case.push(c);
+/// Writes `content` to `path`, which must not exist: `create_new` refuses an existing file
+/// atomically, so a file that appears between a check and the write is not overwritten either.
+async fn write_new(path: &Path, content: &str) -> Result<()> {
+    let mut file = match fs::OpenOptions::new().write(true).create_new(true).open(path).await {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+            bail!("{} already exists; `ulo generate` does not overwrite", path.display())
         }
-
-        if let Some(&next_char) = chars.peek() {
-            if next_char.is_uppercase() && c != ' ' && c != '_' {
-                snake_case.push('_');
-            }
-        }
+        Err(error) => return Err(error).with_context(|| format!("Failed to create {}", path.display())),
+    };
+    let written = async {
+        file.write_all(content.as_bytes()).await?;
+        file.flush().await
     }
+    .await;
+    if let Err(error) = written {
+        // A half-written file would refuse the next attempt as existing.
+        drop(file);
+        let _ = fs::remove_file(path).await;
+        return Err(error).with_context(|| format!("Failed to write {}", path.display()));
+    }
+    Ok(())
+}
 
-    snake_case
+/// The spellings of `name`, once it is known to be a name a Rust item can carry.
+fn names(name: &str) -> Result<Names> {
+    check_identifier(name)?;
+    let snake = snake_case(name);
+    let pascal = pascal_case(name);
+    if !pascal.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        bail!("'{name}' must have a letter before any digit");
+    }
+    let route = snake.split('_').filter(|word| !word.is_empty()).collect::<Vec<_>>().join("-");
+    let mut field = pascal.clone();
+    field[..1].make_ascii_lowercase();
+    Ok(Names { pascal, snake, route, field })
+}
+
+fn check_identifier(name: &str) -> Result<()> {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        bail!("The name cannot be empty");
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        bail!("'{name}' is not an identifier: use letters, digits and '_', and do not start with a digit");
+    }
+    if !name.chars().any(|c| c.is_ascii_alphanumeric()) {
+        bail!("'{name}' has no letter or digit in it");
+    }
+    if is_keyword(name) {
+        bail!("'{name}' is a Rust keyword");
+    }
+    Ok(())
+}
+
+/// `UserProfile` and `user_profile` to `user_profile`, `HTTPServer` to `http_server`.
+fn snake_case(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut snake = String::with_capacity(name.len() + 4);
+    for (at, &c) in chars.iter().enumerate() {
+        if c.is_ascii_uppercase() && at > 0 {
+            let previous = chars[at - 1];
+            let word_starts = previous.is_ascii_lowercase() || previous.is_ascii_digit();
+            let acronym_ends =
+                previous.is_ascii_uppercase() && chars.get(at + 1).is_some_and(|next| next.is_ascii_lowercase());
+            if word_starts || acronym_ends {
+                snake.push('_');
+            }
+        }
+        snake.push(c.to_ascii_lowercase());
+    }
+    snake
+}
+
+/// `user_profile` and `userProfile` to `UserProfile`; an acronym keeps its capitals.
+fn pascal_case(name: &str) -> String {
+    name.split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
 }
