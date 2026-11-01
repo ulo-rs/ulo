@@ -1,8 +1,10 @@
 # Questions from the September Smile salvage (for the designer)
 
-Written for: the designer. These are the questions that cross subjects or that a record raised as a decision, collected from the ten records in this folder. Each record's own "Worth discussing with the designer" section holds the rest, with the evidence. Cite these as QS-1 onwards. Ledger entries: `FRAMEWORK_GAPS.md` F524 to F561.
+Written for: the designer. Context for reading them: the campaign was written against the old framework on `master`, and the rebuild changed course on purpose, with a different architecture. Most departures below follow from that. A question here asks whether the reason behind an old decision still holds on the new design; it does not claim the rebuild is wrong, and the answer may be that the old decision is moot.
 
-## Decisions the rebuild reversed or did not carry
+These are the questions that cross subjects or that a record raised as a decision, collected from the ten records in this folder. Each record's own "Worth discussing with the designer" section holds the rest, with the evidence. Cite these as QS-1 onwards. Ledger entries: `FRAMEWORK_GAPS.md` F524 to F561.
+
+## Old decisions the rebuild did not carry
 
 **QS-1. The load-shed answer (gRPC F524, RPC F551, sequence).** The user-approved S3 ruling was `TooManyRequests` (gRPC RESOURCE_EXHAUSTED). HEAD answers `Unavailable`, with `RetryAfter` on RPC and nothing on gRPC. The only record of the change is a "for the record" line in `integrations/QUESTIONS_5.md:84`. A stream refused on a link without streams answers `internal` where S3 approved `Unimplemented`. Restore S3, or record why `Unavailable` is right.
 

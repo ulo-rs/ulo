@@ -2,7 +2,7 @@
 
 `PROJECT_SEPTEMBER_SMILE/` was a planning campaign written 2026-09-20 to 2026-09-24 against the framework on `master` at `654c7183`: eight audits, their build handoffs, a 132-row build sequence and the findings F138 to F292 in `FRAMEWORK_GAPS.md`. The build was paused on 2026-10-01 and the framework was rebuilt on `experiment/di-redesign`. This folder holds the campaign's material, read item by item against the rebuild, so that what the audits found and decided is not lost.
 
-Nothing here is a build plan. Each item carries a status at the tip the reader checked, evidence, and, where the item still teaches something, the value written out with its provenance.
+The campaign was written against the old framework, and the rebuild changed course on purpose with a different architecture, so a status of superseded or dropped is the expected outcome for much of it. Nothing here is a build plan. Each item carries a status at the tip the reader checked, evidence, and, where the item still teaches something, the value written out with its provenance.
 
 ## Layout
 
