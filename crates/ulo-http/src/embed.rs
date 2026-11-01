@@ -524,7 +524,7 @@ impl<A: Embed> Embedded<A> {
     /// everything, being in place before any entry runs. A `PreDispatch::supplies` after an
     /// unscoped entry reaches every handler and the `adopt` entries after it in stage order,
     /// whatever its `exclude`, which a later rewrite can make miss or match; one after a scoped
-    /// entry, the handlers of the routes that entry's stage covers. `service` is
+    /// entry, the handlers of the routes that entry runs on for every request. `service` is
     /// `None` when the stage or the route table failed, and the handlers are then not checked,
     /// since which routes a scoped entry covers is unknown.
     fn check_host_values(&self, mounted: &Mounted<'_, Http>, service: Option<&AppService>, failures: &mut Failures) {
@@ -560,7 +560,7 @@ impl<A: Embed> Embedded<A> {
                 }
                 let of_type = scoped.iter().filter(|(_, _, supply)| supply.ty == ty);
                 let covers = |meta: &Arc<PreDispatch>, index: usize| {
-                    target.stage.steps.iter().any(|(_, held, at)| Arc::ptr_eq(held, meta) && *at == index)
+                    target.stage.every_request().any(|(_, held, at)| Arc::ptr_eq(held, meta) && *at == index)
                 };
                 if of_type.clone().any(|(meta, index, _)| covers(meta, *index)) {
                     continue;

@@ -1,18 +1,22 @@
 //! The pre-dispatch stage: unscoped entries run in the order written and see misses, may rewrite
 //! the path before routing, answer without calling `next` or fail into the error chain; scoped
-//! entries run for the routes their pattern covers minus the exclusions, and a declaration the
-//! stage cannot build is refused by `listen()` at the call that wrote it.
+//! entries run for the request paths their pattern matches minus the exclusions, routed or not,
+//! a path with a dot segment reaches no entry, and a declaration the stage cannot build is
+//! refused by `listen()` at the call that wrote it.
 
 mod o1_support;
 
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use http::{HeaderMap, HeaderValue, StatusCode};
-use o1_support::{Call, Running, refusal_entries, refused, start};
-use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, injectable, routes};
+use o1_support::{Call, Reply, Running, refusal_entries, refused, start};
+use ulo::{AnyErrorHandler, BoxError, BoxFuture, ErrorHandler, ModuleDef, injectable, routes};
 use ulo_http::middleware::{Middleware, Next};
-use ulo_http::{Http, HttpBody, HttpCx, PreDispatch, Request, Response, Routing};
+use ulo_http::{Cors, Http, HttpBody, HttpCx, PreDispatch, Request, Response, Routing, UpgradeHandler, Upgrades};
+
+const ORIGIN: &str = "https://app.example";
 use ulo_transport::{CallError, ErrorKind};
 
 /// Appends its name to the request's `x-trail`, so the handler reads the order entries ran in.
@@ -214,7 +218,7 @@ async fn an_unscoped_entry_sees_a_miss_and_a_405_and_skips_a_path_it_excludes() 
 }
 
 #[tokio::test]
-async fn a_scoped_entry_runs_for_the_routes_its_pattern_covers_and_not_the_excluded_one() {
+async fn a_scoped_entry_runs_for_the_paths_its_pattern_matches_and_not_the_excluded_one() {
     let app = start(scoped_with_exclusion).await;
 
     assert_eq!(stamped(&app, "/admin/users").await, (StatusCode::OK, true));
@@ -222,7 +226,196 @@ async fn a_scoped_entry_runs_for_the_routes_its_pattern_covers_and_not_the_exclu
     assert_eq!(stamped(&app, "/admin/health").await, (StatusCode::OK, false), "excluded");
     assert_eq!(stamped(&app, "/admin").await, (StatusCode::OK, false), "`/admin/*` needs a segment after `/admin`");
     assert_eq!(stamped(&app, "/public").await, (StatusCode::OK, false), "outside the scope");
-    assert_eq!(stamped(&app, "/admin/nowhere").await, (StatusCode::NOT_FOUND, false), "a scoped entry runs after a route matched");
+    assert_eq!(stamped(&app, "/admin/nowhere").await, (StatusCode::NOT_FOUND, true), "the scope matches the path, routed or not");
+    app.stop().await;
+}
+
+/// Refuses with 401 unless the request carries `x-key: open`, and marks what it passes with
+/// `x-auth: checked`.
+#[injectable]
+struct ApiKeyAuth;
+
+impl Middleware for ApiKeyAuth {
+    async fn handle(&self, req: Request, next: Next<'_>) -> Result<Response, BoxError> {
+        if req.headers().get("x-key").is_none_or(|key| key != "open") {
+            return Err(CallError::unauthorized("ApiKey").into());
+        }
+        let mut response = next.run(req).await?;
+        response.headers_mut().insert("x-auth", HeaderValue::from_static("checked"));
+        Ok(response)
+    }
+}
+
+/// Answers every upgrade request on `/admin/socket` with 200 `taken`.
+struct Taker;
+
+impl UpgradeHandler for Taker {
+    fn paths(&self, _app: &ulo::AppHandle) -> Vec<Cow<'static, str>> {
+        vec!["/admin/socket".into()]
+    }
+
+    fn upgrade(&self, _req: Request) -> BoxFuture<'static, Response> {
+        Box::pin(async { Response::new(HttpBody::from("taken")) })
+    }
+}
+
+fn admin_behind_a_key(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.provide::<Stamp>();
+    m.provide::<ApiKeyAuth>();
+    m.meta::<Upgrades>().register(Taker);
+    m.meta::<PreDispatch>()
+        .apply_value(Cors::new().allow_origin(ORIGIN))
+        .apply::<Stamp>()
+        .apply_for::<ApiKeyAuth>(["/admin/*"])
+        .exclude(["/admin/health"]);
+}
+
+const GET: &str = "GET";
+const DELETE: &str = "DELETE";
+const OPTIONS: &str = "OPTIONS";
+/// A `GET` carrying `Upgrade: websocket`.
+const UPGRADE: &str = "UPGRADE";
+
+fn call(method: &str, path: &str) -> Call {
+    match method {
+        UPGRADE => Call::get(path).header("upgrade", "websocket"),
+        _ => Call::new(method.parse().expect("a method name"), path),
+    }
+}
+
+async fn as_anonymous(app: &Running, call: Call) -> Reply {
+    app.send(call.header("origin", ORIGIN)).await
+}
+
+#[tokio::test]
+async fn a_scoped_entry_answers_an_unrouted_path_under_its_scope_as_it_answers_a_routed_one() {
+    let app = start(admin_behind_a_key).await;
+
+    // Anonymous: the routed path, a path no route matches, a method no handler takes, an
+    // `OPTIONS` with no handler and an upgrade all answer the same 401, so the status tells no
+    // route from none.
+    for (method, path) in [
+        (GET, "/admin/users"),
+        (GET, "/admin/nowhere"),
+        (GET, "/admin/users/7/deeper"),
+        (GET, "/admin/healthz"),
+        (DELETE, "/admin/users"),
+        (OPTIONS, "/admin/users"),
+        (UPGRADE, "/admin/socket"),
+    ] {
+        let what = format!("{method} {path}");
+        let reply = as_anonymous(&app, call(method, path)).await;
+        assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{what}");
+        assert_eq!(reply.header("www-authenticate"), Some("ApiKey"), "{what}");
+        assert_eq!(reply.header("x-auth"), None, "{what}");
+        assert_eq!(reply.header("access-control-allow-origin"), Some(ORIGIN), "{what}: the outer CORS entry decorates the 401");
+        assert_eq!(reply.header("x-stamp"), Some("stamped"), "{what}: the unscoped entry before it ran");
+    }
+
+    // With the key, each is answered as routing decides, the scoped entry having passed it.
+    for (method, path, status) in [
+        (GET, "/admin/users", StatusCode::OK),
+        (GET, "/admin/nowhere", StatusCode::NOT_FOUND),
+        (DELETE, "/admin/users", StatusCode::METHOD_NOT_ALLOWED),
+        (OPTIONS, "/admin/users", StatusCode::NO_CONTENT),
+        (UPGRADE, "/admin/socket", StatusCode::OK),
+    ] {
+        let what = format!("{method} {path}");
+        let reply = app.send(call(method, path).header("x-key", "open")).await;
+        assert_eq!((reply.status, reply.header("x-auth")), (status, Some("checked")), "{what}");
+    }
+
+    // The exclusion and the paths outside the scope pass without a key.
+    for (path, status) in [("/admin/health", StatusCode::OK), ("/admin", StatusCode::OK), ("/nowhere", StatusCode::NOT_FOUND)] {
+        let reply = as_anonymous(&app, Call::get(path)).await;
+        assert_eq!((reply.status, reply.header("x-auth")), (status, None), "{path}");
+    }
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn a_dot_segment_is_refused_before_any_entry_so_it_cannot_step_into_or_out_of_a_scope() {
+    let app = start(admin_behind_a_key).await;
+
+    // Read as written, `/public/../admin/users` is outside `/admin/*`; normalized, it is
+    // `/admin/users`. Refused before the stage, it reaches neither the router nor any entry, and
+    // `/admin/../public` cannot step out of the scope either.
+    for path in ["/public/../admin/users", "/public/%2e%2e/admin/users", "/admin/../public", "/admin/%2E%2E/public", "/admin/./users"] {
+        for key in [None, Some("open")] {
+            let mut call = Call::get(path).header("origin", ORIGIN);
+            if let Some(key) = key {
+                call = call.header("x-key", key);
+            }
+            let reply = app.send(call).await;
+            assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{path} with key {key:?}");
+            assert_eq!(reply.json()["detail"], "the path holds a `.` or `..` segment", "{path}");
+            assert_eq!(
+                (reply.header("x-stamp"), reply.header("x-auth"), reply.header("access-control-allow-origin")),
+                (None, None, None),
+                "{path}: no entry, scoped or unscoped, ran"
+            );
+            assert!(matches!(reply.routing, Some(Routing::Unrouted)), "{path}: {:?}", reply.routing);
+        }
+    }
+    app.stop().await;
+}
+
+/// Rewrites `/into-admin` to `/public/../admin/users`.
+struct DotRewrite;
+
+impl Middleware for DotRewrite {
+    async fn handle(&self, mut req: Request, next: Next<'_>) -> Result<Response, BoxError> {
+        if req.path() == "/into-admin" {
+            req.set_path("/public/../admin/users")?;
+        }
+        next.run(req).await
+    }
+}
+
+fn rewriting_into_a_dot_segment(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.provide::<ApiKeyAuth>();
+    m.meta::<PreDispatch>().apply_value(DotRewrite).apply_for::<ApiKeyAuth>(["/admin/*"]);
+}
+
+#[tokio::test]
+async fn a_path_an_unscoped_entry_rewrites_into_a_dot_segment_is_refused_at_routing() {
+    let app = start(rewriting_into_a_dot_segment).await;
+
+    let reply = app.send(Call::get("/into-admin")).await;
+    assert_eq!((reply.status, reply.header("x-auth")), (StatusCode::BAD_REQUEST, None));
+    assert_eq!(reply.json()["detail"], "the path holds a `.` or `..` segment");
+    app.stop().await;
+}
+
+fn one_user_behind_a_key(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.provide::<ApiKeyAuth>();
+    m.meta::<PreDispatch>()
+        .apply_for::<ApiKeyAuth>(["/admin/users/me"])
+        .apply_for::<ApiKeyAuth>(["/admin/users/*"])
+        .exclude(["/admin/users/7"]);
+}
+
+#[tokio::test]
+async fn a_scope_narrower_than_the_route_it_shares_paths_with_decides_per_request() {
+    // `/admin/users/me` and the exclusion `/admin/users/7` each match some paths of
+    // `/admin/users/{id}` and not others: the app starts, and each request's path decides.
+    let app = start(one_user_behind_a_key).await;
+
+    for (path, status) in [
+        ("/admin/users/me", StatusCode::UNAUTHORIZED),
+        ("/admin/users/7", StatusCode::OK),
+        ("/admin/users/8", StatusCode::UNAUTHORIZED),
+        ("/admin/users/7/x", StatusCode::UNAUTHORIZED),
+        ("/admin/users", StatusCode::OK),
+    ] {
+        let reply = app.send(Call::get(path)).await;
+        assert_eq!(reply.status, status, "{path}");
+    }
+    let reply = app.send(Call::get("/admin/users/me").header("x-key", "open")).await;
+    assert_eq!((reply.status, reply.text()), (StatusCode::OK, "user".to_owned()));
     app.stop().await;
 }
 
@@ -430,4 +623,127 @@ async fn a_scope_whose_covered_routes_are_all_excluded_is_refused() {
     let entries = refusal_entries(&error);
     assert_eq!(entries.len(), 1, "{error}");
     assert!(is_unreached(&entries[0], &EXCLUDED, "/public"), "{entries:?}");
+}
+
+fn admin_behind_a_key_but_one_user(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.provide::<ApiKeyAuth>();
+    m.meta::<PreDispatch>().apply_for::<ApiKeyAuth>(["/admin/*"]).exclude(["/admin/users/7"]);
+}
+
+#[tokio::test]
+async fn a_route_checked_per_request_keeps_its_check_beside_a_route_the_same_entry_covers_whole() {
+    // `/admin/users`, declared first, runs the entry unchecked; `/admin/users/{id}` holds the
+    // same entry with a per-request check for the exclusion, so the two cannot share a stage.
+    let app = start(admin_behind_a_key_but_one_user).await;
+    for (path, status) in [("/admin/users", StatusCode::UNAUTHORIZED), ("/admin/users/7", StatusCode::OK), ("/admin/users/8", StatusCode::UNAUTHORIZED)] {
+        let reply = app.send(Call::get(path)).await;
+        assert_eq!(reply.status, status, "{path}");
+    }
+    app.stop().await;
+}
+
+#[injectable]
+struct Tree;
+
+#[routes]
+impl Tree {
+    #[ulo_http::get("/tree/{*rest}")]
+    fn rest(&self) -> &'static str {
+        "rest"
+    }
+}
+
+static EXACT_OVER_REST: AtomicU32 = AtomicU32::new(0);
+
+fn exact_scope_over_a_rest_route(m: &mut ModuleDef<'_>) {
+    m.controller::<Tree>();
+    m.provide::<Stamp>();
+    declared_at!(EXACT_OVER_REST, m.meta::<PreDispatch>().apply_for::<Stamp>(["/tree"]));
+}
+
+#[tokio::test]
+async fn an_exact_scope_over_the_prefix_of_a_rest_route_is_refused() {
+    // `{*rest}` takes one segment at least, so `/tree/{*rest}` matches no path `/tree` matches.
+    let error = refused(exact_scope_over_a_rest_route).await;
+    let entries = refusal_entries(&error);
+    assert_eq!(entries.len(), 1, "{error}");
+    assert!(is_unreached(&entries[0], &EXACT_OVER_REST, "/tree"), "{entries:?}");
+}
+
+fn exact_scope_beside_a_wildcard_exclusion(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.provide::<Stamp>();
+    m.meta::<PreDispatch>().apply_for::<Stamp>(["/admin"]).exclude(["/admin/*"]);
+}
+
+#[tokio::test]
+async fn a_wildcard_exclusion_leaves_the_exact_scope_it_extends() {
+    // `/admin/*` needs a segment after `/admin`, so it takes nothing of the scope `/admin`.
+    let app = start(exact_scope_beside_a_wildcard_exclusion).await;
+    assert_eq!(stamped(&app, "/admin").await, (StatusCode::OK, true));
+    assert_eq!(stamped(&app, "/admin/users").await, (StatusCode::OK, false));
+    app.stop().await;
+}
+
+static SWALLOWED: AtomicU32 = AtomicU32::new(0);
+
+fn entry_whose_scope_its_exclusion_matches_whole(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.provide::<Stamp>();
+    declared_at!(SWALLOWED, m.meta::<PreDispatch>().apply_for::<Stamp>(["/admin/users/me"]).exclude(["/admin/users/me"]));
+}
+
+#[tokio::test]
+async fn a_scope_its_exclusion_matches_whole_is_refused_though_it_shares_paths_with_a_route() {
+    // `/admin/users/me` shares a path with `/admin/users/{id}`, and the exclusion matches only
+    // some of that route's paths, but every path the scope matches, so the entry never runs.
+    let error = refused(entry_whose_scope_its_exclusion_matches_whole).await;
+    let entries = refusal_entries(&error);
+    assert_eq!(entries.len(), 1, "{error}");
+    assert!(is_unreached(&entries[0], &SWALLOWED, "/admin/users/me"), "{entries:?}");
+}
+
+#[injectable]
+struct Encoded;
+
+#[routes]
+impl Encoded {
+    #[ulo_http::get("/caf%C3%A9/x")]
+    fn written_encoded(&self) -> &'static str {
+        "encoded"
+    }
+
+    #[ulo_http::get("/café/y")]
+    fn written_plain(&self) -> &'static str {
+        "plain"
+    }
+}
+
+fn plain_scope_over_an_encoded_route(m: &mut ModuleDef<'_>) {
+    m.controller::<Encoded>();
+    m.provide::<ApiKeyAuth>();
+    m.meta::<PreDispatch>().apply_for::<ApiKeyAuth>(["/café/*"]);
+}
+
+fn encoded_scope_over_a_plain_route(m: &mut ModuleDef<'_>) {
+    m.controller::<Encoded>();
+    m.provide::<ApiKeyAuth>();
+    m.meta::<PreDispatch>().apply_for::<ApiKeyAuth>(["/caf%C3%A9/*"]);
+}
+
+#[tokio::test]
+async fn a_scope_and_a_route_written_in_different_percent_encodings_read_one_path() {
+    // The router matches `/caf%C3%A9/x` to the route written encoded and `/caf%C3%A9/y` to the
+    // one written `é`; each scope matches both paths at runtime, so the routed request runs it.
+    for register in [plain_scope_over_an_encoded_route, encoded_scope_over_a_plain_route] {
+        let app = start(register).await;
+        for path in ["/caf%C3%A9/x", "/caf%c3%a9/x", "/caf%C3%A9/y", "/caf%c3%a9/y"] {
+            let reply = app.send(Call::get(path)).await;
+            assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{path}: {:?}", reply.matched());
+        }
+        let reply = app.send(Call::get("/caf%C3%A9/x").header("x-key", "open")).await;
+        assert_eq!((reply.status, reply.text()), (StatusCode::OK, "encoded".to_owned()));
+        app.stop().await;
+    }
 }

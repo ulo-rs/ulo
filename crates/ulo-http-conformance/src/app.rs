@@ -1,5 +1,6 @@
-//! The application every scenario runs: one controller, a global error handler, a CORS entry, the
-//! echo upgrade handler where the host takes upgrades, and the probe the disconnect scenario reads.
+//! The application every scenario runs: one controller, a global error handler, a CORS entry, a
+//! scoped entry over `/guarded/*`, the echo upgrade handler where the host takes upgrades, and the
+//! probe the disconnect scenario reads.
 
 use std::error::Error;
 use std::fmt;
@@ -49,7 +50,8 @@ impl Module for SuiteModule {
         m.controller::<Suite>();
         let reshape: Arc<AnyErrorHandler<Http>> = Arc::new(Reshape);
         m.enhancer::<AnyErrorHandler<Http>>().value(reshape);
-        m.meta::<PreDispatch>().apply_value(Cors::new().allow_origin(ORIGIN));
+        m.provide::<KeyGate>();
+        m.meta::<PreDispatch>().apply_value(Cors::new().allow_origin(ORIGIN)).apply_for::<KeyGate>(["/guarded/*"]);
         // A host declaring `upgrades: false` refuses any upgrade handler in `prepare`.
         if self.limits.upgrades {
             m.meta::<Upgrades>().register(Echo::default());
@@ -201,9 +203,30 @@ impl Suite {
         Sse::new(first.chain(second).boxed())
     }
 
+    #[ulo_http::get("/guarded/hit")]
+    fn guarded(&self) -> &'static str {
+        "guarded"
+    }
+
     #[ulo_http::get("/host-value")]
     fn host_value(&self, value: Host<HostValue>) -> String {
         value.0.0
+    }
+}
+
+/// The header [`KeyGate`] admits a request on.
+pub(crate) const KEY_HEADER: &str = "x-suite-key";
+
+/// The scoped entry over `/guarded/*`: 401 unless the request carries [`KEY_HEADER`].
+#[injectable]
+pub(crate) struct KeyGate;
+
+impl ulo_http::middleware::Middleware for KeyGate {
+    async fn handle(&self, req: Request, next: ulo_http::middleware::Next<'_>) -> Result<Response, BoxError> {
+        if !req.headers().contains_key(KEY_HEADER) {
+            return Err(CallError::unauthorized("SuiteKey").into());
+        }
+        next.run(req).await
     }
 }
 

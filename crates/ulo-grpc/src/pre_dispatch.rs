@@ -1,6 +1,8 @@
 //! gRPC's pre-dispatch stage (transports DESIGN §6.2, X23): `ulo_http::PreDispatch<Grpc>`, scoped
-//! by method path, run by the server around its dispatcher through `ulo_http::stage`. A response an
-//! entry answers with a non-200 HTTP status is translated with `code_for_http`.
+//! by method path, run by the server around its dispatcher through `ulo_http::stage`. A scope is
+//! matched against the call's path, so an entry runs for a method no handler answers under its
+//! scope too, before UNIMPLEMENTED. A response an entry answers with a non-200 HTTP status is
+//! translated with `code_for_http`.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -22,13 +24,18 @@ use crate::transport::{Grpc, GrpcMetadata};
 ///     .apply_for::<ApiKeyAuth>(["/users.v1.UserService/*"]);
 /// ```
 ///
+/// A scope matches the call's path, whether or not a handler answers it: the entry above refuses
+/// an anonymous call to a method `UserService` lacks as it refuses one to a method it has, so
+/// UNIMPLEMENTED reaches only a caller the entry admitted.
+///
 /// A metadata key apart from HTTP's `ulo_http::PreDispatch`, so an entry declared for one never
 /// runs on the other.
 pub type PreDispatch = ulo_http::PreDispatch<Grpc>;
 
 /// One call's sub-step, as an entry's failure is offered to the error handlers: the global ones in
-/// the unscoped sub-step, the matched handler's tiers then the global ones in the scoped one. The
-/// failure is answered as a status in the response's headers.
+/// the unscoped sub-step, the matched handler's tiers then the global ones in the scoped one, and
+/// the global ones alone for a path no handler answers. The failure is answered as a status in the
+/// response's headers.
 pub(crate) struct StageCx {
     dispatcher: Arc<Dispatcher>,
     exec: ExecutionRef,

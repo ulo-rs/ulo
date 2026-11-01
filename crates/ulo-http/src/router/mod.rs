@@ -51,8 +51,8 @@ pub(crate) struct RouteTarget {
     pub(crate) body_limit: u64,
     /// The route's `#[meta(Timeout(..))]` as a duration, `None` for no timeout.
     pub(crate) timeout: Option<Duration>,
-    /// The pre-dispatch entries whose scope covers this route, middleware and tower layers in
-    /// declaration order, composed once here; routes with the same set share one stack.
+    /// The pre-dispatch entries whose scope can match a path of this route, middleware and tower
+    /// layers in declaration order, composed once here; routes with the same set share one stack.
     pub(crate) stage: Arc<ScopedStage>,
 }
 

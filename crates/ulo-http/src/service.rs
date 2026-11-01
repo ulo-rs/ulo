@@ -29,7 +29,7 @@ use crate::pre_dispatch::{self, Rest, Stage, StageCx};
 use crate::render;
 use crate::request::{ConnInfo, OnUpgrade, Request};
 use crate::response::Response;
-use crate::router::pattern::Pattern;
+use crate::router::pattern::{Pattern, has_dot_segment};
 use crate::router::{RouteTarget, Routed, Router};
 use crate::routing::Routing;
 use crate::trace;
@@ -48,14 +48,21 @@ use crate::upgrade::UpgradeHandler;
 ///    `ulo_transport::span::call` span entered, its `url.path` the request's
 ///    [`OriginalPath`](crate::embed::OriginalPath) when an embedding's adapter supplied one, and
 ///    the path received otherwise.
-/// 4. The unscoped pre-dispatch entries, in order, inside `AppHandle::catch_panic`.
-/// 5. An `Upgrade` request on an upgrade path goes to its `UpgradeHandler`. Otherwise routing: a
-///    miss is offered to the global error handlers through `ulo::recover(None, ..)` as a
-///    `CallError` whose source is [`NoRoute`] or [`MethodNotAllowed`], rendered 404, or 405 with
-///    `Allow`, when none claims it; `OPTIONS` with no handler answers 204 with `Allow`.
+/// 4. A path holding a `.` or `..` segment, each dot raw, `%2E` or `%2e`, answers 400 as a
+///    problem document, offered to no error handler and seen by no pre-dispatch entry; a path an
+///    unscoped entry rewrites to one is answered the same at routing, logged at `warn`. Otherwise
+///    the unscoped pre-dispatch entries, in order, inside `AppHandle::catch_panic`.
+/// 5. An `Upgrade` request on an upgrade path goes to its `UpgradeHandler`, after the scoped
+///    entries whose scope matches its path. Otherwise routing: a miss runs the scoped entries
+///    whose scope matches its path, then is offered to the global error handlers through
+///    `ulo::recover(None, ..)` as a `CallError` whose source is [`NoRoute`] or
+///    [`MethodNotAllowed`], rendered 404, or 405 with `Allow`, when none claims it; `OPTIONS`
+///    with no handler answers 204 with `Allow`. A request outside an embedding's prefix runs no
+///    scoped entry.
 /// 6. `Execution::route_to` the controller's module, the route's timeout armed on the app's
-///    `Timer`, the scoped entries run. When the timeout passes before an answer, the pipeline is
-///    dropped, the execution cancelled with `CancelReason::Deadline`, and the error handlers, the
+///    `Timer`, the scoped entries whose scope matches the path run. When the timeout passes
+///    before an answer, the pipeline is dropped, the execution cancelled with
+///    `CancelReason::Deadline`, and the error handlers, the
 ///    matched handler's tiers then the global ones, receive `Timeout` under
 ///    `HttpConfig::timeout_grace`, which bounds their answer's body as well: unclaimed, not
 ///    answered within the grace, or answered with a body still open when it runs out or, one the
@@ -201,7 +208,12 @@ impl ServiceInner {
         call_span.record(span::URL_PATH, path);
         call_span.record(span::URL_SCHEME, if req.conn.tls.is_some() { "https" } else { "http" });
         let exec = Arc::new(exec);
-        let pipeline = self.unscoped(Arc::clone(&exec), req, call_span.clone(), Arc::clone(&tracking)).instrument(call_span.clone());
+        let pipeline = if has_dot_segment(req.path()) {
+            Box::pin(std::future::ready(render::dot_segment(&self.config)))
+        } else {
+            self.unscoped(Arc::clone(&exec), req, call_span.clone(), Arc::clone(&tracking))
+        };
+        let pipeline = pipeline.instrument(call_span.clone());
         let mut response = match until_drained(pipeline, &handle).await {
             // A stream answered once the drain's end has cancelled the call would be cut at its
             // first poll, and a backend that has not yet written the head then closes the
@@ -264,10 +276,15 @@ impl ServiceInner {
 
     fn route(self: Arc<Self>, exec: Arc<Execution>, req: Request, call_span: Span, tracking: Arc<Tracking>) -> BoxFuture<'static, Response> {
         Box::pin(async move {
+            if has_dot_segment(req.path()) {
+                tracing::warn!(path = req.path(), "an unscoped pre-dispatch entry rewrote the path to one holding a `.` or `..` segment; answered 400");
+                return render::dot_segment(&self.config);
+            }
             if req.headers().contains_key(UPGRADE) {
                 let taker = self.upgrades.iter().find(|(path, _)| path.matches(req.path()).is_some()).map(|(_, taker)| Arc::clone(taker));
                 if let Some(taker) = taker {
-                    return taker.upgrade(req).await;
+                    let end: Rest = Box::new(move |req| taker.upgrade(req));
+                    return self.unrouted(&exec.handle(), req, end).await;
                 }
             }
             let outside = req.head.extensions.get::<crate::embed::OutsidePrefix>().is_some();
@@ -278,34 +295,60 @@ impl ServiceInner {
                 Routed::MethodNotAllowed { allow } => Err(Miss::MethodNotAllowed(allow)),
                 Routed::Options { allow, route } => Err(Miss::Options(allow, route)),
             };
-            match routed {
+            let miss = match routed {
                 Ok((target, params, head_from_get)) => {
                     tracking.route(Routing::Matched { route: Arc::clone(&target.route), handler: Arc::clone(target.handler.info()) });
-                    self.found(&exec, req, target, params, head_from_get, &call_span).await
+                    return self.found(&exec, req, target, params, head_from_get, &call_span).await;
                 }
-                Err(Miss::NotFound) => {
-                    tracking.route(Routing::NotFound);
-                    if self.forward {
-                        if tracking.forwardable(&req) {
-                            return self.forwardable();
-                        }
-                        tracing::warn!(
-                            path = req.path(),
-                            "a miss under `Miss::Forward` is answered 404 by the app: a pre-dispatch entry read the body or rewrote the path, \
-                             so the host cannot route the request again"
-                        );
-                    }
-                    self.miss(&exec.handle(), req, Miss::NotFound).await
-                }
-                Err(miss) => {
-                    tracking.route(match &miss {
-                        Miss::Options(_, route) => Routing::Options { route: Arc::clone(route) },
-                        _ => Routing::MethodNotAllowed,
-                    });
-                    self.miss(&exec.handle(), req, miss).await
-                }
+                Err(miss) => miss,
+            };
+            tracking.route(match &miss {
+                Miss::NotFound => Routing::NotFound,
+                Miss::Options(_, route) => Routing::Options { route: Arc::clone(route) },
+                Miss::MethodNotAllowed(_) => Routing::MethodNotAllowed,
+            });
+            let handle = exec.handle();
+            if outside {
+                return self.unmatched(&handle, req, miss, &tracking).await;
             }
+            let this = Arc::clone(&self);
+            let at = handle.clone();
+            let end: Rest = Box::new(move |req| Box::pin(async move { this.unmatched(&at, req, miss, &tracking).await }));
+            self.unrouted(&handle, req, end).await
         })
+    }
+
+    /// The scoped entries whose scope matches the path of a request no route matched, then `end`.
+    /// Their failures are offered to the global error handlers only, no handler having matched.
+    fn unrouted(self: &Arc<Self>, exec: &ExecutionRef, req: Request, end: Rest) -> BoxFuture<'static, Response> {
+        let steps = self.stage.unrouted().runnable(&req);
+        if steps.is_empty() {
+            return end(req);
+        }
+        let at = StageCx {
+            service: Arc::clone(self),
+            exec: exec.clone(),
+            head: Arc::new(RequestHead { parts: req.head.clone() }),
+            conn: req.conn.clone(),
+            route: None,
+        };
+        pre_dispatch::run(Arc::new(at), steps, 0, req, end)
+    }
+
+    /// A miss's answer: forwardable under `Miss::Forward` when nothing changed the request,
+    /// otherwise offered to the global error handlers.
+    async fn unmatched(&self, exec: &ExecutionRef, req: Request, miss: Miss, tracking: &Tracking) -> Response {
+        if matches!(miss, Miss::NotFound) && self.forward {
+            if tracking.forwardable(&req) {
+                return self.forwardable();
+            }
+            tracing::warn!(
+                path = req.path(),
+                "a miss under `Miss::Forward` is answered 404 by the app: a pre-dispatch entry read the body or rewrote the path, \
+                 so the host cannot route the request again"
+            );
+        }
+        self.miss(exec, req, miss).await
     }
 
     async fn found(
@@ -409,7 +452,7 @@ impl ServiceInner {
 
     /// The scoped sub-step, `dispatch` after it.
     fn scoped(self: &Arc<Self>, exec: ExecutionRef, req: Request, target: Arc<RouteTarget>, params: PathParams) -> BoxFuture<'static, Response> {
-        let steps = target.stage.runnable();
+        let steps = target.stage.runnable(&req);
         if steps.is_empty() {
             return self.dispatch(exec, req, target, params);
         }

@@ -24,9 +24,9 @@
 //! client's own for a connection that closed. A scenario a link's
 //! capabilities exclude asserts the refusal the capability declares instead: a streamed shape on
 //! UDP is refused at startup, a binary payload on a JSON link before any I/O and its handler at
-//! startup, a miss on a link without `miss_signal` is the client's `Timeout`, and the
-//! two-instance scenario runs one instance on an `Addressed` link, where a second cannot share the
-//! address.
+//! startup, a miss on a link without `miss_signal` is the client's `Timeout`, the two-instance
+//! scenarios run one instance on an `Addressed` link, where a second cannot share the address, and
+//! a request runs on both instances on a link declaring `delivers_requests_once: false`.
 //!
 //! No scenario passes on silence. The client's own `Timeout` passes only where it is the declared
 //! answer: a scenario about the client's timeout or `deadline-ms`, a call nothing takes on a link
@@ -254,6 +254,7 @@ macro_rules! conformance_suite {
             recovery_after_disrupt => recovery::after_disrupt,
             client_close => client_close::client_close,
             two_instances => delivery::two_instances,
+            two_instances_answering_requests => delivery::requests_across_two_instances,
             over_the_bound => admission::over_the_bound,
             client_on_a_thread_without_a_runtime => threads::plain_thread,
             cancel_follows_its_request => order::cancel_follows_its_request,

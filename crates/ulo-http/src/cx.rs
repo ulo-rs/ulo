@@ -49,7 +49,8 @@ pub(crate) struct MatchedRoute {
     pub(crate) body_limit: u64,
 }
 
-/// A matched route's path parameters, percent-decoded, in the order the pattern names them.
+/// A matched route's path parameters, percent-decoded but for `%2F`, which stays as sent, in the
+/// order the pattern names them.
 #[derive(Clone, Debug, Default)]
 pub struct PathParams {
     pub(crate) pairs: Vec<(Arc<str>, String)>,
@@ -108,7 +109,7 @@ impl HttpCx {
         &self.inner.mount
     }
 
-    /// One path parameter of the matched route, percent-decoded.
+    /// One path parameter of the matched route, percent-decoded but for `%2F`, which stays as sent.
     pub fn param(&self, name: &str) -> Option<&str> {
         self.inner.route.as_ref()?.params.get(name)
     }

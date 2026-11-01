@@ -5,24 +5,28 @@
 //! Beside the suite, a test drives the link through `Link` directly, for an ordering no scenario
 //! reaches on its own: a request read after the drain ended the inbound stream. Three more drop
 //! the link without `close` and count, through a relay, the connections Redis still holds: each
-//! side's link, and a server's link holding a call nobody answers.
+//! side's link, and a server's link holding a call nobody answers. Two more run two and three
+//! server apps on one Redis and count what one request and one event do across them.
 
 #![cfg(feature = "integration")]
 
+use std::error::Error;
+use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures_util::StreamExt;
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage};
-use ulo::{BoundAddr, Runtime};
+use ulo::{App, AppHandle, BoundAddr, Dep, Module, ModuleDef, ModuleIdentity, Runtime, Signal, injectable, routes};
 use ulo_rpc_conformance::{Broker, report, startup_failed};
 use ulo_rpc_conformance::relay::{Relay, reachable, unshadowed};
-use ulo_rpc::{CallHeaders, Data, Frame, Link, Pattern};
+use ulo_rpc::{CallHeaders, Data, Frame, Link, Pattern, Payload, RpcClient, Server};
 use ulo_rpc_redis::Redis;
-use ulo_transport::ErrorKind;
+use ulo_transport::{Classify, ErrorKind};
 
 /// The runtime a client hands its link: the test's tokio runtime, which a tokio link ignores.
 fn client_runtime() -> Arc<dyn Runtime> {
@@ -208,4 +212,154 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connections() {
         released(&relay, what).await;
     }
     client.close().await.expect("the client's link closes");
+}
+
+/// What the fan-out apps' handlers count, one value shared by every app in a test.
+#[derive(Default)]
+struct Counts {
+    requests: AtomicUsize,
+    events: AtomicUsize,
+}
+
+#[derive(Debug)]
+struct Never;
+
+impl fmt::Display for Never {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("never raised")
+    }
+}
+
+impl Error for Never {}
+
+impl Classify for Never {
+    fn classify(&self) -> ErrorKind {
+        ErrorKind::Internal
+    }
+}
+
+#[injectable]
+struct Counted {
+    counts: Dep<Arc<Counts>>,
+}
+
+#[routes]
+impl Counted {
+    #[ulo_rpc::message("fan.request")]
+    async fn request(&self, n: Payload<u32>) -> Result<u32, Never> {
+        self.counts.requests.fetch_add(1, Ordering::SeqCst);
+        Ok(n.0 + 1)
+    }
+
+    #[ulo_rpc::event("fan.event")]
+    async fn event(&self, _n: Payload<u32>) -> Result<(), Never> {
+        self.counts.events.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+struct FanOutRoot(Arc<Counts>);
+
+impl Module for FanOutRoot {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.value(Arc::clone(&self.0));
+        m.controller::<Counted>();
+    }
+}
+
+/// One server app on `url`, counting into `counts`, served on a task of its own.
+async fn counted_server(url: &str, counts: &Arc<Counts>) -> (AppHandle, tokio::task::JoinHandle<()>) {
+    let app = App::builder(FanOutRoot(Arc::clone(counts)))
+        .runtime(ulo_runtime_tokio::Tokio::current())
+        .wire()
+        .expect("the app wires")
+        .connect()
+        .await
+        .expect("the app connects")
+        .bind(Server::new(Redis::url(url)))
+        .listen()
+        .await
+        .map_err(Box::new)
+        .expect("the server binds");
+    let handle = app.handle();
+    let serving = tokio::spawn(async move {
+        let _ = app.serve(std::future::pending::<Signal>()).await;
+    });
+    (handle, serving)
+}
+
+/// How long the fan-out tests wait, once the count they expect has arrived, for one more.
+const SETTLE: Duration = Duration::from_millis(500);
+
+/// Waits until `count` reads `expected`, failing with `what` after [`PATIENCE`], then [`SETTLE`]
+/// more, and answers what it reads then.
+async fn settled(count: impl Fn() -> usize, expected: usize, what: &str) -> usize {
+    let waited = std::time::Instant::now();
+    while count() < expected {
+        assert!(waited.elapsed() < PATIENCE, "{what}: {} of {expected} within {PATIENCE:?}", count());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(SETTLE).await;
+    count()
+}
+
+/// Redis Pub/Sub hands a message to every connection subscribed to its channel, and each server
+/// subscribes to its patterns' channels, so one request runs its handler on every server and each
+/// publishes a reply; `RpcClient` answers the first and drops the rest. The link declares
+/// `delivers_requests_once: false` for it. An event reaches every server as well, the link's
+/// `DeliveryMode::FanOut`.
+async fn fan_out(servers: usize) {
+    let capabilities = Redis::url("redis://127.0.0.1:6379").capabilities();
+    assert!(!capabilities.delivers_requests_once && capabilities.fan_out_reason.is_some(), "{capabilities:?}");
+    let broker = RedisServer::start().await;
+    let url = format!("redis://{}", broker.server);
+    let counts = Arc::new(Counts::default());
+    let mut running = Vec::new();
+    for _ in 0..servers {
+        running.push(counted_server(&url, &counts).await);
+    }
+
+    let client = RpcClient::new(Redis::url(url.as_str()), client_runtime()).expect("the link is usable");
+    let answer = tokio::time::timeout(PATIENCE, client.request::<_, u32>("fan.request", &1u32)).await.expect("the request answered in time");
+    assert_eq!(answer.expect("the request is answered"), 2);
+    let executions = settled(|| counts.requests.load(Ordering::SeqCst), servers, "executions of one request").await;
+    assert_eq!(executions, servers, "one request's executions across {servers} servers");
+
+    // The reply lane as the link hands it over, before `RpcClient` drops the second reply.
+    let link = Redis::url(url.as_str());
+    let outbound = link.connect(&client_runtime()).await.expect("the client's link connects");
+    let mut replies = outbound.replies;
+    let request = Frame::Req { id: 7, pattern: "fan.request".to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
+    (outbound.send)(Pattern::from("fan.request"), request, None).await.expect("the request is published");
+    let mut answered = 0;
+    while let Ok(Some(frame)) = tokio::time::timeout(PATIENCE.min(SETTLE * 2), replies.next()).await {
+        assert!(matches!(frame, Frame::Res { id: 7, .. }), "a reply other than the request's: {frame:?}");
+        answered += 1;
+    }
+    assert_eq!(answered, servers, "replies to one request across {servers} servers");
+    assert_eq!(counts.requests.load(Ordering::SeqCst), 2 * servers, "executions of two requests across {servers} servers");
+
+    client.emit("fan.event", &1u32).await.expect("the event is published");
+    let events = settled(|| counts.events.load(Ordering::SeqCst), servers, "deliveries of one event").await;
+    assert_eq!(events, servers, "one event's deliveries across {servers} servers");
+
+    link.close().await.expect("the client's link closes");
+    for (handle, serving) in running {
+        let _ = tokio::time::timeout(PATIENCE, handle.close(Signal::new("test"))).await.expect("the server closed in time");
+        let _ = tokio::time::timeout(PATIENCE, serving).await.expect("the server's serve ended in time");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_request_runs_on_each_of_two_servers() {
+    fan_out(2).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_request_runs_on_each_of_three_servers() {
+    fan_out(3).await;
 }

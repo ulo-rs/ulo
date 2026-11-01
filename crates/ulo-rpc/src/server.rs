@@ -29,7 +29,9 @@ const DEFAULT_TIMEOUT_GRACE: Duration = Duration::from_secs(1);
 /// `prepare` calls `Link::prepare` and `Link::max_inflight`, and refuses two handlers for one
 /// pattern, a handler whose shape the link's capabilities do not carry (a streamed shape on UDP),
 /// an `#[event]` handler with a streamed shape, a `Binary` payload on a link declaring
-/// `binary: false`, `max_inflight(Count::Max(0))` and `timeout_grace(Bound::After(Duration::ZERO))`. `bind` calls `Link::listen` with every mounted
+/// `binary: false`, `max_inflight(Count::Max(0))` and `timeout_grace(Bound::After(Duration::ZERO))`.
+/// On a link declaring `delivers_requests_once: false` it logs one `warn` naming how many request
+/// patterns it mounts and the link's `fan_out_reason`, and refuses nothing. `bind` calls `Link::listen` with every mounted
 /// pattern. Over the in-flight limit a call is answered `err` of kind `unavailable`. A pattern is
 /// its own, so a controller's `.at(prefix)` does not apply to it, and `wire()` refuses a prefix on
 /// a controller whose handlers are all RPC handlers.
@@ -174,6 +176,17 @@ impl<L: Link> ulo::Server for Server<L> {
             }
         }
         failures.into_result()?;
+        let requests = routes.values().filter(|route| route.kind == Kind::Message).count();
+        if !capabilities.delivers_requests_once && requests > 0 {
+            tracing::warn!(
+                link = L::NAME,
+                request_patterns = requests,
+                reason = capabilities.fan_out_reason.unwrap_or("the link declares it"),
+                "the {} link delivers each request to every server instance listening on its pattern, \
+                 each running the handler; run one server instance",
+                L::NAME
+            );
+        }
         let limit = self.max_inflight.max_inflight();
         self.shared = Some(Arc::new(Shared {
             app: mounted.app().clone(),

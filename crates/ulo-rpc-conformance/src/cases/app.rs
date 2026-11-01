@@ -219,6 +219,11 @@ impl Probe {
         *lock(&self.0.held_answered)
     }
 
+    /// How many `add` calls have reached their handler.
+    pub(crate) fn adds_begun(&self) -> usize {
+        self.0.adds_begun.load(Ordering::SeqCst)
+    }
+
     /// Whether every `add` call that reached its handler has had its execution end, and one did.
     pub(crate) fn adds_settled(&self) -> bool {
         // `ended` is read first: a call beginning between the two reads only makes the pair unequal.

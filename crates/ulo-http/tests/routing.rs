@@ -1,5 +1,6 @@
 //! Routing as every backend sees it: a trailing slash is insignificant, `{name}` and `{*rest}`
-//! parameters are decoded and typed, a static segment outranks a parameter, one path carries one
+//! parameters are decoded but for `%2F` and typed, a path with a `.` or `..` segment is refused
+//! before routing, a static segment outranks a parameter, one path carries one
 //! handler per verb, and a route table that cannot be built is refused by `listen()` naming the
 //! controllers involved.
 
@@ -8,7 +9,7 @@ mod o1_support;
 use http::{Method, StatusCode};
 use o1_support::{Call, Running, refusal_names, refusals, refused, start};
 use ulo::{ModuleDef, TypeName, injectable, routes};
-use ulo_http::{HttpCx, Path};
+use ulo_http::{HttpCx, Path, Routing};
 
 #[injectable]
 struct Pages;
@@ -31,9 +32,10 @@ impl Pages {
         format!("{id}|{}|{}", cx.param("id").unwrap_or("-"), cx.route().unwrap_or("-"))
     }
 
+    /// The value as `Path` read it, then as `HttpCx::param` read it.
     #[ulo_http::get("/names/{name}")]
-    fn named(&self, Path(name): Path<String>) -> String {
-        name
+    fn named(&self, cx: HttpCx, Path(name): Path<String>) -> String {
+        format!("{name}|{}", cx.param("name").unwrap_or("-"))
     }
 
     #[ulo_http::get("/files/{name}")]
@@ -131,11 +133,75 @@ async fn a_parameter_that_does_not_parse_is_a_bad_request_and_an_empty_one_match
 }
 
 #[tokio::test]
-async fn a_parameter_is_percent_decoded() {
+async fn a_parameter_is_percent_decoded_except_for_an_encoded_slash_which_stays_as_sent() {
     let app = running().await;
 
-    let reply = app.send(Call::get("/names/a%20b%2Fc")).await;
-    assert_eq!((reply.status, reply.text()), (StatusCode::OK, "a b/c".to_owned()));
+    // The handler receives the three characters `%2F`, in the case the client wrote them, and
+    // never a `/`, so a value from one segment holds no separator.
+    for (sent, value) in [
+        ("a%20b%2Fc", "a b%2Fc"),
+        ("a%2fb", "a%2fb"),
+        ("..%2F..%2Fetc%2Fpasswd", "..%2F..%2Fetc%2Fpasswd"),
+        // `%25` decodes once, so `%252F` reaches the handler as the same text as `%2F`.
+        ("a%252Fb", "a%2Fb"),
+    ] {
+        let reply = app.send(Call::get(&format!("/names/{sent}"))).await;
+        assert_eq!((reply.status, reply.text()), (StatusCode::OK, format!("{value}|{value}")), "/names/{sent}");
+        assert_eq!(reply.matched(), Some(("/names/{name}".to_owned(), "named")), "/names/{sent}");
+    }
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn a_rest_parameter_keeps_an_encoded_slash_so_each_slash_in_it_is_one_the_client_sent() {
+    let app = running().await;
+
+    let reply = app.send(Call::get("/assets/a%2Fb/c%20d")).await;
+    assert_eq!((reply.status, reply.text()), (StatusCode::OK, "a%2Fb/c d".to_owned()));
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn a_dot_segment_raw_or_encoded_is_refused_400_before_routing() {
+    let app = running().await;
+
+    for path in [
+        "/assets/..",
+        "/assets/a/../b",
+        "/assets/./b",
+        "/assets/%2e%2e/b",
+        "/assets/%2E%2E/b",
+        "/assets/.%2e/b",
+        "/assets/%2e./b",
+        "/assets/%2e/b",
+        "/names/..",
+        "/../a",
+        "/nowhere/../a",
+        "/assets/a/../",
+    ] {
+        let reply = app.send(Call::get(path)).await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{path}");
+        assert!(reply.header("content-type").is_some_and(|value| value.starts_with("application/problem+json")), "{path}");
+        assert_eq!(reply.json()["detail"], "the path holds a `.` or `..` segment", "{path}");
+        assert!(matches!(reply.routing, Some(Routing::Unrouted)), "{path}: answered before routing, {:?}", reply.routing);
+    }
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn a_segment_that_only_contains_dots_or_a_twice_encoded_dot_is_routed() {
+    let app = running().await;
+
+    for (path, value) in [
+        ("/assets/.../b", ".../b"),
+        ("/assets/a./b", "a./b"),
+        ("/assets/.hidden", ".hidden"),
+        // Decoded once, `%252e` is the text `%2e`, which names no dot segment at this layer.
+        ("/assets/%252e%252e/b", "%2e%2e/b"),
+    ] {
+        let reply = app.send(Call::get(path)).await;
+        assert_eq!((reply.status, reply.text()), (StatusCode::OK, value.to_owned()), "{path}");
+    }
     app.stop().await;
 }
 

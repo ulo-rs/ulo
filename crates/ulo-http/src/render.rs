@@ -122,6 +122,11 @@ pub(crate) fn not_listening(config: &HttpConfig) -> Response {
     refusal(&CallError::new(ErrorKind::Unavailable, "the application is not yet listening"), config)
 }
 
+/// 400: a path holding a `.` or `..` segment, refused before the pre-dispatch stage and routing.
+pub(crate) fn dot_segment(config: &HttpConfig) -> Response {
+    problem(&CallError::new(ErrorKind::BadRequest, "the path holds a `.` or `..` segment"), config)
+}
+
 /// 503 with `Retry-After`: over the server's in-flight bound.
 pub(crate) fn shed(config: &HttpConfig) -> Response {
     refusal(&CallError::new(ErrorKind::Unavailable, "the server is at its limit of requests in flight"), config)

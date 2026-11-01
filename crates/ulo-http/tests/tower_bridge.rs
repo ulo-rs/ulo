@@ -1,6 +1,6 @@
 //! Tower layers in the pre-dispatch stage: an unscoped layer wraps routing and sees misses, may
 //! rewrite the request before the route is matched, layers nest in declaration order, a scoped
-//! layer wraps the routes its pattern covers, an `Err` is rendered by its kind, a response a
+//! layer wraps the request paths its pattern matches, routed or not, an `Err` is rendered by its kind, a response a
 //! layer builds is not an error, and a second call of the inner service for one request is a 500.
 
 mod o1_support;
@@ -237,7 +237,7 @@ async fn layers_nest_in_declaration_order_the_first_declared_outermost() {
 }
 
 #[tokio::test]
-async fn a_scoped_layer_wraps_the_routes_its_pattern_covers_only() {
+async fn a_scoped_layer_wraps_the_paths_its_pattern_matches_only_routed_or_not() {
     let app = start(scoped).await;
 
     let covered = app.send(Call::get("/files/a")).await;
@@ -245,7 +245,9 @@ async fn a_scoped_layer_wraps_the_routes_its_pattern_covers_only() {
     let outside = app.send(Call::get("/other")).await;
     assert_eq!((outside.status, outside.header("x-layer")), (StatusCode::OK, None));
     let miss = app.send(Call::get("/files/zzz")).await;
-    assert_eq!((miss.status, miss.header("x-layer")), (StatusCode::NOT_FOUND, None), "a miss matched no route for the scope to cover");
+    assert_eq!((miss.status, miss.header("x-layer")), (StatusCode::NOT_FOUND, Some("seen")), "a miss under the scope passes the layer");
+    let bare = app.send(Call::get("/files")).await;
+    assert_eq!((bare.status, bare.header("x-layer")), (StatusCode::NOT_FOUND, None), "`/files/*` needs a segment after `/files`");
     app.stop().await;
 }
 

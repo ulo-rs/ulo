@@ -18,7 +18,9 @@
 //! 5. The unscoped pre-dispatch entries of `PreDispatch<Grpc>`, in order.
 //! 6. The path routed: a handler's path routes the execution to the controller's module and runs
 //!    the scoped entries, then `ulo::dispatch`; the health and reflection services answer their
-//!    own paths; any other path answers UNIMPLEMENTED.
+//!    own paths; any other path runs the scoped entries whose scope matches it, their failures
+//!    offered to the global error handlers alone, then answers UNIMPLEMENTED, so a caller an
+//!    entry refuses is refused alike whether or not the method exists.
 //! 7. An error no handler claims rendered as a status: a `tonic::Status` as it stands,
 //!    DEADLINE_EXCEEDED when the deadline cancelled the call, any other error by its kind.
 //! 8. A response a pre-dispatch entry answered with an HTTP status other than 200 translated by
@@ -297,8 +299,23 @@ impl Dispatcher {
                 let Request { head, body, .. } = req;
                 return (*builtin)(http::Request::from_parts(head, body)).await.map(HttpBody::new);
             }
-            status_response(Status::unimplemented(format!("this server has no method `{}`", req.path())))
+            self.unrouted(exec.handle(), req).await
         })
+    }
+
+    /// The scoped entries whose scope matches the path of a call no handler answers, then
+    /// UNIMPLEMENTED. Their failures are offered to the global error handlers alone, no handler
+    /// having matched.
+    fn unrouted(self: &Arc<Self>, exec: ExecutionRef, req: Request) -> BoxFuture<'static, Response> {
+        let end: Rest = Box::new(|req| {
+            Box::pin(std::future::ready(status_response(Status::unimplemented(format!("this server has no method `{}`", req.path())))))
+        });
+        let unrouted = self.stage.unrouted();
+        if unrouted.is_empty() {
+            return end(req);
+        }
+        let host = StageCx::new(self, exec, &req, None);
+        unrouted.run(Arc::new(host), req, end)
     }
 
     /// The scoped sub-step, `dispatch` after it.

@@ -100,13 +100,21 @@ impl Redis {
     }
 }
 
+/// Pub/Sub has no consumer group: a `PUBLISH` reaches every connection subscribed to the channel.
+const FAN_OUT: &str = "Redis Pub/Sub delivers a request to every server instance subscribed to its pattern's channel";
+
 const NO_RUNTIME: &str = "the Redis link has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
 
 impl Link for Redis {
     const NAME: &'static str = "redis";
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::new(DeliveryMode::FanOut).binary(self.codec.binary()).ordering(Order::PerChannel).miss_signal(true).ordered_control(true)
+        Capabilities::new(DeliveryMode::FanOut)
+            .binary(self.codec.binary())
+            .ordering(Order::PerChannel)
+            .miss_signal(true)
+            .ordered_control(true)
+            .fans_out_requests(FAN_OUT)
     }
 
     fn usable(&self) -> Result<(), BoxError> {

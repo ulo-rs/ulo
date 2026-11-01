@@ -6,9 +6,10 @@
 //! literal such as `/u/{id` is a span error; the two parsers are kept in step by hand.
 //!
 //! A request path's segments are percent-decoded before they are compared or captured, as path
-//! decoding rather than form decoding: `+` stays `+`, and `%2F` decodes to a `/` inside its
-//! segment, never splitting it. A decoded byte sequence that is not UTF-8 is captured with
-//! U+FFFD in place of each invalid sequence.
+//! decoding rather than form decoding: `+` stays `+`, and an encoded slash, `%2F` or `%2f`, stays
+//! as the client wrote it, so a `/` in a captured value is always a separator the client sent.
+//! A decoded byte sequence that is not UTF-8 is captured with U+FFFD in place of each invalid
+//! sequence.
 
 use std::borrow::Cow;
 use std::fmt;
@@ -124,6 +125,13 @@ impl Pattern {
         (pieces.len() == self.segments.len()).then_some(PathParams { pairs })
     }
 
+    fn shape(&self) -> Shape<'_> {
+        match self.segments.split_last() {
+            Some((Segment::Rest(_), fixed)) => Shape { fixed, open: true },
+            _ => Shape { fixed: &self.segments, open: false },
+        }
+    }
+
     pub(crate) fn param_names(&self) -> impl Iterator<Item = &str> + '_ {
         self.segments.iter().filter_map(|segment| match segment {
             Segment::Param(name) | Segment::Rest(name) => Some(&**name),
@@ -152,9 +160,10 @@ impl fmt::Display for Pattern {
     }
 }
 
-/// A pre-dispatch scope, `/admin/*`: matched against route patterns when the server prepares, so
-/// each route's scoped stack is built once. `*` as the last segment matches one or more segments;
-/// a scope without one matches its pattern exactly.
+/// A pre-dispatch scope, `/admin/*`, matched against the request path. `*` as the last segment
+/// matches one or more segments; a scope without one matches its pattern exactly. When the server
+/// prepares it is also compared with each route pattern, so a route whose every request it matches
+/// needs no check per request.
 #[derive(Clone, Debug)]
 pub(crate) struct ScopePattern {
     pub(crate) raw: Arc<str>,
@@ -174,23 +183,31 @@ impl ScopePattern {
         Ok(ScopePattern { raw: Arc::from(normalize(text)), segments, wildcard })
     }
 
-    /// Whether this scope covers the route `pattern`.
+    fn shape(&self) -> Shape<'_> {
+        Shape { fixed: &self.segments, open: self.wildcard }
+    }
+
+    /// Whether this scope matches every request path the route `pattern` matches.
     ///
     /// A scope's static segment covers only the same static segment, and its parameter covers a
     /// static segment or a parameter of the route, whatever the names. A route's `{*rest}` is
     /// covered only by the scope's wildcard, since it stands for one or more segments.
     pub(crate) fn covers(&self, pattern: &Pattern) -> bool {
-        let route = &pattern.segments;
-        let fits = if self.wildcard { route.len() > self.segments.len() } else { route.len() == self.segments.len() };
-        fits && self.segments.iter().zip(route).all(|pair| match pair {
-            (Segment::Static(a), Segment::Static(b)) => a == b,
-            (Segment::Param(_), Segment::Static(_) | Segment::Param(_)) => true,
-            _ => false,
-        })
+        self.shape().contains(&pattern.shape())
     }
 
-    /// Whether this scope covers a request path that matched no route: unscoped entries run on
-    /// misses, scoped ones never, so this serves only `exclude` on an unscoped entry.
+    /// Whether some request path matches both this scope and the route `pattern`: `/users/me`
+    /// overlaps `/users/{id}` without covering it.
+    pub(crate) fn overlaps(&self, pattern: &Pattern) -> bool {
+        self.shape().overlaps(&pattern.shape())
+    }
+
+    /// Whether every request path `other` matches, this scope matches too.
+    pub(crate) fn contains(&self, other: &ScopePattern) -> bool {
+        self.shape().contains(&other.shape())
+    }
+
+    /// Whether this scope matches the request path `path`, compared as the router compares it.
     pub(crate) fn covers_path(&self, path: &str) -> bool {
         let path = normalize(path);
         let pieces = split(path);
@@ -207,6 +224,70 @@ impl fmt::Display for ScopePattern {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.raw)
     }
+}
+
+/// The request paths a route pattern or a scope matches: exactly `fixed`, or with `open`, `fixed`
+/// followed by one or more segments. `fixed` holds static segments and parameters only.
+struct Shape<'s> {
+    fixed: &'s [Segment],
+    open: bool,
+}
+
+impl Shape<'_> {
+    /// Whether every path `other` matches, this matches too.
+    fn contains(&self, other: &Shape<'_>) -> bool {
+        let (mine, theirs) = (self.fixed.len(), other.fixed.len());
+        let fits = match (self.open, other.open) {
+            (true, true) => theirs >= mine,
+            (true, false) => theirs > mine,
+            (false, false) => theirs == mine,
+            (false, true) => false,
+        };
+        fits && self.fixed.iter().zip(other.fixed).all(|pair| match pair {
+            (Segment::Static(a), Segment::Static(b)) => a == b,
+            (Segment::Param(_), _) => true,
+            _ => false,
+        })
+    }
+
+    /// Whether some path matches both. Past the shorter `fixed`, the open one takes any segment.
+    fn overlaps(&self, other: &Shape<'_>) -> bool {
+        let (mine, theirs) = (self.fixed.len(), other.fixed.len());
+        let fits = match (self.open, other.open) {
+            (true, true) => true,
+            (true, false) => theirs > mine,
+            (false, true) => mine > theirs,
+            (false, false) => theirs == mine,
+        };
+        fits && self.fixed.iter().zip(other.fixed).all(|pair| match pair {
+            (Segment::Static(a), Segment::Static(b)) => a == b,
+            _ => true,
+        })
+    }
+}
+
+/// Whether `path` holds a `.` or `..` segment (RFC 3986 §3.3), with each dot written raw, `%2E`
+/// or `%2e`: `/a/..`, `/a/%2e%2E/b` and `/a/.%2e/b` do, `/a/.../b`, `/a/b./c` and `/a/%252e/b` do
+/// not. Segments are those of the path as received, so `%2F` separates nothing here either.
+pub(crate) fn has_dot_segment(path: &str) -> bool {
+    path.split('/').any(is_dot_segment)
+}
+
+fn is_dot_segment(segment: &str) -> bool {
+    let mut rest = segment.as_bytes();
+    let mut dots = 0;
+    while let [first, tail @ ..] = rest {
+        rest = match (first, tail) {
+            (b'.', _) => tail,
+            (b'%', [b'2', e, after @ ..]) if e.eq_ignore_ascii_case(&b'e') => after,
+            _ => return false,
+        };
+        dots += 1;
+        if dots > 2 {
+            return false;
+        }
+    }
+    dots > 0
 }
 
 /// `path` without its trailing slash, except for `/`.
@@ -281,7 +362,10 @@ fn parse_segments(text: &str, scope: bool) -> Result<Vec<Segment>, &'static str>
         } else if piece.contains(['{', '}']) {
             return Err("a brace appears outside a whole `{name}` segment");
         } else {
-            Segment::Static(piece.to_owned())
+            // Decoded as a request segment is, so the router, a scope at runtime and the
+            // comparison of a scope with a route pattern in `prepare` read one form whichever
+            // side wrote `%C3%A9` and whichever wrote `é`.
+            Segment::Static(decode(piece).into_owned())
         };
         segments.push(segment);
     }
@@ -308,12 +392,59 @@ fn check_name(name: &str) -> Result<(), &'static str> {
     }
 }
 
-/// A request segment against a static pattern segment: equal as sent, or equal once decoded, so
-/// `/caf%C3%A9` matches the pattern `/café`.
+/// A request segment against a static pattern segment, which `parse_segments` holds decoded:
+/// equal as sent, or equal once decoded, so `/caf%C3%A9` matches the pattern `/café` and the
+/// pattern `/caf%C3%A9` alike.
 fn static_matches(text: &str, piece: &str) -> bool {
     text == piece || (piece.contains('%') && decode(piece) == text)
 }
 
+/// `piece` percent-decoded, an invalid UTF-8 sequence read as U+FFFD, with each encoded slash left
+/// as written: a value captured from one segment then holds no `/`, and `root.join(value)` cannot
+/// climb out of `root`. `%252F` decodes to the text `%2F` as well, so a captured `%2F` does not
+/// say which of the two the client sent.
 fn decode(piece: &str) -> Cow<'_, str> {
-    percent_decode_str(piece).decode_utf8_lossy()
+    let Some(first) = encoded_slash(piece) else {
+        return percent_decode_str(piece).decode_utf8_lossy();
+    };
+    let mut decoded = String::with_capacity(piece.len());
+    let mut rest = piece;
+    let mut at = Some(first);
+    while let Some(slash) = at {
+        decoded.push_str(&percent_decode_str(&rest[..slash]).decode_utf8_lossy());
+        decoded.push_str(&rest[slash..slash + 3]);
+        rest = &rest[slash + 3..];
+        at = encoded_slash(rest);
+    }
+    decoded.push_str(&percent_decode_str(rest).decode_utf8_lossy());
+    Cow::Owned(decoded)
+}
+
+/// The byte offset of the first `%2F` or `%2f` in `text`.
+fn encoded_slash(text: &str) -> Option<usize> {
+    text.as_bytes().windows(3).position(|window| matches!(window, [b'%', b'2', b'F' | b'f']))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_encoded_slash_stays_as_written_and_everything_else_decodes() {
+        assert_eq!(decode("a%20b%2Fc%2fd%2520"), "a b%2Fc%2fd%20");
+        assert_eq!(decode("..%2F..%2Fetc"), "..%2F..%2Fetc");
+        assert_eq!(decode("%%2F"), "%%2F", "a `%` that starts no escape is kept, and the slash after it too");
+        assert_eq!(decode("%C3%A9%2F%C3%A9"), "é%2Fé");
+        assert_eq!(decode("plain"), "plain");
+    }
+
+    #[test]
+    fn a_dot_segment_is_found_raw_and_encoded_and_nothing_else_is() {
+        for path in ["/.", "/..", "/a/./b", "/a/../b", "/a/..", "/a/%2e", "/a/%2E%2e/b", "/a/.%2e", "/a/%2e./b", "/../"] {
+            assert!(has_dot_segment(path), "{path}");
+        }
+        for path in ["/", "/a", "/a/.../b", "/a/b./c", "/a/.b", "/a/%252e/b", "/a/%2e%2e%2e", "/a/..%2Fb", "//", "/a/%2"] {
+            assert!(!has_dot_segment(path), "{path}");
+        }
+    }
 }

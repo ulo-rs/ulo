@@ -59,14 +59,14 @@ pub async fn head<H: Host>(mode: Mode) {
     host.stop().await;
 }
 
-/// A path parameter is percent-decoded once, after the path is split: `a%20b%2Fc%2520` is
-/// `a b/c%20` in one segment, `%2F` not a separator and `%25` not decoded a second time, as the
-/// reference host reads it.
+/// A path parameter is percent-decoded once, after the path is split, an encoded slash excepted:
+/// `a%20b%2Fc%2520` is `a b%2Fc%20` in one segment, `%2F` kept as the client wrote it and `%25`
+/// not decoded a second time, as the reference host reads it.
 pub async fn percent_decoded<H: Host>(mode: Mode) {
     let host = start::<H>(mode).await;
     let reply = same_as_reference(&host, Exchange::get("/echo/a%20b%2Fc%2520")).await;
     assert_eq!(reply.status, 200, "{}", reply.text());
-    assert_eq!(reply.text(), "a b/c%20", "the parameter is decoded once, and an encoded slash stays inside its segment");
+    assert_eq!(reply.text(), "a b%2Fc%20", "the parameter is decoded once, and an encoded slash stays encoded");
     if !is_reference::<H>() {
         assert_eq!(reply.routing(), Some(format!("matched {}", host.route("/echo/{name}")).as_str()));
     }
@@ -82,6 +82,22 @@ pub async fn trailing_slash<H: Host>(mode: Mode) {
         assert_eq!((reply.status, reply.text()), (200, "hit".to_owned()), "GET {path}");
         if !is_reference::<H>() {
             assert_eq!(reply.routing(), Some(format!("matched {}", host.route("/hit")).as_str()), "GET {path}");
+        }
+    }
+    host.stop().await;
+}
+
+/// A path holding a `.` or `..` segment, raw or with a dot written `%2E` or `%2e`, answers 400 as
+/// a problem document before routing, whatever the rest of the path names: the host hands the
+/// path over as the client sent it.
+pub async fn dot_segment<H: Host>(mode: Mode) {
+    let host = start::<H>(mode).await;
+    for path in ["/echo/..", "/echo/.", "/echo/%2e%2e", "/echo/%2E%2E", "/echo/.%2e", "/echo/%2e.", "/hit/../hit", "/nowhere/%2e%2e/hit", "/../hit"] {
+        let reply = same_as_reference(&host, Exchange::get(path)).await;
+        assert_eq!(reply.status, 400, "GET {path}: {}", reply.text());
+        assert!(reply.header("content-type").is_some_and(|value| value.starts_with("application/problem+json")), "GET {path}");
+        if !is_reference::<H>() {
+            assert_eq!(reply.routing(), Some("unrouted"), "GET {path}");
         }
     }
     host.stop().await;
