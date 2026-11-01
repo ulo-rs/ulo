@@ -4,9 +4,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use ulo::{Bound, Dep, Module, ModuleDef, ModuleIdentity, Runtime};
+use ulo::{Bound, BoxError, Dep, Module, ModuleDef, ModuleIdentity, Runtime};
+use ulo_transport::Count;
 
-use crate::client::{RpcClient, UnusableLink, ZeroTimeout};
+use crate::client::{RpcClient, UnusableLink, ZeroCount, ZeroTimeout};
 use crate::link::Link;
 
 /// Binds `RpcClient` over link `L`, exported, usually keyed so two clients coexist:
@@ -38,6 +39,7 @@ pub struct RpcClientModule<L: Link> {
     pub(crate) link: Arc<L>,
     pub(crate) timeout: Bound,
     pub(crate) idle: Bound,
+    pub(crate) queued: Count,
     pub(crate) instance: u64,
 }
 
@@ -53,6 +55,7 @@ impl<L: Link> RpcClientModule<L> {
             link: Arc::new(link),
             timeout: Bound::Default,
             idle: Bound::Default,
+            queued: Count::Default,
             instance: INSTANCES.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -79,6 +82,16 @@ impl<L: Link> RpcClientModule<L> {
         self.idle = idle;
         self
     }
+
+    /// The client's queue limit, as [`RpcClient::max_queued_items`] sets it: the reply items of
+    /// one `stream` or `duplex` call held unread for its caller, 1,024 at `Count::Default`, none at
+    /// `Count::Unlimited`. The item past it ends the call `Unavailable` with the reason
+    /// `"overflow"`, after the client sends its server `cancel`. `Count::Max(0)` is refused when the
+    /// app wires, as [`ZeroCount`].
+    pub fn max_queued_items(mut self, items: Count) -> Self {
+        self.queued = items;
+        self
+    }
 }
 
 impl<L: Link> Module for RpcClientModule<L> {
@@ -88,25 +101,27 @@ impl<L: Link> Module for RpcClientModule<L> {
 
     fn register(&self, m: &mut ModuleDef<'_>) {
         let zero = Bound::After(Duration::ZERO);
-        let refused = if self.timeout == zero {
-            Some(("RpcClientModule::timeout", "every call"))
+        let refused: Option<BoxError> = if self.timeout == zero {
+            Some(ZeroTimeout::of_module("RpcClientModule::timeout", L::NAME, "every call").into())
         } else if self.idle == zero {
-            Some(("RpcClientModule::idle_timeout", "every stream"))
+            Some(ZeroTimeout::of_module("RpcClientModule::idle_timeout", L::NAME, "every stream").into())
+        } else if self.queued == Count::Max(0) {
+            Some(ZeroCount::new("RpcClientModule::max_queued_items", L::NAME).into())
         } else {
             None
         };
-        if let Some((setter, ends)) = refused {
+        if let Some(refusal) = refused {
             // A module has no `prepare`; the refusal is recorded for `wire()` to report beside every
             // other wiring error.
-            m.try_value::<RpcClient, _>(Err(ZeroTimeout::of_module(setter, L::NAME, ends)));
+            m.try_value::<RpcClient, _>(Err(refusal));
         } else {
             let link = Arc::clone(&self.link);
             let closing = Arc::clone(&self.link);
-            let (timeout, idle) = (self.timeout, self.idle);
+            let (timeout, idle, queued) = (self.timeout, self.idle, self.queued);
             let checked = Arc::clone(&self.link);
             m.singleton(move |runtime: Dep<dyn Runtime>| {
                 let link = Arc::clone(&link);
-                async move { RpcClient::of_module(link, timeout, idle, runtime.into_arc()) }
+                async move { RpcClient::of_module(link, timeout, idle, runtime.into_arc()).with_queued(queued) }
             })
             .on_destroy(move || {
                 let link = Arc::clone(&closing);

@@ -65,6 +65,7 @@ pub(crate) const BOUNDED_TOO: &str = "conformance.bounded_too";
 pub(crate) const DEADLINE: &str = "conformance.deadline";
 pub(crate) const DEADLINE_STREAM: &str = "conformance.deadline_stream";
 pub(crate) const DEADLINE_SUM: &str = "conformance.deadline_sum";
+pub(crate) const IGNORE: &str = "conformance.ignore";
 
 /// A payload no codec reads: not UTF-8, so no JSON text, and a lone CBOR break code, so no CBOR
 /// item. A reply carrying it fails the link's frame encoding.
@@ -607,6 +608,15 @@ impl StreamController {
         Ok(total)
     }
 
+    /// Reads none of its streamed request and answers nothing, so only its execution's
+    /// cancellation ends it, recording the reason as the stalled handler does.
+    #[ulo_rpc::message("conformance.ignore")]
+    async fn ignore(&self, items: Inbound<i64>, exec: ExecutionRef) -> Result<i64, Refusal> {
+        let _items = items;
+        let _recorder = Recorder { exec, probe: (*self.probe).clone(), stream: false };
+        std::future::pending().await
+    }
+
     /// Ticks until the server drains, then ends cleanly.
     #[ulo_rpc::message("conformance.until_drain")]
     async fn until_drain(&self, exec: ExecutionRef, timer: Dep<dyn Timer>) -> impl Stream<Item = Result<u64, Refusal>> {
@@ -724,13 +734,22 @@ impl Server {
     }
 }
 
-async fn bound<B: Broker, L: Link>(
-    link: L,
-    probe: Probe,
-    mounts: Mounts,
+/// What a scenario sets on its server beside the link.
+#[derive(Clone, Copy)]
+struct Settings {
     max_inflight: Count,
+    max_queued_items: Count,
     cap: Option<Duration>,
-) -> Result<App<Serving>, StartupError> {
+}
+
+impl Settings {
+    fn bounded(max_inflight: Count) -> Settings {
+        Settings { max_inflight, max_queued_items: Count::Default, cap: None }
+    }
+}
+
+async fn bound<B: Broker, L: Link>(link: L, probe: Probe, mounts: Mounts, settings: Settings) -> Result<App<Serving>, StartupError> {
+    let Settings { max_inflight, max_queued_items, cap } = settings;
     let mut builder = App::builder(ServerRoot { probe, mounts }).runtime(<B::Harness as Harness>::runtime()).drain_timeout(DRAIN);
     if let Some(cap) = cap {
         builder = builder.shutdown_timeout(cap);
@@ -739,7 +758,7 @@ async fn bound<B: Broker, L: Link>(
         .wire()?
         .connect()
         .await?
-        .bind(ulo_rpc::Server::new(link).max_inflight(max_inflight))
+        .bind(ulo_rpc::Server::new(link).max_inflight(max_inflight).max_queued_items(max_queued_items))
         .listen()
         .await
 }
@@ -756,18 +775,23 @@ pub(crate) async fn server_bounded<B: Broker>(broker: &B, max_inflight: Count) -
 
 /// [`server_bounded`] over `link`, a link built from the broker's [`Broker::link`].
 pub(crate) async fn server_over<B: Broker, L: Link>(broker: &B, link: L, max_inflight: Count) -> Server {
-    serving::<B, L>(broker, link, max_inflight, None).await
+    serving::<B, L>(broker, link, Settings::bounded(max_inflight)).await
 }
 
 /// [`server`] with its `shutdown_timeout` set to `cap`.
 pub(crate) async fn server_capped<B: Broker>(broker: &B, cap: Duration) -> Server {
-    serving::<B, _>(broker, broker.link(), Count::Default, Some(cap)).await
+    serving::<B, _>(broker, broker.link(), Settings { cap: Some(cap), ..Settings::bounded(Count::Default) }).await
 }
 
-async fn serving<B: Broker, L: Link>(broker: &B, link: L, max_inflight: Count, cap: Option<Duration>) -> Server {
+/// [`server`] with its `max_queued_items` set.
+pub(crate) async fn server_queued<B: Broker>(broker: &B, max_queued_items: Count) -> Server {
+    serving::<B, _>(broker, broker.link(), Settings { max_queued_items, ..Settings::bounded(Count::Default) }).await
+}
+
+async fn serving<B: Broker, L: Link>(broker: &B, link: L, settings: Settings) -> Server {
     let probe = Probe::default();
     let mounts = Mounts::carried(&broker.link().capabilities());
-    let app = bound::<B, L>(link, probe.clone(), mounts, max_inflight, cap)
+    let app = bound::<B, L>(link, probe.clone(), mounts, settings)
         .await
         .unwrap_or_else(|error| crate::startup_failed!("the conformance server did not start: {}", report(&error)));
     let handle = app.handle();
@@ -789,7 +813,7 @@ async fn serving<B: Broker, L: Link>(broker: &B, link: L, max_inflight: Count, c
 /// Asserts that a server mounting `mounts` is refused at startup as a `Configure` error: what a
 /// link's capabilities exclude is refused in `prepare`, before anything binds.
 pub(crate) async fn refused_at_startup<B: Broker>(broker: &B, mounts: Mounts) {
-    match bound::<B, _>(broker.link(), Probe::default(), mounts, Count::Default, None).await {
+    match bound::<B, _>(broker.link(), Probe::default(), mounts, Settings::bounded(Count::Default)).await {
         Err(StartupError::Configure(_)) => {}
         Err(other) => crate::startup_failed!("expected a `Configure` refusal for {mounts:?}, got: {}", report(&other)),
         Ok(app) => {
@@ -906,6 +930,15 @@ impl<B: Broker> Fixture<B> {
             }
         })
         .await;
+        Fixture { broker, server, client }
+    }
+
+    /// [`start`](Self::start) with the server's `max_queued_items` set.
+    pub(crate) async fn start_queued(max_queued_items: Count) -> Fixture<B> {
+        let broker = B::start().await;
+        let server = server_queued(&broker, max_queued_items).await;
+        let client = client(&broker, &[&server]).await;
+        ready(&broker, &client.rpc, &[&server]).await;
         Fixture { broker, server, client }
     }
 

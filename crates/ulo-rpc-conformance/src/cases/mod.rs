@@ -15,6 +15,7 @@ pub mod headers;
 pub mod misses;
 pub mod order;
 pub mod payloads;
+pub mod queues;
 pub mod recovery;
 pub mod streams;
 pub mod threads;
