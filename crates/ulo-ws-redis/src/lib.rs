@@ -13,10 +13,17 @@
 //! `dyn BroadcastAdapter` beside `WsModule`'s would be `DuplicateBinding` at `wire()`.
 //!
 //! The channels: `ulo:ws:room:<room>` for a room, `ulo:ws:node:<node>` for a client, addressed to
-//! the process its id names, and `ulo:ws:all` for everyone. Each message is the target as JSON, a
-//! newline, then the encoded broadcast. A process subscribes to its node's channel and
+//! the process its id names, and `ulo:ws:all` for everyone. Each message is the broadcast in
+//! [`ulo_ws::wire`]'s versioned layout. A process subscribes to its node's channel and
 //! `ulo:ws:all`, and pattern-subscribes to `ulo:ws:room:*`, filtering rooms against its own
 //! members on delivery, since the adapter learns of no membership change.
+//!
+//! A message the subscription cannot read is dropped with a `warn` and the subscription reads on.
+//! One in another wire version, in the unversioned layout or naming an audience kind this build
+//! does not know comes from another version of the application, as during a rolling deploy: its
+//! `warn` is written once per process for each version or kind, later ones at `debug`, for up to
+//! 64 of them, an audience kind remembered and logged at its first 64 bytes. A malformed message
+//! is logged each time.
 //!
 //! A server's `listen()` returns once Redis has confirmed the adapter's subscription, so a
 //! broadcast published after it reaches the process's own members as well as the other
@@ -33,6 +40,7 @@
 
 use std::fmt;
 use std::pin::pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use std::time::Duration;
 
@@ -44,6 +52,7 @@ use tokio::runtime::Handle;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use ulo::{BoxError, BoxFuture, Cut, Permanent, Refused, RuntimeShutDown, Spawn, Timer, timeout};
 use ulo_runtime_tokio::Tokio;
+use ulo_ws::wire::{self, Undecodable};
 use ulo_ws::{Audience, BroadcastAdapter, NodeId, Target};
 
 /// How long a lost subscription waits before connecting again.
@@ -106,17 +115,93 @@ fn channel(target: &Target) -> String {
     }
 }
 
-fn encode(target: &Target, frame: &[u8]) -> Result<Vec<u8>, serde_json::Error> {
-    let mut message = serde_json::to_vec(target)?;
-    message.push(b'\n');
-    message.extend_from_slice(frame);
-    Ok(message)
+/// How many distinct versions and audience kinds a process remembers, each logged at `warn` once
+/// and held for the process's life. The first kind past them is logged at `warn` saying so, and
+/// every later new kind at `debug`.
+const KINDS_LOGGED: usize = 64;
+
+/// The bytes of an audience kind a process remembers and logs. The peer names the kind at any
+/// length, so a longer one is cut at a character boundary and marked with `…`, and two kinds
+/// sharing their first [`KIND_SHOWN`] bytes are remembered and logged as one.
+const KIND_SHOWN: usize = 64;
+
+/// `kind`, cut to [`KIND_SHOWN`] bytes at a character boundary and marked when it was longer.
+fn shown(kind: &str) -> String {
+    if kind.len() <= KIND_SHOWN {
+        return kind.to_owned();
+    }
+    let mut end = KIND_SHOWN;
+    while !kind.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &kind[..end])
 }
 
-fn decode(message: &[u8]) -> Option<(Target, Bytes)> {
-    let split = message.iter().position(|&byte| byte == b'\n')?;
-    let target = serde_json::from_slice(&message[..split]).ok()?;
-    Some((target, Bytes::copy_from_slice(&message[split + 1..])))
+/// The versions and audience kinds of other builds this process has logged.
+static SIGHTINGS: Sightings = Sightings::new();
+
+struct Sightings {
+    kinds: StdMutex<Vec<String>>,
+    full: AtomicBool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Sighting {
+    First,
+    Again,
+    /// The first kind past [`KINDS_LOGGED`].
+    Full,
+}
+
+impl Sightings {
+    const fn new() -> Self {
+        Sightings { kinds: StdMutex::new(Vec::new()), full: AtomicBool::new(false) }
+    }
+
+    fn sight(&self, kind: String) -> Sighting {
+        let mut kinds = self.kinds.lock().unwrap_or_else(PoisonError::into_inner);
+        if kinds.contains(&kind) {
+            Sighting::Again
+        } else if kinds.len() < KINDS_LOGGED {
+            kinds.push(kind);
+            Sighting::First
+        } else if self.full.swap(true, Ordering::Relaxed) {
+            Sighting::Again
+        } else {
+            Sighting::Full
+        }
+    }
+}
+
+/// Logs a message the subscription on `channel` drops.
+fn dropped(refused: &Undecodable, channel: &str) {
+    let cut;
+    let (kind, refused) = match refused {
+        Undecodable::Unversioned => ("unversioned".to_owned(), refused),
+        Undecodable::Version(version) => (format!("version {version}"), refused),
+        Undecodable::Audience(kind) => {
+            let kind = shown(kind);
+            cut = Undecodable::Audience(kind.clone());
+            (format!("audience {kind}"), &cut)
+        }
+        _ => {
+            tracing::warn!(channel, %refused, "a Redis broadcast did not decode; it is dropped");
+            return;
+        }
+    };
+    match SIGHTINGS.sight(kind) {
+        Sighting::First => tracing::warn!(
+            channel,
+            %refused,
+            "a Redis broadcast from another version of the application is dropped; later ones of this kind are logged at `debug`"
+        ),
+        Sighting::Full => tracing::warn!(
+            channel,
+            %refused,
+            "a Redis broadcast from another version of the application is dropped; {KINDS_LOGGED} kinds have been logged, so later new kinds are logged at `debug`"
+        ),
+        Sighting::Again => tracing::debug!(channel, %refused, "a Redis broadcast from another version of the application is dropped"),
+    }
 }
 
 impl BroadcastAdapter for Redis {
@@ -140,7 +225,7 @@ impl BroadcastAdapter for Redis {
         let publisher = Arc::clone(&self.publisher);
         Box::pin(async move {
             let published = runtime?.run(async move {
-                let message = encode(&target, &frame)?;
+                let message = wire::encode(&target, &frame);
                 let mut cached = publisher.lock().await;
                 let mut connection = match cached.take() {
                     Some(connection) => connection,
@@ -272,14 +357,196 @@ async fn listen(
     }
     let mut messages = pubsub.into_on_message();
     while let Some(message) = messages.next().await {
-        match decode(message.get_payload_bytes()) {
-            Some(item) => {
+        match wire::decode(message.get_payload_bytes()) {
+            Ok(item) => {
                 if sender.send(item).is_err() {
                     return Ok(());
                 }
             }
-            None => tracing::warn!(channel = message.get_channel_name(), "a Redis broadcast did not decode; it is dropped"),
+            Err(refused) => dropped(&refused, message.get_channel_name()),
         }
     }
     Err(BoxError::from("the Redis subscription ended"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex, PoisonError};
+
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Level, Metadata};
+    use ulo_ws::wire::Undecodable;
+
+    use super::{KIND_SHOWN, KINDS_LOGGED, SIGHTINGS, Sighting, Sightings, dropped, shown};
+
+    #[test]
+    fn a_kind_is_first_once_then_again() {
+        let sightings = Sightings::new();
+        assert_eq!(sightings.sight("version 2".to_owned()), Sighting::First);
+        assert_eq!(sightings.sight("version 2".to_owned()), Sighting::Again);
+        assert_eq!(sightings.sight("version 3".to_owned()), Sighting::First);
+        assert_eq!(sightings.sight("version 2".to_owned()), Sighting::Again);
+    }
+
+    #[test]
+    fn the_first_kind_past_the_bound_is_full_once_and_kinds_seen_stay_again() {
+        let sightings = Sightings::new();
+        for n in 0..KINDS_LOGGED {
+            assert_eq!(sightings.sight(format!("audience {n}")), Sighting::First, "kind {n}");
+        }
+        assert_eq!(sightings.sight("audience past".to_owned()), Sighting::Full);
+        assert_eq!(sightings.sight("audience further".to_owned()), Sighting::Again);
+        assert_eq!(sightings.sight("audience past".to_owned()), Sighting::Again);
+        assert_eq!(sightings.sight("audience 0".to_owned()), Sighting::Again);
+    }
+
+    /// The process's sightings are one static, which no test resets: each test that reaches it
+    /// drops kinds no other test in this binary drops.
+    #[test]
+    fn a_broadcast_from_another_version_is_logged_at_warn_once_per_kind() {
+        let capture = Capture::default();
+        tracing::subscriber::with_default(capture.clone(), || {
+            dropped(&Undecodable::Version(201), "ulo:ws:all");
+            dropped(&Undecodable::Version(201), "ulo:ws:all");
+            dropped(&Undecodable::Audience("tests-only".to_owned()), "ulo:ws:room:lobby");
+            dropped(&Undecodable::Version(201), "ulo:ws:all");
+            dropped(&Undecodable::Audience("tests-only".to_owned()), "ulo:ws:room:lobby");
+        });
+        let warned: Vec<String> = capture.lines(Level::WARN);
+        assert_eq!(warned.len(), 2, "one `warn` per kind: {warned:?}");
+        assert!(warned[0].contains("version 201") && warned[0].contains("channel=ulo:ws:all"), "{}", warned[0]);
+        assert!(warned[1].contains("`tests-only`") && warned[1].contains("channel=ulo:ws:room:lobby"), "{}", warned[1]);
+        assert_eq!(capture.lines(Level::DEBUG).len(), 3, "the repeats at `debug`");
+    }
+
+    /// Each version and each audience kind is a kind of its own: a second one is logged at `warn`
+    /// beside the first.
+    #[test]
+    fn each_version_and_each_audience_kind_is_logged_at_warn() {
+        let capture = Capture::default();
+        tracing::subscriber::with_default(capture.clone(), || {
+            dropped(&Undecodable::Version(202), "ulo:ws:all");
+            dropped(&Undecodable::Version(203), "ulo:ws:all");
+            dropped(&Undecodable::Audience("tests-only-a".to_owned()), "ulo:ws:all");
+            dropped(&Undecodable::Audience("tests-only-b".to_owned()), "ulo:ws:all");
+        });
+        let warned = capture.lines(Level::WARN);
+        assert_eq!(warned.len(), 4, "one `warn` for each of two versions and two audience kinds: {warned:?}");
+    }
+
+    const MIB: usize = 1 << 20;
+
+    /// A kind is kept whole up to [`KIND_SHOWN`] bytes, and a longer one is cut at the last
+    /// character boundary within them and marked.
+    #[test]
+    fn a_kind_past_the_bytes_shown_is_cut_at_a_character_boundary_and_marked() {
+        let exact = "k".repeat(KIND_SHOWN);
+        assert_eq!(shown(&exact), exact);
+        assert_eq!(shown(&format!("{exact}k")), format!("{exact}…"));
+        // "é" is two bytes, so byte 64 falls inside one and the cut moves back to byte 63.
+        let wide = format!("k{}", "é".repeat(KIND_SHOWN));
+        assert_eq!(shown(&wide), format!("{}…", &wide[..KIND_SHOWN - 1]));
+    }
+
+    /// A mebibyte audience kind is remembered and logged at its first [`KIND_SHOWN`] bytes: it
+    /// holds no more of the process's memory, and writes no more into its log, than a short one.
+    #[test]
+    fn a_long_audience_kind_is_remembered_and_logged_short() {
+        let kind = format!("tests-long-{}", "k".repeat(MIB));
+        let capture = Capture::default();
+        tracing::subscriber::with_default(capture.clone(), || dropped(&Undecodable::Audience(kind.clone()), "ulo:ws:all"));
+        let warned = capture.lines(Level::WARN);
+        let [line] = warned.as_slice() else { panic!("one `warn`: {} lines", warned.len()) };
+        let cut = format!("{}…", &kind[..KIND_SHOWN]);
+        assert!(line.contains(&format!("`{cut}`")), "the `warn` names the kind cut short");
+        assert!(line.len() < 512, "the `warn` is {} bytes long", line.len());
+        let remembered = SIGHTINGS.kinds.lock().unwrap_or_else(PoisonError::into_inner);
+        assert!(remembered.contains(&format!("audience {cut}")), "the kind is remembered cut short");
+        let longest = remembered.iter().map(String::len).max().unwrap_or(0);
+        assert!(longest <= "audience ".len() + KIND_SHOWN + '…'.len_utf8(), "a remembered kind is {longest} bytes long");
+    }
+
+    /// Two kinds that differ only past their first [`KIND_SHOWN`] bytes are one kind: the second
+    /// is logged at `debug`, as a repeat of the first.
+    #[test]
+    fn two_long_kinds_sharing_the_bytes_shown_are_one_kind() {
+        let prefix = format!("tests-shared-{}", "k".repeat(KIND_SHOWN));
+        let first = format!("{prefix}{}", "a".repeat(MIB));
+        let second = format!("{prefix}{}", "b".repeat(MIB));
+        let capture = Capture::default();
+        tracing::subscriber::with_default(capture.clone(), || {
+            dropped(&Undecodable::Audience(first), "ulo:ws:all");
+            dropped(&Undecodable::Audience(second), "ulo:ws:all");
+        });
+        assert_eq!(capture.lines(Level::WARN).len(), 1, "the second kind was logged as a new one");
+        assert_eq!(capture.lines(Level::DEBUG).len(), 1, "the second kind was not logged as a repeat");
+    }
+
+    #[test]
+    fn a_malformed_broadcast_is_logged_at_warn_each_time() {
+        let capture = Capture::default();
+        tracing::subscriber::with_default(capture.clone(), || {
+            dropped(&Undecodable::Malformed("no newline ends the target".to_owned()), "ulo:ws:all");
+            dropped(&Undecodable::Malformed("no newline ends the target".to_owned()), "ulo:ws:all");
+        });
+        let warned = capture.lines(Level::WARN);
+        assert_eq!(warned.len(), 2, "{warned:?}");
+        assert!(warned.iter().all(|line| line.contains("did not decode") && line.contains("no newline")), "{warned:?}");
+    }
+
+    /// Every event on the thread it is the default subscriber of, as its level, its message and
+    /// `name=value` for each other field.
+    #[derive(Clone, Default)]
+    struct Capture {
+        events: Arc<Mutex<Vec<(Level, String)>>>,
+    }
+
+    impl Capture {
+        fn lines(&self, level: Level) -> Vec<String> {
+            let events = self.events.lock().unwrap_or_else(PoisonError::into_inner);
+            events.iter().filter(|(at, _)| *at == level).map(|(_, line)| line.clone()).collect()
+        }
+    }
+
+    impl tracing::Subscriber for Capture {
+        fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, _span: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &Id, _values: &Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+
+        fn event(&self, event: &Event<'_>) {
+            let mut line = Line::default();
+            event.record(&mut line);
+            self.events.lock().unwrap_or_else(PoisonError::into_inner).push((*event.metadata().level(), line.0));
+        }
+
+        fn enter(&self, _span: &Id) {}
+
+        fn exit(&self, _span: &Id) {}
+    }
+
+    #[derive(Default)]
+    struct Line(String);
+
+    impl Visit for Line {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0.insert_str(0, &format!("{value:?}"));
+            } else {
+                self.0.push_str(&format!(" {}={value:?}", field.name()));
+            }
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.0.push_str(&format!(" {}={value}", field.name()));
+        }
+    }
 }

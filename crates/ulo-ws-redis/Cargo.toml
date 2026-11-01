@@ -18,7 +18,6 @@ futures-core.workspace = true
 futures-util.workspace = true
 # `tokio-rustls-comp`: `rediss://` connects over TLS.
 redis = { workspace = true, features = ["tokio-rustls-comp"] }
-serde_json.workspace = true
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1" }
 tokio = { workspace = true, features = ["sync", "rt"] }
 tracing.workspace = true
@@ -37,6 +36,7 @@ ulo-conformance-support = { path = "../ulo-conformance-support" }
 futures-executor.workspace = true
 # `sink`: the test writes through `SinkExt` on each client's socket.
 futures-util = { workspace = true, features = ["sink"] }
+serde_json.workspace = true
 testcontainers.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "io-util"] }
 # `connect`: the test drives each instance's gateway through a real WebSocket client.

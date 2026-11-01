@@ -63,7 +63,7 @@ pub mod __private;
 #[doc(hidden)]
 pub use ulo_transport::__derive;
 
-pub use broadcast::{Audience, BroadcastAdapter, InMemory, NodeId, Target};
+pub use broadcast::{Audience, BroadcastAdapter, InMemory, NodeId, Target, wire};
 pub use codec::Codec;
 pub use connection::{ConnId, Connection, Handshake, Refusal, Switch};
 pub use envelope::{Frame, MessageId, Payload};

@@ -351,6 +351,7 @@ jobs:
           a_room_broadcast_reaches_the_member_on_the_other_process
           a_broadcast_published_right_after_listen_reaches_a_member_of_the_same_process
           listen_waits_for_the_subscription_when_redis_is_slow_to_confirm_it
+          a_broadcast_this_build_cannot_read_is_dropped_and_the_subscription_keeps_delivering
           -- cargo test -p ulo-ws-redis --features integration --test integration --locked
       # Example 24: two processes of its binary on one Redis. Required by name, since a cfg that
       # compiles the test away reports `ok. 0 passed`.
