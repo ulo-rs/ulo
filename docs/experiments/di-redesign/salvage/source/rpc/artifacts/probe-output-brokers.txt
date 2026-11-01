@@ -1,0 +1,47 @@
+########## nats
+test probe_payload_variant ... PROBE variant Text(hello) => Binary(hello)
+PROBE variant Text({"a":1}) => Json({"a":1})
+PROBE variant Binary({"a":1}) => Json({"a":1})
+PROBE variant Binary(0xFF 0xFE) => Binary(��)
+PROBE variant Json("hello") => Json("hello")
+test probe_two_instances_one_emit ... PROBE fanout => 2 handler runs across 2 instances
+test probe_unrouted_pattern ... PROBE unrouted => Err(Transport("no responders: no responders"))
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 8.45s
+########## redis
+test probe_payload_variant ... PROBE variant Text(hello) => Text(hello)
+PROBE variant Text({"a":1}) => Text({"a":1})
+PROBE variant Binary({"a":1}) => Binary({"a":1})
+PROBE variant Binary(0xFF 0xFE) => Binary(��)
+PROBE variant Json("hello") => Json("hello")
+test probe_two_instances_one_emit ... PROBE fanout => 2 handler runs across 2 instances
+test probe_unrouted_pattern ... PROBE unrouted => Err(Timeout)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 10.59s
+########## mqtt
+test probe_payload_variant ... PROBE variant Text(hello) => Binary(hello)
+PROBE variant Text({"a":1}) => Json({"a":1})
+PROBE variant Binary({"a":1}) => Json({"a":1})
+PROBE variant Binary(0xFF 0xFE) => Binary(��)
+PROBE variant Json("hello") => Json("hello")
+test probe_two_instances_one_emit ... PROBE fanout => 2 handler runs across 2 instances
+test probe_unrouted_pattern ... PROBE unrouted => Err(Timeout)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 11.76s
+########## rabbitmq
+test probe_payload_variant ... PROBE variant Text(hello) => Binary(hello)
+PROBE variant Text({"a":1}) => Json({"a":1})
+PROBE variant Binary({"a":1}) => Json({"a":1})
+PROBE variant Binary(0xFF 0xFE) => Binary(��)
+PROBE variant Json("hello") => Json("hello")
+test probe_two_instances_one_emit ... PROBE fanout => 1 handler runs across 2 instances
+test probe_unrouted_pattern ... PROBE unrouted => Err(Timeout)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 26.34s
+########## kafka
+test probe_payload_variant ... PROBE variant Text(hello) => Binary(hello)
+PROBE variant Text({"a":1}) => Json({"a":1})
+PROBE variant Binary({"a":1}) => Json({"a":1})
+PROBE variant Binary(0xFF 0xFE) => Binary(��)
+PROBE variant Json("hello") => Json("hello")
+test probe_two_instances_one_emit ... PROBE fanout => 1 handler runs across 2 instances
+test probe_unrouted_pattern ... PROBE unrouted => Err(Timeout)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 347.00s
+
+[exited with code 0]
