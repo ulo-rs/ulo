@@ -67,7 +67,7 @@ pub use error::{
     Limit, LoadError, LoadRefusal, LookupError, LookupKind, PanicRecovered, PrepareEntry, PrepareError, Shutdown, ShutdownError,
     Permanent, PreparePanicked, RuntimeMissing, ServeEnd, ShutdownFailure, StartupError, UndeclaredRead, is_panic, is_permanent,
 };
-pub use error::wiring::{BoundItem, InputOrigin, WiringError, WiringErrors};
+pub use error::wiring::{BoundItem, DifferingSetting, InputOrigin, ModuleSite, WiringError, WiringErrors};
 pub use execution::extensions::Extensions;
 pub use execution::notify::{Cancelled, Draining};
 pub use execution::trace::{TraceContext, TraceMode, TraceOrigin, TraceSource, TraceState};
@@ -83,7 +83,7 @@ pub use module::handle::ModuleRef;
 pub use module::keyed::Keyed;
 pub use module::meta::Meta;
 pub use module::def::{ModuleDef, ModuleHook};
-pub use module::{Module, ModuleIdentity, ModuleName};
+pub use module::{Module, ModuleIdentity, ModuleName, ModuleSettings};
 pub use redact::{Redacted, Secret};
 pub use resolver::{Entries, Entry, Resolver};
 pub use scope::{AllowedIn, HookCapable, Scope, ScopeKind};

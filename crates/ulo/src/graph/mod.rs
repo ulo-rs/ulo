@@ -19,10 +19,11 @@ use crate::binding::{BindingRecord, Qualifier, Recipe};
 use crate::dependency::{Dependencies, DependencyLabel, DependencyRecord, ReadKind};
 use crate::error::wiring::InputOrigin;
 use crate::error::{LookupError, LookupKind};
+use crate::graph::register::Site;
 use crate::hooks::HookRecord;
 use crate::key::{BindingKind, Key, KeyName};
 use crate::module::meta::FrozenMeta;
-use crate::module::{ModuleIdentity, ModuleName};
+use crate::module::{ModuleIdentity, ModuleName, ModuleSettings};
 use crate::redact::SecretRegistry;
 use crate::transport::controller::HandlerRecord;
 use crate::transport::enhancer::ClosureId;
@@ -81,6 +82,11 @@ pub(crate) struct FrozenModule {
     pub(crate) meta: FrozenMeta,
     /// `Some(n)` for the n-th lazily loaded module; shutdown runs those in reverse load order.
     pub(crate) loaded: Option<u32>,
+    /// The settings of the registration that claimed the identity, which a later registration of
+    /// it, by a lazy load, is compared with.
+    pub(crate) settings: ModuleSettings,
+    /// Where that registration was reached, its importer named by `ModuleId`.
+    pub(crate) site: Site,
 }
 
 #[derive(Clone)]

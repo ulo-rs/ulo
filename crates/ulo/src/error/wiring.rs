@@ -116,6 +116,13 @@ pub enum WiringError {
     /// identity carries `outer` and its exports `inner`, so the two disagree for every module
     /// written this way. `module` is the module as its identity names it.
     NestedKeyed { module: ModuleName, outer: TypeName, inner: TypeName },
+    /// Step 1: a second registration of an identity already registered, whose
+    /// [`Module::settings`](crate::Module::settings) differ from the first's. The two are one
+    /// module and only the first registers, so the second's settings would go unused. `first`
+    /// is the registration holding the identity, `second` the later one; `settings` holds each
+    /// setting that differs, in the order the first wrote them. Also answered by `load` for a
+    /// module whose identity the graph holds.
+    DifferingSettings { module: ModuleName, first: ModuleSite, second: ModuleSite, settings: Vec<DifferingSetting> },
     /// Step 1: `export::<T>()` of a key the module does not bind. `imported` when the module sees
     /// the key through an import, which leaves through `reexport`; `near` is a key the module
     /// binds that is spelled the same up to a trailing `+ Send + Sync`, or by its last path
@@ -300,6 +307,7 @@ impl WiringError {
             WiringError::ZeroBound { binding, .. } => binding.iter().collect(),
             WiringError::ImportCycle { .. }
             | WiringError::NestedKeyed { .. }
+            | WiringError::DifferingSettings { .. }
             | WiringError::OverrideModuleAmbiguous { .. }
             | WiringError::TimerOverride { .. }
             | WiringError::RuntimeOverride { .. }
@@ -326,6 +334,7 @@ impl WiringError {
             WiringError::InputConflict { first, second, .. } => first.type_names().into_iter().chain(second.type_names()).collect(),
             WiringError::NestedKeyed { outer, inner, .. } => vec![*outer, *inner],
             WiringError::ImportCycle { .. }
+            | WiringError::DifferingSettings { .. }
             | WiringError::ReexportNotVisible { .. }
             | WiringError::ReexportAmbiguous { .. }
             | WiringError::KeyedInput { .. }
@@ -382,6 +391,9 @@ impl WiringError {
             | WiringError::NestedKeyed { module, .. }
             | WiringError::ZeroBound { module, .. } => vec![module],
             WiringError::ControllerRead { module, controller_module, .. } => vec![module, controller_module],
+            WiringError::DifferingSettings { module, first, second, .. } => {
+                std::iter::once(module).chain(first.importer()).chain(second.importer()).collect()
+            }
             WiringError::ReexportAmbiguous { module, sources, .. } => std::iter::once(module).chain(sources).collect(),
             WiringError::OverrideUnmatched { keyed, .. } => keyed.iter().collect(),
             WiringError::OverrideAmbiguous { matches, .. } => matches.iter().collect(),
@@ -807,6 +819,29 @@ impl WiringError {
                     ],
                 )
             }
+            WiringError::DifferingSettings { module, first, second, settings } => {
+                let names: Vec<String> = settings.iter().map(|setting| format!("`{}`", setting.name)).collect();
+                let values = |value: fn(&DifferingSetting) -> &Option<String>| {
+                    let written: Vec<String> = settings
+                        .iter()
+                        .map(|setting| match value(setting) {
+                            Some(text) => format!("`{}` = {text}", setting.name),
+                            None => format!("`{}` unset", setting.name),
+                        })
+                        .collect();
+                    written.join(", ")
+                };
+                tree(
+                    f,
+                    format!("two registrations of {} differ in {}", show_module(module), names.join(", ")),
+                    vec![
+                        format!("{} with {}", first.line(false, &show_module), values(|setting| &setting.first)),
+                        format!("{} with {}", second.line(true, &show_module), values(|setting| &setting.second)),
+                        "help: an equal identity is one module, registered once; write the same settings at both, or key one with `.keyed::<Q>()` to make it a second instance"
+                            .to_owned(),
+                    ],
+                )
+            }
             WiringError::ControllerRead { controller, consumer, module, controller_module } => tree(
                 f,
                 format!("the controller `{}` in {} is read by {consumer} in {}", show(controller), show_module(controller_module), show_module(module)),
@@ -884,6 +919,48 @@ impl fmt::Display for InputOrigin {
         let types = TypeName::colliding(self.type_names());
         f.write_str(&self.line(|name| if full { format!("{name:#}") } else { name.to_string() }, |name| name.written(&types)))
     }
+}
+
+/// Where a module was registered, as [`WiringError::DifferingSettings`] names each side.
+#[non_exhaustive]
+#[derive(Clone, Debug)]
+pub enum ModuleSite {
+    /// The root module the app was built from.
+    Root,
+    /// `ModuleDef::import` in `importer`, the call at `at`.
+    Import { importer: ModuleName, at: &'static Location<'static> },
+    /// `AppHandle::load`, which records no call site.
+    Load,
+}
+
+impl ModuleSite {
+    fn importer(&self) -> Option<&ModuleName> {
+        match self {
+            ModuleSite::Import { importer, .. } => Some(importer),
+            ModuleSite::Root | ModuleSite::Load => None,
+        }
+    }
+
+    /// The report's line for this site; `again` for the later of two registrations.
+    fn line(&self, again: bool, module: &impl Fn(&ModuleName) -> String) -> String {
+        match (self, again) {
+            (ModuleSite::Root, _) => "registered as the root module".to_owned(),
+            (ModuleSite::Import { importer, at }, false) => format!("imported by {} at {}", module(importer), place(at)),
+            (ModuleSite::Import { importer, at }, true) => format!("imported again by {} at {}", module(importer), place(at)),
+            (ModuleSite::Load, false) => "loaded by `AppHandle::load`".to_owned(),
+            (ModuleSite::Load, true) => "loaded again by `AppHandle::load`".to_owned(),
+        }
+    }
+}
+
+/// One setting two registrations of a module disagree on: its name and each side's value as
+/// [`ModuleSettings`](crate::ModuleSettings) wrote it, `None` where that side has no such setting.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DifferingSetting {
+    pub name: &'static str,
+    pub first: Option<String>,
+    pub second: Option<String>,
 }
 
 /// What one report prints with full paths: the types and the modules whose short form a different

@@ -11,7 +11,7 @@ use crate::binding::{BindingRecord, Qualifier, Recipe, instance_of};
 use crate::dependency::{Dependencies, ReadKind};
 use crate::error::LoadRefusal;
 use crate::error::wiring::{BoundItem, InputOrigin, WiringError, WiringErrors};
-use crate::graph::register::{Import, Registry};
+use crate::graph::register::{Differing, Import, Registry, Site};
 use crate::graph::{
     BindingId, EdgeTarget, Effective, FrozenBinding, FrozenModule, Graph, InputDecl, ModuleId, Role, Visible,
     boundary_key, cycles, order, record_key, register, scopes, visibility,
@@ -70,6 +70,9 @@ pub(crate) fn wire(root: Box<dyn Module>, env: &WireEnv, plan: Option<TestPlan>)
 /// snapshot. An identity the base already holds answers with its module and no new singleton.
 pub(crate) fn wire_lazy(base: &Graph, module: Box<dyn Module>, env: &WireEnv) -> Result<LazyWiring, LazyFailure> {
     if let Some(&existing) = base.by_identity.get(&module.identity()) {
+        if let Some(errors) = reload_differs(base, existing, &*module) {
+            return Err(LazyFailure::Wiring(errors));
+        }
         return Ok(LazyWiring { graph: base.clone(), module: existing, singletons: Vec::new() });
     }
     let registry = register::register_lazy(base, module);
@@ -93,6 +96,15 @@ pub(crate) fn wire_lazy(base: &Graph, module: Box<dyn Module>, env: &WireEnv) ->
     let singletons =
         graph.connect_order.iter().copied().filter(|id| id.0 as usize >= declared.first_binding).collect();
     Ok(LazyWiring { graph, module: declared.root, singletons })
+}
+
+/// The report for a `load` of `module`, whose identity `existing` already holds, when its
+/// settings differ from the ones `existing` was registered with.
+pub(crate) fn reload_differs(base: &Graph, existing: ModuleId, module: &dyn Module) -> Option<WiringErrors> {
+    let frozen = base.module(existing);
+    let differing =
+        Differing::of(Import::Existing(existing), (&frozen.settings, frozen.site), (&module.settings(), Site::Load))?;
+    Some(WiringErrors::new(vec![differing.into_error(&[], base)]))
 }
 
 pub(crate) struct LazyWiring {
@@ -234,6 +246,9 @@ fn freeze(
 ) -> Declared {
     let names = registry.names(Some(&*graph));
     cycles::import_cycles(&registry, &names, &mut steps.modules);
+    for differing in std::mem::take(&mut registry.differing) {
+        steps.modules.push(differing.into_error(&names, graph));
+    }
 
     for text in registry.nodes.iter().flat_map(|node| &node.secrets) {
         if !text.is_empty() {
@@ -341,7 +356,20 @@ fn freeze(
         let Some(node) = nodes[index].take() else { continue };
         let id = ModuleId((first_module + position) as u32);
         let ModuleNode {
-            identity, global, keyed, nested_keyed, bindings, enhancers, exports, controllers, inputs, hooks, meta, ..
+            identity,
+            global,
+            keyed,
+            nested_keyed,
+            bindings,
+            enhancers,
+            exports,
+            controllers,
+            inputs,
+            hooks,
+            meta,
+            settings,
+            site,
+            ..
         } = node;
         if let Some((outer, inner)) = nested_keyed {
             steps.modules.push(WiringError::NestedKeyed {
@@ -451,6 +479,11 @@ fn freeze(
             hooks,
             meta: frozen_meta,
             loaded: load,
+            settings,
+            site: match site {
+                Site::Import { importer: Import::New(node), at } => Site::Import { importer: Import::Existing(module_of[node]), at },
+                other => other,
+            },
         });
     }
 

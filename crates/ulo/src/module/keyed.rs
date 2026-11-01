@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::binding::Qualifier;
 use crate::module::def::ModuleDef;
-use crate::module::{Module, ModuleIdentity};
+use crate::module::{Module, ModuleIdentity, ModuleSettings};
 
 /// `M` as the keyed instance `Q`: itself a module, built by [`Module::keyed`].
 ///
@@ -25,6 +25,10 @@ impl<Q: 'static, M: Module> Keyed<Q, M> {
 impl<Q: 'static, M: Module> Module for Keyed<Q, M> {
     fn identity(&self) -> ModuleIdentity {
         self.inner.identity().keyed_by(Qualifier::of::<Q>())
+    }
+
+    fn settings(&self) -> ModuleSettings {
+        self.inner.settings()
     }
 
     fn register(&self, m: &mut ModuleDef<'_>) {

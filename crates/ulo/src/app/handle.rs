@@ -76,7 +76,8 @@ impl AppHandle {
 
     /// Wires `module` against the frozen graph, every error collected, then connects it through
     /// its own readiness checks and init hooks. Loading an equal identity twice returns the
-    /// existing handle. Refused from Stopping on with `LoadError::Closed` (§8.6).
+    /// existing handle, or `LoadError::Wiring` holding `WiringError::DifferingSettings` when the
+    /// settings differ. Refused from Stopping on with `LoadError::Closed` (§8.6).
     pub async fn load(&self, module: impl Module) -> Result<ModuleRef, LoadError> {
         load::load(&self.shared, Box::new(module)).await
     }

@@ -18,7 +18,8 @@ use crate::module::handle::ModuleRef;
 
 /// Refused from Stopping on with `LoadError::Closed`: a module loaded then would miss the
 /// before-shutdown stage already running. An identity already in the graph returns its
-/// existing handle. Lazily loaded modules shut down in reverse load order.
+/// existing handle, unless its settings differ from the graph's module. Lazily loaded modules
+/// shut down in reverse load order.
 ///
 /// A load that fails to connect leaves the app as it found it: the graph it extended is put
 /// back and the singletons it built are dropped, so a later load of the same module wires
@@ -35,6 +36,9 @@ pub(crate) async fn load(shared: &Arc<AppShared>, module: Box<dyn Module>) -> Re
 
     let base = shared.graph();
     if let Some(&existing) = base.by_identity.get(&module.identity()) {
+        if let Some(errors) = wire::reload_differs(&base, existing, &*module) {
+            return Err(LoadError::Wiring(errors));
+        }
         return Ok(shared.module_ref(existing));
     }
 

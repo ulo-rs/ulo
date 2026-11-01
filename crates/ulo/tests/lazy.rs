@@ -3,7 +3,8 @@
 //! Capabilities pinned: 38 (a module is wired against the frozen graph and connected through its
 //! own constructors, checks and init hooks; an equal identity is loaded once; a failed load leaves
 //! the app as it found it; what the graph cannot take is refused with the `LoadRefusal` that names
-//! it; a lazy module's hooks run first at shutdown, latest load first).
+//! it; a lazy module's hooks run first at shutdown, latest load first; a load whose module, or an
+//! import of it, the graph holds under an equal identity with other settings is refused).
 //!
 //! `LoadError::Closed` from Stopping on, and after the shutdown, is pinned by the `load` lines of
 //! `phases.rs`.
@@ -17,8 +18,8 @@ use std::sync::Arc;
 use common::*;
 use ulo::scope::Auto;
 use ulo::{
-    AppHandle, ConnectError, Dep, FailureReason, Key, LoadError, LoadRefusal, LookupError, LookupKind, Meta, Signal,
-    WiringError,
+    AppHandle, ConnectError, Dep, FailureReason, Key, LoadError, LoadRefusal, LookupError, LookupKind, Meta, Module,
+    ModuleDef, ModuleIdentity, ModuleSettings, ModuleSite, Signal, WiringError,
 };
 
 struct A;
@@ -395,4 +396,87 @@ fn destroy_hook(log: &Log, text: &'static str) -> impl Fn() -> std::future::Read
         log.push(text);
         std::future::ready(())
     }
+}
+
+/// A configured module whose identity is `options` and whose one setting is `knob`.
+struct Pool {
+    options: &'static str,
+    knob: u32,
+}
+
+impl Module for Pool {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_owner::<Pool, _>(&self.options)
+    }
+
+    fn settings(&self) -> ModuleSettings {
+        ModuleSettings::new().with("knob", self.knob)
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.value(Cfg(1));
+        m.export::<Cfg>();
+    }
+}
+
+/// The two sides of the one `DifferingSettings` entry a refused load reports, as text.
+fn differing_sides(outcome: Result<ulo::ModuleRef, LoadError>) -> (String, String, Vec<&'static str>) {
+    let errors = match outcome {
+        Err(LoadError::Wiring(errors)) => errors,
+        Err(other) => panic!("expected wiring errors, got: {other}"),
+        Ok(_) => panic!("the load was accepted; other settings under an equal identity should be refused"),
+    };
+    let side = |site: &ModuleSite| match site {
+        ModuleSite::Import { importer, .. } => format!("import by {importer}"),
+        ModuleSite::Load => "load".to_owned(),
+        ModuleSite::Root => "root".to_owned(),
+        other => format!("{other:?}"),
+    };
+    let found = entry!(errors, WiringError::DifferingSettings { first, second, settings, .. } =>
+        (side(first), side(second), settings.iter().map(|setting| setting.name).collect()));
+    assert_eq!(errors.len(), 1, "{errors}");
+    found
+}
+
+/// Planted break: `reload_differs` answering `None`, which returns the existing handle.
+#[tokio::test]
+async fn loading_an_identity_the_graph_holds_with_other_settings_is_refused() {
+    let (app, handle) = base_with(Mod::<A>::new(|m| m.import(Pool { options: "db", knob: 1 }))).await;
+    let sides = differing_sides(handle.load(Pool { options: "db", knob: 2 }).await);
+    assert_eq!(sides, (format!("import by {}", mod_name::<A>()), "load".to_owned(), vec!["knob"]));
+
+    let held = handle.load(Pool { options: "db", knob: 1 }).await.unwrap_or_else(|error| panic!("equal settings: {error}"));
+    assert_eq!(held.name().to_string(), "Pool", "equal settings answer the existing module");
+    close(app).await;
+}
+
+/// Planted break: `reach` returning `Import::Existing` without comparing settings.
+#[tokio::test]
+async fn a_loaded_module_importing_an_identity_the_graph_holds_with_other_settings_is_refused() {
+    let (app, handle) = base_with(Mod::<A>::new(|m| m.import(Pool { options: "db", knob: 1 }))).await;
+    let sides = differing_sides(handle.load(Mod::<L1>::new(|m| m.import(Pool { options: "db", knob: 2 }))).await);
+    assert_eq!(sides, (format!("import by {}", mod_name::<A>()), format!("import by {}", mod_name::<L1>()), vec!["knob"]));
+
+    handle
+        .load(Mod::<L2>::new(|m| m.import(Pool { options: "db", knob: 1 })))
+        .await
+        .unwrap_or_else(|error| panic!("an import with equal settings links to the frozen module: {error}"));
+    close(app).await;
+}
+
+/// Planted break: `register_lazy` walking from `Site::Root`, so a loaded module is frozen as the
+/// root's registration.
+#[tokio::test]
+async fn loading_a_loaded_identity_again_with_other_settings_names_both_loads() {
+    let (app, handle) = base_with(Mod::<A>::new(|_| {})).await;
+    handle.load(Pool { options: "db", knob: 1 }).await.unwrap_or_else(|error| panic!("the first load: {error}"));
+    let outcome = handle.load(Pool { options: "db", knob: 2 }).await;
+    let text = match &outcome {
+        Err(error) => error.to_string(),
+        Ok(_) => String::new(),
+    };
+    assert_eq!(differing_sides(outcome), ("load".to_owned(), "load".to_owned(), vec!["knob"]));
+    assert!(text.contains("loaded by `AppHandle::load` with `knob` = 1"), "{text}");
+    assert!(text.contains("loaded again by `AppHandle::load` with `knob` = 2"), "{text}");
+    close(app).await;
 }
