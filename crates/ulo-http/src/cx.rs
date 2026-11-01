@@ -29,7 +29,7 @@ pub(crate) struct CxInner {
     pub(crate) conn: ConnInfo,
     /// `None` for a request that matched no route, whose context the global error handlers read.
     pub(crate) route: Option<MatchedRoute>,
-    pub(crate) body: Mutex<Option<HttpBody>>,
+    pub(crate) body: Mutex<BodySlot>,
     pub(crate) upgrade: Mutex<Option<OnUpgrade>>,
     /// Merged into the response's headers when it is written, the reply's own winning.
     pub(crate) response_headers: Mutex<HeaderMap>,
@@ -37,6 +37,28 @@ pub(crate) struct CxInner {
     /// The embedding's normalized `.nested_at` prefix; empty otherwise.
     pub(crate) mount: Arc<str>,
     pub(crate) timer: Arc<dyn Timer>,
+}
+
+/// The request body's slot. A request always carries a body, empty or not, so a dispatch context
+/// starts `Unread`, and a body extractor finding `Taken` knows the server took it rather than the
+/// client sending none. A context built for the error handlers after the body is out of reach, a
+/// route timeout's or a pre-dispatch failure's, is `Absent`.
+pub(crate) enum BodySlot {
+    Unread(HttpBody),
+    Taken,
+    Absent,
+}
+
+impl BodySlot {
+    pub(crate) fn new(body: Option<HttpBody>) -> BodySlot {
+        body.map_or(BodySlot::Absent, BodySlot::Unread)
+    }
+}
+
+/// Why the slot held no body.
+pub(crate) enum NoBody {
+    Taken,
+    Absent,
 }
 
 /// The route a request matched.
@@ -132,8 +154,25 @@ impl HttpCx {
     }
 
     /// The request body, once: a second take, or a take after a body extractor, is `None`.
+    ///
+    /// A guard or interceptor that takes it leaves none for the handler, whose body extractor then
+    /// fails with `ExtractError::BodyTaken`, answered 500 and logged at `warn` naming the
+    /// extractor; `Option<Json<T>>` fails the same way rather than reading `None`.
     pub fn take_body(&self) -> Option<HttpBody> {
-        self.inner.body.lock().unwrap_or_else(PoisonError::into_inner).take()
+        self.take_unread().ok()
+    }
+
+    /// The body, leaving `Taken` in its place, or why there is none.
+    pub(crate) fn take_unread(&self) -> Result<HttpBody, NoBody> {
+        let mut slot = self.inner.body.lock().unwrap_or_else(PoisonError::into_inner);
+        match std::mem::replace(&mut *slot, BodySlot::Taken) {
+            BodySlot::Unread(body) => Ok(body),
+            BodySlot::Taken => Err(NoBody::Taken),
+            BodySlot::Absent => {
+                *slot = BodySlot::Absent;
+                Err(NoBody::Absent)
+            }
+        }
     }
 
     /// The upgrade future, once, for the WebSocket hand-off.

@@ -50,9 +50,9 @@ pub trait BroadcastAdapter: Send + Sync + 'static {
     fn subscribe(&self, node: NodeId, timer: Arc<dyn Timer>) -> BoxFuture<'static, Result<BoxStream<'static, (Target, Bytes)>, BoxError>>;
 }
 
-/// Who a broadcast reaches.
+/// Who a broadcast reaches. Between processes it travels in the form [`wire`] defines.
 #[non_exhaustive]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
     /// The gateway path or namespace addressed; `None` addresses every gateway.
     pub gateway: Option<String>,
@@ -69,7 +69,7 @@ impl Target {
 
 /// The members of a broadcast within its gateway or gateways.
 #[non_exhaustive]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Audience {
     All,
     Room(String),
@@ -165,5 +165,190 @@ impl BroadcastAdapter for InMemory {
             }
         }));
         Box::pin(async move { Ok(carried) })
+    }
+}
+
+pub mod wire {
+    //! The form a broadcast takes between processes: what an adapter carrying broadcasts across
+    //! processes publishes with [`encode`] and reads back with [`decode`].
+    //!
+    //! A message is one version byte, [`VERSION`], the [`Target`] as one line of JSON, a newline,
+    //! then the encoded broadcast:
+    //!
+    //! ```text
+    //! 0x01 {"gateway":null,"audience":{"kind":"room","room":"lobby"},"except":[]} 0x0A <frame>
+    //! ```
+    //!
+    //! `gateway` is the path or namespace addressed, or `null` for every gateway. `audience` is
+    //! `{"kind":"all"}`, `{"kind":"room","room":<name>}` or `{"kind":"client","client":<id>}`.
+    //! `except` lists ids, each `{"node":<32 lowercase hex digits>,"seq":<integer>}`. A field this
+    //! version does not name makes the message [`Undecodable::Malformed`].
+    //!
+    //! The version byte is read before anything is parsed, so a later version may change the whole
+    //! layout and a reader of this one still tells it from a corrupt message. Any change to the
+    //! layout takes a new version. Versions count up from 1 and stop short of `0x7B`, `{`, which
+    //! opens the unversioned layout: the target's JSON in the shape its derived `serde` impls
+    //! wrote, a newline and the frame, with no version byte. A reader refuses that layout, another
+    //! version and an audience kind it does not know, each with its own [`Undecodable`], and the
+    //! adapter drops the message.
+    //!
+    //! ```
+    //! use ulo_ws::wire::{self, Undecodable};
+    //! use ulo_ws::{Audience, Target};
+    //!
+    //! let target = Target::new(None, Audience::Room("lobby".into()), Vec::new());
+    //! let message = wire::encode(&target, br#"{"event":"hi"}"#);
+    //! assert_eq!(message[0], wire::VERSION);
+    //! let (read, frame) = wire::decode(&message).expect("a message this version wrote");
+    //! assert_eq!((read, &frame[..]), (target, &br#"{"event":"hi"}"#[..]));
+    //!
+    //! assert_eq!(wire::decode(b"\x02{}\n"), Err(Undecodable::Version(2)));
+    //! ```
+
+    use std::fmt;
+
+    use bytes::Bytes;
+    use serde::{Deserialize, Serialize};
+    use serde_json::value::RawValue;
+
+    use super::{Audience, NodeId, Target};
+    use crate::connection::ConnId;
+
+    /// The version [`encode`] writes and the one [`decode`] reads.
+    pub const VERSION: u8 = 1;
+
+    /// The first byte of the unversioned layout, the opening brace of its JSON.
+    const UNVERSIONED: u8 = b'{';
+
+    /// `frame` addressed to `target`, as a message of [`VERSION`].
+    pub fn encode(target: &Target, frame: &[u8]) -> Vec<u8> {
+        // Inside its own crate `Audience` is matched with no wildcard, so a new variant does not
+        // compile until the wire names it, under a new version.
+        let audience = match &target.audience {
+            Audience::All => Kind::All {},
+            Audience::Room(room) => Kind::Room { room: room.clone() },
+            Audience::Client(id) => Kind::Client { client: Id::from(*id) },
+        };
+        let header = HeaderOut {
+            gateway: target.gateway.as_deref(),
+            audience,
+            except: target.except.iter().copied().map(Id::from).collect(),
+        };
+        let mut message = vec![VERSION];
+        serde_json::to_writer(&mut message, &header).expect("a header of strings and integers serializes into a `Vec`");
+        message.push(b'\n');
+        message.extend_from_slice(frame);
+        message
+    }
+
+    /// The target and frame of `message`, or why this version cannot read it.
+    pub fn decode(message: &[u8]) -> Result<(Target, Bytes), Undecodable> {
+        let (&version, rest) = message.split_first().ok_or_else(|| Undecodable::Malformed("the message is empty".to_owned()))?;
+        match version {
+            VERSION => {}
+            UNVERSIONED => return Err(Undecodable::Unversioned),
+            other => return Err(Undecodable::Version(other)),
+        }
+        // Compact JSON writes a newline inside a string as `\n`, so the first newline ends the header.
+        let split = rest.iter().position(|&byte| byte == b'\n').ok_or_else(|| Undecodable::Malformed("no newline ends the target".to_owned()))?;
+        let malformed = |error: serde_json::Error| Undecodable::Malformed(error.to_string());
+        let header: HeaderIn = serde_json::from_slice(&rest[..split]).map_err(malformed)?;
+        let named: Named = serde_json::from_str(header.audience.get()).map_err(malformed)?;
+        if !KINDS.contains(&named.kind.as_str()) {
+            return Err(Undecodable::Audience(named.kind));
+        }
+        let audience = match serde_json::from_str(header.audience.get()).map_err(malformed)? {
+            Kind::All {} => Audience::All,
+            Kind::Room { room } => Audience::Room(room),
+            Kind::Client { client } => Audience::Client(client.conn()?),
+        };
+        let except = header.except.into_iter().map(Id::conn).collect::<Result<_, _>>()?;
+        Ok((Target::new(header.gateway, audience, except), Bytes::copy_from_slice(&rest[split + 1..])))
+    }
+
+    /// Why [`decode`] refused a message.
+    #[non_exhaustive]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum Undecodable {
+        /// The unversioned layout, opening with the target's JSON where the version byte stands.
+        Unversioned,
+        /// A version other than [`VERSION`].
+        Version(u8),
+        /// An audience kind this version does not know, as the message names it.
+        Audience(String),
+        /// A message of [`VERSION`] that does not parse, and why.
+        Malformed(String),
+    }
+
+    impl fmt::Display for Undecodable {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Undecodable::Unversioned => f.write_str("the broadcast is in the unversioned wire layout"),
+                Undecodable::Version(version) => write!(f, "the broadcast is wire version {version}; this build reads version {VERSION}"),
+                Undecodable::Audience(kind) => write!(f, "the broadcast addresses an audience of kind `{kind}`, which wire version {VERSION} does not name"),
+                Undecodable::Malformed(reason) => write!(f, "the broadcast does not parse as wire version {VERSION}: {reason}"),
+            }
+        }
+    }
+
+    impl std::error::Error for Undecodable {}
+
+    /// The audience kinds of this version, as `Kind` names them on the wire.
+    const KINDS: [&str; 3] = ["all", "room", "client"];
+
+    #[derive(Serialize)]
+    struct HeaderOut<'a> {
+        gateway: Option<&'a str>,
+        audience: Kind,
+        except: Vec<Id>,
+    }
+
+    /// The audience stays raw until its kind is read, so an unknown kind is told from a malformed one.
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct HeaderIn {
+        gateway: Option<String>,
+        audience: Box<RawValue>,
+        except: Vec<Id>,
+    }
+
+    #[derive(Deserialize)]
+    struct Named {
+        kind: String,
+    }
+
+    /// `All` is a struct variant: serde ignores the other fields beside an internally tagged unit
+    /// variant's tag, where it refuses them beside a struct variant's.
+    #[derive(Serialize, Deserialize)]
+    #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+    enum Kind {
+        All {},
+        Room { room: String },
+        Client { client: Id },
+    }
+
+    /// A [`ConnId`]; the node as hex digits, which a JSON reader holding numbers as doubles keeps
+    /// exact where a 128-bit number would not survive.
+    #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Id {
+        node: String,
+        seq: u64,
+    }
+
+    impl From<ConnId> for Id {
+        fn from(id: ConnId) -> Self {
+            Id { node: id.node.to_string(), seq: id.seq }
+        }
+    }
+
+    impl Id {
+        fn conn(self) -> Result<ConnId, Undecodable> {
+            let hex = self.node.len() == 32 && self.node.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+            match u128::from_str_radix(&self.node, 16) {
+                Ok(node) if hex => Ok(ConnId { node: NodeId(node), seq: self.seq }),
+                _ => Err(Undecodable::Malformed(format!("`{}` is not a node id of 32 lowercase hex digits", self.node))),
+            }
+        }
     }
 }

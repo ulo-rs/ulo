@@ -22,7 +22,7 @@ async fn a_form_is_decoded_from_urlencoded_pairs_and_json_is_not_a_form() {
     assert_eq!(wrong.status, 415);
 
     let partial = Call::post("/login").header("content-type", "application/x-www-form-urlencoded");
-    assert_eq!(call(server.addr, partial.body("user=ann")).await.status, 400, "`pw` is missing");
+    assert_eq!(call(server.addr, partial.body("user=ann")).await.status, 422, "`pw` is missing: the form parsed and does not fit");
     server.stop().await.expect("closes clean");
 }
 

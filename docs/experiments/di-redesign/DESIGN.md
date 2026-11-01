@@ -282,6 +282,14 @@ pub trait Module: Send + Sync + 'static {
 
     /// Declare everything. Synchronous and free of I/O.
     fn register(&self, m: &mut ModuleDef<'_>);
+
+    /// What the module is configured with outside its identity, compared across imports (§8.3).
+    fn settings(&self) -> ModuleSettings { ModuleSettings::new() }
+}
+
+impl ModuleSettings {
+    pub fn new() -> Self;
+    pub fn with(self, name: &'static str, value: impl Debug) -> Self;  // the value as `Debug` writes it
 }
 
 impl ModuleIdentity {
@@ -294,7 +302,7 @@ impl ModuleIdentity {
 
 `register` returns `()` and never returns early. A value that may fail to build goes through `m.try_value(result)`, which records an `Err` on the `ModuleDef` for `wire()` to report beside every other wiring error, under a `WiringErrors` entry naming the module and the key; a contribution's goes through `Contribute::try_value(result)` (§4), recorded the same way under the collection key. Stopping at the first failure would hide the rest, which is what [44] rules out.
 
-Identity is the module's `TypeId`, plus its configuration value if it has one, plus a qualifier if it's keyed. Two configurations of one type are two modules. The same configuration imported twice is one module [31].
+Identity is the module's `TypeId`, plus its configuration value if it has one, plus a qualifier if it's keyed. Two configurations of one type are two modules. The same configuration imported twice is one module [31], and both imports must carry the same settings (§8.3).
 
 Diagnostic names are the type name, the key and an optional label, as in `DbModule @ Replica`. The second and later module of one type and qualifier, in collection order, carries `#n`, labelled or not: `DbModule #2`. A label names every configuration of an integration alike, and two modules printed alike cannot be told apart. The configuration's `Debug` output is never printed, because it may hold credentials.
 
@@ -791,6 +799,8 @@ imports = [
 
 Its identity includes `Q`, so the two instances are distinct modules, and a bare `DbModule::for_root(url)` beside `DbModule::for_root(url).keyed::<Primary>()` is two modules with two pools and two readiness checks. One pool under two keys is an alias (§4), not a second import. A module is keyed once: `store.keyed::<A>().keyed::<B>()` would carry `B` in its identity and leave its exports as `T @ A`, so `wire()` refuses it as `NestedKeyed`, naming both qualifiers (§10.1 step 1).
 
+A builder knob outside the configuration value, such as a store's connect bound or `.lazy()`, is not part of the identity: the options decide which pool a module is, and the knobs how it starts. The module answers its knobs from `Module::settings`, each a name and its value as `Debug` writes it, none by default, and `Keyed<Q, M>` answers `M`'s. Two imports of an equal identity are one module and only the first registers, so the second's settings would go unused: where the two `settings` differ, `wire()` refuses the second as `DifferingSettings`, naming the module, both import sites (the importing module and the `import` call's location, `ModuleDef::import` being `#[track_caller]`) and each setting that differs with both values (§10.1 step 1). Equal settings are one module. A keyed pair over equal options is two identities and may differ. A module loaded with `load` is compared the same way, against the module the graph holds under its identity, and so is each of its imports (§8.6). The values are printed; a credential belongs in the identity, which is not.
+
 ### 8.4 Runtime-built modules [33]
 
 ```rust
@@ -802,7 +812,7 @@ pub fn redis_module(cfg: RedisConfig) -> DynamicModule {
 }
 ```
 
-The identity is the owner type plus the configuration value, so these modules are still distinct Rust-typed identities.
+The identity is the owner type plus the configuration value, so these modules are still distinct Rust-typed identities. What the closure captures beside the value is opaque to the graph; `DynamicModule::with_settings(settings)` names it as the module's settings (§8.3).
 
 ### 8.5 Module handles [37]
 
@@ -832,7 +842,7 @@ let reports: ModuleRef = handle.load(ReportsModule).await?;   // Result<ModuleRe
 
 `AppHandle` is a `Clone + Send + Sync` view of the shared inner state, available from `Connected` on. It is a view, not an owner: keep the `App`, or the future serving it, alive for as long as the app serves, since the `App` value's drop is the end of the app however many handles are kept (§9.5 step 6), and an embedded host serving through a kept handle then answers each request 503. `get`, `module`, `module_keyed`, `module_of`, `execute`, `load`, `close`, `draining`, `is_draining`, `drain_timeout`, `timer` and `runtime` live on it, `timer()` and `runtime()` each answering `Option<&Arc<..>>`, the objects `Dep<dyn Timer>` and `Dep<dyn Runtime>` resolve to, for code holding a handle rather than a `Dep` (§3.9), `draining()` returning the same `Draining<'_>` an execution's does (§3.8) and resolving at the same moment, and `drain_timeout()` the window the drain runs under (§9.5), zero on an app without a `Timer`, which a transport hands to a host that stops on a clock of its own (transports §3.8); `serve(self)` consumes only the `Bound` typestate, so a handle taken before `serve` keeps working while the app serves. `close` on a handle is one of shutdown's three triggers and ends `serve` (§9.5). The graph sits behind a lock that only `load` writes.
 
-A lazily loaded module is wired against the frozen graph, with all of its errors reported in one pass, and then connected through its own readiness checks and init hooks. Loading the same identity twice returns the existing handle.
+A lazily loaded module is wired against the frozen graph, with all of its errors reported in one pass, and then connected through its own readiness checks and init hooks. Loading the same identity twice returns the existing handle, when the settings are equal; with other settings it fails with `LoadError::Wiring` holding `DifferingSettings`, its second site `ModuleSite::Load` (§8.3).
 
 `load` fails with `LoadError` (§10.2): `Wiring` for the module's wiring errors, `Connect(ConnectError)` for a construction, readiness check or init hook that fails, `Refused(LoadRefusal)` for what the frozen graph cannot take, and `Closed` by phase. `LoadRefusal` names five things, refused because the graph has already been handed out:
 - **Controllers and middleware**, because routes are already bound.
@@ -993,7 +1003,7 @@ Without `serve`, a job or CLI on `Connected`, `close` runs the same sequence. Th
 
 `wire()` runs these steps and **collects** errors. It never stops at the first one.
 
-1. **Module graph:** deduplicate identities, detect import cycles (printing the path of module names), check that re-exports are visible, refuse an `export::<T>()` of a key the module does not bind (`ExportNotBound`, with the hint to bind it there, or to re-export it with `reexport` when an import provides it), refuse an input declared by a keyed module, and refuse a keyed module keyed again (`NestedKeyed`, naming the module, the outer qualifier its identity carries and the inner one its exports leave under, with the hint to key it once).
+1. **Module graph:** deduplicate identities, refuse a second registration of an identity whose `settings` differ from the first's (`DifferingSettings { module, first, second, settings }`, each side a `ModuleSite`, `settings` each `DifferingSetting { name, first, second }`, with the hint to write the same settings at both or key one, §8.3), detect import cycles (printing the path of module names), check that re-exports are visible, refuse an `export::<T>()` of a key the module does not bind (`ExportNotBound`, with the hint to bind it there, or to re-export it with `reexport` when an import provides it), refuse an input declared by a keyed module, and refuse a keyed module keyed again (`NestedKeyed`, naming the module, the outer qualifier its identity carries and the inner one its exports leave under, with the hint to key it once).
 2. **Bindings:** find duplicate singles, single/collection mixes, aliases pointing at nothing, values whose `try_value` recorded an `Err` (naming the module and the key; `ModuleDef::try_value` and `Contribute::try_value` alike), a qualified contribution and a single binding under a role key the freeze recorded (§7; the hints "contribute it unqualified" and "contribute it"), and, in tests, overrides that match no binding or more than one, an `in_module::<M>()` over several instances of `M` among them, an override of `dyn Timer` or `dyn Runtime`, refused with the hint "set it with `TestApp::timer(..)`" or "set it with `TestApp::runtime(..)`" (§3.9), a `replace_module` whose original no module imports (`ReplacementUnmatched`, the same stale mock §11 reports for an override), and a second `replace_module` of an original already replaced (`DuplicateReplacement { original, first, second }`, `first` and `second` the two `replace_module` calls, with the hint "keep one; wiring applied only the first"). Over an original nothing imports, the first call is `ReplacementUnmatched` and each later one `DuplicateReplacement`, never both on one call. An input a transport declared (`Transport::inputs`, transports/DESIGN §2.10) beside another transport's declaration of the key with a different seeder set, beside a module's declaration with another seeder, or beside a single binding under the key is `InputConflict { key, first, second }`, each side an `InputOrigin` (§10.2); two transports' declarations of one key whose seeder sets are equal, each written with `also_seeded_by`, merge into one; a binding is reported once per key, and inputs only modules declare keep `DuplicateBinding`.
 3. **Visibility:** resolve every injection point against its module's visibility table. Report missing keys (with the injection point, the key and the module) and ambiguous keys (naming every source module). When a missing key's name equals a bound key's name up to a trailing `+ core::marker::Send + core::marker::Sync`, the report names both spellings: `dyn Repo` and `dyn Repo + Send + Sync` are distinct `TypeId`s, and this is the one place the mismatch is visible. Then refuse every read of a controller's key by a binding that is not a controller, through its construction, an optional read included, a hook, its readiness check or an alias naming the controller (`ControllerRead`, naming the controller, the reader, the reader's module and the controller's, with the hint "move the shared logic into a provider both can read"): a controller is the edge of the application, reached by its transport alone. The same refusal covers a module's own hooks and a handler's enhancer closures (the reader is named as `OnModuleInit hook of <module>` or `<controller>::<handler> (enhancer closure)`, with that module). A controller reading a controller, a handler parameter, metadata and a runtime `app.get::<Ctl>()` are not checked.
 4. **Dependency cycles:** run a DFS over the resolved edges and print the full path, as in `A → B → C → A`, with the module of each step.
@@ -1204,6 +1214,9 @@ pub enum WiringError {
     InputNotSeeded { handler: String, transport: TypeName, input: KeyName, seeder: TypeName, steps: Vec<String> },
     /// Step 1: a keyed module keyed again; the identity carries `outer` and the exports `inner`.
     NestedKeyed { module: ModuleName, outer: TypeName, inner: TypeName },
+    /// Step 1: a second registration of an identity whose `Module::settings` differ from the first's; `first` holds the
+    /// identity. `settings` lists each setting that differs, in the first's order. `load` answers it too (§8.6).
+    DifferingSettings { module: ModuleName, first: ModuleSite, second: ModuleSite, settings: Vec<DifferingSetting> },
     /// Step 3: a binding that is not a controller reads a controller's key. `consumer` names the reader as `Missing` does.
     ControllerRead { controller: KeyName, consumer: String, module: ModuleName, controller_module: ModuleName },
     /// Step 6: `After(ZERO)` on a construction, a readiness check, one of its attempts or a hook. `binding` is `None` for a
@@ -1213,6 +1226,15 @@ pub enum WiringError {
     ZeroDefault { knob: &'static str, at: &'static Location<'static> },
     ..
 }
+
+/// Where a module was registered: the app's root, `ModuleDef::import` in `importer` at `at`, or `AppHandle::load`, which records
+/// no call site.
+#[non_exhaustive]
+pub enum ModuleSite { Root, Import { importer: ModuleName, at: &'static Location<'static> }, Load }
+
+/// One setting two registrations disagree on, each value as `ModuleSettings` wrote it, `None` where that side lacks it.
+#[non_exhaustive]
+pub struct DifferingSetting { pub name: &'static str, pub first: Option<String>, pub second: Option<String> }
 
 /// The item a bound is written on: `Construction`, `ReadinessWhole`, `ReadinessAttempt` or `Hook(HookKind)`.
 #[non_exhaustive]
@@ -1383,6 +1405,7 @@ Override rules:
 | `After(Duration::ZERO)` on a construction, a readiness check or one attempt of it, or a hook, a trait const's included, with or without a `Timer` | startup (`wire`) | environment pass; `ZeroBound`, the item's `BoundItem`, its binding, its module and the call that wrote the bound, hint `.unbounded()`; a transport's own zero settings are X22's (transports DESIGN) |
 | `construct_timeout(ZERO)` or `hook_timeout(ZERO)` on the builder | startup (`wire`) | environment pass; `ZeroDefault`, the knob and the call that set it, hint `.unbounded()` on the items; `drain_timeout` and `shutdown_timeout` accept zero |
 | A keyed module keyed again, `store.keyed::<A>().keyed::<B>()` | startup (`wire`) | module graph pass; `NestedKeyed`, naming both qualifiers, hint to key once |
+| A second import of an identity with other `Module::settings`, a store with another `connect_within` | startup (`wire`), or runtime (`load`) | module graph pass; `DifferingSettings`, naming the module, both sites and each differing setting with both values, hint to write the same settings or key one; `LoadError::Wiring` from `load` |
 | A binding that is not a controller, a module hook or an enhancer closure reading a controller's key: a construction, an optional read, a hook, a readiness check or an alias | startup (`wire`) | visibility pass; `ControllerRead`, naming the controller, the reader and both modules, hint "move the shared logic into a provider both can read"; a controller reading a controller, a handler parameter and a runtime `app.get::<Ctl>()` are not checked |
 | A hand-written `Construct` reading a key, an extension or the execution its `dependencies` does not declare, an optional read included | startup (`connect`), or runtime for an execution-scoped or transient type | first construction; `Errored` holding a `Permanent` `UndeclaredRead` naming the key (the type, for an extension) and the reading type, in `ConnectError::Construct` or `LookupError::Construct` (§3.4) |
 | A constructor, factory, readiness check or hook fails, panics or times out | startup (`connect`) | `StartupError::Connect`, the case named in `ConnectError` and the reason on `FailureReason` |
@@ -1473,14 +1496,14 @@ The value API an integration writes against:
 
 | Area | API |
 |---|---|
-| Modules | `Module`, `ModuleIdentity`, `ModuleDef::{import, global, export, reexport, secret, on_init, on_destroy, meta, enhancer}`, `DynamicModule`, `Keyed` |
+| Modules | `Module` (with `settings`), `ModuleIdentity`, `ModuleSettings`, `ModuleDef::{import, global, export, reexport, secret, on_init, on_destroy, meta, enhancer}`, `DynamicModule` (with `with_settings`), `Keyed` |
 | Bindings | `provide::<T: Construct>`, `provide_with::<T>(factory)`/`try_provide_with`, `value`/`try_value`, `with`/`try_with` (`Auto`, §3.3), `singleton`/`try_singleton`, `execution`/`try_execution`, `transient`/`try_transient`, `contribute::<T>()`, `enhancer::<R: Role>()` (the same builder marked `Enhancer`, for a role key of a transport with no mounted handler), `Contribute<'m, U, Q, Mark = Plain>` (`provide`, `value`, `try_value(Result<Arc<U>, E>)`, `singleton`/`try_singleton`, `execution`/`try_execution`, `with`/`try_with` (`Auto`, §3.3), each with the coercion closure; `qualified` on `Plain` alone), `handle::{Plain, Enhancer}` (empty enums, the marks), `alias::<T, Q>().of::<Existing>()`, `input::<T>().seeded_by::<Tr>()` |
 | Binding handles | `also_as`, `qualified::<Q>`, `timeout(..)`/`unbounded()` on the binding itself, `ready(..).retries(..).backoff(..).attempt_timeout(..).timeout(..)`/`.unbounded()`, `on_init`/`on_destroy`/`before_shutdown`/`on_shutdown` each with `.timeout(..)`/`.unbounded()` (singleton and `Auto` handles); every bound written once per item (§9.1) |
 | Injection points | `FromContainer`, `Requirement`, `Dependencies::{field, param, add}`, `Key`, `KeyName`, `TypeName`, `Resolver::{dep, dep_qualified, many, many_qualified, entries, ext, input, module, execution, by_key}` |
 | Construction | `Construct` (with `CONSTRUCT_TIMEOUT`), `Hooks<T>::{on_module_init, on_application_bootstrap, on_module_destroy, before_application_shutdown, on_application_shutdown}`, `hooks!`, `ConstructError` |
 | Transports | `Transport`, `Role`, `Controller::mount`, `Mount` (whose `handler` records the transport's role keys for the freeze, taking a `HandlerSpec` over the transport's handler value: `fw_http::HttpHandler`, `fw_rpc::RpcHandler`, `fw_ws::WsHandler` with `fw_ws::GatewayHooks`, `fw_grpc::GrpcHandler`, transports X40), `dispatch`, `Execution::{open, open_terminal, seed, handle}`, `DrainToken`, `ExecutionRef`, `EnhancerSpec` (`guard_with`/`interceptor_with`/`error_handler_with`, `Auto`; `guard_with_in::<S>` and kin take the scope, §3.3), the `Erased*` role twins |
 | Runtime | `Timer`, `Spawn`, `Runtime`, `TaskHandle`, `TaskEnd`, `spawn_with`, `Bound`, `timeout`, `timeout_at`, `Expiry`, `Cut` (a reporting bound's ties, §3.9), `Signal`, `Server` (implemented by transports for `prepare`, `bind`, `bound`, the drain, which hands over the `DrainToken`, and `close`), `AppHandle`, `Cancelled`, `Draining`, `Shutdown`, `Closed` |
-| Errors | `StartupError`, `RuntimeMissing`, `Refused`, `RuntimeShutDown`, `RUNTIME_SHUT_DOWN`, `ConnectError`, `FailureReason`, `Limit`, `WiringErrors`, `WiringError`, `ConfigureErrors`, `ConfigureError`, `PrepareError`, `PreparePanicked`, `LoadError`, `LoadRefusal`, `ShutdownError`, `ShutdownFailure`, `LookupError`, `UndeclaredRead`, `GuardRejected`, `PanicRecovered`, `DispatchStage`, `InputOrigin`, `BoundItem`, `is_panic`, `Redacted`, `Secret` |
+| Errors | `StartupError`, `RuntimeMissing`, `Refused`, `RuntimeShutDown`, `RUNTIME_SHUT_DOWN`, `ConnectError`, `FailureReason`, `Limit`, `WiringErrors`, `WiringError`, `ConfigureErrors`, `ConfigureError`, `PrepareError`, `PreparePanicked`, `LoadError`, `LoadRefusal`, `ShutdownError`, `ShutdownFailure`, `LookupError`, `UndeclaredRead`, `GuardRejected`, `PanicRecovered`, `DispatchStage`, `InputOrigin`, `BoundItem`, `ModuleSite`, `DifferingSetting`, `is_panic`, `Redacted`, `Secret` |
 
 The transport layer extends this surface, and `transports/DESIGN.md` §11 states each extension where a requirement forces it: `Transport::KEY` and `Transport::inputs`, whose declarations an `InputConflict` reports through `InputOrigin` (§10.2); `Transport::READS_PREFIX`, by which the freeze refuses `ModuleDef::controller::<C>().at(prefix)` on a controller none of whose handlers' transports read a prefix, or that mounts none; a `HandlerSpec` builder for `Mount::handler` carrying metadata, route, shape and the handler's own dependencies, with `Execution::handler()`, `AppHandle::handlers()` and `ModuleDef::controller::<C>().at(prefix)`; `Mount::once`; impl-level shared values through `EnhancerSpec::{guard,interceptor,error_handler}_arc`; `CancelReason`, `cancel_with` on `Execution` and `ExecutionRef`, `cancel_reason` and `on_stream_end`; `Server::prepare` before any bind, `Server::bound` and `StartupError::Configure(ConfigureErrors)`, a fourth variant shaped as `Wiring(WiringErrors)` is, with `PrepareError` as what a `prepare` answers when its text names types (§10.2); `dispatch_late` and `is_late` for errors after a stream has started; `Execution::route_to`; `Mounted::module_meta` and `ModuleRef::with_execution`; `Mounted::handlers_reading` and its `InputReader` (`handler()`, `transport()`, `steps()`), built on the input walk (§6.4); `AppHandle::phase`, `AppHandle::redact` and `AppHandle::drain_timeout`; `Spawn`, `Runtime`, `TaskHandle`, `TaskEnd`, the `RuntimeTask` SPI a runtime crate implements, `spawn_with` and `ValueHandle`, with `AppBuilder::runtime`, `TestApp::runtime`, `AppHandle::timer` and `AppHandle::runtime`, and `fw-transport`'s `TaskSet` (transports §8); `RuntimeMissing`, which `listen()` and `AppHandle::mounted` answer for an app binding a transport with no runtime, and `Mounted::runtime` (transports §8, X31); `Inputs::also_seeded_by`, with the freeze merging equal seeder sets (§6.4); `AppHandle::mounted::<T>()` and `Mounted::handlers_of::<U>()`, the mounted handlers of a transport read from a handle or from another transport's server; and `TransportMetadata`, by which a metadata type names the one transport it is valid on, read by a probe the handler attributes emit. Nothing above changes for them: each is an addition at the point the transport design names.
 

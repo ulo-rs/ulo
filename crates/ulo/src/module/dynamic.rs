@@ -2,7 +2,7 @@ use std::hash::Hash;
 use std::sync::Mutex;
 
 use crate::module::def::ModuleDef;
-use crate::module::{Module, ModuleIdentity};
+use crate::module::{Module, ModuleIdentity, ModuleSettings};
 
 type Register = Box<dyn FnOnce(&mut ModuleDef<'_>) + Send>;
 
@@ -30,6 +30,7 @@ type Register = Box<dyn FnOnce(&mut ModuleDef<'_>) + Send>;
 /// so a second import of an equal identity never reaches it.
 pub struct DynamicModule {
     identity: ModuleIdentity,
+    settings: ModuleSettings,
     register: Mutex<Option<Register>>,
 }
 
@@ -40,6 +41,7 @@ impl DynamicModule {
     ) -> Self {
         DynamicModule {
             identity: ModuleIdentity::of_owner::<O, C>(&config),
+            settings: ModuleSettings::new(),
             register: Mutex::new(Some(Box::new(register))),
         }
     }
@@ -48,11 +50,21 @@ impl DynamicModule {
     pub fn label(self, name: &'static str) -> Self {
         DynamicModule { identity: self.identity.label(name), ..self }
     }
+
+    /// The settings the registration closure captures outside `config`, which a second import of
+    /// an equal identity must repeat ([`Module::settings`]).
+    pub fn with_settings(self, settings: ModuleSettings) -> Self {
+        DynamicModule { settings, ..self }
+    }
 }
 
 impl Module for DynamicModule {
     fn identity(&self) -> ModuleIdentity {
         self.identity.clone()
+    }
+
+    fn settings(&self) -> ModuleSettings {
+        self.settings.clone()
     }
 
     fn register(&self, m: &mut ModuleDef<'_>) {

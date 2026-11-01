@@ -103,18 +103,17 @@ const GRPC_ENCODING: HeaderName = HeaderName::from_static("grpc-encoding");
 const GRPC_ACCEPT_ENCODING: HeaderName = HeaderName::from_static("grpc-accept-encoding");
 const GRPC_TIMEOUT: HeaderName = HeaderName::from_static("grpc-timeout");
 
-/// The headers a reply's metadata never sets: the protocol's own, which the reply and its
-/// trailers write.
-const RESERVED: [&str; 8] = [
-    "te",
-    "content-type",
-    "content-length",
-    "grpc-status",
-    "grpc-message",
-    "grpc-message-type",
-    "grpc-status-details-bin",
-    "grpc-encoding",
-];
+/// The headers a reply's metadata never sets besides the `grpc-` family: HTTP/2's own, which the
+/// reply writes.
+const RESERVED: [&str; 3] = ["te", "content-type", "content-length"];
+
+/// Whether a reply's metadata may not carry `name`. Every name beginning `grpc-` is the protocol's:
+/// gRPC over HTTP/2 reserves the prefix, and the reply and its trailers write the ones in use.
+/// Header names are lowercase by the time they get here, so the prefix is compared as written.
+fn reserved(name: &HeaderName) -> bool {
+    let name = name.as_str();
+    name.starts_with("grpc-") || RESERVED.contains(&name)
+}
 
 /// A service the server answers beside the handlers, health and reflection, called with the
 /// request as the unscoped pre-dispatch entries left it.
@@ -446,7 +445,7 @@ fn with_metadata(body: tonic::body::Body, metadata: MetadataMap) -> Reply {
     let mut reply = Reply::new(body);
     let headers = reply.headers_mut();
     for (name, value) in metadata.into_headers().iter() {
-        if !RESERVED.contains(&name.as_str()) {
+        if !reserved(name) {
             headers.append(name.clone(), value.clone());
         }
     }
@@ -509,7 +508,7 @@ fn as_grpc(response: Response) -> Response {
     let mut translated = status_response(Status::new(code_for_http(status), format!("a pre-dispatch entry answered HTTP {status}")));
     let headers = translated.headers_mut();
     for (name, value) in &parts.headers {
-        if !RESERVED.contains(&name.as_str()) {
+        if !reserved(name) {
             headers.append(name.clone(), value.clone());
         }
     }

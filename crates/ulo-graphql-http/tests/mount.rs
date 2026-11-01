@@ -129,33 +129,73 @@ async fn a_post_reaches_the_engine_whole_and_the_answer_is_served_at_the_path() 
     app.stop().await;
 }
 
-/// The status of each outcome under each negotiated media type: executed 200 whatever its
-/// errors, a request error 400 under `application/graphql-response+json` and 200 under
-/// `application/json`, a failed request 500 under both. No `Accept` reads as the new type.
+/// The status of each outcome, the same under every negotiated media type (the GraphQL-over-HTTP
+/// draft's status list): executed 200 whatever its errors, a request error 400 when its document
+/// does not parse and 422 for every other fault, one the engine did not name included, a failed
+/// request 500. The media type follows `Accept`, no `Accept` reading as the new type; a legacy
+/// client, accepting `application/json` alone, gets `application/json` on a 2xx and keeps
+/// `application/graphql-response+json` on every other status, so it can tell a GraphQL error from
+/// an intermediary's.
 #[tokio::test]
 async fn the_status_follows_the_outcome_and_the_media_type_negotiated_from_accept() {
     let seen = Arc::new(Seen::default());
     let app = start(one_endpoint(&seen, || GraphqlConfig::at("/graphql"), false)).await;
 
-    let table: [(&str, Option<&str>, StatusCode, &str); 12] = [
+    let unprocessable = StatusCode::UNPROCESSABLE_ENTITY;
+    let table: [(&str, Option<&str>, StatusCode, &str); 21] = [
         ("{ executed }", None, StatusCode::OK, GRAPHQL_RESPONSE),
         ("{ fieldError }", None, StatusCode::OK, GRAPHQL_RESPONSE),
-        ("{ requestError }", None, StatusCode::BAD_REQUEST, GRAPHQL_RESPONSE),
+        ("{ requestError }", None, unprocessable, GRAPHQL_RESPONSE),
+        ("{ syntaxError }", None, StatusCode::BAD_REQUEST, GRAPHQL_RESPONSE),
+        ("{ validationError }", None, unprocessable, GRAPHQL_RESPONSE),
+        ("{ operationError }", None, unprocessable, GRAPHQL_RESPONSE),
+        ("{ coercionError }", None, unprocessable, GRAPHQL_RESPONSE),
         ("{ failed }", None, StatusCode::INTERNAL_SERVER_ERROR, GRAPHQL_RESPONSE),
-        ("{ requestError }", Some("application/graphql-response+json"), StatusCode::BAD_REQUEST, GRAPHQL_RESPONSE),
-        ("{ requestError }", Some("application/json"), StatusCode::OK, LEGACY_JSON),
+        ("{ requestError }", Some("application/graphql-response+json"), unprocessable, GRAPHQL_RESPONSE),
+        ("{ executed }", Some("application/json"), StatusCode::OK, LEGACY_JSON),
         ("{ fieldError }", Some("application/json"), StatusCode::OK, LEGACY_JSON),
-        ("{ failed }", Some("application/json"), StatusCode::INTERNAL_SERVER_ERROR, LEGACY_JSON),
-        ("{ requestError }", Some("application/json, application/graphql-response+json"), StatusCode::BAD_REQUEST, GRAPHQL_RESPONSE),
-        ("{ requestError }", Some("application/graphql-response+json;q=0.5, application/json"), StatusCode::OK, LEGACY_JSON),
-        ("{ requestError }", Some("*/*"), StatusCode::BAD_REQUEST, GRAPHQL_RESPONSE),
-        ("{ requestError }", Some("text/plain"), StatusCode::OK, LEGACY_JSON),
+        ("{ requestError }", Some("application/json"), unprocessable, GRAPHQL_RESPONSE),
+        ("{ syntaxError }", Some("application/json"), StatusCode::BAD_REQUEST, GRAPHQL_RESPONSE),
+        ("{ failed }", Some("application/json"), StatusCode::INTERNAL_SERVER_ERROR, GRAPHQL_RESPONSE),
+        ("{ requestError }", Some("application/json, application/graphql-response+json"), unprocessable, GRAPHQL_RESPONSE),
+        ("{ requestError }", Some("application/graphql-response+json;q=0.5, application/json"), unprocessable, LEGACY_JSON),
+        ("{ executed }", Some("application/graphql-response+json;q=0.5, application/json"), StatusCode::OK, LEGACY_JSON),
+        ("{ requestError }", Some("*/*"), unprocessable, GRAPHQL_RESPONSE),
+        ("{ requestError }", Some("application/*"), unprocessable, GRAPHQL_RESPONSE),
+        ("{ executed }", Some("text/plain, application/json;q=0.1"), StatusCode::OK, LEGACY_JSON),
+        ("{ requestError }", Some("text/plain, application/json;q=0.1"), unprocessable, GRAPHQL_RESPONSE),
     ];
     for (query, accept, status, media) in table {
         let headers: Vec<(&str, &str)> = accept.map(|accept| ("accept", accept)).into_iter().collect();
         let answer = app.post("/graphql", &headers, json!({ "query": query })).await;
         assert_eq!((answer.status, answer.header("content-type")), (status, Some(media)), "{query} accepting {accept:?}");
+        assert!(answer.json()["errors"].is_array() || answer.json()["data"].is_object(), "{query}: a GraphQL response: {}", answer.text());
     }
+    app.stop().await;
+}
+
+/// An `Accept` naming neither JSON type, nor a range covering one, is refused 406 before the
+/// engine runs, as a problem document naming the two types the endpoint answers: the draft's
+/// SHOULD, and a response that carries no GraphQL result, so not
+/// `application/graphql-response+json`.
+#[tokio::test]
+async fn an_accept_naming_neither_json_type_is_refused_406_before_the_engine_runs() {
+    let seen = Arc::new(Seen::default());
+    let app = start(one_endpoint(&seen, || GraphqlConfig::at("/graphql"), false)).await;
+
+    for accept in ["text/plain", "text/html", "application/xml", "application/json;q=0, application/graphql-response+json;q=0"] {
+        let posted = app.post("/graphql", &[("accept", accept)], json!({ "query": "{ executed }" })).await;
+        let got = app.call("GET", "/graphql?query=%7B%20executed%20%7D", &[("accept", accept)], b"").await;
+        for (method, answer) in [("POST", posted), ("GET", got)] {
+            assert_eq!(answer.status, StatusCode::NOT_ACCEPTABLE, "{method} accepting {accept}: {}", answer.text());
+            assert_eq!(answer.header("content-type"), Some("application/problem+json"), "{method} accepting {accept}");
+            let problem = answer.json();
+            assert_eq!((problem["status"].as_u64(), problem["title"].as_str()), (Some(406), Some("Not Acceptable")), "{method}");
+            let detail = problem["detail"].as_str().unwrap_or_default();
+            assert!(detail.contains("application/graphql-response+json") && detail.contains("application/json"), "{method}: {detail}");
+        }
+    }
+    assert!(seen.requests().is_empty(), "the engine heard none of them");
     app.stop().await;
 }
 
@@ -189,13 +229,22 @@ async fn a_get_reads_the_query_string_and_refuses_a_mutation_with_405_and_allow(
     let refused = app.call("GET", "/graphql?query=query%20A%20%7B%20executed%20%7D%20mutation%20B%20%7B%20executed%20%7D&operationName=B", &[], b"").await;
     assert_eq!(refused.status, StatusCode::METHOD_NOT_ALLOWED, "the named mutation, written after a query");
 
-    let bad = app.call("GET", "/graphql?query=%7B%20executed%20%7D&variables=%5B1%5D", &[], b"").await;
-    assert_eq!(bad.status, StatusCode::BAD_REQUEST, "`variables` that is not a JSON object is a request error");
+    // The draft's "invalid shape for `variables`": not a well-formed request, 422. JSON text that
+    // does not parse in a query parameter is the same fault, a GET having no body to fail to parse.
+    for variables in ["%5B1%5D", "%7Bnope"] {
+        let bad = app.call("GET", &format!("/graphql?query=%7B%20executed%20%7D&variables={variables}"), &[], b"").await;
+        assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY, "`variables={variables}` is not a JSON object: {}", bad.text());
+        assert_eq!(bad.header("content-type"), Some(GRAPHQL_RESPONSE));
+    }
+    let none = app.call("GET", "/graphql", &[], b"").await;
+    assert_eq!(none.status, StatusCode::UNPROCESSABLE_ENTITY, "a GET with no `query` is not a well-formed request");
+    assert_eq!(seen.requests().len(), 3, "the engine heard the three queries above and none of these");
     app.stop().await;
 }
 
-/// A POST body that is not `application/json` is refused 415 before the engine; one that is JSON
-/// and not a GraphQL request is a request error.
+/// A POST body that is not `application/json` is refused 415 before the engine. A body that is not
+/// JSON is a request error answered 400, and JSON that is not a GraphQL request one answered 422,
+/// the draft's "JSON parsing failure" and "Invalid parameters" examples.
 #[tokio::test]
 async fn a_post_that_is_not_json_is_415_and_a_body_that_is_no_request_is_a_request_error() {
     let seen = Arc::new(Seen::default());
@@ -207,10 +256,27 @@ async fn a_post_that_is_not_json_is_415_and_a_body_that_is_no_request_is_a_reque
     assert_eq!(bare.status, StatusCode::UNSUPPORTED_MEDIA_TYPE, "no `Content-Type` is not JSON");
     assert!(seen.requests().is_empty(), "the engine heard nothing of either");
 
-    let no_query = app.post("/graphql", &[], json!({ "operationName": "Q" })).await;
-    assert_eq!(no_query.status, StatusCode::BAD_REQUEST);
-    assert_eq!(no_query.header("content-type"), Some(GRAPHQL_RESPONSE));
-    assert!(no_query.json()["errors"].as_array().is_some_and(|errors| errors.len() == 1), "one error in the response format");
+    let json = [("content-type", "application/json")];
+    for body in [&b"NONSENSE"[..], br#"{"query":"#] {
+        let unparsed = app.call("POST", "/graphql", &json, body).await;
+        let shown = String::from_utf8_lossy(body);
+        assert_eq!(unparsed.status, StatusCode::BAD_REQUEST, "{shown}: {}", unparsed.text());
+        assert_eq!(unparsed.header("content-type"), Some(GRAPHQL_RESPONSE), "{shown}");
+        assert!(unparsed.json()["errors"].as_array().is_some_and(|errors| errors.len() == 1), "{shown}: one error in the response format");
+    }
+    let shapes = [
+        json!({ "operationName": "Q" }),
+        json!({ "qeury": "{ executed }" }),
+        json!({ "query": 7 }),
+        json!({ "query": "query Q ($i:Int!) { q(i: $i) }", "variables": [7] }),
+    ];
+    for body in shapes {
+        let shape = app.post("/graphql", &[], body.clone()).await;
+        assert_eq!(shape.status, StatusCode::UNPROCESSABLE_ENTITY, "{body}: {}", shape.text());
+        assert_eq!(shape.header("content-type"), Some(GRAPHQL_RESPONSE), "{body}");
+        assert!(shape.json()["errors"].as_array().is_some_and(|errors| errors.len() == 1), "{body}: one error in the response format");
+        assert!(shape.json().get("data").is_none(), "{body}: a request error carries no `data`");
+    }
     assert!(seen.requests().is_empty());
     app.stop().await;
 }
@@ -241,10 +307,13 @@ async fn the_playground_is_html_for_a_browser_with_no_query_and_only_when_enable
     assert_eq!(seen.playground(), [("/graphql".to_owned(), Some("/graphql/ws".to_owned()))], "the page is told both paths as a browser reaches them");
 
     let curl = app.call("GET", "/graphql", &[("accept", "*/*")], b"").await;
-    assert_eq!(curl.status, StatusCode::BAD_REQUEST, "`*/*` is no browser: a GET with no query is a request error");
+    assert_eq!(curl.status, StatusCode::UNPROCESSABLE_ENTITY, "`*/*` is no browser: a GET with no query is a request error");
     let queried = app.call("GET", "/graphql?query=%7B%20executed%20%7D", &html, b"").await;
     assert_eq!(queried.header("content-type"), Some(GRAPHQL_RESPONSE), "a `query` is answered as a query whatever the browser accepts");
     assert_eq!(seen.playground().len(), 1, "the engine was asked for the page once");
+    // A browser naming HTML alone gets the page, not the 406 an `Accept` without JSON earns a query.
+    let html_only = app.call("GET", "/graphql", &[("accept", "text/html")], b"").await;
+    assert_eq!((html_only.status, html_only.header("content-type")), (StatusCode::OK, Some("text/html; charset=utf-8")), "{}", html_only.text());
     app.stop().await;
 
     let seen = Arc::new(Seen::default());
@@ -255,7 +324,7 @@ async fn the_playground_is_html_for_a_browser_with_no_query_and_only_when_enable
         }
     };
     let app = start(off).await;
-    assert_eq!(app.call("GET", "/graphql", &html, b"").await.status, StatusCode::BAD_REQUEST, "disabled: no page");
+    assert_eq!(app.call("GET", "/graphql", &html, b"").await.status, StatusCode::UNPROCESSABLE_ENTITY, "disabled: no page");
     app.stop().await;
 
     let seen = Arc::new(Seen::default());
@@ -266,7 +335,7 @@ async fn the_playground_is_html_for_a_browser_with_no_query_and_only_when_enable
         }
     };
     let app = start(none).await;
-    assert_eq!(app.call("GET", "/graphql", &html, b"").await.status, StatusCode::BAD_REQUEST, "an engine with no page serves none");
+    assert_eq!(app.call("GET", "/graphql", &html, b"").await.status, StatusCode::UNPROCESSABLE_ENTITY, "an engine with no page serves none");
     assert_eq!(seen.playground().len(), 1, "the engine was asked and answered `None`");
     app.stop().await;
 }

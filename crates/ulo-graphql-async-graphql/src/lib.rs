@@ -29,7 +29,7 @@ use futures_util::{StreamExt, future, stream};
 use serde_json::{Map, Value};
 use ulo::scope::Auto;
 use ulo::{BoxFuture, Construct, ConstructError, Dep, Dependencies, ExecutionRef, ModuleRef, Resolver};
-use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse, Location};
+use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse, Location, RequestFault};
 
 /// The engine over schema `S`, read as `Dep<S>`, with context type `C`, resolved per call from the
 /// execution: `C` is an execution-scoped `#[injectable]` reading `Option<Ext<CurrentUser>>`,
@@ -69,7 +69,7 @@ where
         let module = self.module.clone();
         Box::pin(async move {
             match request::<C>(&module, req, exec).await {
-                Ok(request) => response_of(schema.execute(request).await),
+                Ok((request, fault)) => response_of(schema.execute(request).await, fault),
                 Err(response) => response,
             }
         })
@@ -82,7 +82,9 @@ where
             .flat_map(move |prepared| match prepared {
                 // `execute_stream` borrows the schema for its stream; the session-data form owns a
                 // clone, which a stream outliving this closure needs.
-                Ok(request) => schema.execute_stream_with_session_data(request, Default::default()).map(response_of).boxed(),
+                Ok((request, fault)) => {
+                    schema.execute_stream_with_session_data(request, Default::default()).map(move |response| response_of(response, fault)).boxed()
+                }
                 Err(response) => stream::once(future::ready(response)).boxed(),
             })
             .boxed()
@@ -118,13 +120,14 @@ pub async fn dep<T: ?Sized + Send + Sync + 'static>(ctx: &async_graphql::Context
     })
 }
 
-/// The async-graphql request for `req`, carrying the call's context and its execution. A context
-/// that cannot be built is answered `Failed`: nothing executed, and the fault is the server's.
+/// The async-graphql request for `req`, carrying the call's context and its execution, and the
+/// fault a request error the schema answers for it would be. A context that cannot be built is
+/// answered `Failed`: nothing executed, and the fault is the server's.
 async fn request<C: Send + Sync + 'static>(
     module: &ModuleRef,
     req: GqlRequest,
     exec: ExecutionRef,
-) -> Result<async_graphql::Request, GqlResponse> {
+) -> Result<(async_graphql::Request, RequestFault), GqlResponse> {
     let context = match module.with_execution(&exec).get::<C>().await {
         Ok(context) => context,
         Err(error) => {
@@ -137,8 +140,9 @@ async fn request<C: Send + Sync + 'static>(
     if let Some(name) = req.operation_name {
         request = request.operation_name(name);
     }
+    let fault = fault_before_execution(&mut request);
     if let Some(errors) = missing_variables(&mut request, &supplied) {
-        return Err(GqlResponse::request_error(errors));
+        return Err(GqlResponse::request_fault(RequestFault::Coercion, errors));
     }
     request = request.variables(Variables::from_json(Value::Object(supplied)));
     for (name, value) in req.extensions.unwrap_or_default() {
@@ -147,13 +151,31 @@ async fn request<C: Send + Sync + 'static>(
                 request.extensions.0.insert(name, value);
             }
             Err(_) => {
-                return Err(GqlResponse::request_error(vec![GqlError::new(format!(
-                    "the extension `{name}` is not a GraphQL value"
-                ))]));
+                return Err(GqlResponse::request_fault(
+                    RequestFault::NotWellFormed,
+                    vec![GqlError::new(format!("the extension `{name}` is not a GraphQL value"))],
+                ));
             }
         }
     }
-    Ok(request.data(context).data(exec))
+    Ok((request.data(context).data(exec), fault))
+}
+
+/// The fault a request error the schema answers before execution is, told from the document:
+/// `Syntax` when it does not parse, `Operation` when it selects no single operation by
+/// `operationName`, and `Validation` otherwise. async-graphql validates before it selects the
+/// operation, so a document failing both answers validation's errors under `Operation`; the draft
+/// gives the two the same status. The parse is cached on the request, which the schema reuses.
+fn fault_before_execution(request: &mut async_graphql::Request) -> RequestFault {
+    let operation_name = request.operation_name.clone();
+    let Ok(document) = request.parsed_query() else { return RequestFault::Syntax };
+    let selected = match (&document.operations, operation_name.as_deref()) {
+        (DocumentOperations::Single(_), None) => true,
+        (DocumentOperations::Multiple(operations), Some(name)) => operations.contains_key(name),
+        (DocumentOperations::Multiple(operations), None) => operations.len() == 1,
+        (DocumentOperations::Single(_), Some(_)) => false,
+    };
+    if selected { RequestFault::Validation } else { RequestFault::Operation }
 }
 
 /// The errors of GraphQL's variable coercion (CoerceVariableValues) that `supplied` fails against
@@ -191,13 +213,13 @@ fn missing_variables(request: &mut async_graphql::Request, supplied: &Map<String
     (!errors.is_empty()).then_some(errors)
 }
 
-/// async-graphql's response as a `GqlResponse`.
+/// async-graphql's response as a `GqlResponse`, a request error carrying `fault`.
 ///
 /// async-graphql answers a request that failed before execution as a response whose `data` is
 /// `null` and whose errors carry no `path`, a field error always naming its field, so that is how
 /// a request error is told from an executed request whose data is `null`. Variable coercion is the
 /// exception, which [`missing_variables`] answers before the schema runs.
-fn response_of(response: async_graphql::Response) -> GqlResponse {
+fn response_of(response: async_graphql::Response, fault: RequestFault) -> GqlResponse {
     let errors: Vec<GqlError> = response.errors.iter().map(error_of).collect();
     let before_execution =
         response.data == async_graphql::Value::Null && !response.errors.is_empty() && response.errors.iter().all(|e| e.path.is_empty());
@@ -207,7 +229,7 @@ fn response_of(response: async_graphql::Response) -> GqlResponse {
         .filter_map(|(name, value)| value.into_json().ok().map(|value| (name, value)))
         .collect();
     let mut out = if before_execution {
-        GqlResponse::request_error(errors)
+        GqlResponse::request_fault(fault, errors)
     } else {
         GqlResponse::executed(response.data.into_json().unwrap_or(Value::Null), errors)
     };

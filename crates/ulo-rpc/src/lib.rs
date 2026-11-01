@@ -42,6 +42,7 @@ mod extract;
 mod frame;
 mod handler;
 mod held;
+mod queue;
 mod server;
 mod trace;
 mod transport;
@@ -71,7 +72,7 @@ pub mod __private;
 #[doc(hidden)]
 pub use ulo_transport::__derive;
 
-pub use client::{Call, Emit, RpcClient, RpcError, RpcStream, StreamCall, UnusableLink, ZeroTimeout};
+pub use client::{Call, Emit, RpcClient, RpcError, RpcStream, StreamCall, UnusableLink, ZeroCount, ZeroTimeout};
 pub use client_module::RpcClientModule;
 pub use codec::Codec;
 pub use extract::{Inbound, Payload};

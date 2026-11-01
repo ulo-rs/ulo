@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
-use ulo::{Module, ModuleDef, ModuleIdentity};
+use ulo::{Module, ModuleDef, ModuleIdentity, ModuleSettings};
 
 use crate::config::Config;
 use crate::error::ConfigError;
@@ -55,6 +55,10 @@ where
 {
     fn identity(&self) -> ModuleIdentity {
         ModuleIdentity::of_type::<Self>()
+    }
+
+    fn settings(&self) -> ModuleSettings {
+        ModuleSettings::new().with("deny_unread", self.deny_unread)
     }
 
     fn register(&self, m: &mut ModuleDef<'_>) {

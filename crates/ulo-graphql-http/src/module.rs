@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use ulo::{Bound, Module, ModuleDef, ModuleIdentity};
+use ulo::{Bound, Module, ModuleDef, ModuleIdentity, ModuleSettings};
 use ulo_graphql_ws::GraphqlWs;
 use ulo_graphql_ws::__private::InitTimeout;
 use ulo_transport::prepare::{Failures, zero_bound};
@@ -124,6 +124,10 @@ pub(crate) struct EngineModule {
 impl Module for EngineModule {
     fn identity(&self) -> ModuleIdentity {
         self.identity.clone()
+    }
+
+    fn settings(&self) -> ModuleSettings {
+        self.module.settings()
     }
 
     fn register(&self, m: &mut ModuleDef<'_>) {

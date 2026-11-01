@@ -1,6 +1,25 @@
 //! The GraphQL-over-HTTP endpoint: a controller mounted `.at(config.path)`, reading
 //! `Dep<dyn Engine, Q>`, answering GET and POST by the specification's rules from the response's
-//! `Outcome`, and the negotiated media type.
+//! `Outcome` and `RequestFault`, and the negotiated media type.
+//!
+//! The rules are the GraphQL-over-HTTP working draft's (graphql/graphql-over-http,
+//! `spec/GraphQLOverHTTP.md` at `d027fa2`, 2026-09-28), read as a shape rather than a contract: the
+//! draft is unfinished, and its statuses are SHOULDs. Its status list reads, for a request error:
+//! "If the JSON body of the request could not be parsed, status code `400` SHOULD be used." "If the
+//! request is not a well-formed _GraphQL-over-HTTP request_, status code `422` SHOULD be used." "If
+//! the GraphQL document in the request cannot be parsed, status code `400` SHOULD be used." "If the
+//! request does not pass GraphQL validation, status code `422` SHOULD be used." "If the operation to
+//! execute cannot be unambiguously determined, status code `422` SHOULD be used." "If the variable
+//! values cannot be coerced to match the operation's variable definitions, status code `422` SHOULD
+//! be used." Those statuses hold under either response media type; for a legacy client, one that
+//! accepts `application/json` and not `application/graphql-response+json`, the request "SHOULD be
+//! performed following the requirements of this specification as if the request had specified
+//! `Accept: application/graphql-response+json`, except any response that produces a `2xx` status
+//! code should replace the `Content-Type` header with `Content-Type: application/json`." An
+//! `Accept` naming neither: "If the `Accept` header is present but does not indicate support for
+//! any of the server's supported media types or `application/json`, the server SHOULD respond with
+//! `406 Not Acceptable`." No `Accept`: "If a client does not supply the `Accept` header then the
+//! server may respond with an error, or with any content type it chooses".
 
 use std::marker::PhantomData;
 
@@ -10,10 +29,10 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use ulo::scope::Auto;
 use ulo::{BoxError, Construct, ConstructError, Controller, Dep, Dependencies, HandlerSpec, Mount, Resolver};
-use ulo_graphql::{Engine, GqlError, GqlRequest, GqlResponse, Outcome};
+use ulo_graphql::{Engine, GqlError, GqlRequest, GqlResponse, Outcome, RequestFault};
 use ulo_http::{
     Bytes, CallError, ErrorKind, ExtractError, FromCall, Http, HttpBody, HttpCx, HttpHandler, IntoReplyError, MethodNotAllowed,
-    Query, Response,
+    NotAcceptable, Query, Response,
 };
 
 use crate::playground;
@@ -67,18 +86,21 @@ struct GetParams {
 }
 
 /// A GET: the playground for a browser asking for HTML with no `query`, otherwise a query read from
-/// the query string. A mutation is refused with 405 before anything executes.
+/// the query string. An `Accept` naming neither JSON type is refused with 406, and a mutation with
+/// 405, before anything executes.
 async fn get<Q: Send + Sync + 'static>(cx: HttpCx) -> Result<Response, BoxError> {
     let endpoint = cx.exec().get::<GraphqlEndpoint<Q>>().await?;
     let Query(params) = <Query<GetParams> as FromCall<Http>>::from_call(&cx).await?;
-    let media = Media::negotiate(cx.headers());
+    if params.query.is_none()
+        && endpoint.settings.playground
+        && playground::accepts_html(cx.headers())
+        && let Some(page) = playground::page(&*endpoint.engine, &endpoint.settings, cx.mount_prefix())
+    {
+        return Ok(page);
+    }
+    let media = Media::negotiate(cx.headers())?;
     let Some(query) = params.query else {
-        if endpoint.settings.playground && playground::accepts_html(cx.headers()) {
-            if let Some(page) = playground::page(&*endpoint.engine, &endpoint.settings, cx.mount_prefix()) {
-                return Ok(page);
-            }
-        }
-        return render(&request_error("the request names no `query`"), media);
+        return render(&request_error(RequestFault::NotWellFormed, "the request names no `query`"), media);
     };
     let variables = match json_object(params.variables.as_deref(), "variables") {
         Ok(variables) => variables,
@@ -97,17 +119,25 @@ async fn get<Q: Send + Sync + 'static>(cx: HttpCx) -> Result<Response, BoxError>
 }
 
 /// A POST: an `application/json` body holding the request. Another media type is refused with 415
-/// through the error handlers, a body over the route's limit with 413.
+/// and an `Accept` naming neither JSON type with 406, both through the error handlers, and a body
+/// over the route's limit with 413. A body that is not JSON is a request error answered 400, and
+/// JSON that is not a GraphQL request, `{"qeury": ..}` or `variables` that is not a map, 422.
 async fn post<Q: Send + Sync + 'static>(cx: HttpCx) -> Result<Response, BoxError> {
     let endpoint = cx.exec().get::<GraphqlEndpoint<Q>>().await?;
     if !is_json(cx.headers()) {
         return Err(ExtractError::UnsupportedMediaType { param: "body", expected: "application/json" }.into());
     }
+    let media = Media::negotiate(cx.headers())?;
     let body = <Bytes as FromCall<Http>>::from_call(&cx).await?;
-    let media = Media::negotiate(cx.headers());
     let request = match serde_json::from_slice::<GqlRequest>(&body) {
         Ok(request) => request,
-        Err(error) => return render(&request_error(&format!("the body is not a GraphQL request: {error}")), media),
+        Err(error) => {
+            let fault = match error.classify() {
+                serde_json::error::Category::Data => RequestFault::NotWellFormed,
+                _ => RequestFault::Encoding,
+            };
+            return render(&request_error(fault, &format!("the body is not a GraphQL request: {error}")), media);
+        }
     };
     let response = endpoint.engine.execute(request, cx.exec().clone()).await;
     render(&response, media)
@@ -117,41 +147,60 @@ async fn post<Q: Send + Sync + 'static>(cx: HttpCx) -> Result<Response, BoxError
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Media {
     GraphqlResponse,
+    /// The client accepts both and prefers `application/json`.
     Json,
+    /// The client accepts `application/json` and not `application/graphql-response+json`.
+    Legacy,
 }
+
+const GRAPHQL_RESPONSE: &str = "application/graphql-response+json; charset=utf-8";
+const JSON: &str = "application/json; charset=utf-8";
 
 impl Media {
     /// `application/graphql-response+json` when the client accepts it at least as much as
-    /// `application/json`, and when it sends no `Accept`, which the specification reads that way
-    /// from its 2025-01-01 watershed on; `application/json` when it prefers that, or accepts
-    /// neither.
-    fn negotiate(headers: &HeaderMap) -> Media {
+    /// `application/json`, and when it sends no `Accept`, which the draft leaves to the server;
+    /// `application/json` when it prefers that; the legacy rule when it accepts `application/json`
+    /// alone. An `Accept` naming neither is the 406 of [`not_acceptable`].
+    fn negotiate(headers: &HeaderMap) -> Result<Media, BoxError> {
         let ranges = accept_ranges(headers);
         if ranges.is_empty() {
-            return Media::GraphqlResponse;
+            return Ok(Media::GraphqlResponse);
         }
         let graphql = quality(&ranges, "application", "graphql-response+json");
         let json = quality(&ranges, "application", "json");
-        if graphql > 0 && graphql >= json { Media::GraphqlResponse } else { Media::Json }
+        match (graphql, json) {
+            (0, 0) => Err(not_acceptable()),
+            (0, _) => Ok(Media::Legacy),
+            (graphql, json) if graphql >= json => Ok(Media::GraphqlResponse),
+            _ => Ok(Media::Json),
+        }
     }
 
-    fn content_type(self) -> HeaderValue {
+    /// The `Content-Type` for a response of `status`: the legacy rule's `application/json` for a
+    /// `2xx` only, every other legacy response keeping `application/graphql-response+json`, by
+    /// which a client tells a GraphQL error from an intermediary's.
+    fn content_type(self, status: StatusCode) -> HeaderValue {
         match self {
-            Media::GraphqlResponse => HeaderValue::from_static("application/graphql-response+json; charset=utf-8"),
-            Media::Json => HeaderValue::from_static("application/json; charset=utf-8"),
+            Media::GraphqlResponse => HeaderValue::from_static(GRAPHQL_RESPONSE),
+            Media::Json => HeaderValue::from_static(JSON),
+            Media::Legacy if status.is_success() => HeaderValue::from_static(JSON),
+            Media::Legacy => HeaderValue::from_static(GRAPHQL_RESPONSE),
         }
     }
+}
 
-    /// GraphQL-over-HTTP's status: under `application/graphql-response+json` 200 for a request
-    /// that executed, errors included, and 400 for one that failed before execution; under the
-    /// legacy `application/json`, 200 for every GraphQL response. A request the server failed is
-    /// 500 under both, the fault being the server's and no document's.
-    fn status(self, outcome: Outcome) -> StatusCode {
-        match (self, outcome) {
-            (_, Outcome::Failed) => StatusCode::INTERNAL_SERVER_ERROR,
-            (Media::GraphqlResponse, Outcome::RequestError) => StatusCode::BAD_REQUEST,
-            _ => StatusCode::OK,
-        }
+/// GraphQL-over-HTTP's status, the same under every media type: 200 for a request that executed,
+/// errors included; for a request error 400 when its body or document does not parse and 422
+/// otherwise, a request error whose fault the engine did not name included; 500 for a request the
+/// server failed, the fault being the server's and no document's.
+fn status(response: &GqlResponse) -> StatusCode {
+    match response.outcome() {
+        Outcome::Executed => StatusCode::OK,
+        Outcome::Failed => StatusCode::INTERNAL_SERVER_ERROR,
+        Outcome::RequestError => match response.fault() {
+            Some(RequestFault::Encoding | RequestFault::Syntax) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::UNPROCESSABLE_ENTITY,
+        },
     }
 }
 
@@ -226,24 +275,35 @@ fn is_json(headers: &HeaderMap) -> bool {
 }
 
 /// A query parameter holding JSON text, as an object; absent and `null` alike are `None`. Text
-/// that is not a JSON object is a request error.
+/// that is not a JSON object is a request that is not well-formed: the draft asks for `variables`
+/// and `extensions` as maps, and a GET carries no body whose JSON could fail to parse.
 fn json_object(text: Option<&str>, name: &str) -> Result<Option<Map<String, Value>>, GqlResponse> {
     let Some(text) = text else { return Ok(None) };
     serde_json::from_str::<Option<Map<String, Value>>>(text)
-        .map_err(|error| request_error(&format!("`{name}` is not a JSON object: {error}")))
+        .map_err(|error| request_error(RequestFault::NotWellFormed, &format!("`{name}` is not a JSON object: {error}")))
 }
 
-fn request_error(message: &str) -> GqlResponse {
-    GqlResponse::request_error(vec![GqlError::new(message)])
+fn request_error(fault: RequestFault, message: &str) -> GqlResponse {
+    GqlResponse::request_fault(fault, vec![GqlError::new(message)])
 }
 
 /// `response` in `media`, with the status GraphQL-over-HTTP gives its outcome.
 fn render(response: &GqlResponse, media: Media) -> Result<Response, BoxError> {
     let body = serde_json::to_vec(response).map_err(IntoReplyError::new)?;
     let mut reply = Response::new(HttpBody::from_bytes(body));
-    *reply.status_mut() = media.status(response.outcome());
-    reply.headers_mut().insert(CONTENT_TYPE, media.content_type());
+    let status = status(response);
+    *reply.status_mut() = status;
+    reply.headers_mut().insert(CONTENT_TYPE, media.content_type(status));
     Ok(reply)
+}
+
+/// The 406 for an `Accept` naming neither JSON type: a `BadRequest` whose source is
+/// [`NotAcceptable`], offered to the error handlers and rendered 406 as a problem document when
+/// none claims it. The draft rules out `application/graphql-response+json` for it, a response
+/// that no GraphQL result is part of.
+fn not_acceptable() -> BoxError {
+    let refused = NotAcceptable::new(["application/graphql-response+json", "application/json"]);
+    BoxError::from(CallError::new(ErrorKind::BadRequest, refused.to_string()).with_source(refused))
 }
 
 /// The 405 for a GET whose operation is a mutation, which the specification forbids executing:

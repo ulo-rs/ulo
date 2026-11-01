@@ -6,12 +6,15 @@ use crate::wire::{Exchange, has_header, same_as_reference, start, status_of};
 use crate::{Host, Mode};
 use ulo_transport::ExtractError;
 
-/// Each extraction failure's status, 400, 413, 415 and 422, with its problem document.
+/// Each extraction failure's status, 400, 413, 415 and 422, with its problem document: a body that
+/// is not JSON 400, JSON that does not fit the type 422, as a violated validation rule is.
 pub async fn failures<H: Host>(mode: Mode) {
     let host = start::<H>(mode).await;
     let json = "application/json";
     let cases = [
         (Exchange::get("/page?page=many"), 400),
+        (Exchange::new(Method::POST, "/json").header("content-type", json).body("{not json"), 400),
+        (Exchange::new(Method::POST, "/json").header("content-type", json).body(r#"{"wrong":1}"#), 422),
         (
             Exchange::new(Method::POST, "/small").header("content-type", json).body(r#"{"name":"far-too-long-for-sixteen"}"#),
             413,

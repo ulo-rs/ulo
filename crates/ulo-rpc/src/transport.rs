@@ -3,7 +3,6 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use futures_channel::mpsc::UnboundedReceiver;
 use futures_core::Stream;
 use futures_core::stream::BoxStream;
 use futures_util::StreamExt;
@@ -14,6 +13,7 @@ use ulo_transport::{CallError, ExtractError, FromCall, IntoReply, IntoReplyError
 use crate::codec::Codec;
 use crate::frame::Data;
 use crate::link::Pattern;
+use crate::queue::Drain;
 
 /// The RPC transport, key `"rpc"`: one execution per call or event. `#[guards(rpc = ..)]` scopes an
 /// entry to its handlers. Its inputs, [`CallHeaders`] and [`LinkInfo`], are seeded into every
@@ -52,10 +52,10 @@ pub(crate) struct CxInner {
 }
 
 /// What a call carries as its payload: one `d`, or a streamed request's `in` items until
-/// `in_end`, which closes the channel.
+/// `in_end`, which closes the queue, held up to the server's `max_queued_items`.
 pub(crate) enum Body {
     Data(Data),
-    Stream(UnboundedReceiver<Data>),
+    Stream(Drain<Data>),
 }
 
 impl RpcCx {

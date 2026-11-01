@@ -1,5 +1,6 @@
 //! Section 10.1 step 1, the module graph: import cycles, re-exports, exports of unbound keys,
-//! inputs declared by keyed modules and a keyed module keyed again. Each test makes `wire()` fail with one `WiringError` variant
+//! inputs declared by keyed modules, a keyed module keyed again and two registrations of one
+//! identity with different settings. Each test makes `wire()` fail with one `WiringError` variant
 //! and asserts the variant and its fields.
 //!
 //! Capabilities pinned: 29 (an export is the only exit, `ExportNotBound`), 34 (re-export and its
@@ -9,8 +10,10 @@
 #[macro_use]
 mod common;
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use common::*;
-use ulo::{Key, Module, TypeName, WiringError};
+use ulo::{DifferingSetting, DynamicModule, Key, Module, ModuleDef, ModuleIdentity, ModuleSettings, ModuleSite, TypeName, WiringError};
 
 struct A;
 struct B;
@@ -251,4 +254,219 @@ fn a_module_keyed_once_is_accepted() {
         })
         .keyed::<Outer>());
     }));
+}
+
+/// A configured module: `options` is its identity, `knob` and `mode` settings outside it.
+struct Pool {
+    options: &'static str,
+    knob: u32,
+    mode: &'static str,
+}
+
+impl Pool {
+    fn new(options: &'static str, knob: u32) -> Self {
+        Pool { options, knob, mode: "plain" }
+    }
+}
+
+impl Module for Pool {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_owner::<Pool, _>(&self.options)
+    }
+
+    fn settings(&self) -> ModuleSettings {
+        ModuleSettings::new().with("knob", self.knob).with("mode", self.mode)
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.value(Svc);
+        m.export::<Svc>();
+    }
+}
+
+/// Each setting as `(name, first value, second value)`.
+fn sides(settings: &[DifferingSetting]) -> Vec<(&'static str, Option<String>, Option<String>)> {
+    settings.iter().map(|setting| (setting.name, setting.first.clone(), setting.second.clone())).collect()
+}
+
+static FIRST: AtomicU32 = AtomicU32::new(0);
+static AGAIN: AtomicU32 = AtomicU32::new(0);
+
+/// Planted break: `enter` returning the claimed node without comparing settings.
+#[test]
+fn a_second_import_of_one_identity_with_other_settings_is_refused_naming_both_sites() {
+    #[rustfmt::skip]
+    let root = Mod::<A>::new(|m| {
+        m.import(Pool::new("db", 5)); FIRST.store(line!(), Ordering::SeqCst);
+        m.import(Mod::<B>::new(|m| {
+            m.import(Pool::new("db", 10)); AGAIN.store(line!(), Ordering::SeqCst);
+        }));
+    });
+    let errors = wire_err(root);
+    let (module, first, second, settings) = entry!(errors, WiringError::DifferingSettings { module, first, second, settings } =>
+        (module.to_string(), first.clone(), second.clone(), settings.clone()));
+    assert_eq!(module, "Pool");
+    let site = |site: &ModuleSite| match site {
+        ModuleSite::Import { importer, at } => (importer.to_string(), at.file().to_owned(), at.line()),
+        other => panic!("expected an import site, got {other:?}"),
+    };
+    assert_eq!(site(&first), (mod_name::<A>(), file!().to_owned(), FIRST.load(Ordering::SeqCst)), "the import that claimed the identity");
+    assert_eq!(site(&second), (mod_name::<B>(), file!().to_owned(), AGAIN.load(Ordering::SeqCst)), "the later import");
+    assert_eq!(sides(&settings), [("knob", Some("5".to_owned()), Some("10".to_owned()))], "only the setting that differs");
+    assert_eq!(errors.len(), 1, "{errors}");
+
+    let expected = format!(
+        "two registrations of Pool differ in `knob`\n\
+         ├─ imported by {a} at {file}:{first} with `knob` = 5\n\
+         ├─ imported again by {b} at {file}:{again} with `knob` = 10\n\
+         └─ help: an equal identity is one module, registered once; write the same settings at both, or key one with `.keyed::<Q>()` to make it a second instance",
+        a = mod_name::<A>(),
+        b = mod_name::<B>(),
+        file = file!(),
+        first = FIRST.load(Ordering::SeqCst),
+        again = AGAIN.load(Ordering::SeqCst),
+    );
+    assert_eq!(errors.iter().next().map(ToString::to_string), Some(expected));
+}
+
+/// Every differing setting is named, in the order the first registration wrote them, and a
+/// setting equal on both sides is left out.
+#[test]
+fn every_setting_that_differs_is_named() {
+    let root = Mod::<A>::new(|m| {
+        m.import(Pool { options: "db", knob: 1, mode: "plain" });
+        m.import(Pool { options: "db", knob: 2, mode: "tls" });
+    });
+    let errors = wire_err(root);
+    let names = entry!(errors, WiringError::DifferingSettings { settings, .. } =>
+        settings.iter().map(|setting| setting.name).collect::<Vec<_>>());
+    assert_eq!(names, ["knob", "mode"]);
+    let text = errors.to_string();
+    assert!(text.contains("differ in `knob`, `mode`"), "{text}");
+    assert!(text.contains("with `knob` = 1, `mode` = \"plain\""), "{text}");
+
+    let errors = wire_err(Mod::<A>::new(|m| {
+        m.import(Pool { options: "db", knob: 1, mode: "plain" });
+        m.import(Pool { options: "db", knob: 1, mode: "tls" });
+    }));
+    let names = entry!(errors, WiringError::DifferingSettings { settings, .. } =>
+        settings.iter().map(|setting| setting.name).collect::<Vec<_>>());
+    assert_eq!(names, ["mode"]);
+}
+
+/// Planted break: `Keyed::settings` left at the trait's default.
+#[test]
+fn a_keyed_module_compares_the_settings_of_the_module_it_keys() {
+    let errors = wire_err(Mod::<A>::new(|m| {
+        m.import(Pool::new("db", 1).keyed::<Primary>());
+        m.import(Pool::new("db", 2).keyed::<Primary>());
+    }));
+    let module = entry!(errors, WiringError::DifferingSettings { module, .. } => module.to_string());
+    assert_eq!(module, format!("Pool @ {}", TypeName::of::<Primary>()));
+}
+
+/// Planted break: `DynamicModule::settings` answering none.
+#[test]
+fn a_dynamic_module_compares_the_settings_it_was_given() {
+    struct Owner;
+    let dynamic = |knob: u32| {
+        DynamicModule::new::<Owner, _>("cfg", |m| {
+            m.value(Svc);
+            m.export::<Svc>();
+        })
+        .with_settings(ModuleSettings::new().with("knob", knob))
+    };
+    let errors = wire_err(Mod::<A>::new(move |m| {
+        m.import(dynamic(1));
+        m.import(dynamic(2));
+    }));
+    let settings = entry!(errors, WiringError::DifferingSettings { settings, .. } => settings.clone());
+    assert_eq!(sides(&settings), [("knob", Some("1".to_owned()), Some("2".to_owned()))]);
+}
+
+#[tokio::test]
+async fn two_imports_with_equal_settings_are_one_module() {
+    let app = connects(Mod::<A>::new(|m| {
+        m.import(Pool::new("db", 5));
+        m.import(Mod::<B>::new(|m| m.import(Pool::new("db", 5))));
+    }))
+    .await;
+    app.module::<Pool>().unwrap_or_else(|error| panic!("one module under the identity: {error}"));
+}
+
+#[tokio::test]
+async fn other_options_are_another_identity_whatever_the_settings() {
+    let app = connects(Mod::<A>::new(|m| {
+        m.import(Pool::new("primary", 5).keyed::<Primary>());
+        m.import(Pool::new("replica", 10).keyed::<Outer>());
+        // Each in a module of its own, so no module sees two `Svc`s.
+        m.import(Mod::<B>::new(|m| m.import(Pool::new("a", 5))));
+        m.import(Mod::<C>::new(|m| m.import(Pool::new("b", 10))));
+    }))
+    .await;
+    let lookup = app.module::<Pool>().map(drop);
+    assert!(matches!(lookup, Err(ulo::LookupError::AmbiguousModule { .. })), "two unkeyed modules: {lookup:?}");
+}
+
+#[tokio::test]
+async fn two_keyed_instances_of_equal_options_with_other_settings_are_two_modules() {
+    let app = connects(Mod::<A>::new(|m| {
+        m.import(Pool::new("db", 5).keyed::<Primary>());
+        m.import(Pool::new("db", 10).keyed::<Outer>());
+    }))
+    .await;
+    app.module_keyed::<Pool, Primary>().unwrap_or_else(|error| panic!("the first instance: {error}"));
+    app.module_keyed::<Pool, Outer>().unwrap_or_else(|error| panic!("the second instance: {error}"));
+}
+
+/// A setting one registration writes and the other does not is named, the side without it
+/// printed `unset`. Planted break: `differences` leaving out the names only the second has.
+#[test]
+fn a_setting_only_the_second_registration_writes_is_named_unset_on_the_first() {
+    struct Optional(Option<u32>);
+    impl Module for Optional {
+        fn identity(&self) -> ModuleIdentity {
+            ModuleIdentity::of_owner::<Optional, _>(&"db")
+        }
+
+        fn settings(&self) -> ModuleSettings {
+            match self.0 {
+                Some(extra) => ModuleSettings::new().with("extra", extra),
+                None => ModuleSettings::new(),
+            }
+        }
+
+        fn register(&self, _: &mut ModuleDef<'_>) {}
+    }
+    let errors = wire_err(Mod::<A>::new(|m| {
+        m.import(Optional(None));
+        m.import(Optional(Some(3)));
+    }));
+    let settings = entry!(errors, WiringError::DifferingSettings { settings, .. } => settings.clone());
+    assert_eq!(sides(&settings), [("extra", None, Some("3".to_owned()))]);
+    let text = errors.to_string();
+    assert!(text.contains("with `extra` unset"), "{text}");
+    assert!(text.contains("with `extra` = 3"), "{text}");
+}
+
+mod one {
+    pub struct Host;
+}
+
+mod two {
+    pub struct Host;
+}
+
+/// Two importers whose short names collide print in full. Planted break: the entry's
+/// `module_names` leaving out the importers.
+#[test]
+fn importers_sharing_a_short_name_are_printed_in_full() {
+    let errors = wire_err(Mod::<A>::new(|m| {
+        m.import(Mod::<one::Host>::new(|m| m.import(Pool::new("db", 1))));
+        m.import(Mod::<two::Host>::new(|m| m.import(Pool::new("db", 2))));
+    }));
+    let text = errors.to_string();
+    for full in ["one::Host", "two::Host"] {
+        assert!(text.contains(full), "{full} not printed in full:\n{text}");
+    }
 }

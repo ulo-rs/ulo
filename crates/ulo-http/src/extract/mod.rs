@@ -5,8 +5,9 @@
 //!
 //! `Json`, `Form`, `Bytes`, `BodyStream` and `Multipart` consume the body, so a handler declares at
 //! most one of them, checked at compile time. A body over the route's limit fails with 413 before
-//! deserialization. Every failure is an `ExtractError`: 400, 413, 415 or 422 by variant, field
-//! violations in the problem document's `details`.
+//! deserialization. Every failure is an `ExtractError`: 400, 413, 415, 422 or 500 by variant,
+//! field violations in the problem document's `details`. A body that does not parse is 400, and one
+//! that parses and does not fit its type, or fails `Valid`'s rules, is 422.
 
 mod body;
 mod de;

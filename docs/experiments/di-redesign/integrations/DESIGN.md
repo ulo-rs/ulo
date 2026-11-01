@@ -306,6 +306,7 @@ impl Store for Postgres {
 - **The health check.** `contribute::<dyn Check>()` with a check that runs `ping` through `spawn_with`, named `S::NAME`, `S::NAME@path` for a module read from a section, and with ` @ Q` appended for a module keyed by `Q`, `Q` written short as a report writes a type (§4.3, I17); omitted under `.without_health_check()` (§3.1).
 - **The close.** `.on_destroy(close)`, run through `spawn_with`, under the hook's bound (§4.7).
 - **The export.** `S::Client`, bare, so a consumer writes `Dep<sqlx::PgPool>` [12].
+- **The settings.** The builder knobs are outside the identity and are the module's `Module::settings` (DESIGN §8.3): `lazy`, `without_health_check`, `connect_within`, `retries`, `backoff`, `migrate` and `migrate_within`. Two imports with equal options and equal settings are one module; with other settings `wire()` refuses the second as `DifferingSettings`, naming both import sites and each knob that differs. A migrator has no value to compare, so `migrate` compares the `.migrate(..)` call that set it: two calls naming one migrator differ, and a store built by one function that both importers call does not.
 
 ```rust
 fn register(&self, m: &mut ModuleDef<'_>) {      // the root module's, as in §2.2

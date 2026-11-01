@@ -15,10 +15,11 @@ use crate::binding::handle::{Binding, Handle, Open, Set};
 use crate::binding::{BindingRecord, Qualifier, Recipe, erase_construct, instance_of};
 use crate::construct::Construct;
 use crate::dependency::Dependencies;
+use crate::graph::register::Site;
 use crate::hooks::{HookFn, HookKind, HookRecord, erase_trait_hooks};
 use crate::key::{BindingKind, Key};
 use crate::module::Module;
-use crate::module::ModuleIdentity;
+use crate::module::{ModuleIdentity, ModuleSettings};
 use crate::module::meta::{Meta, MetaMap};
 use crate::redact::Secret;
 use crate::scope::{Auto, PerExecution, Scope, ScopeKind, Singleton, Transient};
@@ -42,9 +43,11 @@ impl<'a> ModuleDef<'a> {
     }
 
     /// Imports `module`: this module sees its exports. Two imports of an equal identity, from
-    /// anywhere in the graph, are one module.
+    /// anywhere in the graph, are one module, and must carry equal
+    /// [`settings`](Module::settings).
+    #[track_caller]
     pub fn import<M: Module>(&mut self, module: M) {
-        self.node.imports.push(ImportRecord { module: Box::new(module) });
+        self.node.imports.push(ImportRecord { module: Box::new(module), at: Location::caller() });
     }
 
     /// Makes this module's exports visible to every module.
@@ -564,6 +567,10 @@ pub(crate) struct ModuleNode {
     pub(crate) secrets: Vec<String>,
     /// `try_value` errors, redacted when `wire()` reports them.
     pub(crate) failures: Vec<ValueFailure>,
+    /// `Module::settings` of the registration that claimed the identity.
+    pub(crate) settings: ModuleSettings,
+    /// Where that registration was reached.
+    pub(crate) site: Site,
 }
 
 impl ModuleNode {
@@ -584,12 +591,15 @@ impl ModuleNode {
             meta: MetaMap::default(),
             secrets: Vec::new(),
             failures: Vec::new(),
+            settings: ModuleSettings::new(),
+            site: Site::Root,
         }
     }
 }
 
 pub(crate) struct ImportRecord {
     pub(crate) module: Box<dyn Module>,
+    pub(crate) at: &'static Location<'static>,
 }
 
 pub(crate) struct ExportRecord {

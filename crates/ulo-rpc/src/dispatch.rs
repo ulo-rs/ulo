@@ -26,7 +26,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::Poll;
 use std::time::Duration;
 
-use futures_channel::mpsc::{self, UnboundedSender};
 use futures_core::stream::BoxStream;
 use futures_util::StreamExt;
 use futures_util::future::{Either, select};
@@ -42,6 +41,7 @@ use crate::handler::{HandlerFn, Kind};
 use crate::codec::Codec;
 use crate::frame::{Data, ErrorBody, Frame};
 use crate::link::{Ack, Capabilities, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Pattern, ReplyPath};
+use crate::queue::{self, Feed, Halted};
 use crate::trace;
 use crate::transport::{Body, CallHeaders, CxInner, LinkInfo, NoHandler, Reply, Rpc, RpcCx};
 
@@ -62,6 +62,8 @@ pub(crate) struct Shared {
     pub(crate) admission: Admission,
     /// `Server::timeout_grace` as a duration; `None` waits for the error handlers.
     pub(crate) grace: Option<Duration>,
+    /// `Server::max_queued_items` as a limit; `None` for `Count::Unlimited`.
+    pub(crate) queued: Option<usize>,
     pub(crate) calls: Mutex<HashMap<u64, Live>>,
     pub(crate) serial: AtomicU64,
     /// Events no handler took, counted for the log line each one writes.
@@ -107,8 +109,9 @@ pub(crate) struct Live {
     /// Tells this registration from a later one under the same id.
     serial: u64,
     exec: ExecutionRef,
-    /// `None` once `in_end` arrived, and for a call whose request is not streamed.
-    inbound: Option<UnboundedSender<Data>>,
+    /// `None` once `in_end` arrived or the queue overflowed, and for a call whose request is not
+    /// streamed.
+    inbound: Option<Feed<Data>>,
 }
 
 impl Shared {
@@ -131,7 +134,7 @@ struct Incoming {
     pattern: String,
     headers: CallHeaders,
     body: Body,
-    feed: Option<UnboundedSender<Data>>,
+    feed: Option<Feed<Data>>,
 }
 
 /// Routes one delivery, in arrival order: a call is opened and spawned into `tasks`; a frame for a
@@ -148,17 +151,31 @@ pub(crate) fn accept(shared: &Arc<Shared>, delivery: Delivery, tasks: &mut TaskS
             start(shared, incoming, reply, ack, tasks);
         }
         Frame::Open { id, pattern, headers } => {
-            // Unbounded: the reserved `credit` frame is the window a bound needs, and blocking here
-            // would stall every call on the link behind one slow handler.
-            let (feed, items) = mpsc::unbounded();
+            let (feed, items) = queue::queue(shared.queued);
             let incoming =
                 Incoming { id: Some(id), arrived: Arrived::Open, pattern, headers, body: Body::Stream(items), feed: Some(feed) };
             start(shared, incoming, reply, ack, tasks);
         }
         Frame::In { id, data } => {
-            let feed = shared.calls().get(&id).and_then(|live| live.inbound.clone());
-            if let Some(feed) = feed {
-                let _ = feed.unbounded_send(data);
+            // Offered, never awaited: waiting for room here would stall every call on the link
+            // behind one handler that does not read.
+            let overflowed = {
+                let mut calls = shared.calls();
+                match calls.get_mut(&id) {
+                    Some(live) if live.inbound.as_ref().is_some_and(|feed| !feed.offer(data)) => {
+                        if let Some(feed) = live.inbound.take() {
+                            feed.halt();
+                        }
+                        Some(live.exec.clone())
+                    }
+                    _ => None,
+                }
+            };
+            // The halt wakes a reader on any task, and its next read fails; the call's task answers
+            // `overflow` whether the cancellation or the handler's answer reaches it first, and
+            // the client's pump stops sending when that answer ends the call.
+            if let Some(exec) = overflowed {
+                exec.cancel_with(CancelReason::Explicit);
             }
             ack.ack();
         }
@@ -236,6 +253,7 @@ fn start(shared: &Arc<Shared>, incoming: Incoming, reply: Option<ReplyPath>, ack
     exec.seed(incoming.headers.clone());
     exec.seed(link.clone());
     let handle = exec.handle();
+    let halted = incoming.feed.as_ref().map(Feed::halted);
     let registered = incoming.id.map(|id| {
         let serial = shared.serial.fetch_add(1, Ordering::Relaxed);
         shared.calls().insert(id, Live { serial, exec: handle.clone(), inbound: incoming.feed });
@@ -252,6 +270,7 @@ fn start(shared: &Arc<Shared>, incoming: Incoming, reply: Option<ReplyPath>, ack
         answered,
         ack,
         deadline,
+        halted,
         _registered: registered,
         permit,
     };
@@ -300,7 +319,7 @@ fn unhandled(shared: &Arc<Shared>, incoming: Incoming, link: LinkInfo, reply: Op
             async move {
                 let handle = exec.handle();
                 let outcome = ulo::recover::<Rpc>(None, &handle, &cx, BoxError::from(error)).await;
-                answer(&shared, None, &handle, &cx, &reply, id, Outcome::Done(outcome), &mut None).await;
+                answer(&shared, None, &handle, &cx, &reply, id, Outcome::Done(outcome), &mut None, None).await;
                 ack.ack();
                 drop(exec);
             }
@@ -322,13 +341,15 @@ struct Call {
     answered: Option<(u64, ReplyPath)>,
     ack: Ack,
     deadline: Option<Duration>,
+    /// Whether the streamed request's queue overflowed, for a call whose request is streamed.
+    halted: Option<Halted>,
     _registered: Option<Registered>,
     permit: Permit,
 }
 
 impl Call {
     async fn run(self) {
-        let Call { shared, route, exec, cx, arrived, answered, ack, deadline, _registered, permit } = self;
+        let Call { shared, route, exec, cx, arrived, answered, ack, deadline, halted, _registered, permit } = self;
         let handle = exec.handle();
         let mut deadline = deadline.map(|after| shared.timer.sleep(after));
         let outcome = match mismatch(arrived, &route, cx.pattern()) {
@@ -340,6 +361,7 @@ impl Call {
                 let call = Arc::clone(&route.call);
                 let dispatching = ulo::dispatch(&route.handler, &handle, &cx, move |cx| (*call)(cx));
                 match until_ended(&handle, &mut deadline, dispatching).await {
+                    Ended::Done(_) if overflowed(halted.as_ref()) => Outcome::Cancelled(cut_short(&handle)),
                     Ended::Done(outcome) => Outcome::Done(outcome),
                     Ended::Cancelled(Some(CancelReason::Deadline)) => {
                         Outcome::Expired(expired(&shared, &route.handler, &handle, &cx).await)
@@ -375,7 +397,7 @@ impl Call {
                         let error = ErrorBody::new(ErrorKind::Internal, message, Details::new().with(reason("shape_mismatch")));
                         send(&reply, &handle, id, Frame::Err { id, error }).await;
                     }
-                    None => answer(&shared, Some(&route.handler), &handle, &cx, &reply, id, outcome, &mut deadline).await,
+                    None => answer(&shared, Some(&route.handler), &handle, &cx, &reply, id, outcome, &mut deadline, halted.as_ref()).await,
                 }
                 // Freed before the settlement: a link declaring `native_backpressure` lets its
                 // broker hand over the next request once the `Ack` settles, and that request must
@@ -482,6 +504,7 @@ async fn answer(
     id: u64,
     outcome: Outcome,
     deadline: &mut Option<BoxFuture<'static, ()>>,
+    halted: Option<&Halted>,
 ) {
     match outcome {
         Outcome::Done(Ok(Reply::None)) | Outcome::Expired(Some(Ok(Reply::None))) => {
@@ -491,7 +514,7 @@ async fn answer(
             send(reply, exec, id, Frame::Res { id, data }).await;
         }
         Outcome::Done(Ok(Reply::Many(stream))) => {
-            stream_reply(shared, handler, exec, cx, reply, id, stream, deadline).await;
+            stream_reply(shared, handler, exec, cx, reply, id, stream, deadline, halted).await;
         }
         Outcome::Expired(Some(Ok(Reply::Many(stream)))) => {
             // The error handlers answered with this stream, so it is the reply, dropped unwritten:
@@ -513,7 +536,7 @@ async fn answer(
         Outcome::Expired(None) => {
             send(reply, exec, id, Frame::Err { id, error: timed_out() }).await;
         }
-        Outcome::Cancelled(reason) => cancelled(reply, exec, id, reason).await,
+        Outcome::Cancelled(reason) => cancelled(reply, exec, id, reason, halted).await,
     }
 }
 
@@ -532,6 +555,7 @@ async fn stream_reply(
     id: u64,
     stream: BoxStream<'static, Result<Data, BoxError>>,
     deadline: &mut Option<BoxFuture<'static, ()>>,
+    halted: Option<&Halted>,
 ) {
     if !shared.capabilities.shapes.iter().any(|shape| matches!(shape, Shape::ServerStreaming | Shape::Bidi)) {
         drop(stream);
@@ -542,6 +566,7 @@ async fn stream_reply(
     let mut stream = Tracked::new(stream, exec.clone());
     loop {
         match until_ended(exec, deadline, stream.next()).await {
+            Ended::Done(_) if overflowed(halted) => return cancelled(reply, exec, id, cut_short(exec), halted).await,
             Ended::Done(Some(Ok(data))) => {
                 passed(exec, deadline).await;
                 if !send(reply, exec, id, Frame::Item { id, data }).await {
@@ -560,7 +585,7 @@ async fn stream_reply(
                 send(reply, exec, id, Frame::End { id }).await;
                 return;
             }
-            Ended::Cancelled(reason) => return cancelled(reply, exec, id, reason).await,
+            Ended::Cancelled(reason) => return cancelled(reply, exec, id, reason, halted).await,
         }
     }
 }
@@ -593,15 +618,41 @@ async fn late(handler: Option<&MountedHandler<Rpc>>, exec: &ExecutionRef, cx: &R
 
 /// What a cancelled call writes: nothing to a caller that left or cancelled, `timeout` at the
 /// deadline, `unavailable` at the drain's end (the shutdown phrase every refusal carries) or an
-/// explicit cancel.
-async fn cancelled(reply: &ReplyPath, exec: &ExecutionRef, id: u64, reason: Option<CancelReason>) {
-    let error = match reason {
-        Some(CancelReason::ClientCancelled | CancelReason::Disconnected) => return,
-        Some(CancelReason::Deadline) => timed_out(),
-        Some(CancelReason::Drain) => ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()),
+/// explicit cancel, and `unavailable` with the reason `overflow` for a call cancelled because its
+/// streamed request's queue overflowed.
+async fn cancelled(reply: &ReplyPath, exec: &ExecutionRef, id: u64, reason: Option<CancelReason>, halted: Option<&Halted>) {
+    // Only an unlimited queue has no limit, and it never overflows.
+    let overflow = halted.filter(|halted| halted.get()).and_then(Halted::limit);
+    let error = match (reason, overflow) {
+        (Some(CancelReason::ClientCancelled | CancelReason::Disconnected), _) => return,
+        (Some(CancelReason::Deadline), _) => timed_out(),
+        (Some(CancelReason::Drain), _) => ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()),
+        (Some(CancelReason::Explicit), Some(limit)) => overflow_answer(limit),
         _ => ErrorBody::new(ErrorKind::Unavailable, "the call was cancelled", Details::new()),
     };
     send(reply, exec, id, Frame::Err { id, error }).await;
+}
+
+/// Whether the call's streamed request overflowed. The halt wakes the request's reader before the
+/// call is cancelled, so a handler can answer from the failed read, or its reply stream yield, in
+/// the poll that would have observed the cancellation; that answer is not the call's.
+fn overflowed(halted: Option<&Halted>) -> bool {
+    halted.is_some_and(Halted::get)
+}
+
+/// The cancel reason of a call whose request overflowed: `Explicit`, the overflow's own, unless
+/// another reason landed first.
+fn cut_short(exec: &ExecutionRef) -> Option<CancelReason> {
+    exec.cancel_with(CancelReason::Explicit);
+    exec.cancel_reason()
+}
+
+/// The answer to a call whose streamed request queued `limit` items its handler had not read.
+fn overflow_answer(limit: usize) -> ErrorBody {
+    let message = format!(
+        "the streamed request had {limit} items waiting for its handler, the server's `max_queued_items`, and the next one ended the call"
+    );
+    ErrorBody::new(ErrorKind::Unavailable, message, Details::new().with(reason("overflow")))
 }
 
 /// Sends one frame; `false` when it did not reach the caller. A frame over the link's limit, or

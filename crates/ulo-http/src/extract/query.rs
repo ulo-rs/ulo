@@ -12,7 +12,9 @@ use crate::transport::Http;
 /// empty one, so a `T` whose fields are all optional or defaulted always extracts.
 ///
 /// A required field the query lacks is `ExtractError::Missing` naming it, so `Option<Query<T>>` is
-/// `None` then; a value that does not parse is `Malformed` naming it.
+/// `None` then; a value that does not parse is `Malformed` naming it. Both are 400: the query is
+/// part of the request's target rather than its content, so the 422 a body that does not fit its
+/// type answers does not apply.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Query<T>(pub T);
 

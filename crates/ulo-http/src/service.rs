@@ -21,7 +21,7 @@ use ulo_transport::{Admission, CallError, ErrorKind, Permit, span};
 
 use crate::backend::HttpConfig;
 use crate::body::HttpBody;
-use crate::cx::{CxInner, HttpCx, MatchedRoute, PathParams};
+use crate::cx::{BodySlot, CxInner, HttpCx, MatchedRoute, PathParams};
 use crate::limits::MB;
 use crate::embed::{Forwardable, OriginalPath};
 use crate::miss::{MethodNotAllowed, NoRoute};
@@ -529,7 +529,7 @@ impl ServiceInner {
                 head,
                 conn,
                 route,
-                body: Mutex::new(body),
+                body: Mutex::new(BodySlot::new(body)),
                 upgrade: Mutex::new(upgrade),
                 response_headers: Mutex::new(HeaderMap::new()),
                 config: Arc::clone(&self.config),

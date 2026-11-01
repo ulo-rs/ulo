@@ -30,6 +30,15 @@ pub trait Module: Send + Sync + 'static {
     /// Declare everything. Synchronous and free of I/O.
     fn register(&self, m: &mut ModuleDef<'_>);
 
+    /// What this module is configured with outside its identity. A second import of an equal
+    /// identity registers nothing, so it must carry the same settings: `wire()` refuses one that
+    /// differs as `WiringError::DifferingSettings`, naming both import sites and each setting
+    /// that differs. A module whose identity holds all of its configuration has none, the
+    /// default.
+    fn settings(&self) -> ModuleSettings {
+        ModuleSettings::new()
+    }
+
     /// This module as a keyed instance: inside it injection points stay unqualified, and at its
     /// export boundary every unqualified export, re-exports included, is requalified as `T @ Q`.
     /// `DbModule::for_root(url).keyed::<Primary>()`.
@@ -43,7 +52,7 @@ pub trait Module: Send + Sync + 'static {
 
 /// Who a module is: its type, plus its configuration value if it has one, plus a qualifier if
 /// it is keyed. Two configurations of one type are two modules; the same configuration imported
-/// twice is one.
+/// twice is one, its [`settings`](Module::settings) equal in both imports.
 ///
 /// Equality and hashing ignore the label. The configuration's `Debug` output is never printed,
 /// because it may hold credentials.
@@ -122,6 +131,55 @@ impl Hash for ModuleIdentity {
         self.ty.hash(state);
         self.qualifier.hash(state);
         self.config.as_ref().map(|c| c.hash).hash(state);
+    }
+}
+
+/// The settings a module answers from [`Module::settings`]: each a name and its value as `Debug`
+/// writes it, in the order written. Two imports compare by that text, so a value whose `Debug`
+/// text differs between equal values, a `HashMap` iterating in another order or a pointer, makes
+/// two equal registrations differ.
+///
+/// A wiring report prints the values. A credential belongs in the identity, whose configuration
+/// is never printed.
+///
+/// ```
+/// # use std::time::Duration;
+/// # use ulo::ModuleSettings;
+/// let settings = ModuleSettings::new().with("connect_within", Duration::from_secs(5)).with("lazy", false);
+/// assert_ne!(settings, ModuleSettings::new().with("connect_within", Duration::from_secs(10)).with("lazy", false));
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ModuleSettings {
+    entries: Vec<(&'static str, String)>,
+}
+
+impl ModuleSettings {
+    pub fn new() -> Self {
+        ModuleSettings::default()
+    }
+
+    /// Records the setting `name` with `value` written by `Debug`.
+    pub fn with(mut self, name: &'static str, value: impl fmt::Debug) -> Self {
+        self.entries.push((name, format!("{value:?}")));
+        self
+    }
+
+    /// Each setting whose value differs between `self` and `other`, or that one of them lacks, as
+    /// `(name, self's value, other's value)`; a missing value is `None`. In `self`'s order, then
+    /// the names only `other` has.
+    pub(crate) fn differences(&self, other: &ModuleSettings) -> Vec<(&'static str, Option<String>, Option<String>)> {
+        let value = |settings: &ModuleSettings, name: &str| {
+            settings.entries.iter().find(|(written, _)| *written == name).map(|(_, value)| value.clone())
+        };
+        let mut names: Vec<&'static str> = self.entries.iter().map(|(name, _)| *name).collect();
+        names.extend(other.entries.iter().map(|(name, _)| *name).filter(|name| !self.entries.iter().any(|(own, _)| own == name)));
+        names
+            .into_iter()
+            .filter_map(|name| {
+                let (first, second) = (value(self, name), value(other, name));
+                (first != second).then_some((name, first, second))
+            })
+            .collect()
     }
 }
 

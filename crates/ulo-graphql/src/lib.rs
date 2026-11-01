@@ -57,12 +57,14 @@ impl GqlRequest {
     }
 }
 
-/// A GraphQL response, serialized as `{data, errors, extensions}` without its outcome, which the
-/// HTTP binding reads to decide the status.
+/// A GraphQL response, serialized as `{data, errors, extensions}` without its outcome and fault,
+/// which the HTTP binding reads to decide the status.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct GqlResponse {
     #[serde(skip)]
     outcome: Outcome,
+    #[serde(skip)]
+    fault: Option<RequestFault>,
     #[serde(skip_serializing_if = "Option::is_none")]
     data: Option<Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -74,19 +76,26 @@ pub struct GqlResponse {
 impl GqlResponse {
     /// A request that executed: its data, `null` where execution failed, and its field errors.
     pub fn executed(data: Value, errors: Vec<GqlError>) -> Self {
-        GqlResponse { outcome: Outcome::Executed, data: Some(data), errors, extensions: None }
+        GqlResponse { outcome: Outcome::Executed, fault: None, data: Some(data), errors, extensions: None }
     }
 
-    /// A request that failed before execution began: a document that does not parse or validate,
-    /// a missing `query`. It carries no `data`.
+    /// A request that failed before execution began, for a fault in it that the engine does not
+    /// name. It carries no `data`. The HTTP binding answers it as the commonest request error,
+    /// one in a document that parses, so an engine whose document does not parse answers
+    /// [`request_fault`](Self::request_fault) with [`RequestFault::Syntax`] instead.
     pub fn request_error(errors: Vec<GqlError>) -> Self {
-        GqlResponse { outcome: Outcome::RequestError, data: None, errors, extensions: None }
+        GqlResponse { outcome: Outcome::RequestError, fault: None, data: None, errors, extensions: None }
+    }
+
+    /// A request that failed before execution began, for `fault`. It carries no `data`.
+    pub fn request_fault(fault: RequestFault, errors: Vec<GqlError>) -> Self {
+        GqlResponse { outcome: Outcome::RequestError, fault: Some(fault), data: None, errors, extensions: None }
     }
 
     /// A request the server could not run for a fault of its own, before execution began: a
     /// context that cannot be built. It carries no `data`, and nothing in the document caused it.
     pub fn failed(errors: Vec<GqlError>) -> Self {
-        GqlResponse { outcome: Outcome::Failed, data: None, errors, extensions: None }
+        GqlResponse { outcome: Outcome::Failed, fault: None, data: None, errors, extensions: None }
     }
 
     pub fn with_extensions(mut self, extensions: Value) -> Self {
@@ -96,6 +105,11 @@ impl GqlResponse {
 
     pub fn outcome(&self) -> Outcome {
         self.outcome
+    }
+
+    /// What stopped a request error, when the engine named it; `None` for every other outcome.
+    pub fn fault(&self) -> Option<RequestFault> {
+        self.fault
     }
 
     pub fn data(&self) -> Option<&Value> {
@@ -112,8 +126,8 @@ impl GqlResponse {
 }
 
 /// Whether execution began, and if not whose fault stopped it, which decides the HTTP status:
-/// under `application/graphql-response+json` 200 for `Executed`, errors included, 400 for
-/// `RequestError`, and 500 for `Failed` under either media type.
+/// 200 for `Executed`, errors included, 400 or 422 for `RequestError` by its [`RequestFault`], and
+/// 500 for `Failed`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Outcome {
     Executed,
@@ -122,6 +136,29 @@ pub enum Outcome {
     RequestError,
     /// The request failed before execution for a fault in the server.
     Failed,
+}
+
+/// The fault in a request that stopped it before execution, one for each request error the
+/// GraphQL-over-HTTP draft gives its own status. A binding renders it; over HTTP `Encoding` and
+/// `Syntax` are 400 and the others 422.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RequestFault {
+    /// The request's encoding does not parse: a JSON body that is not JSON.
+    Encoding,
+    /// The request is not a well-formed GraphQL request: no `query`, or a parameter of the wrong
+    /// type, such as `variables` that is not a map.
+    NotWellFormed,
+    /// The GraphQL document does not parse.
+    Syntax,
+    /// The document does not pass GraphQL validation, the engine's own further rules, such as a
+    /// depth limit, included.
+    Validation,
+    /// The operation to execute cannot be determined: several and none named, or a name that
+    /// matches none, or one the call cannot run, a subscription asked to execute once.
+    Operation,
+    /// The variable values cannot be coerced to the operation's variable definitions.
+    Coercion,
 }
 
 /// One GraphQL error, as the specification's response format writes it.

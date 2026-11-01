@@ -19,6 +19,7 @@ use crate::codec::Codec;
 use crate::dispatch::{self, Route, Settling, Shared};
 use crate::frame::PayloadKind;
 use crate::link::{Delivery, Inbound, Link, Pattern};
+use crate::queue;
 use crate::transport::Rpc;
 
 /// `timeout_grace` at `Bound::Default`, the HTTP server's.
@@ -29,7 +30,8 @@ const DEFAULT_TIMEOUT_GRACE: Duration = Duration::from_secs(1);
 /// `prepare` calls `Link::prepare` and `Link::max_inflight`, and refuses two handlers for one
 /// pattern, a handler whose shape the link's capabilities do not carry (a streamed shape on UDP),
 /// an `#[event]` handler with a streamed shape, a `Binary` payload on a link declaring
-/// `binary: false`, `max_inflight(Count::Max(0))` and `timeout_grace(Bound::After(Duration::ZERO))`.
+/// `binary: false`, `max_inflight(Count::Max(0))`, `max_queued_items(Count::Max(0))` and
+/// `timeout_grace(Bound::After(Duration::ZERO))`.
 /// On a link declaring `delivers_requests_once: false` it logs one `warn` naming how many request
 /// patterns it mounts and the link's `fan_out_reason`, and refuses nothing. `bind` calls `Link::listen` with every mounted
 /// pattern. Over the in-flight limit a call is answered `err` of kind `unavailable`. A pattern is
@@ -47,6 +49,7 @@ const DEFAULT_TIMEOUT_GRACE: Duration = Duration::from_secs(1);
 pub struct Server<L: Link> {
     pub(crate) link: L,
     pub(crate) max_inflight: Count,
+    pub(crate) max_queued_items: Count,
     pub(crate) timeout_grace: Bound,
     /// Set by `prepare`.
     pub(crate) shared: Option<Arc<Shared>>,
@@ -61,6 +64,7 @@ impl<L: Link> Server<L> {
         Server {
             link,
             max_inflight: Count::Default,
+            max_queued_items: Count::Default,
             timeout_grace: Bound::Default,
             shared: None,
             inbound: Mutex::new(None),
@@ -76,6 +80,22 @@ impl<L: Link> Server<L> {
     /// refused `unavailable` with a `RetryAfter` detail.
     pub fn max_inflight(mut self, calls: Count) -> Self {
         self.max_inflight = calls;
+        self
+    }
+
+    /// The items of one streamed request that may wait for its handler to read them: 1,024 at
+    /// `Count::Default`, none at `Count::Unlimited`, which lets a client sending faster than its
+    /// handler reads grow the server's memory without limit. `Count::Max(0)` is refused in
+    /// `prepare`. The item arriving past the limit ends that call: its handler's execution is
+    /// cancelled `CancelReason::Explicit`, the items it had not read are dropped and its request
+    /// ends failing, `ExtractError::Overflowed` its last item on whatever task reads it, never
+    /// with the end `in_end` gives, and the call is answered `err` of kind `unavailable` with the
+    /// reason `overflow` whatever the handler returns, on which the client stops sending. The link's
+    /// reader never waits for room, since it serves every call on the link. The limit holds without
+    /// telling the client how much room is left: the reserved `credit` frame is that window, and no
+    /// link sends it.
+    pub fn max_queued_items(mut self, items: Count) -> Self {
+        self.max_queued_items = items;
         self
     }
 
@@ -99,6 +119,7 @@ impl<L: Link> ulo::Server for Server<L> {
         }
         self.link.max_inflight(self.max_inflight);
         failures.extend(zero_count("max_inflight", self.max_inflight, "shed every call"));
+        failures.extend(zero_count("max_queued_items", self.max_queued_items, "end every streamed request at its first item"));
         failures.extend(zero_bound(
             "timeout_grace",
             self.timeout_grace,
@@ -198,6 +219,7 @@ impl<L: Link> ulo::Server for Server<L> {
             link: L::NAME,
             admission: Admission::new(limit),
             grace: grace_of(self.timeout_grace),
+            queued: queue::limit_of(self.max_queued_items),
             calls: Mutex::new(HashMap::new()),
             serial: AtomicU64::new(0),
             unhandled_events: AtomicU64::new(0),

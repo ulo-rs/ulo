@@ -26,7 +26,7 @@ use juniper::{
 use serde_json::{Map, Value};
 use ulo::scope::Auto;
 use ulo::{BoxFuture, Construct, ConstructError, Dep, Dependencies, ExecutionRef, LookupError, ModuleRef, Resolver};
-use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse};
+use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse, RequestFault};
 
 /// The root node the engine reads.
 type Root<Q, M, Sub> = RootNode<'static, Q, M, Sub>;
@@ -93,7 +93,7 @@ where
                 Ok(request) => request,
                 Err(response) => return response,
             };
-            response_of(request.execute(&*root, &*context).await)
+            execute(&request, &root, &context).await
         })
     }
 
@@ -181,12 +181,12 @@ async fn drive<Q, M, Sub>(
     let resolved = juniper::http::resolve_into_stream(&request, &*root, &*context).await;
     let mut events = match resolved {
         Err(GraphQLError::NotSubscription) => {
-            let response = response_of(request.execute(&*root, &*context).await);
+            let response = execute(&request, &root, &context).await;
             let _ = sender.send(response).await;
             return;
         }
         Err(error) => {
-            let _ = sender.send(response_of(GraphQLResponse::from_result(Err(error)))).await;
+            let _ = sender.send(response_of(Err(error))).await;
             return;
         }
         Ok((_, errors)) if !errors.is_empty() => {
@@ -231,7 +231,8 @@ fn request_of(req: GqlRequest) -> Result<GraphQLRequest<DefaultScalarValue>, Gql
         Some(variables) => match serde_json::from_value::<InputValue<DefaultScalarValue>>(Value::Object(variables)) {
             Ok(variables) => Some(variables),
             Err(error) => {
-                return Err(GqlResponse::request_error(vec![GqlError::new(format!("`variables` is not a GraphQL value: {error}"))]));
+                let errors = vec![GqlError::new(format!("`variables` is not a GraphQL value: {error}"))];
+                return Err(GqlResponse::request_fault(RequestFault::Coercion, errors));
             }
         },
         None => None,
@@ -239,23 +240,50 @@ fn request_of(req: GqlRequest) -> Result<GraphQLRequest<DefaultScalarValue>, Gql
     Ok(GraphQLRequest::new(req.query, req.operation_name, variables))
 }
 
-/// juniper's response as a `GqlResponse`: an `Err` inside it is a request that failed before
-/// execution.
-fn response_of(response: GraphQLResponse<DefaultScalarValue>) -> GqlResponse {
-    let executed = response.is_ok();
+/// `request` executed through `juniper::execute`, whose `GraphQLError` names the fault that
+/// `GraphQLResponse` keeps private.
+async fn execute<Q, M, Sub>(request: &GraphQLRequest<DefaultScalarValue>, root: &Root<Q, M, Sub>, context: &Q::Context) -> GqlResponse
+where
+    Q: GraphQLTypeAsync<DefaultScalarValue> + Send + Sync + 'static,
+    Q::TypeInfo: Send + Sync,
+    Q::Context: Send + Sync + 'static,
+    M: GraphQLTypeAsync<DefaultScalarValue, Context = Q::Context> + Send + Sync + 'static,
+    M::TypeInfo: Send + Sync,
+    Sub: GraphQLSubscriptionType<DefaultScalarValue, Context = Q::Context> + Send + Sync + 'static,
+    Sub::TypeInfo: Send + Sync,
+{
+    let variables = request.variables();
+    response_of(juniper::execute(&request.query, request.operation_name.as_deref(), root, &variables, context).await)
+}
+
+/// The fault of a request juniper stopped before execution. juniper reports a variable that does
+/// not coerce as a `ValidationError`, as it reports a document that does not validate, so
+/// `Coercion` is not told apart here; the draft gives both 422.
+fn fault_of(error: &GraphQLError) -> RequestFault {
+    match error {
+        GraphQLError::ParseError(_) => RequestFault::Syntax,
+        GraphQLError::ValidationError(_) => RequestFault::Validation,
+        _ => RequestFault::Operation,
+    }
+}
+
+/// juniper's result as a `GqlResponse`: an `Err` is a request that failed before execution.
+fn response_of(result: Result<(JuniperValue<DefaultScalarValue>, Vec<ExecutionError<DefaultScalarValue>>), GraphQLError>) -> GqlResponse {
+    let fault = result.as_ref().err().map(fault_of);
+    let response = GraphQLResponse::from_result(result);
     let mut json = serde_json::to_value(&response).unwrap_or(Value::Null);
     let errors: Vec<GqlError> = json
         .get_mut("errors")
         .map(Value::take)
         .and_then(|errors| serde_json::from_value(errors).ok())
         .unwrap_or_default();
-    if executed {
-        let data = json.get_mut("data").map(Value::take).unwrap_or(Value::Null);
-        GqlResponse::executed(data, errors)
-    } else if errors.is_empty() {
-        GqlResponse::request_error(vec![GqlError::new("the request could not be executed")])
-    } else {
-        GqlResponse::request_error(errors)
+    match fault {
+        None => {
+            let data = json.get_mut("data").map(Value::take).unwrap_or(Value::Null);
+            GqlResponse::executed(data, errors)
+        }
+        Some(fault) if errors.is_empty() => GqlResponse::request_fault(fault, vec![GqlError::new("the request could not be executed")]),
+        Some(fault) => GqlResponse::request_fault(fault, errors),
     }
 }
 

@@ -9,13 +9,17 @@
 //! The second instance is this test binary run again as a child process, through the ignored test
 //! `peer_instance`, which the parent starts with the Redis URL in `ULO_WS_REDIS_PEER`. The child
 //! prints the address its server bound and serves until its stdin closes.
+//!
+//! A last test publishes, beside the adapter, messages this build cannot read, as a process of
+//! another build would during a rolling deploy, and holds that the subscription drops them, logs
+//! each kind once and goes on delivering.
 
 #![cfg(feature = "integration")]
 
 use std::io::{BufRead, BufReader, Read};
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -32,7 +36,11 @@ use ulo::app::Bound as Serving;
 use ulo::{App, AppHandle, Dep, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
 use ulo_rpc_conformance::relay::{reachable, unshadowed};
 use ulo_rpc_conformance::{report, startup_failed};
-use ulo_ws::{BroadcastError, ConnectCx, ConnectRefused, OnConnect, Payload, Rooms, WsModule};
+use tracing::field::{Field, Visit};
+use tracing::span::{Attributes, Id, Record};
+use tracing::{Event, Level, Metadata};
+use ulo_runtime_tokio::Tokio;
+use ulo_ws::{Audience, BroadcastAdapter, BroadcastError, Bytes, ConnectCx, ConnectRefused, NodeId, OnConnect, Payload, Rooms, Target, WsModule};
 use ulo_ws_redis::Redis;
 
 /// The environment variable carrying the Redis URL to the child process.
@@ -396,4 +404,123 @@ async fn listen_waits_for_the_subscription_when_redis_is_slow_to_confirm_it() {
     assert_eq!(received.as_deref(), Some("at once"), "the broadcast published straight after `listen` reached the member");
     let _ = member.close(None).await;
     instance.stop().await;
+}
+
+/// What a process of another build publishes: a later wire version, the unversioned layout, an
+/// audience kind this build does not know, and a message of this version that does not parse.
+const UNREADABLE: [&[u8]; 4] = [
+    b"\x02{\"gateway\":null,\"audience\":{\"kind\":\"all\"},\"except\":[]}\n{\"event\":\"shouted\",\"data\":\"v2\"}",
+    b"{\"gateway\":null,\"audience\":\"All\",\"except\":[]}\n{\"event\":\"shouted\",\"data\":\"old\"}",
+    b"\x01{\"gateway\":null,\"audience\":{\"kind\":\"everyone_but\",\"rooms\":[]},\"except\":[]}\n{}",
+    b"\x01{\"gateway\":null",
+];
+
+/// Two links on one Redis: a plain connection publishing what this build cannot read, and the
+/// adapter, which publishes a broadcast after each batch and must receive it. Pub/Sub delivers one
+/// subscription's messages in the order Redis took the `PUBLISH`es, so the adapter's broadcast
+/// reaches its stream only after every unreadable message before it went through the same loop. A
+/// loop that ended on one would reconnect a second later and miss the broadcast.
+///
+/// The runtime is current-thread and the adapter captures it, so the subscription task runs on
+/// this thread, under the capturing subscriber. The kinds are this binary's alone, since the count
+/// of `warn`s per kind is once per process.
+#[tokio::test(flavor = "current_thread")]
+async fn a_broadcast_this_build_cannot_read_is_dropped_and_the_subscription_keeps_delivering() {
+    let (_redis, url) = start_redis("ulo-conf-qs10-ws-redis-wire").await;
+    let capture = Capture::default();
+    let _default = tracing::subscriber::set_default(capture.clone());
+    let adapter = Redis::url(&url);
+    let mut broadcasts = adapter
+        .subscribe(NodeId::current(), Arc::new(Tokio::current().timer()))
+        .await
+        .unwrap_or_else(|error| panic!("the adapter did not subscribe: {}", report(&*error)));
+    let mut other = redis::Client::open(url.as_str())
+        .expect("the Redis URL parses")
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap_or_else(|error| panic!("the plain link did not connect: {error}"));
+
+    for round in ["first", "second"] {
+        for message in UNREADABLE {
+            let _: i64 = redis::cmd("PUBLISH")
+                .arg("ulo:ws:all")
+                .arg(message)
+                .query_async(&mut other)
+                .await
+                .unwrap_or_else(|error| panic!("the plain link's PUBLISH failed: {error}"));
+        }
+        adapter
+            .publish(Target::new(None, Audience::All, Vec::new()), Bytes::from(round))
+            .await
+            .unwrap_or_else(|error| panic!("the adapter's publish failed: {error}"));
+        let (target, frame) = tokio::time::timeout(PATIENCE, broadcasts.next())
+            .await
+            .unwrap_or_else(|_| panic!("the {round} broadcast did not arrive within {PATIENCE:?}"))
+            .unwrap_or_else(|| panic!("the subscription ended before the {round} broadcast"));
+        assert_eq!((target.audience, &frame[..]), (Audience::All, round.as_bytes()), "the next broadcast delivered");
+    }
+
+    let warned = capture.lines(Level::WARN);
+    let count = |needle: &str| warned.iter().filter(|line| line.contains(needle)).count();
+    assert_eq!(count("wire version 2;"), 1, "one `warn` for version 2: {warned:?}");
+    assert_eq!(count("unversioned wire layout"), 1, "one `warn` for the unversioned layout: {warned:?}");
+    assert_eq!(count("`everyone_but`"), 1, "one `warn` for the unknown audience: {warned:?}");
+    assert_eq!(count("does not parse"), 2, "a `warn` for each malformed message: {warned:?}");
+    assert!(warned.iter().all(|line| line.contains("channel=ulo:ws:all")), "each `warn` names the channel: {warned:?}");
+    assert_eq!(capture.lines(Level::DEBUG).iter().filter(|line| line.contains("another version")).count(), 3, "the repeats at `debug`");
+}
+
+/// Every event on the thread it is the default subscriber of, as its level, its message and
+/// `name=value` for each other field.
+#[derive(Clone, Default)]
+struct Capture {
+    events: Arc<Mutex<Vec<(Level, String)>>>,
+}
+
+impl Capture {
+    fn lines(&self, level: Level) -> Vec<String> {
+        let events = self.events.lock().unwrap_or_else(PoisonError::into_inner);
+        events.iter().filter(|(at, _)| *at == level).map(|(_, line)| line.clone()).collect()
+    }
+}
+
+impl tracing::Subscriber for Capture {
+    fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _span: &Attributes<'_>) -> Id {
+        Id::from_u64(1)
+    }
+
+    fn record(&self, _span: &Id, _values: &Record<'_>) {}
+
+    fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+
+    fn event(&self, event: &Event<'_>) {
+        let mut line = Line::default();
+        event.record(&mut line);
+        self.events.lock().unwrap_or_else(PoisonError::into_inner).push((*event.metadata().level(), line.0));
+    }
+
+    fn enter(&self, _span: &Id) {}
+
+    fn exit(&self, _span: &Id) {}
+}
+
+#[derive(Default)]
+struct Line(String);
+
+impl Visit for Line {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0.insert_str(0, &format!("{value:?}"));
+        } else {
+            self.0.push_str(&format!(" {}={value:?}", field.name()));
+        }
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.0.push_str(&format!(" {}={value}", field.name()));
+    }
 }

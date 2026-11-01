@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::panic::Location;
 use std::time::Duration;
 
-use ulo::{Bound, BoxError, BoxFuture, Dep, Many, Module, ModuleDef, ModuleIdentity, Permanent, Runtime};
+use ulo::{Bound, BoxError, BoxFuture, Dep, Many, Module, ModuleDef, ModuleIdentity, ModuleSettings, Permanent, Runtime};
 use ulo_config::{Config, ConfigError, Problems, Section};
 use ulo_health::Check;
 
@@ -28,8 +28,11 @@ const HOOK_MARGIN: Duration = Duration::from_secs(10);
 ///
 /// Its identity is by value over the store's options, so two equal configurations are one module
 /// and a different URL is another. `Module::keyed::<Q>()` gives several instances of one store.
-/// The builder settings are not part of the identity: two imports with equal options and different
-/// settings are one module, registered with the settings of the first the graph reaches.
+/// The builder settings are not part of the identity and are its [`Module::settings`]: `lazy`,
+/// `without_health_check`, `connect_within`, `retries`, `backoff`, `migrate` and `migrate_within`.
+/// Two imports with equal options and equal settings are one module; with equal options and
+/// different settings, `wire()` refuses the second as `ulo::WiringError::DifferingSettings`. A
+/// migrator has no value to compare, so `migrate` compares the `.migrate(..)` call that set it.
 ///
 /// The module's type is `StoreModule<S>`, so `app.module::<StoreModule<S>>()` and
 /// `app.module_keyed::<StoreModule<S>, Q>()` find it, and a report prints it as `StoreModule<S>`,
@@ -206,6 +209,21 @@ where
             Err(error) => Identity::Failed(self.section.path().to_owned(), error.clone()),
         };
         ModuleIdentity::of_owner::<Self, _>(&key)
+    }
+
+    fn settings(&self) -> ModuleSettings {
+        let migrate = match self.migrate_at {
+            Some(at) => format!("`.migrate(..)` at {}:{}", at.file(), at.line()),
+            None => "off".to_owned(),
+        };
+        ModuleSettings::new()
+            .with("lazy", self.lazy.is_some())
+            .with("without_health_check", !self.health_check)
+            .with("connect_within", self.connect_within)
+            .with("retries", self.retries)
+            .with("backoff", self.backoff)
+            .with("migrate", format_args!("{migrate}"))
+            .with("migrate_within", self.migrate_within)
     }
 
     fn register(&self, m: &mut ModuleDef<'_>) {
