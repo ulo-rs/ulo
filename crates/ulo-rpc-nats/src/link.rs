@@ -89,7 +89,8 @@ const CUT_GRACE: Duration = Duration::from_secs(2);
 ///
 /// A server's `listen` therefore waits for the load, on `nats://` and `tls://` alike, since its
 /// one connection serves the app's whole life, and so does a `tls://` client's connect, which
-/// cannot be made without the file; each waits at most [`roots_timeout`](Self::roots_timeout). A
+/// cannot be made without the file; each waits at most [`roots_timeout`](Self::roots_timeout),
+/// a server on the app's `Timer` and a client on the runtime its client was built on. A
 /// `nats://` client waits for nothing: a connection it makes once the load has ended is handed
 /// the file, and one made before is not, and its next connection after a lost one is made afresh.
 ///
@@ -99,9 +100,9 @@ const CUT_GRACE: Duration = Duration::from_secs(2);
 /// `reason: "misconfigured_link"`. Over `nats://` the first two are logged at `warn` once and the
 /// link connects without the file, since a plain server needs none of it; a connection the server
 /// upgrades then fails as async-nats's own read of the store does. A `nats://` server whose load
-/// outlasts `roots_timeout` connects without the file and logs it at `warn`. A wait whose bound the
-/// link's runtime refuses, having shut down, reports the refusal as `ulo::RuntimeShutDown` rather
-/// than as an expiry (see [`roots_timeout`](Self::roots_timeout)). The provider is
+/// outlasts `roots_timeout` connects without the file and logs it at `warn`. A wait whose bound its
+/// clock refuses, the runtime behind it having shut down, reports the refusal as
+/// `ulo::RuntimeShutDown` rather than as an expiry (see [`roots_timeout`](Self::roots_timeout)). The provider is
 /// resolved for `tls://` alone, so a provider conflict is neither checked nor logged over
 /// `nats://`.
 pub struct Nats {
@@ -214,13 +215,15 @@ impl Nats {
 
     /// How long a server's `listen`, and a `tls://` client's connect, wait for the platform's root
     /// certificates to load: 30 s at `Bound::Default`, as long as the load takes at
-    /// `Bound::Unbounded`, timed on the link's runtime. On expiry a `tls://` link is refused: a
+    /// `Bound::Unbounded`. A server's wait is timed on the app's `Timer`, which `prepare` reads,
+    /// as its `connect_within` is, and a client's on the runtime its client was built on, the
+    /// app's inside an app; the load runs on the link's runtime. On expiry a `tls://` link is refused: a
     /// server's `bind` fails `StartupError::Configure`, and each client call `Internal` with
     /// `reason: "misconfigured_link"`. A `nats://` server connects without the file and logs it at
     /// `warn`; if its server upgrades the connection, async-nats reads the platform's store on the
     /// thread polling it, at that connect and at every reconnect. A `nats://` client never waits.
-    /// The load goes on after an expiry, and a later wait joins it. A bound the link's runtime
-    /// refuses, having shut down, is not an expiry unless it had passed by then: a `tls://` link
+    /// The load goes on after an expiry, and a later wait joins it. A bound its clock refuses, the
+    /// runtime behind it having shut down, is not an expiry unless it had passed by then: a `tls://` link
     /// fails with `ulo::RuntimeShutDown`, as it does for a load its runtime ended unanswered, which
     /// a client call answers `Unavailable` with `reason: "runtime_shut_down"` and a server's
     /// `prepare` and `listen` raise inside `ulo::Permanent`, and a `nats://` server connects without
@@ -259,16 +262,16 @@ impl Nats {
     /// The load of root certificates the servers in `url` connect with, started for every url:
     /// async-nats upgrades a `nats://` connection whose server requires TLS, and the link cannot
     /// know before connecting whether one will. A url naming a `tls://` server resolves the crypto
-    /// provider (see [`resolve_provider`]), waits for the load under `roots_timeout` and is
-    /// refused if it failed or outlasted the bound. A url naming none waits under the bound when
+    /// provider (see [`resolve_provider`]), waits for the load under `roots_timeout` on `clock` and
+    /// is refused if it failed or outlasted the bound. A url naming none waits under the bound when
     /// `waits`, a server's `listen`, and connects without the file on a failure or an expiry;
     /// otherwise it waits for nothing: `Some` once the file is written, `None` while the load runs
-    /// or after it failed.
-    async fn roots(&self, servers: &[ServerAddr], runtime: &Tokio, waits: bool) -> Result<Option<Arc<Load>>, BoxError> {
+    /// or after it failed. The load runs on `runtime`, the link's.
+    async fn roots(&self, servers: &[ServerAddr], runtime: &Tokio, clock: &dyn Timer, waits: bool) -> Result<Option<Arc<Load>>, BoxError> {
         if servers.iter().any(ServerAddr::tls_required) {
-            self.roots.wait(runtime, runtime, true, self.roots_timeout).await.map(Some)
+            self.roots.wait(runtime, clock, true, self.roots_timeout).await.map(Some)
         } else if waits {
-            Ok(self.roots.awaited(runtime, runtime, self.roots_timeout).await)
+            Ok(self.roots.awaited(runtime, clock, self.roots_timeout).await)
         } else {
             Ok(self.roots.ready(runtime))
         }
@@ -328,8 +331,14 @@ impl Link for Nats {
         }
         self.timer = app.timer().cloned();
         // A server starts its roots' load here, so over `tls://` a store that yields none fails
-        // `bind` before `listen`; over `nats://` `listen` waits for it.
-        self.roots(&servers, &runtime, false).await.map_err(at_startup)?;
+        // `bind` before `listen`; over `nats://` `listen` waits for it. With no `Timer` nothing
+        // here waits: the load starts, and `listen` refuses before it would wait.
+        match self.timer.clone() {
+            Some(clock) => {
+                self.roots(&servers, &runtime, &*clock, false).await.map_err(at_startup)?;
+            }
+            None => drop(self.roots.held(&runtime)),
+        }
         Ok(())
     }
 
@@ -344,7 +353,7 @@ impl Link for Nats {
         let servers = servers(&self.url)?;
         // The server's one connection reconnects with the options it is made with for the app's
         // life, so it waits for the file rather than connect without it.
-        let roots = self.roots(&servers, &runtime, true).await.map_err(at_startup)?;
+        let roots = self.roots(&servers, &runtime, &*timer, true).await.map_err(at_startup)?;
         let (ended, _) = watch::channel(0u64);
         let reported = ended.clone();
         let options = ConnectOptions::new().event_callback(move |event| {
@@ -425,7 +434,7 @@ impl Link for Nats {
         let servers = servers(&self.url)?;
         // A client's next connection after a lost one is made here afresh, so on `nats://` it
         // waits for no load: a connection made before the load ends costs that connection alone.
-        let roots = self.roots(&servers, &runtime, false).await?;
+        let roots = self.roots(&servers, &runtime, &**client_runtime, false).await?;
         let (lost, disconnected) = watch::channel(false);
         let options = ConnectOptions::new().event_callback(move |event| {
             if matches!(event, Event::Disconnected) {
@@ -1412,8 +1421,8 @@ impl Roots {
         load
     }
 
-    /// The load once its file is written, waited for under `bound` on `clock`, the link's runtime
-    /// outside the tests. `tls` is whether the link's url names a `tls://` server, constant for a
+    /// The load once its file is written, waited for under `bound` on `clock`: the app's `Timer`
+    /// for a server, the client's runtime for a client. `tls` is whether the link's url names a `tls://` server, constant for a
     /// link: it resolves the provider first and names `tls://` in a refusal. A load outlasting the
     /// bound is refused as a failed one is; it keeps running, and a later wait joins it. A bound
     /// the clock refuses, its runtime shut down, fails the wait with `RuntimeShutDown`, and so does
@@ -1609,9 +1618,8 @@ enum Cut {
 }
 
 /// `fut`'s output, or the `Cut` that ended it first: [`ROOTS_TIMEOUT`] at `Bound::Default`, none
-/// at `Bound::Unbounded`. The wait is timed on `clock`, the link's runtime outside the tests, so it
-/// is timed wherever it is polled, as a [`ulo::timeout`] with its ties: an answer already in is
-/// taken however short the bound.
+/// at `Bound::Unbounded`. The wait is a [`ulo::timeout`] on `clock`, with its ties: an answer
+/// already in is taken however short the bound.
 async fn within<F: Future>(clock: &dyn Timer, bound: Bound, fut: F) -> Result<F::Output, Cut> {
     let after = match bound {
         Bound::Default => ROOTS_TIMEOUT,
@@ -1796,7 +1804,7 @@ mod tests {
     }
 
     /// Root certificates loaded per test, each test's loader counting in a slot of its own.
-    static LOADS: [AtomicUsize; 39] = [const { AtomicUsize::new(0) }; 39];
+    static LOADS: [AtomicUsize; 42] = [const { AtomicUsize::new(0) }; 42];
 
     /// A store that cannot be read: rustls-native-certs reading a file that is not there, as it
     /// reads one `SSL_CERT_FILE` names.
@@ -1868,7 +1876,7 @@ mod tests {
         }
     }
 
-    static GATES: [Gate; 9] = [const { Gate::new() }; 9];
+    static GATES: [Gate; 12] = [const { Gate::new() }; 12];
 
     /// The test certificate once gate `GATE` opens or `HELD` passes, counted in `SLOT`.
     fn gated<const SLOT: usize, const GATE: usize>() -> CertificateResult {
@@ -2933,7 +2941,7 @@ mod tests {
             GATES[1].open();
             let file = client.roots.settled().await.expect("the roots are written once the load ends");
             assert_ne!(serving.roots.path().as_ref(), Some(&file), "the server's link holds the process's file, not its own load's");
-            let handed = client.roots(&servers(&url).expect("the url parses"), &Tokio::current(), false).await.expect("a plain link is not refused");
+            let handed = client.roots(&servers(&url).expect("the url parses"), &Tokio::current(), &Tokio::current(), false).await.expect("a plain link is not refused");
             assert_eq!(handed.and_then(|load| load.path()).as_ref(), Some(&file), "a connect after the load ended is not handed its file");
             client.connect(&runtime).await.expect("a later connect succeeds");
             assert_eq!((LOADS[17].load(Ordering::SeqCst), files_in(&here)), (1, vec![file]), "the roots loaded other than once, or into other than one file");
@@ -3332,6 +3340,85 @@ mod tests {
         assert!(failed.is::<Misconfigured>(), "a wait whose bound passed is not `Misconfigured`: {failed:?}");
     }
 
+    /// The bound of the roots waits in the two tests below, which the wall clock passes six times
+    /// over before the scripted clock moves.
+    const SCRIPTED: Duration = Duration::from_millis(50);
+
+    /// The error `waiting` fails with, a roots wait under [`SCRIPTED`] on `clock`: armed on
+    /// `clock`, still pending once the wall clock has passed the bound six times over after that,
+    /// and ended once `clock` passes it.
+    async fn expired_on<T>(clock: &ScriptedTimer, waiting: impl Future<Output = Result<T, BoxError>>) -> BoxError {
+        let mut waiting = pin!(waiting);
+        let deadline = Instant::now() + HELD / 2;
+        while clock.live(SCRIPTED) != 1 {
+            assert!(Instant::now() < deadline, "the roots wait was not armed on the scripted clock within {:?}", HELD / 2);
+            let early = tokio::time::timeout(Duration::from_millis(5), waiting.as_mut()).await;
+            assert!(early.is_err(), "the roots wait ended before it was armed on the scripted clock");
+        }
+        let early = tokio::time::timeout(SCRIPTED * 6, waiting.as_mut()).await;
+        assert!(early.is_err(), "the roots wait ended on the wall clock, before the scripted clock moved");
+        clock.advance(SCRIPTED);
+        match tokio::time::timeout(HELD / 2, waiting).await {
+            Ok(Ok(_)) => panic!("a roots wait whose load is held at its gate answered a load"),
+            Ok(Err(failed)) => failed,
+            Err(_) => panic!("the roots wait did not end once the scripted clock passed its bound"),
+        }
+    }
+
+    /// Q21-P2: a `tls://` server's roots waits, `prepare`'s and `listen`'s, are timed on the app's
+    /// `Timer`, which `prepare` reads, and not on the link's runtime: each outlasts its bound on
+    /// the wall clock and fails `Misconfigured` once the app's clock passes it, the load held at its
+    /// gate throughout. Planted break: the server's waits timed on the link's runtime.
+    #[tokio::test]
+    async fn a_server_s_roots_waits_are_timed_on_the_app_s_timer() {
+        let clock = ScriptedTimer::new();
+        let app = App::builder(Root).runtime(Tokio::current()).timer(clock.clone()).wire().expect("the app wires").connect().await.expect("the app connects");
+        let mut serving = link("tls://localhost:1", gated::<39, 9>, std::env::temp_dir).roots_timeout(Bound::After(SCRIPTED));
+        let prepared = expired_on(&clock, serving.prepare(&app.handle())).await;
+        assert!(prepared.is::<Misconfigured>(), "`prepare`'s expired wait is not `Misconfigured`: {prepared:?}");
+        let listened = expired_on(&clock, serving.listen(&[])).await;
+        GATES[9].open();
+        assert!(listened.is::<Misconfigured>(), "`listen`'s expired wait is not `Misconfigured`: {listened:?}");
+        assert_eq!(LOADS[39].load(Ordering::SeqCst), 1, "the server loaded its roots other than once");
+    }
+
+    /// Q21-P2: a `tls://` client's roots wait is timed on the runtime its client was built on, the
+    /// app's here, whose clock is scripted, and not on the link's runtime. Planted break: the
+    /// client's wait timed on the link's runtime.
+    #[tokio::test]
+    async fn a_client_s_roots_wait_is_timed_on_the_client_s_runtime() {
+        let clock = ScriptedTimer::new();
+        let app = App::builder(Root).runtime(Tokio::current()).timer(clock.clone()).wire().expect("the app wires").connect().await.expect("the app connects");
+        let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
+        let calling = link("tls://localhost:1", gated::<40, 10>, std::env::temp_dir).roots_timeout(Bound::After(SCRIPTED));
+        let failed = expired_on(&clock, calling.connect(&runtime)).await;
+        GATES[10].open();
+        assert!(failed.is::<Misconfigured>(), "the client's expired wait is not `Misconfigured`: {failed:?}");
+        assert_eq!(LOADS[40].load(Ordering::SeqCst), 1, "the client loaded its roots other than once");
+    }
+
+    /// Q21-P2: a `tls://` server's `prepare` on an app with no `Timer` starts the roots' load and
+    /// waits for none of it, the load held at its gate; `listen` then refuses with `NoTimer`.
+    /// Planted break: the wait timed on the link's runtime instead.
+    #[tokio::test]
+    async fn a_server_s_prepare_with_no_timer_starts_the_load_and_waits_for_none_of_it() {
+        let app = App::builder(Root).wire().expect("the app wires").connect().await.expect("the app connects");
+        assert!(app.handle().timer().is_none(), "the app has a timer");
+        let mut serving = link("tls://localhost:1", gated::<41, 11>, std::env::temp_dir).roots_timeout(Bound::Unbounded);
+        tokio::time::timeout(HELD / 2, serving.prepare(&app.handle()))
+            .await
+            .expect("`prepare` with no `Timer` waited for the roots' load")
+            .expect("the link prepares");
+        let deadline = Instant::now() + HELD / 2;
+        while LOADS[41].load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline, "`prepare` with no `Timer` did not start the roots' load");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let Err(refused) = serving.listen(&[]).await else { panic!("a link with no `Timer` listened") };
+        GATES[11].open();
+        assert!(refused.is::<NoTimer>(), "`listen` with no `Timer` is not refused `NoTimer`: {refused:?}");
+    }
+
     /// O1: a `nats://` server's wait for its roots whose bound the clock refuses connects without
     /// them, as an expiry does, and logs the refusal under its reason.
     #[cfg(feature = "integration")]
@@ -3421,8 +3508,8 @@ mod tests {
         let servers = servers("nats://localhost:1").expect("the url parses");
 
         let late = link("nats://localhost:1", gated_unreadable::<25, 4>, std::env::temp_dir).roots_timeout(Bound::After(SHORT));
-        assert!(late.roots(&servers, &runtime, false).await.expect("`prepare`'s call answers").is_none(), "a running load answered a file");
-        assert!(late.roots(&servers, &runtime, true).await.expect("`listen`'s call answers").is_none(), "an expired wait answered a file");
+        assert!(late.roots(&servers, &runtime, &runtime, false).await.expect("`prepare`'s call answers").is_none(), "a running load answered a file");
+        assert!(late.roots(&servers, &runtime, &runtime, true).await.expect("`listen`'s call answers").is_none(), "an expired wait answered a file");
         GATES[4].open();
         let deadline = Instant::now() + Duration::from_secs(5);
         while count(FAILED) == 0 && Instant::now() < deadline {
@@ -3431,8 +3518,8 @@ mod tests {
         assert_eq!((count(EXPIRED), count(FAILED)), (1, 1), "a load failing after the bound was logged other than once per cause: {:?}", capture.warnings(here));
 
         let soon = link("nats://localhost:1", unreadable::<26>, std::env::temp_dir).roots_timeout(Bound::After(SHORT));
-        assert!(soon.roots(&servers, &runtime, false).await.expect("`prepare`'s call answers").is_none(), "a failing load answered a file");
-        assert!(soon.roots(&servers, &runtime, true).await.expect("`listen`'s call answers").is_none(), "a failed load answered a file");
+        assert!(soon.roots(&servers, &runtime, &runtime, false).await.expect("`prepare`'s call answers").is_none(), "a failing load answered a file");
+        assert!(soon.roots(&servers, &runtime, &runtime, true).await.expect("`listen`'s call answers").is_none(), "a failed load answered a file");
         // Room for the armed task, which ends once the load's answer reaches it.
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert_eq!((count(EXPIRED), count(FAILED)), (1, 2), "a load failing inside the bound was logged other than once: {:?}", capture.warnings(here));
@@ -3458,7 +3545,8 @@ mod tests {
         .expect("the runtime shuts down");
         let servers = servers("nats://localhost:1").expect("the url parses");
         let serving = link("nats://localhost:1", test_root::<27>, std::env::temp_dir).roots_timeout(Bound::Unbounded);
-        let roots = serving.roots(&servers, &Tokio::from_handle(stopped), true).await.expect("`listen`'s call answers");
+        let stopped = Tokio::from_handle(stopped);
+        let roots = serving.roots(&servers, &stopped, &stopped, true).await.expect("`listen`'s call answers");
         assert!(roots.is_none(), "a load that never ran answered a file");
         let warned: Vec<String> = capture.warnings(here).into_iter().filter(|line| line.contains(UNANSWERED)).collect();
         assert_eq!(warned.len(), 1, "the unanswered load was logged other than once: {warned:?}");

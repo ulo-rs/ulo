@@ -577,9 +577,9 @@ fn chain_text(error: &(dyn Error + 'static)) -> String {
 }
 
 /// What a panic payload becomes inside a `Redacted`: the message, unredacted, reached only
-/// through `into_inner`.
+/// through `into_inner`. `is_panic` recognises a `Redacted` holding one.
 #[derive(Debug)]
-struct PanicMessage(String);
+pub(crate) struct PanicMessage(String);
 
 impl fmt::Display for PanicMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -1,7 +1,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -18,7 +20,7 @@ use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, Consumer
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, BoxError, BoxFuture, Cut, Permanent, Refused, Runtime, RuntimeShutDown, Timer};
+use ulo::{AppHandle, BoxError, BoxFuture, Cut, Permanent, Redacted, Refused, Runtime, RuntimeShutDown, TaskEnd, Timer, ValueHandle};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
@@ -153,19 +155,65 @@ enum Failure {
     TimedOut,
     Refused(Refused),
     Lapin(lapin::Error),
+    /// The connect panicked: its message, redacted as a task's panic is.
+    Panicked(Arc<Redacted>),
     /// `close` ran while the connect was running or before its connection was taken.
     Closed,
 }
 
+/// The error every `connect` waiting on a connect that panicked answers. The panic is its
+/// `source()`, so `ulo::is_panic` finds it, on the call's error too.
+#[derive(Debug)]
+pub(crate) struct ConnectPanicked(Arc<Redacted>);
+
+impl std::fmt::Display for ConnectPanicked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the RabbitMQ link's connect panicked: {}", self.0)
+    }
+}
+
+impl std::error::Error for ConnectPanicked {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&*self.0)
+    }
+}
+
+/// A task's value, the task aborted when this drops.
+struct Aborting<T>(ValueHandle<T>);
+
+impl<T> Future for Aborting<T> {
+    type Output = Result<T, TaskEnd>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.0).poll(cx)
+    }
+}
+
+impl<T> Drop for Aborting<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 impl Connecting {
-    fn start(runtime: &Tokio, uri: AMQPUri, within: Duration, clock: Arc<dyn Runtime>) -> Connecting {
+    /// `opening` runs as a task of its own on `runtime`, so a panic in it ends that task alone and
+    /// is answered as `TaskEnd::Panicked`, its message redacted; the task holding the outcome
+    /// awaits it under `within` and aborts it when it ends first.
+    fn start<F>(runtime: &Tokio, opening: F, within: Duration, clock: Arc<dyn Runtime>) -> Connecting
+    where
+        F: Future<Output = lapin::Result<Opened>> + Send + 'static,
+    {
         let (answered, done) = watch::channel(false);
         let outcome = Arc::new(Mutex::new(None));
         let written = Arc::clone(&outcome);
+        let opening = Aborting(ulo::spawn_with(runtime, opening));
         let task = runtime.handle().spawn(async move {
-            let answer = match ulo::timeout(&*clock, within, open_client(uri)).await {
-                Ok(Ok(opened)) => Outcome::Opened(Box::new(opened)),
-                Ok(Err(error)) => Outcome::Failed(Failure::Lapin(error)),
+            let answer = match ulo::timeout(&*clock, within, opening).await {
+                Ok(Ok(Ok(opened))) => Outcome::Opened(Box::new(opened)),
+                Ok(Ok(Err(error))) => Outcome::Failed(Failure::Lapin(error)),
+                Ok(Err(TaskEnd::Panicked(message))) => Outcome::Failed(Failure::Panicked(message)),
+                // The runtime dropped the connect unfinished, having shut down.
+                Ok(Err(_)) => Outcome::Failed(Failure::Refused(Refused)),
                 Err(Cut::Expired) => Outcome::Failed(Failure::TimedOut),
                 Err(Cut::Refused(refused)) => Outcome::Failed(Failure::Refused(refused)),
             };
@@ -248,7 +296,9 @@ impl RabbitMq {
     /// app's `Timer`, which `prepare` reads, and a client's on the runtime the connect's first
     /// call was handed, its client's, the app's inside an app; a clock whose runtime has shut down
     /// fails `listen` as `Permanent` `RuntimeShutDown` and a call `Unavailable` with
-    /// `reason: "runtime_shut_down"`. A zero bound is refused in `usable`, so in a server's
+    /// `reason: "runtime_shut_down"`. A client connect that panics fails every call waiting on
+    /// it `Unavailable`, the panic's message redacted and kept as the error's source, so
+    /// `ulo::is_panic` is true of the call's error. A zero bound is refused in `usable`, so in a server's
     /// `prepare` and where a client takes the link.
     ///
     /// A connect that runs out leaves lapin's `lapin-io-loop` thread and its socket behind, since
@@ -317,6 +367,7 @@ impl RabbitMq {
             Failure::TimedOut => ConnectTimedOut::new(self.connect_within, address(uri), "RabbitMQ").into(),
             Failure::Refused(refused) => RuntimeShutDown::new(refused).into(),
             Failure::Lapin(error) => error.into(),
+            Failure::Panicked(message) => Box::new(ConnectPanicked(message)),
             Failure::Closed => CLOSED.into(),
         }
     }
@@ -432,7 +483,7 @@ impl Link for RabbitMq {
                 match state.connecting.as_ref().filter(|connecting| connecting.joinable()) {
                     Some(connecting) => (connecting.done.clone(), Arc::clone(&connecting.outcome)),
                     None => {
-                        let connecting = Connecting::start(&runtime, uri.clone(), self.connect_within, Arc::clone(client));
+                        let connecting = Connecting::start(&runtime, open_client(uri.clone()), self.connect_within, Arc::clone(client));
                         let joined = (connecting.done.clone(), Arc::clone(&connecting.outcome));
                         state.connecting = Some(connecting);
                         joined
@@ -462,8 +513,7 @@ impl Link for RabbitMq {
                 Err(Some(failure)) => Err(self.failed(failure, &uri)),
                 // Another `connect` took the connection: this one starts the next.
                 Err(None) if answered => continue,
-                // The task ended unanswered: its runtime dropped it, having shut down, or it
-                // panicked.
+                // The task ended unanswered: its runtime dropped it, having shut down.
                 Err(None) => Err(match runtime.run(async {}).await {
                     Err(shut_down) => shut_down.into(),
                     Ok(()) => "the RabbitMQ link's connect ended without answering".into(),
@@ -1207,4 +1257,81 @@ fn receiver_stream<T: Send + 'static>(receiver: mpsc::UnboundedReceiver<T>) -> f
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use ulo_rpc::{ErrorKind, RpcClient};
+
+    use super::*;
+
+    /// Q21-P6: a client connect that panics fails the call waiting on it `Unavailable` holding the
+    /// panic, so `ulo::is_panic` is true of the call's error, its message redacted. A panicking
+    /// future stands in for `open_client` through `Connecting::start`, held at a gate until the
+    /// call has joined the connect. Planted break: the panic answered as a plain error.
+    #[tokio::test]
+    async fn a_connect_that_panics_fails_the_call_holding_the_redacted_panic() {
+        let runtime = Tokio::current();
+        let clock: Arc<dyn Runtime> = Arc::new(runtime.clone());
+        let link = RabbitMq::url("amqp://ulo:hunter2@127.0.0.1:1");
+        let (release, released) = oneshot::channel::<()>();
+        let opening = async move {
+            let _ = released.await;
+            panic!("connecting to amqp://ulo:hunter2@127.0.0.1:1");
+        };
+        let connecting = Connecting::start(&runtime, opening, CONNECT_WITHIN, Arc::clone(&clock));
+        // The connect's own handle, its task's and this one: a call that joins adds a fourth.
+        let outcome = Arc::clone(&connecting.outcome);
+        lock(&link.state).connecting = Some(connecting);
+        let client = RpcClient::new(link, clock).expect("the link is usable");
+        let caller = client.clone();
+        let calling = tokio::spawn(async move { caller.request::<_, u32>("panics.call", &()).await });
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while Arc::strong_count(&outcome) < 4 {
+            assert!(std::time::Instant::now() < deadline, "the call did not join the running connect within 5 s");
+            tokio::task::yield_now().await;
+        }
+        release.send(()).expect("the connect waits at its gate");
+        let failed = calling.await.expect("the call's task completes").expect_err("a call over a connect that panicked succeeded");
+        assert_eq!((failed.kind(), failed.reason()), (ErrorKind::Unavailable, None), "{failed:?}");
+        let message = failed.message().to_owned();
+        assert!(message.contains("connect panicked: connecting to amqp://[redacted]@127.0.0.1:1"), "the call does not carry the panic: {message}");
+        assert!(!message.contains("hunter2"), "the call repeats the url's password: {message}");
+        assert!(ulo::is_panic(&BoxError::from(failed)), "the call's error does not hold the panic: {message}");
+
+        // The panicked connect is not joined: the next call starts its own, which the closed port
+        // refuses as an ordinary error.
+        let next = client.request::<_, u32>("panics.call", &()).await.expect_err("nothing listens on port 1");
+        assert!(!ulo::is_panic(&BoxError::from(next)), "the next call joined the connect that panicked");
+    }
+
+    /// A connect `close` cuts short ends with its task: the opening future is dropped, not left
+    /// running beside a closed link. Planted break: the opening task not aborted with the task
+    /// holding its outcome.
+    #[tokio::test]
+    async fn close_drops_the_opening_it_cuts_short() {
+        struct Flag(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for Flag {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let runtime = Tokio::current();
+        let clock: Arc<dyn Runtime> = Arc::new(runtime.clone());
+        let link = RabbitMq::url("amqp://127.0.0.1:1");
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = Flag(Arc::clone(&dropped));
+        let opening = async move {
+            let _held = flag;
+            std::future::pending::<lapin::Result<Opened>>().await
+        };
+        lock(&link.state).connecting = Some(Connecting::start(&runtime, opening, CONNECT_WITHIN, clock));
+        tokio::task::yield_now().await;
+        link.close().await.expect("the link closes");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !dropped.load(Ordering::SeqCst) {
+            assert!(std::time::Instant::now() < deadline, "the opening `close` cut short was still held 5 s later");
+            tokio::task::yield_now().await;
+        }
+    }
 }

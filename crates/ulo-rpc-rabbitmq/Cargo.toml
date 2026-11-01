@@ -42,9 +42,5 @@ testcontainers.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
 
-# `tests/one_connect.rs` names the process's threads through libproc on macOS.
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-libc.workspace = true
-
 [lints]
 workspace = true

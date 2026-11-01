@@ -7,8 +7,9 @@
 //! a call's own 5 s timeout ends the connect first, and closes its connection too.
 //!
 //! The bound runs on the app's `Timer`, which these tests script: no bound elapses in real time.
-//! A server's `listen` first waits for the platform's root certificates on the wall clock, which
-//! [`PATIENCE`] allows for.
+//! A server's `listen` first waits for the platform's root certificates, under a `roots_timeout`
+//! the scripted clock never reaches; the load itself takes real time, which [`PATIENCE`] allows
+//! for.
 
 use std::error::Error;
 use std::io::Read;

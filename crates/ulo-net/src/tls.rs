@@ -47,14 +47,17 @@ impl Tls {
     /// by accident. At [`load`](Self::load) the given `alpn_protocols` are read against the
     /// protocols the transport needs (`h2` and `http/1.1` for HTTP):
     ///
-    /// - empty: the server sets the protocols it needs;
+    /// - empty, or naming `acme-tls/1` alone: the configuration expresses no choice among
+    ///   application protocols, so the server sets the protocols it needs, followed by
+    ///   `acme-tls/1` when the configuration names it;
     /// - naming every protocol the transport needs: accepted, and the server offers exactly the
     ///   transport's protocols in its order, followed by `acme-tls/1` when the configuration
     ///   names it (RFC 8737: the certificate resolver answers it inside the handshake and no
     ///   application protocol is spoken on it). Any other further protocol (`h3`) is dropped from
     ///   that list, since a client that negotiated it would reach a server that cannot speak it; a
     ///   client offering only such a protocol gets a TLS alert at the handshake;
-    /// - missing one the transport needs, `h2` only or `http/1.1` only included: refused as
+    /// - naming an application protocol and missing one the transport needs, `h2` only or
+    ///   `http/1.1` only for HTTP, `http/1.1` only for gRPC, `h3` alone: refused as
     ///   [`TlsError::Alpn`], which `listen` reports as `StartupError::Configure`.
     ///
     /// A transport that needs no protocol (the TCP link) takes the configuration as given. The
@@ -127,7 +130,11 @@ fn reconcile_alpn(given: &Arc<ServerConfig>, required: &[&[u8]]) -> Result<Arc<S
     let named = &given.alpn_protocols;
     let missing: Vec<String> =
         required.iter().filter(|protocol| !named.iter().any(|n| n == **protocol)).map(|protocol| String::from_utf8_lossy(protocol).into_owned()).collect();
-    if !named.is_empty() && !missing.is_empty() {
+    // A configuration naming no application protocol (empty, or `acme-tls/1` alone) says nothing
+    // about them, so the transport's are supplied; one naming any has made a choice the transport
+    // cannot honour unless it covers all of the transport's.
+    let chose = named.iter().any(|n| n.as_slice() != ACME_TLS_1);
+    if chose && !missing.is_empty() {
         return Err(TlsError::Alpn {
             required: required.iter().map(|protocol| String::from_utf8_lossy(protocol).into_owned()).collect(),
             given: named.iter().map(|protocol| String::from_utf8_lossy(protocol).into_owned()).collect(),
@@ -228,8 +235,8 @@ pub enum TlsError {
     /// The key PEM holds no private key, one that does not parse or is not a supported key, or one
     /// that is not the certificate's.
     PrivateKey { path: Option<PathBuf>, cause: KeyCause },
-    /// A configuration given to [`Tls::from_config`] names ALPN protocols and omits one the
-    /// transport needs. `required` is what the transport needs, `given` what the configuration
+    /// A configuration given to [`Tls::from_config`] names an application protocol and omits one
+    /// the transport needs. `required` is what the transport needs, `given` what the configuration
     /// names and `missing` the part of `required` it lacks.
     Alpn { required: Vec<String>, given: Vec<String>, missing: Vec<String> },
     /// rustls refused the configuration for another reason.

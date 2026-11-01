@@ -12,7 +12,8 @@
 //! PEM file in the OS temp directory, removed once the last link and connection holding it have
 //! dropped it; a process killed first leaves that one file, uniquely named and holding public
 //! data. A server's `listen` waits for the load on either scheme, and so does a `tls://` client's
-//! connect, each for at most [`Nats::roots_timeout`], 30 s by default; a `nats://` client does not.
+//! connect, each for at most [`Nats::roots_timeout`], 30 s by default, timed on the clock that
+//! times its `connect_within`; a `nats://` client does not wait.
 //! async-nats reconnects a connection with the options it was made with, so a connection made
 //! without the file, a `nats://` client's made before the load ends or a `nats://` server's whose
 //! load outlasted the bound, has none at its reconnects either, and if its server upgrades it,

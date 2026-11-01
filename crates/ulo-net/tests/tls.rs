@@ -214,9 +214,44 @@ mod given_configuration {
         refused(&[b"h2"], &["http/1.1"]);
     }
 
+    /// The configuration names no application protocol, so it chose none: the server's are
+    /// supplied, in its order, and `acme-tls/1` stays when named.
     #[test]
-    fn acme_tls_1_alone_lacks_the_http_protocols_and_is_refused() {
-        refused(&[b"acme-tls/1"], &["h2", "http/1.1"]);
+    fn a_configuration_naming_none_of_the_transports_protocols_is_given_them() {
+        let given = config_with(&[b"acme-tls/1"]);
+        let loaded = Tls::from_config(Arc::clone(&given)).load(HTTP).expect("acme-tls/1 alone makes no choice");
+        assert_eq!(protocols(&loaded), [b"h2".as_slice(), b"http/1.1", b"acme-tls/1"]);
+        assert_eq!(protocols(&given), [b"acme-tls/1".as_slice()], "the handed configuration is not modified");
+
+        // `h3` alone chose a protocol HTTP's server does not speak.
+        refused(&[b"h3"], &["h2", "http/1.1"]);
+
+        let empty = Tls::from_config(config_with(&[])).load(HTTP).expect("an empty list makes no choice");
+        let only_acme_without_it = Tls::from_config(config_with(&[b"acme-tls/1"])).load(HTTP).expect("loads");
+        assert_eq!(protocols(&empty), &protocols(&only_acme_without_it)[..2], "empty and acme-only agree on the transport's part");
+    }
+
+    #[test]
+    fn acme_only_on_ws_and_grpc_is_given_the_transports_protocol_and_keeps_acme() {
+        let ws = Tls::from_config(config_with(&[b"acme-tls/1"])).load(&[b"http/1.1"]).expect("no choice");
+        assert_eq!(protocols(&ws), [b"http/1.1".as_slice(), b"acme-tls/1"]);
+        let grpc = Tls::from_config(config_with(&[b"acme-tls/1"])).load(&[b"h2"]).expect("no choice");
+        assert_eq!(protocols(&grpc), [b"h2".as_slice(), b"acme-tls/1"]);
+    }
+
+    #[test]
+    fn an_acme_only_configuration_on_http_serves_both_protocols_and_the_validator() {
+        let loaded = Tls::from_config(config_with(&[b"acme-tls/1"])).load(HTTP).expect("no choice");
+        assert_eq!(handshake(Arc::clone(&loaded), &[b"h2", b"http/1.1"]).expect("h2 in common"), Some(b"h2".to_vec()));
+        assert_eq!(handshake(Arc::clone(&loaded), &[b"http/1.1"]).expect("http/1.1 in common"), Some(b"http/1.1".to_vec()));
+        assert_eq!(handshake(loaded, &[b"acme-tls/1"]).expect("acme-tls/1 in common"), Some(b"acme-tls/1".to_vec()));
+    }
+
+    /// A configuration naming part of the transport's protocols has chosen against the rest.
+    #[test]
+    fn a_subset_of_the_transports_protocols_is_still_refused_beside_other_names() {
+        refused(&[b"acme-tls/1", b"http/1.1"], &["h2"]);
+        refused(&[b"h3", b"h2"], &["http/1.1"]);
     }
 
     #[test]
@@ -245,6 +280,7 @@ mod given_configuration {
     fn a_grpc_server_offers_h2_alone() {
         let loaded = Tls::from_config(config_with(&[b"http/1.1", b"h2", b"h3"])).load(&[b"h2"]).expect("h2 is named");
         assert_eq!(protocols(&loaded), [b"h2".as_slice()]);
+        // `http/1.1` alone chose a protocol gRPC does not speak.
         assert!(matches!(Tls::from_config(config_with(&[b"http/1.1"])).load(&[b"h2"]), Err(TlsError::Alpn { .. })));
     }
 

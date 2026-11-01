@@ -5,12 +5,13 @@
 //!
 //! The threads are counted by name across the whole process, and every connect against a silent
 //! broker leaves its thread until the process ends (transports DESIGN §5.2), so this file holds
-//! one test. Linux reads the names from `/proc`, macOS through `proc_pidinfo`; on any other OS the
-//! file builds nothing.
+//! one test.
+//!
+//! Linux only: the names come from `/proc`, which reads in safe Rust. The one thread per connect
+//! is lapin's own behaviour rather than the OS's, so one OS proves it; on any other OS the file
+//! builds nothing.
 
-#![cfg(any(target_os = "linux", target_os = "macos"))]
-// The macOS thread count calls `proc_pidinfo`; the one place this file uses `unsafe`.
-#![allow(unsafe_code)]
+#![cfg(target_os = "linux")]
 
 use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
@@ -75,46 +76,11 @@ impl Silent {
 }
 
 /// The process's threads named `lapin-io-loop`, read from `/proc/self/task/*/comm`.
-#[cfg(target_os = "linux")]
 fn lapin_threads() -> usize {
     std::fs::read_dir("/proc/self/task")
         .expect("the process's threads are listed under /proc")
         .flatten()
         .filter(|task| std::fs::read_to_string(task.path().join("comm")).is_ok_and(|name| name.trim_end() == "lapin-io-loop"))
-        .count()
-}
-
-/// The process's threads named `lapin-io-loop`, listed by `PROC_PIDLISTTHREADS` and each named by
-/// `PROC_PIDTHREADINFO`. A thread that ends between the two answers nothing and is not counted.
-#[cfg(target_os = "macos")]
-fn lapin_threads() -> usize {
-    use std::ffi::CStr;
-    use std::mem::size_of;
-
-    /// `<sys/proc_info.h>`'s flavour listing a process's thread handles, which `libc` omits.
-    const PROC_PIDLISTTHREADS: libc::c_int = 6;
-    let pid = libc::pid_t::try_from(std::process::id()).expect("a pid fits a `pid_t`");
-    let mut handles = vec![0_u64; 4096];
-    let room = libc::c_int::try_from(handles.len() * size_of::<u64>()).expect("the buffer's size fits a `c_int`");
-    // SAFETY: the buffer holds `room` bytes, and the call writes at most that many.
-    let written = unsafe { libc::proc_pidinfo(pid, PROC_PIDLISTTHREADS, 0, handles.as_mut_ptr().cast(), room) };
-    let written = usize::try_from(written).expect("`proc_pidinfo` listed the process's threads");
-    assert!(written > 0 && written < handles.len() * size_of::<u64>(), "`proc_pidinfo` listed {written} bytes of thread handles");
-    handles.truncate(written / size_of::<u64>());
-    handles
-        .into_iter()
-        .filter(|&handle| {
-            // SAFETY: `proc_threadinfo` is plain data, valid zeroed.
-            let mut info: libc::proc_threadinfo = unsafe { std::mem::zeroed() };
-            let size = libc::c_int::try_from(size_of::<libc::proc_threadinfo>()).expect("the record's size fits a `c_int`");
-            // SAFETY: `info` is a `proc_threadinfo`, the record this flavour writes, `size` bytes.
-            let answered = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTHREADINFO, handle, (&raw mut info).cast(), size) };
-            if answered != size {
-                return false;
-            }
-            let name = info.pth_name.map(|byte| byte.cast_unsigned());
-            CStr::from_bytes_until_nul(&name).is_ok_and(|name| name.to_bytes() == b"lapin-io-loop")
-        })
         .count()
 }
 

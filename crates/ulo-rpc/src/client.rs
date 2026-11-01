@@ -849,9 +849,15 @@ fn lost() -> RpcError {
 /// may not meet, unless the link answered it [`Misconfigured`], which the next call meets too,
 /// save a `tls://` NATS link's roots wait that outlasted its bound, which ends once the load has.
 /// A connect the link's runtime refused, having shut down, a wait of the connect's or the connect
-/// itself, answers a [`RuntimeShutDown`](ulo::RuntimeShutDown), which keeps its reason.
+/// itself, answers a [`RuntimeShutDown`](ulo::RuntimeShutDown), which keeps its reason. A connect
+/// that panicked keeps the link's error as the call's source, so [`ulo::is_panic`] finds the panic
+/// on the call's error.
 fn connect_error(link: &str, err: BoxError) -> RpcError {
-    if err.is::<Misconfigured>() {
+    if ulo::is_panic(&err) {
+        let mut error = RpcError::new(ErrorKind::Unavailable, format!("the {link} link could not connect: {err}"));
+        error.source = Some(err);
+        error
+    } else if err.is::<Misconfigured>() {
         RpcError::new(ErrorKind::Internal, format!("the {link} link cannot connect: {err}")).with_reason("misconfigured_link")
     } else if err.is::<ulo::RuntimeShutDown>() {
         RpcError::new(ErrorKind::Unavailable, format!("the {link} link could not connect: {err}")).with_reason(ulo::RUNTIME_SHUT_DOWN)
@@ -1284,7 +1290,8 @@ impl<Res> Stream for RpcStream<Res> {
 /// with `reason: "binary_unsupported"`, before any I/O; a `deadline-ms` the caller set with
 /// `.header` `BadRequest` with `reason: "reserved_header"`, before any I/O; a request frame the
 /// link cannot encode `Internal`; a connect the link refuses as [`Misconfigured`] `Internal` with
-/// `reason: "misconfigured_link"`. A pattern nothing handles is `Unavailable`
+/// `reason: "misconfigured_link"`; a connect that panicked `Unavailable`, the link's error, which
+/// holds the redacted panic, as its `source()`, so [`ulo::is_panic`] is true of it. A pattern nothing handles is `Unavailable`
 /// with `reason: "pattern_unhandled"` or `"no_destination"` where the link signals it, and the
 /// client's `Timeout` where it cannot.
 #[derive(Debug)]
@@ -1293,7 +1300,8 @@ pub struct RpcError {
     pub(crate) message: String,
     pub(crate) details: Details,
     /// The client's own refusal, where it has a type: a [`ZeroTimeout`] for a call's zero timeout,
-    /// a stream's zero deadline or a stream's zero idle timeout.
+    /// a stream's zero deadline or a stream's zero idle timeout; or the link's error for a connect
+    /// that panicked.
     source: Option<Box<dyn Error + Send + Sync>>,
 }
 
@@ -2156,6 +2164,23 @@ mod tests {
         ShutDown,
         TimedOut,
         Other,
+        Panicked,
+    }
+
+    /// A connect task's panic, kept as the link's error's source.
+    #[derive(Debug)]
+    struct Panicked(Arc<ulo::Redacted>);
+
+    impl fmt::Display for Panicked {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "the connect panicked: {}", self.0)
+        }
+    }
+
+    impl Error for Panicked {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            Some(&*self.0)
+        }
     }
 
     impl Link for FailsToConnect {
@@ -2176,6 +2201,10 @@ mod tests {
                 Fails::ShutDown => Err(ulo::RuntimeShutDown::new(ulo::Refused).into()),
                 Fails::TimedOut => Err(ConnectTimedOut::new(Duration::from_secs(3), "127.0.0.1:4222", "NATS").into()),
                 Fails::Other => Err("connection refused".into()),
+                Fails::Panicked => match ulo::spawn_with(&ulo_runtime_tokio::Tokio::current(), async { panic!("connecting to amqp://ulo:hunter2@127.0.0.1:1") }).await {
+                    Err(ulo::TaskEnd::Panicked(message)) => Err(Box::new(Panicked(message))),
+                    other => panic!("the connect task did not panic: {other:?}"),
+                },
             }
         }
 
@@ -2212,6 +2241,22 @@ mod tests {
                 assert!(failed.message().contains(cause), "call {call} does not name the link's cause: {failed:?}");
             }
             assert_eq!(connects.load(Ordering::SeqCst), 2, "each call asks the link to connect, {fails:?}");
+        }
+    }
+
+    /// Q21-P6: a connect whose task panicked fails each call `Unavailable` holding the panic, so
+    /// `ulo::is_panic` is true of the call's error, the url's credentials redacted. Planted break:
+    /// the link's error not kept as the call's source.
+    #[tokio::test]
+    async fn a_connect_that_panicked_fails_every_call_holding_the_panic() {
+        let client = RpcClient::new(FailsToConnect { fails: Fails::Panicked, connects: Arc::default() }, Arc::new(ulo_runtime_tokio::Tokio::current()))
+            .expect("the link is usable");
+        for call in 0..2 {
+            let failed = client.request::<_, u32>("failing.request", &()).await.expect_err("the link never connects");
+            assert_eq!((failed.kind(), failed.reason()), (ErrorKind::Unavailable, None), "call {call}: {failed:?}");
+            let message = failed.message().to_owned();
+            assert!(message.contains("amqp://[redacted]@127.0.0.1:1") && !message.contains("hunter2"), "call {call} is not redacted: {message}");
+            assert!(ulo::is_panic(&BoxError::from(failed)), "call {call} does not hold the panic: {message}");
         }
     }
 

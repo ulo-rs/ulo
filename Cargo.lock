@@ -9686,7 +9686,6 @@ dependencies = [
  "futures-executor",
  "futures-util",
  "lapin",
- "libc",
  "testcontainers",
  "tokio",
  "tracing",

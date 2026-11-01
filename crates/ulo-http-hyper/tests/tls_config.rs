@@ -148,6 +148,21 @@ async fn acme_tls_1_in_the_handed_configuration_is_kept_beside_the_http_protocol
     server.stop().await;
 }
 
+/// A configuration naming only `acme-tls/1` chose no application protocol, so HTTP serves both of
+/// its own and still answers the validator.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_acme_only_configuration_serves_http_1_1_and_h2_and_the_validator() {
+    let ca = Ca::new();
+    let server = start(server_config(&ca.issue(&["localhost", "127.0.0.1"]), &ca, false, &[b"acme-tls/1"])).await.expect("the app listens");
+
+    assert_eq!(server.negotiated(&ca, &[b"h2", b"http/1.1"]).await.as_deref(), Some(b"h2".as_slice()));
+    let (reply, alpn) = server.get(&ca, None, &[b"http/1.1"]).await.expect("an HTTP/1.1 client is served");
+    assert!(reply.starts_with("HTTP/1.1 200") && reply.ends_with("hit"), "{reply}");
+    assert_eq!(alpn.as_deref(), Some(b"http/1.1".as_slice()));
+    assert_eq!(server.negotiated(&ca, &[b"acme-tls/1"]).await.as_deref(), Some(b"acme-tls/1".as_slice()), "the validator's handshake completes");
+    server.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_client_without_a_certificate_is_refused_and_one_with_it_is_served() {
     let ca = Ca::new();

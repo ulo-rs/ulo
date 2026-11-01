@@ -21,6 +21,7 @@ Read first:
 
 Client certificates: PEM cannot ask for one. Build a rustls `ServerConfig` with `with_client_cert_verifier`
 and hand it over with `Tls::from_config(Arc<ServerConfig>)`; the server still sets `h2` and `http/1.1`, and
-a configuration naming ALPN protocols without both fails `listen` as `Configure`.
+a configuration naming one of the two without the other fails `listen` as `Configure`; one naming
+neither, `acme-tls/1` alone included, is given both.
 
 Previous: [19 http-uploads](../19-http-uploads). Next: [21 http-in-axum](../21-http-in-axum).

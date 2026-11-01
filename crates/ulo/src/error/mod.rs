@@ -19,7 +19,7 @@ use crate::construct::ConstructError;
 use crate::hooks::HookKind;
 use crate::key::{BindingKind, KeyName};
 use crate::module::{ModuleName, colliding_names};
-use crate::redact::Redacted;
+use crate::redact::{PanicMessage, Redacted};
 use crate::signal::Signal;
 use crate::timer::BoxError;
 use crate::type_name::{TypeName, short_type_name};
@@ -863,7 +863,10 @@ fn reason_permanent(reason: &FailureReason, depth: usize) -> bool {
 /// [`ConfigureErrors`] it holds, which is how `listen()` reports a server's panicking `prepare`,
 /// and for a [`ShutdownError`] with a failure that holds one: a [`ServeEnd::Panicked`], which is
 /// how `serve()` reports a transport that panicked, a hook or `close` whose reason is `Panicked`,
-/// or a serve end, hook or `close` whose error holds a panic.
+/// or a serve end, hook or `close` whose error holds a panic. A panic's own message, the
+/// [`Redacted`] a [`TaskEnd::Panicked`](crate::TaskEnd::Panicked) holds, is one too, so an error
+/// that keeps a task's panic as its `source()` is found: how a link answers a call whose
+/// connect task panicked.
 ///
 /// The panic is found under a constructor or a `try_` factory that returned a dependency's
 /// `LookupError` as its own `Err`, and down any error's `source()` chain. Inside a [`Redacted`],
@@ -893,7 +896,7 @@ fn redacted_panicked(redacted: &Redacted, depth: usize) -> bool {
 /// `Some` when `error` is one of the core's types that can carry a panic, holding whether it
 /// does; `None` for any other type.
 fn recognized<'e>(error: impl ByType<'e>, depth: usize) -> Option<bool> {
-    if error.get::<PanicRecovered>().is_some() || error.get::<PreparePanicked>().is_some() {
+    if error.get::<PanicRecovered>().is_some() || error.get::<PreparePanicked>().is_some() || error.get::<PanicMessage>().is_some() {
         return Some(true);
     }
     if let Some(lookup) = error.get::<LookupError>() {
@@ -1014,5 +1017,37 @@ mod shutdown_panics {
         let close = ShutdownFailure::Close { transport: TypeName::of::<()>(), reason: FailureReason::Errored(errored_with_a_panic()) };
         let serve = ShutdownFailure::Serve { transport: TypeName::of::<()>(), end: ServeEnd::Errored(errored_with_a_panic()) };
         assert_eq!((holds_a_panic(close), holds_a_panic(serve)), (true, true));
+    }
+}
+
+#[cfg(test)]
+mod task_panics {
+    use super::*;
+    use crate::redact::{SecretRegistry, redact_panic};
+
+    /// An error keeping `0` as its `source()`, as a link keeps its connect task's panic.
+    #[derive(Debug)]
+    struct Kept(Redacted);
+
+    impl fmt::Display for Kept {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("the connect ended")
+        }
+    }
+
+    impl Error for Kept {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    /// A panic's message, redacted as `TaskEnd::Panicked` holds it, is a panic under the error
+    /// that keeps it, and a `Redacted` error of the same text is not.
+    #[test]
+    fn a_task_s_panic_kept_as_a_source_is_a_panic() {
+        let panicked = redact_panic(&SecretRegistry::default(), Box::new("boom"));
+        let errored = Redacted::from_parts(Box::new(fmt::Error), "boom".into());
+        let held = |redacted| crate::is_panic(&(Box::new(Kept(redacted)) as BoxError));
+        assert_eq!((held(panicked), held(errored)), (true, false));
     }
 }
