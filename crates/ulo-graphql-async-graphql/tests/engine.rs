@@ -14,7 +14,7 @@ use futures_util::stream;
 use serde_json::{Map, Value, json};
 use ulo::scope::PerExecution;
 use ulo::{App, Construct, ConstructError, Dep, Dependencies, ExecOptions, Module, ModuleDef, ModuleIdentity, Resolver};
-use ulo_graphql::{Engine, GqlRequest, GqlResponse, Location, Outcome, PathSegment};
+use ulo_graphql::{Engine, GqlRequest, GqlResponse, Location, Outcome, PathSegment, RequestFault};
 use ulo_graphql_async_graphql::AsyncGraphql;
 
 const PATIENCE: Duration = Duration::from_secs(10);
@@ -187,13 +187,19 @@ async fn a_field_error_is_an_executed_response_naming_its_path_and_location() {
 async fn a_request_that_fails_before_execution_is_a_request_error_with_no_data() {
     with_engine::<Gql, _>(async |app, engine| {
         let cases = [
-            ("a syntax error", GqlRequest::new("{ answer")),
-            ("an unknown field", GqlRequest::new("{ nope }")),
-            ("an unknown operation", GqlRequest { operation_name: Some("Missing".into()), ..GqlRequest::new("query A { answer }") }),
+            ("a syntax error", GqlRequest::new("{ answer"), RequestFault::Syntax),
+            ("an unknown field", GqlRequest::new("{ nope }"), RequestFault::Validation),
+            (
+                "an unknown operation",
+                GqlRequest { operation_name: Some("Missing".into()), ..GqlRequest::new("query A { answer }") },
+                RequestFault::Operation,
+            ),
+            ("two operations and no name", GqlRequest::new("query A { answer } query B { answer }"), RequestFault::Operation),
         ];
-        for (what, request) in cases {
+        for (what, request, fault) in cases {
             let response = execute(app, &engine, request).await;
             assert_eq!(response.outcome(), Outcome::RequestError, "{what}");
+            assert_eq!(response.fault(), Some(fault), "{what}");
             assert_eq!(response.data(), None, "{what}: no `data` key at all");
             assert!(!response.errors().is_empty(), "{what}");
             assert!(response.errors().iter().all(|error| error.path.is_empty()), "{what}: a request error names no field");
@@ -211,6 +217,7 @@ async fn a_missing_required_variable_is_a_request_error() {
     with_engine::<Gql, _>(async |app, engine| {
         let response = execute(app, &engine, GqlRequest::new("query A($n: String!) { hello(name: $n) }")).await;
         assert_eq!(response.outcome(), Outcome::RequestError);
+        assert_eq!(response.fault(), Some(RequestFault::Coercion));
         assert_eq!(response.data(), None);
         assert!(response.errors().iter().all(|error| error.path.is_empty()));
     })
@@ -230,6 +237,7 @@ async fn a_fault_is_a_request_error_by_where_it_was_raised_not_by_its_path() {
 
         let resolver = execute(app, &engine, GqlRequest::new("{ softFail }")).await;
         assert_eq!(resolver.outcome(), Outcome::Executed, "a resolver's error");
+        assert_eq!(resolver.fault(), None, "an executed request names no fault");
         assert_eq!(resolver.errors()[0].path, [PathSegment::Field("softFail".into())]);
 
         let null = GqlRequest { variables: vars(json!({ "n": null })), ..GqlRequest::new("query A($n: String!) { hello(name: $n) }") };
@@ -255,6 +263,7 @@ async fn a_fault_is_a_request_error_by_where_it_was_raised_not_by_its_path() {
             .expect("an execution");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].outcome(), Outcome::RequestError, "a missing variable in a subscription");
+        assert_eq!(events[0].fault(), Some(RequestFault::Coercion));
         assert_eq!(events[0].data(), None);
 
         let supplied = GqlRequest { variables: vars(json!({ "from": 2 })), ..GqlRequest::new("subscription S($from: Int!) { countdown(from: $from) }") };
@@ -338,6 +347,7 @@ async fn a_subscription_yields_one_response_per_event() {
         let refused = collect(GqlRequest::new("subscription { nope }")).await;
         assert_eq!(refused.len(), 1);
         assert_eq!(refused[0].outcome(), Outcome::RequestError);
+        assert_eq!(refused[0].fault(), Some(RequestFault::Validation), "an unknown field in a subscription");
         assert_eq!(refused[0].data(), None);
     })
     .await;

@@ -2,8 +2,9 @@
 //! each value text parsed as the field's type asks.
 //!
 //! Serde names a struct's fields with `&'static str`, which is what lets a failure carry the
-//! field's name as `ExtractError`'s `param`: a missing field is `Missing { param: "page" }`, a value
-//! that does not parse is `Malformed { param: "page", .. }`.
+//! field's name as `ExtractError`'s `param`: in a query or a path a missing field is
+//! `Missing { param: "page" }` and a value that does not parse `Malformed { param: "page", .. }`;
+//! in a form body both are `Mismatched { param: "page", .. }`.
 
 use std::error::Error;
 use std::fmt;
@@ -77,6 +78,15 @@ impl ParamsError {
         } else {
             ExtractError::Malformed { param, source: cx.app().redact(Box::new(self)) }
         }
+    }
+
+    /// The extraction failure for content: `Mismatched` whether serde reported a field missing or
+    /// a value that does not parse, the content having decoded and not fit. A form body is
+    /// content; a query string and a route's parameters are the request's target, which
+    /// [`into_extract`](Self::into_extract) answers.
+    pub(crate) fn into_mismatch(self, whole: &'static str, cx: &HttpCx) -> ExtractError {
+        let param = self.field.unwrap_or(whole);
+        ExtractError::Mismatched { param, source: cx.app().redact(Box::new(self)) }
     }
 }
 

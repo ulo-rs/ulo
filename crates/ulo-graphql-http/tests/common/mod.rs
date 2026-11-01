@@ -11,7 +11,7 @@ use std::time::Duration;
 use http_body::Body as _;
 use tokio::sync::Notify;
 use ulo::{BoxError, BoxFuture, ExecutionRef, Module, ModuleDef, ModuleIdentity};
-use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse};
+use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse, RequestFault};
 use ulo_http::{AppService, Backend, BackendLimits, ConnInfo, HttpBody, HttpConfig, Request, Response, StatusCode};
 use ulo_net::BoundListener;
 use ulo_net::rustls::ServerConfig;
@@ -118,8 +118,9 @@ impl Seen {
     }
 }
 
-/// Answers by what the query names: `executed`, `fieldError`, `requestError` or `failed`; every
-/// request it executes is recorded.
+/// Answers by what the query names: `executed`, `fieldError`, `requestError` (a request error
+/// naming no fault), `syntaxError`, `validationError`, `operationError`, `coercionError` or
+/// `failed`; every request it executes is recorded.
 pub struct Stub {
     pub seen: Arc<Seen>,
     pub page: bool,
@@ -130,7 +131,17 @@ impl Engine for Stub {
         let query = req.query.clone();
         self.seen.requests.lock().unwrap_or_else(PoisonError::into_inner).push(req);
         Box::pin(async move {
-            if query.contains("requestError") {
+            let fault = [
+                ("syntaxError", RequestFault::Syntax),
+                ("validationError", RequestFault::Validation),
+                ("operationError", RequestFault::Operation),
+                ("coercionError", RequestFault::Coercion),
+            ]
+            .into_iter()
+            .find_map(|(name, fault)| query.contains(name).then_some(fault));
+            if let Some(fault) = fault {
+                GqlResponse::request_fault(fault, vec![GqlError::new("the request is at fault")])
+            } else if query.contains("requestError") {
                 GqlResponse::request_error(vec![GqlError::new("the document is invalid")])
             } else if query.contains("failed") {
                 GqlResponse::failed(vec![GqlError::new("the server failed")])

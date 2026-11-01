@@ -12,7 +12,7 @@ use ulo_transport::{CallError, Details, ErrorKind, ExtractError};
 
 use crate::backend::HttpConfig;
 use crate::body::HttpBody;
-use crate::miss::MethodNotAllowed;
+use crate::miss::{MethodNotAllowed, NotAcceptable};
 use crate::response::Response;
 use crate::routing::Routing;
 use crate::sse::{Event, EventName};
@@ -55,11 +55,11 @@ pub(crate) fn render_error(err: BoxError, exec: &ExecutionRef, config: &HttpConf
 /// route timeout's error handlers return, which is the `Timeout` it offered or their reshaping of
 /// it.
 ///
-/// `CallError::from_boxed`, with three statuses no kind has, each while the error is still of
-/// kind `BadRequest`: 405 with `Allow` for a `MethodNotAllowed`, and 413 and 415 for an
-/// `ExtractError`'s `TooLarge` and `UnsupportedMediaType`. Each is recognised bare or as the
-/// source of a `CallError`; an error handler that reshaped it to another kind is rendered by that
-/// kind. A 415 carries `Accept` with the media type the extractor expected (RFC 9110 §15.5.16).
+/// `CallError::from_boxed`, with four statuses no kind has, each while the error is still of
+/// kind `BadRequest`: 405 with `Allow` for a `MethodNotAllowed`, 406 for a `NotAcceptable`, and
+/// 413 and 415 for an `ExtractError`'s `TooLarge` and `UnsupportedMediaType`. Each is recognised
+/// as the source of a `CallError`, and all but `NotAcceptable` bare as well; an error handler that
+/// reshaped it to another kind is rendered by that kind. A 415 carries `Accept` with the media type the extractor expected (RFC 9110 §15.5.16).
 pub(crate) fn render_as_is(err: BoxError, config: &HttpConfig) -> Response {
     let error = match err.downcast::<MethodNotAllowed>() {
         Ok(refused) => (*refused).into_error(),
@@ -70,6 +70,9 @@ pub(crate) fn render_as_is(err: BoxError, config: &HttpConfig) -> Response {
     }
     if let Some(refused) = error.source_as::<MethodNotAllowed>() {
         return method_not_allowed(&error, refused, config);
+    }
+    if error.source_as::<NotAcceptable>().is_some() {
+        return document(&error, StatusCode::NOT_ACCEPTABLE, config);
     }
     match error.source_as::<ExtractError>() {
         Some(ExtractError::TooLarge { .. }) => document(&error, StatusCode::PAYLOAD_TOO_LARGE, config),

@@ -25,13 +25,20 @@
 //! exports and not its importer's bindings, so `engine_from` names the module binding the engine
 //! and `GraphqlModule` imports it.
 //!
-//! In `application/graphql-response+json` a request that executed answers 200, errors included,
-//! and one that failed before execution 400; in the legacy `application/json` every GraphQL
-//! response is 200. A request the server could not run, its context failing to build, answers
-//! 500 under both. The response media type is negotiated from `Accept`, and a request with no
-//! `Accept` reads as accepting `application/graphql-response+json`. A POST whose body is not
-//! `application/json` is refused 415, and a GET whose operation is a mutation 405 with `Allow`,
-//! both through the error handlers as the router's refusals are.
+//! The statuses follow the GraphQL-over-HTTP working draft, read as a shape rather than a
+//! contract. A request that executed answers 200, errors included. One that failed before
+//! execution answers 400 when its JSON body or its document does not parse, and 422 when it is not
+//! a well-formed GraphQL request, fails validation, names no operation that can be determined, or
+//! carries variables that cannot be coerced. A request the server could not run, its context
+//! failing to build, answers 500. The response media type is negotiated from `Accept`: a request
+//! with no `Accept` reads as accepting `application/graphql-response+json`, and the statuses are
+//! the same under either JSON type; a legacy client, one accepting `application/json` and not
+//! `application/graphql-response+json`, gets `application/json` on a 2xx and
+//! `application/graphql-response+json` otherwise, as the draft has it. An `Accept` naming neither
+//! is refused 406, a POST whose body is not `application/json` 415, and a GET whose operation is a
+//! mutation 405 with `Allow`, each through the error handlers as the router's refusals are. The
+//! draft's 294 for a result with both `data` and `errors` is not used: an executed request answers
+//! 200.
 
 mod controller;
 mod module;

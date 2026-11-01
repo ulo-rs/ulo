@@ -7,7 +7,7 @@ cargo run -p ex-31-graphql
 curl -H 'content-type: application/json' -d '{"query":"{ greeting(name: \"ulo\") }"}' http://127.0.0.1:3000/graphql
 ```
 
-The server listens on `PORT` (default 3000). A required variable left out answers 400 under `application/graphql-response+json` (the default when `Accept` names nothing) and 200 under `application/json`, with the error naming the variable and its location and no `path`.
+The server listens on `PORT` (default 3000). A required variable left out answers 422, with the error naming the variable and its location and no `path`. The status is the same for a client accepting only `application/json`, and only a 2xx answer carries that media type; every other answer stays `application/graphql-response+json` (the default when `Accept` names nothing).
 
 Read first:
 

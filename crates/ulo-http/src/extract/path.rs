@@ -20,8 +20,9 @@ use crate::transport::Http;
 /// than the first request's. A map, a `#[serde(flatten)]` struct and a hand-written impl calling
 /// `deserialize_any` ask for no names and are not checked.
 ///
-/// A value that does not parse as its field's type is `ExtractError::Malformed` naming the struct
-/// field, or `"path"` for a tuple or a scalar.
+/// A value that does not parse as its field's type is `ExtractError::Malformed` (400) naming the
+/// struct field, or `"path"` for a tuple or a scalar. The path is the request's target rather than
+/// its content, so the 422 a body that does not fit its type answers does not apply.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Path<T>(pub T);
 

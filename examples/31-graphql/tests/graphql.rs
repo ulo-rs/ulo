@@ -59,9 +59,10 @@ async fn the_context_is_built_once_per_request() {
     server.stop().await.unwrap();
 }
 
-/// A required variable left out is a fault in the request: 400, no `data` key, and an error that
-/// names the variable and where it is declared but no field `path`. The legacy media type
-/// carries the same body with status 200.
+/// A required variable left out is a fault in the request, variable coercion's: 422, no `data`
+/// key, and an error that names the variable and where it is declared but no field `path`. A
+/// client accepting only the legacy `application/json` gets the same status and body, under
+/// `application/graphql-response+json`, which the draft keeps on every response but a 2xx.
 #[tokio::test]
 async fn a_missing_required_variable_is_a_request_error() {
     let server = start(builder()).await;
@@ -74,13 +75,13 @@ async fn a_missing_required_variable_is_a_request_error() {
     });
 
     let reply = post(server.addr, None, json!({ "query": query })).await;
-    assert_eq!(reply.status, 400);
+    assert_eq!(reply.status, 422);
     assert_eq!(reply.header("content-type"), Some(GRAPHQL_RESPONSE));
     assert_eq!(json_of(&reply), expected);
 
     let legacy = post(server.addr, Some("application/json"), json!({ "query": query })).await;
-    assert_eq!(legacy.status, 200);
-    assert_eq!(legacy.header("content-type"), Some("application/json; charset=utf-8"));
+    assert_eq!(legacy.status, 422);
+    assert_eq!(legacy.header("content-type"), Some(GRAPHQL_RESPONSE));
     assert_eq!(json_of(&legacy), expected);
     server.stop().await.unwrap();
 }

@@ -34,8 +34,9 @@ pub trait FromCall<T: Transport>: Sized + Send + 'static {
 
 /// `None` exactly where `P` fails with [`ExtractError::Missing`] or
 /// [`ExtractError::HostMissing`]: a header, query field or body the call does not carry, or a
-/// value its host did not supply. Every other failure propagates. Forwards `CONSUMES_BODY` and the
-/// dependencies.
+/// value its host did not supply. Every other failure propagates, [`ExtractError::BodyTaken`]
+/// among them: a body the server took before the extractor ran is not one the call lacks. Forwards
+/// `CONSUMES_BODY` and the dependencies.
 impl<T: Transport, P: FromCall<T>> FromCall<T> for Option<P> {
     const CONSUMES_BODY: bool = P::CONSUMES_BODY;
 
@@ -90,9 +91,14 @@ where
 pub enum ExtractError {
     /// A required header, query field or path segment.
     Missing { param: &'static str },
-    /// Could not decode. `source` is built through `AppHandle::redact`, so a decoder's error
-    /// echoing a credential is redacted like any outside error.
+    /// Could not decode: the syntax is wrong, or the input ended early. `source` is built through
+    /// `AppHandle::redact`, so a decoder's error echoing a credential is redacted like any outside
+    /// error.
     Malformed { param: &'static str, source: Redacted },
+    /// Decoded, and does not fit the type: a JSON body missing a field or holding a value of the
+    /// wrong type, a form lacking a field. `source`, redacted as `Malformed`'s is, names what
+    /// did not fit.
+    Mismatched { param: &'static str, source: Redacted },
     UnsupportedMediaType { param: &'static str, expected: &'static str },
     TooLarge { param: &'static str, limit: u64 },
     /// Validation rules failed.
@@ -105,6 +111,18 @@ pub enum ExtractError {
     /// rather than a bad request, so it classifies as `Internal` with its message withheld.
     /// `type_name` is the value's type.
     HostMissing { param: &'static str, type_name: &'static str },
+    /// The body was taken before the extractor ran, by a guard or an interceptor calling the
+    /// transport's `take_body`: a fault in the server, not in the request, so it classifies as
+    /// `Internal` with its message withheld, and `Option<P>` does not read it as an absent body.
+    /// `extractor` is the extractor's type.
+    BodyTaken { param: &'static str, extractor: &'static str },
+    /// A streamed body's items arrived faster than its reader took them: `limit` waited unread,
+    /// the transport's bound, and the next one ended the call. The stream yields this as its last
+    /// item, the items left unread dropped, so a reader does not take a request cut short for a
+    /// complete one. It classifies as `Unavailable`. RPC's `Inbound<T>` yields it, and the RPC
+    /// server answers the call `unavailable` with the reason `overflow` whatever the handler
+    /// returns.
+    Overflowed { param: &'static str, limit: u64 },
 }
 
 impl ExtractError {
@@ -112,11 +130,14 @@ impl ExtractError {
         match self {
             ExtractError::Missing { param }
             | ExtractError::Malformed { param, .. }
+            | ExtractError::Mismatched { param, .. }
             | ExtractError::UnsupportedMediaType { param, .. }
             | ExtractError::TooLarge { param, .. }
             | ExtractError::Invalid { param, .. }
             | ExtractError::Dependency { param, .. }
-            | ExtractError::HostMissing { param, .. } => param,
+            | ExtractError::HostMissing { param, .. }
+            | ExtractError::BodyTaken { param, .. }
+            | ExtractError::Overflowed { param, .. } => param,
         }
     }
 }
@@ -126,6 +147,7 @@ impl fmt::Display for ExtractError {
         match self {
             ExtractError::Missing { param } => write!(f, "`{param}` is missing"),
             ExtractError::Malformed { param, source } => write!(f, "`{param}` could not be decoded: {source}"),
+            ExtractError::Mismatched { param, source } => write!(f, "`{param}` does not fit the expected type: {source}"),
             ExtractError::UnsupportedMediaType { param, expected } => write!(f, "`{param}` must be `{expected}`"),
             ExtractError::TooLarge { param, limit } => write!(f, "`{param}` is larger than {limit} bytes"),
             ExtractError::Invalid { param, violations } => {
@@ -136,6 +158,10 @@ impl fmt::Display for ExtractError {
             ExtractError::Dependency { source, .. } => fmt::Display::fmt(source, f),
             ExtractError::HostMissing { param, type_name } => {
                 write!(f, "`{param}`: the host supplied no `{type_name}` with the request")
+            }
+            ExtractError::BodyTaken { param, extractor } => write!(f, "`{param}` was taken before `{extractor}` read it"),
+            ExtractError::Overflowed { param, limit } => {
+                write!(f, "`{param}` had {limit} items waiting to be read, and the next one ended the call")
             }
         }
     }
@@ -150,17 +176,20 @@ impl Error for ExtractError {
     }
 }
 
-/// `BadRequest`, or `Unprocessable` for `Invalid` with its violations as a `FieldViolations`
-/// detail; a `Dependency` takes the kind, message and details its lookup error maps to, so a
+/// `BadRequest`; `Unprocessable` for `Invalid`, with its violations as a `FieldViolations` detail,
+/// and for `Mismatched`, content that decoded and does not fit, which RFC 9110 §15.5.21 gives 422
+/// on HTTP; a `Dependency` takes the kind, message and details its lookup error maps to, so a
 /// lookup failure's text, which names keys, is withheld as `CallError::from_boxed` withholds it.
-/// `HostMissing` is `Internal` with the message withheld: the fault is the deployment's, and its
-/// text names a type.
+/// `HostMissing` and `BodyTaken` are `Internal` with the message withheld: the fault is the
+/// deployment's or the server's own, and the text names a type. `Overflowed` is `Unavailable`: the
+/// request was well formed and the server did not keep up with it.
 impl Classify for ExtractError {
     fn classify(&self) -> ErrorKind {
         match self {
-            ExtractError::Invalid { .. } => ErrorKind::Unprocessable,
+            ExtractError::Invalid { .. } | ExtractError::Mismatched { .. } => ErrorKind::Unprocessable,
             ExtractError::Dependency { source, .. } => from_lookup(source, 0).kind(),
-            ExtractError::HostMissing { .. } => ErrorKind::Internal,
+            ExtractError::HostMissing { .. } | ExtractError::BodyTaken { .. } => ErrorKind::Internal,
+            ExtractError::Overflowed { .. } => ErrorKind::Unavailable,
             _ => ErrorKind::BadRequest,
         }
     }
@@ -168,7 +197,7 @@ impl Classify for ExtractError {
     fn public_message(&self) -> Cow<'_, str> {
         match self {
             ExtractError::Dependency { source, .. } => Cow::Owned(from_lookup(source, 0).message().to_owned()),
-            ExtractError::HostMissing { .. } => Cow::Borrowed(INTERNAL_MESSAGE),
+            ExtractError::HostMissing { .. } | ExtractError::BodyTaken { .. } => Cow::Borrowed(INTERNAL_MESSAGE),
             _ => Cow::Owned(self.to_string()),
         }
     }

@@ -1,5 +1,5 @@
-//! A routing miss, as the global error handlers receive it (transports DESIGN §3.2, §3.3): a
-//! `CallError` whose source is one of these.
+//! A routing miss, as the global error handlers receive it (transports DESIGN §3.2, §3.3), and a
+//! handler's refusal of an `Accept` it cannot answer: a `CallError` whose source is one of these.
 
 use std::error::Error;
 use std::fmt;
@@ -93,3 +93,46 @@ impl fmt::Display for MethodNotAllowed {
 }
 
 impl Error for MethodNotAllowed {}
+
+/// A request whose `Accept` allows none of the media types a handler answers: the source of the
+/// `BadRequest` the error handlers receive. Unclaimed, and while the error is still of kind
+/// `BadRequest`, it renders 406 (RFC 9110 §15.5.7) as a problem document; an error handler that
+/// reshapes it to another kind is rendered by that kind.
+///
+/// No `ErrorKind` is 406, the status being HTTP's alone, as with [`MethodNotAllowed`]. A handler
+/// returns it as the source of a `CallError` of kind `BadRequest`:
+///
+/// ```
+/// # use ulo_http::{CallError, ErrorKind, NotAcceptable};
+/// let refused = NotAcceptable::new(["application/json"]);
+/// let error = CallError::new(ErrorKind::BadRequest, refused.to_string()).with_source(refused);
+/// assert_eq!(error.source_as::<NotAcceptable>().map(|refused| refused.available().len()), Some(1));
+/// ```
+#[derive(Clone, Debug)]
+pub struct NotAcceptable {
+    available: Vec<String>,
+}
+
+impl NotAcceptable {
+    /// A refusal naming the media types the handler answers, which RFC 9110 has the 406 list.
+    pub fn new<I, S>(available: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        NotAcceptable { available: available.into_iter().map(Into::into).collect() }
+    }
+
+    /// The media types the handler answers.
+    pub fn available(&self) -> &[String] {
+        &self.available
+    }
+}
+
+impl fmt::Display for NotAcceptable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "`Accept` allows none of the media types this resource answers: {}", self.available.join(", "))
+    }
+}
+
+impl Error for NotAcceptable {}

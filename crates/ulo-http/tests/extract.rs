@@ -5,6 +5,7 @@
 
 mod o1_support;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
@@ -67,6 +68,16 @@ impl Inputs {
     #[ulo_http::post("/json")]
     fn json(&self, Json(value): Json<serde_json::Value>) -> String {
         value["n"].to_string()
+    }
+
+    #[ulo_http::post("/json-typed")]
+    fn json_typed(&self, Json(ids): Json<Ids>) -> String {
+        ids.id.to_string()
+    }
+
+    #[ulo_http::post("/json-map")]
+    fn json_map(&self, Json(map): Json<HashMap<u32, String>>) -> String {
+        map.len().to_string()
     }
 
     #[ulo_http::post("/form")]
@@ -176,6 +187,7 @@ fn describe(error: &ExtractError) -> String {
     match error {
         ExtractError::Missing { param } => format!("Missing|{param}"),
         ExtractError::Malformed { param, .. } => format!("Malformed|{param}"),
+        ExtractError::Mismatched { param, .. } => format!("Mismatched|{param}"),
         ExtractError::UnsupportedMediaType { param, expected } => format!("UnsupportedMediaType|{param}|{expected}"),
         ExtractError::TooLarge { param, limit } => format!("TooLarge|{param}|{limit}"),
         ExtractError::Invalid { param, violations } => format!("Invalid|{param}|{}", violations.len()),
@@ -283,6 +295,33 @@ async fn json_needs_a_json_media_type_and_a_body_and_names_what_failed() {
     apps.stop().await;
 }
 
+/// RFC 9110 §15.5.21: content whose syntax is correct and which the server cannot process is 422,
+/// syntax that is not JSON 400. A body cut off mid-value is a syntax failure.
+#[tokio::test]
+async fn json_that_parses_and_does_not_fit_the_type_is_mismatched_422_and_json_that_does_not_parse_is_malformed_400() {
+    let apps = Apps::start().await;
+    let typed = |body: &'static str| move || Call::new(Method::POST, "/json-typed").header("content-type", "application/json").body(body);
+
+    apps.succeeds(typed(r#"{"id":4}"#), "4").await;
+    for body in [r#"{"wrong":1}"#, r#"{"id":"four"}"#, r#"{"id":-1}"#, r#""four""#] {
+        let reply = apps.fails(typed(body), StatusCode::UNPROCESSABLE_ENTITY, "Mismatched|body").await;
+        assert_eq!(reply.header("content-type"), Some("application/problem+json"), "{body}");
+        assert_eq!((reply.json()["status"].as_u64(), reply.json()["title"].as_str()), (Some(422), Some("Unprocessable Content")), "{body}");
+        let detail = reply.json()["detail"].as_str().unwrap_or_default().to_owned();
+        assert!(detail.starts_with("`body` does not fit the expected type: "), "{body}: {detail}");
+    }
+    for body in ["nope", r#"{"id":"#, r#"{"id":4"#] {
+        apps.fails(typed(body), BAD, "Malformed|body").await;
+    }
+    // serde_json reports a map key that is not the number the type asks for as a syntax error,
+    // though the body is JSON.
+    let map = |body: &'static str| move || Call::new(Method::POST, "/json-map").header("content-type", "application/json").body(body);
+    apps.succeeds(map(r#"{"1":"a"}"#), "1").await;
+    apps.fails(map(r#"{"one":"a"}"#), StatusCode::UNPROCESSABLE_ENTITY, "Mismatched|body").await;
+    apps.fails(map(r#"{"one":"a""#), BAD, "Malformed|body").await;
+    apps.stop().await;
+}
+
 #[tokio::test]
 async fn form_needs_the_urlencoded_media_type_and_names_the_field_that_failed() {
     let apps = Apps::start().await;
@@ -292,7 +331,8 @@ async fn form_needs_the_urlencoded_media_type_and_names_the_field_that_failed() 
     apps.succeeds(form(urlencoded, "user=ann&pw=x%21"), "ann|x!").await;
     let wrong = apps.fails(form("application/json", "user=ann&pw=x"), StatusCode::UNSUPPORTED_MEDIA_TYPE, &format!("UnsupportedMediaType|body|{urlencoded}")).await;
     assert_eq!(wrong.header("accept"), Some(urlencoded));
-    apps.fails(form(urlencoded, "user=ann"), BAD, "Missing|pw").await;
+    // Every byte sequence parses as a form, so a field it lacks is content that does not fit.
+    apps.fails(form(urlencoded, "user=ann"), StatusCode::UNPROCESSABLE_ENTITY, "Mismatched|pw").await;
     apps.stop().await;
 }
 
@@ -434,8 +474,10 @@ async fn valid_runs_after_extraction_and_answers_422_with_every_violated_field()
     fields.sort_unstable();
     assert_eq!(fields, ["name", "qty"]);
 
-    // A body that does not extract fails as extraction, before validation runs.
-    apps.fails(item("{}"), BAD, "Malformed|body").await;
+    // A body that does not extract fails as extraction, before validation runs: `{}` is JSON that
+    // lacks both fields, the same 422 a violated rule answers, and text that is not JSON is 400.
+    apps.fails(item("{}"), StatusCode::UNPROCESSABLE_ENTITY, "Mismatched|body").await;
+    apps.fails(item("{"), BAD, "Malformed|body").await;
     apps.stop().await;
 }
 
