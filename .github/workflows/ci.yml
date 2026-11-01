@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [experiment/di-redesign]
+    branches: [master]
   pull_request:
-    branches: [experiment/di-redesign]
+    branches: [master]
 
 jobs:
   check:
