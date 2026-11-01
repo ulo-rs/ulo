@@ -28,10 +28,10 @@ use ulo_rpc::__private::ClientProbe;
 use ulo_rpc::__private::HoldUntil;
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured, NoTimer,
-    Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
+    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link,
+    Misconfigured, NoTimer, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
 };
-use ulo_transport::prepare::{Failures, zero_bound};
+use ulo_transport::prepare::{Failure, Failures, zero_bound};
 use ulo_transport::{Detail, Details, ErrorKind, SHUTDOWN_MESSAGE};
 
 /// The header naming a message's frame kind where the message alone does not tell it: `open` on
@@ -115,8 +115,8 @@ pub struct Nats {
     pub(crate) max_payload: Arc<AtomicU64>,
     pub(crate) roots: Roots,
     pub(crate) roots_timeout: Bound,
-    /// The app's clock, read by `prepare`. A `listen` made without `prepare` times its grace on
-    /// the link's runtime.
+    pub(crate) connect_within: Duration,
+    /// The app's clock, read by `prepare`; `listen` refuses without one.
     pub(crate) timer: Option<Arc<dyn Timer>>,
     pub(crate) state: Mutex<State>,
     #[cfg(feature = "conformance-probe")]
@@ -159,6 +159,10 @@ impl Drop for AbortOnDrop {
 /// How long a link that waits for its roots waits at `Bound::Default`.
 const ROOTS_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long a server's `listen` and a client's connect wait for the NATS server, unless
+/// [`Nats::connect_within`] says otherwise.
+const CONNECT_WITHIN: Duration = Duration::from_secs(30);
+
 impl Nats {
     /// The link on `url`, `nats://host:4222` or `tls://host:4222`, parsed in `prepare` and
     /// connected lazily: the server side at `bind`, the client side on its first call. Several
@@ -173,6 +177,7 @@ impl Nats {
             max_payload: Arc::new(AtomicU64::new(0)),
             roots: Roots::platform(),
             roots_timeout: Bound::Default,
+            connect_within: CONNECT_WITHIN,
             timer: None,
             state: Mutex::new(State::default()),
             #[cfg(feature = "conformance-probe")]
@@ -226,6 +231,27 @@ impl Nats {
         self
     }
 
+    /// How long the link waits for the NATS server to take its connection, 30 seconds by
+    /// default: the connect, the server's `INFO`, a TLS upgrade, its answer to `CONNECT`, and the
+    /// subscriptions made on the new connection until they are written to it, since async-nats's
+    /// `flush` waits for the write and not for the server; on a server that is the whole of
+    /// `listen` after its roots' wait. async-nats bounds only the TCP connect itself, at 5 s, so a server that
+    /// accepts the connection and never writes its `INFO` holds the connect here. A wait that runs
+    /// out fails with [`ConnectTimedOut`], which a server's `listen` returns as `Bind` and
+    /// `RpcClient` answers `Unavailable` with `reason: "connect_timed_out"`; the connection is
+    /// dropped with the wait, so nothing of it remains. A server's wait is timed on the app's
+    /// `Timer`, which `prepare` reads, and a client's on the runtime its client was built on, the
+    /// app's inside an app; a clock whose runtime has shut down fails `listen` as `Permanent`
+    /// `RuntimeShutDown` and a call `Unavailable` with `reason: "runtime_shut_down"`. The call's
+    /// own timeout, five seconds unset, runs over the connect too, so with both unset a call
+    /// against a silent server ends `Timeout` at five seconds and the next call connects again. A
+    /// zero bound is refused in `usable`, so in a server's `prepare` and where a client takes the
+    /// link.
+    pub fn connect_within(mut self, bound: Duration) -> Self {
+        self.connect_within = bound;
+        self
+    }
+
     fn runtime(&self) -> Result<Tokio, BoxError> {
         self.runtime.clone().ok_or_else(|| NO_RUNTIME.into())
     }
@@ -273,16 +299,18 @@ impl Link for Nats {
 
     fn usable(&self) -> Result<(), BoxError> {
         self.runtime()?.require_io()?;
+        let mut failures = Failures::new();
         if let Some(zero) = zero_bound(
             "roots_timeout",
             self.roots_timeout,
             "refuse every `tls://` link and connect every `nats://` server without its root certificates",
         ) {
-            let mut failures = Failures::new();
             failures.push(zero);
-            return Err(failures.into_error().into());
         }
-        Ok(())
+        if self.connect_within.is_zero() {
+            failures.push(Failure::plain("the NATS link's `connect_within` is zero, so no connection to the server could be made within it"));
+        }
+        failures.into_result()
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
@@ -325,34 +353,46 @@ impl Link for Nats {
             }
             async {}
         });
-        let client = runtime.run(open(servers, options, roots.as_deref().and_then(Load::path))).await.map_err(Permanent::new)??;
-        self.max_payload.store(client.server_info().max_payload as u64, Ordering::Relaxed);
+        let timed_out = ConnectTimedOut::new(self.connect_within, addresses(&servers), "NATS");
+        let connecting = async {
+            let client = runtime.run(open(servers, options, roots.as_deref().and_then(Load::path))).await.map_err(Permanent::new)??;
+            self.max_payload.store(client.server_info().max_payload as u64, Ordering::Relaxed);
 
-        // Every subscription is made before any lane starts, so a failure leaves nothing
-        // subscribed: a dropped `Subscriber` unsubscribes.
-        let mut lanes = Vec::with_capacity(patterns.len());
-        for pattern in patterns {
-            match client.queue_subscribe(pattern.as_str().to_owned(), group.clone()).await {
-                Ok(subscriber) => lanes.push(subscriber),
+            // Every subscription is made before any lane starts, so a failure leaves nothing
+            // subscribed: a dropped `Subscriber` unsubscribes.
+            let mut lanes = Vec::with_capacity(patterns.len());
+            for pattern in patterns {
+                match client.queue_subscribe(pattern.as_str().to_owned(), group.clone()).await {
+                    Ok(subscriber) => lanes.push(subscriber),
+                    Err(error) => {
+                        drop(lanes);
+                        let _ = client.drain().await;
+                        return Err(format!("the NATS link could not subscribe to `{pattern}`: {error}").into());
+                    }
+                }
+            }
+            let control = match client.subscribe(CONTROL).await {
+                Ok(subscriber) => subscriber,
                 Err(error) => {
                     drop(lanes);
                     let _ = client.drain().await;
-                    return Err(format!("the NATS link could not subscribe to `{pattern}`: {error}").into());
+                    return Err(format!("the NATS link could not subscribe to `{CONTROL}`: {error}").into());
                 }
-            }
-        }
-        let control = match client.subscribe(CONTROL).await {
-            Ok(subscriber) => subscriber,
-            Err(error) => {
-                drop(lanes);
+            };
+            if let Err(error) = client.flush().await {
                 let _ = client.drain().await;
-                return Err(format!("the NATS link could not subscribe to `{CONTROL}`: {error}").into());
+                return Err(format!("the NATS link's subscriptions did not reach the server: {error}").into());
             }
+            Ok::<_, BoxError>((client, lanes, control))
         };
-        if let Err(error) = client.flush().await {
-            let _ = client.drain().await;
-            return Err(format!("the NATS link's subscriptions did not reach the server: {error}").into());
-        }
+        // Dropped at the bound, the connect leaves nothing behind: async-nats spawns the
+        // connection's task only once the server has answered, and that task ends once the
+        // `Client` and the subscribers dropped here were its last handles.
+        let (client, lanes, control) = match ulo::timeout(&*timer, timed_out.within(), connecting).await {
+            Ok(connected) => connected?,
+            Err(ulo::Cut::Expired) => return Err(timed_out.into()),
+            Err(ulo::Cut::Refused(refused)) => return Err(Permanent::new(RuntimeShutDown::new(refused)).into()),
+        };
 
         let (phase, _) = watch::channel(Phase::Serving);
         let side = Arc::new(ServerSide {
@@ -377,7 +417,7 @@ impl Link for Nats {
         Ok(receiver_stream(inbound))
     }
 
-    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+    async fn connect(&self, client_runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         // async-nats reconnects by itself and resubscribes the inbox, but what was published to
         // the inbox while the connection was down is gone, so a disconnect ends the reply lane:
         // `RpcClient` fails the calls waiting on it `Unavailable` and connects again for the next.
@@ -393,13 +433,22 @@ impl Link for Nats {
             }
             async {}
         });
-        let client = runtime.run(open(servers, options, roots.as_deref().and_then(Load::path))).await??;
-        self.max_payload.store(client.server_info().max_payload as u64, Ordering::Relaxed);
-        let prefix = client.new_inbox();
-        let replies = client.subscribe(format!("{prefix}.*")).await?;
-        // The reply subscription reaches the server before the first request can, so no reply
-        // arrives ahead of it.
-        client.flush().await?;
+        let timed_out = ConnectTimedOut::new(self.connect_within, addresses(&servers), "NATS");
+        let connecting = async {
+            let client = runtime.run(open(servers, options, roots.as_deref().and_then(Load::path))).await??;
+            self.max_payload.store(client.server_info().max_payload as u64, Ordering::Relaxed);
+            let prefix = client.new_inbox();
+            let replies = client.subscribe(format!("{prefix}.*")).await?;
+            // The reply subscription reaches the server before the first request can, so no reply
+            // arrives ahead of it.
+            client.flush().await?;
+            Ok::<_, BoxError>((client, prefix, replies))
+        };
+        let (client, prefix, replies) = match ulo::timeout(&**client_runtime, timed_out.within(), connecting).await {
+            Ok(connected) => connected?,
+            Err(ulo::Cut::Expired) => return Err(timed_out.into()),
+            Err(ulo::Cut::Refused(refused)) => return Err(RuntimeShutDown::new(refused).into()),
+        };
 
         let side = Arc::new(ClientSide {
             client: client.clone(),
@@ -1257,6 +1306,11 @@ fn with_id(frame: Frame, id: u64) -> Frame {
 
 fn is_terminal(frame: &Frame) -> bool {
     matches!(frame, Frame::Res { .. } | Frame::Err { .. } | Frame::End { .. })
+}
+
+/// The servers' `host:port`s, comma-separated, without the url's credentials.
+fn addresses(servers: &[ServerAddr]) -> String {
+    servers.iter().map(|server| format!("{}:{}", server.host(), server.port())).collect::<Vec<_>>().join(",")
 }
 
 fn servers(url: &str) -> Result<Vec<ServerAddr>, BoxError> {

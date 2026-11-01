@@ -22,6 +22,7 @@ use std::fmt;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use futures_core::stream::BoxStream;
 use ulo::{AppHandle, BoundAddr, BoxError, BoxFuture, Runtime, Shape};
@@ -72,9 +73,9 @@ pub trait Link: Send + Sync + 'static {
     }
 
     /// Server side: subscribe to `patterns`, the mounted handlers' patterns. Called from
-    /// `Server::bind`, all-or-nothing: a failure leaves nothing subscribed. A link that bounds its
-    /// close with the app's clock (TCP, UDP, NATS, MQTT, Kafka) refuses with [`NoTimer`] before any
-    /// I/O when `prepare` found the app without one.
+    /// `Server::bind`, all-or-nothing: a failure leaves nothing subscribed. A link that times its
+    /// close or its first connect on the app's clock (TCP, UDP, NATS, MQTT, RabbitMQ, Kafka)
+    /// refuses with [`NoTimer`] before any I/O when `prepare` found the app without one.
     fn listen(&self, patterns: &[Pattern]) -> impl Future<Output = Result<Inbound, BoxError>> + Send;
 
     /// Client side: connect. `RpcClient` calls it lazily, on its first call and again after the
@@ -430,9 +431,10 @@ impl fmt::Display for NoDestination {
 
 impl Error for NoDestination {}
 
-/// A server link's refusal to listen on an app that handed it no `Timer`: each link bounds its
-/// close with the app's clock and has none of its own to fall back on. `link` is the transport's
-/// name as it reads in prose (`TCP`, `UDP`, `NATS`, `MQTT`, `Kafka`). A caller finds it with
+/// A server link's refusal to listen on an app that handed it no `Timer`: each link times its
+/// close or its first connect on the app's clock (RabbitMQ only its connect) and has none of its
+/// own to fall back on. `link` is the transport's
+/// name as it reads in prose (`TCP`, `UDP`, `NATS`, `MQTT`, `RabbitMQ`, `Kafka`). A caller finds it with
 /// `downcast_ref` on the `BoxError` `listen` returns.
 #[derive(Debug)]
 pub struct NoTimer {
@@ -441,11 +443,67 @@ pub struct NoTimer {
 
 impl fmt::Display for NoTimer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "the {} link's server has no `Timer` to bound its close with: its app has none", self.link)
+        write!(f, "the {} link's server has no `Timer` to time its close or its connect on: its app has none", self.link)
     }
 }
 
 impl Error for NoTimer {}
+
+/// A broker that did not answer within the link's `connect_within`: one that accepts the
+/// connection and never completes the handshake, or, on RabbitMQ, one lost between a server's two
+/// connections. A server's `listen` fails with it as `Bind`, and `RpcClient` answers it
+/// `Unavailable` with `reason: "connect_timed_out"`. It has no source: the bound ran out while the
+/// connect was still waiting, with no attempt's error to report.
+///
+/// A caller finds it with `downcast_ref` on the `BoxError` a link returns:
+///
+/// ```
+/// use std::time::Duration;
+/// use ulo::BoxError;
+/// use ulo_rpc::ConnectTimedOut;
+///
+/// let failed: BoxError = ConnectTimedOut::new(Duration::from_secs(30), "10.0.0.7:4222", "NATS").into();
+/// let timed_out = failed.downcast_ref::<ConnectTimedOut>().expect("the link's connect ran out");
+/// assert_eq!((timed_out.within(), timed_out.address(), timed_out.link()), (Duration::from_secs(30), "10.0.0.7:4222", "NATS"));
+/// assert_eq!(failed.to_string(), "the NATS broker at 10.0.0.7:4222 did not answer within the link's `connect_within` of 30s");
+/// ```
+#[derive(Debug)]
+pub struct ConnectTimedOut {
+    within: Duration,
+    address: String,
+    link: &'static str,
+}
+
+impl ConnectTimedOut {
+    /// `link` is the transport's name as it reads in prose (`NATS`, `RabbitMQ`), and `address` the
+    /// broker's `host:port`, given without the url's credentials, since the error is shown whole.
+    pub fn new(within: Duration, address: impl Into<String>, link: &'static str) -> Self {
+        ConnectTimedOut { within, address: address.into(), link }
+    }
+
+    /// The bound that ran out.
+    pub fn within(&self) -> Duration {
+        self.within
+    }
+
+    /// The broker's `host:port`.
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    /// The transport's name as it reads in prose.
+    pub fn link(&self) -> &'static str {
+        self.link
+    }
+}
+
+impl fmt::Display for ConnectTimedOut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the {} broker at {} did not answer within the link's `connect_within` of {:?}", self.link, self.address, self.within)
+    }
+}
+
+impl Error for ConnectTimedOut {}
 
 /// A link's refusal to connect over a misconfiguration only its connect could see: an `mqtts://`
 /// or `tls://` link whose platform root certificates did not load, a NATS link whose roots file

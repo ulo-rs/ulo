@@ -985,6 +985,7 @@ async fn a_close_called_after_the_app_s_drop_answers_that_the_app_was_dropped() 
     let error = handle.close(Signal::new("test")).await.expect_err("a close after the app's drop answered `Ok`");
     assert!(matches!(&*error.failures, [ShutdownFailure::Dropped]), "the close answered {error}");
     assert!(error.to_string().contains("the app was dropped before its shutdown closed its servers"), "the close answered {error}");
+    assert!(!ulo::is_panic(&ulo::BoxError::from(error.clone())), "a `Dropped` failure holds no panic");
     let events = log.events();
     assert!(!events.iter().any(|e| e.starts_with("close ") || e == "before-shutdown"), "the close ran a step: {events:?}");
     assert!(handle.close(Signal::new("again")).await.is_err_and(|again| matches!(&*again.failures, [ShutdownFailure::Dropped])), "a second close did not answer `Dropped`");
@@ -1152,7 +1153,8 @@ impl Server for Dying {
 /// answers `Err` whose one failure is `Serve` naming the dying transport, its `end` checked by
 /// `ended`. A later `close` answers the same failure.
 async fn a_serve_that_ends(fails: bool, ended: impl Fn(&ServeEnd) -> bool) {
-    serve_that_ends(fails, None, None, ended).await;
+    let error = serve_that_ends(fails, None, None, ended).await;
+    assert!(!ulo::is_panic(&ulo::BoxError::from(error)), "a serve that errored or returned holds no panic");
 }
 
 /// A [`Gated`] root that also registers a secret, when given one.
@@ -1232,6 +1234,7 @@ async fn a_transport_whose_serve_panics_closes_the_app() {
     assert_eq!(error.report.signal.name(), "transport `Doomed` failed: panicked: the loop died holding [redacted]");
     let text = error.to_string();
     assert!(text.contains("transport `Doomed` panicked while serving: the loop died holding [redacted]"), "{text}");
+    assert!(ulo::is_panic(&ulo::BoxError::from(error)), "`is_panic` answers true for a `ServeEnd::Panicked`");
 }
 
 #[tokio::test]

@@ -49,16 +49,18 @@ impl Tls {
     ///
     /// - empty: the server sets the protocols it needs;
     /// - naming every protocol the transport needs: accepted, and the server offers exactly the
-    ///   transport's protocols in its order. A further protocol the configuration names
-    ///   (`acme-tls/1`, `h3`) is dropped from that list, since a client that negotiated it
-    ///   would reach a server that cannot speak it; a client offering only such a protocol gets a
-    ///   TLS alert at the handshake;
+    ///   transport's protocols in its order, followed by `acme-tls/1` when the configuration
+    ///   names it (RFC 8737: the certificate resolver answers it inside the handshake and no
+    ///   application protocol is spoken on it). Any other further protocol (`h3`) is dropped from
+    ///   that list, since a client that negotiated it would reach a server that cannot speak it; a
+    ///   client offering only such a protocol gets a TLS alert at the handshake;
     /// - missing one the transport needs, `h2` only or `http/1.1` only included: refused as
     ///   [`TlsError::Alpn`], which `listen` reports as `StartupError::Configure`.
     ///
     /// A transport that needs no protocol (the TCP link) takes the configuration as given. The
     /// handed `Arc` is never modified: a configuration whose protocols change is copied, with
-    /// everything else it set, and one whose list already equals the transport's is used as given.
+    /// everything else it set, and one whose list already equals the one the server offers is used
+    /// as given.
     pub fn from_config(config: Arc<ServerConfig>) -> Tls {
         Tls { source: Source::Config(config) }
     }
@@ -114,6 +116,10 @@ fn key_path(source: &Source) -> Option<PathBuf> {
     }
 }
 
+/// RFC 8737's validation protocol: the certificate resolver answers it inside the handshake and
+/// the validator closes the connection after, so the transport never has to speak it.
+const ACME_TLS_1: &[u8] = b"acme-tls/1";
+
 fn reconcile_alpn(given: &Arc<ServerConfig>, required: &[&[u8]]) -> Result<Arc<ServerConfig>, TlsError> {
     if required.is_empty() {
         return Ok(Arc::clone(given));
@@ -128,7 +134,10 @@ fn reconcile_alpn(given: &Arc<ServerConfig>, required: &[&[u8]]) -> Result<Arc<S
             missing,
         });
     }
-    let protocols: Vec<Vec<u8>> = required.iter().map(|protocol| protocol.to_vec()).collect();
+    let mut protocols: Vec<Vec<u8>> = required.iter().map(|protocol| protocol.to_vec()).collect();
+    if named.iter().any(|n| n.as_slice() == ACME_TLS_1) {
+        protocols.push(ACME_TLS_1.to_vec());
+    }
     if &protocols == named {
         return Ok(Arc::clone(given));
     }

@@ -9,7 +9,9 @@
 //! client's connection drops is `Unavailable`, since a direct reply-to address dies with its
 //! channel; the drain cancels the consumers (`basic.cancel`); `amqps://` selects TLS. A server's
 //! `listen` and a client's connect wait for the broker at most [`RabbitMq::connect_within`], 30 s
-//! unset, and a wait that runs out fails with [`ConnectTimedOut`].
+//! unset, and a wait that runs out fails with [`ConnectTimedOut`]; a client runs one connect at a
+//! time, which every call waits on and none cancels by giving up. A server's `listen` needs the
+//! app's `Timer`.
 //!
 //! ```
 //! # fn f(app: ulo::App<ulo::Connected>) {
@@ -29,4 +31,5 @@
 
 mod link;
 
-pub use link::{ConnectTimedOut, RabbitMq};
+pub use link::RabbitMq;
+pub use ulo_rpc::ConnectTimedOut;

@@ -172,6 +172,7 @@ async fn a_close_during_a_running_shutdown_waits_for_it_and_receives_its_outcome
         matches!(&*first.failures, [ShutdownFailure::Hook { hook: HookKind::OnModuleDestroy, reason: FailureReason::Panicked(_), .. }]),
         "got: {first}"
     );
+    assert!(ulo::is_panic(&ulo::BoxError::from(first.clone())), "`is_panic` answers true for a hook whose reason is `Panicked`");
     assert_eq!(log.count("hook started"), 1, "the shutdown ran once");
     drop(app);
 }
@@ -386,6 +387,7 @@ async fn a_close_that_errs_panics_or_exceeds_its_bound_is_recorded_and_every_clo
         matches!(c, ShutdownFailure::Close { transport, reason: FailureReason::Panicked(_) } if *transport == TypeName::of::<TC>()),
         "got: {c}"
     );
+    assert!(ulo::is_panic(&ulo::BoxError::from(error.clone())), "`is_panic` answers true when one failure among several is a panicking `close`");
     match b {
         ShutdownFailure::Close { transport, reason: FailureReason::Errored(source) } => {
             assert_eq!(*transport, TypeName::of::<TB>());

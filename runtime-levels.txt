@@ -183,6 +183,11 @@ ulo-grpc                      tokio-bound
 # The generated gRPC code compiled and served, on `ulo-grpc`.
 ulo-codegen-tests             tokio-bound
 
+# Each derives `Classify` and `Validate` through one transport crate alone; its tree is that crate's.
+ulo-reexport-ws               runtime-free           --all-features
+ulo-reexport-rpc              runtime-free           --all-features
+ulo-reexport-grpc             tokio-bound
+
 # Every macro expanded in one crate for clippy, the gRPC ones on `ulo-grpc`.
 ulo-macro-lints               tokio-bound
 

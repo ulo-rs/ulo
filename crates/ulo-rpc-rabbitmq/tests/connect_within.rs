@@ -4,20 +4,24 @@
 //! bound is refused before any I/O, and a clock that refuses fails `listen` as `Permanent`
 //! `RuntimeShutDown`.
 //!
+//! A client's connect belongs to the link, not to the call that started it: a failed connect is
+//! replaced by the next call's, and `close` or the link's drop ends one still running, `close`
+//! failing the `connect` waiting on it.
+//!
 //! The bound runs on the app's `Timer`, which these tests script: no bound elapses in real time.
 //! Each connect that runs out leaves lapin's `lapin-io-loop` thread and its socket behind
 //! (transports DESIGN §5.2), so the silent socket's connections stay open until the test process
-//! ends; nothing here counts them.
+//! ends; `tests/one_connect.rs` counts the threads.
 
 use std::error::Error;
 use std::net::{SocketAddr, TcpListener};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use ulo::testing::ScriptedTimer;
 use ulo::{App, Module, ModuleDef, ModuleIdentity, RuntimeShutDown, Signal, StartupError, is_permanent};
-use ulo_rpc::{ErrorKind, RpcClient, Server, UnusableLink};
+use ulo_rpc::{ErrorKind, Link, RpcClient, Server, UnusableLink};
 use ulo_rpc_rabbitmq::{ConnectTimedOut, RabbitMq};
 use ulo_runtime_tokio::Tokio;
 
@@ -141,6 +145,7 @@ async fn listen_against_a_silent_broker_fails_as_bind_at_the_bound() {
     let timed_out = cause.downcast_ref::<ConnectTimedOut>().unwrap_or_else(|| panic!("the `Bind` does not carry `ConnectTimedOut`: {cause:?}"));
     assert_eq!(timed_out.within(), WITHIN);
     assert_eq!(timed_out.address(), silent.addr.to_string());
+    assert_eq!(timed_out.link(), "RabbitMQ", "the expiry names another link");
     let shown = cause.to_string();
     assert!(shown.contains(&silent.addr.to_string()) && shown.contains(&format!("{WITHIN:?}")), "the cause names the address and the bound: {shown}");
     assert!(!format!("{text} {shown}").contains("hunter2"), "the failure repeats the url's password: {text} / {shown}");
@@ -163,10 +168,11 @@ async fn a_client_against_a_silent_broker_fails_its_call_at_the_bound() {
         .unwrap_or_else(|_| panic!("the call did not end within {PATIENCE:?} of the bound passing"))
         .expect("the call did not panic")
         .expect_err("a call succeeded against a broker that never answers");
-    assert_eq!(failed.kind(), ErrorKind::Unavailable, "{failed:?}");
+    assert_eq!((failed.kind(), failed.reason()), (ErrorKind::Unavailable, Some("connect_timed_out")), "{failed:?}");
     let message = failed.message();
     assert!(message.contains(&silent.addr.to_string()) && message.contains(&format!("{WITHIN:?}")), "the call names the address and the bound: {message}");
     assert!(message.contains("connect_within"), "the call names the setting that ran out: {message}");
+    assert!(message.contains("the RabbitMQ broker at"), "the call's expiry names another link: {message}");
     assert!(!message.contains("hunter2"), "the call repeats the url's password: {message}");
 }
 
@@ -233,4 +239,127 @@ async fn an_unset_bound_is_thirty_seconds() {
     let cause = bind_cause(error);
     let timed_out = cause.downcast_ref::<ConnectTimedOut>().unwrap_or_else(|| panic!("the `Bind` does not carry `ConnectTimedOut`: {cause:?}"));
     assert_eq!(timed_out.within(), UNSET);
+}
+
+/// A loopback socket that accepts every connection and closes it at once, counting each.
+fn closing() -> (SocketAddr, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let addr = listener.local_addr().expect("the port's address");
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&accepted);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            counted.fetch_add(1, Ordering::SeqCst);
+            drop(stream);
+        }
+    });
+    (addr, accepted)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_connect_is_replaced_by_the_next_call_s() {
+    let (addr, accepted) = closing();
+    let clock = ScriptedTimer::new();
+    let app = app(&clock).await;
+    let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
+    let client = RpcClient::new(RabbitMq::url(format!("amqp://guest:guest@{addr}/%2f")).connect_within(WITHIN), runtime).expect("the link is usable");
+    for attempt in 1..=2 {
+        let failed = tokio::time::timeout(PATIENCE, client.request::<_, u32>("closing.call", &()))
+            .await
+            .unwrap_or_else(|_| panic!("call {attempt} against a broker that closes the connection did not end within {PATIENCE:?}"))
+            .expect_err("a call succeeded against a broker that closes the connection");
+        assert_eq!(failed.kind(), ErrorKind::Unavailable, "call {attempt}: {failed:?}");
+        assert!(!failed.message().contains("connect_within"), "call {attempt} failed at the bound rather than on the closed connection: {failed:?}");
+        assert_eq!(accepted.load(Ordering::SeqCst), attempt, "call {attempt} did not connect once of its own");
+        assert_eq!(clock.live(WITHIN), 0, "the failed connect's bound is still armed after call {attempt}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn close_fails_the_connect_it_cuts_short() {
+    let silent = Silent::start();
+    let clock = ScriptedTimer::new();
+    let app = app(&clock).await;
+    let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
+    let link = Arc::new(RabbitMq::url(silent.url()).connect_within(WITHIN));
+    let connecting = {
+        let link = Arc::clone(&link);
+        tokio::spawn(async move { link.connect(&runtime).await.map(drop) })
+    };
+    until("the connect bound armed and the connection accepted", || clock.live(WITHIN) == 1 && silent.accepted() == 1).await;
+    link.close().await.expect("the link closes");
+    let failed = tokio::time::timeout(PATIENCE, connecting)
+        .await
+        .unwrap_or_else(|_| panic!("the connect `close` cut short did not end within {PATIENCE:?}"))
+        .expect("the connect did not panic")
+        .expect_err("a connect succeeded against a broker that never answers");
+    assert!(failed.to_string().contains("closed"), "the connect does not answer that the link closed: {failed}");
+    until("the closed link's connect bound dropped", || clock.live(WITHIN) == 0).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_dropped_link_aborts_its_connect() {
+    let silent = Silent::start();
+    let clock = ScriptedTimer::new();
+    let app = app(&clock).await;
+    let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
+    let link = RabbitMq::url(silent.url()).connect_within(WITHIN);
+    // The call gives up at once; the connect it started runs on until the link drops.
+    assert!(futures_util::FutureExt::now_or_never(link.connect(&runtime)).is_none(), "a connect against a silent broker answered");
+    until("the connect bound armed and the connection accepted", || clock.live(WITHIN) == 1 && silent.accepted() == 1).await;
+    drop(link);
+    until("the dropped link's connect bound dropped", || clock.live(WITHIN) == 0).await;
+}
+
+/// A loopback socket that accepts every connection, counting each, holds it unanswered until
+/// the returned gate opens, then closes it.
+fn held() -> (SocketAddr, Arc<AtomicUsize>, Arc<(Mutex<bool>, Condvar)>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let addr = listener.local_addr().expect("the port's address");
+    let (accepted, gate) = (Arc::new(AtomicUsize::new(0)), Arc::new((Mutex::new(false), Condvar::new())));
+    let (counted, waited) = (Arc::clone(&accepted), Arc::clone(&gate));
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let waited = Arc::clone(&waited);
+            std::thread::spawn(move || {
+                let (open, changed) = &*waited;
+                let guard = open.lock().unwrap_or_else(PoisonError::into_inner);
+                drop(changed.wait_while(guard, |open| !*open).unwrap_or_else(PoisonError::into_inner));
+                drop(stream);
+            });
+        }
+    });
+    (addr, accepted, gate)
+}
+
+/// Two `connect`s waiting on one connect that fails both answer its failure, and the link
+/// connected once: a failure stays for every `connect` that waited on it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn connects_waiting_on_one_failed_connect_share_its_failure() {
+    let (addr, accepted, gate) = held();
+    let clock = ScriptedTimer::new();
+    let app = app(&clock).await;
+    let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
+    let link = Arc::new(RabbitMq::url(format!("amqp://guest:guest@{addr}/%2f")).connect_within(WITHIN));
+    let both = {
+        let link = Arc::clone(&link);
+        tokio::spawn(async move {
+            let (first, second) = futures_util::future::join(link.connect(&runtime), link.connect(&runtime)).await;
+            (first.map(drop), second.map(drop))
+        })
+    };
+    until("the shared connect accepted", || accepted.load(Ordering::SeqCst) == 1).await;
+    {
+        let (open, changed) = &*gate;
+        *open.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        changed.notify_all();
+    }
+    let (first, second) = tokio::time::timeout(PATIENCE, both)
+        .await
+        .unwrap_or_else(|_| panic!("the two connects did not end within {PATIENCE:?}"))
+        .expect("the connects did not panic");
+    let (first, second) = (first.expect_err("a connect succeeded against a closed connection"), second.expect_err("a connect succeeded against a closed connection"));
+    assert_eq!(first.to_string(), second.to_string(), "the two connects answered different failures");
+    assert_eq!(accepted.load(Ordering::SeqCst), 1, "a connect waiting on a failed connect connected again rather than answering its failure");
 }

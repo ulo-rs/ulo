@@ -851,7 +851,7 @@ fn reason_permanent(reason: &FailureReason, depth: usize) -> bool {
     }
 }
 
-/// Whether `error` carries a panic the core caught, whichever shape it arrived in. Inside a call
+/// Whether `error` holds a panic the core caught, whichever shape it arrived in. Inside a call
 /// there are two: [`PanicRecovered`] from a guard, an interceptor, the handler or an error
 /// handler, and [`LookupError::Construct`] with `reason: Panicked` from a build the container
 /// ran for the call, an enhancer, the controller or one of their dependencies. An error handler
@@ -860,7 +860,10 @@ fn reason_permanent(reason: &FailureReason, depth: usize) -> bool {
 /// Also true for a `ConnectError` whose reason is `Panicked`, bare or inside `LoadError` or
 /// `StartupError`, which is how a handler calling `load` meets a lazily loaded module's panic,
 /// and for a [`PreparePanicked`] in an entry of `StartupError::Configure` or of the
-/// [`ConfigureErrors`] it holds, which is how `listen()` reports a server's panicking `prepare`.
+/// [`ConfigureErrors`] it holds, which is how `listen()` reports a server's panicking `prepare`,
+/// and for a [`ShutdownError`] with a failure that holds one: a [`ServeEnd::Panicked`], which is
+/// how `serve()` reports a transport that panicked, a hook or `close` whose reason is `Panicked`,
+/// or a serve end, hook or `close` whose error holds a panic.
 ///
 /// The panic is found under a constructor or a `try_` factory that returned a dependency's
 /// `LookupError` as its own `Err`, and down any error's `source()` chain. Inside a [`Redacted`],
@@ -921,7 +924,22 @@ fn recognized<'e>(error: impl ByType<'e>, depth: usize) -> Option<bool> {
     if let Some(redacted) = error.get::<Redacted>() {
         return Some(redacted_panicked(redacted, depth + 1));
     }
+    if let Some(shutdown) = error.get::<ShutdownError>() {
+        return Some(shutdown.failures.iter().any(|failure| shutdown_failure_panicked(failure, depth)));
+    }
     None
+}
+
+fn shutdown_failure_panicked(failure: &ShutdownFailure, depth: usize) -> bool {
+    match failure {
+        ShutdownFailure::Hook { reason, .. } | ShutdownFailure::Close { reason, .. } => reason_panicked(reason, depth),
+        ShutdownFailure::Serve { end, .. } => match end {
+            ServeEnd::Panicked(_) => true,
+            ServeEnd::Errored(redacted) => redacted_panicked(redacted, depth + 1),
+            ServeEnd::Returned => false,
+        },
+        ShutdownFailure::Dropped => false,
+    }
 }
 
 /// Each entry's `source` is a `Redacted`, which `ConfigureError::source()` does not hand out:
@@ -970,5 +988,31 @@ impl<'e> ByType<'e> for &'e Redacted {
     fn get<E: Error + 'static>(&self) -> Option<&'e E> {
         let redacted: &'e Redacted = *self;
         redacted.downcast_ref::<E>()
+    }
+}
+
+#[cfg(test)]
+mod shutdown_panics {
+    use super::*;
+
+    /// A panic the core caught, inside an error a transport returned.
+    fn errored_with_a_panic() -> Redacted {
+        let panic = PanicRecovered { stage: DispatchStage::Handler, message: Redacted::from_parts(Box::new(fmt::Error), "boom".into()) };
+        Redacted::from_parts(Box::new(panic), "wrapped".into())
+    }
+
+    fn holds_a_panic(failure: ShutdownFailure) -> bool {
+        let error = ShutdownError {
+            report: Shutdown { signal: Signal::new("test"), abandoned: 0, terminal_skipped: 0 },
+            failures: Arc::from(vec![failure]),
+        };
+        crate::is_panic(&(Box::new(error) as BoxError))
+    }
+
+    #[test]
+    fn a_serve_end_and_a_close_whose_error_holds_a_panic_answer_alike() {
+        let close = ShutdownFailure::Close { transport: TypeName::of::<()>(), reason: FailureReason::Errored(errored_with_a_panic()) };
+        let serve = ShutdownFailure::Serve { transport: TypeName::of::<()>(), end: ServeEnd::Errored(errored_with_a_panic()) };
+        assert_eq!((holds_a_panic(close), holds_a_panic(serve)), (true, true));
     }
 }

@@ -3,14 +3,18 @@
 //!
 //! Beside the suite, three tests drop the link without `close` and count, through a relay, the
 //! connections the broker still holds: each side's link, and a server's link holding a call nobody
-//! answers. A fourth has the broker close every connection and shows the server's recovers, and
-//! a fifth loses the broker between the server's two connections and shows `listen` fails at its
-//! `connect_within`.
+//! answers. A fourth has the broker close every connection and shows the server's recovers, a
+//! fifth loses the broker between the server's two connections and shows `listen` fails at its
+//! `connect_within`, a sixth shows a client call that gives up while the link connects leaves
+//! the connect to the next call, a seventh that a connect finishing after its call gave up is taken
+//! by the next call, and an eighth that a client dropped holding that connection closes it. A server's link listens after `prepare` on an app with a
+//! `Timer`, which `listen` refuses to go without.
 
 #![cfg(feature = "integration")]
 
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
@@ -19,7 +23,7 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage};
 use ulo::{App, BoundAddr, Module, ModuleDef, ModuleIdentity, Runtime, Signal, StartupError};
 use ulo_rpc::__private::ClientProbe;
-use ulo_rpc::{CallHeaders, Data, Frame, Link, Pattern, ReplyTo, Server};
+use ulo_rpc::{CallHeaders, Data, ErrorKind, Frame, Link, Pattern, ReplyTo, RpcClient, Server};
 use ulo_rpc_conformance::{Broker, report, startup_failed};
 use ulo_rpc_conformance::relay::{Relay, reachable, unshadowed};
 use ulo_rpc_rabbitmq::{ConnectTimedOut, RabbitMq};
@@ -105,7 +109,7 @@ async fn released(relay: &Relay, what: &str) {
 async fn a_server_link_dropped_without_close_closes_its_connection() {
     let broker = RabbitMqBroker::start().await;
     let relay = Relay::start(broker.server).await;
-    let server = RabbitMq::url(format!("amqp://guest:guest@{}/%2f", relay.addr()));
+    let server = prepared(RabbitMq::url(format!("amqp://guest:guest@{}/%2f", relay.addr()))).await;
     let inbound = server.listen(&[Pattern::from("link.dropped")]).await.expect("the server's link listens");
     assert!(relay.open().await > 0, "the listening server's link holds no connection through its relay");
     drop(inbound);
@@ -146,7 +150,7 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connection() {
     for (id, drained) in [(1, false), (2, true)] {
         let pattern = if drained { "link.held.drained" } else { "link.held" };
         let relay = Relay::start(broker.server).await;
-        let server = RabbitMq::url(format!("amqp://guest:guest@{}/%2f", relay.addr()));
+        let server = prepared(RabbitMq::url(format!("amqp://guest:guest@{}/%2f", relay.addr()))).await;
         let mut inbound = server.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
         let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
         (outbound.send)(Pattern::from(pattern), request, Some(ReplyTo { id })).await.expect("the request is published");
@@ -192,7 +196,7 @@ async fn rabbitmqctl(broker: &RabbitMqBroker, args: &[&str]) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_server_s_connection_recovers_after_the_broker_closes_it() {
     let broker = RabbitMqBroker::start().await;
-    let server = broker.link();
+    let server = prepared(broker.link()).await;
     let pattern = "link.recovered";
     let mut inbound = server.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
     let listening = std::time::Instant::now();
@@ -306,4 +310,135 @@ async fn a_broker_lost_between_the_two_connections_fails_listen_at_the_bound() {
         elapsed >= LOST_WITHIN && elapsed < LOST_WITHIN + LOST_MARGIN,
         "`listen` failed after {elapsed:?}, not at its {LOST_WITHIN:?} bound"
     );
+}
+
+/// A server's link after `prepare` on an app that hands it the tokio runtime's clock, which
+/// `listen` times its `connect_within` on.
+async fn prepared(mut link: RabbitMq) -> RabbitMq {
+    let app = App::builder(Root).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
+    link.prepare(&app.handle()).await.expect("the server's link prepares");
+    link
+}
+
+/// A listener that accepts every connection, counting each, and holds it unanswered until
+/// [`open`](Self::open), then relays it to `upstream`.
+struct Gate {
+    addr: SocketAddr,
+    accepted: Arc<AtomicUsize>,
+    opened: Arc<(Mutex<bool>, Condvar)>,
+}
+
+impl Gate {
+    fn start(upstream: SocketAddr) -> Gate {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a loopback port");
+        let addr = listener.local_addr().expect("the gate's address");
+        let (accepted, opened) = (Arc::new(AtomicUsize::new(0)), Arc::new((Mutex::new(false), Condvar::new())));
+        let (counted, waited) = (Arc::clone(&accepted), Arc::clone(&opened));
+        std::thread::spawn(move || {
+            for client in listener.incoming().flatten() {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let waited = Arc::clone(&waited);
+                std::thread::spawn(move || {
+                    let (open, changed) = &*waited;
+                    let guard = open.lock().unwrap_or_else(PoisonError::into_inner);
+                    drop(changed.wait_while(guard, |open| !*open).unwrap_or_else(PoisonError::into_inner));
+                    let Ok(broker) = TcpStream::connect(upstream) else { return };
+                    for (from, to) in [(client.try_clone(), broker.try_clone()), (broker.try_clone(), client.try_clone())] {
+                        let (Ok(mut from), Ok(mut to)) = (from, to) else { return };
+                        std::thread::spawn(move || {
+                            let _ = std::io::copy(&mut from, &mut to);
+                            let _ = to.shutdown(Shutdown::Write);
+                        });
+                    }
+                });
+            }
+        });
+        Gate { addr, accepted, opened }
+    }
+
+    fn accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    fn open(&self) {
+        let (open, changed) = &*self.opened;
+        *open.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        changed.notify_all();
+    }
+}
+
+/// How long the first call waits before it gives up, the gate still holding its connection.
+const GIVES_UP: Duration = Duration::from_millis(500);
+
+/// Q20-P4: a call whose own timeout ends it while the client connects leaves the connect running,
+/// and the next call is answered on the connection it opens. The gate holds the client's
+/// connection unanswered until the first call has timed out, then relays it to the broker; it
+/// accepts one connection, and the second call's request, which no queue takes, comes back from
+/// the broker as `no_destination`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_call_that_gives_up_leaves_the_connect_to_the_next_call() {
+    let broker = RabbitMqBroker::start().await;
+    let gate = Gate::start(broker.server);
+    let runtime: Arc<dyn Runtime> = Arc::new(Tokio::current());
+    let client = RpcClient::new(RabbitMq::url(format!("amqp://guest:guest@{}/%2f", gate.addr)), runtime).expect("the link is usable");
+    let gave_up = client.request::<_, u32>("link.ungated", &()).timeout(GIVES_UP).await.expect_err("a call was answered through a closed gate");
+    assert_eq!(gave_up.kind(), ErrorKind::Timeout, "the first call ended other than at its own timeout: {gave_up:?}");
+    assert_eq!(gate.accepted(), 1, "the first call's connect did not reach the gate");
+    gate.open();
+    let answered = client.request::<_, u32>("link.ungated", &()).timeout(PATIENCE).await.expect_err("a pattern no server declared was answered");
+    assert_eq!((answered.kind(), answered.reason()), (ErrorKind::Unavailable, Some("no_destination")), "{answered:?}");
+    assert_eq!(gate.accepted(), 1, "the second call connected again rather than taking the first call's connect");
+
+    // Two `connect`s on one link waiting on one connect, as `RpcClient`'s lock never lets them:
+    // the first takes the connection, and the second starts the next connect and takes that.
+    let link = RabbitMq::url(format!("amqp://guest:guest@{}/%2f", gate.addr));
+    let runtime: Arc<dyn Runtime> = Arc::new(Tokio::current());
+    let (first, second) = tokio::time::timeout(PATIENCE, futures_util::future::join(link.connect(&runtime), link.connect(&runtime)))
+        .await
+        .unwrap_or_else(|_| panic!("two connects on one link did not both answer within {PATIENCE:?}"));
+    let (first, second) = (first.expect("the first connect answers"), second.expect("the second connect answers"));
+    assert_eq!(gate.accepted(), 3, "two connects on one link did not each open a connection of their own");
+    drop((first, second));
+    link.close().await.expect("the link closes");
+}
+
+/// Parks a client connect: the first call over a gate in front of the broker's relay gives up
+/// while the gate holds its connection, the gate opens, and the connect finishes with no call
+/// waiting on it, the broker listing its channel in confirm mode.
+async fn parked(broker: &RabbitMqBroker) -> (Gate, RpcClient) {
+    let gate = Gate::start(broker.relay.addr());
+    let runtime: Arc<dyn Runtime> = Arc::new(Tokio::current());
+    let client = RpcClient::new(RabbitMq::url(format!("amqp://guest:guest@{}/%2f", gate.addr)), runtime).expect("the link is usable");
+    let gave_up = client.request::<_, u32>("link.parked", &()).timeout(GIVES_UP).await.expect_err("a call was answered through a closed gate");
+    assert_eq!(gave_up.kind(), ErrorKind::Timeout, "the first call ended other than at its own timeout: {gave_up:?}");
+    gate.open();
+    let deadline = Instant::now() + PATIENCE;
+    // The channel's confirm mode is the connect's last step but two, a declaration and the
+    // consume, which finish well inside `rabbitmqctl`'s own second or so.
+    while !rabbitmqctl(broker, &["list_channels", "confirm"]).await.lines().any(|line| line.trim() == "true") {
+        assert!(Instant::now() < deadline, "the parked connect did not finish within {PATIENCE:?}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    (gate, client)
+}
+
+/// A connect that finishes after the call that started it gave up is taken by the next call,
+/// which opens no connection of its own.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_connect_finished_after_its_call_gave_up_is_taken_by_the_next_call() {
+    let broker = RabbitMqBroker::start().await;
+    let (gate, client) = parked(&broker).await;
+    let answered = client.request::<_, u32>("link.parked", &()).timeout(PATIENCE).await.expect_err("a pattern no server declared was answered");
+    assert_eq!((answered.kind(), answered.reason()), (ErrorKind::Unavailable, Some("no_destination")), "{answered:?}");
+    assert_eq!(gate.accepted(), 1, "the next call connected again rather than taking the parked connection");
+}
+
+/// A client dropped while its link holds a connection no call took closes that connection.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_client_dropped_holding_an_untaken_connection_closes_it() {
+    let broker = RabbitMqBroker::start().await;
+    let (_gate, client) = parked(&broker).await;
+    assert_eq!(broker.relay.open().await, 1, "the parked connect holds no connection at the broker");
+    drop(client);
+    released(&broker.relay, "a client dropped holding an untaken connection").await;
 }

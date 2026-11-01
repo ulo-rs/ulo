@@ -18,6 +18,9 @@
 //! load outlasted the bound, has none at its reconnects either, and if its server upgrades it,
 //! async-nats reads the platform's store on the thread polling it. A `tls://` link whose load
 //! outlasts the bound is refused. A `nats://` link whose load fails connects without the file.
+//! A server's `listen` and a client's connect then wait for the NATS server at most
+//! [`Nats::connect_within`], 30 s unset, its `INFO` included, and a wait that runs out fails with
+//! [`ulo_rpc::ConnectTimedOut`].
 //!
 //! A server's `close` answers every call it still holds `unavailable` with the shutdown phrase in
 //! its first poll, and drops a reply sent after it. A reply finding async-nats's command channel

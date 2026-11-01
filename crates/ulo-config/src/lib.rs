@@ -82,7 +82,8 @@
 //! At most 2048 sections and missing fields are reported together. A read with more ends its
 //! report with one final problem, for which [`Problem::truncated`] is `true`: an empty path, no
 //! origin, and the message `the report stopped after N problems; fix these and read again`, N being
-//! the number of problems before it. A report that holds everything has no such problem.
+//! the number of problems before it. The error's header counts only the problems before the notice
+//! and says so, `(2048 problems, truncated)`. A report that holds everything has no such problem.
 
 mod config;
 mod de;

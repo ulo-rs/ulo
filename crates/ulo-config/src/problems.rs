@@ -105,10 +105,14 @@ impl fmt::Display for Problems {
 
 /// The header line with the count, then one problem per line. Newlines are the separator because
 /// `Redacted` flattens an error into one string, and the renderer indents continuation lines.
+/// The count is of real problems: a report cut at the pass cap ends with a notice that is not
+/// one, and the header says `truncated` in its place.
 pub(crate) fn write_report(f: &mut fmt::Formatter<'_>, header: &str, problems: &Problems) -> fmt::Result {
-    let count = problems.list.len();
+    let cut = problems.list.iter().any(|p| p.truncated);
+    let count = problems.list.len() - usize::from(cut);
     let plural = if count == 1 { "" } else { "s" };
-    write!(f, "{header} ({count} problem{plural})")?;
+    let tail = if cut { ", truncated" } else { "" };
+    write!(f, "{header} ({count} problem{plural}{tail})")?;
     for problem in &problems.list {
         f.write_str("\n")?;
         let flattened = problem.flattened;

@@ -316,6 +316,27 @@ fn a_report_cut_at_the_pass_cap_ends_with_the_truncation_notice() {
     assert!(notice.truncated());
 }
 
+/// The header's count is of real problems: the notice a cut report ends with is not one, and the
+/// header says `truncated` where a complete report's says nothing.
+#[test]
+fn a_truncated_report_s_header_counts_only_the_real_problems() {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct Probe(std::collections::BTreeMap<String, DbUrl>);
+    let header_of = |entries: usize| {
+        let mut values = Values::new();
+        for index in 0..entries {
+            values = values.set(format!("k{index:05}"), "mysql://u@h/d");
+        }
+        let config = Config::builder().source(values).load();
+        let read = Section::<Probe>::read(&config, "");
+        let error = read.value().expect_err("every entry is refused");
+        error.to_string().lines().next().expect("a header line").to_owned()
+    };
+    assert!(header_of(2049).ends_with("(2048 problems, truncated)"), "{}", header_of(2049));
+    assert!(header_of(2048).ends_with("(2048 problems)"), "{}", header_of(2048));
+}
+
 /// The cap counts missing fields as it counts sections: a root map of 2049 entries each missing
 /// its one required field stops after 2048 and says so.
 #[test]
@@ -426,4 +447,23 @@ fn the_fields_of_a_flattened_struct_after_a_failed_section_are_not_reported() {
         summary(&common::problems_of::<Flat>(&healthy, "")),
         [("port".to_owned(), Some(explicit("database.url")), "missing required field".to_owned())]
     );
+}
+
+/// The cap bounds passes, not problems: wrong types are collected in one pass, so a complete report
+/// can list more than 2048 problems, and its header says nothing of truncation.
+#[test]
+fn a_complete_report_past_2048_problems_is_not_called_truncated() {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct Probe(std::collections::BTreeMap<String, u16>);
+    let mut values = Values::new();
+    for index in 0..3000 {
+        values = values.set(format!("k{index:05}"), "not a port");
+    }
+    let config = Config::builder().source(values).load();
+    let read = Section::<Probe>::read(&config, "");
+    let error = read.value().expect_err("every entry is refused");
+    let text = error.to_string();
+    let header = text.lines().next().expect("a header line");
+    assert!(header.ends_with("(3000 problems)"), "{header}");
 }

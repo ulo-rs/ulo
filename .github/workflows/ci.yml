@@ -336,6 +336,9 @@ jobs:
           python3 scripts/require_tests.py
           the_server_s_connection_recovers_after_the_broker_closes_it
           a_broker_lost_between_the_two_connections_fails_listen_at_the_bound
+          a_call_that_gives_up_leaves_the_connect_to_the_next_call
+          a_connect_finished_after_its_call_gave_up_is_taken_by_the_next_call
+          a_client_dropped_holding_an_untaken_connection_closes_it
           -- cargo test -p ulo-rpc-rabbitmq --features integration --test conformance --locked
       - run: cargo test -p ulo-rpc-kafka --features integration --test conformance --locked
       - run: >-

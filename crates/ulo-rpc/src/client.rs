@@ -43,7 +43,7 @@ use ulo_transport::{Classify, Detail, Details, ErrorKind};
 use crate::codec::Codec;
 use crate::dispatch::{quote, reason};
 use crate::frame::{Data, ErrorBody, Frame};
-use crate::link::{FrameTooLarge, FrameUnencodable, Link, Misconfigured, NoDestination, Outbound, Pattern, ReplyTo};
+use crate::link::{ConnectTimedOut, FrameTooLarge, FrameUnencodable, Link, Misconfigured, NoDestination, Outbound, Pattern, ReplyTo};
 use crate::trace;
 use crate::transport::CallHeaders;
 
@@ -855,6 +855,8 @@ fn connect_error(link: &str, err: BoxError) -> RpcError {
         RpcError::new(ErrorKind::Internal, format!("the {link} link cannot connect: {err}")).with_reason("misconfigured_link")
     } else if err.is::<ulo::RuntimeShutDown>() {
         RpcError::new(ErrorKind::Unavailable, format!("the {link} link could not connect: {err}")).with_reason(ulo::RUNTIME_SHUT_DOWN)
+    } else if err.is::<ConnectTimedOut>() {
+        RpcError::new(ErrorKind::Unavailable, format!("the {link} link could not connect: {err}")).with_reason("connect_timed_out")
     } else {
         RpcError::new(ErrorKind::Unavailable, format!("the {link} link could not connect: {err}"))
     }
@@ -2142,7 +2144,7 @@ mod tests {
     }
 
     /// A link whose every connect fails: with a [`Misconfigured`] refusal, a
-    /// [`RuntimeShutDown`](ulo::RuntimeShutDown), or any other error.
+    /// [`RuntimeShutDown`](ulo::RuntimeShutDown), a [`ConnectTimedOut`], or any other error.
     struct FailsToConnect {
         fails: Fails,
         connects: Arc<AtomicU64>,
@@ -2152,6 +2154,7 @@ mod tests {
     enum Fails {
         Misconfigured,
         ShutDown,
+        TimedOut,
         Other,
     }
 
@@ -2171,6 +2174,7 @@ mod tests {
             match self.fails {
                 Fails::Misconfigured => Err(Misconfigured { source: "no root certificate loaded".into() }.into()),
                 Fails::ShutDown => Err(ulo::RuntimeShutDown::new(ulo::Refused).into()),
+                Fails::TimedOut => Err(ConnectTimedOut::new(Duration::from_secs(3), "127.0.0.1:4222", "NATS").into()),
                 Fails::Other => Err("connection refused".into()),
             }
         }
@@ -2184,13 +2188,19 @@ mod tests {
 
     /// A connect the link refuses as `Misconfigured` fails each call `Internal` with
     /// `reason: "misconfigured_link"`, the link's cause in its message, one answered
-    /// `RuntimeShutDown` `Unavailable` with `reason: "runtime_shut_down"`, and any other failed
+    /// `RuntimeShutDown` `Unavailable` with `reason: "runtime_shut_down"`, one answered
+    /// `ConnectTimedOut` `Unavailable` with `reason: "connect_timed_out"`, and any other failed
     /// connect `Unavailable`. Each call asks the link again.
     #[tokio::test]
     async fn a_misconfigured_link_fails_every_call_internal() {
         for (fails, expected, cause) in [
             (Fails::Misconfigured, (ErrorKind::Internal, Some("misconfigured_link")), "no root certificate loaded"),
             (Fails::ShutDown, (ErrorKind::Unavailable, Some(ulo::RUNTIME_SHUT_DOWN)), "the runtime has shut down"),
+            (
+                Fails::TimedOut,
+                (ErrorKind::Unavailable, Some("connect_timed_out")),
+                "the NATS broker at 127.0.0.1:4222 did not answer within the link's `connect_within` of 3s",
+            ),
             (Fails::Other, (ErrorKind::Unavailable, None), "connection refused"),
         ] {
             let connects = Arc::new(AtomicU64::new(0));

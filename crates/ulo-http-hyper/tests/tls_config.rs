@@ -127,12 +127,24 @@ async fn a_handed_configuration_serves_https_and_the_server_adds_the_alpn_it_nee
 #[tokio::test(flavor = "multi_thread")]
 async fn a_further_protocol_in_the_handed_configuration_is_not_offered() {
     let ca = Ca::new();
+    let server = start(server_config(&ca.issue(&["localhost", "127.0.0.1"]), &ca, false, &[b"h3", b"http/1.1", b"h2"])).await.expect("the app listens");
+
+    assert_eq!(server.negotiated(&ca, &[b"h3", b"h2", b"http/1.1"]).await.as_deref(), Some(b"h2".as_slice()), "h2 is preferred");
+    assert_eq!(server.negotiated(&ca, &[b"h3", b"http/1.1"]).await.as_deref(), Some(b"http/1.1".as_slice()));
+    let only_further = server.get(&ca, None, &[b"h3"]).await;
+    assert!(only_further.is_err(), "a client offering only the further protocol gets an alert, got {only_further:?}");
+    server.stop().await;
+}
+
+/// RFC 8737's validator offers only `acme-tls/1` and closes after the handshake, so the server must
+/// settle on it for the certificate resolver to answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn acme_tls_1_in_the_handed_configuration_is_kept_beside_the_http_protocols() {
+    let ca = Ca::new();
     let server = start(server_config(&ca.issue(&["localhost", "127.0.0.1"]), &ca, false, &[b"acme-tls/1", b"http/1.1", b"h2"])).await.expect("the app listens");
 
-    assert_eq!(server.negotiated(&ca, &[b"acme-tls/1", b"h2", b"http/1.1"]).await.as_deref(), Some(b"h2".as_slice()), "h2 is preferred");
-    assert_eq!(server.negotiated(&ca, &[b"acme-tls/1", b"http/1.1"]).await.as_deref(), Some(b"http/1.1".as_slice()));
-    let only_further = server.get(&ca, None, &[b"acme-tls/1"]).await;
-    assert!(only_further.is_err(), "a client offering only the further protocol gets an alert, got {only_further:?}");
+    assert_eq!(server.negotiated(&ca, &[b"acme-tls/1"]).await.as_deref(), Some(b"acme-tls/1".as_slice()), "the validator's handshake completes");
+    assert_eq!(server.negotiated(&ca, &[b"acme-tls/1", b"h2", b"http/1.1"]).await.as_deref(), Some(b"h2".as_slice()), "HTTP clients keep h2");
     server.stop().await;
 }
 

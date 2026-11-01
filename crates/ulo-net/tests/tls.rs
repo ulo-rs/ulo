@@ -139,10 +139,57 @@ mod given_configuration {
 
     #[test]
     fn a_further_protocol_is_dropped_from_the_servers_list() {
-        let given = config_with(&[b"acme-tls/1", b"h2", b"http/1.1"]);
+        let given = config_with(&[b"h3", b"h2", b"http/1.1"]);
         let loaded = Tls::from_config(Arc::clone(&given)).load(HTTP).expect("a superset is accepted");
         assert_eq!(protocols(&loaded), HTTP);
-        assert_eq!(protocols(&given), [b"acme-tls/1".as_slice(), b"h2", b"http/1.1"], "the handed configuration is not modified");
+        assert_eq!(protocols(&given), [b"h3".as_slice(), b"h2", b"http/1.1"], "the handed configuration is not modified");
+    }
+
+    #[test]
+    fn acme_tls_1_is_kept_after_the_transports_protocols() {
+        let given = config_with(&[b"acme-tls/1", b"http/1.1", b"h2"]);
+        let loaded = Tls::from_config(Arc::clone(&given)).load(HTTP).expect("http names acme-tls/1 beside its pair");
+        assert_eq!(protocols(&loaded), [b"h2".as_slice(), b"http/1.1", b"acme-tls/1"]);
+        assert_eq!(protocols(&given), [b"acme-tls/1".as_slice(), b"http/1.1", b"h2"], "the handed configuration is not modified");
+    }
+
+    #[test]
+    fn acme_tls_1_is_kept_on_ws_and_grpc_and_h3_is_still_dropped() {
+        let ws = Tls::from_config(config_with(&[b"h2", b"h3", b"http/1.1", b"acme-tls/1"])).load(&[b"http/1.1"]).expect("http/1.1 is named");
+        assert_eq!(protocols(&ws), [b"http/1.1".as_slice(), b"acme-tls/1"]);
+        let grpc = Tls::from_config(config_with(&[b"http/1.1", b"h2", b"h3", b"acme-tls/1"])).load(&[b"h2"]).expect("h2 is named");
+        assert_eq!(protocols(&grpc), [b"h2".as_slice(), b"acme-tls/1"]);
+    }
+
+    #[test]
+    fn acme_tls_1_is_not_added_when_the_configuration_does_not_name_it() {
+        let loaded = Tls::from_config(config_with(&[b"h2", b"http/1.1"])).load(HTTP).expect("both are named");
+        assert_eq!(protocols(&loaded), HTTP);
+        let empty = Tls::from_config(config_with(&[])).load(HTTP).expect("an empty list is the server's to set");
+        assert_eq!(protocols(&empty), HTTP);
+    }
+
+    /// The match is on the exact name, and a configuration naming it twice is offered it once.
+    #[test]
+    fn acme_tls_1_named_twice_is_offered_once_and_a_lookalike_is_dropped() {
+        let loaded = Tls::from_config(config_with(&[b"acme-tls/1", b"h2", b"acme-tls/2", b"http/1.1", b"acme-tls/1"])).load(HTTP).expect("both are named");
+        assert_eq!(protocols(&loaded), [b"h2".as_slice(), b"http/1.1", b"acme-tls/1"]);
+        let lookalike = Tls::from_config(config_with(&[b"h2", b"acme-tls/2", b"http/1.1"])).load(HTTP).expect("both are named");
+        assert_eq!(protocols(&lookalike), HTTP, "only `acme-tls/1` itself is kept");
+    }
+
+    #[test]
+    fn a_configuration_already_equal_to_the_list_with_acme_is_used_as_given() {
+        let given = config_with(&[b"h2", b"http/1.1", b"acme-tls/1"]);
+        let loaded = Tls::from_config(Arc::clone(&given)).load(HTTP).expect("both are named");
+        assert!(Arc::ptr_eq(&given, &loaded));
+    }
+
+    #[test]
+    fn a_transport_needing_no_protocol_keeps_acme_tls_1_as_given() {
+        let given = config_with(&[b"acme-tls/1"]);
+        let loaded = Tls::from_config(Arc::clone(&given)).load(&[]).expect("nothing is required");
+        assert!(Arc::ptr_eq(&given, &loaded));
     }
 
     fn refused(alpn: &[&[u8]], missing: &[&str]) {
@@ -168,7 +215,7 @@ mod given_configuration {
     }
 
     #[test]
-    fn an_unknown_protocol_alone_is_refused() {
+    fn acme_tls_1_alone_lacks_the_http_protocols_and_is_refused() {
         refused(&[b"acme-tls/1"], &["h2", "http/1.1"]);
     }
 
@@ -196,7 +243,7 @@ mod given_configuration {
 
     #[test]
     fn a_grpc_server_offers_h2_alone() {
-        let loaded = Tls::from_config(config_with(&[b"http/1.1", b"h2", b"acme-tls/1"])).load(&[b"h2"]).expect("h2 is named");
+        let loaded = Tls::from_config(config_with(&[b"http/1.1", b"h2", b"h3"])).load(&[b"h2"]).expect("h2 is named");
         assert_eq!(protocols(&loaded), [b"h2".as_slice()]);
         assert!(matches!(Tls::from_config(config_with(&[b"http/1.1"])).load(&[b"h2"]), Err(TlsError::Alpn { .. })));
     }
@@ -231,5 +278,26 @@ mod given_configuration {
         let error = handshake(Arc::clone(&loaded), &[b"http/1.1"]).expect_err("no protocol in common");
         assert!(matches!(error, rustls::Error::NoApplicationProtocol), "{error:?}");
         assert_eq!(handshake(loaded, &[b"h2", b"http/1.1"]).expect("h2 in common"), Some(b"h2".to_vec()));
+    }
+
+    #[test]
+    fn a_client_offering_only_acme_tls_1_completes_the_handshake_when_the_configuration_names_it() {
+        let loaded = Tls::from_config(config_with(&[b"h2", b"http/1.1", b"acme-tls/1"])).load(HTTP).expect("both are named");
+        assert_eq!(handshake(Arc::clone(&loaded), &[b"acme-tls/1"]).expect("acme-tls/1 in common"), Some(b"acme-tls/1".to_vec()));
+        assert_eq!(handshake(loaded, &[b"acme-tls/1", b"h2", b"http/1.1"]).expect("h2 in common"), Some(b"h2".to_vec()), "HTTP clients keep the transport's preference");
+    }
+
+    #[test]
+    fn a_client_offering_only_acme_tls_1_gets_an_alert_when_the_configuration_does_not_name_it() {
+        let loaded = Tls::from_config(config_with(&[b"h2", b"http/1.1"])).load(HTTP).expect("both are named");
+        let error = handshake(loaded, &[b"acme-tls/1"]).expect_err("no protocol in common");
+        assert!(matches!(error, rustls::Error::NoApplicationProtocol), "{error:?}");
+    }
+
+    #[test]
+    fn a_client_offering_only_h3_gets_an_alert_though_the_configuration_names_it() {
+        let loaded = Tls::from_config(config_with(&[b"h3", b"h2", b"http/1.1", b"acme-tls/1"])).load(HTTP).expect("both are named");
+        let error = handshake(loaded, &[b"h3"]).expect_err("h3 is dropped");
+        assert!(matches!(error, rustls::Error::NoApplicationProtocol), "{error:?}");
     }
 }
