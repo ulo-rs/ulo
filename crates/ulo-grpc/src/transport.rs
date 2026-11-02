@@ -38,6 +38,12 @@ impl ulo_http::HttpCarried for Grpc {}
 /// service. A stream item's `Err` runs `dispatch_late` and is written in the trailers. An error
 /// handler builds one with [`GrpcCx::reply`], [`GrpcCx::reply_stream`] or
 /// [`GrpcCx::reply_status`].
+///
+/// A header whose name begins `grpc-` is the protocol's. Once the interceptors have answered, a
+/// reply built by a handler or through one of those three keeps the `grpc-` headers it was built
+/// with: one an interceptor added is dropped, one it changed or removed is written back, and each
+/// name is logged at `warn` the first time in the process, so a trailers-only reply's status
+/// stands as the framework wrote it.
 pub type Reply = http::Response<tonic::body::Body>;
 
 /// One call's context: `Clone + Send + Sync`, every clone the same call. The execution, the method

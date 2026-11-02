@@ -130,6 +130,11 @@ pub(crate) fn dot_segment(config: &HttpConfig) -> Response {
     problem(&CallError::new(ErrorKind::BadRequest, "the path holds a `.` or `..` segment"), config)
 }
 
+/// 400: a path holding a `\`, raw or as `%5C`, refused where a dot segment is.
+pub(crate) fn backslash(config: &HttpConfig) -> Response {
+    problem(&CallError::new(ErrorKind::BadRequest, "the path holds a `\\`, raw or as `%5C`"), config)
+}
+
 /// 503 with `Retry-After`: over the server's in-flight bound.
 pub(crate) fn shed(config: &HttpConfig) -> Response {
     refusal(&CallError::new(ErrorKind::Unavailable, "the server is at its limit of requests in flight"), config)

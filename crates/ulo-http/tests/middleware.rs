@@ -1,8 +1,8 @@
 //! The pre-dispatch stage: unscoped entries run in the order written and see misses, may rewrite
 //! the path before routing, answer without calling `next` or fail into the error chain; scoped
 //! entries run for the request paths their pattern matches minus the exclusions, routed or not,
-//! a path with a dot segment reaches no entry, and a declaration the stage cannot build is
-//! refused by `listen()` at the call that wrote it.
+//! a path with a dot segment or a backslash reaches no entry, and a declaration the stage cannot
+//! build is refused by `listen()` at the call that wrote it.
 
 mod o1_support;
 
@@ -361,13 +361,40 @@ async fn a_dot_segment_is_refused_before_any_entry_so_it_cannot_step_into_or_out
     app.stop().await;
 }
 
-/// Rewrites `/into-admin` to `/public/../admin/users`.
+#[tokio::test]
+async fn a_backslash_is_refused_before_any_entry_so_no_value_a_scope_admits_carries_one() {
+    let app = start(admin_behind_a_key).await;
+
+    for path in ["/admin/users\\..\\..", "/admin/users/7%5C..%5C..", "/public%5C..%5Cadmin%5Cusers", "/admin\\users"] {
+        for key in [None, Some("open")] {
+            let mut call = Call::get(path).header("origin", ORIGIN);
+            if let Some(key) = key {
+                call = call.header("x-key", key);
+            }
+            let reply = app.send(call).await;
+            assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{path} with key {key:?}");
+            assert_eq!(reply.json()["detail"], "the path holds a `\\`, raw or as `%5C`", "{path}");
+            assert_eq!(
+                (reply.header("x-stamp"), reply.header("x-auth"), reply.header("access-control-allow-origin")),
+                (None, None, None),
+                "{path}: no entry, scoped or unscoped, ran"
+            );
+            assert!(matches!(reply.routing, Some(Routing::Unrouted)), "{path}: {:?}", reply.routing);
+        }
+    }
+    app.stop().await;
+}
+
+/// Rewrites `/into-admin` to `/public/../admin/users`, and `/into-admin-encoded` to a path whose
+/// `%5C` a Windows join would read as separators.
 struct DotRewrite;
 
 impl Middleware for DotRewrite {
     async fn handle(&self, mut req: Request, next: Next<'_>) -> Result<Response, BoxError> {
-        if req.path() == "/into-admin" {
-            req.set_path("/public/../admin/users")?;
+        match req.path() {
+            "/into-admin" => req.set_path("/public/../admin/users")?,
+            "/into-admin-encoded" => req.set_path("/admin/users/7%5C..%5C..")?,
+            _ => {}
         }
         next.run(req).await
     }
@@ -386,6 +413,9 @@ async fn a_path_an_unscoped_entry_rewrites_into_a_dot_segment_is_refused_at_rout
     let reply = app.send(Call::get("/into-admin")).await;
     assert_eq!((reply.status, reply.header("x-auth")), (StatusCode::BAD_REQUEST, None));
     assert_eq!(reply.json()["detail"], "the path holds a `.` or `..` segment");
+    let reply = app.send(Call::get("/into-admin-encoded")).await;
+    assert_eq!((reply.status, reply.header("x-auth")), (StatusCode::BAD_REQUEST, None));
+    assert_eq!(reply.json()["detail"], "the path holds a `\\`, raw or as `%5C`");
     app.stop().await;
 }
 

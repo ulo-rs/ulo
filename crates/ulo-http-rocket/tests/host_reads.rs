@@ -1,6 +1,7 @@
 //! Under rocket's `host_extensions: false`, a `Host<T>` read nothing supplies refuses the app at
 //! `listen()`, whether an attribute's parameter declared the read or a hand-written handler's
-//! `HttpHandler::reads_host`.
+//! `HttpHandler::reads_host`; a scoped entry's exclusion counts against a route only where a
+//! request can reach the route through it.
 
 use ulo::scope::Auto;
 use ulo::{
@@ -120,4 +121,116 @@ async fn a_supplies_after_a_scoped_entry_matching_some_paths_of_a_route_does_not
     let Err(error) = app.bind(Embedded::new()).listen().await else { panic!("listen() accepted a Host read the entry reaches on one path") };
     let text = error.to_string();
     assert!(text.contains("page` on `GET /pages/{page}` reads `Host<"), "{text}");
+}
+
+#[injectable]
+struct AdminHealth;
+
+#[routes]
+impl AdminHealth {
+    #[ulo_http::get("/admin/health")]
+    fn health(&self) -> &'static str {
+        "health"
+    }
+}
+
+#[injectable]
+struct AdminPage;
+
+#[routes]
+impl AdminPage {
+    #[ulo_http::get("/admin/{page}")]
+    fn page(&self, _tenant: Host<Tenant>) -> &'static str {
+        "page"
+    }
+
+    #[ulo_http::post("/admin/{page}")]
+    fn post_page(&self, _tenant: Host<Tenant>) -> &'static str {
+        "posted"
+    }
+}
+
+/// `/admin/{page}` reading `Host<Tenant>` behind `/admin/*` minus `/admin/health`, with the route
+/// `/admin/health` when `health_route` is set.
+struct AdminBehindAnExclusion {
+    health_route: bool,
+}
+
+impl Module for AdminBehindAnExclusion {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        if self.health_route {
+            m.controller::<AdminHealth>();
+        }
+        m.controller::<AdminPage>();
+        m.provide::<Supplier>();
+        m.meta::<PreDispatch>().apply_for::<Supplier>(["/admin/*"]).exclude(["/admin/health"]).supplies::<Tenant>();
+    }
+}
+
+async fn listen_admin(health_route: bool) -> Result<ulo::App<ulo::app::Bound>, StartupError> {
+    let app = App::builder(AdminBehindAnExclusion { health_route })
+        .runtime(Tokio::current())
+        .wire()
+        .expect("the app wires")
+        .connect()
+        .await
+        .expect("the app connects");
+    app.bind(Embedded::new()).listen().await
+}
+
+#[tokio::test]
+async fn an_exclusion_a_route_of_higher_precedence_answers_for_every_method_leaves_the_route_below_covered() {
+    // `/admin/health` matches the excluded path, so the router answers every request on it there,
+    // `GET` with its handler and `POST` with a 405 though `/admin/{page}` takes `POST`: no request
+    // reaching `/admin/{page}` is one the entry skips.
+    if let Err(error) = listen_admin(true).await {
+        panic!("listen() refused a scope that runs on every request reaching `/admin/{{page}}`: {error}");
+    }
+}
+
+#[tokio::test]
+async fn an_exclusion_no_route_of_higher_precedence_answers_still_refuses_the_route_below() {
+    // With no `/admin/health` route, `GET /admin/health` reaches `/admin/{page}` without the entry.
+    let Err(error) = listen_admin(false).await else { panic!("listen() accepted a Host read the exclusion leaves unsupplied") };
+    assert!(matches!(error, StartupError::Configure(_)), "{error}");
+    let text = error.to_string();
+    for route in ["page` on `GET /admin/{page}` reads `Host<", "post_page` on `POST /admin/{page}` reads `Host<"] {
+        assert!(text.contains(route), "{route} in {text}");
+    }
+    assert!(text.contains("does not cover `/admin/{page}`"), "{text}");
+}
+
+/// `/admin/{page}` behind `/admin/*` minus `/admin/health`, which a route claims, and
+/// `/admin/status`, which none does.
+struct AdminBehindTwoExclusions;
+
+impl Module for AdminBehindTwoExclusions {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.controller::<AdminHealth>();
+        m.controller::<AdminPage>();
+        m.provide::<Supplier>();
+        m.meta::<PreDispatch>().apply_for::<Supplier>(["/admin/*"]).exclude(["/admin/health", "/admin/status"]).supplies::<Tenant>();
+    }
+}
+
+#[tokio::test]
+async fn one_exclusion_no_route_of_higher_precedence_answers_refuses_the_route_below_beside_one_that_is_claimed() {
+    let app = App::builder(AdminBehindTwoExclusions)
+        .runtime(Tokio::current())
+        .wire()
+        .expect("the app wires")
+        .connect()
+        .await
+        .expect("the app connects");
+    // `GET /admin/status` reaches `/admin/{page}` without the entry, whatever `/admin/health` claims.
+    let Err(error) = app.bind(Embedded::new()).listen().await else { panic!("listen() accepted a Host read `/admin/status` leaves unsupplied") };
+    assert!(error.to_string().contains("page` on `GET /admin/{page}` reads `Host<"), "{error}");
 }

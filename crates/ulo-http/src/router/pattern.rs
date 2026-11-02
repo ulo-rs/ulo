@@ -207,6 +207,12 @@ impl ScopePattern {
         self.shape().contains(&other.shape())
     }
 
+    /// The request paths this scope and the route `pattern` both match, `None` when they share
+    /// none.
+    pub(crate) fn shared_with(&self, pattern: &Pattern) -> Option<Shared> {
+        self.shape().intersection(&pattern.shape())
+    }
+
     /// Whether this scope matches the request path `path`, compared as the router compares it.
     pub(crate) fn covers_path(&self, path: &str) -> bool {
         let path = normalize(path);
@@ -226,6 +232,19 @@ impl fmt::Display for ScopePattern {
     }
 }
 
+impl Pattern {
+    /// Whether this route matches every request path in `shared`.
+    pub(crate) fn contains(&self, shared: &Shared) -> bool {
+        self.shape().contains(&Shape { fixed: &shared.fixed, open: shared.open })
+    }
+}
+
+/// The request paths two shapes both match, as an owned [`Shape`].
+pub(crate) struct Shared {
+    fixed: Vec<Segment>,
+    open: bool,
+}
+
 /// The request paths a route pattern or a scope matches: exactly `fixed`, or with `open`, `fixed`
 /// followed by one or more segments. `fixed` holds static segments and parameters only.
 struct Shape<'s> {
@@ -234,6 +253,25 @@ struct Shape<'s> {
 }
 
 impl Shape<'_> {
+    /// The paths both match: segment by segment the narrower of the two, a static segment
+    /// narrower than a parameter, and past the shorter `fixed` the longer one's, the open side
+    /// taking any segment there.
+    fn intersection(&self, other: &Shape<'_>) -> Option<Shared> {
+        if !self.overlaps(other) {
+            return None;
+        }
+        let (long, short) = if self.fixed.len() >= other.fixed.len() { (self.fixed, other.fixed) } else { (other.fixed, self.fixed) };
+        let fixed = long
+            .iter()
+            .enumerate()
+            .map(|(index, segment)| match short.get(index) {
+                Some(narrower @ Segment::Static(_)) => narrower.clone(),
+                _ => segment.clone(),
+            })
+            .collect();
+        Some(Shared { fixed, open: self.open && other.open })
+    }
+
     /// Whether every path `other` matches, this matches too.
     fn contains(&self, other: &Shape<'_>) -> bool {
         let (mine, theirs) = (self.fixed.len(), other.fixed.len());
@@ -288,6 +326,14 @@ fn is_dot_segment(segment: &str) -> bool {
         }
     }
     dots > 0
+}
+
+/// Whether `path` holds a `\`, raw or written `%5C` or `%5c`. A raw one is not a path character
+/// (RFC 3986 §3.3), and a decoded one is a separator to a Windows path join, so a parameter value
+/// holding one would let `root.join(value)` climb out of `root` there. `%255C` decodes once to the
+/// text `%5C` and holds none.
+pub(crate) fn has_backslash(path: &str) -> bool {
+    path.contains('\\') || path.as_bytes().windows(3).any(|window| matches!(window, [b'%', b'5', b'C' | b'c']))
 }
 
 /// `path` without its trailing slash, except for `/`.
@@ -400,9 +446,12 @@ fn static_matches(text: &str, piece: &str) -> bool {
 }
 
 /// `piece` percent-decoded, an invalid UTF-8 sequence read as U+FFFD, with each encoded slash left
-/// as written: a value captured from one segment then holds no `/`, and `root.join(value)` cannot
-/// climb out of `root`. `%252F` decodes to the text `%2F` as well, so a captured `%2F` does not
-/// say which of the two the client sent.
+/// as written: a value captured from one segment then holds no `/`. A path holding a dot segment
+/// or a `\`, raw or as `%5C`, is refused before routing, so no captured value holds a `\` or a
+/// dot segment either, and `root.join(value)` reaches no separator or dot segment that climbs out
+/// of `root`. A Windows join also replaces `root` with a value carrying a drive prefix, `C:x`,
+/// which nothing here refuses. `%252F` decodes to the text `%2F` as well, so a captured `%2F`
+/// does not say which of the two the client sent.
 fn decode(piece: &str) -> Cow<'_, str> {
     let Some(first) = encoded_slash(piece) else {
         return percent_decode_str(piece).decode_utf8_lossy();
@@ -436,6 +485,39 @@ mod tests {
         assert_eq!(decode("%%2F"), "%%2F", "a `%` that starts no escape is kept, and the slash after it too");
         assert_eq!(decode("%C3%A9%2F%C3%A9"), "é%2Fé");
         assert_eq!(decode("plain"), "plain");
+    }
+
+    /// Whether `route` matches every path the scope `exclude` shares with `pattern`, `None` when
+    /// the two share none.
+    fn claims(route: &str, exclude: &str, pattern: &str) -> Option<bool> {
+        let (route, pattern) = (Pattern::parse(route).unwrap(), Pattern::parse(pattern).unwrap());
+        ScopePattern::parse(exclude).unwrap().shared_with(&pattern).map(|shared| route.contains(&shared))
+    }
+
+    #[test]
+    fn a_route_claims_what_an_exclusion_shares_with_another_route_only_when_it_matches_all_of_it() {
+        assert_eq!(claims("/admin/health", "/admin/health", "/admin/{page}"), Some(true));
+        assert_eq!(claims("/admin/status", "/admin/health", "/admin/{page}"), Some(false));
+        assert_eq!(claims("/admin/{x}", "/admin/health", "/users/{id}"), None);
+        // The exclusion is wider than the route below it, and only the shared `/a/c/b` counts.
+        assert_eq!(claims("/a/c/b", "/a/{x}/b", "/a/c/{y}"), Some(true));
+        // A wildcard shares one or more segments: a route of fixed length claims none of them all.
+        assert_eq!(claims("/files/health/x", "/files/health/*", "/files/{*rest}"), Some(false));
+        assert_eq!(claims("/files/health/{*rest}", "/files/health/*", "/files/{*rest}"), Some(true));
+        assert_eq!(claims("/files/{name}/{*rest}", "/files/health/*", "/files/{*rest}"), Some(true));
+        // A fixed-length exclusion shares exactly its own path with a rest route below it.
+        assert_eq!(claims("/admin/health", "/admin/health", "/admin/{*rest}"), Some(true));
+        assert_eq!(claims("/admin/health/x", "/admin/health", "/admin/{*rest}"), Some(false));
+    }
+
+    #[test]
+    fn a_backslash_is_found_raw_and_encoded_and_a_twice_encoded_one_is_not() {
+        for path in ["/a\\b", "/\\", "/a/%5C", "/a/b%5c..%5C..", "/%%5C"] {
+            assert!(has_backslash(path), "{path}");
+        }
+        for path in ["/", "/a/b", "/a/%255C", "/a/%5", "/a/5C", "/a/%2F"] {
+            assert!(!has_backslash(path), "{path}");
+        }
     }
 
     #[test]

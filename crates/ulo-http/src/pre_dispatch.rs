@@ -9,7 +9,8 @@
 //!    (`Execution::route_to`); then the entries whose scope matches the request path run, the
 //!    path the router matched. A request no route matches runs them too, before its 404, 405 or
 //!    `OPTIONS` answer and before an upgrade handler takes it, so whether an entry runs never
-//!    depends on the route table.
+//!    depends on the route table. In an embedding under `Miss::Forward`, a request no route
+//!    matches runs none when the host can route it again: the host protects its own paths.
 //!
 //! Then `dispatch`. Both sub-steps run inside the error chain: an entry's `Err`, a middleware's or
 //! a tower layer's, reaches the error handlers as a `BoxError` and its panic as `PanicRecovered`;
@@ -67,11 +68,12 @@ use crate::transport::{Http, HttpCarried, RequestHead};
 ///
 /// A scope is a route pattern whose last segment may be `*`, matched against the request path,
 /// routed or not: `apply_for::<ApiKeyAuth>(["/admin/*"])` runs for `/admin/users` and for an
-/// unrouted `/admin/x` alike. `exclude` removes the paths it matches from the entry written
-/// before it. A scoped entry's scopes and exclusions read the path the router matched; an unscoped
-/// entry's `exclude`, which runs before routing, reads the path as that entry receives it. The
-/// middleware types an entry names are declared as its dependencies, so `wire()` checks that the
-/// declaring module sees them.
+/// unrouted `/admin/x` alike, except in an embedding under `Miss::Forward`, where an unrouted path
+/// the host can route again is the host's and runs no scoped entry. `exclude` removes the paths it matches from the entry
+/// written before it. A scoped entry's scopes and exclusions read the path the router matched; an
+/// unscoped entry's `exclude`, which runs before routing, reads the path as that entry receives
+/// it. The middleware types an entry names are declared as its dependencies, so `wire()` checks
+/// that the declaring module sees them.
 ///
 /// `prepare` refuses a scope or an exclusion that does not parse, a scoped entry naming no pattern,
 /// a scope that matches no path a route of the table matches once the entry's exclusions are
@@ -237,9 +239,12 @@ impl<T: HttpCarried> PreDispatch<T> {
     /// `Host<V>` and an `adopt::<V>()` entry unless `V` reaches them, and reads the declaration
     /// where the entry runs. After a scoped entry it reaches the handlers of the routes that
     /// entry runs for on every request, its scope matching each of their paths and no exclusion
-    /// matching any; after an unscoped one, every handler, and the `adopt` entries written after
-    /// it. A scoped entry runs after routing, so its declaration reaches no `adopt`. A value the
-    /// host keeps is copied in by `Embedded::forward::<V>(..)`, which reaches everything.
+    /// matching a path a request reaches them by: a path a route of higher precedence also
+    /// matches is answered there, so `.exclude(["/admin/health"])` under `/admin/*` leaves
+    /// `/admin/{page}` reached when the route `/admin/health` exists, and not when it is absent.
+    /// After an unscoped one, every handler, and the `adopt` entries written after it. A scoped
+    /// entry runs after routing, so its declaration reaches no `adopt`. A value the host keeps is
+    /// copied in by `Embedded::forward::<V>(..)`, which reaches everything.
     ///
     /// An unscoped entry's `exclude` is not consulted: it matches the path as that entry receives
     /// it, which an entry after it may rewrite before routing. A supply after an excluding entry
@@ -612,6 +617,23 @@ impl<T: HttpCarried> Stage<T> {
         let stage = Arc::new(ScopedStage { steps, filters, run });
         shared.push(Arc::clone(&stage));
         stage
+    }
+
+    /// Whether the scoped entry at `index` of `meta` runs on every request that reaches the route
+    /// `pattern`, `before` being the patterns the router tries first. One of its scopes matches
+    /// every path of the route, and each path an exclusion shares with the route is one a route
+    /// in `before` matches: the router answers that path there, with its handler or a 405, so no
+    /// request reaching `pattern` is excluded.
+    pub(crate) fn runs_on_every_request(&self, meta: &Arc<PreDispatch<T>>, index: usize, pattern: &Pattern, before: &[&Pattern]) -> bool {
+        let Some(at) = self.scoped.iter().position(|(_, held, at)| Arc::ptr_eq(held, meta) && *at == index) else {
+            return false;
+        };
+        let entry = &self.covering[at];
+        entry.scope.iter().any(|scope| scope.covers(pattern))
+            && entry.exclude.iter().all(|exclude| match exclude.shared_with(pattern) {
+                None => true,
+                Some(shared) => before.iter().any(|route| route.contains(&shared)),
+            })
     }
 
     /// Every scoped entry, each run when its scope matches the path: what a request no route

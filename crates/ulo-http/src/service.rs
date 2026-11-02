@@ -29,7 +29,7 @@ use crate::pre_dispatch::{self, Rest, Stage, StageCx};
 use crate::render;
 use crate::request::{ConnInfo, OnUpgrade, Request};
 use crate::response::Response;
-use crate::router::pattern::{Pattern, has_dot_segment};
+use crate::router::pattern::{Pattern, has_backslash, has_dot_segment};
 use crate::router::{RouteTarget, Routed, Router};
 use crate::routing::Routing;
 use crate::trace;
@@ -208,8 +208,8 @@ impl ServiceInner {
         call_span.record(span::URL_PATH, path);
         call_span.record(span::URL_SCHEME, if req.conn.tls.is_some() { "https" } else { "http" });
         let exec = Arc::new(exec);
-        let pipeline = if has_dot_segment(req.path()) {
-            Box::pin(std::future::ready(render::dot_segment(&self.config)))
+        let pipeline = if let Some(refused) = malformed(req.path(), &self.config) {
+            Box::pin(std::future::ready(refused))
         } else {
             self.unscoped(Arc::clone(&exec), req, call_span.clone(), Arc::clone(&tracking))
         };
@@ -276,9 +276,9 @@ impl ServiceInner {
 
     fn route(self: Arc<Self>, exec: Arc<Execution>, req: Request, call_span: Span, tracking: Arc<Tracking>) -> BoxFuture<'static, Response> {
         Box::pin(async move {
-            if has_dot_segment(req.path()) {
-                tracing::warn!(path = req.path(), "an unscoped pre-dispatch entry rewrote the path to one holding a `.` or `..` segment; answered 400");
-                return render::dot_segment(&self.config);
+            if let Some(refused) = malformed(req.path(), &self.config) {
+                tracing::warn!(path = req.path(), "an unscoped pre-dispatch entry rewrote the path to one refused before routing; answered 400");
+                return refused;
             }
             if req.headers().contains_key(UPGRADE) {
                 let taker = self.upgrades.iter().find(|(path, _)| path.matches(req.path()).is_some()).map(|(_, taker)| Arc::clone(taker));
@@ -308,7 +308,10 @@ impl ServiceInner {
                 Miss::MethodNotAllowed(_) => Routing::MethodNotAllowed,
             });
             let handle = exec.handle();
-            if outside {
+            // Under `Miss::Forward` a path no route matches belongs to the host when it can route
+            // the request again, and the host protects its own routes: no scoped entry speaks for
+            // them. A miss the app answers itself, its body read or its path rewritten, runs them.
+            if outside || (matches!(miss, Miss::NotFound) && tracking.forwardable(&req)) {
                 return self.unmatched(&handle, req, miss, &tracking).await;
             }
             let this = Arc::clone(&self);
@@ -558,6 +561,15 @@ pub(crate) fn merge_headers(cx: &HttpCx, mut response: Response) -> Response {
         }
     }
     response
+}
+
+/// The 400 a path refused before routing answers: one holding a `.` or `..` segment, or a `\`
+/// raw or as `%5C`.
+fn malformed(path: &str, config: &HttpConfig) -> Option<Response> {
+    if has_dot_segment(path) {
+        return Some(render::dot_segment(config));
+    }
+    has_backslash(path).then(|| render::backslash(config))
 }
 
 /// 204 with `Allow`: `OPTIONS` on a path whose routes have no `OPTIONS` handler.

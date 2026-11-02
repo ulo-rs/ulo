@@ -17,10 +17,12 @@
 //!    `ulo_transport::span::call` span entered, named `package.Service/Method`.
 //! 5. The unscoped pre-dispatch entries of `PreDispatch<Grpc>`, in order.
 //! 6. The path routed: a handler's path routes the execution to the controller's module and runs
-//!    the scoped entries, then `ulo::dispatch`; the health and reflection services answer their
-//!    own paths; any other path runs the scoped entries whose scope matches it, their failures
-//!    offered to the global error handlers alone, then answers UNIMPLEMENTED, so a caller an
-//!    entry refuses is refused alike whether or not the method exists.
+//!    the scoped entries, then `ulo::dispatch`; the health service answers its own paths with no
+//!    scoped entry, being for probes that carry no credentials; any other path runs the scoped
+//!    entries whose scope matches it, their failures offered to the global error handlers alone,
+//!    then is answered by the reflection service for its own paths and UNIMPLEMENTED for the rest,
+//!    so a caller an entry refuses is refused alike whether or not the method exists, and lists
+//!    no service through reflection.
 //! 7. An error no handler claims rendered as a status: a `tonic::Status` as it stands,
 //!    DEADLINE_EXCEEDED when the deadline cancelled the call, any other error by its kind.
 //! 8. A response a pre-dispatch entry answered with an HTTP status other than 200 translated by
@@ -124,8 +126,12 @@ pub(crate) struct Dispatcher {
     pub(crate) app: AppHandle,
     pub(crate) timer: Arc<dyn Timer>,
     pub(crate) routes: HashMap<&'static str, Arc<Route>>,
-    /// By service name, `grpc.health.v1.Health`.
-    pub(crate) builtins: Vec<(&'static str, Builtin)>,
+    /// `grpc.health.v1.Health`, by service name. It runs no scoped entry: the protocol is for
+    /// probes calling without credentials.
+    pub(crate) health: Vec<(&'static str, Builtin)>,
+    /// `grpc.reflection.v1` and `v1alpha`, by service name, each run behind the scoped entries
+    /// whose scope matches its path: it lists the API a scope protects.
+    pub(crate) reflection: Vec<(&'static str, Builtin)>,
     pub(crate) stage: Stage<Grpc>,
     pub(crate) admission: Admission,
     /// The per-connection in-flight bound, `None` for none.
@@ -291,24 +297,30 @@ impl Dispatcher {
                 call_span.record(span::HANDLER, field::display(HandlerName(&route.handler)));
                 return self.scoped(exec.handle(), req, route).await;
             }
-            let builtin = service_of(req.path())
-                .and_then(|service| self.builtins.iter().find(|(name, _)| *name == service))
-                .map(|(_, builtin)| Arc::clone(builtin));
-            if let Some(builtin) = builtin {
-                let Request { head, body, .. } = req;
-                return (*builtin)(http::Request::from_parts(head, body)).await.map(HttpBody::new);
+            let service = service_of(req.path());
+            let find = |services: &[(&'static str, Builtin)]| {
+                service.and_then(|service| services.iter().find(|(name, _)| *name == service)).map(|(_, builtin)| Arc::clone(builtin))
+            };
+            if let Some(health) = find(&self.health) {
+                return answer_builtin(&health, req).await;
             }
-            self.unrouted(exec.handle(), req).await
+            let end: Rest = match find(&self.reflection) {
+                Some(reflection) => Box::new(move |req| Box::pin(async move { answer_builtin(&reflection, req).await })),
+                None => Box::new(|req| {
+                    Box::pin(std::future::ready(status_response(Status::unimplemented(format!(
+                        "this server has no method `{}`",
+                        req.path()
+                    )))))
+                }),
+            };
+            self.unrouted(exec.handle(), req, end).await
         })
     }
 
-    /// The scoped entries whose scope matches the path of a call no handler answers, then
-    /// UNIMPLEMENTED. Their failures are offered to the global error handlers alone, no handler
-    /// having matched.
-    fn unrouted(self: &Arc<Self>, exec: ExecutionRef, req: Request) -> BoxFuture<'static, Response> {
-        let end: Rest = Box::new(|req| {
-            Box::pin(std::future::ready(status_response(Status::unimplemented(format!("this server has no method `{}`", req.path())))))
-        });
+    /// The scoped entries whose scope matches the path of a call no handler answers, then `end`:
+    /// the reflection service for its own paths, UNIMPLEMENTED for any other. Their failures are
+    /// offered to the global error handlers alone, no handler having matched.
+    fn unrouted(self: &Arc<Self>, exec: ExecutionRef, req: Request, end: Rest) -> BoxFuture<'static, Response> {
         let unrouted = self.stage.unrouted();
         if unrouted.is_empty() {
             return end(req);
@@ -346,7 +358,7 @@ impl Dispatcher {
             );
             let call = Arc::clone(&route.call);
             let reply = match ulo::dispatch(&route.handler, &exec, &cx, move |cx| (*call)(cx)).await {
-                Ok(reply) => reply,
+                Ok(reply) => screened(reply),
                 Err(err) => status_reply(status::render(err, &exec)),
             };
             reply.map(HttpBody::new)
@@ -374,6 +386,12 @@ impl Dispatcher {
             body: Mutex::new(body),
         })
     }
+}
+
+/// `req` answered by the health or reflection service `builtin`.
+async fn answer_builtin(builtin: &Builtin, req: Request) -> Response {
+    let Request { head, body, .. } = req;
+    (**builtin)(http::Request::from_parts(head, body)).await.map(HttpBody::new)
 }
 
 /// The health or reflection service `service`, by the name its paths start with.
@@ -450,12 +468,83 @@ fn with_metadata(body: tonic::body::Body, metadata: MetadataMap) -> Reply {
         }
     }
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/grpc"));
-    reply
+    written(reply)
 }
 
 /// `status` as a trailers-only reply.
 pub(crate) fn status_reply(status: Status) -> Reply {
-    status.into_http()
+    written(status.into_http())
+}
+
+/// In a reply the framework built, before any interceptor saw it: the `grpc-` headers it was
+/// written with, a trailers-only reply's `grpc-status`, `grpc-message` and
+/// `grpc-status-details-bin` among them, none on a reply carrying a message.
+#[derive(Clone, Debug)]
+struct Written(Arc<[(HeaderName, HeaderValue)]>);
+
+fn written(mut reply: Reply) -> Reply {
+    let protocol: Arc<[(HeaderName, HeaderValue)]> =
+        reply.headers().iter().filter(|(name, _)| is_protocol(name)).map(|(name, value)| (name.clone(), value.clone())).collect();
+    reply.extensions_mut().insert(Written(protocol));
+    reply
+}
+
+fn is_protocol(name: &HeaderName) -> bool {
+    name.as_str().starts_with("grpc-")
+}
+
+/// `reply` as `ulo::dispatch` answered it, its `grpc-` headers those the framework wrote it with:
+/// a name an interceptor added through `Reply::headers_mut` is dropped, and one it changed or
+/// removed is written back, so no interceptor sets what gRPC over HTTP/2 reserves or forges a
+/// status. A reply carrying no [`Written`], one an interceptor or an error handler built by hand
+/// rather than through the context, passes as it is.
+fn screened(mut reply: Reply) -> Reply {
+    let Some(Written(protocol)) = reply.extensions().get::<Written>().cloned() else {
+        return reply;
+    };
+    let mut names: Vec<HeaderName> = reply.headers().keys().filter(|name| is_protocol(name)).cloned().collect();
+    names.extend(protocol.iter().map(|(name, _)| name.clone()));
+    names.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
+    names.dedup();
+    let touched: Vec<HeaderName> = names
+        .into_iter()
+        .filter(|name| {
+            let now = reply.headers().get_all(name).iter();
+            let then = protocol.iter().filter(|(written, _)| written == name).map(|(_, value)| value);
+            !now.eq(then)
+        })
+        .collect();
+    if touched.is_empty() {
+        return reply;
+    }
+    let headers = reply.headers_mut();
+    for name in &touched {
+        headers.remove(name);
+    }
+    for (name, value) in protocol.iter().filter(|(name, _)| touched.contains(name)) {
+        headers.append(name.clone(), value.clone());
+    }
+    for name in &touched {
+        warn_restored(name);
+    }
+    reply
+}
+
+/// The `grpc-` names [`screened`] has restored and logged, each logged once per process.
+static RESTORED: Mutex<Vec<HeaderName>> = Mutex::new(Vec::new());
+
+fn warn_restored(name: &HeaderName) {
+    let mut restored = RESTORED.lock().unwrap_or_else(PoisonError::into_inner);
+    if restored.contains(name) {
+        return;
+    }
+    restored.push(name.clone());
+    drop(restored);
+    tracing::warn!(
+        header = name.as_str(),
+        "an interceptor wrote a `grpc-` header onto a gRPC reply; gRPC over HTTP/2 reserves the prefix, so the reply keeps \
+         what the framework wrote under it (logged once per name)"
+    );
 }
 
 /// The one phrase every refusal of a call because the server is draining or closing carries

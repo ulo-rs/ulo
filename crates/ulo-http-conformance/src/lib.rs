@@ -353,6 +353,7 @@ macro_rules! http_conformance_suite {
             chunked_body_over_the_limit => extraction::chunked_over_the_limit,
             path_parameter_percent_decoded => routing::percent_decoded,
             dot_segment_refused => routing::dot_segment,
+            backslash_refused => routing::backslash,
             trailing_slash_insignificant => routing::trailing_slash,
             reshaped_error => errors::reshaped,
             recovered_error => errors::recovered,
