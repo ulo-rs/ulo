@@ -21,11 +21,11 @@ use rustls_native_certs::CertificateResult;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, Bound, BoxError, BoxFuture, Permanent, Refused, Runtime, RuntimeShutDown, Timer};
+use ulo::{AppHandle, Bound, BoxError, BoxFuture, Permanent, Redacted, Refused, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
-use ulo_rpc::__private::HoldUntil;
+use ulo_rpc::__private::{HoldUntil, panic_redacted};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link,
@@ -335,7 +335,15 @@ impl Link for Nats {
         // here waits: the load starts, and `listen` refuses before it would wait.
         match self.timer.clone() {
             Some(clock) => {
-                self.roots(&servers, &runtime, &*clock, false).await.map_err(at_startup)?;
+                if let Err(error) = self.roots(&servers, &runtime, &*clock, false).await {
+                    // Raised again here, so the app reports it as this server's panic in
+                    // `prepare`, redacted with the app's secrets: an error from `prepare` reaches
+                    // the startup report as its text alone.
+                    if let Some(panicked) = error.downcast_ref::<RootsPanicked>() {
+                        std::panic::resume_unwind(Box::new(panicked.to_string()));
+                    }
+                    return Err(at_startup(error));
+                }
             }
             None => drop(self.roots.held(&runtime)),
         }
@@ -1434,7 +1442,8 @@ impl Roots {
         let load = self.held(runtime);
         match within(clock, bound, load.wait()).await {
             Ok(Some(Ok(_))) => Ok(load),
-            Ok(Some(Err(cause))) => Err(Misconfigured { source: format!("{}: {cause}", unloaded(tls)).into() }.into()),
+            Ok(Some(Err(Unloaded::Failed(cause)))) => Err(Misconfigured { source: format!("{}: {cause}", unloaded(tls)).into() }.into()),
+            Ok(Some(Err(Unloaded::Panicked(message)))) => Err(RootsPanicked { tls, message }.into()),
             // The load's task never finished, its runtime having shut down: the runtime refused it.
             Ok(None) => Err(RuntimeShutDown::new(Refused).into()),
             Err(Cut::Refused(refused)) => Err(RuntimeShutDown::new(refused).into()),
@@ -1524,8 +1533,8 @@ impl Roots {
 /// caller that stops waiting drops its own wait and nothing else, so the load is never restarted
 /// while anything holds it. The file goes once the last holder and the task have dropped it.
 pub(crate) struct Load {
-    /// `None` until the task answers: the file, or the whole of the refusal's cause.
-    answer: watch::Receiver<Option<Result<RootsFile, String>>>,
+    /// `None` until the task answers: the file, or why there is none.
+    answer: watch::Receiver<Option<Result<RootsFile, Unloaded>>>,
     /// A task waits to log the load's failure for a `nats://` link.
     watched: AtomicBool,
     /// The failure has been logged for a `nats://` link.
@@ -1544,13 +1553,21 @@ impl Load {
         load
     }
 
-    /// A load spawned on `runtime`'s blocking pool. A panic in it is kept as a refusal naming the
-    /// panic; a task the runtime drops unrun leaves the load abandoned.
+    /// A load spawned on `runtime`'s blocking pool. A panic in it is kept as the panic, its
+    /// message redacted as a task's panic is; a task the runtime drops unrun leaves the load
+    /// abandoned, and so does a panic the runtime, having shut down, can no longer convert.
     fn start(runtime: &Tokio, loader: Loader) -> Arc<Load> {
         let (answering, answer) = watch::channel(None);
+        let converting = runtime.clone();
         drop(runtime.handle().spawn_blocking(move || {
-            let written = std::panic::catch_unwind(AssertUnwindSafe(|| RootsFile::write((loader.load)(), &(loader.dir)())))
-                .unwrap_or_else(|panic| Err(format!("loading them panicked: {}", panic_text(&*panic))));
+            let written = match std::panic::catch_unwind(AssertUnwindSafe(|| RootsFile::write((loader.load)(), &(loader.dir)()))) {
+                Ok(written) => written.map_err(Unloaded::Failed),
+                // A blocking thread may wait on a task of its runtime: the conversion is one.
+                Err(payload) => match converting.handle().block_on(panic_redacted(&converting, payload)) {
+                    Some(message) => Err(Unloaded::Panicked(message)),
+                    None => return,
+                },
+            };
             // Refused once every holder has dropped the load, which drops the file here.
             let _ = answering.send(Some(written));
         }));
@@ -1568,13 +1585,13 @@ impl Load {
     }
 
     /// The task's answer, or `None` if it ended without one.
-    async fn wait(&self) -> Option<Result<PathBuf, String>> {
+    async fn wait(&self) -> Option<Result<PathBuf, Unloaded>> {
         let mut answer = self.answer.clone();
         let answered = answer.wait_for(Option::is_some).await.ok()?;
         answered.as_ref().map(|written| written.as_ref().map(|file| file.path.clone()).map_err(Clone::clone))
     }
 
-    fn warn(&self, cause: &str) {
+    fn warn(&self, cause: &Unloaded) {
         if !self.warned.swap(true, Ordering::Relaxed) {
             tracing::warn!(
                 cause = %format!("{}: {cause}", unloaded(false)),
@@ -1605,6 +1622,46 @@ fn unloaded(tls: bool) -> &'static str {
         "the NATS link could not load the platform's root certificates for `tls://`"
     } else {
         "the NATS link could not load the platform's root certificates"
+    }
+}
+
+/// Why a load yielded no file.
+#[derive(Clone)]
+enum Unloaded {
+    /// The whole of the refusal's cause.
+    Failed(String),
+    /// The loader panicked: its message, redacted as a task's panic is.
+    Panicked(Arc<Redacted>),
+}
+
+impl std::fmt::Display for Unloaded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unloaded::Failed(cause) => f.write_str(cause),
+            Unloaded::Panicked(message) => write!(f, "loading them panicked: {message}"),
+        }
+    }
+}
+
+/// A `tls://` link's refusal over a roots load that panicked. The panic is its `source()`, so
+/// `ulo::is_panic` finds it, on a call's error too, which `RpcClient` answers `Unavailable`
+/// rather than as [`Misconfigured`]. A server's `prepare` raises it again, so the app reports it
+/// as that server's panic.
+#[derive(Debug)]
+struct RootsPanicked {
+    tls: bool,
+    message: Arc<Redacted>,
+}
+
+impl std::fmt::Display for RootsPanicked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: loading them panicked: {}", unloaded(self.tls), self.message)
+    }
+}
+
+impl std::error::Error for RootsPanicked {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&*self.message)
     }
 }
 
@@ -1724,14 +1781,6 @@ impl Drop for RootsFile {
             tracing::debug!(%error, path = %self.path.display(), "the NATS link could not remove its file of root certificates");
         }
     }
-}
-
-fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
-    panic
-        .downcast_ref::<String>()
-        .cloned()
-        .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
-        .unwrap_or_else(|| "a payload that is not text".to_owned())
 }
 
 /// A queue group name from the root module's path: NATS refuses whitespace and the wildcards in
@@ -2042,6 +2091,66 @@ mod tests {
 
     async fn refused_calls(link: Nats) -> Vec<(ErrorKind, Option<String>, String)> {
         failed_calls(&RpcClient::new(link, Arc::new(Tokio::current())).expect("the link is usable")).await
+    }
+
+    /// The text a panicking roots load raises: a url's userinfo and a value the app registers
+    /// as a secret.
+    const PANIC_TEXT: &str = "reading the store for https://ulo:hunter2@vault.internal with s3cr3t-token-value";
+
+    fn panicking() -> CertificateResult {
+        panic!("{PANIC_TEXT}")
+    }
+
+    /// The root module registering `s3cr3t-token-value` as a secret.
+    struct SecretRoot;
+
+    impl Module for SecretRoot {
+        fn identity(&self) -> ModuleIdentity {
+            ModuleIdentity::of_type::<Self>()
+        }
+
+        fn register(&self, m: &mut ModuleDef<'_>) {
+            m.secret(&ulo::Secret::new("s3cr3t-token-value"));
+        }
+    }
+
+    /// Neither the url's password nor the app's secret, and the panic's own text otherwise.
+    fn redacted_panic_text(message: &str) {
+        assert!(message.contains("loading them panicked: reading the store for https://[redacted]@vault.internal"), "{message}");
+        assert!(!message.contains("hunter2"), "the url's password reached the report: {message}");
+    }
+
+    /// Q22-P10: a server whose roots load panics fails `listen` with the panic as its `prepare`'s,
+    /// so `ulo::is_panic` is true of the report, its text redacted: the url's password stripped
+    /// and the app's registered secret replaced. Planted break: the panic kept as a refusal.
+    #[tokio::test]
+    async fn a_roots_load_that_panics_fails_the_server_s_bind_as_a_redacted_panic() {
+        let app = App::builder(SecretRoot).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
+        let failed = match app.bind(Server::new(link("tls://localhost:1", panicking, std::env::temp_dir))).listen().await {
+            Err(error @ StartupError::Configure(_)) => error,
+            Err(other) => panic!("the bind failed other than as a `Configure` refusal: {other:?}"),
+            Ok(_) => panic!("a server whose roots load panicked listened"),
+        };
+        let message = failed.to_string();
+        redacted_panic_text(&message);
+        assert!(!message.contains("s3cr3t-token-value"), "the app's secret reached the report: {message}");
+        assert!(ulo::is_panic(&BoxError::from(failed)), "the report does not hold the panic: {message}");
+    }
+
+    /// Q22-P10: a client whose roots load panics fails every call `Unavailable` holding the panic,
+    /// not `Internal` with `reason: "misconfigured_link"`, so `ulo::is_panic` is true of the call's
+    /// error, the url's password stripped from its text. Planted break: the panic kept as a
+    /// refusal.
+    #[tokio::test]
+    async fn a_roots_load_that_panics_fails_every_call_holding_the_redacted_panic() {
+        let client = RpcClient::new(link("tls://localhost:1", panicking, std::env::temp_dir), Arc::new(Tokio::current())).expect("the link is usable");
+        for _ in 0..2 {
+            let failed = client.request::<_, u32>("roots.panic", &()).await.expect_err("a call over a link whose roots load panicked");
+            assert_eq!((failed.kind(), failed.reason()), (ErrorKind::Unavailable, None), "{failed:?}");
+            let message = failed.message().to_owned();
+            redacted_panic_text(&message);
+            assert!(ulo::is_panic(&BoxError::from(failed)), "the call's error does not hold the panic: {message}");
+        }
     }
 
     /// F417: a store that cannot be read refuses a server's bind in `prepare`, naming the store and

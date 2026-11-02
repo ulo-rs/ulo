@@ -1,6 +1,6 @@
 //! Routing as every backend sees it: a trailing slash is insignificant, `{name}` and `{*rest}`
-//! parameters are decoded but for `%2F` and typed, a path with a `.` or `..` segment is refused
-//! before routing, a static segment outranks a parameter, one path carries one
+//! parameters are decoded but for `%2F` and typed, a path with a `.` or `..` segment or a `\`,
+//! raw or as `%5C`, is refused before routing, a static segment outranks a parameter, one path carries one
 //! handler per verb, and a route table that cannot be built is refused by `listen()` naming the
 //! controllers involved.
 
@@ -185,6 +185,33 @@ async fn a_dot_segment_raw_or_encoded_is_refused_400_before_routing() {
         assert_eq!(reply.json()["detail"], "the path holds a `.` or `..` segment", "{path}");
         assert!(matches!(reply.routing, Some(Routing::Unrouted)), "{path}: answered before routing, {:?}", reply.routing);
     }
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn a_backslash_raw_or_encoded_is_refused_400_before_routing_in_any_parameter_and_any_path() {
+    let app = running().await;
+
+    for path in [
+        "/names/a\\b",
+        "/names/a%5Cb",
+        "/names/a%5cb",
+        "/files/..%5C..%5Cwindows",
+        // Past the dot-segment check, which splits on `/`, a Windows join would climb out here.
+        "/assets/a%5C..%5C..",
+        "/assets/css/a\\..\\..",
+        "/nowhere\\x",
+        "/nowhere/%5C",
+    ] {
+        let reply = app.send(Call::get(path)).await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{path}");
+        assert!(reply.header("content-type").is_some_and(|value| value.starts_with("application/problem+json")), "{path}");
+        assert_eq!(reply.json()["detail"], "the path holds a `\\`, raw or as `%5C`", "{path}");
+        assert!(matches!(reply.routing, Some(Routing::Unrouted)), "{path}: answered before routing, {:?}", reply.routing);
+    }
+    // Decoded once, `%255C` is the text `%5C`, which holds no `\`.
+    let reply = app.send(Call::get("/assets/a%255Cb")).await;
+    assert_eq!((reply.status, reply.text()), (StatusCode::OK, "a%5Cb".to_owned()));
     app.stop().await;
 }
 

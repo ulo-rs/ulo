@@ -94,6 +94,10 @@ impl<L: Link> Server<L> {
     /// reader never waits for room, since it serves every call on the link. The limit holds without
     /// telling the client how much room is left: the reserved `credit` frame is that window, and no
     /// link sends it.
+    ///
+    /// An item count is not a memory bound: the worst case is the item bound times the link's
+    /// `Capabilities::max_frame` per call, and a link declaring none, Redis and RabbitMQ, bounds an
+    /// item only by what its broker accepts.
     pub fn max_queued_items(mut self, items: Count) -> Self {
         self.max_queued_items = items;
         self
@@ -198,11 +202,13 @@ impl<L: Link> ulo::Server for Server<L> {
         }
         failures.into_result()?;
         let requests = routes.values().filter(|route| route.kind == Kind::Message).count();
-        if !capabilities.delivers_requests_once && requests > 0 {
+        if let Some(reason) = capabilities.fan_out_reason()
+            && requests > 0
+        {
             tracing::warn!(
                 link = L::NAME,
                 request_patterns = requests,
-                reason = capabilities.fan_out_reason.unwrap_or("the link declares it"),
+                reason,
                 "the {} link delivers each request to every server instance listening on its pattern, \
                  each running the handler; run one server instance",
                 L::NAME

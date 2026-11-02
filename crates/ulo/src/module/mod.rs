@@ -139,8 +139,10 @@ impl Hash for ModuleIdentity {
 /// text differs between equal values, a `HashMap` iterating in another order or a pointer, makes
 /// two equal registrations differ.
 ///
-/// A wiring report prints the values. A credential belongs in the identity, whose configuration
-/// is never printed.
+/// A wiring report prints the values after the graph's redaction function, which replaces a
+/// secret the graph registered and the userinfo of a URL; anything else is printed as written,
+/// and `WiringError::DifferingSettings` holds every value unredacted. A credential belongs in the
+/// identity, whose configuration is never printed.
 ///
 /// ```
 /// # use std::time::Duration;

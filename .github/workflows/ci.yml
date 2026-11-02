@@ -300,9 +300,9 @@ jobs:
   brokers:
     name: broker integration
     # The tests that need a live broker: the five broker RPC conformance suites,
-    # the NATS and MQTT links' own broker tests, the WebSocket Redis adapter's
+    # the NATS, MQTT and RabbitMQ links' own broker tests, the WebSocket Redis adapter's
     # two-process test and examples 24 and 28; and Kafka's `NoTimer` refusal, which
-    # needs none and is required by name, as the NATS and MQTT lib tests are. On push,
+    # needs none and is required by name, as the NATS, MQTT and RabbitMQ lib tests are. On push,
     # not on pull requests: each starts its broker under Docker through testcontainers,
     # and the image pulls and the compile of every `integration` test target cost
     # minutes a pull request does not need to wait on. One crate per step, so a failure names its broker. The Kafka
@@ -340,6 +340,13 @@ jobs:
           a_connect_finished_after_its_call_gave_up_is_taken_by_the_next_call
           a_client_dropped_holding_an_untaken_connection_closes_it
           -- cargo test -p ulo-rpc-rabbitmq --features integration --test conformance --locked
+      - run: >-
+          python3 scripts/require_tests.py
+          a_close_publishes_the_answers_queued_before_it_and_then_closes
+          a_close_cut_at_its_first_poll_still_publishes_its_answers_and_closes
+          a_close_cut_at_its_first_poll_answers_the_calls_it_holds
+          a_close_whose_writer_never_publishes_ends_at_the_grace
+          -- cargo test -p ulo-rpc-rabbitmq --features integration --lib --locked
       - run: cargo test -p ulo-rpc-kafka --features integration --test conformance --locked
       - run: >-
           python3 scripts/require_tests.py

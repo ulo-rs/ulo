@@ -9537,8 +9537,10 @@ dependencies = [
  "reqwest",
  "rustls",
  "rustls-platform-verifier",
+ "tokio",
  "ulo",
  "ulo-otel",
+ "ulo-runtime-tokio",
  "ureq",
 ]
 

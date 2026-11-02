@@ -314,7 +314,7 @@ async fn settled(count: impl Fn() -> usize, expected: usize, what: &str) -> usiz
 /// `DeliveryMode::FanOut`.
 async fn fan_out(servers: usize) {
     let capabilities = Redis::url("redis://127.0.0.1:6379").capabilities();
-    assert!(!capabilities.delivers_requests_once && capabilities.fan_out_reason.is_some(), "{capabilities:?}");
+    assert!(!capabilities.delivers_requests_once() && capabilities.fan_out_reason().is_some(), "{capabilities:?}");
     let broker = RedisServer::start().await;
     let url = format!("redis://{}", broker.server);
     let counts = Arc::new(Counts::default());

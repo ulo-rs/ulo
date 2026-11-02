@@ -1,7 +1,8 @@
 //! gRPC's pre-dispatch stage (transports DESIGN §6.2, X23): `ulo_http::PreDispatch<Grpc>`, scoped
 //! by method path, run by the server around its dispatcher through `ulo_http::stage`. A scope is
 //! matched against the call's path, so an entry runs for a method no handler answers under its
-//! scope too, before UNIMPLEMENTED. A response an entry answers with a non-200 HTTP status is
+//! scope too, before UNIMPLEMENTED, and before the reflection service; never before the health
+//! service. A response an entry answers with a non-200 HTTP status is
 //! translated with `code_for_http`.
 
 use std::net::SocketAddr;
@@ -26,7 +27,10 @@ use crate::transport::{Grpc, GrpcMetadata};
 ///
 /// A scope matches the call's path, whether or not a handler answers it: the entry above refuses
 /// an anonymous call to a method `UserService` lacks as it refuses one to a method it has, so
-/// UNIMPLEMENTED reaches only a caller the entry admitted.
+/// UNIMPLEMENTED reaches only a caller the entry admitted. Scoped entries run before the
+/// reflection service too, which lists the API they protect, so `apply_for::<ApiKeyAuth>(["/*"])`
+/// refuses an anonymous reflection listing; they never run before the health service, which
+/// load balancers and orchestrators call without credentials.
 ///
 /// A metadata key apart from HTTP's `ulo_http::PreDispatch`, so an entry declared for one never
 /// runs on the other.

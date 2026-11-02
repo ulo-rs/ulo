@@ -192,7 +192,7 @@ async fn a_server_on_a_link_delivering_requests_once_logs_nothing() {
     let lines = capture();
     let link = Once { tcp: Tcp::new("127.0.0.1:0") };
     let capabilities = link.capabilities();
-    assert!(capabilities.delivers_requests_once && capabilities.fan_out_reason.is_none(), "{capabilities:?}");
+    assert!(capabilities.delivers_requests_once() && capabilities.fan_out_reason().is_none(), "{capabilities:?}");
     bind_and_close(MixedRoot, link).await;
     let warned = lines.matching("link=\"once\"");
     assert!(warned.is_empty(), "{warned:?}");

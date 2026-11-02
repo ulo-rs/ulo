@@ -96,8 +96,9 @@ pub enum ExtractError {
     /// error.
     Malformed { param: &'static str, source: Redacted },
     /// Decoded, and does not fit the type: a JSON body missing a field or holding a value of the
-    /// wrong type, a form lacking a field. `source`, redacted as `Malformed`'s is, names what
-    /// did not fit.
+    /// wrong type, a form lacking a field. A body that parses as JSON and is refused for what it
+    /// holds is this whatever category the decoder files it under: a number past `f64`, nesting
+    /// past 128. `source`, redacted as `Malformed`'s is, names what did not fit.
     Mismatched { param: &'static str, source: Redacted },
     UnsupportedMediaType { param: &'static str, expected: &'static str },
     TooLarge { param: &'static str, limit: u64 },

@@ -76,9 +76,9 @@ pub async fn requests_across_two_instances<B: Broker>() {
         let sum = caller.rpc.request::<_, Sum>(ADD, &Add { a: n, b: 1 }).await.expect("the request is answered");
         assert_eq!(sum, Sum { sum: n + 1 });
     }
-    let expected = if capabilities.delivers_requests_once { REQUESTS } else { servers.len() * REQUESTS };
+    let expected = if capabilities.delivers_requests_once() { REQUESTS } else { servers.len() * REQUESTS };
     let ran = || total() - before;
-    let once = capabilities.delivers_requests_once;
+    let once = capabilities.delivers_requests_once();
     assert!(
         eventually::<B>(budget.boot + budget.settle, || ran() >= expected).await,
         "{} of {expected} executions ran across {} instances, `delivers_requests_once: {once}`",

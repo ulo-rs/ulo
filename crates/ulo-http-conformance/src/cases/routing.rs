@@ -73,6 +73,22 @@ pub async fn percent_decoded<H: Host>(mode: Mode) {
     host.stop().await;
 }
 
+/// A path holding a `\`, raw or written `%5C` or `%5c`, in a parameter or where nothing routes,
+/// answers 400 as a problem document before routing: the host hands the path over as the client
+/// sent it, neither turning a `\` into a `/` nor decoding it.
+pub async fn backslash<H: Host>(mode: Mode) {
+    let host = start::<H>(mode).await;
+    for path in ["/echo/a\\b", "/echo/a%5Cb", "/echo/a%5cb", "/echo/a%5C..%5C..", "/nowhere\\hit", "/nowhere/%5C/hit"] {
+        let reply = same_as_reference(&host, Exchange::get(path)).await;
+        assert_eq!(reply.status, 400, "GET {path}: {}", reply.text());
+        assert!(reply.header("content-type").is_some_and(|value| value.starts_with("application/problem+json")), "GET {path}");
+        if !is_reference::<H>() {
+            assert_eq!(reply.routing(), Some("unrouted"), "GET {path}");
+        }
+    }
+    host.stop().await;
+}
+
 /// A trailing slash is insignificant: `/hit/` reaches the handler `/hit` does, answered the same
 /// and recorded as the same route.
 pub async fn trailing_slash<H: Host>(mode: Mode) {

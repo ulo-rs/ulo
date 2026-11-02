@@ -39,11 +39,11 @@ pub(crate) enum Import {
 }
 
 /// Where a registration was reached: the root of a walk, `Root` for the app's and `Load` for a
-/// lazily loaded module, or an import written in a module.
+/// lazily loaded module with the `load` call, or an import written in a module.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Site {
     Root,
-    Load,
+    Load { at: &'static Location<'static> },
     Import { importer: Import, at: &'static Location<'static> },
 }
 
@@ -52,7 +52,8 @@ pub(crate) struct Differing {
     pub(crate) module: Import,
     pub(crate) first: Site,
     pub(crate) second: Site,
-    pub(crate) settings: Vec<DifferingSetting>,
+    /// Each differing setting as `(name, first value, second value)`.
+    pub(crate) settings: Vec<(&'static str, Option<String>, Option<String>)>,
 }
 
 impl Differing {
@@ -62,17 +63,12 @@ impl Differing {
         first: (&ModuleSettings, Site),
         second: (&ModuleSettings, Site),
     ) -> Option<Differing> {
-        let settings: Vec<DifferingSetting> = first
-            .0
-            .differences(second.0)
-            .into_iter()
-            .map(|(name, first, second)| DifferingSetting { name, first, second })
-            .collect();
+        let settings = first.0.differences(second.0);
         (!settings.is_empty()).then_some(Differing { module, first: first.1, second: second.1, settings })
     }
 
     /// The report entry. `names` are the registry's by node, and `base` holds the modules an
-    /// `Import::Existing` names.
+    /// `Import::Existing` names and the secrets the printed values are redacted with.
     pub(crate) fn into_error(self, names: &[ModuleName], base: &Graph) -> WiringError {
         let name = |import: Import| match import {
             Import::New(node) => names[node].clone(),
@@ -80,14 +76,18 @@ impl Differing {
         };
         let site = |site: Site| match site {
             Site::Root => ModuleSite::Root,
-            Site::Load => ModuleSite::Load,
+            Site::Load { at } => ModuleSite::Load { at },
             Site::Import { importer, at } => ModuleSite::Import { importer: name(importer), at },
         };
         WiringError::DifferingSettings {
             module: name(self.module),
             first: site(self.first),
             second: site(self.second),
-            settings: self.settings,
+            settings: self
+                .settings
+                .into_iter()
+                .map(|(setting, first, second)| DifferingSetting::new(setting, first, second, &base.secrets))
+                .collect(),
         }
     }
 }
@@ -136,9 +136,9 @@ pub(crate) fn register_all(root: Box<dyn Module>, plan: Option<&TestPlan>) -> Re
 /// Registers a lazily loaded module against a frozen graph. An import whose identity the graph
 /// already holds links to it and is not registered again, its settings compared with the frozen
 /// module's.
-pub(crate) fn register_lazy(base: &Graph, module: Box<dyn Module>) -> Registry {
+pub(crate) fn register_lazy(base: &Graph, module: Box<dyn Module>, at: &'static Location<'static>) -> Registry {
     let mut walk = Walk::new(Some(base), None);
-    walk.reach(&*module, Site::Load);
+    walk.reach(&*module, Site::Load { at });
     walk.finish()
 }
 
@@ -208,13 +208,16 @@ impl<'a> Walk<'a> {
 
     fn enter(&mut self, identity: ModuleIdentity, module: &dyn Module, site: Site) -> Import {
         if let Some(&node) = self.registry.by_identity.get(&identity) {
+            let found = Import::New(node);
+            // An import closing a cycle is one mistake, reported as the cycle: the settings it
+            // would differ in are not compared.
             if let Some(start) = self.path.iter().position(|&on_path| on_path == node) {
                 let mut cycle = self.path[start..].to_vec();
                 cycle.push(node);
                 self.registry.import_cycles.push(cycle);
+                return found;
             }
             let claimed = &self.registry.nodes[node];
-            let found = Import::New(node);
             self.registry.differing.extend(Differing::of(found, (&claimed.settings, claimed.site), (&module.settings(), site)));
             return found;
         }

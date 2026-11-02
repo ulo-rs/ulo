@@ -1,6 +1,7 @@
 //! A scoped `PreDispatch<Grpc>` entry runs for every call whose path its scope matches, a path no
 //! handler answers included: an anonymous caller is refused alike whether or not the method
 //! exists, so UNIMPLEMENTED tells only a caller the entry admitted which methods a service lacks.
+//! Scoped entries run before the reflection service and never before the health service.
 
 mod support;
 
@@ -198,5 +199,81 @@ async fn an_entry_scoped_to_every_path_refuses_an_anonymous_call_to_a_service_th
     let status = failed(path, dial(&app, path, Some(KEY)).await);
     assert_eq!(status.code(), Code::Unimplemented, "{status:?}");
     assert_eq!(header(status.metadata(), "x-auth"), Some("checked"));
+    app.stop().await;
+}
+
+/// The services a `grpc.reflection.v1` client lists, with `key` as its `authorization`.
+async fn list_services(app: &Running, key: Option<&str>) -> Result<Vec<String>, Status> {
+    use tonic_reflection::pb::v1::ServerReflectionRequest;
+    use tonic_reflection::pb::v1::server_reflection_client::ServerReflectionClient;
+    use tonic_reflection::pb::v1::server_reflection_request::MessageRequest;
+    use tonic_reflection::pb::v1::server_reflection_response::MessageResponse;
+
+    let listing = ServerReflectionRequest { host: String::new(), message_request: Some(MessageRequest::ListServices(String::new())) };
+    let mut request = tonic::Request::new(futures_util::stream::iter([listing]));
+    if let Some(key) = key {
+        request.metadata_mut().insert("authorization", key.parse().unwrap_or_else(|error| panic!("bad key {key}: {error}")));
+    }
+    let mut client = ServerReflectionClient::new(app.channel().await);
+    let mut replies = support::within("the reflection call", client.server_reflection_info(request)).await?.into_inner();
+    let reply = support::within("a reflection reply", futures_util::StreamExt::next(&mut replies))
+        .await
+        .unwrap_or_else(|| panic!("the reflection stream ended with no reply"))?;
+    match reply.message_response {
+        Some(MessageResponse::ListServicesResponse(listed)) => Ok(listed.service.into_iter().map(|service| service.name).collect()),
+        other => panic!("unexpected reflection reply {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn an_entry_scoped_to_every_path_refuses_an_anonymous_reflection_listing_and_lets_health_through() {
+    use tonic_health::pb::health_check_response::ServingStatus;
+    use tonic_health::pb::health_client::HealthClient;
+    use tonic_health::pb::HealthCheckRequest;
+
+    let server = ulo_grpc::Server::new("127.0.0.1:0").file_descriptor_set(probe::FILE_DESCRIPTOR_SET).reflection(true);
+    let app = Running::start(Root(every_path_behind_a_key), server).await;
+
+    let status = list_services(&app, None).await.err().unwrap_or_else(|| panic!("an anonymous caller listed the services"));
+    assert_eq!((status.code(), status.message()), (Code::Unauthenticated, "no key"), "{status:?}");
+    let listed = list_services(&app, Some(KEY)).await.unwrap_or_else(|status| panic!("the listing with the key failed: {status:?}"));
+    assert!(listed.iter().any(|service| service == "codegen.probe.v1.Known"), "{listed:?}");
+
+    // Health is for probes that carry no credentials: `Check` and `Watch` answer the anonymous
+    // caller.
+    let mut health = HealthClient::new(app.channel().await);
+    for service in ["", "codegen.probe.v1.Known"] {
+        let request = HealthCheckRequest { service: service.to_owned() };
+        let checked = support::within("a health check", health.check(request.clone())).await;
+        let checked = checked.unwrap_or_else(|status| panic!("Check {service:?} refused: {status:?}"));
+        assert_eq!(checked.into_inner().status(), ServingStatus::Serving, "Check {service:?}");
+        let watched = support::within("a health watch", health.watch(request)).await;
+        let mut updates = watched.unwrap_or_else(|status| panic!("Watch {service:?} refused: {status:?}")).into_inner();
+        let first = support::within("the first health update", futures_util::StreamExt::next(&mut updates))
+            .await
+            .unwrap_or_else(|| panic!("Watch {service:?} ended with no update"))
+            .unwrap_or_else(|status| panic!("Watch {service:?} failed: {status:?}"));
+        assert_eq!(first.status(), ServingStatus::Serving, "Watch {service:?}");
+    }
+    drop(health);
+    app.stop().await;
+}
+
+fn reflection_behind_a_key(m: &mut ModuleDef<'_>) {
+    m.meta::<ulo_grpc::PreDispatch>().apply_for::<RequireKey>(["/grpc.reflection.v1.ServerReflection/*"]);
+}
+
+#[tokio::test]
+async fn an_entry_scoped_to_the_reflection_service_alone_starts_and_refuses_an_anonymous_listing() {
+    let server = ulo_grpc::Server::new("127.0.0.1:0").file_descriptor_set(probe::FILE_DESCRIPTOR_SET).reflection(true);
+    let app = Running::start(Root(reflection_behind_a_key), server).await;
+
+    let status = list_services(&app, None).await.err().unwrap_or_else(|| panic!("an anonymous caller listed the services"));
+    assert_eq!((status.code(), status.message()), (Code::Unauthenticated, "no key"), "{status:?}");
+    let listed = list_services(&app, Some(KEY)).await.unwrap_or_else(|status| panic!("the listing with the key failed: {status:?}"));
+    assert!(listed.iter().any(|service| service == "codegen.probe.v1.Known"), "{listed:?}");
+    // A method outside the scope answers the anonymous caller.
+    let reply = dial(&app, "/codegen.probe.v1.Known/Upper", None).await.unwrap_or_else(|status| panic!("Upper refused: {status:?}"));
+    assert_eq!(reply.into_inner(), "ADA");
     app.stop().await;
 }

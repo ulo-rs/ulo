@@ -16,7 +16,7 @@ use bytes::Bytes;
 use futures_core::stream::BoxStream;
 use async_broadcast::{InactiveReceiver, RecvError, Sender};
 use serde::{Deserialize, Serialize};
-use ulo::{BoxError, BoxFuture, Timer};
+use ulo::{BoxError, BoxFuture, ModuleSettings, Timer};
 
 use crate::connection::ConnId;
 
@@ -32,6 +32,18 @@ pub trait BroadcastAdapter: Send + Sync + 'static {
     /// in-memory adapter.
     fn prepare(&self) -> Result<(), BoxError> {
         Ok(())
+    }
+
+    /// What `WsModule` answers from `Module::settings`: two registrations of the module whose
+    /// adapters answer other settings are refused at `wire()` as
+    /// `ulo::WiringError::DifferingSettings`.
+    ///
+    /// By default the adapter's type name alone, under `broadcast`, so an adapter that overrides
+    /// nothing compares by its type and two values of one type are one module. The in-memory
+    /// adapter answers `local`, and `ulo_ws_redis::Redis` answers `redis` with its URL, userinfo
+    /// left out. A wiring report prints the values, so a credential is never written here.
+    fn settings(&self) -> ModuleSettings {
+        ModuleSettings::new().with("broadcast", format_args!("{}", std::any::type_name::<Self>()))
     }
 
     /// Sends `frame`, an encoded envelope, to every process's members of `target`.
@@ -140,6 +152,10 @@ impl InMemory {
 }
 
 impl BroadcastAdapter for InMemory {
+    fn settings(&self) -> ModuleSettings {
+        ModuleSettings::new().with("broadcast", format_args!("local"))
+    }
+
     /// With no subscriber there is no member to deliver to, which is not a failure.
     fn publish(&self, target: Target, frame: Bytes) -> BoxFuture<'static, Result<(), BoxError>> {
         // `Inactive` when no subscriber is active. In overflow mode a full queue drops its oldest
@@ -191,6 +207,11 @@ pub mod wire {
     //! wrote, a newline and the frame, with no version byte. A reader refuses that layout, another
     //! version and an audience kind it does not know, each with its own [`Undecodable`], and the
     //! adapter drops the message.
+    //!
+    //! The wire bounds neither a kind's length nor how many kinds it names. `ulo-ws-redis` bounds
+    //! only its warnings: it de-duplicates them over at most 64 kinds, each remembered at its
+    //! first 64 bytes, so two kinds sharing that prefix cost at most one missing `warn`, and
+    //! every message is read and dropped the same.
     //!
     //! ```
     //! use ulo_ws::wire::{self, Undecodable};

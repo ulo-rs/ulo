@@ -11,7 +11,7 @@ use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider};
 use tracing::Subscriber;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::registry::LookupSpan;
-use ulo::{BoxError, Module, ModuleDef, ModuleIdentity, Secret, Signal, TraceSource};
+use ulo::{BoxError, Module, ModuleDef, ModuleIdentity, ModuleSettings, Secret, Signal, TraceSource};
 
 use crate::exporter::Exporter;
 use crate::flush;
@@ -31,6 +31,8 @@ const HOOK_MARGIN: Duration = Duration::from_secs(1);
 pub struct Otel {
     pub(crate) provider: SdkTracerProvider,
     pub(crate) options: OtelOptions,
+    /// The exporter's `Exporter::settings`, read before `build` consumed it.
+    pub(crate) settings: ModuleSettings,
     /// Shared with the source: set once the flush begins.
     pub(crate) flushing: Arc<AtomicBool>,
 }
@@ -47,13 +49,14 @@ impl Otel {
     /// `OTEL_BSP_*` and the `OTEL_SPAN_*_LIMIT` names from the process environment.
     pub fn new<E: Exporter>(options: OtelOptions, exporter: E) -> Result<Otel, BoxError> {
         options.check()?;
+        let settings = exporter.settings(&options);
         let spans = exporter.build(&options)?;
         let provider = SdkTracerProvider::builder()
             .with_resource(resource(&options))
             .with_sampler(sampler(&options))
             .with_batch_exporter(spans)
             .build();
-        Ok(Otel { provider, options, flushing: Arc::new(AtomicBool::new(false)) })
+        Ok(Otel { provider, options, settings, flushing: Arc::new(AtomicBool::new(false)) })
     }
 
     /// The layer for the application's `tracing` subscriber.
@@ -85,6 +88,11 @@ impl Otel {
 /// `Timer`, as every bound written on a hook does; past the bound the hook is recorded `TimedOut`
 /// and the flush thread is left to finish on its own. A span another `OnApplicationShutdown` hook
 /// opens after the flush is not exported.
+///
+/// Its identity is its type, so two imports are one module, and its settings are the exporter's
+/// [`Exporter::settings`]: a second import over an exporter answering other settings is refused
+/// at `wire()` as `ulo::WiringError::DifferingSettings`. The exporter's headers are never among
+/// them.
 pub struct OtelModule {
     pub(crate) otel: Otel,
 }
@@ -92,6 +100,10 @@ pub struct OtelModule {
 impl Module for OtelModule {
     fn identity(&self) -> ModuleIdentity {
         ModuleIdentity::of_type::<Self>()
+    }
+
+    fn settings(&self) -> ModuleSettings {
+        self.otel.settings.clone()
     }
 
     fn register(&self, m: &mut ModuleDef<'_>) {

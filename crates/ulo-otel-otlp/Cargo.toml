@@ -54,3 +54,6 @@ workspace = true
 [dev-dependencies]
 opentelemetry_sdk = { workspace = true, features = ["trace"] }
 opentelemetry = { workspace = true, features = ["trace"] }
+# `tests/settings.rs` wires an app, whose bounded flush hook needs a `Timer`.
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+tokio = { workspace = true, features = ["macros", "rt"] }

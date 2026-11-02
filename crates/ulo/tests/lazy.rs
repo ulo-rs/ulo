@@ -428,7 +428,7 @@ fn differing_sides(outcome: Result<ulo::ModuleRef, LoadError>) -> (String, Strin
     };
     let side = |site: &ModuleSite| match site {
         ModuleSite::Import { importer, .. } => format!("import by {importer}"),
-        ModuleSite::Load => "load".to_owned(),
+        ModuleSite::Load { .. } => "load".to_owned(),
         ModuleSite::Root => "root".to_owned(),
         other => format!("{other:?}"),
     };
@@ -464,19 +464,32 @@ async fn a_loaded_module_importing_an_identity_the_graph_holds_with_other_settin
     close(app).await;
 }
 
-/// Planted break: `register_lazy` walking from `Site::Root`, so a loaded module is frozen as the
-/// root's registration.
+/// Each side names its `load` call. Planted breaks: `register_lazy` walking from `Site::Root`, so
+/// a loaded module is frozen as the root's registration; `AppHandle::load` without
+/// `#[track_caller]`, which names the line inside it.
 #[tokio::test]
 async fn loading_a_loaded_identity_again_with_other_settings_names_both_loads() {
     let (app, handle) = base_with(Mod::<A>::new(|_| {})).await;
+    let first_line = line!() + 1;
     handle.load(Pool { options: "db", knob: 1 }).await.unwrap_or_else(|error| panic!("the first load: {error}"));
+    let second_line = line!() + 1;
     let outcome = handle.load(Pool { options: "db", knob: 2 }).await;
     let text = match &outcome {
         Err(error) => error.to_string(),
         Ok(_) => String::new(),
     };
+    if let Err(LoadError::Wiring(errors)) = &outcome {
+        let sites = entry!(errors, WiringError::DifferingSettings { first, second, .. } => (first.clone(), second.clone()));
+        let at = |site: &ModuleSite| match site {
+            ModuleSite::Load { at } => (at.file().to_owned(), at.line()),
+            other => panic!("expected a load site, got {other:?}"),
+        };
+        assert_eq!(at(&sites.0), (file!().to_owned(), first_line), "the first `load` call");
+        assert_eq!(at(&sites.1), (file!().to_owned(), second_line), "the second `load` call");
+    }
     assert_eq!(differing_sides(outcome), ("load".to_owned(), "load".to_owned(), vec!["knob"]));
-    assert!(text.contains("loaded by `AppHandle::load` with `knob` = 1"), "{text}");
-    assert!(text.contains("loaded again by `AppHandle::load` with `knob` = 2"), "{text}");
+    let file = file!();
+    assert!(text.contains(&format!("loaded by `AppHandle::load` at {file}:{first_line} with `knob` = 1")), "{text}");
+    assert!(text.contains(&format!("loaded again by `AppHandle::load` at {file}:{second_line} with `knob` = 2")), "{text}");
     close(app).await;
 }

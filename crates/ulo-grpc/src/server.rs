@@ -44,8 +44,9 @@ const CLOSE_GRACE: Duration = Duration::from_millis(500);
 /// stage from `PreDispatch<Grpc>`, refuses `Count::Max(0)` on each count and
 /// `Bound::After(Duration::ZERO)` on `handshake_timeout` and `timeout_grace`, resolves the
 /// endpoints and loads TLS with ALPN `h2`. Health reports SERVING for every known service after `bind` and NOT_SERVING
-/// from the drain on. Reflection, `grpc.reflection.v1` and `v1alpha`, is served in debug builds
-/// and behind `reflection(true)` in release builds.
+/// from the drain on; it runs no scoped pre-dispatch entry. Reflection, `grpc.reflection.v1` and
+/// `v1alpha`, is served in debug builds and behind `reflection(true)` in release builds, after the
+/// scoped entries whose scope matches its path.
 ///
 /// A gRPC method's path is its proto's, so a controller's `.at(prefix)` does not apply to it, and
 /// `wire()` refuses a prefix on a controller whose handlers are all gRPC methods.
@@ -339,10 +340,22 @@ impl ulo::Server for Server {
                 None
             }
         };
+        let mut reflection = Vec::new();
+        if self.reflection {
+            match reflection::services(&self.descriptor_sets) {
+                Ok(services) => reflection = services,
+                Err(reason) => failures.push(reason),
+            }
+        }
         let routes = match &stage {
             Some(stage) => {
                 let before = failures.len();
                 let routes = routes(&mounted, stage, &mut failures);
+                // Reflection runs the scoped entries whose scope matches its path, so a scope
+                // matching only a reflection method reaches a path the server answers.
+                for (service, _) in &reflection {
+                    let _ = stage.scoped(&format!("/{service}/ServerReflectionInfo"));
+                }
                 // A route the table could not hold took no scoped stage, so its scopes would read
                 // as unreached beside the failure that already names it.
                 if failures.len() == before {
@@ -356,13 +369,6 @@ impl ulo::Server for Server {
             Ok(health) => (*health).clone(),
             Err(_) => GrpcHealth::new(),
         };
-        let mut builtins = vec![builtin(health.service())];
-        if self.reflection {
-            match reflection::services(&self.descriptor_sets) {
-                Ok(services) => builtins.extend(services),
-                Err(reason) => failures.push(reason),
-            }
-        }
         let endpoints = self.resolve_endpoints(&mut failures);
         let mut tls_failure = None;
         let tls = match &self.tls {
@@ -393,7 +399,8 @@ impl ulo::Server for Server {
             app: mounted.app().clone(),
             timer: Arc::clone(mounted.timer()),
             routes,
-            builtins,
+            health: vec![builtin(health.service())],
+            reflection,
             stage,
             admission: Admission::new(self.max_inflight.max_inflight()),
             per_connection: limit(self.max_per_connection),

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use http::{HeaderName, HeaderValue};
 use opentelemetry_otlp::{Protocol, SpanExporter, WithExportConfig, WithHttpConfig};
-use ulo::BoxError;
+use ulo::{BoxError, ModuleSettings};
 use ulo_otel::{Exporter, OtelOptions};
 
 use crate::proxy::ProxyChoice;
@@ -75,6 +75,17 @@ impl OtlpExporter {
 impl Exporter for OtlpExporter {
     type Span = SpanExporter;
 
+    /// `exporter` = `otlp-http`, `protocol` = `http/protobuf`, and the options' `endpoint` with
+    /// its userinfo left out when one is set. The headers are not among them.
+    fn settings(&self, options: &OtelOptions) -> ModuleSettings {
+        let settings = ModuleSettings::new().with("exporter", format_args!("otlp-http"));
+        let settings = match options.endpoint.as_deref().filter(|e| !e.is_empty()) {
+            Some(endpoint) => settings.with("endpoint", format_args!("{}", without_userinfo(endpoint))),
+            None => settings,
+        };
+        settings.with("protocol", format_args!("http/protobuf"))
+    }
+
     fn build(self, options: &OtelOptions) -> Result<SpanExporter, BoxError> {
         let mut builder = SpanExporter::builder()
             .with_http()
@@ -102,6 +113,17 @@ impl Exporter for OtlpExporter {
         };
 
         Ok(builder.build()?)
+    }
+}
+
+/// `url` without the userinfo of its authority: `https://user:key@host/p` is `https://host/p`.
+fn without_userinfo(url: &str) -> String {
+    let Some(scheme) = url.find("://").map(|at| at + "://".len()) else { return url.to_owned() };
+    let (head, tail) = url.split_at(scheme);
+    let authority = tail.find(['/', '?', '#']).unwrap_or(tail.len());
+    match tail[..authority].rfind('@') {
+        Some(at) => format!("{head}{}", &tail[at + 1..]),
+        None => url.to_owned(),
     }
 }
 

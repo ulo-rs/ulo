@@ -87,7 +87,8 @@ impl<L: Link> RpcClientModule<L> {
     /// one `stream` or `duplex` call held unread for its caller, 1,024 at `Count::Default`, none at
     /// `Count::Unlimited`. The item past it ends the call `Unavailable` with the reason
     /// `"overflow"`, after the client sends its server `cancel`. `Count::Max(0)` is refused when the
-    /// app wires, as [`ZeroCount`].
+    /// app wires, as [`ZeroCount`]. An item count is not a memory bound: the worst case is the item
+    /// bound times the link's `Capabilities::max_frame` per call.
     pub fn max_queued_items(mut self, items: Count) -> Self {
         self.queued = items;
         self

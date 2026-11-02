@@ -448,6 +448,10 @@ impl RpcClient {
     /// The limit holds without telling the server how much room is left: the reserved `credit`
     /// frame is that window, and no link sends it.
     ///
+    /// An item count is not a memory bound: the worst case is the item bound times the link's
+    /// `Capabilities::max_frame` per call, and a link declaring none, Redis and RabbitMQ, bounds an
+    /// item only by what its broker accepts.
+    ///
     /// `Count::Max(0)`, which would end every stream at its first item, is refused as
     /// [`ZeroCount`].
     pub fn max_queued_items(mut self, items: Count) -> Result<Self, ZeroCount> {

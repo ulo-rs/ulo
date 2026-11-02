@@ -276,6 +276,9 @@ pub enum Miss {
     /// with [`Forwardable`] in its extensions, skipping the error handlers, for the adapter to
     /// hand back. Any other miss is the app's own 404, logged at `warn`. A 405 is never
     /// forwarded: a route of the app matches the path.
+    ///
+    /// A scoped pre-dispatch entry runs only for the requests the app answers, a 405 among them: a
+    /// forwardable miss is the host's, and the host protects its own paths.
     Forward,
 }
 
@@ -524,7 +527,11 @@ impl<A: Embed> Embedded<A> {
     /// everything, being in place before any entry runs. A `PreDispatch::supplies` after an
     /// unscoped entry reaches every handler and the `adopt` entries after it in stage order,
     /// whatever its `exclude`, which a later rewrite can make miss or match; one after a scoped
-    /// entry, the handlers of the routes that entry runs on for every request. `service` is
+    /// entry, the handlers of the routes that entry runs on for every request reaching them. An
+    /// exclusion counts against a route only where a request can reach the route through it: a
+    /// path a route of higher precedence matches is answered there, by its handler or with a 405,
+    /// so `/admin/health` excluded from `/admin/*` leaves `/admin/{page}` covered when the route
+    /// `/admin/health` exists. `service` is
     /// `None` when the stage or the route table failed, and the handlers are then not checked,
     /// since which routes a scoped entry covers is unknown.
     fn check_host_values(&self, mounted: &Mounted<'_, Http>, service: Option<&AppService>, failures: &mut Failures) {
@@ -551,8 +558,12 @@ impl<A: Embed> Embedded<A> {
             }
         }
         let routes = service.map_or(&[][..], |service| &service.inner.router.routes[..]);
-        for (method, target) in routes.iter().flat_map(|route| &route.methods) {
+        let targets = routes.iter().enumerate().flat_map(|(position, route)| route.methods.iter().map(move |(method, target)| (position, route, method, target)));
+        for (position, route, method, target) in targets {
             let Some(http) = target.handler.handler::<HttpHandler>() else { continue };
+            // The routes the router tries before this one, by precedence: a path one of them
+            // matches never reaches this route, whatever an exclusion says about it.
+            let before: Vec<&Pattern> = routes[..position].iter().map(|earlier| &earlier.pattern).collect();
             for read in &http.host_reads {
                 let ty = read.ty;
                 if forwarded(ty) || unscoped.iter().any(|(_, supply)| supply.ty == ty) {
@@ -561,6 +572,7 @@ impl<A: Embed> Embedded<A> {
                 let of_type = scoped.iter().filter(|(_, _, supply)| supply.ty == ty);
                 let covers = |meta: &Arc<PreDispatch>, index: usize| {
                     target.stage.every_request().any(|(_, held, at)| Arc::ptr_eq(held, meta) && *at == index)
+                        || service.is_some_and(|service| service.inner.stage.runs_on_every_request(meta, index, &route.pattern, &before))
                 };
                 if of_type.clone().any(|(meta, index, _)| covers(meta, *index)) {
                     continue;

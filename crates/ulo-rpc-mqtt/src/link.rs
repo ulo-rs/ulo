@@ -18,11 +18,11 @@ use rustls_native_certs::CertificateResult;
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, OnceCell, mpsc, oneshot, watch};
 use tokio::task::{AbortHandle, JoinHandle};
-use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Refused, Runtime, RuntimeShutDown, Timer};
+use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Redacted, Refused, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::__private::ClientProbe;
-use ulo_rpc::__private::HoldUntil;
+use ulo_rpc::__private::{HoldUntil, panic_redacted};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured, NoTimer,
@@ -311,7 +311,15 @@ impl Link for Mqtt {
         }
         self.timer = app.timer().cloned();
         // A server loads its roots here, so a store that yields none fails `bind` before `listen`.
-        self.tls(&target, &runtime).await.map_err(at_startup)?;
+        if let Err(error) = self.tls(&target, &runtime).await {
+            // Raised again here, so the app reports it as this server's panic in `prepare`,
+            // redacted with the app's secrets: an error from `prepare` reaches the startup report
+            // as its text alone.
+            if let Some(panicked) = error.downcast_ref::<RootsPanicked>() {
+                std::panic::resume_unwind(Box::new(panicked.to_string()));
+            }
+            return Err(at_startup(error));
+        }
         Ok(())
     }
 
@@ -634,11 +642,38 @@ impl Target {
 /// would stall every task scheduled there, and rumqttc's own default configuration reads the store
 /// on every connection. A load that fails is kept too, since no retry mends a store that cannot be
 /// read or holds no root: a server's `prepare` refuses it, and every client call answers it as
-/// [`Misconfigured`].
+/// [`Misconfigured`]. A load that panics is kept as the panic, its message redacted as a task's
+/// panic is: a server's `prepare` raises it again, so the app reports it as that server's panic,
+/// and every client call answers it `Unavailable` holding it, so `ulo::is_panic` is true of the
+/// call's error.
 pub(crate) struct Roots {
     /// `rustls_native_certs::load_native_certs`, which a test replaces.
     load: fn() -> CertificateResult,
-    loaded: OnceCell<Result<TlsConfiguration, String>>,
+    loaded: OnceCell<Result<TlsConfiguration, Unloaded>>,
+}
+
+/// Why a load yielded no configuration.
+enum Unloaded {
+    /// The whole of the refusal's cause.
+    Failed(String),
+    Panicked(Arc<Redacted>),
+}
+
+/// A link's refusal over a roots load that panicked. The panic is its `source()`, so
+/// `ulo::is_panic` finds it.
+#[derive(Debug)]
+struct RootsPanicked(Arc<Redacted>);
+
+impl std::fmt::Display for RootsPanicked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the MQTT link could not load the platform's root certificates for `mqtts://`: loading them panicked: {}", self.0)
+    }
+}
+
+impl std::error::Error for RootsPanicked {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&*self.0)
+    }
 }
 
 impl Roots {
@@ -652,18 +687,22 @@ impl Roots {
             .loaded
             .get_or_try_init(|| async move {
                 match runtime.handle().spawn_blocking(move || configure(load())).await {
-                    Ok(configured) => Ok(configured),
-                    Err(ended) if ended.is_panic() => Ok(Err(format!("loading them panicked: {}", panic_text(&*ended.into_panic())))),
-                    Err(ended) => Err(ended),
+                    Ok(configured) => Ok(configured.map_err(Unloaded::Failed)),
+                    Err(ended) if ended.is_panic() => match panic_redacted(runtime, ended.into_panic()).await {
+                        Some(message) => Ok(Err(Unloaded::Panicked(message))),
+                        None => Err(Refused),
+                    },
+                    Err(_) => Err(Refused),
                 }
             })
             .await;
         match loaded {
             Ok(Ok(tls)) => Ok(tls.clone()),
-            Ok(Err(cause)) => Err(Misconfigured {
+            Ok(Err(Unloaded::Failed(cause))) => Err(Misconfigured {
                 source: format!("the MQTT link could not load the platform's root certificates for `mqtts://`: {cause}").into(),
             }
             .into()),
+            Ok(Err(Unloaded::Panicked(message))) => Err(RootsPanicked(Arc::clone(message)).into()),
             // Not kept: the next connect, on a runtime still running, loads them again.
             Err(_) => Err(RuntimeShutDown::new(Refused).into()),
         }
@@ -704,14 +743,6 @@ fn configure(loaded: CertificateResult) -> Result<TlsConfiguration, String> {
         .with_root_certificates(roots)
         .with_no_client_auth();
     Ok(TlsConfiguration::Rustls(Arc::new(config)))
-}
-
-fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
-    panic
-        .downcast_ref::<String>()
-        .cloned()
-        .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
-        .unwrap_or_else(|| "a payload that is not text".to_owned())
 }
 
 /// The server side of a bound link. The event loop owns the connection; replies are queued on
@@ -1854,6 +1885,66 @@ mod tests {
             refused.push((failed.kind(), failed.reason().map(str::to_owned), failed.message().to_owned()));
         }
         refused
+    }
+
+    /// The text a panicking roots load raises: a url's userinfo and a value the app registers
+    /// as a secret.
+    const PANIC_TEXT: &str = "reading the store for https://ulo:hunter2@vault.internal with s3cr3t-token-value";
+
+    fn panicking() -> CertificateResult {
+        panic!("{PANIC_TEXT}")
+    }
+
+    /// The root module registering `s3cr3t-token-value` as a secret.
+    struct SecretRoot;
+
+    impl Module for SecretRoot {
+        fn identity(&self) -> ModuleIdentity {
+            ModuleIdentity::of_type::<Self>()
+        }
+
+        fn register(&self, m: &mut ModuleDef<'_>) {
+            m.secret(&ulo::Secret::new("s3cr3t-token-value"));
+        }
+    }
+
+    /// Neither the url's password nor the app's secret, and the panic's own text otherwise.
+    fn redacted_panic_text(message: &str) {
+        assert!(message.contains("loading them panicked: reading the store for https://[redacted]@vault.internal"), "{message}");
+        assert!(!message.contains("hunter2"), "the url's password reached the report: {message}");
+    }
+
+    /// Q22-P10: a server whose roots load panics fails `listen` with the panic as its `prepare`'s,
+    /// so `ulo::is_panic` is true of the report, its text redacted: the url's password stripped
+    /// and the app's registered secret replaced. Planted break: the panic kept as a refusal.
+    #[tokio::test]
+    async fn a_roots_load_that_panics_fails_the_server_s_bind_as_a_redacted_panic() {
+        let app = App::builder(SecretRoot).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
+        let failed = match app.bind(Server::new(link(panicking))).listen().await {
+            Err(error @ StartupError::Configure(_)) => error,
+            Err(other) => panic!("the bind failed other than as a `Configure` refusal: {other:?}"),
+            Ok(_) => panic!("a server whose roots load panicked listened"),
+        };
+        let message = failed.to_string();
+        redacted_panic_text(&message);
+        assert!(!message.contains("s3cr3t-token-value"), "the app's secret reached the report: {message}");
+        assert!(ulo::is_panic(&BoxError::from(failed)), "the report does not hold the panic: {message}");
+    }
+
+    /// Q22-P10: a client whose roots load panics fails every call `Unavailable` holding the panic,
+    /// not `Internal` with `reason: "misconfigured_link"`, so `ulo::is_panic` is true of the call's
+    /// error, the url's password stripped from its text. Planted break: the panic kept as a
+    /// refusal.
+    #[tokio::test]
+    async fn a_roots_load_that_panics_fails_every_call_holding_the_redacted_panic() {
+        let client = RpcClient::new(link(panicking), Arc::new(Tokio::current())).expect("the link is usable");
+        for _ in 0..2 {
+            let failed = client.request::<_, u32>("roots.panic", &()).await.expect_err("a call over a link whose roots load panicked");
+            assert_eq!((failed.kind(), failed.reason()), (ErrorKind::Unavailable, None), "{failed:?}");
+            let message = failed.message().to_owned();
+            redacted_panic_text(&message);
+            assert!(ulo::is_panic(&BoxError::from(failed)), "the call's error does not hold the panic: {message}");
+        }
     }
 
     /// F414: a store that cannot be read refuses a server's bind in `prepare`, naming the store and
