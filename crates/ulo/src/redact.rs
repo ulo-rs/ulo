@@ -550,7 +550,7 @@ pub(crate) fn strip_userinfo(text: &str) -> String {
     out
 }
 
-fn scrub(secrets: &SecretRegistry, text: &str) -> String {
+pub(crate) fn scrub(secrets: &SecretRegistry, text: &str) -> String {
     strip_userinfo(&secrets.replace(text))
 }
 

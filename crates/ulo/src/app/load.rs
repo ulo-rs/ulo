@@ -6,6 +6,7 @@
 //! collection the module does not introduce (whatever reads it as `Many<T>` may already have),
 //! global exports, and execution inputs (the per-handler input check ran at wiring time).
 
+use std::panic::Location;
 use std::sync::Arc;
 
 use crate::app::shared::AppShared;
@@ -24,7 +25,11 @@ use crate::module::handle::ModuleRef;
 /// A load that fails to connect leaves the app as it found it: the graph it extended is put
 /// back and the singletons it built are dropped, so a later load of the same module wires
 /// again from the start.
-pub(crate) async fn load(shared: &Arc<AppShared>, module: Box<dyn Module>) -> Result<ModuleRef, LoadError> {
+pub(crate) async fn load(
+    shared: &Arc<AppShared>,
+    module: Box<dyn Module>,
+    at: &'static Location<'static>,
+) -> Result<ModuleRef, LoadError> {
     if !shared.phase.allows_load() {
         return Err(LoadError::Closed(Closed::new()));
     }
@@ -36,7 +41,7 @@ pub(crate) async fn load(shared: &Arc<AppShared>, module: Box<dyn Module>) -> Re
 
     let base = shared.graph();
     if let Some(&existing) = base.by_identity.get(&module.identity()) {
-        if let Some(errors) = wire::reload_differs(&base, existing, &*module) {
+        if let Some(errors) = wire::reload_differs(&base, existing, &*module, at) {
             return Err(LoadError::Wiring(errors));
         }
         return Ok(shared.module_ref(existing));
@@ -48,7 +53,7 @@ pub(crate) async fn load(shared: &Arc<AppShared>, module: Box<dyn Module>) -> Re
         knobs_set: shared.config.knobs_set(),
         zero_defaults: Vec::new(),
     };
-    let LazyWiring { graph, module: loaded, singletons } = match wire::wire_lazy(&base, module, &env) {
+    let LazyWiring { graph, module: loaded, singletons } = match wire::wire_lazy(&base, module, &env, at) {
         Ok(wiring) => wiring,
         Err(LazyFailure::Wiring(errors)) => return Err(LoadError::Wiring(errors)),
         Err(LazyFailure::Refused(refusal)) => return Err(LoadError::Refused(refusal)),

@@ -68,14 +68,19 @@ pub(crate) fn wire(root: Box<dyn Module>, env: &WireEnv, plan: Option<TestPlan>)
 ///
 /// The base graph is copied, never changed: executions still reading it keep a consistent
 /// snapshot. An identity the base already holds answers with its module and no new singleton.
-pub(crate) fn wire_lazy(base: &Graph, module: Box<dyn Module>, env: &WireEnv) -> Result<LazyWiring, LazyFailure> {
+pub(crate) fn wire_lazy(
+    base: &Graph,
+    module: Box<dyn Module>,
+    env: &WireEnv,
+    at: &'static Location<'static>,
+) -> Result<LazyWiring, LazyFailure> {
     if let Some(&existing) = base.by_identity.get(&module.identity()) {
-        if let Some(errors) = reload_differs(base, existing, &*module) {
+        if let Some(errors) = reload_differs(base, existing, &*module, at) {
             return Err(LazyFailure::Wiring(errors));
         }
         return Ok(LazyWiring { graph: base.clone(), module: existing, singletons: Vec::new() });
     }
-    let registry = register::register_lazy(base, module);
+    let registry = register::register_lazy(base, module, at);
     if let Some(refusal) = refusal(base, &registry) {
         return Err(LazyFailure::Refused(refusal));
     }
@@ -99,11 +104,16 @@ pub(crate) fn wire_lazy(base: &Graph, module: Box<dyn Module>, env: &WireEnv) ->
 }
 
 /// The report for a `load` of `module`, whose identity `existing` already holds, when its
-/// settings differ from the ones `existing` was registered with.
-pub(crate) fn reload_differs(base: &Graph, existing: ModuleId, module: &dyn Module) -> Option<WiringErrors> {
+/// settings differ from the ones `existing` was registered with. `at` is the `load` call.
+pub(crate) fn reload_differs(
+    base: &Graph,
+    existing: ModuleId,
+    module: &dyn Module,
+    at: &'static Location<'static>,
+) -> Option<WiringErrors> {
     let frozen = base.module(existing);
     let differing =
-        Differing::of(Import::Existing(existing), (&frozen.settings, frozen.site), (&module.settings(), Site::Load))?;
+        Differing::of(Import::Existing(existing), (&frozen.settings, frozen.site), (&module.settings(), Site::Load { at }))?;
     Some(WiringErrors::new(vec![differing.into_error(&[], base)]))
 }
 
@@ -246,14 +256,15 @@ fn freeze(
 ) -> Declared {
     let names = registry.names(Some(&*graph));
     cycles::import_cycles(&registry, &names, &mut steps.modules);
-    for differing in std::mem::take(&mut registry.differing) {
-        steps.modules.push(differing.into_error(&names, graph));
-    }
 
+    // Before the differing settings are rendered, which print their values redacted.
     for text in registry.nodes.iter().flat_map(|node| &node.secrets) {
         if !text.is_empty() {
             graph.secrets.register(text.clone());
         }
+    }
+    for differing in std::mem::take(&mut registry.differing) {
+        steps.modules.push(differing.into_error(&names, graph));
     }
 
     for replaced in &registry.replaced {

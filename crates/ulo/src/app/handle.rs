@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::panic::Location;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -77,9 +78,12 @@ impl AppHandle {
     /// Wires `module` against the frozen graph, every error collected, then connects it through
     /// its own readiness checks and init hooks. Loading an equal identity twice returns the
     /// existing handle, or `LoadError::Wiring` holding `WiringError::DifferingSettings` when the
-    /// settings differ. Refused from Stopping on with `LoadError::Closed` (§8.6).
-    pub async fn load(&self, module: impl Module) -> Result<ModuleRef, LoadError> {
-        load::load(&self.shared, Box::new(module)).await
+    /// settings differ, its second site naming this call. Refused from Stopping on with
+    /// `LoadError::Closed` (§8.6).
+    #[track_caller]
+    pub fn load(&self, module: impl Module) -> impl Future<Output = Result<ModuleRef, LoadError>> {
+        let at = Location::caller();
+        async move { load::load(&self.shared, Box::new(module), at).await }
     }
 
     /// One of shutdown's three triggers; ends `serve`. A `close` during a running shutdown starts

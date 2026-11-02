@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use futures_core::stream::BoxStream;
-use ulo::{BoxError, BoxFuture, Bound, Meta, Module, ModuleDef, ModuleIdentity, Timer};
+use ulo::{BoxError, BoxFuture, Bound, Meta, Module, ModuleDef, ModuleIdentity, ModuleSettings, Timer};
 use ulo_http::Upgrades;
 use ulo_transport::Count;
 
@@ -35,6 +35,11 @@ use crate::table::GatewayDefaults;
 /// On the HTTP port, the HTTP server's drain and load shedding answer first: an upgrade request
 /// arriving once the drain has begun, or over the HTTP server's `max_inflight`, gets the HTTP
 /// server's 503 before the hand-off sees it.
+///
+/// Its identity is its type, so two imports are one module, and its settings are the broadcast
+/// adapter's [`BroadcastAdapter::settings`]: a second import over an adapter answering other
+/// settings, `redis` beside `local` or another Redis URL, is refused at `wire()` as
+/// `ulo::WiringError::DifferingSettings`.
 #[derive(Clone)]
 pub struct WsModule {
     pub(crate) adapter: Arc<dyn BroadcastAdapter>,
@@ -111,6 +116,10 @@ impl Module for WsModule {
         ModuleIdentity::of_type::<WsModule>()
     }
 
+    fn settings(&self) -> ModuleSettings {
+        self.adapter.settings()
+    }
+
     /// The module is global, so `Dep<Rooms>` and `Dep<dyn BroadcastAdapter>` resolve in every
     /// module of the application, and the standalone server finds the application's `Hub` in its
     /// metadata whichever module imported it.
@@ -145,6 +154,10 @@ struct SharedAdapter(Arc<dyn BroadcastAdapter>);
 impl BroadcastAdapter for SharedAdapter {
     fn prepare(&self) -> Result<(), BoxError> {
         self.0.prepare()
+    }
+
+    fn settings(&self) -> ModuleSettings {
+        self.0.settings()
     }
 
     fn publish(&self, target: Target, frame: Bytes) -> BoxFuture<'static, Result<(), BoxError>> {

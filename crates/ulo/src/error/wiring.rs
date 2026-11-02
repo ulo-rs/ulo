@@ -7,7 +7,7 @@ use crate::graph::visibility::two_versions;
 use crate::hooks::HookKind;
 use crate::key::{BindingKind, Key, KeyName, role_spelling};
 use crate::module::{ModuleName, colliding_names};
-use crate::redact::Redacted;
+use crate::redact::{Redacted, SecretRegistry, scrub};
 use crate::runtime::Runtime;
 use crate::scope::ScopeKind;
 use crate::timer::Timer;
@@ -821,10 +821,10 @@ impl WiringError {
             }
             WiringError::DifferingSettings { module, first, second, settings } => {
                 let names: Vec<String> = settings.iter().map(|setting| format!("`{}`", setting.name)).collect();
-                let values = |value: fn(&DifferingSetting) -> &Option<String>| {
+                let values = |side: usize| {
                     let written: Vec<String> = settings
                         .iter()
-                        .map(|setting| match value(setting) {
+                        .map(|setting| match &setting.shown[side] {
                             Some(text) => format!("`{}` = {text}", setting.name),
                             None => format!("`{}` unset", setting.name),
                         })
@@ -835,8 +835,8 @@ impl WiringError {
                     f,
                     format!("two registrations of {} differ in {}", show_module(module), names.join(", ")),
                     vec![
-                        format!("{} with {}", first.line(false, &show_module), values(|setting| &setting.first)),
-                        format!("{} with {}", second.line(true, &show_module), values(|setting| &setting.second)),
+                        format!("{} with {}", first.line(false, &show_module), values(0)),
+                        format!("{} with {}", second.line(true, &show_module), values(1)),
                         "help: an equal identity is one module, registered once; write the same settings at both, or key one with `.keyed::<Q>()` to make it a second instance"
                             .to_owned(),
                     ],
@@ -929,15 +929,15 @@ pub enum ModuleSite {
     Root,
     /// `ModuleDef::import` in `importer`, the call at `at`.
     Import { importer: ModuleName, at: &'static Location<'static> },
-    /// `AppHandle::load`, which records no call site.
-    Load,
+    /// `AppHandle::load`, the call at `at`.
+    Load { at: &'static Location<'static> },
 }
 
 impl ModuleSite {
     fn importer(&self) -> Option<&ModuleName> {
         match self {
             ModuleSite::Import { importer, .. } => Some(importer),
-            ModuleSite::Root | ModuleSite::Load => None,
+            ModuleSite::Root | ModuleSite::Load { .. } => None,
         }
     }
 
@@ -947,20 +947,38 @@ impl ModuleSite {
             (ModuleSite::Root, _) => "registered as the root module".to_owned(),
             (ModuleSite::Import { importer, at }, false) => format!("imported by {} at {}", module(importer), place(at)),
             (ModuleSite::Import { importer, at }, true) => format!("imported again by {} at {}", module(importer), place(at)),
-            (ModuleSite::Load, false) => "loaded by `AppHandle::load`".to_owned(),
-            (ModuleSite::Load, true) => "loaded again by `AppHandle::load`".to_owned(),
+            (ModuleSite::Load { at }, false) => format!("loaded by `AppHandle::load` at {}", place(at)),
+            (ModuleSite::Load { at }, true) => format!("loaded again by `AppHandle::load` at {}", place(at)),
         }
     }
 }
 
 /// One setting two registrations of a module disagree on: its name and each side's value as
 /// [`ModuleSettings`](crate::ModuleSettings) wrote it, `None` where that side has no such setting.
+///
+/// `first` and `second` hold the values unredacted. Its `Debug`, the `WiringError` entry's
+/// `Display` and `Debug`, and the report's, print them after the graph's redaction function, so a
+/// secret the graph registered is replaced there as in every other error.
 #[non_exhaustive]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DifferingSetting {
     pub name: &'static str,
     pub first: Option<String>,
     pub second: Option<String>,
+    shown: [Option<String>; 2],
+}
+
+impl DifferingSetting {
+    pub(crate) fn new(name: &'static str, first: Option<String>, second: Option<String>, secrets: &SecretRegistry) -> Self {
+        let shown = [first.as_deref().map(|text| scrub(secrets, text)), second.as_deref().map(|text| scrub(secrets, text))];
+        DifferingSetting { name, first, second, shown }
+    }
+}
+
+impl fmt::Debug for DifferingSetting {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DifferingSetting").field("name", &self.name).field("first", &self.shown[0]).field("second", &self.shown[1]).finish()
+    }
 }
 
 /// What one report prints with full paths: the types and the modules whose short form a different

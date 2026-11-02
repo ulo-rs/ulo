@@ -449,6 +449,86 @@ fn a_setting_only_the_second_registration_writes_is_named_unset_on_the_first() {
     assert!(text.contains("with `extra` = 3"), "{text}");
 }
 
+/// A module of identity `"db"` that imports itself with `next` as its setting, directly or, with
+/// `through`, through `Mod<B>`.
+struct SelfImporting {
+    knob: u32,
+    next: Option<u32>,
+    through: bool,
+}
+
+impl Module for SelfImporting {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_owner::<SelfImporting, _>(&"db")
+    }
+
+    fn settings(&self) -> ModuleSettings {
+        ModuleSettings::new().with("knob", self.knob)
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        let Some(knob) = self.next else { return };
+        let again = move || SelfImporting { knob, next: None, through: false };
+        if self.through {
+            m.import(Mod::<B>::new(move |m| m.import(again())));
+        } else {
+            m.import(again());
+        }
+    }
+}
+
+/// An import that closes a cycle and differs in its settings is one mistake, reported once as the
+/// cycle. Planted break: `enter` comparing settings before returning on a cycle.
+#[test]
+fn a_self_import_with_other_settings_is_reported_as_the_cycle_alone() {
+    let errors = wire_err(SelfImporting { knob: 1, next: Some(2), through: false });
+    let path = entry!(errors, WiringError::ImportCycle { path } => path.iter().map(|n| n.to_string()).collect::<Vec<_>>());
+    assert_eq!(path, ["SelfImporting", "SelfImporting"]);
+    assert_eq!(errors.len(), 1, "the cycle and nothing else:\n{errors}");
+
+    let errors = wire_err(SelfImporting { knob: 1, next: Some(2), through: true });
+    let path = entry!(errors, WiringError::ImportCycle { path } => path.iter().map(|n| n.to_string()).collect::<Vec<_>>());
+    assert_eq!(path, ["SelfImporting".to_owned(), mod_name::<B>(), "SelfImporting".to_owned()]);
+    assert_eq!(errors.len(), 1, "a cycle through another module is the cycle alone too:\n{errors}");
+}
+
+/// A setting value holding a secret the graph registered is printed redacted, and kept whole in
+/// the entry's field. Planted breaks: the report printing `first`/`second` instead of the
+/// redacted copies; `DifferingSetting`'s `Debug` derived, which prints the fields.
+#[test]
+fn a_registered_secret_in_a_setting_value_is_redacted_in_the_report() {
+    const SECRET: &str = "s3cret-token-value";
+    struct Holding(&'static str);
+    impl Module for Holding {
+        fn identity(&self) -> ModuleIdentity {
+            ModuleIdentity::of_owner::<Holding, _>(&"db")
+        }
+
+        fn settings(&self) -> ModuleSettings {
+            ModuleSettings::new().with("auth", format_args!("{}", self.0))
+        }
+
+        fn register(&self, _: &mut ModuleDef<'_>) {}
+    }
+    let errors = wire_err(Mod::<A>::new(|m| {
+        m.secret(&ulo::Secret::new(SECRET.to_owned()));
+        m.import(Holding("bearer s3cret-token-value"));
+        m.import(Holding("none"));
+    }));
+    let settings = entry!(errors, WiringError::DifferingSettings { settings, .. } => settings.clone());
+    assert_eq!(
+        sides(&settings),
+        [("auth", Some(format!("bearer {SECRET}")), Some("none".to_owned()))],
+        "the field keeps the value as written"
+    );
+    for text in [errors.to_string(), format!("{errors:?}"), errors.iter().next().map(ToString::to_string).unwrap_or_default()] {
+        assert!(!text.contains(SECRET), "the secret is printed:\n{text}");
+        assert!(text.contains("with `auth` = bearer [redacted]"), "{text}");
+    }
+    let entry = format!("{:?}", errors.iter().next());
+    assert!(!entry.contains(SECRET), "the entry's `Debug` prints the secret:\n{entry}");
+}
+
 mod one {
     pub struct Host;
 }
@@ -468,5 +548,34 @@ fn importers_sharing_a_short_name_are_printed_in_full() {
     let text = errors.to_string();
     for full in ["one::Host", "two::Host"] {
         assert!(text.contains(full), "{full} not printed in full:\n{text}");
+    }
+}
+
+/// A registered secret is redacted on whichever side of the report it sits. Planted break: the
+/// second side's printed copy left unscrubbed.
+#[test]
+fn a_registered_secret_is_redacted_on_either_side_of_the_report() {
+    const SECRET: &str = "s3cret-token-value";
+    struct Holding(&'static str);
+    impl Module for Holding {
+        fn identity(&self) -> ModuleIdentity {
+            ModuleIdentity::of_owner::<Holding, _>(&"db")
+        }
+
+        fn settings(&self) -> ModuleSettings {
+            ModuleSettings::new().with("auth", format_args!("{}", self.0))
+        }
+
+        fn register(&self, _: &mut ModuleDef<'_>) {}
+    }
+    for (first, second) in [("bearer s3cret-token-value", "none"), ("none", "bearer s3cret-token-value")] {
+        let errors = wire_err(Mod::<A>::new(move |m| {
+            m.secret(&ulo::Secret::new(SECRET.to_owned()));
+            m.import(Holding(first));
+            m.import(Holding(second));
+        }));
+        let text = errors.to_string();
+        assert!(!text.contains(SECRET), "the secret is printed:\n{text}");
+        assert!(text.contains("with `auth` = bearer [redacted]"), "{text}");
     }
 }

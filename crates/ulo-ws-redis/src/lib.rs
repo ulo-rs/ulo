@@ -50,7 +50,7 @@ use futures_util::StreamExt;
 use redis::aio::MultiplexedConnection;
 use tokio::runtime::Handle;
 use tokio::sync::{Mutex, mpsc, oneshot};
-use ulo::{BoxError, BoxFuture, Cut, Permanent, Refused, RuntimeShutDown, Spawn, Timer, timeout};
+use ulo::{BoxError, BoxFuture, Cut, ModuleSettings, Permanent, Refused, RuntimeShutDown, Spawn, Timer, timeout};
 use ulo_runtime_tokio::Tokio;
 use ulo_ws::wire::{self, Undecodable};
 use ulo_ws::{Audience, BroadcastAdapter, NodeId, Target};
@@ -106,6 +106,17 @@ impl Redis {
 }
 
 const NO_RUNTIME: &str = "the Redis broadcast adapter has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
+
+/// `url` without the userinfo of its authority.
+fn without_userinfo(url: &str) -> String {
+    let Some(scheme) = url.find("://").map(|at| at + "://".len()) else { return url.to_owned() };
+    let (head, tail) = url.split_at(scheme);
+    let authority = tail.find(['/', '?', '#']).unwrap_or(tail.len());
+    match tail[..authority].rfind('@') {
+        Some(at) => format!("{head}{}", &tail[at + 1..]),
+        None => url.to_owned(),
+    }
+}
 
 fn channel(target: &Target) -> String {
     match &target.audience {
@@ -214,6 +225,13 @@ impl BroadcastAdapter for Redis {
             return Err("the Redis broadcast adapter's `connect_within` is zero, so no subscription could be confirmed".into());
         }
         Ok(())
+    }
+
+    /// `broadcast` = `redis` and `url`, the adapter's URL with the userinfo of its authority left
+    /// out: `redis://:key@cache:6379` is `redis://cache:6379`, so two URLs differing only in
+    /// their credentials compare equal.
+    fn settings(&self) -> ModuleSettings {
+        ModuleSettings::new().with("broadcast", format_args!("redis")).with("url", format_args!("{}", without_userinfo(&self.url)))
     }
 
     /// A failed publish drops the cached connection, so the next publish connects again. The
