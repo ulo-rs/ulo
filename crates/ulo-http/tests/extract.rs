@@ -28,6 +28,14 @@ struct Ids {
 }
 
 #[derive(Deserialize)]
+struct Fit {
+    #[allow(dead_code)]
+    n: f64,
+    #[allow(dead_code)]
+    s: String,
+}
+
+#[derive(Deserialize)]
 struct Login {
     user: String,
     pw: String,
@@ -73,6 +81,11 @@ impl Inputs {
     #[ulo_http::post("/json-typed")]
     fn json_typed(&self, Json(ids): Json<Ids>) -> String {
         ids.id.to_string()
+    }
+
+    #[ulo_http::post("/json-fit")]
+    fn json_fit(&self, Json(_): Json<Fit>) -> String {
+        String::new()
     }
 
     #[ulo_http::post("/json-map")]
@@ -319,6 +332,28 @@ async fn json_that_parses_and_does_not_fit_the_type_is_mismatched_422_and_json_t
     apps.succeeds(map(r#"{"1":"a"}"#), "1").await;
     apps.fails(map(r#"{"one":"a"}"#), StatusCode::UNPROCESSABLE_ENTITY, "Mismatched|body").await;
     apps.fails(map(r#"{"one":"a""#), BAD, "Malformed|body").await;
+    apps.stop().await;
+}
+
+/// serde_json files three more refusals of valid JSON under `Syntax`: a number past `f64`, a lone
+/// surrogate escape in a string, and nesting past its limit of 128. All are content the server
+/// cannot accept, so 422 with serde_json's detail, whichever category it names.
+#[tokio::test]
+async fn valid_json_serde_files_as_syntax_is_still_mismatched_422_with_the_detail() {
+    let apps = Apps::start().await;
+    let post = |route: &'static str, body: String| move || Call::new(Method::POST, route).header("content-type", "application/json").body(body.clone());
+    let deep = format!("{}{}", "[".repeat(200), "]".repeat(200));
+    let cases = [
+        ("/json-fit", r#"{"n":1e400,"s":"a"}"#.to_owned(), "number out of range"),
+        ("/json-fit", r#"{"n":1,"s":"\ud800"}"#.to_owned(), "hex escape"),
+        ("/json", deep, "recursion limit exceeded"),
+    ];
+    for (route, body, detail) in cases {
+        let shown = body.chars().take(24).collect::<String>();
+        let reply = apps.fails(post(route, body), StatusCode::UNPROCESSABLE_ENTITY, "Mismatched|body").await;
+        let text = reply.json()["detail"].as_str().unwrap_or_default().to_owned();
+        assert!(text.contains(detail), "{shown}: {text}");
+    }
     apps.stop().await;
 }
 

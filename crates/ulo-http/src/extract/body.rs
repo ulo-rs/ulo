@@ -30,7 +30,9 @@ const BODY: &str = "body";
 /// none. Another media type is `UnsupportedMediaType` (415), a body over the route's limit
 /// `TooLarge` (413) before any of it is decoded, a body that is not JSON `Malformed` (400), and
 /// JSON that does not fit `T`, a field missing or of the wrong type, `Mismatched` (422, RFC 9110
-/// §15.5.21). A body a guard or interceptor took first is `BodyTaken` (500), for `Option<Json<T>>`
+/// §15.5.21), as is JSON the decoder refuses for what it holds whatever category serde_json files
+/// it under: a number past `f64`, a lone surrogate escape, nesting past 128, each carrying
+/// serde_json's detail. A body a guard or interceptor took first is `BodyTaken` (500), for `Option<Json<T>>`
 /// too.
 ///
 /// A handler reads the body once, so a second body extractor beside it fails to compile:

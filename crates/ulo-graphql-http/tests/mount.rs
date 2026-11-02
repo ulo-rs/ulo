@@ -257,7 +257,8 @@ async fn a_post_that_is_not_json_is_415_and_a_body_that_is_no_request_is_a_reque
     assert!(seen.requests().is_empty(), "the engine heard nothing of either");
 
     let json = [("content-type", "application/json")];
-    for body in [&b"NONSENSE"[..], br#"{"query":"#] {
+    // A body that is not UTF-8 is not JSON, whatever a reader that skips string contents makes of it.
+    for body in [&b"NONSENSE"[..], br#"{"query":"#, b"{\"query\":\"\xff\"}"] {
         let unparsed = app.call("POST", "/graphql", &json, body).await;
         let shown = String::from_utf8_lossy(body);
         assert_eq!(unparsed.status, StatusCode::BAD_REQUEST, "{shown}: {}", unparsed.text());
@@ -276,6 +277,21 @@ async fn a_post_that_is_not_json_is_415_and_a_body_that_is_no_request_is_a_reque
         assert_eq!(shape.header("content-type"), Some(GRAPHQL_RESPONSE), "{body}");
         assert!(shape.json()["errors"].as_array().is_some_and(|errors| errors.len() == 1), "{body}: one error in the response format");
         assert!(shape.json().get("data").is_none(), "{body}: a request error carries no `data`");
+    }
+    // JSON the server cannot accept is not a parse failure, whatever category serde_json files it
+    // under: a number past `f64` and nesting past 128 are 422 with the decoder's detail, as
+    // `Json<T>` answers them.
+    let deep = format!(r#"{{"query":"{{ q }}","variables":{{"v":{}{}}}}}"#, "[".repeat(200), "]".repeat(200));
+    let content = [
+        (r#"{"query":"{ q }","variables":{"v":1e400}}"#.to_owned(), "number out of range"),
+        (r#"{"query":"{ q }","variables":{"v":"\ud800"}}"#.to_owned(), "hex escape"),
+        (deep, "recursion limit exceeded"),
+    ];
+    for (body, detail) in content {
+        let shown: String = body.chars().take(40).collect();
+        let refused = app.call("POST", "/graphql", &json, body.as_bytes()).await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{shown}: {}", refused.text());
+        assert!(refused.text().contains(detail), "{shown}: {}", refused.text());
     }
     assert!(seen.requests().is_empty());
     app.stop().await;

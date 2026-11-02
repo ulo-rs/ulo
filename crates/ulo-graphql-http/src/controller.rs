@@ -121,7 +121,9 @@ async fn get<Q: Send + Sync + 'static>(cx: HttpCx) -> Result<Response, BoxError>
 /// A POST: an `application/json` body holding the request. Another media type is refused with 415
 /// and an `Accept` naming neither JSON type with 406, both through the error handlers, and a body
 /// over the route's limit with 413. A body that is not JSON is a request error answered 400, and
-/// JSON that is not a GraphQL request, `{"qeury": ..}` or `variables` that is not a map, 422.
+/// JSON that is not a GraphQL request, `{"qeury": ..}` or `variables` that is not a map, 422, as is
+/// JSON the server cannot accept whatever category serde_json files it under (a number past
+/// `f64`, nesting past 128).
 async fn post<Q: Send + Sync + 'static>(cx: HttpCx) -> Result<Response, BoxError> {
     let endpoint = cx.exec().get::<GraphqlEndpoint<Q>>().await?;
     if !is_json(cx.headers()) {
@@ -132,15 +134,28 @@ async fn post<Q: Send + Sync + 'static>(cx: HttpCx) -> Result<Response, BoxError
     let request = match serde_json::from_slice::<GqlRequest>(&body) {
         Ok(request) => request,
         Err(error) => {
-            let fault = match error.classify() {
-                serde_json::error::Category::Data => RequestFault::NotWellFormed,
-                _ => RequestFault::Encoding,
-            };
+            let fault = body_fault(&body, &error);
             return render(&request_error(fault, &format!("the body is not a GraphQL request: {error}")), media);
         }
     };
     let response = endpoint.engine.execute(request, cx.exec().clone()).await;
     render(&response, media)
+}
+
+/// The fault of a body that did not decode as a request: `NotWellFormed` when it is JSON the
+/// server cannot accept, `Encoding` when it is not JSON. serde_json files some refusals of valid
+/// JSON under `Syntax` (a number past `f64`, a lone surrogate escape, nesting past 128), so a
+/// `Syntax` failure on UTF-8 that parses as JSON read for no type is a refusal of content, as
+/// `Json<T>` reads it.
+fn body_fault(bytes: &[u8], error: &serde_json::Error) -> RequestFault {
+    let content = match error.classify() {
+        serde_json::error::Category::Data => true,
+        serde_json::error::Category::Syntax => {
+            std::str::from_utf8(bytes).is_ok() && serde_json::from_slice::<serde::de::IgnoredAny>(bytes).is_ok()
+        }
+        _ => false,
+    };
+    if content { RequestFault::NotWellFormed } else { RequestFault::Encoding }
 }
 
 /// The response media type, negotiated from `Accept`.
