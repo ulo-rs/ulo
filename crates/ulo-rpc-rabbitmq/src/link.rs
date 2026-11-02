@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
-use std::pin::Pin;
+use std::pin::{Pin, pin};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll};
@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
+use futures_util::future::{Either, select};
 use futures_util::stream::FuturesUnordered;
 use lapin::message::Delivery as AmqpDelivery;
 use lapin::options::{
@@ -27,9 +28,9 @@ use ulo_rpc::__private::ClientProbe;
 use ulo_rpc::__private::HoldUntil;
 use ulo_rpc::link::Inbound;
 use ulo_transport::__private::ordered;
-use ulo_transport::Count;
+use ulo_transport::{Count, Details, ErrorKind, SHUTDOWN_MESSAGE};
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, Frame, Link, NoDestination, NoTimer,
+    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, ErrorBody, Frame, Link, NoDestination, NoTimer,
     Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
 };
 
@@ -64,6 +65,10 @@ const CONNECT_WITHIN: Duration = Duration::from_secs(30);
 /// Frames queued for one side's writer ahead of the next send's wait: each send is queued at its call and waits until it is
 /// among this many the writer has not taken.
 const WRITE_QUEUE: usize = 64;
+
+/// How long a server's `close` waits, from its first poll, for its writer to publish the answers
+/// queued before it and for the broker to close the connection (transports DESIGN §5.2).
+const CUT_GRACE: Duration = Duration::from_secs(2);
 
 /// The RabbitMQ link.
 ///
@@ -451,11 +456,13 @@ impl Link for RabbitMq {
         let (phase, _) = watch::channel(Phase::Serving);
         let (deliveries, inbound) = mpsc::unbounded_channel();
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
-        runtime.handle().spawn(server_writer(channel.clone(), queued));
+        let writer = runtime.handle().spawn(server_writer(channel.clone(), queued)).abort_handle();
         let side = Arc::new(ServerSide {
             connection,
             channel,
             writes,
+            writer,
+            timer: clock,
             codec: self.codec,
             runtime: runtime.clone(),
             calls: Arc::new(Calls::new()),
@@ -553,6 +560,13 @@ impl Link for RabbitMq {
             let mut state = lock(&self.state);
             (state.server.take(), state.client.take(), state.connecting.take())
         };
+        // Started before the first await, so a `close` cut at its first poll leaves the server's
+        // connection to the task, which publishes what the server queued before it.
+        let closing = server.map(|(side, tasks)| {
+            side.phase.send_replace(Phase::Closed);
+            lock(&side.deliveries).take();
+            side.close_after_writes(tasks)
+        });
         let mut failure = None;
         // A connect still running is aborted, and a connection no `connect` took is closed; either
         // way the `connect`s waiting on it answer that the client is closed.
@@ -577,13 +591,12 @@ impl Link for RabbitMq {
         {
             failure = Some(error);
         }
-        if let Some((side, _)) = server {
-            side.phase.send_replace(Phase::Closed);
-            side.calls.clear();
-            lock(&side.deliveries).take();
-            let closing = Arc::clone(&side);
-            if let Err(error) = close_on(&side.runtime, async move { closing.connection.close(200, "close".into()).await }).await {
-                failure = Some(error);
+        if let Some(closing) = closing {
+            match closing.await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => failure = Some(error),
+                // The task was dropped unfinished, its runtime having shut down.
+                Err(_) => failure = Some(RuntimeShutDown::new(Refused).into()),
             }
         }
         if let Some((connection, runtime, _)) = client
@@ -660,7 +673,11 @@ struct ServerSide {
     connection: Connection,
     channel: Channel,
     /// The server's writer, which every reply and `opened` is published through.
-    writes: ordered::Sender<Reply>,
+    writes: ordered::Sender<Write>,
+    /// The writer's task, aborted when the connection is let go at [`CUT_GRACE`].
+    writer: AbortHandle,
+    /// The app's clock, which [`CUT_GRACE`] is timed on.
+    timer: Arc<dyn Timer>,
     codec: Codec,
     /// The link's runtime, where an `Ack`'s settlement runs: `Ack::ack` and `reject` are
     /// synchronous, and lapin's acknowledgment is a future.
@@ -683,6 +700,54 @@ impl Drop for ServerSide {
 }
 
 impl ServerSide {
+    /// Queues the `err` of kind `unavailable` with the shutdown phrase for every call the side
+    /// holds, and a flush behind them, in one hold of the table's lock, which every reply path
+    /// takes to queue a frame, so a call's own answer is queued before them or dropped; then spawns
+    /// the task that closes the connection once the writer reaches the flush, answering the
+    /// close's outcome on the receiver. The task does not wait on the receiver, so a `close` cut short leaves it running.
+    /// It ends at [`CUT_GRACE`] on the app's clock if the connection has not closed by then, and
+    /// aborts `tasks` and the writer as it ends, so the side's last handles on the connection go
+    /// and lapin closes it. A clock whose runtime has shut down cannot time the grace, and the
+    /// connection is let go at once.
+    fn close_after_writes(self: Arc<Self>, tasks: Vec<AbortHandle>) -> oneshot::Receiver<Result<(), BoxError>> {
+        let (flush, flushed) = oneshot::channel();
+        {
+            let mut table = self.calls.close();
+            for (_, call) in table.held.drain() {
+                let error = ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new());
+                match self.codec.encode_frame(&Frame::Err { id: call.id, error }) {
+                    Ok(bytes) => drop(write(&self.writes, call.reply, call.correlation, None, bytes)),
+                    Err(error) => tracing::debug!(%error, "the RabbitMQ link could not encode the shutdown answer of a call it held at `close`"),
+                }
+            }
+            self.calls.count.send_replace(0);
+            drop(self.writes.send(Write::Flush(flush)));
+        }
+        let (answer, answered) = oneshot::channel();
+        let grace = self.timer.try_sleep(CUT_GRACE);
+        let runtime = self.runtime.handle().clone();
+        drop(runtime.spawn(async move {
+            let outcome = {
+                let closing = async {
+                    let _ = flushed.await;
+                    self.connection.close(200, "close".into()).await.map_err(BoxError::from)
+                };
+                match select(pin!(closing), grace).await {
+                    Either::Left((closed, _)) => closed,
+                    Either::Right((Ok(()), _)) => Err("its connection had not closed `CUT_GRACE` after `close` began".into()),
+                    Either::Right((Err(refused), _)) => Err(RuntimeShutDown::new(refused).into()),
+                }
+            };
+            tasks.iter().for_each(AbortHandle::abort);
+            if outcome.is_err() {
+                self.writer.abort();
+            }
+            drop(self);
+            let _ = answer.send(outcome);
+        }));
+        answered
+    }
+
     fn deliver(&self, delivery: Delivery) {
         if let Some(deliveries) = lock(&self.deliveries).as_ref() {
             let _ = deliveries.send(delivery);
@@ -742,7 +807,7 @@ impl ServerSide {
         let frame = match kind_of(delivery.properties.headers().as_ref()).as_deref() {
             Some(IN) => self.calls.get(&key).map(|(id, path)| (Frame::In { id, data: Data::new(delivery.data) }, path)),
             Some(IN_END) => self.calls.get(&key).map(|(id, path)| (Frame::InEnd { id }, path)),
-            Some(CANCEL) => self.calls.release(&key).map(|(id, path)| (Frame::Cancel { id }, path)),
+            Some(CANCEL) => self.calls.release(&key).map(|call| (Frame::Cancel { id: call.id }, call.path)),
             _ => None,
         };
         if let Some((frame, path)) = frame {
@@ -756,15 +821,22 @@ impl ServerSide {
         let codec = self.codec;
         let calls = Arc::clone(&self.calls);
         let released = key.clone();
-        // Queued at the call, so replies go out in the order their sends were called.
+        let (to, correlated) = (reply.clone(), correlation.clone());
+        // Queued at the call, so replies go out in the order their sends were called, and under
+        // the table's lock, so a frame is queued before `close`'s answers and flush or not at all.
         let path = ReplyPath::new(move |frame: Frame| -> BoxFuture<'static, Result<(), BoxError>> {
-            if is_terminal(&frame) {
-                calls.release(&released);
+            let mut table = lock(&calls.held);
+            if table.closed {
+                return Box::pin(std::future::ready(Err(BoxError::from(SERVER_CLOSED))));
             }
-            let written = codec.encode_frame(&frame).map(|bytes| write(&writes, reply.clone(), correlation.clone(), None, bytes));
+            if is_terminal(&frame) {
+                calls.remove(&mut table, &released);
+            }
+            let written = codec.encode_frame(&frame).map(|bytes| write(&writes, to.clone(), correlated.clone(), None, bytes));
+            drop(table);
             Box::pin(async move { written?.await })
         });
-        let id = self.calls.hold(key, path.clone());
+        let id = self.calls.hold(key, Held { id: 0, path: path.clone(), reply, correlation });
         (id, path)
     }
 }
@@ -778,28 +850,44 @@ struct Reply {
     answer: oneshot::Sender<Result<(), BoxError>>,
 }
 
+/// What the server's writer takes, in order.
+enum Write {
+    Reply(Reply),
+    /// `close`'s, answered once every reply queued before it has been published.
+    Flush(oneshot::Sender<()>),
+}
+
 /// Publishes the server's replies one after another, in the order they were queued, until every
 /// sender is gone. The server's channel is not in confirm mode, so each publish is done once lapin
 /// has written it.
-async fn server_writer(channel: Channel, mut queued: ordered::Receiver<Reply>) {
-    while let Some(Reply { reply, correlation, kind, body, answer }) = queued.recv().await {
-        let _ = answer.send(publish_reply(&channel, reply, correlation, kind, &body).await);
+async fn server_writer(channel: Channel, mut queued: ordered::Receiver<Write>) {
+    while let Some(write) = queued.recv().await {
+        match write {
+            Write::Reply(Reply { reply, correlation, kind, body, answer }) => {
+                #[cfg(test)]
+                tests::gate::at_publish(&reply).await;
+                let _ = answer.send(publish_reply(&channel, reply, correlation, kind, &body).await);
+            }
+            Write::Flush(flushed) => {
+                let _ = flushed.send(());
+            }
+        }
     }
 }
 
 /// Queues one message on the server's writer at the call and answers a wait for it to be
 /// published.
 fn write(
-    writes: &ordered::Sender<Reply>,
+    writes: &ordered::Sender<Write>,
     reply: String,
     correlation: Option<String>,
     kind: Option<&'static str>,
     body: Bytes,
 ) -> impl Future<Output = Result<(), BoxError>> + Send + 'static {
     let (answer, answered) = oneshot::channel();
-    let room = writes.send(Reply { reply, correlation, kind, body, answer });
+    let room = writes.send(Write::Reply(Reply { reply, correlation, kind, body, answer }));
     async move {
-        let gone = || BoxError::from("the RabbitMQ link's server side is closed");
+        let gone = || BoxError::from(SERVER_CLOSED);
         room.await.map_err(|_| gone())?;
         answered.await.map_err(|_| gone())?
     }
@@ -837,41 +925,70 @@ async fn control_lane(side: Arc<ServerSide>, mut consumer: Consumer) {
     }
 }
 
-/// The calls a server holds, by the key their control messages carry, each with its local id and
-/// its reply path. The local id is this link's own, unique across every caller.
+const SERVER_CLOSED: &str = "the RabbitMQ link's server side is closed";
+
+/// The calls a server holds, by the key their control messages carry, each with its local id, its
+/// reply path and where its replies go. The local id is this link's own, unique across every
+/// caller.
 struct Calls {
     next: AtomicU64,
-    held: Mutex<HashMap<String, (u64, ReplyPath)>>,
+    held: Mutex<Table>,
     count: watch::Sender<usize>,
+}
+
+#[derive(Default)]
+struct Table {
+    held: HashMap<String, Held>,
+    /// Set by `close` once it has answered the calls held: a reply sent after it is dropped.
+    closed: bool,
+}
+
+struct Held {
+    id: u64,
+    path: ReplyPath,
+    reply: String,
+    correlation: Option<String>,
 }
 
 impl Calls {
     fn new() -> Self {
-        Calls { next: AtomicU64::new(1), held: Mutex::new(HashMap::new()), count: watch::channel(0).0 }
+        Calls { next: AtomicU64::new(1), held: Mutex::new(Table::default()), count: watch::channel(0).0 }
     }
 
-    fn hold(&self, key: String, path: ReplyPath) -> u64 {
+    fn hold(&self, key: String, mut call: Held) -> u64 {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        let mut held = lock(&self.held);
-        held.insert(key, (id, path));
-        self.count.send_replace(held.len());
+        call.id = id;
+        let mut table = lock(&self.held);
+        table.held.insert(key, call);
+        self.count.send_replace(table.held.len());
         id
     }
 
     fn get(&self, key: &str) -> Option<(u64, ReplyPath)> {
-        lock(&self.held).get(key).cloned()
+        lock(&self.held).held.get(key).map(|call| (call.id, call.path.clone()))
     }
 
-    fn release(&self, key: &str) -> Option<(u64, ReplyPath)> {
-        let mut held = lock(&self.held);
-        let call = held.remove(key);
-        self.count.send_replace(held.len());
+    fn release(&self, key: &str) -> Option<Held> {
+        self.remove(&mut lock(&self.held), key)
+    }
+
+    fn remove(&self, table: &mut Table, key: &str) -> Option<Held> {
+        let call = table.held.remove(key);
+        self.count.send_replace(table.held.len());
         call
+    }
+
+    /// The table, closed: every reply sent from here on is dropped. The caller drains what it
+    /// holds.
+    fn close(&self) -> MutexGuard<'_, Table> {
+        let mut table = lock(&self.held);
+        table.closed = true;
+        table
     }
 
     /// Drops every held path, each of which holds this table through its closure.
     fn clear(&self) {
-        lock(&self.held).clear();
+        lock(&self.held).held.clear();
         self.count.send_replace(0);
     }
 }
@@ -1265,6 +1382,37 @@ mod tests {
 
     use super::*;
 
+    /// The server's writer stopped before it publishes a reply to a named queue, for a test to
+    /// run `close` while the reply waits.
+    pub(super) mod gate {
+        use super::*;
+
+        type Stop = (String, oneshot::Sender<()>, oneshot::Receiver<()>);
+
+        static AT_PUBLISH: Mutex<Vec<Stop>> = Mutex::new(Vec::new());
+
+        /// Stops the writer at its next reply to `reply`: the first receiver answers once it has
+        /// stopped there, and the sender releases it.
+        #[cfg_attr(not(feature = "integration"), allow(dead_code))]
+        pub(crate) fn stop(reply: &str) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+            let (arrived, stopped) = oneshot::channel();
+            let (release, released) = oneshot::channel();
+            lock(&AT_PUBLISH).push((reply.to_owned(), arrived, released));
+            (stopped, release)
+        }
+
+        pub(crate) async fn at_publish(reply: &str) {
+            let stop = {
+                let mut stops = lock(&AT_PUBLISH);
+                stops.iter().position(|(stopped, _, _)| stopped == reply).map(|at| stops.remove(at))
+            };
+            if let Some((_, arrived, released)) = stop {
+                let _ = arrived.send(());
+                let _ = released.await;
+            }
+        }
+    }
+
     /// Q21-P6: a client connect that panics fails the call waiting on it `Unavailable` holding the
     /// panic, so `ulo::is_panic` is true of the call's error, its message redacted. A panicking
     /// future stands in for `open_client` through `Connecting::start`, held at a gate until the
@@ -1334,4 +1482,331 @@ mod tests {
             tokio::task::yield_now().await;
         }
     }
+
+    /// F522 (Q22-P8): a server's `close` publishes the answers queued before it, then closes the
+    /// connection, from a task its own future does not hold, ending at `CUT_GRACE` on the app's
+    /// clock. Each test builds a server side on a connection to a broker in a container, holds a
+    /// call whose reply queue a caller consumes on a connection of its own, and stops the writer
+    /// before it publishes the call's answer.
+    #[cfg(feature = "integration")]
+    mod cut_close {
+        use std::net::{Ipv4Addr, SocketAddr};
+        use std::time::Instant;
+
+        use testcontainers::core::{IntoContainerPort, WaitFor};
+        use testcontainers::runners::AsyncRunner;
+        use testcontainers::{ContainerAsync, GenericImage};
+        use ulo_rpc::{Details, ErrorBody};
+        use ulo_rpc_conformance::relay::{reachable, unshadowed};
+        use ulo_rpc_conformance::{report, startup_failed};
+
+        use super::*;
+
+        async fn rabbitmq() -> (AMQPUri, ContainerAsync<GenericImage>) {
+            let (container, addrs) = unshadowed("the RabbitMQ container", || async {
+                let container = GenericImage::new("rabbitmq", "4.1-alpine")
+                    .with_exposed_port(5672.tcp())
+                    .with_wait_for(WaitFor::message_on_stdout("Server startup complete"))
+                    .start()
+                    .await
+                    .unwrap_or_else(|error| startup_failed!("the RabbitMQ container did not start: {}", report(&error)));
+                let port = container
+                    .get_host_port_ipv4(5672)
+                    .await
+                    .unwrap_or_else(|error| startup_failed!("the AMQP port is not mapped: {}", report(&error)));
+                (container, vec![SocketAddr::from((Ipv4Addr::LOCALHOST, port))])
+            })
+            .await;
+            reachable(addrs[0], Duration::from_secs(10)).await;
+            (uri(&format!("amqp://guest:guest@{}/%2f", addrs[0])).expect("the url parses"), container)
+        }
+
+        /// A clock that moves only when the test advances it, and records each sleep asked of it.
+        #[derive(Clone, Default)]
+        struct Scripted(Arc<Mutex<Script>>);
+
+        #[derive(Default)]
+        struct Script {
+            elapsed: Duration,
+            asked: Vec<Duration>,
+            waiting: Vec<std::task::Waker>,
+        }
+
+        impl Scripted {
+            fn advance(&self, by: Duration) {
+                let waiting = {
+                    let mut script = lock(&self.0);
+                    script.elapsed += by;
+                    std::mem::take(&mut script.waiting)
+                };
+                waiting.into_iter().for_each(std::task::Waker::wake);
+            }
+
+            fn asked(&self) -> Vec<Duration> {
+                lock(&self.0).asked.clone()
+            }
+        }
+
+        impl Timer for Scripted {
+            fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+                let sleeping = self.try_sleep(d);
+                Box::pin(async move {
+                    let _ = sleeping.await;
+                })
+            }
+
+            fn now(&self) -> Instant {
+                Instant::now()
+            }
+
+            fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
+                let script = Arc::clone(&self.0);
+                let until = {
+                    let mut script = lock(&script);
+                    script.asked.push(d);
+                    script.elapsed + d
+                };
+                Box::pin(std::future::poll_fn(move |cx| {
+                    let mut script = lock(&script);
+                    if script.elapsed >= until {
+                        return Poll::Ready(Ok(()));
+                    }
+                    script.waiting.push(cx.waker().clone());
+                    Poll::Pending
+                }))
+            }
+        }
+
+        /// A server's link holding a call whose answer goes to `reply`, which a caller consumes,
+        /// and the call's reply path, with the writer stopped before the answer's publish.
+        struct Held {
+            link: RabbitMq,
+            path: ReplyPath,
+            status: lapin::ConnectionStatus,
+            replies: Consumer,
+            _caller: Connection,
+            stopped: oneshot::Receiver<()>,
+            release: oneshot::Sender<()>,
+            /// Answers once the task standing in for a pattern consumer has been aborted.
+            consumer_gone: oneshot::Receiver<()>,
+        }
+
+        /// Sends on its sender when dropped, as an aborted task drops what its future holds.
+        struct OnDrop(Option<oneshot::Sender<()>>);
+
+        impl Drop for OnDrop {
+            fn drop(&mut self) {
+                if let Some(gone) = self.0.take() {
+                    let _ = gone.send(());
+                }
+            }
+        }
+
+        async fn held(uri: &AMQPUri, reply: &str, clock: &Scripted) -> Held {
+            let caller = Connection::connect_uri(uri.clone(), ConnectionProperties::default()).await.expect("the caller connects");
+            let consuming = caller.create_channel().await.expect("the caller's channel opens");
+            consuming
+                .queue_declare(reply.into(), QueueDeclareOptions { exclusive: true, ..Default::default() }, FieldTable::default())
+                .await
+                .expect("the reply queue is declared");
+            let replies = consuming
+                .basic_consume(reply.into(), "".into(), BasicConsumeOptions { no_ack: true, ..Default::default() }, FieldTable::default())
+                .await
+                .expect("the caller consumes its reply queue");
+
+            let connection = Connection::connect_uri(uri.clone(), ConnectionProperties::default()).await.expect("the server connects");
+            let channel = connection.create_channel().await.expect("the server's channel opens");
+            let status = connection.status().clone();
+            let runtime = Tokio::current();
+            let (writes, queued) = ordered::channel(WRITE_QUEUE);
+            let writer = runtime.handle().spawn(server_writer(channel.clone(), queued)).abort_handle();
+            let (gone, consumer_gone) = oneshot::channel();
+            let held = OnDrop(Some(gone));
+            let consumer = runtime
+                .handle()
+                .spawn(async move {
+                    let _held = held;
+                    std::future::pending::<()>().await;
+                })
+                .abort_handle();
+            let side = Arc::new(ServerSide {
+                connection,
+                channel,
+                writes,
+                writer,
+                timer: Arc::new(clock.clone()),
+                codec: Codec::Json,
+                runtime,
+                calls: Arc::new(Calls::new()),
+                phase: watch::channel(Phase::Serving).0,
+                tags: Vec::new(),
+                deliveries: Mutex::new(None),
+            });
+            let (_id, path) = side.hold("call".to_owned(), reply.to_owned(), Some("call".to_owned()));
+            let link = RabbitMq::url("amqp://127.0.0.1:1");
+            lock(&link.state).server = Some((side, vec![consumer]));
+            let (stopped, release) = gate::stop(reply);
+            Held { link, path, status, replies, _caller: caller, stopped, release, consumer_gone }
+        }
+
+        fn unavailable() -> Frame {
+            Frame::Err { id: 1, error: ErrorBody::new(ErrorKind::Unavailable, "shutting down", Details::new()) }
+        }
+
+        /// The writer stopping at its gate, within 10 s: a publish that never comes fails the
+        /// test rather than holding it.
+        async fn stops(stopped: oneshot::Receiver<()>, what: &str) {
+            match tokio::time::timeout(Duration::from_secs(10), stopped).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => panic!("{what}: the gate was dropped"),
+                Err(_) => panic!("{what}: the writer published nothing for 10 s"),
+            }
+        }
+
+        /// The caller reads the call's answer, within 10 s.
+        async fn answered(replies: &mut Consumer) -> Frame {
+            let delivery = tokio::time::timeout(Duration::from_secs(10), replies.next())
+                .await
+                .expect("the caller read no answer within 10 s")
+                .expect("the caller's consumer ended")
+                .expect("the caller's consumer failed");
+            Codec::Json.decode_frame(&delivery.data).expect("the answer decodes")
+        }
+
+        /// The consumer's task aborted, within 10 s.
+        async fn consumer_aborted(consumer_gone: oneshot::Receiver<()>) {
+            tokio::time::timeout(Duration::from_secs(10), consumer_gone)
+                .await
+                .expect("the consumer's task was still running 10 s after the close ended")
+                .expect("the consumer's task ended unaborted");
+        }
+
+        async fn until_closed(status: &lapin::ConnectionStatus) {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !status.closed() {
+                assert!(Instant::now() < deadline, "the server's connection was still open 10 s after it was let go");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+
+        /// A `close` the writer holds up, its connection's close waiting for the writer to publish
+        /// the answer queued before it: the close is still running 2 s after it began, the caller
+        /// reads the answer once the writer goes on, and the connection closes after it. Planted
+        /// break: the connection closed in `close` itself, ahead of the writer, which loses the
+        /// answer.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_close_publishes_the_answers_queued_before_it_and_then_closes() {
+            let (uri, _container) = rabbitmq().await;
+            let clock = Scripted::default();
+            let Held { link, path, status, mut replies, _caller, stopped, release, consumer_gone } = tokio::time::timeout(Duration::from_secs(30), held(&uri, "cut.answered", &clock)).await.expect("the server side and its caller were not set up within 30 s");
+            drop(path.send(unavailable()));
+            stops(stopped, "the writer stops before the answer's publish").await;
+
+            let link = Arc::new(link);
+            let closing = tokio::spawn({
+                let link = Arc::clone(&link);
+                async move { link.close().await }
+            });
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            assert!(!closing.is_finished(), "the close ended while the answer queued before it was unpublished");
+            assert!(!status.closed(), "the connection closed while the answer queued before it was unpublished");
+            release.send(()).expect("the writer waits at its gate");
+            let Frame::Err { error, .. } = answered(&mut replies).await else { panic!("the caller read an answer other than an `err`") };
+            assert_eq!(error.kind, ErrorKind::Unavailable, "the answer the caller read");
+            tokio::time::timeout(Duration::from_secs(10), closing)
+                .await
+                .expect("the close outlived the answer's publish by 10 s")
+                .expect("the close's task")
+                .expect("the close ends clean");
+            assert!(status.closed(), "the close ended with the connection open");
+            consumer_aborted(consumer_gone).await;
+            assert_eq!(clock.asked(), [CUT_GRACE], "the sleeps the close asked of the app's clock");
+        }
+
+        /// A `close` polled once and dropped, as a spent shutdown cap leaves it, with the answer
+        /// queued before it unpublished: the caller reads the answer once the writer goes on, and
+        /// the connection closes after it, the task outliving the close.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_close_cut_at_its_first_poll_still_publishes_its_answers_and_closes() {
+            let (uri, _container) = rabbitmq().await;
+            let clock = Scripted::default();
+            let Held { link, path, status, mut replies, _caller, stopped, release, consumer_gone: _ } = tokio::time::timeout(Duration::from_secs(30), held(&uri, "cut.short", &clock)).await.expect("the server side and its caller were not set up within 30 s");
+            drop(path.send(unavailable()));
+            drop(path);
+            stops(stopped, "the writer stops before the answer's publish").await;
+
+            {
+                let mut close = pin!(link.close());
+                assert!(futures_util::poll!(close.as_mut()).is_pending(), "the close ended while the writer held the answer");
+            }
+            drop(link);
+            release.send(()).expect("the writer waits at its gate");
+            let Frame::Err { error, .. } = answered(&mut replies).await else { panic!("the caller read an answer other than an `err`") };
+            assert_eq!(error.kind, ErrorKind::Unavailable, "the answer the caller read");
+            until_closed(&status).await;
+        }
+
+        /// A `close` cut at its first poll answers the call it holds, which the server has not
+        /// answered, `unavailable` with the shutdown phrase, the answer published once the writer
+        /// goes on; a reply the call sends after it is refused, and the connection closes. Planted
+        /// break: the held calls dropped without an answer, the caller left to its own `Timeout`.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_close_cut_at_its_first_poll_answers_the_calls_it_holds() {
+            let (uri, _container) = rabbitmq().await;
+            let clock = Scripted::default();
+            let Held { link, path, status, mut replies, _caller, stopped, release, consumer_gone: _ } = tokio::time::timeout(Duration::from_secs(30), held(&uri, "cut.unanswered", &clock)).await.expect("the server side and its caller were not set up within 30 s");
+
+            {
+                let mut close = pin!(link.close());
+                assert!(futures_util::poll!(close.as_mut()).is_pending(), "the close ended while the writer held its answer");
+            }
+            drop(link);
+            stops(stopped, "the writer stops before the close's answer is published").await;
+            let late = tokio::time::timeout(Duration::from_secs(10), path.send(unavailable())).await.expect("a reply sent after the close waited 10 s");
+            assert!(late.is_err(), "a reply sent after the close was taken");
+            drop(path);
+            release.send(()).expect("the writer waits at its gate");
+            let Frame::Err { id, error } = answered(&mut replies).await else { panic!("the caller read an answer other than an `err`") };
+            assert_eq!((id, error.kind, error.message.as_str()), (1, ErrorKind::Unavailable, SHUTDOWN_MESSAGE), "the answer the caller read");
+            until_closed(&status).await;
+        }
+
+        /// A writer that never publishes holds the connection until `CUT_GRACE` on the app's clock
+        /// and no longer: a millisecond short of it the close is still running and the connection
+        /// open; at it the close fails naming the grace, and the connection closes, the writer
+        /// aborted with it. Planted break: no grace, the close waiting on the writer.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_close_whose_writer_never_publishes_ends_at_the_grace() {
+            let (uri, _container) = rabbitmq().await;
+            let clock = Scripted::default();
+            let Held { link, path, status, replies: _replies, _caller, stopped, release: _release, consumer_gone } = tokio::time::timeout(Duration::from_secs(30), held(&uri, "cut.grace", &clock)).await.expect("the server side and its caller were not set up within 30 s");
+            drop(path.send(unavailable()));
+            stops(stopped, "the writer stops before the answer's publish").await;
+
+            let link = Arc::new(link);
+            let closing = tokio::spawn({
+                let link = Arc::clone(&link);
+                async move { link.close().await }
+            });
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while clock.asked().is_empty() {
+                assert!(Instant::now() < deadline, "the close asked the app's clock for no grace within 10 s");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert_eq!(clock.asked(), [CUT_GRACE], "the sleeps the close asked of the app's clock");
+            clock.advance(CUT_GRACE - Duration::from_millis(1));
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            assert!(!closing.is_finished() && !status.closed(), "the close let go of the connection short of the grace");
+            clock.advance(Duration::from_millis(1));
+            let failed = tokio::time::timeout(Duration::from_secs(10), closing)
+                .await
+                .expect("the close outlived the grace by 10 s")
+                .expect("the close's task")
+                .expect_err("a close whose writer never published ended clean");
+            assert!(failed.to_string().contains("`CUT_GRACE`"), "the failure does not name the grace: {failed}");
+            until_closed(&status).await;
+            consumer_aborted(consumer_gone).await;
+        }
+    }
+
 }

@@ -312,19 +312,11 @@ pub struct Capabilities {
     /// broker can deliver a `cancel` first, and the server drops a `cancel` naming no call it
     /// holds.
     pub ordered_control: bool,
-    /// A request reaches one server instance however many listen on its pattern. `true` unless a
-    /// link declares otherwise, as `confirms_drain` is, so a link that does not declare it is held
-    /// to it. A link declaring [`fans_out_requests`](Self::fans_out_requests) hands each request to
-    /// every instance subscribed to its pattern: each runs the handler and replies, and the client
-    /// answers the first reply and drops the rest, so the handler's side effects run once per
-    /// instance. Such a link's request side supports one server instance, and `Server::prepare`
-    /// logs a `warn` saying so, naming [`fan_out_reason`](Self::fan_out_reason), when it mounts a
-    /// request handler; it refuses nothing, since one instance cannot tell itself from many. An
-    /// event is outside it, delivered as [`delivery`](Self::delivery) declares.
-    pub delivers_requests_once: bool,
-    /// Why a link that does not deliver a request once hands it to every instance, as the
-    /// server's `warn` names it; `None` on a link delivering once.
-    pub fan_out_reason: Option<&'static str>,
+    /// Read through [`delivers_requests_once`](Self::delivers_requests_once): private, so a
+    /// `false` is declared only through [`fans_out_requests`](Self::fans_out_requests), which
+    /// carries its reason.
+    delivers_requests_once: bool,
+    fan_out_reason: Option<&'static str>,
 }
 
 /// Every call shape, for a link that carries them all.
@@ -397,19 +389,50 @@ impl Capabilities {
         Capabilities { ordered_control, ..self }
     }
 
-    /// Declares `delivers_requests_once` false, with `reason`, the server's `warn` text for why.
+    /// Declares [`delivers_requests_once`](Self::delivers_requests_once) false, with `reason`, the
+    /// server's `warn` text for why. It is the one way to declare it, so the `warn` always names
+    /// a reason.
     ///
     /// ```
     /// use ulo_rpc::{Capabilities, DeliveryMode};
     ///
     /// let once = Capabilities::new(DeliveryMode::Competing);
-    /// assert!(once.delivers_requests_once && once.fan_out_reason.is_none());
+    /// assert!(once.delivers_requests_once() && once.fan_out_reason().is_none());
     /// let fanned = once.fans_out_requests("Pub/Sub hands a message to every subscriber");
-    /// assert!(!fanned.delivers_requests_once);
-    /// assert_eq!(fanned.fan_out_reason, Some("Pub/Sub hands a message to every subscriber"));
+    /// assert!(!fanned.delivers_requests_once());
+    /// assert_eq!(fanned.fan_out_reason(), Some("Pub/Sub hands a message to every subscriber"));
     /// ```
     pub const fn fans_out_requests(self, reason: &'static str) -> Self {
         Capabilities { delivers_requests_once: false, fan_out_reason: Some(reason), ..self }
+    }
+
+    /// A request reaches one server instance however many listen on its pattern. `true` unless a
+    /// link declares otherwise, as `confirms_drain` is, so a link that does not declare it is held
+    /// to it. A link declaring [`fans_out_requests`](Self::fans_out_requests) hands each request to
+    /// every instance subscribed to its pattern: each runs the handler and replies, and the client
+    /// answers the first reply and drops the rest, so the handler's side effects run once per
+    /// instance. Such a link's request side supports one server instance, and `Server::prepare`
+    /// logs a `warn` saying so, naming [`fan_out_reason`](Self::fan_out_reason), when it mounts a
+    /// request handler; it refuses nothing, since one instance cannot tell itself from many. An
+    /// event is outside it, delivered as [`delivery`](Self::delivery) declares.
+    ///
+    /// The field is not written from outside the crate, so no link declares `false` without a
+    /// reason:
+    ///
+    /// ```compile_fail,E0616
+    /// use ulo_rpc::{Capabilities, DeliveryMode};
+    ///
+    /// let mut capabilities = Capabilities::new(DeliveryMode::FanOut);
+    /// capabilities.delivers_requests_once = false;
+    /// ```
+    pub const fn delivers_requests_once(&self) -> bool {
+        self.delivers_requests_once
+    }
+
+    /// Why a link that does not deliver a request once hands it to every instance, as the
+    /// server's `warn` names it; `None` on a link delivering once.
+    pub const fn fan_out_reason(&self) -> Option<&'static str> {
+        self.fan_out_reason
     }
 }
 

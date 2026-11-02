@@ -11,7 +11,11 @@
 //! `listen` and a client's connect wait for the broker at most [`RabbitMq::connect_within`], 30 s
 //! unset, and a wait that runs out fails with [`ConnectTimedOut`]; a client runs one connect at a
 //! time, which every call waits on and none cancels by giving up. A server's `listen` needs the
-//! app's `Timer`.
+//! app's `Timer`. A server's `close` answers every call it still holds `Unavailable` with the
+//! shutdown phrase and closes its connection once its writer has published those answers and
+//! every reply queued before them, from a task the close does not hold, so a close cut short by
+//! a spent shutdown cap still delivers them; the task lets go of the connection at the latest 2 s
+//! after the close began, on the app's `Timer`.
 //!
 //! ```
 //! # fn f(app: ulo::App<ulo::Connected>) {
