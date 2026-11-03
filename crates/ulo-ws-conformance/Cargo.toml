@@ -12,9 +12,9 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
-ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.2" }
+ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.2" }
 # The suite's client: `handshake` for the key and the accept value it derives. No runtime feature:
 # the client runs over the host's `futures-io` stream.
 async-tungstenite = { workspace = true, features = ["handshake"] }

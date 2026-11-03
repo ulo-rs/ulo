@@ -22,14 +22,14 @@ tokio = ["dep:ulo-listener-tokio"]
 conformance-probe = ["ulo-ws/conformance-probe"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
 # `Upgraded`, the `futures-io` stream `ulo-ws`'s driver serves.
-ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
-ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.1" }
-ulo-listener-tokio = { path = "../ulo-listener-tokio", version = "=0.1.0-alpha.1", optional = true }
-ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
-ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
-ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.2" }
+ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.2" }
+ulo-listener-tokio = { path = "../ulo-listener-tokio", version = "=0.1.0-alpha.2", optional = true }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.2" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.2" }
+ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.2" }
 bytes.workspace = true
 futures-util.workspace = true
 http.workspace = true

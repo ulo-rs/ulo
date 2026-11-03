@@ -11,9 +11,9 @@ keywords = ["ulo", "database", "pool", "migrations"]
 categories = ["database"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
-ulo-health = { path = "../ulo-health", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.2" }
+ulo-health = { path = "../ulo-health", version = "=0.1.0-alpha.2" }
 # `DeserializeOwned`: a store's options are read from a configuration section.
 serde.workspace = true
 tracing.workspace = true

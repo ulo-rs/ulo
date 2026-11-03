@@ -21,18 +21,18 @@ smol = ["dep:ulo-runtime-smol", "dep:ulo-listener-smol", "dep:async-net"]
 rocket = ["dep:rocket"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.2" }
 # The reference host, on the listener a host's runtime half names.
-ulo-http-hyper = { path = "../ulo-http-hyper", version = "=0.1.0-alpha.1", default-features = false }
+ulo-http-hyper = { path = "../ulo-http-hyper", version = "=0.1.0-alpha.2", default-features = false }
 # `FuturesIo` and `RuntimeExecutor`: the suite's client over a host's `futures-io` stream, its
 # HTTP/2 tasks on the app's runtime.
-ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.1" }
-ulo-listener-smol = { path = "../ulo-listener-smol", version = "=0.1.0-alpha.1", optional = true }
-ulo-listener-tokio = { path = "../ulo-listener-tokio", version = "=0.1.0-alpha.1", optional = true }
-ulo-runtime-smol = { path = "../ulo-runtime-smol", version = "=0.1.0-alpha.1", optional = true }
-ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1", optional = true }
-ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.2" }
+ulo-listener-smol = { path = "../ulo-listener-smol", version = "=0.1.0-alpha.2", optional = true }
+ulo-listener-tokio = { path = "../ulo-listener-tokio", version = "=0.1.0-alpha.2", optional = true }
+ulo-runtime-smol = { path = "../ulo-runtime-smol", version = "=0.1.0-alpha.2", optional = true }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.2", optional = true }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.2" }
 async-net = { workspace = true, optional = true }
 bytes.workspace = true
 futures-channel.workspace = true

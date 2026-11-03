@@ -20,7 +20,7 @@ quote.workspace = true
 syn = { workspace = true, features = ["full", "visit-mut"] }
 # The `__handler` grammar and the key and shared-value emission `#[routes]` writes, defined once
 # for `#[routes]` and every transport attribute.
-ulo-handler-codegen = { path = "../ulo-handler-codegen", version = "=0.1.0-alpha.1" }
+ulo-handler-codegen = { path = "../ulo-handler-codegen", version = "=0.1.0-alpha.2" }
 
 [dev-dependencies]
 # The `#[module]` doctest wires an application.

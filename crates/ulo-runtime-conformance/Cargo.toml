@@ -12,8 +12,8 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.2" }
 # The runtime-free oneshot and unbounded channels the scenarios signal through. The suite names no
 # runtime: each runtime crate's `Harness` brings its own executor.
 futures.workspace = true

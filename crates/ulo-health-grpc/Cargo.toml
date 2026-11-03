@@ -11,9 +11,9 @@ keywords = ["ulo", "health", "grpc", "kubernetes"]
 categories = ["network-programming"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-grpc = { path = "../ulo-grpc", version = "=0.1.0-alpha.1" }
-ulo-health = { path = "../ulo-health", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-grpc = { path = "../ulo-grpc", version = "=0.1.0-alpha.2" }
+ulo-health = { path = "../ulo-health", version = "=0.1.0-alpha.2" }
 tonic-health.workspace = true
 tracing.workspace = true
 

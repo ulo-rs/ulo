@@ -18,12 +18,12 @@ tokio = ["ulo-conformance-support/tokio"]
 smol = ["ulo-conformance-support/smol"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
 # `conformance-probe`: `Broker::probe` names the broker links' `ClientProbe`.
-ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1", features = ["conformance-probe"] }
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.2", features = ["conformance-probe"] }
 # The harness pieces shared with the database suite; this crate re-exports them at their old paths.
 ulo-conformance-support = { path = "../ulo-conformance-support" }
-ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.2" }
 # `serde` lets the binary scenario send and receive `Bytes` as raw bytes.
 bytes = { workspace = true, features = ["serde"] }
 # The plain-thread scenario drives its client with `block_on`, which needs no runtime.

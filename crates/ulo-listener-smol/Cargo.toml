@@ -11,9 +11,9 @@ keywords = ["ulo", "hyper", "smol", "server", "tls"]
 categories = ["network-programming", "web-programming::http-server"]
 
 [dependencies]
-ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
-ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.1" }
-ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.2" }
+ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.2" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.2" }
 async-net.workspace = true
 futures-io.workspace = true
 futures-rustls.workspace = true

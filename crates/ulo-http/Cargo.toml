@@ -16,10 +16,10 @@ categories = ["web-programming::http-server", "asynchronous"]
 tokio-io = ["dep:tokio", "dep:tokio-util"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-http-macros = { path = "../ulo-http-macros", version = "=0.1.0-alpha.1" }
-ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
-ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-http-macros = { path = "../ulo-http-macros", version = "=0.1.0-alpha.2" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.2" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.2" }
 bytes.workspace = true
 futures-core.workspace = true
 # The I/O traits an upgraded connection implements.

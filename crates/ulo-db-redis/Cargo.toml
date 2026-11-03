@@ -25,9 +25,9 @@ tls = ["redis/tokio-rustls-comp", "redis/tls-rustls-webpki-roots"]
 smol-comp = ["redis/smol-comp", "redis/smol-rustls-comp", "redis/tokio-rustls-comp"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
-ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
-ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2", features = ["serde"] }
+ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.2" }
+ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.2" }
 # The workspace entry brings `aio` and `tokio-comp`, the one runtime feature this crate takes.
 redis = { workspace = true, features = ["connection-manager"] }
 serde = { workspace = true, features = ["derive"] }

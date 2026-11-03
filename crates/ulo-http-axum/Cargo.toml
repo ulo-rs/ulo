@@ -11,9 +11,9 @@ keywords = ["ulo", "axum", "embedding", "web"]
 categories = ["web-programming::http-server"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
 # `tokio-io`: hyper's upgraded I/O reaches `Upgraded` through tokio's traits.
-ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1", features = ["tokio-io"] }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.2", features = ["tokio-io"] }
 axum = { workspace = true, features = ["tokio", "http1", "http2", "original-uri"] }
 http.workspace = true
 # The upgrade future axum's server leaves in the request's extensions, and its I/O as tokio's traits.

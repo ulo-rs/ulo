@@ -11,7 +11,7 @@ keywords = ["ulo", "health", "kubernetes", "probes"]
 categories = ["web-programming"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
 # `Shared`: a probe arriving while a run is in flight shares that run. `catch_unwind` and
 # `Shared` need its default `std` feature.
 futures-util.workspace = true

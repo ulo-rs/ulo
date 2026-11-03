@@ -11,8 +11,8 @@ keywords = ["ulo", "graphql", "juniper"]
 categories = ["web-programming"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-graphql = { path = "../ulo-graphql", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-graphql = { path = "../ulo-graphql", version = "=0.1.0-alpha.2" }
 futures.workspace = true
 juniper = { workspace = true, features = ["schema-language"] }
 serde_json.workspace = true
