@@ -27,10 +27,12 @@ use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{Attribute, Expr, ExprClosure, Ident, ImplItem, ItemImpl, Lit, LitStr, Meta, Token, Type, parenthesized};
 use ulo_handler_codegen::protocol::{Entry, Form};
+use ulo_handler_codegen::restore::restore_item;
 use ulo_handler_codegen::util::{check_factory_params, combine, wrap_async};
 
 pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let args: Args = syn::parse2(attr)?;
+    let original = item.clone();
     let item: ItemImpl = syn::parse2(item)?;
     if item.trait_.is_some() {
         return Err(syn::Error::new_spanned(
@@ -48,6 +50,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     let config = args.config()?;
     let (impl_generics, _, where_clause) = item.generics.split_for_impl();
     let self_ty = &item.self_ty;
+    let item = restore_item(&original, &item);
     Ok(quote! {
         #item
 

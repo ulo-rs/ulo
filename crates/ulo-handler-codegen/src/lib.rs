@@ -12,6 +12,7 @@
 //! 3. [`reply::rewrite_opaque_returns`] appends `+ use<>` to the return position's opaque types.
 //! 4. The transport builds its handler value around [`emit::call_closure`], and
 //!    [`emit::MountFn::emit`] writes the three items the protocol owes.
+//! 5. [`restore::restore_attrs`] puts the input's own attribute groups back into the expansion.
 
 pub mod body;
 pub mod cfg;
@@ -21,6 +22,7 @@ pub mod params;
 pub mod paths;
 pub mod protocol;
 pub mod reply;
+pub mod restore;
 pub mod shared;
 pub mod util;
 

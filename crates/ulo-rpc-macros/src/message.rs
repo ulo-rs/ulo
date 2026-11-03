@@ -24,6 +24,7 @@ use syn::spanned::Spanned;
 use syn::{Ident, ImplItemFn, LitStr};
 use ulo_handler_codegen::emit::{self, MountFn};
 use ulo_handler_codegen::params::{self, HandlerSig, Receiver};
+use ulo_handler_codegen::restore::restore_item;
 use ulo_handler_codegen::{Paths, protocol, reply};
 
 /// The transport's key, which equals `<ulo_rpc::Rpc as ulo::Transport>::KEY`.
@@ -61,6 +62,7 @@ pub(crate) fn expand_kind(kind: Kind, attr: TokenStream, item: TokenStream) -> s
     if let Err(reason) = check_pattern(&pattern.value()) {
         return Err(syn::Error::new(pattern.span(), format!("invalid pattern: {reason}")));
     }
+    let original = item.clone();
     let mut item: ImplItemFn = syn::parse2(item)?;
     let Some(tokens) = protocol::take_handler_attr(&mut item.attrs)? else {
         return Err(protocol::outside_routes(attr_name));
@@ -84,6 +86,7 @@ pub(crate) fn expand_kind(kind: Kind, attr: TokenStream, item: TokenStream) -> s
     }
     .emit();
 
+    let item = restore_item(&original, &item);
     Ok(quote! {
         #item
         #mount

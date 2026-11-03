@@ -1,0 +1,15 @@
+[package]
+name = "editor-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Its own workspace root: the fixture is opened by a language server, not built with the real
+# workspace, and the real workspace must not adopt it.
+[workspace]
+
+[dependencies]
+ulo = { path = "../../../ulo" }
+ulo-http = { path = "../../../ulo-http" }
+ulo-rpc = { path = "../../../ulo-rpc" }
+ulo-ws = { path = "../../../ulo-ws" }

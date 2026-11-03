@@ -7,6 +7,8 @@ use quote::quote;
 use syn::spanned::Spanned;
 use syn::{Field, Index, ItemStruct, Member, Type};
 
+use ulo_handler_codegen::restore::restore_item;
+
 use crate::injectable::InjectableArgs;
 use crate::shared::attrs;
 use crate::shared::dependencies::{self, DependencyLabel, DependencySpec};
@@ -14,7 +16,7 @@ use crate::shared::{ConstructImpl, combine, ulo};
 
 /// The struct as written, minus its `#[injectable(default)]` field markers, followed by its
 /// `Construct` impl.
-pub(crate) fn expand(args: InjectableArgs, mut item: ItemStruct) -> syn::Result<TokenStream> {
+pub(crate) fn expand(args: InjectableArgs, mut item: ItemStruct, original: &TokenStream) -> syn::Result<TokenStream> {
     let ulo = ulo();
     let mut dependency_specs = Vec::new();
     let mut dependency_members = Vec::new();
@@ -64,6 +66,7 @@ pub(crate) fn expand(args: InjectableArgs, mut item: ItemStruct) -> syn::Result<
     }
     .emit();
 
+    let item = restore_item(original, &item);
     Ok(quote! {
         #item
         #construct_impl
