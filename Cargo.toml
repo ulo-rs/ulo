@@ -114,10 +114,6 @@ members = [
     "examples/40-socket-activation",
     "examples/41-one-guard-two-transports",
 ]
-exclude = [
-    "integration-tests",
-    "examples",
-]
 
 # `unsafe` is refused in every member but in the modules `unsafe-allowed.txt` lists, each of which
 # opts out with `#![allow(unsafe_code)]` at its top. `deny` rather than `forbid`, since `forbid`
