@@ -12,12 +12,20 @@ use ulo_handler_codegen::restore::restore_item;
 use crate::injectable::InjectableArgs;
 use crate::shared::attrs;
 use crate::shared::dependencies::{self, DependencyLabel, DependencySpec};
-use crate::shared::{ConstructImpl, combine, ulo};
+use crate::shared::{ConstructImpl, combine, editor, ulo};
 
 /// The struct as written, minus its `#[injectable(default)]` field markers, followed by its
-/// `Construct` impl.
+/// `Construct` impl and the hidden import of each marker removed (`crate::shared::editor`).
 pub(crate) fn expand(args: InjectableArgs, mut item: ItemStruct, original: &TokenStream) -> syn::Result<TokenStream> {
     let ulo = ulo();
+    let written: Vec<syn::Ident> = item
+        .fields
+        .iter()
+        .flat_map(|field| &field.attrs)
+        .filter(|attr| attrs::is(attr, "injectable"))
+        .filter_map(|attr| attr.path().segments.last().map(|segment| segment.ident.clone()))
+        .collect();
+    let imports = editor::marker_imports(&written);
     let mut dependency_specs = Vec::new();
     let mut dependency_members = Vec::new();
     let mut default_members = Vec::new();
@@ -70,6 +78,7 @@ pub(crate) fn expand(args: InjectableArgs, mut item: ItemStruct, original: &Toke
     Ok(quote! {
         #item
         #construct_impl
+        #imports
     })
 }
 

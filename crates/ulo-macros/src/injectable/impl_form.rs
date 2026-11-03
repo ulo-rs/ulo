@@ -15,9 +15,10 @@ use ulo_handler_codegen::restore::restore_item;
 use crate::injectable::InjectableArgs;
 use crate::shared::attrs;
 use crate::shared::dependencies::{self, DependencyLabel, DependencySpec};
-use crate::shared::{ConstructImpl, ulo};
+use crate::shared::{ConstructImpl, editor, ulo};
 
-/// The impl as written, minus `#[construct]`, followed by the `Construct` impl for its self type.
+/// The impl as written, minus `#[construct]`, followed by the `Construct` impl for its self type and
+/// the hidden import of each `#[construct]` removed (`crate::shared::editor`).
 pub(crate) fn expand(args: InjectableArgs, mut item: ItemImpl, original: &TokenStream) -> syn::Result<TokenStream> {
     if let Some((_, path, _)) = &item.trait_ {
         return Err(syn::Error::new_spanned(
@@ -26,6 +27,15 @@ pub(crate) fn expand(args: InjectableArgs, mut item: ItemImpl, original: &TokenS
         ));
     }
     let ulo = ulo();
+    let written: Vec<syn::Ident> = item
+        .items
+        .iter()
+        .filter_map(|impl_item| if let ImplItem::Fn(method) = impl_item { Some(&method.attrs) } else { None })
+        .flatten()
+        .filter(|attr| attrs::is(attr, "construct"))
+        .filter_map(|attr| attr.path().segments.last().map(|segment| segment.ident.clone()))
+        .collect();
+    let imports = editor::marker_imports(&written);
     let ctor = find_constructor(&mut item)?;
     let dependency_specs = params(ctor)?;
     let name = &ctor.sig.ident;
@@ -63,6 +73,7 @@ pub(crate) fn expand(args: InjectableArgs, mut item: ItemImpl, original: &TokenS
     Ok(quote! {
         #item
         #construct_impl
+        #imports
     })
 }
 

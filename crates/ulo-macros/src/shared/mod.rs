@@ -2,6 +2,7 @@
 
 pub(crate) mod attrs;
 pub(crate) mod dependencies;
+pub(crate) mod editor;
 pub(crate) mod scope;
 
 use proc_macro2::{Span, TokenStream};
