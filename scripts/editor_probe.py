@@ -4,9 +4,12 @@
 usage: editor_probe.py <rust-analyzer> <project root> <file> [--target-dir DIR] [--point NAME:LINE:COL]...
 
 Without --point, every pathed attribute `#[a::b(..)]` in <file> yields two points, one on `a` and
-one on `b`, and a bare `#[routes]` or `#[injectable]` one control point. An attribute on a `//`
-comment line yields none, and neither does one inside a `macro_rules!` body, which the editor
-resolves only where the macro is invoked. The server is started over stdio, waited on until it
+one on `b`, and a bare `#[routes]` or `#[injectable]` one control point. A marker attribute, one
+that `#[routes]` or `#[injectable]` reads and removes (`guards`, `interceptors`, `error_handlers`,
+`meta`, `construct`, and `injectable(default)` on a field), yields one point on its last segment,
+bare, pathed or inside a `#[cfg_attr(..)]`: the editor resolves it through the import the macro
+writes for that segment alone. An attribute on a `//` comment line yields none, and neither does
+one inside a `macro_rules!` body, which the editor resolves only where the macro is invoked. The server is started over stdio, waited on until it
 reports itself quiescent, and each point is asked for `textDocument/hover` and
 `textDocument/definition`. A point missing either answer fails the run (exit 1), as does a server
 that reports the project failed to load. Lines and columns are 0-based, as LSP counts them.
@@ -36,6 +39,9 @@ import time
 
 ATTR = re.compile(r"#\[\s*((?:[A-Za-z_]\w*::)+)([A-Za-z_]\w*)")
 BARE = re.compile(r"#\[\s*(routes|injectable)\s*\]")
+MARKERS = r"guards|interceptors|error_handlers|meta|construct"
+# A marker's last segment: after `#[` or, inside a `cfg_attr`, after a comma, with any path before it.
+MARKER = re.compile(r"(?:#\[|,)\s*(?:[A-Za-z_]\w*::)*(?:(" + MARKERS + r")\b(?!\s*::)|(injectable)(?=\s*\(\s*default\s*\)))")
 
 
 def macro_rules_lines(text):
@@ -58,13 +64,21 @@ def points_of(text):
     for line, src in enumerate(text.split("\n")):
         if line in skipped or src.lstrip().startswith("//"):
             continue
+        markers = set()
+        if "#[" in src:
+            for m in MARKER.finditer(src):
+                group = 1 if m.group(1) else 2
+                points.append((m.group(group), line, m.start(group)))
+                markers.add(m.start(group))
         for m in ATTR.finditer(src):
+            if m.start(2) in markers:
+                continue
             first = m.group(1).split("::")[0]
             points.append((first, line, m.start(1)))
             points.append((m.group(2), line, m.start(2)))
         for m in BARE.finditer(src):
             points.append((m.group(1), line, m.start(1)))
-    return points
+    return sorted(points, key=lambda p: (p[1], p[2]))
 
 
 class Server:
