@@ -6,6 +6,10 @@
 //! adapters bring the executor, sockets, timers and signals.
 //! Every macro expands to calls on the value-level API re-exported here, which integration
 //! crates call directly.
+//!
+//! The macros name this crate as `::ulo`. A crate that depends on it under another name,
+//! `framework = { package = "ulo", .. }` in its manifest, writes `extern crate framework as ulo;`
+//! at its root for any `ulo` macro to expand.
 
 // The README blocks are compiled, not rendered: the `//!` docs above stay the crate's page.
 #[cfg(doctest)]

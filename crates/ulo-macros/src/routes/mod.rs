@@ -23,6 +23,8 @@
 //! 5. `impl ::ulo::Controller for Self`, whose `mount` builds the impl-level `value` entries once
 //!    into a `::ulo::__private::Shared` and calls every `__ulo_mount_<name>` with it, in method
 //!    order (X2).
+//! 6. The hidden import of every enhancer and `#[meta]` attribute it removed, through which an
+//!    editor resolves each one (`crate::shared::editor`).
 //!
 //! A handler's `#[cfg]` and `#[cfg_attr]` reach `#[routes]` unevaluated, and rustc removes a
 //! cfg'd-out method, or expands a `cfg_attr` around its transport attribute, only after `#[routes]`
@@ -43,7 +45,7 @@ use ulo_handler_codegen::protocol::{self, EnhancerAttr, HandlerTokens, MetaExpr,
 use ulo_handler_codegen::restore::restore_item;
 use ulo_handler_codegen::{cfg, keys, reply, shared};
 
-use crate::shared::{attrs, combine, ulo};
+use crate::shared::{attrs, combine, editor, ulo};
 
 pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     if !attr.is_empty() {
@@ -64,6 +66,7 @@ pub(crate) fn expand_impl(mut item: ItemImpl, original: &TokenStream) -> syn::Re
         ));
     }
     let ulo = ulo();
+    let imports = editor::marker_imports(&written_markers(&item));
     let controller = take_enhancers(&mut item.attrs)?;
     let controller_meta = protocol::take_meta(&mut item.attrs)?;
 
@@ -132,7 +135,24 @@ pub(crate) fn expand_impl(mut item: ItemImpl, original: &TokenStream) -> syn::Re
         #item
         #controller_impl
         #free
+        #imports
     })
+}
+
+/// The last path segment of every enhancer and `#[meta]` attribute `#[routes]` reads, on the
+/// impl and on its methods, inside `cfg_attr` or not, in the order written.
+fn written_markers(item: &ItemImpl) -> Vec<syn::Ident> {
+    let methods = item.items.iter().filter_map(|impl_item| match impl_item {
+        ImplItem::Fn(method) => Some(cfg::leaves(&method.attrs).into_iter().map(|leaf| leaf.attr)),
+        _ => None,
+    });
+    item.attrs
+        .iter()
+        .cloned()
+        .chain(methods.flatten())
+        .filter(|attr| role_of(attr).is_some() || protocol::is_meta(attr))
+        .filter_map(|attr| attr.path().segments.last().map(|segment| segment.ident.clone()))
+        .collect()
 }
 
 /// A handler method; its enhancer attributes and metadata travel in the `__handler` attribute.

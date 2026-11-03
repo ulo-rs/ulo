@@ -1,5 +1,6 @@
 //! `#[routes]` over every HTTP verb attribute, with the extractors, the reply forms, the enhancer
-//! spellings at both tiers, `#[meta]`, a generic controller and `self: Arc<Self>`.
+//! spellings at both tiers, `#[meta]`, a generic controller, one declared inside a fn body, two
+//! written by a `macro_rules!` macro and `self: Arc<Self>`.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -108,3 +109,52 @@ impl<T: Send + Sync + 'static> Generic<T> {
         std::any::type_name::<T>()
     }
 }
+
+/// A controller declared inside a fn body, whose markers repeat, carry a path, follow the
+/// transport attribute and sit inside `cfg_attr`.
+pub fn local() {
+    #[injectable]
+    struct Local {
+        #[injectable(default)]
+        a: u8,
+        #[ulo::injectable(default)]
+        b: u8,
+    }
+
+    #[routes]
+    #[guards(value = Allow)]
+    #[ulo::guards(value = Allow)]
+    impl Local {
+        #[guards(value = Allow)]
+        #[ulo_http::get("/local")]
+        #[ulo::meta(Tag("local"))]
+        #[cfg_attr(all(), meta(Tag("gated")), interceptors(value = Pass))]
+        fn local(&self) -> String {
+            format!("{}{}", self.a, self.b)
+        }
+    }
+}
+
+/// Writes a controller whose markers reach `#[routes]` spanned in this macro's body, a span local to
+/// the crate, so a lint the generated code trips is reported here as it is in hand-written code.
+macro_rules! controller {
+    ($name:ident, $path:literal) => {
+        #[injectable]
+        pub struct $name;
+
+        #[routes]
+        #[guards(value = Allow)]
+        #[meta(Tag("generated"))]
+        impl $name {
+            #[ulo_http::get($path)]
+            #[guards(value = Allow)]
+            #[interceptors(value = Pass)]
+            fn handle(&self) -> &'static str {
+                $path
+            }
+        }
+    };
+}
+
+controller!(GeneratedA, "/generated-a");
+controller!(GeneratedB, "/generated-b");

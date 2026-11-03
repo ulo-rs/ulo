@@ -218,8 +218,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Pinned on purpose, one of the four pins in this file that are not read from
-      # a manifest; `generated code lints`, `template matrix` and `miri` hold the others. `tests/ui/*.stderr` records rustc's rendering as well as the
+      # Pinned on purpose, one of the pins in this file that are not read from a
+      # manifest; `generated code lints`, `editor resolution`, `template matrix`,
+      # `public reach` and `miri` hold the others. `tests/ui/*.stderr` records rustc's rendering as well as the
       # attributes' own text, and rustc rewords its half roughly once every three
       # minor versions: on `stable` that arrives as a red build on a pull request
       # that changed nothing related. ulo-codegen-tests' build script sets
@@ -252,6 +253,32 @@ jobs:
       # here names generated code. --no-deps lints that crate alone: the framework's own crates
       # are compiled, not linted.
       - run: cargo clippy -p ulo-macro-lints --all-targets --no-deps --locked -- -D warnings
+
+  editor-resolution:
+    name: editor resolution
+    runs-on: ubuntu-latest
+    # The probe waits up to 25 minutes for the server to settle and up to two minutes per request;
+    # a server that hangs fails the job here instead of holding a runner for six hours.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      # rust-analyzer as the pinned toolchain ships it, the pin the `generated code lints` job
+      # holds, so a server release cannot turn this job red on a change unrelated to the macros.
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: rust-analyzer
+      - uses: Swatinem/rust-cache@v2
+      # The fixture is its own workspace, which `.gitignore` gives no lockfile. Seeded from the
+      # workspace's own, it resolves the versions the rest of CI builds; unseeded, cargo would pick
+      # the newest each crate allows.
+      - run: cp Cargo.lock crates/ulo-codegen-tests/fixtures/editor/Cargo.lock
+      # Every attribute path in the fixture, and every marker `#[routes]` and `#[injectable]`
+      # remove, answers hover and go-to-definition, or the probe exits non-zero naming the point.
+      # The server builds the fixture's proc macros and build scripts and checks nothing.
+      - run: >-
+          python3 scripts/editor_probe.py "$(rustup which rust-analyzer)"
+          crates/ulo-codegen-tests/fixtures/editor crates/ulo-codegen-tests/fixtures/editor/src/lib.rs
+          --target-dir target/editor-probe
 
   public-reach:
     name: public reach
