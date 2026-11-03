@@ -8,6 +8,8 @@ members = [
     "crates/ulo-reexport-ws",
     "crates/ulo-reexport-rpc",
     "crates/ulo-reexport-grpc",
+    "crates/ulo-reexport-renamed",
+    "crates/ulo-reexport-facade",
     "crates/ulo-transport-macros",
     "crates/ulo-net",
     "crates/ulo-runtime-tokio",

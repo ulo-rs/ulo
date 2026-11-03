@@ -1,0 +1,18 @@
+[package]
+name = "ulo-reexport-facade"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Writes the attributes #[routes] and #[injectable] remove through a crate re-exporting ulo, with no ulo in the manifest"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# Tests only: it exists for its manifest, which lists no `ulo`.
+publish = false
+
+[dependencies]
+ulo-reexport-renamed = { path = "../ulo-reexport-renamed" }
+ulo-http = { path = "../ulo-http" }
+
+[lints]
+workspace = true

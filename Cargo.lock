@@ -9545,10 +9545,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ulo-reexport-facade"
+version = "0.1.0-alpha.2"
+dependencies = [
+ "ulo-http",
+ "ulo-reexport-renamed",
+]
+
+[[package]]
 name = "ulo-reexport-grpc"
 version = "0.1.0-alpha.2"
 dependencies = [
  "ulo-grpc",
+]
+
+[[package]]
+name = "ulo-reexport-renamed"
+version = "0.1.0-alpha.2"
+dependencies = [
+ "ulo",
+ "ulo-http",
 ]
 
 [[package]]
