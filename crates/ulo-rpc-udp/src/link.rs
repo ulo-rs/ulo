@@ -59,9 +59,8 @@ const CUT_GRACE: Duration = Duration::from_secs(2);
 /// A server's link dropped without `close`, as it is when its app drops before the close step,
 /// stops its receive task, and its writer once it has sent the datagrams already queued or two
 /// seconds have passed on the app's `Timer`, so its socket closes and the address can be bound
-/// again. A reply queued as the app drops, the
-/// `unavailable` a `close` cut by a spent `shutdown_timeout` wrote in its one poll among them,
-/// is sent.
+/// again. A reply queued as the app drops is sent, among them the `unavailable` a `close` cut by
+/// a spent `shutdown_timeout` queues in its one poll for each call the server still holds.
 ///
 /// The link's sockets and tasks live on the tokio runtime it holds, the one current where it was
 /// built or the one [`with_handle`](Self::with_handle) names, so its futures and streams may be
@@ -83,6 +82,8 @@ pub struct Udp {
     receiving: Mutex<Option<Owned>>,
     /// The server socket's writer, which `close` leaves running to send its refusals.
     writing: Mutex<Option<Flushed>>,
+    /// The server's calls in flight; set while the server listens.
+    calls: Mutex<Option<Arc<Mutex<Ids>>>>,
 }
 
 /// A task only the link holds, aborted when dropped: a tokio `JoinHandle` detaches on drop.
@@ -139,6 +140,7 @@ impl Udp {
             timer: None,
             receiving: Mutex::new(None),
             writing: Mutex::new(None),
+            calls: Mutex::new(None),
             state: Arc::new(State {
                 bound: Mutex::new(Vec::new()),
                 socket: Mutex::new(None),
@@ -243,8 +245,10 @@ impl Link for Udp {
         drop(runtime.handle().spawn(write_server_datagrams(Arc::clone(&socket), queued, stop, timer)));
         *lock(&self.writing) = Some(Flushed(Some(dropped)));
         *lock(&self.state.writes) = Some(writes.clone());
+        let ids = Arc::new(Mutex::new(Ids::new(Arc::clone(&self.state))));
+        *lock(&self.calls) = Some(Arc::clone(&ids));
         let (deliveries, inbound) = mpsc::channel(DELIVERY_QUEUE);
-        let receiving = runtime.handle().spawn(receive(socket, self.codec, Arc::clone(&self.state), deliveries, writes));
+        let receiving = runtime.handle().spawn(receive(socket, self.codec, Arc::clone(&self.state), ids, deliveries, writes));
         *lock(&self.receiving) = Some(Owned(receiving));
         let inbound = futures_util::stream::unfold(inbound, |mut inbound| async move {
             let delivery = inbound.recv().await?;
@@ -291,10 +295,17 @@ impl Link for Udp {
         self.state.draining.send_replace(true);
     }
 
-    /// A server's `close` stops the receive task, then reads what the socket's buffer already
-    /// holds and answers each request found there `err` of kind `unavailable`, so a datagram that
-    /// arrived before the close is answered; one arriving after it is not.
+    /// A server's `close` first answers every call it holds `err` of kind `unavailable`, queued
+    /// before its first await, so a `close` a spent shutdown cap polls once sends them; a call's
+    /// own answer arriving afterwards is refused. It then stops the receive task, reads what the
+    /// socket's buffer already holds and answers each request found there the same way, so a
+    /// datagram that arrived before the close is answered; one arriving after it is not.
     async fn close(&self) -> Result<(), BoxError> {
+        let calls = lock(&self.calls).take();
+        let writes = lock(&self.state.writes).clone();
+        if let (Some(calls), Some(writes)) = (calls, writes) {
+            answer_held(&calls, &writes, self.codec);
+        }
         self.state.client_epoch.send_modify(|epoch| *epoch += 1);
         let receiving = lock(&self.receiving).take();
         if let Some(mut receiving) = receiving {
@@ -357,8 +368,14 @@ async fn read_replies(socket: Arc<UdpSocket>, epoch: watch::Receiver<u64>, codec
 /// caller to stop sending, and the stream ending only at `close` would hold the drain to its
 /// deadline. This loop alone sends deliveries and decides the end between datagrams, so a
 /// `cancel` releasing the last call is queued before the stream ends.
-async fn receive(socket: Arc<UdpSocket>, codec: Codec, state: Arc<State>, deliveries: mpsc::Sender<Delivery>, writes: ordered::Sender<Datagram>) {
-    let ids = Arc::new(Mutex::new(Ids::new(Arc::clone(&state))));
+async fn receive(
+    socket: Arc<UdpSocket>,
+    codec: Codec,
+    state: Arc<State>,
+    ids: Arc<Mutex<Ids>>,
+    deliveries: mpsc::Sender<Delivery>,
+    writes: ordered::Sender<Datagram>,
+) {
     let mut buffer = vec![0u8; MAX_DATAGRAM as usize + 1];
     let mut deliveries = Some(deliveries);
     loop {
@@ -453,13 +470,33 @@ async fn idle(state: &State) {
 /// anything else names no call in flight and is dropped.
 async fn refuse(writes: &ordered::Sender<Datagram>, codec: Codec, peer: SocketAddr, frame: &Frame) {
     let (Frame::Req { id, .. } | Frame::Open { id, .. }) = *frame else { return };
-    let error = ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new());
-    let refused = match encode(codec, &Frame::Err { id, error }) {
+    let refused = match encode(codec, &unavailable(id)) {
         Ok(bytes) => write(writes, bytes, Some(peer)).await,
         Err(error) => Err(error),
     };
     if let Err(error) = refused {
         tracing::debug!(%error, %peer, "the UDP link could not refuse a request that arrived after the drain");
+    }
+}
+
+/// `err` of kind `unavailable` with the shutdown phrase, under `id`.
+fn unavailable(id: u64) -> Frame {
+    Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()) }
+}
+
+/// `close`'s answer to every call still held, queued on the server socket's writer in one hold of
+/// the call table's lock, which each reply path takes to queue its frame: a call's own answer is
+/// queued before these or refused. The writer sends what is queued when the link drops, so a
+/// `close` cut after this sends them, where a call's task rendering the drain's `unavailable` on
+/// another worker may queue it after the writer has ended, and the answer is lost (F586).
+fn answer_held(calls: &Mutex<Ids>, writes: &ordered::Sender<Datagram>, codec: Codec) {
+    let mut ids = lock(calls);
+    for (peer, caller) in ids.forget_all() {
+        match encode(codec, &unavailable(caller)) {
+            // Queued at the call; nothing waits for the send, which a cut `close` would not see.
+            Ok(bytes) => drop(write(writes, bytes, Some(peer))),
+            Err(error) => tracing::debug!(%error, %peer, "the UDP link could not answer a call it held at close"),
+        }
     }
 }
 
@@ -488,6 +525,14 @@ struct Ids {
 impl Ids {
     fn new(state: Arc<State>) -> Self {
         Ids { by_caller: HashMap::new(), by_server: HashMap::new(), state }
+    }
+
+    /// Every call held, as its sender's address and id, each forgotten, so a reply to it is refused.
+    fn forget_all(&mut self) -> Vec<(SocketAddr, u64)> {
+        self.by_caller.clear();
+        let held = self.by_server.drain().map(|(_, caller)| caller).collect();
+        self.counted();
+        held
     }
 
     fn counted(&self) {
@@ -538,8 +583,8 @@ fn reply_path(writes: ordered::Sender<Datagram>, peer: SocketAddr, codec: Codec,
     .peer(peer)
 }
 
-/// `frame` under the caller's id, queued now; the mapping is forgotten once a reply ends the
-/// call.
+/// `frame` under the caller's id, queued now in one hold of the call table's lock; the mapping is
+/// forgotten once a reply ends the call, or once `close` has answered the calls held.
 fn queue_reply(
     writes: &ordered::Sender<Datagram>,
     peer: SocketAddr,
@@ -550,14 +595,15 @@ fn queue_reply(
     let Some(server) = frame.id() else {
         return Err(BoxError::from("a reply frame carries no id"));
     };
-    let Some(caller) = lock(ids).caller(server) else {
+    let mut ids = lock(ids);
+    let Some(caller) = ids.caller(server) else {
         return Err("the call is no longer in flight".into());
     };
     let ends = matches!(frame, Frame::Res { .. } | Frame::Err { .. } | Frame::End { .. });
     let bytes = encode(codec, &with_id(frame, caller))?;
     let written = write(writes, bytes, Some(peer));
     if ends {
-        lock(ids).finish(server);
+        ids.finish(server);
     }
     Ok(written)
 }
@@ -766,6 +812,62 @@ mod tests {
         drop(drain);
         assert_eq!(*lock(&clock.asked), [grace], "the sleeps the drain asked of the app's clock");
         assert!(queued.recv().now_or_never().flatten().is_some(), "the drain took every datagram though its first send never completed");
+    }
+
+    /// A call's own answer racing `close`'s answer to the calls held, on two threads: once
+    /// `answer_held` returns, the call's one terminal frame is already queued, and the call's own
+    /// answer was either that frame or is refused. What is queued later would reach an ended
+    /// writer after a cut `close`.
+    #[test]
+    fn a_reply_racing_the_close_is_queued_before_it_or_refused() {
+        let state = Udp::new("127.0.0.1:0").state;
+        let peer: SocketAddr = (Ipv4Addr::LOCALHOST, 9).into();
+        let (mut own_first, mut refused) = (0, 0);
+        for round in 0..100_000 {
+            let (writes, mut queued) = ordered::channel(WRITE_QUEUE);
+            let ids = Mutex::new(Ids::new(Arc::clone(&state)));
+            let server = lock(&ids).open(peer, 7, &state.next_id);
+            let start = std::sync::Barrier::new(2);
+            let taken = |queued: &mut ordered::Receiver<Datagram>| {
+                let mut frames = Vec::new();
+                while let Some(Some(datagram)) = queued.recv().now_or_never() {
+                    frames.push(Codec::Json.decode_frame(&datagram.bytes).expect("the frame decodes"));
+                }
+                frames
+            };
+            let reply = || {
+                start.wait();
+                queue_reply(&writes, peer, Codec::Json, &ids, Frame::Res { id: server, data: ulo_rpc::Data::new(Bytes::from_static(b"1")) }).map(drop)
+            };
+            // The thread spawned reaches the barrier last and usually runs first, so the two sides
+            // swap threads each round and both orders run.
+            let (at_close, own) = std::thread::scope(|scope| {
+                if round % 2 == 0 {
+                    let own = scope.spawn(reply);
+                    start.wait();
+                    answer_held(&ids, &writes, Codec::Json);
+                    let at_close = taken(&mut queued);
+                    (at_close, own.join().expect("the reply thread"))
+                } else {
+                    let close = scope.spawn(|| {
+                        start.wait();
+                        answer_held(&ids, &writes, Codec::Json);
+                        taken(&mut queued)
+                    });
+                    let own = reply();
+                    (close.join().expect("the closing thread"), own)
+                }
+            });
+            let after = taken(&mut queued);
+            assert!(after.is_empty(), "round {round}: queued after `answer_held` returned: {after:?}");
+            assert_eq!(at_close.len(), 1, "round {round}: the frames queued for the call: {at_close:?}");
+            match (&at_close[0], own) {
+                (Frame::Res { id: 7, .. }, Ok(())) => own_first += 1,
+                (Frame::Err { id: 7, .. }, Err(_)) => refused += 1,
+                (frame, own) => panic!("round {round}: {frame:?} queued with the call's own answer {own:?}"),
+            }
+        }
+        assert!(own_first > 0 && refused > 0, "one order never ran: {own_first} answered first, {refused} refused");
     }
 
     #[test]
