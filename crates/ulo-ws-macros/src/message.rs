@@ -20,6 +20,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{ImplItemFn, LitStr};
 use ulo_handler_codegen::emit::{self, MountFn};
+use ulo_handler_codegen::restore::restore_item;
 use ulo_handler_codegen::{Paths, params, protocol, reply};
 
 /// The transport's key, which equals `<ulo_ws::Ws as ulo::Transport>::KEY`.
@@ -40,6 +41,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
         }
         _ => {}
     }
+    let original = item.clone();
     let mut item: ImplItemFn = syn::parse2(item)?;
     let Some(tokens) = protocol::take_handler_attr(&mut item.attrs)? else {
         return Err(protocol::outside_routes("message"));
@@ -64,6 +66,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     }
     .emit();
 
+    let item = restore_item(&original, &item);
     Ok(quote! {
         #item
         #mount

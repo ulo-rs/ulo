@@ -40,6 +40,7 @@ use syn::ext::IdentExt;
 use syn::parse::Parser;
 use syn::{Attribute, GenericParam, ImplItem, ImplItemFn, ItemImpl};
 use ulo_handler_codegen::protocol::{self, EnhancerAttr, HandlerTokens, MetaExpr, MetaTokens, Role};
+use ulo_handler_codegen::restore::restore_item;
 use ulo_handler_codegen::{cfg, keys, reply, shared};
 
 use crate::shared::{attrs, combine, ulo};
@@ -48,13 +49,14 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     if !attr.is_empty() {
         return Err(syn::Error::new_spanned(attr, "#[routes] takes no arguments"));
     }
+    let original = item.clone();
     let item: ItemImpl = syn::parse2(item)?;
-    expand_impl(item)
+    expand_impl(item, &original)
 }
 
 /// The impl with each handler's attributes rewritten and the controller-tier assertions added,
 /// followed by `impl Controller` and the free assertions.
-pub(crate) fn expand_impl(mut item: ItemImpl) -> syn::Result<TokenStream> {
+pub(crate) fn expand_impl(mut item: ItemImpl, original: &TokenStream) -> syn::Result<TokenStream> {
     if let Some((_, path, _)) = &item.trait_ {
         return Err(syn::Error::new_spanned(
             path,
@@ -125,6 +127,7 @@ pub(crate) fn expand_impl(mut item: ItemImpl) -> syn::Result<TokenStream> {
     };
     let free = &assertions.free;
 
+    let item = restore_item(original, &item);
     Ok(quote! {
         #item
         #controller_impl

@@ -30,6 +30,7 @@ use syn::spanned::Spanned;
 use syn::{Ident, ImplItemFn, ReturnType, Type};
 use ulo_handler_codegen::emit::{self, MountFn};
 use ulo_handler_codegen::params::{self, HandlerSig, Receiver};
+use ulo_handler_codegen::restore::restore_item;
 use ulo_handler_codegen::{Paths, protocol, reply};
 
 /// The transport's key, which equals `<ulo_grpc::Grpc as ulo::Transport>::KEY`.
@@ -43,6 +44,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
         ));
     }
     let marker: Type = syn::parse2(attr)?;
+    let original = item.clone();
     let mut item: ImplItemFn = syn::parse2(item)?;
     let Some(tokens) = protocol::take_handler_attr(&mut item.attrs)? else {
         return Err(protocol::outside_routes("method"));
@@ -72,6 +74,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     }
     .emit();
 
+    let item = restore_item(&original, &item);
     Ok(quote! {
         #item
         #hidden

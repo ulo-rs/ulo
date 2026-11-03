@@ -17,6 +17,8 @@ use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{Ident, Index, ItemStruct, Member, Type};
 
+use ulo_handler_codegen::restore::restore_item;
+
 use crate::shared::ulo;
 
 pub(crate) use args::{ExportEntry, ModuleArgs};
@@ -24,8 +26,9 @@ pub(crate) use providers::ProviderEntry;
 
 pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let args: ModuleArgs = syn::parse2(attr)?;
+    let original = item.clone();
     let item: ItemStruct = syn::parse2(item)?;
-    expand_struct(args, item)
+    expand_struct(args, item, &original)
 }
 
 /// The `ModuleDef` parameter of the generated `register`. Mixed-site, so no name in a providers
@@ -35,7 +38,7 @@ pub(crate) fn module_def_param() -> Ident {
 }
 
 /// The struct as written, followed by its `Module` impl.
-pub(crate) fn expand_struct(args: ModuleArgs, item: ItemStruct) -> syn::Result<TokenStream> {
+pub(crate) fn expand_struct(args: ModuleArgs, item: ItemStruct, original: &TokenStream) -> syn::Result<TokenStream> {
     let ulo = ulo();
     let m = module_def_param();
     let name = &item.ident;
@@ -75,6 +78,7 @@ pub(crate) fn expand_struct(args: ModuleArgs, item: ItemStruct) -> syn::Result<T
         },
     });
 
+    let item = restore_item(original, &item);
     Ok(quote! {
         #item
 

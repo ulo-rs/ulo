@@ -10,13 +10,15 @@ use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{FnArg, ImplItem, ImplItemFn, ItemImpl, Pat, ReturnType};
 
+use ulo_handler_codegen::restore::restore_item;
+
 use crate::injectable::InjectableArgs;
 use crate::shared::attrs;
 use crate::shared::dependencies::{self, DependencyLabel, DependencySpec};
 use crate::shared::{ConstructImpl, ulo};
 
 /// The impl as written, minus `#[construct]`, followed by the `Construct` impl for its self type.
-pub(crate) fn expand(args: InjectableArgs, mut item: ItemImpl) -> syn::Result<TokenStream> {
+pub(crate) fn expand(args: InjectableArgs, mut item: ItemImpl, original: &TokenStream) -> syn::Result<TokenStream> {
     if let Some((_, path, _)) = &item.trait_ {
         return Err(syn::Error::new_spanned(
             path,
@@ -57,6 +59,7 @@ pub(crate) fn expand(args: InjectableArgs, mut item: ItemImpl) -> syn::Result<To
     }
     .emit();
 
+    let item = restore_item(original, &item);
     Ok(quote! {
         #item
         #construct_impl

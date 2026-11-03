@@ -12,9 +12,10 @@ pub(crate) use args::InjectableArgs;
 
 pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let args: InjectableArgs = syn::parse2(attr)?;
+    let original = item.clone();
     match syn::parse2::<Item>(item)? {
-        Item::Struct(item) => struct_form::expand(args, item),
-        Item::Impl(item) => impl_form::expand(args, item),
+        Item::Struct(item) => struct_form::expand(args, item, &original),
+        Item::Impl(item) => impl_form::expand(args, item, &original),
         other => Err(syn::Error::new_spanned(
             other,
             "#[injectable] goes on a struct, whose fields are injected, or on an impl block holding its constructor",
