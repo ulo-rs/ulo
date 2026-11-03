@@ -67,9 +67,9 @@ application is a graph of modules and providers wired at startup. It serves that
 HTTP, WebSocket, RPC (over TCP, UDP, NATS, Redis, MQTT, RabbitMQ or Kafka), gRPC and GraphQL.
 
 The code is on the branch `experiment/di-redesign` of `github.com/ulo-rs/ulo`. That branch is a
-rebuild from first principles, and it will replace `master`. All 43 publishable crates are on
-crates.io at `0.1.0-alpha.1`, tagged `v0.1.0-alpha.1`. Every crate inherits one workspace version,
-and internal dependencies are pinned exactly, so a release is a one-line version bump.
+rebuild from first principles, and it will replace `master`. All 55 publishable crates are versioned
+`0.1.0-alpha.2` and install from crates.io. Every crate inherits one workspace version,
+and internal dependencies are pinned exactly, so a release substitutes one version string across the manifests.
 
 CI runs 14 jobs on every push:
 

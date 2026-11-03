@@ -10,7 +10,7 @@ homepage.workspace = true
 categories = ["asynchronous"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
 tokio = { workspace = true, features = ["rt", "time", "signal", "macros", "net"] }
 
 [dev-dependencies]

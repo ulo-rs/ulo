@@ -22,9 +22,9 @@ sqlite = ["diesel-async/sqlite", "diesel/sqlite"]
 integration = []
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
-ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
-ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2", features = ["serde"] }
+ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.2" }
+ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.2" }
 deadpool = { workspace = true, features = ["rt_tokio_1"] }
 diesel.workspace = true
 # `migrations` brings `AsyncConnectionWrapper` and `diesel_migrations`.

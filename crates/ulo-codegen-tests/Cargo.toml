@@ -11,7 +11,7 @@ homepage.workspace = true
 publish = false
 
 [dependencies]
-ulo-grpc = { path = "../ulo-grpc", version = "=0.1.0-alpha.1" }
+ulo-grpc = { path = "../ulo-grpc", version = "=0.1.0-alpha.2" }
 # What the code `ulo-build` writes names: tonic's client over a channel, the prost messages and
 # their codec.
 prost.workspace = true
@@ -52,7 +52,7 @@ ulo-ws-hyper = { path = "../ulo-ws-hyper" }
 ulo-test-certs = { path = "../ulo-test-certs" }
 
 [build-dependencies]
-ulo-build = { path = "../ulo-build", version = "=0.1.0-alpha.1" }
+ulo-build = { path = "../ulo-build", version = "=0.1.0-alpha.2" }
 
 [lints]
 workspace = true

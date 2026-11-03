@@ -16,8 +16,8 @@ categories = ["development-tools::debugging"]
 # `--all-features`.
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
-ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2", features = ["serde"] }
+ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.2" }
 # The flush hook awaits a oneshot the flush thread completes; no runtime is involved.
 futures-channel.workspace = true
 # `trace`: `SpanContext`, `TraceState` and the ID types the source converts through. The SDK's

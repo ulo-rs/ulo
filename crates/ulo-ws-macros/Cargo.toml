@@ -13,7 +13,7 @@ categories = ["development-tools::procedural-macro-helpers"]
 proc-macro = true
 
 [dependencies]
-ulo-handler-codegen = { path = "../ulo-handler-codegen", version = "=0.1.0-alpha.1" }
+ulo-handler-codegen = { path = "../ulo-handler-codegen", version = "=0.1.0-alpha.2" }
 proc-macro2.workspace = true
 quote.workspace = true
 syn = { workspace = true, features = ["full"] }

@@ -14,7 +14,7 @@ readme = "README.md"
 [dependencies]
 # The runtime-free async once-cell behind the per-execution cache and the shutdown outcome.
 async-lock = "3.4"
-ulo-macros = { path = "../ulo-macros", version = "=0.1.0-alpha.1" }
+ulo-macros = { path = "../ulo-macros", version = "=0.1.0-alpha.2" }
 # The `warn` for a panic raised while a spawned task's future is dropped, which no caller is
 # waiting to receive.
 tracing.workspace = true

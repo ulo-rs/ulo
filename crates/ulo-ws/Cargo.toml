@@ -20,10 +20,10 @@ categories = ["web-programming::websocket", "asynchronous"]
 conformance-probe = []
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
-ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
-ulo-ws-macros = { path = "../ulo-ws-macros", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.2" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.2" }
+ulo-ws-macros = { path = "../ulo-ws-macros", version = "=0.1.0-alpha.2" }
 # The in-memory adapter's channel: a sender that never waits and a subscriber that falls behind
 # skipping the oldest, without a runtime.
 async-broadcast.workspace = true

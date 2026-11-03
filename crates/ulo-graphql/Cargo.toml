@@ -11,7 +11,7 @@ keywords = ["ulo", "graphql", "framework"]
 categories = ["web-programming"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
 futures-core.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

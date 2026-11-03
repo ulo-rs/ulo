@@ -11,9 +11,9 @@ keywords = ["ulo", "rpc", "microservices", "framework"]
 categories = ["network-programming", "asynchronous"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-rpc-macros = { path = "../ulo-rpc-macros", version = "=0.1.0-alpha.1" }
-ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-rpc-macros = { path = "../ulo-rpc-macros", version = "=0.1.0-alpha.2" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.2" }
 # `serde` so `Bytes` and `Payload<Bytes>` travel as a CBOR byte string.
 bytes = { workspace = true, features = ["serde"] }
 ciborium.workspace = true

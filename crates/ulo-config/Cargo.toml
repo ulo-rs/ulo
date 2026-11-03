@@ -16,7 +16,7 @@ yaml = ["dep:saphyr", "dep:saphyr-parser"]
 
 [dependencies]
 # `serde`: `Secret<T>: Deserialize` and the collector `ulo-config` installs around each section.
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2", features = ["serde"] }
 jsonc-parser.workspace = true
 # The event stream of the pre-scan that bounds alias expansion; `saphyr` re-exports none of it.
 saphyr = { workspace = true, optional = true }

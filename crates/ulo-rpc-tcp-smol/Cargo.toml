@@ -11,11 +11,11 @@ keywords = ["ulo", "rpc", "tcp", "smol"]
 categories = ["network-programming"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
-ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.2" }
+ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.2" }
 # The wire, shared with ulo-rpc-tcp; this crate supplies `async-io`'s sockets.
-ulo-rpc-tcp-core = { path = "../ulo-rpc-tcp-core", version = "=0.1.0-alpha.1" }
+ulo-rpc-tcp-core = { path = "../ulo-rpc-tcp-core", version = "=0.1.0-alpha.2" }
 async-net.workspace = true
 futures-rustls.workspace = true
 # `io`: a TLS connection split into its two halves.

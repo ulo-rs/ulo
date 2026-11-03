@@ -16,9 +16,9 @@ categories = ["database"]
 integration = []
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1", features = ["serde"] }
-ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.1" }
-ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2", features = ["serde"] }
+ulo-config = { path = "../ulo-config", version = "=0.1.0-alpha.2" }
+ulo-db = { path = "../ulo-db", version = "=0.1.0-alpha.2" }
 # mongodb's default features: `rustls-tls` is rustls over ring, the workspace's provider, and
 # `dns-resolver` is what `mongodb+srv` needs. `compat-3-0-0` selects the driver's `bson` 2.
 mongodb = { workspace = true, features = ["compat-3-0-0", "rustls-tls", "dns-resolver"] }

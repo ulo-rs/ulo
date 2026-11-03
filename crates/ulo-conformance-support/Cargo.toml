@@ -19,9 +19,9 @@ tokio = ["dep:ulo-runtime-tokio", "dep:tokio"]
 smol = ["dep:ulo-runtime-smol"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-runtime-smol = { path = "../ulo-runtime-smol", version = "=0.1.0-alpha.1", optional = true }
-ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.1", optional = true }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-runtime-smol = { path = "../ulo-runtime-smol", version = "=0.1.0-alpha.2", optional = true }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.2", optional = true }
 # The relay's threads signal their ends through its oneshot, which needs no runtime.
 futures-channel.workspace = true
 # `rt-multi-thread`: `OnTokio`'s runtime.

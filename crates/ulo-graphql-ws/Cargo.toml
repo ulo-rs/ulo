@@ -11,10 +11,10 @@ keywords = ["ulo", "graphql", "websocket", "subscriptions"]
 categories = ["web-programming::websocket"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-graphql = { path = "../ulo-graphql", version = "=0.1.0-alpha.1" }
-ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
-ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-graphql = { path = "../ulo-graphql", version = "=0.1.0-alpha.2" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.2" }
+ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.2" }
 futures-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

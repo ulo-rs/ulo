@@ -22,8 +22,8 @@ ureq = ["dep:ureq"]
 reqwest-blocking = ["opentelemetry-otlp/reqwest-blocking-client", "dep:reqwest", "dep:rustls-platform-verifier"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-otel = { path = "../ulo-otel", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-otel = { path = "../ulo-otel", version = "=0.1.0-alpha.2" }
 async-trait.workspace = true
 bytes.workspace = true
 http.workspace = true

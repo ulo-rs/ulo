@@ -11,9 +11,9 @@ keywords = ["ulo", "hyper", "tokio", "server", "tls"]
 categories = ["network-programming", "web-programming::http-server"]
 
 [dependencies]
-ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
-ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.1" }
-ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.2" }
+ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.2" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.2" }
 # `tokio`: `TokioIo`, hyper's I/O traits over tokio's.
 hyper-util = { workspace = true, features = ["tokio"] }
 # `net`: the listener adopted from `ulo-net`'s socket; `rt`: the check that a tokio runtime is

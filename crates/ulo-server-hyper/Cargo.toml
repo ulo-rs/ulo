@@ -11,13 +11,13 @@ keywords = ["ulo", "hyper", "server", "tls"]
 categories = ["network-programming", "web-programming::http-server"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
 # `ConnInfo` and `TlsInfo`, what each accepted connection reports.
-ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
-ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.2" }
+ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.2" }
 # `TaskSet`, the connection tasks spawned through the app's runtime, and `Watch`, the drain's
 # signal, neither needing a runtime of its own.
-ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.1" }
+ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.2" }
 futures-io.workspace = true
 http.workspace = true
 # The I/O, executor and timer traits a connection is served through. No features: the protocol

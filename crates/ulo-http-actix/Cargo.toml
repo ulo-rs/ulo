@@ -18,8 +18,8 @@ categories = ["web-programming::http-server"]
 conformance-http2 = ["actix-web/http2"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.2" }
 actix-http.workspace = true
 actix-service.workspace = true
 actix-web.workspace = true

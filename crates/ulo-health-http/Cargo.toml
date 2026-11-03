@@ -11,10 +11,10 @@ keywords = ["ulo", "health", "http", "kubernetes"]
 categories = ["web-programming"]
 
 [dependencies]
-ulo = { path = "../ulo", version = "=0.1.0-alpha.1" }
-ulo-health = { path = "../ulo-health", version = "=0.1.0-alpha.1" }
+ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
+ulo-health = { path = "../ulo-health", version = "=0.1.0-alpha.2" }
 # Default features: its `tokio-io` feature would bring tokio into a crate that is runtime-free.
-ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.1" }
+ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.2" }
 # The `Content-Type` header name, which `ulo-http` does not re-export.
 http.workspace = true
 serde_json.workspace = true

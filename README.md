@@ -11,14 +11,14 @@ so the same application module runs on either runtime and behind any server.
 
 ## Install
 
-The `v0.1.0-alpha.1` tag is the current release. Depend on it from git:
+`0.1.0-alpha.2` is the current release, on crates.io:
 
 ```toml
 [dependencies]
-ulo = { git = "https://github.com/ulo-rs/ulo", tag = "v0.1.0-alpha.1" }
-ulo-http = { git = "https://github.com/ulo-rs/ulo", tag = "v0.1.0-alpha.1" }
-ulo-http-hyper = { git = "https://github.com/ulo-rs/ulo", tag = "v0.1.0-alpha.1" }
-ulo-runtime-tokio = { git = "https://github.com/ulo-rs/ulo", tag = "v0.1.0-alpha.1" }
+ulo = "0.1.0-alpha.2"
+ulo-http = "0.1.0-alpha.2"
+ulo-http-hyper = "0.1.0-alpha.2"
+ulo-runtime-tokio = "0.1.0-alpha.2"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
