@@ -107,17 +107,6 @@ impl Redis {
 
 const NO_RUNTIME: &str = "the Redis broadcast adapter has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
 
-/// `url` without the userinfo of its authority.
-fn without_userinfo(url: &str) -> String {
-    let Some(scheme) = url.find("://").map(|at| at + "://".len()) else { return url.to_owned() };
-    let (head, tail) = url.split_at(scheme);
-    let authority = tail.find(['/', '?', '#']).unwrap_or(tail.len());
-    match tail[..authority].rfind('@') {
-        Some(at) => format!("{head}{}", &tail[at + 1..]),
-        None => url.to_owned(),
-    }
-}
-
 fn channel(target: &Target) -> String {
     match &target.audience {
         Audience::Room(room) => format!("ulo:ws:room:{room}"),
@@ -227,11 +216,19 @@ impl BroadcastAdapter for Redis {
         Ok(())
     }
 
-    /// `broadcast` = `redis` and `url`, the adapter's URL with the userinfo of its authority left
-    /// out: `redis://:key@cache:6379` is `redis://cache:6379`, so two URLs differing only in
-    /// their credentials compare equal.
+    /// `broadcast` = `redis` and `url`, the adapter's URL as its scheme, host, port and path:
+    /// `redis://:key@cache:6379/2` is `redis://cache:6379/2`, and
+    /// `redis+unix:///run/redis.sock?pass=key&db=1` is `redis+unix:///run/redis.sock`. Two URLs
+    /// differing only in their userinfo, query or fragment compare equal, a Unix socket's
+    /// database number among them, since it is a query parameter; two differing in their path,
+    /// a TCP URL's database number or a socket's location, do not. Then `connect_within`, so a
+    /// second import with another bound is refused rather than running on the first's. The
+    /// runtime `with_handle` names is not compared.
     fn settings(&self) -> ModuleSettings {
-        ModuleSettings::new().with("broadcast", format_args!("redis")).with("url", format_args!("{}", without_userinfo(&self.url)))
+        ModuleSettings::new()
+            .with("broadcast", format_args!("redis"))
+            .with("url", format_args!("{}", ulo::__private::setting_url(&self.url)))
+            .with("connect_within", self.connect_within)
     }
 
     /// A failed publish drops the cached connection, so the next publish connects again. The

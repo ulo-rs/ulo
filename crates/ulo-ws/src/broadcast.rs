@@ -40,8 +40,11 @@ pub trait BroadcastAdapter: Send + Sync + 'static {
     ///
     /// By default the adapter's type name alone, under `broadcast`, so an adapter that overrides
     /// nothing compares by its type and two values of one type are one module. The in-memory
-    /// adapter answers `local`, and `ulo_ws_redis::Redis` answers `redis` with its URL, userinfo
-    /// left out. A wiring report prints the values, so a credential is never written here.
+    /// adapter answers `local`, and `ulo_ws_redis::Redis` answers `redis` with its URL's scheme,
+    /// host, port and path, its userinfo, query and fragment left out, and its `connect_within`.
+    /// A wiring report prints the values, so a credential is never written here. `WsModule`
+    /// appends the gateway defaults under their builder methods' names, and
+    /// `ModuleSettings::with` panics on a name written twice, so an adapter does not use them.
     fn settings(&self) -> ModuleSettings {
         ModuleSettings::new().with("broadcast", format_args!("{}", std::any::type_name::<Self>()))
     }

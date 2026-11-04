@@ -1,5 +1,5 @@
-//! Support for the code `ulo-macros` generates. Not part of the public API: names and shapes here
-//! change with the macros.
+//! Support for the code `ulo-macros` generates and for the workspace's integration crates. Not
+//! part of the public API: names and shapes here change with the macros and those crates.
 
 pub use std::sync::Arc;
 
@@ -649,6 +649,14 @@ pub mod factory {
         PerExecution => execution, try_execution;
         Transient => transient, try_transient;
     }
+}
+
+/// `url` as a module setting reports it: its scheme, host, port and path, never its userinfo,
+/// query or fragment, and its scheme and `[unreadable]` when it does not read as a scheme and an
+/// authority (DESIGN §8.3). Every integration crate whose `settings` report a URL writes it
+/// through this.
+pub fn setting_url(url: &str) -> String {
+    crate::redact::setting_url(url)
 }
 
 /// Runs one synchronous deserialisation with the secret collector open on this thread, answering

@@ -37,8 +37,9 @@ use crate::table::GatewayDefaults;
 /// server's 503 before the hand-off sees it.
 ///
 /// Its identity is its type, so two imports are one module, and its settings are the broadcast
-/// adapter's [`BroadcastAdapter::settings`]: a second import over an adapter answering other
-/// settings, `redis` beside `local` or another Redis URL, is refused at `wire()` as
+/// adapter's [`BroadcastAdapter::settings`] followed by the gateway defaults: a second import over
+/// an adapter answering other settings, `redis` beside `local` or another Redis URL, or with
+/// another default, a `message_limit` or a `ping_interval`, is refused at `wire()` as
 /// `ulo::WiringError::DifferingSettings`.
 #[derive(Clone)]
 pub struct WsModule {
@@ -117,7 +118,16 @@ impl Module for WsModule {
     }
 
     fn settings(&self) -> ModuleSettings {
-        self.adapter.settings()
+        let defaults = &self.defaults;
+        self.adapter
+            .settings()
+            .with("message_limit", defaults.message_limit)
+            .with("max_connections", defaults.max_connections)
+            .with("max_inflight", defaults.max_inflight)
+            .with("server_max_inflight", defaults.server_max_inflight)
+            .with("max_outbound", defaults.max_outbound)
+            .with("ping_interval", defaults.ping_interval)
+            .with("pong_timeout", defaults.pong_timeout)
     }
 
     /// The module is global, so `Dep<Rooms>` and `Dep<dyn BroadcastAdapter>` resolve in every

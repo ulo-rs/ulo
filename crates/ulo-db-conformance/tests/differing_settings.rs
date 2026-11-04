@@ -10,7 +10,7 @@ use std::time::Duration;
 use ulo::{App, Bound, BoxError, BoxFuture, LookupError, Module, ModuleDef, ModuleIdentity, ModuleSite, Signal, WiringError, WiringErrors};
 use ulo_config::Problems;
 use ulo_conformance_support::{Harness, OnTokio};
-use ulo_db::{MigrationLock, Migrations, Store, StoreModule};
+use ulo_db::{MigrationLock, Migrations, MigratorIdentity, Store, StoreModule};
 
 struct Fake;
 
@@ -53,6 +53,7 @@ impl MigrationLock for Fake {
     }
 }
 
+/// A migrator answering no identity, so `.migrate(..)` compares its call.
 struct Migrator;
 
 impl Migrations<Fake> for Migrator {
@@ -60,6 +61,35 @@ impl Migrations<Fake> for Migrator {
         Box::pin(async { Ok(()) })
     }
 }
+
+/// A second migrator type answering no identity.
+struct OtherMigrator;
+
+impl Migrations<Fake> for OtherMigrator {
+    fn run(self: Arc<Self>, _: String) -> BoxFuture<'static, Result<(), BoxError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// A migrator held in a `static` and passed by reference, compared by its address, as
+/// `ulo-db-sqlx` implements it for `&'static sqlx::migrate::Migrator`. Not zero-sized, so two
+/// `static`s have two addresses.
+struct Listed {
+    _name: &'static str,
+}
+
+impl Migrations<Fake> for &'static Listed {
+    fn run(self: Arc<Self>, _: String) -> BoxFuture<'static, Result<(), BoxError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn identity(&self) -> Option<MigratorIdentity> {
+        Some(MigratorIdentity::of_static(*self))
+    }
+}
+
+static MIGRATIONS: Listed = Listed { _name: "one" };
+static OTHER_MIGRATIONS: Listed = Listed { _name: "two" };
 
 struct Primary;
 struct Replica;
@@ -193,8 +223,29 @@ fn each_builder_setting_is_compared() {
     }
 }
 
-/// A migrator has no value to compare, so two `.migrate(..)` calls are two settings even when
-/// they name one migrator, and a store built in one function that both importers call is one.
+/// One `static` passed at two calls is one migrator, and two `static`s are two, whatever their
+/// contents. Planted break: `StoreModule::settings` ignoring the migrator's identity.
+#[test]
+fn a_static_migrator_is_compared_by_its_address() {
+    wire(module::<Root>(vec![
+        Box::new(|m| m.import(store().migrate(&MIGRATIONS))),
+        Box::new(|m| m.import(store().migrate(&MIGRATIONS))),
+    ]))
+    .unwrap_or_else(|error| panic!("one static at two calls is one module:\n{error}"));
+
+    let errors = refused(module::<Root>(vec![
+        Box::new(|m| m.import(store().migrate(&MIGRATIONS))),
+        Box::new(|m| m.import(store().migrate(&OTHER_MIGRATIONS))),
+    ]));
+    assert_eq!(differing(&errors), ["migrate"]);
+    let text = errors.to_string();
+    let named = format!("`migrate` = `{}` at 0x", std::any::type_name::<Listed>());
+    assert_eq!(text.matches(&named).count(), 2, "both sides name the migrator's type and address:\n{text}");
+}
+
+/// A migrator answering no identity compares the call that set it: one migrator written at two
+/// calls is refused, and two migrators passed through one helper's single call are one module.
+/// Planted break: `StoreModule::settings` writing `migrate` as on or off alone.
 #[test]
 fn migrations_are_compared_by_the_call_that_set_them() {
     let errors = refused(module::<Root>(vec![Box::new(|m| m.import(store())), Box::new(|m| m.import(store().migrate(Migrator)))]));
@@ -209,11 +260,23 @@ fn migrations_are_compared_by_the_call_that_set_them() {
     ]));
     assert_eq!(differing(&errors), ["migrate"]);
 
-    fn migrating() -> StoreModule<Fake> {
-        store().migrate(Migrator)
+    fn migrating(migrations: impl Migrations<Fake>) -> StoreModule<Fake> {
+        store().migrate(migrations)
     }
-    wire(module::<Root>(vec![Box::new(|m| m.import(migrating())), Box::new(|m| m.import(migrating()))]))
-        .unwrap_or_else(|error| panic!("one `.migrate(..)` call is one setting:\n{error}"));
+    wire(module::<Root>(vec![Box::new(|m| m.import(migrating(Migrator))), Box::new(|m| m.import(migrating(OtherMigrator)))]))
+        .unwrap_or_else(|error| panic!("one `.migrate(..)` call is one setting, whatever it is given:\n{error}"));
+}
+
+/// The call is its file, line and column, so two `.migrate(..)` calls on one line are two.
+/// Planted break: the call written as its file and line alone.
+#[test]
+fn two_migrate_calls_on_one_line_are_two_calls() {
+    #[rustfmt::skip]
+    let errors = refused(module::<Root>(vec![Box::new(|m| m.import(store().migrate(Migrator))), Box::new(|m| m.import(store().migrate(Migrator)))]));
+    assert_eq!(differing(&errors), ["migrate"]);
+    let text = errors.to_string();
+    let line = line!() - 3;
+    assert!(text.contains(&format!("`.migrate(..)` at {}:{line}:", file!())), "both sides name the line and a column:\n{text}");
 }
 
 #[test]

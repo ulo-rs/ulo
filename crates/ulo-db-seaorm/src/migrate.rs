@@ -7,7 +7,7 @@ use sea_orm::DatabaseConnection;
 use sea_orm::DbBackend;
 use sea_orm_migration::MigratorTrait;
 use ulo::{BoxError, BoxFuture};
-use ulo_db::{MigrationLock, Migrations};
+use ulo_db::{MigrationLock, Migrations, MigratorIdentity};
 #[cfg(feature = "mysql")]
 use ulo_db_sqlx::{MySql, MySqlLock};
 #[cfg(feature = "postgres")]
@@ -24,6 +24,10 @@ use crate::store::SeaOrm;
 /// On Postgres and MySQL the lock holds one pooled connection for the length of the run, so the
 /// pool needs `max_connections` of at least 2. A migration using `CREATE INDEX CONCURRENTLY` can
 /// deadlock against a session waiting on the advisory lock.
+///
+/// Its identity is `M`'s `TypeId`, so two imports migrating with one `M` are one module and two
+/// migrator types are refused at `wire()` as `DifferingSettings`, wherever `.migrate(..)` is
+/// written.
 pub struct SeaOrmMigrations<M> {
     _migrator: PhantomData<fn() -> M>,
 }
@@ -43,6 +47,10 @@ impl<M> Default for SeaOrmMigrations<M> {
 impl<M: MigratorTrait + 'static> Migrations<SeaOrm> for SeaOrmMigrations<M> {
     fn run(self: Arc<Self>, client: DatabaseConnection) -> BoxFuture<'static, Result<(), BoxError>> {
         Box::pin(async move { M::up(&client, None).await.map_err(|error| -> BoxError { Box::new(error) }) })
+    }
+
+    fn identity(&self) -> Option<MigratorIdentity> {
+        Some(MigratorIdentity::of_type::<M>())
     }
 }
 

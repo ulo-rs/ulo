@@ -1,5 +1,6 @@
 //! `WsModule`'s settings: its identity is its type, so two imports are one module, and the
-//! broadcast adapter's `BroadcastAdapter::settings` decide whether the second is the same one.
+//! broadcast adapter's `BroadcastAdapter::settings` followed by the gateway defaults decide
+//! whether the second is the same one.
 
 use std::sync::Arc;
 
@@ -60,6 +61,21 @@ async fn two_adapter_kinds_under_one_identity_are_refused() {
     assert_eq!(module.to_string(), "WsModule");
     let settings: Vec<_> = settings.iter().map(|s| (s.name, s.first.clone(), s.second.clone())).collect();
     assert_eq!(settings, [("broadcast", Some("local".to_owned()), Some(std::any::type_name::<Opaque>().to_owned()))]);
+}
+
+/// The gateway defaults are settings too: a second import with another `message_limit` is
+/// refused naming it. Planted break: `WsModule::settings` answering the adapter's alone.
+#[tokio::test]
+async fn two_gateway_defaults_under_one_identity_are_refused() {
+    let errors = match wired(Root(vec![WsModule::for_root().message_limit(1024), WsModule::for_root().message_limit(2048)])) {
+        Err(errors) => errors,
+        Ok(()) => panic!("wired; two message limits under one identity should be refused"),
+    };
+    let Some(WiringError::DifferingSettings { settings, .. }) = errors.iter().next() else {
+        panic!("expected `DifferingSettings`:\n{errors}");
+    };
+    let settings: Vec<_> = settings.iter().map(|s| (s.name, s.first.clone(), s.second.clone())).collect();
+    assert_eq!(settings, [("message_limit", Some("Some(1024)".to_owned()), Some("Some(2048)".to_owned()))]);
 }
 
 /// Two in-memory modules are one module, and so are two of one user adapter type.
