@@ -7,7 +7,7 @@ mod wire;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use ulo::{App, BoxError, Module, ModuleDef, ModuleIdentity, PrepareEntry, PrepareError, StartupError, TypeName, injectable};
+use ulo::{App, BoxError, Module, ModuleDef, ModuleIdentity, PrepareEntry, PrepareError, StartupError, TypeName, Unreached, injectable};
 use ulo_grpc::Grpc;
 use ulo_http::{Middleware, Request, Response};
 
@@ -27,6 +27,7 @@ impl Middleware for Pass {
 static MIXED: AtomicU32 = AtomicU32::new(0);
 static EXCLUDED: AtomicU32 = AtomicU32::new(0);
 static COVERING: AtomicU32 = AtomicU32::new(0);
+static HEALTH: AtomicU32 = AtomicU32::new(0);
 
 macro_rules! declared_at {
     ($line:expr, $declaration:expr) => {{
@@ -61,7 +62,16 @@ fn every_covered_method_excluded(m: &mut ModuleDef<'_>) {
     declared_at!(EXCLUDED, m.meta::<ulo_grpc::PreDispatch>().apply_for::<Pass>(["/codegen.v1.Counter/Add"]).exclude(["/codegen.v1.Counter/Add"]));
 }
 
+fn health_alone(m: &mut ModuleDef<'_>) {
+    declared_at!(HEALTH, m.meta::<ulo_grpc::PreDispatch>().apply_for::<Pass>(["/grpc.health.v1.Health/*"]));
+}
+
 async fn entries(register: fn(&mut ModuleDef<'_>)) -> Vec<PrepareEntry> {
+    refusal(register).await.0
+}
+
+/// The entries of the gRPC server's refusal, and its text.
+async fn refusal(register: fn(&mut ModuleDef<'_>)) -> (Vec<PrepareEntry>, String) {
     let bound = App::builder(Root(register))
         .runtime(ulo_runtime_tokio::Tokio::current())
         .wire()
@@ -79,28 +89,46 @@ async fn entries(register: fn(&mut ModuleDef<'_>)) -> Vec<PrepareEntry> {
     assert_eq!(errors.len(), 1, "{errors}");
     let refused = errors.iter().next().expect("one entry");
     assert_eq!(refused.transport, TypeName::of::<Grpc>());
-    refused.source.downcast_ref::<PrepareError>().expect("a PrepareError").entries().to_vec()
+    let prepared = refused.source.downcast_ref::<PrepareError>().expect("a PrepareError");
+    (prepared.entries().to_vec(), prepared.to_string())
 }
 
-fn is_unreached(entry: &PrepareEntry, line: &AtomicU32, scope: &str) -> bool {
+fn is_unreached(entry: &PrepareEntry, line: &AtomicU32, scope: &str, reason: Unreached) -> bool {
     let line = line.load(Ordering::SeqCst);
     assert_ne!(line, 0, "the declaration never ran");
     entry.location().is_some_and(|at| at.file() == file!() && at.line() == line)
         && entry.subject() == Some("pre-dispatch entry")
         && entry.scopes() == [scope.to_owned()]
+        && entry.reason() == Some(reason)
         && entry.names().is_empty()
 }
 
 #[tokio::test]
 async fn a_scope_covering_no_method_is_refused_beside_one_that_does() {
-    let entries = entries(one_scope_covers_and_one_does_not).await;
+    let (entries, text) = refusal(one_scope_covers_and_one_does_not).await;
     assert_eq!(entries.len(), 1, "{entries:?}");
-    assert!(is_unreached(&entries[0], &MIXED, "/typo"), "{entries:?}");
+    assert!(is_unreached(&entries[0], &MIXED, "/typo", Unreached::NoRoute), "{entries:?}");
+    let location = entries[0].location().expect("a location");
+    assert_eq!(text, format!("pre-dispatch entry at {location} is scoped to `/typo`, which matches no route's path"));
 }
 
 #[tokio::test]
 async fn a_scope_whose_covered_methods_are_all_excluded_is_refused() {
     let entries = entries(every_covered_method_excluded).await;
     assert_eq!(entries.len(), 1, "{entries:?}");
-    assert!(is_unreached(&entries[0], &EXCLUDED, "/codegen.v1.Counter/Add"), "{entries:?}");
+    assert!(is_unreached(&entries[0], &EXCLUDED, "/codegen.v1.Counter/Add", Unreached::NoRoute), "{entries:?}");
+}
+
+#[tokio::test]
+async fn a_scope_naming_only_the_health_service_is_refused_saying_health_runs_no_scoped_entry() {
+    // The health path is one the server answers, so "matches no route's path" would misstate it.
+    let (entries, text) = refusal(health_alone).await;
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert!(is_unreached(&entries[0], &HEALTH, "/grpc.health.v1.Health/*", Unreached::HealthOnly), "{entries:?}");
+    let location = entries[0].location().expect("a location");
+    let expected = format!(
+        "pre-dispatch entry at {location} is scoped to `/grpc.health.v1.Health/*`, which matches only the gRPC health \
+         service's paths among those the server answers, and health runs no scoped entry, so the entry would never run"
+    );
+    assert_eq!(text, expected);
 }

@@ -48,10 +48,14 @@ use crate::upgrade::UpgradeHandler;
 ///    `ulo_transport::span::call` span entered, its `url.path` the request's
 ///    [`OriginalPath`](crate::embed::OriginalPath) when an embedding's adapter supplied one, and
 ///    the path received otherwise.
-/// 4. A path holding a `.` or `..` segment, each dot raw, `%2E` or `%2e`, answers 400 as a
-///    problem document, offered to no error handler and seen by no pre-dispatch entry; a path an
-///    unscoped entry rewrites to one is answered the same at routing, logged at `warn`. Otherwise
-///    the unscoped pre-dispatch entries, in order, inside `AppHandle::catch_panic`.
+/// 4. A path holding a `.` or `..` segment, each dot raw, `%2E` or `%2e`, or a `\`, raw, `%5C` or
+///    `%5c`, answers 400 as a problem document, offered to no error handler and seen by no
+///    pre-dispatch entry, with the headers each unscoped `Cors` entry adds to a response it passes
+///    and `Routing::Unrouted`. Under an embedding's `Miss::Forward`, such a path that no route or
+///    upgrade path matches, its segments compared as received, is answered as a forwardable miss
+///    instead, before any entry, so the host routes it as the client sent it. A path an unscoped
+///    entry rewrites to a refused one is answered 400 at routing, logged at `warn`. Otherwise the
+///    unscoped pre-dispatch entries, in order, inside `AppHandle::catch_panic`.
 /// 5. An `Upgrade` request on an upgrade path goes to its `UpgradeHandler`, after the scoped
 ///    entries whose scope matches its path. Otherwise routing: a miss runs the scoped entries
 ///    whose scope matches its path, then is offered to the global error handlers through
@@ -208,10 +212,9 @@ impl ServiceInner {
         call_span.record(span::URL_PATH, path);
         call_span.record(span::URL_SCHEME, if req.conn.tls.is_some() { "https" } else { "http" });
         let exec = Arc::new(exec);
-        let pipeline = if let Some(refused) = malformed(req.path(), &self.config) {
-            Box::pin(std::future::ready(refused))
-        } else {
-            self.unscoped(Arc::clone(&exec), req, call_span.clone(), Arc::clone(&tracking))
+        let pipeline = match self.refused(&req, &tracking) {
+            Some(refused) => Box::pin(std::future::ready(refused)),
+            None => self.unscoped(Arc::clone(&exec), req, call_span.clone(), Arc::clone(&tracking)),
         };
         let pipeline = pipeline.instrument(call_span.clone());
         let mut response = match until_drained(pipeline, &handle).await {
@@ -254,6 +257,30 @@ impl ServiceInner {
             };
             HttpBody::new(ExecBody::new(body, exec, handle, app, permit, unwritten))
         })
+    }
+
+    /// The answer to a path [`malformed`] refuses, before any entry runs; `None` for any other.
+    /// Under `Miss::Forward` a path no route or upgrade path of the app matches, its segments
+    /// compared as received, is the host's and is answered forwardable, untouched. Any other is
+    /// the app's and answers the 400 with the headers the unscoped `Cors` entries add.
+    fn refused(&self, req: &Request, tracking: &Tracking) -> Option<Response> {
+        let mut refused = malformed(req.path(), &self.config)?;
+        if self.forward && !self.routes(req) {
+            tracking.route(Routing::NotFound);
+            return Some(self.forwardable());
+        }
+        self.stage.decorate_refusal(req, &mut refused);
+        Some(refused)
+    }
+
+    /// Whether a route of the app matches `req`'s path, whatever the method, or an upgrade path
+    /// matches an `Upgrade` request's: a path outside the embedding's prefix matches none.
+    fn routes(&self, req: &Request) -> bool {
+        if req.head.extensions.get::<crate::embed::OutsidePrefix>().is_some() {
+            return false;
+        }
+        let upgrade = req.headers().contains_key(UPGRADE) && self.upgrades.iter().any(|(path, _)| path.matches(req.path()).is_some());
+        upgrade || !matches!(self.router.route(req.method(), req.path()), Routed::NotFound)
     }
 
     /// The unscoped sub-step, routing after it.

@@ -43,7 +43,9 @@ impl ulo_http::HttpCarried for Grpc {}
 /// reply built by a handler or through one of those three keeps the `grpc-` headers it was built
 /// with: one an interceptor added is dropped, one it changed or removed is written back, and each
 /// name is logged at `warn` the first time in the process, so a trailers-only reply's status
-/// stands as the framework wrote it.
+/// stands as the framework wrote it. The response a `PreDispatch<Grpc>` entry passes is screened
+/// the same way once the stage answers, the health and reflection services' replies and the
+/// dispatcher's own statuses included.
 pub type Reply = http::Response<tonic::body::Body>;
 
 /// One call's context: `Clone + Send + Sync`, every clone the same call. The execution, the method

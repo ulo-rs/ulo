@@ -96,7 +96,7 @@ pub mod multipart {
 /// takes each method path's [`ScopedStage`](stage::ScopedStage), and runs both around its
 /// dispatcher with a [`StageHost`](stage::StageHost) that renders a failure as a gRPC status.
 pub mod stage {
-    pub use crate::pre_dispatch::{Rest, ScopedStage, Stage, StageHost};
+    pub use crate::pre_dispatch::{Rest, ScopedStage, Stage, StageHost, shares_path, unreached_scope};
 }
 
 #[doc(hidden)]

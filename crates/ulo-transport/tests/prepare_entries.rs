@@ -3,7 +3,7 @@
 
 use std::panic::Location;
 
-use ulo::{BoxError, PrepareEntry, PrepareError, TypeName};
+use ulo::{BoxError, PrepareEntry, PrepareError, TypeName, Unreached};
 use ulo_transport::prepare::{Failure, Failures};
 
 struct Gateway;
@@ -54,4 +54,28 @@ fn a_link_failure_alone_is_written_as_its_text() {
     let error = failures.into_error();
     assert_eq!(error.to_string(), "link `tcp`: refused");
     assert_eq!(error.entries()[0].subject(), Some("tcp"));
+}
+
+#[test]
+fn a_reason_given_to_a_failure_is_its_entrys_and_a_nested_entrys_reason_passes_on() {
+    let inner = PrepareError::new([], |_| "the stage refused".to_owned())
+        .with_entries(vec![PrepareEntry::new([]).scoped(["/health/*".to_owned()]).because(Unreached::HealthOnly)]);
+    let mut failures = Failures::new();
+    failures.push(Failure::plain("no route").scoped(["/typo".to_owned()]).because(Unreached::NoRoute));
+    failures.push(Failure::plain("max_inflight is zero"));
+    failures.push_error(Box::new(inner) as BoxError);
+
+    let error = failures.into_error();
+    let reasons: Vec<_> = error.entries().iter().map(PrepareEntry::reason).collect();
+    assert_eq!(reasons, [Some(Unreached::NoRoute), None, Some(Unreached::HealthOnly)]);
+}
+
+#[test]
+fn each_reason_writes_the_clause_its_refusal_ends_with() {
+    assert_eq!(Unreached::NoRoute.to_string(), "matches no route's path");
+    assert_eq!(
+        Unreached::HealthOnly.to_string(),
+        "matches only the gRPC health service's paths among those the server answers, and health runs no scoped entry, so the \
+         entry would never run"
+    );
 }

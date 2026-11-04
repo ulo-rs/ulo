@@ -1,6 +1,8 @@
 //! The router every backend shares (transports DESIGN §3.2). Built in `prepare`; a duplicate
 //! route, or two patterns that differ only in a parameter's name at one position, is a
-//! `StartupError::Configure` naming both handlers.
+//! `StartupError::Configure` naming both handlers, and a route whose static segment holds a `\`,
+//! raw or as `%5C`, one naming its handler, since a request path holding one never reaches
+//! routing.
 //!
 //! A path that matches nothing answers 404. A matching path with the wrong method answers 405
 //! with `Allow`, which RFC 9110 requires. `HEAD` is answered from the `GET` handler with the body
@@ -21,7 +23,7 @@ use crate::handler::{HandlerFn, HttpHandler};
 use crate::cx::PathParams;
 use crate::limits::{BodyLimit, Timeout};
 use crate::pre_dispatch::{ScopedStage, Stage};
-use crate::router::pattern::Pattern;
+use crate::router::pattern::{Pattern, unreachable};
 use crate::transport::Http;
 
 /// Every route, by pattern, each with its methods.
@@ -116,6 +118,13 @@ impl Router {
                     continue;
                 }
             };
+            if let Some(segment) = pattern.unreachable_segment() {
+                let (pattern, segment) = (pattern.to_string(), segment.to_owned());
+                errors.push(Failure::naming(vec![who.controller], move |names| {
+                    format!("{}: {}", who.text(names), unreachable(&format!("the route `{pattern}`"), &segment))
+                }));
+                continue;
+            }
             let names: Vec<&str> = pattern.param_names().collect();
             for check in &http.path_checks {
                 if let Err(reason) = (check.check)(&names) {

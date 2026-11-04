@@ -390,3 +390,45 @@ async fn a_path_extractor_that_does_not_fit_its_route_is_refused_naming_the_cont
     assert!(names.contains(&TypeName::of::<Mismatched>()), "{names:?}");
     assert!(names.contains(&TypeName::of::<(u64, u64)>()), "{names:?}");
 }
+
+#[injectable]
+struct Unreachable;
+
+#[routes]
+impl Unreachable {
+    #[ulo_http::get("/files/a%5Cb")]
+    fn encoded(&self) -> &'static str {
+        "never"
+    }
+
+    #[ulo_http::get("/raw\\dir/{name}")]
+    fn raw(&self) -> &'static str {
+        "never"
+    }
+
+    #[ulo_http::get("/files/a%255Cb")]
+    fn twice_encoded(&self) -> &'static str {
+        "reached"
+    }
+}
+
+fn routes_with_a_backslash(m: &mut ModuleDef<'_>) {
+    m.controller::<Unreachable>();
+}
+
+#[tokio::test]
+async fn a_route_whose_static_segment_holds_a_backslash_is_refused_naming_the_route_and_the_segment() {
+    let error = refused(routes_with_a_backslash).await;
+
+    assert_eq!(refusals(&error), 1, "one transport refused: {error}");
+    assert_eq!(refusal_names(&error), [TypeName::of::<Unreachable>(); 2], "{error}");
+    let text = error.to_string();
+    for (handler, route, segment) in [("encoded", "/files/a%5Cb", "a%5Cb"), ("raw", "/raw\\dir/{name}", "raw\\dir")] {
+        let expected = format!(
+            "`Unreachable::{handler}`: the route `{route}` can never match: its static segment `{segment}` holds a `\\`, raw or as \
+             `%5C`, and a request path holding one is refused with 400 before routing"
+        );
+        assert!(text.contains(&expected), "{expected}\n{error}");
+    }
+    assert!(!text.contains("twice_encoded"), "`%255C` decodes to the text `%5C`, which a request reaches: {error}");
+}

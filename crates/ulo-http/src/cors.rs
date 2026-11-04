@@ -24,6 +24,12 @@ use crate::response::Response;
 /// `Access-Control-Allow-*` headers without reaching routing. Every response it passes gets
 /// `Vary: Origin`. It never sends `*` together with credentials: the specification forbids the
 /// combination, so `prepare` refuses a `Cors` allowing any origin with credentials.
+///
+/// A path the app refuses before the stage runs, one holding a `.` or `..` segment or a `\`,
+/// answers 400 with the headers each `Cors` declared with `apply_value` adds to a response it
+/// passes, and no other entry runs: a cross-origin page reads the 400. A preflight to such a path
+/// is that 400 too, which a browser takes as a failed preflight. A `Cors` applied by type,
+/// `apply::<Cors>()` or `apply_for::<Cors>(..)`, adds nothing to that 400.
 #[derive(Clone, Debug, Default)]
 pub struct Cors {
     pub(crate) origins: Origins,
@@ -169,12 +175,21 @@ impl Middleware for Cors {
             return Ok(self.preflight(&req));
         }
         let mut response = next.run(req).await?;
-        let headers = response.headers_mut();
+        self.decorate(origin.as_ref(), response.headers_mut());
+        Ok(response)
+    }
+}
+
+impl Cors {
+    /// The headers added to a response this passes, for a request whose `Origin` is `origin`:
+    /// what reads no more of the request than its `Origin`, so the 400 of a path refused before
+    /// the pre-dispatch stage carries them without the entry running.
+    pub(crate) fn decorate(&self, origin: Option<&HeaderValue>, headers: &mut HeaderMap) {
         // On every response, a request without `Origin` included: a cache must not hand a
         // response without the allow headers to a cross-origin request.
         vary(headers, ORIGIN.as_str());
-        let Some(allow_origin) = origin.as_ref().and_then(|origin| self.allowed_origin(origin)) else {
-            return Ok(response);
+        let Some(allow_origin) = origin.and_then(|origin| self.allowed_origin(origin)) else {
+            return;
         };
         headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, allow_origin);
         if self.credentials {
@@ -183,7 +198,6 @@ impl Middleware for Cors {
         if let Some(expose) = list(self.expose.iter().map(HeaderName::as_str)) {
             headers.insert(ACCESS_CONTROL_EXPOSE_HEADERS, expose);
         }
-        Ok(response)
     }
 }
 

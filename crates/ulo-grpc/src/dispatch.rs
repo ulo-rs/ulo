@@ -202,9 +202,9 @@ impl Dispatcher {
         let pipeline = until_drained(pipeline, handle.clone());
         let mut abandoned = CancelOnDrop(Some(handle.clone()));
         let (response, deadline) = match timeout {
-            None => (pipeline.await, None),
+            None => (screened(pipeline.await, Writer::PreDispatch), None),
             Some(after) => match race(pipeline, self.timer.sleep(after), &handle).await {
-                Raced::Done(response, deadline) => (response, deadline),
+                Raced::Done(response, deadline) => (screened(response, Writer::PreDispatch), deadline),
                 Raced::Expired => {
                     let handler = matched.get().cloned();
                     let expired = self.expired(&handle, path, metadata, peer, handler).instrument(call_span.clone()).await;
@@ -358,7 +358,7 @@ impl Dispatcher {
             );
             let call = Arc::clone(&route.call);
             let reply = match ulo::dispatch(&route.handler, &exec, &cx, move |cx| (*call)(cx)).await {
-                Ok(reply) => screened(reply),
+                Ok(reply) => screened(reply, Writer::Interceptor),
                 Err(err) => status_reply(status::render(err, &exec)),
             };
             reply.map(HttpBody::new)
@@ -388,10 +388,11 @@ impl Dispatcher {
     }
 }
 
-/// `req` answered by the health or reflection service `builtin`.
+/// `req` answered by the health or reflection service `builtin`, its `grpc-` headers recorded as
+/// a reply the framework built records them.
 async fn answer_builtin(builtin: &Builtin, req: Request) -> Response {
     let Request { head, body, .. } = req;
-    (**builtin)(http::Request::from_parts(head, body)).await.map(HttpBody::new)
+    written((**builtin)(http::Request::from_parts(head, body)).await).map(HttpBody::new)
 }
 
 /// The health or reflection service `service`, by the name its paths start with.
@@ -476,13 +477,14 @@ pub(crate) fn status_reply(status: Status) -> Reply {
     written(status.into_http())
 }
 
-/// In a reply the framework built, before any interceptor saw it: the `grpc-` headers it was
-/// written with, a trailers-only reply's `grpc-status`, `grpc-message` and
-/// `grpc-status-details-bin` among them, none on a reply carrying a message.
+/// In a reply the framework built, a health or reflection reply among them, before any
+/// interceptor or pre-dispatch entry saw it: the `grpc-` headers it was written with, a
+/// trailers-only reply's `grpc-status`, `grpc-message` and `grpc-status-details-bin` among them,
+/// none on a reply carrying a message.
 #[derive(Clone, Debug)]
 struct Written(Arc<[(HeaderName, HeaderValue)]>);
 
-fn written(mut reply: Reply) -> Reply {
+fn written<B>(mut reply: http::Response<B>) -> http::Response<B> {
     let protocol: Arc<[(HeaderName, HeaderValue)]> =
         reply.headers().iter().filter(|(name, _)| is_protocol(name)).map(|(name, value)| (name.clone(), value.clone())).collect();
     reply.extensions_mut().insert(Written(protocol));
@@ -493,12 +495,13 @@ fn is_protocol(name: &HeaderName) -> bool {
     name.as_str().starts_with("grpc-")
 }
 
-/// `reply` as `ulo::dispatch` answered it, its `grpc-` headers those the framework wrote it with:
-/// a name an interceptor added through `Reply::headers_mut` is dropped, and one it changed or
-/// removed is written back, so no interceptor sets what gRPC over HTTP/2 reserves or forges a
-/// status. A reply carrying no [`Written`], one an interceptor or an error handler built by hand
-/// rather than through the context, passes as it is.
-fn screened(mut reply: Reply) -> Reply {
+/// `reply` as `ulo::dispatch` or the pre-dispatch stage answered it, its `grpc-` headers those the
+/// framework wrote it with: a name `by` added through the reply's `headers_mut` is dropped, and one
+/// it changed or removed is written back, so neither an interceptor nor a pre-dispatch entry sets
+/// what gRPC over HTTP/2 reserves or forges a status. A reply carrying no [`Written`], one an
+/// interceptor, an error handler or an entry built by hand rather than through the context,
+/// passes as it is.
+fn screened<B>(mut reply: http::Response<B>, by: Writer) -> http::Response<B> {
     let Some(Written(protocol)) = reply.extensions().get::<Written>().cloned() else {
         return reply;
     };
@@ -525,26 +528,44 @@ fn screened(mut reply: Reply) -> Reply {
         headers.append(name.clone(), value.clone());
     }
     for name in &touched {
-        warn_restored(name);
+        by.warn_restored(name);
     }
     reply
 }
 
-/// The `grpc-` names [`screened`] has restored and logged, each logged once per process.
+/// What wrote onto a reply [`screened`] screens: the interceptors, screened once `ulo::dispatch`
+/// answers, or the pre-dispatch entries, screened once the stage answers.
+#[derive(Clone, Copy)]
+enum Writer {
+    Interceptor,
+    PreDispatch,
+}
+
+/// The `grpc-` names [`screened`] has restored and logged, each logged once per process whether an
+/// interceptor or a pre-dispatch entry wrote it, by the warning of whichever was screened first.
 static RESTORED: Mutex<Vec<HeaderName>> = Mutex::new(Vec::new());
 
-fn warn_restored(name: &HeaderName) {
-    let mut restored = RESTORED.lock().unwrap_or_else(PoisonError::into_inner);
-    if restored.contains(name) {
-        return;
+impl Writer {
+    fn warn_restored(self, name: &HeaderName) {
+        let mut restored = RESTORED.lock().unwrap_or_else(PoisonError::into_inner);
+        if restored.contains(name) {
+            return;
+        }
+        restored.push(name.clone());
+        drop(restored);
+        match self {
+            Writer::Interceptor => tracing::warn!(
+                header = name.as_str(),
+                "an interceptor wrote a `grpc-` header onto a gRPC reply; gRPC over HTTP/2 reserves the prefix, so the reply \
+                 keeps what the framework wrote under it (logged once per name)"
+            ),
+            Writer::PreDispatch => tracing::warn!(
+                header = name.as_str(),
+                "a pre-dispatch entry wrote a `grpc-` header onto a gRPC reply; gRPC over HTTP/2 reserves the prefix, so the \
+                 reply keeps what the framework wrote under it (logged once per name)"
+            ),
+        }
     }
-    restored.push(name.clone());
-    drop(restored);
-    tracing::warn!(
-        header = name.as_str(),
-        "an interceptor wrote a `grpc-` header onto a gRPC reply; gRPC over HTTP/2 reserves the prefix, so the reply keeps \
-         what the framework wrote under it (logged once per name)"
-    );
 }
 
 /// The one phrase every refusal of a call because the server is draining or closing carries
@@ -580,9 +601,9 @@ fn until_drained(mut pipeline: BoxFuture<'static, Response>, exec: ExecutionRef)
     })
 }
 
-/// `status` as a trailers-only response.
+/// `status` as a trailers-only response, its `grpc-` headers recorded for [`screened`].
 pub(crate) fn status_response(status: Status) -> Response {
-    status.into_http()
+    written(status.into_http())
 }
 
 /// `response` as a gRPC response: one with HTTP status 200 is left as it is; any other, which a
@@ -606,16 +627,16 @@ fn as_grpc(response: Response) -> Response {
 
 /// UNIMPLEMENTED with `grpc-accept-encoding: identity` for a request compressed with an encoding
 /// this server does not decompress, which the gRPC compression specification prescribes; `None`
-/// for an uncompressed request.
+/// for an uncompressed request. The header is recorded with the status, so [`screened`] keeps it.
 fn unsupported_encoding(headers: &HeaderMap) -> Option<Response> {
     let encoding = headers.get(GRPC_ENCODING)?;
     if encoding.as_bytes() == b"identity" {
         return None;
     }
     let message = format!("this server does not decompress `{}`", String::from_utf8_lossy(encoding.as_bytes()));
-    let mut response = status_response(Status::unimplemented(message));
+    let mut response: Response = Status::unimplemented(message).into_http();
     response.headers_mut().insert(GRPC_ACCEPT_ENCODING, HeaderValue::from_static("identity"));
-    Some(response)
+    Some(written(response))
 }
 
 /// How much of a `grpc-timeout` off the grammar the refusal quotes back, as RPC's `bad_deadline`
