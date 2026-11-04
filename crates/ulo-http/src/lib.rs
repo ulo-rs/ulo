@@ -97,6 +97,7 @@ pub mod multipart {
 /// dispatcher with a [`StageHost`](stage::StageHost) that renders a failure as a gRPC status.
 pub mod stage {
     pub use crate::pre_dispatch::{Rest, ScopedStage, Stage, StageHost, shares_path, unreached_scope};
+    pub use ulo_transport::prepare::Failure;
 }
 
 #[doc(hidden)]
