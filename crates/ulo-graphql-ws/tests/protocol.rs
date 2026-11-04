@@ -24,8 +24,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use ulo::app::Bound as Serving;
 use ulo::{App, AppHandle, Bound, BoxFuture, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal};
 use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse};
-use ulo_graphql_ws::GraphqlWs;
-use ulo_graphql_ws::__private::InitTimeout;
+use ulo_graphql_ws::{GraphqlWs, InitTimeout};
 use ulo_runtime_tokio::Tokio;
 use ulo_ws::WsModule;
 

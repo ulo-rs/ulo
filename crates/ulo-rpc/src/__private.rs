@@ -24,30 +24,6 @@ use ulo_transport::{CallError, ErrorKind, IntoReply};
 pub use ulo_transport as transport;
 pub use ulo_transport::__private::{Param, ViaCall, ViaContainer, controller};
 
-/// A broker link's held `cancel` and the probe the RPC conformance suite reads it through.
-#[cfg(feature = "conformance-probe")]
-pub use crate::held::ClientProbe;
-pub use crate::held::{CANCEL_HOLD, HoldUntil};
-
-/// A panic a link caught where no task boundary converts it, its root certificates' load on a
-/// blocking thread, as the redacted message a task's panic answers: `payload` raised again in a
-/// task on `runtime` and caught by the core there, so `ulo::is_panic` finds it on an error that
-/// keeps it as its `source()`. The raise is a `resume_unwind`, which runs no panic hook, so the
-/// panic is not printed a second time. `None` when `runtime` drops the task unrun, having shut
-/// down.
-pub async fn panic_redacted<R: ulo::Spawn + ?Sized>(
-    runtime: &R,
-    payload: Box<dyn std::any::Any + Send>,
-) -> Option<std::sync::Arc<ulo::Redacted>> {
-    let raised = ulo::spawn_with(runtime, async move {
-        std::panic::resume_unwind(payload);
-    });
-    match raised.await {
-        Err(ulo::TaskEnd::Panicked(message)) => Some(message),
-        _ => None,
-    }
-}
-
 use crate::extract::{Inbound, Payload};
 use crate::frame::PayloadKind;
 use crate::handler::RpcHandler;

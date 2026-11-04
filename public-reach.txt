@@ -2,6 +2,7 @@
 # is reachable from the crate. `crate <package>` adds one; `allow <crate> <item> <type>  # reason`
 # accepts one finding as it stands. An allowance no finding matches fails the check.
 
+crate ulo-transport
 crate ulo-http
 crate ulo-rpc
 crate ulo-ws
@@ -90,3 +91,7 @@ allow ulo_ws ulo_ws::BroadcastAdapter futures_core::stream::BoxStream  # a futur
 allow ulo_ws ulo_ws::Frame serde_json::error::Error  # a JSON encoder's error, propagated with `?`; re-exporting `serde_json` for it is open
 allow ulo_ws ulo_ws::GatewayTable ulo_transport::prepare::Failures  # a server's `prepare` SPI; a server crate builds its failures through `ulo-transport`
 allow ulo_ws ulo_ws::Reply futures_core::stream::BoxStream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
+
+allow ulo_transport ulo_transport::span::call tracing::span::Span  # the span a transport opens per call, `tracing`'s own type; every transport crate depends on `tracing`, and re-exporting it from this crate is open
+allow ulo_transport ulo_transport::Detail serde_json::value::Value  # a detail's JSON payload; re-exporting `serde_json` from this crate is open
+allow ulo_transport ulo_transport::Tracked futures_core::stream::Stream  # the `Stream` impl of a reply's stream-end tracker; re-exporting `futures_core::Stream` from this crate is open

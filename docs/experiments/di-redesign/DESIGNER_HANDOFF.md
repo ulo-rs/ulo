@@ -87,7 +87,7 @@ CI runs 14 jobs on every push:
 | Layer | Crates |
 | --- | --- |
 | Core | `ulo` (DI graph, app lifecycle, `Execution`, `Runtime`/`Timer` traits, errors, redaction), `ulo-macros`, `ulo-handler-codegen` |
-| Shared transport SPI | `ulo-transport` (call/reply traits, `Count`, `TaskSet`, `Tracked`, doc-hidden `__private` primitives: the call-ordered queue, `Watch`), `ulo-transport-macros` |
+| Shared transport SPI | `ulo-transport` (call/reply traits, `Count`, `TaskSet`, `Tracked`, and in its public `sync` module the primitives a link or host shares: the call-ordered queue, `Watch`), `ulo-transport-macros` |
 | Hubs (one per protocol; runtime-free) | `ulo-http`, `ulo-rpc`, `ulo-ws`, `ulo-graphql`, `ulo-graphql-http`, `ulo-graphql-ws`, plus `-macros` crates |
 | Sockets and TLS (runtime-free) | `ulo-net` (std sockets, endpoints, socket activation, rustls `ServerConfig`) |
 | Runtimes | `ulo-runtime-tokio` (`Tokio`, holding a `Handle`), `ulo-runtime-smol` (`Smol`, `block_on`) |

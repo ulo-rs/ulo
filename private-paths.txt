@@ -1,0 +1,28 @@
+# What `scripts/private_paths.py` accepts as another crate's `__private` or `__derive` path outside
+# generated code. `emitter <package>` leaves a package's source unscanned; `allow <package> <path>`
+# accepts one path as it stands. Each entry carries its reason after a `#`; an entry no finding
+# matches fails the check. Proc-macro crates are not scanned and need no entry.
+
+emitter ulo-handler-codegen  # builds the handler code every transport attribute expands to: the paths it writes are the generated code's
+
+allow ulo-transport ulo::__private::HandlerParam  # `Param::dependencies`, which generated handler code calls, labels each parameter's reads through the core's helper: both halves are macro ABI
+allow ulo-transport ulo::__private::handler_param  # the same helper, called from `Param`'s two impls
+
+allow ulo-rpc ulo_transport::__private::Param  # re-exported in `ulo_rpc::__private` for the code `#[ulo_rpc::message]` and `#[ulo_rpc::event]` generate, which names `::ulo_rpc::__private::Param`
+allow ulo-rpc ulo_transport::__private::ViaCall  # the marker `Param`'s generated call infers, re-exported beside it
+allow ulo-rpc ulo_transport::__private::ViaContainer  # the marker `Param`'s generated call infers, re-exported beside it
+allow ulo-rpc ulo_transport::__private::controller  # re-exported for the generated call, which names `::ulo_rpc::__private::controller`
+allow ulo-ws ulo_transport::__private::Param  # re-exported in `ulo_ws::__private::reply::__private` for the code `#[ulo_ws::message]` generates, which names it there
+allow ulo-ws ulo_transport::__private::ViaCall  # the marker `Param`'s generated call infers, re-exported beside it
+allow ulo-ws ulo_transport::__private::ViaContainer  # the marker `Param`'s generated call infers, re-exported beside it
+allow ulo-ws ulo_transport::__private::controller  # re-exported for the generated call, which names `::ulo_ws::__private::reply::__private::controller`
+
+allow ulo-http ulo_transport::__derive  # re-exported so `#[derive(Classify)]` and `#[derive(Validate)]` expand through whichever transport crate the deriving crate depends on
+allow ulo-rpc ulo_transport::__derive  # re-exported for the derives, as in `ulo-http`
+allow ulo-ws ulo_transport::__derive  # re-exported for the derives, as in `ulo-http`
+allow ulo-grpc ulo_transport::__derive  # re-exported for the derives, as in `ulo-http`
+
+allow ulo-grpc ulo_http::__private::Carried  # the seal of `ulo_http::HttpCarried`, which `Grpc` implements so a gRPC call runs HTTP's pre-dispatch stage; a doc-hidden supertrait is what seals it to the two transports
+
+allow ulo-rpc-conformance ulo_conformance_support::__private  # re-exported for `conformance_suite!`'s expansion, `$crate::__private::{Slots, startup_failed}`; both crates are `publish = false` test support
+allow ulo-db-conformance ulo_conformance_support::__private  # re-exported for `conformance_suite!`'s expansion, `$crate::__private::Slots`; both crates are `publish = false` test support

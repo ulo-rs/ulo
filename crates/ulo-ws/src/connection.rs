@@ -36,7 +36,7 @@ use ulo::{
     LateOutcome, ModuleRef, MountedHandler, Refused, Runtime, Spawn, TaskHandle, Timer, TraceContext, TraceMode, Transport,
 };
 use ulo_transport::{CallError, ErrorKind, TaskSet, Tracked, Turns, span};
-use ulo_transport::__private::Watch;
+use ulo_transport::sync::{Changed, Watch};
 
 use crate::handler::HandlerFn;
 use crate::broadcast::NodeId;
@@ -1035,7 +1035,7 @@ fn poll_sleep(sleep: &mut Option<BoxFuture<'static, ()>>, cx: &mut Context<'_>) 
 }
 
 /// Ready, and spent, once `listener` has been notified.
-fn poll_listener(listener: &mut Option<EventListener>, cx: &mut Context<'_>) -> Poll<()> {
+fn poll_listener<L: Future<Output = ()> + Unpin>(listener: &mut Option<L>, cx: &mut Context<'_>) -> Poll<()> {
     let Some(heard) = listener else { return Poll::Pending };
     if Pin::new(heard).poll(cx).is_pending() {
         return Poll::Pending;
@@ -1210,7 +1210,7 @@ where
     // and registered again on the next turn.
     let mut woken: Option<EventListener> = None;
     let mut progressed: Option<EventListener> = None;
-    let mut phase_changed: Option<EventListener> = None;
+    let mut phase_changed: Option<Changed> = None;
     let mut freed: Option<EventListener> = None;
     // A message read as the server's last place went, waiting for one.
     let mut waiting: Option<Frame> = None;

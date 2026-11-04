@@ -19,7 +19,7 @@ use ulo_rpc::link::{Inbound, UNARY_ONLY};
 use ulo_rpc::{
     Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo,
 };
-use ulo_transport::__private::ordered;
+use ulo_transport::sync::ordered;
 use ulo_transport::{Details, ErrorKind};
 
 /// The largest UDP payload over IPv4: 65,535 less the IP and UDP headers. One frame is one

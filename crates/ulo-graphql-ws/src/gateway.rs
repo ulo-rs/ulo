@@ -81,8 +81,13 @@ impl ConnectionInit {
     }
 }
 
-/// `GraphqlConfig::connection_init_timeout`, as `GraphqlModule` binds it for the gateway it mounts.
-/// Read optionally: a gateway mounted without it takes the 3-second default.
+/// How long a connection has to send `connection_init`, which a [`GraphqlWs`] reads from its
+/// module when it is built. `ulo-graphql-http`'s `GraphqlModule` binds it from
+/// `GraphqlConfig::connection_init_timeout`; a module that mounts the gateway itself binds it with
+/// `m.value(InitTimeout(..))` to set the timeout. Read optionally: a gateway mounted without it
+/// takes the 3-second default, `Bound::Unbounded` waits for ever, and `Bound::After(Duration::ZERO)`
+/// closes every connection before its `connection_init` could arrive, which `GraphqlModule` refuses
+/// at startup and a binding of this value directly does not.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InitTimeout(pub Bound);
 

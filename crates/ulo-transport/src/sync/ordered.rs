@@ -2,6 +2,11 @@
 //! one link side writes. `ulo-rpc`'s TCP, UDP, Redis, RabbitMQ and Kafka links feed their writers
 //! through one.
 //!
+//! A link whose `Outbound::send` or `ReplyPath` promises call order (a streamed request's items in
+//! order with its end last, a `cancel` behind the request it names) feeds its writer through
+//! [`channel`] and answers the send with the [`Room`], in place of a bounded channel whose send
+//! waits for a permit.
+//!
 //! [`Sender::send`] puts its item in the queue at the call, synchronously, and returns a [`Room`]
 //! that resolves once the item is among the first `bound` the receiver has not taken: the bound
 //! is applied after the place is fixed. A bounded channel whose send waits for a permit before it

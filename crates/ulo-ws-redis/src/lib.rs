@@ -227,7 +227,7 @@ impl BroadcastAdapter for Redis {
     fn settings(&self) -> ModuleSettings {
         ModuleSettings::new()
             .with("broadcast", format_args!("redis"))
-            .with("url", format_args!("{}", ulo::__private::setting_url(&self.url)))
+            .with("url", format_args!("{}", ulo::secrets::setting_url(&self.url)))
             .with("connect_within", self.connect_within)
     }
 

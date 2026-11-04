@@ -85,13 +85,13 @@ impl Exporter for OtlpExporter {
     fn settings(&self, options: &OtelOptions) -> ModuleSettings {
         let settings = ModuleSettings::new().with("exporter", format_args!("otlp-http"));
         let settings = match options.endpoint.as_deref().filter(|e| !e.is_empty()) {
-            Some(endpoint) => settings.with("endpoint", format_args!("{}", ulo::__private::setting_url(endpoint))),
+            Some(endpoint) => settings.with("endpoint", format_args!("{}", ulo::secrets::setting_url(endpoint))),
             None => settings,
         };
         let proxy = match &self.proxy {
             ProxyChoice::Environment => "environment".to_owned(),
             ProxyChoice::Off => "off".to_owned(),
-            ProxyChoice::Explicit(url) => ulo::__private::setting_url(url),
+            ProxyChoice::Explicit(url) => ulo::secrets::setting_url(url),
         };
         settings
             .with("protocol", format_args!("http/protobuf"))

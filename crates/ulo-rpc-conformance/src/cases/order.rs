@@ -19,7 +19,7 @@ use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use ulo::{App, Module, ModuleDef, ModuleIdentity, Shape, Signal};
 use ulo::app::Connected;
-use ulo_rpc::__private::ClientProbe;
+use ulo_rpc::link::ClientProbe;
 use ulo_rpc::{CallHeaders, Codec, Delivery, Frame, Link, Outbound, Pattern, ReplyTo};
 
 use crate::rt::{sleep, timeout};

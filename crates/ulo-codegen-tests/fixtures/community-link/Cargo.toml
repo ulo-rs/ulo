@@ -1,0 +1,21 @@
+[package]
+name = "community-link"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "An RPC link written as a crate outside the workspace would write one: public API and the link kit alone"
+
+# Its own workspace root: built as a crate outside the repository's workspace is, against the
+# real crates by path, and never adopted by the workspace.
+[workspace]
+
+[dependencies]
+ulo = { path = "../../../ulo" }
+ulo-rpc = { path = "../../../ulo-rpc" }
+ulo-transport = { path = "../../../ulo-transport" }
+futures-core = "0.3"
+futures-util = "0.3"
+
+[dev-dependencies]
+# `publish = false`: a link outside this repository reaches the suite through a git dependency.
+ulo-rpc-conformance = { path = "../../../ulo-rpc-conformance", features = ["tokio"] }

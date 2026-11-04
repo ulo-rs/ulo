@@ -19,7 +19,7 @@ use ulo_net::rustls::ServerConfig;
 use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo};
-use ulo_transport::__private::{Watch, ordered};
+use ulo_transport::sync::{Watch, ordered};
 use ulo_transport::{Details, ErrorKind, TaskSet};
 
 /// The largest frame unless `max_frame` sets one: twice HTTP's default body limit, room for a

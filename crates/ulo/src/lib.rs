@@ -40,6 +40,7 @@ mod type_name;
 
 pub mod app;
 pub mod scope;
+pub mod secrets;
 pub mod testing;
 
 /// The binding-handle typestate: the state markers `Handle`'s parameters take and the traits

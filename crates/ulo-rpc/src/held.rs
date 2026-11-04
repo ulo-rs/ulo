@@ -48,7 +48,11 @@ impl HoldUntil {
 /// holds, the `opened` acknowledgments it withholds on request and delivers late, and the hold
 /// on a held `cancel` whose `open` carried no deadline, which a scenario shortens. A link built
 /// with its `conformance-probe` feature holds one from its construction and attaches each client
-/// side it connects.
+/// side it connects, and answers it from its `Broker::probe`.
+///
+/// Test support: compiled only under `ulo-rpc`'s `conformance-probe` feature, which a link turns
+/// on from its own feature of that name, enabled by its dev-dependency, so an application build
+/// contains it only when the application turns that feature on.
 #[cfg(feature = "conformance-probe")]
 #[derive(Default)]
 pub struct ClientProbe {

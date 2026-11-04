@@ -59,7 +59,7 @@ use std::num::NonZeroUsize;
 
 use ulo::BoundAddr;
 use ulo_rpc::Link;
-use ulo_rpc::__private::ClientProbe;
+use ulo_rpc::link::ClientProbe;
 
 pub mod cases;
 mod rt;

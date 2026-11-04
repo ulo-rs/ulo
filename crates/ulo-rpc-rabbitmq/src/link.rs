@@ -24,10 +24,9 @@ use tokio::task::AbortHandle;
 use ulo::{AppHandle, BoxError, BoxFuture, Cut, Permanent, Redacted, Refused, Runtime, RuntimeShutDown, TaskEnd, Timer, ValueHandle};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
-use ulo_rpc::__private::ClientProbe;
-use ulo_rpc::__private::HoldUntil;
-use ulo_rpc::link::Inbound;
-use ulo_transport::__private::ordered;
+use ulo_rpc::link::ClientProbe;
+use ulo_rpc::link::{HoldUntil, Inbound};
+use ulo_transport::sync::ordered;
 use ulo_transport::{Count, Details, ErrorKind, SHUTDOWN_MESSAGE};
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, ErrorBody, Frame, Link, NoDestination, NoTimer,
@@ -1176,7 +1175,7 @@ impl ClientSide {
         #[cfg(feature = "conformance-probe")]
         return self.probe.hold();
         #[cfg(not(feature = "conformance-probe"))]
-        ulo_rpc::__private::CANCEL_HOLD
+        ulo_rpc::link::CANCEL_HOLD
     }
 
     /// A streamed request's `in` or `in_end`: published once the server has acknowledged the

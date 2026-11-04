@@ -12,7 +12,7 @@ use futures_util::{FutureExt, StreamExt};
 use ulo::{Bound, BoundAddr, BoxError, DrainToken, MountedHandler, Mounted, Shape, Spawn, TypeName};
 use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
 use ulo_transport::{Admission, Count, TaskSet, Turns};
-use ulo_transport::__private::Watch;
+use ulo_transport::sync::Watch;
 
 use crate::handler::{Kind, RpcHandler};
 use crate::codec::Codec;

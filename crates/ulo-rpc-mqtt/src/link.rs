@@ -21,9 +21,8 @@ use tokio::task::{AbortHandle, JoinHandle};
 use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Redacted, Refused, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
-use ulo_rpc::__private::ClientProbe;
-use ulo_rpc::__private::{HoldUntil, panic_redacted};
-use ulo_rpc::link::Inbound;
+use ulo_rpc::link::ClientProbe;
+use ulo_rpc::link::{HoldUntil, Inbound, panic_redacted};
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured, NoTimer,
     Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
@@ -1539,7 +1538,7 @@ impl ClientSide {
         #[cfg(feature = "conformance-probe")]
         return self.probe.hold();
         #[cfg(not(feature = "conformance-probe"))]
-        ulo_rpc::__private::CANCEL_HOLD
+        ulo_rpc::link::CANCEL_HOLD
     }
 
     fn open_gate(&self, id: u64) {
