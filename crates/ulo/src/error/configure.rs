@@ -143,18 +143,45 @@ pub struct PrepareError {
 
 /// One failure a [`PrepareError`] lists, as data a test or a tool reads without parsing the
 /// report's text: the types it names, the source line that declared what failed, what failed, and
-/// the route scopes involved.
+/// the route scopes involved, and, for a scope refused because its entry would never run, why.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PrepareEntry {
     names: Vec<TypeName>,
     location: Option<&'static Location<'static>>,
     subject: Option<String>,
     scopes: Vec<String>,
+    reason: Option<Unreached>,
+}
+
+/// Why `prepare` refused a pre-dispatch entry's scope as one the entry would never run for, as
+/// [`PrepareEntry::reason`] reads it. `Display` writes the clause the refusal's text ends with,
+/// after "which".
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Unreached {
+    /// The scope matches no path a route of the table matches, once the entry's exclusions are
+    /// taken out.
+    NoRoute,
+    /// The only path the server answers that the scope matches is the gRPC health service's,
+    /// which runs no scoped entry (transports DESIGN §6.2).
+    HealthOnly,
+}
+
+impl fmt::Display for Unreached {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Unreached::NoRoute => "matches no route's path",
+            Unreached::HealthOnly => {
+                "matches only the gRPC health service's paths among those the server answers, and health runs no scoped \
+                 entry, so the entry would never run"
+            }
+        })
+    }
 }
 
 impl PrepareEntry {
-    /// An entry naming `names` and nothing else; [`at`](Self::at), [`about`](Self::about) and
-    /// [`scoped`](Self::scoped) add the rest.
+    /// An entry naming `names` and nothing else; [`at`](Self::at), [`about`](Self::about),
+    /// [`scoped`](Self::scoped) and [`because`](Self::because) add the rest.
     pub fn new(names: impl IntoIterator<Item = TypeName>) -> Self {
         PrepareEntry { names: names.into_iter().collect(), ..PrepareEntry::default() }
     }
@@ -177,6 +204,13 @@ impl PrepareEntry {
         self
     }
 
+    /// Why the scope in [`scopes`](Self::scopes) was refused, when the failure is a scope its
+    /// entry would never run for.
+    pub fn because(mut self, reason: Unreached) -> Self {
+        self.reason = Some(reason);
+        self
+    }
+
     /// The types the failure names.
     pub fn names(&self) -> &[TypeName] {
         &self.names
@@ -192,6 +226,10 @@ impl PrepareEntry {
 
     pub fn scopes(&self) -> &[String] {
         &self.scopes
+    }
+
+    pub fn reason(&self) -> Option<Unreached> {
+        self.reason
     }
 }
 

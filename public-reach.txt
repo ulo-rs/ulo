@@ -73,7 +73,6 @@ allow ulo_http ulo_http::Service tower_service::Service  # a tower `Service` imp
 allow ulo_http ulo_http::Upgraded futures_io::if_std::AsyncRead  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_http ulo_http::Upgraded futures_io::if_std::AsyncWrite  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_http ulo_http::embed::Service tower_service::Service  # a tower `Service` impl; a host serving through tower depends on tower
-allow ulo_http ulo_http::stage::Stage ulo_transport::prepare::Failure  # a server's `prepare` SPI; a server crate builds its failures through `ulo-transport`
 allow ulo_otel ulo_otel::Otel opentelemetry_sdk::trace::tracer::SdkTracer  # `Otel::layer()`'s tracing-opentelemetry types, named by a subscriber setup; re-exporting them is open
 allow ulo_otel ulo_otel::Otel tracing_opentelemetry::layer::OpenTelemetryLayer  # `Otel::layer()`'s tracing-opentelemetry types, named by a subscriber setup; re-exporting them is open
 allow ulo_otel ulo_otel::OtelOptions ulo_config::config::Config  # `ulo-config`'s types in the configuration API; re-exporting them from this crate is open

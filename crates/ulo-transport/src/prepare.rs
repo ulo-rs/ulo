@@ -30,7 +30,7 @@ use std::fmt;
 use std::panic::Location;
 use std::time::Duration;
 
-use ulo::{Bound, BoxError, PrepareEntry, PrepareError, TypeName};
+use ulo::{Bound, BoxError, PrepareEntry, PrepareError, TypeName, Unreached};
 
 use crate::count::Count;
 
@@ -133,12 +133,14 @@ impl fmt::Debug for Failures {
 ///
 /// A failure also carries what it is about as data, which `PrepareError::entries` hands on:
 /// [`at`](Self::at) the source line that declared what failed, [`about`](Self::about) what that
-/// is, [`scoped`](Self::scoped) the route scopes involved.
+/// is, [`scoped`](Self::scoped) the route scopes involved, [`because`](Self::because) why a scope
+/// was refused as one its entry would never run for.
 pub struct Failure {
     inner: Inner,
     location: Option<&'static Location<'static>>,
     subject: Option<String>,
     scopes: Vec<String>,
+    reason: Option<Unreached>,
     /// The entries of the `PrepareError` this failure came from, which it passes on whole.
     nested: Vec<PrepareEntry>,
     /// The error it came from carried a `Permanent`, which only its text would otherwise keep.
@@ -155,7 +157,16 @@ enum Inner {
 
 impl Failure {
     fn of(inner: Inner) -> Failure {
-        Failure { inner, location: None, subject: None, scopes: Vec::new(), nested: Vec::new(), permanent: false, link: None }
+        Failure {
+            inner,
+            location: None,
+            subject: None,
+            scopes: Vec::new(),
+            reason: None,
+            nested: Vec::new(),
+            permanent: false,
+            link: None,
+        }
     }
 
     /// A failure whose text names no type.
@@ -213,6 +224,14 @@ impl Failure {
         self
     }
 
+    /// Why the scope in [`scopes`](Self::scopes) was refused, when the failure is a scope its entry
+    /// would never run for. The text is the caller's: `ulo_http::stage::unreached_scope` writes it
+    /// from the reason.
+    pub fn because(mut self, reason: Unreached) -> Failure {
+        self.reason = Some(reason);
+        self
+    }
+
     /// The types this failure names.
     pub fn names(&self) -> &[TypeName] {
         match &self.inner {
@@ -231,6 +250,10 @@ impl Failure {
 
     pub fn scopes(&self) -> &[String] {
         &self.scopes
+    }
+
+    pub fn reason(&self) -> Option<Unreached> {
+        self.reason
     }
 
     /// This failure as the entries `PrepareError::entries` lists: its own, or the ones of the
@@ -255,6 +278,9 @@ impl Failure {
         }
         if let Some(subject) = self.subject.as_ref().or(self.link.as_ref()) {
             entry = entry.about(subject.clone());
+        }
+        if let Some(reason) = self.reason {
+            entry = entry.because(reason);
         }
         vec![entry]
     }

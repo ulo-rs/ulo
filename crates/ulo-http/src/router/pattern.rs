@@ -132,6 +132,12 @@ impl Pattern {
         }
     }
 
+    /// The first static segment as written that holds a `\`, raw or as `%5C`, which no request
+    /// path reaching routing holds.
+    pub(crate) fn unreachable_segment(&self) -> Option<&str> {
+        unreachable_segment(&self.raw, &self.segments)
+    }
+
     pub(crate) fn param_names(&self) -> impl Iterator<Item = &str> + '_ {
         self.segments.iter().filter_map(|segment| match segment {
             Segment::Param(name) | Segment::Rest(name) => Some(&**name),
@@ -185,6 +191,11 @@ impl ScopePattern {
 
     fn shape(&self) -> Shape<'_> {
         Shape { fixed: &self.segments, open: self.wildcard }
+    }
+
+    /// As [`Pattern::unreachable_segment`]: a scope with one matches no request path.
+    pub(crate) fn unreachable_segment(&self) -> Option<&str> {
+        unreachable_segment(&self.raw, &self.segments)
     }
 
     /// Whether this scope matches every request path the route `pattern` matches.
@@ -336,6 +347,21 @@ pub(crate) fn has_backslash(path: &str) -> bool {
     path.contains('\\') || path.as_bytes().windows(3).any(|window| matches!(window, [b'%', b'5', b'C' | b'c']))
 }
 
+/// The refusal of `what`, a route, a scope or an upgrade path, whose static `segment` holds a `\`.
+pub(crate) fn unreachable(what: &str, segment: &str) -> String {
+    format!(
+        "{what} can never match: its static segment `{segment}` holds a `\\`, raw or as `%5C`, and a request path holding one is \
+         refused with 400 before routing"
+    )
+}
+
+/// The piece of `raw` written for the first of `segments` that is static and holds a `\` once
+/// decoded. `segments` is `raw` parsed, one per piece, a scope's wildcard popped off the end.
+fn unreachable_segment<'r>(raw: &'r str, segments: &[Segment]) -> Option<&'r str> {
+    let index = segments.iter().position(|segment| matches!(segment, Segment::Static(text) if text.contains('\\')))?;
+    raw.strip_prefix('/')?.split('/').nth(index)
+}
+
 /// `path` without its trailing slash, except for `/`.
 pub(crate) fn normalize(path: &str) -> &str {
     match path.strip_suffix('/') {
@@ -448,10 +474,12 @@ fn static_matches(text: &str, piece: &str) -> bool {
 /// `piece` percent-decoded, an invalid UTF-8 sequence read as U+FFFD, with each encoded slash left
 /// as written: a value captured from one segment then holds no `/`. A path holding a dot segment
 /// or a `\`, raw or as `%5C`, is refused before routing, so no captured value holds a `\` or a
-/// dot segment either, and `root.join(value)` reaches no separator or dot segment that climbs out
-/// of `root`. A Windows join also replaces `root` with a value carrying a drive prefix, `C:x`,
-/// which nothing here refuses. `%252F` decodes to the text `%2F` as well, so a captured `%2F`
-/// does not say which of the two the client sent.
+/// dot segment either. That keeps `root.join(value)` from walking out of `root` through a
+/// separator or a dot segment, not from every way out: a Windows `Path::join` replaces `root`
+/// when the value carries a drive prefix, `C:x`, which nothing here refuses, `a:b` being an
+/// ordinary value. `Path`'s documentation gives the check an application joining a value runs.
+/// `%252F` decodes to the text `%2F` as well, so a captured `%2F` does not say which of the two
+/// the client sent.
 fn decode(piece: &str) -> Cow<'_, str> {
     let Some(first) = encoded_slash(piece) else {
         return percent_decode_str(piece).decode_utf8_lossy();
@@ -518,6 +546,20 @@ mod tests {
         for path in ["/", "/a/b", "/a/%255C", "/a/%5", "/a/5C", "/a/%2F"] {
             assert!(!has_backslash(path), "{path}");
         }
+    }
+
+    #[test]
+    fn a_static_segment_holding_a_backslash_is_named_as_written_and_a_twice_encoded_one_is_not() {
+        let route = |text: &str| Pattern::parse(text).unwrap().unreachable_segment().map(str::to_owned);
+        assert_eq!(route("/files/a%5Cb/{name}"), Some("a%5Cb".to_owned()));
+        assert_eq!(route("/files/a%5cb"), Some("a%5cb".to_owned()));
+        assert_eq!(route("/files\\raw/x%5C"), Some("files\\raw".to_owned()), "the first one");
+        for text in ["/files/a%255Cb", "/files/{name}", "/files/{*rest}", "/", "/a/5C"] {
+            assert_eq!(route(text), None, "{text}");
+        }
+        let scope = |text: &str| ScopePattern::parse(text).unwrap().unreachable_segment().map(str::to_owned);
+        assert_eq!(scope("/admin/%5C/*"), Some("%5C".to_owned()));
+        assert_eq!(scope("/admin/*"), None);
     }
 
     #[test]

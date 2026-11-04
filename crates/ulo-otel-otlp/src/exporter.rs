@@ -75,15 +75,28 @@ impl OtlpExporter {
 impl Exporter for OtlpExporter {
     type Span = SpanExporter;
 
-    /// `exporter` = `otlp-http`, `protocol` = `http/protobuf`, and the options' `endpoint` with
-    /// its userinfo left out when one is set. The headers are not among them.
+    /// `exporter` = `otlp-http`, `protocol` = `http/protobuf`, and the options' `endpoint` when
+    /// one is set, as its scheme, host, port and path: `https://user:key@collector:4318/v1?k=v`
+    /// is `https://collector:4318/v1`. Two endpoints differing only in their userinfo, query or
+    /// fragment compare equal, and two differing in their path do not. Then `client`, `Ureq` or
+    /// `ReqwestBlocking`, and `proxy`: `environment`, `off`, or the URL [`proxy`](Self::proxy)
+    /// names as the endpoint is written, its credentials left out the same way. The headers are
+    /// not among them.
     fn settings(&self, options: &OtelOptions) -> ModuleSettings {
         let settings = ModuleSettings::new().with("exporter", format_args!("otlp-http"));
         let settings = match options.endpoint.as_deref().filter(|e| !e.is_empty()) {
-            Some(endpoint) => settings.with("endpoint", format_args!("{}", without_userinfo(endpoint))),
+            Some(endpoint) => settings.with("endpoint", format_args!("{}", ulo::__private::setting_url(endpoint))),
             None => settings,
         };
-        settings.with("protocol", format_args!("http/protobuf"))
+        let proxy = match &self.proxy {
+            ProxyChoice::Environment => "environment".to_owned(),
+            ProxyChoice::Off => "off".to_owned(),
+            ProxyChoice::Explicit(url) => ulo::__private::setting_url(url),
+        };
+        settings
+            .with("protocol", format_args!("http/protobuf"))
+            .with("client", self.client)
+            .with("proxy", format_args!("{proxy}"))
     }
 
     fn build(self, options: &OtelOptions) -> Result<SpanExporter, BoxError> {
@@ -113,17 +126,6 @@ impl Exporter for OtlpExporter {
         };
 
         Ok(builder.build()?)
-    }
-}
-
-/// `url` without the userinfo of its authority: `https://user:key@host/p` is `https://host/p`.
-fn without_userinfo(url: &str) -> String {
-    let Some(scheme) = url.find("://").map(|at| at + "://".len()) else { return url.to_owned() };
-    let (head, tail) = url.split_at(scheme);
-    let authority = tail.find(['/', '?', '#']).unwrap_or(tail.len());
-    match tail[..authority].rfind('@') {
-        Some(at) => format!("{head}{}", &tail[at + 1..]),
-        None => url.to_owned(),
     }
 }
 

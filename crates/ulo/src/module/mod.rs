@@ -142,7 +142,13 @@ impl Hash for ModuleIdentity {
 /// A wiring report prints the values after the graph's redaction function, which replaces a
 /// secret the graph registered and the userinfo of a URL; anything else is printed as written,
 /// and `WiringError::DifferingSettings` holds every value unredacted. A credential belongs in the
-/// identity, whose configuration is never printed.
+/// identity, whose configuration is never printed. A URL the workspace's integration crates
+/// report as a setting is its scheme, host, port and path, never its userinfo, query or fragment,
+/// and a URL that does not read as a scheme and an authority is its scheme and `[unreadable]`.
+/// A credential written as RFC 3986 requires, its `/`, `?` and `#` percent-encoded, therefore
+/// never reaches the values, a secret only a refused registration declares, which the graph never
+/// registers, included. An unencoded `?` or `#` inside the userinfo can leave the part before it
+/// reading as a host and port, and that part is reported.
 ///
 /// ```
 /// # use std::time::Duration;
@@ -161,7 +167,19 @@ impl ModuleSettings {
     }
 
     /// Records the setting `name` with `value` written by `Debug`.
+    ///
+    /// # Panics
+    ///
+    /// When `name` is already recorded. Two imports compare a name's first value only, so a
+    /// second value under it would never be compared; a module appending its own settings to
+    /// another's, as `ulo-otel` appends `service_name` to the exporter's, fails here when both
+    /// write one name.
+    #[track_caller]
     pub fn with(mut self, name: &'static str, value: impl fmt::Debug) -> Self {
+        assert!(
+            !self.entries.iter().any(|(written, _)| *written == name),
+            "the module setting `{name}` is written twice; each name is one setting"
+        );
         self.entries.push((name, format!("{value:?}")));
         self
     }
@@ -284,4 +302,16 @@ pub(crate) fn colliding_names<'a>(names: impl IntoIterator<Item = &'a ModuleName
         }
     }
     by_text.into_values().filter(|group| group.len() > 1).flatten().cloned().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ModuleSettings;
+
+    /// Planted break: `with` recording the name again.
+    #[test]
+    #[should_panic(expected = "the module setting `lazy` is written twice")]
+    fn a_setting_name_written_twice_panics() {
+        let _ = ModuleSettings::new().with("lazy", false).with("retries", 2).with("lazy", true);
+    }
 }

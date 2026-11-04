@@ -3,7 +3,7 @@
 use http::Method;
 
 use crate::wire::{Exchange, is_reference, same_as_reference, start};
-use crate::{Host, Mode};
+use crate::{Host, Mode, ORIGIN};
 
 /// A request a route matches, answered by its handler.
 pub async fn hit<H: Host>(mode: Mode) {
@@ -74,14 +74,16 @@ pub async fn percent_decoded<H: Host>(mode: Mode) {
 }
 
 /// A path holding a `\`, raw or written `%5C` or `%5c`, in a parameter or where nothing routes,
-/// answers 400 as a problem document before routing: the host hands the path over as the client
-/// sent it, neither turning a `\` into a `/` nor decoding it.
+/// answers 400 as a problem document before routing, carrying the CORS entry's headers for the
+/// allowed origin: the host hands the path over as the client sent it, neither turning a `\` into
+/// a `/` nor decoding it.
 pub async fn backslash<H: Host>(mode: Mode) {
     let host = start::<H>(mode).await;
     for path in ["/echo/a\\b", "/echo/a%5Cb", "/echo/a%5cb", "/echo/a%5C..%5C..", "/nowhere\\hit", "/nowhere/%5C/hit"] {
-        let reply = same_as_reference(&host, Exchange::get(path)).await;
+        let reply = same_as_reference(&host, Exchange::get(path).header("origin", ORIGIN)).await;
         assert_eq!(reply.status, 400, "GET {path}: {}", reply.text());
         assert!(reply.header("content-type").is_some_and(|value| value.starts_with("application/problem+json")), "GET {path}");
+        assert_eq!(reply.header("access-control-allow-origin"), Some(ORIGIN), "GET {path}");
         if !is_reference::<H>() {
             assert_eq!(reply.routing(), Some("unrouted"), "GET {path}");
         }
@@ -104,14 +106,15 @@ pub async fn trailing_slash<H: Host>(mode: Mode) {
 }
 
 /// A path holding a `.` or `..` segment, raw or with a dot written `%2E` or `%2e`, answers 400 as
-/// a problem document before routing, whatever the rest of the path names: the host hands the
-/// path over as the client sent it.
+/// a problem document before routing, whatever the rest of the path names, carrying the CORS
+/// entry's headers for the allowed origin: the host hands the path over as the client sent it.
 pub async fn dot_segment<H: Host>(mode: Mode) {
     let host = start::<H>(mode).await;
     for path in ["/echo/..", "/echo/.", "/echo/%2e%2e", "/echo/%2E%2E", "/echo/.%2e", "/echo/%2e.", "/hit/../hit", "/nowhere/%2e%2e/hit", "/../hit"] {
-        let reply = same_as_reference(&host, Exchange::get(path)).await;
+        let reply = same_as_reference(&host, Exchange::get(path).header("origin", ORIGIN)).await;
         assert_eq!(reply.status, 400, "GET {path}: {}", reply.text());
         assert!(reply.header("content-type").is_some_and(|value| value.starts_with("application/problem+json")), "GET {path}");
+        assert_eq!(reply.header("access-control-allow-origin"), Some(ORIGIN), "GET {path}");
         if !is_reference::<H>() {
             assert_eq!(reply.routing(), Some("unrouted"), "GET {path}");
         }

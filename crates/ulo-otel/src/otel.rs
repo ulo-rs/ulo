@@ -31,7 +31,8 @@ const HOOK_MARGIN: Duration = Duration::from_secs(1);
 pub struct Otel {
     pub(crate) provider: SdkTracerProvider,
     pub(crate) options: OtelOptions,
-    /// The exporter's `Exporter::settings`, read before `build` consumed it.
+    /// The exporter's `Exporter::settings`, read before `build` consumed it, and the options the
+    /// module itself reads.
     pub(crate) settings: ModuleSettings,
     /// Shared with the source: set once the flush begins.
     pub(crate) flushing: Arc<AtomicBool>,
@@ -47,9 +48,23 @@ impl Otel {
     /// and the SDK's `telemetry.sdk.*` attributes alone; it reads no `OTEL_*` variable, so a
     /// value comes from the options however they were read. The SDK's own defaults still read
     /// `OTEL_BSP_*` and the `OTEL_SPAN_*_LIMIT` names from the process environment.
+    ///
+    /// # Panics
+    ///
+    /// When the exporter's [`Exporter::settings`] write `service_name`, `sample_ratio` or
+    /// `flush_timeout_ms`, the names the module writes itself.
+    #[track_caller]
     pub fn new<E: Exporter>(options: OtelOptions, exporter: E) -> Result<Otel, BoxError> {
         options.check()?;
-        let settings = exporter.settings(&options);
+        // The ratio and the flush timeout are compared as the module runs them, an unset one as
+        // its documented default. `Debug` writes an `f64` as the shortest text reading back to its
+        // bits, and `check` has refused NaN; adding `0.0` turns `-0.0` into `0.0`, the one ratio
+        // they both sample at.
+        let settings = exporter
+            .settings(&options)
+            .with("service_name", &options.service_name)
+            .with("sample_ratio", options.sample_ratio.unwrap_or(1.0) + 0.0)
+            .with("flush_timeout_ms", options.flush_timeout().as_millis());
         let spans = exporter.build(&options)?;
         let provider = SdkTracerProvider::builder()
             .with_resource(resource(&options))
@@ -90,9 +105,13 @@ impl Otel {
 /// opens after the flush is not exported.
 ///
 /// Its identity is its type, so two imports are one module, and its settings are the exporter's
-/// [`Exporter::settings`]: a second import over an exporter answering other settings is refused
-/// at `wire()` as `ulo::WiringError::DifferingSettings`. The exporter's headers are never among
-/// them.
+/// [`Exporter::settings`] followed by the options' `service_name`, `sample_ratio` and
+/// `flush_timeout_ms`: a second import over an exporter answering other settings, or with another
+/// of those options, is refused at `wire()` as `ulo::WiringError::DifferingSettings`. The ratio
+/// and the flush timeout compare as the module runs them: an unset ratio is `1.0` and an unset
+/// timeout `5000`, so either written out equals it unset, and `-0.0` is the ratio `0.0`. An unset
+/// `service_name` is not compared as the name the resource derives, which depends on the
+/// executable, so it differs from every name written out. The headers are never among them.
 pub struct OtelModule {
     pub(crate) otel: Otel,
 }

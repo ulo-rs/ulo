@@ -10,8 +10,11 @@ use std::time::Duration;
 use hyper::body::Incoming;
 use hyper::server::conn::http2;
 use tonic_health::ServingStatus;
-use ulo::{Bound, BoundAddr, BoxError, DrainToken, Mounted, Shape, Transport, TypeName};
-use ulo_http::stage::Stage;
+use ulo::{Bound, BoundAddr, BoxError, DrainToken, Mounted, Shape, Transport, TypeName, Unreached};
+use tonic::server::NamedService;
+use tonic_health::pb::health_server::HealthServer;
+use tonic_health::server::HealthService;
+use ulo_http::stage::{Stage, shares_path, unreached_scope};
 use ulo_server_hyper::{Accepted, RuntimeExecutor, RuntimeTimer, Serve, ServeConfig};
 use ulo_listener_tokio::TokioListener;
 use ulo_net::rustls::ServerConfig;
@@ -305,6 +308,20 @@ fn routes(mounted: &Mounted<'_, Grpc>, stage: &Stage<Grpc>, failures: &mut Failu
     routes.into_iter().map(|(path, (route, _))| (path, route)).collect()
 }
 
+/// `refused`, a scope `Stage::unreached` refused, with the reason [`Unreached::HealthOnly`] when the
+/// one path the server answers that it matches is the health service's: health runs no scoped
+/// entry, so [`Unreached::NoRoute`] would misstate it.
+fn health_only(refused: Failure) -> Failure {
+    let service = <HealthServer<HealthService> as NamedService>::NAME;
+    let (Some(Unreached::NoRoute), Some(location), [scope]) = (refused.reason(), refused.location(), refused.scopes()) else {
+        return refused;
+    };
+    if !shares_path(scope, &format!("/{service}/{{method}}")) {
+        return refused;
+    }
+    unreached_scope(location, scope.clone(), Unreached::HealthOnly)
+}
+
 fn shape_name(shape: Shape) -> &'static str {
     match shape {
         Shape::Unary => "unary",
@@ -359,7 +376,7 @@ impl ulo::Server for Server {
                 // A route the table could not hold took no scoped stage, so its scopes would read
                 // as unreached beside the failure that already names it.
                 if failures.len() == before {
-                    failures.extend(stage.unreached());
+                    failures.extend(stage.unreached().into_iter().map(health_only));
                 }
                 routes
             }

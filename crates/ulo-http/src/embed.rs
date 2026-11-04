@@ -278,7 +278,10 @@ pub enum Miss {
     /// forwarded: a route of the app matches the path.
     ///
     /// A scoped pre-dispatch entry runs only for the requests the app answers, a 405 among them: a
-    /// forwardable miss is the host's, and the host protects its own paths.
+    /// forwardable miss is the host's, and the host protects its own paths. A path holding a `\`
+    /// or a dot segment, which the app refuses with 400 before any entry, is the app's to refuse
+    /// only when a route or an upgrade path of the app matches it as received; any other is
+    /// answered forwardable, before any entry runs, and reaches the host as the client sent it.
     Forward,
 }
 

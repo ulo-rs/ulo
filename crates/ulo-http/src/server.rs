@@ -12,7 +12,7 @@ use ulo_transport::{Admission, Count};
 use crate::backend::{Backend, BackendLimits, HttpConfig};
 use crate::pre_dispatch::{PreDispatch, Stage};
 use crate::router::Router;
-use crate::router::pattern::Pattern;
+use crate::router::pattern::{Pattern, unreachable};
 use crate::service::{AppService, ServiceInner};
 use crate::transport::Http;
 use crate::upgrade::{UpgradeHandler, Upgrades};
@@ -248,7 +248,8 @@ fn upgrade_handlers(mounted: &Mounted<'_, Http>) -> Vec<Arc<dyn UpgradeHandler>>
 }
 
 /// The paths every registered `UpgradeHandler` takes, parsed; two that would match the same
-/// requests are refused, as two gateways on one path are.
+/// requests are refused, as two gateways on one path are, and so is one whose static segment holds
+/// a `\`, which no request reaching it holds.
 fn upgrade_paths(
     mounted: &Mounted<'_, Http>,
     handlers: &[Arc<dyn UpgradeHandler>],
@@ -264,6 +265,10 @@ fn upgrade_paths(
                     continue;
                 }
             };
+            if let Some(segment) = pattern.unreachable_segment() {
+                failures.push(unreachable(&format!("the upgrade path `{pattern}`"), segment));
+                continue;
+            }
             let clash = paths.iter().find(|(taken, _)| taken.conflicts(&pattern)).map(|(taken, _)| taken.to_string());
             match clash {
                 Some(taken) => failures.push(format!("two upgrade paths take the same requests: `{taken}` and `{pattern}`")),

@@ -23,6 +23,32 @@ use crate::transport::Http;
 /// A value that does not parse as its field's type is `ExtractError::Malformed` (400) naming the
 /// struct field, or `"path"` for a tuple or a scalar. The path is the request's target rather than
 /// its content, so the 422 a body that does not fit its type answers does not apply.
+///
+/// A value joined to a filesystem root is kept under it as far as the router's refusals reach: a
+/// value from one segment holds no `/`, and no value holds a `\` or a `.` or `..` segment
+/// (transports DESIGN §3.2). A Windows `Path::join` still replaces its root when the value carries a drive prefix,
+/// `C:x`, which the router does not refuse, `a:b` being an ordinary value. An application joining
+/// a value checks it first, and one line refuses prefixes, roots and dot segments alike:
+///
+/// ```
+/// use std::path::{Component, Path};
+///
+/// fn stays_under_its_root(value: &str) -> bool {
+///     Path::new(value).components().all(|c| matches!(c, Component::Normal(_)))
+/// }
+///
+/// assert!(stays_under_its_root("report.txt"));
+/// assert!(stays_under_its_root("2024/report.txt"));
+/// assert!(!stays_under_its_root(".."));
+/// assert!(!stays_under_its_root("a/../b"));
+/// assert!(!stays_under_its_root("/etc/passwd"));
+/// ```
+///
+/// Those assertions hold on every platform and run where the crate is tested. On Windows,
+/// `components()` reads `C:x` as a `Component::Prefix`, so the same line refuses it there; that is
+/// std's documented behaviour, not something this example runs. `a:b` reads there as a drive
+/// prefix too, and is refused by the same line, being as able to replace the root as `C:x`. An
+/// interior `.` is dropped by `components()` rather than refused, and stays under the root.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Path<T>(pub T);
 

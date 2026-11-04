@@ -550,6 +550,63 @@ pub(crate) fn strip_userinfo(text: &str) -> String {
     out
 }
 
+/// `url` as a module setting reports it: its scheme, host, port and path, never its userinfo,
+/// query or fragment (DESIGN §8.3). `redis://:key@cache:6379/2?protocol=resp3` is
+/// `redis://cache:6379/2`, and `redis+unix:///run/redis.sock?pass=key` is
+/// `redis+unix:///run/redis.sock`.
+///
+/// The URL is read as RFC 3986 reads it, and as [`strip_userinfo`] reads the authority: the query
+/// starts at the first `?` and the fragment at the first `#`, the authority follows `scheme://`
+/// or a leading `//` and ends at `/`, `?` or `#`, and its last `@` ends the userinfo. A value
+/// with neither is read from its authority, so `key@cache:6379` is `cache:6379`.
+///
+/// An unencoded `/`, `?` or `#` inside the userinfo ends the authority there. A `/` leaves the
+/// `@` in the path, and a `?` or `#` after a `:` leaves a port that is not digits unless every
+/// character between them is a digit. A URL left with either reads as no authority and is
+/// reported as its scheme and `[unreadable]`, path and all, so two such URLs under one scheme
+/// compare equal; an `@` in any path is read the same way. Two shapes cut by a `?` or `#` still
+/// read as an authority, and what precedes the cut is reported: a userinfo without a `:`,
+/// `redis://token?x@cache` reported as `redis://token`, and a password whose characters before
+/// the cut are all digits, `redis://user:12?x@cache` reported as `redis://user:12`.
+pub(crate) fn setting_url(url: &str) -> String {
+    const UNREADABLE: &str = "[unreadable]";
+    // As the WHATWG parser the clients use reads it: no leading or trailing control or space,
+    // and no tab or newline anywhere.
+    let url: String = url.trim_matches(|c: char| c <= ' ').chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+    let url = &url[..url.find(['?', '#']).unwrap_or(url.len())];
+    let (scheme, rest) = match url.find("://") {
+        Some(at) if is_scheme(&url[..at]) => url.split_at(at + "://".len()),
+        _ if url.starts_with("//") => url.split_at("//".len()),
+        _ => ("", url),
+    };
+    let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    let host = authority.rfind('@').map_or(authority, |at| &authority[at + 1..]);
+    let readable = port_of(host).is_some() && !path.contains('@');
+    if readable { format!("{scheme}{host}{path}") } else { format!("{scheme}{UNREADABLE}") }
+}
+
+/// RFC 3986's `scheme`: a letter, then letters, digits, `+`, `-` and `.`.
+fn is_scheme(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic()) && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// The port of `host[:port]` or `[v6][:port]`, empty when there is none, or `None` when the text
+/// is no such authority: a port that is not digits, or a colon outside brackets in the host.
+fn port_of(host: &str) -> Option<&str> {
+    let after = match host.strip_prefix('[') {
+        Some(inner) => &inner[inner.find(']')? + 1..],
+        None => host,
+    };
+    let port = match after.rfind(':') {
+        Some(at) if after[..at].contains(':') => return None,
+        Some(at) => &after[at + 1..],
+        None if host.starts_with('[') && !after.is_empty() => return None,
+        None => "",
+    };
+    port.bytes().all(|b| b.is_ascii_digit()).then_some(port)
+}
+
 pub(crate) fn scrub(secrets: &SecretRegistry, text: &str) -> String {
     strip_userinfo(&secrets.replace(text))
 }
@@ -588,3 +645,100 @@ impl fmt::Display for PanicMessage {
 }
 
 impl Error for PanicMessage {}
+
+#[cfg(test)]
+mod tests {
+    use super::setting_url;
+
+    #[test]
+    fn a_setting_url_keeps_scheme_host_port_and_path() {
+        assert_eq!(setting_url("redis://cache:6379/2"), "redis://cache:6379/2");
+        assert_eq!(setting_url("https://collector:4318/v1/traces"), "https://collector:4318/v1/traces");
+        assert_eq!(setting_url("http://a:4318"), "http://a:4318");
+    }
+
+    #[test]
+    fn a_setting_url_drops_the_userinfo_the_query_and_the_fragment() {
+        assert_eq!(setting_url("redis://user:pw-in-userinfo@cache:6379/2?pass=pw-in-query#frag"), "redis://cache:6379/2");
+        assert_eq!(setting_url("https://collector:4318/v1?api_key=key-in-query"), "https://collector:4318/v1");
+        assert_eq!(setting_url("https://collector:4318#frag"), "https://collector:4318");
+        assert_eq!(setting_url("https://collector:4318?a=b#frag"), "https://collector:4318");
+    }
+
+    /// The query and fragment end the authority, so an `@` inside them is not the userinfo's. An
+    /// `@` in the path may close a password holding an unencoded `/`, so the authority is not
+    /// reported.
+    #[test]
+    fn an_at_sign_past_the_authority_is_not_userinfo() {
+        assert_eq!(setting_url("https://collector:4318/team@example/v1"), "https://[unreadable]");
+        assert_eq!(setting_url("http://host?login=me@corp"), "http://host");
+        assert_eq!(setting_url("http://host#me@corp"), "http://host");
+    }
+
+    #[test]
+    fn a_unix_socket_url_keeps_its_path_and_drops_its_query() {
+        assert_eq!(setting_url("redis+unix:///run/redis.sock?pass=pw-in-query&db=1"), "redis+unix:///run/redis.sock");
+        assert_eq!(setting_url("unix:///tmp/redis.sock"), "unix:///tmp/redis.sock");
+        assert_eq!(setting_url("redis+unix://:pw@/run/redis.sock"), "redis+unix:///run/redis.sock");
+    }
+
+    #[test]
+    fn an_ipv6_host_is_kept_whole() {
+        assert_eq!(setting_url("redis://[::1]:6379/0"), "redis://[::1]:6379/0");
+        assert_eq!(setting_url("redis://:pw@[2001:db8::1]:6379/0?pass=x"), "redis://[2001:db8::1]:6379/0");
+        assert_eq!(setting_url("http://user:pw@[fe80::1%25en0]:4318"), "http://[fe80::1%25en0]:4318");
+    }
+
+    /// Without `://` the value is read from its authority.
+    #[test]
+    fn a_value_without_a_scheme_is_read_from_its_authority() {
+        assert_eq!(setting_url("cache:6379"), "cache:6379");
+        assert_eq!(setting_url("key@cache:6379/1?pass=x"), "cache:6379/1");
+        assert_eq!(setting_url("unix:/tmp/redis.sock?pass=x"), "unix:/tmp/redis.sock");
+        assert_eq!(setting_url(""), "");
+    }
+
+    /// The last `@` of the authority ends the userinfo, so an unencoded `@` in a password is
+    /// still left out.
+    #[test]
+    fn the_last_at_sign_of_the_authority_ends_the_userinfo() {
+        assert_eq!(setting_url("redis://user:p@ss@cache:6379"), "redis://cache:6379");
+    }
+
+    /// An unencoded `/`, `?` or `#` in a password ends the authority inside it: no part of the
+    /// password is reported. Planted break: the authority reported as read.
+    #[test]
+    fn a_password_cut_by_a_delimiter_is_not_reported() {
+        for url in [
+            "redis://:pa/ss-secret@cache:6379/0",
+            "redis://user:pa/ss-secret@cache:6379/0",
+            "redis://user:pa?ss-secret@cache:6379",
+            "redis://user:pa#ss-secret@cache:6379",
+            "redis://user:/ss-secret@cache:6379",
+            "redis://u:x@y/ss-secret@cache:6379",
+        ] {
+            let reported = setting_url(url);
+            assert!(!reported.contains("pa") && !reported.contains("secret"), "{url} -> {reported}");
+        }
+    }
+
+    /// The two shapes the doc names as reported: what precedes an unencoded `?` or `#` reads as a
+    /// host, or as a host and a port of digits.
+    #[test]
+    fn a_userinfo_cut_into_a_host_and_port_is_reported() {
+        assert_eq!(setting_url("redis://token?x@cache"), "redis://token");
+        assert_eq!(setting_url("redis://token#x@cache"), "redis://token");
+        assert_eq!(setting_url("redis://user:12?x@cache"), "redis://user:12");
+        assert_eq!(setting_url("redis://token/x@cache"), "redis://[unreadable]");
+    }
+
+    /// A leading `//` opens an authority, and a `://` after anything but a scheme does not.
+    /// Planted break: only `://` opening the authority.
+    #[test]
+    fn a_network_path_and_a_late_separator_are_read_from_the_authority() {
+        assert_eq!(setting_url("//user:pw@cache:6379/1"), "//cache:6379/1");
+        assert_eq!(setting_url("key@cache/x://y"), "cache/x://y");
+        assert_eq!(setting_url("redis:\0//user:pw@cache"), "[unreadable]");
+        assert_eq!(setting_url(" re\tdis://user:pw@cache:6379/0\n"), "redis://cache:6379/0");
+    }
+}

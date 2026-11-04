@@ -340,7 +340,8 @@ async fn a_dot_segment_is_refused_before_any_entry_so_it_cannot_step_into_or_out
 
     // Read as written, `/public/../admin/users` is outside `/admin/*`; normalized, it is
     // `/admin/users`. Refused before the stage, it reaches neither the router nor any entry, and
-    // `/admin/../public` cannot step out of the scope either.
+    // `/admin/../public` cannot step out of the scope either. The CORS entry's headers are the
+    // refusal's, its entry not having run.
     for path in ["/public/../admin/users", "/public/%2e%2e/admin/users", "/admin/../public", "/admin/%2E%2E/public", "/admin/./users"] {
         for key in [None, Some("open")] {
             let mut call = Call::get(path).header("origin", ORIGIN);
@@ -352,7 +353,7 @@ async fn a_dot_segment_is_refused_before_any_entry_so_it_cannot_step_into_or_out
             assert_eq!(reply.json()["detail"], "the path holds a `.` or `..` segment", "{path}");
             assert_eq!(
                 (reply.header("x-stamp"), reply.header("x-auth"), reply.header("access-control-allow-origin")),
-                (None, None, None),
+                (None, None, Some(ORIGIN)),
                 "{path}: no entry, scoped or unscoped, ran"
             );
             assert!(matches!(reply.routing, Some(Routing::Unrouted)), "{path}: {:?}", reply.routing);
@@ -376,12 +377,73 @@ async fn a_backslash_is_refused_before_any_entry_so_no_value_a_scope_admits_carr
             assert_eq!(reply.json()["detail"], "the path holds a `\\`, raw or as `%5C`", "{path}");
             assert_eq!(
                 (reply.header("x-stamp"), reply.header("x-auth"), reply.header("access-control-allow-origin")),
-                (None, None, None),
+                (None, None, Some(ORIGIN)),
                 "{path}: no entry, scoped or unscoped, ran"
             );
             assert!(matches!(reply.routing, Some(Routing::Unrouted)), "{path}: {:?}", reply.routing);
         }
     }
+    app.stop().await;
+}
+
+/// The paths `Record` received, in order.
+static RECORDED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Records the path of every request it receives, as an unscoped static-file layer reads it.
+struct Record;
+
+impl Middleware for Record {
+    async fn handle(&self, req: Request, next: Next<'_>) -> Result<Response, BoxError> {
+        RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(req.path().to_owned());
+        next.run(req).await
+    }
+}
+
+fn recorded_behind_two_cors_entries(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.meta::<PreDispatch>()
+        .apply_value(Record)
+        .apply_value(Cors::new().allow_origin(ORIGIN).expose_headers([http::header::ETAG]))
+        .apply_value(Cors::new().allow_any_origin())
+        .exclude(["/admin/*"]);
+}
+
+#[tokio::test]
+async fn a_refused_path_carries_only_the_cors_headers_and_reaches_no_entry() {
+    let app = start(recorded_behind_two_cors_entries).await;
+    let elsewhere = "https://elsewhere.example";
+
+    // Under `/admin/*` only the first entry decorates: the allowed origin reads the 400, with the
+    // header it exposes, and any other origin, or none, gets `Vary: Origin` alone.
+    for path in ["/admin/users/7%5C..%5C..", "/admin/users/a%5cb", "/admin/users\\x", "/admin/users/..", "/admin/%2e%2e/public"] {
+        let reply = app.send(Call::get(path).header("origin", ORIGIN)).await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{path}");
+        assert_eq!(reply.header("access-control-allow-origin"), Some(ORIGIN), "{path}");
+        assert_eq!(reply.header("access-control-expose-headers"), Some("etag"), "{path}");
+        assert_eq!(reply.values("vary"), ["origin"], "{path}");
+        assert!(matches!(reply.routing, Some(Routing::Unrouted)), "{path}: {:?}", reply.routing);
+        for call in [Call::get(path).header("origin", elsewhere), Call::get(path)] {
+            let reply = app.send(call).await;
+            assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{path}");
+            assert_eq!(reply.header("access-control-allow-origin"), None, "{path}");
+            assert_eq!(reply.values("vary"), ["origin"], "{path}");
+        }
+    }
+
+    // Elsewhere both decorate, the outer entry last as on a response passing them: its echo of
+    // the allowed origin replaces the inner one's `*`, which any other origin keeps.
+    for path in ["/public/%5C", "/public/%2e%2e/admin/users", "/nowhere/%5C"] {
+        let reply = app.send(Call::get(path).header("origin", ORIGIN)).await;
+        assert_eq!((reply.status, reply.header("access-control-allow-origin")), (StatusCode::BAD_REQUEST, Some(ORIGIN)), "{path}");
+        let reply = app.send(Call::get(path).header("origin", elsewhere)).await;
+        assert_eq!((reply.status, reply.header("access-control-allow-origin")), (StatusCode::BAD_REQUEST, Some("*")), "{path}");
+        assert_eq!(reply.values("vary"), ["origin"], "{path}");
+    }
+    let reply = app.send(Call::get("/public").header("origin", ORIGIN)).await;
+    assert_eq!((reply.status, reply.header("access-control-allow-origin")), (StatusCode::OK, Some(ORIGIN)), "a request the stage runs for");
+
+    let recorded = RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    assert_eq!(recorded, ["/public"], "the unscoped entry received a refused path");
     app.stop().await;
 }
 
@@ -599,13 +661,15 @@ async fn a_supplies_with_no_entry_to_follow_is_refused_at_the_line_that_wrote_it
 }
 
 /// Whether `entry` is the refusal of one unreached scope of the pre-dispatch entry written at
-/// `line`: that line of this file, the subject, exactly that one scope, and no type named.
+/// `line`: that line of this file, the subject, exactly that one scope, the reason
+/// `Unreached::NoRoute`, and no type named.
 fn is_unreached(entry: &ulo::PrepareEntry, line: &AtomicU32, scope: &str) -> bool {
     let line = line.load(Ordering::SeqCst);
     assert_ne!(line, 0, "the declaration never ran");
     entry.location().is_some_and(|at| at.file() == file!() && at.line() == line)
         && entry.subject() == Some("pre-dispatch entry")
         && entry.scopes() == [scope.to_owned()]
+        && entry.reason() == Some(ulo::Unreached::NoRoute)
         && entry.names().is_empty()
 }
 
@@ -622,6 +686,9 @@ async fn a_scoped_entry_covering_no_route_is_refused_with_its_scope_and_the_line
     assert!(is_unreached(&entries[2], &TOO_DEEP, "/admin/users/{id}/posts"), "{entries:?}");
     let text = error.to_string();
     assert!(text.contains("`/ghost`") && text.contains("`/phantom/*`") && !text.contains("`/admin/*`"), "{error}");
+    let location = entries[0].location().expect("a location");
+    let expected = format!("pre-dispatch entry at {location} is scoped to `/ghost`, which matches no route's path");
+    assert!(text.contains(&expected), "{expected}\n{error}");
 }
 
 static MIXED: AtomicU32 = AtomicU32::new(0);
@@ -776,4 +843,71 @@ async fn a_scope_and_a_route_written_in_different_percent_encodings_read_one_pat
         assert_eq!((reply.status, reply.text()), (StatusCode::OK, "encoded".to_owned()));
         app.stop().await;
     }
+}
+
+static BACKSLASH_SCOPE: AtomicU32 = AtomicU32::new(0);
+
+fn scope_holding_a_backslash(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.provide::<Stamp>();
+    declared_at!(BACKSLASH_SCOPE, m.meta::<PreDispatch>().apply_for::<Stamp>(["/admin/*", "/admin/a%5Cb/*", "/admin\\users"]));
+}
+
+#[tokio::test]
+async fn a_scope_whose_static_segment_holds_a_backslash_is_refused_naming_the_scope_and_the_segment() {
+    // A request path holding a `\` is refused before the stage, so neither scope matches one.
+    let error = refused(scope_holding_a_backslash).await;
+    let entries = refusal_entries(&error);
+    assert_eq!(entries.len(), 2, "{error}");
+    assert!(is_refusal_at(&entries[0], &BACKSLASH_SCOPE, &["/admin/a%5Cb/*"]), "{entries:?}");
+    assert!(is_refusal_at(&entries[1], &BACKSLASH_SCOPE, &["/admin\\users"]), "{entries:?}");
+    let text = error.to_string();
+    for (scope, segment) in [("/admin/a%5Cb/*", "a%5Cb"), ("/admin\\users", "admin\\users")] {
+        let expected = format!("the scope `{scope}` can never match: its static segment `{segment}` holds a `\\`");
+        assert!(text.contains(&expected), "{expected}\n{error}");
+    }
+}
+
+static BACKSLASH_EXCLUSION: AtomicU32 = AtomicU32::new(0);
+
+fn exclusion_holding_a_backslash(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.provide::<Stamp>();
+    declared_at!(BACKSLASH_EXCLUSION, m.meta::<PreDispatch>().apply_for::<Stamp>(["/admin/*"]).exclude(["/admin/public", "/admin/x%5cy"]));
+}
+
+#[tokio::test]
+async fn an_exclusion_whose_static_segment_holds_a_backslash_is_refused_naming_it_and_the_segment() {
+    // No request path the stage sees holds a `\`, so the exclusion would remove nothing.
+    let error = refused(exclusion_holding_a_backslash).await;
+    let entries = refusal_entries(&error);
+    assert_eq!(entries.len(), 1, "{error}");
+    assert!(is_refusal_at(&entries[0], &BACKSLASH_EXCLUSION, &["/admin/x%5cy"]), "{entries:?}");
+    let expected = "the exclusion `/admin/x%5cy` can never match: its static segment `x%5cy` holds a `\\`";
+    assert!(error.to_string().contains(expected), "{expected}\n{error}");
+}
+
+/// Takes upgrades on a path no request reaching it holds.
+struct BackslashTaker;
+
+impl UpgradeHandler for BackslashTaker {
+    fn paths(&self, _app: &ulo::AppHandle) -> Vec<Cow<'static, str>> {
+        vec!["/socket%5Cfeed".into()]
+    }
+
+    fn upgrade(&self, _req: Request) -> BoxFuture<'static, Response> {
+        Box::pin(async { Response::new(HttpBody::from("never")) })
+    }
+}
+
+fn upgrade_path_holding_a_backslash(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.meta::<Upgrades>().register(BackslashTaker);
+}
+
+#[tokio::test]
+async fn an_upgrade_path_whose_static_segment_holds_a_backslash_is_refused() {
+    let error = refused(upgrade_path_holding_a_backslash).await;
+    let expected = "the upgrade path `/socket%5Cfeed` can never match: its static segment `socket%5Cfeed` holds a `\\`";
+    assert!(error.to_string().contains(expected), "{error}");
 }

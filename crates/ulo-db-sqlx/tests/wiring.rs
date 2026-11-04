@@ -196,3 +196,32 @@ async fn two_failing_readiness_checks_name_the_module_that_owns_each() {
     }
     assert_ne!(seen[0], seen[1]);
 }
+
+static MIGRATOR: Migrator = sqlx::migrate!("./tests/migrations");
+static SAME_DIRECTORY: Migrator = sqlx::migrate!("./tests/migrations");
+
+/// `&MIGRATOR` passed at two calls is one module, and two `static`s are two migrators though they
+/// read one directory. Each pair's calls are on two lines, so a comparison by call site refuses
+/// the first pair. Planted break: the `&'static Migrator` impl answering no identity.
+#[tokio::test]
+async fn a_static_migrator_is_one_migrator_wherever_it_is_passed() {
+    let db = Db::new();
+    let first = db.module().migrate(&MIGRATOR);
+    let second = db.module().migrate(&MIGRATOR);
+    app(Root::new().import(first).import(second))
+        .wire()
+        .unwrap_or_else(|error| panic!("one static at two calls is one module:\n{error}"));
+
+    let first = db.module().migrate(&MIGRATOR);
+    let second = db.module().migrate(&SAME_DIRECTORY);
+    let Err(StartupError::Wiring(errors)) = app(Root::new().import(first).import(second)).wire() else {
+        panic!("two static migrators under one identity wired");
+    };
+    let Some(WiringError::DifferingSettings { settings, .. }) = errors.iter().next() else {
+        panic!("expected `DifferingSettings`:\n{errors}");
+    };
+    let names: Vec<_> = settings.iter().map(|setting| setting.name).collect();
+    assert_eq!((names, errors.len()), (vec!["migrate"], 1), "{errors}");
+    let first = settings[0].first.as_deref().unwrap_or_default();
+    assert!(first.starts_with(&format!("`{}` at 0x", std::any::type_name::<Migrator>())), "{first}");
+}

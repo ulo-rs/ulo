@@ -1,4 +1,6 @@
+use std::any::{TypeId, type_name};
 use std::error::Error;
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,6 +32,82 @@ pub trait Migrations<S: Store>: Send + Sync + 'static {
     /// Applies the pending migrations on `client`. A migration using `CREATE INDEX CONCURRENTLY` can
     /// deadlock against a session waiting on an advisory lock.
     fn run(self: Arc<Self>, client: S::Client) -> BoxFuture<'static, Result<(), BoxError>>;
+
+    /// Which migrations these are, for comparing two imports of one store module: the `migrate`
+    /// setting is this identity's text, so two imports naming one migrator are one module and
+    /// two naming different migrators are refused at `wire()` as
+    /// `ulo::WiringError::DifferingSettings`.
+    ///
+    /// `None`, the default, compares the `.migrate(..)` call that set the migrator instead, its
+    /// file, line and column. That refuses one migrator written at two calls, and matches two
+    /// migrators passed through one helper function's single call, the second import then
+    /// running the first's migrations.
+    fn identity(&self) -> Option<MigratorIdentity> {
+        None
+    }
+}
+
+/// What a migrator is, as [`Migrations::identity`] answers it: a `static`'s address or a type,
+/// each written with the type's name. Two identities are equal when both name one `static`, or
+/// both one type.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MigratorIdentity {
+    of: Of,
+    name: &'static str,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Of {
+    Address(usize),
+    Type(TypeId),
+}
+
+impl MigratorIdentity {
+    /// A migrator held in a `static`, compared by its address: `&MIGRATOR` passed at two calls is
+    /// one migrator, and two `static`s are two, whatever they hold. A promoted constant written
+    /// inline, `&CONST` or `&sqlx::migrate!()`, has whatever address the compiler gives it:
+    /// rustc gives two occurrences of one constant one address in debug and release builds, and
+    /// in a release build a `static` can share the address of an equal inline constant. The
+    /// compiler merges two values only when their bytes are identical, which for a migrator means
+    /// the same migrations, so a merged address never names two different migrators. The merge
+    /// itself is not promised, so a `static` is what makes one migrator compare equal to itself.
+    ///
+    /// `T` is sized: a slice or a trait object would be compared by its data address alone, so
+    /// two slices starting at one element would compare equal. A zero-sized value has no address
+    /// of its own; [`of_type`](Self::of_type) names one.
+    ///
+    /// ```compile_fail,E0277
+    /// static MIGRATIONS: [u8; 2] = [1, 2];
+    /// ulo_db::MigratorIdentity::of_static::<[u8]>(&MIGRATIONS[..1]);
+    /// ```
+    pub fn of_static<T>(migrator: &'static T) -> Self {
+        let address = (migrator as *const T).cast::<()>() as usize;
+        MigratorIdentity { of: Of::Address(address), name: type_name::<T>() }
+    }
+
+    /// A migrator that is a type, compared by its `TypeId`: two values of one type are one
+    /// migrator.
+    pub fn of_type<T: ?Sized + 'static>() -> Self {
+        MigratorIdentity { of: Of::Type(TypeId::of::<T>()), name: type_name::<T>() }
+    }
+}
+
+/// `{name} at {address}` for a `static`, and `{name}` followed by its `TypeId` for a type: the
+/// `migrate` setting compares by this text, and a type's name alone is shared by one crate's
+/// type at two versions.
+impl fmt::Display for MigratorIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.of {
+            Of::Address(address) => write!(f, "`{}` at {address:#x}", self.name),
+            Of::Type(id) => write!(f, "`{}` ({id:?})", self.name),
+        }
+    }
+}
+
+impl fmt::Debug for MigratorIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 /// The store side of the migration lock: the dedicated connection and the primitive. `ulo-db` owns
@@ -62,6 +140,7 @@ pub trait MigrationLock: Store {
 /// `S: MigrationLock` is known, which `Module::register` is not.
 pub(crate) struct Migrate<S: Store> {
     migrations: Arc<dyn Migrations<S>>,
+    pub(crate) identity: Option<MigratorIdentity>,
     run: RunLocked<S>,
 }
 
@@ -89,7 +168,8 @@ impl<S: Store> Migrate<S> {
     where
         S: MigrationLock,
     {
-        Migrate { migrations: Arc::new(migrations), run: run_boxed::<S> }
+        let identity = migrations.identity();
+        Migrate { migrations: Arc::new(migrations), identity, run: run_boxed::<S> }
     }
 
     /// The lock, the migrations and the release on `client`, under `bounds`.
@@ -105,7 +185,7 @@ impl<S: Store> Migrate<S> {
 
 impl<S: Store> Clone for Migrate<S> {
     fn clone(&self) -> Self {
-        Migrate { migrations: Arc::clone(&self.migrations), run: self.run }
+        Migrate { migrations: Arc::clone(&self.migrations), identity: self.identity, run: self.run }
     }
 }
 

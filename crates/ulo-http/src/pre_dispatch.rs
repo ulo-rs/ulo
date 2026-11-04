@@ -26,7 +26,7 @@
 //! runs its stage through [`Stage`], handing each run a [`StageHost`] that renders a failure on
 //! its wire.
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::panic::Location;
@@ -36,6 +36,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use bytes::Bytes;
 use ulo::{
     AppHandle, BoxError, BoxFuture, Dep, Dependencies, DispatchStage, ExecutionRef, LookupError, Meta, ModuleRef, TypeName,
+    Unreached,
 };
 use ulo_transport::prepare::Failure;
 
@@ -47,7 +48,7 @@ use crate::render;
 use crate::request::{ConnInfo, Request};
 use crate::response::Response;
 use crate::router::RouteTarget;
-use crate::router::pattern::{Pattern, ScopePattern};
+use crate::router::pattern::{Pattern, ScopePattern, unreachable};
 use crate::service::{ServiceInner, merge_headers};
 use crate::tower_bridge::{Continuation, ErasedLayer, LayerOf, LayeredService, Service};
 use crate::transport::{Http, HttpCarried, RequestHead};
@@ -75,7 +76,8 @@ use crate::transport::{Http, HttpCarried, RequestHead};
 /// it. The middleware types an entry names are declared as its dependencies, so `wire()` checks
 /// that the declaring module sees them.
 ///
-/// `prepare` refuses a scope or an exclusion that does not parse, a scoped entry naming no pattern,
+/// `prepare` refuses a scope or an exclusion that does not parse or whose static segment holds a
+/// `\`, raw or as `%5C`, which no request reaching the stage holds, a scoped entry naming no pattern,
 /// a scope that matches no path a route of the table matches once the entry's exclusions are
 /// taken out, naming the entry's declaring location and the scope it wrote, an `exclude` or a
 /// `supplies` written before any entry, a `supplies`
@@ -124,6 +126,9 @@ pub(crate) struct Entry {
     pub(crate) dependencies: fn(&mut Dependencies),
     /// A check `prepare` runs, for a value it can validate: CORS refusing `*` with credentials.
     pub(crate) check: Option<Check>,
+    /// The `Cors` value `apply_value` was given, whose response headers the 400 of a path refused
+    /// before the stage carries.
+    pub(crate) cors: Option<Cors>,
     pub(crate) location: &'static Location<'static>,
 }
 
@@ -164,14 +169,18 @@ impl<T: HttpCarried> PreDispatch<T> {
     }
 
     /// A middleware by value, built once and shared, unscoped. A `Cors` value is checked in
-    /// `prepare`.
+    /// `prepare`, and its response headers are what the 400 of a path refused before the stage
+    /// carries; a `Cors` applied by type, `apply::<Cors>()` or `apply_for::<Cors>(..)`, adds
+    /// nothing to that 400.
     #[track_caller]
     pub fn apply_value<M: Middleware>(&mut self, middleware: M) -> &mut Self {
-        let check = (&middleware as &dyn Any).downcast_ref::<Cors>().map(|cors| -> Check {
-            let cors = cors.clone();
-            Arc::new(move || cors.check().map_err(BoxError::from))
-        });
-        self.push(Step::Value(Arc::new(middleware)), None, declare_nothing, check)
+        let cors = (&middleware as &dyn Any).downcast_ref::<Cors>().cloned();
+        let check = cors.clone().map(|cors| -> Check { Arc::new(move || cors.check().map_err(BoxError::from)) });
+        self.push(Step::Value(Arc::new(middleware)), None, declare_nothing, check);
+        if let Some(entry) = self.entries.last_mut() {
+            entry.cors = cors;
+        }
+        self
     }
 
     /// A middleware by type, for the requests whose path `patterns` match, routed or not.
@@ -293,6 +302,7 @@ impl<T: HttpCarried> PreDispatch<T> {
             supplies: Vec::new(),
             dependencies,
             check,
+            cors: None,
             location: Location::caller(),
         });
         self
@@ -341,6 +351,8 @@ pub struct Stage<T: HttpCarried = Http> {
     reached: Vec<Vec<AtomicBool>>,
     /// Every scoped entry, each checked against the path: what a request no route matched runs.
     unrouted: ScopedStage<T>,
+    /// The unscoped `Cors` values, in order, each with its exclusions.
+    cors: Vec<(Cors, Vec<ScopePattern>)>,
 }
 
 /// The entries one route runs after it matched: those whose scope can match one of its paths,
@@ -477,7 +489,9 @@ impl<T: HttpCarried> Stage<T> {
                         );
                     }
                 }
-                let exclude = scopes(&entry.exclude, entry.location, &mut failures);
+                // gRPC refuses no path before its stage: a method path is the method's name.
+                let http = TypeId::of::<T>() == TypeId::of::<Http>();
+                let exclude = scopes(&entry.exclude, "exclusion", http, entry.location, &mut failures);
                 let action = match &entry.step {
                     Step::ByType(resolve) => Action::ByType(*resolve),
                     Step::Value(middleware) => Action::Value(Arc::clone(middleware)),
@@ -485,6 +499,9 @@ impl<T: HttpCarried> Stage<T> {
                     Step::Adopt(copy, _) => Action::Adopt(*copy),
                 };
                 if !entry.scoped {
+                    if let Some(cors) = &entry.cors {
+                        stage.cors.push((cors.clone(), exclude.clone()));
+                    }
                     run.push(Runnable { module: module.clone(), action, exclude });
                     continue;
                 }
@@ -495,7 +512,7 @@ impl<T: HttpCarried> Stage<T> {
                             .about(PRE_DISPATCH_ENTRY),
                     );
                 }
-                let scope = scopes(&entry.scope, entry.location, &mut failures);
+                let scope = scopes(&entry.scope, "scope", http, entry.location, &mut failures);
                 let scope_count = scope.len();
                 stage.scoped.push((module.clone(), Arc::clone(&meta), index));
                 stage.covering.push(Covering {
@@ -528,6 +545,7 @@ impl<T: HttpCarried> Stage<T> {
             covering: Vec::new(),
             reached: Vec::new(),
             unrouted: ScopedStage::empty(),
+            cors: Vec::new(),
         }
     }
 
@@ -539,7 +557,7 @@ impl<T: HttpCarried> Stage<T> {
     /// by [`build`](Self::build) already.
     ///
     /// Each refusal is a [`Failure`] carrying the entry's `location`, the `subject`
-    /// `"pre-dispatch entry"` and the one scope in `scopes`.
+    /// `"pre-dispatch entry"`, the one scope in `scopes` and the reason [`Unreached::NoRoute`].
     pub fn unreached(&self) -> Vec<Failure> {
         let mut refusals = Vec::new();
         for ((covering, reached), (_, meta, index)) in self.covering.iter().zip(&self.reached).zip(&self.scoped) {
@@ -548,13 +566,7 @@ impl<T: HttpCarried> Stage<T> {
                 if reached.load(Ordering::Relaxed) {
                     continue;
                 }
-                let raw = scope.raw.to_string();
-                refusals.push(
-                    Failure::plain(format!("pre-dispatch entry at {location} is scoped to `{raw}`, which matches no route's path"))
-                        .at(location)
-                        .about(PRE_DISPATCH_ENTRY)
-                        .scoped([raw]),
-                );
+                refusals.push(unreached_scope(location, scope.raw.to_string(), Unreached::NoRoute));
             }
         }
         refusals
@@ -573,6 +585,18 @@ impl<T: HttpCarried> Stage<T> {
     /// [`StageHost::fail`] in its place.
     pub fn run(&self, host: Arc<dyn StageHost>, req: Request, end: Rest) -> BoxFuture<'static, Response> {
         run(host, self.runnable(), 0, req, end)
+    }
+
+    /// `refused`, the answer to `req` refused before the stage runs, with the headers each unscoped
+    /// `Cors` entry whose exclusions do not match the path adds to a response it passes, the last
+    /// written first, as a response passes them on its way out. No entry runs.
+    pub(crate) fn decorate_refusal(&self, req: &Request, refused: &mut Response) {
+        let origin = req.headers().get(http::header::ORIGIN);
+        for (cors, exclude) in self.cors.iter().rev() {
+            if !exclude.iter().any(|scope| scope.covers_path(req.path())) {
+                cors.decorate(origin, refused.headers_mut());
+            }
+        }
     }
 
     /// Whether the stage has no unscoped entry, so a server can skip [`run`](Self::run).
@@ -674,19 +698,57 @@ fn stage_flags(count: usize) -> Vec<AtomicBool> {
 /// The `subject` of a [`Failure`] about a pre-dispatch entry.
 const PRE_DISPATCH_ENTRY: &str = "pre-dispatch entry";
 
-fn scopes(patterns: &[Cow<'static, str>], at: &'static Location<'static>, failures: &mut Vec<Failure>) -> Vec<ScopePattern> {
+/// `patterns` parsed, each that does not parse refused. With `routed`, an HTTP scope's, each whose
+/// static segment holds a `\`, raw or as `%5C`, is refused too: no request path the scoped sub-step
+/// runs for holds one, so the scope matches none.
+fn scopes(
+    patterns: &[Cow<'static, str>],
+    what: &str,
+    routed: bool,
+    at: &'static Location<'static>,
+    failures: &mut Vec<Failure>,
+) -> Vec<ScopePattern> {
+    let mut refuse = |text: String, pattern: &str| {
+        failures.push(Failure::plain(format!("pre-dispatch entry at {at}: {text}")).at(at).about(PRE_DISPATCH_ENTRY).scoped([pattern.to_owned()]));
+    };
     patterns
         .iter()
         .filter_map(|pattern| match ScopePattern::parse(pattern) {
-            Ok(scope) => Some(scope),
+            Ok(parsed) => match parsed.unreachable_segment().filter(|_| routed) {
+                Some(segment) => {
+                    refuse(unreachable(&format!("the {what} `{pattern}`"), segment), pattern);
+                    None
+                }
+                None => Some(parsed),
+            },
             Err(err) => {
-                failures.push(
-                    Failure::plain(format!("pre-dispatch entry at {at}: {err}")).at(at).about(PRE_DISPATCH_ENTRY).scoped([pattern.to_string()]),
-                );
+                refuse(err.to_string(), pattern);
                 None
             }
         })
         .collect()
+}
+
+/// The refusal of `scope`, written by the entry declared at `location`, as a scope the entry would
+/// never run for: a [`Failure`] carrying the location, the `subject` `"pre-dispatch entry"`, the
+/// scope and `reason`, its text written from `reason`.
+pub fn unreached_scope(location: &'static Location<'static>, scope: String, reason: Unreached) -> Failure {
+    Failure::plain(format!("pre-dispatch entry at {location} is scoped to `{scope}`, which {reason}"))
+        .at(location)
+        .about(PRE_DISPATCH_ENTRY)
+        .scoped([scope])
+        .because(reason)
+}
+
+/// Whether the scope `scope` matches a request path the route pattern `route` matches, both as
+/// written, compared as `prepare` compares a scope with a route; `false` when either does not
+/// parse. A transport that answers some paths without running a scoped entry reads it to give a
+/// scope [`Stage::unreached`] refused for reaching only those paths the reason.
+pub fn shares_path(scope: &str, route: &str) -> bool {
+    match (ScopePattern::parse(scope), Pattern::parse(route)) {
+        (Ok(scope), Ok(route)) => scope.overlaps(&route),
+        _ => false,
+    }
 }
 
 /// What runs after an entry: the entries after it, then routing or dispatch.

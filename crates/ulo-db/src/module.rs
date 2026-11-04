@@ -31,8 +31,10 @@ const HOOK_MARGIN: Duration = Duration::from_secs(10);
 /// The builder settings are not part of the identity and are its [`Module::settings`]: `lazy`,
 /// `without_health_check`, `connect_within`, `retries`, `backoff`, `migrate` and `migrate_within`.
 /// Two imports with equal options and equal settings are one module; with equal options and
-/// different settings, `wire()` refuses the second as `ulo::WiringError::DifferingSettings`. A
-/// migrator has no value to compare, so `migrate` compares the `.migrate(..)` call that set it.
+/// different settings, `wire()` refuses the second as `ulo::WiringError::DifferingSettings`.
+/// `migrate` compares the migrator's [`Migrations::identity`], a `static`'s address or a type,
+/// and the `.migrate(..)` call that set it, its file, line and column, for a migrator answering
+/// none.
 ///
 /// The module's type is `StoreModule<S>`, so `app.module::<StoreModule<S>>()` and
 /// `app.module_keyed::<StoreModule<S>, Q>()` find it, and a report prints it as `StoreModule<S>`,
@@ -212,9 +214,10 @@ where
     }
 
     fn settings(&self) -> ModuleSettings {
-        let migrate = match self.migrate_at {
-            Some(at) => format!("`.migrate(..)` at {}:{}", at.file(), at.line()),
-            None => "off".to_owned(),
+        let migrate = match (self.migrations.as_ref().and_then(|m| m.identity), self.migrate_at) {
+            (Some(identity), _) => identity.to_string(),
+            (None, Some(at)) => format!("`.migrate(..)` at {}:{}:{}", at.file(), at.line(), at.column()),
+            (None, None) => "off".to_owned(),
         };
         ModuleSettings::new()
             .with("lazy", self.lazy.is_some())

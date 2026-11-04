@@ -32,6 +32,13 @@ use crate::store::Given;
 
 /// A `diesel_migrations` source, `embed_migrations!()`'s value or a directory's, for
 /// [`StoreModule::migrate`](ulo_db::StoreModule::migrate).
+///
+/// It answers no [`identity`](ulo_db::Migrations::identity), since the source is held by value
+/// and `embed_migrations!()` is a constant with no address of its own, so two imports compare the
+/// `.migrate(..)` call that set it, its file, line and column. One source written at two calls is refused at `wire()` as
+/// `DifferingSettings`, and two sources passed through one helper function's single call are one
+/// module, the second import running the first's migrations: build the store module in one
+/// function that both importers call, with one source.
 pub struct DieselMigrations<M> {
     #[cfg_attr(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")), allow(dead_code))]
     pub(crate) source: M,

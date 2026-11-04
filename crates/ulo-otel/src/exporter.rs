@@ -21,7 +21,9 @@ pub trait Exporter {
     /// nothing compares by its type and two values of one type are one module. An exporter that
     /// can tell its configurations apart writes its kind under `exporter`, and `endpoint` and
     /// `protocol` where it has them, as `ulo-otel-otlp`'s `otlp-http` does. A wiring report prints
-    /// the values, so a header or any other credential is never written here.
+    /// the values, so a header or any other credential is never written here. The module appends
+    /// `service_name`, `sample_ratio` and `flush_timeout_ms`, and `ModuleSettings::with` panics on
+    /// a name written twice, so `Otel::new` panics for an exporter writing one of them.
     fn settings(&self, _options: &OtelOptions) -> ModuleSettings {
         ModuleSettings::new().with("exporter", format_args!("{}", type_name::<Self>()))
     }
