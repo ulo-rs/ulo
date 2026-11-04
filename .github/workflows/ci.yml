@@ -28,6 +28,10 @@ jobs:
       - run: python3 scripts/check_examples.py
       - run: python3 scripts/check_doctests.py
       - run: python3 scripts/check_readme_install.py
+      # No crate's source names another crate's `__private` or `__derive` module outside generated
+      # code, but for the entries `private-paths.txt` gives a reason; a stale entry fails too. The
+      # self-test runs first, inside the check, on planted violations and legal uses.
+      - run: python3 scripts/private_paths.py check
       - run: cargo clippy -p 'ex-*' --all-targets --no-deps --locked -- -D warnings
 
   runtime-levels:
@@ -279,6 +283,26 @@ jobs:
           python3 scripts/editor_probe.py "$(rustup which rust-analyzer)"
           crates/ulo-codegen-tests/fixtures/editor crates/ulo-codegen-tests/fixtures/editor/src/lib.rs
           --target-dir target/editor-probe
+
+  community-link:
+    name: community link
+    runs-on: ubuntu-latest
+    # The suite's scenarios finish in seconds on this link; one that hangs fails the job here
+    # instead of holding a runner for six hours.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # An RPC link written as a crate outside the workspace, against public API and the link kit
+      # alone, run through the RPC conformance suite: the claim that a community link needs no
+      # crate's private items, tested. Its own workspace, seeded with the workspace's lockfile as
+      # the editor fixture is; not `--locked`, since cargo adds the fixture's own entry to the lock.
+      - run: cp Cargo.lock crates/ulo-codegen-tests/fixtures/community-link/Cargo.lock
+      - run: python3 scripts/private_paths.py scan crates/ulo-codegen-tests/fixtures/community-link
+      - run: >-
+          cargo test --manifest-path crates/ulo-codegen-tests/fixtures/community-link/Cargo.toml
+          --target-dir target/community-link
 
   public-reach:
     name: public reach
