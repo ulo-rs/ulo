@@ -4,8 +4,8 @@
 //! extraction failures ([`ExtractError`]), declarative validation ([`Valid`], [`Validate`]),
 //! declared metadata ([`Metadata`]), load shedding ([`Admission`]), the count a server setting
 //! bounds ([`Count`]), call spans ([`span`]), stream-end tracking ([`Tracked`]), the tasks a
-//! server spawns ([`TaskSet`]) and the one way a server builds its `prepare` failure
-//! ([`prepare`]).
+//! server spawns ([`TaskSet`]), the one way a server builds its `prepare` failure
+//! ([`prepare`]), and the runtime-free primitives a link or host is built from ([`sync`]).
 //!
 //! Each transport says only how these look on its wire. A transport's `Cx` implements
 //! `AsRef<ExecutionRef>`, which is how the impls here reach the call's execution.
@@ -20,11 +20,10 @@ mod task_set;
 mod tracked;
 mod turns;
 mod validate;
-mod ordered;
-mod watch;
 
 pub mod prepare;
 pub mod span;
+pub mod sync;
 
 #[doc(hidden)]
 pub mod __private;

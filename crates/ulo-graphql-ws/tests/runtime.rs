@@ -22,8 +22,7 @@ use ulo::{
     App, AppHandle, Bound, BoxFuture, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, Spawn, TaskHandle, Timer,
 };
 use ulo_graphql::{BoxStream, Engine, GqlRequest, GqlResponse};
-use ulo_graphql_ws::GraphqlWs;
-use ulo_graphql_ws::__private::InitTimeout;
+use ulo_graphql_ws::{GraphqlWs, InitTimeout};
 use ulo_runtime_tokio::Tokio;
 use ulo_ws::WsModule;
 

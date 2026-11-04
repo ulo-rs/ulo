@@ -651,68 +651,6 @@ pub mod factory {
     }
 }
 
-/// `url` as a module setting reports it: its scheme, host, port and path, never its userinfo,
-/// query or fragment, and its scheme and `[unreadable]` when it does not read as a scheme and an
-/// authority (DESIGN §8.3). Every integration crate whose `settings` report a URL writes it
-/// through this.
-pub fn setting_url(url: &str) -> String {
-    crate::redact::setting_url(url)
-}
-
-/// Runs one synchronous deserialisation with the secret collector open on this thread, answering
-/// its value and every secret it produced (integrations §2.3, P6). `ulo-config` installs it around
-/// each deserialisation it runs; `Secret<T>: Deserialize`, behind the `serde` feature, writes into
-/// it, under `#[serde(flatten)]` and `#[serde(untagged)]` too. A collection open around this one
-/// receives nothing of it. Without the `serde` feature nothing writes, and the answer is empty.
-pub fn collect_secrets<R>(f: impl FnOnce() -> R) -> (R, CollectedSecrets) {
-    let (answer, texts) = crate::redact::collecting(f);
-    (answer, CollectedSecrets { texts })
-}
-
-/// The secrets one [`collect_secrets`] call recorded: the text of each scalar a `Secret`'s inner
-/// value was read from, whatever its type, so a `Secret<T>` whose `T` is not `Display` is
-/// recorded by the text it was read from. A value read more than once is recorded once per read;
-/// the registry skips a repeat. `Debug` writes the count alone.
-#[derive(Clone, Default)]
-pub struct CollectedSecrets {
-    texts: Vec<String>,
-}
-
-impl CollectedSecrets {
-    /// Registers each secret with the module through `m.secret(..)`, so the graph's redaction
-    /// replaces it in every error the graph reports.
-    pub fn register(self, m: &mut crate::ModuleDef<'_>) {
-        for text in self.texts {
-            m.secret(&crate::Secret::new(text));
-        }
-    }
-
-    /// Appends `other`'s secrets, for a caller that runs several deserialisations and registers
-    /// them together.
-    pub fn append(&mut self, mut other: CollectedSecrets) {
-        self.texts.append(&mut other.texts);
-    }
-
-    /// The recorded texts, for a caller that keeps them beside other secrets it registers later.
-    pub fn texts(&self) -> &[String] {
-        &self.texts
-    }
-
-    pub fn len(&self) -> usize {
-        self.texts.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.texts.is_empty()
-    }
-}
-
-impl std::fmt::Debug for CollectedSecrets {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "CollectedSecrets({} recorded)", self.texts.len())
-    }
-}
-
 /// The check `#[module]` writes before an `into K: [..]` list: a `K` that implements
 /// [`Meta`](crate::Meta) is module metadata, which a transport reads through `m.meta::<K>()`, and
 /// a contribution to it would sit in a collection nothing reads. The `Meta` arm is ranked first

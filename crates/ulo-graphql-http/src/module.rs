@@ -6,8 +6,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use ulo::{Bound, Module, ModuleDef, ModuleIdentity, ModuleSettings};
-use ulo_graphql_ws::GraphqlWs;
-use ulo_graphql_ws::__private::InitTimeout;
+use ulo_graphql_ws::{GraphqlWs, InitTimeout};
 use ulo_transport::prepare::{Failures, zero_bound};
 
 use crate::controller::{EndpointSettings, GraphqlEndpoint};

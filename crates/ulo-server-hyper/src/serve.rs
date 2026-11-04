@@ -12,7 +12,7 @@ use ulo_http::ConnInfo;
 use ulo_net::BoundListener;
 use ulo_net::rustls::ServerConfig;
 use ulo_transport::{TaskSet, Turns};
-use ulo_transport::__private::Watch;
+use ulo_transport::sync::Watch;
 
 use crate::listener::{Incoming, Io, Listener, ReadCount};
 use crate::rt::RuntimeExecutor;

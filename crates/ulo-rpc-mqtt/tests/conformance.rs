@@ -26,7 +26,7 @@ use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event as TraceEvent, Level, Metadata};
 use ulo::{BoundAddr, Runtime};
-use ulo_rpc::__private::ClientProbe;
+use ulo_rpc::link::ClientProbe;
 use ulo_rpc_conformance::{Broker, report, startup_failed};
 use ulo_rpc_conformance::relay::{Relay, reachable, unshadowed};
 use ulo_rpc::link::Inbound;

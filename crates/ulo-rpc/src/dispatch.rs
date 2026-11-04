@@ -35,7 +35,7 @@ use ulo::{
     MountedHandler, Runtime, Shape, Timer, TraceMode, Transport,
 };
 use ulo_transport::{Admission, CallError, Detail, Details, ErrorKind, Permit, TaskSet, Tracked, Turns, span};
-use ulo_transport::__private::Watch;
+use ulo_transport::sync::Watch;
 
 use crate::handler::{HandlerFn, Kind};
 use crate::codec::Codec;

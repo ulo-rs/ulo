@@ -24,14 +24,13 @@ use tokio::task::AbortHandle;
 use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Refused, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
-use ulo_rpc::__private::ClientProbe;
-use ulo_rpc::__private::HoldUntil;
-use ulo_rpc::link::Inbound;
+use ulo_rpc::link::ClientProbe;
+use ulo_rpc::link::{HoldUntil, Inbound};
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Link, NoDestination, NoTimer,
     Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
 };
-use ulo_transport::__private::ordered;
+use ulo_transport::sync::ordered;
 use ulo_transport::Count;
 
 /// The header naming a record's frame kind where the record alone does not tell it: `open` on a
@@ -1201,7 +1200,7 @@ impl ClientSide {
         #[cfg(feature = "conformance-probe")]
         return self.probe.hold();
         #[cfg(not(feature = "conformance-probe"))]
-        ulo_rpc::__private::CANCEL_HOLD
+        ulo_rpc::link::CANCEL_HOLD
     }
 
     /// A streamed request's `in` or `in_end`: produced once the server has acknowledged the

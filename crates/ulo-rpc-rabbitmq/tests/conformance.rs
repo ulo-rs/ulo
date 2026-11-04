@@ -22,7 +22,7 @@ use testcontainers::core::{CmdWaitFor, ExecCommand, IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage};
 use ulo::{App, BoundAddr, Module, ModuleDef, ModuleIdentity, Runtime, Signal, StartupError};
-use ulo_rpc::__private::ClientProbe;
+use ulo_rpc::link::ClientProbe;
 use ulo_rpc::{CallHeaders, Data, ErrorKind, Frame, Link, Pattern, ReplyTo, RpcClient, Server};
 use ulo_rpc_conformance::{Broker, report, startup_failed};
 use ulo_rpc_conformance::relay::{Relay, reachable, unshadowed};

@@ -852,7 +852,7 @@ fn scrub(problems: &mut Problems, secrets: &BTreeSet<String>) {
     }
 }
 
-/// Deserialises the section at `path` as `T` inside the collector `ulo::__private::collect_secrets`
+/// Deserialises the section at `path` as `T` inside the collector `ulo::secrets::collect_secrets`
 /// installs, with each top-level section set aside when a leaf type's own error ends it. Answers the
 /// value or the error, and the secrets either path recorded.
 pub(crate) fn section<T: DeserializeOwned>(
@@ -878,7 +878,7 @@ pub(crate) fn section<T: DeserializeOwned>(
             Some(node) => Target::Node(node),
             None => Target::Absent { reported: false, origin: None },
         };
-        let (result, collected) = ulo::__private::collect_secrets(|| {
+        let (result, collected) = ulo::secrets::collect_secrets(|| {
             T::deserialize(NodeDeserializer { ctx: &ctx, target, path: path.to_owned() })
         });
         texts.extend(collected.texts().iter().cloned());

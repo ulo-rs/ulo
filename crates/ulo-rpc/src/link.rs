@@ -16,6 +16,17 @@
 //! [`Link::connect`], the app's inside an app and the one given to
 //! [`RpcClient::new`](crate::RpcClient::new) outside one. A link whose sockets belong to no runtime
 //! spawns its tasks there; a link carrying a runtime of its own, as the tokio links do, ignores it.
+//!
+//! Beside the SPI, this module holds what the authors of transport links share with the
+//! first-party links, so a link outside this repository keeps the same timing and redaction:
+//! [`CANCEL_HOLD`] and [`HoldUntil`], how long a link that holds a streamed request's `cancel`
+//! until the server's `opened` keeps it; [`panic_redacted`], the redacted error a panic caught
+//! outside a task answers; and, behind the `conformance-probe` feature, `ClientProbe`, the
+//! conformance suite's view of a held `cancel`. Semver applies to them as to the rest of the
+//! crate's public API: from 0.1.0, a change that breaks a link is released under a new breaking
+//! version (`0.x` to `0.(x+1)` before 1.0). A pre-release of 0.1.0 may break it, and Cargo takes
+//! a later pre-release of the same version for a requirement on an earlier one, so a link
+//! depending on a pre-release pins it with `=`.
 
 use std::error::Error;
 use std::fmt;
@@ -30,6 +41,10 @@ use ulo_transport::Count;
 
 use crate::codec::Codec;
 use crate::frame::Frame;
+
+#[cfg(feature = "conformance-probe")]
+pub use crate::held::ClientProbe;
+pub use crate::held::{CANCEL_HOLD, HoldUntil};
 
 /// One RPC transport's frame carriage.
 pub trait Link: Send + Sync + 'static {
@@ -619,5 +634,22 @@ impl fmt::Display for FrameUnencodable {
 impl Error for FrameUnencodable {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         Some(&*self.source)
+    }
+}
+
+/// A panic a link caught where no task boundary converts it, as the redacted message a task's
+/// panic answers: `payload` raised again in a task on `runtime` and caught by the core there, so
+/// `ulo::is_panic` finds it on an error that keeps it as its `source()`. For a link that runs work
+/// on a blocking thread or a library callback, where a panic reaches it as a payload rather than
+/// as a task's end: the NATS and MQTT links' load of their root certificates. The raise is a
+/// `resume_unwind`, which runs no panic hook, so the panic is not printed a second time. `None`
+/// when `runtime` drops the task unrun, having shut down.
+pub async fn panic_redacted<R: ulo::Spawn + ?Sized>(runtime: &R, payload: Box<dyn std::any::Any + Send>) -> Option<Arc<ulo::Redacted>> {
+    let raised = ulo::spawn_with(runtime, async move {
+        std::panic::resume_unwind(payload);
+    });
+    match raised.await {
+        Err(ulo::TaskEnd::Panicked(message)) => Some(message),
+        _ => None,
     }
 }

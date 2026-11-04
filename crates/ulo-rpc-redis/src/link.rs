@@ -16,7 +16,7 @@ use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, Link, NoDestination, Ordering as Order,
     Outbound, Pattern, ReplyPath, ReplyTo,
 };
-use ulo_transport::__private::ordered;
+use ulo_transport::sync::ordered;
 use ulo_transport::{Details, ErrorKind};
 
 /// The reserved header a `req` or `open` frame carries in its `h`: the caller's reply channel.

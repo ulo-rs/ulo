@@ -12,15 +12,8 @@
 //! cancelling that execution with `ClientCancelled`.
 //!
 //! `ulo-graphql-http`'s `GraphqlConfig::subscriptions(path)` mounts [`GraphqlWs`] at `path`, and
-//! `GraphqlConfig::connection_init_timeout` sets its timeout.
+//! `GraphqlConfig::connection_init_timeout` sets its timeout, bound as an [`InitTimeout`].
 
 mod gateway;
 
-pub use gateway::{ConnectionInit, GraphqlWs};
-
-/// What `ulo-graphql-http`'s `GraphqlModule` binds for the gateway it mounts. Not part of the
-/// public API.
-#[doc(hidden)]
-pub mod __private {
-    pub use crate::gateway::InitTimeout;
-}
+pub use gateway::{ConnectionInit, GraphqlWs, InitTimeout};

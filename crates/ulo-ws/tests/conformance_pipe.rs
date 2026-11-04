@@ -25,7 +25,7 @@ use ulo_http::Upgraded;
 use ulo_http_conformance::{Harness, OnSmol};
 use ulo_runtime_smol::Smol;
 use ulo_transport::TaskSet;
-use ulo_transport::__private::Watch;
+use ulo_transport::sync::Watch;
 use ulo_transport::prepare::Failures;
 use ulo_ws::{GatewayDefaults, GatewayTable, Handshake, Port, Ws};
 use ulo_ws_conformance::{Host, ws_conformance_suite};
