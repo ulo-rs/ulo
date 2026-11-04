@@ -297,14 +297,21 @@ impl Link for Udp {
 
     /// A server's `close` first answers every call it holds `err` of kind `unavailable`, queued
     /// before its first await, so a `close` a spent shutdown cap polls once sends them; a call's
-    /// own answer arriving afterwards is refused. It then stops the receive task, reads what the
-    /// socket's buffer already holds and answers each request found there the same way, so a
-    /// datagram that arrived before the close is answered; one arriving after it is not.
+    /// own answer arriving afterwards is refused, and so is a request the receive task decodes
+    /// before it stops, answered the same way rather than delivered. It then stops the receive
+    /// task, reads what the socket's buffer already holds and answers each request found there the
+    /// same way, so a datagram that arrived before the close is answered; one arriving after it is
+    /// not.
     async fn close(&self) -> Result<(), BoxError> {
         let calls = lock(&self.calls).take();
         let writes = lock(&self.state.writes).clone();
         if let (Some(calls), Some(writes)) = (calls, writes) {
             answer_held(&calls, &writes, self.codec);
+        }
+        #[cfg(test)]
+        {
+            let bound = lock(&self.state.bound).first().map(|bound| bound.addr);
+            tests::gate::after_sweep(bound).await;
         }
         self.state.client_epoch.send_modify(|epoch| *epoch += 1);
         let receiving = lock(&self.receiving).take();
@@ -412,7 +419,19 @@ async fn receive(
             refuse(&writes, codec, peer, &frame).await;
             continue;
         };
-        let Some(frame) = inward(frame, peer, &ids, &state.next_id) else { continue };
+        #[cfg(test)]
+        {
+            let bound = lock(&state.bound).first().map(|bound| bound.addr);
+            tests::stall::before_inward(bound);
+        }
+        let frame = match inward(frame, peer, &ids, &state.next_id) {
+            Inward::Deliver(frame) => frame,
+            Inward::Refuse(frame) => {
+                refuse_after_close(&socket, &writes, codec, peer, &frame);
+                continue;
+            }
+            Inward::Discard => continue,
+        };
         let reply = reply_path(writes.clone(), peer, codec, Arc::clone(&ids));
         if sender.send(Delivery { frame, reply: Some(reply), ack: Ack::none() }).await.is_err() {
             return;
@@ -475,7 +494,34 @@ async fn refuse(writes: &ordered::Sender<Datagram>, codec: Codec, peer: SocketAd
         Err(error) => Err(error),
     };
     if let Err(error) = refused {
-        tracing::debug!(%error, %peer, "the UDP link could not refuse a request that arrived after the drain");
+        tracing::debug!(%error, %peer, "the UDP link could not refuse a request it no longer takes");
+    }
+}
+
+/// Answers a request or streamed request that arrived once `close` had answered the calls held,
+/// sent on the socket in this poll rather than through the writer: after a cut `close` the link's
+/// drop can end the writer before this task, still mid-poll on another worker, reaches the queue.
+/// The socket is non-blocking, so the send never waits.
+fn refuse_after_close(socket: &UdpSocket, writes: &ordered::Sender<Datagram>, codec: Codec, peer: SocketAddr, frame: &Frame) {
+    let (Frame::Req { id, .. } | Frame::Open { id, .. }) = *frame else { return };
+    let bytes = match encode(codec, &unavailable(id)) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::debug!(%error, %peer, "the UDP link could not refuse a request it no longer takes");
+            return;
+        }
+    };
+    let sent = socket2::SockRef::from(socket).send_to(&bytes, &peer.into());
+    queue_unsent(sent, writes, bytes, peer);
+}
+
+/// Hands the writer a refusal the socket's send buffer had no room for, to send once it has. A
+/// writer a cut `close` has already ended drops it, as it drops any datagram queued after its end.
+fn queue_unsent(sent: io::Result<usize>, writes: &ordered::Sender<Datagram>, bytes: Bytes, peer: SocketAddr) {
+    match sent {
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => drop(write(writes, bytes, Some(peer))),
+        Err(error) => tracing::debug!(%error, %peer, "the UDP link could not refuse a request it no longer takes"),
     }
 }
 
@@ -500,35 +546,56 @@ fn answer_held(calls: &Mutex<Ids>, writes: &ordered::Sender<Datagram>, codec: Co
     }
 }
 
-/// A sender's frame with its id mapped to the server's; `None` for one the server takes no part
-/// in, or that names no call in flight.
-fn inward(frame: Frame, peer: SocketAddr, ids: &Mutex<Ids>, next: &AtomicU64) -> Option<Frame> {
+/// What the receive loop does with a sender's frame.
+#[derive(Debug)]
+enum Inward {
+    /// Delivered to the server, its id mapped to the server's.
+    Deliver(Frame),
+    /// A request or streamed request that arrived once `close` had answered the calls held, to be
+    /// answered `unavailable` under the sender's id rather than opened in a table nothing answers:
+    /// the receive task can still be mid-poll on another worker when `close` sweeps the table.
+    Refuse(Frame),
+    /// One the server takes no part in, or that names no call in flight.
+    Discard,
+}
+
+/// A sender's frame with its id mapped to the server's, checked against the sweep in the same hold
+/// of the call table's lock that opens the call.
+fn inward(frame: Frame, peer: SocketAddr, ids: &Mutex<Ids>, next: &AtomicU64) -> Inward {
     let mut ids = lock(ids);
-    Some(match frame {
-        Frame::Req { id, pattern, headers, data } => Frame::Req { id: ids.open(peer, id, next), pattern, headers, data },
-        Frame::Open { id, pattern, headers } => Frame::Open { id: ids.open(peer, id, next), pattern, headers },
-        Frame::Evt { pattern, headers, data } => Frame::Evt { pattern, headers, data },
-        Frame::In { id, data } => Frame::In { id: ids.server(peer, id)?, data },
-        Frame::InEnd { id } => Frame::InEnd { id: ids.server(peer, id)? },
-        Frame::Cancel { id } => Frame::Cancel { id: ids.cancel(peer, id)? },
-        _ => return None,
-    })
+    if ids.closed && matches!(frame, Frame::Req { .. } | Frame::Open { .. }) {
+        return Inward::Refuse(frame);
+    }
+    let mapped = match frame {
+        Frame::Req { id, pattern, headers, data } => Some(Frame::Req { id: ids.open(peer, id, next), pattern, headers, data }),
+        Frame::Open { id, pattern, headers } => Some(Frame::Open { id: ids.open(peer, id, next), pattern, headers }),
+        Frame::Evt { pattern, headers, data } => Some(Frame::Evt { pattern, headers, data }),
+        Frame::In { id, data } => ids.server(peer, id).map(|id| Frame::In { id, data }),
+        Frame::InEnd { id } => ids.server(peer, id).map(|id| Frame::InEnd { id }),
+        Frame::Cancel { id } => ids.cancel(peer, id).map(|id| Frame::Cancel { id }),
+        _ => None,
+    };
+    mapped.map_or(Inward::Discard, Inward::Deliver)
 }
 
 /// The calls in flight: each sender's id and the server's, both ways, counted in `State::held`.
 struct Ids {
     by_caller: HashMap<(SocketAddr, u64), u64>,
     by_server: HashMap<u64, (SocketAddr, u64)>,
+    /// Set by `forget_all`: a request arriving afterwards is refused, not opened.
+    closed: bool,
     state: Arc<State>,
 }
 
 impl Ids {
     fn new(state: Arc<State>) -> Self {
-        Ids { by_caller: HashMap::new(), by_server: HashMap::new(), state }
+        Ids { by_caller: HashMap::new(), by_server: HashMap::new(), closed: false, state }
     }
 
-    /// Every call held, as its sender's address and id, each forgotten, so a reply to it is refused.
+    /// Every call held, as its sender's address and id, each forgotten, so a reply to it is
+    /// refused, and the table closed, so a request arriving afterwards is refused too.
     fn forget_all(&mut self) -> Vec<(SocketAddr, u64)> {
+        self.closed = true;
         self.by_caller.clear();
         let held = self.by_server.drain().map(|(_, caller)| caller).collect();
         self.counted();
@@ -742,6 +809,8 @@ mod tests {
     use std::task::{Context, Poll, Waker};
     use std::time::Instant;
 
+    use futures_util::StreamExt;
+
     use super::*;
 
     fn datagram() -> Datagram {
@@ -868,6 +937,270 @@ mod tests {
             }
         }
         assert!(own_first > 0 && refused > 0, "one order never ran: {own_first} answered first, {refused} refused");
+    }
+
+    fn request(id: u64) -> Frame {
+        Frame::Req { id, pattern: LATE.to_owned(), headers: ulo_rpc::CallHeaders::new(), data: ulo_rpc::Data::new(Bytes::from_static(b"1")) }
+    }
+
+    const LATE: &str = "udp.late";
+
+    /// A request racing `close`'s sweep on two threads is either opened before the sweep and
+    /// answered by it, or refused; the swept table is left holding no call.
+    #[test]
+    fn a_request_racing_the_sweep_is_answered_by_it_or_refused() {
+        let state = Udp::new("127.0.0.1:0").state;
+        let peer: SocketAddr = (Ipv4Addr::LOCALHOST, 9).into();
+        let (mut opened_first, mut refused) = (0, 0);
+        for round in 0..100_000 {
+            let (writes, mut queued) = ordered::channel(WRITE_QUEUE);
+            let ids = Mutex::new(Ids::new(Arc::clone(&state)));
+            let start = std::sync::Barrier::new(2);
+            let arrive = || {
+                start.wait();
+                inward(request(7), peer, &ids, &state.next_id)
+            };
+            let sweep = || {
+                start.wait();
+                answer_held(&ids, &writes, Codec::Json);
+            };
+            // As in the reply race above, the two sides swap threads each round so both orders run.
+            let arrived = std::thread::scope(|scope| {
+                if round % 2 == 0 {
+                    let arrived = scope.spawn(arrive);
+                    sweep();
+                    arrived.join().expect("the receiving thread")
+                } else {
+                    let swept = scope.spawn(sweep);
+                    let arrived = arrive();
+                    swept.join().expect("the closing thread");
+                    arrived
+                }
+            });
+            let mut at_close = Vec::new();
+            while let Some(Some(datagram)) = queued.recv().now_or_never() {
+                at_close.push(Codec::Json.decode_frame(&datagram.bytes).expect("the frame decodes"));
+            }
+            assert!(lock(&ids).by_server.is_empty(), "round {round}: the swept table holds a call; the request was {arrived:?}");
+            match (at_close.as_slice(), &arrived) {
+                ([answer], Inward::Deliver(Frame::Req { .. })) if *answer == unavailable(7) => opened_first += 1,
+                ([], Inward::Refuse(frame)) if *frame == request(7) => refused += 1,
+                (at_close, arrived) => panic!("round {round}: the sweep queued {at_close:?} for a request that was {arrived:?}"),
+            }
+        }
+        assert!(opened_first > 0 && refused > 0, "one order never ran: {opened_first} opened first, {refused} refused");
+    }
+
+    /// After the sweep a streamed request is refused as a request is, under the sender's id and
+    /// opened nowhere; an event is still delivered, and a frame naming a call the sweep forgot is
+    /// dropped, so nothing answers that call a second time.
+    #[test]
+    fn after_the_sweep_a_streamed_request_is_refused_and_an_event_delivered() {
+        let state = Udp::new("127.0.0.1:0").state;
+        let peer: SocketAddr = (Ipv4Addr::LOCALHOST, 9).into();
+        let (writes, _queued) = ordered::channel(WRITE_QUEUE);
+        let ids = Mutex::new(Ids::new(Arc::clone(&state)));
+        let held = inward(request(7), peer, &ids, &state.next_id);
+        assert!(matches!(held, Inward::Deliver(Frame::Req { .. })), "the request before the sweep was {held:?}");
+        answer_held(&ids, &writes, Codec::Json);
+        let open = Frame::Open { id: 8, pattern: LATE.to_owned(), headers: ulo_rpc::CallHeaders::new() };
+        match inward(open.clone(), peer, &ids, &state.next_id) {
+            Inward::Refuse(frame) => assert_eq!(frame, open, "the streamed request refused after the sweep"),
+            other => panic!("a streamed request after the sweep was {other:?}"),
+        }
+        assert!(lock(&ids).by_server.is_empty(), "the swept table holds a call");
+        let event = Frame::Evt { pattern: LATE.to_owned(), headers: ulo_rpc::CallHeaders::new(), data: ulo_rpc::Data::new(Bytes::from_static(b"1")) };
+        match inward(event.clone(), peer, &ids, &state.next_id) {
+            Inward::Deliver(frame) => assert_eq!(frame, event, "the event delivered after the sweep"),
+            other => panic!("an event after the sweep was {other:?}"),
+        }
+        let forgotten = [Frame::In { id: 7, data: ulo_rpc::Data::new(Bytes::from_static(b"1")) }, Frame::InEnd { id: 7 }, Frame::Cancel { id: 7 }];
+        for frame in forgotten {
+            let inward = inward(frame.clone(), peer, &ids, &state.next_id);
+            assert!(matches!(inward, Inward::Discard), "{frame:?} naming the call the sweep answered was {inward:?}");
+        }
+    }
+
+    pub(super) mod gate {
+        use super::*;
+
+        type Stop = (SocketAddr, oneshot::Sender<()>, oneshot::Receiver<()>);
+
+        static AFTER_SWEEP: Mutex<Vec<Stop>> = Mutex::new(Vec::new());
+
+        /// Stops the next `close` of the server bound at `addr` once it has answered the calls
+        /// held, before it stops the receive task: the receiver answers once the close has stopped
+        /// there, and the sender releases it.
+        pub(crate) fn stop(addr: SocketAddr) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+            let (arrived, stopped) = oneshot::channel();
+            let (release, released) = oneshot::channel();
+            lock(&AFTER_SWEEP).push((addr, arrived, released));
+            (stopped, release)
+        }
+
+        pub(crate) async fn after_sweep(bound: Option<SocketAddr>) {
+            let stop = {
+                let mut stops = lock(&AFTER_SWEEP);
+                let at = stops.iter().position(|(addr, _, _)| Some(*addr) == bound);
+                at.map(|at| stops.swap_remove(at))
+            };
+            if let Some((_, arrived, released)) = stop {
+                let _ = arrived.send(());
+                let _ = released.await;
+            }
+        }
+    }
+
+    struct Root;
+
+    impl ulo::Module for Root {
+        fn identity(&self) -> ulo::ModuleIdentity {
+            ulo::ModuleIdentity::of_type::<Self>()
+        }
+
+        fn register(&self, m: &mut ulo::ModuleDef<'_>) {
+            let _ = m;
+        }
+    }
+
+    /// The receive task still running once `close` has swept the call table, as it is when it is
+    /// mid-poll on another worker, is held there by the gate: the request it decodes then is
+    /// answered `unavailable` with the shutdown phrase under the sender's id, and never delivered.
+    async fn a_request_decoded_after_the_sweep_is_refused_and_not_delivered() {
+        const PATIENCE: Duration = Duration::from_secs(5);
+        let app = ulo::App::builder(Root).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
+        let mut udp = Udp::new("127.0.0.1:0");
+        udp.prepare(&app.handle()).await.expect("the link prepares");
+        let inbound = udp.listen(&[Pattern::from(LATE)]).await.expect("the link listens");
+        let addr = udp.bound().first().map(|bound| bound.addr).expect("the link's address");
+        let caller = UdpSocket::bind("127.0.0.1:0").await.expect("the caller's socket");
+        let (swept, release) = gate::stop(addr);
+        let late = async {
+            tokio::time::timeout(PATIENCE, swept).await.expect("the close did not stop after its sweep").expect("the gate");
+            let bytes = Codec::Json.encode_frame(&request(7)).expect("the request encodes");
+            caller.send_to(&bytes, addr).await.expect("the request is sent");
+            let mut buffer = vec![0u8; MAX_DATAGRAM as usize + 1];
+            let answer = tokio::time::timeout(PATIENCE, caller.recv_from(&mut buffer)).await;
+            let _ = release.send(());
+            let (len, _) = answer.expect("no answer to the request decoded after the sweep").expect("the answer is received");
+            Codec::Json.decode_frame(&buffer[..len]).expect("the answer decodes")
+        };
+        let (closed, answer) = tokio::join!(udp.close(), late);
+        closed.expect("the link closes");
+        assert_eq!(answer, unavailable(7), "what the caller read for the request decoded after the sweep");
+        let delivered: Vec<Frame> =
+            tokio::time::timeout(PATIENCE, inbound.map(|delivery| delivery.frame).collect()).await.expect("the inbound stream did not end with the close");
+        assert!(delivered.is_empty(), "the server was delivered frames after the sweep: {delivered:?}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_request_decoded_after_the_sweep_is_refused_on_one_thread() {
+        a_request_decoded_after_the_sweep_is_refused_and_not_delivered().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_request_decoded_after_the_sweep_is_refused_on_a_worker_pool() {
+        a_request_decoded_after_the_sweep_is_refused_and_not_delivered().await;
+    }
+
+    pub(super) mod stall {
+        use super::*;
+
+        type Stall = (SocketAddr, std::sync::mpsc::SyncSender<()>, std::sync::mpsc::Receiver<()>);
+
+        static BEFORE_INWARD: Mutex<Vec<Stall>> = Mutex::new(Vec::new());
+
+        /// How long a stall holds its worker unreleased before it fails the receive task, so a
+        /// test that never releases it fails rather than hangs.
+        const LIMIT: Duration = Duration::from_secs(10);
+
+        /// Blocks the worker of the receive task of the server bound at `addr` the next time it
+        /// has decoded a datagram, as a preemption mid-poll would: the receiver answers once it
+        /// has stopped there, and the sender releases it. Nothing the stalled task holds is locked
+        /// meanwhile, so the test can close and drop the link.
+        pub(crate) fn arm(addr: SocketAddr) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::SyncSender<()>) {
+            let (arrived, stopped) = std::sync::mpsc::sync_channel(1);
+            let (release, released) = std::sync::mpsc::sync_channel(1);
+            lock(&BEFORE_INWARD).push((addr, arrived, released));
+            (stopped, release)
+        }
+
+        pub(crate) fn before_inward(bound: Option<SocketAddr>) {
+            let stall = {
+                let mut stalls = lock(&BEFORE_INWARD);
+                let at = stalls.iter().position(|(addr, _, _)| Some(*addr) == bound);
+                at.map(|at| stalls.swap_remove(at))
+            };
+            if let Some((_, arrived, released)) = stall {
+                let _ = arrived.send(());
+                if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = released.recv_timeout(LIMIT) {
+                    panic!("the receive task's stall was not released within {LIMIT:?}");
+                }
+            }
+        }
+    }
+
+    /// A request the receive task decodes while a `close` cut in its first poll lets the link drop
+    /// and its writer end is still answered `unavailable` under the sender's id. The receive task
+    /// is stalled on its worker after decoding the request, the close is polled once and dropped
+    /// with the link, and the task is released only once the writer has let go of the socket.
+    /// One worker is stalled, so this needs a pool: on one thread the abort ends the task before
+    /// it runs again.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_request_decoded_as_a_cut_close_drops_the_link_is_refused() {
+        const PATIENCE: Duration = Duration::from_secs(5);
+        let app = ulo::App::builder(Root).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
+        let mut udp = Udp::new("127.0.0.1:0");
+        udp.prepare(&app.handle()).await.expect("the link prepares");
+        let _inbound = udp.listen(&[Pattern::from(LATE)]).await.expect("the link listens");
+        let addr = udp.bound().first().map(|bound| bound.addr).expect("the link's address");
+        let socket = lock(&udp.state.socket).clone().expect("the server's socket");
+        let caller = UdpSocket::bind("127.0.0.1:0").await.expect("the caller's socket");
+        let (stopped, release) = stall::arm(addr);
+        let bytes = Codec::Json.encode_frame(&request(7)).expect("the request encodes");
+        caller.send_to(&bytes, addr).await.expect("the request is sent");
+        let stopped = tokio::task::spawn_blocking(move || stopped.recv_timeout(PATIENCE));
+        stopped.await.expect("the wait for the stall").expect("the receive task did not stop after decoding the request");
+
+        // Held by the link's state, the writer, the stalled receive task and this test.
+        let held_by_writer = Arc::strong_count(&socket);
+        assert_eq!(held_by_writer, 4, "the holders of the server's socket before the cut");
+        let mut close = Box::pin(udp.close());
+        assert!(close.as_mut().now_or_never().is_none(), "the close ended in its first poll");
+        drop(close);
+        drop(udp);
+        let writer_ended = tokio::time::timeout(PATIENCE, async {
+            while Arc::strong_count(&socket) >= held_by_writer {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        let _ = release.send(());
+        writer_ended.expect("the writer did not let go of the socket after the link dropped");
+
+        let mut buffer = vec![0u8; MAX_DATAGRAM as usize + 1];
+        let (len, _) = tokio::time::timeout(PATIENCE, caller.recv_from(&mut buffer))
+            .await
+            .expect("no answer to the request decoded as the cut close dropped the link")
+            .expect("the answer is received");
+        assert_eq!(Codec::Json.decode_frame(&buffer[..len]).expect("the answer decodes"), unavailable(7));
+    }
+
+    /// A refusal the socket's send buffer had no room for is queued on the writer for the
+    /// request's sender; one the socket sent, or failed for another reason, is not.
+    #[test]
+    fn a_refusal_the_socket_has_no_room_for_is_queued_on_the_writer() {
+        let peer: SocketAddr = (Ipv4Addr::LOCALHOST, 9).into();
+        let bytes = Codec::Json.encode_frame(&unavailable(7)).expect("the refusal encodes");
+        let (writes, mut queued) = ordered::channel(WRITE_QUEUE);
+        queue_unsent(Err(io::ErrorKind::WouldBlock.into()), &writes, bytes.clone(), peer);
+        let datagram = queued.recv().now_or_never().flatten().expect("the refusal the socket had no room for was not queued");
+        assert_eq!((datagram.bytes, datagram.to), (bytes.clone(), Some(peer)), "the queued refusal");
+        for sent in [Ok(bytes.len()), Err(io::ErrorKind::ConnectionRefused.into())] {
+            let outcome = format!("{sent:?}");
+            queue_unsent(sent, &writes, bytes.clone(), peer);
+            assert!(queued.recv().now_or_never().flatten().is_none(), "a refusal was queued after the socket's send answered {outcome}");
+        }
     }
 
     #[test]
