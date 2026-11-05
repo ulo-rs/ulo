@@ -384,6 +384,85 @@ fn a_dynamic_module_compares_the_settings_it_was_given() {
     assert_eq!(sides(&settings), [("knob", Some("1".to_owned()), Some("2".to_owned()))]);
 }
 
+/// A module writing one setting name twice is refused at `wire()`, imported once, naming the
+/// name and both `with` calls. Planted break: `freeze` reporting no repeat.
+#[test]
+fn a_setting_name_a_module_writes_twice_is_refused_with_both_lines() {
+    struct Owner;
+    let first_line = line!() + 2;
+    let settings = ModuleSettings::new()
+        .with("knob", 1)
+        .with("mode", "fast")
+        .with("knob", 2);
+    let errors = wire_err(Mod::<A>::new(move |m| {
+        m.import(DynamicModule::new::<Owner, _>("cfg", |_| {}).with_settings(settings.clone()));
+    }));
+
+    let (setting, module, first, second) = entry!(errors, WiringError::DuplicateSetting { setting, module, first, second } =>
+        (*setting, module.to_string(), (first.file(), first.line()), (second.file(), second.line())));
+    assert_eq!(setting, "knob");
+    assert_eq!(module, "Owner");
+    assert_eq!(first, (file!(), first_line));
+    assert_eq!(second, (file!(), first_line + 2));
+    assert_eq!(errors.len(), 1, "one entry:\n{errors}");
+    let text = errors.to_string();
+    assert!(text.contains(&format!("first written at {}:{}", file!(), first_line)), "the first line:\n{text}");
+    assert!(text.contains(&format!("written again at {}:{}", file!(), first_line + 2)), "the repeat's line:\n{text}");
+}
+
+/// Every repeat is an entry of its own, in the order written, one with the value already
+/// recorded among them, each naming the line that recorded the name. Planted breaks: `freeze`
+/// reporting a module's first repeat alone; `with` skipping a repeat of an equal value.
+#[test]
+fn every_repeat_is_refused_in_the_order_written_an_equal_value_among_them() {
+    struct Owner;
+    let line = line!() + 2;
+    let settings = ModuleSettings::new()
+        .with("knob", 1)
+        .with("mode", "fast")
+        .with("knob", 1)
+        .with("mode", "slow")
+        .with("knob", 3);
+    let errors = wire_err(Mod::<A>::new(move |m| {
+        m.import(DynamicModule::new::<Owner, _>("cfg", |_| {}).with_settings(settings.clone()));
+    }));
+    let repeats: Vec<_> = errors
+        .iter()
+        .filter_map(|error| match error {
+            WiringError::DuplicateSetting { setting, first, second, .. } => Some((*setting, first.line(), second.line())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(repeats, [("knob", line, line + 2), ("mode", line + 1, line + 3), ("knob", line, line + 4)], "{errors}");
+    assert_eq!(errors.len(), 3, "{errors}");
+}
+
+/// A repeat is refused whichever registration of an identity writes it: a later import whose
+/// settings equal the first's is dropped once compared, its repeat reported all the same, and a
+/// repeat both imports write is one entry. Planted break: `later_repeats` recording nothing.
+#[test]
+fn a_repeat_a_later_equal_import_writes_is_refused_and_a_shared_one_is_one_entry() {
+    struct Owner;
+    let dynamic = |settings: ModuleSettings| DynamicModule::new::<Owner, _>("cfg", |_| {}).with_settings(settings);
+    let once = || ModuleSettings::new().with("knob", 1);
+    let twice = || ModuleSettings::new().with("knob", 1).with("knob", 2);
+    for repeat_first in [true, false] {
+        let errors = wire_err(Mod::<A>::new(move |m| {
+            let (first, second) = if repeat_first { (twice(), once()) } else { (once(), twice()) };
+            m.import(dynamic(first));
+            m.import(dynamic(second));
+        }));
+        let setting = entry!(errors, WiringError::DuplicateSetting { setting, .. } => *setting);
+        assert_eq!(setting, "knob");
+        assert_eq!(errors.len(), 1, "the repeat in the import written first: {repeat_first}\n{errors}");
+    }
+    let errors = wire_err(Mod::<A>::new(move |m| {
+        m.import(dynamic(twice()));
+        m.import(dynamic(twice()));
+    }));
+    assert_eq!(errors.len(), 1, "one repeat written by both imports:\n{errors}");
+}
+
 #[tokio::test]
 async fn two_imports_with_equal_settings_are_one_module() {
     let app = connects(Mod::<A>::new(|m| {

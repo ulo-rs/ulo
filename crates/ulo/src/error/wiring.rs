@@ -123,6 +123,12 @@ pub enum WiringError {
     /// setting that differs, in the order the first wrote them. Also answered by `load` for a
     /// module whose identity the graph holds.
     DifferingSettings { module: ModuleName, first: ModuleSite, second: ModuleSite, settings: Vec<DifferingSetting> },
+    /// Step 1: a setting name written twice in one module's
+    /// [`Module::settings`](crate::Module::settings). `first` is the
+    /// [`ModuleSettings::with`](crate::ModuleSettings::with) call that recorded it and `second`
+    /// the repeat, so a module appending its settings to an adapter's or an exporter's names the
+    /// adapter's or exporter's line beside its own.
+    DuplicateSetting { setting: &'static str, module: ModuleName, first: &'static Location<'static>, second: &'static Location<'static> },
     /// Step 1: `export::<T>()` of a key the module does not bind. `imported` when the module sees
     /// the key through an import, which leaves through `reexport`; `near` is a key the module
     /// binds that is spelled the same up to a trailing `+ Send + Sync`, or by its last path
@@ -308,6 +314,7 @@ impl WiringError {
             WiringError::ImportCycle { .. }
             | WiringError::NestedKeyed { .. }
             | WiringError::DifferingSettings { .. }
+            | WiringError::DuplicateSetting { .. }
             | WiringError::OverrideModuleAmbiguous { .. }
             | WiringError::TimerOverride { .. }
             | WiringError::RuntimeOverride { .. }
@@ -335,6 +342,7 @@ impl WiringError {
             WiringError::NestedKeyed { outer, inner, .. } => vec![*outer, *inner],
             WiringError::ImportCycle { .. }
             | WiringError::DifferingSettings { .. }
+            | WiringError::DuplicateSetting { .. }
             | WiringError::ReexportNotVisible { .. }
             | WiringError::ReexportAmbiguous { .. }
             | WiringError::KeyedInput { .. }
@@ -389,6 +397,7 @@ impl WiringError {
             | WiringError::HooksOnPerExecution { module, .. }
             | WiringError::UnreadPrefix { module, .. }
             | WiringError::NestedKeyed { module, .. }
+            | WiringError::DuplicateSetting { module, .. }
             | WiringError::ZeroBound { module, .. } => vec![module],
             WiringError::ControllerRead { module, controller_module, .. } => vec![module, controller_module],
             WiringError::DifferingSettings { module, first, second, .. } => {
@@ -819,6 +828,16 @@ impl WiringError {
                     ],
                 )
             }
+            WiringError::DuplicateSetting { setting, module, first, second } => tree(
+                f,
+                format!("the setting `{setting}` is written twice in the settings of {}", show_module(module)),
+                vec![
+                    format!("first written at {}", place(first)),
+                    format!("written again at {}", place(second)),
+                    "help: write each name once; a module appending its settings to an adapter's or an exporter's cannot reuse one of theirs"
+                        .to_owned(),
+                ],
+            ),
             WiringError::DifferingSettings { module, first, second, settings } => {
                 let names: Vec<String> = settings.iter().map(|setting| format!("`{}`", setting.name)).collect();
                 let values = |side: usize| {

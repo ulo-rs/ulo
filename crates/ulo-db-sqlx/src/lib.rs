@@ -15,15 +15,13 @@
 //!
 //! A `&'static Migrator` compares by its address, so two imports passing `&MIGRATOR` are one
 //! module and two `static`s are two, even when they read one directory. An inline
-//! `&sqlx::migrate!(..)` is a promoted constant, whose address is the compiler's choice: rustc
-//! gives two occurrences reading one directory one address in debug and release builds, and in
-//! a release build a `static` can share it. A merge needs identical bytes, so a merged address
-//! never names two different sets of migrations, but no merge is promised: bind the migrator to
-//! a `static`, the form that compares by identity. An owned `Migrator` has no address to
-//! compare, and `.migrate(..)` compares the call that set it, its file, line and column: one
-//! migrator passed at two calls is refused at `wire()` as `DifferingSettings`, and two migrators
-//! passed through one helper function's single call are one module, the second import running
-//! the first's migrations.
+//! `&sqlx::migrate!(..)` is a promoted constant whose address the compiler chooses, so it may
+//! compare equal or unequal between builds; bind a `static`. Only identical bytes share an
+//! address, so an equal address never names two different sets of migrations. An owned
+//! `Migrator` has no address to compare, and `.migrate(..)` compares the call that set it, its
+//! file, line and column: one migrator passed at two calls is refused at `wire()` as
+//! `DifferingSettings`, and two migrators passed through one helper function's single call are
+//! one module, the second import running the first's migrations.
 //!
 //! `sqlx::migrate!` is a macro of SQLx's `macros` feature, which this crate does not enable, and
 //! its expansion names `::sqlx::migrate` paths, which resolve only in a crate that depends on

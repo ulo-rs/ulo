@@ -11,7 +11,7 @@ use crate::binding::{BindingRecord, Qualifier, Recipe, instance_of};
 use crate::dependency::{Dependencies, ReadKind};
 use crate::error::LoadRefusal;
 use crate::error::wiring::{BoundItem, InputOrigin, WiringError, WiringErrors};
-use crate::graph::register::{Differing, Import, Registry, Site};
+use crate::graph::register::{Differing, Import, Registry, Site, later_repeats};
 use crate::graph::{
     BindingId, EdgeTarget, Effective, FrozenBinding, FrozenModule, Graph, InputDecl, ModuleId, Role, Visible,
     boundary_key, cycles, order, record_key, register, scopes, visibility,
@@ -112,9 +112,21 @@ pub(crate) fn reload_differs(
     at: &'static Location<'static>,
 ) -> Option<WiringErrors> {
     let frozen = base.module(existing);
-    let differing =
-        Differing::of(Import::Existing(existing), (&frozen.settings, frozen.site), (&module.settings(), Site::Load { at }))?;
-    Some(WiringErrors::new(vec![differing.into_error(&[], base)]))
+    let settings = module.settings();
+    let mut errors: Vec<WiringError> =
+        Differing::of(Import::Existing(existing), (&frozen.settings, frozen.site), (&settings, Site::Load { at }))
+            .into_iter()
+            .map(|differing| differing.into_error(&[], base))
+            .collect();
+    let mut repeats = Vec::new();
+    later_repeats(&mut repeats, Import::Existing(existing), &frozen.settings, &settings);
+    errors.extend(repeats.into_iter().map(|(_, repeat)| WiringError::DuplicateSetting {
+        setting: repeat.name,
+        module: frozen.name.clone(),
+        first: repeat.first,
+        second: repeat.second,
+    }));
+    (!errors.is_empty()).then(|| WiringErrors::new(errors))
 }
 
 pub(crate) struct LazyWiring {
@@ -239,10 +251,10 @@ fn add_timer_module(registry: &mut Registry, timer: &Arc<dyn Timer>, runtime: Op
 
 /// Appends the registry's modules to `graph` in collection order, assigning ids and roles,
 /// requalifying keyed exports, mounting controllers, and freezing metadata. Along the way it
-/// reports import cycles (step 1) and, for step 2, the `try_value` failures (redacted), a
-/// replacement's missing exports, a replacement whose original nothing imports, a second
-/// replacement of one original, the test plan's overrides as it applies them, and qualified
-/// contributions and single bindings under a role key. `load` numbers the modules of a lazy load.
+/// reports import cycles and setting names a module writes twice (step 1) and, for step 2, the
+/// `try_value` failures (redacted), a replacement's missing exports, a replacement whose original
+/// nothing imports, a second replacement of one original, the test plan's overrides as it applies
+/// them, and qualified contributions and single bindings under a role key. `load` numbers the modules of a lazy load.
 ///
 /// A binding's role is decided here: `controller`, a contribution under a role key once every
 /// handler is mounted (`scopes::mark_role_contributions`), or a provider. `scopes::assign_roles`
@@ -265,6 +277,13 @@ fn freeze(
     }
     for differing in std::mem::take(&mut registry.differing) {
         steps.modules.push(differing.into_error(&names, graph));
+    }
+    for (module, repeat) in std::mem::take(&mut registry.repeats) {
+        let module = match module {
+            Import::New(node) => names[node].clone(),
+            Import::Existing(id) => graph.module(id).name.clone(),
+        };
+        steps.modules.push(WiringError::DuplicateSetting { setting: repeat.name, module, first: repeat.first, second: repeat.second });
     }
 
     for replaced in &registry.replaced {
@@ -382,6 +401,14 @@ fn freeze(
             site,
             ..
         } = node;
+        for repeat in settings.repeats() {
+            steps.modules.push(WiringError::DuplicateSetting {
+                setting: repeat.name,
+                module: names[index].clone(),
+                first: repeat.first,
+                second: repeat.second,
+            });
+        }
         if let Some((outer, inner)) = nested_keyed {
             steps.modules.push(WiringError::NestedKeyed {
                 module: names[index].clone(),

@@ -138,6 +138,9 @@ async fn a_ratio_and_a_flush_timeout_compare_as_the_module_runs_them() {
 /// An exporter writing a name the module writes too.
 struct Colliding;
 
+/// The line of `Colliding`'s `with` call.
+const COLLIDING_LINE: u32 = line!() + 6;
+
 impl Exporter for Colliding {
     type Span = Sink;
 
@@ -150,13 +153,20 @@ impl Exporter for Colliding {
     }
 }
 
-/// An exporter's setting under a name the module also writes fails `Otel::new`, rather than one
-/// of the two values going uncompared. Planted break: `ModuleSettings::with` accepting a name
-/// twice.
-#[test]
-#[should_panic(expected = "the module setting `service_name` is written twice")]
-fn an_exporter_setting_named_as_a_module_setting_panics() {
-    let _ = Otel::new(OtelOptions::default(), Colliding);
+/// An exporter's setting under a name the module also writes is refused at `wire()`, naming the
+/// exporter's line and the module's, rather than one of the two values going uncompared.
+/// Planted break: `ModuleSettings::with` recording the name again.
+#[tokio::test]
+async fn an_exporter_setting_named_as_a_module_setting_is_refused_with_both_lines() {
+    let errors = refused(Root(vec![otel(OtelOptions::default(), Colliding)]));
+    assert_eq!(errors.len(), 1, "{errors}");
+    let Some(WiringError::DuplicateSetting { setting, module, first, second }) = errors.iter().next() else {
+        panic!("expected `DuplicateSetting`:\n{errors}");
+    };
+    assert_eq!(*setting, "service_name");
+    assert_eq!(module.to_string(), "OtelModule");
+    assert_eq!((first.file(), first.line()), (file!(), COLLIDING_LINE));
+    assert!(second.file().ends_with("otel.rs") && second.file().contains("ulo-otel"), "the module's own line: {second}");
 }
 
 /// The headers are never a setting, in the entry's fields or in its text, though the two

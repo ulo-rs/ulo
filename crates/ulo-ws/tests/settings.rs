@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use futures_util::stream::BoxStream;
-use ulo::{App, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, StartupError, Timer, WiringError, WiringErrors};
+use ulo::{App, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, ModuleSettings, StartupError, Timer, WiringError, WiringErrors};
 use ulo_ws::{BroadcastAdapter, NodeId, Target, WsModule};
 
 /// An adapter on the default settings, its type name.
@@ -84,4 +84,43 @@ async fn one_adapter_kind_is_one_module() {
     wired(Root(vec![WsModule::for_root(), WsModule::for_root()])).unwrap_or_else(|errors| panic!("{errors}"));
     wired(Root(vec![WsModule::for_root().broadcast(Opaque), WsModule::for_root().broadcast(Opaque)]))
         .unwrap_or_else(|errors| panic!("{errors}"));
+}
+
+/// An adapter writing a name `WsModule` writes too.
+struct Colliding;
+
+/// The line of `Colliding`'s `with` call.
+const COLLIDING_LINE: u32 = line!() + 4;
+
+impl BroadcastAdapter for Colliding {
+    fn settings(&self) -> ModuleSettings {
+        ModuleSettings::new().with("broadcast", "colliding").with("message_limit", 7)
+    }
+
+    fn publish(&self, target: Target, frame: Bytes) -> BoxFuture<'static, Result<(), BoxError>> {
+        Opaque.publish(target, frame)
+    }
+
+    fn subscribe(&self, node: NodeId, timer: Arc<dyn Timer>) -> BoxFuture<'static, Result<BoxStream<'static, (Target, Bytes)>, BoxError>> {
+        Opaque.subscribe(node, timer)
+    }
+}
+
+/// An adapter's setting under a name the module also writes is refused at `wire()`, naming the
+/// adapter's line and the module's. Planted break: `ModuleSettings::with` recording the name
+/// again.
+#[tokio::test]
+async fn an_adapter_setting_named_as_a_gateway_default_is_refused_with_both_lines() {
+    let errors = match wired(Root(vec![WsModule::for_root().broadcast(Colliding)])) {
+        Err(errors) => errors,
+        Ok(()) => panic!("wired; the adapter and the module both write `message_limit`"),
+    };
+    assert_eq!(errors.len(), 1, "{errors}");
+    let Some(WiringError::DuplicateSetting { setting, module, first, second }) = errors.iter().next() else {
+        panic!("expected `DuplicateSetting`:\n{errors}");
+    };
+    assert_eq!(*setting, "message_limit");
+    assert_eq!(module.to_string(), "WsModule");
+    assert_eq!((first.file(), first.line()), (file!(), COLLIDING_LINE));
+    assert!(second.file().ends_with("module.rs") && second.file().contains("ulo-ws"), "the module's own line: {second}");
 }
