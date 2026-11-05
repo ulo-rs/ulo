@@ -19,7 +19,7 @@ use futures_util::{Stream, StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use ulo::app::{Bound as Serving, Connected};
 use ulo::{
-    App, AppHandle, BoundAddr, BoxError, Bound, CancelReason, Dep, ErrorHandler, ExecOptions, Execution, ExecutionRef, Guard,
+    App, AppBuilder, AppHandle, BoundAddr, BoxError, Bound, CancelReason, Dep, ErrorHandler, ExecOptions, Execution, ExecutionRef, Guard,
     Module, ModuleDef, ModuleIdentity, ModuleRef, Shape, Shutdown, ShutdownError, Signal, StartupError, TaskEnd, Timer,
     ValueHandle, injectable, routes,
 };
@@ -886,8 +886,17 @@ pub(crate) fn addresses(servers: &[&Server]) -> Vec<BoundAddr> {
 
 /// A client over `link`, on the harness's runtime.
 pub(crate) async fn client_over<B: Broker, L: Link>(link: L) -> Client {
-    let app = App::builder(ClientRoot { link: Mutex::new(Some(link)) })
-        .runtime(<B::Harness as Harness>::runtime())
+    client_built::<L>(App::builder(ClientRoot { link: Mutex::new(Some(link)) }).runtime(<B::Harness as Harness>::runtime())).await
+}
+
+/// [`client_over`] on the harness's runtime timed by `timer`.
+pub(crate) async fn client_timed<B: Broker, L: Link>(link: L, timer: impl Timer) -> Client {
+    let builder = App::builder(ClientRoot { link: Mutex::new(Some(link)) }).runtime(<B::Harness as Harness>::runtime()).timer(timer);
+    client_built::<L>(builder).await
+}
+
+async fn client_built<L: Link>(builder: AppBuilder) -> Client {
+    let app = builder
         .wire()
         .unwrap_or_else(|error| crate::startup_failed!("the conformance client did not wire: {}", report(&error)))
         .connect()

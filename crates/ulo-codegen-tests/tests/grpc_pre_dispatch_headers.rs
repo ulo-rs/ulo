@@ -2,7 +2,8 @@
 //! one it rewrites is written back, and each is logged at `warn` once per process per name, as
 //! for an interceptor: an entry cannot forge a status onto a 200 reply carrying a message, onto a
 //! trailers-only one, a stream's, an error handler's, or onto the health or reflection service's
-//! reply. A name an interceptor and an entry both drop is one name, logged once.
+//! reply. A name an interceptor and an entry both drop is logged once for each, both on the first
+//! reply that carries both.
 //!
 //! In a file of its own: the once-per-process record would otherwise depend on which test of the
 //! binary dropped a name first.
@@ -176,7 +177,7 @@ async fn a_pre_dispatch_entry_neither_adds_a_grpc_name_nor_rewrites_one_the_fram
 
     // A 200 reply carrying a message: the scoped entry's `grpc-status: 13` and the unscoped one's
     // names are dropped, so the call ends with the trailers the reply was written with.
-    for _ in 0..2 {
+    for round in 0..2 {
         let reply = support::within("the Upper call", client.upper("ada".to_owned())).await;
         let reply = reply.unwrap_or_else(|status| panic!("the forged status reached the caller: {status:?}"));
         for dropped in ["grpc-message", "grpc-forged"] {
@@ -187,6 +188,12 @@ async fn a_pre_dispatch_entry_neither_adds_a_grpc_name_nor_rewrites_one_the_fram
         assert_eq!(header(reply.metadata(), "grpc-status"), Some("0"), "{:?}", reply.metadata());
         assert_eq!(header(reply.metadata(), "x-kept"), Some("kept"), "an ordinary header passes");
         assert_eq!(reply.into_inner(), "ADA");
+        if round == 0 {
+            // Both writers' warnings for `grpc-forged` are logged by the first reply.
+            for writer in ["an interceptor", "a pre-dispatch entry"] {
+                assert_eq!(warned_about(&capture, writer, "grpc-forged"), 1, "{writer}: {:?}", capture.warnings());
+            }
+        }
     }
 
     // A trailers-only reply: the handler's error and the UNIMPLEMENTED of a missing method keep
@@ -242,10 +249,10 @@ async fn a_pre_dispatch_entry_neither_adds_a_grpc_name_nor_rewrites_one_the_fram
         assert_eq!(warned_about(&capture, "a pre-dispatch entry", name), 1, "{name}: {:?}", capture.warnings());
         assert_eq!(warned_about(&capture, "an interceptor", name), 0, "{name}: {:?}", capture.warnings());
     }
-    // The interceptor, screened inside the entries, dropped `grpc-forged` first: the entry's drop
-    // of the same name is not logged again.
+    // The interceptor, screened inside the entries, and the entry both dropped `grpc-forged`: each
+    // writer's warning is logged once. Planted break: the record keyed by the name alone.
     assert_eq!(warned_about(&capture, "an interceptor", "grpc-forged"), 1, "{:?}", capture.warnings());
-    assert_eq!(warned_about(&capture, "a pre-dispatch entry", "grpc-forged"), 0, "{:?}", capture.warnings());
+    assert_eq!(warned_about(&capture, "a pre-dispatch entry", "grpc-forged"), 1, "{:?}", capture.warnings());
     app.stop().await;
 }
 
