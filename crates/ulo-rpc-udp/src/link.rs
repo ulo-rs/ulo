@@ -153,7 +153,7 @@ impl Udp {
         }
     }
 
-    /// `Codec::Cbor` carries raw bytes and declares `binary: true`; JSON unset.
+    /// `Codec::Cbor` carries raw bytes and has `binary`; JSON unset, which is declared without it.
     pub fn codec(mut self, codec: Codec) -> Self {
         self.codec = codec;
         self
@@ -196,15 +196,20 @@ impl Link for Udp {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities::new(DeliveryMode::Addressed)
-            .binary(self.codec.binary())
+            .codec(self.codec)
             .max_frame(Some(MAX_DATAGRAM))
             .ordering(ulo_rpc::Ordering::Unordered)
             .shapes(UNARY_ONLY)
-            .miss_signal(true)
-            // `close` answers what its socket holds; a datagram arriving after the socket closes
-            // reaches no one. A connected client socket may learn of it through an ICMP port
-            // unreachable, which is often filtered, so the link does not rely on it.
-            .confirms_drain(false)
+            .without_native_backpressure(
+                "a UDP server reads each request off its socket as it arrives, and no broker holds one over the server's bound, which the server refuses",
+            )
+            .without_holds_unserved("the caller sends to one server's address, and no broker keeps a request while that server is not serving")
+            .without_durable_replies("a reply is one datagram sent once to the caller's address, and nothing keeps it for a caller that is not there")
+            .without_confirms_drain(
+                "`close` answers the requests its socket already holds, but a datagram arriving after the socket closes reaches no one; \
+                 a connected client socket may learn of it through an ICMP port unreachable, which is often filtered and is not relied on",
+            )
+            .without_ordered_control("datagrams arrive in any order, so a `cancel` may overtake its request")
     }
 
     fn usable(&self) -> Result<(), BoxError> {

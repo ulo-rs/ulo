@@ -25,7 +25,7 @@ const HELD_AFTER_DISRUPT: Duration = Duration::from_secs(3);
 pub async fn after_disrupt<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     let budget = fixture.broker.budget();
-    let durable = fixture.capabilities().durable_replies;
+    let durable = fixture.capabilities().durable_replies();
     let rpc = fixture.rpc().clone();
     // The handler answers `HELD_AFTER_DISRUPT` after the scenario's settle, so after `disrupt`
     // however long the environment settles.
@@ -38,7 +38,10 @@ pub async fn after_disrupt<B: Broker>() {
     let ended = joined(within::<B, _>(held_for + budget.recovery, "the call waiting on the severed connection", held).await, "the held call's task");
     match (ended, durable) {
         (Err(error), false) if error.kind() == ErrorKind::Unavailable => {}
-        (other, false) => panic!("a call waiting on a severed connection fails `Unavailable`, got: {other:?}"),
+        (other, false) => panic!(
+            "a call waiting on a severed connection fails `Unavailable` on a link declared without `durable_replies` ({}), got: {other:?}",
+            fixture.capabilities().why_not_durable_replies().unwrap_or_default()
+        ),
         (Ok(answered), true) => {
             assert_eq!(answered, held_ms, "the held call's answer");
             let outage = fixture.broker.outage().expect(

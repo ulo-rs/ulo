@@ -3,7 +3,7 @@
 //! less the envelope; unary calls and events only, a streamed shape refused at startup;
 //! `Addressed`; at close the server answers `unavailable` every request its socket already holds,
 //! but a datagram arriving after the socket closes reaches no one, and its caller sees its own
-//! `Timeout` (`confirms_drain` is `false`). No TLS: DTLS is not supported, so `Udp::tls` does not
+//! `Timeout` (declared without `confirms_drain`). No TLS: DTLS is not supported, so `Udp::tls` does not
 //! exist.
 //!
 //! ```

@@ -280,7 +280,7 @@ impl RabbitMq {
         &self.probe
     }
 
-    /// `Codec::Cbor` carries raw bytes and declares `binary: true`; JSON unset.
+    /// `Codec::Cbor` carries raw bytes and has `binary`; JSON unset, which is declared without it.
     pub fn codec(mut self, codec: Codec) -> Self {
         self.codec = codec;
         self
@@ -379,16 +379,21 @@ impl RabbitMq {
 
 const NO_RUNTIME: &str = "the RabbitMQ link has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
 
+/// Why a `cancel` can reach the server ahead of its request.
+const CONTROL_LANE: &str = "the link carries a request and its `cancel` on separate lanes, and the broker may deliver the `cancel` first";
+
 impl Link for RabbitMq {
     const NAME: &'static str = "rabbitmq";
 
     fn capabilities(&self) -> Capabilities {
         Capabilities::new(DeliveryMode::Competing)
-            .binary(self.codec.binary())
+            .codec(self.codec)
             .ordering(Order::PerQueue)
-            .native_backpressure(true)
-            .miss_signal(true)
-            .holds_unserved(true)
+            .without_durable_replies(
+                "the client reads its replies through direct reply-to, `amq.rabbitmq.reply-to`, and the broker discards a reply whose \
+                 requesting channel has closed",
+            )
+            .without_ordered_control(CONTROL_LANE)
     }
 
     fn usable(&self) -> Result<(), BoxError> {

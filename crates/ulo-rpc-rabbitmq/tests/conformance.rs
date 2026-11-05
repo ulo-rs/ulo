@@ -80,9 +80,7 @@ impl Broker for RabbitMqBroker {
     }
 }
 
-ulo_rpc_conformance::conformance_suite!(RabbitMqBroker; not_applicable {
-    cancel_follows_its_request: "U17: the link carries a request and its `cancel` on separate lanes, and the broker may deliver the `cancel` first",
-});
+ulo_rpc_conformance::conformance_suite!(RabbitMqBroker);
 
 /// How long a dropped link's connections have to close at the broker.
 const RELEASE: Duration = Duration::from_secs(10);

@@ -177,7 +177,7 @@ impl Kafka {
         self
     }
 
-    /// `Codec::Cbor` carries raw bytes and declares `binary: true`; JSON unset.
+    /// `Codec::Cbor` carries raw bytes and has `binary`; JSON unset, which is declared without it.
     pub fn codec(mut self, codec: Codec) -> Self {
         self.codec = codec;
         self
@@ -211,17 +211,22 @@ impl Kafka {
 
 const NO_RUNTIME: &str = "the Kafka link has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
 
+/// Why a `cancel` can reach the server ahead of its request.
+const CONTROL_LANE: &str = "the link carries a request and its `cancel` on separate lanes, and the broker may deliver the `cancel` first";
+
 impl Link for Kafka {
     const NAME: &'static str = "kafka";
 
     fn capabilities(&self) -> Capabilities {
         Capabilities::new(DeliveryMode::Competing)
-            .binary(self.codec.binary())
+            .codec(self.codec)
             .ordering(Order::PerPartition)
-            .native_backpressure(true)
-            .holds_unserved(true)
-            .durable_replies(true)
             .max_frame(Some(MAX_MESSAGE))
+            .without_miss_signal(
+                "the broker's `auto.create.topics.enable`, on by default, creates the topic a request to an unhandled pattern names, and the \
+                 caller sees its own `Timeout`",
+            )
+            .without_ordered_control(CONTROL_LANE)
     }
 
     fn usable(&self) -> Result<(), BoxError> {

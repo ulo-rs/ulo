@@ -26,13 +26,20 @@
 //! UDP is refused at startup, a binary payload on a JSON link before any I/O and its handler at
 //! startup, a miss on a link without `miss_signal` is the client's `Timeout`, the two-instance
 //! scenarios run one instance on an `Addressed` link, where a second cannot share the address, and
-//! a request runs on both instances on a link declaring `delivers_requests_once: false`.
+//! a request runs on both instances on a link without `delivers_requests_once`. A scenario that
+//! needs a capability to run at all, `cancel_follows_its_request` on `ordered_control`, is skipped
+//! on a link declared without it, writing the declared reason to standard error through
+//! [`skipped`].
+//!
+//! Every capability a `Capabilities` accessor names is `true` unless the link declares it absent
+//! with a reason, so a link that declares nothing is held to each: the scenario runs, and fails
+//! where the link cannot keep it.
 //!
 //! No scenario passes on silence. The client's own `Timeout` passes only where it is the declared
 //! answer: a scenario about the client's timeout or `deadline-ms`, a call nothing takes on a link
 //! without `miss_signal`, a call reaching a draining server on a link that declares
 //! `holds_unserved`, where an event emitted then has to reach the next instance, and a call sent
-//! during the drain on a link that declares `confirms_drain(false)`, where a call sent once the
+//! during the drain on a link declared without `confirms_drain`, where a call sent once the
 //! server has closed has to be refused `Unavailable`; a link that does not declare it is held to the
 //! confirmed drain. A scenario that cannot apply to a link is declared not applicable
 //! in [`conformance_suite!`] and reported as ignored; run on that link, it fails.
@@ -72,7 +79,7 @@ pub use cases::deadlines::Stamped;
 pub use ulo_conformance_support::OnSmol;
 #[cfg(feature = "tokio")]
 pub use ulo_conformance_support::OnTokio;
-pub use ulo_conformance_support::{Budget, Harness, PARALLEL_VAR, failures_dir, relay, report, startup_failed};
+pub use ulo_conformance_support::{Budget, Harness, PARALLEL_VAR, failures_dir, relay, report, skipped, startup_failed};
 // The macros expand to `$crate::__private::{Slots, startup_failed}`.
 #[doc(hidden)]
 pub use ulo_conformance_support::__private;

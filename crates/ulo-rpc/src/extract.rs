@@ -18,7 +18,7 @@ use crate::transport::{Body, Rpc, RpcCx};
 const PAYLOAD: &str = "payload";
 
 /// The call's payload, `d`, decoded by the link's codec: `Payload<NewInvoice>`. `Payload<Bytes>`
-/// is raw bytes, refused in `prepare` on a link declaring `binary: false`. A payload that does not
+/// is raw bytes, refused in `prepare` on a link declaring `without_binary`. A payload that does not
 /// decode fails as `Malformed`, answered `bad_request`.
 #[derive(Clone, Debug)]
 pub struct Payload<T>(pub T);

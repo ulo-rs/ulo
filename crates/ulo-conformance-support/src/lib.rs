@@ -66,6 +66,17 @@ pub fn report(error: &(dyn Error + 'static)) -> String {
     text
 }
 
+/// Skips a scenario whose host or link declares the capability it needs absent: writes one line
+/// naming the scenario, the capability and the declared reason to the process's standard error,
+/// which libtest does not capture, so the line is in the run's output whether the test passes or
+/// fails. The scenario then returns, and libtest counts it as passed.
+pub fn skipped(scenario: &str, capability: &str, reason: &str) {
+    use std::io::Write;
+    // One write, so the line is not split by another test thread's output.
+    let line = format!("skipped `{scenario}`: declared without `{capability}`: {reason}\n");
+    let _ = std::io::stderr().write_all(line.as_bytes());
+}
+
 /// Fails a scenario whose environment did not start, as `panic!` with the same arguments would,
 /// after writing the message to a file of its own under [`failures_dir`]; the panic names the file.
 /// Every startup path in a suite fails through it, and a suite's environment implementation's own

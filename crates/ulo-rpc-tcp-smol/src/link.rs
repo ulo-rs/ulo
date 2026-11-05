@@ -69,7 +69,7 @@ impl Tcp {
         self
     }
 
-    /// `Codec::Cbor` carries raw bytes and declares `binary: true`; JSON unset.
+    /// `Codec::Cbor` carries raw bytes and has `binary`; JSON unset, which is declared without it.
     pub fn codec(mut self, codec: Codec) -> Self {
         self.core.set_codec(codec);
         self

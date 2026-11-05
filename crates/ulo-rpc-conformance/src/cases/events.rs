@@ -48,7 +48,7 @@ pub async fn refused_event_is_not_redelivered<B: Broker>() {
 
     let Fixture { broker, server, client } = fixture;
     server.stop().await;
-    if broker.link().capabilities().holds_unserved {
+    if broker.link().capabilities().holds_unserved() {
         let next_tap = Tap::default();
         let next = server_over(&broker, Tapped { link: broker.link(), tap: next_tap.clone() }, Count::Default).await;
         ready(&broker, &client.rpc, &[&next]).await;
@@ -96,7 +96,7 @@ pub async fn emitter_s_deadline_is_not_the_event_s<B: Broker>() {
     let fixture = Fixture::<B>::start_over(Count::Default, |broker| Tapped { link: broker.link(), tap: tap.clone() }).await;
     let budget = fixture.broker.budget();
     let (left, runs) = (left_of(budget), runs_of(budget));
-    let holds = fixture.capabilities().holds_unserved;
+    let holds = fixture.capabilities().holds_unserved();
     let Fixture { broker, server, client } = fixture;
     let (server, tap) = if holds {
         server.stop().await;

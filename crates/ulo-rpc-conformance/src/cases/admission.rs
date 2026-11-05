@@ -39,13 +39,17 @@ pub async fn over_the_bound<B: Broker>() {
     let served = answers.iter().filter(|answer| answer.as_ref().is_ok_and(|held| *held == millis)).count();
     let peak = fixture.server.probe.bounded_peak();
     assert!(peak <= BOUND as usize, "{peak} calls ran at once against a bound of {BOUND}: {answers:?}");
-    if capabilities.native_backpressure {
+    if capabilities.native_backpressure() {
         assert_eq!(served, CALLS, "a link declaring `native_backpressure` did not serve every call over the bound: {answers:?}");
     } else {
         for answer in answers.iter().filter(|answer| answer.is_err()) {
             match answer {
                 Err(error) if error.kind() == ErrorKind::Unavailable && error.details().retry_after().is_some() => {}
-                other => panic!("a call over the bound was not refused `unavailable` with `RetryAfter`, got: {other:?}"),
+                other => panic!(
+                    "a call over the bound on a link declared without `native_backpressure` ({}) was not refused `unavailable` with \
+                     `RetryAfter`, got: {other:?}",
+                    capabilities.why_not_native_backpressure().unwrap_or_default()
+                ),
             }
         }
         assert_eq!(served, BOUND as usize, "a refusing link did not serve exactly the calls within the bound: {answers:?}");

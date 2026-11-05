@@ -12,7 +12,7 @@ use crate::cases::app::{ADD, Add, Fixture, NOBODY, NOBODY_EVENT, Sum, failed, mi
 pub async fn unhandled_pattern<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     let outcome = fixture.rpc().request::<_, ()>(NOBODY, &()).timeout(miss_wait(&fixture.broker)).await;
-    if fixture.capabilities().miss_signal {
+    if fixture.capabilities().miss_signal() {
         let error = failed(outcome, ErrorKind::Unavailable);
         assert!(
             matches!(error.reason(), Some("pattern_unhandled" | "no_destination")),
@@ -20,7 +20,13 @@ pub async fn unhandled_pattern<B: Broker>() {
             error.reason()
         );
     } else {
-        failed(outcome, ErrorKind::Timeout);
+        match outcome {
+            Err(error) if error.kind() == ErrorKind::Timeout => {}
+            other => panic!(
+                "a miss on a link declared without `miss_signal` ({}) is the caller's own `Timeout`, got: {other:?}",
+                fixture.capabilities().why_not_miss_signal().unwrap_or_default()
+            ),
+        }
     }
     fixture.stop().await;
 }
