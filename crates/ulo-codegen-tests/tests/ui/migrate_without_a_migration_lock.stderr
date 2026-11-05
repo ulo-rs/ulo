@@ -1,0 +1,20 @@
+error[E0277]: `Lockless` takes no migrations: `StoreModule::migrate` needs a store implementing `MigrationLock`
+  --> tests/ui/migrate_without_a_migration_lock.rs:47:66
+   |
+47 |     let _ = StoreModule::<Lockless>::from_options(String::new()).migrate(Migrator);
+   |                                                                  ^^^^^^^ a store without a migration lock
+   |
+help: the trait `MigrationLock` is not implemented for `Lockless`
+  --> tests/ui/migrate_without_a_migration_lock.rs:9:1
+   |
+ 9 | struct Lockless;
+   | ^^^^^^^^^^^^^^^
+   = note: the stores that implement it: `ulo_db_sqlx`'s and `ulo_db_diesel`'s `Postgres`, `MySql` and `Sqlite`, and `ulo_db_seaorm::SeaOrm`
+note: required by a bound in `StoreModule::<S>::migrate`
+  --> $WORKSPACE/crates/ulo-db/src/module.rs
+   |
+   |     pub fn migrate(mut self, migrations: impl Migrations<S>) -> Self
+   |            ------- required by a bound in this associated function
+   |     where
+   |         S: MigrationLock,
+   |            ^^^^^^^^^^^^^ required by this bound in `StoreModule::<S>::migrate`
