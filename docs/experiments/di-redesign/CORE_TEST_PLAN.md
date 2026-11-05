@@ -594,3 +594,29 @@ Breaks planted in a scratch copy at the branch's state with these changes, each 
 | `release_unserved` removed from `AbortOnDrop`, `drain` and `close` | 1 (`close_after` not ending in its first poll) |
 
 Survivors: `release_unserved` removed from `AbortOnDrop` alone (F480). On `OnTokio`'s worker pool the stamp stays green on TCP and UDP with the RPC server's turn removed, since another worker runs the call's task before the cap drops `close`; the one-thread stamp is the one that holds the turn.
+
+### Q25 status (QS-19, the capability declaration)
+
+- Strict defaults: the `Capabilities::new` doctest (`crates/ulo-rpc/src/link.rs`) requires every boolean capability held; the `compile_fail,E0616` doctest on `Capabilities` requires an absence to go through its reasoned setter; the `Capabilities::codec` doctest requires a JSON link declared without `binary` with the codec's reason.
+- Reasons printed: `ulo-rpc/tests/hand_written.rs`'s two binary-payload refusals require the declared reason in the text, and `fan_out.rs` the `warn`'s `reason` field; `ulo-http/tests/declared_limits.rs :: a_host_s_refusals_name_the_reasons_it_declared` requires the `peer_addr`, `forward_miss`, `host_extensions` and `upgrades` refusals each to carry its reason, `a_backend_s_refusals_name_the_reasons_it_declared` the backend's `upgrades`, `port_zero`, `inherited_sockets` and `tls` refusals, `the_warn_for_a_path_outside_the_prefix_names_the_declared_reason` the `strips_prefix` `warn`'s `reason` field, and `a_backend_s_declaration_follows_the_backend_value` requires `Backend::limits(&self)` read off the backend value, one built without `h2c` refused naming the reason and one built with it accepted; the WebSocket suite's declaration scenario requires the upgrades refusal to carry the adapter's reason on actix.
+- `strips_prefix`: `ulo-http/tests/embed_outside_prefix.rs` runs on a test host declared `without_strips_prefix`, so the app strips the prefix only from the declaration.
+- Skips from the declaration: `ulo-rpc-conformance/tests/skips.rs` runs `cancel_follows_its_request` over a link that fails whatever starts it, returning when the link is declared without `ordered_control` and panicking at the link's start when it declares nothing; actix's WebSocket suite skips thirty scenarios from `why_not_upgrades`, and `ulo-ws-conformance`'s two unit tests on `__private::skips` hold that decision in both directions, a host that has upgrades skipping nothing; the stamping macro asserts in a constant that its scenario list names the declaration `skips` exempts, so a renamed declaration scenario fails to compile on every host.
+- `MigrationLock`: `ulo-codegen-tests/tests/ui/migrate_without_a_migration_lock.rs`, the E0277 carrying the trait's `on_unimplemented` message and note.
+
+Breaks planted in the working tree, one at a time, each anchor asserted once and each file restored and compared by hash afterwards:
+
+| Break | Red |
+| --- | --- |
+| `Capabilities::new` declaring `holds_unserved` absent | 1 (the `new` doctest) |
+| the binary-payload refusal without its reason | 2 (`hand_written.rs`) |
+| `Capabilities::codec` leaving a JSON link with `binary` | 3 (`hand_written.rs`, the hand-written twin test among them) |
+| the `forward_miss` refusal without its reason | 1 (`declared_limits.rs`) |
+| `Server::prepare` reading `BackendLimits::NONE` in place of the backend's `limits(&self)` | 1 (`declared_limits.rs`) |
+| `Embedded` ignoring `strips_prefix` | 1 (`embed_outside_prefix.rs`) |
+| the ordered-cancel skip removed | 1 (`skips.rs`) |
+| the ordered-cancel skip taken on every link | 1 (`skips.rs`, the `should_panic` test) |
+| the WebSocket suite's skip removed | 30 (actix's `ws_conformance`) |
+| the WebSocket suite's skip taken on every host | 2 (`ulo-ws-conformance`'s unit tests) |
+| the embedding's upgrades refusal without its reason | 1 (actix's declaration scenario) |
+| the fan-out `warn` without its `reason` field | 1 (`fan_out.rs`) |
+| `MigrationLock` without `on_unimplemented` | 1 (`compile_fail`, on rustc 1.98.1) |

@@ -1396,6 +1396,8 @@ Override rules:
 | A closure hook or `.ready(..)` on an execution-scoped or transient handle | compile | typed binding handle (§9.1) |
 | `.qualified::<Q>()` on an enhancer contribution | compile | `Contribute<.., Enhancer>` has no `qualified`; a role collection is read unqualified (§7) |
 | `enhancer::<K>()` with a `K` that is not a role key | compile | `Role` bound + `on_unimplemented` (§3.7) |
+| `StoreModule::migrate` on a store implementing no `MigrationLock` | compile | method bound + `on_unimplemented` naming the stores that implement it (integrations §4) |
+| A backend or host asked for a capability it is declared without (`upgrades`, `h2c`, `peer_addr`, `forward_miss`, `host_extensions`, ...), or an RPC handler of a shape or payload the link does not carry | startup (`prepare`) | the `Server`'s `prepare` against `BackendLimits`, `EmbedLimits` or `Capabilities`, the refusal naming the capability and, for a boolean capability, the reason the declaration carries; a call shape outside `Capabilities::shapes` is named without one (transports §3.7, §3.8, §5.3) |
 | A second bound on one binding-handle item: `.timeout` twice, `.unbounded()` beside `.timeout` or `.attempt_timeout`, either after `.unbounded()` | compile | typed binding handle: the item's bounded state has neither method (§9.1) |
 | An enhancer that lacks its role trait, including a controller-level one for any handler's transport | compile | `Guard<T>` and similar bounds, one per handler, naming the handler |
 | A constructor that isn't `Send` | compile | generated impl |
