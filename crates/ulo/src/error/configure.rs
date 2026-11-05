@@ -143,7 +143,7 @@ pub struct PrepareError {
 
 /// One failure a [`PrepareError`] lists, as data a test or a tool reads without parsing the
 /// report's text: the types it names, the source line that declared what failed, what failed, and
-/// the route scopes involved, and, for a scope refused because its entry would never run, why.
+/// the route scopes involved, and, for what was refused as something that would never run, why.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PrepareEntry {
     names: Vec<TypeName>,
@@ -153,29 +153,45 @@ pub struct PrepareEntry {
     reason: Option<Unreached>,
 }
 
-/// Why `prepare` refused a pre-dispatch entry's scope as one the entry would never run for, as
+/// Why `prepare` refused something it was given as something that would never run, as
 /// [`PrepareEntry::reason`] reads it. `Display` writes the clause the refusal's text ends with,
-/// after "which".
+/// so the text follows from the reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Unreached {
     /// The scope matches no path a route of the table matches, once the entry's exclusions are
     /// taken out.
     NoRoute,
-    /// The only path the server answers that the scope matches is the gRPC health service's,
-    /// which runs no scoped entry (transports DESIGN §6.2).
-    HealthOnly,
+    /// The only service the server answers whose paths the scope matches is `service`, a health
+    /// service, which runs no scoped entry (transports DESIGN §6.2). The transport names the
+    /// service.
+    HealthOnly { service: &'static str },
+    /// A scoped entry names no route pattern.
+    EmptyScope,
+    /// A message handler is mounted on a gateway that reads every message raw, which no handler
+    /// receives.
+    RawGateway,
+    /// A route, a scope, an exclusion or an upgrade path has a static segment holding a `\`, raw
+    /// or as `%5C`, and a request path holding one is refused before routing, so it can never
+    /// match.
+    BackslashSegment,
 }
 
 impl fmt::Display for Unreached {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Unreached::NoRoute => "matches no route's path",
-            Unreached::HealthOnly => {
-                "matches only the gRPC health service's paths among those the server answers, and health runs no scoped \
-                 entry, so the entry would never run"
+        match self {
+            Unreached::NoRoute => f.write_str("matches no route's path"),
+            Unreached::HealthOnly { service } => write!(
+                f,
+                "matches only `{service}`'s paths among those the server answers, and that health service runs no \
+                 scoped entry, so the entry would never run"
+            ),
+            Unreached::EmptyScope => f.write_str("names no route pattern, so it covers no route"),
+            Unreached::RawGateway => f.write_str("reads every message raw, so the handler would never run"),
+            Unreached::BackslashSegment => {
+                f.write_str("holds a `\\`, raw or as `%5C`, and a request path holding one is refused with 400 before routing")
             }
-        })
+        }
     }
 }
 
@@ -204,8 +220,9 @@ impl PrepareEntry {
         self
     }
 
-    /// Why the scope in [`scopes`](Self::scopes) was refused, when the failure is a scope its
-    /// entry would never run for.
+    /// Why what failed would never run: a scope in [`scopes`](Self::scopes) its entry would never
+    /// run for, a scoped entry with no scope, a handler its gateway never calls, or a route, scope,
+    /// exclusion or upgrade path no request reaching it can match.
     pub fn because(mut self, reason: Unreached) -> Self {
         self.reason = Some(reason);
         self

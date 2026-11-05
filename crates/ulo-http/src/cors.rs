@@ -28,8 +28,9 @@ use crate::response::Response;
 /// A path the app refuses before the stage runs, one holding a `.` or `..` segment or a `\`,
 /// answers 400 with the headers each `Cors` declared with `apply_value` adds to a response it
 /// passes, and no other entry runs: a cross-origin page reads the 400. A preflight to such a path
-/// is that 400 too, which a browser takes as a failed preflight. A `Cors` applied by type,
-/// `apply::<Cors>()` or `apply_for::<Cors>(..)`, adds nothing to that 400.
+/// is that 400 too, which a browser takes as a failed preflight. To get CORS headers on a refused
+/// path, give `Cors` to `apply_value`: a `Cors` applied by type, `apply::<Cors>()` or
+/// `apply_for::<Cors>(..)`, adds nothing to that 400.
 #[derive(Clone, Debug, Default)]
 pub struct Cors {
     pub(crate) origins: Origins,

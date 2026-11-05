@@ -47,6 +47,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures_core::stream::BoxStream;
 use futures_util::StreamExt;
+use redis::IntoConnectionInfo;
 use redis::aio::MultiplexedConnection;
 use tokio::runtime::Handle;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -62,8 +63,9 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(1);
 /// [`Redis::connect_within`] says otherwise.
 const CONNECT_WITHIN: Duration = Duration::from_secs(30);
 
-/// The Redis adapter. The URL is parsed and the connection made lazily, at the first publish or
-/// subscribe; `rediss://` selects TLS.
+/// The Redis adapter. The URL is read in `prepare`, which refuses one the redis client does not
+/// read, and the connection is made lazily, at the first publish or subscribe; `rediss://`
+/// selects TLS.
 #[derive(Clone)]
 pub struct Redis {
     pub(crate) url: String,
@@ -102,6 +104,12 @@ impl Redis {
 
     fn runtime(&self) -> Result<Tokio, BoxError> {
         self.runtime.clone().ok_or_else(|| NO_RUNTIME.into())
+    }
+
+    /// The database the URL selects, as the redis client reads it: the path of a TCP URL, the
+    /// `db` query parameter of a Unix socket's, 0 when it names none.
+    fn database(&self) -> redis::RedisResult<i64> {
+        self.url.as_str().into_connection_info().map(|info| info.redis_settings().db())
     }
 }
 
@@ -206,29 +214,40 @@ fn dropped(refused: &Undecodable, channel: &str) {
 
 impl BroadcastAdapter for Redis {
     /// Refuses an adapter with no tokio runtime, naming `.with_handle(..)`, one whose runtime was
-    /// built without its IO driver ([`Tokio::require_io`]), and a zero
+    /// built without its IO driver ([`Tokio::require_io`]), a URL the redis client does not read,
+    /// a `db` that is not a number among them, and a zero
     /// [`connect_within`](Redis::connect_within).
     fn prepare(&self) -> Result<(), BoxError> {
         self.runtime()?.require_io()?;
+        if let Err(error) = self.database() {
+            return Err(format!("the Redis broadcast adapter's URL is not one the redis client reads: {error}").into());
+        }
         if self.connect_within.is_zero() {
             return Err("the Redis broadcast adapter's `connect_within` is zero, so no subscription could be confirmed".into());
         }
         Ok(())
     }
 
-    /// `broadcast` = `redis` and `url`, the adapter's URL as its scheme, host, port and path:
+    /// `broadcast` = `redis`; `url`, the adapter's URL as its scheme, host, port and path:
     /// `redis://:key@cache:6379/2` is `redis://cache:6379/2`, and
-    /// `redis+unix:///run/redis.sock?pass=key&db=1` is `redis+unix:///run/redis.sock`. Two URLs
-    /// differing only in their userinfo, query or fragment compare equal, a Unix socket's
-    /// database number among them, since it is a query parameter; two differing in their path,
-    /// a TCP URL's database number or a socket's location, do not. Then `connect_within`, so a
-    /// second import with another bound is refused rather than running on the first's. The
+    /// `redis+unix:///run/redis.sock?pass=key&db=1` is `redis+unix:///run/redis.sock`; and
+    /// `database`, the database the redis client selects from the URL, the path of a TCP URL and
+    /// the `db` query parameter of a Unix socket's, 0 when the URL names none. Two URLs differing
+    /// in their path or in the database compare unequal, a Unix socket's `db` among them, and two
+    /// differing only in their userinfo, their fragment or a query parameter that selects no
+    /// database compare equal. A URL the client does not read, a `db` that is not a number among
+    /// them, has the database `[unreadable]`, and `prepare` refuses it. Then `connect_within`, so
+    /// a second import with another bound is refused rather than running on the first's. The
     /// runtime `with_handle` names is not compared.
     fn settings(&self) -> ModuleSettings {
-        ModuleSettings::new()
+        let settings = ModuleSettings::new()
             .with("broadcast", format_args!("redis"))
-            .with("url", format_args!("{}", ulo::secrets::setting_url(&self.url)))
-            .with("connect_within", self.connect_within)
+            .with("url", format_args!("{}", ulo::secrets::setting_url(&self.url)));
+        let settings = match self.database() {
+            Ok(database) => settings.with("database", database),
+            Err(_) => settings.with("database", format_args!("[unreadable]")),
+        };
+        settings.with("connect_within", self.connect_within)
     }
 
     /// A failed publish drops the cached connection, so the next publish connects again. The

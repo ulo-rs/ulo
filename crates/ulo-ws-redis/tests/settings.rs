@@ -1,6 +1,7 @@
 //! The Redis adapter's settings, which `WsModule` compares: `redis`, the URL's scheme, host, port
-//! and path, never its userinfo, query or fragment, and `connect_within`. Nothing connects:
-//! `wire()` reads the settings alone.
+//! and path, never its userinfo, query or fragment, the database the URL selects, and
+//! `connect_within`. Nothing connects: `wire()` reads the settings alone, and `prepare` reads the
+//! URL.
 
 use std::time::Duration;
 
@@ -61,6 +62,7 @@ fn the_settings_name_redis_and_the_url_without_its_userinfo_or_query() {
     let expected = ulo::ModuleSettings::new()
         .with("broadcast", format_args!("redis"))
         .with("url", format_args!("redis://cache:6379/0"))
+        .with("database", 0)
         .with("connect_within", Duration::from_secs(30));
     assert_eq!(settings, expected);
     let socket = Redis::url("redis+unix:///run/redis.sock?pass=query-credential-value&db=1").settings();
@@ -112,7 +114,47 @@ async fn two_databases_under_one_identity_are_refused() {
         panic!("expected `DifferingSettings`:\n{errors}");
     };
     let settings: Vec<_> = settings.iter().map(|s| (s.name, s.first.clone(), s.second.clone())).collect();
-    assert_eq!(settings, [("url", Some("redis://a:6379/0".to_owned()), Some("redis://a:6379/1".to_owned()))]);
+    assert_eq!(
+        settings,
+        [
+            ("url", Some("redis://a:6379/0".to_owned()), Some("redis://a:6379/1".to_owned())),
+            ("database", Some("0".to_owned()), Some("1".to_owned())),
+        ]
+    );
+}
+
+/// A Unix socket's database is its `db` query parameter, which the URL setting leaves out: two
+/// sockets differing only there are refused naming `database`. Planted break: `Redis::settings`
+/// without `database`.
+#[tokio::test]
+async fn two_unix_socket_databases_under_one_identity_are_refused() {
+    let errors = match wired(Root(vec!["redis+unix:///run/redis.sock?db=1", "redis+unix:///run/redis.sock?db=2"])) {
+        Err(errors) => errors,
+        Ok(()) => panic!("wired; two Redis databases on one socket under one identity should be refused"),
+    };
+    assert_eq!(errors.len(), 1, "{errors}");
+    let Some(WiringError::DifferingSettings { settings, .. }) = errors.iter().next() else {
+        panic!("expected `DifferingSettings`:\n{errors}");
+    };
+    let settings: Vec<_> = settings.iter().map(|s| (s.name, s.first.clone(), s.second.clone())).collect();
+    assert_eq!(settings, [("database", Some("1".to_owned()), Some("2".to_owned()))]);
+    wired(Root(vec!["redis+unix:///run/redis.sock?db=1&pass=a", "redis+unix:///run/redis.sock?pass=b&db=1"]))
+        .unwrap_or_else(|errors| panic!("one database on one socket: {errors}"));
+}
+
+/// A `db` that is not a number is a URL the redis client does not read: the setting says so and
+/// `prepare` refuses the adapter. Planted break: `prepare` not reading the URL.
+#[tokio::test]
+async fn a_database_that_is_not_a_number_is_unreadable_and_refused_by_prepare() {
+    let adapter = Redis::url("redis+unix:///run/redis.sock?db=one&pass=query-credential-value");
+    let settings = format!("{:?}", adapter.settings());
+    assert!(settings.contains("\"database\": \"[unreadable]\""), "{settings}");
+    let refused = adapter.prepare().err().unwrap_or_else(|| panic!("prepare accepted a database that is not a number"));
+    let text = refused.to_string();
+    assert!(text.contains("the Redis broadcast adapter's URL is not one the redis client reads"), "{text}");
+    assert!(text.contains("Invalid database number"), "{text}");
+    assert!(!holds_a_password(&text), "{text}");
+    Redis::url("redis+unix:///run/redis.sock?db=3").prepare().unwrap_or_else(|error| panic!("a numeric database: {error}"));
 }
 
 /// The subscription bound is a setting: a second import with another is refused rather than

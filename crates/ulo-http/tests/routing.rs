@@ -7,7 +7,7 @@
 mod o1_support;
 
 use http::{Method, StatusCode};
-use o1_support::{Call, Running, refusal_names, refusals, refused, start};
+use o1_support::{Call, Running, refusal_entries, refusal_names, refusals, refused, start};
 use ulo::{ModuleDef, TypeName, injectable, routes};
 use ulo_http::{HttpCx, Path, Routing};
 
@@ -422,6 +422,8 @@ async fn a_route_whose_static_segment_holds_a_backslash_is_refused_naming_the_ro
 
     assert_eq!(refusals(&error), 1, "one transport refused: {error}");
     assert_eq!(refusal_names(&error), [TypeName::of::<Unreachable>(); 2], "{error}");
+    let reasons: Vec<_> = refusal_entries(&error).iter().map(|entry| entry.reason()).collect();
+    assert_eq!(reasons, [Some(ulo::Unreached::BackslashSegment); 2], "{error}");
     let text = error.to_string();
     for (handler, route, segment) in [("encoded", "/files/a%5Cb", "a%5Cb"), ("raw", "/raw\\dir/{name}", "raw\\dir")] {
         let expected = format!(

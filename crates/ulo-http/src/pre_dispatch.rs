@@ -170,8 +170,8 @@ impl<T: HttpCarried> PreDispatch<T> {
 
     /// A middleware by value, built once and shared, unscoped. A `Cors` value is checked in
     /// `prepare`, and its response headers are what the 400 of a path refused before the stage
-    /// carries; a `Cors` applied by type, `apply::<Cors>()` or `apply_for::<Cors>(..)`, adds
-    /// nothing to that 400.
+    /// carries. To get CORS headers on a refused path, give `Cors` here: a `Cors` applied by type,
+    /// `apply::<Cors>()` or `apply_for::<Cors>(..)`, adds nothing to that 400.
     #[track_caller]
     pub fn apply_value<M: Middleware>(&mut self, middleware: M) -> &mut Self {
         let cors = (&middleware as &dyn Any).downcast_ref::<Cors>().cloned();
@@ -506,10 +506,12 @@ impl<T: HttpCarried> Stage<T> {
                     continue;
                 }
                 if entry.scope.is_empty() {
+                    let reason = Unreached::EmptyScope;
                     failures.push(
-                        Failure::plain(format!("pre-dispatch entry at {} names no route pattern, so it covers no route", entry.location))
+                        Failure::plain(format!("pre-dispatch entry at {} {reason}", entry.location))
                             .at(entry.location)
-                            .about(PRE_DISPATCH_ENTRY),
+                            .about(PRE_DISPATCH_ENTRY)
+                            .because(reason),
                     );
                 }
                 let scope = scopes(&entry.scope, "scope", http, entry.location, &mut failures);
@@ -708,21 +710,25 @@ fn scopes(
     at: &'static Location<'static>,
     failures: &mut Vec<Failure>,
 ) -> Vec<ScopePattern> {
-    let mut refuse = |text: String, pattern: &str| {
-        failures.push(Failure::plain(format!("pre-dispatch entry at {at}: {text}")).at(at).about(PRE_DISPATCH_ENTRY).scoped([pattern.to_owned()]));
+    let mut refuse = |text: String, pattern: &str, reason: Option<Unreached>| {
+        let failure = Failure::plain(format!("pre-dispatch entry at {at}: {text}")).at(at).about(PRE_DISPATCH_ENTRY).scoped([pattern.to_owned()]);
+        failures.push(match reason {
+            Some(reason) => failure.because(reason),
+            None => failure,
+        });
     };
     patterns
         .iter()
         .filter_map(|pattern| match ScopePattern::parse(pattern) {
             Ok(parsed) => match parsed.unreachable_segment().filter(|_| routed) {
                 Some(segment) => {
-                    refuse(unreachable(&format!("the {what} `{pattern}`"), segment), pattern);
+                    refuse(unreachable(&format!("the {what} `{pattern}`"), segment), pattern, Some(Unreached::BackslashSegment));
                     None
                 }
                 None => Some(parsed),
             },
             Err(err) => {
-                refuse(err.to_string(), pattern);
+                refuse(err.to_string(), pattern, None);
                 None
             }
         })

@@ -65,12 +65,9 @@ enum Of {
 impl MigratorIdentity {
     /// A migrator held in a `static`, compared by its address: `&MIGRATOR` passed at two calls is
     /// one migrator, and two `static`s are two, whatever they hold. A promoted constant written
-    /// inline, `&CONST` or `&sqlx::migrate!()`, has whatever address the compiler gives it:
-    /// rustc gives two occurrences of one constant one address in debug and release builds, and
-    /// in a release build a `static` can share the address of an equal inline constant. The
-    /// compiler merges two values only when their bytes are identical, which for a migrator means
-    /// the same migrations, so a merged address never names two different migrators. The merge
-    /// itself is not promised, so a `static` is what makes one migrator compare equal to itself.
+    /// inline, `&CONST` or `&sqlx::migrate!()`, has the address the compiler chooses, so it may
+    /// compare equal or unequal between builds; bind a `static`. Only identical bytes share an
+    /// address, so an equal address never names two different migrators.
     ///
     /// `T` is sized: a slice or a trait object would be compared by its data address alone, so
     /// two slices starting at one element would compare equal. A zero-sized value has no address

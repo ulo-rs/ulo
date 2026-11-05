@@ -11,6 +11,7 @@ use std::any::{Any, TypeId, type_name};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::panic::Location;
 use std::sync::Arc;
 
 use crate::binding::Qualifier;
@@ -156,9 +157,26 @@ impl Hash for ModuleIdentity {
 /// let settings = ModuleSettings::new().with("connect_within", Duration::from_secs(5)).with("lazy", false);
 /// assert_ne!(settings, ModuleSettings::new().with("connect_within", Duration::from_secs(10)).with("lazy", false));
 /// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default)]
 pub struct ModuleSettings {
-    entries: Vec<(&'static str, String)>,
+    entries: Vec<Setting>,
+    repeats: Vec<Repeat>,
+}
+
+#[derive(Clone)]
+struct Setting {
+    name: &'static str,
+    value: String,
+    at: &'static Location<'static>,
+}
+
+/// A name written to one `ModuleSettings` a second time: `first` is the call that recorded it,
+/// `second` the repeat.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Repeat {
+    pub(crate) name: &'static str,
+    pub(crate) first: &'static Location<'static>,
+    pub(crate) second: &'static Location<'static>,
 }
 
 impl ModuleSettings {
@@ -168,38 +186,59 @@ impl ModuleSettings {
 
     /// Records the setting `name` with `value` written by `Debug`.
     ///
-    /// # Panics
-    ///
-    /// When `name` is already recorded. Two imports compare a name's first value only, so a
-    /// second value under it would never be compared; a module appending its own settings to
-    /// another's, as `ulo-otel` appends `service_name` to the exporter's, fails here when both
-    /// write one name.
+    /// A module's settings name each setting once. A name already recorded keeps its first value,
+    /// and `wire()` refuses the module as `WiringError::DuplicateSetting`, naming the name and
+    /// the two `with` calls that wrote it, so a module appending its own settings to an adapter's
+    /// or an exporter's is refused where the two collide.
     #[track_caller]
     pub fn with(mut self, name: &'static str, value: impl fmt::Debug) -> Self {
-        assert!(
-            !self.entries.iter().any(|(written, _)| *written == name),
-            "the module setting `{name}` is written twice; each name is one setting"
-        );
-        self.entries.push((name, format!("{value:?}")));
+        let at = Location::caller();
+        match self.entries.iter().find(|written| written.name == name) {
+            Some(first) => self.repeats.push(Repeat { name, first: first.at, second: at }),
+            None => self.entries.push(Setting { name, value: format!("{value:?}"), at }),
+        }
         self
+    }
+
+    /// Each name written a second time, in the order the repeats were written.
+    pub(crate) fn repeats(&self) -> &[Repeat] {
+        &self.repeats
+    }
+
+    fn value(&self, name: &str) -> Option<&str> {
+        self.entries.iter().find(|written| written.name == name).map(|written| written.value.as_str())
     }
 
     /// Each setting whose value differs between `self` and `other`, or that one of them lacks, as
     /// `(name, self's value, other's value)`; a missing value is `None`. In `self`'s order, then
     /// the names only `other` has.
     pub(crate) fn differences(&self, other: &ModuleSettings) -> Vec<(&'static str, Option<String>, Option<String>)> {
-        let value = |settings: &ModuleSettings, name: &str| {
-            settings.entries.iter().find(|(written, _)| *written == name).map(|(_, value)| value.clone())
-        };
-        let mut names: Vec<&'static str> = self.entries.iter().map(|(name, _)| *name).collect();
-        names.extend(other.entries.iter().map(|(name, _)| *name).filter(|name| !self.entries.iter().any(|(own, _)| own == name)));
+        let mut names: Vec<&'static str> = self.entries.iter().map(|written| written.name).collect();
+        names.extend(other.entries.iter().map(|written| written.name).filter(|name| self.value(name).is_none()));
         names
             .into_iter()
             .filter_map(|name| {
-                let (first, second) = (value(self, name), value(other, name));
-                (first != second).then_some((name, first, second))
+                let (first, second) = (self.value(name), other.value(name));
+                (first != second).then(|| (name, first.map(str::to_owned), second.map(str::to_owned)))
             })
             .collect()
+    }
+}
+
+/// Compares the names and values in order, not where they were written.
+impl PartialEq for ModuleSettings {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries.len() == other.entries.len()
+            && self.entries.iter().zip(&other.entries).all(|(a, b)| a.name == b.name && a.value == b.value)
+    }
+}
+
+impl Eq for ModuleSettings {}
+
+/// Each name and its value, unredacted.
+impl fmt::Debug for ModuleSettings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map().entries(self.entries.iter().map(|written| (written.name, &written.value))).finish()
     }
 }
 
@@ -308,10 +347,19 @@ pub(crate) fn colliding_names<'a>(names: impl IntoIterator<Item = &'a ModuleName
 mod tests {
     use super::ModuleSettings;
 
-    /// Planted break: `with` recording the name again.
+    /// A repeat keeps the first value and records both calls. Planted break: `with` recording
+    /// the name again.
     #[test]
-    #[should_panic(expected = "the module setting `lazy` is written twice")]
-    fn a_setting_name_written_twice_panics() {
-        let _ = ModuleSettings::new().with("lazy", false).with("retries", 2).with("lazy", true);
+    fn a_setting_name_written_twice_is_recorded_as_a_repeat() {
+        let first_line = line!() + 2;
+        let settings = ModuleSettings::new()
+            .with("lazy", false)
+            .with("retries", 2)
+            .with("lazy", true);
+        assert_eq!(settings, ModuleSettings::new().with("lazy", false).with("retries", 2));
+        let [repeat] = settings.repeats() else { panic!("expected one repeat: {}", settings.repeats().len()) };
+        assert_eq!(repeat.name, "lazy");
+        assert_eq!((repeat.first.file(), repeat.first.line()), (file!(), first_line));
+        assert_eq!((repeat.second.file(), repeat.second.line()), (file!(), first_line + 2));
     }
 }

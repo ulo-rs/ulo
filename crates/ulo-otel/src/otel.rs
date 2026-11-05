@@ -48,18 +48,11 @@ impl Otel {
     /// and the SDK's `telemetry.sdk.*` attributes alone; it reads no `OTEL_*` variable, so a
     /// value comes from the options however they were read. The SDK's own defaults still read
     /// `OTEL_BSP_*` and the `OTEL_SPAN_*_LIMIT` names from the process environment.
-    ///
-    /// # Panics
-    ///
-    /// When the exporter's [`Exporter::settings`] write `service_name`, `sample_ratio` or
-    /// `flush_timeout_ms`, the names the module writes itself.
-    #[track_caller]
     pub fn new<E: Exporter>(options: OtelOptions, exporter: E) -> Result<Otel, BoxError> {
         options.check()?;
         // The ratio and the flush timeout are compared as the module runs them, an unset one as
-        // its documented default. `Debug` writes an `f64` as the shortest text reading back to its
-        // bits, and `check` has refused NaN; adding `0.0` turns `-0.0` into `0.0`, the one ratio
-        // they both sample at.
+        // its documented default. `check` has refused NaN, and adding `0.0` turns `-0.0` into
+        // `0.0`, the one ratio they both sample at.
         let settings = exporter
             .settings(&options)
             .with("service_name", &options.service_name)
@@ -111,7 +104,9 @@ impl Otel {
 /// and the flush timeout compare as the module runs them: an unset ratio is `1.0` and an unset
 /// timeout `5000`, so either written out equals it unset, and `-0.0` is the ratio `0.0`. An unset
 /// `service_name` is not compared as the name the resource derives, which depends on the
-/// executable, so it differs from every name written out. The headers are never among them.
+/// executable, so it differs from every name written out. The headers are never among them. An
+/// exporter writing one of the three names the module writes is refused at `wire()` as
+/// `ulo::WiringError::DuplicateSetting`, naming the exporter's line and the module's.
 pub struct OtelModule {
     pub(crate) otel: Otel,
 }

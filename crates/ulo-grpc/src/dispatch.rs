@@ -535,23 +535,24 @@ fn screened<B>(mut reply: http::Response<B>, by: Writer) -> http::Response<B> {
 
 /// What wrote onto a reply [`screened`] screens: the interceptors, screened once `ulo::dispatch`
 /// answers, or the pre-dispatch entries, screened once the stage answers.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Writer {
     Interceptor,
     PreDispatch,
 }
 
-/// The `grpc-` names [`screened`] has restored and logged, each logged once per process whether an
-/// interceptor or a pre-dispatch entry wrote it, by the warning of whichever was screened first.
-static RESTORED: Mutex<Vec<HeaderName>> = Mutex::new(Vec::new());
+/// The `grpc-` names [`screened`] has restored and logged, each with what wrote it: a name is
+/// logged once per process for each writer, so a name both an interceptor and a pre-dispatch entry
+/// write logs both warnings on the first reply that carries both.
+static RESTORED: Mutex<Vec<(Writer, HeaderName)>> = Mutex::new(Vec::new());
 
 impl Writer {
     fn warn_restored(self, name: &HeaderName) {
         let mut restored = RESTORED.lock().unwrap_or_else(PoisonError::into_inner);
-        if restored.contains(name) {
+        if restored.iter().any(|(writer, restored)| *writer == self && restored == name) {
             return;
         }
-        restored.push(name.clone());
+        restored.push((self, name.clone()));
         drop(restored);
         match self {
             Writer::Interceptor => tracing::warn!(

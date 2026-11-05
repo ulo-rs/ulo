@@ -45,7 +45,8 @@ impl ulo_http::HttpCarried for Grpc {}
 /// name is logged at `warn` the first time in the process, so a trailers-only reply's status
 /// stands as the framework wrote it. The response a `PreDispatch<Grpc>` entry passes is screened
 /// the same way once the stage answers, the health and reflection services' replies and the
-/// dispatcher's own statuses included.
+/// dispatcher's own statuses included. The record is kept per writer: a name an interceptor and a
+/// pre-dispatch entry both write is logged once for each, both on the first reply.
 pub type Reply = http::Response<tonic::body::Body>;
 
 /// One call's context: `Clone + Send + Sync`, every clone the same call. The execution, the method

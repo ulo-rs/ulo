@@ -10,7 +10,7 @@ use crate::error::wiring::{DifferingSetting, ModuleSite, WiringError};
 use crate::graph::{Graph, ModuleId, boundary_key, order};
 use crate::key::Key;
 use crate::module::def::{ModuleDef, ModuleNode};
-use crate::module::{Module, ModuleIdentity, ModuleName, ModuleSettings};
+use crate::module::{Module, ModuleIdentity, ModuleName, ModuleSettings, Repeat};
 use crate::testing::{Replacement, TestPlan};
 
 /// Every module reached from a root, before freezing.
@@ -30,9 +30,13 @@ pub(crate) struct Registry {
     /// Each later registration of an identity already claimed whose settings differ from the
     /// claiming one's.
     pub(crate) differing: Vec<Differing>,
+    /// Each repeated setting name a later registration of a claimed identity wrote and the
+    /// claiming one did not, with the module it registers as: the later registration's settings
+    /// are compared and then dropped, so its repeats are reported from here.
+    pub(crate) repeats: Vec<(Import, Repeat)>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Import {
     New(usize),
     Existing(ModuleId),
@@ -88,6 +92,22 @@ impl Differing {
                 .into_iter()
                 .map(|(setting, first, second)| DifferingSetting::new(setting, first, second, &base.secrets))
                 .collect(),
+        }
+    }
+}
+
+/// Records each repeat of `later`, a later registration of `module`, that `claimed`, the
+/// registration holding the identity, does not carry and no earlier registration recorded: a
+/// repeat the claiming registration carries is reported with its module.
+pub(crate) fn later_repeats(
+    repeats: &mut Vec<(Import, Repeat)>,
+    module: Import,
+    claimed: &ModuleSettings,
+    later: &ModuleSettings,
+) {
+    for repeat in later.repeats() {
+        if !claimed.repeats().contains(repeat) && !repeats.contains(&(module, *repeat)) {
+            repeats.push((module, *repeat));
         }
     }
 }
@@ -162,6 +182,7 @@ impl<'a> Walk<'a> {
                 import_cycles: Vec::new(),
                 replaced: Vec::new(),
                 differing: Vec::new(),
+                repeats: Vec::new(),
             },
             base,
             plan,
@@ -180,7 +201,9 @@ impl<'a> Walk<'a> {
         if let Some((base, &existing)) = self.base.and_then(|base| Some((base, base.by_identity.get(&identity)?))) {
             let frozen = base.module(existing);
             let found = Import::Existing(existing);
-            self.registry.differing.extend(Differing::of(found, (&frozen.settings, frozen.site), (&module.settings(), site)));
+            let settings = module.settings();
+            self.registry.differing.extend(Differing::of(found, (&frozen.settings, frozen.site), (&settings, site)));
+            later_repeats(&mut self.registry.repeats, found, &frozen.settings, &settings);
             return found;
         }
         let plan = self.plan;
@@ -218,7 +241,9 @@ impl<'a> Walk<'a> {
                 return found;
             }
             let claimed = &self.registry.nodes[node];
-            self.registry.differing.extend(Differing::of(found, (&claimed.settings, claimed.site), (&module.settings(), site)));
+            let settings = module.settings();
+            self.registry.differing.extend(Differing::of(found, (&claimed.settings, claimed.site), (&settings, site)));
+            later_repeats(&mut self.registry.repeats, found, &claimed.settings, &settings);
             return found;
         }
 

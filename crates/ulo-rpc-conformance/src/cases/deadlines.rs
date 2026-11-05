@@ -3,7 +3,7 @@
 use std::error::Error as _;
 use std::future::{Future, IntoFuture};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
@@ -16,7 +16,7 @@ use ulo_transport::{Count, ErrorKind};
 use crate::{Broker, Budget};
 use crate::cases::app::{
     ADD, Add, COUNT, DEADLINE, DEADLINE_STREAM, DEADLINE_SUM, EVENT, Fixture, Mounts, PAUSE, STALL, SUM, Sum, TICKS, addresses,
-    client_over, eventually, failed, refused_at_startup, streams, within,
+    client_over, client_timed, eventually, failed, refused_at_startup, streams, within,
 };
 
 /// `deadline-ms` fires `Deadline` and renders `timeout`: a call whose `req` carries 300 ms, written
@@ -633,84 +633,180 @@ pub async fn connect_past_the_deadline_is_refused_before_the_server_sees_it<B: B
     fixture.stop().await;
 }
 
-/// How many calls [`blocked_connect_s_timer_ends_with_its_bound`] makes. Its timer starts late
-/// only when the call's `select!` polls the work before the timer, an order it shuffles at random,
-/// so half the time; sixteen leave a chance of one in 65,536 that a timer started late is never
-/// seen.
+/// How many calls [`blocked_connect_s_timer_ends_with_its_bound`] makes. A timer that an order
+/// picked at random arms after the work's first poll is late in half the calls; sixteen leave a
+/// chance of one in 65,536 that it is never seen.
 const BLOCKED_CALLS: usize = 16;
 
 /// The `deadline-ms` [`blocked_connect_s_timer_ends_with_its_bound`]'s server is given, ten
 /// seconds, past every bound the scenario sets: the client's `cancel` stops the handler.
 const UNANSWERED: &str = "10000";
 
-/// F411: a call's timer ends where its bound does, whatever blocked the call's first poll. Sixteen
-/// requests, each the first call of a fresh client whose link blocks its thread in the connect for
-/// half the call's timeout, two fifths of the broker's settle budget, to a handler that stalls. A
-/// [`Stamped`] link below the client writes the server a ten-second deadline, `UNANSWERED`, so the
-/// server's own `timeout` does not answer the call at its bound and only the client's timer can.
-/// Each fails `Timeout` no later than its timeout, the later of the bound's end and the block's,
-/// and a tenth of the settle budget, room for the poll that finds the timer due, after it was
-/// awaited. A timer counted from its own first poll, which the block delays, fires a full timeout
-/// after the block ends, half a timeout past the bound's end. The block leaves the link's own
-/// connect half the timeout to finish in, so the frame is sent and the timer alone ends the call:
-/// a connect returning past the bound is refused there instead, whatever the timer does.
+/// F411: a call's timer is armed for the end of the call's bound, whatever blocked the call's
+/// first poll. Sixteen requests, each the first call of a fresh client whose link blocks its
+/// thread in the connect for half the call's timeout, two fifths of the broker's settle budget, to
+/// a handler that stalls. A [`Stamped`] link below the client writes the server a ten-second
+/// deadline, `UNANSWERED`, so the server's own `timeout` does not answer the call at its bound and
+/// only the client's timer can. Each fails `Timeout`.
 ///
-/// Each call is timed on the std clock, and the report on a failure gives, for each, the client
-/// runtime's clock beside it, so a failure reading the two clocks apart shows, and when its
-/// connect began and returned against the call's start, on both.
+/// Each client's app is timed by an `ArmedClock` of its own over the runtime's clock, which
+/// records the instant each sleep ends, read where a clock that arms a sleep at its first poll
+/// arms it, and the instant a sleep that ran to its end ended. A call passes when a sleep its
+/// client asked for after the call began ends no earlier than the call's start plus its timeout
+/// and no later than the connect's start plus the timeout, and ran to its end before the call
+/// answered: the timer that ended the call was armed for the bound counted from the call. A timer
+/// armed after the block for a full timeout ends half a timeout beyond that window; a call
+/// answered `Timeout` before any such sleep ended was not ended by its timer. A call whose
+/// connect returned past the bound is answered by the refusal at the write, whatever the timer
+/// does, and passes on `Timeout` alone. The window follows from the order of the clock's reads on
+/// one thread, so load moves no threshold; the wall-clock time a call takes to answer is not
+/// asserted. A clock per client keeps a sleep an earlier client's lingering connection asks for,
+/// `CUT_GRACE` on TCP, out of the calls that follow it.
+///
+/// The report on a failure gives, for each call, its sleeps, its connects and its answer against
+/// the call's start, on the runtime's clock and the std clock.
 pub async fn blocked_connect_s_timer_ends_with_its_bound<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     let budget = fixture.broker.budget();
     let timeout = budget.settle * 2 / 5;
     let blocked = timeout / 2;
-    let margin = budget.settle / 10;
-    let clock = crate::rt::runtime::<B>();
     let mut calls = Vec::new();
     for _ in 0..BLOCKED_CALLS {
+        let clock = ArmedClock::new(crate::rt::runtime::<B>());
         let stamped = Stamped { link: fixture.broker.client_link(&addresses(&[&fixture.server])), value: UNANSWERED };
         let link = SlowConnect::new(stamped, Hold::Blocks(blocked));
         let connects = link.connects.clone();
-        let client = client_over::<B, _>(link).await;
-        let started = Instants::now(&*clock);
+        let client = client_timed::<B, _>(link, clock.clone()).await;
+        clock.take();
+        let started = Instants::now(&*clock.clock);
         let call = client.rpc.request::<_, ()>(STALL, &()).timeout(timeout).into_future();
         let outcome = within::<B, _>(timeout + blocked + budget.boot, "the call", call).await;
-        let answered = Instants::now(&*clock);
-        calls.push(Blocked { started, answered, connects: connects.all(), outcome });
+        let answered = Instants::now(&*clock.clock);
+        calls.push(Blocked { started, answered, connects: connects.all(), sleeps: clock.take(), outcome });
         client.close().await;
     }
-    let latest = timeout.max(blocked) + margin;
-    let late = |call: &Blocked| !matches!(&call.outcome, Err(error) if error.kind() == ErrorKind::Timeout) || call.answered.std - call.started.std > latest;
-    if calls.iter().any(late) {
+    if !calls.iter().all(|call| call.armed_within(timeout)) {
         let report: Vec<String> = calls.iter().map(Blocked::report).collect();
         panic!(
-            "a call given {timeout:?} over a connect blocking {blocked:?} was answered later than {latest:?} by the std clock or not `Timeout`; every call:\n{}",
+            "a call given {timeout:?} over a connect blocking {blocked:?} failed other than `Timeout`, or, its connect returning \
+             inside its bound, no sleep it asked for ended inside [the call's start + {timeout:?}, the connect's start + \
+             {timeout:?}] on the runtime's clock before it answered; every call:\n{}",
             report.join("\n")
         );
     }
     fixture.stop().await;
 }
 
+/// A clock that records, for each sleep asked of it, when it was asked for, the instant it ends,
+/// read at its first poll: where a clock that arms a sleep on its first poll arms it, the latest
+/// instant a sleep's timer can be armed, and when it ended, read as it ends.
+#[derive(Clone)]
+struct ArmedClock {
+    clock: Arc<dyn Runtime>,
+    sleeps: Arc<Mutex<Vec<Armed>>>,
+}
+
+/// One sleep an [`ArmedClock`] recorded, on its clock: when it was asked for, when it ends,
+/// `None` for an end past the clock's range, and when it ended, unset for one that has not or that
+/// the clock refused.
+#[derive(Clone, Debug)]
+struct Armed {
+    asked: Instant,
+    ends: Option<Instant>,
+    ended: Arc<OnceLock<Instant>>,
+}
+
+impl ArmedClock {
+    fn new(clock: Arc<dyn Runtime>) -> ArmedClock {
+        ArmedClock { clock, sleeps: Arc::default() }
+    }
+
+    /// The sleeps recorded since the last call, cleared.
+    fn take(&self) -> Vec<Armed> {
+        std::mem::take(&mut *self.sleeps.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+}
+
+impl Timer for ArmedClock {
+    fn sleep(&self, d: Duration) -> ulo::BoxFuture<'static, ()> {
+        let slept = self.try_sleep(d);
+        Box::pin(async move {
+            let _ = slept.await;
+        })
+    }
+
+    fn now(&self) -> Instant {
+        self.clock.now()
+    }
+
+    fn try_sleep(&self, d: Duration) -> ulo::BoxFuture<'static, Result<(), ulo::Refused>> {
+        let asked = self.clock.now();
+        let (clock, sleeps) = (Arc::clone(&self.clock), Arc::clone(&self.sleeps));
+        Box::pin(async move {
+            let ends = clock.now().checked_add(d);
+            let ended = Arc::new(OnceLock::new());
+            sleeps.lock().unwrap_or_else(PoisonError::into_inner).push(Armed { asked, ends, ended: Arc::clone(&ended) });
+            let slept = clock.try_sleep(d).await;
+            if slept.is_ok() {
+                let _ = ended.set(clock.now());
+            }
+            slept
+        })
+    }
+}
+
 /// One call of [`blocked_connect_s_timer_ends_with_its_bound`]: when it was made and answered,
-/// when its client's connects began and returned, and its outcome.
+/// when its client's connects began and returned, the sleeps its client's clock armed, and its
+/// outcome.
 struct Blocked {
     started: Instants,
     answered: Instants,
     connects: Vec<(Instants, Instants)>,
+    sleeps: Vec<Armed>,
     outcome: Result<(), RpcError>,
 }
 
 impl Blocked {
+    /// Whether the call failed `Timeout` and, unless its first connect returned past
+    /// `started + timeout`, a sleep its client asked for after `started` ends within
+    /// `[started + timeout, connect + timeout]` and ended before the call answered, on the
+    /// runtime's clock.
+    fn armed_within(&self, timeout: Duration) -> bool {
+        let Some((connect, returned)) = self.connects.first() else { return false };
+        let (earliest, latest) = (self.started.timer + timeout, connect.timer + timeout);
+        let timed_out = matches!(&self.outcome, Err(error) if error.kind() == ErrorKind::Timeout);
+        let ended_it = |sleep: &Armed| {
+            sleep.asked >= self.started.timer
+                && sleep.ends.is_some_and(|ends| ends >= earliest && ends <= latest)
+                && sleep.ended.get().is_some_and(|ended| *ended <= self.answered.timer)
+        };
+        timed_out && (returned.timer >= earliest || self.sleeps.iter().any(ended_it))
+    }
+
     fn report(&self) -> String {
         let since = |at: Instants| format!("{:+.1} ms by std, {:+.1} ms by the runtime", signed_millis(at.std, self.started.std), signed_millis(at.timer, self.started.timer));
+        let on_runtime = |at: Instant| format!("{:+.3} ms", signed_millis(at, self.started.timer));
         let connects: Vec<String> = self
             .connects
             .iter()
             .map(|(began, returned)| format!("a connect began {} and returned {}", since(*began), since(*returned)))
             .collect();
+        let sleeps: Vec<String> = self
+            .sleeps
+            .iter()
+            .map(|sleep| {
+                let ended = sleep.ended.get().map_or_else(|| "not ended".to_owned(), |ended| format!("ended {}", on_runtime(*ended)));
+                match sleep.ends {
+                    Some(ends) => format!("a sleep asked {} ending {}, {ended}", on_runtime(sleep.asked), on_runtime(ends)),
+                    None => format!("a sleep asked {} ending past the clock's range, {ended}", on_runtime(sleep.asked)),
+                }
+            })
+            .collect();
         format!(
-            "answered {}; {}; the runtime's clock read {:+.3} ms from std as the call was made; {:?}",
+            "answered {}; {}; {}; the runtime's clock read {:+.3} ms from std as the call was made; {:?}",
             since(self.answered),
             if connects.is_empty() { "no connect".to_owned() } else { connects.join(", ") },
+            if sleeps.is_empty() { "no sleep".to_owned() } else { sleeps.join(", ") },
             signed_millis(self.started.timer, self.started.std),
             self.outcome
         )

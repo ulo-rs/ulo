@@ -450,6 +450,35 @@ async fn loading_an_identity_the_graph_holds_with_other_settings_is_refused() {
     close(app).await;
 }
 
+/// A load of an identity the graph holds whose settings repeat a name is refused, though its
+/// settings equal the held module's. Planted break: `reload_differs` reporting no repeat.
+#[tokio::test]
+async fn loading_an_identity_the_graph_holds_with_a_repeated_setting_is_refused() {
+    struct Repeating(bool);
+    impl Module for Repeating {
+        fn identity(&self) -> ModuleIdentity {
+            ModuleIdentity::of_owner::<Repeating, _>(&"db")
+        }
+
+        fn settings(&self) -> ModuleSettings {
+            let settings = ModuleSettings::new().with("knob", 1);
+            if self.0 { settings.with("knob", 2) } else { settings }
+        }
+
+        fn register(&self, _: &mut ModuleDef<'_>) {}
+    }
+    let (app, handle) = base_with(Mod::<A>::new(|m| m.import(Repeating(false)))).await;
+    let errors = match handle.load(Repeating(true)).await {
+        Err(LoadError::Wiring(errors)) => errors,
+        Err(other) => panic!("expected wiring errors, got: {other}"),
+        Ok(_) => panic!("the load was accepted; a repeated setting should be refused"),
+    };
+    let (setting, module) = entry!(errors, WiringError::DuplicateSetting { setting, module, .. } => (*setting, module.to_string()));
+    assert_eq!((setting, module.as_str()), ("knob", "Repeating"));
+    assert_eq!(errors.len(), 1, "{errors}");
+    close(app).await;
+}
+
 /// Planted break: `reach` returning `Import::Existing` without comparing settings.
 #[tokio::test]
 async fn a_loaded_module_importing_an_identity_the_graph_holds_with_other_settings_is_refused() {
