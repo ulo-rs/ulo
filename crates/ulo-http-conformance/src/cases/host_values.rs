@@ -10,7 +10,7 @@ use crate::{HOST_VALUE_HEADER, Host, Mode};
 /// absent half runs against it.
 pub async fn present_and_absent<H: Host>(mode: Mode) {
     let host = start::<H>(mode).await;
-    let through = if H::limits().host_extensions { "the host's request extensions" } else { "an `Embedded::forward` copy" };
+    let through = if H::limits().host_extensions() { "the host's request extensions" } else { "an `Embedded::forward` copy" };
     if !is_reference::<H>() {
         let present = host.send(Exchange::get("/host-value").header(HOST_VALUE_HEADER, "frank")).await;
         assert_eq!(present.status, 200, "a host value through {through}");

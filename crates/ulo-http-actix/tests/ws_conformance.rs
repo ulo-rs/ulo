@@ -1,7 +1,7 @@
-//! The WebSocket conformance suite against an actix-web host, which declares `upgrades: false`: the
-//! suite's app, serving gateways on the HTTP port, must be refused at `listen()` before the host
-//! serves anything, rather than advertising gateways whose upgrades never arrive. No other scenario
-//! applies.
+//! The WebSocket conformance suite against an actix-web host, which is declared without
+//! `upgrades`: the suite's app, serving gateways on the HTTP port, must be refused at `listen()`
+//! before the host serves anything, rather than advertising gateways whose upgrades never arrive.
+//! The suite skips every other scenario, printing the declared reason.
 
 use std::future::Future;
 use std::io;
@@ -24,8 +24,8 @@ impl Host for ActixHost {
 
     const PORT: Port = Port::Http;
 
-    fn upgrades() -> bool {
-        <Actix as Embed>::limits().upgrades
+    fn why_not_upgrades() -> Option<&'static str> {
+        <Actix as Embed>::limits().why_not_upgrades()
     }
 
     fn runtime() -> Tokio {
@@ -53,4 +53,4 @@ impl Host for ActixHost {
     }
 }
 
-ws_conformance_suite!(ActixHost; without_upgrades);
+ws_conformance_suite!(ActixHost);

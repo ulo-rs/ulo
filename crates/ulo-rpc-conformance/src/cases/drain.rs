@@ -63,10 +63,10 @@ pub async fn drain<B: Broker>() {
         // A link without a miss signal declares the caller's own timeout as its answer to a call
         // nothing takes, as in the unhandled-pattern scenario; a link whose broker holds the call
         // for the next instance declares it too, and the held event below shows the hold.
-        Err(error) if error.kind() == ErrorKind::Timeout && (!capabilities.miss_signal || capabilities.holds_unserved) => {}
-        other => panic!("a call arriving during the drain is refused `Unavailable`, got: {other:?}"),
+        Err(error) if error.kind() == ErrorKind::Timeout && (!capabilities.miss_signal() || capabilities.holds_unserved()) => {}
+        other => panic!("a call arriving during the drain is refused `Unavailable` on a link {}, got: {other:?}", declared(&capabilities)),
     }
-    if capabilities.holds_unserved {
+    if capabilities.holds_unserved() {
         fixture.rpc().emit(EVENT, &HELD_EVENT).await.expect("an event during the drain is published");
     }
 
@@ -77,7 +77,7 @@ pub async fn drain<B: Broker>() {
         assert!(rest.iter().all(Result::is_ok), "the stream ended on an error rather than cleanly: {rest:?}");
     }
     let _ = closing.await;
-    if capabilities.holds_unserved {
+    if capabilities.holds_unserved() {
         let budget = fixture.broker.budget();
         let next = server(&fixture.broker).await;
         let probe = next.probe.clone();
@@ -92,7 +92,7 @@ pub async fn drain<B: Broker>() {
 /// Calls sent from the drain's first moment until the server has closed, with no call held to
 /// keep the drain open: each is refused `unavailable`, since a link's drain returns only once
 /// nothing more is on its way to the server and the server answers everything that reached it. A
-/// link declaring `confirms_drain(false)` cannot promise that, and may answer one with the
+/// link declared without `confirms_drain` cannot promise that, and may answer one with the
 /// caller's own `Timeout`; a call sent once the server has closed is still `unavailable` there, which shows
 /// the server stopped taking calls. A link without `miss_signal`, or declaring `holds_unserved`,
 /// answers a call nothing takes with the caller's `Timeout`, as in the drain scenario.
@@ -128,7 +128,12 @@ pub async fn window<B: Broker>() {
 
     for (index, answer) in during.iter().enumerate() {
         let declared = answer == &Err(ErrorKind::Unavailable) || (answer == &Err(ErrorKind::Timeout) && times_out_during_drain(&capabilities));
-        assert!(declared, "call {index} of {} sent during the drain was not refused `Unavailable`, got: {answer:?}", during.len());
+        assert!(
+            declared,
+            "call {index} of {} sent during the drain to a link {} was not refused `Unavailable`, got: {answer:?}",
+            during.len(),
+            self::declared(&capabilities)
+        );
     }
     assert_refused_after_close(&capabilities, after);
     fixture.stop().await;
@@ -136,15 +141,35 @@ pub async fn window<B: Broker>() {
 
 /// Whether the caller's own `Timeout` is a declared answer for a call reaching a draining server.
 fn times_out_during_drain(capabilities: &Capabilities) -> bool {
-    !capabilities.miss_signal || capabilities.holds_unserved || !capabilities.confirms_drain
+    !capabilities.miss_signal() || capabilities.holds_unserved() || !capabilities.confirms_drain()
 }
 
 fn assert_refused_after_close(capabilities: &Capabilities, after: Result<Sum, RpcError>) {
     match after {
         Err(error) if error.kind() == ErrorKind::Unavailable => {}
-        Err(error) if error.kind() == ErrorKind::Timeout && (!capabilities.miss_signal || capabilities.holds_unserved) => {}
-        other => panic!("a call sent once the drained server had closed was not refused `Unavailable`, got: {other:?}"),
+        Err(error) if error.kind() == ErrorKind::Timeout && (!capabilities.miss_signal() || capabilities.holds_unserved()) => {}
+        other => panic!(
+            "a call sent once the drained server had closed was not refused `Unavailable` on a link {}, got: {other:?}",
+            declared(capabilities)
+        ),
     }
+}
+
+/// The capabilities that decide a draining server's answers, as the link declares them, each held
+/// or absent with its reason, for a failure to name.
+fn declared(capabilities: &Capabilities) -> String {
+    [
+        ("miss_signal", capabilities.why_not_miss_signal()),
+        ("holds_unserved", capabilities.why_not_holds_unserved()),
+        ("confirms_drain", capabilities.why_not_confirms_drain()),
+    ]
+    .iter()
+    .map(|(name, why)| match why {
+        None => format!("holding `{name}`"),
+        Some(reason) => format!("declared without `{name}` ({reason})"),
+    })
+    .collect::<Vec<_>>()
+    .join(", ")
 }
 
 /// A call still in its handler when the server closes under a `shutdown_timeout` already spent:

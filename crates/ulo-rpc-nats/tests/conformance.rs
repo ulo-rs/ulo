@@ -74,9 +74,7 @@ impl Broker for NatsServer {
     }
 }
 
-ulo_rpc_conformance::conformance_suite!(NatsServer; not_applicable {
-    cancel_follows_its_request: "U17: the link carries a request and its `cancel` on separate lanes, and the broker may deliver the `cancel` first",
-});
+ulo_rpc_conformance::conformance_suite!(NatsServer);
 
 /// A server's link after `prepare` on an app that hands it the tokio runtime's clock, which
 /// `listen` refuses to go without.

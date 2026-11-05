@@ -26,7 +26,7 @@ use tokio::sync::{Notify, mpsc, watch};
 use tokio::task::JoinHandle;
 use ulo::{App, AppHandle, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Shutdown, ShutdownError, Signal, Timer, injectable, routes};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, ErrorBody, Frame, Link, Outbound, Pattern, Payload, ReplyPath};
+use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, ErrorBody, Frame, Link, Outbound, Pattern, Payload, ReplyPath};
 use ulo_transport::{Classify, Count, Detail, Details, ErrorKind};
 
 const HELD: &str = "held.wait";
@@ -101,7 +101,7 @@ impl Link for Scripted {
     const NAME: &'static str = "scripted";
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::new(DeliveryMode::Addressed).miss_signal(true)
+        Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
     async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {

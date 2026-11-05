@@ -29,8 +29,8 @@ impl Host for RocketHost {
 
     const PORT: Port = Port::Http;
 
-    fn upgrades() -> bool {
-        <Rocket as Embed>::limits().upgrades
+    fn why_not_upgrades() -> Option<&'static str> {
+        <Rocket as Embed>::limits().why_not_upgrades()
     }
 
     fn runtime() -> Tokio {

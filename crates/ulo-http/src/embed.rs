@@ -57,7 +57,7 @@ use ulo_transport::Count;
 use ulo_transport::prepare::{Failure, Failures};
 
 use crate::handler::HttpHandler;
-use crate::backend::HttpConfig;
+use crate::backend::{Absent, HttpConfig};
 use crate::body::HttpBody;
 use crate::pre_dispatch::{Entry, PreDispatch, Step, Supply};
 use crate::render;
@@ -83,15 +83,10 @@ pub trait Embed: Send + Sync + 'static {
     /// [`Service`] a `tower::Service`.
     type HostRequest<'r>;
 
-    /// What the host cannot do, checked in `prepare`: asking for it is a
-    /// `StartupError::Configure` naming the limit.
+    /// What the host can do, checked in `prepare`: asking for what it is declared without is a
+    /// `StartupError::Configure` naming the capability and the reason. An associated function: an
+    /// adapter is a type naming its host, with no value or configuration of its own to read.
     fn limits() -> EmbedLimits;
-
-    /// Whether the host removes the mount prefix before its handler sees the path, as axum's
-    /// `nest_service` and poem's `nest` do. A host that hands over the full path declares `false`,
-    /// and [`Service::respond`] strips the `.nested_at` prefix itself, answering a path outside it
-    /// as the app's `NoRoute` 404.
-    const STRIPS_PREFIX: bool = true;
 
     /// The adapter's built-in values, as `forward` registrations every app gets: an
     /// [`OriginalPath`] read from the host's request, for one. [`Embedded::new`] passes the fresh
@@ -105,9 +100,9 @@ pub trait Embed: Send + Sync + 'static {
 
     /// Takes the host's upgrade future out of a request's extensions, for [`Service`]'s
     /// `tower::Service` impl, which hands it to the app as [`Request::upgrade`] when the host
-    /// declares `upgrades`. A hyper-based host stores hyper's `OnUpgrade` there, and its adapter
-    /// converts it, as axum's does. `None`, the default, takes nothing. A host declaring
-    /// `upgrades: true` must implement this, unless it builds the app's request itself for
+    /// has `upgrades`. A hyper-based host stores hyper's `OnUpgrade` there, and its adapter
+    /// converts it, as axum's does. `None`, the default, takes nothing. A host that has
+    /// `upgrades` must implement this, unless it builds the app's request itself for
     /// [`Service::respond`] and sets `upgrade` there.
     fn take_upgrade(extensions: &mut http::Extensions) -> Option<OnUpgrade> {
         let _ = extensions;
@@ -115,27 +110,23 @@ pub trait Embed: Send + Sync + 'static {
     }
 }
 
-/// What a host cannot do, as its adapter declares it. Separate from
+/// What a host can do, as its adapter declares it. Separate from
 /// [`BackendLimits`](crate::BackendLimits): a host owns its sockets, so ports, TLS and h2c are not
 /// the app's to limit.
+///
+/// Every capability a `bool` accessor names is held from [`NONE`](Self::NONE), the strict
+/// reading, and an adapter declares one absent only through its `without_` setter, which takes the
+/// reason; `prepare` prints the reason in the refusal the absence causes. The enum fields record
+/// what a host does where hosts differ and refuse nothing.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EmbedLimits {
-    /// The host supplies the peer address with every request. `false` refuses a handler reading
-    /// `Dep<ClientAddr>` without `Option`, directly or through an execution-scoped service it
-    /// reaches, unless `Embedded::peer_addr(true)` says this host provides it.
-    pub peer_addr: bool,
-    /// The host hands over a per-request upgraded I/O; `false` refuses a gateway on the HTTP
-    /// transport.
-    pub upgrades: bool,
-    /// The host can route a request the app missed again; `false` refuses `Miss::Forward`.
-    pub forward_miss: bool,
-    /// The host's request extensions reach the app; `false` refuses a handler reading `Host<T>`
-    /// and a pre-dispatch `adopt::<T>()` for a `T` that nothing supplies before it is read
-    /// (`Embedded::forward`, `PreDispatch::supplies`).
-    pub host_extensions: bool,
-    /// The host reports the TLS it terminated. Nothing is refused: `ConnInfo::tls` is `None`.
-    pub tls_info: bool,
+    peer_addr: Absent,
+    upgrades: Absent,
+    forward_miss: Absent,
+    host_extensions: Absent,
+    tls_info: Absent,
+    strips_prefix: Absent,
     /// How the host hands over a request body.
     pub request_body: RequestBody,
     /// When the host drops an abandoned response body, which is when the execution observes
@@ -161,11 +152,12 @@ pub struct EmbedLimits {
 impl EmbedLimits {
     /// A host that can do everything.
     pub const NONE: EmbedLimits = EmbedLimits {
-        peer_addr: true,
-        upgrades: true,
-        forward_miss: true,
-        host_extensions: true,
-        tls_info: true,
+        peer_addr: None,
+        upgrades: None,
+        forward_miss: None,
+        host_extensions: None,
+        tls_info: None,
+        strips_prefix: None,
         request_body: RequestBody::Streamed,
         disconnect: Disconnect::AtClose,
         drain_pending: DrainPending::Served,
@@ -173,24 +165,93 @@ impl EmbedLimits {
         drain_http2: DrainHttp2::GoAway,
     };
 
-    pub const fn peer_addr(self, supported: bool) -> Self {
-        EmbedLimits { peer_addr: supported, ..self }
+    /// The host supplies the peer address with every request. A host without it refuses a
+    /// handler reading `Dep<ClientAddr>` without `Option`, directly or through an
+    /// execution-scoped service it reaches, unless `Embedded::peer_addr(true)` says this host
+    /// provides it.
+    pub const fn peer_addr(&self) -> bool {
+        self.peer_addr.is_none()
     }
 
-    pub const fn upgrades(self, supported: bool) -> Self {
-        EmbedLimits { upgrades: supported, ..self }
+    pub const fn without_peer_addr(self, reason: &'static str) -> Self {
+        EmbedLimits { peer_addr: Some(reason), ..self }
     }
 
-    pub const fn forward_miss(self, supported: bool) -> Self {
-        EmbedLimits { forward_miss: supported, ..self }
+    pub const fn why_not_peer_addr(&self) -> Option<&'static str> {
+        self.peer_addr
     }
 
-    pub const fn host_extensions(self, supported: bool) -> Self {
-        EmbedLimits { host_extensions: supported, ..self }
+    /// The host hands over a per-request upgraded I/O. A host without it refuses a gateway on the
+    /// HTTP transport.
+    pub const fn upgrades(&self) -> bool {
+        self.upgrades.is_none()
     }
 
-    pub const fn tls_info(self, supported: bool) -> Self {
-        EmbedLimits { tls_info: supported, ..self }
+    pub const fn without_upgrades(self, reason: &'static str) -> Self {
+        EmbedLimits { upgrades: Some(reason), ..self }
+    }
+
+    pub const fn why_not_upgrades(&self) -> Option<&'static str> {
+        self.upgrades
+    }
+
+    /// The host can route a request the app missed again. A host without it refuses
+    /// `Miss::Forward`.
+    pub const fn forward_miss(&self) -> bool {
+        self.forward_miss.is_none()
+    }
+
+    pub const fn without_forward_miss(self, reason: &'static str) -> Self {
+        EmbedLimits { forward_miss: Some(reason), ..self }
+    }
+
+    pub const fn why_not_forward_miss(&self) -> Option<&'static str> {
+        self.forward_miss
+    }
+
+    /// The host's request extensions reach the app. A host without it refuses a handler reading
+    /// `Host<T>` and a pre-dispatch `adopt::<T>()` for a `T` that nothing supplies before it is
+    /// read (`Embedded::forward`, `PreDispatch::supplies`).
+    pub const fn host_extensions(&self) -> bool {
+        self.host_extensions.is_none()
+    }
+
+    pub const fn without_host_extensions(self, reason: &'static str) -> Self {
+        EmbedLimits { host_extensions: Some(reason), ..self }
+    }
+
+    pub const fn why_not_host_extensions(&self) -> Option<&'static str> {
+        self.host_extensions
+    }
+
+    /// The host reports the TLS it terminated. Nothing is refused on a host without it:
+    /// `ConnInfo::tls` is `None`.
+    pub const fn tls_info(&self) -> bool {
+        self.tls_info.is_none()
+    }
+
+    pub const fn without_tls_info(self, reason: &'static str) -> Self {
+        EmbedLimits { tls_info: Some(reason), ..self }
+    }
+
+    pub const fn why_not_tls_info(&self) -> Option<&'static str> {
+        self.tls_info
+    }
+
+    /// The host removes the mount prefix before its handler sees the path, as axum's
+    /// `nest_service` and poem's `nest` do. On a host without it [`Service::respond`] strips the
+    /// `.nested_at` prefix itself, answering a path outside it as the app's `NoRoute` 404 and
+    /// logging that at `warn` once with the reason. Nothing is refused.
+    pub const fn strips_prefix(&self) -> bool {
+        self.strips_prefix.is_none()
+    }
+
+    pub const fn without_strips_prefix(self, reason: &'static str) -> Self {
+        EmbedLimits { strips_prefix: Some(reason), ..self }
+    }
+
+    pub const fn why_not_strips_prefix(&self) -> Option<&'static str> {
+        self.strips_prefix
     }
 
     pub const fn request_body(self, body: RequestBody) -> Self {
@@ -361,7 +422,8 @@ impl<A: Embed> Embedded<A> {
             stopping: Notice::default(),
             finished: Notice::default(),
             app: OnceLock::new(),
-            upgrades: A::limits().upgrades,
+            upgrades: A::limits().upgrades(),
+            strips_prefix: A::limits().why_not_strips_prefix(),
             prefix: OnceLock::new(),
             outside_warned: AtomicBool::new(false),
             listeners: Mutex::new(Listeners::default()),
@@ -424,8 +486,8 @@ impl<A: Embed> Embedded<A> {
         self
     }
 
-    /// Whether the host supplies the peer address on a host whose adapter declares
-    /// `peer_addr: false`: axum does when served through
+    /// Whether the host supplies the peer address on a host whose adapter is declared without
+    /// `peer_addr`: axum does when served through
     /// `into_make_service_with_connect_info::<SocketAddr>()`.
     pub fn peer_addr(mut self, provided: bool) -> Self {
         self.peer_addr = provided;
@@ -433,7 +495,7 @@ impl<A: Embed> Embedded<A> {
     }
 
     /// Copies a value from the host's own request into the app's request extensions, for a host
-    /// whose request store does not reach the app (`host_extensions: false`): actix's
+    /// whose request store does not reach the app (declared without `host_extensions`): actix's
     /// `req.extensions().get::<CurrentUser>().cloned()`. The copy runs on every request before
     /// the app sees it, and its `T` is then supplied everywhere: a handler reading `Host<T>` and
     /// a pre-dispatch `adopt::<T>()` are accepted. `None` inserts nothing, and a copy that panics
@@ -490,13 +552,17 @@ impl<A: Embed> Embedded<A> {
     fn check_limits(&self, mounted: &Mounted<'_, Http>, service: Option<&AppService>, upgrading: bool, failures: &mut Failures) {
         let limits = A::limits();
         let host = A::NAME;
-        if upgrading && !limits.upgrades {
+        if let Some(reason) = limits.why_not_upgrades()
+            && upgrading
+        {
             failures.push(format!(
-                "the {host} embedding declares `upgrades: false`, so a gateway on the HTTP transport cannot take an upgrade \
-                 through this host; serve the gateways on a separate port"
+                "the {host} embedding is declared without `upgrades` ({reason}), so a gateway on the HTTP transport cannot take an \
+                 upgrade through this host; serve the gateways on a separate port"
             ));
         }
-        if !limits.peer_addr && !self.peer_addr {
+        if let Some(reason) = limits.why_not_peer_addr()
+            && !self.peer_addr
+        {
             let input = TypeName::of::<ClientAddr>();
             for reader in mounted.handlers_reading::<ClientAddr>() {
                 let controller = reader.handler().controller().key().type_name();
@@ -508,24 +574,27 @@ impl<A: Embed> Embedded<A> {
                     let path: Vec<String> = std::iter::once(head).chain(steps.iter().cloned()).collect();
                     let input = names.of(input);
                     format!(
-                        "{} reads `{input}`, and the {host} embedding supplies no peer address: read `Option<Dep<{input}>>`, \
-                         or call `.peer_addr(true)` when the host provides it",
+                        "{} reads `{input}`, and the {host} embedding supplies no peer address ({reason}): read \
+                         `Option<Dep<{input}>>`, or call `.peer_addr(true)` when the host provides it",
                         path.join(" → ")
                     )
                 }));
             }
         }
-        if !limits.host_extensions {
-            self.check_host_values(mounted, service, failures);
+        if let Some(reason) = limits.why_not_host_extensions() {
+            self.check_host_values(mounted, service, reason, failures);
         }
-        if self.on_miss == Miss::Forward && !limits.forward_miss {
+        if let Some(reason) = limits.why_not_forward_miss()
+            && self.on_miss == Miss::Forward
+        {
             failures.push(format!(
-                "`.on_miss(Miss::Forward)`: the {host} embedding declares `forward_miss: false`, so the host cannot route a miss again"
+                "`.on_miss(Miss::Forward)`: the {host} embedding is declared without `forward_miss` ({reason}), so the host cannot \
+                 route a miss again"
             ));
         }
     }
 
-    /// Under `host_extensions: false`: every `Host<T>` a handler reads and every pre-dispatch
+    /// On a host declared without `host_extensions`, for `reason`: every `Host<T>` a handler reads and every pre-dispatch
     /// `adopt::<T>()`, each against the supplies that reach it. A `forward` copy reaches
     /// everything, being in place before any entry runs. A `PreDispatch::supplies` after an
     /// unscoped entry reaches every handler and the `adopt` entries after it in stage order,
@@ -537,7 +606,7 @@ impl<A: Embed> Embedded<A> {
     /// `/admin/health` exists. `service` is
     /// `None` when the stage or the route table failed, and the handlers are then not checked,
     /// since which routes a scoped entry covers is unknown.
-    fn check_host_values(&self, mounted: &Mounted<'_, Http>, service: Option<&AppService>, failures: &mut Failures) {
+    fn check_host_values(&self, mounted: &Mounted<'_, Http>, service: Option<&AppService>, reason: &'static str, failures: &mut Failures) {
         let host = A::NAME;
         let metas = mounted.module_meta::<PreDispatch>();
         let forwarded = |ty: TypeName| self.forwarded.iter().any(|copy| copy.ty == ty);
@@ -593,8 +662,8 @@ impl<A: Embed> Embedded<A> {
                         format!("{} {entries} not cover `{pattern}`, so it does not reach this route", declared(&name, &elsewhere))
                     };
                     format!(
-                        "`{}::{handler}` on `{method} {pattern}` reads `Host<{name}>`, and the {host} embedding declares \
-                         `host_extensions: false`: {why}",
+                        "`{}::{handler}` on `{method} {pattern}` reads `Host<{name}>`, and the {host} embedding is declared \
+                         without `host_extensions` ({reason}): {why}",
                         names.of(controller),
                     )
                 }));
@@ -626,8 +695,8 @@ impl<A: Embed> Embedded<A> {
                     why.push(unsupplied(&name));
                 }
                 format!(
-                    "`adopt::<{name}>()` at {location} copies a host value, and the {host} embedding declares \
-                     `host_extensions: false`: {}",
+                    "`adopt::<{name}>()` at {location} copies a host value, and the {host} embedding is declared without \
+                     `host_extensions` ({reason}): {}",
                     why.join("; ")
                 )
             }));
@@ -774,10 +843,13 @@ struct Shared {
     /// Fired when `serve` ends, with or without the host future.
     finished: Notice,
     app: OnceLock<AppHandle>,
-    /// `A::limits().upgrades`: whether the upgrade future `Embed::take_upgrade` finds is handed on.
+    /// `A::limits().upgrades()`: whether the upgrade future `Embed::take_upgrade` finds is handed on.
     upgrades: bool,
+    /// `A::limits().why_not_strips_prefix()`: `Some` where the host leaves the prefix on the path,
+    /// and `Service::respond` strips it.
+    strips_prefix: Absent,
     /// The normalized `.nested_at` prefix, set at `prepare`; read only when the host leaves the
-    /// prefix on the path (`Embed::STRIPS_PREFIX == false`).
+    /// prefix on the path.
     prefix: OnceLock<String>,
     /// A request outside the prefix is logged once, not per request.
     outside_warned: AtomicBool,
@@ -1036,8 +1108,8 @@ impl<A: Embed> Service<A> {
     /// after `close`, and the app's answer between.
     pub fn respond(&self, host: &A::HostRequest<'_>, mut req: Request) -> impl Future<Output = Response> + Send + use<A> {
         self.copy(host, &mut req.head.extensions);
-        if !A::STRIPS_PREFIX {
-            self.strip_prefix(&mut req);
+        if let Some(reason) = self.shared.strips_prefix {
+            self.strip_prefix(&mut req, reason);
         }
         self.answer(req)
     }
@@ -1045,7 +1117,7 @@ impl<A: Embed> Service<A> {
     /// Removes the mount prefix from a path the host handed over whole, keeping the query. A
     /// path outside the prefix is marked, so routing answers it as the app's `NoRoute` 404 rather
     /// than matching an in-app route by accident.
-    fn strip_prefix(&self, req: &mut Request) {
+    fn strip_prefix(&self, req: &mut Request, reason: &'static str) {
         let Some(prefix) = self.shared.prefix.get().filter(|prefix| !prefix.is_empty()) else { return };
         let path = req.head.uri.path().to_owned();
         let rest = match path.strip_prefix(prefix.as_str()) {
@@ -1057,7 +1129,9 @@ impl<A: Embed> Service<A> {
                         host = A::NAME,
                         path = %path,
                         prefix = %prefix,
-                        "a request outside the embedding's `.nested_at` prefix is answered as the app's 404"
+                        reason,
+                        "a request outside the embedding's `.nested_at` prefix is answered as the app's 404: the host hands over the \
+                         full path, and the app strips the prefix itself"
                     );
                 }
                 req.head.extensions.insert(OutsidePrefix);

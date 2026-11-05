@@ -119,6 +119,11 @@ impl fmt::Debug for MigratorIdentity {
 /// then `unlock` whether the migrator succeeded or not. When the module's bound passes first the
 /// task is aborted and the guard dropped where it stands, so a guard releases the lock on drop as
 /// well as through `unlock`.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` takes no migrations: `StoreModule::migrate` needs a store implementing `MigrationLock`",
+    label = "a store without a migration lock",
+    note = "the stores that implement it: `ulo_db_sqlx`'s and `ulo_db_diesel`'s `Postgres`, `MySql` and `Sqlite`, and `ulo_db_seaorm::SeaOrm`"
+)]
 pub trait MigrationLock: Store {
     /// The held lock: the dedicated connection, or the locked file.
     type Guard: Send + 'static;

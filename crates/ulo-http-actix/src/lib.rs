@@ -24,7 +24,7 @@
 //!
 //! actix's request payload is `!Send` while the app's body is `Send`, so the payload is pumped
 //! through a bounded channel from the worker-local task. `web::scope` leaves the path whole, so the
-//! adapter declares `STRIPS_PREFIX: false` and the app strips `.nested_at` itself. A
+//! adapter is declared without `strips_prefix` and the app strips `.nested_at` itself. A
 //! `Connection: close` header is mapped onto the response head's connection-type flag. What it
 //! declares: the peer address from `peer_addr`; no upgrades; no miss forwarding; no host
 //! extensions, a value in actix's request store crossing through a `forward` copy over
@@ -69,16 +69,17 @@ pub struct Actix;
 impl Embed for Actix {
     const NAME: &'static str = "actix";
 
-    const STRIPS_PREFIX: bool = false;
-
     type HostRequest<'r> = actix_web::HttpRequest;
 
     fn limits() -> EmbedLimits {
         EmbedLimits::NONE
-            .upgrades(false)
-            .forward_miss(false)
-            .host_extensions(false)
-            .tls_info(false)
+            .without_upgrades("actix's upgrade is a payload and body pair on the request, not a per-request future handing over the upgraded I/O")
+            .without_forward_miss("an actix scope or default service answers every request it is handed, and offers no way to hand one back to the router")
+            .without_host_extensions(
+                "actix's request extensions are its own store, which cannot be enumerated; a value in it crosses through an `Embedded::forward` copy",
+            )
+            .without_tls_info("the adapter reads no TLS state off actix's request, so `ConnInfo::tls` is `None`")
+            .without_strips_prefix("`web::scope` leaves `req.path()` whole, with the rest in `match_info`")
             .disconnect(Disconnect::AtNextWrite)
             .drain_pending(DrainPending::Closed)
             .drain_http2(DrainHttp2::Reset)

@@ -17,7 +17,7 @@
 //! ```
 //!
 //! rocket 0.5 is on `http` 0.2, so the adapter converts at its edge. `mount` leaves the URI whole,
-//! so the adapter declares `STRIPS_PREFIX: false` and the app strips `.nested_at` itself. rocket's
+//! so the adapter is declared without `strips_prefix` and the app strips `.nested_at` itself. rocket's
 //! `Data` must be read inside the handler, so the body is buffered under the embedding's own
 //! `body_limit` once the app first reads it, a larger one answered with the same 413 as everywhere
 //! else; a body the app never reads stays unread, which is what lets a `Miss::Forward` miss go back
@@ -63,8 +63,6 @@ pub struct Rocket;
 impl Embed for Rocket {
     const NAME: &'static str = "rocket";
 
-    const STRIPS_PREFIX: bool = false;
-
     type HostRequest<'r> = rocket::Request<'r>;
 
     /// `request_body` reports `Buffered` at the default `body_limit`, 2 MiB: the declaration is
@@ -72,8 +70,11 @@ impl Embed for Rocket {
     /// under.
     fn limits() -> EmbedLimits {
         EmbedLimits::NONE
-            .host_extensions(false)
-            .tls_info(false)
+            .without_host_extensions(
+                "rocket's `local_cache` is keyed by type and cannot be enumerated; a value in it crosses through an `Embedded::forward` copy",
+            )
+            .without_tls_info("the adapter reads no TLS state off rocket's request, so `ConnInfo::tls` is `None`")
+            .without_strips_prefix("`mount` leaves `req.uri()` whole, with the tail in a `<path..>` segment")
             .request_body(RequestBody::Buffered(HttpConfig::default().body_limit))
             .disconnect(Disconnect::AtNextWrite)
             .drain_abandoned(DrainAbandoned::Window)

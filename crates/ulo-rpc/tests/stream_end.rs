@@ -23,7 +23,7 @@ use ulo::{
     Signal, StreamOutcome, injectable, routes,
 };
 use ulo_rpc::link::{Inbound, UNARY_ONLY};
-use ulo_rpc::{Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, Reply, ReplyPath, Rpc, RpcCx};
+use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, Reply, ReplyPath, Rpc, RpcCx};
 use ulo_transport::{Classify, ErrorKind};
 
 const DISCARDED: &str = "stream_end.discarded";
@@ -180,7 +180,7 @@ impl Link for Scripted {
     const NAME: &'static str = "scripted";
 
     fn capabilities(&self) -> Capabilities {
-        let capabilities = Capabilities::new(DeliveryMode::Addressed).miss_signal(true);
+        let capabilities = Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json);
         if self.unary { capabilities.shapes(UNARY_ONLY) } else { capabilities }
     }
 

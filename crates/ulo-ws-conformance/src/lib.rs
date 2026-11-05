@@ -15,7 +15,6 @@
 //!     type Stream = ulo_http::Upgraded;
 //!     const PORT: ulo_ws::Port = ulo_ws::Port::Own;
 //!     const CLOSES_IDLE_AT_DRAIN: bool = true; // hyper's graceful shutdown
-//!     fn upgrades() -> bool { true }
 //!     fn runtime() -> ulo_runtime_tokio::Tokio { ulo_runtime_tokio::Tokio::current() }
 //!     fn block_on<F: Future>(fut: F) -> F::Output { /* a runtime of its own per scenario */ }
 //!     fn bind(app: App<Connected>) -> (App<Connected>, Self) {
@@ -112,16 +111,19 @@ pub trait Host: Sized + 'static {
     /// one closing it, the connection must end with nothing written.
     const CLOSES_IDLE_AT_DRAIN: bool = false;
 
-    /// Whether the server hands a gateway on its port the connection a 101 upgrades: `true` for
-    /// the standalone server and an HTTP server serving the hand-off, and for an `Embed` host what
-    /// its adapter's `EmbedLimits::upgrades` declares.
+    /// Why the server cannot hand a gateway on its port the connection a 101 upgrades, or `None`
+    /// where it can: `None`, the default, for the standalone server and an HTTP server serving the
+    /// hand-off, and for an `Embed` host what its adapter's `EmbedLimits::why_not_upgrades`
+    /// answers, read from the adapter rather than written again.
     ///
-    /// `handshake_upgrades_as_the_host_declares` asserts it both ways: on a host declaring it, an
-    /// upgrade to a gateway switches protocols and its message is answered; on one declaring none,
-    /// `listen()` refuses the suite's app, which serves gateways on the host's port, naming the
-    /// declaration. A host declaring none stamps the suite with `without_upgrades`, under which
-    /// every other scenario is not applicable.
-    fn upgrades() -> bool;
+    /// `handshake_upgrades_as_the_host_declares` asserts it both ways: on a host that has
+    /// upgrades, an upgrade to a gateway switches protocols and its message is answered; on one
+    /// declared without them, `listen()` refuses the suite's app, which serves gateways on the
+    /// host's port, naming the declaration. On that host every other scenario is skipped, the
+    /// declared reason written to standard error, since no gateway is served on its port.
+    fn why_not_upgrades() -> Option<&'static str> {
+        None
+    }
 
     /// A runtime value; each scenario takes its own, built inside the future [`block_on`] runs, so
     /// a runtime that captures the executor it runs on finds it.
@@ -196,6 +198,17 @@ pub fn report(error: &(dyn Error + 'static)) -> String {
     text
 }
 
+/// Skips a scenario whose host is declared without the capability it needs: writes one line naming
+/// the scenario, the capability and the declared reason to the process's standard error, which
+/// libtest does not capture, so the line is in the run's output whether the test passes or fails.
+/// The scenario then returns, and libtest counts it as passed.
+pub fn skipped(scenario: &str, capability: &str, reason: &str) {
+    use std::io::Write;
+    // One write, so the line is not split by another test thread's output.
+    let line = format!("skipped `{scenario}`: declared without `{capability}`: {reason}\n");
+    let _ = io::stderr().write_all(line.as_bytes());
+}
+
 /// Fails a scenario whose environment did not start, as `panic!` with the same arguments would,
 /// after writing the message to a file of its own under [`failures_dir`]; the panic names the file.
 /// Every startup path in the suite fails through it, and a [`Host`] implementation's own startup
@@ -225,22 +238,14 @@ macro_rules! startup_failed {
 /// to fails rather than passing, so a host leaving out a declaration it needs fails too;
 /// `cargo test -- --ignored` runs the declared ones, which then fail the same way.
 ///
-/// A host whose [`Host::upgrades`] declares none is stamped `without_upgrades`: it runs
-/// `handshake_upgrades_as_the_host_declares`, which requires that declaration and `listen()`'s
-/// refusal of the suite's app, and every other scenario is not applicable, since no gateway is
-/// served on its port:
-///
-/// ```ignore
-/// # // reason: names a host type defined in the server crate's own tests/conformance.rs
-/// ulo_ws_conformance::ws_conformance_suite!(ActixHost; without_upgrades);
-/// ```
+/// On a host whose [`Host::why_not_upgrades`] names a reason, every scenario but
+/// `handshake_upgrades_as_the_host_declares`, which requires `listen()`'s refusal of the suite's
+/// app, is skipped at run time, writing the reason to standard error through [`skipped`], since no
+/// gateway is served on its port. libtest counts a skipped scenario as passed.
 #[macro_export]
 macro_rules! ws_conformance_suite {
     ($host:ty $(,)?) => {
         $crate::ws_conformance_suite!($host; not_applicable {});
-    };
-    ($host:ty; without_upgrades $(,)?) => {
-        $crate::ws_conformance_suite!(@without_upgrades [$] $host);
     };
     ($host:ty; not_applicable { $($skip:ident : $why:literal),* $(,)? } $(,)?) => {
         $crate::ws_conformance_suite!(@stamper [$] $host; $($skip : $why),*);
@@ -261,22 +266,6 @@ macro_rules! ws_conformance_suite {
         }
         // A declared name that is no scenario names no function here.
         $(const _: fn() = $skip;)*
-        $crate::ws_conformance_suite!(@list $host);
-    };
-    (@without_upgrades [$d:tt] $host:ty) => {
-        macro_rules! __ulo_ws_conformance_stamp {
-            (handshake_upgrades_as_the_host_declares, $d($d test:tt)*) => {
-                #[test]
-                fn handshake_upgrades_as_the_host_declares() {
-                    <$host as $crate::Host>::block_on($crate::cases::handshake::without_upgrades::<$host>());
-                }
-            };
-            ($d other:ident, $d($d test:tt)*) => {
-                #[test]
-                #[ignore = "not applicable: the host declares no upgrades, so it serves no gateway on its port"]
-                $d($d test)*
-            };
-        }
         $crate::ws_conformance_suite!(@list $host);
     };
     (@list $host:ty) => {
@@ -316,8 +305,15 @@ macro_rules! ws_conformance_suite {
     };
     (@cases $host:ty; $($name:ident => $module:ident :: $case:ident),* $(,)?) => {
         static __ULO_WS_CONFORMANCE_SLOTS: $crate::__private::Slots = $crate::__private::Slots::new();
+        const _: () = ::core::assert!(
+            $crate::__private::lists_declaration(&[$(::core::stringify!($name)),*]),
+            "the stamped scenarios do not include the upgrades declaration, which `__private::skips` never skips"
+        );
         $(
             __ulo_ws_conformance_stamp!($name, fn $name() {
+                if $crate::__private::skips(::std::stringify!($name), <$host as $crate::Host>::why_not_upgrades()) {
+                    return;
+                }
                 let _slot = __ULO_WS_CONFORMANCE_SLOTS.hold();
                 <$host as $crate::Host>::block_on($crate::cases::$module::$case::<$host>());
             });
@@ -332,6 +328,43 @@ pub mod __private {
 
     pub use crate::failures::startup_failed;
     use crate::PARALLEL_VAR;
+
+    /// The scenario the upgrades declaration does not skip: it asserts the declaration itself.
+    const DECLARATION: &str = "handshake_upgrades_as_the_host_declares";
+
+    /// Whether the stamped `scenario` is skipped on a host whose `why_not_upgrades` answered
+    /// `why_not`, writing the skip's line when it is.
+    pub fn skips(scenario: &str, why_not: Option<&'static str>) -> bool {
+        match why_not {
+            Some(reason) if scenario != DECLARATION => {
+                crate::skipped(scenario, "upgrades", reason);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `scenarios`, the names the suite stamps, include `DECLARATION`. The stamping
+    /// macro asserts it in a constant, so a scenario list naming the declaration otherwise fails
+    /// to compile rather than having [`skips`] skip the declaration too.
+    pub const fn lists_declaration(scenarios: &[&str]) -> bool {
+        let wanted = DECLARATION.as_bytes();
+        let mut i = 0;
+        while i < scenarios.len() {
+            let name = scenarios[i].as_bytes();
+            if name.len() == wanted.len() {
+                let mut j = 0;
+                while j < name.len() && name[j] == wanted[j] {
+                    j += 1;
+                }
+                if j == name.len() {
+                    return true;
+                }
+            }
+            i += 1;
+        }
+        false
+    }
 
     /// The slots one stamped suite's scenarios share. Each scenario runs on its own test thread,
     /// so a slot is waited for by blocking that thread before the scenario's runtime starts.
@@ -426,5 +459,28 @@ pub mod __private {
             assert_eq!(most.load(Ordering::SeqCst), 1, "two holders were inside a bound of one at once");
             assert_eq!(*SLOTS.held.lock().expect("the slots' lock"), 0, "a slot was not given back");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::__private::{lists_declaration, skips};
+
+    #[test]
+    fn a_host_declared_without_upgrades_skips_every_scenario_but_the_declaration_s() {
+        assert!(skips("event_round_trip", Some("the host hands over no upgraded I/O")));
+        assert!(!skips("handshake_upgrades_as_the_host_declares", Some("the host hands over no upgraded I/O")));
+    }
+
+    #[test]
+    fn a_list_without_the_declaration_is_refused() {
+        assert!(!lists_declaration(&["event_round_trip", "handshake_upgrades_as_declared"]));
+        assert!(lists_declaration(&["event_round_trip", "handshake_upgrades_as_the_host_declares"]));
+    }
+
+    #[test]
+    fn a_host_that_has_upgrades_skips_nothing() {
+        assert!(!skips("event_round_trip", None));
+        assert!(!skips("handshake_upgrades_as_the_host_declares", None));
     }
 }

@@ -15,7 +15,7 @@ const HOST: &str = "host";
 ///
 /// Absent is `ExtractError::HostMissing`, a deployment fault: it renders 500 with its message
 /// withheld. `Option<Host<T>>` is the spelling for a value the host may leave out, `None` then.
-/// An embedding whose adapter declares `host_extensions: false` refuses a handler reading either
+/// An embedding whose adapter is declared without `host_extensions` refuses a handler reading either
 /// form when the app listens, unless `T` is supplied on its route: copied from the host's request
 /// by `Embedded::forward::<T>(..)`, or declared with `.supplies::<T>()` after a pre-dispatch entry
 /// that runs for the route and inserts it. Guards and services read a host value as `Ext<T>` once

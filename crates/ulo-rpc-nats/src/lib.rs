@@ -6,7 +6,7 @@
 //! the client's connection drops, since async-nats resubscribes the inbox but what was published
 //! to it meanwhile is gone; the drain is NATS's drain protocol, which async-nats ends without
 //! waiting for the server to stop routing, so a request routed to the draining instance in between
-//! can be lost and its caller sees its own `Timeout` (`confirms_drain` is `false`); `tls://` selects
+//! can be lost and its caller sees its own `Timeout` (declared without `confirms_drain`); `tls://` selects
 //! TLS, and a `nats://` server requiring it upgrades the connection, either trusting the platform's
 //! root certificates. The process reads them once while any link holds them and writes them to one
 //! PEM file in the OS temp directory, removed once the last link and connection holding it have

@@ -8883,6 +8883,8 @@ dependencies = [
  "trybuild",
  "ulo",
  "ulo-build",
+ "ulo-config",
+ "ulo-db",
  "ulo-grpc",
  "ulo-http",
  "ulo-http-hyper",

@@ -282,57 +282,42 @@ impl From<String> for Pattern {
 /// What a link can do, read by `Server::prepare` and by the client, and asserted by the
 /// conformance suite in both directions. Built from [`Capabilities::new`] and its setters, since
 /// the struct is `#[non_exhaustive]`.
+///
+/// Every capability named by a `bool` accessor is `true` from `new`, the strict reading, so a link
+/// that declares nothing is held to each and a scenario fails where the link cannot keep one. A
+/// link declares one absent only through its `without_` setter, which takes the reason, and the
+/// `why_not_` accessor answers that reason: `Server::prepare` prints it in a refusal or a `warn`,
+/// and the suite in a failure or in the line naming a scenario it skips.
+///
+/// The fields are private, so no link declares an absence without its reason:
+///
+/// ```compile_fail,E0616
+/// use ulo_rpc::{Capabilities, DeliveryMode};
+///
+/// let mut capabilities = Capabilities::new(DeliveryMode::FanOut);
+/// capabilities.delivers_requests_once = None;
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
-    /// The codec carries raw bytes.
-    pub binary: bool,
     /// The largest frame the link carries, `None` for no limit of its own.
     pub max_frame: Option<u64>,
     pub ordering: Ordering,
     /// The call shapes the link carries; a handler of another shape is refused in `prepare`.
     pub shapes: &'static [Shape],
-    /// The broker paces deliveries itself, AMQP through its prefetch and Kafka by pausing
-    /// partitions: over `Server::max_inflight` the link stops taking requests, which wait in the
-    /// broker. On a link without it the server refuses a request over the bound `unavailable`
-    /// with a `RetryAfter` detail.
-    pub native_backpressure: bool,
     pub delivery: DeliveryMode,
-    /// A request to a pattern nothing subscribes to is reported to the caller, which then answers
-    /// `Unavailable` with `reason: "no_destination"`; without it the caller's own `Timeout`.
-    pub miss_signal: bool,
-    /// The broker keeps a request for a pattern a server has subscribed while no instance consumes
-    /// it, and hands it to the next instance: an AMQP queue, a Kafka topic. A caller reaching a
-    /// draining or stopped server then sees its own `Timeout`, and `miss_signal` covers only a
-    /// pattern never subscribed.
-    pub holds_unserved: bool,
-    /// The broker keeps a reply published while the client's connection is down, and the client
-    /// reads it once it reconnects: a Kafka reply topic. A call waiting when the client loses its
-    /// connection is then answered, rather than failed `Unavailable` as on a link whose replies
-    /// the outage loses.
-    pub durable_replies: bool,
-    /// The link's drain returns only once nothing more is on its way to the server, so every
-    /// request that reached it is answered, `Unavailable` once it is draining. `true` unless a link
-    /// declares otherwise, so a link that does not declare it is held to the confirmed drain. A link
-    /// declaring `false` cannot confirm it, and a request already on its way can be lost: the NATS
-    /// client removes a drained subscription before the server has processed the unsubscribe and
-    /// discards what arrives for it afterwards, and a datagram reaching a UDP server after its
-    /// socket closes is dropped. A caller reaching a draining server can then see its own `Timeout`
-    /// rather than `Unavailable`; once the server has closed, a miss is reported as on any link with
-    /// `miss_signal`.
-    pub confirms_drain: bool,
-    /// A request and its control frames travel one ordered lane end to end, so a `cancel` sent
-    /// after its request reaches the server after it: TCP's connection, Redis's one publisher and
-    /// one Pub/Sub connection. On a broker whose control frames travel a lane of their own the
-    /// broker can deliver a `cancel` first, and the server drops a `cancel` naming no call it
-    /// holds.
-    pub ordered_control: bool,
-    /// Read through [`delivers_requests_once`](Self::delivers_requests_once): private, so a
-    /// `false` is declared only through [`fans_out_requests`](Self::fans_out_requests), which
-    /// carries its reason.
-    delivers_requests_once: bool,
-    fan_out_reason: Option<&'static str>,
+    binary: Absent,
+    native_backpressure: Absent,
+    miss_signal: Absent,
+    holds_unserved: Absent,
+    durable_replies: Absent,
+    confirms_drain: Absent,
+    ordered_control: Absent,
+    delivers_requests_once: Absent,
 }
+
+/// `None` where the link has the capability, and why it has not otherwise.
+type Absent = Option<&'static str>;
 
 /// Every call shape, for a link that carries them all.
 pub const ALL_SHAPES: &[Shape] = &[Shape::Unary, Shape::ServerStreaming, Shape::ClientStreaming, Shape::Bidi];
@@ -340,32 +325,44 @@ pub const ALL_SHAPES: &[Shape] = &[Shape::Unary, Shape::ServerStreaming, Shape::
 /// Unary calls and events alone, UDP's.
 pub const UNARY_ONLY: &[Shape] = &[Shape::Unary];
 
+/// Why a JSON link carries no raw bytes, as [`Capabilities::codec`] declares it.
+const JSON_CARRIES_NO_BYTES: &str = "the link's codec is JSON, which carries no raw bytes; `.codec(Codec::Cbor)` on the link selects CBOR, which does";
+
 impl Capabilities {
-    /// A link delivering as `delivery`, carrying every shape, JSON, unordered, with no frame limit,
-    /// no native backpressure, no miss signal, nothing held for a server that has gone, no reply
-    /// kept through a client's outage, control frames on a lane of their own, a confirmed drain,
-    /// and each request delivered to one instance: `confirms_drain` and `delivers_requests_once`
-    /// are the capabilities `new` sets `true`.
+    /// A link delivering as `delivery`, carrying every shape, unordered, with no frame limit, and
+    /// holding every capability a `bool` accessor names.
+    ///
+    /// ```
+    /// use ulo_rpc::{Capabilities, DeliveryMode};
+    ///
+    /// let declared = Capabilities::new(DeliveryMode::Competing);
+    /// let held = [
+    ///     declared.binary(),
+    ///     declared.native_backpressure(),
+    ///     declared.miss_signal(),
+    ///     declared.holds_unserved(),
+    ///     declared.durable_replies(),
+    ///     declared.confirms_drain(),
+    ///     declared.ordered_control(),
+    ///     declared.delivers_requests_once(),
+    /// ];
+    /// assert_eq!(held, [true; 8]);
+    /// ```
     pub const fn new(delivery: DeliveryMode) -> Self {
         Capabilities {
-            binary: false,
             max_frame: None,
             ordering: Ordering::Unordered,
             shapes: ALL_SHAPES,
-            native_backpressure: false,
             delivery,
-            miss_signal: false,
-            holds_unserved: false,
-            durable_replies: false,
-            confirms_drain: true,
-            ordered_control: false,
-            delivers_requests_once: true,
-            fan_out_reason: None,
+            binary: None,
+            native_backpressure: None,
+            miss_signal: None,
+            holds_unserved: None,
+            durable_replies: None,
+            confirms_drain: None,
+            ordered_control: None,
+            delivers_requests_once: None,
         }
-    }
-
-    pub const fn binary(self, binary: bool) -> Self {
-        Capabilities { binary, ..self }
     }
 
     pub const fn max_frame(self, max_frame: Option<u64>) -> Self {
@@ -380,74 +377,164 @@ impl Capabilities {
         Capabilities { shapes, ..self }
     }
 
-    pub const fn native_backpressure(self, native_backpressure: bool) -> Self {
-        Capabilities { native_backpressure, ..self }
+    /// Declares [`binary`](Self::binary) as `codec` carries it: absent for JSON, with the reason
+    /// that JSON carries no raw bytes, and left as it is for CBOR.
+    ///
+    /// ```
+    /// use ulo_rpc::{Capabilities, Codec, DeliveryMode};
+    ///
+    /// let json = Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json);
+    /// assert!(!json.binary() && json.why_not_binary().is_some_and(|reason| reason.contains("JSON")));
+    /// assert!(Capabilities::new(DeliveryMode::Addressed).codec(Codec::Cbor).binary());
+    /// ```
+    pub const fn codec(self, codec: Codec) -> Self {
+        match codec {
+            Codec::Json => self.without_binary(JSON_CARRIES_NO_BYTES),
+            Codec::Cbor => self,
+        }
     }
 
-    pub const fn miss_signal(self, miss_signal: bool) -> Self {
-        Capabilities { miss_signal, ..self }
+    /// The codec carries raw bytes: the server and client speak CBOR on a link that has it and
+    /// JSON on one that has not. A handler with a binary payload on a link without it is refused
+    /// in `prepare`, and a client call with one fails before any I/O with `binary_unsupported`.
+    pub const fn binary(&self) -> bool {
+        self.binary.is_none()
     }
 
-    pub const fn holds_unserved(self, holds_unserved: bool) -> Self {
-        Capabilities { holds_unserved, ..self }
+    pub const fn without_binary(self, reason: &'static str) -> Self {
+        Capabilities { binary: Some(reason), ..self }
     }
 
-    pub const fn durable_replies(self, durable_replies: bool) -> Self {
-        Capabilities { durable_replies, ..self }
+    pub const fn why_not_binary(&self) -> Option<&'static str> {
+        self.binary
     }
 
-    pub const fn confirms_drain(self, confirms_drain: bool) -> Self {
-        Capabilities { confirms_drain, ..self }
+    /// The broker paces deliveries itself, AMQP through its prefetch and Kafka by pausing
+    /// partitions: over `Server::max_inflight` the link stops taking requests, which wait in the
+    /// broker. On a link without it the server refuses a request over the bound `unavailable`
+    /// with a `RetryAfter` detail.
+    pub const fn native_backpressure(&self) -> bool {
+        self.native_backpressure.is_none()
     }
 
-    pub const fn ordered_control(self, ordered_control: bool) -> Self {
-        Capabilities { ordered_control, ..self }
+    pub const fn without_native_backpressure(self, reason: &'static str) -> Self {
+        Capabilities { native_backpressure: Some(reason), ..self }
     }
 
-    /// Declares [`delivers_requests_once`](Self::delivers_requests_once) false, with `reason`, the
-    /// server's `warn` text for why. It is the one way to declare it, so the `warn` always names
-    /// a reason.
+    pub const fn why_not_native_backpressure(&self) -> Option<&'static str> {
+        self.native_backpressure
+    }
+
+    /// A request to a pattern nothing subscribes to is reported to the caller, which then answers
+    /// `Unavailable` with `reason: "no_destination"`; without it the caller's own `Timeout`.
+    pub const fn miss_signal(&self) -> bool {
+        self.miss_signal.is_none()
+    }
+
+    pub const fn without_miss_signal(self, reason: &'static str) -> Self {
+        Capabilities { miss_signal: Some(reason), ..self }
+    }
+
+    pub const fn why_not_miss_signal(&self) -> Option<&'static str> {
+        self.miss_signal
+    }
+
+    /// The broker keeps a request for a pattern a server has subscribed while no instance consumes
+    /// it, and hands it to the next instance: an AMQP queue, a Kafka topic. A caller reaching a
+    /// draining or stopped server then sees its own `Timeout`, and `miss_signal` covers only a
+    /// pattern never subscribed.
+    pub const fn holds_unserved(&self) -> bool {
+        self.holds_unserved.is_none()
+    }
+
+    pub const fn without_holds_unserved(self, reason: &'static str) -> Self {
+        Capabilities { holds_unserved: Some(reason), ..self }
+    }
+
+    pub const fn why_not_holds_unserved(&self) -> Option<&'static str> {
+        self.holds_unserved
+    }
+
+    /// The broker keeps a reply published while the client's connection is down, and the client
+    /// reads it once it reconnects: a Kafka reply topic. A call waiting when the client loses its
+    /// connection is then answered, rather than failed `Unavailable` as on a link whose replies
+    /// the outage loses.
+    pub const fn durable_replies(&self) -> bool {
+        self.durable_replies.is_none()
+    }
+
+    pub const fn without_durable_replies(self, reason: &'static str) -> Self {
+        Capabilities { durable_replies: Some(reason), ..self }
+    }
+
+    pub const fn why_not_durable_replies(&self) -> Option<&'static str> {
+        self.durable_replies
+    }
+
+    /// The link's drain returns only once nothing more is on its way to the server, so every
+    /// request that reached it is answered, `Unavailable` once it is draining. A link without it
+    /// can lose a request already on its way: the NATS client removes a drained subscription
+    /// before the server has processed the unsubscribe and discards what arrives for it
+    /// afterwards, and a datagram reaching a UDP server after its socket closes is dropped. A
+    /// caller reaching a draining server can then see its own `Timeout` rather than `Unavailable`;
+    /// once the server has closed, a miss is reported as on any link with `miss_signal`.
+    pub const fn confirms_drain(&self) -> bool {
+        self.confirms_drain.is_none()
+    }
+
+    pub const fn without_confirms_drain(self, reason: &'static str) -> Self {
+        Capabilities { confirms_drain: Some(reason), ..self }
+    }
+
+    pub const fn why_not_confirms_drain(&self) -> Option<&'static str> {
+        self.confirms_drain
+    }
+
+    /// A request and its control frames travel one ordered lane end to end, so a `cancel` sent
+    /// after its request reaches the server after it: TCP's connection, Redis's one publisher and
+    /// one Pub/Sub connection. On a broker whose control frames travel a lane of their own the
+    /// broker can deliver a `cancel` first, and the server drops a `cancel` naming no call it
+    /// holds.
+    pub const fn ordered_control(&self) -> bool {
+        self.ordered_control.is_none()
+    }
+
+    pub const fn without_ordered_control(self, reason: &'static str) -> Self {
+        Capabilities { ordered_control: Some(reason), ..self }
+    }
+
+    pub const fn why_not_ordered_control(&self) -> Option<&'static str> {
+        self.ordered_control
+    }
+
+    /// A request reaches one server instance however many listen on its pattern. A link without
+    /// it hands each request to every instance subscribed to its pattern: each runs the handler
+    /// and replies, and the client answers the first reply and drops the rest, so the handler's
+    /// side effects run once per instance. Such a link's request side supports one server
+    /// instance, and `Server::prepare` logs a `warn` saying so, naming
+    /// [`why_not_delivers_requests_once`](Self::why_not_delivers_requests_once), when it mounts a
+    /// request handler; it refuses nothing, since one instance cannot tell itself from many. An
+    /// event is outside it, delivered as [`delivery`](Self::delivery) declares.
     ///
     /// ```
     /// use ulo_rpc::{Capabilities, DeliveryMode};
     ///
     /// let once = Capabilities::new(DeliveryMode::Competing);
-    /// assert!(once.delivers_requests_once() && once.fan_out_reason().is_none());
-    /// let fanned = once.fans_out_requests("Pub/Sub hands a message to every subscriber");
+    /// assert!(once.delivers_requests_once() && once.why_not_delivers_requests_once().is_none());
+    /// let fanned = once.without_delivers_requests_once("Pub/Sub hands a message to every subscriber");
     /// assert!(!fanned.delivers_requests_once());
-    /// assert_eq!(fanned.fan_out_reason(), Some("Pub/Sub hands a message to every subscriber"));
-    /// ```
-    pub const fn fans_out_requests(self, reason: &'static str) -> Self {
-        Capabilities { delivers_requests_once: false, fan_out_reason: Some(reason), ..self }
-    }
-
-    /// A request reaches one server instance however many listen on its pattern. `true` unless a
-    /// link declares otherwise, as `confirms_drain` is, so a link that does not declare it is held
-    /// to it. A link declaring [`fans_out_requests`](Self::fans_out_requests) hands each request to
-    /// every instance subscribed to its pattern: each runs the handler and replies, and the client
-    /// answers the first reply and drops the rest, so the handler's side effects run once per
-    /// instance. Such a link's request side supports one server instance, and `Server::prepare`
-    /// logs a `warn` saying so, naming [`fan_out_reason`](Self::fan_out_reason), when it mounts a
-    /// request handler; it refuses nothing, since one instance cannot tell itself from many. An
-    /// event is outside it, delivered as [`delivery`](Self::delivery) declares.
-    ///
-    /// The field is not written from outside the crate, so no link declares `false` without a
-    /// reason:
-    ///
-    /// ```compile_fail,E0616
-    /// use ulo_rpc::{Capabilities, DeliveryMode};
-    ///
-    /// let mut capabilities = Capabilities::new(DeliveryMode::FanOut);
-    /// capabilities.delivers_requests_once = false;
+    /// assert_eq!(fanned.why_not_delivers_requests_once(), Some("Pub/Sub hands a message to every subscriber"));
     /// ```
     pub const fn delivers_requests_once(&self) -> bool {
-        self.delivers_requests_once
+        self.delivers_requests_once.is_none()
     }
 
-    /// Why a link that does not deliver a request once hands it to every instance, as the
-    /// server's `warn` names it; `None` on a link delivering once.
-    pub const fn fan_out_reason(&self) -> Option<&'static str> {
-        self.fan_out_reason
+    pub const fn without_delivers_requests_once(self, reason: &'static str) -> Self {
+        Capabilities { delivers_requests_once: Some(reason), ..self }
+    }
+
+    pub const fn why_not_delivers_requests_once(&self) -> Option<&'static str> {
+        self.delivers_requests_once
     }
 }
 

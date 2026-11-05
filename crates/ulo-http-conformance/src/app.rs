@@ -52,8 +52,8 @@ impl Module for SuiteModule {
         m.enhancer::<AnyErrorHandler<Http>>().value(reshape);
         m.provide::<KeyGate>();
         m.meta::<PreDispatch>().apply_value(Cors::new().allow_origin(ORIGIN)).apply_for::<KeyGate>(["/guarded/*"]);
-        // A host declaring `upgrades: false` refuses any upgrade handler in `prepare`.
-        if self.limits.upgrades {
+        // A host declared without `upgrades` refuses any upgrade handler in `prepare`.
+        if self.limits.upgrades() {
             m.meta::<Upgrades>().register(Echo::default());
         }
     }

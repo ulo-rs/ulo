@@ -138,7 +138,7 @@ pub trait Harness: Send + Sync + 'static {
 /// - nested, the app mounted under [`PREFIX`] with `.nested_at(PREFIX)`; as the fallback, mounted
 ///   as the host's fallback with no `.nested_at`;
 /// - a [`HostValue`] from the [`HOST_VALUE_HEADER`] request header, where the request carries it:
-///   on a host declaring `host_extensions: true`, written into the host's own request store by a
+///   on a host declaring `host_extensions`, written into the host's own request store by a
 ///   host middleware; on one declaring `false`, copied by `Embedded::forward::<HostValue>(..)`;
 /// - on every response carrying a `Routing`, the header [`ROUTING_HEADER`] holding
 ///   [`routing_label`] of it, written by a host middleware, or on rocket by
@@ -279,7 +279,7 @@ pub async fn app(runtime: impl Runtime) -> App<Connected> {
 }
 
 /// The suite's application as a host declaring `limits` takes it, on `runtime`: without the
-/// upgrade handler where `upgrades` is `false`, which `prepare` would otherwise refuse.
+/// upgrade handler where the host is declared without `upgrades`, which `prepare` would otherwise refuse.
 pub async fn app_for(limits: EmbedLimits, runtime: impl Runtime) -> App<Connected> {
     App::builder(app::SuiteModule { limits })
         .runtime(runtime)

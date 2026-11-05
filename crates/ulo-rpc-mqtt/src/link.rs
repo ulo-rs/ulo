@@ -230,7 +230,7 @@ impl Mqtt {
         self
     }
 
-    /// `Codec::Cbor` carries raw bytes and declares `binary: true`; JSON unset.
+    /// `Codec::Cbor` carries raw bytes and has `binary`; JSON unset, which is declared without it.
     pub fn codec(mut self, codec: Codec) -> Self {
         self.codec = codec;
         self
@@ -278,16 +278,30 @@ impl QoS {
     }
 }
 
+/// Why a `cancel` can reach the server ahead of its request.
+const CONTROL_LANE: &str = "the link carries a request and its `cancel` on separate lanes, and the broker may deliver the `cancel` first";
+
 impl Link for Mqtt {
     const NAME: &'static str = "mqtt";
 
     fn capabilities(&self) -> Capabilities {
         let max_packet = self.max_packet.load(Ordering::Relaxed);
-        Capabilities::new(DeliveryMode::Competing)
-            .binary(self.codec.binary())
+        let capabilities = Capabilities::new(DeliveryMode::Competing)
+            .codec(self.codec)
             .ordering(Order::PerTopic)
-            .miss_signal(self.qos != QoS::AtMostOnce)
             .max_frame((max_packet > 0).then_some(max_packet))
+            .without_native_backpressure(
+                "holding a request over the server's bound at the broker needs it to pass an unacknowledged shared-subscription message to \
+                 another member when the holder's session ends, which MQTT 5 §4.8.2 only recommends and Mosquitto does not do",
+            )
+            .without_holds_unserved("a request published while no instance subscribes its pattern's `$share` filter reaches no one")
+            .without_durable_replies("the client's clean session loses what reached its reply topic while its connection was down")
+            .without_ordered_control(CONTROL_LANE);
+        if self.qos == QoS::AtMostOnce {
+            capabilities.without_miss_signal("at QoS 0 the broker acknowledges nothing, so a publish nothing subscribes to is not reported")
+        } else {
+            capabilities
+        }
     }
 
     fn usable(&self) -> Result<(), BoxError> {
@@ -1823,6 +1837,19 @@ mod tests {
     use ulo_transport::ErrorKind;
 
     use super::*;
+
+    #[test]
+    fn a_miss_is_signalled_at_every_qos_but_0() {
+        for (qos, signalled) in [(QoS::AtMostOnce, false), (QoS::AtLeastOnce, true), (QoS::ExactlyOnce, true)] {
+            let capabilities = Mqtt::url("mqtt://localhost:1").qos(qos).capabilities();
+            assert_eq!(
+                (capabilities.miss_signal(), capabilities.why_not_miss_signal().is_some()),
+                (signalled, !signalled),
+                "`miss_signal` and its reason at {qos:?}"
+            );
+        }
+        assert!(Mqtt::url("mqtt://localhost:1").capabilities().miss_signal(), "`miss_signal` at the default QoS");
+    }
 
     /// Root certificates loaded per test, each test's loader counting in a slot of its own.
     static LOADS: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];

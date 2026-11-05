@@ -8,9 +8,9 @@
 //! the link's hold runs out for an `open` carrying none, so a call whose `opened` never comes
 //! holds nothing until the link closes.
 //!
-//! On a link without `ordered_control` a request's control frames travel a lane of their own and
-//! the broker can deliver a `cancel` ahead of its request, so there the first scenario's order is
-//! not observable and the link declares it not applicable.
+//! On a link declared without `ordered_control` a request's control frames travel a lane of their
+//! own and the broker can deliver a `cancel` ahead of its request, so there the first scenario's
+//! order is not observable and the scenario is skipped, naming the declared reason.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -81,7 +81,10 @@ struct Linked<B: Broker> {
 
 impl<B: Broker> Linked<B> {
     async fn start() -> Self {
-        let broker = B::start().await;
+        Linked::on(B::start().await).await
+    }
+
+    async fn on(broker: B) -> Self {
         let app = App::builder(Empty)
             .runtime(<B::Harness as Harness>::runtime())
             .wire()
@@ -141,16 +144,16 @@ impl<B: Broker> Linked<B> {
 
 /// Sends `ROUNDS` requests, each followed by its `cancel`, the two sends of a round polled together
 /// and the request's first, and requires the server's link to deliver every request and then its
-/// `cancel`. A link without `ordered_control` fails here, and declares the scenario not applicable.
+/// `cancel`. Skipped on a link declared without `ordered_control`, printing its reason.
 pub async fn cancel_follows_its_request<B: Broker>() {
-    let mut linked = Linked::<B>::start().await;
-    assert!(
-        linked.server.capabilities().ordered_control,
-        "the link does not declare `ordered_control`, so its `cancel` may overtake its request: declare \
-         `cancel_follows_its_request` not applicable with the reason"
-    );
+    let broker = B::start().await;
+    if let Some(reason) = broker.link().capabilities().why_not_ordered_control() {
+        crate::skipped("cancel_follows_its_request", "ordered_control", reason);
+        return;
+    }
+    let mut linked = Linked::on(broker).await;
     let pattern = Pattern::from(ORDERED);
-    let codec = if linked.server.capabilities().binary { Codec::Cbor } else { Codec::Json };
+    let codec = if linked.server.capabilities().binary() { Codec::Cbor } else { Codec::Json };
     let null = codec.encode(&()).expect("a unit encodes");
     for id in 1..=ROUNDS {
         let request = Frame::Req { id, pattern: ORDERED.to_owned(), headers: CallHeaders::new(), data: null.clone() };

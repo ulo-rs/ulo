@@ -260,6 +260,9 @@ pub(crate) struct ClientInner {
     /// module's client leaves it to the module's destroy hook.
     close: Option<Close>,
     codec: Codec,
+    /// The reason the link declares for carrying no raw bytes, which a call with a binary payload
+    /// is refused with before any I/O.
+    binary_refused: Option<&'static str>,
     runtime: Arc<dyn Runtime>,
     /// Held across `connect`, so concurrent first calls share one connection.
     conn: async_lock::Mutex<Option<Arc<Conn>>>,
@@ -365,7 +368,8 @@ impl RpcClient {
     }
 
     fn build<L: Link>(link: Arc<L>, timeout: Bound, idle: Bound, runtime: Arc<dyn Runtime>, close: Option<Close>) -> Self {
-        let codec = Codec::of(&link.capabilities());
+        let capabilities = link.capabilities();
+        let codec = Codec::of(&capabilities);
         let handed = Arc::clone(&runtime);
         let connect: Connect = Box::new(move || {
             let (link, runtime) = (Arc::clone(&link), Arc::clone(&handed));
@@ -377,6 +381,7 @@ impl RpcClient {
                 connect,
                 close,
                 codec,
+                binary_refused: capabilities.why_not_binary(),
                 runtime,
                 conn: async_lock::Mutex::new(None),
                 next_id: AtomicU64::new(1),
@@ -468,13 +473,13 @@ impl RpcClient {
         Req: Serialize + ?Sized,
         Res: DeserializeOwned + Send + 'static,
     {
-        let payload = encode(self.inner.codec, req);
+        let payload = encode(self.inner.codec, self.inner.binary_refused, req);
         Call { _res: PhantomData, spec: Spec::new(self, pattern, Request::One(payload)) }
     }
 
     /// An event, answered by nothing.
     pub fn emit<T: Serialize + ?Sized>(&self, pattern: &str, data: &T) -> Emit {
-        let payload = encode(self.inner.codec, data);
+        let payload = encode(self.inner.codec, self.inner.binary_refused, data);
         Emit { spec: Spec::new(self, pattern, Request::One(payload)) }
     }
 
@@ -484,7 +489,7 @@ impl RpcClient {
         Req: Serialize + ?Sized,
         Res: DeserializeOwned + Send + 'static,
     {
-        let payload = encode(self.inner.codec, req);
+        let payload = encode(self.inner.codec, self.inner.binary_refused, req);
         StreamCall::new(Spec::new(self, pattern, Request::One(payload)))
     }
 
@@ -513,22 +518,23 @@ impl RpcClient {
         S: Stream + Send + 'static,
         S::Item: Serialize,
     {
-        let codec = self.inner.codec;
-        Request::Stream(Box::pin(items.map(move |item| encode(codec, &item))))
+        let (codec, refused) = (self.inner.codec, self.inner.binary_refused);
+        Request::Stream(Box::pin(items.map(move |item| encode(codec, refused, &item))))
     }
 }
 
-/// `value` as a payload. A JSON link carries raw bytes only as an array of numbers, so a payload
-/// that writes them is refused here, before any I/O.
-fn encode<T: Serialize + ?Sized>(codec: Codec, value: &T) -> Result<Data, RpcError> {
-    match codec.encode_checked(value) {
-        Ok((_, true)) if !codec.binary() => Err(RpcError::new(
+/// `value` as a payload. A JSON link carries raw bytes only as an array of numbers, so on a link
+/// declared without `binary`, `refused` holding its reason, a payload that writes them is refused
+/// here, before any I/O, naming that reason.
+fn encode<T: Serialize + ?Sized>(codec: Codec, refused: Option<&'static str>, value: &T) -> Result<Data, RpcError> {
+    match (codec.encode_checked(value), refused) {
+        (Ok((_, true)), Some(reason)) => Err(RpcError::new(
             ErrorKind::BadRequest,
-            "a binary payload cannot travel on a JSON link; set `.codec(Codec::Cbor)` on the link",
+            format!("a binary payload cannot travel on the link, declared without `binary`: {reason}"),
         )
         .with_reason("binary_unsupported")),
-        Ok((data, _)) => Ok(data),
-        Err(err) => Err(RpcError::new(ErrorKind::BadRequest, format!("the payload could not be encoded: {err}"))),
+        (Ok((data, _)), _) => Ok(data),
+        (Err(err), _) => Err(RpcError::new(ErrorKind::BadRequest, format!("the payload could not be encoded: {err}"))),
     }
 }
 
@@ -1407,8 +1413,8 @@ impl<Res> Stream for RpcStream<Res> {
 /// runtime has shut down while it timed the call, or a link whose runtime refused a wait its
 /// connect made, `Unavailable` with `reason: "runtime_shut_down"`;
 /// an oversized payload
-/// `BadRequest` with `reason: "payload_too_large"`; a binary payload on a JSON link `BadRequest`
-/// with `reason: "binary_unsupported"`, before any I/O; a stream whose caller left more reply
+/// `BadRequest` with `reason: "payload_too_large"`; a binary payload on a link declared without
+/// `binary` `BadRequest` with `reason: "binary_unsupported"` and the declared reason, before any I/O; a stream whose caller left more reply
 /// items unread than the client's `max_queued_items` `Unavailable` with `reason: "overflow"`, and a
 /// streamed request whose handler left more items unread than the server's the same, from the
 /// server; a `deadline-ms` the caller set with
@@ -1514,7 +1520,7 @@ mod tests {
         const NAME: &'static str = "misencoding";
 
         fn capabilities(&self) -> Capabilities {
-            Capabilities::new(DeliveryMode::Addressed)
+            Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
         async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
@@ -1537,6 +1543,34 @@ mod tests {
         }
     }
 
+    /// Why [`TextLink`] carries no raw bytes.
+    const TEXT_ONLY: &str = "the test link frames text alone";
+
+    /// A link declared without `binary` for a reason of its own, whose every connect fails.
+    struct TextLink;
+
+    impl Link for TextLink {
+        const NAME: &'static str = "text";
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::new(DeliveryMode::Addressed).without_binary(TEXT_ONLY)
+        }
+
+        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+            Err("this link has no server side".into())
+        }
+
+        async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+            Err("the call connected, though its payload is refused before any I/O".into())
+        }
+
+        async fn drain(&self) {}
+
+        async fn close(&self) -> Result<(), BoxError> {
+            Ok(())
+        }
+    }
+
     /// A link whose first connection's reply lane ends at once, as a server closing does, and
     /// whose later ones stay open; it counts its connections.
     struct EndingLink(Arc<AtomicU64>);
@@ -1545,7 +1579,7 @@ mod tests {
         const NAME: &'static str = "ending";
 
         fn capabilities(&self) -> Capabilities {
-            Capabilities::new(DeliveryMode::Addressed)
+            Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
         async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
@@ -1595,7 +1629,7 @@ mod tests {
         const NAME: &'static str = "silent";
 
         fn capabilities(&self) -> Capabilities {
-            Capabilities::new(DeliveryMode::Addressed)
+            Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
         async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
@@ -2073,7 +2107,7 @@ mod tests {
         const NAME: &'static str = "refusing";
 
         fn capabilities(&self) -> Capabilities {
-            Capabilities::new(DeliveryMode::Addressed)
+            Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
         async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
@@ -2212,7 +2246,7 @@ mod tests {
         const NAME: &'static str = "severed";
 
         fn capabilities(&self) -> Capabilities {
-            Capabilities::new(DeliveryMode::Addressed)
+            Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
         async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
@@ -2275,7 +2309,7 @@ mod tests {
         const NAME: &'static str = "fed";
 
         fn capabilities(&self) -> Capabilities {
-            Capabilities::new(DeliveryMode::Addressed)
+            Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
         async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
@@ -2422,6 +2456,15 @@ mod tests {
         assert!(err.message().contains("the Cbor codec cannot encode the frame"), "the message should name the codec's failure, got: {err:?}");
     }
 
+    #[tokio::test]
+    async fn a_binary_payload_is_refused_naming_the_declared_reason() {
+        let client = RpcClient::of_module(Arc::new(TextLink), Bound::Unbounded, Bound::Default, Arc::new(ulo_runtime_tokio::Tokio::current()));
+        let answer = client.request::<_, ()>("files.put", &bytes::Bytes::from_static(&[0x00, 0xfe, 0xff])).await;
+        let err = answer.expect_err("a binary payload on a link declared without `binary` must fail");
+        assert_eq!((err.kind(), err.reason()), (ErrorKind::BadRequest, Some("binary_unsupported")), "got: {err:?}");
+        assert!(err.message().contains(TEXT_ONLY), "the refusal should name the link's declared reason, got: {err:?}");
+    }
+
     /// A link whose every connect fails: with a [`Misconfigured`] refusal, a
     /// [`RuntimeShutDown`](ulo::RuntimeShutDown), a [`ConnectTimedOut`], or any other error.
     struct FailsToConnect {
@@ -2458,7 +2501,7 @@ mod tests {
         const NAME: &'static str = "failing";
 
         fn capabilities(&self) -> Capabilities {
-            Capabilities::new(DeliveryMode::Addressed)
+            Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
         async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {

@@ -22,9 +22,10 @@ pub trait Backend: Send + Sync + 'static {
     /// The backend's name, as a `Configure` error naming a limit prints it.
     const NAME: &'static str;
 
-    /// What it cannot do, checked in `prepare`: asking for it is a `StartupError::Configure`
-    /// naming the limit.
-    fn limits() -> BackendLimits;
+    /// What it can do, checked in `prepare`: asking for what it is declared without is a
+    /// `StartupError::Configure` naming the capability and the reason. Read from the backend
+    /// value, so a declaration can follow its configuration.
+    fn limits(&self) -> BackendLimits;
 
     /// Takes the listeners the server bound and starts accepting on them, without serving yet.
     /// All-or-nothing: an error closes whatever this call opened. `tls` is the loaded TLS
@@ -55,44 +56,99 @@ pub trait Backend: Send + Sync + 'static {
     fn close(&self) -> impl Future<Output = Result<(), BoxError>> + Send;
 }
 
-/// What a backend cannot do. The starting point per backend is documented beside each, and its
-/// conformance tests confirm each entry.
+/// What a backend can do, read in `prepare`: asking a backend for what it is declared without is
+/// a `StartupError::Configure` naming the capability and the declared reason. Every capability is
+/// held from [`NONE`](Self::NONE), the strict reading, and a backend declares one absent only
+/// through its `without_` setter, which takes the reason; its conformance tests confirm each
+/// entry.
+///
+/// ```
+/// use ulo_http::BackendLimits;
+///
+/// let limits = BackendLimits::NONE.without_h2c("the backend's HTTP/2 needs ALPN");
+/// assert!(!limits.h2c() && limits.why_not_h2c() == Some("the backend's HTTP/2 needs ALPN"));
+/// assert!(limits.tls() && limits.why_not_tls().is_none());
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BackendLimits {
-    /// Hands over a per-request upgraded I/O; `false` refuses a gateway on its port.
-    pub upgrades: bool,
-    /// HTTP/2 without TLS.
-    pub h2c: bool,
-    /// Adopts an inherited socket.
-    pub inherited_sockets: bool,
-    /// Binds port 0 and reports the port chosen.
-    pub port_zero: bool,
-    pub tls: bool,
+    upgrades: Absent,
+    h2c: Absent,
+    inherited_sockets: Absent,
+    port_zero: Absent,
+    tls: Absent,
 }
+
+/// `None` where the backend or host has the capability, and why it has not otherwise.
+pub(crate) type Absent = Option<&'static str>;
 
 impl BackendLimits {
     /// A backend that can do everything.
-    pub const NONE: BackendLimits = BackendLimits { upgrades: true, h2c: true, inherited_sockets: true, port_zero: true, tls: true };
+    pub const NONE: BackendLimits = BackendLimits { upgrades: None, h2c: None, inherited_sockets: None, port_zero: None, tls: None };
 
-    pub const fn upgrades(self, supported: bool) -> Self {
-        BackendLimits { upgrades: supported, ..self }
+    /// Hands over a per-request upgraded I/O; a backend without it refuses a gateway on its port.
+    pub const fn upgrades(&self) -> bool {
+        self.upgrades.is_none()
     }
 
-    pub const fn h2c(self, supported: bool) -> Self {
-        BackendLimits { h2c: supported, ..self }
+    pub const fn without_upgrades(self, reason: &'static str) -> Self {
+        BackendLimits { upgrades: Some(reason), ..self }
     }
 
-    pub const fn inherited_sockets(self, supported: bool) -> Self {
-        BackendLimits { inherited_sockets: supported, ..self }
+    pub const fn why_not_upgrades(&self) -> Option<&'static str> {
+        self.upgrades
     }
 
-    pub const fn port_zero(self, supported: bool) -> Self {
-        BackendLimits { port_zero: supported, ..self }
+    /// HTTP/2 without TLS.
+    pub const fn h2c(&self) -> bool {
+        self.h2c.is_none()
     }
 
-    pub const fn tls(self, supported: bool) -> Self {
-        BackendLimits { tls: supported, ..self }
+    pub const fn without_h2c(self, reason: &'static str) -> Self {
+        BackendLimits { h2c: Some(reason), ..self }
+    }
+
+    pub const fn why_not_h2c(&self) -> Option<&'static str> {
+        self.h2c
+    }
+
+    /// Adopts an inherited socket.
+    pub const fn inherited_sockets(&self) -> bool {
+        self.inherited_sockets.is_none()
+    }
+
+    pub const fn without_inherited_sockets(self, reason: &'static str) -> Self {
+        BackendLimits { inherited_sockets: Some(reason), ..self }
+    }
+
+    pub const fn why_not_inherited_sockets(&self) -> Option<&'static str> {
+        self.inherited_sockets
+    }
+
+    /// Binds port 0 and reports the port chosen.
+    pub const fn port_zero(&self) -> bool {
+        self.port_zero.is_none()
+    }
+
+    pub const fn without_port_zero(self, reason: &'static str) -> Self {
+        BackendLimits { port_zero: Some(reason), ..self }
+    }
+
+    pub const fn why_not_port_zero(&self) -> Option<&'static str> {
+        self.port_zero
+    }
+
+    /// Serves TLS from the configuration the server loads.
+    pub const fn tls(&self) -> bool {
+        self.tls.is_none()
+    }
+
+    pub const fn without_tls(self, reason: &'static str) -> Self {
+        BackendLimits { tls: Some(reason), ..self }
+    }
+
+    pub const fn why_not_tls(&self) -> Option<&'static str> {
+        self.tls
     }
 }
 

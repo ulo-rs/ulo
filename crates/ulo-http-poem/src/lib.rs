@@ -18,7 +18,7 @@
 //! # }
 //! ```
 //!
-//! `Route::nest` strips the prefix, so the adapter declares `STRIPS_PREFIX: true`; mounting the
+//! `Route::nest` strips the prefix, so the adapter has `strips_prefix`; mounting the
 //! endpoint with `Route::at("/api/*path", ..)` instead leaves the prefix on the path and is not
 //! supported. What it declares: the peer address from `remote_addr`; upgrades through
 //! `take_upgrade`; no miss forwarding; host extensions from `Request::extensions`; no TLS info;
@@ -42,12 +42,13 @@ pub struct Poem;
 impl Embed for Poem {
     const NAME: &'static str = "poem";
 
-    const STRIPS_PREFIX: bool = true;
-
     type HostRequest<'r> = poem::Request;
 
     fn limits() -> EmbedLimits {
-        EmbedLimits::NONE.forward_miss(false).tls_info(false).disconnect(Disconnect::AtNextWrite)
+        EmbedLimits::NONE
+            .without_forward_miss("a poem `Endpoint` answers every request it is handed, and poem offers no way to hand one back to the router")
+            .without_tls_info("the adapter reads no TLS state off poem's request, so `ConnInfo::tls` is `None`")
+            .disconnect(Disconnect::AtNextWrite)
     }
 
     fn builtin_forwards(embedded: ulo_http::embed::Embedded<Self>) -> ulo_http::embed::Embedded<Self> {

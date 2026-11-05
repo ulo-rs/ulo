@@ -119,7 +119,7 @@ pub(crate) struct Entry {
     pub(crate) scope: Vec<Cow<'static, str>>,
     pub(crate) exclude: Vec<Cow<'static, str>>,
     /// What the `supplies` calls written after it declare this entry inserts: an embedding
-    /// declaring `host_extensions: false` reads them where the entry runs, for the routes it runs
+    /// declared without `host_extensions` reads them where the entry runs, for the routes it runs
     /// on for every request or, unscoped, for every route and every `adopt` written after it.
     pub(crate) supplies: Vec<Supply>,
     /// `Dep<M>` for a by-type middleware; nothing otherwise.
@@ -233,7 +233,7 @@ impl<T: HttpCarried> PreDispatch<T> {
     /// `V` passes unchanged, and `Ext<V>` then fails with `LookupError::NotFound`.
     ///
     /// That is how a host's auth layer hands its user to the app's guards; a handler reads a host
-    /// value directly with `Host<V>`. An embedding declaring `host_extensions: false` refuses it
+    /// value directly with `Host<V>`. An embedding declared without `host_extensions` refuses it
     /// unless `V` is supplied before it runs: by `Embedded::forward::<V>(..)`, or by an unscoped
     /// entry written before it and declared with `.supplies::<V>()`.
     #[track_caller]
@@ -244,7 +244,7 @@ impl<T: HttpCarried> PreDispatch<T> {
     /// Declares that the entry written before it puts `V` in the request's `http::Extensions`,
     /// as a tower layer authenticating the request does. Runs nothing, on a backend or embedded.
     ///
-    /// An embedding whose adapter declares `host_extensions: false` refuses a handler reading
+    /// An embedding whose adapter is declared without `host_extensions` refuses a handler reading
     /// `Host<V>` and an `adopt::<V>()` entry unless `V` reaches them, and reads the declaration
     /// where the entry runs. After a scoped entry it reaches the handlers of the routes that
     /// entry runs for on every request, its scope matching each of their paths and no exclusion

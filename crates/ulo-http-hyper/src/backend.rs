@@ -113,7 +113,7 @@ impl Protocols {
 impl<L: Listener> Backend for HyperOn<L> {
     const NAME: &'static str = "hyper";
 
-    fn limits() -> BackendLimits {
+    fn limits(&self) -> BackendLimits {
         BackendLimits::NONE
     }
 

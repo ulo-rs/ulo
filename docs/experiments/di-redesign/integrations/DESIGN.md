@@ -246,7 +246,8 @@ pub trait Store: Send + Sync + 'static {
     fn close(c: Self::Client) -> BoxFuture<'static, ()>;
 }
 
-pub trait MigrationLock: Store { /* type Guard; lock(&Client, Duration); unlock(Guard) */ } // `StoreModule::migrate` exists for one implementing it
+#[diagnostic::on_unimplemented(message = "`{Self}` takes no migrations: ..", note = "the stores that implement it: ..")]
+pub trait MigrationLock: Store { /* type Guard; lock(&Client, Duration); unlock(Guard) */ } // `StoreModule::migrate` is bounded `where S: MigrationLock`
 ```
 
 `create_connects` is decided by the options, since one store can connect in `create` for some options and not for others: MongoDB's `mongodb+srv://` URI resolves DNS inside `create` and a `mongodb://` URI does not (§4.6). Every other shipped store answers false for every option. A store whose `create` connects whatever the options would answer true for every option, and `.lazy()` on its module is refused at registration. `create_connects` and that refusal are the one rule: there is no marker trait, and `.lazy()` exists on every `StoreModule`.
@@ -287,7 +288,7 @@ impl Store for Postgres {
 }
 ```
 
-`permanent_or_not` wraps the library's permanent errors (§4.6) in `Permanent` and leaves the rest bare; it takes the engine as well, `permanent_or_not(Engine::Postgres, e)`, since one SQLSTATE means different things on the three engines. `MigrationLock` follows, for the lock primitive of §4.4. `PgConnectOptions`, `MySqlConnectOptions` and SeaORM's `ConnectOptions` print the password under `Debug` (PROBES_db.md §1.5, §2.2), so no library's options value is formatted anywhere: the options type holds the URL as a `Secret<String>`, and its own `Debug` writes the URL redacted.
+`permanent_or_not` wraps the library's permanent errors (§4.6) in `Permanent` and leaves the rest bare; it takes the engine as well, `permanent_or_not(Engine::Postgres, e)`, since one SQLSTATE means different things on the three engines. `MigrationLock` follows, for the lock primitive of §4.4. `migrate` and `migrate_within` sit on `StoreModule<S: Store>` with a method bound `where S: MigrationLock`, not on an impl bounded by the trait: a method an impl's bound hides is rustc's E0599, which prints no `on_unimplemented` text, and a method bound is an E0277 that prints the trait's message and its note naming the stores that implement it, the SQLx and Diesel `Postgres`, `MySql` and `Sqlite` and `SeaOrm`; `ulo-codegen-tests`'s `tests/ui/migrate_without_a_migration_lock.rs` holds the diagnostic. `PgConnectOptions`, `MySqlConnectOptions` and SeaORM's `ConnectOptions` print the password under `Debug` (PROBES_db.md §1.5, §2.2), so no library's options value is formatted anywhere: the options type holds the URL as a `Secret<String>`, and its own `Debug` writes the URL redacted.
 
 ### 4.2 `StoreModule<S>` and the phases
 

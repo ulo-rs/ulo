@@ -25,7 +25,7 @@ use ulo_http::{AppService, Backend, BackendLimits, ConnInfo, HttpBody, HttpConfi
 use ulo_net::BoundListener;
 use ulo_net::rustls::ServerConfig;
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, Payload, ReplyPath, RpcClient};
+use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, Payload, ReplyPath, RpcClient};
 use ulo_transport::ErrorKind;
 
 const PATIENCE: Duration = Duration::from_secs(10);
@@ -139,7 +139,7 @@ impl Link for Wire {
     const NAME: &'static str = "wire";
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::new(DeliveryMode::Addressed).miss_signal(true)
+        Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
     async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
@@ -365,7 +365,7 @@ struct Keeper {
 impl Backend for Keeper {
     const NAME: &'static str = "keeper";
 
-    fn limits() -> BackendLimits {
+    fn limits(&self) -> BackendLimits {
         BackendLimits::NONE
     }
 

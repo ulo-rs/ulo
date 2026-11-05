@@ -1,4 +1,4 @@
-//! Under rocket's `host_extensions: false`, a `Host<T>` read nothing supplies refuses the app at
+//! On rocket, declared without `host_extensions`, a `Host<T>` read nothing supplies refuses the app at
 //! `listen()`, whether an attribute's parameter declared the read or a hand-written handler's
 //! `HttpHandler::reads_host`; a scoped entry's exclusion counts against a route only where a
 //! request can reach the route through it.

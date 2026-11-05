@@ -26,7 +26,7 @@
 //! The rest of the server is configured as usual, `with_http_builder`, `http1_mut`, `http2_mut`
 //! and `fuse_factory` included.
 //!
-//! salvo hands its handler the full path, so the adapter declares `STRIPS_PREFIX: false` and the
+//! salvo hands its handler the full path, so the adapter is declared without `strips_prefix` and the
 //! app strips `.nested_at` itself; a request it receives outside the prefix is answered as the
 //! app's 404 and logged at `warn` once. What it declares: the peer address from
 //! `Request::remote_addr`; upgrades through `OnUpgrade` left in the extensions; no miss
@@ -51,12 +51,13 @@ pub struct Salvo;
 impl Embed for Salvo {
     const NAME: &'static str = "salvo";
 
-    const STRIPS_PREFIX: bool = false;
-
     type HostRequest<'r> = SalvoRequest<'r>;
 
     fn limits() -> EmbedLimits {
-        EmbedLimits::NONE.forward_miss(false).tls_info(false)
+        EmbedLimits::NONE
+            .without_forward_miss("a salvo goal handler answers every request it is handed, and salvo offers no way to hand one back to the router")
+            .without_tls_info("the adapter reads no TLS state off salvo's request, so `ConnInfo::tls` is `None`")
+            .without_strips_prefix("salvo hands its handler the full `uri().path()`")
     }
 
     fn builtin_forwards(embedded: ulo_http::embed::Embedded<Self>) -> ulo_http::embed::Embedded<Self> {

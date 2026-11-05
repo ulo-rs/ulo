@@ -12,7 +12,7 @@ use futures_util::{Stream, StreamExt, stream};
 use tokio::sync::{Notify, mpsc};
 use ulo::{App, BoxError, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, injectable, routes};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, ReplyPath};
+use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, ReplyPath};
 use ulo_transport::CallError;
 
 const PATIENCE: Duration = Duration::from_secs(5);
@@ -97,7 +97,7 @@ impl Link for Scripted {
     const NAME: &'static str = "scripted";
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::new(DeliveryMode::Addressed).miss_signal(true)
+        Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
     async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {

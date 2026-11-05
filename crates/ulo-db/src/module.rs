@@ -152,9 +152,7 @@ impl<S: Store> StoreModule<S> {
         self.lazy = Some(Location::caller());
         self
     }
-}
 
-impl<S: MigrationLock> StoreModule<S> {
     /// Runs `migrations` in the module's `on_init`, after connecting, under the lock. Off unless
     /// written. A failure is `MigrationFailed`. Refused at registration on a [`lazy`](Self::lazy)
     /// module, as [`LazyWithMigrations`].
@@ -168,8 +166,14 @@ impl<S: MigrationLock> StoreModule<S> {
     /// failure of the lock step is classified by the store, as its `ping` is; a failure after the
     /// lock is held is permanent. The init hook is bounded to cover both waits, so `hook_timeout`
     /// never cuts them.
+    ///
+    /// Only a store implementing [`MigrationLock`] takes migrations; on any other the call fails to
+    /// compile, the error naming the stores that do.
     #[track_caller]
-    pub fn migrate(mut self, migrations: impl Migrations<S>) -> Self {
+    pub fn migrate(mut self, migrations: impl Migrations<S>) -> Self
+    where
+        S: MigrationLock,
+    {
         self.migrations = Some(Migrate::new(migrations));
         self.migrate_at = Some(Location::caller());
         self
@@ -179,7 +183,10 @@ impl<S: MigrationLock> StoreModule<S> {
     /// granted. `Bound::Default`, the default, and `Bound::Unbounded` set none; `Bound::After(d)`
     /// fails the start with a permanent `MigrationFailed` when the migrations run past `d`. Zero is
     /// refused at registration. Without `.migrate(..)` it has no effect.
-    pub fn migrate_within(mut self, bound: Bound) -> Self {
+    pub fn migrate_within(mut self, bound: Bound) -> Self
+    where
+        S: MigrationLock,
+    {
         self.migrate_within = bound;
         self
     }

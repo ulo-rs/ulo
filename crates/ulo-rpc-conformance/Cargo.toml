@@ -37,5 +37,9 @@ serde = { workspace = true, features = ["derive"] }
 name = "harness"
 required-features = ["tokio", "smol"]
 
+[[test]]
+name = "skips"
+required-features = ["tokio"]
+
 [lints]
 workspace = true

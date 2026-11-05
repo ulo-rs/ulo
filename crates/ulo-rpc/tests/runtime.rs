@@ -25,7 +25,7 @@ use tracing::span::{Attributes, Id, Record};
 use tracing::{Event as TraceEvent, Level, Metadata};
 use ulo::{App, Bound, BoxError, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, Runtime, RuntimeMissing, StartupError, WiringError};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Capabilities, DeliveryMode, Link, Outbound, Pattern, RpcClient, RpcClientModule, UnusableLink, ZeroTimeout};
+use ulo_rpc::{Codec, Capabilities, DeliveryMode, Link, Outbound, Pattern, RpcClient, RpcClientModule, UnusableLink, ZeroTimeout};
 use ulo_transport::ErrorKind;
 use ulo_runtime_tokio::Tokio;
 
@@ -50,7 +50,7 @@ impl Link for Observed {
     const NAME: &'static str = "observed";
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::new(DeliveryMode::Addressed)
+        Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
     async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
@@ -294,7 +294,7 @@ impl Link for Unusable {
     const NAME: &'static str = "unusable";
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities::new(DeliveryMode::Addressed)
+        Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
     fn usable(&self) -> Result<(), BoxError> {

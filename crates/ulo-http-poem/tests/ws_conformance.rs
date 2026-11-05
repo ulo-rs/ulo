@@ -54,8 +54,8 @@ impl Host for PoemHost {
     // requests.
     const CLOSES_IDLE_AT_DRAIN: bool = true;
 
-    fn upgrades() -> bool {
-        <Poem as Embed>::limits().upgrades
+    fn why_not_upgrades() -> Option<&'static str> {
+        <Poem as Embed>::limits().why_not_upgrades()
     }
 
     fn runtime() -> Tokio {
