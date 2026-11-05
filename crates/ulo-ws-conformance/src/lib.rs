@@ -344,7 +344,7 @@ pub mod __private {
         }
     }
 
-    /// Whether `scenarios`, the names the suite stamps, include [`DECLARATION`]. The stamping
+    /// Whether `scenarios`, the names the suite stamps, include `DECLARATION`. The stamping
     /// macro asserts it in a constant, so a scenario list naming the declaration otherwise fails
     /// to compile rather than having [`skips`] skip the declaration too.
     pub const fn lists_declaration(scenarios: &[&str]) -> bool {
