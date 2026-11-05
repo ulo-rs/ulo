@@ -767,20 +767,25 @@ struct Blocked {
 }
 
 impl Blocked {
-    /// Whether the call failed `Timeout` and, unless its first connect returned past
-    /// `started + timeout`, a sleep its client asked for after `started` ends within
-    /// `[started + timeout, connect + timeout]` and ended before the call answered, on the
-    /// runtime's clock.
+    /// Whether the call failed `Timeout` and its timer was armed in time.
     fn armed_within(&self, timeout: Duration) -> bool {
-        let Some((connect, returned)) = self.connects.first() else { return false };
-        let (earliest, latest) = (self.started.timer + timeout, connect.timer + timeout);
-        let timed_out = matches!(&self.outcome, Err(error) if error.kind() == ErrorKind::Timeout);
+        matches!(&self.outcome, Err(error) if error.kind() == ErrorKind::Timeout) && self.timer_armed_in_time(timeout)
+    }
+
+    /// Whether the first connect returned past `started + timeout` or a sleep its client asked
+    /// for after `started` ends within `[started + timeout, connect + timeout]` and ended before
+    /// the call answered, on the runtime's clock. A call that began no connect, one taking a
+    /// connection another call opened, has no upper end to hold the sleep to.
+    fn timer_armed_in_time(&self, timeout: Duration) -> bool {
+        let earliest = self.started.timer + timeout;
+        let latest = self.connects.first().map(|(connect, _)| connect.timer + timeout);
         let ended_it = |sleep: &Armed| {
             sleep.asked >= self.started.timer
-                && sleep.ends.is_some_and(|ends| ends >= earliest && ends <= latest)
+                && sleep.ends.is_some_and(|ends| ends >= earliest && latest.is_none_or(|latest| ends <= latest))
                 && sleep.ended.get().is_some_and(|ended| *ended <= self.answered.timer)
         };
-        timed_out && (returned.timer >= earliest || self.sleeps.iter().any(ended_it))
+        let connected_past_the_bound = self.connects.first().is_some_and(|(_, returned)| returned.timer >= earliest);
+        connected_past_the_bound || self.sleeps.iter().any(ended_it)
     }
 
     fn report(&self) -> String {
@@ -1209,4 +1214,46 @@ fn stamped(headers: &CallHeaders, value: &str) -> CallHeaders {
     }
     out.insert("deadline-ms", value);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(base: Instant, millis: u64) -> Instants {
+        let moment = base + Duration::from_millis(millis);
+        Instants { std: moment, timer: moment }
+    }
+
+    fn sleep(base: Instant, asked: u64, ends: u64, ended: u64) -> Armed {
+        Armed {
+            asked: base + Duration::from_millis(asked),
+            ends: Some(base + Duration::from_millis(ends)),
+            ended: Arc::new(OnceLock::from(base + Duration::from_millis(ended))),
+        }
+    }
+
+    fn call(base: Instant, connects: Vec<(Instants, Instants)>, sleeps: Vec<Armed>) -> Blocked {
+        Blocked { started: at(base, 0), answered: at(base, 201), connects, sleeps, outcome: Ok(()) }
+    }
+
+    #[test]
+    fn a_call_taking_a_connection_another_call_opened_is_held_to_its_own_timer() {
+        let base = Instant::now();
+        let timeout = Duration::from_millis(200);
+        assert!(call(base, vec![], vec![sleep(base, 0, 200, 200)]).timer_armed_in_time(timeout));
+        assert!(call(base, vec![], vec![sleep(base, 1, 201, 201)]).timer_armed_in_time(timeout), "no connect, no upper end");
+        assert!(!call(base, vec![], vec![sleep(base, 0, 100, 100)]).timer_armed_in_time(timeout), "armed for too little");
+        assert!(!call(base, vec![], vec![sleep(base, 0, 200, 250)]).timer_armed_in_time(timeout), "ended after the answer");
+        assert!(!call(base, vec![], vec![]).timer_armed_in_time(timeout), "no sleep at all");
+    }
+
+    #[test]
+    fn a_call_with_a_connect_holds_the_sleep_to_the_connects_start() {
+        let base = Instant::now();
+        let timeout = Duration::from_millis(200);
+        let connect = vec![(at(base, 0), at(base, 100))];
+        assert!(call(base, connect.clone(), vec![sleep(base, 0, 200, 200)]).timer_armed_in_time(timeout));
+        assert!(!call(base, connect, vec![sleep(base, 100, 300, 200)]).timer_armed_in_time(timeout), "armed after the block");
+    }
 }
