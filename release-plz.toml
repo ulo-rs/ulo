@@ -1,0 +1,106 @@
+# Two tiers. The core, every package below with `version_group = "core"`, releases as one version
+# with exact pins between its members, because its crates meet through doc-hidden macro ABI that
+# carries no semver promise. Every other publishable crate is a leaf, versioned on its own.
+# `scripts/release_check.py` holds the group to the rule that decides membership and to one
+# version. release-plz checks neither: it moves every member to one version when it releases any
+# of them, and refuses no member that starts at another.
+#
+# Check mode: CI's `release check` job runs `release-plz update` against a checkout of the last
+# release instead of crates.io, and nothing here publishes, tags or writes a changelog.
+
+[workspace]
+publish = false
+git_release_enable = false
+changelog_update = false
+dependencies_update = false
+semver_check = true
+git_tag_name = "{{ package }}-v{{ version }}"
+
+# The core's one tag, `v<version>`, names the release of every member.
+[[package]]
+name = "ulo"
+version_group = "core"
+git_tag_name = "v{{ version }}"
+
+[[package]]
+name = "ulo-macros"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-handler-codegen"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-transport"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-transport-macros"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-http"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-http-macros"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-rpc"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-rpc-macros"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-ws"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-ws-macros"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-grpc"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-grpc-macros"
+version_group = "core"
+git_tag_enable = false
+
+# The code it writes into a build script's output names `ulo-grpc`'s items, and it depends on no
+# core crate, so no Cargo requirement keeps the two compatible.
+[[package]]
+name = "ulo-build"
+version_group = "core"
+git_tag_enable = false
+
+# The next three are not macro ABI: core crates pin them exactly, so they release with the core.
+[[package]]
+name = "ulo-net"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-server-hyper"
+version_group = "core"
+git_tag_enable = false
+
+[[package]]
+name = "ulo-listener-tokio"
+version_group = "core"
+git_tag_enable = false
