@@ -1,0 +1,16 @@
+# The breaks `scripts/release_check.py` accepts against the last release, which CI's `release check`
+# job checks out: `break <package> <lint> <count>  # reason`, `<lint>` as cargo-semver-checks names
+# it and `<count>` the distinct items it reports for that lint in that package. A break no entry
+# accepts fails the job, as does a count the run does not reproduce and an entry the run does not
+# report, so these entries go once the last release is one that carries them.
+
+break ulo enum_no_repr_variant_discriminant_changed 33  # #408 adds `WiringError::DuplicateSetting` ahead of later variants; every variant carries fields and the enum is `#[non_exhaustive]`, so no caller reads a discriminant
+break ulo-http method_parameter_count_changed 10  # #409: each ability of `BackendLimits` and `EmbedLimits` is a `bool` accessor taking no argument, declared absent through a `without_` setter that takes the reason, in place of a setter taking the `bool`
+break ulo-http struct_pub_field_missing 10  # #409: the public `bool` fields of `BackendLimits` and `EmbedLimits` are private, read through the accessors
+break ulo-http struct_pub_field_now_doc_hidden 10  # #409: the same ten fields, which this lint reports a second time
+break ulo-http trait_method_receiver_added 1  # #409: `Backend::limits` takes `&self`
+break ulo-http trait_removed_associated_constant 1  # #409: `Embed::STRIPS_PREFIX` is the `strips_prefix` ability of `EmbedLimits`
+break ulo-rpc inherent_method_missing 2  # #409: `Capabilities::fans_out_requests` and `fan_out_reason` are the inverted ability `delivers_requests_once`, with `without_delivers_requests_once` and `why_not_delivers_requests_once`
+break ulo-rpc method_parameter_count_changed 14  # #409: each ability of `Capabilities` is a `bool` accessor taking no argument, declared absent through a `without_` setter that takes the reason; seven methods, each reported at `ulo_rpc` and at `ulo_rpc::link`
+break ulo-rpc struct_pub_field_missing 7  # #409: the public `bool` fields of `Capabilities` are private, read through the accessors
+break ulo-rpc struct_pub_field_now_doc_hidden 7  # #409: the same seven fields, which this lint reports a second time
