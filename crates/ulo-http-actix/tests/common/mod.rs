@@ -1,5 +1,5 @@
 //! The actix-web host both conformance targets run. actix's request store does not reach the app
-//! (`host_extensions: false`), so the host's middleware puts `HostValue` there and an
+//! (declared without `host_extensions`), so the host's middleware puts `HostValue` there and an
 //! `Embedded::forward` copy carries it across.
 
 use std::sync::Arc;

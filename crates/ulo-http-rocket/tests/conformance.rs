@@ -1,6 +1,6 @@
 //! The embedding conformance suite against a rocket host, the catch-all routes mounted at `PREFIX`
 //! and at `/`. rocket's request store, the local cache, does not reach the app
-//! (`host_extensions: false`), so a request fairing puts `HostValue` there and an
+//! (declared without `host_extensions`), so a request fairing puts `HostValue` there and an
 //! `Embedded::forward` copy carries it across; `RoutingFairing` writes the `Routing` header.
 
 use rocket::fairing::AdHoc;

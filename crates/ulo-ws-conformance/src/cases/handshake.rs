@@ -34,14 +34,14 @@ fn refused<S>(what: &str, answer: &Answer<S>, status: u16) {
 
 /// What a host declaring no upgrades refuses the suite's app with: `ulo-http`'s `Embed` check
 /// names the adapter's declaration.
-const NO_UPGRADES: &str = "declares `upgrades: false`";
+const NO_UPGRADES: &str = "is declared without `upgrades`";
 
-/// The host serves upgrades as [`Host::upgrades`] declares. Declaring them, an upgrade to a gateway
-/// on its port switches protocols and the connection answers a message; declaring none,
-/// `listen()` refuses the app, which serves gateways on that port, naming the declaration, before
-/// the host serves anything.
+/// The host serves upgrades as [`Host::why_not_upgrades`] declares. Having them, an upgrade to a
+/// gateway on its port switches protocols and the connection answers a message; declared without
+/// them, `listen()` refuses the app, which serves gateways on that port, naming the declaration and
+/// its reason, before the host serves anything.
 pub async fn as_declared<H: Host>() {
-    if H::upgrades() {
+    let Some(reason) = H::why_not_upgrades() else {
         let app = Served::<H>::start().await;
         let answer = app.upgrade(&Request::upgrade("/echo")).await;
         assert_eq!(
@@ -54,25 +54,19 @@ pub async fn as_declared<H: Host>() {
         conn.hang_up().await;
         app.stop().await;
         return;
-    }
+    };
     let (app, _host) = H::bind(suite_app::<H>(&Probe::new()).await);
     match app.listen().await {
-        Ok(_) => panic!("the host declares no upgrades, and the app listened with gateways on its port"),
+        Ok(_) => panic!("the host is declared without upgrades ({reason}), and the app listened with gateways on its port"),
         Err(StartupError::Configure(errors)) => {
             let text = errors.to_string();
-            assert!(text.contains(NO_UPGRADES), "the host declares no upgrades, and its refusal does not name the declaration: {text}");
+            assert!(
+                text.contains(NO_UPGRADES) && text.contains(reason),
+                "the host is declared without upgrades, and its refusal does not name the declaration and its reason `{reason}`: {text}"
+            );
         }
-        Err(other) => panic!("the host declares no upgrades, and `listen()` refused otherwise: {}", report(&other)),
+        Err(other) => panic!("the host is declared without upgrades, and `listen()` refused otherwise: {}", report(&other)),
     }
-}
-
-/// [`as_declared`] for a host stamped `without_upgrades`, whose declaration must agree.
-pub async fn without_upgrades<H: Host>() {
-    assert!(
-        !H::upgrades(),
-        "the host is stamped `without_upgrades` and declares upgrades: stamp it without, so every scenario runs on it"
-    );
-    as_declared::<H>().await;
 }
 
 pub async fn switches<H: Host>() {

@@ -34,7 +34,7 @@ impl Keeper {
 impl Backend for Keeper {
     const NAME: &'static str = "keeper";
 
-    fn limits() -> BackendLimits {
+    fn limits(&self) -> BackendLimits {
         BackendLimits::NONE
     }
 

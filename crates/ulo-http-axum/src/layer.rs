@@ -14,7 +14,7 @@ use ulo_http::embed::OriginalPath;
 /// `.fallback_service(..)`'s argument.
 ///
 /// It writes host extensions, which the axum embedding reads as it reads any other
-/// (`host_extensions: true`): a `ConnInfo` carrying the peer address when the router is served
+/// (`host_extensions`): a `ConnInfo` carrying the peer address when the router is served
 /// through `into_make_service_with_connect_info::<SocketAddr>()`, which `.peer_addr(true)` relies
 /// on, and the path the client sent, before `nest_service` stripped the prefix, as
 /// `OriginalPath`. A `ConnInfo` an earlier layer inserted is kept.

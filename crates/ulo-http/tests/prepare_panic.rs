@@ -21,7 +21,7 @@ struct Idle;
 impl Backend for Idle {
     const NAME: &'static str = "idle";
 
-    fn limits() -> BackendLimits {
+    fn limits(&self) -> BackendLimits {
         BackendLimits::NONE
     }
 

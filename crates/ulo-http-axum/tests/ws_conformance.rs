@@ -54,8 +54,8 @@ impl Host for AxumHost {
     // axum's graceful shutdown is hyper's, which closes a connection idle between requests.
     const CLOSES_IDLE_AT_DRAIN: bool = true;
 
-    fn upgrades() -> bool {
-        <Axum as Embed>::limits().upgrades
+    fn why_not_upgrades() -> Option<&'static str> {
+        <Axum as Embed>::limits().why_not_upgrades()
     }
 
     fn runtime() -> Tokio {

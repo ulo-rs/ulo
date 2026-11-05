@@ -1,5 +1,5 @@
-//! On axum, whose request extensions reach the app (`host_extensions: true`), `listen()` checks no
-//! `Host<T>` read, and the requests show what the check under `host_extensions: false` decides:
+//! On axum, whose request extensions reach the app (`host_extensions`), `listen()` checks no
+//! `Host<T>` read, and the requests show what the check without `host_extensions` decides:
 //! `/admin/{page}` behind `/admin/*` minus `/admin/health` reads the entry's `Tenant` on every
 //! request reaching it while the route `/admin/health` exists, `POST /admin/health` answered 405
 //! there, and without that route `GET /admin/health` reaches it with nothing inserted.

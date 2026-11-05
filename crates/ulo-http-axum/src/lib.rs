@@ -26,7 +26,7 @@
 //! the app's service, supplies the peer address and the original path, which axum keeps in
 //! `ConnectInfo` and `OriginalUri`.
 //!
-//! What it declares: the peer address only through `ConnectInfo`, so `peer_addr` is `false` unless
+//! What it declares: the peer address only through `ConnectInfo`, so it is declared without `peer_addr` unless
 //! `.peer_addr(true)`; upgrades through hyper's `OnUpgrade`; no miss forwarding; host extensions
 //! read from `http::Extensions`; no TLS info; streamed bodies; a dropped body observed at the
 //! disconnect.
@@ -48,12 +48,16 @@ pub struct Axum;
 impl Embed for Axum {
     const NAME: &'static str = "axum";
 
-    const STRIPS_PREFIX: bool = true;
-
     type HostRequest<'r> = http::request::Parts;
 
     fn limits() -> EmbedLimits {
-        EmbedLimits::NONE.peer_addr(false).forward_miss(false).tls_info(false)
+        EmbedLimits::NONE
+            .without_peer_addr(
+                "axum supplies the peer address only through `ConnectInfo`, which `into_make_service_with_connect_info` inserts; \
+                 `.peer_addr(true)` says the router is served that way",
+            )
+            .without_forward_miss("a tower service answers every request it is handed, and axum offers no way to hand one back to the router")
+            .without_tls_info("the adapter reads no TLS state off axum's request, so `ConnInfo::tls` is `None`")
     }
 
     /// Hyper's `OnUpgrade`, which axum's server leaves in a request's extensions.

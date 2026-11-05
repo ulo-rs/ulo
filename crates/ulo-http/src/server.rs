@@ -170,22 +170,25 @@ impl<B: Backend> Server<B> {
             };
             match &endpoint {
                 Endpoint::Addr(addr) => {
-                    if addr.port() == 0 && !limits.port_zero {
-                        failures.push(format!("{endpoint}: the {} backend declares `port_zero: false`", B::NAME));
+                    if let Some(reason) = limits.why_not_port_zero()
+                        && addr.port() == 0
+                    {
+                        failures.push(format!("{endpoint}: the {} backend is declared without `port_zero`: {reason}", B::NAME));
                     }
                     // Two port-0 endpoints are two listeners, each on a port of the OS's choosing.
                     if addr.port() != 0 && endpoints.contains(&endpoint) {
                         failures.push(format!("{endpoint} is listed twice"));
                     }
                 }
-                Endpoint::Inherited(_) if !limits.inherited_sockets => {
-                    failures.push(format!("{endpoint}: the {} backend declares `inherited_sockets: false`", B::NAME));
+                Endpoint::Inherited(_) => {
+                    if let Some(reason) = limits.why_not_inherited_sockets() {
+                        failures.push(format!("{endpoint}: the {} backend is declared without `inherited_sockets`: {reason}", B::NAME));
+                    }
                 }
-                Endpoint::Inherited(_) => {}
             }
             endpoints.push(endpoint);
         }
-        if limits.inherited_sockets {
+        if limits.inherited_sockets() {
             check_inherited(&endpoints, failures);
         }
         endpoints
@@ -411,33 +414,39 @@ impl<B: Backend> ulo::Server for Server<B> {
 
     async fn prepare(&mut self, mounted: Mounted<'_, Http>) -> Result<(), BoxError> {
         let mut failures = Failures::new();
-        let limits = B::limits();
+        let limits = self.backend.limits();
         // `self.upgrades` keeps every handler whose `prepare` ran, whatever the rest answers or a
         // panic: this server's drop owes each a `release`.
         let PreparedApp { service, upgrading } = prepare_app(&mounted, &self.config, "", false, &mut self.upgrades, &mut failures);
-        if upgrading && !limits.upgrades {
+        if let Some(reason) = limits.why_not_upgrades()
+            && upgrading
+        {
             failures.push(format!(
-                "the {} backend declares `upgrades: false`, so it cannot hand a WebSocket upgrade to a gateway on its port; \
-                 serve the gateways on a separate port",
+                "the {} backend is declared without `upgrades` ({reason}), so it cannot hand a WebSocket upgrade to a gateway on its \
+                 port; serve the gateways on a separate port",
                 B::NAME
             ));
         }
         let endpoints = self.resolve_endpoints(limits, &mut failures);
-        if self.config.h2c && !limits.h2c {
-            failures.push(format!("the {} backend declares `h2c: false`: HTTP/2 without TLS is refused", B::NAME));
+        if let Some(reason) = limits.why_not_h2c()
+            && self.config.h2c
+        {
+            failures.push(format!("the {} backend is declared without `h2c` ({reason}): HTTP/2 without TLS is refused", B::NAME));
         }
         let tls = match &self.tls {
             None => None,
-            Some(_) if !limits.tls => {
-                failures.push(format!("the {} backend declares `tls: false`", B::NAME));
-                None
-            }
-            Some(tls) => match tls.load(&[b"h2".as_slice(), b"http/1.1".as_slice()]) {
-                Ok(config) => Some(config),
-                Err(error) => {
-                    failures.push(error.to_string());
+            Some(tls) => match limits.why_not_tls() {
+                Some(reason) => {
+                    failures.push(format!("the {} backend is declared without `tls`: {reason}", B::NAME));
                     None
                 }
+                None => match tls.load(&[b"h2".as_slice(), b"http/1.1".as_slice()]) {
+                    Ok(config) => Some(config),
+                    Err(error) => {
+                        failures.push(error.to_string());
+                        None
+                    }
+                },
             },
         };
         let Some(service) = service.filter(|_| failures.is_empty()) else {

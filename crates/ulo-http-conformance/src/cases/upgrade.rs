@@ -16,13 +16,13 @@ pub async fn echo<H: Host>(mode: Mode) {
     raw.write(request.as_bytes()).await;
     let head = raw.read_until(b"\r\n\r\n", "the upgrade request").await.expect("the host answers the upgrade request");
     let status = status_of(&head);
-    if H::limits().upgrades {
+    if H::limits().upgrades() {
         assert_eq!(status, Some(101), "the host declares `upgrades` and did not switch protocols");
         raw.write(b"ping").await;
         let echoed = raw.read_until(b"ping", "the echoed frame").await;
         assert!(echoed.is_some(), "the upgraded connection did not echo the frame");
     } else {
-        assert_ne!(status, Some(101), "the host declares `upgrades: false` and switched protocols");
+        assert_ne!(status, Some(101), "the host is declared without `upgrades` and switched protocols");
     }
     host.stop().await;
 }

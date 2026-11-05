@@ -58,8 +58,8 @@ impl Host for SalvoHost {
     // requests.
     const CLOSES_IDLE_AT_DRAIN: bool = true;
 
-    fn upgrades() -> bool {
-        <Salvo as Embed>::limits().upgrades
+    fn why_not_upgrades() -> Option<&'static str> {
+        <Salvo as Embed>::limits().why_not_upgrades()
     }
 
     fn runtime() -> Tokio {

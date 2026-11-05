@@ -16,12 +16,10 @@ struct FullPath;
 impl Embed for FullPath {
     const NAME: &'static str = "full-path";
 
-    const STRIPS_PREFIX: bool = false;
-
     type HostRequest<'r> = http::request::Parts;
 
     fn limits() -> EmbedLimits {
-        EmbedLimits::NONE
+        EmbedLimits::NONE.without_strips_prefix("the test host hands over every path whole")
     }
 }
 

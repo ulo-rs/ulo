@@ -343,10 +343,6 @@ impl Host for PipeHost {
     // shutdown does, and answers a request already arriving first.
     const CLOSES_IDLE_AT_DRAIN: bool = true;
 
-    fn upgrades() -> bool {
-        true
-    }
-
     fn runtime() -> Smol {
         OnSmol::runtime()
     }
