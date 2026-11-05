@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use http::{HeaderValue, Method};
-use ulo::{MetaTier, Metadata, MountedHandler, TypeName};
+use ulo::{MetaTier, Metadata, MountedHandler, TypeName, Unreached};
 use ulo_transport::prepare::{Failure, Names};
 
 use crate::handler::{HandlerFn, HttpHandler};
@@ -120,9 +120,12 @@ impl Router {
             };
             if let Some(segment) = pattern.unreachable_segment() {
                 let (pattern, segment) = (pattern.to_string(), segment.to_owned());
-                errors.push(Failure::naming(vec![who.controller], move |names| {
-                    format!("{}: {}", who.text(names), unreachable(&format!("the route `{pattern}`"), &segment))
-                }));
+                errors.push(
+                    Failure::naming(vec![who.controller], move |names| {
+                        format!("{}: {}", who.text(names), unreachable(&format!("the route `{pattern}`"), &segment))
+                    })
+                    .because(Unreached::BackslashSegment),
+                );
                 continue;
             }
             let names: Vec<&str> = pattern.param_names().collect();

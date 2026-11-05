@@ -1,7 +1,8 @@
 //! An envelope gateway written without the attributes, through `GatewayConfig`, `GatewayHooks`,
 //! `WsHandler` and `HandlerSpec`: its connect hook, a unary answer and a streamed one answer what
-//! the attribute-written twin answers, with the same `HandlerInfo`; and a message handler mounted
-//! with no event is refused naming its gateway.
+//! the attribute-written twin answers, with the same `HandlerInfo`; a message handler mounted
+//! with no event is refused naming its gateway, and one mounted beside a gateway that reads every
+//! message raw is refused with the reason `Unreached::RawGateway`.
 
 mod support;
 
@@ -10,11 +11,11 @@ use serde_json::json;
 use ulo::scope::Auto;
 use ulo::{
     App, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Module, ModuleDef, ModuleIdentity, Mount,
-    Resolver, Shape, StartupError, TypeName, injectable, routes,
+    PrepareEntry, PrepareError, Resolver, Shape, StartupError, TypeName, Unreached, injectable, routes,
 };
 use ulo_ws::{
-    CallError, ConnectCx, ConnectRefused, ErrorKind, FromCall, GatewayConfig, GatewayHooks, GatewaySettings, OnConnect, Payload,
-    Reply, Ws, WsCx, WsHandler, WsModule,
+    CallError, ConnectCx, ConnectRefused, Connection, ErrorKind, Frame, FromCall, Gateway, GatewayConfig, GatewayHooks,
+    GatewaySettings, OnConnect, Payload, Reply, Ws, WsCx, WsHandler, WsModule,
 };
 
 use support::{Running, close_frame, hang_up, next_json, send_json, upgrade};
@@ -272,4 +273,74 @@ async fn a_message_handler_with_no_gateway_not_a_ws_handler_or_spelling_cancel_i
     assert!(text.contains("Gatewayless::echo` is mounted for WebSocket on a controller that mounted no gateway"), "{text}");
     assert!(text.contains("its message handler `five` is mounted with a handler value that is not a `ulo_ws::WsHandler`"), "{text}");
     assert!(text.contains("`cancel` is the envelope's reserved event, and a handler spells it"), "{text}");
+}
+
+/// A gateway implementing `Gateway` by hand, which reads every message raw, with a message
+/// handler mounted beside it.
+struct Raw;
+
+impl Construct for Raw {
+    type Scope = Auto;
+
+    fn dependencies(_: &mut Dependencies) {}
+
+    async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
+        Ok(Raw)
+    }
+}
+
+impl GatewayConfig for Raw {
+    fn settings() -> GatewaySettings {
+        GatewaySettings::at("/raw")
+    }
+
+    fn mount_gateway(m: &mut Mount<'_>) {
+        <Self as Gateway>::mount(m);
+    }
+}
+
+impl Gateway for Raw {
+    async fn on_message(&self, _conn: &Connection, _frame: Frame) {}
+}
+
+impl Controller for Raw {
+    fn mount(m: &mut Mount<'_>) {
+        <Self as Gateway>::mount(m);
+        m.handler(HandlerSpec::<Ws, _>::new("echo", WsHandler::new(nothing)).route("echo"));
+    }
+}
+
+/// Planted break: the refusal carrying no reason.
+#[tokio::test]
+async fn a_message_handler_on_a_gateway_reading_every_message_raw_is_refused_with_the_reason() {
+    let refused = App::builder(Root(|m| {
+        m.controller::<Raw>();
+    }))
+    .runtime(ulo_runtime_tokio::Tokio::current())
+    .wire()
+    .expect("the app wires")
+    .connect()
+    .await
+    .expect("the app connects")
+    .bind(ulo_http_hyper::Server::new("127.0.0.1:0"))
+    .listen()
+    .await;
+    let Err(error) = refused else { panic!("listen() accepted a message handler its gateway never calls") };
+    let StartupError::Configure(errors) = &error else { panic!("expected StartupError::Configure, got {error}") };
+    let entries: Vec<PrepareEntry> = errors
+        .iter()
+        .filter_map(|refused| refused.source.downcast_ref::<PrepareError>())
+        .flat_map(|prepared| prepared.entries().to_vec())
+        .collect();
+    let [entry] = entries.as_slice() else { panic!("expected one entry: {entries:?}\n{error}") };
+    assert_eq!(entry.reason(), Some(Unreached::RawGateway), "{entries:?}");
+    assert_eq!(entry.names(), [TypeName::of::<Raw>()], "{entries:?}");
+    let text = error.to_string();
+    assert!(
+        text.contains(
+            "its `#[message(\"echo\")]` handler is on a gateway implementing `ulo_ws::Gateway` by hand, which reads every \
+             message raw, so the handler would never run"
+        ),
+        "{text}"
+    );
 }

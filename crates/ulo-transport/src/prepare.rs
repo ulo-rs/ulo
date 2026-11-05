@@ -133,8 +133,8 @@ impl fmt::Debug for Failures {
 ///
 /// A failure also carries what it is about as data, which `PrepareError::entries` hands on:
 /// [`at`](Self::at) the source line that declared what failed, [`about`](Self::about) what that
-/// is, [`scoped`](Self::scoped) the route scopes involved, [`because`](Self::because) why a scope
-/// was refused as one its entry would never run for.
+/// is, [`scoped`](Self::scoped) the route scopes involved, [`because`](Self::because) why what
+/// failed would never run.
 pub struct Failure {
     inner: Inner,
     location: Option<&'static Location<'static>>,
@@ -224,9 +224,10 @@ impl Failure {
         self
     }
 
-    /// Why the scope in [`scopes`](Self::scopes) was refused, when the failure is a scope its entry
-    /// would never run for. The text is the caller's: `ulo_http::stage::unreached_scope` writes it
-    /// from the reason.
+    /// Why what failed would never run: a scope in [`scopes`](Self::scopes) its entry would never
+    /// run for, a scoped entry with no scope, a handler its gateway never calls, or a route, scope,
+    /// exclusion or upgrade path no request reaching it can match. The text is the caller's:
+    /// `ulo_http::stage::unreached_scope` writes a scope's from the reason.
     pub fn because(mut self, reason: Unreached) -> Failure {
         self.reason = Some(reason);
         self

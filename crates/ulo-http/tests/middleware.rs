@@ -635,11 +635,17 @@ async fn a_declaration_the_stage_cannot_build_is_refused_at_the_line_that_wrote_
     let entries = refusal_entries(&error);
     assert_eq!(entries.len(), 1, "an `exclude` with no entry before it: {error}");
     assert!(is_refusal_at(&entries[0], &STRAY_EXCLUDE, &[]), "{entries:?}");
+    assert_eq!(entries[0].reason(), None, "a stray `exclude` is no reason an entry never runs");
 
+    // Planted break: the empty-scope refusal carrying no reason.
     let error = refused(scoped_entry_naming_no_pattern).await;
     let entries = refusal_entries(&error);
     assert_eq!(entries.len(), 1, "a scoped entry with an empty scope: {error}");
     assert!(is_refusal_at(&entries[0], &EMPTY_SCOPE, &[]), "{entries:?}");
+    assert_eq!(entries[0].reason(), Some(ulo::Unreached::EmptyScope), "{entries:?}");
+    let location = entries[0].location().expect("a location");
+    let expected = format!("pre-dispatch entry at {location} names no route pattern, so it covers no route");
+    assert!(error.to_string().contains(&expected), "{expected}\n{error}");
 
     let error = refused(scope_that_is_not_a_pattern).await;
     let entries = refusal_entries(&error);
@@ -861,6 +867,9 @@ async fn a_scope_whose_static_segment_holds_a_backslash_is_refused_naming_the_sc
     assert_eq!(entries.len(), 2, "{error}");
     assert!(is_refusal_at(&entries[0], &BACKSLASH_SCOPE, &["/admin/a%5Cb/*"]), "{entries:?}");
     assert!(is_refusal_at(&entries[1], &BACKSLASH_SCOPE, &["/admin\\users"]), "{entries:?}");
+    for entry in &entries {
+        assert_eq!(entry.reason(), Some(ulo::Unreached::BackslashSegment), "{entries:?}");
+    }
     let text = error.to_string();
     for (scope, segment) in [("/admin/a%5Cb/*", "a%5Cb"), ("/admin\\users", "admin\\users")] {
         let expected = format!("the scope `{scope}` can never match: its static segment `{segment}` holds a `\\`");
@@ -883,6 +892,7 @@ async fn an_exclusion_whose_static_segment_holds_a_backslash_is_refused_naming_i
     let entries = refusal_entries(&error);
     assert_eq!(entries.len(), 1, "{error}");
     assert!(is_refusal_at(&entries[0], &BACKSLASH_EXCLUSION, &["/admin/x%5cy"]), "{entries:?}");
+    assert_eq!(entries[0].reason(), Some(ulo::Unreached::BackslashSegment), "{entries:?}");
     let expected = "the exclusion `/admin/x%5cy` can never match: its static segment `x%5cy` holds a `\\`";
     assert!(error.to_string().contains(expected), "{expected}\n{error}");
 }
@@ -910,4 +920,7 @@ async fn an_upgrade_path_whose_static_segment_holds_a_backslash_is_refused() {
     let error = refused(upgrade_path_holding_a_backslash).await;
     let expected = "the upgrade path `/socket%5Cfeed` can never match: its static segment `socket%5Cfeed` holds a `\\`";
     assert!(error.to_string().contains(expected), "{error}");
+    let entries = refusal_entries(&error);
+    assert_eq!(entries.len(), 1, "{error}");
+    assert_eq!(entries[0].reason(), Some(ulo::Unreached::BackslashSegment), "{entries:?}");
 }

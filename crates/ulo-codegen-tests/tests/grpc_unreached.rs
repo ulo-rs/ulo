@@ -124,11 +124,13 @@ async fn a_scope_naming_only_the_health_service_is_refused_saying_health_runs_no
     // The health path is one the server answers, so "matches no route's path" would misstate it.
     let (entries, text) = refusal(health_alone).await;
     assert_eq!(entries.len(), 1, "{entries:?}");
-    assert!(is_unreached(&entries[0], &HEALTH, "/grpc.health.v1.Health/*", Unreached::HealthOnly), "{entries:?}");
+    let health = Unreached::HealthOnly { service: "grpc.health.v1.Health" };
+    assert!(is_unreached(&entries[0], &HEALTH, "/grpc.health.v1.Health/*", health), "{entries:?}");
     let location = entries[0].location().expect("a location");
     let expected = format!(
-        "pre-dispatch entry at {location} is scoped to `/grpc.health.v1.Health/*`, which matches only the gRPC health \
-         service's paths among those the server answers, and health runs no scoped entry, so the entry would never run"
+        "pre-dispatch entry at {location} is scoped to `/grpc.health.v1.Health/*`, which matches only \
+         `grpc.health.v1.Health`'s paths among those the server answers, and that health service runs no scoped entry, so \
+         the entry would never run"
     );
     assert_eq!(text, expected);
 }

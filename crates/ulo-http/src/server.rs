@@ -4,9 +4,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::future::join_all;
-use ulo::{AppHandle, Bound, BoundAddr, BoxError, DrainToken, Mounted, Transport};
+use ulo::{AppHandle, Bound, BoundAddr, BoxError, DrainToken, Mounted, Transport, Unreached};
 use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec, ListenerName, Tls};
-use ulo_transport::prepare::{Failures, zero_bound, zero_count};
+use ulo_transport::prepare::{Failure, Failures, zero_bound, zero_count};
 use ulo_transport::{Admission, Count};
 
 use crate::backend::{Backend, BackendLimits, HttpConfig};
@@ -266,7 +266,7 @@ fn upgrade_paths(
                 }
             };
             if let Some(segment) = pattern.unreachable_segment() {
-                failures.push(unreachable(&format!("the upgrade path `{pattern}`"), segment));
+                failures.push(Failure::plain(unreachable(&format!("the upgrade path `{pattern}`"), segment)).because(Unreached::BackslashSegment));
                 continue;
             }
             let clash = paths.iter().find(|(taken, _)| taken.conflicts(&pattern)).map(|(taken, _)| taken.to_string());

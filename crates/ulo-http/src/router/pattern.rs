@@ -13,6 +13,8 @@
 
 use std::borrow::Cow;
 use std::fmt;
+
+use ulo::Unreached;
 use std::sync::Arc;
 
 use percent_encoding::percent_decode_str;
@@ -347,12 +349,10 @@ pub(crate) fn has_backslash(path: &str) -> bool {
     path.contains('\\') || path.as_bytes().windows(3).any(|window| matches!(window, [b'%', b'5', b'C' | b'c']))
 }
 
-/// The refusal of `what`, a route, a scope or an upgrade path, whose static `segment` holds a `\`.
+/// The text of the refusal of `what`, a route, a scope or an upgrade path, whose static `segment`
+/// holds a `\`, written from its reason, [`Unreached::BackslashSegment`].
 pub(crate) fn unreachable(what: &str, segment: &str) -> String {
-    format!(
-        "{what} can never match: its static segment `{segment}` holds a `\\`, raw or as `%5C`, and a request path holding one is \
-         refused with 400 before routing"
-    )
+    format!("{what} can never match: its static segment `{segment}` {}", Unreached::BackslashSegment)
 }
 
 /// The piece of `raw` written for the first of `segments` that is static and holds a `\` once

@@ -18,7 +18,7 @@ use std::time::Duration;
 use http::StatusCode;
 use ulo::{
     BoxError, BoxFuture, Bound, Construct, EnhancerSpec, ExecOptions, Execution, ExecutionRef, ModuleRef, Mount,
-    MountedHandler, TypeName,
+    MountedHandler, TypeName, Unreached,
 };
 use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
 use ulo_transport::{CallError, Count, ErrorKind};
@@ -720,48 +720,51 @@ pub(crate) fn build_table(
         }
         let controller = connect.controller().key().type_name();
         let path = join_path(connect.info().prefix(), &settings.path);
-        let mut fail = |text: String| failures.push(gateway_failure(controller, path.clone(), text));
+        let refusal = |text: String| gateway_failure(controller, path.clone(), text);
         if !path.starts_with('/') {
-            fail("a gateway path starts with `/`".to_owned());
+            failures.push(refusal("a gateway path starts with `/`".to_owned()));
         }
         if path.contains(['{', '}']) {
-            fail("a gateway path is matched as written and takes no `{param}` segment".to_owned());
+            failures.push(refusal("a gateway path is matched as written and takes no `{param}` segment".to_owned()));
         }
         if matches!(&*settings.event, "id" | "data") {
-            fail(format!("the event field `{}` is a key the envelope reserves", settings.event));
+            failures.push(refusal(format!("the event field `{}` is a key the envelope reserves", settings.event)));
         }
         for text in zero_settings(settings) {
-            fail(text);
+            failures.push(refusal(text));
         }
         let mut events: HashMap<String, Event> = HashMap::new();
         for mounted in messages.iter().filter(|mounted| mounted.controller() == connect.controller()) {
             let Some(ws) = mounted.handler::<WsHandler>() else {
-                fail(format!(
+                failures.push(refusal(format!(
                     "its message handler `{}` is mounted with a handler value that is not a `ulo_ws::WsHandler`",
                     mounted.name()
-                ));
+                )));
                 continue;
             };
             let Some(event) = mounted.info().route() else {
-                fail(format!(
+                failures.push(refusal(format!(
                     "its message handler `{}` is mounted with no event; `HandlerSpec::route` sets it",
                     mounted.name()
-                ));
+                )));
                 continue;
             };
             if matches!(handler.messages, Messages::Raw { .. }) {
-                fail(format!(
-                    "it implements `ulo_ws::Gateway` by hand, which reads every message raw, so its `#[message(\"{event}\")]` \
-                     handler would never run"
-                ));
+                let reason = Unreached::RawGateway;
+                failures.push(
+                    refusal(format!(
+                        "its `#[message(\"{event}\")]` handler is on a gateway implementing `ulo_ws::Gateway` by hand, which {reason}"
+                    ))
+                    .because(reason),
+                );
                 continue;
             }
             if event == "cancel" {
-                fail("`cancel` is the envelope's reserved event, and a handler spells it".to_owned());
+                failures.push(refusal("`cancel` is the envelope's reserved event, and a handler spells it".to_owned()));
                 continue;
             }
             if events.contains_key(event) {
-                fail(format!("two handlers answer the event `{event}`"));
+                failures.push(refusal(format!("two handlers answer the event `{event}`")));
                 continue;
             }
             events.insert(event.to_owned(), Event { mounted: mounted.clone(), call: Arc::clone(&ws.call) });

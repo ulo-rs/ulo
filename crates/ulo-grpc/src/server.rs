@@ -308,9 +308,9 @@ fn routes(mounted: &Mounted<'_, Grpc>, stage: &Stage<Grpc>, failures: &mut Failu
     routes.into_iter().map(|(path, (route, _))| (path, route)).collect()
 }
 
-/// `refused`, a scope `Stage::unreached` refused, with the reason [`Unreached::HealthOnly`] when the
-/// one path the server answers that it matches is the health service's: health runs no scoped
-/// entry, so [`Unreached::NoRoute`] would misstate it.
+/// `refused`, a scope `Stage::unreached` refused, with the reason [`Unreached::HealthOnly`] naming
+/// the health service when the one path the server answers that it matches is that service's:
+/// health runs no scoped entry, so [`Unreached::NoRoute`] would misstate it.
 fn health_only(refused: Failure) -> Failure {
     let service = <HealthServer<HealthService> as NamedService>::NAME;
     let (Some(Unreached::NoRoute), Some(location), [scope]) = (refused.reason(), refused.location(), refused.scopes()) else {
@@ -319,7 +319,7 @@ fn health_only(refused: Failure) -> Failure {
     if !shares_path(scope, &format!("/{service}/{{method}}")) {
         return refused;
     }
-    unreached_scope(location, scope.clone(), Unreached::HealthOnly)
+    unreached_scope(location, scope.clone(), Unreached::HealthOnly { service })
 }
 
 fn shape_name(shape: Shape) -> &'static str {
