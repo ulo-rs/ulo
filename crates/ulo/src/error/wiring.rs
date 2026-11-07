@@ -104,7 +104,11 @@ impl Error for WiringErrors {}
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum WiringError {
-    /// Step 1: the path of module names, from a module back to itself.
+    /// Step 1: a module importing an identity equal to its own, `path` the module's name twice,
+    /// importer then import. That import's settings are not compared, so a self-import with other
+    /// settings is this entry alone. Modules importing one another through other modules are
+    /// accepted: an import decides what a module sees, and a cycle that blocks construction is a
+    /// dependency cycle, [`Cycle`](WiringError::Cycle).
     ImportCycle { path: Vec<ModuleName> },
     /// Step 1: a re-export of a key the module cannot see.
     ReexportNotVisible { module: ModuleName, key: KeyName, at: &'static Location<'static> },
@@ -452,8 +456,8 @@ impl WiringError {
         match self {
             WiringError::ImportCycle { path } => tree(
                 f,
-                format!("import cycle: {}", closed_loop(path.iter().map(show_module).collect())),
-                vec!["help: move what the modules in the cycle share into a module each of them imports".to_owned()],
+                format!("{} imports itself", path.first().map(show_module).unwrap_or_default()),
+                vec!["help: remove the import; a module sees its own bindings without importing itself".to_owned()],
             ),
             WiringError::ReexportNotVisible { module, key, at } => {
                 let key = show(key);

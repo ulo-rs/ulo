@@ -44,7 +44,9 @@ impl<'a> ModuleDef<'a> {
 
     /// Imports `module`: this module sees its exports. Two imports of an equal identity, from
     /// anywhere in the graph, are one module, and must carry equal
-    /// [`settings`](Module::settings).
+    /// [`settings`](Module::settings). Modules may import one another, directly or through
+    /// others; a module importing itself is refused as
+    /// [`WiringError::ImportCycle`](crate::WiringError::ImportCycle).
     #[track_caller]
     pub fn import<M: Module>(&mut self, module: M) {
         self.node.imports.push(ImportRecord { module: Box::new(module), at: Location::caller() });
@@ -426,8 +428,12 @@ impl<'a> ModuleDef<'a> {
     ///
     /// A module reached by several importers is registered once, under the path that reached it
     /// first, so the ancestor it reads is that path's. Two importers keyed differently importing
-    /// an equal module give one instance, not two. A module loaded lazily reads only its own key:
-    /// its importer lives in a graph that is already frozen.
+    /// an equal module give one instance, not two. The modules of an import cycle are each other's
+    /// importers and follow the same rule: the member the walk enters first reads the path into the
+    /// cycle, and a member reached through a keyed member reads that member's key. A member reads
+    /// its qualifier before its imports are known, so the rule cannot take the rest of the cycle
+    /// into account. A module loaded lazily reads only its own key: its importer lives in a graph
+    /// that is already frozen.
     pub fn qualifier(&self) -> Option<TypeName> {
         self.node.keyed.or(self.node.inherited_keyed).map(|qualifier| TypeName::from_parts(qualifier.id, qualifier.name))
     }
