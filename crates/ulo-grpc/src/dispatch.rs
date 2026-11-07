@@ -10,7 +10,8 @@
 //!    A zero `grpc-timeout`, in any unit, is a budget already spent, the value a caller passing
 //!    its own remaining time down arrives at: DEADLINE_EXCEEDED, as grpc-go answers it, at the
 //!    same point and with nothing run.
-//! 2. Over the server's or the connection's in-flight bound: UNAVAILABLE.
+//! 2. Over the server's or the connection's in-flight bound: UNAVAILABLE, with
+//!    `grpc-retry-pushback-ms` from `Server::shed_retry_after`.
 //! 3. `Execution::open` at the root module, its deadline the caller's `grpc-timeout`. Refused
 //!    during the drain: UNAVAILABLE, answered directly, no pre-dispatch stage.
 //! 4. The inputs `GrpcMetadata` and `PeerAddr` seeded as the client sent them, and the
@@ -104,6 +105,7 @@ const GRPC_STATUS: HeaderName = HeaderName::from_static("grpc-status");
 const GRPC_ENCODING: HeaderName = HeaderName::from_static("grpc-encoding");
 const GRPC_ACCEPT_ENCODING: HeaderName = HeaderName::from_static("grpc-accept-encoding");
 const GRPC_TIMEOUT: HeaderName = HeaderName::from_static("grpc-timeout");
+const GRPC_RETRY_PUSHBACK_MS: HeaderName = HeaderName::from_static("grpc-retry-pushback-ms");
 
 /// The headers a reply's metadata never sets besides the `grpc-` family: HTTP/2's own, which the
 /// reply writes.
@@ -164,7 +166,7 @@ impl Dispatcher {
             return status_response(status::deadline_exceeded());
         }
         let Some(permit) = admission.try_admit() else {
-            return status_response(Status::unavailable("the server is at its in-flight limit"));
+            return shed(admission.shed_retry_after());
         };
         let mut opts = ExecOptions::new();
         if let Some(deadline) = timeout.and_then(|after| self.timer.now().checked_add(after)) {
@@ -668,6 +670,23 @@ fn as_grpc(response: Response) -> Response {
         }
     }
     translated
+}
+
+/// UNAVAILABLE for a call over an in-flight bound, with `grpc-retry-pushback-ms` (gRFC A6) set to
+/// `after`, so a client's retry policy waits that long rather than its own backoff. The header is
+/// recorded with the status, so [`screened`] keeps it.
+fn shed(after: Duration) -> Response {
+    let mut response: Response = Status::unavailable("the server is at its in-flight limit").into_http();
+    response.headers_mut().insert(GRPC_RETRY_PUSHBACK_MS, HeaderValue::from(pushback_ms(after)));
+    written(response)
+}
+
+/// `after` in whole milliseconds, a part millisecond rounded up, at most `i32::MAX`: gRFC A6 makes
+/// the value a signed 32-bit integer, and a client takes one it cannot parse as a request not to
+/// retry at all.
+fn pushback_ms(after: Duration) -> i32 {
+    let millis = after.as_millis() + u128::from(after.subsec_nanos() % 1_000_000 > 0);
+    i32::try_from(millis).unwrap_or(i32::MAX)
 }
 
 /// UNIMPLEMENTED with `grpc-accept-encoding: identity` for a request compressed with an encoding
@@ -1202,6 +1221,24 @@ mod tests {
 
     fn name(n: usize) -> HeaderName {
         HeaderName::try_from(format!("grpc-x-{n}")).expect("a valid header name")
+    }
+
+    /// The pushback is whole milliseconds, a part millisecond rounded up so a hint is never shorter
+    /// than the setting, and clamped to the signed 32-bit range gRFC A6 gives the value.
+    #[test]
+    fn the_pushback_rounds_up_to_a_millisecond_and_stops_at_i32_max() {
+        let cases = [
+            (Duration::ZERO, 0),
+            (Duration::from_nanos(1), 1),
+            (Duration::from_millis(250), 250),
+            (Duration::from_micros(250_001), 251),
+            (Duration::from_secs(1), 1000),
+            (Duration::from_millis(u64::try_from(i32::MAX).expect("fits")), i32::MAX),
+            (Duration::MAX, i32::MAX),
+        ];
+        for (after, expected) in cases {
+            assert_eq!(pushback_ms(after), expected, "{after:?}");
+        }
     }
 
     /// The record holds at most 64 names whatever a writer sends: the first 64 are each warned

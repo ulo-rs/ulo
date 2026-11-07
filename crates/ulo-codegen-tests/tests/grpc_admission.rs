@@ -1,7 +1,10 @@
 //! The gRPC server's in-flight bounds (transports DESIGN §2.8): a call over `max_inflight` or
-//! over `max_per_connection` is refused at once with UNAVAILABLE and never reaches a handler, the
-//! place of a finished call is free again, and a zero bound is refused at `listen()`. Capability:
-//! gRPC admission (G19).
+//! over `max_per_connection` is refused at once with UNAVAILABLE carrying `grpc-retry-pushback-ms`
+//! (gRFC A6), the server's `shed_retry_after`, and never reaches a handler, the place of a finished
+//! call is free again, and a zero bound is refused at `listen()`. Capability: gRPC admission (G19).
+
+use std::time::Duration;
+
 
 mod support;
 mod wire;
@@ -32,6 +35,14 @@ async fn add(channel: Channel, a: i64) -> Result<Sum, tonic::Status> {
     within("the call's answer", CounterClient::new(channel).add(AddRequest { a, b: 0 })).await.map(tonic::Response::into_inner)
 }
 
+/// A shed call's refusal: UNAVAILABLE whose trailers carry `grpc-retry-pushback-ms` as `pushback`.
+fn shed(outcome: &Result<Sum, tonic::Status>, pushback: &str, what: &str) {
+    let Err(status) = outcome else { panic!("{what}: the call over the bound was answered: {outcome:?}") };
+    assert_eq!(status.code(), Code::Unavailable, "{what}: {status:?}");
+    let hint = status.metadata().get("grpc-retry-pushback-ms").map(|value| value.to_str().unwrap_or("<not text>"));
+    assert_eq!(hint, Some(pushback), "{what}: the retry hint, in {:?}", status.metadata());
+}
+
 #[tokio::test]
 async fn a_call_over_the_servers_bound_is_unavailable_on_any_connection_and_a_freed_place_admits_again() {
     let hold = Hold::new();
@@ -39,10 +50,8 @@ async fn a_call_over_the_servers_bound_is_unavailable_on_any_connection_and_a_fr
     let first = connect(&app).await;
     let held = hold_one(first.clone(), &hold, 0).await;
 
-    let same = add(first.clone(), 100).await;
-    assert_eq!(same.as_ref().err().map(tonic::Status::code), Some(Code::Unavailable), "same connection: {same:?}");
-    let other = add(connect(&app).await, 100).await;
-    assert_eq!(other.as_ref().err().map(tonic::Status::code), Some(Code::Unavailable), "another connection: {other:?}");
+    shed(&add(first.clone(), 100).await, "1000", "same connection");
+    shed(&add(connect(&app).await, 100).await, "1000", "another connection");
     assert_eq!(hold.entered.snapshot().len(), 1, "a refused call reached the handler");
 
     hold.gate.notify_one();
@@ -60,11 +69,24 @@ async fn a_call_over_a_connections_bound_is_unavailable_there_while_another_conn
     let first = connect(&app).await;
     let held = hold_one(first.clone(), &hold, 0).await;
 
-    let same = add(first.clone(), 100).await;
-    assert_eq!(same.as_ref().err().map(tonic::Status::code), Some(Code::Unavailable), "same connection: {same:?}");
+    shed(&add(first.clone(), 100).await, "1000", "same connection");
     assert_eq!(add(connect(&app).await, 4).await.unwrap_or_else(|status| panic!("a second connection was refused: {status:?}")), Sum { sum: 4 });
     assert_eq!(hold.entered.snapshot().len(), 1, "a refused call reached the handler");
 
+    hold.gate.notify_one();
+    let _ = within("the held call", held).await;
+    app.stop().await;
+}
+
+/// The hint follows the setting, rounded up to a whole millisecond.
+#[tokio::test]
+async fn the_retry_hint_is_the_servers_shed_retry_after() {
+    let hold = Hold::new();
+    let server = ulo_grpc::Server::new("127.0.0.1:0").reflection(false).max_inflight(Count::Max(1)).shed_retry_after(Duration::from_micros(249_500));
+    let app = Running::start(Root(hold.clone()), server).await;
+    let channel = connect(&app).await;
+    let held = hold_one(channel.clone(), &hold, 0).await;
+    shed(&add(channel, 100).await, "250", "a quarter second");
     hold.gate.notify_one();
     let _ = within("the held call", held).await;
     app.stop().await;

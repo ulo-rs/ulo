@@ -544,7 +544,8 @@ async fn answer(
 /// error handlers on the late path and is written as `err`, which ends the stream, unless they
 /// answer `EndStream`. The stream is tracked once the link is known to carry it, and dropped once
 /// its end is written, which reports it. On a link that carries no streamed reply the call is
-/// answered `err` of kind `internal`, and the stream, never the reply, reports nothing.
+/// answered `err` of kind `unimplemented` with `reason: "shape_unsupported"`, and the stream, never
+/// the reply, reports nothing.
 #[allow(clippy::too_many_arguments)]
 async fn stream_reply(
     shared: &Shared,
@@ -559,7 +560,8 @@ async fn stream_reply(
 ) {
     if !shared.capabilities.shapes.iter().any(|shape| matches!(shape, Shape::ServerStreaming | Shape::Bidi)) {
         drop(stream);
-        let error = ErrorBody::new(ErrorKind::Internal, format!("the {} link carries no streamed reply", shared.link), Details::new());
+        let message = format!("the {} link carries no streamed reply", shared.link);
+        let error = ErrorBody::new(ErrorKind::Unimplemented, message, Details::new().with(reason(SHAPE_UNSUPPORTED)));
         send(reply, exec, id, Frame::Err { id, error }).await;
         return;
     }
@@ -762,6 +764,10 @@ fn timed_out() -> ErrorBody {
 fn timeout_error() -> CallError {
     CallError::new(ErrorKind::Timeout, "the call's deadline passed")
 }
+
+/// The reason of a call whose shape the link does not carry: the server's answer to a stream on a
+/// link without streamed replies, and the client's refusal of a shape its link does not declare.
+pub(crate) const SHAPE_UNSUPPORTED: &str = "shape_unsupported";
 
 /// The `ErrorInfo` detail carrying `reason`, under this transport's domain.
 pub(crate) fn reason(reason: &str) -> Detail {

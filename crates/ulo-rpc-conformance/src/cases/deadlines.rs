@@ -376,9 +376,10 @@ pub async fn zero_call_timeout_is_refused_before_the_server_sees_it<B: Broker>()
 /// F392: a stream given `.deadline(Duration::ZERO)` fails when it is awaited, `BadRequest` with
 /// the reason `zero_timeout` and a `ZeroTimeout` as its source, and its server sees no request,
 /// as in [`zero_call_timeout_is_refused_before_the_server_sees_it`]: the ninth stream, given a
-/// ten-second deadline, is answered, its two items on a link carrying streamed replies and
-/// `pattern_unhandled` on UDP, which mounts no streaming handler, and the server has delivered
-/// it alone.
+/// ten-second deadline, is answered its two items on a link carrying streamed replies, and the
+/// server has delivered it alone. On UDP, which carries none, the ninth stream is refused
+/// `shape_unsupported` before any I/O, and a marked request after it is the one call the server
+/// delivers.
 pub async fn zero_stream_deadline_is_refused_before_the_server_sees_it<B: Broker>() {
     let tap = Tap::default();
     let fixture = Fixture::<B>::start_over(Count::Default, |broker| Tapped { link: broker.link(), tap: tap.clone() }).await;
@@ -388,16 +389,19 @@ pub async fn zero_stream_deadline_is_refused_before_the_server_sees_it<B: Broker
         zero_refused(refused.map(drop), "`StreamCall::deadline(Duration::ZERO)`");
     }
     let call = fixture.rpc().stream::<_, u32>(COUNT, &2u32).header(MARK, "after").deadline(Duration::from_secs(10));
-    let replies = within::<B, _>(Duration::from_secs(10), "the stream's opening", call.into_future()).await.expect("the stream opens");
-    let items: Vec<_> = within::<B, _>(Duration::from_secs(10), "the stream", replies.collect()).await;
+    let opened = within::<B, _>(Duration::from_secs(10), "the stream's opening", call.into_future()).await;
     if streams(&fixture.capabilities()) {
+        let replies = opened.expect("the stream opens");
+        let items: Vec<_> = within::<B, _>(Duration::from_secs(10), "the stream", replies.collect()).await;
         let items: Vec<u32> = items.into_iter().map(|item| item.expect("the stream yields")).collect();
         assert_eq!(items, vec![1, 2], "the stream given a ten-second deadline");
     } else {
-        match items.as_slice() {
-            [Err(error)] if error.reason() == Some("pattern_unhandled") => {}
-            other => panic!("a stream on a link carrying none was not answered `pattern_unhandled`: {other:?}"),
+        match opened.err() {
+            Some(error) if error.reason() == Some("shape_unsupported") => {}
+            other => panic!("a stream on a link carrying none was not refused `shape_unsupported`: {other:?}"),
         }
+        let sum = fixture.rpc().request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).header(MARK, "after").timeout(Duration::from_secs(10)).await;
+        assert_eq!(sum.expect("a request after the refused stream is answered"), Sum { sum: 5 });
     }
     assert_eq!(tap.marks(), vec!["after"], "the marked calls the server received");
     fixture.stop().await;
