@@ -82,8 +82,9 @@ impl Tcp {
     }
 
     /// The largest frame, in bytes, read or written; a larger length prefix closes the connection
-    /// before the body is read. 4 MiB unset; a value above the 4-byte prefix's range is bounded by
-    /// it. Zero is refused in `prepare`.
+    /// before the body is read. 1 MiB unset, which bounds the request frames a server holds at
+    /// 1 GiB under its default `max_inflight`; a value above the 4-byte prefix's range is bounded
+    /// by it. Zero is refused in `prepare`.
     pub fn max_frame(mut self, bytes: u64) -> Self {
         self.core.set_max_frame(bytes);
         self

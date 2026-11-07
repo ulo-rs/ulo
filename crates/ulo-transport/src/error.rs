@@ -23,6 +23,11 @@ pub enum ErrorKind {
     Conflict,
     Unprocessable,
     TooManyRequests,
+    /// The call ran out of time: gRPC DEADLINE_EXCEEDED and HTTP 504 Gateway Timeout, the HTTP
+    /// mapping `google.rpc.Code` documents for DEADLINE_EXCEEDED (`code.proto`). grpc-gateway
+    /// follows that file, and AIP-193 has an API's HTTP/1.1+JSON error carry the HTTP status
+    /// corresponding to its code. HTTP's 408 Request Timeout is another case: the server gave up
+    /// waiting for the client's request.
     Timeout,
     Unavailable,
     Unimplemented,

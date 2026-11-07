@@ -1,10 +1,13 @@
 //! Scenarios: streams. On a link whose `shapes` exclude the streamed ones, each asserts the
-//! startup refusal instead.
+//! startup refusal instead, and the client's refusal of its call before any I/O where the
+//! scenario makes one.
 
 use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
 use ulo::Bound;
+use ulo_rpc::RpcError;
+use ulo_transport::ErrorKind;
 
 use crate::Broker;
 use crate::cases::app::{COLLECT, COUNT, DOUBLE, Fixture, Mounts, SUM, refused_at_startup, streams, within};
@@ -18,11 +21,19 @@ const ITEMS: u32 = 256;
 /// The ordered client stream's own timeout: on Kafka each item waits for its delivery report.
 const ORDERED_WAIT: Duration = Duration::from_secs(60);
 
+/// The client's refusal of a `call` whose shape the link's `shapes` leave out: `Unimplemented`
+/// with `shape_unsupported`.
+fn shape_refused(call: &str, outcome: Option<RpcError>) {
+    let error = outcome.unwrap_or_else(|| panic!("the client opened a `{call}` call on a link whose shapes leave it out"));
+    assert_eq!((error.kind(), error.reason()), (ErrorKind::Unimplemented, Some("shape_unsupported")), "`{call}`: {error:?}");
+}
+
 /// A server stream, in order, ending with `end`.
 pub async fn server_stream<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
         refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        shape_refused("stream", fixture.rpc().stream::<_, u32>(COUNT, &3u32).await.err());
         return fixture.stop().await;
     }
     let replies = fixture.rpc().stream::<_, u32>(COUNT, &3u32).idle_timeout(Bound::After(WAIT)).await.expect("the stream opens");
@@ -37,6 +48,7 @@ pub async fn client_stream<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
         refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        shape_refused("send_stream", fixture.rpc().send_stream::<_, i64>(SUM, stream::iter(vec![1i64])).timeout(WAIT).await.err());
         return fixture.stop().await;
     }
     let total = fixture.rpc().send_stream::<_, i64>(SUM, stream::iter(vec![1i64, 2, 3, 4])).timeout(WAIT).await;
@@ -72,6 +84,7 @@ pub async fn bidi_stream<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
         refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        shape_refused("duplex", fixture.rpc().duplex::<_, i64>(DOUBLE, stream::iter(vec![1i64])).await.err());
         return fixture.stop().await;
     }
     let replies = fixture.rpc().duplex::<_, i64>(DOUBLE, stream::iter(vec![1i64, 2, 3])).idle_timeout(Bound::After(WAIT)).await.expect("the stream opens");

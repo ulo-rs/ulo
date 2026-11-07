@@ -1,8 +1,9 @@
 //! `on_stream_end` reports the reply the dispatcher writes. A stream an interceptor discards was
 //! never the reply and reports nothing, so it cannot hide the outcome of the reply that replaced
 //! it; a stream the error handlers answer after the deadline was the reply, dropped unwritten, and
-//! reports `CutOff(Deadline)`. A stream on a link that carries no streamed reply is never written:
-//! the call is answered `err` of kind `internal`, and the stream reports nothing.
+//! reports `CutOff(Deadline)`. A stream on a link that carries no streamed reply, one a global
+//! error handler answers a miss with, is never written: the call is answered `err` of kind
+//! `unimplemented` with `reason: "shape_unsupported"`, and the stream reports nothing.
 //!
 //! Each handler registers a callback that sends the outcome on a channel the test holds the other
 //! end of. The callback owns the channel's only sender, so the channel closes when the execution
@@ -19,12 +20,12 @@ use futures_util::{Stream, stream};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use ulo::{
-    App, AppHandle, BoxError, CancelReason, ErrorHandler, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, Runtime,
+    AnyErrorHandler, App, AppHandle, BoxError, CancelReason, ErrorHandler, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, Runtime,
     Signal, StreamOutcome, controller, handlers,
 };
 use ulo_rpc::link::{Inbound, UNARY_ONLY};
 use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, Reply, ReplyPath, Rpc, RpcCx};
-use ulo_transport::{Classify, ErrorKind};
+use ulo_transport::{Classify, Detail, ErrorKind};
 
 const DISCARDED: &str = "stream_end.discarded";
 const REPLACED: &str = "stream_end.replaced";
@@ -100,6 +101,19 @@ impl ErrorHandler<Rpc> for StreamOnTimeout {
     }
 }
 
+/// Answers a pattern nothing handles with a stream, from the global tier: the one stream a server
+/// on a link without streamed replies can be handed, since it refuses a streamed handler at startup
+/// and a unary handler's stream as `shape_mismatch`.
+struct StreamOnMiss;
+
+impl ErrorHandler<Rpc> for StreamOnMiss {
+    async fn handle(&self, err: BoxError, cx: &RpcCx) -> Result<Reply, BoxError> {
+        let _ = err;
+        report_for(UNCARRIED, cx.exec());
+        Ok(cx.reply_stream(ticks()))
+    }
+}
+
 #[controller]
 struct Streams;
 
@@ -140,17 +154,13 @@ struct Unary;
 
 #[handlers]
 impl Unary {
-    /// A unary handler whose interceptor answers a stream, which only a link carrying streamed
-    /// replies can write.
-    #[ulo_rpc::message("stream_end.uncarried")]
-    #[interceptors(value = AnswerStream)]
-    async fn uncarried(&self, exec: ExecutionRef) -> Result<u32, Late> {
-        report_for(UNCARRIED, &exec);
+    #[ulo_rpc::message("stream_end.unary")]
+    async fn unary(&self) -> Result<u32, Late> {
         Ok(0)
     }
 }
 
-/// `Streams`, or `Unary` alone when `unary`.
+/// `Streams`, or `Unary` and [`StreamOnMiss`] when `unary`.
 struct Root {
     unary: bool,
 }
@@ -163,6 +173,8 @@ impl Module for Root {
     fn register(&self, m: &mut ModuleDef<'_>) {
         if self.unary {
             m.controller::<Unary>();
+            let answer: Arc<AnyErrorHandler<Rpc>> = Arc::new(StreamOnMiss);
+            m.enhancer::<AnyErrorHandler<Rpc>>().value(answer);
         } else {
             m.controller::<Streams>();
         }
@@ -322,9 +334,16 @@ async fn a_stream_the_error_handlers_answer_after_the_deadline_reports_cut_off()
 async fn a_stream_the_link_cannot_carry_reports_nothing() {
     let running = Running::on(true).await;
     let (frames, outcome) = running.call(UNCARRIED, CallHeaders::new()).await;
+    let reason = |error: &ulo_rpc::ErrorBody| {
+        error.details.iter().find_map(|detail| match detail {
+            Detail::ErrorInfo { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+    };
     assert!(
-        matches!(frames.as_slice(), [Frame::Err { id: 1, error }] if error.kind == ErrorKind::Internal),
-        "the stream the link cannot carry was not answered `internal`: {frames:?}",
+        matches!(frames.as_slice(), [Frame::Err { id: 1, error }]
+            if error.kind == ErrorKind::Unimplemented && reason(error).as_deref() == Some("shape_unsupported")),
+        "the stream the link cannot carry was not answered `unimplemented` with `shape_unsupported`: {frames:?}",
     );
     assert_eq!(outcome, None, "a stream that was never written reported its end");
     running.stop().await;

@@ -35,6 +35,9 @@ const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// `timeout_grace` at `Bound::Default`, the HTTP server's.
 const DEFAULT_TIMEOUT_GRACE: Duration = Duration::from_secs(1);
 
+/// `shed_retry_after` unset, the HTTP server's.
+const DEFAULT_SHED_RETRY_AFTER: Duration = Duration::from_secs(1);
+
 /// How long `close` lets the connections finish what the drain's end left them before it aborts
 /// them: a call abandoned at the drain's end answers UNAVAILABLE, and its connection, already in
 /// graceful shutdown, ends once that answer is written.
@@ -59,6 +62,7 @@ pub struct Server {
     pub(crate) max_inflight: Count,
     pub(crate) max_per_connection: Count,
     pub(crate) max_concurrent_streams: Count,
+    pub(crate) shed_retry_after: Duration,
     pub(crate) handshake_timeout: Bound,
     pub(crate) timeout_grace: Bound,
     pub(crate) reflection: bool,
@@ -98,6 +102,7 @@ impl Server {
             max_inflight: Count::Default,
             max_per_connection: Count::Default,
             max_concurrent_streams: Count::Default,
+            shed_retry_after: DEFAULT_SHED_RETRY_AFTER,
             handshake_timeout: Bound::Default,
             timeout_grace: Bound::Default,
             reflection: cfg!(debug_assertions),
@@ -122,16 +127,29 @@ impl Server {
 
     /// Calls in flight across the server: 1,024 at `Count::Default` (`Count::DEFAULT_MAX_INFLIGHT`),
     /// none at `Count::Unlimited`; over it a call is answered UNAVAILABLE, which clients treat as
-    /// retryable. `Count::Max(0)` is refused.
+    /// retryable, with [`shed_retry_after`](Self::shed_retry_after) as its retry hint.
+    /// `Count::Max(0)` is refused.
     pub fn max_inflight(mut self, calls: Count) -> Self {
         self.max_inflight = calls;
         self
     }
 
-    /// Calls in flight per connection, refused UNAVAILABLE over it: no bound of its own at
-    /// `Count::Default`, the server's `max_inflight` alone. `Count::Max(0)` is refused.
+    /// Calls in flight per connection, refused UNAVAILABLE over it, with the same retry hint: no
+    /// bound of its own at `Count::Default`, the server's `max_inflight` alone. `Count::Max(0)` is
+    /// refused.
     pub fn max_per_connection(mut self, calls: Count) -> Self {
         self.max_per_connection = calls;
+        self
+    }
+
+    /// How long a call refused over `max_inflight` or `max_per_connection` is asked to wait before
+    /// a retry: one second unset, the HTTP server's `Retry-After`. The refusal carries it as
+    /// `grpc-retry-pushback-ms` (gRFC A6), whole milliseconds rounded up, which a client whose
+    /// retry policy retries UNAVAILABLE waits before its next attempt in place of its own backoff.
+    /// A value past `i32::MAX` milliseconds, about 24.8 days, is written as that: the value is a
+    /// signed 32-bit integer, and one a client cannot parse asks it not to retry at all.
+    pub fn shed_retry_after(mut self, after: Duration) -> Self {
+        self.shed_retry_after = after;
         self
     }
 
@@ -419,7 +437,7 @@ impl ulo::Server for Server {
             health: vec![builtin(health.service())],
             reflection,
             stage,
-            admission: Admission::new(self.max_inflight.max_inflight()),
+            admission: Admission::new(self.max_inflight.max_inflight()).retry_after(self.shed_retry_after),
             per_connection: limit(self.max_per_connection),
             grace: match self.timeout_grace {
                 Bound::Default => Some(DEFAULT_TIMEOUT_GRACE),

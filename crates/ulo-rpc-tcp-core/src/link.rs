@@ -22,9 +22,11 @@ use ulo_rpc::{Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame
 use ulo_transport::sync::{Watch, ordered};
 use ulo_transport::{Details, ErrorKind, TaskSet};
 
-/// The largest frame unless `max_frame` sets one: twice HTTP's default body limit, room for a
-/// payload HTTP accepts unset with its envelope and its JSON encoding's growth.
-pub const DEFAULT_MAX_FRAME: u64 = 4 * 1024 * 1024;
+/// The largest frame unless `max_frame` sets one: 1 MiB. A server holds the request frame of each
+/// call it admits, so the frames it holds are bounded by this times its `max_inflight`, 1 GiB at
+/// the defaults. A larger payload, a body at HTTP's 2 MiB limit forwarded whole among them, needs
+/// `max_frame` set on the server's link and the client's.
+pub const DEFAULT_MAX_FRAME: u64 = 1024 * 1024;
 
 /// How long the accept loop waits after the OS refuses an accept, out of descriptors or memory,
 /// before it accepts again. A runtime that refuses the wait, having shut down, ends the loop as the
@@ -192,7 +194,7 @@ impl Core {
         self.max_frame = Some(bytes);
     }
 
-    /// The largest frame read or written: `max_frame`, 4 MiB unset, bounded by the 4-byte prefix.
+    /// The largest frame read or written: `max_frame`, 1 MiB unset, bounded by the 4-byte prefix.
     pub fn limit(&self) -> u64 {
         self.max_frame.unwrap_or(DEFAULT_MAX_FRAME).min(u64::from(u32::MAX))
     }

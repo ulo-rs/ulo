@@ -553,6 +553,7 @@ async fn a_grpc_call_abandoned_at_the_drains_end_answers_unavailable_with_the_sh
     let status = within("the gRPC call's end", call).await.expect("the gRPC task").expect_err("an abandoned gRPC call was answered with its result");
     assert_eq!(status.code(), tonic::Code::Unavailable, "the abandoned call's code: {status:?}");
     assert_eq!(status.message(), SHUTDOWN_PHRASE, "the abandoned call's phrase");
+    assert_eq!(status.metadata().get("grpc-retry-pushback-ms"), None, "a drain's refusal carries no retry hint: {status:?}");
     assert_eq!(app.grpc_hold.dropped.at_least(1, "the held handler dropping").await, vec![Some(CancelReason::Drain)], "the handler was cancelled by the drain");
     let _ = within("serve", app.serving).await;
 }
