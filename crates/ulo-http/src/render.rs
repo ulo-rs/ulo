@@ -17,8 +17,9 @@ use crate::response::Response;
 use crate::routing::Routing;
 use crate::sse::{Event, EventName};
 
-/// The canonical status of a kind. `Timeout` is 504: the server ran out of time, usually waiting
-/// downstream; 408 means it gave up waiting for the client's request.
+/// The canonical status of a kind. `Timeout` is 504, the HTTP mapping `google.rpc.Code` documents
+/// for DEADLINE_EXCEEDED (`code.proto`), which grpc-gateway follows; 408 means the server gave up
+/// waiting for the client's request.
 pub(crate) fn status_of(kind: ErrorKind) -> StatusCode {
     match kind {
         ErrorKind::BadRequest => StatusCode::BAD_REQUEST,

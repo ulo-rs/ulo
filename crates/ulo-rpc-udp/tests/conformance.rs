@@ -1,6 +1,7 @@
 //! The RPC conformance suite over the UDP link, each scenario against a server on a port of its
 //! own. The link declares unary calls alone and a 65,507-byte frame, so the streamed scenarios,
-//! the held-`cancel` ones among them, and the binary one assert the startup refusals, and the
+//! the held-`cancel` ones among them, and the binary one assert the startup refusals, the three
+//! stream scenarios the client's `shape_unsupported` refusal besides, and the
 //! oversized one the client's refusal one byte over the datagram. The recovery scenario is
 //! declared not applicable, and the ordered-`cancel` one is skipped from the link's declaration
 //! without `ordered_control`.

@@ -135,7 +135,8 @@ impl RpcCx {
     /// `items` as the call's reply stream, as a handler returning a stream is answered: each `Ok`
     /// encoded by the link's codec and written as `item`, the end as `end`. An `Err` item, or an
     /// item the codec refuses, runs the matched handler's error handlers on the late path and ends
-    /// the stream. A link carrying no streamed reply answers the call `internal`.
+    /// the stream. A link carrying no streamed reply answers the call `unimplemented` with
+    /// `reason: "shape_unsupported"`.
     pub fn reply_stream<S, U, E>(&self, items: S) -> Reply
     where
         S: Stream<Item = Result<U, E>> + Send + 'static,

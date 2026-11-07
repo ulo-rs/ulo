@@ -447,7 +447,7 @@ fn check_pattern(pattern: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn shape_name(shape: Shape) -> &'static str {
+pub(crate) fn shape_name(shape: Shape) -> &'static str {
     match shape {
         Shape::Unary => "unary",
         Shape::ServerStreaming => "server-streaming",

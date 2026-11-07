@@ -36,14 +36,15 @@ use futures_core::stream::BoxStream;
 use futures_util::{FutureExt, StreamExt};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use ulo::{Bound, BoxError, BoxFuture, CancelReason, ExecutionRef, Runtime, Timer, TraceOrigin};
+use ulo::{Bound, BoxError, BoxFuture, CancelReason, ExecutionRef, Runtime, Shape, Timer, TraceOrigin};
 use ulo_transport::{Classify, Count, Detail, Details, ErrorKind};
 
 use crate::codec::Codec;
-use crate::dispatch::{quote, reason};
+use crate::dispatch::{SHAPE_UNSUPPORTED, quote, reason};
 use crate::frame::{Data, ErrorBody, Frame};
 use crate::link::{ConnectTimedOut, FrameTooLarge, FrameUnencodable, Link, Misconfigured, NoDestination, Outbound, Pattern, ReplyTo};
 use crate::queue::{self, Drain, Feed};
+use crate::server::shape_name;
 use crate::trace;
 use crate::transport::CallHeaders;
 
@@ -260,6 +261,9 @@ pub(crate) struct ClientInner {
     /// module's client leaves it to the module's destroy hook.
     close: Option<Close>,
     codec: Codec,
+    /// The call shapes the link declares it carries, `Capabilities::shapes`: a call of another
+    /// shape is refused before it connects.
+    shapes: &'static [Shape],
     runtime: Arc<dyn Runtime>,
     /// Held across `connect`, so concurrent first calls share one connection.
     conn: async_lock::Mutex<Option<Arc<Conn>>>,
@@ -365,7 +369,8 @@ impl RpcClient {
     }
 
     fn build<L: Link>(link: Arc<L>, timeout: Bound, idle: Bound, runtime: Arc<dyn Runtime>, close: Option<Close>) -> Self {
-        let codec = Codec::of(&link.capabilities());
+        let capabilities = link.capabilities();
+        let codec = Codec::of(&capabilities);
         let handed = Arc::clone(&runtime);
         let connect: Connect = Box::new(move || {
             let (link, runtime) = (Arc::clone(&link), Arc::clone(&handed));
@@ -377,6 +382,7 @@ impl RpcClient {
                 connect,
                 close,
                 codec,
+                shapes: capabilities.shapes,
                 runtime,
                 conn: async_lock::Mutex::new(None),
                 next_id: AtomicU64::new(1),
@@ -469,23 +475,28 @@ impl RpcClient {
         Res: DeserializeOwned + Send + 'static,
     {
         let payload = encode(self.inner.codec, req);
-        Call { _res: PhantomData, spec: Spec::new(self, pattern, Request::One(payload)) }
+        Call { _res: PhantomData, spec: Spec::new(self, pattern, Shape::Unary, Request::One(payload)) }
     }
 
     /// An event, answered by nothing.
     pub fn emit<T: Serialize + ?Sized>(&self, pattern: &str, data: &T) -> Emit {
         let payload = encode(self.inner.codec, data);
-        Emit { spec: Spec::new(self, pattern, Request::One(payload)) }
+        Emit { spec: Spec::new(self, pattern, Shape::Unary, Request::One(payload)) }
     }
 
-    /// A request answered by a stream of replies.
+    /// A request answered by a stream of replies. On a link whose `Capabilities::shapes` leave out
+    /// `Shape::ServerStreaming`, UDP's, the call fails when it is awaited, before it connects,
+    /// `Unimplemented` with the reason `"shape_unsupported"`, the server's answer to a stream on
+    /// such a link, whatever shape the pattern's handler has: a unary handler's one reply is
+    /// [`request`](Self::request)'s there. [`send_stream`](Self::send_stream) and
+    /// [`duplex`](Self::duplex) are refused alike for `Shape::ClientStreaming` and `Shape::Bidi`.
     pub fn stream<Req, Res>(&self, pattern: &str, req: &Req) -> StreamCall<Res>
     where
         Req: Serialize + ?Sized,
         Res: DeserializeOwned + Send + 'static,
     {
         let payload = encode(self.inner.codec, req);
-        StreamCall::new(Spec::new(self, pattern, Request::One(payload)))
+        StreamCall::new(Spec::new(self, pattern, Shape::ServerStreaming, Request::One(payload)))
     }
 
     /// A streamed request answered by one reply.
@@ -495,7 +506,7 @@ impl RpcClient {
         S::Item: Serialize,
         Res: DeserializeOwned + Send + 'static,
     {
-        Call { _res: PhantomData, spec: Spec::new(self, pattern, self.items(items)) }
+        Call { _res: PhantomData, spec: Spec::new(self, pattern, Shape::ClientStreaming, self.items(items)) }
     }
 
     /// A streamed request answered by a stream of replies.
@@ -505,7 +516,7 @@ impl RpcClient {
         S::Item: Serialize,
         Res: DeserializeOwned + Send + 'static,
     {
-        StreamCall::new(Spec::new(self, pattern, self.items(items)))
+        StreamCall::new(Spec::new(self, pattern, Shape::Bidi, self.items(items)))
     }
 
     fn items<S>(&self, items: S) -> Request
@@ -536,6 +547,7 @@ fn encode<T: Serialize + ?Sized>(codec: Codec, value: &T) -> Result<Data, RpcErr
 pub(crate) struct Spec {
     client: RpcClient,
     pattern: Pattern,
+    shape: Shape,
     request: Request,
     headers: CallHeaders,
     /// The call's own timeout, in place of the client's.
@@ -575,10 +587,11 @@ enum Request {
 }
 
 impl Spec {
-    fn new(client: &RpcClient, pattern: &str, request: Request) -> Self {
+    fn new(client: &RpcClient, pattern: &str, shape: Shape, request: Request) -> Self {
         Spec {
             client: client.clone(),
             pattern: Pattern::from(pattern),
+            shape,
             request,
             headers: CallHeaders::new(),
             timeout: None,
@@ -624,6 +637,23 @@ impl Spec {
         self.ends = ends;
         self.stamps = !matches!(whole, Whole::Publish);
         Ok(ends)
+    }
+
+    /// Refuses a call whose shape the link does not carry, before any I/O: `Unimplemented` with
+    /// the reason `"shape_unsupported"`, what the link's server answers a stream it cannot write.
+    /// The server refused every handler of the shape at startup. A `stream` call's `req` frame is a
+    /// request's, which a unary handler would answer with one `res`, and it is refused all the same:
+    /// on such a link `request` is the call for one reply.
+    /// Checked as the call opens, after the refusals of how the call is written, a reserved header
+    /// or a zero bound, and of the calling execution's state, a passed deadline or a cancellation,
+    /// so those read the same on every link.
+    fn carried(&self) -> Result<(), RpcError> {
+        let inner = &self.client.inner;
+        if inner.shapes.contains(&self.shape) {
+            return Ok(());
+        }
+        let message = format!("the {} link does not carry a {} call", inner.link, shape_name(self.shape));
+        Err(RpcError::new(ErrorKind::Unimplemented, message).with_reason(SHAPE_UNSUPPORTED))
     }
 
     /// Refuses a call whose caller set a header the client writes itself, `BadRequest` with the
@@ -674,6 +704,7 @@ impl Spec {
     /// Connects, registers the call, and sends its opening frame; a streamed request's items follow
     /// from a task of their own.
     async fn open(self) -> Result<Exchange, RpcError> {
+        self.carried()?;
         let Spec { client, pattern, request, mut headers, within, ends, stamps, .. } = self;
         let inner = &client.inner;
         let request = match request {
@@ -1408,8 +1439,11 @@ impl<Res> Stream for RpcStream<Res> {
 /// connect made, `Unavailable` with `reason: "runtime_shut_down"`;
 /// an oversized payload
 /// `BadRequest` with `reason: "payload_too_large"`; a binary payload on a JSON link `BadRequest`
-/// with `reason: "binary_unsupported"`, before any I/O; a stream whose caller left more reply
-/// items unread than the client's `max_queued_items` `Unavailable` with `reason: "overflow"`, and a
+/// with `reason: "binary_unsupported"`, before any I/O; a call of a shape the link's
+/// `Capabilities::shapes` leave out `Unimplemented` with `reason: "shape_unsupported"`, before any
+/// I/O, and a streamed reply a server on such a link cannot write the same; a stream whose caller
+/// left more reply items unread than the client's `max_queued_items` `Unavailable` with
+/// `reason: "overflow"`, and a
 /// streamed request whose handler left more items unread than the server's the same, from the
 /// server; a `deadline-ms` the caller set with
 /// `.header` `BadRequest` with `reason: "reserved_header"`, before any I/O; a request frame the
@@ -1461,7 +1495,8 @@ impl RpcError {
     }
 
     /// The `ErrorInfo` detail's `reason`, when one is present: `"no_destination"`,
-    /// `"pattern_unhandled"`, `"payload_too_large"`, `"binary_unsupported"`, `"zero_timeout"`,
+    /// `"pattern_unhandled"`, `"payload_too_large"`, `"binary_unsupported"`, `"shape_unsupported"`
+    /// for a call of a shape the link does not carry, `"zero_timeout"`,
     /// `"reserved_header"` for a `deadline-ms` the caller set, `"overflow"` for a call whose reply
     /// items, or whose streamed request's items on its server, waited unread past the
     /// `max_queued_items` of the side that held them, `"misconfigured_link"` for a link
@@ -1553,6 +1588,33 @@ mod tests {
 
         async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
             Err("the call connected, though its payload is refused before any I/O".into())
+        }
+
+        async fn drain(&self) {}
+
+        async fn close(&self) -> Result<(), BoxError> {
+            Ok(())
+        }
+    }
+
+    /// A link declaring unary calls alone, as UDP does, whose every connect fails; it counts its
+    /// connects.
+    struct UnaryLink(Arc<AtomicU64>);
+
+    impl Link for UnaryLink {
+        const NAME: &'static str = "unary";
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::new(DeliveryMode::Addressed).shapes(crate::link::UNARY_ONLY)
+        }
+
+        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+            Err("this link has no server side".into())
+        }
+
+        async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Err("no server listens".into())
         }
 
         async fn drain(&self) {}
@@ -2454,6 +2516,29 @@ mod tests {
         let err = answer.expect_err("a binary payload on a JSON link must fail");
         assert_eq!((err.kind(), err.reason()), (ErrorKind::BadRequest, Some("binary_unsupported")), "got: {err:?}");
         assert!(err.message().contains("`.codec(Codec::Cbor)`"), "the refusal should name the codec that carries bytes, got: {err:?}");
+    }
+
+    /// Each streamed shape on a link declaring unary calls alone is refused `Unimplemented` with
+    /// `shape_unsupported` before the client connects, and a request on the same link connects.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_shape_the_link_does_not_carry_is_refused_before_any_io() {
+        let connects = Arc::new(AtomicU64::new(0));
+        let link = UnaryLink(Arc::clone(&connects));
+        let client = RpcClient::of_module(Arc::new(link), Bound::Unbounded, Bound::Default, Arc::new(ulo_runtime_tokio::Tokio::current()));
+        let refusals = [
+            ("stream", client.stream::<_, u32>("ticks", &()).await.err()),
+            ("send_stream", client.send_stream::<_, u32>("sum", futures_util::stream::iter([1u32])).await.err()),
+            ("duplex", client.duplex::<_, u32>("double", futures_util::stream::iter([1u32])).await.err()),
+        ];
+        for (shape, refused) in refusals {
+            let err = refused.unwrap_or_else(|| panic!("`{shape}` on a unary-only link was not refused"));
+            assert_eq!((err.kind(), err.reason()), (ErrorKind::Unimplemented, Some("shape_unsupported")), "{shape}: {err:?}");
+            assert!(err.message().contains("unary link"), "{shape}: the refusal should name the link, got: {err:?}");
+        }
+        assert_eq!(connects.load(Ordering::Relaxed), 0, "a refused call connected");
+        let unary = client.request::<_, u32>("add", &1u32).await;
+        assert_eq!(unary.as_ref().map_err(RpcError::kind).err(), Some(ErrorKind::Unavailable), "{unary:?}");
+        assert_eq!(connects.load(Ordering::Relaxed), 1, "the unary call on the same link did not connect");
     }
 
     /// A link whose every connect fails: with a [`Misconfigured`] refusal, a
