@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ulo::{App, AppBuilder, BoxError, Dep, Module, ModuleDef, ModuleIdentity, injectable, module, routes};
+use ulo::{App, AppBuilder, BoxError, Dep, Module, ModuleDef, ModuleIdentity, controller, handlers, injectable, module};
 use ulo_http::middleware::Next;
 use ulo_http::{CallError, Cors, HeaderValue, Host, Method, Middleware, PreDispatch, Request, Response};
 
@@ -73,10 +73,10 @@ impl Module for EdgeModule {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct PagesController;
 
-#[routes]
+#[handlers]
 impl PagesController {
     #[ulo_http::get("/")]
     fn index(&self) -> &'static str {

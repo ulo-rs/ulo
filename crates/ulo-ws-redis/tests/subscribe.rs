@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use ulo::{
     App, BoxFuture, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, Permanent, RUNTIME_SHUT_DOWN, Refused, RuntimeShutDown, StartupError,
-    Timer, injectable, is_permanent, routes,
+    Timer, controller, handlers, is_permanent,
 };
 use ulo_conformance_support::ScriptedTimer;
 use ulo_runtime_tokio::Tokio;
@@ -37,10 +37,10 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(1);
 /// How long the tests wait, in real time, for the adapter to reach a state they then act on.
 const PATIENCE: Duration = Duration::from_secs(10);
 
-#[injectable]
+#[controller]
 struct Members;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/members", port = own)]
 impl Members {
     #[ulo_ws::message("ping")]

@@ -1,14 +1,14 @@
 //! The attributes that decide whether a handler, or one of its enhancer entries, is compiled,
-//! which `#[routes]` copies onto every item it writes that names the handler's generated items,
+//! which `#[handlers]` copies onto every item it writes that names the handler's generated items,
 //! and the reading of a method's attributes through `cfg_attr`.
 //!
 //! An attribute macro receives the items inside its input with their `#[cfg]` and `#[cfg_attr]`
-//! unevaluated, so `#[routes]` sees a method behind `#[cfg(feature = "x")]` whether or not the
-//! feature is on. Rustc evaluates that `cfg` after `#[routes]` has expanded, and with the feature
+//! unevaluated, so `#[handlers]` sees a method behind `#[cfg(feature = "x")]` whether or not the
+//! feature is on. Rustc evaluates that `cfg` after `#[handlers]` has expanded, and with the feature
 //! off it removes the method together with its transport attribute, which then writes none of
 //! `__ULO_KEY_<name>`, `__ULO_CHECKS_<name>` and `__ulo_mount_<name>`. Likewise
-//! `#[cfg_attr(feature = "x", guards(..))]` reaches `#[routes]` as a `cfg_attr`, and expands to
-//! `#[guards(..)]` only after `#[routes]` has run; [`take`] reads through it, so `#[routes]` takes
+//! `#[cfg_attr(feature = "x", guards(..))]` reaches `#[handlers]` as a `cfg_attr`, and expands to
+//! `#[guards(..)]` only after `#[handlers]` has run; [`take`] reads through it, so `#[handlers]` takes
 //! the entry with its predicate as a gate.
 
 use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};

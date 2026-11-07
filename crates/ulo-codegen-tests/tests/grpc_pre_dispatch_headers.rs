@@ -17,7 +17,7 @@ use futures_util::{Stream, StreamExt, stream};
 use http::HeaderValue;
 use http::uri::PathAndQuery;
 use tonic::{Code, Status};
-use ulo::{BoxError, ErrorHandler, Interceptor, Module, ModuleDef, ModuleIdentity, Next, injectable, routes};
+use ulo::{BoxError, ErrorHandler, Interceptor, Module, ModuleDef, ModuleIdentity, Next, controller, handlers, injectable};
 use ulo_codegen_tests::probe;
 use ulo_codegen_tests::probe::known_client::KnownClient;
 use ulo_codegen_tests::probe::shapes_client::ShapesClient;
@@ -102,10 +102,10 @@ impl Interceptor<Grpc> for AlsoForge {
     }
 }
 
-#[injectable]
+#[controller]
 struct Known;
 
-#[routes]
+#[handlers]
 #[error_handlers(grpc(value = Mend))]
 impl Known {
     #[ulo_grpc::method(probe::known::Upper)]
@@ -123,10 +123,10 @@ impl Known {
     }
 }
 
-#[injectable]
+#[controller]
 struct Shapes;
 
-#[routes]
+#[handlers]
 impl Shapes {
     #[ulo_grpc::method(probe::shapes::Watch)]
     fn watch(&self, req: Message<Ticks>) -> impl Stream<Item = Result<Tick, Refusal>> {

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use ulo::{BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_ws::{ConnectCx, ConnectRefused, ConnectionInfo, OnConnect, WsConnect};
 
 use support::{Record, Running, hang_up, next_json, send_json};
@@ -46,12 +46,12 @@ impl Guard<WsConnect> for Tag {
 #[derive(Clone)]
 struct Seen(Record<&'static str>);
 
-#[injectable]
+#[controller]
 struct Scoped {
     seen: Dep<Seen>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/scoped", port = own, connect_guards(value = Tag))]
 impl Scoped {
     #[ulo_ws::message("who")]

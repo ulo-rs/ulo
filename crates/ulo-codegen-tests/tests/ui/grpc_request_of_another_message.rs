@@ -1,11 +1,11 @@
-use ulo::{injectable, routes};
+use ulo::{controller, handlers};
 use ulo_codegen_tests::pb::{self, Number, Sum};
 use ulo_grpc::Message;
 
-#[injectable]
+#[controller]
 struct Counter;
 
-#[routes]
+#[handlers]
 impl Counter {
     // `Add` is unary, as this handler is, and takes an `AddRequest`.
     #[ulo_grpc::method(pb::counter::Add)]

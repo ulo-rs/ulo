@@ -6,7 +6,7 @@ mod support;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use ulo::{Dep, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{Dep, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_transport::{Valid, Validate};
 use ulo_ws::Payload;
 
@@ -23,12 +23,12 @@ struct Signup {
 #[derive(Clone)]
 struct Ran(Record<String>);
 
-#[injectable]
+#[controller]
 struct Forms {
     ran: Dep<Ran>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/forms", port = own)]
 impl Forms {
     #[ulo_ws::message("signup")]

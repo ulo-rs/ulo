@@ -6,8 +6,8 @@
 //! What `Auto` means depends on the binding's role. For a provider it behaves exactly like
 //! [`Singleton`], and depending on execution data is refused at `wire()`. For a controller or an
 //! enhancer it resolves to singleton when nothing below it needs an execution, and to
-//! per-execution otherwise. Writing `#[injectable(singleton)]` on a controller opts out of the
-//! inference, so a controller declared that way that needs execution data is refused.
+//! per-execution otherwise. Writing `#[controller(singleton)]` opts out of the inference, so a
+//! controller declared that way that needs execution data is refused.
 //!
 //! A closure follows the same rule: [`Contribute::with`](crate::Contribute::with) and
 //! [`EnhancerSpec::guard_with`](crate::EnhancerSpec::guard_with) declare `Auto`. Inference reads
@@ -72,7 +72,7 @@ impl Scope for Auto {
 #[diagnostic::on_unimplemented(
     message = "lifecycle hooks are only allowed on singletons",
     label = "`{Self}` scope cannot have hooks",
-    note = "remove the scope argument from #[injectable], or move the hook to a singleton"
+    note = "remove the scope argument from #[injectable] or #[controller], or move the hook to a singleton"
 )]
 pub trait HookCapable: Scope {}
 
@@ -99,6 +99,6 @@ impl ExplicitScope for Transient {}
 #[diagnostic::on_unimplemented(
     message = "a `{S}` type cannot read `{Self}`",
     label = "this injection point needs an execution",
-    note = "declare the type #[injectable(execution)] or #[injectable(transient)]"
+    note = "declare the type #[injectable(execution)] or #[injectable(transient)]; a controller drops `singleton` from #[controller] and is then built per call"
 )]
 pub trait AllowedIn<S: Scope> {}

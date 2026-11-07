@@ -5,7 +5,7 @@ error[E0277]: lifecycle hooks are only allowed on singletons
    |      ^^^^^^^^^^^^^^^ `ulo::scope::Transient` scope cannot have hooks
    |
    = help: the trait `HookCapable` is not implemented for `ulo::scope::Transient`
-   = note: remove the scope argument from #[injectable], or move the hook to a singleton
+   = note: remove the scope argument from #[injectable] or #[controller], or move the hook to a singleton
 help: the following other types implement trait `HookCapable`
   --> $WORKSPACE/crates/ulo/src/scope.rs
    |

@@ -1,9 +1,9 @@
 //! The hidden import through which an editor resolves a marker attribute a macro removes.
 //!
-//! `#[routes]` reads and removes `#[guards]`, `#[interceptors]`, `#[error_handlers]` and
-//! `#[meta]`, and `#[injectable]` reads and removes `#[construct]` and a field's
-//! `#[injectable(default)]`, so rustc never resolves those paths; a field could not carry an
-//! attribute macro anyway. An editor finds what a written token means by following it into the
+//! `#[handlers]` reads and removes `#[guards]`, `#[interceptors]`, `#[error_handlers]` and
+//! `#[meta]`, and `#[injectable]` and `#[controller]` read and remove `#[construct]` and a field's
+//! `#[injectable(default)]` or `#[controller(default)]`, so rustc never resolves those paths; a
+//! field could not carry an attribute macro anyway. An editor finds what a written token means by following it into the
 //! expansion by its span, and a removed attribute's tokens are nowhere in it. Beside the item, the
 //! macro therefore writes
 //!
@@ -111,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    fn routes_imports_every_marker_it_removes() {
+    fn handlers_imports_every_marker_it_removes() {
         let item = quote! {
             #[guards(A)]
             #[ulo::meta(1)]
@@ -127,7 +127,7 @@ mod tests {
                 fn b(&self) {}
             }
         };
-        let out = hidden(&crate::routes::expand(TokenStream::new(), item).unwrap());
+        let out = hidden(&crate::handlers::expand(TokenStream::new(), item).unwrap());
         assert_eq!(out.matches("use ").count(), 4, "{out}");
         assert!(out.contains("use :: ulo :: { guards as _ , guards as _ , guards as _ }"), "{out}");
         assert!(out.contains("use :: ulo :: { meta as _ , meta as _ }"), "{out}");
@@ -138,18 +138,27 @@ mod tests {
     #[test]
     fn injectable_imports_its_construct_and_field_markers() {
         let impl_form = quote!(impl X { #[construct] fn build() -> Self { X } });
-        let out = hidden(&crate::injectable::expand(TokenStream::new(), impl_form).unwrap());
+        let out = hidden(&crate::construct::expand(crate::construct::Kind::Injectable, TokenStream::new(), impl_form).unwrap());
         assert!(out.contains("use :: ulo :: construct as _"), "{out}");
         let struct_form = quote!(struct X { #[injectable(default)] a: u8, #[ulo::injectable(default)] b: u8, c: Dep });
-        let out = hidden(&crate::injectable::expand(TokenStream::new(), struct_form).unwrap());
+        let out = hidden(&crate::construct::expand(crate::construct::Kind::Injectable, TokenStream::new(), struct_form).unwrap());
         assert!(out.contains("use :: ulo :: { injectable as _ , injectable as _ }"), "{out}");
     }
 
     #[test]
+    fn controller_imports_its_construct_and_field_markers() {
+        let controller = |item| crate::construct::expand(crate::construct::Kind::Controller, TokenStream::new(), item);
+        let out = hidden(&controller(quote!(impl X { #[construct] fn build() -> Self { X } })).unwrap());
+        assert!(out.contains("use :: ulo :: construct as _"), "{out}");
+        let out = hidden(&controller(quote!(struct X { #[controller(default)] a: u8, #[ulo::controller(default)] b: u8, c: Dep })).unwrap());
+        assert!(out.contains("use :: ulo :: { controller as _ , controller as _ }"), "{out}");
+    }
+
+    #[test]
     fn an_item_without_markers_gets_no_import() {
-        let out = crate::routes::expand(TokenStream::new(), quote!(impl X { #[http::get("/a")] fn a(&self) {} })).unwrap();
+        let out = crate::handlers::expand(TokenStream::new(), quote!(impl X { #[http::get("/a")] fn a(&self) {} })).unwrap();
         assert_eq!(hidden(&out), "");
-        let out = crate::injectable::expand(TokenStream::new(), quote!(struct X { a: Dep })).unwrap();
+        let out = crate::construct::expand(crate::construct::Kind::Injectable, TokenStream::new(), quote!(struct X { a: Dep })).unwrap();
         assert_eq!(hidden(&out), "");
     }
 

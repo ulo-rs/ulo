@@ -5,7 +5,7 @@ use std::time::Duration;
 use futures_util::stream::{self, BoxStream};
 use futures_util::{Stream, StreamExt};
 use tokio::sync::{Semaphore, watch};
-use ulo::{App, AppBuilder, Dep, ExecutionRef, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, ExecutionRef, controller, handlers, injectable, module};
 use ulo_http::{Body, Bytes, Event, EventId, LastEventId, Path, Sse};
 
 pub const KEEP_ALIVE: Duration = Duration::from_secs(15);
@@ -57,13 +57,13 @@ impl Pace {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct StreamController {
     feed: Dep<Feed>,
     pace: Dep<Pace>,
 }
 
-#[routes]
+#[handlers]
 impl StreamController {
     /// Resumes after `Last-Event-ID`, and ends with the drain instead of holding it open.
     #[ulo_http::get("/events")]

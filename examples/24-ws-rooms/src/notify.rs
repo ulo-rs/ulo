@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use ulo::{Dep, injectable, routes};
+use ulo::{Dep, controller, handlers};
 use ulo_http::{Json, Path};
 use ulo_ws::{BroadcastError, Rooms};
 
@@ -10,12 +10,12 @@ pub struct Notice {
 
 /// An HTTP route pushing to WebSocket clients: `Rooms` is an ordinary injectable, so any
 /// controller on any transport can broadcast through the same adapter the gateway uses.
-#[injectable]
+#[controller]
 pub struct Notifier {
     rooms: Dep<Rooms>,
 }
 
-#[routes]
+#[handlers]
 impl Notifier {
     /// Delivers `text` to the members of `room` as a `notice` event.
     #[ulo_http::post("/notify/{room}")]

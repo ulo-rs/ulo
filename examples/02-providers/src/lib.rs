@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ulo::{App, AppBuilder, Dep, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, controller, handlers, injectable, module};
 
 /// A value the module binds; `Greeter::new` reads it like any provider.
 pub struct Settings {
@@ -52,12 +52,12 @@ impl Greeter {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct HelloController {
     greeter: Dep<Greeter>,
 }
 
-#[routes]
+#[handlers]
 impl HelloController {
     #[ulo_http::get("/")]
     fn hello(&self) -> String {

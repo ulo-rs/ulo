@@ -19,7 +19,7 @@ use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use ulo::app::Bound as Serving;
-use ulo::{App, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_ws::Payload;
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -53,13 +53,13 @@ struct Held {
     size: usize,
 }
 
-#[injectable]
+#[controller]
 struct Late {
     seen: Dep<Seen>,
     gates: Dep<Gates>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/late", port = own)]
 impl Late {
     /// Waits for its execution's cancellation and answers in the poll that wakes it.

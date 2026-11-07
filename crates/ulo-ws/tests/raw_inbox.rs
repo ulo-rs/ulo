@@ -29,7 +29,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::Role;
 use ulo::{
     App, AppHandle, BoxError, BoxFuture, Controller, Dep, DrainToken, FailureReason, Limit, Module, ModuleDef, ModuleIdentity, Mount,
-    Mounted, Shutdown, ShutdownError, ShutdownFailure, Signal, Timer, TypeName, injectable,
+    Mounted, Shutdown, ShutdownError, ShutdownFailure, Signal, Timer, TypeName, controller,
 };
 use ulo_http::Upgraded;
 use ulo_transport::prepare::Failures;
@@ -51,7 +51,7 @@ struct Gates {
 }
 
 /// Answers each message with `answered` once its gate opens.
-#[injectable]
+#[controller]
 struct Gated {
     gates: Dep<Gates>,
 }
@@ -83,7 +83,7 @@ impl Controller for Gated {
 
 /// Answers each message with `answered` once its flag is set, polled by nothing but a poll it did
 /// not ask for.
-#[injectable]
+#[controller]
 struct Unwoken {
     gates: Dep<Gates>,
 }

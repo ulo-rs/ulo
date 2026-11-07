@@ -1,4 +1,4 @@
-//! The enhancer attributes' grammar, shared by `#[routes]`, which parses them off the impl and its
+//! The enhancer attributes' grammar, shared by `#[handlers]`, which parses them off the impl and its
 //! methods, and by every transport attribute, which reads them back out of `__handler`.
 //!
 //! `#[guards(..)]`, `#[interceptors(..)]` and `#[error_handlers(..)]` each take a comma list of:
@@ -83,7 +83,7 @@ pub struct EnhancerAttr {
     /// The `#[cfg(..)]` attributes the attribute's entries are compiled under: one per predicate of
     /// the `cfg_attr`s it was written inside, on a method. Empty for an attribute written outside
     /// any `cfg_attr`, and always at the controller tier, where rustc has evaluated the impl's
-    /// `cfg_attr`s before `#[routes]` reads them.
+    /// `cfg_attr`s before `#[handlers]` reads them.
     pub gates: Vec<syn::Attribute>,
 }
 

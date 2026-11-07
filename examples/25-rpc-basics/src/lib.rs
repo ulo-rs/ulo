@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use ulo::{App, AppBuilder, Dep, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, controller, handlers, injectable, module};
 use ulo_rpc::{Classify, Payload};
 
 mod roles;
@@ -46,14 +46,14 @@ impl Journal {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct Calculator {
     journal: Dep<Journal>,
 }
 
 /// A `message` answers its caller; an `event` answers nobody. `RoleGuard` guards every handler,
 /// and only those declaring `#[meta(RequiresRole(..))]` ask for anything.
-#[routes]
+#[handlers]
 #[guards(RoleGuard)]
 impl Calculator {
     #[ulo_rpc::message("calc.divide")]

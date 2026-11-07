@@ -11,7 +11,7 @@ use std::fmt;
 use http::HeaderValue;
 use http::uri::PathAndQuery;
 use tonic::{Code, Status};
-use ulo::{BoxError, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{BoxError, Module, ModuleDef, ModuleIdentity, controller, handlers, injectable};
 use ulo_codegen_tests::probe;
 use ulo_grpc::Message;
 use ulo_http::{Middleware, Request, Response};
@@ -60,10 +60,10 @@ impl Middleware for Mark {
     }
 }
 
-#[injectable]
+#[controller]
 struct Known;
 
-#[routes]
+#[handlers]
 impl Known {
     #[ulo_grpc::method(probe::known::Ping)]
     async fn ping(&self) {}

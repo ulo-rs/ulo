@@ -26,7 +26,7 @@ use crate::timer::{BoxError, Bound};
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a type the container can construct",
     label = "the container cannot build this",
-    note = "add #[injectable] to the type, or bind it with a factory"
+    note = "add #[injectable] to the type, #[controller] to a controller, or bind it with a factory"
 )]
 pub trait Construct: Sized + Send + Sync + 'static {
     type Scope: Scope;

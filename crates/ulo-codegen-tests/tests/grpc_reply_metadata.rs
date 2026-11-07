@@ -10,7 +10,7 @@ use std::fmt;
 use http::{HeaderValue, StatusCode};
 use http::uri::PathAndQuery;
 use tonic::{Code, Status};
-use ulo::{BoxError, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{BoxError, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_codegen_tests::probe;
 use ulo_grpc::{Message, Response};
 use ulo_http::middleware::Next;
@@ -31,10 +31,10 @@ impl fmt::Display for Refusal {
 
 impl Error for Refusal {}
 
-#[injectable]
+#[controller]
 struct Known;
 
-#[routes]
+#[handlers]
 impl Known {
     #[ulo_grpc::method(probe::known::Upper)]
     fn upper(&self, text: Message<String>) -> Result<Response<String>, Refusal> {

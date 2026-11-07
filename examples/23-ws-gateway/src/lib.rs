@@ -1,7 +1,7 @@
 use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
-use ulo::{App, AppBuilder, BoxError, Dep, Ext, Guard, injectable, module, routes};
+use ulo::{App, AppBuilder, BoxError, Dep, Ext, Guard, controller, handlers, injectable, module};
 use ulo_ws::{
     ConnectCx, ConnectRefused, Connection, DisconnectReason, OnConnect, OnDisconnect, Payload, UpgradeHead, Session, Ws, WsCx, WsModule,
 };
@@ -55,12 +55,12 @@ impl Guard<Ws> for Stamp {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct Chat {
     journal: Dep<Journal>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(
     path = "/chat",
     port = own,

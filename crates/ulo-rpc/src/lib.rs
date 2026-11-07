@@ -3,7 +3,7 @@
 //! [`RpcClient`], and the [`link`] SPI each transport crate implements once.
 //!
 //! ```no_run
-//! # use ulo::{BoxError, Guard, injectable, routes};
+//! # use ulo::{BoxError, Guard, controller, handlers};
 //! # use ulo_rpc::{CallHeaders, Payload, Rpc, RpcCx};
 //! # use ulo_transport::{CallError, Classify};
 //! # #[derive(serde::Deserialize)] struct NewInvoice;
@@ -14,10 +14,10 @@
 //! # impl std::error::Error for BillingError {}
 //! # struct ServiceTokenGuard;
 //! # impl Guard<Rpc> for ServiceTokenGuard { async fn can_activate(&self, _cx: &RpcCx) -> Result<bool, BoxError> { Ok(true) } }
-//! #[injectable]
+//! #[controller]
 //! struct InvoicesController;
 //!
-//! #[routes]
+//! #[handlers]
 //! #[guards(value = ServiceTokenGuard)]
 //! impl InvoicesController {
 //!     #[ulo_rpc::message("invoices.create")]

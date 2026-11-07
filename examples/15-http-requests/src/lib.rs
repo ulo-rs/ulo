@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use ulo::{App, AppBuilder, Dep, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, controller, handlers, injectable, module};
 use ulo_http::headers::UserAgent;
 use ulo_http::{Classify, Created, Header, Json, Path, Query, Valid, Validate, WithHeaders};
 
@@ -57,12 +57,12 @@ impl Notes {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct NotesController {
     notes: Dep<Notes>,
 }
 
-#[routes]
+#[handlers]
 impl NotesController {
     #[ulo_http::post("/notes")]
     fn create(&self, Valid(Json(new)): Valid<Json<NewNote>>) -> Created<Json<Note>> {

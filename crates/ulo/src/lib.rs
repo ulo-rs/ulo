@@ -58,7 +58,7 @@ pub mod handle {
 #[doc(hidden)]
 pub mod __private;
 
-pub use ulo_macros::{construct, error_handlers, guards, injectable, interceptors, meta, module, routes};
+pub use ulo_macros::{construct, controller, error_handlers, guards, handlers, injectable, interceptors, meta, module};
 
 pub use app::{App, AppBuilder, AppHandle, Connected, Phase, Wired};
 pub use binding::alias::{Alias, Input};

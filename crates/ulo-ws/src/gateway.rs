@@ -1,6 +1,6 @@
 //! Gateways and their connection hooks (transports DESIGN §4.1, §4.2).
 //!
-//! `#[ulo_ws::gateway(..)]` on a `#[routes]` impl writes [`GatewayConfig`]; its `#[message]`
+//! `#[ulo_ws::gateway(..)]` on a `#[handlers]` impl writes [`GatewayConfig`]; its `#[message]`
 //! handlers are `Ws` handlers routed by the envelope's event. A gateway whose protocol does not fit
 //! the envelope, graphql-transport-ws for one, implements [`Gateway`] by hand: it receives each
 //! data message raw and answers through its [`Connection`].
@@ -37,7 +37,7 @@ use crate::transport::{ConnectCx, ConnectReply, Ws, WsConnect};
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a WebSocket gateway",
     label = "a `#[ulo_ws::message]` handler needs its impl to be a gateway",
-    note = "add `#[ulo_ws::gateway(path = \"/..\")]` to the `#[routes]` impl, or implement `ulo_ws::Gateway` by hand"
+    note = "add `#[ulo_ws::gateway(path = \"/..\")]` to the `#[handlers]` impl, or implement `ulo_ws::Gateway` by hand"
 )]
 pub trait GatewayConfig: Construct {
     /// The gateway attribute's arguments.

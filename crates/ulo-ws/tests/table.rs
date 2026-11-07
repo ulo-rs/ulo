@@ -25,7 +25,7 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::Role;
 use ulo::app::Bound as Serving;
-use ulo::{App, AppHandle, BoxError, DrainToken, Guard, Module, ModuleDef, ModuleIdentity, Mounted, Signal, injectable, routes};
+use ulo::{App, AppHandle, BoxError, DrainToken, Guard, Module, ModuleDef, ModuleIdentity, Mounted, Signal, controller, handlers};
 use ulo_http::Upgraded;
 use ulo_transport::prepare::Failures;
 use ulo_ws::{
@@ -39,10 +39,10 @@ const WAIT: Duration = Duration::from_secs(5);
 const KEY: &str = "dGhlIHNhbXBsZSBub25jZQ==";
 const ACCEPT: &str = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 
-#[injectable]
+#[controller]
 struct Plain;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/plain", port = own)]
 impl Plain {
     #[ulo_ws::message("echo")]
@@ -55,12 +55,12 @@ impl Plain {
 #[derive(Clone, Default)]
 struct Joined(Arc<Mutex<Vec<Connection>>>);
 
-#[injectable]
+#[controller]
 struct Held {
     joined: ulo::Dep<Joined>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/held", port = own, refuse = handshake)]
 impl Held {
     #[ulo_ws::message("noop")]
@@ -108,12 +108,12 @@ impl Hooks {
 }
 
 /// Runs its connection phase in the handshake, one connection at a time.
-#[injectable]
+#[controller]
 struct Paired {
     hooks: ulo::Dep<Hooks>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/paired", port = own, refuse = handshake, max_connections = 1)]
 impl Paired {
     #[ulo_ws::message("echo")]
@@ -136,12 +136,12 @@ impl OnDisconnect for Paired {
 }
 
 /// Runs its connection phase once the connection is upgraded.
-#[injectable]
+#[controller]
 struct Loose {
     hooks: ulo::Dep<Hooks>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/loose", port = own)]
 impl Loose {
     #[ulo_ws::message("noop")]
@@ -175,12 +175,12 @@ impl Guard<WsConnect> for NoRefuseHeader {
 
 /// Runs its connection phase once the connection is upgraded, one connection at a time, behind a
 /// connect guard.
-#[injectable]
+#[controller]
 struct Capped {
     hooks: ulo::Dep<Hooks>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/capped", port = own, max_connections = 1, connect_guards(value = NoRefuseHeader))]
 impl Capped {
     #[ulo_ws::message("echo")]
@@ -203,10 +203,10 @@ impl OnDisconnect for Capped {
 }
 
 /// One message in flight per connection.
-#[injectable]
+#[controller]
 struct Serial;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/serial", port = own, max_inflight = 1)]
 impl Serial {
     #[ulo_ws::message("first")]

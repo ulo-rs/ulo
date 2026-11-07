@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use http::{HeaderMap, HeaderValue, StatusCode};
 use o1_support::{Call, Reply, Running, refusal_entries, refused, start};
-use ulo::{AnyErrorHandler, BoxError, BoxFuture, ErrorHandler, ModuleDef, injectable, routes};
+use ulo::{AnyErrorHandler, BoxError, BoxFuture, ErrorHandler, ModuleDef, controller, handlers, injectable};
 use ulo_http::middleware::{Middleware, Next};
 use ulo_http::{Cors, Http, HttpBody, HttpCx, PreDispatch, Request, Response, Routing, UpgradeHandler, Upgrades};
 
@@ -91,10 +91,10 @@ impl ErrorHandler<Http> for Claim {
     }
 }
 
-#[injectable]
+#[controller]
 struct Pages;
 
-#[routes]
+#[handlers]
 impl Pages {
     #[ulo_http::get("/trail")]
     fn trail(&self, headers: HeaderMap) -> String {
@@ -746,10 +746,10 @@ async fn a_route_checked_per_request_keeps_its_check_beside_a_route_the_same_ent
     app.stop().await;
 }
 
-#[injectable]
+#[controller]
 struct Tree;
 
-#[routes]
+#[handlers]
 impl Tree {
     #[ulo_http::get("/tree/{*rest}")]
     fn rest(&self) -> &'static str {
@@ -807,10 +807,10 @@ async fn a_scope_its_exclusion_matches_whole_is_refused_though_it_shares_paths_w
     assert!(is_unreached(&entries[0], &SWALLOWED, "/admin/users/me"), "{entries:?}");
 }
 
-#[injectable]
+#[controller]
 struct Encoded;
 
-#[routes]
+#[handlers]
 impl Encoded {
     #[ulo_http::get("/caf%C3%A9/x")]
     fn written_encoded(&self) -> &'static str {

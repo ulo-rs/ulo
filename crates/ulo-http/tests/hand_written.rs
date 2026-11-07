@@ -12,14 +12,14 @@ use o1_support::{Call, refusal_names, refusals, refused, start};
 use ulo::scope::Auto;
 use ulo::{
     BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Metadata, ModuleDef, Mount, Resolver, Shape,
-    TypeName, injectable, routes,
+    TypeName, controller, handlers,
 };
 use ulo_http::{FromCall, Http, HttpCx, HttpHandler, IntoReply, Method, Path, Response, Timeout};
 
-#[injectable]
+#[controller]
 struct Macro;
 
-#[routes]
+#[handlers]
 impl Macro {
     #[ulo_http::get("/m/users/{id}")]
     #[meta(Timeout::after(Duration::from_secs(5)))]

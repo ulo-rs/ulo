@@ -1,15 +1,15 @@
-use ulo::{Dep, injectable, routes};
+use ulo::{Dep, controller, handlers};
 use ulo_rpc::Payload;
 
 use crate::store::{Gate, Store};
 
-#[injectable]
+#[controller]
 pub struct RpcApi {
     store: Dep<Store>,
     gate: Dep<Gate>,
 }
 
-#[routes]
+#[handlers]
 impl RpcApi {
     #[ulo_rpc::message("notes.add")]
     fn add(&self, text: Payload<String>) -> u32 {

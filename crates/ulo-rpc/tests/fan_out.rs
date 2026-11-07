@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event as TraceEvent, Level, Metadata};
-use ulo::{App, AppHandle, BoundAddr, BoxError, Module, ModuleDef, ModuleIdentity, Runtime, Signal, injectable, routes};
+use ulo::{App, AppHandle, BoundAddr, BoxError, Module, ModuleDef, ModuleIdentity, Runtime, Signal, controller, handlers};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Capabilities, Link, Outbound, Pattern, Payload};
 use ulo_rpc_tcp::Tcp;
@@ -35,10 +35,10 @@ impl Classify for Never {
     }
 }
 
-#[injectable]
+#[controller]
 struct Mixed;
 
-#[routes]
+#[handlers]
 impl Mixed {
     #[ulo_rpc::message("fan.one")]
     async fn one(&self, n: Payload<u32>) -> Result<u32, Never> {
@@ -56,10 +56,10 @@ impl Mixed {
     }
 }
 
-#[injectable]
+#[controller]
 struct EventsOnly;
 
-#[routes]
+#[handlers]
 impl EventsOnly {
     #[ulo_rpc::event("fan.only")]
     async fn only(&self, _n: Payload<u32>) -> Result<(), Never> {

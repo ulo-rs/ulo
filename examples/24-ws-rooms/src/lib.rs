@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use ulo::{App, AppBuilder, Dep, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{App, AppBuilder, Dep, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_ws::{BroadcastError, Payload, Rooms, WsCx, WsModule};
 use ulo_ws_redis::Redis;
 
@@ -12,10 +12,10 @@ pub struct Shout {
     pub text: String,
 }
 
-#[injectable]
+#[controller]
 pub struct Lobby;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/rooms")]
 impl Lobby {
     #[ulo_ws::message("join")]

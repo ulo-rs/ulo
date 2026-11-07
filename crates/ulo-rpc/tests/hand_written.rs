@@ -12,7 +12,7 @@ use ulo::app::Bound as Listening;
 use ulo::scope::Auto;
 use ulo::{
     App, AppHandle, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Module, ModuleDef,
-    ModuleIdentity, Mount, Resolver, Shape, Signal, StartupError, TypeName, injectable, routes,
+    ModuleIdentity, Mount, Resolver, Shape, Signal, StartupError, TypeName, controller, handlers,
 };
 use ulo_rpc::{Bytes, CallError, Classify, ErrorKind, FromCall, Payload, PayloadKind, Reply, Rpc, RpcClient, RpcCx, RpcHandler};
 use ulo_rpc_tcp::Tcp;
@@ -32,10 +32,10 @@ impl std::fmt::Display for Taken {
 
 impl std::error::Error for Taken {}
 
-#[injectable]
+#[controller]
 struct Macro;
 
-#[routes]
+#[handlers]
 impl Macro {
     #[ulo_rpc::message("m.add")]
     fn add(&self, Payload((a, b)): Payload<(i64, i64)>) -> i64 {
@@ -284,10 +284,10 @@ async fn a_pattern_holding_a_control_character_is_refused_as_the_attribute_refus
     assert!(text.contains("Controlled::nul` has the pattern `orders\u{0}created`, and a pattern holds no whitespace or control character"), "{text}");
 }
 
-#[injectable]
+#[controller]
 struct BinaryMacro;
 
-#[routes]
+#[handlers]
 impl BinaryMacro {
     #[ulo_rpc::message("blobs.macro")]
     fn put(&self, Payload(_blob): Payload<Bytes>) {}

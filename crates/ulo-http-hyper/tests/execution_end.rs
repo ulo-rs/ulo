@@ -16,7 +16,7 @@ use futures_util::stream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
-use ulo::{App, AppHandle, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Shutdown, ShutdownError, Signal, injectable, routes};
+use ulo::{App, AppHandle, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Shutdown, ShutdownError, Signal, controller, handlers, injectable};
 use ulo_conformance_support::ScriptedTimer;
 use ulo_http::{Bytes, HttpBody, Response};
 
@@ -47,12 +47,12 @@ impl Drop for Audit {
     }
 }
 
-#[injectable]
+#[controller]
 struct Audited {
     audit: Dep<Audit>,
 }
 
-#[routes]
+#[handlers]
 impl Audited {
     #[ulo_http::get("/audit")]
     fn audit(&self) -> &'static str {

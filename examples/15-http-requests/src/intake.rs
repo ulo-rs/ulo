@@ -5,7 +5,7 @@ use std::fmt;
 
 use futures_util::StreamExt;
 use serde::Deserialize;
-use ulo::{BoxError, injectable, routes};
+use ulo::{BoxError, controller, handlers};
 use ulo_http::{BodyStream, ExtractError, Form, FromCall, Http, HttpCx};
 
 /// The caller named by `authorization: Bearer <name>`. `FromCall<Http>` is the whole contract: a
@@ -41,10 +41,10 @@ pub struct Login {
     pub pw: String,
 }
 
-#[injectable]
+#[controller]
 pub struct IntakeController;
 
-#[routes]
+#[handlers]
 impl IntakeController {
     #[ulo_http::post("/login")]
     fn login(&self, Form(login): Form<Login>) -> String {

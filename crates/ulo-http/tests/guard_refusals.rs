@@ -6,7 +6,7 @@ mod o1_support;
 
 use http::StatusCode;
 use o1_support::{Call, start};
-use ulo::{BoxError, Guard, ModuleDef, injectable, routes};
+use ulo::{BoxError, Guard, ModuleDef, controller, handlers};
 use ulo_http::{Http, HttpCx};
 use ulo_transport::CallError;
 
@@ -26,10 +26,10 @@ impl Guard<Http> for Challenges {
     }
 }
 
-#[injectable]
+#[controller]
 struct Vault;
 
-#[routes]
+#[handlers]
 impl Vault {
     #[ulo_http::get("/forbidden")]
     #[guards(value = Forbids)]

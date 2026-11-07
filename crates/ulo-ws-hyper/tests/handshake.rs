@@ -9,7 +9,7 @@ mod support;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::json;
-use ulo::{BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_transport::ErrorKind;
 use ulo_ws::{ConnectCx, ConnectRefused, OnConnect, Session, UpgradeHead, WsConnect};
 
@@ -20,10 +20,10 @@ use support::{Running, close_frame, hang_up, next_json, send_json, upgrade};
 const SUBPROTOCOL_NOT_ACCEPTABLE: u16 = 4406;
 
 /// Speaks two versions of a protocol and refuses a connection that agreed on neither.
-#[injectable]
+#[controller]
 struct Versioned;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/versioned", port = own, subprotocols = ["v2.chat", "v1.chat"])]
 impl Versioned {
     #[ulo_ws::message("which")]
@@ -43,10 +43,10 @@ impl OnConnect for Versioned {
 }
 
 /// Lists no subprotocol.
-#[injectable]
+#[controller]
 struct Unversioned;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/unversioned", port = own)]
 impl Unversioned {
     #[ulo_ws::message("which")]
@@ -91,10 +91,10 @@ impl Guard<WsConnect> for FromAgent {
 }
 
 /// Refuses before the upgrade: no token is 403, a token without a user is 401.
-#[injectable]
+#[controller]
 struct Strict;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(
     path = "/strict",
     port = own,
@@ -120,10 +120,10 @@ impl OnConnect for Strict {
 
 /// Three connect guards, one per spelling: by value, by closure over the container, and by closure
 /// built per execution from the upgrade request.
-#[injectable]
+#[controller]
 struct Gated;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(
     path = "/gated",
     port = own,
@@ -155,10 +155,10 @@ impl Guard<WsConnect> for Seeds {
     }
 }
 
-#[injectable]
+#[controller]
 struct Counted;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/counted", port = own, session = Tally, connect_guards(with = |tally: Session<Tally>| Seeds(tally)))]
 impl Counted {
     #[ulo_ws::message("bump")]

@@ -3,16 +3,16 @@ use syn::{Expr, Ident, Token};
 
 use crate::shared::scope::ScopeArg;
 
-/// `#[injectable(<scope>?, timeout = <expr>?)]`, in either order.
+/// `#[injectable(<scope>?, timeout = <expr>?)]` and `#[controller(..)]` alike, in either order.
 #[derive(Default)]
-pub(crate) struct InjectableArgs {
+pub(crate) struct ConstructArgs {
     pub(crate) scope: Option<ScopeArg>,
     pub(crate) timeout: Option<Expr>,
 }
 
-impl Parse for InjectableArgs {
+impl Parse for ConstructArgs {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let mut args = InjectableArgs::default();
+        let mut args = ConstructArgs::default();
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
             if let Some(scope) = ScopeArg::from_ident(&ident) {

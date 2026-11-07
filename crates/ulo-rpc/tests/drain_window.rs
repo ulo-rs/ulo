@@ -21,7 +21,7 @@ use tokio::task::JoinHandle;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event as TraceEvent, Level, Metadata};
-use ulo::{App, AppHandle, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Signal, injectable, routes};
+use ulo::{App, AppHandle, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Signal, controller, handlers};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, Payload, ReplyPath};
 use ulo_transport::{Classify, ErrorKind};
@@ -49,10 +49,10 @@ impl Classify for Never {
     }
 }
 
-#[injectable]
+#[controller]
 struct Adder;
 
-#[routes]
+#[handlers]
 impl Adder {
     #[ulo_rpc::message("drain.add")]
     async fn add(&self, n: Payload<u32>) -> Result<u32, Never> {

@@ -1,9 +1,9 @@
-//! The WebSocket attributes, re-exported by `ulo-ws`: `#[gateway(..)]` on a `#[routes]` impl and
+//! The WebSocket attributes, re-exported by `ulo-ws`: `#[gateway(..)]` on a `#[handlers]` impl and
 //! `#[message("event")]` on its handler methods, each a thin layer over `ulo-handler-codegen`.
 //!
 //! ```ignore
 //! # // reason: a proc-macro crate cannot depend on the crates the expansion names
-//! #[routes]
+//! #[handlers]
 //! #[ulo_ws::gateway(path = "/chat", namespace = "lobby", event = "event", session = ChatSession,
 //!                   connect_guards(TokenGuard), subprotocols = ["chat.v1"])]
 //! impl ChatGateway {
@@ -17,7 +17,7 @@ mod message;
 
 use proc_macro::TokenStream;
 
-/// The gateway's configuration on a `#[routes]` impl, which `#[routes]` passes through and this
+/// The gateway's configuration on a `#[handlers]` impl, which `#[handlers]` passes through and this
 /// attribute turns into `impl ulo_ws::GatewayConfig`: `path`, `namespace`, `event`, `codec`,
 /// `subprotocols`, `session` or `session_with`, `connect_guards(..)`, `refuse`, `overflow` and the
 /// limits. A gateway with no `#[message]` handler is refused at compile time.

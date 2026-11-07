@@ -1,17 +1,17 @@
-use ulo::{Dep, injectable, routes};
+use ulo::{Dep, controller, handlers};
 use ulo_http::{Json, Path};
 
 use crate::config::AppConfig;
 use crate::store::{Gate, Store};
 
-#[injectable]
+#[controller]
 pub struct HttpApi {
     config: Dep<AppConfig>,
     store: Dep<Store>,
     gate: Dep<Gate>,
 }
 
-#[routes]
+#[handlers]
 impl HttpApi {
     #[ulo_http::get("/greeting")]
     fn greeting(&self) -> String {

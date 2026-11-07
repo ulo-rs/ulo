@@ -15,7 +15,7 @@ use futures_core::Stream;
 use futures_util::{StreamExt, stream};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
-use ulo::{App, AppHandle, BoxError, BoxFuture, CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, injectable, routes};
+use ulo::{App, AppHandle, BoxError, BoxFuture, CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, controller, handlers};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, ReplyPath};
 use ulo_transport::{CallError, Classify, ErrorKind};
@@ -79,12 +79,12 @@ impl Drop for OnDrop {
     }
 }
 
-#[injectable]
+#[controller]
 struct Handlers {
     probe: Dep<Shared>,
 }
 
-#[routes]
+#[handlers]
 impl Handlers {
     /// Waits for its execution's cancellation, then answers with the reason it read.
     #[ulo_rpc::message("cancelled.observe")]

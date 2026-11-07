@@ -1,12 +1,12 @@
 use std::time::Duration;
 
-use ulo::{injectable, routes};
+use ulo::{controller, handlers};
 use ulo_http::Timeout;
 
-#[injectable]
+#[controller]
 struct Chat;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/chat")]
 impl Chat {
     #[ulo_ws::message("chat.send")]

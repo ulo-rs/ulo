@@ -5,7 +5,7 @@ error[E0277]: a `ulo::scope::Singleton` type cannot read `ExecutionRef`
    |                       ^^^^^^^^^^^^ this injection point needs an execution
    |
    = help: the trait `AllowedIn<ulo::scope::Singleton>` is not implemented for `ExecutionRef`
-   = note: declare the type #[injectable(execution)] or #[injectable(transient)]
+   = note: declare the type #[injectable(execution)] or #[injectable(transient)]; a controller drops `singleton` from #[controller] and is then built per call
 help: `ExecutionRef` implements trait `AllowedIn<S>`
   --> $WORKSPACE/crates/ulo/src/dependency/handles.rs
    |

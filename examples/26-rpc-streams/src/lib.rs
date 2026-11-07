@@ -2,7 +2,7 @@ use std::fmt;
 use std::time::Duration;
 
 use futures_util::{Stream, StreamExt, stream};
-use ulo::{App, AppBuilder, Dep, Timer, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, Timer, controller, handlers, module};
 use ulo_rpc::{Classify, Inbound, Payload};
 
 /// A streamed request item that did not decode.
@@ -20,10 +20,10 @@ impl std::error::Error for BadItem {}
 
 /// The call shape comes from the signature: an `Inbound` parameter is a streamed request, a stream
 /// return a streamed reply, both together a duplex call.
-#[injectable]
+#[controller]
 pub struct Streams;
 
-#[routes]
+#[handlers]
 impl Streams {
     #[ulo_rpc::message("stream.up")]
     async fn up(&self, n: Payload<u32>) -> impl Stream<Item = Result<u32, BadItem>> {

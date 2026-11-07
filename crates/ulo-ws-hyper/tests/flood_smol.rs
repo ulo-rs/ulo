@@ -13,7 +13,7 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use ulo::{App, Module, ModuleDef, ModuleIdentity, Runtime, Signal, injectable, routes};
+use ulo::{App, Module, ModuleDef, ModuleIdentity, Runtime, Signal, controller, handlers};
 use ulo_conformance_support::starvation::{Probe, Starvation};
 use ulo_http_conformance::{Harness, OnSmol};
 use ulo_listener_smol::SmolListener;
@@ -30,10 +30,10 @@ const LOOP: &str = "ulo-ws read loop on ulo-listener-smol (serve, yield_now ever
 /// on Linux, so the loop has been taking it.
 const FLOODED: u64 = 8 * 1024 * 1024;
 
-#[injectable]
+#[controller]
 struct Echo;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/flood", port = own)]
 impl Echo {
     #[ulo_ws::message("echo")]

@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{Notify, oneshot, watch};
-use ulo::{App, BoxFuture, Dep, Module, ModuleDef, ModuleIdentity, Signal, Timer, injectable, routes};
+use ulo::{App, BoxFuture, Dep, Module, ModuleDef, ModuleIdentity, Signal, Timer, controller, handlers};
 use ulo_codegen_tests::pb::counter_client::CounterClient;
 use ulo_codegen_tests::pb::{self, Number};
 use ulo_grpc::Message as Grpc;
@@ -29,12 +29,12 @@ const GRACE: Duration = Duration::from_millis(500);
 struct Entered(Arc<Notify>);
 
 /// `Counter.Count` as a flood: `up_to` numbers, every one ready, each a ten-byte varint.
-#[injectable]
+#[controller]
 struct Flood {
     entered: Dep<Entered>,
 }
 
-#[routes]
+#[handlers]
 impl Flood {
     #[ulo_grpc::method(pb::counter::Count)]
     async fn count(&self, req: Grpc<pb::CountRequest>) -> impl futures_util::Stream<Item = Result<Number, CallError>> {

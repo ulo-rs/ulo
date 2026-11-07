@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use ulo::{App, AppBuilder, Dep, DynamicModule, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, DynamicModule, controller, handlers, injectable, module};
 
 /// Records what the container builds, so a test can see when a lazy module's providers are built.
 #[derive(Default)]
@@ -52,12 +52,12 @@ impl Reports {
 #[module(providers = [Reports], exports = [Reports])]
 pub struct ReportsModule;
 
-#[injectable]
+#[controller]
 pub struct FeatureController {
     feature: Dep<Feature>,
 }
 
-#[routes]
+#[handlers]
 impl FeatureController {
     #[ulo_http::get("/feature")]
     fn feature(&self) -> String {

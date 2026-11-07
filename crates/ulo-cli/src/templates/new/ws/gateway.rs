@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use ulo::{Dep, injectable, routes};
+use ulo::{Dep, controller, handlers};
 use ulo_ws::Payload;
 
 use crate::greeter::Greeter;
@@ -14,12 +14,12 @@ pub struct Greeting {
     pub message: String,
 }
 
-#[injectable]
+#[controller]
 pub struct GreetingGateway {
     greeter: Dep<Greeter>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/ws")]
 impl GreetingGateway {
     #[ulo_ws::message("greet")]

@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use futures_util::{StreamExt, stream};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use ulo::{App, AppHandle, BoxError, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Timer, injectable, routes};
+use ulo::{App, AppHandle, BoxError, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Timer, controller, handlers};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, Link, Outbound, Pattern, Payload, ReplyPath,
@@ -70,12 +70,12 @@ impl Runs {
     }
 }
 
-#[injectable]
+#[controller]
 struct Handlers {
     runs: Dep<Runs>,
 }
 
-#[routes]
+#[handlers]
 impl Handlers {
     #[ulo_rpc::message("bad_deadline.unary")]
     async fn unary(&self, exec: ExecutionRef) -> Result<u32, Never> {

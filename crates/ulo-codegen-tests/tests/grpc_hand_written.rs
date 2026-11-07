@@ -19,7 +19,7 @@ use ulo::scope::Auto;
 use ulo::{
     App, BoxError, Construct, ConstructError, Controller, Dependencies, EnhancerSpec, ErrorHandler, Guard, HandlerInfo,
     HandlerSpec, Interceptor, MetaTier, Metadata, Module, ModuleDef, ModuleIdentity, Mount, Next, Resolver, Shape,
-    StartupError, TypeName, injectable, routes,
+    StartupError, TypeName, controller, handlers,
 };
 use ulo_codegen_tests::pb::counter_client::CounterClient;
 use ulo_codegen_tests::pb::{self, AddRequest, CountRequest, Number, Sum};
@@ -76,10 +76,10 @@ impl ErrorHandler<Grpc> for Mend {
     }
 }
 
-#[injectable]
+#[controller]
 struct MacroCounter;
 
-#[routes]
+#[handlers]
 #[guards(value = NoDeny)]
 #[meta(Tag("controller"))]
 impl MacroCounter {

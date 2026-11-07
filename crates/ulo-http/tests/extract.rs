@@ -12,7 +12,7 @@ use futures_util::StreamExt;
 use http::{Method, StatusCode};
 use o1_support::{Call, Running, start};
 use serde::Deserialize;
-use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, injectable, routes};
+use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, controller, handlers};
 use ulo_http::{BodyLimit, BodyStream, Bytes, Form, Header, Host, Http, HttpBody, HttpCx, Json, Multipart, Path, Query, Response};
 use ulo_transport::{CallError, ErrorKind, ExtractError, Valid, Validate};
 
@@ -53,10 +53,10 @@ struct Item {
 #[derive(Clone)]
 struct Who(&'static str);
 
-#[injectable]
+#[controller]
 struct Inputs;
 
-#[routes]
+#[handlers]
 impl Inputs {
     #[ulo_http::get("/scalar/{id}")]
     fn scalar(&self, Path(id): Path<u32>) -> String {

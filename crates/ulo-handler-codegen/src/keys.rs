@@ -1,11 +1,11 @@
 //! Transport keys (transports DESIGN §2.1, X1): the constant each transport attribute emits per
-//! handler, and the assertions `#[routes]` emits over every controller-level scoped key.
+//! handler, and the assertions `#[handlers]` emits over every controller-level scoped key.
 //!
 //! A free `const _` after the impl is evaluated unconditionally; inside the impl a constant needs
 //! a name, and a named associated constant is evaluated only where it is read, so a misspelled
 //! key would compile unnoticed. Const evaluation runs after every attribute has expanded, so the
 //! `__ULO_KEY_*` constants exist by then. A generic controller is the case a free constant cannot
-//! name: there `#[routes]` emits a named associated constant and `Controller::mount` reads it,
+//! name: there `#[handlers]` emits a named associated constant and `Controller::mount` reads it,
 //! which evaluates it when `mount` is instantiated.
 //!
 //! A handler behind `#[cfg]`, or whose transport attribute sits inside `cfg_attr`, has no
@@ -70,7 +70,7 @@ pub struct GatedHandler<'a> {
     pub gates: &'a [Attribute],
 }
 
-/// What `#[routes]` emits for the X1 key assertions and for the per-handler checks constants.
+/// What `#[handlers]` emits for the X1 key assertions and for the per-handler checks constants.
 pub struct Assertions {
     /// Free items after the impl: per scoped key, spanned on the key,
     ///
@@ -87,7 +87,7 @@ pub struct Assertions {
     /// `const _: () = <Ctrl>::__ULO_CHECKS_<name>;` per handler, under its gates. Empty for a
     /// generic controller.
     pub free: TokenStream,
-    /// Associated items `#[routes]` adds to the impl: for a generic controller, the named
+    /// Associated items `#[handlers]` adds to the impl: for a generic controller, the named
     /// `const __ULO_KEYS_CHECK_<key>: () = { .. };` per scoped key, the same block over `Self`.
     /// Empty otherwise.
     pub associated: TokenStream,

@@ -1,13 +1,13 @@
 use std::time::Duration;
 
-use ulo::{injectable, routes};
+use ulo::{controller, handlers};
 use ulo_http::Timeout;
 use ulo_rpc::Payload;
 
-#[injectable]
+#[controller]
 struct Orders;
 
-#[routes]
+#[handlers]
 impl Orders {
     #[ulo_rpc::message("orders.get")]
     #[meta(Timeout::after(Duration::from_secs(5)))]

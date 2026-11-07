@@ -8,13 +8,13 @@ mod o1_support;
 
 use http::{Method, StatusCode};
 use o1_support::{Call, Running, refusal_entries, refusal_names, refusals, refused, start};
-use ulo::{ModuleDef, TypeName, injectable, routes};
+use ulo::{ModuleDef, TypeName, controller, handlers};
 use ulo_http::{HttpCx, Path, Routing};
 
-#[injectable]
+#[controller]
 struct Pages;
 
-#[routes]
+#[handlers]
 impl Pages {
     #[ulo_http::get("/a")]
     fn a(&self) -> &'static str {
@@ -64,10 +64,10 @@ impl Pages {
     }
 }
 
-#[injectable]
+#[controller]
 struct Versioned;
 
-#[routes]
+#[handlers]
 impl Versioned {
     #[ulo_http::get("/items/{id}")]
     fn item(&self, cx: HttpCx) -> String {
@@ -290,10 +290,10 @@ async fn a_controller_prefix_joins_the_route_whatever_slashes_either_side_carrie
     app.stop().await;
 }
 
-#[injectable]
+#[controller]
 struct SlashFirst;
 
-#[routes]
+#[handlers]
 impl SlashFirst {
     #[ulo_http::get("/dup")]
     fn dup(&self) -> &'static str {
@@ -301,10 +301,10 @@ impl SlashFirst {
     }
 }
 
-#[injectable]
+#[controller]
 struct SlashLast;
 
-#[routes]
+#[handlers]
 impl SlashLast {
     #[ulo_http::get("/dup/")]
     fn dup(&self) -> &'static str {
@@ -328,10 +328,10 @@ async fn two_routes_equal_up_to_a_trailing_slash_are_refused_naming_both_control
     assert!(names.contains(&TypeName::of::<SlashLast>()), "{names:?}");
 }
 
-#[injectable]
+#[controller]
 struct ParamA;
 
-#[routes]
+#[handlers]
 impl ParamA {
     #[ulo_http::get("/k/{a}")]
     fn by_a(&self) -> &'static str {
@@ -339,10 +339,10 @@ impl ParamA {
     }
 }
 
-#[injectable]
+#[controller]
 struct ParamB;
 
-#[routes]
+#[handlers]
 impl ParamB {
     #[ulo_http::get("/k/{b}")]
     fn by_b(&self) -> &'static str {
@@ -366,10 +366,10 @@ async fn two_routes_differing_only_in_a_parameter_name_are_refused_naming_both_c
     assert!(names.contains(&TypeName::of::<ParamB>()), "{names:?}");
 }
 
-#[injectable]
+#[controller]
 struct Mismatched;
 
-#[routes]
+#[handlers]
 impl Mismatched {
     #[ulo_http::get("/one/{id}")]
     fn pair(&self, Path((_first, _second)): Path<(u64, u64)>) -> &'static str {
@@ -391,10 +391,10 @@ async fn a_path_extractor_that_does_not_fit_its_route_is_refused_naming_the_cont
     assert!(names.contains(&TypeName::of::<(u64, u64)>()), "{names:?}");
 }
 
-#[injectable]
+#[controller]
 struct Unreachable;
 
-#[routes]
+#[handlers]
 impl Unreachable {
     #[ulo_http::get("/files/a%5Cb")]
     fn encoded(&self) -> &'static str {

@@ -6,7 +6,10 @@
 //! #[module(imports = [ulo_ws::WsModule::for_root()], controllers = [ChatGateway])]
 //! pub struct ChatModule;
 //!
-//! #[routes]
+//! #[controller]
+//! pub struct ChatGateway;
+//!
+//! #[handlers]
 //! #[ulo_ws::gateway(path = "/chat", namespace = "lobby", session = ChatSession, connect_guards(TokenGuard))]
 //! impl ChatGateway {
 //!     #[ulo_ws::message("chat.send")]

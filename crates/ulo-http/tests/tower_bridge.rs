@@ -11,7 +11,7 @@ use std::task::{Context, Poll};
 use http::{HeaderValue, StatusCode};
 use o1_support::{Call, start};
 use tower::Service as _;
-use ulo::{AnyErrorHandler, BoxError, BoxFuture, ErrorHandler, ModuleDef, injectable, routes};
+use ulo::{AnyErrorHandler, BoxError, BoxFuture, ErrorHandler, ModuleDef, controller, handlers};
 use ulo_http::{Http, HttpBody, HttpCx, PreDispatch, Response};
 use ulo_transport::{CallError, ErrorKind};
 
@@ -134,10 +134,10 @@ impl ErrorHandler<Http> for Claim {
     }
 }
 
-#[injectable]
+#[controller]
 struct Pages;
 
-#[routes]
+#[handlers]
 impl Pages {
     #[ulo_http::get("/hit")]
     fn hit(&self) -> &'static str {

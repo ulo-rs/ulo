@@ -19,7 +19,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use ulo::app::Bound as Serving;
-use ulo::{App, BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Timer, injectable, routes};
+use ulo::{App, BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Timer, controller, handlers, injectable};
 use ulo_transport::Classify;
 use ulo_ws::{ConnectCx, ConnectRefused, Frame, OnConnect, Payload, Reply, Session, UpgradeHead, WsConnect};
 
@@ -83,10 +83,10 @@ fn greeting(greet: &Greet) -> Result<Greeting, Taken> {
     if greet.name == "taken" { Err(Taken) } else { Ok(Greeting { text: format!("hello, {}", greet.name) }) }
 }
 
-#[injectable]
+#[controller]
 struct Chat;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(
     path = "/chat",
     port = own,
@@ -188,13 +188,13 @@ impl Word for Hi {
 
 /// A generic gateway: its `GatewayConfig` impl, its hook probes and its reply probe sit in a
 /// generic impl.
-#[injectable]
+#[controller]
 struct Echo<W: Word> {
-    #[injectable(default)]
+    #[controller(default)]
     _word: PhantomData<W>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/echo", port = own)]
 impl<W: Word> Echo<W> {
     #[ulo_ws::message("echo")]

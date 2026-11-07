@@ -21,7 +21,7 @@ use tokio::net::TcpStream;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event as TraceEvent, Level, Metadata};
-use ulo::{App, AppHandle, BoxError, Bound, ErrorHandler, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, AppHandle, BoxError, Bound, ErrorHandler, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_http::{Bytes, Event, Http, HttpBody, HttpCx, Response, Sse, StatusCode, Timeout};
 use ulo_transport::{CallError, ErrorKind, IntoReply};
 
@@ -144,10 +144,10 @@ impl ErrorHandler<Http> for FullOnTimeout {
     }
 }
 
-#[injectable]
+#[controller]
 struct Slow;
 
-#[routes]
+#[handlers]
 #[meta(Timeout::after(DEADLINE))]
 impl Slow {
     #[ulo_http::get("/streamed")]

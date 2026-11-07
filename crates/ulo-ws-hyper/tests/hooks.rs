@@ -9,7 +9,7 @@ use serde_json::json;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::frame::Frame as WireFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::{Data, OpCode};
-use ulo::{BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_ws::{
     AfterInit, ConnectCx, ConnectRefused, Connection, DisconnectReason, GatewayRef, OnConnect, OnDisconnect, Payload, UpgradeHead,
     WsConnect, WsCx,
@@ -44,13 +44,13 @@ impl Guard<WsConnect> for NotMallory {
     }
 }
 
-#[injectable]
+#[controller]
 struct Hooked {
     departures: Dep<Departures>,
     inits: Dep<Inits>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(
     path = "/hooked",
     namespace = "hooks",

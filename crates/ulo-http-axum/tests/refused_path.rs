@@ -7,7 +7,7 @@ use axum::Router;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
-use ulo::{App, BoxError, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, BoxError, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_http::middleware::Next;
 use ulo_http::{Cors, Middleware, PreDispatch, Request, Response};
 use ulo_http_axum::Embedded;
@@ -25,10 +25,10 @@ impl Middleware for Record {
     }
 }
 
-#[injectable]
+#[controller]
 struct Api;
 
-#[routes]
+#[handlers]
 impl Api {
     #[ulo_http::get("/api/{name}")]
     fn named(&self) -> &'static str {

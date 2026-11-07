@@ -5,17 +5,17 @@
 
 use std::time::Duration;
 
-use ulo::{App, AppHandle, Dep, Key, Module, ModuleDef, ModuleIdentity, Signal, StartupError, WiringError, injectable, routes};
+use ulo::{App, AppHandle, Dep, Key, Module, ModuleDef, ModuleIdentity, Signal, StartupError, WiringError, controller, handlers, injectable};
 use ulo_rpc::{Payload, RpcClient, RpcClientModule, RpcError};
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
 
 const PATIENCE: Duration = Duration::from_secs(10);
 
-#[injectable]
+#[controller]
 struct AddOne;
 
-#[routes]
+#[handlers]
 impl AddOne {
     #[ulo_rpc::message("inj.add")]
     fn add(&self, n: Payload<u32>) -> u32 {
@@ -23,10 +23,10 @@ impl AddOne {
     }
 }
 
-#[injectable]
+#[controller]
 struct AddHundred;
 
-#[routes]
+#[handlers]
 impl AddHundred {
     #[ulo_rpc::message("inj.add")]
     fn add(&self, n: Payload<u32>) -> u32 {

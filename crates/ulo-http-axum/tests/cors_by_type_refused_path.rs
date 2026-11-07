@@ -7,17 +7,17 @@ use axum::Router;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
-use ulo::{App, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_http::{Cors, PreDispatch};
 use ulo_http_axum::Embedded;
 use ulo_runtime_tokio::Tokio;
 
 const ORIGIN: &str = "https://app.example";
 
-#[injectable]
+#[controller]
 struct Api;
 
-#[routes]
+#[handlers]
 impl Api {
     #[ulo_http::get("/api/{name}")]
     fn named(&self) -> &'static str {

@@ -1,9 +1,9 @@
-//! The enhancer attributes reached outside `#[routes]`, and `__enhancer_specs!`, which a
+//! The enhancer attributes reached outside `#[handlers]`, and `__enhancer_specs!`, which a
 //! transport's mount function calls to build one handler's two `EnhancerSpec` tiers (§7,
 //! transports DESIGN §2.1).
 //!
 //! The grammar of `#[guards(..)]`, `#[interceptors(..)]` and `#[error_handlers(..)]` and of the
-//! `__handler` tokens lives in `ulo_handler_codegen::protocol`, read the same way by `#[routes]`
+//! `__handler` tokens lives in `ulo_handler_codegen::protocol`, read the same way by `#[handlers]`
 //! and every transport attribute.
 //!
 //! How an enhancer is built (type, value, closure) and how long it lives are separate. `Auto`
@@ -61,9 +61,9 @@ struct SpecMethods {
     by_closure_in: Ident,
 }
 
-/// `#[meta]` reached as an attribute macro: outside a `#[routes]` impl, or above `#[routes]`.
-/// `#[routes]` takes it from the impl and from every method, inside `cfg_attr` or not, so one
-/// written below `#[routes]` never reaches here.
+/// `#[meta]` reached as an attribute macro: outside a `#[handlers]` impl, or above `#[handlers]`.
+/// `#[handlers]` takes it from the impl and from every method, inside `cfg_attr` or not, so one
+/// written below `#[handlers]` never reaches here.
 pub(crate) fn meta_marker(_attr: TokenStream, _item: TokenStream) -> syn::Result<TokenStream> {
     Err(unread("meta"))
 }
@@ -77,8 +77,8 @@ fn unread(name: &str) -> syn::Error {
     syn::Error::new(
         Span::call_site(),
         format!(
-            "#[{name}] is read by #[routes]: it goes on a #[routes] impl block, below #[routes], or on a method of one; \
-             no #[routes] read this one, so it is outside a #[routes] impl or above #[routes], which expands after it"
+            "#[{name}] is read by #[handlers]: it goes on a #[handlers] impl block, below #[handlers], or on a method of one; \
+             no #[handlers] read this one, so it is outside a #[handlers] impl or above #[handlers], which expands after it"
         ),
     )
 }
@@ -87,9 +87,9 @@ fn unread(name: &str) -> syn::Error {
 pub(crate) fn unconsumed_handler(_attr: TokenStream, _item: TokenStream) -> syn::Result<TokenStream> {
     Err(syn::Error::new(
         Span::call_site(),
-        "no transport attribute read this handler's enhancers: #[routes] took this method for a handler because of an \
+        "no transport attribute read this handler's enhancers: #[handlers] took this method for a handler because of an \
          attribute macro on it, read through `cfg_attr` (one outside any `cfg_attr` counts in every build, otherwise the \
-         first inside one decides), and no transport attribute supporting #[routes] is present in this build; \
+         first inside one decides), and no transport attribute supporting #[handlers] is present in this build; \
          a helper goes in a separate impl block",
     ))
 }

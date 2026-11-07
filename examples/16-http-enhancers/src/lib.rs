@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use ulo::{AnyErrorHandler, AnyGuard, AnyInterceptor, App, AppBuilder, BoxError, Dep, ErrorHandler, Guard, GuardRejected, Interceptor, Next, injectable, module, routes};
+use ulo::{AnyErrorHandler, AnyGuard, AnyInterceptor, App, AppBuilder, BoxError, Dep, ErrorHandler, Guard, GuardRejected, Interceptor, Next, controller, handlers, injectable, module};
 use ulo_http::{HttpBody, HttpCx, Http, Response, StatusCode};
 
 pub mod order;
@@ -86,12 +86,12 @@ impl ErrorHandler<Http> for Refusals {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct ReportsController {
     trace: Dep<Trace>,
 }
 
-#[routes]
+#[handlers]
 #[guards(RoleGuard, with = |trace: Dep<Trace>| Stamp::new("controller", trace))]
 #[interceptors(with = |trace: Dep<Trace>| Stamp::new("controller", trace))]
 #[error_handlers(Refusals)]

@@ -21,7 +21,7 @@ use futures_util::StreamExt;
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage};
-use ulo::{App, AppHandle, BoundAddr, Dep, Module, ModuleDef, ModuleIdentity, Runtime, Signal, injectable, routes};
+use ulo::{App, AppHandle, BoundAddr, Dep, Module, ModuleDef, ModuleIdentity, Runtime, Signal, controller, handlers};
 use ulo_rpc_conformance::{Broker, report, startup_failed};
 use ulo_rpc_conformance::relay::{Relay, reachable, unshadowed};
 use ulo_rpc::{CallHeaders, Data, Frame, Link, Pattern, Payload, RpcClient, Server};
@@ -238,12 +238,12 @@ impl Classify for Never {
     }
 }
 
-#[injectable]
+#[controller]
 struct Counted {
     counts: Dep<Arc<Counts>>,
 }
 
-#[routes]
+#[handlers]
 impl Counted {
     #[ulo_rpc::message("fan.request")]
     async fn request(&self, n: Payload<u32>) -> Result<u32, Never> {

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use ulo::{BoxFuture, Dep, Module, ModuleDef, ModuleIdentity, Spawn, TaskHandle, Timer, injectable, routes};
+use ulo::{BoxFuture, Dep, Module, ModuleDef, ModuleIdentity, Spawn, TaskHandle, Timer, controller, handlers};
 use ulo_runtime_tokio::Tokio;
 use ulo_ws::{AfterInit, GatewayRef, WsModule};
 
@@ -59,12 +59,12 @@ impl Spawn for Counting {
 #[derive(Clone)]
 struct Inits(Record<String>);
 
-#[injectable]
+#[controller]
 struct Own {
     inits: Dep<Inits>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/own", port = own)]
 impl Own {
     #[ulo_ws::message("ping")]

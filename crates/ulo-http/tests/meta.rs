@@ -1,4 +1,4 @@
-//! Declared metadata on an HTTP handler: the `#[routes]` impl's declarations apply to every
+//! Declared metadata on an HTTP handler: the `#[handlers]` impl's declarations apply to every
 //! handler in it, the method's own come first and win per type, every declaration is listable,
 //! and the handler listing a permission report reads carries each with its tier.
 
@@ -8,7 +8,7 @@ use std::any::type_name;
 
 use http::StatusCode;
 use o1_support::{Call, start};
-use ulo::{MetaTier, ModuleDef, TypeName, injectable, routes};
+use ulo::{MetaTier, ModuleDef, TypeName, controller, handlers};
 use ulo_http::HttpCx;
 
 /// A declaration with a value, as a role requirement.
@@ -25,10 +25,10 @@ fn describe(cx: &HttpCx) -> String {
     format!("{winner}|{}|{}", all.join(","), info.meta::<Audited>().is_some())
 }
 
-#[injectable]
+#[controller]
 struct Guarded;
 
-#[routes]
+#[handlers]
 #[meta(Roles("user"), Audited)]
 impl Guarded {
     #[ulo_http::get("/inherits")]
@@ -56,10 +56,10 @@ impl Guarded {
     }
 }
 
-#[injectable]
+#[controller]
 struct Bare;
 
-#[routes]
+#[handlers]
 impl Bare {
     #[ulo_http::get("/bare")]
     fn bare(&self, cx: HttpCx) -> String {

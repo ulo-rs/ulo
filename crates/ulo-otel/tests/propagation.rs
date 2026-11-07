@@ -19,7 +19,7 @@ use tokio::sync::{Notify, mpsc};
 use tracing::Span;
 use ulo::{
     App, AppHandle, BoxError, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, TraceContext, TraceMode, TraceOrigin,
-    TraceSource, injectable, routes,
+    TraceSource, controller, handlers,
 };
 use ulo_http::{AppService, Backend, BackendLimits, ConnInfo, HttpBody, HttpConfig, Request, StatusCode};
 use ulo_net::BoundListener;
@@ -210,7 +210,7 @@ impl Module for Sourced {
 
 /// The HTTP side: each route records the context its execution carries, and some make a call
 /// `.within` that execution.
-#[injectable]
+#[controller]
 struct Edge {
     rec: Dep<Rec>,
     out: Dep<Out>,
@@ -218,7 +218,7 @@ struct Edge {
 
 const CALLER_TRACEPARENT: &str = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01";
 
-#[routes]
+#[handlers]
 impl Edge {
     #[ulo_http::get("/seen")]
     async fn seen(&self, exec: ExecutionRef) -> &'static str {
@@ -308,13 +308,13 @@ impl Edge {
 }
 
 /// The RPC side: each handler records the context its execution carries; a request forwards it.
-#[injectable]
+#[controller]
 struct Handlers {
     rec: Dep<Rec>,
     out: Dep<Out>,
 }
 
-#[routes]
+#[handlers]
 impl Handlers {
     #[ulo_rpc::message("in.req")]
     async fn request(&self, exec: ExecutionRef) -> u32 {

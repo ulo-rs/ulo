@@ -2,9 +2,10 @@
 //! type has a method of the same name as one the generated code calls by method syntax. Two sets
 //! of such traits, one whose methods take `&self` and one whose methods take `self`, each over
 //! the same application: `#[injectable]` on a struct and on a constructor with parameters, hooks
-//! probed by `#[injectable]`, a `#[module]` with every kind of providers entry, `#[routes]` with
-//! impl- and method-level enhancers and metadata on an HTTP, a WebSocket, an RPC and a gRPC
-//! controller, a gateway with connect guards and connection hooks, and `#[derive(Validate)]`.
+//! probed by `#[injectable]`, a `#[module]` with every kind of providers entry and four
+//! controllers, `#[handlers]` with impl- and method-level enhancers and metadata on an HTTP, a
+//! WebSocket, an RPC and a gRPC `#[controller]`, a gateway with connect guards and connection
+//! hooks, and `#[derive(Validate)]`.
 //!
 //! The probes the generated code ranks by autoref are trait methods, which the user's blanket
 //! trait meets at the same autoref step: ambiguous (E0034) where the probe's arm applies, and the
@@ -58,7 +59,7 @@ macro_rules! application {
         use std::convert::Infallible;
         use std::time::Duration;
 
-        use ulo::{BoxError, Dep, Guard, OnModuleInit, injectable, module, routes};
+        use ulo::{BoxError, Dep, Guard, OnModuleInit, controller, handlers, injectable, module};
         use ulo_codegen_tests::pb::{self, AddRequest, Sum};
         use ulo_grpc::Message as Grpc;
         use ulo_http::{Http, HttpCx, Path, Timeout};
@@ -135,10 +136,10 @@ macro_rules! application {
 
         pub struct Tag(&'static str);
 
-        #[injectable]
+        #[controller]
         pub struct Web;
 
-        #[routes]
+        #[handlers]
         #[guards(value = Admit)]
         #[meta(Tag("controller"))]
         impl Web {
@@ -150,10 +151,10 @@ macro_rules! application {
             }
         }
 
-        #[injectable]
+        #[controller]
         pub struct Chat;
 
-        #[routes]
+        #[handlers]
         #[ulo_ws::gateway(path = "/ws", connect_guards(Admit, value = Admit))]
         impl Chat {
             #[ulo_ws::message("m")]
@@ -168,10 +169,10 @@ macro_rules! application {
             }
         }
 
-        #[injectable]
+        #[controller]
         pub struct Bus;
 
-        #[routes]
+        #[handlers]
         impl Bus {
             #[ulo_rpc::message("bus.m")]
             async fn m(&self, n: Payload<u32>) -> Result<u32, Infallible> {
@@ -182,10 +183,10 @@ macro_rules! application {
             async fn e(&self, _n: Payload<u32>) {}
         }
 
-        #[injectable]
+        #[controller]
         pub struct Counter;
 
-        #[routes]
+        #[handlers]
         impl Counter {
             #[ulo_grpc::method(pb::counter::Add)]
             async fn add(&self, req: Grpc<AddRequest>) -> Sum {

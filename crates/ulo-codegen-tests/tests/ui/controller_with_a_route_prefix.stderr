@@ -1,0 +1,5 @@
+error: #[controller] takes no route prefix: the module mounts the controller under one, `m.controller::<T>().at("/prefix")`
+ --> tests/ui/controller_with_a_route_prefix.rs:5:14
+  |
+5 | #[controller("/checkout")]
+  |              ^^^^^^^^^^^

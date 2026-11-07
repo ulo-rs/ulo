@@ -2,7 +2,7 @@
 // handler's transport" (compile). Capabilities 25, 46.
 // Refused at: the impl-level `#[guards(..)]` entry, once for the handler whose transport (RPC)
 // the guard has no role for; the HTTP handler is satisfied.
-use ulo::{BoxError, Guard, injectable, routes};
+use ulo::{BoxError, Guard, controller, handlers};
 use ulo_http::{Http, HttpCx};
 use ulo_rpc::Payload;
 
@@ -14,10 +14,10 @@ impl Guard<Http> for HttpOnly {
     }
 }
 
-#[injectable]
+#[controller]
 struct Orders;
 
-#[routes]
+#[handlers]
 #[guards(HttpOnly)]
 impl Orders {
     #[ulo_http::get("/orders")]

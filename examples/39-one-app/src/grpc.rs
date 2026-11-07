@@ -1,4 +1,4 @@
-use ulo::{Dep, injectable, routes};
+use ulo::{Dep, controller, handlers};
 use ulo_grpc::Message;
 
 use crate::store::{Gate, Store};
@@ -7,13 +7,13 @@ pub mod pb {
     ulo_grpc::include_proto!("notes.v1");
 }
 
-#[injectable]
+#[controller]
 pub struct GrpcApi {
     store: Dep<Store>,
     gate: Dep<Gate>,
 }
 
-#[routes]
+#[handlers]
 impl GrpcApi {
     #[ulo_grpc::method(pb::notes::Add)]
     async fn add(&self, note: Message<pb::Note>) -> pb::Count {

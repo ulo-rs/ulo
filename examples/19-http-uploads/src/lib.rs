@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use ulo::{App, AppBuilder, BoxError, Dep, injectable, module, routes};
+use ulo::{App, AppBuilder, BoxError, Dep, controller, handlers, injectable, module};
 use ulo_http::{BodyLimit, Bytes, CallError, Created, ErrorKind, KB, Multipart, Path};
 use ulo_http_hyper::Server;
 
@@ -21,7 +21,7 @@ pub struct Files {
     stored: Mutex<HashMap<String, Bytes>>,
 }
 
-#[injectable]
+#[controller]
 pub struct UploadController {
     files: Dep<Files>,
 }
@@ -43,7 +43,7 @@ impl UploadController {
     }
 }
 
-#[routes]
+#[handlers]
 impl UploadController {
     #[ulo_http::post("/files")]
     async fn upload(&self, parts: Multipart) -> Result<Created<&'static str>, BoxError> {

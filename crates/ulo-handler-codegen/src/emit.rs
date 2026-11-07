@@ -1,7 +1,7 @@
-//! The items a transport attribute owes `#[routes]` for one handler (see [`crate::protocol`]).
+//! The items a transport attribute owes `#[handlers]` for one handler (see [`crate::protocol`]).
 //!
 //! For `#[ulo_http::get("/users/{id}")] async fn get(&self, id: Path<u64>, user: Ext<CurrentUser>)
-//! -> Result<Json<User>, UserError>` inside a `#[routes]` impl with one impl-level
+//! -> Result<Json<User>, UserError>` inside a `#[handlers]` impl with one impl-level
 //! `#[interceptors(value = Timing::new())]`, the expansion is, in shape:
 //!
 //! ```text
@@ -77,7 +77,7 @@ impl MountFn<'_> {
     /// A handler with a type or const parameter gets a `compile_error!` spanned at its name in
     /// place of a working mount function: the call names each parameter's type inside the mount
     /// function, where the method's own parameters are not in scope. The three items are still
-    /// written, empty, so `#[routes]`'s reads of them resolve and the refusal is the one error.
+    /// written, empty, so `#[handlers]`'s reads of them resolve and the refusal is the one error.
     pub fn emit(&self) -> TokenStream {
         let name = self.tokens.name();
         let handler = &self.tokens.handler;

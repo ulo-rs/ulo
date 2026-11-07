@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::{Stream, StreamExt, stream};
 use tokio::sync::Notify;
-use ulo::{App, BoxFuture, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, Timer, injectable, routes};
+use ulo::{App, BoxFuture, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, Timer, controller, handlers, injectable};
 use ulo_codegen_tests::probe::ends_client::EndsClient;
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
 use ulo_grpc::Message;
@@ -76,12 +76,12 @@ impl Drop for Audit {
     }
 }
 
-#[injectable]
+#[controller]
 struct Streams {
     audit: Dep<Audit>,
 }
 
-#[routes]
+#[handlers]
 impl Streams {
     /// Tick 1, then, once the test opens the gate, tick 2 when a lookup through the instance's own
     /// handle answers that instance, 0 when the execution ended first.
@@ -107,12 +107,12 @@ impl Streams {
 }
 
 
-#[injectable]
+#[controller]
 struct Leaving {
     audit: Dep<Audit>,
 }
 
-#[routes]
+#[handlers]
 impl Leaving {
     /// Tick 1, then a wait for the cancellation the caller's leaving fires.
     #[ulo_grpc::method(probe::ends::Abandoned)]

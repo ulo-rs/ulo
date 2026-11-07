@@ -5,7 +5,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use ulo::{App, Bound, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, Bound, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_rpc::{Payload, RpcClient, RpcClientModule};
 use ulo_rpc_conformance::{Harness, OnSmol};
 use ulo_rpc_tcp_smol::Tcp;
@@ -34,10 +34,10 @@ impl Classify for Never {
     }
 }
 
-#[injectable]
+#[controller]
 struct Adder;
 
-#[routes]
+#[handlers]
 impl Adder {
     #[ulo_rpc::message("drain_end.add")]
     async fn add(&self, n: Payload<u32>) -> Result<u32, Never> {

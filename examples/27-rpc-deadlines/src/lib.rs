@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
-use ulo::{App, AppBuilder, Dep, ExecutionRef, Timer, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, ExecutionRef, Timer, controller, handlers, injectable, module};
 use ulo_rpc::{Payload, RpcClient, RpcClientModule, RpcError};
 use ulo_rpc_tcp::Tcp;
 
@@ -26,13 +26,13 @@ pub struct Runs {
     pub count: AtomicUsize,
 }
 
-#[injectable]
+#[controller]
 pub struct Catalog {
     runs: Dep<Runs>,
     timer: Dep<dyn Timer>,
 }
 
-#[routes]
+#[handlers]
 impl Catalog {
     #[ulo_rpc::message("price.quote")]
     async fn quote(&self, sku: Payload<String>, exec: ExecutionRef) -> Quote {
@@ -51,7 +51,7 @@ pub struct CalleeModule;
 /// Names the pricing service's client where more than one is injected.
 pub struct Pricing;
 
-#[injectable]
+#[controller]
 pub struct Gateway {
     pricing: Dep<RpcClient, Pricing>,
     timer: Dep<dyn Timer>,
@@ -65,7 +65,7 @@ impl Gateway {
     }
 }
 
-#[routes]
+#[handlers]
 impl Gateway {
     #[ulo_rpc::message("gateway.quote")]
     async fn relay(&self, sku: Payload<String>, exec: ExecutionRef) -> Result<Relayed, RpcError> {

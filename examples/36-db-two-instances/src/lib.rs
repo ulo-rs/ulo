@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use ulo::{App, AppBuilder, BoxError, Dep, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{App, AppBuilder, BoxError, Dep, Module, ModuleDef, ModuleIdentity, controller, handlers, injectable};
 use ulo_config::{Config, Env, Values};
 use ulo_db_sqlx::sqlx::{self, PgPool};
 use ulo_db_sqlx::{Postgres, SqlxModule};
@@ -64,13 +64,13 @@ impl ReplicaNotes {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct NotesController {
     primary: Dep<PrimaryNotes>,
     replica: Dep<ReplicaNotes>,
 }
 
-#[routes]
+#[handlers]
 impl NotesController {
     #[ulo_http::post("/notes")]
     async fn create(&self, Json(new): Json<NewNote>) -> Result<Created<Json<Note>>, BoxError> {

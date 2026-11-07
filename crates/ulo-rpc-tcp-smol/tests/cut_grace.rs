@@ -19,7 +19,7 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use ulo::{App, BoxFuture, FailureReason, Module, ModuleDef, ModuleIdentity, Runtime, ShutdownFailure, Signal, Spawn, TaskHandle, Timer, injectable, routes};
+use ulo::{App, BoxFuture, FailureReason, Module, ModuleDef, ModuleIdentity, Runtime, ShutdownFailure, Signal, Spawn, TaskHandle, Timer, controller, handlers};
 use ulo_conformance_support::ScriptedTimer;
 use ulo_rpc::{CallHeaders, Codec, Data, Frame, Link, Pattern, Payload, ReplyTo};
 use ulo_rpc_conformance::{Harness, OnSmol};
@@ -250,10 +250,10 @@ impl Classify for Never {
 /// Calls the server has answered.
 static ANSWERED: AtomicU64 = AtomicU64::new(0);
 
-#[injectable]
+#[controller]
 struct Answering;
 
-#[routes]
+#[handlers]
 impl Answering {
     #[ulo_rpc::message("cut_grace.answer")]
     async fn answer(&self, n: Payload<u32>) -> Result<String, Never> {

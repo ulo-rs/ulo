@@ -21,7 +21,7 @@
 | Crate | Contents |
 |---|---|
 | `fw-core` | Keys, bindings, injection points, scopes, executions, modules, lifecycle, errors, and enhancer traits generic over a transport |
-| `fw-macros` | `#[injectable]`, `#[construct]`, `#[module]`, `#[routes]` |
+| `fw-macros` | `#[injectable]`, `#[controller]`, `#[construct]`, `#[module]`, `#[handlers]` |
 | `fw-http`, `fw-ws`, `fw-rpc`, `fw-grpc` | Transport marker types, contexts, handler attributes, middleware, servers |
 | `fw-runtime-tokio` (and others) | `Runtime` and `Timer` implementations, OS signal future, spawn helpers |
 | Integrations (`fw-sqlx`, `fw-redis`, `fw-config`, ...) | Ordinary modules written against the value API |
@@ -116,7 +116,7 @@ pub struct ExecutionRef { /* a cheap-clone handle to the current execution (§3.
     message = "`{Self}` cannot be obtained from the container",
     label = "the container cannot provide this",
     note = "write `Dep<{Self}>` to share the container's instance",
-    note = "or set it inside the #[construct] fn / mark the field #[injectable(default)]"
+    note = "or set it inside the #[construct] fn / mark the field #[injectable(default)], #[controller(default)] on a controller"
 )]
 pub trait FromContainer: Sized + Send + 'static {
     /// What this type reads, for the wiring pass: key, kind, optional, needs-execution.
@@ -179,14 +179,14 @@ pub trait Scope: sealed::Sealed + 'static {
 #[diagnostic::on_unimplemented(
     message = "lifecycle hooks are only allowed on singletons",
     label = "`{Self}` scope cannot have hooks",
-    note = "remove the scope argument from #[injectable], or move the hook to a singleton"
+    note = "remove the scope argument from #[injectable] or #[controller], or move the hook to a singleton"
 )]
 pub trait HookCapable: Scope {}          // Singleton, Auto
 
 #[diagnostic::on_unimplemented(
     message = "a `{S}` type cannot read `{Self}`",
     label = "this injection point needs an execution",
-    note = "declare the type #[injectable(execution)] or #[injectable(transient)]"
+    note = "declare the type #[injectable(execution)] or #[injectable(transient)]; a controller drops `singleton` from #[controller] and is then built per call"
 )]
 pub trait AllowedIn<S: Scope> {}         // implemented per injection-point type and scope
 // `{Self}` is the injection point's type; the type that cannot read it is the one declared `{S}`.
@@ -196,7 +196,7 @@ What `Auto` means depends on the binding's role:
 - For a **provider**, `Auto` behaves exactly like `Singleton`. Depending on execution data is refused [21].
 - For a **controller or enhancer**, `Auto` resolves to singleton if nothing below it needs an execution, and to per-execution otherwise [22][24][26].
 
-Writing `#[injectable(singleton)]` explicitly on a controller opts out of this inference, so a controller declared that way that needs execution data is refused.
+Writing `#[controller(singleton)]` explicitly opts out of this inference, so a controller declared that way that needs execution data is refused. A controller is declared with `#[controller]`, which writes the `Construct` impl `#[injectable]` writes and marks the type; `#[module]` lists a marked type under `controllers` and nowhere else, so a type's `Auto` is read in the role its declaration names (§14, item 28).
 
 Scope is one axis and construction is another. How a binding is built is a type, a value (`value = expr`) or a closure (`with = closure`), and that is all the spelling says; a value is built once where it is written and has no scope to choose. How long a type's or a closure's instance lives is its scope: `Auto` unless one is written, with the two meanings above. The same closure means the same thing on a method, on a controller impl, in an `into` list, in a `providers` list and through the value API. One override serves every position, mirroring `#[injectable(singleton | execution | transient)]` on a type:
 
@@ -482,7 +482,26 @@ impl UserService {
 }
 ```
 
-`#[injectable]` reads and removes a field's `#[injectable(default)]` and the `#[construct]` mark, so rustc never resolves either path, and a field could not carry an attribute macro for it to expand. Beside the item, the macro writes a hidden underscore import of each, `const _: () = { #[allow(unused_imports)] use ::fw::construct as _; };`, through which an editor answers hover and go-to-definition on the attribute as written; `#[routes]` does the same for the enhancer and `#[meta]` attributes (transports DESIGN §2.1, which states the import's form).
+A controller is declared with `#[controller]`, in either style, and its handlers in a `#[handlers]` impl on every transport (§7). `#[controller]` writes what `#[injectable]` writes and marks the type as a controller: `#[module]` takes it under `controllers` and refuses it under `providers`, and refuses an `#[injectable]` type under `controllers`, pointing at `#[controller]` (§12). It takes no route prefix; a module mounts a controller under one with `m.controller::<T>().at(prefix)` (transports §2.5). On an impl, `#[controller]` and `#[handlers]` stack in either order, so `new` and the handlers can share one impl:
+
+```rust
+pub struct UsersController { users: Dep<UserService> }
+
+#[controller]                                  // Auto → inferred for controllers [22]
+#[handlers]
+impl UsersController {
+    fn new(users: Dep<UserService>) -> Self {
+        Self { users }
+    }
+
+    #[fw_http::get("/users/{id}")]
+    async fn get(&self, Path(id): Path<u64>) -> Result<Json<User>, UserError> {
+        Ok(Json(self.users.find(id).await?))
+    }
+}
+```
+
+`#[injectable]` reads and removes a field's `#[injectable(default)]` and the `#[construct]` mark, so rustc never resolves either path, and a field could not carry an attribute macro for it to expand; `#[controller]` does the same with `#[controller(default)]` and `#[construct]`. Beside the item, the macro writes a hidden underscore import of each, `const _: () = { #[allow(unused_imports)] use ::fw::construct as _; };`, through which an editor answers hover and go-to-definition on the attribute as written; `#[handlers]` does the same for the enhancer and `#[meta]` attributes (transports DESIGN §2.1, which states the import's form).
 
 The module ties these together:
 
@@ -695,7 +714,7 @@ impl Guard<Http> for AuthGuard {
 Declaring enhancers by type, by value or by closure [26]:
 
 ```rust
-#[routes]
+#[handlers]
 #[guards(http = AuthGuard)]                              // by type, HTTP handlers only: AuthGuard is Guard<Http>
 #[interceptors(TimingInterceptor)]                       // every handler: TimingInterceptor is Interceptor<Http> and <Rpc>
 impl UsersController {
@@ -712,9 +731,9 @@ impl UsersController {
 
 A controller-level enhancer applies to every handler on the impl, strictly. `#[interceptors(TimingInterceptor)]` expands to `spec.interceptor::<TimingInterceptor>()` once per handler, and each expansion requires the role for that handler's transport: `Interceptor<Http>` for `get`, `Interceptor<Rpc>` for `get_rpc`. A handler whose transport lacks the role is a compile error at the attribute naming the handler: written `#[guards(AuthGuard)]`, the impl above fails on `get_rpc` with a message like "`AuthGuard` is not a guard for `Rpc`, needed by `get_rpc`; implement `Guard<Rpc>`". There is no "apply where the role exists": a guard that guards three of four handlers is the bug [25] exists to prevent. A controller that serves several transports scopes an enhancer with the transport-scoped form, `#[guards(http = AuthGuard)]`, which applies it to that transport's handlers alone and checks only their role.
 
-`value = expr` is built once, where it is written, and shared by every call of what it is written on. On a method that is one handler. On the impl it is every handler of the impl: `#[routes]` builds each impl-level value once when the controller mounts, into an `Arc`, and every handler's mount takes a clone of it (transports DESIGN X2), so a rate limiter declared on the impl limits the controller as a whole and not each handler alone. A known limit sits beside it: a controller-level entry scoped to a transport key no handler carries, `#[guards(htpp = AuthGuard)]`, applies to nothing and is not yet reported. `#[routes]` expands before the transport attributes and does not know its handlers' keys; the report waits for the transport protocol to carry each transport's key.
+`value = expr` is built once, where it is written, and shared by every call of what it is written on. On a method that is one handler. On the impl it is every handler of the impl: `#[handlers]` builds each impl-level value once when the controller mounts, into an `Arc`, and every handler's mount takes a clone of it (transports DESIGN X2), so a rate limiter declared on the impl limits the controller as a whole and not each handler alone. A known limit sits beside it: a controller-level entry scoped to a transport key no handler carries, `#[guards(htpp = AuthGuard)]`, applies to nothing and is not yet reported. `#[handlers]` expands before the transport attributes and does not know its handlers' keys; the report waits for the transport protocol to carry each transport's key.
 
-In a `#[routes]` impl, a method carrying any attribute other than the language's own (`doc`, `allow`, `warn`, `deny`, `expect`, `cfg`, `cfg_attr`, `inline`, `must_use`, `deprecated`, `track_caller`) or an enhancer attribute is a handler. A helper annotated `#[tracing::instrument]` is read as one and fails to compile, as a handler whose transport attribute read nothing; helpers go in a separate `impl` block. `#[routes]` reads and removes the enhancer attributes and `#[meta]`, and writes a hidden import of each beside the impl for an editor to resolve them by (transports DESIGN §2.1).
+In a `#[handlers]` impl, a method carrying any attribute other than the language's own (`doc`, `allow`, `warn`, `deny`, `expect`, `cfg`, `cfg_attr`, `inline`, `must_use`, `deprecated`, `track_caller`) or an enhancer attribute is a handler. A helper annotated `#[tracing::instrument]` is read as one and fails to compile, as a handler whose transport attribute read nothing; helpers go in a separate `impl` block. `#[handlers]` reads and removes the enhancer attributes and `#[meta]`, and writes a hidden import of each beside the impl for an editor to resolve them by (transports DESIGN §2.1).
 
 Global enhancers are collection contributions under a role key [28]. In `#[module]` they are an `into` list, `into AnyGuard<Http>: [AuthGuard, value = RateLimit::per_second(100)]`, which lowers to `contribute` like every `into` list (§4); the value API writes `contribute` or `enhancer`:
 
@@ -741,7 +760,7 @@ The dispatch pipeline for one call [27] runs like this. Steps 2 to 4 are the cor
 
 HTTP middleware is declared as scoped `PreDispatch` entries with `exclude` (transports §3.3).
 
-WebSocket gateways are controllers whose handlers carry `fw_ws` attributes. A gateway participates in the container like any other controller [24].
+WebSocket gateways are controllers whose handlers carry `fw_ws` attributes, declared with `#[controller]` and a `#[handlers]` impl carrying `#[fw_ws::gateway(..)]`. A gateway participates in the container like any other controller [24].
 
 ---
 
@@ -1402,6 +1421,9 @@ Override rules:
 | An enhancer that lacks its role trait, including a controller-level one for any handler's transport | compile | `Guard<T>` and similar bounds, one per handler, naming the handler |
 | A constructor that isn't `Send` | compile | generated impl |
 | Two or zero constructors, a bad attribute, a malformed `into` item | compile | macro span error; the `into` text names the three forms (§4) |
+| A `#[controller]` type under `providers`, as a type, behind `as dyn K`, qualified or as an `into` item | compile | autoref probe on the mark `#[controller]` writes, a method bound + `on_unimplemented` naming the type (§4) |
+| A type under `controllers` that is not `#[controller]`, an `#[injectable]` type among them | compile | bound on the mark + `on_unimplemented` naming the type and pointing at `#[controller]` (§4) |
+| A route prefix on `#[controller]`, `#[injectable(default)]` on a `#[controller]` struct's field, or `#[controller(default)]` on an `#[injectable]` struct's field | compile | macro span error naming `.at(prefix)` or the marker the struct's attribute reads (§4) |
 | `X as <role key>` in a `providers` list | compile | macro span error on the role key (§4); reads the key as written, so an alias passes to the wiring error below |
 | Trait binding with a non-implementing type | compile | coercion in the closure |
 | `?` on a value whose expression failed | startup (`wire`) | `try_value` record, `ModuleDef`'s for a `providers` entry and `Contribute`'s for an `into` entry (§4) |
@@ -1564,4 +1586,5 @@ The transport layer extends this surface, and `transports/DESIGN.md` §11 states
 24. **A task's panic keeps its message, and a panic while a task's future is dropped is logged at `warn`.** `TaskEnd::Panicked(Arc<Redacted>)` is converted by the one `redact_panic` the core uses for `PanicRecovered` and `FailureReason::Panicked`, with the app's registry for a task spawned through the app's runtime, whose wrapper carries it, and an empty one for a task spawned on a bare runtime outside any app (25; §3.9, transports §8). The drop-time panic reaches no caller, so the wrapper catches it where the drop runs, keeps the end `Aborted`, and logs it through `tracing`, the core's one log line and its dependency for it; uncaught, tokio swallowed it and smol aborted the process.
 25. **The app's runtime is always the core's wrapper, carrying the graph's redactor.** `.runtime(r)` binds `dyn Runtime` and `dyn Timer` as one `Clocked` around `r` in every configuration, `.runtime(r)` alone included, so a task spawned through the app, `Dep<dyn Runtime>` or `AppHandle::runtime()`, has every registered secret replaced in its panic's message and in its drop-time `warn`; binding `r` itself left nothing of the app between a caller and `r`'s `spawn`, and a panic message is where a connection string ends up. The redactor is set from the graph at `wire` and refreshed by every `load`, the base graph's put back on a failed connect, and read at the panic rather than at the spawn, so a secret a lazily loaded module registers is replaced in a task spawned before the load that panics after it. The cost is a second `CatchUnwind` and record per task spawned through the app, and that the object injected is the wrapper rather than the object given, so a reader wanting `r`'s own type cannot reach it through `Dep<dyn Runtime>` or `AppHandle::runtime()`, a downcast included, which both accessors' documentation says in a sentence, there being no `Any` supertrait on `Runtime` for a downcast to try; a task spawned on a runtime outside any app keeps the userinfo strip alone (§3.9, §9.4, transports §8).
 26. **`unsafe_code` is `deny` with listed opt-outs, not `forbid`, and a script holds the list** (§0, transports §0, transports 113). `forbid` reaches each member as `-F unsafe_code`, under which a module's `#![allow]` is itself an error, so it admits no per-module opt-out; `deny` can be relaxed anywhere, which is what `scripts/unsafe_allowed.py check` refuses outside `unsafe-allowed.txt`. The list holds two modules, each marked by kind: `fw-server-hyper`'s `FuturesIo`, pure Rust, whose tests the `miri` job runs under Miri, failing when it runs none of a pure-Rust entry's tests (F388); and `fw-net`'s descriptor adoption, a system call Miri cannot execute, printed as skipped with the reason and resting on its safety comments and ordinary tests (transports 113, 116).
-27. **Which attributes are imported, which name their transport, which are written bare.** The core attributes (`#[routes]`, `#[injectable]`, `#[module]`) are imported. A transport's attributes name their transport, `#[ulo_http::get]`, `#[ulo_rpc::message]`, `#[ulo_ws::message]`, `#[ulo_grpc::method]`, `#[ulo_ws::gateway]`, because the path says which transport the attribute belongs to and `message` exists in both `ulo_rpc` and `ulo_ws`; they are not renamed to be distinct, the full path is the distinction. Markers that mean the same on every transport, `#[guards]`, `#[interceptors]`, `#[error_handlers]`, `#[meta]`, `#[construct]` and the field markers, are written bare, read and removed by the macro around them before Rust resolves them, as `#[serde(..)]` is; a full path such as `#[ulo::guards]` also works, but only its last segment is read, so a qualifier is not checked (F595). The markers are not real macros that stay in the output, because Rust allows no attribute macro on a struct field or a function parameter, so field and parameter markers can only be inert, and making only the method- and impl-level ones real would split the markers among themselves and add an import to every file that writes one. For the editor, `#[routes]` and `#[injectable]` emit beside the item a hidden `use ::ulo::<name> as _` per marker, spanned at the user's own token, so hover and go-to-definition reach the macro's documentation; the first segment of a qualified marker is not covered. Every path the macros generate names `::ulo`, so a crate that depends on it under another name writes `extern crate framework as ulo;` at its root for any macro to expand, and the hidden import resolves wherever the rest of the expansion does.
+27. **Which attributes are imported, which name their transport, which are written bare.** The core attributes (`#[controller]`, `#[handlers]`, `#[injectable]`, `#[module]`) are imported. A transport's attributes name their transport, `#[ulo_http::get]`, `#[ulo_rpc::message]`, `#[ulo_ws::message]`, `#[ulo_grpc::method]`, `#[ulo_ws::gateway]`, because the path says which transport the attribute belongs to and `message` exists in both `ulo_rpc` and `ulo_ws`; they are not renamed to be distinct, the full path is the distinction. Markers that mean the same on every transport, `#[guards]`, `#[interceptors]`, `#[error_handlers]`, `#[meta]`, `#[construct]` and the field markers, are written bare, read and removed by the macro around them before Rust resolves them, as `#[serde(..)]` is; a full path such as `#[ulo::guards]` also works, but only its last segment is read, so a qualifier is not checked (F595). The markers are not real macros that stay in the output, because Rust allows no attribute macro on a struct field or a function parameter, so field and parameter markers can only be inert, and making only the method- and impl-level ones real would split the markers among themselves and add an import to every file that writes one. For the editor, `#[handlers]`, `#[injectable]` and `#[controller]` emit beside the item a hidden `use ::ulo::<name> as _` per marker, spanned at the user's own token, so hover and go-to-definition reach the macro's documentation; the first segment of a qualified marker is not covered. Every path the macros generate names `::ulo`, so a crate that depends on it under another name writes `extern crate framework as ulo;` at its root for any macro to expand, and the hidden import resolves wherever the rest of the expansion does.
+28. **A controller is declared with `#[controller]`, and its handler impl with `#[handlers]`, on every transport.** `#[injectable]` says two things: the container builds the type, and other bindings inject it. A controller is built by the container and reached through its transport, and `wire()` refuses a read of one by any binding that is not itself a controller (`ControllerRead`): outside the controllers, it has the first property without the second, and it takes an attribute of its own. `#[controller]` writes the `Construct` impl `#[injectable]` writes, from a struct or from an impl's `new` or `#[construct]` fn, async and fallible alike, takes the same scope words and `timeout`, and writes beside it the mark `IsController` (macro ABI, `__private::controller_entry`). `#[module]` asks for the mark on every `controllers` entry and refuses it on every entry under `providers` whose type it can name, a type entry or a value (a closure is not checked). A controller may be exported, for another controller in an importing module to read. The list a controller sits in, the `ControllerRead` check and the `Auto` inference (§3.3) then all follow the one declaration. Its field marker is `#[controller(default)]`, named, as `#[injectable(default)]` is, after the attribute that reads it. It takes no route prefix: the prefix belongs to the module that mounts the controller, `m.controller::<T>().at(prefix)` (transports §2.5). A WebSocket gateway is a controller and takes it too. The handler impl is `#[handlers]` because handler is the transport-neutral word the core uses (`HandlerInfo`, `HttpHandler`, `RpcHandler`, `Execution::handler()`) and one impl attribute serves HTTP, RPC, WebSocket and gRPC handlers alike; HTTP keeps `route` where it means routing (`HttpCx::route()`, route patterns). `#[controller]` and `#[handlers]` stack on one impl in either order, and a constructor-style controller writes `new` beside its handlers. `#[construct]` does not make a method a handler, which lets the fn it marks sit in a stacked impl whichever attribute expands first. A module written by hand registers any `Construct + Controller` type with `m.controller::<T>()`; only `#[module]` reads the mark.

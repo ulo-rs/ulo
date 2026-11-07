@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use ulo::{App, AppBuilder, Dep, Module, ModuleDef, ModuleIdentity, Secret, injectable, routes};
+use ulo::{App, AppBuilder, Dep, Module, ModuleDef, ModuleIdentity, Secret, controller, handlers};
 use ulo_config::{Config, ConfigModule, Defaults, DotEnv, Env, File, Values};
 use ulo_http::Json;
 
@@ -98,12 +98,12 @@ pub struct Settings {
     pub database_url: String,
 }
 
-#[injectable]
+#[controller]
 pub struct SettingsController {
     config: Dep<AppConfig>,
 }
 
-#[routes]
+#[handlers]
 impl SettingsController {
     #[ulo_http::get("/settings")]
     fn settings(&self) -> Json<Settings> {

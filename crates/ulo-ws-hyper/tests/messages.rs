@@ -12,7 +12,7 @@ use futures_util::{SinkExt, Stream, StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
-use ulo::{BoxError, Dep, ErrorHandler, Guard, Interceptor, Module, ModuleDef, ModuleIdentity, Next, StreamOutcome, injectable, routes};
+use ulo::{BoxError, Dep, ErrorHandler, Guard, Interceptor, Module, ModuleDef, ModuleIdentity, Next, StreamOutcome, controller, handlers};
 use ulo_transport::Classify;
 use ulo_ws::{Frame, Payload, Reply, Rooms, Ws, WsCx, WsModule};
 
@@ -43,10 +43,10 @@ struct Sum {
 }
 
 /// A gateway speaking MessagePack in binary frames.
-#[injectable]
+#[controller]
 struct Packed;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/packed", port = own, codec = msgpack)]
 impl Packed {
     #[ulo_ws::message("add")]
@@ -70,12 +70,12 @@ impl Packed {
 struct Ends(Record<StreamOutcome>);
 
 /// A JSON gateway with a streamed answer that never ends on its own, and a broadcast.
-#[injectable]
+#[controller]
 struct Plain {
     ends: Dep<Ends>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/plain", port = own)]
 impl Plain {
     /// One item, then nothing until the answer is cut off.
@@ -108,10 +108,10 @@ impl Guard<Ws> for Deny {
 }
 
 /// One message at a time, so a message's answer is written before the next message is read.
-#[injectable]
+#[controller]
 struct Serial;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/serial", port = own, max_inflight = 1)]
 impl Serial {
     #[ulo_ws::message("greet")]
@@ -166,10 +166,10 @@ impl ErrorHandler<Ws> for Recover {
     }
 }
 
-#[injectable]
+#[controller]
 struct Enhanced;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/enhanced", port = own)]
 #[guards(ws(value = NotBanned))]
 #[meta(Tag("gateway"))]

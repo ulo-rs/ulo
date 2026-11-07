@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use ulo::{Dep, injectable, routes};
+use ulo::{Dep, controller, handlers};
 use ulo_rpc::Payload;
 
 use crate::greeter::Greeter;
@@ -14,12 +14,12 @@ pub struct Greeting {
     pub message: String,
 }
 
-#[injectable]
+#[controller]
 pub struct GreetingController {
     greeter: Dep<Greeter>,
 }
 
-#[routes]
+#[handlers]
 impl GreetingController {
     #[ulo_rpc::message("greeter.greet")]
     async fn greet(&self, request: Payload<Greet>) -> Greeting {

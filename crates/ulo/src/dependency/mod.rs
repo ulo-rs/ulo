@@ -28,7 +28,7 @@ pub use many::Many;
     message = "`{Self}` cannot be obtained from the container",
     label = "the container cannot provide this",
     note = "write `Dep<{Self}>` to share the container's instance",
-    note = "or set it inside the #[construct] fn / mark the field #[injectable(default)]"
+    note = "or set it inside the #[construct] fn / mark the field #[injectable(default)], #[controller(default)] on a controller"
 )]
 pub trait FromContainer: Sized + Send + 'static {
     /// Static description used by the wiring pass: key, kind, optional, needs-execution.

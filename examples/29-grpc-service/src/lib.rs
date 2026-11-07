@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 
 use futures_util::{Stream, stream};
-use ulo::{App, AppBuilder, BoxError, Guard, injectable, module, routes};
+use ulo::{App, AppBuilder, BoxError, Guard, controller, handlers, injectable, module};
 use ulo_grpc::{CallError, Classify, Detail, Details, ErrorKind, FieldViolation, Grpc, GrpcCx, Message};
 
 pub mod pb {
@@ -69,10 +69,10 @@ fn item(id: &str, name: &str) -> pb::Item {
     pb::Item { id: id.to_owned(), name: name.to_owned() }
 }
 
-#[injectable]
+#[controller]
 pub struct CatalogService;
 
-#[routes]
+#[handlers]
 #[guards(grpc = TokenGuard)]
 impl CatalogService {
     #[ulo_grpc::method(pb::catalog::GetItem)]

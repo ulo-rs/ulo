@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 /// The paths generated code names its crates by. A transport's macro crate builds one: the core
-/// is always `::ulo`, which `#[routes]` and `__enhancer_specs!` name too, so an application
+/// is always `::ulo`, which `#[handlers]` and `__enhancer_specs!` name too, so an application
 /// depends on `ulo` directly. What the generated call reads besides the core is reached through
 /// the transport crate, so an application needs no direct dependency on `ulo-transport` for what
 /// a handler attribute generates.

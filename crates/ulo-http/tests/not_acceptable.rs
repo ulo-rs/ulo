@@ -6,7 +6,7 @@ mod o1_support;
 
 use http::StatusCode;
 use o1_support::{Call, start};
-use ulo::{BoxError, ErrorHandler, ModuleDef, injectable, routes};
+use ulo::{BoxError, ErrorHandler, ModuleDef, controller, handlers};
 use ulo_http::{CallError, ErrorKind, Http, HttpCx, NotAcceptable, Response};
 
 fn refusal() -> BoxError {
@@ -25,10 +25,10 @@ impl ErrorHandler<Http> for Reshape {
     }
 }
 
-#[injectable]
+#[controller]
 struct Report;
 
-#[routes]
+#[handlers]
 impl Report {
     #[ulo_http::get("/report")]
     fn report(&self) -> Result<String, BoxError> {

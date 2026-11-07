@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use http::StatusCode;
 use o1_support::{Call, start};
-use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, injectable, routes};
+use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, controller, handlers};
 use ulo_http::{Bytes, Created, Http, HttpBody, HttpCx, Json, NoContent, Response, WithHeaders};
 use ulo_transport::{CallError, Classify, ErrorKind};
 
@@ -30,10 +30,10 @@ impl Error for Refusal {}
 
 type Outcome<T> = Result<T, Refusal>;
 
-#[injectable]
+#[controller]
 struct Replies;
 
-#[routes]
+#[handlers]
 impl Replies {
     #[ulo_http::get("/sync")]
     fn sync_form(&self) -> &'static str {

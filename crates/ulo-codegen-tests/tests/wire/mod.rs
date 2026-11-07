@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Notify;
-use ulo::{CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_codegen_tests::pb::{self, AddRequest, Sum};
 use ulo_grpc::Message;
 use ulo_transport::{CallError, Detail, Details, ErrorKind, FieldViolation, Link};
@@ -49,12 +49,12 @@ impl Hold {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct Service {
     hold: Dep<Hold>,
 }
 
-#[routes]
+#[handlers]
 impl Service {
     #[ulo_grpc::method(pb::counter::Add)]
     async fn add(&self, req: Message<AddRequest>, exec: ExecutionRef) -> Result<Sum, CallError> {

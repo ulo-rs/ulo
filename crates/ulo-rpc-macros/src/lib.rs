@@ -1,9 +1,9 @@
 //! The RPC attributes, re-exported by `ulo-rpc`: `#[message("pattern")]` and `#[event("pattern")]`
-//! on the methods of a `#[routes]` impl, each a thin layer over `ulo-handler-codegen`.
+//! on the methods of a `#[handlers]` impl, each a thin layer over `ulo-handler-codegen`.
 //!
 //! ```ignore
 //! # // reason: a proc-macro crate cannot depend on the crates the expansion names
-//! #[routes]
+//! #[handlers]
 //! impl InvoicesController {
 //!     #[ulo_rpc::message("invoices.create")]
 //!     async fn create(&self, req: Payload<NewInvoice>) -> Result<Invoice, BillingError> { /* .. */ }

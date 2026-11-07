@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tonic::transport::Channel;
 use tonic::{Request, Status};
-use ulo::{App, AppBuilder, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{App, AppBuilder, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_grpc::{GrpcClientModule, GrpcEndpoint, Message};
 
 pub mod pb {
@@ -22,12 +22,12 @@ impl Calls {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct ClockService {
     calls: Dep<Calls>,
 }
 
-#[routes]
+#[handlers]
 impl ClockService {
     /// The time left before the deadline this call was given, in milliseconds rounded up.
     #[ulo_grpc::method(pb::clock::Remaining)]
@@ -62,7 +62,7 @@ pub fn callee_builder(calls: Calls) -> AppBuilder {
 }
 
 /// Calls `Clock` with the deadline of the execution it runs in.
-#[injectable]
+#[controller]
 pub struct Front {
     clock: Dep<ClockClient<Channel>>,
 }
@@ -77,7 +77,7 @@ impl Front {
     }
 }
 
-#[routes]
+#[handlers]
 impl Front {
     #[ulo_grpc::method(pb::front::Ask)]
     async fn ask(&self, _req: Message<pb::Probe>, exec: ExecutionRef) -> Result<pb::Left, Status> {

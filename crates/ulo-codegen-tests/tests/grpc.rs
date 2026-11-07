@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use futures_util::{Stream, StreamExt, stream};
 use tonic::transport::{Channel, Endpoint};
 use ulo::app::Bound as Serving;
-use ulo::{App, AppHandle, Dep, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Timer, injectable, routes};
+use ulo::{App, AppHandle, Dep, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Timer, controller, handlers};
 use ulo_codegen_tests::pb::counter_client::CounterClient;
 use ulo_codegen_tests::pb::scale_client::ScaleClient;
 use ulo_codegen_tests::pb::{self, AddRequest, CountRequest, Number, Sum};
@@ -34,10 +34,10 @@ impl fmt::Display for Refusal {
 
 impl Error for Refusal {}
 
-#[injectable]
+#[controller]
 struct CounterService;
 
-#[routes]
+#[handlers]
 impl CounterService {
     #[ulo_grpc::method(pb::counter::Add)]
     async fn add(&self, req: Request<AddRequest>) -> Result<Response<Sum>, Refusal> {
@@ -90,13 +90,13 @@ impl Factor for Triple {
 }
 
 /// A generic controller: its hidden methods and the checks inside them sit in a generic impl.
-#[injectable]
+#[controller]
 struct Scaled<F: Factor> {
-    #[injectable(default)]
+    #[controller(default)]
     _factor: PhantomData<F>,
 }
 
-#[routes]
+#[handlers]
 impl<F: Factor> Scaled<F> {
     #[ulo_grpc::method(pb::scale::Apply)]
     async fn apply(&self, n: Message<Number>) -> Number {

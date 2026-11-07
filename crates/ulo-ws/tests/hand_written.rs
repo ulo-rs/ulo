@@ -11,7 +11,7 @@ use serde_json::json;
 use ulo::scope::Auto;
 use ulo::{
     App, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Module, ModuleDef, ModuleIdentity, Mount,
-    PrepareEntry, PrepareError, Resolver, Shape, StartupError, TypeName, Unreached, injectable, routes,
+    PrepareEntry, PrepareError, Resolver, Shape, StartupError, TypeName, Unreached, controller, handlers,
 };
 use ulo_ws::{
     CallError, ConnectCx, ConnectRefused, Connection, ErrorKind, Frame, FromCall, Gateway, GatewayConfig, GatewayHooks,
@@ -30,10 +30,10 @@ fn refusal(cx: &ConnectCx) -> Result<(), ConnectRefused> {
     }
 }
 
-#[injectable]
+#[controller]
 struct Macro;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/m")]
 impl Macro {
     #[ulo_ws::message("echo")]

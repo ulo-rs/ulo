@@ -17,7 +17,7 @@ use futures_util::{StreamExt, stream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Notify, Semaphore};
-use ulo::{App, AppHandle, Dep, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, AppHandle, Dep, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_http::{Bytes, HttpBody, Response};
 
 /// The longest any one wait below lasts before it fails the test.
@@ -37,12 +37,12 @@ struct Hold {
 #[derive(Clone)]
 struct Shared(Arc<Hold>);
 
-#[injectable]
+#[controller]
 struct Held {
     hold: Dep<Shared>,
 }
 
-#[routes]
+#[handlers]
 impl Held {
     #[ulo_http::get("/hold")]
     async fn hold(&self) -> &'static str {

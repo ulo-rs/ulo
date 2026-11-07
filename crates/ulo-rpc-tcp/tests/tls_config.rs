@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
-use ulo::{App, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_net::Tls;
 use ulo_net::rustls::pki_types::pem::PemObject;
 use ulo_net::rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
@@ -19,10 +19,10 @@ use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
 use ulo_test_certs::{Ca, Certified};
 
-#[injectable]
+#[controller]
 struct Echo;
 
-#[routes]
+#[handlers]
 impl Echo {
     #[ulo_rpc::message("echo")]
     async fn echo(&self, n: Payload<u32>) -> u32 {

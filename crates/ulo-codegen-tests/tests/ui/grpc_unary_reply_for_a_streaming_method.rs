@@ -1,11 +1,11 @@
-use ulo::{injectable, routes};
+use ulo::{controller, handlers};
 use ulo_codegen_tests::pb::{self, CountRequest, Number};
 use ulo_grpc::Message;
 
-#[injectable]
+#[controller]
 struct Counter;
 
-#[routes]
+#[handlers]
 impl Counter {
     // `Count` streams its reply.
     #[ulo_grpc::method(pb::counter::Count)]
