@@ -180,10 +180,13 @@ impl fmt::Debug for ReplyPath {
     }
 }
 
-/// How one delivery is settled with the broker, once its handler completes: acknowledged, or
-/// rejected without requeue (an unhandled event, so it cannot loop on redelivery). A no-op off
-/// AMQP and Kafka. Dropped unsettled it sends nothing, and the broker redelivers the message once
-/// the consumer's channel closes.
+/// How one delivery is settled: acknowledged, or rejected without requeue (an unhandled event, so
+/// it cannot loop on redelivery). A request or event is settled once its handler completes, and an
+/// `in`, `in_end` or `cancel` once the server has handed it to the call it names, a `cancel` after
+/// that call is cancelled. AMQP and Kafka settle with their broker; a link can also keep a call its
+/// caller cancelled known until the `cancel` settles, its reason written by then. Dropped
+/// unsettled it sends nothing, and a broker redelivers the message once the consumer's channel
+/// closes.
 pub struct Ack {
     settle: Mutex<Option<Box<dyn FnOnce(bool) + Send>>>,
 }
