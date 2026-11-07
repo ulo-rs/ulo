@@ -28,7 +28,7 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::Role;
 use ulo::{
-    App, AppHandle, BoxError, BoxFuture, Controller, Dep, DrainToken, FailureReason, Limit, Module, ModuleDef, ModuleIdentity, Mount,
+    App, AppHandle, BoxError, BoxFuture, Dep, DrainToken, FailureReason, Handlers, Limit, Module, ModuleDef, ModuleIdentity, Mount,
     Mounted, Shutdown, ShutdownError, ShutdownFailure, Signal, Timer, TypeName, controller,
 };
 use ulo_http::Upgraded;
@@ -75,7 +75,7 @@ impl Gateway for Gated {
     }
 }
 
-impl Controller for Gated {
+impl Handlers for Gated {
     fn mount(m: &mut Mount<'_>) {
         <Self as Gateway>::mount(m);
     }
@@ -105,7 +105,7 @@ impl Gateway for Unwoken {
     }
 }
 
-impl Controller for Unwoken {
+impl Handlers for Unwoken {
     fn mount(m: &mut Mount<'_>) {
         <Self as Gateway>::mount(m);
     }

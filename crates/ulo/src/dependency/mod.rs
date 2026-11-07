@@ -109,6 +109,11 @@ pub(crate) enum ReadKind {
 #[derive(Clone, Default)]
 pub struct Dependencies {
     pub(crate) list: Vec<DependencyRecord>,
+    /// The type the `dependencies` an `#[injectable]` or `#[controller]` impl writes found to be a
+    /// `Controller` (`__private::controller_entry`). A provider registration of a type reads it
+    /// into `BindingRecord::controller_type` when it names that type, so a hand-written
+    /// `dependencies` that calls another type's records nothing for its own.
+    pub(crate) controller: Option<std::any::TypeId>,
 }
 
 impl Dependencies {

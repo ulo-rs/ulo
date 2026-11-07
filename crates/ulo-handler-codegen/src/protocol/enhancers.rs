@@ -5,7 +5,7 @@
 //! - `Type`: by type, resolved from the container.
 //! - `key = Type`: by type, for the handlers of the transport whose `Transport::KEY` is `key`.
 //! - `value = expr`: by value. On a method it is built once when the handler mounts; on the impl
-//!   it is built once by `Controller::mount` and shared by every handler (transports DESIGN §2.1,
+//!   it is built once by `Handlers::mount` and shared by every handler (transports DESIGN §2.1,
 //!   X2).
 //! - `with = |param: Ty, ..| expr`: by closure, scope `Auto`.
 //! - `with(singleton) = ..`, `with(execution) = ..`, `with(transient) = ..`: by closure, in the

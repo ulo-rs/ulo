@@ -35,8 +35,10 @@ pub(crate) fn resolver_param() -> Ident {
     Ident::new("r", Span::mixed_site())
 }
 
-/// The `Construct` impl both forms of `#[injectable]` write: scope, optional `CONSTRUCT_TIMEOUT`,
-/// `dependencies`, `construct` and the probing `hooks`.
+/// The `Construct` impl both forms of `#[injectable]` and `#[controller]` write: scope, optional
+/// `CONSTRUCT_TIMEOUT`, `dependencies`, `construct` and the probing `hooks`. `dependencies` ends
+/// with the probe that records whether the type is a `Controller` (`ulo::__private::controller_entry`),
+/// which a provider registration of it reads.
 pub(crate) struct ConstructImpl<'a> {
     pub(crate) self_ty: &'a syn::Type,
     pub(crate) generics: &'a syn::Generics,
@@ -76,9 +78,13 @@ impl ConstructImpl<'_> {
 
                 #timeout
 
-                #[allow(unused_variables)]
                 fn dependencies(#d: &mut #ulo::Dependencies) {
                     #dependencies
+                    {
+                        #[allow(unused_imports)]
+                        use #ulo::__private::controller_entry::{MarkArm as _, UnmarkedArm as _};
+                        (&#ulo::__private::controller_entry::Probe::<Self>::new()).__ulo_mark_controller(#d);
+                    }
                 }
 
                 #construct_fn

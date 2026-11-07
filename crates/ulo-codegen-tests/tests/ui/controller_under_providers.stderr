@@ -1,4 +1,4 @@
-error[E0277]: `Checkout` is a `#[controller]` type, listed under `providers`
+error[E0277]: `Checkout` is a controller, listed under `providers`
   --> tests/ui/controller_under_providers.rs:23:23
    |
 23 | #[module(providers = [Checkout, Checkout as dyn Plugin, Checkout @ Primary, into dyn Plugin: [Checkout]])]
@@ -19,7 +19,7 @@ note: required by a bound in `ulo::__private::controller_entry::ControllerArm::_
    |             T: ControllerNotAProvider;
    |                ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `ControllerArm::__ulo_check_provider`
 
-error[E0277]: `Checkout` is a `#[controller]` type, listed under `providers`
+error[E0277]: `Checkout` is a controller, listed under `providers`
   --> tests/ui/controller_under_providers.rs:23:33
    |
 23 | #[module(providers = [Checkout, Checkout as dyn Plugin, Checkout @ Primary, into dyn Plugin: [Checkout]])]
@@ -40,7 +40,7 @@ note: required by a bound in `ulo::__private::controller_entry::ControllerArm::_
    |             T: ControllerNotAProvider;
    |                ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `ControllerArm::__ulo_check_provider`
 
-error[E0277]: `Checkout` is a `#[controller]` type, listed under `providers`
+error[E0277]: `Checkout` is a controller, listed under `providers`
   --> tests/ui/controller_under_providers.rs:23:57
    |
 23 | #[module(providers = [Checkout, Checkout as dyn Plugin, Checkout @ Primary, into dyn Plugin: [Checkout]])]
@@ -61,7 +61,7 @@ note: required by a bound in `ulo::__private::controller_entry::ControllerArm::_
    |             T: ControllerNotAProvider;
    |                ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `ControllerArm::__ulo_check_provider`
 
-error[E0277]: `Checkout` is a `#[controller]` type, listed under `providers`
+error[E0277]: `Checkout` is a controller, listed under `providers`
   --> tests/ui/controller_under_providers.rs:23:95
    |
 23 | #[module(providers = [Checkout, Checkout as dyn Plugin, Checkout @ Primary, into dyn Plugin: [Checkout]])]

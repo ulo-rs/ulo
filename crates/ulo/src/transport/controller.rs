@@ -18,12 +18,42 @@ use crate::transport::{AnyErrorHandler, AnyGuard, AnyInterceptor, Transport};
 use crate::type_name::TypeName;
 
 /// A dispatch target: a `Construct` type whose handlers `mount` declares, one per transport
-/// route, message pattern, gRPC method or WebSocket event. `#[handlers]` writes the impl, and
-/// `#[controller]` the `Construct` impl beside it.
+/// route, message pattern, gRPC method or WebSocket event.
+///
+/// The trait is what makes a type a controller. [`ModuleDef::controller`](crate::ModuleDef::controller)
+/// and `#[module]`'s `controllers` take a type that implements it, `#[handlers]` refuses a type that
+/// does not, and a controller bound as a provider is refused: by `#[module]`'s `providers` at
+/// compile time, and by `wire()` for a `provide` call naming a type whose `Construct` impl
+/// `#[injectable]` or `#[controller]` wrote.
+///
+/// `#[controller]` writes the impl, whose `mount` mounts the type's [`Handlers`]. A controller
+/// written by hand implements it with its own `mount`.
 ///
 /// A controller takes part in the container like any binding. With `Auto` scope it is a
 /// singleton if nothing below it needs an execution and is built per call otherwise.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a controller",
+    label = "a controller is declared with `#[controller]`",
+    note = "write `#[controller]` on `{Self}`, in place of `#[injectable]` where that is written: `#[injectable]` declares a \
+            type the container injects into others, and a controller is reached through its transport; a controller \
+            written by hand implements `ulo::Controller` and mounts its handlers in `Controller::mount`"
+)]
 pub trait Controller: Construct {
+    fn mount(m: &mut Mount<'_>);
+}
+
+/// The handlers of a `#[controller]` type, which the `Controller` impl `#[controller]` writes
+/// mounts. `#[handlers]` writes the impl. A `#[controller]` type that mounts its handlers by hand,
+/// a WebSocket gateway implementing `Gateway` among them, implements it itself. A type that
+/// implements `Controller` by hand needs no `Handlers` impl, and a `#[handlers]` impl on it mounts
+/// only when its own `mount` calls `<Self as Handlers>::mount`.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is a `#[controller]` type with no `#[handlers]` impl",
+    label = "its `Controller::mount` mounts the handlers of its `#[handlers]` impl",
+    note = "write `#[handlers]` on the impl block holding `{Self}`'s handlers; a `#[controller]` type that mounts its \
+            handlers by hand implements `ulo::Handlers`"
+)]
+pub trait Handlers: Controller {
     fn mount(m: &mut Mount<'_>);
 }
 

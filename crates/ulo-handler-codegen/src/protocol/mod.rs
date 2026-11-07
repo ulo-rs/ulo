@@ -25,11 +25,11 @@
 //! 2. `const __ULO_CHECKS_<name>: () = { .. };`, the pairwise body-consumer assertions, `()` when
 //!    the handler has fewer than two parameters. `#[handlers]` reads it from a free
 //!    `const _: () = <Ctrl>::__ULO_CHECKS_<name>;`, which evaluates it unconditionally, or on a
-//!    generic controller from `Controller::mount`, which evaluates it when `mount` is instantiated.
+//!    generic controller from `Handlers::mount`, which evaluates it when `mount` is instantiated.
 //! 3. `fn __ulo_mount_<name><__UloV0, ..>(m: &mut ::ulo::Mount<'_>, shared: &::ulo::__private::Shared<(Arc<__UloV0>, ..)>)`,
 //!    one type parameter per impl-level `value` entry in the order written across the impl's
 //!    enhancer attributes, each bounded by its role for this transport when the entry applies to
-//!    it and unbounded otherwise (X2). `#[handlers]`'s `Controller::mount` builds the `Shared` once
+//!    it and unbounded otherwise (X2). `#[handlers]`'s `Handlers::mount` builds the `Shared` once
 //!    and calls every mount function with it.
 //!
 //! [`crate::emit::MountFn`] writes all three.
