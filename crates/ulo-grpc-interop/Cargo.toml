@@ -1,0 +1,28 @@
+[package]
+name = "ulo-grpc-interop"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "The gRPC project's interop TestService on ulo-grpc, for the CI job that runs the standard interop client against it"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# CI support: nothing depends on it, and it is never released.
+publish = false
+
+[dependencies]
+ulo = { path = "../ulo" }
+ulo-grpc = { path = "../ulo-grpc" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+futures-util.workspace = true
+# What the generated code names.
+prost.workspace = true
+tonic = { workspace = true, features = ["channel", "codegen"] }
+tonic-prost.workspace = true
+
+[build-dependencies]
+ulo-build = { path = "../ulo-build" }
+
+[lints]
+workspace = true

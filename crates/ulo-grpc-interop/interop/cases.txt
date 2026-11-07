@@ -1,0 +1,36 @@
+# The standard cases of the gRPC project's interop client that run against `ulo-grpc-interop`,
+# read by `run.py`. One line per case:
+#
+#     <test_case> <marker> [allow <F-number> "<failure>" <reason>]
+#
+# `<marker>` is the name in the `<marker> done` line the grpc-go client logs when its case passes;
+# a case counts as passed on exit status 0 and that line together. A line with `allow` names a case
+# the framework does not pass and the client's line for that failure: `run.py` fails on an allowed
+# case that passes, so an allowance cannot go stale, on one whose output lacks the quoted line, so
+# the allowance covers no other failure, and on a case that fails without one.
+#
+# The client's other cases are not listed. Seven need TLS and Google credentials
+# (`compute_engine_creds`, `service_account_creds`, `jwt_token_creds`, `per_rpc_creds`,
+# `oauth2_auth_token`, `google_default_credentials`, `compute_engine_channel_credentials`).
+# `pick_first_unary` tests the client's `pick_first` policy and reads a `server_id` the server does
+# not fill. `orca_per_rpc` and `orca_oob` read ORCA load reports, which the server does not send.
+# The interop descriptions' `cacheable_unary`, `client_compressed_unary`, `server_compressed_unary`,
+# `client_compressed_streaming`, `server_compressed_streaming` and
+# `max_concurrent_streams_connection_scaling` are cases the grpc-go client does not implement.
+
+empty_unary EmptyUnaryCall
+large_unary LargeUnaryCall
+client_streaming ClientStreaming
+server_streaming ServerStreaming
+ping_pong Pingpong
+empty_stream Emptystream
+timeout_on_sleeping_server TimeoutOnSleepingServer
+cancel_after_begin CancelAfterBegin
+cancel_after_first_response CancelAfterFirstResponse
+rpc_soak RpcSoak
+channel_soak ChannelSoak
+status_code_and_message StatusCodeAndMessage
+special_status_message SpecialStatusMessage
+custom_metadata CustomMetadata allow F525 "Expected exactly one trailer from server. Received 0" a successful reply carries no trailing metadata: `ulo_grpc::Response::metadata` writes the initial headers only, so the `x-grpc-test-echo-trailing-bin` the case reads from the trailers is never written
+unimplemented_method UnimplementedMethod
+unimplemented_service UnimplementedService

@@ -8834,6 +8834,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ulo-bench-overhead"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper 1.11.1",
+ "hyper-util",
+ "tokio",
+ "ulo",
+ "ulo-http",
+ "ulo-http-hyper",
+ "ulo-runtime-tokio",
+]
+
+[[package]]
 name = "ulo-build"
 version = "0.1.0-alpha.2"
 dependencies = [
@@ -9156,6 +9171,21 @@ dependencies = [
  "ulo-runtime-tokio",
  "ulo-server-hyper",
  "ulo-transport",
+]
+
+[[package]]
+name = "ulo-grpc-interop"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "prost",
+ "tokio",
+ "tonic",
+ "tonic-prost",
+ "ulo",
+ "ulo-build",
+ "ulo-grpc",
+ "ulo-runtime-tokio",
 ]
 
 [[package]]

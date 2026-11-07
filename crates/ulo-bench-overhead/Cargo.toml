@@ -1,0 +1,30 @@
+[package]
+name = "ulo-bench-overhead"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Framework overhead: one GET / route served by ulo and by bare hyper, driven over loopback by one load loop"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# A measurement, not a library: nothing depends on it, and it is never released.
+publish = false
+
+[dev-dependencies]
+ulo = { path = "../ulo" }
+ulo-http = { path = "../ulo-http" }
+ulo-http-hyper = { path = "../ulo-http-hyper" }
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "time", "sync"] }
+bytes.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["server", "client", "http1"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+
+[[bench]]
+name = "overhead"
+# The harness is the file's own `main`: it prints a table instead of libtest's lines.
+harness = false
+
+[lints]
+workspace = true
