@@ -276,8 +276,8 @@ jobs:
       # workspace's own, it resolves the versions the rest of CI builds; unseeded, cargo would pick
       # the newest each crate allows.
       - run: cp Cargo.lock crates/ulo-codegen-tests/fixtures/editor/Cargo.lock
-      # Every attribute path in the fixture, and every marker `#[routes]` and `#[injectable]`
-      # remove, answers hover and go-to-definition, or the probe exits non-zero naming the point.
+      # Every attribute path in the fixture, and every marker `#[handlers]`, `#[injectable]` and
+      # `#[controller]` remove, answers hover and go-to-definition, or the probe exits non-zero naming the point.
       # The server builds the fixture's proc macros and build scripts and checks nothing.
       - run: >-
           python3 scripts/editor_probe.py "$(rustup which rust-analyzer)"

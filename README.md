@@ -29,14 +29,14 @@ A module, one controller with one route, and the phases that start an applicatio
 `examples/01-hello` in one file.
 
 ```rust,no_run
-use ulo::{App, injectable, module, routes};
+use ulo::{App, controller, handlers, module};
 use ulo_http_hyper::Server;
 use ulo_runtime_tokio::{Tokio, shutdown_signal};
 
-#[injectable]
+#[controller]
 pub struct HelloController;
 
-#[routes]
+#[handlers]
 impl HelloController {
     #[ulo_http::get("/")]
     fn hello(&self) -> &'static str {
@@ -76,7 +76,7 @@ provider is injected as `Dep<T>` (`examples/15-http-requests` is the full versio
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use ulo::{Dep, injectable, module, routes};
+use ulo::{Dep, controller, handlers, injectable, module};
 use ulo_http::{Created, Json, Query, Valid, Validate};
 
 #[derive(Clone, Serialize)]
@@ -102,12 +102,12 @@ pub struct Notes {
     all: Mutex<Vec<Note>>,
 }
 
-#[injectable]
+#[controller]
 pub struct NotesController {
     notes: Dep<Notes>,
 }
 
-#[routes]
+#[handlers]
 impl NotesController {
     #[ulo_http::post("/notes")]
     fn create(&self, Valid(Json(new)): Valid<Json<NewNote>>) -> Created<Json<Note>> {
