@@ -263,7 +263,7 @@ async fn a_binary_payload_on_a_json_link_is_refused() {
     })
     .await;
     assert!(text.contains("Binary::raw` (pattern `blobs.put`) takes a binary payload"), "{text}");
-    assert!(text.contains("the link's codec is JSON, which carries no raw bytes"), "the refusal names the link's declared reason: {text}");
+    assert!(text.contains("JSON codec cannot carry; set `.codec(Codec::Cbor)` on the link"), "the refusal names the codec that carries it: {text}");
 }
 
 #[tokio::test]
@@ -300,5 +300,5 @@ async fn an_attribute_s_binary_payload_on_a_json_link_is_refused() {
     })
     .await;
     assert!(text.contains("BinaryMacro::put` (pattern `blobs.macro`) takes a binary payload"), "{text}");
-    assert!(text.contains("the link's codec is JSON, which carries no raw bytes"), "the refusal names the link's declared reason: {text}");
+    assert!(text.contains("JSON codec cannot carry; set `.codec(Codec::Cbor)` on the link"), "the refusal names the codec that carries it: {text}");
 }

@@ -11,7 +11,10 @@ break ulo-http struct_pub_field_missing 10  # #409: the public `bool` fields of 
 break ulo-http struct_pub_field_now_doc_hidden 10  # #409: the same ten fields, which this lint reports a second time
 break ulo-http trait_method_receiver_added 1  # #409: `Backend::limits` takes `&self`
 break ulo-http trait_removed_associated_constant 1  # #409: `Embed::STRIPS_PREFIX` is the `strips_prefix` ability of `EmbedLimits`
-break ulo-rpc inherent_method_missing 2  # #409: `Capabilities::fans_out_requests` and `fan_out_reason` are the inverted ability `delivers_requests_once`, with `without_delivers_requests_once` and `why_not_delivers_requests_once`
-break ulo-rpc method_parameter_count_changed 14  # #409: each ability of `Capabilities` is a `bool` accessor taking no argument, declared absent through a `without_` setter that takes the reason; seven methods, each reported at `ulo_rpc` and at `ulo_rpc::link`
-break ulo-rpc struct_pub_field_missing 7  # #409: the public `bool` fields of `Capabilities` are private, read through the accessors
-break ulo-rpc struct_pub_field_now_doc_hidden 7  # #409: the same seven fields, which this lint reports a second time
+break ulo-rpc inherent_method_missing 5  # `Capabilities::fans_out_requests` and `fan_out_reason` are the ability `single_delivery`, and the setters `confirms_drain`, `holds_unserved` and the accessor `delivers_requests_once` are the abilities named as nouns, `confirmed_drain`, `unserved_hold` and `single_delivery`, each declared absent through `without_<noun>(reason)`
+break ulo-rpc method_parameter_count_changed 8  # #409: `native_backpressure`, `miss_signal`, `durable_replies` and `ordered_control` are `bool` accessors taking no argument, declared absent through a `without_` setter that takes the reason; four methods, each reported at `ulo_rpc` and at `ulo_rpc::link`
+break ulo-rpc struct_pub_field_missing 6  # #409: the public `bool` fields of `Capabilities` that are abilities are private, read through the accessors; `binary`, a report of the codec, stays public
+break ulo-rpc struct_pub_field_now_doc_hidden 4  # #409: the four of those fields whose names remain, which this lint reports a second time
+break ulo-ws inherent_method_now_doc_hidden 2  # `GatewayDefaults::answer_hold` and `messages_read`, compiled under `conformance-probe`, are test support and doc-hidden, outside the semver promise
+break ulo-ws struct_now_doc_hidden 2  # `AnswerHold` and `MessagesRead`, the same feature's test support, doc-hidden
+break ulo-ws-hyper inherent_method_now_doc_hidden 1  # `ServerOn::messages_read`, under `conformance-probe`, test support and doc-hidden

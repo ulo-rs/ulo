@@ -541,29 +541,73 @@ enum Writer {
     PreDispatch,
 }
 
+/// How many `grpc-` names, each with what wrote it, a process remembers having restored and
+/// logged. An interceptor can copy names a peer chose onto its replies, so the record is bounded:
+/// past it a name is still restored, and logged at `debug`.
+const RESTORED_LOGGED: usize = 64;
+
 /// The `grpc-` names [`screened`] has restored and logged, each with what wrote it: a name is
-/// logged once per process for each writer, so a name both an interceptor and a pre-dispatch entry
-/// write logs both warnings on the first reply that carries both.
-static RESTORED: Mutex<Vec<(Writer, HeaderName)>> = Mutex::new(Vec::new());
+/// logged at `warn` once per process for each writer, so a name both an interceptor and a
+/// pre-dispatch entry write logs both warnings on the first reply that carries both. The first
+/// name past [`RESTORED_LOGGED`] is logged at `warn` saying the record is full, and every later
+/// new one at `debug`.
+static RESTORED: Mutex<Restored> = Mutex::new(Restored::new());
+
+struct Restored {
+    names: Vec<(Writer, HeaderName)>,
+    full: bool,
+}
+
+/// What [`Restored::record`] answers for a name.
+#[derive(Debug, PartialEq, Eq)]
+enum Sighting {
+    First,
+    Again,
+    /// The first name past [`RESTORED_LOGGED`].
+    Full,
+}
+
+impl Restored {
+    const fn new() -> Self {
+        Restored { names: Vec::new(), full: false }
+    }
+
+    fn record(&mut self, by: Writer, name: &HeaderName) -> Sighting {
+        if self.names.iter().any(|(writer, restored)| *writer == by && restored == name) {
+            Sighting::Again
+        } else if self.names.len() < RESTORED_LOGGED {
+            self.names.push((by, name.clone()));
+            Sighting::First
+        } else if std::mem::replace(&mut self.full, true) {
+            Sighting::Again
+        } else {
+            Sighting::Full
+        }
+    }
+}
 
 impl Writer {
     fn warn_restored(self, name: &HeaderName) {
-        let mut restored = RESTORED.lock().unwrap_or_else(PoisonError::into_inner);
-        if restored.iter().any(|(writer, restored)| *writer == self && restored == name) {
-            return;
-        }
-        restored.push((self, name.clone()));
-        drop(restored);
-        match self {
-            Writer::Interceptor => tracing::warn!(
+        let sighting = RESTORED.lock().unwrap_or_else(PoisonError::into_inner).record(self, name);
+        let writer = match self {
+            Writer::Interceptor => "an interceptor",
+            Writer::PreDispatch => "a pre-dispatch entry",
+        };
+        match sighting {
+            Sighting::First => tracing::warn!(
                 header = name.as_str(),
-                "an interceptor wrote a `grpc-` header onto a gRPC reply; gRPC over HTTP/2 reserves the prefix, so the reply \
-                 keeps what the framework wrote under it (logged once per name)"
+                "{writer} wrote a `grpc-` header onto a gRPC reply; gRPC over HTTP/2 reserves the prefix, so the reply keeps \
+                 what the framework wrote under it (logged once per name)"
             ),
-            Writer::PreDispatch => tracing::warn!(
+            Sighting::Full => tracing::warn!(
                 header = name.as_str(),
-                "a pre-dispatch entry wrote a `grpc-` header onto a gRPC reply; gRPC over HTTP/2 reserves the prefix, so the \
-                 reply keeps what the framework wrote under it (logged once per name)"
+                "{writer} wrote a `grpc-` header onto a gRPC reply; gRPC over HTTP/2 reserves the prefix, so the reply keeps \
+                 what the framework wrote under it ({RESTORED_LOGGED} names have been logged, so later new names are logged at \
+                 `debug`)"
+            ),
+            Sighting::Again => tracing::debug!(
+                header = name.as_str(),
+                "{writer} wrote a `grpc-` header onto a gRPC reply; the reply keeps what the framework wrote under it"
             ),
         }
     }
@@ -1149,5 +1193,41 @@ impl Drop for CallBody {
             self.exec.cancel_with(CancelReason::ClientCancelled);
         }
         self.report(false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn name(n: usize) -> HeaderName {
+        HeaderName::try_from(format!("grpc-x-{n}")).expect("a valid header name")
+    }
+
+    /// The record holds at most 64 names whatever a writer sends: the first 64 are each warned
+    /// once, the 65th warns that the record is full, and every name after it, new or seen, is
+    /// logged at `debug`. Planted break: the record without its bound.
+    #[test]
+    fn the_restored_record_keeps_64_names_and_warns_each_once() {
+        let mut restored = Restored::new();
+        let sightings: Vec<Sighting> = (0..100).map(|n| restored.record(Writer::Interceptor, &name(n))).collect();
+        assert!(sightings[..64].iter().all(|s| *s == Sighting::First), "{:?}", &sightings[..64]);
+        assert_eq!(sightings[64], Sighting::Full);
+        assert!(sightings[65..].iter().all(|s| *s == Sighting::Again), "{:?}", &sightings[65..]);
+        assert_eq!(restored.names.len(), 64);
+        let again: Vec<Sighting> = (0..100).map(|n| restored.record(Writer::Interceptor, &name(n))).collect();
+        assert!(again.iter().all(|s| *s == Sighting::Again), "{again:?}");
+        assert_eq!(restored.names.len(), 64);
+    }
+
+    /// A name is recorded once per writer: the same name from an interceptor and from a
+    /// pre-dispatch entry warns twice.
+    #[test]
+    fn a_name_is_recorded_once_per_writer() {
+        let mut restored = Restored::new();
+        let first = name(0);
+        assert_eq!(restored.record(Writer::Interceptor, &first), Sighting::First);
+        assert_eq!(restored.record(Writer::PreDispatch, &first), Sighting::First);
+        assert_eq!(restored.record(Writer::Interceptor, &first), Sighting::Again);
     }
 }

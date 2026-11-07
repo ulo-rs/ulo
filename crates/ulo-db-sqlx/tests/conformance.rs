@@ -127,7 +127,7 @@ mod sqlite {
         }
 
         fn capabilities(&self) -> Capabilities {
-            Capabilities::default()
+            Capabilities::new()
         }
     }
 

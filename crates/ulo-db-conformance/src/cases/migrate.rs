@@ -1,17 +1,20 @@
 use futures_util::future::join;
 use ulo::{App, Connected, StartupError};
-use ulo_db::{MigrationFailed, Store};
+use ulo_db::MigrationFailed;
 
 use crate::cases::{Root, builder, carried, closed, connected, store, wired};
 use crate::{Host, MigrationProbe, report};
 
-/// Fails the scenario when the host declares no migrator for its store.
-fn require_migrations<H: Host>(host: &H) {
-    assert!(
-        host.capabilities().migrations,
-        "the host declares `{}` without `.migrate(..)`: declare this scenario not applicable",
-        <H::Store as Store>::NAME
-    );
+/// Whether `scenario` runs: on a host declared without `migrations` it is skipped, writing the
+/// declared reason.
+fn runs_migrations<H: Host>(host: &H, scenario: &str) -> bool {
+    match host.capabilities().why_not_migrations() {
+        Some(reason) => {
+            crate::skipped(scenario, "migrations", reason);
+            false
+        }
+        None => true,
+    }
 }
 
 /// Migrations run only on request. Planted breaks: migrations run without `.migrate(..)`; migrations
@@ -27,7 +30,9 @@ fn require_migrations<H: Host>(host: &H) {
 /// a migration still running when `connect` returns reads as an empty table.
 pub async fn only_on_request<H: Host>() {
     let host = H::start().await;
-    require_migrations(&host);
+    if !runs_migrations(&host, "migrations_run_only_on_request") {
+        return;
+    }
     let probe = MigrationProbe::new();
 
     let plain = connected(builder::<H>(Root::new().import(store::<H>(host.options()))), "an app without `.migrate(..)`").await;
@@ -78,7 +83,9 @@ pub async fn only_on_request<H: Host>() {
 /// the evidence for SeaORM and Diesel, whose migrators take none.
 pub async fn once_across_replicas<H: Host>() {
     let host = H::start().await;
-    require_migrations(&host);
+    if !runs_migrations(&host, "migrations_run_once_across_replicas") {
+        return;
+    }
     let probe = MigrationProbe::new();
     let replica = |n: &str| {
         wired(

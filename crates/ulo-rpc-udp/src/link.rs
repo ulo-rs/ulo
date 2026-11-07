@@ -153,7 +153,7 @@ impl Udp {
         }
     }
 
-    /// `Codec::Cbor` carries raw bytes and has `binary`; JSON unset, which is declared without it.
+    /// `Codec::Cbor` carries raw bytes and reports `binary: true`; JSON unset.
     pub fn codec(mut self, codec: Codec) -> Self {
         self.codec = codec;
         self
@@ -203,9 +203,9 @@ impl Link for Udp {
             .without_native_backpressure(
                 "a UDP server reads each request off its socket as it arrives, and no broker holds one over the server's bound, which the server refuses",
             )
-            .without_holds_unserved("the caller sends to one server's address, and no broker keeps a request while that server is not serving")
+            .without_unserved_hold("the caller sends to one server's address, and no broker keeps a request while that server is not serving")
             .without_durable_replies("a reply is one datagram sent once to the caller's address, and nothing keeps it for a caller that is not there")
-            .without_confirms_drain(
+            .without_confirmed_drain(
                 "`close` answers the requests its socket already holds, but a datagram arriving after the socket closes reaches no one; \
                  a connected client socket may learn of it through an ICMP port unreachable, which is often filtered and is not relied on",
             )

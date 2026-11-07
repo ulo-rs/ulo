@@ -20,10 +20,11 @@
 //! Beside the SPI, this module holds what the authors of transport links share with the
 //! first-party links, so a link outside this repository keeps the same timing and redaction:
 //! [`CANCEL_HOLD`] and [`HoldUntil`], how long a link that holds a streamed request's `cancel`
-//! until the server's `opened` keeps it; [`panic_redacted`], the redacted error a panic caught
-//! outside a task answers; and, behind the `conformance-probe` feature, `ClientProbe`, the
-//! conformance suite's view of a held `cancel`. Semver applies to them as to the rest of the
-//! crate's public API: from 0.1.0, a change that breaks a link is released under a new breaking
+//! until the server's `opened` keeps it; and [`panic_redacted`], the redacted error a panic caught
+//! outside a task answers. Behind the `conformance-probe` feature it also holds `ClientProbe`, the
+//! conformance suite's view of a held `cancel`, which is test support, hidden from the
+//! documentation and outside the semver promise. Semver applies to the others as to the rest of
+//! the crate's public API: from 0.1.0, a change that breaks a link is released under a new breaking
 //! version (`0.x` to `0.(x+1)` before 1.0). A pre-release of 0.1.0 may break it, and Cargo takes
 //! a later pre-release of the same version for a requirement on an earlier one, so a link
 //! depending on a pre-release pins it with `=`.
@@ -42,6 +43,7 @@ use ulo_transport::Count;
 use crate::codec::Codec;
 use crate::frame::Frame;
 
+#[doc(hidden)]
 #[cfg(feature = "conformance-probe")]
 pub use crate::held::ClientProbe;
 pub use crate::held::{CANCEL_HOLD, HoldUntil};
@@ -279,41 +281,50 @@ impl From<String> for Pattern {
     }
 }
 
-/// What a link can do, read by `Server::prepare` and by the client, and asserted by the
-/// conformance suite in both directions. Built from [`Capabilities::new`] and its setters, since
-/// the struct is `#[non_exhaustive]`.
+/// What a link can do and how it is configured, read by `Server::prepare` and by the client, and
+/// asserted by the conformance suite in both directions. Built from [`Capabilities::new`] and its
+/// setters, since the struct is `#[non_exhaustive]`.
 ///
-/// Every capability named by a `bool` accessor is `true` from `new`, the strict reading, so a link
+/// The public fields report the link's configuration: `binary`, `max_frame`, `ordering`, `shapes`
+/// and `delivery` say what the link is set up to speak and how it delivers, and change how the
+/// server and client behave on it. `delivery` is given to `new`, and each of the others has a
+/// setter of its own name taking the value; `binary` is `false` from `new`, a JSON link, and
+/// [`codec`](Self::codec) sets it from the link's codec.
+///
+/// Every ability named by a `bool` accessor is `true` from `new`, the strict reading, so a link
 /// that declares nothing is held to each and a scenario fails where the link cannot keep one. A
 /// link declares one absent only through its `without_` setter, which takes the reason, and the
 /// `why_not_` accessor answers that reason: `Server::prepare` prints it in a refusal or a `warn`,
 /// and the suite in a failure or in the line naming a scenario it skips.
 ///
-/// The fields are private, so no link declares an absence without its reason:
+/// The abilities are private fields, so no link declares an absence without its reason:
 ///
 /// ```compile_fail,E0616
 /// use ulo_rpc::{Capabilities, DeliveryMode};
 ///
 /// let mut capabilities = Capabilities::new(DeliveryMode::FanOut);
-/// capabilities.delivers_requests_once = None;
+/// capabilities.single_delivery = None;
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
+    /// The link's codec carries raw bytes: the server and client speak CBOR on the link, and JSON
+    /// where it is `false`. A handler with a binary payload on a JSON link is refused in
+    /// `prepare`, and a client call with one fails before any I/O with `binary_unsupported`.
+    pub binary: bool,
     /// The largest frame the link carries, `None` for no limit of its own.
     pub max_frame: Option<u64>,
     pub ordering: Ordering,
     /// The call shapes the link carries; a handler of another shape is refused in `prepare`.
     pub shapes: &'static [Shape],
     pub delivery: DeliveryMode,
-    binary: Absent,
     native_backpressure: Absent,
     miss_signal: Absent,
-    holds_unserved: Absent,
+    unserved_hold: Absent,
     durable_replies: Absent,
-    confirms_drain: Absent,
+    confirmed_drain: Absent,
     ordered_control: Absent,
-    delivers_requests_once: Absent,
+    single_delivery: Absent,
 }
 
 /// `None` where the link has the capability, and why it has not otherwise.
@@ -325,44 +336,45 @@ pub const ALL_SHAPES: &[Shape] = &[Shape::Unary, Shape::ServerStreaming, Shape::
 /// Unary calls and events alone, UDP's.
 pub const UNARY_ONLY: &[Shape] = &[Shape::Unary];
 
-/// Why a JSON link carries no raw bytes, as [`Capabilities::codec`] declares it.
-const JSON_CARRIES_NO_BYTES: &str = "the link's codec is JSON, which carries no raw bytes; `.codec(Codec::Cbor)` on the link selects CBOR, which does";
-
 impl Capabilities {
-    /// A link delivering as `delivery`, carrying every shape, unordered, with no frame limit, and
-    /// holding every capability a `bool` accessor names.
+    /// A link delivering as `delivery`, carrying every shape, speaking JSON, unordered, with no
+    /// frame limit, and holding every ability a `bool` accessor names.
     ///
     /// ```
     /// use ulo_rpc::{Capabilities, DeliveryMode};
     ///
     /// let declared = Capabilities::new(DeliveryMode::Competing);
+    /// assert!(!declared.binary);
     /// let held = [
-    ///     declared.binary(),
     ///     declared.native_backpressure(),
     ///     declared.miss_signal(),
-    ///     declared.holds_unserved(),
+    ///     declared.unserved_hold(),
     ///     declared.durable_replies(),
-    ///     declared.confirms_drain(),
+    ///     declared.confirmed_drain(),
     ///     declared.ordered_control(),
-    ///     declared.delivers_requests_once(),
+    ///     declared.single_delivery(),
     /// ];
-    /// assert_eq!(held, [true; 8]);
+    /// assert_eq!(held, [true; 7]);
     /// ```
     pub const fn new(delivery: DeliveryMode) -> Self {
         Capabilities {
+            binary: false,
             max_frame: None,
             ordering: Ordering::Unordered,
             shapes: ALL_SHAPES,
             delivery,
-            binary: None,
             native_backpressure: None,
             miss_signal: None,
-            holds_unserved: None,
+            unserved_hold: None,
             durable_replies: None,
-            confirms_drain: None,
+            confirmed_drain: None,
             ordered_control: None,
-            delivers_requests_once: None,
+            single_delivery: None,
         }
+    }
+
+    pub const fn binary(self, binary: bool) -> Self {
+        Capabilities { binary, ..self }
     }
 
     pub const fn max_frame(self, max_frame: Option<u64>) -> Self {
@@ -377,36 +389,17 @@ impl Capabilities {
         Capabilities { shapes, ..self }
     }
 
-    /// Declares [`binary`](Self::binary) as `codec` carries it: absent for JSON, with the reason
-    /// that JSON carries no raw bytes, and left as it is for CBOR.
+    /// Sets the `binary` field from the codec the link is configured with: `true` for CBOR,
+    /// `false` for JSON.
     ///
     /// ```
     /// use ulo_rpc::{Capabilities, Codec, DeliveryMode};
     ///
-    /// let json = Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json);
-    /// assert!(!json.binary() && json.why_not_binary().is_some_and(|reason| reason.contains("JSON")));
-    /// assert!(Capabilities::new(DeliveryMode::Addressed).codec(Codec::Cbor).binary());
+    /// assert!(!Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json).binary);
+    /// assert!(Capabilities::new(DeliveryMode::Addressed).codec(Codec::Cbor).binary);
     /// ```
     pub const fn codec(self, codec: Codec) -> Self {
-        match codec {
-            Codec::Json => self.without_binary(JSON_CARRIES_NO_BYTES),
-            Codec::Cbor => self,
-        }
-    }
-
-    /// The codec carries raw bytes: the server and client speak CBOR on a link that has it and
-    /// JSON on one that has not. A handler with a binary payload on a link without it is refused
-    /// in `prepare`, and a client call with one fails before any I/O with `binary_unsupported`.
-    pub const fn binary(&self) -> bool {
-        self.binary.is_none()
-    }
-
-    pub const fn without_binary(self, reason: &'static str) -> Self {
-        Capabilities { binary: Some(reason), ..self }
-    }
-
-    pub const fn why_not_binary(&self) -> Option<&'static str> {
-        self.binary
+        Capabilities { binary: matches!(codec, Codec::Cbor), ..self }
     }
 
     /// The broker paces deliveries itself, AMQP through its prefetch and Kafka by pausing
@@ -443,16 +436,16 @@ impl Capabilities {
     /// it, and hands it to the next instance: an AMQP queue, a Kafka topic. A caller reaching a
     /// draining or stopped server then sees its own `Timeout`, and `miss_signal` covers only a
     /// pattern never subscribed.
-    pub const fn holds_unserved(&self) -> bool {
-        self.holds_unserved.is_none()
+    pub const fn unserved_hold(&self) -> bool {
+        self.unserved_hold.is_none()
     }
 
-    pub const fn without_holds_unserved(self, reason: &'static str) -> Self {
-        Capabilities { holds_unserved: Some(reason), ..self }
+    pub const fn without_unserved_hold(self, reason: &'static str) -> Self {
+        Capabilities { unserved_hold: Some(reason), ..self }
     }
 
-    pub const fn why_not_holds_unserved(&self) -> Option<&'static str> {
-        self.holds_unserved
+    pub const fn why_not_unserved_hold(&self) -> Option<&'static str> {
+        self.unserved_hold
     }
 
     /// The broker keeps a reply published while the client's connection is down, and the client
@@ -478,16 +471,16 @@ impl Capabilities {
     /// afterwards, and a datagram reaching a UDP server after its socket closes is dropped. A
     /// caller reaching a draining server can then see its own `Timeout` rather than `Unavailable`;
     /// once the server has closed, a miss is reported as on any link with `miss_signal`.
-    pub const fn confirms_drain(&self) -> bool {
-        self.confirms_drain.is_none()
+    pub const fn confirmed_drain(&self) -> bool {
+        self.confirmed_drain.is_none()
     }
 
-    pub const fn without_confirms_drain(self, reason: &'static str) -> Self {
-        Capabilities { confirms_drain: Some(reason), ..self }
+    pub const fn without_confirmed_drain(self, reason: &'static str) -> Self {
+        Capabilities { confirmed_drain: Some(reason), ..self }
     }
 
-    pub const fn why_not_confirms_drain(&self) -> Option<&'static str> {
-        self.confirms_drain
+    pub const fn why_not_confirmed_drain(&self) -> Option<&'static str> {
+        self.confirmed_drain
     }
 
     /// A request and its control frames travel one ordered lane end to end, so a `cancel` sent
@@ -512,7 +505,7 @@ impl Capabilities {
     /// and replies, and the client answers the first reply and drops the rest, so the handler's
     /// side effects run once per instance. Such a link's request side supports one server
     /// instance, and `Server::prepare` logs a `warn` saying so, naming
-    /// [`why_not_delivers_requests_once`](Self::why_not_delivers_requests_once), when it mounts a
+    /// [`why_not_single_delivery`](Self::why_not_single_delivery), when it mounts a
     /// request handler; it refuses nothing, since one instance cannot tell itself from many. An
     /// event is outside it, delivered as [`delivery`](Self::delivery) declares.
     ///
@@ -520,21 +513,21 @@ impl Capabilities {
     /// use ulo_rpc::{Capabilities, DeliveryMode};
     ///
     /// let once = Capabilities::new(DeliveryMode::Competing);
-    /// assert!(once.delivers_requests_once() && once.why_not_delivers_requests_once().is_none());
-    /// let fanned = once.without_delivers_requests_once("Pub/Sub hands a message to every subscriber");
-    /// assert!(!fanned.delivers_requests_once());
-    /// assert_eq!(fanned.why_not_delivers_requests_once(), Some("Pub/Sub hands a message to every subscriber"));
+    /// assert!(once.single_delivery() && once.why_not_single_delivery().is_none());
+    /// let fanned = once.without_single_delivery("Pub/Sub hands a message to every subscriber");
+    /// assert!(!fanned.single_delivery());
+    /// assert_eq!(fanned.why_not_single_delivery(), Some("Pub/Sub hands a message to every subscriber"));
     /// ```
-    pub const fn delivers_requests_once(&self) -> bool {
-        self.delivers_requests_once.is_none()
+    pub const fn single_delivery(&self) -> bool {
+        self.single_delivery.is_none()
     }
 
-    pub const fn without_delivers_requests_once(self, reason: &'static str) -> Self {
-        Capabilities { delivers_requests_once: Some(reason), ..self }
+    pub const fn without_single_delivery(self, reason: &'static str) -> Self {
+        Capabilities { single_delivery: Some(reason), ..self }
     }
 
-    pub const fn why_not_delivers_requests_once(&self) -> Option<&'static str> {
-        self.delivers_requests_once
+    pub const fn why_not_single_delivery(&self) -> Option<&'static str> {
+        self.single_delivery
     }
 }
 

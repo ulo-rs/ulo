@@ -280,7 +280,7 @@ impl RabbitMq {
         &self.probe
     }
 
-    /// `Codec::Cbor` carries raw bytes and has `binary`; JSON unset, which is declared without it.
+    /// `Codec::Cbor` carries raw bytes and reports `binary: true`; JSON unset.
     pub fn codec(mut self, codec: Codec) -> Self {
         self.codec = codec;
         self

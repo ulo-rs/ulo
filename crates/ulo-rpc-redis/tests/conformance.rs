@@ -310,11 +310,11 @@ async fn settled(count: impl Fn() -> usize, expected: usize, what: &str) -> usiz
 /// Redis Pub/Sub hands a message to every connection subscribed to its channel, and each server
 /// subscribes to its patterns' channels, so one request runs its handler on every server and each
 /// publishes a reply; `RpcClient` answers the first and drops the rest. The link is declared
-/// without `delivers_requests_once` for it. An event reaches every server as well, the link's
+/// without `single_delivery` for it. An event reaches every server as well, the link's
 /// `DeliveryMode::FanOut`.
 async fn fan_out(servers: usize) {
     let capabilities = Redis::url("redis://127.0.0.1:6379").capabilities();
-    assert!(!capabilities.delivers_requests_once() && capabilities.why_not_delivers_requests_once().is_some(), "{capabilities:?}");
+    assert!(!capabilities.single_delivery() && capabilities.why_not_single_delivery().is_some(), "{capabilities:?}");
     let broker = RedisServer::start().await;
     let url = format!("redis://{}", broker.server);
     let counts = Arc::new(Counts::default());

@@ -78,6 +78,7 @@ pub use handler::{GatewayHooks, WsHandler};
 pub use module::WsModule;
 pub use rooms::{Broadcast, BroadcastError, Rooms, RoomsIn};
 pub use session::{Session, SessionFactory, SessionHandle};
+#[doc(hidden)]
 #[cfg(feature = "conformance-probe")]
 pub use table::{AnswerHold, MessagesRead};
 pub use table::{GatewayDefaults, GatewayTable};

@@ -29,10 +29,10 @@ const DEFAULT_TIMEOUT_GRACE: Duration = Duration::from_secs(1);
 ///
 /// `prepare` calls `Link::prepare` and `Link::max_inflight`, and refuses two handlers for one
 /// pattern, a handler whose shape the link's capabilities do not carry (a streamed shape on UDP),
-/// an `#[event]` handler with a streamed shape, a `Binary` payload on a link declared without
-/// `binary`, naming the reason the link declares, `max_inflight(Count::Max(0))`,
+/// an `#[event]` handler with a streamed shape, a `Binary` payload on a JSON link,
+/// `max_inflight(Count::Max(0))`,
 /// `max_queued_items(Count::Max(0))` and `timeout_grace(Bound::After(Duration::ZERO))`.
-/// On a link declaring `without_delivers_requests_once` it logs one `warn` naming how many request
+/// On a link declaring `without_single_delivery` it logs one `warn` naming how many request
 /// patterns it mounts and the reason, and refuses nothing. `bind` calls `Link::listen` with every
 /// mounted pattern. Over the in-flight limit a call is answered `err` of kind `unavailable`. A pattern is
 /// its own, so a controller's `.at(prefix)` does not apply to it, and `wire()` refuses a prefix on
@@ -177,13 +177,12 @@ impl<L: Link> ulo::Server for Server<L> {
                     )
                 }));
             }
-            if let Some(reason) = capabilities.why_not_binary()
-                && rpc.payload == PayloadKind::Binary
-            {
+            if rpc.payload == PayloadKind::Binary && !capabilities.binary {
                 let pattern = Arc::clone(&pattern);
                 failures.push(Failure::naming(vec![who.controller], move |names| {
                     format!(
-                        "{} (pattern `{pattern}`) takes a binary payload, which the {} link does not carry: {reason}",
+                        "{} (pattern `{pattern}`) takes a binary payload, which the {} link's JSON codec cannot carry; \
+                         set `.codec(Codec::Cbor)` on the link",
                         who.text(names),
                         L::NAME
                     )
@@ -203,7 +202,7 @@ impl<L: Link> ulo::Server for Server<L> {
         }
         failures.into_result()?;
         let requests = routes.values().filter(|route| route.kind == Kind::Message).count();
-        if let Some(reason) = capabilities.why_not_delivers_requests_once()
+        if let Some(reason) = capabilities.why_not_single_delivery()
             && requests > 0
         {
             tracing::warn!(

@@ -17,6 +17,13 @@ request from CI.
   workspace version as the core does, so a release moves every publishable crate. Until the first
   release that is not a pre-release, a leaf at another version fails the lockstep step.
 
+`ulo-graphql` and `ulo-graphql-ws` are leaves by both conditions the rule reads. No core crate
+depends on either, `=` or otherwise: in `cargo metadata` their dependents are `ulo-graphql-http`,
+`ulo-graphql-async-graphql`, `ulo-graphql-juniper`, `ulo-graphql-ws` itself on `ulo-graphql`, and
+the GraphQL examples, each a leaf or unpublished. Neither declares a `#[doc(hidden)]` item, and no
+core crate's source names `ulo_graphql` or `ulo_graphql_ws`. `python3 scripts/release_check.py
+lockstep` derives the same group.
+
 ## What `release check` checks
 
 The job checks out the last release, the nearest tag matching `v[0-9]*` among the ancestors of the
@@ -88,6 +95,9 @@ needs first.
 One pull request moves `[workspace.package] version` and every `=` pin to the new version,
 regenerates `Cargo.lock` for the workspace members, and updates the Install sections of `README.md`
 and `crates/ulo/README.md`, which `scripts/check_readme_install.py` holds to the workspace version.
+While that version is a pre-release the Install sections pin each crate `=<version>`, and the
+script refuses any other operator: a caret on a pre-release also takes a later pre-release of the
+same version, which may break the first.
 The release is tagged `v<version>`. From that tag on, `release check` compares with the new release,
 every entry in `semver-breaks.txt` stops matching, and the first change after the tag removes them.
 Until that change merges, the job fails on `master` and on every other pull request.

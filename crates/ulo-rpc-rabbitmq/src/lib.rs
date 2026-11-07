@@ -31,7 +31,7 @@
 //! every `cancel` travel through the fanout exchange `ulo.rpc.control`, which binds one queue per
 //! server instance, carrying the call's `correlation_id`. A queue outlives the server that
 //! declared it, so a request sent while no instance consumes waits in the queue, and a caller sees
-//! its own `Timeout` rather than `Unavailable`: the link declares `holds_unserved`.
+//! its own `Timeout` rather than `Unavailable`: the link declares `unserved_hold`.
 
 mod link;
 

@@ -137,7 +137,7 @@ impl ErrorBody {
 
 /// What a handler's payload is, recorded on its handler value by the attribute's probe:
 /// `Payload<Bytes>` and `Bytes` are `Binary`, every other type `Serde`. `prepare` refuses a
-/// `Binary` handler on a link whose capabilities declare `without_binary`.
+/// `Binary` handler on a link whose capabilities report `binary: false`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum PayloadKind {
     #[default]

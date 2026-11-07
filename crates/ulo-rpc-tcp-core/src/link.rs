@@ -205,7 +205,7 @@ impl Core {
             .without_native_backpressure(
                 "a TCP server reads each request off its connection as it arrives, and no broker holds one over the server's bound, which the server refuses",
             )
-            .without_holds_unserved("the caller connects to one server, and no broker keeps a request while that server is not serving")
+            .without_unserved_hold("the caller connects to one server, and no broker keeps a request while that server is not serving")
             .without_durable_replies("a reply travels the caller's connection, and a connection lost loses what it was carrying")
     }
 

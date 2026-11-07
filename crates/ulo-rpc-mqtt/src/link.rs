@@ -230,7 +230,7 @@ impl Mqtt {
         self
     }
 
-    /// `Codec::Cbor` carries raw bytes and has `binary`; JSON unset, which is declared without it.
+    /// `Codec::Cbor` carries raw bytes and reports `binary: true`; JSON unset.
     pub fn codec(mut self, codec: Codec) -> Self {
         self.codec = codec;
         self
@@ -294,7 +294,7 @@ impl Link for Mqtt {
                 "holding a request over the server's bound at the broker needs it to pass an unacknowledged shared-subscription message to \
                  another member when the holder's session ends, which MQTT 5 §4.8.2 only recommends and Mosquitto does not do",
             )
-            .without_holds_unserved("a request published while no instance subscribes its pattern's `$share` filter reaches no one")
+            .without_unserved_hold("a request published while no instance subscribes its pattern's `$share` filter reaches no one")
             .without_durable_replies("the client's clean session loses what reached its reply topic while its connection was down")
             .without_ordered_control(CONTROL_LANE);
         if self.qos == QoS::AtMostOnce {

@@ -42,10 +42,10 @@ impl Codec {
         matches!(self, Codec::Cbor)
     }
 
-    /// The codec a link's capabilities declare. The set is closed, so `binary` names it: a link
+    /// The codec a link's capabilities report. The set is closed, so `binary` names it: a link
     /// carrying raw bytes speaks CBOR and one that does not speaks JSON.
     pub(crate) fn of(capabilities: &Capabilities) -> Codec {
-        if capabilities.binary() { Codec::Cbor } else { Codec::Json }
+        if capabilities.binary { Codec::Cbor } else { Codec::Json }
     }
 
     /// One whole frame, as TCP, UDP and Redis carry it and every reply lane does. A frame whose

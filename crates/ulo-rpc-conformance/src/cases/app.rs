@@ -651,7 +651,7 @@ pub(crate) struct Mounts {
 impl Mounts {
     /// What the link carries: every scenario it can run.
     pub(crate) fn carried(capabilities: &Capabilities) -> Mounts {
-        Mounts { streaming: streams(capabilities), binary: capabilities.binary() }
+        Mounts { streaming: streams(capabilities), binary: capabilities.binary }
     }
 }
 

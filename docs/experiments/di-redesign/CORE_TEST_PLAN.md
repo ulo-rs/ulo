@@ -600,8 +600,8 @@ Survivors: `release_unserved` removed from `AbortOnDrop` alone (F480). On `OnTok
 
 ### Q25 status (QS-19, the capability declaration)
 
-- Strict defaults: the `Capabilities::new` doctest (`crates/ulo-rpc/src/link.rs`) requires every boolean capability held; the `compile_fail,E0616` doctest on `Capabilities` requires an absence to go through its reasoned setter; the `Capabilities::codec` doctest requires a JSON link declared without `binary` with the codec's reason.
-- Reasons printed: `ulo-rpc/tests/hand_written.rs`'s two binary-payload refusals require the declared reason in the text, and `fan_out.rs` the `warn`'s `reason` field; `ulo-http/tests/declared_limits.rs :: a_host_s_refusals_name_the_reasons_it_declared` requires the `peer_addr`, `forward_miss`, `host_extensions` and `upgrades` refusals each to carry its reason, `a_backend_s_refusals_name_the_reasons_it_declared` the backend's `upgrades`, `port_zero`, `inherited_sockets` and `tls` refusals, `the_warn_for_a_path_outside_the_prefix_names_the_declared_reason` the `strips_prefix` `warn`'s `reason` field, and `a_backend_s_declaration_follows_the_backend_value` requires `Backend::limits(&self)` read off the backend value, one built without `h2c` refused naming the reason and one built with it accepted; the WebSocket suite's declaration scenario requires the upgrades refusal to carry the adapter's reason on actix.
+- Strict defaults: the `Capabilities::new` doctest (`crates/ulo-rpc/src/link.rs`) requires every ability a `bool` accessor names held and the `binary` report `false`; the `compile_fail,E0616` doctest on `Capabilities` requires an absence to go through its reasoned setter; the `Capabilities::codec` doctest requires `binary` to follow the codec, `false` for JSON and `true` for CBOR.
+- Reasons printed: `ulo-rpc/tests/fan_out.rs` requires the `warn`'s `reason` field, and `hand_written.rs`'s two binary-payload refusals name the codec that carries a binary payload, `.codec(Codec::Cbor)`; `ulo-http/tests/declared_limits.rs :: a_host_s_refusals_name_the_reasons_it_declared` requires the `peer_addr`, `forward_miss`, `host_extensions` and `upgrades` refusals each to carry its reason, `a_backend_s_refusals_name_the_reasons_it_declared` the backend's `upgrades`, `port_zero`, `inherited_sockets` and `tls` refusals, `the_warn_for_a_path_outside_the_prefix_names_the_declared_reason` the `strips_prefix` `warn`'s `reason` field, and `a_backend_s_declaration_follows_the_backend_value` requires `Backend::limits(&self)` read off the backend value, one built without `h2c` refused naming the reason and one built with it accepted; the WebSocket suite's declaration scenario requires the upgrades refusal to carry the adapter's reason on actix.
 - `strips_prefix`: `ulo-http/tests/embed_outside_prefix.rs` runs on a test host declared `without_strips_prefix`, so the app strips the prefix only from the declaration.
 - Skips from the declaration: `ulo-rpc-conformance/tests/skips.rs` runs `cancel_follows_its_request` over a link that fails whatever starts it, returning when the link is declared without `ordered_control` and panicking at the link's start when it declares nothing; actix's WebSocket suite skips thirty scenarios from `why_not_upgrades`, and `ulo-ws-conformance`'s two unit tests on `__private::skips` hold that decision in both directions, a host that has upgrades skipping nothing; the stamping macro asserts in a constant that its scenario list names the declaration `skips` exempts, so a renamed declaration scenario fails to compile on every host.
 - `MigrationLock`: `ulo-codegen-tests/tests/ui/migrate_without_a_migration_lock.rs`, the E0277 carrying the trait's `on_unimplemented` message and note.
@@ -610,9 +610,8 @@ Breaks planted in the working tree, one at a time, each anchor asserted once and
 
 | Break | Red |
 | --- | --- |
-| `Capabilities::new` declaring `holds_unserved` absent | 1 (the `new` doctest) |
-| the binary-payload refusal without its reason | 2 (`hand_written.rs`) |
-| `Capabilities::codec` leaving a JSON link with `binary` | 3 (`hand_written.rs`, the hand-written twin test among them) |
+| `Capabilities::new` declaring `unserved_hold` absent | 1 (the `new` doctest) |
+| `Capabilities::codec` reporting `binary` for a JSON link | 3 (the `codec` doctest; `hand_written.rs`, the hand-written twin test among them) |
 | the `forward_miss` refusal without its reason | 1 (`declared_limits.rs`) |
 | `Server::prepare` reading `BackendLimits::NONE` in place of the backend's `limits(&self)` | 1 (`declared_limits.rs`) |
 | `Embedded` ignoring `strips_prefix` | 1 (`embed_outside_prefix.rs`) |
@@ -623,3 +622,42 @@ Breaks planted in the working tree, one at a time, each anchor asserted once and
 | the embedding's upgrades refusal without its reason | 1 (actix's declaration scenario) |
 | the fan-out `warn` without its `reason` field | 1 (`fan_out.rs`) |
 | `MigrationLock` without `on_unimplemented` | 1 (`compile_fail`, on rustc 1.98.1) |
+
+### Q26 status (the capability follow-ups)
+
+- `binary` is a report of configuration: the `Capabilities::new` doctest requires it `false` from `new`, and `ulo-rpc`'s `client::tests::a_binary_payload_on_a_json_link_is_refused_before_any_io` runs a link declaring nothing, whose call with a binary payload is refused `binary_unsupported` before its failing connect. `hand_written.rs`'s two refusals require the handler refused on a JSON link, naming `.codec(Codec::Cbor)`.
+- The abilities are named as nouns, `confirmed_drain`, `unserved_hold` and `single_delivery`, each set by `without_<noun>(reason)`; the `single_delivery` doctest holds the setter and both accessors.
+- Refusal in place of a skip: on UDP, whose shapes carry no streamed request, `cancel_before_opened` and the three held-cancel scenarios assert the startup refusal of a streamed handler, and UDP's suite declares only `recovery_after_disrupt` not applicable. TCP and TCP-smol, each in its plain, TLS and CBOR suite, Redis and the community fixture keep the three held-cancel entries: they carry streamed requests and hold no `cancel`, so no refusal is there to assert.
+- UDP's `ordered_control`: `ulo-rpc-udp/tests/conformance.rs :: the_link_is_declared_without_ordered_control` pins the declaration, since loopback keeps datagram order and the ordered-cancel scenario passes there without it; the suite run prints the skip line with the declared reason.
+- The database suite's `Capabilities`: private fields, `without_lazy(reason)` and `without_migrations(reason)`, a `compile_fail,E0616` doctest; the lazy and migration scenarios skip from the declaration, and `ulo-db-conformance/tests/create_loop.rs` holds the gate both ways, its stamped host declaring both absent and skipping, and the same host declaring nothing failing each scenario at what the store cannot do.
+- `ulo-ws-redis`'s settings: `tests/settings.rs` requires the canonical `url`, `database`, `protocol` and `tls_verify` and two registrations differing in `#insecure` or `?protocol=` refused naming the setting; `tests/url_corpus.rs` requires `prepare`'s verdict equal to `redis::Client::open`'s over fifty-three URLs, no password reaching a setting or a refusal.
+- gRPC's restored-header record: `ulo-grpc`'s `dispatch::tests` feed a hundred names to the record, which keeps sixty-four, warns each of them once and the sixty-fifth as full, and records a name once per writer.
+- Install pins: `scripts/check_readme_install.py --self-test` refuses a caret, an explicit `^`, a `~` and an unpinned `cargo add` on a pre-release workspace version, once per README.
+
+Breaks planted in the working tree, one at a time, each anchor asserted once and each file restored and compared afterwards:
+
+| Break | Red |
+| --- | --- |
+| `Capabilities::new` reporting `binary` | 2 (the `new` doctest; `client::tests::a_binary_payload_on_a_json_link_is_refused_before_any_io`) |
+| `Capabilities::codec` reporting `binary` for JSON | 3 (the `codec` doctest; `hand_written.rs`'s two refusals) |
+| the server's binary-payload refusal removed | 2 (`hand_written.rs`) |
+| an ability field made public | 1 (the `compile_fail` doctest on `Capabilities`) |
+| the streamed-request refusal branch removed from `order.rs` | 3 (UDP's three held-cancel scenarios; `cancel_before_opened` sends its frames below the server and passes on loopback) |
+| the streamed-request refusal branch taken on every link | 1 (TCP's `cancel_before_opened`) |
+| UDP's `without_ordered_control` removed | 1 (`the_link_is_declared_without_ordered_control`) |
+| the database lazy skip removed | 1 (`create_loop.rs`, the stamped lazy scenario) |
+| the database lazy skip taken on every host | 1 (`create_loop.rs`, the `should_panic` lazy test) |
+| the database migration skip removed | 2 (`create_loop.rs`, both stamped migration scenarios) |
+| the database migration skip taken on every host | 1 (`create_loop.rs`, the `should_panic` migration test) |
+| a database `Capabilities` field made public | 1 (its `compile_fail` doctest) |
+| `ulo-ws-redis` settings without `tls_verify` | 1 (`settings.rs`) |
+| `ulo-ws-redis` settings without `protocol` | 2 (`settings.rs`) |
+| `ulo-ws-redis`'s `url` written as given, through `setting_url` | 4 (`settings.rs`) |
+| `ulo-ws-redis` settings without `database` | 3 (`settings.rs`) |
+| `prepare` refusing a URL that does not start `redis` | 1 (`url_corpus.rs`) |
+| a TCP URL's password written into `url` | 3 (`settings.rs`) |
+| the restored-header record unbounded | 1 (`dispatch::tests`) |
+| the restored-header record keyed by name alone | 1 (`dispatch::tests`) |
+| a caret on a pre-release README pin | the real check, naming the line |
+| the pre-release pin rule removed from the README check | its self-test |
+

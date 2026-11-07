@@ -1,11 +1,14 @@
 //! The RPC conformance suite over the UDP link, each scenario against a server on a port of its
-//! own. The link declares unary calls alone and a 65,507-byte frame, so the streamed scenarios
-//! and the binary one assert the startup refusals, and the oversized one the client's refusal
-//! one byte over the datagram. The recovery scenario is declared not applicable.
+//! own. The link declares unary calls alone and a 65,507-byte frame, so the streamed scenarios,
+//! the held-`cancel` ones among them, and the binary one assert the startup refusals, and the
+//! oversized one the client's refusal one byte over the datagram. The recovery scenario is
+//! declared not applicable, and the ordered-`cancel` one is skipped from the link's declaration
+//! without `ordered_control`.
 
 use std::net::{Ipv4Addr, SocketAddr};
 
 use ulo::BoundAddr;
+use ulo_rpc::Link;
 use ulo_rpc_conformance::{Broker, startup_failed};
 use ulo_rpc_udp::Udp;
 
@@ -36,8 +39,16 @@ impl Broker for Loopback {
 
 ulo_rpc_conformance::conformance_suite!(Loopback; not_applicable {
     recovery_after_disrupt: "UDP holds no connection to lose",
-    cancel_before_opened: "UDP carries no streamed request",
-    a_late_opened_releases_the_held_cancel: "UDP carries no streamed request",
-    a_held_cancel_is_dropped_when_its_hold_runs_out: "UDP carries no streamed request",
-    a_held_cancel_lasts_until_its_call_s_deadline: "UDP carries no streamed request",
 });
+
+/// Datagrams on loopback arrive in the order they were sent, so the ordered-`cancel` scenario
+/// would pass here on a link declaring `ordered_control`, though a network reorders them. The
+/// declaration is what skips it, and this pins the declaration.
+#[test]
+fn the_link_is_declared_without_ordered_control() {
+    let capabilities = Udp::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).capabilities();
+    assert!(
+        !capabilities.ordered_control() && capabilities.why_not_ordered_control().is_some_and(|reason| reason.contains("any order")),
+        "{capabilities:?}"
+    );
+}

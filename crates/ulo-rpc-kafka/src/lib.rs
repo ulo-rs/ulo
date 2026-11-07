@@ -7,7 +7,7 @@
 //! a stopped server's topic exists and a miss is the client's `Timeout` under auto-create; the
 //! group's offsets committed at the topics' end at `bind` where it has none, so a request produced
 //! while no instance consumes, or while a rebalance moves its partition, waits for the next owner
-//! (`holds_unserved`); a reply published while the client is disconnected waits on its reply
+//! (`unserved_hold`); a reply published while the client is disconnected waits on its reply
 //! topic for the client to reconnect (`durable_replies`); at the server's `max_inflight`, 1,024
 //! unset, the group consumer pauses its partitions until a request settles, so requests over the
 //! bound wait in their topics rather than being refused; the drain pauses and commits; an

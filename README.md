@@ -11,14 +11,15 @@ so the same application module runs on either runtime and behind any server.
 
 ## Install
 
-`0.1.0-alpha.2` is the current release, on crates.io:
+`0.1.0-alpha.2` is the current release, on crates.io. Each crate is pinned with `=`, since a caret
+on a pre-release also takes a later alpha, which may break this one:
 
 ```toml
 [dependencies]
-ulo = "0.1.0-alpha.2"
-ulo-http = "0.1.0-alpha.2"
-ulo-http-hyper = "0.1.0-alpha.2"
-ulo-runtime-tokio = "0.1.0-alpha.2"
+ulo = "=0.1.0-alpha.2"
+ulo-http = "=0.1.0-alpha.2"
+ulo-http-hyper = "=0.1.0-alpha.2"
+ulo-runtime-tokio = "=0.1.0-alpha.2"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
