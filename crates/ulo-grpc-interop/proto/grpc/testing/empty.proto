@@ -1,0 +1,6 @@
+// The gRPC project's `grpc/testing/empty.proto`.
+syntax = "proto3";
+
+package grpc.testing;
+
+message Empty {}

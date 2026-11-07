@@ -193,6 +193,12 @@ ulo-reexport-grpc             tokio-bound
 ulo-reexport-renamed          runtime-free
 ulo-reexport-facade           runtime-free
 
+# The framework-overhead benchmark: a bare hyper server and ulo's, on tokio, driven by one load loop.
+ulo-bench-overhead            tokio-bound
+
+# The interop `TestService` the gRPC interop client is run against, on `ulo-grpc`.
+ulo-grpc-interop              tokio-bound
+
 # Every macro expanded in one crate for clippy, the gRPC ones on `ulo-grpc`.
 ulo-macro-lints               tokio-bound
 

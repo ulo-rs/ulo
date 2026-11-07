@@ -1,0 +1,25 @@
+// The `TestService` and `UnimplementedService` of the gRPC project's `grpc/testing/test.proto`,
+// which the standard interop client calls. The project's other services in that file serve
+// load-balancing and xDS tests and are omitted.
+syntax = "proto3";
+
+package grpc.testing;
+
+import "grpc/testing/empty.proto";
+import "grpc/testing/messages.proto";
+
+service TestService {
+  rpc EmptyCall(Empty) returns (Empty);
+  rpc UnaryCall(SimpleRequest) returns (SimpleResponse);
+  rpc CacheableUnaryCall(SimpleRequest) returns (SimpleResponse);
+  rpc StreamingOutputCall(StreamingOutputCallRequest) returns (stream StreamingOutputCallResponse);
+  rpc StreamingInputCall(stream StreamingInputCallRequest) returns (StreamingInputCallResponse);
+  rpc FullDuplexCall(stream StreamingOutputCallRequest) returns (stream StreamingOutputCallResponse);
+  rpc HalfDuplexCall(stream StreamingOutputCallRequest) returns (stream StreamingOutputCallResponse);
+  rpc UnimplementedCall(Empty) returns (Empty);
+}
+
+// A service the server never registers, so a call to it answers UNIMPLEMENTED.
+service UnimplementedService {
+  rpc UnimplementedCall(Empty) returns (Empty);
+}

@@ -321,6 +321,53 @@ jobs:
       # nothing matches.
       - run: python3 scripts/public_reach.py check nightly-2026-10-11
 
+  grpc-interop:
+    name: grpc interop
+    runs-on: ubuntu-latest
+    # A hung case fails the job, not the runner's six hours: each case is also bounded by the
+    # script's own per-case timeout.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # grpc-go's interop client is the reference client: the gRPC project publishes no prebuilt
+      # binary of it that runs on a runner, so it is built from a tag. Both pins are exact and
+      # older than two weeks when chosen: grpc-go v1.84.0 (2026-09-17) declares `go 1.25.0`, which
+      # is the toolchain installed. `go install` checks the module against the checksum database.
+      # Moving either pin is its own change.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          cache: false
+      - run: cargo build -p ulo-grpc-interop --locked
+      - run: GOBIN="$RUNNER_TEMP/interop-client" go install google.golang.org/grpc/interop/client@v1.84.0
+      # The runner judges each case from its own client process, so a failure names the case. The
+      # script self-tests its verdicts first. `--expect` repeats the length of
+      # `crates/ulo-grpc-interop/interop/cases.txt`: a list or a run of any other length fails,
+      # as does a case failing that the file does not allow, an allowed case that passes and an
+      # allowed case failing on another line than the one its allowance quotes. The allowances,
+      # each with the reason the framework does not pass the case, are in that file.
+      - run: python3 crates/ulo-grpc-interop/interop/run.py --self-test
+      - run: >-
+          python3 crates/ulo-grpc-interop/interop/run.py
+          --server target/debug/ulo-grpc-interop
+          --client "$RUNNER_TEMP/interop-client/client --server_host={host} --server_port={port} --test_case={case}"
+          --expect 16
+
+  bench-build:
+    name: bench build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The framework-overhead benchmark compiles on every pull request and never runs here:
+      # throughput and latency on a shared runner vary with its neighbours by more than the
+      # difference being measured, so no number gates a build. Running it is
+      # `cargo bench -p ulo-bench-overhead` (crates/ulo-bench-overhead/README.md).
+      - run: cargo bench -p ulo-bench-overhead --no-run --locked
+
   release-check:
     name: release check
     runs-on: ubuntu-latest
