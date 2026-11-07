@@ -9186,6 +9186,7 @@ dependencies = [
  "ulo-build",
  "ulo-grpc",
  "ulo-runtime-tokio",
+ "ulo-test-certs",
 ]
 
 [[package]]
