@@ -19,7 +19,7 @@ use ulo_rpc::link::{Inbound, UNARY_ONLY};
 use ulo_rpc::{
     Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo,
 };
-use ulo_transport::sync::ordered;
+use ulo_transport::sync::{Watch, ordered};
 use ulo_transport::{Details, ErrorKind};
 
 /// The largest UDP payload over IPv4: 65,535 less the IP and UDP headers. One frame is one
@@ -378,8 +378,9 @@ async fn read_replies(socket: Arc<UdpSocket>, epoch: watch::Receiver<u64>, codec
 /// not decode carries no id to answer and is dropped. Once the link is draining and holds no call,
 /// the inbound stream ends, and a request arriving afterwards is refused here: nothing tells a UDP
 /// caller to stop sending, and the stream ending only at `close` would hold the drain to its
-/// deadline. This loop alone sends deliveries and decides the end between datagrams, so a
-/// `cancel` releasing the last call is queued before the stream ends.
+/// deadline. This loop alone sends deliveries and decides the end between datagrams, and a
+/// `cancel` releases its call once the server has taken it, so no `cancel` is left behind the
+/// stream's end.
 async fn receive(
     socket: Arc<UdpSocket>,
     codec: Codec,
@@ -438,7 +439,11 @@ async fn receive(
             Inward::Discard => continue,
         };
         let reply = reply_path(writes.clone(), peer, codec, Arc::clone(&ids));
-        if sender.send(Delivery { frame, reply: Some(reply), ack: Ack::none() }).await.is_err() {
+        let ack = match &frame {
+            Frame::Cancel { id } => taken(&ids, *id),
+            _ => Ack::none(),
+        };
+        if sender.send(Delivery { frame, reply: Some(reply), ack }).await.is_err() {
             return;
         }
     }
@@ -583,10 +588,12 @@ fn inward(frame: Frame, peer: SocketAddr, ids: &Mutex<Ids>, next: &AtomicU64) ->
     mapped.map_or(Inward::Discard, Inward::Deliver)
 }
 
-/// The calls in flight: each sender's id and the server's, both ways, counted in `State::held`.
+/// The calls in flight, counted in `State::held`: by each sender's id and by the server's while
+/// the sender can address them, and by the server's alone once the sender has cancelled, until the
+/// server has taken the `cancel`.
 struct Ids {
     by_caller: HashMap<(SocketAddr, u64), u64>,
-    by_server: HashMap<u64, (SocketAddr, u64)>,
+    by_server: HashMap<u64, Caller>,
     /// Set by `forget_all`: a request arriving afterwards is refused, not opened.
     closed: bool,
     state: Arc<State>,
@@ -597,12 +604,24 @@ impl Ids {
         Ids { by_caller: HashMap::new(), by_server: HashMap::new(), closed: false, state }
     }
 
-    /// Every call held, as its sender's address and id, each forgotten, so a reply to it is
-    /// refused, and the table closed, so a request arriving afterwards is refused too.
+    /// Every call held and not cancelled, as its sender's address and id, each forgotten, so a
+    /// reply to it is refused, and the table closed, so a request arriving afterwards is refused
+    /// too. A cancelled call is forgotten with them and answered nothing, the sends waiting on it
+    /// answered as at its release.
     fn forget_all(&mut self) -> Vec<(SocketAddr, u64)> {
         self.closed = true;
         self.by_caller.clear();
-        let held = self.by_server.drain().map(|(_, caller)| caller).collect();
+        let held = self
+            .by_server
+            .drain()
+            .filter_map(|(_, caller)| match caller {
+                Caller::Live(peer, caller) => Some((peer, caller)),
+                Caller::Cancelled(released) => {
+                    released.modify(|released| *released = true);
+                    None
+                }
+            })
+            .collect();
         self.counted();
         held
     }
@@ -616,7 +635,7 @@ impl Ids {
         if let Some(stale) = self.by_caller.insert((peer, caller), server) {
             self.by_server.remove(&stale);
         }
-        self.by_server.insert(server, (peer, caller));
+        self.by_server.insert(server, Caller::Live(peer, caller));
         self.counted();
         server
     }
@@ -625,22 +644,70 @@ impl Ids {
         self.by_caller.get(&(peer, caller)).copied()
     }
 
+    /// The sender cancelled: its frames naming the call are dropped from now on, a second
+    /// `cancel` among them, and the call's replies are dropped before the wire until
+    /// [`release`](Self::release) forgets it, each send answered then. The call stays known until
+    /// the server has taken the `cancel`: a reply refused before then would cancel the call
+    /// `Disconnected` ahead of the `cancel` naming its reason, and one answered at once would let
+    /// a stream whose items are always ready run on without yielding, which on a one-thread
+    /// runtime keeps the `cancel` from ever arriving.
     fn cancel(&mut self, peer: SocketAddr, caller: u64) -> Option<u64> {
         let server = self.by_caller.remove(&(peer, caller))?;
-        self.by_server.remove(&server);
-        self.counted();
+        self.by_server.insert(server, Caller::Cancelled(Arc::new(Watch::new(false))));
         Some(server)
     }
 
-    fn caller(&self, server: u64) -> Option<u64> {
-        self.by_server.get(&server).map(|(_, caller)| *caller)
+    fn caller(&self, server: u64) -> Option<Caller> {
+        self.by_server.get(&server).cloned()
     }
 
+    /// A reply ended the call. A call its sender has cancelled is left to its `cancel`.
     fn finish(&mut self, server: u64) {
-        if let Some(caller) = self.by_server.remove(&server) {
-            self.by_caller.remove(&caller);
+        if let Some(Caller::Live(peer, caller)) = self.by_server.get(&server) {
+            self.by_caller.remove(&(*peer, *caller));
+            self.by_server.remove(&server);
         }
         self.counted();
+    }
+
+    /// Forgets a call its sender cancelled, once the server has taken the `cancel`, and answers
+    /// the sends waiting on it.
+    fn release(&mut self, server: u64) {
+        if let Some(Caller::Cancelled(released)) = self.by_server.remove(&server) {
+            released.modify(|released| *released = true);
+        }
+        self.counted();
+    }
+}
+
+/// Who a call's replies go to.
+#[derive(Clone)]
+enum Caller {
+    /// The sender, at its address and under its own id.
+    Live(SocketAddr, u64),
+    /// Nobody: the sender cancelled the call. Its replies are dropped before the wire, each send
+    /// answered once the flag is set, as the `cancel`'s `Ack` settles or drops unsettled, or at
+    /// `close`.
+    Cancelled(Arc<Watch<bool>>),
+}
+
+/// The `Ack` of a sender's `cancel` for call `server`, which forgets the call once the server has
+/// taken the `cancel`: the server cancels the call before it settles the `cancel`'s `Ack`, and an
+/// `Ack` dropped unsettled, its `cancel` dropped untaken, forgets the call as it drops.
+fn taken(ids: &Arc<Mutex<Ids>>, server: u64) -> Ack {
+    let cancelled = Cancelled { ids: Arc::clone(ids), server };
+    Ack::new(move |_| drop(cancelled))
+}
+
+/// A cancelled call, forgotten when dropped.
+struct Cancelled {
+    ids: Arc<Mutex<Ids>>,
+    server: u64,
+}
+
+impl Drop for Cancelled {
+    fn drop(&mut self) {
+        lock(&self.ids).release(self.server);
     }
 }
 
@@ -656,7 +723,9 @@ fn reply_path(writes: ordered::Sender<Datagram>, peer: SocketAddr, codec: Codec,
 }
 
 /// `frame` under the caller's id, queued now in one hold of the call table's lock; the mapping is
-/// forgotten once a reply ends the call, or once `close` has answered the calls held.
+/// forgotten once a reply ends the call, or once `close` has answered the calls held. A reply to a
+/// call its sender cancelled is dropped before the wire, and its send answered once the server has
+/// taken the `cancel` and cancelled the call `ClientCancelled`.
 fn queue_reply(
     writes: &ordered::Sender<Datagram>,
     peer: SocketAddr,
@@ -668,8 +737,15 @@ fn queue_reply(
         return Err(BoxError::from("a reply frame carries no id"));
     };
     let mut ids = lock(ids);
-    let Some(caller) = ids.caller(server) else {
-        return Err("the call is no longer in flight".into());
+    let caller = match ids.caller(server) {
+        Some(Caller::Live(_, caller)) => caller,
+        Some(Caller::Cancelled(released)) => {
+            return Ok(Either::Right(async move {
+                released.wait_for(|released| *released).await;
+                Ok(())
+            }));
+        }
+        None => return Err("the call is no longer in flight".into()),
     };
     let ends = matches!(frame, Frame::Res { .. } | Frame::Err { .. } | Frame::End { .. });
     let bytes = encode(codec, &with_id(frame, caller))?;
@@ -677,7 +753,7 @@ fn queue_reply(
     if ends {
         ids.finish(server);
     }
-    Ok(written)
+    Ok(Either::Left(written))
 }
 
 /// One datagram for a socket's writer: to `to` on the server's socket, to the connected address on

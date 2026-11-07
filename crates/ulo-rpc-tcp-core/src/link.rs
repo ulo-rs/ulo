@@ -735,13 +735,12 @@ impl Server {
                 }
             };
             let Some(frame) = self.inward(frame, &ids) else { continue };
-            let cancels = matches!(frame, Frame::Cancel { .. });
-            let delivery = Delivery { frame, reply: Some(path.clone()), ack: Ack::none() };
-            let sent = deliveries.send(delivery).await;
-            if cancels {
-                self.state.held.modify(|held| *held = held.saturating_sub(1));
-            }
-            if sent.is_err() {
+            let ack = match &frame {
+                Frame::Cancel { id } => taken(&ids, *id),
+                _ => Ack::none(),
+            };
+            let delivery = Delivery { frame, reply: Some(path.clone()), ack };
+            if deliveries.send(delivery).await.is_err() {
                 break;
             }
         }
@@ -832,12 +831,23 @@ fn refuse(delivery: Delivery, runtime: &Arc<dyn Runtime>) {
     })));
 }
 
-/// One connection's calls in flight: the caller's id and the server's, both ways, counted in
-/// `State::held`.
+/// One connection's calls in flight, counted in `State::held`: by the caller's id and by the
+/// server's while the caller can address them, and by the server's alone once the caller has
+/// cancelled, until the server has taken the `cancel`.
 struct Ids {
     by_caller: HashMap<u64, u64>,
-    by_server: HashMap<u64, u64>,
+    by_server: HashMap<u64, Caller>,
     state: Arc<State>,
+}
+
+/// Who a call's replies go to.
+#[derive(Clone)]
+enum Caller {
+    /// The caller, under its own id.
+    Live(u64),
+    /// Nobody: the caller cancelled the call. Its replies are dropped before the wire, each send
+    /// answered once the flag is set, as the `cancel`'s `Ack` settles or drops unsettled.
+    Cancelled(Arc<Watch<bool>>),
 }
 
 impl Ids {
@@ -859,7 +869,7 @@ impl Ids {
         if let Some(stale) = self.by_caller.insert(caller, server) {
             self.by_server.remove(&stale);
         }
-        self.by_server.insert(server, caller);
+        self.by_server.insert(server, Caller::Live(caller));
         self.counted(before);
         server
     }
@@ -868,31 +878,68 @@ impl Ids {
         self.by_caller.get(&caller).copied()
     }
 
-    /// The caller cancelled: its call is no longer answered. Released once the `cancel` is
-    /// queued for the server, by the connection's reader.
+    /// The caller cancelled: the caller's frames naming the call are dropped from now on, a
+    /// second `cancel` among them, and the call's replies are dropped before the wire until
+    /// [`release`](Self::release) forgets it, each send answered then. The call stays known until
+    /// the server has taken the `cancel`: a reply refused before then would cancel the call
+    /// `Disconnected` ahead of the `cancel` naming its reason, and one answered at once would
+    /// let a stream whose items are always ready run on without yielding, which on a one-thread
+    /// runtime keeps the `cancel` from ever arriving.
     fn cancel(&mut self, caller: u64) -> Option<u64> {
         let server = self.by_caller.remove(&caller)?;
-        self.by_server.remove(&server);
+        self.by_server.insert(server, Caller::Cancelled(Arc::new(Watch::new(false))));
         Some(server)
     }
 
-    fn caller(&self, server: u64) -> Option<u64> {
-        self.by_server.get(&server).copied()
+    fn caller(&self, server: u64) -> Option<Caller> {
+        self.by_server.get(&server).cloned()
     }
 
+    /// A reply ended the call. A call its caller has cancelled is left to its `cancel`.
     fn finish(&mut self, server: u64) {
         let before = self.by_server.len();
-        if let Some(caller) = self.by_server.remove(&server) {
-            self.by_caller.remove(&caller);
+        if let Some(Caller::Live(caller)) = self.by_server.get(&server) {
+            self.by_caller.remove(caller);
+            self.by_server.remove(&server);
         }
         self.counted(before);
     }
 
-    /// Every server id still in flight, forgotten; the reader releases them once their `cancel`s
-    /// are queued.
+    /// Forgets a call its caller cancelled, once the server has taken the `cancel`, and answers
+    /// the sends waiting on it.
+    fn release(&mut self, server: u64) {
+        let before = self.by_server.len();
+        if let Some(Caller::Cancelled(released)) = self.by_server.remove(&server) {
+            released.modify(|released| *released = true);
+        }
+        self.counted(before);
+    }
+
+    /// Every server id still live, forgotten; the reader releases them once their `cancel`s are
+    /// queued. A call its caller cancelled is left to its own `cancel`.
     fn drain(&mut self) -> Vec<u64> {
         self.by_caller.clear();
-        self.by_server.drain().map(|(server, _)| server).collect()
+        self.by_server.extract_if(|_, caller| matches!(caller, Caller::Live(_))).map(|(server, _)| server).collect()
+    }
+}
+
+/// The `Ack` of a caller's `cancel` for call `server`, which forgets the call once the server has
+/// taken the `cancel`: the server cancels the call before it settles the `cancel`'s `Ack`, and an
+/// `Ack` dropped unsettled, its `cancel` dropped untaken, forgets the call as it drops.
+fn taken(ids: &Arc<Mutex<Ids>>, server: u64) -> Ack {
+    let cancelled = Cancelled { ids: Arc::clone(ids), server };
+    Ack::new(move |_| drop(cancelled))
+}
+
+/// A cancelled call, forgotten when dropped.
+struct Cancelled {
+    ids: Arc<Mutex<Ids>>,
+    server: u64,
+}
+
+impl Drop for Cancelled {
+    fn drop(&mut self) {
+        lock(&self.ids).release(self.server);
     }
 }
 
@@ -902,19 +949,39 @@ fn reply_path(queue: ordered::Sender<Bytes>, codec: Codec, limit: u64, ids: Arc<
     ReplyPath::new(move |frame: Frame| -> BoxFuture<'static, Result<(), BoxError>> {
         // Queued at the call, so replies go out in the order their sends were called.
         let queued = queue_reply(&queue, codec, limit, &ids, frame);
-        Box::pin(async move { queued?.await.map_err(|_| BoxError::from("the TCP connection closed")) })
+        Box::pin(async move {
+            match queued? {
+                Queued::Written(room) => room.await.map_err(|_| BoxError::from("the TCP connection closed")),
+                Queued::Dropped(released) => {
+                    released.wait_for(|released| *released).await;
+                    Ok(())
+                }
+            }
+        })
     })
     .peer(peer)
 }
 
+/// What became of a reply frame.
+enum Queued {
+    /// Queued on the connection's writer, sent once the writer has room.
+    Written(ordered::Room<Bytes>),
+    /// Dropped, its call cancelled by the caller: sent, as the server is told, once the flag is
+    /// set.
+    Dropped(Arc<Watch<bool>>),
+}
+
 /// `frame` under the caller's id, queued now; the mapping is forgotten once a reply ends the
-/// call.
-fn queue_reply(queue: &ordered::Sender<Bytes>, codec: Codec, limit: u64, ids: &Mutex<Ids>, frame: Frame) -> Result<ordered::Room<Bytes>, BoxError> {
+/// call. A reply to a call its caller cancelled is dropped before the wire, and its send answered
+/// once the server has taken the `cancel` and cancelled the call `ClientCancelled`.
+fn queue_reply(queue: &ordered::Sender<Bytes>, codec: Codec, limit: u64, ids: &Mutex<Ids>, frame: Frame) -> Result<Queued, BoxError> {
     let Some(server) = frame.id() else {
         return Err("a reply frame carries no id".into());
     };
-    let Some(caller) = lock(ids).caller(server) else {
-        return Err("the call is no longer in flight on this connection".into());
+    let caller = match lock(ids).caller(server) {
+        Some(Caller::Live(caller)) => caller,
+        Some(Caller::Cancelled(released)) => return Ok(Queued::Dropped(released)),
+        None => return Err("the call is no longer in flight on this connection".into()),
     };
     let ends = matches!(frame, Frame::Res { .. } | Frame::Err { .. } | Frame::End { .. });
     let bytes = encode(codec, limit, &with_id(frame, caller))?;
@@ -922,7 +989,7 @@ fn queue_reply(queue: &ordered::Sender<Bytes>, codec: Codec, limit: u64, ids: &M
     if ends {
         lock(ids).finish(server);
     }
-    Ok(room)
+    Ok(Queued::Written(room))
 }
 
 /// A reply frame under the caller's id.

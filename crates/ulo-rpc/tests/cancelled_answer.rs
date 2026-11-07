@@ -350,6 +350,29 @@ async fn an_item_ready_in_the_poll_the_cancellation_wakes_is_written_and_none_af
     running.stop().await;
 }
 
+/// A `cancel`'s `Ack` is settled once its call is cancelled: TCP and UDP drop a cancelled call's
+/// replies before the wire and answer each send at that settlement, so a reply the call sends
+/// first cannot cancel it `Disconnected`.
+#[tokio::test(flavor = "current_thread")]
+async fn a_cancels_ack_is_settled_once_its_call_is_cancelled() {
+    let running = Running::start().await;
+    let (path, mut frames) = replies();
+    running.deliver(request(1, GATED), Some(path.clone()));
+    within("the first item", frames.recv()).await.expect("a frame on the reply path");
+    within("the stream waiting at its gate", running.probe.0.waiting.notified()).await;
+    let exec = lock(&running.probe.0.exec).clone().expect("the handler kept its execution");
+    let (settle, mut settled) = mpsc::unbounded_channel();
+    let ack = Ack::new(move |accepted| {
+        let _ = settle.send((accepted, exec.cancel_reason()));
+    });
+    running.deliveries.send(Delivery { frame: Frame::Cancel { id: 1 }, reply: Some(path), ack }).expect("the server reads its inbound stream");
+
+    let settlement = within("the `cancel`'s settlement", settled.recv()).await.expect("the `cancel`'s `Ack` settled");
+    assert_eq!(settlement, (true, Some(CancelReason::ClientCancelled)), "the settlement and the call's reason as it was settled");
+    running.probe.0.gate.notify_one();
+    running.stop().await;
+}
+
 /// A deadline passing while a stream's items are always ready ends it: the race polls the deadline
 /// only while the stream waits, and this stream never does.
 #[tokio::test(flavor = "current_thread")]
