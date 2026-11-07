@@ -10,18 +10,32 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::frame::Frame as WireFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::{Data, OpCode};
 use ulo::{BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, controller, handlers};
+use serde::Deserialize;
+use ulo_http::{StatusCode, WithHttpStatus};
+use ulo_transport::{CallError, ErrorKind};
 use ulo_ws::{
-    AfterInit, ConnectCx, ConnectRefused, Connection, DisconnectReason, GatewayRef, OnConnect, OnDisconnect, Payload, UpgradeHead,
-    WsConnect, WsCx,
+    AfterInit, CloseCode, ConnectCx, ConnectRefused, Connection, DisconnectReason, GatewayRef, OnConnect, OnDisconnect, Payload,
+    UpgradeHead, WsConnect, WsCx,
 };
 
 use support::{Record, Running, close_frame, hang_up, hang_up_with, next_json, send_json, within};
 
 const NAME: &str = "x-name";
 
+/// What `kick` closes the connection with.
+#[derive(Deserialize)]
+struct Kick {
+    code: u16,
+    reason: String,
+}
+
 /// The visitor a connect guard refuses, and the one `on_connect` refuses with its own code.
 const GUARD_REFUSES: &str = "mallory";
 const HOOK_REFUSES: &str = "eve";
+
+/// The visitor a connect guard fails with a `Forbidden` error that names an HTTP status of its
+/// own, which a WebSocket refusal does not read.
+const TEAPOT: &str = "teapot";
 
 /// The connection's session: the name its upgrade carried.
 struct Visitor {
@@ -40,7 +54,11 @@ struct NotMallory;
 
 impl Guard<WsConnect> for NotMallory {
     async fn can_activate(&self, cx: &ConnectCx) -> Result<bool, BoxError> {
-        Ok(cx.head().headers().get(NAME).is_none_or(|name| name != GUARD_REFUSES))
+        let name = cx.head().headers().get(NAME);
+        if name.is_some_and(|name| name == TEAPOT) {
+            return Err(CallError::new(ErrorKind::Forbidden, "no teapots").with_http_status(StatusCode::IM_A_TEAPOT).into());
+        }
+        Ok(name.is_none_or(|name| name != GUARD_REFUSES))
     }
 }
 
@@ -61,22 +79,38 @@ struct Hooked {
     },
 )]
 impl Hooked {
-    /// Closes the connection from the server with the code and reason the message names.
+    /// Closes the connection from the server with the code and reason the message names. A code
+    /// or reason no Close frame carries is refused where it is written, and the refusal's text is
+    /// the answer; the answer to a close that was queued is never written.
     #[ulo_ws::message("kick")]
-    async fn kick(&self, code: Payload<u16>, cx: WsCx) {
-        cx.conn().close(code.0, "kicked").await;
+    async fn kick(&self, kick: Payload<Kick>, cx: WsCx) -> String {
+        let code = match CloseCode::new(kick.0.code) {
+            Ok(code) => code,
+            Err(refused) => return refused.to_string(),
+        };
+        match cx.conn().close(code, &kick.0.reason).await {
+            Ok(()) => "closing".to_owned(),
+            Err(refused) => refused.to_string(),
+        }
     }
 
     #[ulo_ws::message("echo")]
     fn echo(&self, text: Payload<String>) -> String {
         text.0
     }
+
+    /// Fails with a `Conflict` that names an HTTP status of its own.
+    #[ulo_ws::message("teapot")]
+    fn teapot(&self) -> Result<String, CallError> {
+        Err(CallError::new(ErrorKind::Conflict, "the pot is taken").with_http_status(StatusCode::IM_A_TEAPOT))
+    }
 }
 
 impl OnConnect for Hooked {
     async fn on_connect(&self, cx: &ConnectCx) -> Result<(), ConnectRefused> {
         if cx.head().headers().get(NAME).is_some_and(|name| name == HOOK_REFUSES) {
-            return Err(ConnectRefused::code(4000, "not you").unwrap_or_else(|error| panic!("4000 is sendable: {error}")));
+            let code = CloseCode::new(4000).unwrap_or_else(|error| panic!("4000 is sendable: {error}"));
+            return Err(ConnectRefused::code(code, "not you").unwrap_or_else(|error| panic!("the reason fits a Close frame: {error}")));
         }
         Ok(())
     }
@@ -156,21 +190,27 @@ async fn a_close_the_client_sends_is_client_close_with_its_code_and_reason() {
 async fn a_close_the_gateway_sends_is_server_close_with_its_code() {
     let Started { app, departures, .. } = start().await;
     let mut socket = visit(&app, "ada").await;
-    send_json(&mut socket, &json!({ "event": "kick", "id": 1, "data": 4002 })).await;
+    send_json(&mut socket, &json!({ "event": "kick", "id": 1, "data": { "code": 4002, "reason": "kicked" } })).await;
     assert_eq!(close_frame(&mut socket).await, Some((4002, "kicked".to_owned())));
     hang_up(socket).await;
     assert_eq!(departure(&departures).await, ("ada".to_owned(), DisconnectReason::ServerClose { code: 4002 }));
     app.stop().await;
 }
 
+/// `Connection::close` refuses a reason over 123 bytes with nothing queued, so the connection stays
+/// open and answers the next message: no other Close frame is written in its place.
 #[tokio::test]
-async fn a_close_code_no_frame_may_carry_closes_with_1011_instead() {
+async fn a_close_reason_no_frame_may_carry_is_refused_and_the_connection_stays_open() {
     let Started { app, departures, .. } = start().await;
     let mut socket = visit(&app, "ada").await;
-    send_json(&mut socket, &json!({ "event": "kick", "id": 1, "data": 1005 })).await;
-    assert_eq!(close_frame(&mut socket).await, Some((1011, String::new())));
+    let long = "x".repeat(124);
+    send_json(&mut socket, &json!({ "event": "kick", "id": 1, "data": { "code": 4002, "reason": long } })).await;
+    let refused = json!({ "id": 1, "data": "a close reason is at most 123 bytes of UTF-8, and this one is 124" });
+    assert_eq!(next_json(&mut socket).await, refused);
+    send_json(&mut socket, &json!({ "event": "echo", "id": 2, "data": "still open" })).await;
+    assert_eq!(next_json(&mut socket).await, json!({ "id": 2, "data": "still open" }));
     hang_up(socket).await;
-    assert_eq!(departure(&departures).await, ("ada".to_owned(), DisconnectReason::ServerClose { code: 1011 }));
+    assert_eq!(departure(&departures).await, ("ada".to_owned(), DisconnectReason::ClientClose { code: 1000, reason: String::new() }));
     app.stop().await;
 }
 
@@ -209,7 +249,7 @@ async fn the_drain_is_drain_and_on_disconnect_still_runs_and_reads_the_session()
 #[tokio::test]
 async fn a_connection_the_connect_phase_refused_never_reaches_on_disconnect() {
     let Started { app, departures, .. } = start().await;
-    for (name, code) in [(GUARD_REFUSES, 1008), (HOOK_REFUSES, 4000)] {
+    for (name, code) in [(GUARD_REFUSES, 3003), (HOOK_REFUSES, 4000)] {
         let mut socket = app.connect("/hooked", &[(NAME, name)]).await;
         assert_eq!(close_frame(&mut socket).await.map(|(code, _)| code), Some(code), "{name}");
         hang_up(socket).await;
@@ -220,6 +260,22 @@ async fn a_connection_the_connect_phase_refused_never_reaches_on_disconnect() {
     app.stop().await;
     let expected = vec![("ada".to_owned(), DisconnectReason::ClientClose { code: 1000, reason: String::new() })];
     assert_eq!(departures.0.snapshot(), expected);
+}
+
+/// An error's HTTP status is HTTP's alone: a connect guard's `Forbidden` closes with 3003 and a
+/// message handler's `Conflict` answers the envelope's `conflict`, whatever status it names.
+#[tokio::test]
+async fn an_error_s_http_status_changes_no_websocket_rendering() {
+    let Started { app, .. } = start().await;
+    let mut refused = app.connect("/hooked", &[(NAME, TEAPOT)]).await;
+    assert_eq!(close_frame(&mut refused).await, Some((3003, "no teapots".to_owned())));
+    hang_up(refused).await;
+    let mut socket = visit(&app, "ada").await;
+    send_json(&mut socket, &json!({ "event": "teapot", "id": 1 })).await;
+    let error = json!({ "kind": "conflict", "message": "the pot is taken", "details": [] });
+    assert_eq!(next_json(&mut socket).await, json!({ "id": 1, "error": error }));
+    hang_up(socket).await;
+    app.stop().await;
 }
 
 #[tokio::test]

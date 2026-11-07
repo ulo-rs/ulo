@@ -36,11 +36,58 @@ pub(crate) fn status_of(kind: ErrorKind) -> StatusCode {
     }
 }
 
-/// The problem document for `error`. A 401 carries `WWW-Authenticate`, the error's own challenge or
-/// the server's default; a 429 carries `Retry-After` from a `RetryAfter` detail, and a 503 does when
-/// one is present.
+/// Sends a [`CallError`] over HTTP with a status of its own in place of the one its kind maps to,
+/// as `with_grpc_code` does for gRPC: a `Conflict` that names a precondition the request failed
+/// writes `.with_http_status(StatusCode::PRECONDITION_FAILED)`. The kind still decides every other
+/// transport's rendering, the RPC and WebSocket envelopes' `kind`, a WebSocket connect refusal's
+/// close code and the gRPC status, so the error keeps one meaning across transports.
+///
+/// The problem document carries the status in its `status` and `title`, and the headers follow
+/// the status, not the kind: a 401 carries `WWW-Authenticate`, and a 429 or 503 carries
+/// `Retry-After` from a `RetryAfter` detail. A status outside 400 to 599 is not an error's and is
+/// ignored, logged at `warn` when the error is rendered: a 1xx cannot end a response, and a 2xx or
+/// 3xx would read as success.
+///
+/// ```
+/// use ulo_http::{CallError, ErrorKind, StatusCode, WithHttpStatus};
+///
+/// let error = CallError::new(ErrorKind::Conflict, "the version changed").with_http_status(StatusCode::PRECONDITION_FAILED);
+/// assert_eq!(error.kind(), ErrorKind::Conflict);
+/// ```
+pub trait WithHttpStatus {
+    fn with_http_status(self, status: StatusCode) -> Self;
+}
+
+impl WithHttpStatus for CallError {
+    fn with_http_status(self, status: StatusCode) -> Self {
+        self.__with_http_status(status.as_u16())
+    }
+}
+
+/// The status `error` is rendered with: the one [`WithHttpStatus`] set when it is an error's,
+/// otherwise its kind's.
+pub(crate) fn status_for(error: &CallError) -> StatusCode {
+    own_status(error).unwrap_or_else(|| status_of(error.kind()))
+}
+
+/// The status [`WithHttpStatus`] set on `error`, when it is 400 to 599. One outside that range is
+/// logged at `warn` and read as unset.
+fn own_status(error: &CallError) -> Option<StatusCode> {
+    let written = error.__http_status()?;
+    match StatusCode::from_u16(written) {
+        Ok(status) if status.is_client_error() || status.is_server_error() => Some(status),
+        _ => {
+            tracing::warn!(status = written, kind = %error.kind(), "an error's HTTP status is not 400 to 599; it is sent with its kind's");
+            None
+        }
+    }
+}
+
+/// The problem document for `error`, with the status [`status_for`] gives. A 401 carries
+/// `WWW-Authenticate`, the error's own challenge or the server's default; a 429 carries
+/// `Retry-After` from a `RetryAfter` detail, and a 503 does when one is present.
 pub(crate) fn problem(error: &CallError, config: &HttpConfig) -> Response {
-    document(error, status_of(error.kind()), config)
+    document(error, status_for(error), config)
 }
 
 /// An error no handler claimed, as a response: `Timeout` when `exec`'s cancel reason is
@@ -60,7 +107,9 @@ pub(crate) fn render_error(err: BoxError, exec: &ExecutionRef, config: &HttpConf
 /// kind `BadRequest`: 405 with `Allow` for a `MethodNotAllowed`, 406 for a `NotAcceptable`, and
 /// 413 and 415 for an `ExtractError`'s `TooLarge` and `UnsupportedMediaType`. Each is recognised
 /// as the source of a `CallError`, and all but `NotAcceptable` bare as well; an error handler that
-/// reshaped it to another kind is rendered by that kind. A 415 carries `Accept` with the media type the extractor expected (RFC 9110 §15.5.16).
+/// reshaped it to another kind is rendered by that kind, and one that set a status through
+/// [`WithHttpStatus`] by that status. A 415 carries `Accept` with the media type the extractor
+/// expected (RFC 9110 §15.5.16).
 pub(crate) fn render_as_is(err: BoxError, config: &HttpConfig) -> Response {
     let error = match err.downcast::<MethodNotAllowed>() {
         Ok(refused) => (*refused).into_error(),
@@ -68,6 +117,9 @@ pub(crate) fn render_as_is(err: BoxError, config: &HttpConfig) -> Response {
     };
     if error.kind() != ErrorKind::BadRequest {
         return problem(&error, config);
+    }
+    if let Some(status) = own_status(&error) {
+        return document(&error, status, config);
     }
     if let Some(refused) = error.source_as::<MethodNotAllowed>() {
         return method_not_allowed(&error, refused, config);
@@ -84,7 +136,7 @@ pub(crate) fn render_as_is(err: BoxError, config: &HttpConfig) -> Response {
             }
             response
         }
-        _ => problem(&error, config),
+        _ => document(&error, StatusCode::BAD_REQUEST, config),
     }
 }
 
@@ -211,12 +263,13 @@ fn retry_after(after: Duration) -> HeaderValue {
 }
 
 /// The status phrase RFC 9110 recommends, which RFC 9457 makes the `title` of an `about:blank`
-/// problem. The `http` crate's phrases predate RFC 9110 for 413 and 422.
-fn title(status: StatusCode) -> &'static str {
+/// problem; `None` for a status with no registered phrase, whose document carries no `title`. The
+/// `http` crate's phrases predate RFC 9110 for 413 and 422.
+fn title(status: StatusCode) -> Option<&'static str> {
     match status.as_u16() {
-        413 => "Content Too Large",
-        422 => "Unprocessable Content",
-        _ => status.canonical_reason().unwrap_or(""),
+        413 => Some("Content Too Large"),
+        422 => Some("Unprocessable Content"),
+        _ => status.canonical_reason(),
     }
 }
 
@@ -224,7 +277,8 @@ fn title(status: StatusCode) -> &'static str {
 struct Problem<'a> {
     #[serde(rename = "type")]
     kind: &'static str,
-    title: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<&'static str>,
     status: u16,
     detail: &'a str,
     #[serde(skip_serializing_if = "no_details")]
@@ -240,4 +294,36 @@ struct Envelope<'a> {
 
 fn no_details(details: &&Details) -> bool {
     details.is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A status [`WithHttpStatus`] set outside 400 to 599 is read as unset, so the statuses no
+    /// kind has still apply to the error it was set on.
+    #[test]
+    fn a_status_no_error_has_leaves_the_extract_error_s_own_status() {
+        let too_large = || CallError::from(ExtractError::TooLarge { param: "body", limit: 8 });
+        let config = HttpConfig::default();
+        let ignored = render_as_is(Box::new(too_large().with_http_status(StatusCode::OK)), &config);
+        assert_eq!(ignored.status(), StatusCode::PAYLOAD_TOO_LARGE, "a 200 is not an error's status");
+        let named = render_as_is(Box::new(too_large().with_http_status(StatusCode::CONFLICT)), &config);
+        assert_eq!(named.status(), StatusCode::CONFLICT, "an error's own status wins over 413");
+    }
+
+    /// A status with no registered phrase is sent with no `title` rather than an empty one.
+    #[test]
+    fn a_status_with_no_phrase_has_no_title() {
+        let status = StatusCode::from_u16(499).expect("499 is a status code");
+        let response = problem(&CallError::new(ErrorKind::Conflict, "gone").with_http_status(status), &HttpConfig::default());
+        assert_eq!(response.status(), status);
+        let body = futures_util::FutureExt::now_or_never(http_body_util::BodyExt::collect(response.into_body()))
+            .expect("the document is buffered")
+            .expect("the body reads")
+            .to_bytes();
+        let document: serde_json::Value = serde_json::from_slice(&body).expect("a JSON document");
+        assert_eq!(document.get("title"), None, "{document}");
+        assert_eq!(document["status"], 499);
+    }
 }

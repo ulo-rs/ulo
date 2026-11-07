@@ -12,8 +12,9 @@
 //! cancelling that execution with `ClientCancelled`.
 //!
 //! `ulo-graphql-http`'s `GraphqlConfig::subscriptions(path)` mounts [`GraphqlWs`] at `path`, and
-//! `GraphqlConfig::connection_init_timeout` sets its timeout, bound as an [`InitTimeout`].
+//! `GraphqlConfig::connection_init_timeout` sets its timeout, bound as an [`InitTimeout`], whose
+//! constructor refuses a zero bound.
 
 mod gateway;
 
-pub use gateway::{ConnectionInit, GraphqlWs, InitTimeout};
+pub use gateway::{ConnectionInit, GraphqlWs, InitTimeout, InitTimeoutError};

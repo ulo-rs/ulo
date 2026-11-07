@@ -62,7 +62,7 @@ pub(crate) fn record_failure(call_span: &Span, kind: ErrorKind) {
 pub(crate) fn record_refusal(call_span: &Span, refused: &ConnectRefused) {
     match refused.kind {
         Some(kind) => record_failure(call_span, kind),
-        None if matches!(refused.close_code, 1011..=1014) => {
+        None if matches!(refused.close_code.get(), 1011..=1014) => {
             call_span.record(span::OTEL_STATUS_CODE, span::STATUS_ERROR);
         }
         None => {}

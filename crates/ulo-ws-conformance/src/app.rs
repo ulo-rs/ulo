@@ -13,8 +13,8 @@ use event_listener::Event;
 use futures_util::future::{Either, select};
 use futures_util::{Stream, stream};
 use ulo::{BoxError, ExecutionRef, Guard, Interceptor, Module, ModuleDef, ModuleIdentity, Next, StreamOutcome, Timer};
-use ulo_transport::{Classify, ErrorKind};
-use ulo_ws::{ConnectCx, ConnectRefused, DisconnectReason, Frame, Port, Reply, Ws, WsConnect, WsCx, WsModule};
+use ulo_transport::{CallError, Classify, ErrorKind};
+use ulo_ws::{CloseCode, ConnectCx, ConnectRefused, DisconnectReason, Frame, Port, Reply, WithCloseCode, Ws, WsConnect, WsCx, WsModule};
 
 use crate::PATIENCE;
 
@@ -28,9 +28,21 @@ pub(crate) const USER: &str = "x-user";
 pub(crate) const WHO: &str = "who are you?";
 
 /// The upgrade header naming how `/refused` refuses the connection: [`BY_GUARD`], [`BUSY`],
-/// [`FAULT`], [`PANIC`] or [`OWN_CODE`]. Absent, it admits.
+/// [`FAULT`], [`PANIC`] or [`OWN_CODE`] in its connection phase, or a connect guard failing with
+/// [`AS_UNAUTHORIZED`], [`AS_TIMEOUT`], [`AS_NOT_FOUND`] or [`AS_OWN_CODE`]. Absent, it admits.
 pub(crate) const REFUSE: &str = "x-refuse";
 pub(crate) const BY_GUARD: &str = "guard";
+pub(crate) const AS_UNAUTHORIZED: &str = "unauthorized";
+pub(crate) const AS_TIMEOUT: &str = "timeout";
+pub(crate) const AS_NOT_FOUND: &str = "not-found";
+pub(crate) const AS_OWN_CODE: &str = "error-code";
+
+/// The message every error [`RefusedByError`] fails with, which the connection's close reason
+/// carries.
+pub(crate) const BY_ERROR: &str = "refused by the guard's error";
+
+/// The close code [`AS_OWN_CODE`]'s error sets through `WithCloseCode`.
+pub(crate) const ERROR_CODE: u16 = 4403;
 pub(crate) const BUSY: &str = "busy";
 pub(crate) const FAULT: &str = "fault";
 pub(crate) const PANIC: &str = "panic";
@@ -38,7 +50,14 @@ pub(crate) const OWN_CODE: &str = "code";
 
 /// The close code and reason `/refused`'s `OnConnect` sets with `ConnectRefused::code`: the one
 /// graphql-transport-ws's reference server refuses a connection with when no subprotocol agreed.
-pub(crate) const OWN: (u16, &str) = (4406, "no subprotocol agreed");
+pub(crate) const OWN: (CloseCode, &str) = (protocol_code(4406), "no subprotocol agreed");
+
+const fn protocol_code(code: u16) -> CloseCode {
+    match CloseCode::new(code) {
+        Ok(code) => code,
+        Err(_) => panic!("4406 is an application's code"),
+    }
+}
 
 /// `/small`'s `message_limit`, in bytes.
 pub(crate) const MESSAGE_LIMIT: usize = 128;
@@ -232,6 +251,27 @@ impl Guard<WsConnect> for NotRefusedByGuard {
     }
 }
 
+/// Fails an upgrade whose [`REFUSE`] header names one of the `AS_` values, with a `CallError` of
+/// that kind, or of kind `Forbidden` closing with [`ERROR_CODE`].
+pub(crate) struct RefusedByError;
+
+impl Guard<WsConnect> for RefusedByError {
+    async fn can_activate(&self, cx: &ConnectCx) -> Result<bool, BoxError> {
+        let how = cx.head().headers().get(REFUSE).and_then(|how| how.to_str().ok()).unwrap_or_default();
+        let error = match how {
+            AS_UNAUTHORIZED => CallError::new(ErrorKind::Unauthorized, BY_ERROR),
+            AS_TIMEOUT => CallError::new(ErrorKind::Timeout, BY_ERROR),
+            AS_NOT_FOUND => CallError::new(ErrorKind::NotFound, BY_ERROR),
+            AS_OWN_CODE => {
+                let code = CloseCode::new(ERROR_CODE).unwrap_or_else(|error| panic!("{ERROR_CODE} is an application's code: {error}"));
+                CallError::new(ErrorKind::Forbidden, BY_ERROR).with_close_code(code)
+            }
+            _ => return Ok(true),
+        };
+        Err(error.into())
+    }
+}
+
 /// `/strict`'s connection phase: no [`USER`] header is `Unauthorized`.
 fn strict(cx: &ConnectCx) -> Result<(), ConnectRefused> {
     match cx.head().headers().get(USER) {
@@ -247,7 +287,7 @@ fn refused(cx: &ConnectCx) -> Result<(), ConnectRefused> {
         BUSY => Err(ConnectRefused::kind(ErrorKind::TooManyRequests, "try again later")),
         FAULT => Err(ConnectRefused::kind(ErrorKind::Internal, "the connect hook failed")),
         PANIC => panic!("the connect hook panicked, as the scenario asked"),
-        OWN_CODE => Err(ConnectRefused::code(OWN.0, OWN.1).unwrap_or_else(|error| panic!("{} is a close code a frame carries: {error}", OWN.0))),
+        OWN_CODE => Err(ConnectRefused::code(OWN.0, OWN.1).unwrap_or_else(|error| panic!("{} fits a Close frame: {error}", OWN.1))),
         _ => Ok(()),
     }
 }
@@ -279,7 +319,7 @@ macro_rules! gateways {
         use ulo::{Dep, ExecutionRef, ModuleDef, controller, handlers};
         use ulo_ws::{ConnectCx, ConnectRefused, Connection, DisconnectReason, OnConnect, OnDisconnect, Payload, UpgradeHead, WsCx};
 
-        use super::{AnswerOne, Fault, HeaderIs, NotRefusedByGuard, Probe, TOKEN};
+        use super::{AnswerOne, Fault, HeaderIs, NotRefusedByGuard, Probe, RefusedByError, TOKEN};
 
         /// The plain gateway: a round trip, a stream, and every `on_disconnect` recorded.
         #[controller]
@@ -346,7 +386,7 @@ macro_rules! gateways {
         }
 
         #[handlers]
-        #[ulo_ws::gateway(path = "/refused", port = $port, connect_guards(value = NotRefusedByGuard))]
+        #[ulo_ws::gateway(path = "/refused", port = $port, connect_guards(value = NotRefusedByGuard, value = RefusedByError))]
         impl Refused {
             #[ulo_ws::message("echo")]
             fn echo(&self, text: Payload<String>) -> String {

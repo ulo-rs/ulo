@@ -256,7 +256,8 @@ impl fmt::Debug for Reply {
 
 /// What the connection phase answers: admitted, or refused with a close code (after the 101) or
 /// a 401 or 403 (before it, under `refuse = handshake`). A guard's refusal and an error reach the
-/// error handlers first; unclaimed, the kind picks the close code (transports DESIGN §4.2).
+/// error handlers first; unclaimed, the kind picks the close code, or the code the error names
+/// through [`WithCloseCode`](crate::WithCloseCode) (transports DESIGN §4.2).
 #[derive(Debug)]
 pub enum ConnectReply {
     Admitted,

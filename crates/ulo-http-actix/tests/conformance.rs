@@ -8,4 +8,5 @@ mod common;
 ulo_http_conformance::http_conformance_suite!(common::ActixHost<false>; not_applicable {
     drain_http2: "the host listens with `listen`, which serves HTTP/1.1 alone; `conformance_http2` runs it",
     drain_goaway: "the host listens with `listen`, which serves HTTP/1.1 alone; `conformance_http2` runs it",
+    reset_before_head: "the host listens with `listen`, which serves HTTP/1.1 alone; `conformance_http2` runs it",
 });

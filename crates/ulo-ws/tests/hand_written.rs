@@ -132,7 +132,7 @@ async fn a_hand_written_gateway_answers_as_its_attribute_written_twin() {
         hang_up(socket).await;
 
         let mut refused = upgrade(app.addr, path, &[(REFUSE, "1")]).await.socket.expect("the upgrade switches before the hook refuses");
-        assert_eq!(close_frame(&mut refused).await, Some((1008, String::from("not today"))), "{path}");
+        assert_eq!(close_frame(&mut refused).await, Some((3003, String::from("not today"))), "{path}");
 
         let handlers = app.handle.handlers();
         let ours: Vec<_> = handlers.iter().filter(|info| info.controller().key().type_name() == controller).collect();

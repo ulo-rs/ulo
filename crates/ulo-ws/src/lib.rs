@@ -30,6 +30,7 @@
 //! through [`GatewayHooks`]; a gateway written without them builds the same values.
 
 mod broadcast;
+mod close;
 mod codec;
 mod connection;
 mod envelope;
@@ -67,11 +68,12 @@ pub mod __private;
 pub use ulo_transport::__derive;
 
 pub use broadcast::{Audience, BroadcastAdapter, InMemory, NodeId, Target, wire};
+pub use close::{CloseCode, CloseCodeError, WithCloseCode};
 pub use codec::Codec;
 pub use connection::{ConnId, Connection, Handshake, Refusal, Switch};
 pub use envelope::{Frame, MessageId, Payload};
 pub use gateway::{
-    AfterInit, CloseCodeError, ConnectRefused, DisconnectReason, Gateway, GatewayConfig, GatewayRef, GatewaySettings,
+    AfterInit, ConnectRefused, DisconnectReason, Gateway, GatewayConfig, GatewayRef, GatewaySettings,
     OnConnect, OnDisconnect, Overflow, Port, Refuse,
 };
 pub use handler::{GatewayHooks, WsHandler};

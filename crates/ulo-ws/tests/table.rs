@@ -571,7 +571,7 @@ async fn a_full_gateway_s_connect_guard_refuses_first_and_capacity_runs_no_hook(
     };
     let (server, mut refused) = pipe().await;
     guarded.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
-    assert_eq!(close_code("the guarded connection's close", &mut refused).await, 1008, "the connect guard's refusal");
+    assert_eq!(close_code("the guarded connection's close", &mut refused).await, 3003, "the connect guard's refusal");
 
     // Admitted by the guard, then refused for capacity before `OnConnect`.
     let Handshake::Switch(over) = app.table.handshake(head("/capped", |_| {}), None).await else {

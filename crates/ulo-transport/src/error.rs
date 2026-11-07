@@ -93,12 +93,27 @@ pub struct CallError {
     challenge: Option<String>,
     /// The gRPC status code this error is sent with in place of its kind's.
     grpc_code: Option<i32>,
+    /// The HTTP status this error is sent with in place of its kind's, which `ulo-http`'s
+    /// `WithHttpStatus` writes from a typed status.
+    http_status: Option<u16>,
+    /// The WebSocket close code a connect refusal built from this error closes with in place of
+    /// its kind's, which `ulo-ws`'s `WithCloseCode` writes from a validated code.
+    close_code: Option<u16>,
     source: Option<BoxError>,
 }
 
 impl CallError {
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
-        CallError { kind, message: message.into(), details: Details::default(), challenge: None, grpc_code: None, source: None }
+        CallError {
+            kind,
+            message: message.into(),
+            details: Details::default(),
+            challenge: None,
+            grpc_code: None,
+            http_status: None,
+            close_code: None,
+            source: None,
+        }
     }
 
     /// `Unauthorized`, carrying its own `WWW-Authenticate` challenge (RFC 9110 requires one on a
@@ -224,14 +239,44 @@ impl CallError {
         self.grpc_code
     }
 
+    /// The store behind `ulo_http::WithHttpStatus`, which takes a typed status and writes its
+    /// number here; this crate names no protocol's types. HTTP's renderer reads it back through
+    /// [`__http_status`](Self::__http_status), and no other transport reads it.
+    #[doc(hidden)]
+    pub fn __with_http_status(mut self, status: u16) -> Self {
+        self.http_status = Some(status);
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn __http_status(&self) -> Option<u16> {
+        self.http_status
+    }
+
+    /// The store behind `ulo_ws::WithCloseCode`, which takes a validated close code and writes
+    /// its number here. The WebSocket transport reads it back through
+    /// [`__close_code`](Self::__close_code) when it refuses a connection, and no other transport
+    /// reads it.
+    #[doc(hidden)]
+    pub fn __with_close_code(mut self, code: u16) -> Self {
+        self.close_code = Some(code);
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn __close_code(&self) -> Option<u16> {
+        self.close_code
+    }
+
     /// The domain error this was built from, by type: `err.downcast_ref::<CallError>()?.source_as::<UserError>()`.
     pub fn source_as<E: Error + 'static>(&self) -> Option<&E> {
         self.source.as_deref().and_then(|source| source.downcast_ref::<E>())
     }
 
-    /// A copy without the source: kind, message, details and challenge. What a transport keeps
-    /// before handing the error to `ulo::dispatch_late`, which takes it by value, so it can still
-    /// render the original when an error handler answers `Ok` on the late path.
+    /// A copy without the source: kind, message, details, challenge and the per-transport
+    /// overrides. What a transport keeps before handing the error to `ulo::dispatch_late`, which
+    /// takes it by value, so it can still render the original when an error handler answers `Ok`
+    /// on the late path.
     pub fn summary(&self) -> CallError {
         CallError {
             kind: self.kind,
@@ -239,6 +284,8 @@ impl CallError {
             details: self.details.clone(),
             challenge: self.challenge.clone(),
             grpc_code: self.grpc_code,
+            http_status: self.http_status,
+            close_code: self.close_code,
             source: None,
         }
     }

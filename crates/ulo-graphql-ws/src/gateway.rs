@@ -17,7 +17,7 @@ use ulo::{
 use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse, Outcome};
 use ulo_transport::{ErrorKind, Tracked};
 use ulo_ws::{
-    ConnectRefused, Connection, DisconnectReason, Frame, Gateway, GatewayConfig, GatewaySettings, SessionFactory,
+    CloseCode, ConnectRefused, Connection, DisconnectReason, Frame, Gateway, GatewayConfig, GatewaySettings, SessionFactory,
 };
 
 /// The subprotocol the handshake must have echoed.
@@ -29,6 +29,23 @@ const DEFAULT_INIT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// A close reason is at most 123 bytes of UTF-8 (RFC 6455 §5.5.1).
 const MAX_REASON: usize = 123;
+
+/// The close codes graphql-ws's PROTOCOL.md assigns, in the range RFC 6455 leaves to
+/// applications.
+const SUBPROTOCOL_NOT_ACCEPTABLE: CloseCode = protocol_code(4406);
+const INIT_TIMEOUT: CloseCode = protocol_code(4408);
+const INVALID_MESSAGE: CloseCode = protocol_code(4400);
+const TOO_MANY_INITS: CloseCode = protocol_code(4429);
+const UNAUTHORIZED: CloseCode = protocol_code(4401);
+const SUBSCRIBER_EXISTS: CloseCode = protocol_code(4409);
+
+/// `code` as a `CloseCode`, checked when the constant is evaluated.
+const fn protocol_code(code: u16) -> CloseCode {
+    match CloseCode::new(code) {
+        Ok(code) => code,
+        Err(_) => panic!("graphql-transport-ws's close codes are in 4000 to 4999"),
+    }
+}
 
 /// The close reasons graphql-ws's PROTOCOL.md and its reference server write beside each code.
 const REASON_SUBPROTOCOL: &str = "Subprotocol not acceptable";
@@ -84,12 +101,52 @@ impl ConnectionInit {
 /// How long a connection has to send `connection_init`, which a [`GraphqlWs`] reads from its
 /// module when it is built. `ulo-graphql-http`'s `GraphqlModule` binds it from
 /// `GraphqlConfig::connection_init_timeout`; a module that mounts the gateway itself binds it with
-/// `m.value(InitTimeout(..))` to set the timeout. Read optionally: a gateway mounted without it
-/// takes the 3-second default, `Bound::Unbounded` waits for ever, and `Bound::After(Duration::ZERO)`
-/// closes every connection before its `connection_init` could arrive, which `GraphqlModule` refuses
-/// at startup and a binding of this value directly does not.
+/// `m.try_value(InitTimeout::new(..))` to set the timeout, a refused bound reported when the
+/// application wires. Read optionally: a gateway mounted without it takes the 3-second default,
+/// and `Bound::Unbounded` waits for ever.
+///
+/// ```
+/// use std::time::Duration;
+/// use ulo::Bound;
+/// use ulo_graphql_ws::InitTimeout;
+///
+/// assert_eq!(InitTimeout::new(Bound::After(Duration::from_secs(5))).map(InitTimeout::bound), Ok(Bound::After(Duration::from_secs(5))));
+/// assert!(InitTimeout::new(Bound::After(Duration::ZERO)).is_err());
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InitTimeout(pub Bound);
+pub struct InitTimeout(Bound);
+
+impl InitTimeout {
+    /// The timeout `timeout`. Refused: `Bound::After(Duration::ZERO)`, which would close every
+    /// connection before its `connection_init` could arrive.
+    pub const fn new(timeout: Bound) -> Result<InitTimeout, InitTimeoutError> {
+        match timeout {
+            Bound::After(after) if after.is_zero() => Err(InitTimeoutError { _private: () }),
+            _ => Ok(InitTimeout(timeout)),
+        }
+    }
+
+    pub const fn bound(self) -> Bound {
+        self.0
+    }
+}
+
+/// Why [`InitTimeout::new`] refused its bound: it was `Bound::After(Duration::ZERO)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InitTimeoutError {
+    _private: (),
+}
+
+impl fmt::Display for InitTimeoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(
+            "`InitTimeout::new(Bound::After(Duration::ZERO))` would close every connection before its `connection_init` could arrive; \
+             write `Bound::Unbounded` to turn the timeout off",
+        )
+    }
+}
+
+impl std::error::Error for InitTimeoutError {}
 
 /// One connection's protocol state. The lock is never held across an await.
 #[derive(Default)]
@@ -191,7 +248,7 @@ impl<Q: Send + Sync + 'static> Construct for GraphqlWs<Q> {
     async fn construct(r: &Resolver<'_>) -> Result<Self, ConstructError> {
         let engine = r.dep_qualified::<dyn Engine, Q>().await?;
         let configured = <Option<Dep<InitTimeout>> as FromContainer>::from_container(r).await?;
-        let init_timeout = match configured.map_or(Bound::Default, |timeout| timeout.0) {
+        let init_timeout = match configured.map_or(Bound::Default, |timeout| timeout.bound()) {
             Bound::Default => Some(DEFAULT_INIT_TIMEOUT),
             Bound::After(after) => Some(after),
             Bound::Unbounded => None,
@@ -218,7 +275,7 @@ impl<Q: Send + Sync + 'static> GatewayConfig for GraphqlWs<Q> {
 impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
     async fn on_connect(&self, conn: &Connection) -> Result<(), ConnectRefused> {
         if conn.head().subprotocol() != Some(PROTOCOL) {
-            return Err(refusal(4406, REASON_SUBPROTOCOL));
+            return Err(refusal(SUBPROTOCOL_NOT_ACCEPTABLE, REASON_SUBPROTOCOL));
         }
         if let Some(after) = self.init_timeout {
             let Some(session) = conn.session().get::<ConnectionInit>() else {
@@ -236,10 +293,10 @@ impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
                     return;
                 }
                 match waited {
-                    Cut::Expired => close(&watched, &state, 4408, REASON_INIT_TIMEOUT).await,
+                    Cut::Expired => close(&watched, &state, INIT_TIMEOUT, REASON_INIT_TIMEOUT).await,
                     Cut::Refused(refused) => {
                         tracing::debug!(%refused, "the timer bounding a graphql-transport-ws `connection_init` refused the wait, having shut down");
-                        close(&watched, &state, 1001, ulo_transport::SHUTDOWN_MESSAGE).await;
+                        close(&watched, &state, CloseCode::GOING_AWAY, ulo_transport::SHUTDOWN_MESSAGE).await;
                     }
                 }
             })));
@@ -249,7 +306,7 @@ impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
 
     async fn on_message(&self, conn: &Connection, frame: Frame) {
         let Some(session) = conn.session().get::<ConnectionInit>() else {
-            conn.close(1011, "the connection has no graphql-transport-ws session").await;
+            close_frame(conn, CloseCode::INTERNAL_ERROR, "the connection has no graphql-transport-ws session").await;
             return;
         };
         let message = match &frame {
@@ -257,7 +314,7 @@ impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
             Frame::Binary(_) => None,
         };
         let Some(message) = message else {
-            close(conn, &session.state, 4400, REASON_INVALID_MESSAGE).await;
+            close(conn, &session.state, INVALID_MESSAGE, REASON_INVALID_MESSAGE).await;
             return;
         };
         match message {
@@ -278,7 +335,7 @@ impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
                 if first {
                     send(conn, &ServerMessage::ConnectionAck).await;
                 } else {
-                    close(conn, &session.state, 4429, REASON_TOO_MANY_INITS).await;
+                    close(conn, &session.state, TOO_MANY_INITS, REASON_TOO_MANY_INITS).await;
                 }
             }
             ClientMessage::Ping { payload } => {
@@ -340,11 +397,11 @@ impl<Q: Send + Sync + 'static> GraphqlWs<Q> {
             }
         };
         match admission {
-            Admission::Unauthorized => close(conn, &session.state, 4401, REASON_UNAUTHORIZED).await,
+            Admission::Unauthorized => close(conn, &session.state, UNAUTHORIZED, REASON_UNAUTHORIZED).await,
             Admission::Duplicate => {
                 let reason = format!("Subscriber for {id} already exists");
                 let reason = if reason.len() <= MAX_REASON { reason } else { "Subscriber already exists".to_owned() };
-                close(conn, &session.state, 4409, &reason).await;
+                close(conn, &session.state, SUBSCRIBER_EXISTS, &reason).await;
             }
             Admission::Draining => {
                 let errors = [GqlError::new(ulo_transport::SHUTDOWN_MESSAGE)];
@@ -404,11 +461,19 @@ async fn run(
 /// connection ends only when the client answers the close frame, or when its close timeout runs
 /// out, and an operation left running until then keeps producing results nobody can receive.
 /// `CancelReason::Explicit`: the gateway, not the client or the drain, ended them.
-async fn close(conn: &Connection, state: &ConnState, code: u16, reason: &str) {
-    conn.close(code, reason).await;
+async fn close(conn: &Connection, state: &ConnState, code: CloseCode, reason: &str) {
+    close_frame(conn, code, reason).await;
     let running: Vec<Running> = state.lock().running.drain().map(|(_, running)| running).collect();
     for operation in running {
         operation.exec.cancel_with(CancelReason::Explicit);
+    }
+}
+
+/// Queues the Close frame. Every reason the gateway writes is within the 123 bytes a frame
+/// carries, the one refusal `Connection::close` has, so a refusal is logged as the gateway's bug.
+async fn close_frame(conn: &Connection, code: CloseCode, reason: &str) {
+    if let Err(error) = conn.close(code, reason).await {
+        tracing::error!(%error, code = code.get(), "a graphql-transport-ws close was refused");
     }
 }
 
@@ -423,8 +488,8 @@ async fn send(conn: &Connection, message: &ServerMessage<'_>) -> bool {
     }
 }
 
-/// A refusal with a protocol close code. `code` and `reason` are constants `ConnectRefused::code`
-/// accepts; the fallback keeps the refusal should that ever change.
-fn refusal(code: u16, reason: &'static str) -> ConnectRefused {
+/// A refusal with a protocol close code. `reason` is a constant within the 123 bytes
+/// `ConnectRefused::code` accepts; the fallback keeps the refusal should that ever change.
+fn refusal(code: CloseCode, reason: &'static str) -> ConnectRefused {
     ConnectRefused::code(code, reason).unwrap_or_else(|_| ConnectRefused::kind(ErrorKind::Internal, reason))
 }

@@ -127,6 +127,8 @@ pub struct EmbedLimits {
     host_extensions: Absent,
     tls_info: Absent,
     strips_prefix: Absent,
+    pending_close: Absent,
+    pending_reset: Absent,
     /// How the host hands over a request body.
     pub request_body: RequestBody,
     /// When the host drops an abandoned response body, which is when the execution observes
@@ -158,6 +160,8 @@ impl EmbedLimits {
         host_extensions: None,
         tls_info: None,
         strips_prefix: None,
+        pending_close: None,
+        pending_reset: None,
         request_body: RequestBody::Streamed,
         disconnect: Disconnect::AtClose,
         drain_pending: DrainPending::Served,
@@ -252,6 +256,39 @@ impl EmbedLimits {
 
     pub const fn why_not_strips_prefix(&self) -> Option<&'static str> {
         self.strips_prefix
+    }
+
+    /// The host drops the app's call when the peer closes an HTTP/1.1 connection before the
+    /// response's head is produced, so the execution is cancelled with
+    /// `CancelReason::Disconnected` and the handler's future dropped at its current await. Nothing
+    /// is refused on a host without it: the call runs on to its answer, and the execution observes
+    /// the disconnect only once the host drops the response body, at the moment `disconnect`
+    /// declares.
+    pub const fn pending_close(&self) -> bool {
+        self.pending_close.is_none()
+    }
+
+    pub const fn without_pending_close(self, reason: &'static str) -> Self {
+        EmbedLimits { pending_close: Some(reason), ..self }
+    }
+
+    pub const fn why_not_pending_close(&self) -> Option<&'static str> {
+        self.pending_close
+    }
+
+    /// [`pending_close`](Self::pending_close) for an HTTP/2 stream the peer resets before the
+    /// response's head is produced. A host that serves no HTTP/2 declares what it would do were
+    /// it enabled.
+    pub const fn pending_reset(&self) -> bool {
+        self.pending_reset.is_none()
+    }
+
+    pub const fn without_pending_reset(self, reason: &'static str) -> Self {
+        EmbedLimits { pending_reset: Some(reason), ..self }
+    }
+
+    pub const fn why_not_pending_reset(&self) -> Option<&'static str> {
+        self.pending_reset
     }
 
     pub const fn request_body(self, body: RequestBody) -> Self {

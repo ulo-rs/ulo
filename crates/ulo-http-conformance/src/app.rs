@@ -203,6 +203,18 @@ impl Suite {
         Sse::new(first.chain(second).boxed())
     }
 
+    /// Held until the scenario releases it, then answers "released": the call a client leaves
+    /// before its head is produced. [`HeldWatch`] records the cancellation reason it is dropped
+    /// with when it never answers.
+    #[ulo_http::get("/held")]
+    async fn held(&self, cx: HttpCx, probe: Dep<Probe>) -> &'static str {
+        let released = probe.hold();
+        let mut watch = HeldWatch { probe: Probe::clone(&probe), exec: cx.exec().clone(), answered: false };
+        let _ = released.await;
+        watch.answered = true;
+        "released"
+    }
+
     #[ulo_http::get("/guarded/hit")]
     fn guarded(&self) -> &'static str {
         "guarded"
@@ -249,12 +261,37 @@ impl ErrorHandler<Http> for Reshape {
 #[derive(Clone)]
 pub struct Probe {
     ends: Arc<Mutex<Vec<(StreamOutcome, Option<CancelReason>)>>>,
+    held: Arc<Mutex<Held>>,
     pub(crate) gate: Gate,
 }
 
 impl Default for Probe {
     fn default() -> Self {
-        Probe { ends: Arc::default(), gate: Gate::new() }
+        Probe { ends: Arc::default(), held: Arc::default(), gate: Gate::new() }
+    }
+}
+
+/// The calls `GET /held` has taken: how many entered, the cancellation reason of each dropped
+/// before it answered, and the senders that release the ones still held.
+#[derive(Default)]
+struct Held {
+    entered: usize,
+    dropped: Vec<Option<CancelReason>>,
+    release: Vec<oneshot::Sender<()>>,
+}
+
+/// Records the execution's cancellation reason when `GET /held` is dropped before it answers.
+struct HeldWatch {
+    probe: Probe,
+    exec: ulo::ExecutionRef,
+    answered: bool,
+}
+
+impl Drop for HeldWatch {
+    fn drop(&mut self) {
+        if !self.answered {
+            self.probe.held().dropped.push(self.exec.cancel_reason());
+        }
     }
 }
 
@@ -285,6 +322,36 @@ impl Gate {
 }
 
 impl Probe {
+    fn held(&self) -> std::sync::MutexGuard<'_, Held> {
+        self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Counts one `GET /held` call in, answering the receiver that releases it.
+    fn hold(&self) -> oneshot::Receiver<()> {
+        let (release, released) = oneshot::channel();
+        let mut held = self.held();
+        held.entered += 1;
+        held.release.push(release);
+        released
+    }
+
+    /// How many `GET /held` calls have entered the handler.
+    pub(crate) fn held_entered(&self) -> usize {
+        self.held().entered
+    }
+
+    /// The cancellation reason of each `GET /held` call dropped before it answered.
+    pub(crate) fn held_dropped(&self) -> Vec<Option<CancelReason>> {
+        self.held().dropped.clone()
+    }
+
+    /// Lets every `GET /held` call still held answer.
+    pub(crate) fn release_held(&self) {
+        for release in std::mem::take(&mut self.held().release) {
+            let _ = release.send(());
+        }
+    }
+
     fn record(&self, outcome: StreamOutcome, reason: Option<CancelReason>) {
         self.ends.lock().unwrap_or_else(PoisonError::into_inner).push((outcome, reason));
     }

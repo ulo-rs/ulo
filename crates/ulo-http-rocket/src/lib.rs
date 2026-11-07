@@ -76,6 +76,12 @@ impl Embed for Rocket {
             .without_tls_info("the adapter reads no TLS state off rocket's request, so `ConnInfo::tls` is `None`")
             .without_strips_prefix("`mount` leaves `req.uri()` whole, with the tail in a `<path..>` segment")
             .request_body(RequestBody::Buffered(HttpConfig::default().body_limit))
+            .without_pending_close(
+                "rocket runs each request's handler in a task of its own, spawned in `hyper_service_fn`, which a closed connection does not end",
+            )
+            .without_pending_reset(
+                "rocket runs each request's handler in a task of its own, spawned in `hyper_service_fn`, which a reset stream does not end",
+            )
             .disconnect(Disconnect::AtNextWrite)
             .drain_abandoned(DrainAbandoned::Window)
     }
