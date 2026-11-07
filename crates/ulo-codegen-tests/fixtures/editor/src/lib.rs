@@ -1,5 +1,6 @@
 //! Opened by `scripts/editor_probe.py`: every pathed attribute below must answer hover and
-//! go-to-definition at its first and last path segment, and every marker attribute at its last.
+//! go-to-definition at its first and last path segment, and every marker attribute at its last
+//! and, written `ulo::<name>` or `::ulo::<name>`, the one qualifier a marker accepts, at `ulo`.
 //!
 //! Each macro that writes its item back through `syn` restores that item's attributes, so each
 //! carries one attribute only it hands on: the `#[ulo::injectable]` structs inside the handler
@@ -120,6 +121,7 @@ pub struct Marked {
 impl Marked {
     #[ulo::guards(value = G)]
     #[guards(value = G)]
+    #[::ulo::guards(value = G)]
     #[ulo_http::get("/before")]
     #[ulo::interceptors()]
     #[error_handlers()]

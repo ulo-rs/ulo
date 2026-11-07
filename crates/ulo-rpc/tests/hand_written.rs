@@ -11,8 +11,8 @@ use futures_util::{Stream, StreamExt, stream};
 use ulo::app::Bound as Listening;
 use ulo::scope::Auto;
 use ulo::{
-    App, AppHandle, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Module, ModuleDef,
-    ModuleIdentity, Mount, Resolver, Shape, Signal, StartupError, TypeName, controller, handlers,
+    App, AppHandle, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Handlers, Module,
+    ModuleDef, ModuleIdentity, Mount, Resolver, Shape, Signal, StartupError, TypeName, controller, handlers,
 };
 use ulo_rpc::{Bytes, CallError, Classify, ErrorKind, FromCall, Payload, PayloadKind, Reply, Rpc, RpcClient, RpcCx, RpcHandler};
 use ulo_rpc_tcp::Tcp;
@@ -58,7 +58,9 @@ struct Hand;
 impl Construct for Hand {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Hand)
@@ -81,7 +83,9 @@ async fn claim(cx: RpcCx) -> Result<Reply, BoxError> {
     Err(CallError::from(Taken).into())
 }
 
-impl Controller for Hand {
+impl Controller for Hand {}
+
+impl Handlers for Hand {
     fn mount(m: &mut Mount<'_>) {
         m.handler(HandlerSpec::<Rpc, _>::new("add", RpcHandler::message(add)).route("h.add"));
         m.handler(HandlerSpec::<Rpc, _>::new("count", RpcHandler::message(count)).route("h.count").shape(Shape::ServerStreaming));
@@ -199,14 +203,18 @@ macro_rules! controller {
         impl Construct for $name {
             type Scope = Auto;
 
-            fn dependencies(_: &mut Dependencies) {}
+            fn dependencies(d: &mut Dependencies) {
+                d.mark::<Self>();
+            }
 
             async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
                 Ok($name)
             }
         }
 
-        impl Controller for $name {
+        impl Controller for $name {}
+
+        impl Handlers for $name {
             fn mount($m: &mut Mount<'_>) {
                 $mount;
             }

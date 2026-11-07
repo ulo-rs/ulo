@@ -714,10 +714,10 @@ pub mod contribution_key {
 ///
 /// The `Construct::dependencies` that `#[injectable]` and `#[controller]` write calls
 /// `__ulo_mark_controller(d)` on `(&Probe::<Self>::new())` with both mark arms in scope, which
-/// records `Self` on the `Dependencies` when `Self: Controller`. `ModuleDef::provide`, its `_with`
-/// forms and `Contribute::provide` read that record, and `wire()` refuses a type registered
-/// through them that the record names, as `WiringError::ControllerProvided`. A `Construct` impl written by hand records
-/// nothing.
+/// calls `d.mark::<Self>()` when `Self: Controller`. `ModuleDef::provide`, its `_with` forms and
+/// `Contribute::provide` read the mark, and `wire()` refuses a type registered through them that
+/// it names, as `WiringError::ControllerProvided`. A `Construct` impl written by hand marks its
+/// type by calling `Dependencies::mark` itself.
 pub mod controller_entry {
     use std::marker::PhantomData;
 
@@ -783,7 +783,7 @@ pub mod controller_entry {
     }
     impl<T: Controller> MarkArm<T> for Probe<T> {
         fn __ulo_mark_controller(&self, d: &mut Dependencies) {
-            d.controller = Some(std::any::TypeId::of::<T>());
+            d.mark::<T>();
         }
     }
 

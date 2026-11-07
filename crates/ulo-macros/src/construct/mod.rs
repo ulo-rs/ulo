@@ -1,7 +1,7 @@
 //! `#[injectable]` and `#[controller]`: the struct form, whose fields are injection points, and
 //! the impl form, whose constructor's parameters are injection points. Both write a `Construct`
-//! impl (§4, §5); `#[controller]` also writes `impl Controller`, the mark of a controller, whose
-//! `mount` mounts the type's `Handlers`.
+//! impl (§4, §5); `#[controller]` also writes `impl Controller`, the mark of a controller, which
+//! holds where the type's `Handlers` impl does.
 
 mod args;
 mod impl_form;
@@ -33,10 +33,14 @@ impl Kind {
         }
     }
 
-    /// On a controller, `impl Controller for Self` mounting the `Handlers` its `#[handlers]` impl
-    /// writes; nothing on an injectable. The impl holds where `Self: Handlers` holds, so a
-    /// `#[handlers]` impl bounded more narrowly than the struct makes a controller of each type
-    /// it covers.
+    /// On a controller, the mark `impl Controller for Self`, which has no methods: a module
+    /// mounts the `Handlers` impl `#[handlers]` writes. Nothing on an injectable.
+    ///
+    /// The impl holds where `Self: Handlers` holds. For a concrete type with no `Handlers` impl
+    /// that bound is false where it is written, so the type fails to compile at `#[controller]`,
+    /// naming `#[handlers]`, whether or not a module registers it. A generic controller whose
+    /// `#[handlers]` impl is bounded more narrowly than the struct is a controller for each type
+    /// that impl covers, and registers as one for those types.
     pub(crate) fn mark(self, self_ty: &syn::Type, generics: &syn::Generics) -> TokenStream {
         if self == Kind::Injectable {
             return TokenStream::new();
@@ -46,11 +50,7 @@ impl Kind {
         let mut where_clause = generics.where_clause.clone().unwrap_or_else(|| syn::parse_quote!(where));
         where_clause.predicates.push(syn::parse_quote!(#self_ty: #ulo::Handlers));
         quote! {
-            impl #impl_generics #ulo::Controller for #self_ty #where_clause {
-                fn mount(m: &mut #ulo::Mount<'_>) {
-                    <Self as #ulo::Handlers>::mount(m)
-                }
-            }
+            impl #impl_generics #ulo::Controller for #self_ty #where_clause {}
         }
     }
 }

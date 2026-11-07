@@ -11,8 +11,8 @@ use http::StatusCode;
 use o1_support::{Call, refusal_names, refusals, refused, start};
 use ulo::scope::Auto;
 use ulo::{
-    BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Metadata, ModuleDef, Mount, Resolver, Shape,
-    TypeName, controller, handlers,
+    BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Handlers, Metadata, ModuleDef, Mount,
+    Resolver, Shape, TypeName, controller, handlers,
 };
 use ulo_http::{FromCall, Http, HttpCx, HttpHandler, IntoReply, Method, Path, Response, Timeout};
 
@@ -33,7 +33,9 @@ struct Hand;
 impl Construct for Hand {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Hand)
@@ -52,7 +54,9 @@ async fn user(cx: HttpCx) -> Result<Response, BoxError> {
     Ok(hand.user(&cx, id).into_reply(&cx)?)
 }
 
-impl Controller for Hand {
+impl Controller for Hand {}
+
+impl Handlers for Hand {
     fn mount(m: &mut Mount<'_>) {
         let mut meta = Metadata::new();
         meta.method(Timeout::after(Duration::from_secs(5)));
@@ -96,14 +100,18 @@ struct Misfit;
 impl Construct for Misfit {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Misfit)
     }
 }
 
-impl Controller for Misfit {
+impl Controller for Misfit {}
+
+impl Handlers for Misfit {
     fn mount(m: &mut Mount<'_>) {
         let handler = HttpHandler::new(Method::GET, |_cx: HttpCx| async { Ok::<_, BoxError>(Response::default()) })
             .reads_path::<(u64, u64)>();
@@ -131,14 +139,18 @@ struct Configured;
 impl Construct for Configured {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Configured)
     }
 }
 
-impl Controller for Configured {
+impl Controller for Configured {}
+
+impl Handlers for Configured {
     fn mount(m: &mut Mount<'_>) {
         let route = ["status", "v2"].join("/");
         let handler = HttpHandler::new(Method::GET, |cx: HttpCx| async move { Ok("up".into_reply(&cx)?) });
@@ -164,14 +176,18 @@ struct Routeless;
 impl Construct for Routeless {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Routeless)
     }
 }
 
-impl Controller for Routeless {
+impl Controller for Routeless {}
+
+impl Handlers for Routeless {
     fn mount(m: &mut Mount<'_>) {
         let handler = HttpHandler::new(Method::GET, |_cx: HttpCx| async { Ok::<_, BoxError>(Response::default()) });
         m.handler(HandlerSpec::<Http, _>::new("nowhere", handler));

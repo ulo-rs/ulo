@@ -1,4 +1,3 @@
-use std::any::type_name;
 use std::marker::PhantomData;
 use std::panic::Location;
 use std::sync::Arc;
@@ -13,6 +12,7 @@ use crate::key::{BindingKind, Key};
 use crate::module::def::{ModuleNode, ValueFailure};
 use crate::scope::{Auto, PerExecution, Scope, ScopeKind, Singleton, Transient};
 use crate::timer::BoxError;
+use crate::type_name::TypeName;
 
 /// Contributions to the collection `U @ Q`, read as `Many<U, Q>` or, by a transport, through
 /// `Resolver::entries` (§3.2, §7).
@@ -77,7 +77,7 @@ impl<'m, U: ?Sized + Send + Sync + 'static> Contribute<'m, U, (), Enhancer> {
 impl<'m, U: ?Sized + Send + Sync + 'static, Q: 'static, M> Contribute<'m, U, Q, M> {
     /// The record of one contribution to `U @ Q`, before what a particular recipe adds.
     fn record(
-        built: &'static str,
+        built: TypeName,
         scope: ScopeKind,
         recipe: Recipe,
         dependencies: Dependencies,
@@ -111,7 +111,7 @@ impl<'m, U: ?Sized + Send + Sync + 'static, Q: 'static, M> Contribute<'m, U, Q, 
         let mut dependencies = Dependencies::default();
         <F as Factory<Args>>::dependencies(&mut dependencies);
         let into_primary = coercion::<T, U, _>(coerce);
-        let record = Self::record(type_name::<T>(), S::KIND, Recipe::Factory(ctor), dependencies, into_primary, location);
+        let record = Self::record(TypeName::of::<T>(), S::KIND, Recipe::Factory(ctor), dependencies, into_primary, location);
         self.push(record)
     }
 
@@ -125,7 +125,7 @@ impl<'m, U: ?Sized + Send + Sync + 'static, Q: 'static, M> Contribute<'m, U, Q, 
         let mut dependencies = Dependencies::default();
         T::dependencies(&mut dependencies);
         let mut record = Self::record(
-            type_name::<T>(),
+            TypeName::of::<T>(),
             <T::Scope as Scope>::KIND,
             Recipe::Construct(erase_construct::<T>()),
             dependencies,
@@ -135,7 +135,7 @@ impl<'m, U: ?Sized + Send + Sync + 'static, Q: 'static, M> Contribute<'m, U, Q, 
         record.construct_bound = T::CONSTRUCT_TIMEOUT;
         record.hooks = erase_trait_hooks::<T>(location);
         record.constructs = true;
-        record.controller_type = crate::construct::marked_controller::<T>().then(crate::type_name::TypeName::of::<T>);
+        record.controller_type = crate::construct::marked_controller::<T>().then(TypeName::of::<T>);
         self.push(record)
     }
 
@@ -144,7 +144,7 @@ impl<'m, U: ?Sized + Send + Sync + 'static, Q: 'static, M> Contribute<'m, U, Q, 
     pub fn value(self, value: Arc<U>) -> Handle<'m, U, Contribution<Singleton, Set>> {
         let location = Location::caller();
         let record = Self::record(
-            type_name::<U>(),
+            TypeName::of::<U>(),
             ScopeKind::Singleton,
             Recipe::Value(instance_of(value)),
             Dependencies::default(),
@@ -168,7 +168,7 @@ impl<'m, U: ?Sized + Send + Sync + 'static, Q: 'static, M> Contribute<'m, U, Q, 
             }
         };
         let record = Self::record(
-            type_name::<U>(),
+            TypeName::of::<U>(),
             ScopeKind::Singleton,
             recipe,
             Dependencies::default(),

@@ -1,0 +1,23 @@
+error: write the attribute bare, or as `ulo::injectable`; under a renamed dependency, alias it at the crate root, `extern crate <name> as ulo;`
+ --> tests/ui/attribute_qualifier.rs:7:1
+  |
+7 | #[framework::injectable]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `framework::injectable` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: write the attribute bare, or as `ulo::controller`; under a renamed dependency, alias it at the crate root, `extern crate <name> as ulo;`
+  --> tests/ui/attribute_qualifier.rs:10:1
+   |
+10 | #[framework::controller]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `framework::controller` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: write the attribute bare, or as `ulo::handlers`; under a renamed dependency, alias it at the crate root, `extern crate <name> as ulo;`
+  --> tests/ui/attribute_qualifier.rs:15:1
+   |
+15 | #[framework::handlers]
+   | ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `framework::handlers` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -16,35 +16,46 @@
 //! };
 //! ```
 //!
-//! one `use` per marker name, listing every written occurrence's last path segment, the token as
-//! written, so hover and go-to-definition on each one answer for the macro of that name. An
-//! underscore import binds no name, so two occurrences, or a user's own item, module or attribute
-//! named `guards`, never clash with it. The crate is named `::ulo`, as every other path the macros
-//! write names it, so the import resolves wherever the rest of the expansion does, a renamed
-//! dependency or a re-exporting crate brought in as `extern crate .. as ulo` included.
+//! one `use` per marker name, listing every bare occurrence's name, the token as written, so
+//! hover and go-to-definition on each one answer for the macro of that name. An occurrence written
+//! `#[ulo::guards]` gets a `use` of its own, `use ::ulo::guards as _;` built from both of its
+//! written tokens, so its `ulo` segment answers for the crate as well. An underscore import binds
+//! no name, so two occurrences, or a user's own item, module or attribute named `guards`, never
+//! clash with it. The crate is named `::ulo`, as every other path the macros write names it, and
+//! `ulo` is the one qualifier a marker accepts (`crate::shared::attrs`), so the import resolves
+//! wherever the rest of the expansion does, a renamed dependency or a re-exporting crate brought
+//! in as `extern crate .. as ulo` included.
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::Ident;
+use syn::{Ident, Path};
 
-use crate::shared::ulo;
+use crate::shared::{attrs, ulo};
 
-/// The hidden `const` for the markers `written`, each the last path segment of one removed
-/// attribute; empty when there are none.
-pub(crate) fn marker_imports(written: &[Ident]) -> TokenStream {
+/// The hidden `const` for the markers `written`, each the path of one removed attribute, bare or
+/// under `ulo`; empty when there are none.
+pub(crate) fn marker_imports(written: &[Path]) -> TokenStream {
     if written.is_empty() {
         return TokenStream::new();
     }
     imports(&ulo(), written)
 }
 
-fn imports(root: &TokenStream, written: &[Ident]) -> TokenStream {
+fn imports(root: &TokenStream, written: &[Path]) -> TokenStream {
     let mut names: Vec<(String, Vec<&Ident>)> = Vec::new();
-    for ident in written {
-        let name = ident.to_string();
-        match names.iter_mut().find(|(seen, _)| *seen == name) {
-            Some((_, occurrences)) => occurrences.push(ident),
-            None => names.push((name, vec![ident])),
+    let mut qualified = Vec::new();
+    for path in written {
+        let Some(name) = path.segments.last().map(|segment| &segment.ident) else { continue };
+        if let Some(ulo) = attrs::qualifier(path) {
+            qualified.push(quote! {
+                #[allow(unused_imports)]
+                use ::#ulo::#name as _;
+            });
+            continue;
+        }
+        match names.iter_mut().find(|(seen, _)| *name == *seen) {
+            Some((_, occurrences)) => occurrences.push(name),
+            None => names.push((name.to_string(), vec![name])),
         }
     }
     let uses = names.iter().map(|(_, occurrences)| {
@@ -58,7 +69,7 @@ fn imports(root: &TokenStream, written: &[Ident]) -> TokenStream {
             use #root::#tree;
         }
     });
-    quote!(const _: () = { #(#uses)* };)
+    quote!(const _: () = { #(#uses)* #(#qualified)* };)
 }
 
 #[cfg(test)]
@@ -83,9 +94,11 @@ mod tests {
         found
     }
 
-    fn idents(text: &str) -> Vec<Ident> {
-        let ts: TokenStream = text.parse().unwrap();
-        ts.into_iter().filter_map(|tt| if let TokenTree::Ident(i) = tt { Some(i) } else { None }).collect()
+    /// The comma-separated paths in `text`, each keeping the line and column of its tokens.
+    fn paths(text: &str) -> Vec<Path> {
+        use syn::parse::Parser;
+        let parse = syn::punctuated::Punctuated::<Path, syn::Token![,]>::parse_terminated;
+        parse.parse_str(text).unwrap().into_iter().collect()
     }
 
     fn uses(ts: &TokenStream) -> usize {
@@ -94,7 +107,7 @@ mod tests {
 
     #[test]
     fn one_use_per_name_carries_every_written_token() {
-        let written = idents("guards meta\nguards construct");
+        let written = paths("guards, meta,\nguards, construct");
         let out = imports(&quote!(::ulo), &written);
         assert_eq!(uses(&out), 3, "{out}");
         assert_eq!(occurrences(&out, "guards"), [(1, 0), (2, 0)], "each written token, at its own position");
@@ -102,6 +115,16 @@ mod tests {
         assert!(text.contains("use :: ulo :: { guards as _ , guards as _ }"), "{text}");
         assert!(text.contains("use :: ulo :: meta as _"), "{text}");
         assert!(text.contains("use :: ulo :: construct as _"), "{text}");
+    }
+
+    #[test]
+    fn a_marker_under_ulo_imports_through_both_written_tokens() {
+        let written = paths("guards,\n  ulo::guards");
+        let out = imports(&quote!(::ulo), &written);
+        assert_eq!(uses(&out), 2, "{out}");
+        assert_eq!(occurrences(&out, "ulo"), [(1, 0), (2, 2)], "the root for the bare one, the written `ulo` for the other");
+        assert_eq!(occurrences(&out, "guards"), [(1, 0), (2, 7)]);
+        assert!(out.to_string().contains("use :: ulo :: guards as _"), "{out}");
     }
 
     /// The hidden `const` a macro wrote after its item, as text.
@@ -120,7 +143,7 @@ mod tests {
                 #[http::get("/a")]
                 #[cfg_attr(feature = "x", interceptors(C))]
                 fn a(&self) {}
-                #[foo::guards(D)]
+                #[ulo::guards(D)]
                 #[http::get("/b")]
                 #[error_handlers(E)]
                 #[meta(2)]
@@ -128,11 +151,27 @@ mod tests {
             }
         };
         let out = hidden(&crate::handlers::expand(TokenStream::new(), item).unwrap());
-        assert_eq!(out.matches("use ").count(), 4, "{out}");
-        assert!(out.contains("use :: ulo :: { guards as _ , guards as _ , guards as _ }"), "{out}");
-        assert!(out.contains("use :: ulo :: { meta as _ , meta as _ }"), "{out}");
+        assert_eq!(out.matches("use ").count(), 6, "{out}");
+        assert!(out.contains("use :: ulo :: { guards as _ , guards as _ }"), "{out}");
+        assert_eq!(out.matches("use :: ulo :: guards as _").count(), 1, "{out}");
+        assert!(out.contains("use :: ulo :: meta as _"), "{out}");
+        assert_eq!(out.matches("use :: ulo :: meta as _").count(), 2, "one bare, one under `ulo`: {out}");
         assert!(out.contains("use :: ulo :: interceptors as _"), "{out}");
         assert!(out.contains("use :: ulo :: error_handlers as _"), "{out}");
+    }
+
+    #[test]
+    fn a_marker_under_another_qualifier_is_refused_at_its_path() {
+        let refused = |item| crate::handlers::expand(TokenStream::new(), item).map(|_| ()).unwrap_err().to_string();
+        let on_impl = refused(quote!(#[wrong::guards(A)] impl X { #[http::get("/a")] fn a(&self) {} }));
+        assert!(on_impl.starts_with("write the marker bare, or as `ulo::guards`"), "{on_impl}");
+        let on_method = refused(quote!(impl X { #[http::get("/a")] #[cfg_attr(all(), a::b::meta(1))] fn a(&self) {} }));
+        assert!(on_method.starts_with("write the marker bare, or as `ulo::meta`"), "{on_method}");
+        let construct = |kind, item| crate::construct::expand(kind, TokenStream::new(), item).map(|_| ()).unwrap_err().to_string();
+        let ctor = construct(crate::construct::Kind::Injectable, quote!(impl X { #[framework::construct] fn build() -> Self { X } }));
+        assert!(ctor.starts_with("write the marker bare, or as `ulo::construct`"), "{ctor}");
+        let field = construct(crate::construct::Kind::Controller, quote!(struct X { #[wrong::controller(default)] a: u8 }));
+        assert!(field.starts_with("write the marker bare, or as `ulo::controller`"), "{field}");
     }
 
     #[test]
@@ -142,7 +181,7 @@ mod tests {
         assert!(out.contains("use :: ulo :: construct as _"), "{out}");
         let struct_form = quote!(struct X { #[injectable(default)] a: u8, #[ulo::injectable(default)] b: u8, c: Dep });
         let out = hidden(&crate::construct::expand(crate::construct::Kind::Injectable, TokenStream::new(), struct_form).unwrap());
-        assert!(out.contains("use :: ulo :: { injectable as _ , injectable as _ }"), "{out}");
+        assert_eq!(out.matches("use :: ulo :: injectable as _").count(), 2, "{out}");
     }
 
     #[test]
@@ -151,7 +190,7 @@ mod tests {
         let out = hidden(&controller(quote!(impl X { #[construct] fn build() -> Self { X } })).unwrap());
         assert!(out.contains("use :: ulo :: construct as _"), "{out}");
         let out = hidden(&controller(quote!(struct X { #[controller(default)] a: u8, #[ulo::controller(default)] b: u8, c: Dep })).unwrap());
-        assert!(out.contains("use :: ulo :: { controller as _ , controller as _ }"), "{out}");
+        assert_eq!(out.matches("use :: ulo :: controller as _").count(), 2, "{out}");
     }
 
     #[test]
@@ -169,6 +208,6 @@ mod tests {
 
     #[test]
     fn the_import_names_the_crate_as_the_rest_of_the_expansion_does() {
-        assert!(marker_imports(&idents("guards")).to_string().contains(":: ulo :: guards as _"));
+        assert!(marker_imports(&paths("guards")).to_string().contains(":: ulo :: guards as _"));
     }
 }

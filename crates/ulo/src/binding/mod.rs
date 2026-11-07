@@ -20,6 +20,7 @@ use crate::error::Permanent;
 use crate::resolver::{Reading, Resolver};
 use crate::scope::ScopeKind;
 use crate::timer::{BoxFuture, Bound};
+use crate::type_name::TypeName;
 
 /// A built instance as the stores hold it: an `Arc<dyn Any>` wrapping the `Arc<T>` of the key's
 /// type, so an unsized `T` such as `dyn Cache` round-trips. Every holder of a binding holds a
@@ -115,9 +116,10 @@ pub(crate) struct BindingRecord {
     /// applied from `qualifier` when the graph freezes the record.
     pub(crate) primary: Key,
     pub(crate) qualifier: Qualifier,
-    /// `type_name` of the type the recipe builds, which differs from `primary` for a
-    /// contribution; diagnostics print it.
-    pub(crate) built: &'static str,
+    /// The type the recipe builds, which differs from `primary` for a contribution; diagnostics
+    /// print it, and `wire()` compares it with the controllers' types (`ControllerProvided`). A
+    /// contribution by value names the collection's type, its value already an `Arc<U>`.
+    pub(crate) built: TypeName,
     /// For a contribution: the built `Arc<T>` to the collection's `Arc<U>`. Set on every
     /// contribution, as the identity for `Contribute::value`, whose value is already an `Arc<U>`;
     /// `None` on a single binding.
@@ -128,9 +130,10 @@ pub(crate) struct BindingRecord {
     pub(crate) scope: ScopeKind,
     /// Set by `ModuleDef::controller`; enhancer roles are found by the wiring pass.
     pub(crate) controller: bool,
-    /// The type is a `Controller`, as the `Construct::dependencies` its macro wrote records. Set on
-    /// a record without `controller`, `wire()` refuses it as `WiringError::ControllerProvided`.
-    pub(crate) controller_type: Option<crate::type_name::TypeName>,
+    /// The type is a `Controller`, as its `Construct::dependencies` marks it
+    /// (`Dependencies::mark`). Set on a record without `controller`, `wire()` refuses it as
+    /// `WiringError::ControllerProvided`.
+    pub(crate) controller_type: Option<TypeName>,
     pub(crate) recipe: Recipe,
     pub(crate) dependencies: Dependencies,
     pub(crate) construct_bound: Bound,
@@ -221,7 +224,7 @@ impl BindingRecord {
     /// A record with no qualifier, second key, bound, check or hook written yet.
     pub(crate) fn new(
         primary: Key,
-        built: &'static str,
+        built: TypeName,
         kind: BindingKind,
         scope: ScopeKind,
         recipe: Recipe,

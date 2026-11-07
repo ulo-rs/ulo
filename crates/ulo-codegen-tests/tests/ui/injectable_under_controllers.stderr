@@ -1,17 +1,17 @@
-error[E0277]: `Checkout` is not a controller
+error[E0277]: `Checkout` is not a controller with handlers
  --> tests/ui/injectable_under_controllers.rs:8:25
   |
 8 | #[module(controllers = [Checkout])]
-  |                         ^^^^^^^^ a controller is declared with `#[controller]`
+  |                         ^^^^^^^^ a controller is declared with `#[controller]`, and its handlers with `#[handlers]`
   |
-help: the trait `ulo::Controller` is not implemented for `Checkout`
+help: the trait `Handlers` is not implemented for `Checkout`
  --> tests/ui/injectable_under_controllers.rs:6:1
   |
 6 | struct Checkout;
   | ^^^^^^^^^^^^^^^
-  = note: write `#[controller]` on `Checkout`, in place of `#[injectable]` where that is written: `#[injectable]` declares a type the container injects into others, and a controller is reached through its transport; a controller written by hand implements `ulo::Controller` and mounts its handlers in `Controller::mount`
+  = note: `#[handlers]` on the impl block holding `Checkout`'s handlers writes its `Handlers` impl, and `#[controller]` on `Checkout`, in place of `#[injectable]` where that is written, its `Controller` mark; a controller written by hand implements both, declaring its handlers in `ulo::Handlers::mount`
 note: required by a bound in `ModuleDef::<'a>::controller`
  --> $WORKSPACE/crates/ulo/src/module/def.rs
   |
-  |     pub fn controller<C: Controller>(&mut self) -> ControllerHandle<'_> {
-  |                          ^^^^^^^^^^ required by this bound in `ModuleDef::<'a>::controller`
+  |     pub fn controller<C: Handlers>(&mut self) -> ControllerHandle<'_> {
+  |                          ^^^^^^^^ required by this bound in `ModuleDef::<'a>::controller`

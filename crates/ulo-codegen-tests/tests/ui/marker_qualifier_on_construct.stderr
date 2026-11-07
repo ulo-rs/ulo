@@ -1,0 +1,11 @@
+error: write the marker bare, or as `ulo::construct`; under a renamed dependency, alias it at the crate root, `extern crate <name> as ulo;`
+  --> tests/ui/marker_qualifier_on_construct.rs:10:7
+   |
+10 |     #[wrong::construct]
+   |       ^^^^^^^^^^^^^^^^
+
+error: write the marker bare, or as `ulo::construct`; under a renamed dependency, alias it at the crate root, `extern crate <name> as ulo;`
+  --> tests/ui/marker_qualifier_on_construct.rs:20:7
+   |
+20 |     #[ulo::x::construct]
+   |       ^^^^^^^^^^^^^^^^^

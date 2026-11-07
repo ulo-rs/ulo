@@ -43,7 +43,7 @@
 //! ```
 //!
 //! The method attributes build an [`HttpHandler`] for each handler, and a controller written without
-//! them builds the same value in its `Controller::mount`.
+//! them builds the same value in its `Handlers::mount`.
 //!
 //! `ulo-http` owns routing, so every backend routes identically; a backend crate converts between
 //! its server and the `http` crate's types and maps the drain.

@@ -55,12 +55,13 @@ pub trait Construct: Sized + Send + Sync + 'static {
     fn hooks(_h: &mut Hooks<Self>) {}
 }
 
-/// Whether `T`'s `dependencies` records it as a `Controller`, which the impl `#[injectable]` and
-/// `#[controller]` write does by probing the type (`__private::controller_entry`).
+/// Whether `T`'s `dependencies` marks it as a `Controller` ([`Dependencies::mark`]), which the
+/// impl `#[injectable]` and `#[controller]` write does by probing the type
+/// (`__private::controller_entry`).
 pub(crate) fn marked_controller<T: Construct>() -> bool {
     let mut dependencies = Dependencies::default();
     T::dependencies(&mut dependencies);
-    dependencies.controller == Some(std::any::TypeId::of::<T>())
+    dependencies.marked.contains(&std::any::TypeId::of::<T>())
 }
 
 /// Why a constructor did not return its instance.

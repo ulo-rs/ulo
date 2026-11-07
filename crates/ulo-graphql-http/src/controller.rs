@@ -28,7 +28,7 @@ use http::{Method, StatusCode};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use ulo::scope::Auto;
-use ulo::{BoxError, Construct, ConstructError, Controller, Dep, Dependencies, HandlerSpec, Mount, Resolver};
+use ulo::{BoxError, Construct, ConstructError, Controller, Dep, Dependencies, HandlerSpec, Handlers, Mount, Resolver};
 use ulo_graphql::{Engine, GqlError, GqlRequest, GqlResponse, Outcome, RequestFault};
 use ulo_http::{
     Bytes, CallError, ErrorKind, ExtractError, FromCall, Http, HttpBody, HttpCx, HttpHandler, IntoReplyError, MethodNotAllowed,
@@ -57,6 +57,7 @@ impl<Q: Send + Sync + 'static> Construct for GraphqlEndpoint<Q> {
     type Scope = Auto;
 
     fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
         d.field::<Dep<dyn Engine, Q>>("engine").field::<Dep<EndpointSettings<Q>>>("settings");
     }
 
@@ -68,7 +69,9 @@ impl<Q: Send + Sync + 'static> Construct for GraphqlEndpoint<Q> {
     }
 }
 
-impl<Q: Send + Sync + 'static> Controller for GraphqlEndpoint<Q> {
+impl<Q: Send + Sync + 'static> Controller for GraphqlEndpoint<Q> {}
+
+impl<Q: Send + Sync + 'static> Handlers for GraphqlEndpoint<Q> {
     fn mount(m: &mut Mount<'_>) {
         m.handler(HandlerSpec::<Http, _>::new("get", HttpHandler::new(Method::GET, get::<Q>)).route("/"));
         m.handler(HandlerSpec::<Http, _>::new("post", HttpHandler::new(Method::POST, post::<Q>)).route("/"));

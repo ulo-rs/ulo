@@ -15,7 +15,7 @@ use crate::transport::{ConnectCx, Reply, WsCx};
 pub(crate) type HandlerFn = Arc<dyn Fn(WsCx) -> BoxFuture<'static, Result<Reply, BoxError>> + Send + Sync>;
 
 /// One message handler of an envelope gateway: the value a controller's
-/// [`mount`](ulo::Controller::mount) passes to [`HandlerSpec::new`](ulo::HandlerSpec::new),
+/// [`mount`](ulo::Handlers::mount) passes to [`HandlerSpec::new`](ulo::HandlerSpec::new),
 /// which the hand-off and the standalone server read back when they prepare.
 /// `#[ulo_ws::message("chat.send")]` builds this value, and a gateway written without it builds it
 /// by hand.
@@ -35,7 +35,7 @@ pub(crate) type HandlerFn = Arc<dyn Fn(WsCx) -> BoxFuture<'static, Result<Reply,
 ///
 /// ```
 /// use ulo::scope::Auto;
-/// use ulo::{BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Mount, Resolver};
+/// use ulo::{BoxError, Construct, ConstructError, Controller, Dependencies, Handlers, HandlerSpec, Mount, Resolver};
 /// use ulo_ws::{FromCall, GatewayConfig, GatewayHooks, GatewaySettings, Payload, Reply, Ws, WsCx, WsHandler};
 ///
 /// struct Echo;
@@ -43,7 +43,9 @@ pub(crate) type HandlerFn = Arc<dyn Fn(WsCx) -> BoxFuture<'static, Result<Reply,
 /// impl Construct for Echo {
 ///     type Scope = Auto;
 ///
-///     fn dependencies(_: &mut Dependencies) {}
+///     fn dependencies(d: &mut Dependencies) {
+///         d.mark::<Self>();
+///     }
 ///
 ///     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
 ///         Ok(Echo)
@@ -65,7 +67,9 @@ pub(crate) type HandlerFn = Arc<dyn Fn(WsCx) -> BoxFuture<'static, Result<Reply,
 ///     Ok(cx.reply(&text)?)
 /// }
 ///
-/// impl Controller for Echo {
+/// impl Controller for Echo {}
+///
+/// impl Handlers for Echo {
 ///     fn mount(m: &mut Mount<'_>) {
 ///         m.once::<Self>(<Self as GatewayConfig>::mount_gateway);
 ///         m.handler(HandlerSpec::<Ws, _>::new("echo", WsHandler::new(echo)).route("echo"));

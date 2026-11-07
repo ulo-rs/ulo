@@ -20,12 +20,18 @@ use crate::shared::{ConstructImpl, combine, editor, ulo};
 /// hidden import of each marker removed (`crate::shared::editor`).
 pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemStruct, original: &TokenStream) -> syn::Result<TokenStream> {
     let ulo = ulo();
-    let written: Vec<syn::Ident> = item
+    let markers = item.fields.iter().flat_map(|field| &field.attrs).filter(|attr| {
+        attrs::is(attr, Kind::Injectable.name()) || attrs::is(attr, Kind::Controller.name())
+    });
+    if let Some(e) = combine(markers.filter_map(|attr| attrs::check_marker(attr.path()).err()).collect()) {
+        return Err(e);
+    }
+    let written: Vec<syn::Path> = item
         .fields
         .iter()
         .flat_map(|field| &field.attrs)
         .filter(|attr| attrs::is(attr, kind.name()))
-        .filter_map(|attr| attr.path().segments.last().map(|segment| segment.ident.clone()))
+        .map(|attr| attr.path().clone())
         .collect();
     let imports = editor::marker_imports(&written);
     let mut dependency_specs = Vec::new();

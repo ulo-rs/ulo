@@ -1,13 +1,13 @@
-error[E0277]: `Checkout` is a `#[controller]` type with no `#[handlers]` impl
+error[E0277]: `Checkout` is not a controller with handlers
  --> tests/ui/controller_without_handlers.rs:6:1
   |
 6 | #[controller]
-  | ^^^^^^^^^^^^^ its `Controller::mount` mounts the handlers of its `#[handlers]` impl
+  | ^^^^^^^^^^^^^ a controller is declared with `#[controller]`, and its handlers with `#[handlers]`
   |
 help: the trait `Handlers` is not implemented for `Checkout`
  --> tests/ui/controller_without_handlers.rs:7:1
   |
 7 | struct Checkout;
   | ^^^^^^^^^^^^^^^
-  = note: write `#[handlers]` on the impl block holding `Checkout`'s handlers; a `#[controller]` type that mounts its handlers by hand implements `ulo::Handlers`
+  = note: `#[handlers]` on the impl block holding `Checkout`'s handlers writes its `Handlers` impl, and `#[controller]` on `Checkout`, in place of `#[injectable]` where that is written, its `Controller` mark; a controller written by hand implements both, declaring its handlers in `ulo::Handlers::mount`
   = note: this error originates in the attribute macro `controller` (in Nightly builds, run with -Z macro-backtrace for more info)

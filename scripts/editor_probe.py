@@ -8,8 +8,9 @@ one on `b`, and a bare `#[handlers]`, `#[injectable]` or `#[controller]` one con
 attribute, one that `#[handlers]`, `#[injectable]` or `#[controller]` reads and removes (`guards`,
 `interceptors`, `error_handlers`, `meta`, `construct`, and `injectable(default)` or
 `controller(default)` on a field), yields one point on its last segment,
-bare, pathed or inside a `#[cfg_attr(..)]`: the editor resolves it through the import the macro
-writes for that segment alone. An attribute on a `//` comment line yields none, and neither does
+bare, pathed or inside a `#[cfg_attr(..)]`, and one more on `ulo` when it is written `ulo::<name>`
+or `::ulo::<name>`, the one qualifier a marker accepts: the editor resolves each through the import
+the macro writes from the tokens as written. An attribute on a `//` comment line yields none, and neither does
 one inside a `macro_rules!` body, which the editor resolves only where the macro is invoked. The server is started over stdio, waited on until it
 reports itself quiescent, and each point is asked for `textDocument/hover` and
 `textDocument/definition`. A point missing either answer fails the run (exit 1), as does a server
@@ -42,7 +43,9 @@ ATTR = re.compile(r"#\[\s*((?:[A-Za-z_]\w*::)+)([A-Za-z_]\w*)")
 BARE = re.compile(r"#\[\s*(handlers|injectable|controller)\s*\]")
 MARKERS = r"guards|interceptors|error_handlers|meta|construct"
 # A marker's last segment: after `#[` or, inside a `cfg_attr`, after a comma, with any path before it.
-MARKER = re.compile(r"(?:#\[|,)\s*(?:[A-Za-z_]\w*::)*(?:(" + MARKERS + r")\b(?!\s*::)|(injectable|controller)(?=\s*\(\s*default\s*\)))")
+MARKER = re.compile(
+    r"(?:#\[|,)\s*(?P<path>(?:::)?(?:[A-Za-z_]\w*::)*)(?:(" + MARKERS + r")\b(?!\s*::)|(injectable|controller)(?=\s*\(\s*default\s*\)))"
+)
 
 
 def macro_rules_lines(text):
@@ -68,9 +71,11 @@ def points_of(text):
         markers = set()
         if "#[" in src:
             for m in MARKER.finditer(src):
-                group = 1 if m.group(1) else 2
+                group = 2 if m.group(2) else 3
                 points.append((m.group(group), line, m.start(group)))
                 markers.add(m.start(group))
+                if m.group("path").strip(":") == "ulo":
+                    points.append(("ulo", line, m.start("path") + m.group("path").index("ulo")))
         for m in ATTR.finditer(src):
             if m.start(2) in markers:
                 continue

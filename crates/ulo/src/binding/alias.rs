@@ -1,4 +1,3 @@
-use std::any::type_name;
 use std::marker::PhantomData;
 use std::panic::Location;
 
@@ -33,7 +32,7 @@ impl<'m, T: ?Sized + Send + Sync + 'static, Q: 'static> Alias<'m, T, Q> {
         // passes the target's need for an execution up to its readers.
         let mut record = BindingRecord::new(
             Key::of::<T, ()>(),
-            type_name::<T>(),
+            TypeName::of::<T>(),
             BindingKind::Single,
             ScopeKind::Transient,
             Recipe::Alias { target: Key::of::<T, Existing>() },

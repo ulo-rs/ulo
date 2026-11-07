@@ -272,7 +272,7 @@ impl Graph {
     /// A binding as a step of a printed path: the type it builds, with its qualifier.
     pub(in crate::graph) fn label(&self, id: BindingId) -> String {
         let record = &self.binding(id).record;
-        let mut text = short_type_name(record.built);
+        let mut text = short_type_name(record.built.full());
         if record.qualifier != Qualifier::none() {
             text.push_str(" @ ");
             text.push_str(&short_type_name(record.qualifier.name));

@@ -12,6 +12,7 @@ use std::future::Future;
 use crate::error::LookupError;
 use crate::key::Key;
 use crate::resolver::Resolver;
+use crate::transport::controller::Controller;
 
 pub use dep::Dep;
 pub use ext::Ext;
@@ -109,14 +110,48 @@ pub(crate) enum ReadKind {
 #[derive(Clone, Default)]
 pub struct Dependencies {
     pub(crate) list: Vec<DependencyRecord>,
-    /// The type the `dependencies` an `#[injectable]` or `#[controller]` impl writes found to be a
-    /// `Controller` (`__private::controller_entry`). A provider registration of a type reads it
-    /// into `BindingRecord::controller_type` when it names that type, so a hand-written
-    /// `dependencies` that calls another type's records nothing for its own.
-    pub(crate) controller: Option<std::any::TypeId>,
+    /// The controllers [`mark`](Self::mark) recorded. A provider registration of a type reads it
+    /// into `BindingRecord::controller_type` when it holds that type, so a hand-written
+    /// `dependencies` that calls a controller's records the controller and not its own type.
+    pub(crate) marked: Vec<std::any::TypeId>,
 }
 
 impl Dependencies {
+    /// Records `C` as a controller, so `wire()` refuses a provider registration of `C`, through
+    /// `ModuleDef::provide`, `provide_with`, `try_provide_with` or `Contribute::provide`, as
+    /// `WiringError::ControllerProvided`, even where the graph registers no controller of that
+    /// type. The `Construct::dependencies` that `#[injectable]` and `#[controller]` write marks
+    /// its type when it is a controller; a controller whose `Construct` impl is written by hand
+    /// calls `d.mark::<Self>()` there.
+    ///
+    /// A registration reads the mark of its own type only, so a non-controller whose
+    /// `dependencies` delegates to a controller's is not refused. The `C: Controller` bound keeps
+    /// a type that is not a controller from being marked.
+    ///
+    /// ```
+    /// use ulo::{Construct, ConstructError, Controller, Dependencies, Resolver};
+    ///
+    /// struct Health;
+    ///
+    /// impl Construct for Health {
+    ///     type Scope = ulo::scope::Auto;
+    ///
+    ///     fn dependencies(d: &mut Dependencies) {
+    ///         d.mark::<Self>();
+    ///     }
+    ///
+    ///     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
+    ///         Ok(Health)
+    ///     }
+    /// }
+    ///
+    /// impl Controller for Health {}
+    /// ```
+    pub fn mark<C: Controller>(&mut self) -> &mut Self {
+        self.marked.push(std::any::TypeId::of::<C>());
+        self
+    }
+
     /// A struct field, named in diagnostics as ``field `name` ``.
     pub fn field<S: FromContainer>(&mut self, name: &'static str) -> &mut Self {
         self.push::<S>(DependencyLabel::Field(name))
