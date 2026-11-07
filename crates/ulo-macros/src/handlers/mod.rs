@@ -20,9 +20,11 @@
 //! 4. After the impl: one assertion per controller-level transport key against the handlers'
 //!    `__ULO_KEY_*` constants, and one read of each handler's `__ULO_CHECKS_*`, as free constants;
 //!    for a generic controller, named associated constants that `mount` reads instead (X1).
-//! 5. `impl ::ulo::Controller for Self`, whose `mount` builds the impl-level `value` entries once
+//! 5. `impl ::ulo::Handlers for Self`, whose `mount` builds the impl-level `value` entries once
 //!    into a `::ulo::__private::Shared` and calls every `__ulo_mount_<name>` with it, in method
-//!    order (X2).
+//!    order (X2). `Handlers: Controller`, so on a type that is not a controller, one declared
+//!    `#[injectable]` among them, the impl fails to compile naming `Controller`; the
+//!    `Controller::mount` that `#[controller]` writes calls this `mount`.
 //! 6. The hidden import of every enhancer and `#[meta]` attribute it removed, through which an
 //!    editor resolves each one (`crate::shared::editor`).
 //!
@@ -57,7 +59,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
 }
 
 /// The impl with each handler's attributes rewritten and the controller-tier assertions added,
-/// followed by `impl Controller` and the free assertions.
+/// followed by `impl Handlers` and the free assertions.
 pub(crate) fn expand_impl(mut item: ItemImpl, original: &TokenStream) -> syn::Result<TokenStream> {
     if let Some((_, path, _)) = &item.trait_ {
         return Err(syn::Error::new_spanned(
@@ -120,7 +122,7 @@ pub(crate) fn expand_impl(mut item: ItemImpl, original: &TokenStream) -> syn::Re
     let self_ty = &item.self_ty;
     let (impl_generics, _, where_clause) = item.generics.split_for_impl();
     let controller_impl = quote! {
-        impl #impl_generics #ulo::Controller for #self_ty #where_clause {
+        impl #impl_generics #ulo::Handlers for #self_ty #where_clause {
             fn mount(#mount: &mut #ulo::Mount<'_>) {
                 #in_mount
                 #build_shared

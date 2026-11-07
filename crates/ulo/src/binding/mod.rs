@@ -128,6 +128,9 @@ pub(crate) struct BindingRecord {
     pub(crate) scope: ScopeKind,
     /// Set by `ModuleDef::controller`; enhancer roles are found by the wiring pass.
     pub(crate) controller: bool,
+    /// The type is a `Controller`, as the `Construct::dependencies` its macro wrote records. Set on
+    /// a record without `controller`, `wire()` refuses it as `WiringError::ControllerProvided`.
+    pub(crate) controller_type: Option<crate::type_name::TypeName>,
     pub(crate) recipe: Recipe,
     pub(crate) dependencies: Dependencies,
     pub(crate) construct_bound: Bound,
@@ -234,6 +237,7 @@ impl BindingRecord {
             kind,
             scope,
             controller: false,
+            controller_type: None,
             recipe,
             dependencies,
             construct_bound: Bound::Default,

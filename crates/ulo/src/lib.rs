@@ -96,7 +96,7 @@ pub use scope::{AllowedIn, HookCapable, Scope, ScopeKind};
 pub use runtime::{Runtime, RuntimeTask, Spawn, TaskEnd, TaskHandle, ValueHandle, spawn_with};
 pub use signal::Signal;
 pub use timer::{BoxError, BoxFuture, Bound, Cut, Expiry, RUNTIME_SHUT_DOWN, Refused, RuntimeShutDown, Timer, timeout, timeout_at};
-pub use transport::controller::{Controller, ControllerHandle, Mount, MountedHandler};
+pub use transport::controller::{Controller, ControllerHandle, Handlers, Mount, MountedHandler};
 pub use transport::enhancer::EnhancerSpec;
 pub use transport::handler::{HandlerInfo, HandlerSpec, Shape};
 pub use transport::inputs::Inputs;

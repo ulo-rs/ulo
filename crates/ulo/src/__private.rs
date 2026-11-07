@@ -132,7 +132,7 @@ const fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// The impl-level `value` entries of one `#[handlers]` impl, each built once by the generated
-/// `Controller::mount` into an `Arc` and handed to every handler's mount function (transports
+/// `Handlers::mount` into an `Arc` and handed to every handler's mount function (transports
 /// DESIGN §2.1, X2). `T` is a tuple `(Arc<V0>, Arc<V1>, ..)`, one element per `value` entry in the
 /// order written across the impl's three enhancer attributes, entries scoped to other transports
 /// included; `()` when the impl has none.
@@ -701,33 +701,28 @@ pub mod contribution_key {
     impl<K: ?Sized> KeyArm<K> for &Probe<K> {}
 }
 
-/// The mark `#[controller]` writes and the two checks `#[module]` writes against it. A controller
-/// is reached through its transport and injected by no binding but another controller, so a module
-/// lists it under `controllers` and nowhere else.
+/// The probes that read [`Controller`](crate::Controller), the mark of a controller, where the
+/// type is concrete. A controller is reached through its transport and injected by no binding
+/// but another controller, so a module lists it under `controllers` and nowhere else.
 ///
-/// `controllers = [T]` calls [`controller::<T>()`](controller_entry::controller), whose bound
-/// refuses a `T` without the mark, an `#[injectable]` type among them. A type entry under
-/// `providers`, `T`, `T as dyn K`, `T @ Q` or an `into K: [T]` item, calls `__ulo_check_provider`
-/// on `(&Probe::<T>::new())` with both arms in scope: the controller arm is ranked first by autoref
-/// and carries a method-level bound no type satisfies, so a marked `T` is a compile error naming
-/// it, and any other type takes the empty arm. A value entry checks its value's type the same way,
-/// through [`Probe::of`](controller_entry::Probe::of) or
-/// [`Probe::of_handle`](controller_entry::Probe::of_handle).
+/// A type entry under `#[module]`'s `providers`, `T`, `T as dyn K`, `T @ Q` or an `into K: [T]`
+/// item, calls `__ulo_check_provider` on `(&Probe::<T>::new())` with both check arms in scope:
+/// the controller arm is ranked first by autoref and carries a method-level bound no type
+/// satisfies, so a `T: Controller` is a compile error naming it, and any other type takes the
+/// empty arm. A value entry checks its value's type the same way, through
+/// [`Probe::of`](controller_entry::Probe::of) or [`Probe::of_handle`](controller_entry::Probe::of_handle).
+///
+/// The `Construct::dependencies` that `#[injectable]` and `#[controller]` write calls
+/// `__ulo_mark_controller(d)` on `(&Probe::<Self>::new())` with both mark arms in scope, which
+/// records `Self` on the `Dependencies` when `Self: Controller`. `ModuleDef::provide`, its `_with`
+/// forms and `Contribute::provide` read that record, and `wire()` refuses a type registered
+/// through them that the record names, as `WiringError::ControllerProvided`. A `Construct` impl written by hand records
+/// nothing.
 pub mod controller_entry {
     use std::marker::PhantomData;
 
-    /// Written by `#[controller]` beside the type's `Construct` impl.
-    #[diagnostic::on_unimplemented(
-        message = "`{Self}` is listed under `controllers` but is not a `#[controller]` type",
-        label = "a controller is declared with `#[controller]`",
-        note = "write `#[controller]` on `{Self}`, in place of `#[injectable]` where that is written: `#[injectable]` declares a \
-                type the container injects into others, and a controller is reached through its transport; a module \
-                written by hand registers a controller without the mark, `m.controller::<{Self}>()`"
-    )]
-    pub trait IsController {}
-
-    /// The check for one `controllers` entry.
-    pub fn controller<C: IsController>() {}
+    use crate::Controller;
+    use crate::dependency::Dependencies;
 
     pub struct Probe<T: ?Sized>(PhantomData<fn() -> *const T>);
 
@@ -758,7 +753,7 @@ pub mod controller_entry {
     }
 
     #[diagnostic::on_unimplemented(
-        message = "`{Self}` is a `#[controller]` type, listed under `providers`",
+        message = "`{Self}` is a controller, listed under `providers`",
         label = "a controller goes under `controllers`",
         note = "a controller is reached through its transport, and only another controller injects it; a type to \
                 inject is declared with `#[injectable]`"
@@ -770,7 +765,7 @@ pub mod controller_entry {
         where
             T: ControllerNotAProvider;
     }
-    impl<T: IsController + ?Sized> ControllerArm<T> for Probe<T> {
+    impl<T: Controller> ControllerArm<T> for Probe<T> {
         fn __ulo_check_provider(&self)
         where
             T: ControllerNotAProvider,
@@ -782,4 +777,18 @@ pub mod controller_entry {
         fn __ulo_check_provider(&self) {}
     }
     impl<T: ?Sized> ProviderArm<T> for &Probe<T> {}
+
+    pub trait MarkArm<T: ?Sized> {
+        fn __ulo_mark_controller(&self, d: &mut Dependencies);
+    }
+    impl<T: Controller> MarkArm<T> for Probe<T> {
+        fn __ulo_mark_controller(&self, d: &mut Dependencies) {
+            d.controller = Some(std::any::TypeId::of::<T>());
+        }
+    }
+
+    pub trait UnmarkedArm<T: ?Sized> {
+        fn __ulo_mark_controller(&self, _: &mut Dependencies) {}
+    }
+    impl<T: ?Sized> UnmarkedArm<T> for &Probe<T> {}
 }

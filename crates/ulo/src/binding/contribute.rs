@@ -135,6 +135,7 @@ impl<'m, U: ?Sized + Send + Sync + 'static, Q: 'static, M> Contribute<'m, U, Q, 
         record.construct_bound = T::CONSTRUCT_TIMEOUT;
         record.hooks = erase_trait_hooks::<T>(location);
         record.constructs = true;
+        record.controller_type = crate::construct::marked_controller::<T>().then(crate::type_name::TypeName::of::<T>);
         self.push(record)
     }
 

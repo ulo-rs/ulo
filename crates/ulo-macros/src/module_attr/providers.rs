@@ -77,7 +77,7 @@
 //!
 //! A type that does not implement `Construct` fails at `provide::<T>()`; the generated call is
 //! spanned at the entry, where the error is reported. A type entry, `T`, `T as dyn K`, `T @ Q` or
-//! an `into` item `T`, is first checked not to be a `#[controller]` type, and so is the type of a
+//! an `into` item `T`, is first checked not to be a controller, and so is the type of a
 //! value entry, `expr`, `expr?` or an `into` item `value = ..`: a controller is listed under
 //! `controllers`, and only another controller injects it. A closure binding is not checked; what
 //! it builds is known only from its future's output.
@@ -370,7 +370,7 @@ impl ProviderEntry {
 }
 
 /// `bind`, a value entry's `m.value(..)` or `m.try_value(..)`, followed by the check that the
-/// bound type is not a `#[controller]` type, as [`refuse_controller`] does for a type entry. The
+/// bound type is not a controller, as [`refuse_controller`] does for a type entry. The
 /// type is read off the `Handle` the call returns rather than off the expression, so an expression
 /// of the wrong type gets the one error the call reports.
 fn refuse_controller_value(expr: &Expr, bind: TokenStream) -> TokenStream {
@@ -386,7 +386,7 @@ fn refuse_controller_value(expr: &Expr, bind: TokenStream) -> TokenStream {
     }
 }
 
-/// The check that `ty`, bound by a providers entry, is not a `#[controller]` type, spanned at the
+/// The check that `ty`, bound by a providers entry, is not a controller, spanned at the
 /// type so the refusal points there.
 fn refuse_controller(ty: &Type) -> TokenStream {
     let ulo = ulo();

@@ -5,7 +5,7 @@
 //! a name, and a named associated constant is evaluated only where it is read, so a misspelled
 //! key would compile unnoticed. Const evaluation runs after every attribute has expanded, so the
 //! `__ULO_KEY_*` constants exist by then. A generic controller is the case a free constant cannot
-//! name: there `#[handlers]` emits a named associated constant and `Controller::mount` reads it,
+//! name: there `#[handlers]` emits a named associated constant and `Handlers::mount` reads it,
 //! which evaluates it when `mount` is instantiated.
 //!
 //! A handler behind `#[cfg]`, or whose transport attribute sits inside `cfg_attr`, has no
@@ -91,7 +91,7 @@ pub struct Assertions {
     /// `const __ULO_KEYS_CHECK_<key>: () = { .. };` per scoped key, the same block over `Self`.
     /// Empty otherwise.
     pub associated: TokenStream,
-    /// Statements at the head of `Controller::mount`: for a generic controller,
+    /// Statements at the head of `Handlers::mount`: for a generic controller,
     /// `let () = Self::__ULO_KEYS_CHECK_<key>;` per key and `let () = Self::__ULO_CHECKS_<name>;`
     /// per handler, under its gates. Empty otherwise.
     pub in_mount: TokenStream,
