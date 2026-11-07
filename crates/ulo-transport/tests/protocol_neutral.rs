@@ -9,12 +9,15 @@ use std::process::Command;
 const PROTOCOL_CRATES: &[&str] = &["http", "http-body", "hyper", "h2", "tungstenite", "async-tungstenite", "tonic", "prost"];
 
 /// Every package in `ulo-transport`'s normal dependency tree with all its features on, by name.
+///
+/// Not `--offline`: `--all-features` resolves optional crates no other build in the job fetched, and
+/// `cargo tree` downloads their manifests.
 fn dependency_names() -> Vec<String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let manifest = concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml");
     let output = Command::new(cargo)
         .args(["tree", "--manifest-path", manifest, "-p", "ulo-transport", "-e", "normal", "--all-features"])
-        .args(["--prefix", "none", "--format", "{p}", "--locked", "--offline"])
+        .args(["--prefix", "none", "--format", "{p}", "--locked"])
         .output()
         .expect("`cargo tree` runs");
     assert!(output.status.success(), "`cargo tree` failed: {}", String::from_utf8_lossy(&output.stderr));
