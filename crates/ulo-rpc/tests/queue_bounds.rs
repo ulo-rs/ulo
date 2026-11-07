@@ -322,10 +322,10 @@ fn overflowed_after(items: Vec<Result<u64, RpcError>>, limit: u64) {
 
 /// F547: a server streaming to a caller that reads nothing fills the client's queue to its limit,
 /// and the item past it ends the call: the server's producer stops before the caller reads a
-/// thing, and the caller then reads exactly the items held and the overflow. The TCP link
-/// forgets a call's id as it reads its `cancel`, so a reply already on its way fails first and
-/// the server records `Disconnected` rather than `ClientCancelled` when its producer outruns the
-/// `cancel`; the unit test beside the client asserts the `cancel` frame itself.
+/// thing, and the caller then reads exactly the items held and the overflow. The producer is
+/// always ready: an item it sends once the TCP link has read the client's `cancel`, and before the
+/// server has taken it, is dropped before the wire, and the server records `ClientCancelled`; the
+/// unit test beside the client asserts the `cancel` frame itself.
 #[tokio::test]
 async fn a_reply_stream_nobody_reads_ends_overflow_after_its_limit_and_its_producer_is_cancelled() {
     let running = start(Count::Default).await;
@@ -334,7 +334,7 @@ async fn a_reply_stream_nobody_reads_ends_overflow_after_its_limit_and_its_produ
     let seen = running.seen.clone();
     eventually("the producer's cancellation, with nothing read", || seen.dropped().is_some()).await;
     let ended = seen.dropped().flatten();
-    assert!(matches!(ended, Some(CancelReason::ClientCancelled | CancelReason::Disconnected)), "how the producer ended: {ended:?}");
+    assert_eq!(ended, Some(CancelReason::ClientCancelled), "how the producer ended");
     assert!(seen.produced() > u64::from(LIMIT), "the producer stopped before the queue overflowed: {}", seen.produced());
     overflowed_after(drained(items).await, u64::from(LIMIT));
     running.stop().await;
