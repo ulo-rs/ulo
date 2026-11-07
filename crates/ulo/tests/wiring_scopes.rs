@@ -30,7 +30,7 @@ reader!(OverAudit, Singleton, audit: ulo::Dep<Audit>);
 
 /// (declared scope, by_closure, module, path) of the `ScopeViolation` for `binding`.
 fn violation(errors: &ulo::WiringErrors, binding: Key) -> (ScopeKind, bool, String, Vec<String>) {
-    let found = entries!(errors, WiringError::ScopeViolation { binding: b, declared, by_closure, module, path }
+    let found = entries!(errors, WiringError::ScopeViolation { binding: b, declared, by_closure, module, path, .. }
         => (b.key(), *declared, *by_closure, module.to_string(), path.clone()));
     found
         .into_iter()
@@ -50,6 +50,9 @@ fn a_singleton_reading_execution_data_is_refused() {
     assert_eq!(module, mod_name::<A>());
     assert_eq!(path.len(), 2, "the binding, then the read: {path:?}");
     assert!(path[1].contains("Ext<"), "the path ends at the `Ext`: {path:?}");
+    assert!(!entry!(errors, WiringError::ScopeViolation { controller, .. } => *controller));
+    let report = errors.to_string();
+    assert!(report.contains("help: declare Report #[injectable(execution)], or inject a factory"), "{report}");
     assert_eq!(errors.len(), 1, "{errors}");
 }
 
@@ -115,6 +118,12 @@ fn a_controller_declared_singleton_that_reads_execution_data_is_refused() {
     }));
     let (declared, by_closure, ..) = violation(&errors, Key::of::<Pinned, ()>());
     assert_eq!((declared, by_closure), (ScopeKind::Singleton, false), "opting out of the inference makes the read a violation");
+    assert!(entry!(errors, WiringError::ScopeViolation { controller, .. } => *controller));
+    let report = errors.to_string();
+    assert!(
+        report.contains("help: declare Pinned #[controller(execution)], or inject a factory"),
+        "a controller's scope is written on its `#[controller]`: {report}"
+    );
     assert_eq!(errors.len(), 1, "{errors}");
 }
 

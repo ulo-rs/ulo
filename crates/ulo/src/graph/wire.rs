@@ -864,8 +864,8 @@ fn check_modules(graph: &Graph, declared: &Declared, errors: &mut Vec<WiringErro
     }
 }
 
-/// Step 2: duplicate single bindings, single/collection mixes, aliases pointing at nothing, two
-/// readiness checks on one binding, an execution input declared by two modules or also bound,
+/// Step 2: duplicate single bindings, single/collection mixes, controllers registered as providers,
+/// aliases pointing at nothing, two readiness checks on one binding, an execution input declared by two modules or also bound,
 /// and an input a transport declares that a module declares with another seeder, another
 /// transport also declares, or a module binds.
 fn check_bindings(graph: &Graph, declared: &Declared, errors: &mut Vec<WiringError>) {
@@ -929,6 +929,16 @@ fn check_bindings(graph: &Graph, declared: &Declared, errors: &mut Vec<WiringErr
 
     for binding in graph.bindings.iter().skip(declared.first_binding) {
         let record = &binding.record;
+        if let Some(controller) = record.controller_type
+            && !record.controller
+        {
+            errors.push(WiringError::ControllerProvided {
+                key: graph.key_name(binding.id),
+                controller,
+                module: graph.module_name(binding.origin),
+                at: record.location,
+            });
+        }
         if let Recipe::Alias { target } = &record.recipe {
             match graph.lookup(binding.origin, *target) {
                 Some(Visible::Binding(_)) => {}

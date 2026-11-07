@@ -12,7 +12,7 @@
 //! body, so a closure that creates per-call state while reading nothing per call, such as
 //! `|| RequestTimer::start()`, is written `with(execution)`.
 //!
-//! An impl-level `value` entry is built once by `Controller::mount` and reaches each handler
+//! An impl-level `value` entry is built once by `Handlers::mount` and reaches each handler
 //! through the mount function's `shared` parameter, registered with `*_arc` (X2); a method-level
 //! one is built once when its handler mounts. On a method, a transport-scoped entry for another
 //! transport than the handler's applies to nothing and is an error.
@@ -21,7 +21,7 @@
 //! whose bound is the role for the handler's transport, so a missing role reads "`AuthGuard` is
 //! not a guard for `Rpc`", points at the entry, and notes "required by a bound in `get_rpc`" at
 //! the handler. An impl-level value's role is the mount function's bound instead, checked at
-//! `Controller::mount`'s call of it.
+//! `Handlers::mount`'s call of it.
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};

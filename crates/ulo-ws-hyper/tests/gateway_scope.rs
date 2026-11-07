@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use ulo::{BoxError, Controller, Dep, Ext, Guard, Module, ModuleDef, ModuleIdentity, Mount, controller, handlers};
+use ulo::{BoxError, Dep, Ext, Guard, Handlers, Module, ModuleDef, ModuleIdentity, Mount, controller, handlers};
 use ulo_ws::{ConnectCx, Connection, ConnectionInfo, Frame, Gateway, GatewayConfig, GatewaySettings, Port, WsConnect, WsCx};
 
 use tokio_tungstenite::tungstenite::Message;
@@ -213,7 +213,7 @@ impl Gateway for Manual {
     }
 }
 
-impl Controller for Manual {
+impl Handlers for Manual {
     fn mount(m: &mut Mount<'_>) {
         <Self as Gateway>::mount(m);
     }

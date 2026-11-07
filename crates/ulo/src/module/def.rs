@@ -137,6 +137,12 @@ impl<'a> ModuleDef<'a> {
 
     /// A `Construct` type under its own key, with its declared scope, `CONSTRUCT_TIMEOUT` and
     /// trait hooks. The trait const writes the construction's bound, so the handle starts `Set`.
+    ///
+    /// A controller goes in [`controller`](Self::controller): `wire()` refuses one registered
+    /// here, or through `provide_with`, `try_provide_with` or `Contribute::provide`, as
+    /// `WiringError::ControllerProvided`, when its `Construct` impl is one `#[injectable]` or
+    /// `#[controller]` wrote. A hand-written `Construct` impl does not say whether its type is a
+    /// controller, and such a type is registered here as written.
     #[track_caller]
     pub fn provide<T: Construct>(&mut self) -> Handle<'_, T, Binding<T::Scope, Set>> {
         let location = Location::caller();
@@ -375,8 +381,8 @@ impl<'a> ModuleDef<'a> {
     }
 
     /// A controller: a `Construct` type whose handlers `C::mount` declares, written with
-    /// `#[controller]` and a `#[handlers]` impl or by hand. With `Auto` scope it is built per call
-    /// when anything below it needs an execution.
+    /// `#[controller]` and a `#[handlers]` impl or by hand, implementing `Controller` either way.
+    /// With `Auto` scope it is built per call when anything below it needs an execution.
     ///
     /// The handle sets a runtime prefix for every route and gateway path of the controller,
     /// `m.controller::<GraphqlEndpoint>().at(config.path.clone())` (transports DESIGN §2.5, X3);
@@ -466,6 +472,7 @@ fn construct_record<T: Construct>(recipe: Recipe, dependencies: Dependencies, lo
     let mut record = BindingRecord::new(Key::of::<T, ()>(), type_name::<T>(), BindingKind::Single, kind, recipe, dependencies, location);
     record.hooks = erase_trait_hooks::<T>(location);
     record.constructs = true;
+    record.controller_type = crate::construct::marked_controller::<T>().then(crate::type_name::TypeName::of::<T>);
     record
 }
 

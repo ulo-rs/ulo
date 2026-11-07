@@ -141,6 +141,12 @@ pub enum WiringError {
     KindMix { key: KeyName, module: ModuleName, single: &'static Location<'static>, collection: &'static Location<'static> },
     /// Step 2: an alias whose target nothing visible binds.
     DanglingAlias { alias: KeyName, target: KeyName, module: ModuleName, at: &'static Location<'static> },
+    /// Step 2: a controller registered as a provider, through `ModuleDef::provide`, its `_with`
+    /// forms or `Contribute::provide`, where its handlers would never mount. The type is known to
+    /// be a controller when the `Construct` impl `#[injectable]` or `#[controller]` writes finds
+    /// it implements `Controller`; a `Construct` impl written by hand records nothing to read.
+    /// `key` is the binding's key, a contribution's the collection's.
+    ControllerProvided { key: KeyName, controller: TypeName, module: ModuleName, at: &'static Location<'static> },
     /// Step 2: the `Err` a `try_value` recorded, redacted: `ModuleDef::try_value`, or
     /// `Contribute::try_value`, whose `key` is the collection's.
     ValueFailed { module: ModuleName, key: KeyName, error: Redacted, at: &'static Location<'static> },
@@ -209,8 +215,9 @@ pub enum WiringError {
     /// Step 5: a binding that cannot run in an execution depends on per-execution data. `path`
     /// is the dependency path that introduces it, each step as printed. `by_closure` when a
     /// factory closure builds the binding rather than a `Construct` type, so its scope is
-    /// written where the closure is registered, not on an `#[injectable]`.
-    ScopeViolation { binding: KeyName, declared: ScopeKind, by_closure: bool, module: ModuleName, path: Vec<String> },
+    /// written where the closure is registered, not on an `#[injectable]`. `controller` when the
+    /// binding is a controller, whose scope is written on its `#[controller]`.
+    ScopeViolation { binding: KeyName, declared: ScopeKind, by_closure: bool, controller: bool, module: ModuleName, path: Vec<String> },
     /// Step 5: hooks on an `Auto` binding the scope pass inferred per-execution, a contribution
     /// declared by closure included.
     HooksOnPerExecution { binding: KeyName, module: ModuleName },
@@ -301,6 +308,7 @@ impl WiringError {
             | WiringError::OverrideUnmatched { key, .. }
             | WiringError::OverrideAmbiguous { key, .. }
             | WiringError::OverrideKind { key, .. }
+            | WiringError::ControllerProvided { key, .. }
             | WiringError::Ambiguous { key, .. } => vec![key],
             WiringError::ExportNotBound { key, near, .. } => std::iter::once(key).chain(near).collect(),
             WiringError::DanglingAlias { alias, target, .. } => vec![alias, target],
@@ -340,6 +348,7 @@ impl WiringError {
             WiringError::UnreadPrefix { transports, .. } => transports.clone(),
             WiringError::InputConflict { first, second, .. } => first.type_names().into_iter().chain(second.type_names()).collect(),
             WiringError::NestedKeyed { outer, inner, .. } => vec![*outer, *inner],
+            WiringError::ControllerProvided { controller, .. } => vec![*controller],
             WiringError::ImportCycle { .. }
             | WiringError::DifferingSettings { .. }
             | WiringError::DuplicateSetting { .. }
@@ -389,6 +398,7 @@ impl WiringError {
             | WiringError::DuplicateBinding { module, .. }
             | WiringError::KindMix { module, .. }
             | WiringError::DanglingAlias { module, .. }
+            | WiringError::ControllerProvided { module, .. }
             | WiringError::ValueFailed { module, .. }
             | WiringError::QualifiedRoleContribution { module, .. }
             | WiringError::SingleRoleBinding { module, .. }
@@ -518,6 +528,24 @@ impl WiringError {
                     vec![
                         format!("declared at {}", place(at)),
                         format!("help: bind `{target}` in {module}, or import a module that exports it"),
+                    ],
+                )
+            }
+            WiringError::ControllerProvided { key, controller, module, at } => {
+                let controller = show_type(*controller);
+                let module = show_module(module);
+                let head = if key.kind() == BindingKind::Collection {
+                    format!("the controller `{controller}` in {module} is contributed to `{}`", show(key))
+                } else {
+                    format!("the controller `{controller}` in {module} is registered as a provider")
+                };
+                tree(
+                    f,
+                    head,
+                    vec![
+                        format!("registered at {}", place(at)),
+                        "a controller is reached through its transport, and a provider registration never mounts its handlers".to_owned(),
+                        format!("help: register it with `m.controller::<{controller}>()`, or list it under `controllers`"),
                     ],
                 )
             }
@@ -691,7 +719,7 @@ impl WiringError {
                 let head = format!("dependency cycle: {}", closed_loop(steps.iter().map(|(k, _)| show(k)).collect()));
                 tree(f, head, steps.iter().map(|(k, m)| format!("`{}` in {}", show(k), show_module(m))).collect())
             }
-            WiringError::ScopeViolation { binding, declared, by_closure, module, path } => {
+            WiringError::ScopeViolation { binding, declared, by_closure, controller, module, path } => {
                 // The path's steps are printed short by the graph, so its first step is matched
                 // against the short name whichever form the binding prints in.
                 let short = binding.to_string();
@@ -709,10 +737,11 @@ impl WiringError {
                     ),
                     _ => format!("scope violation: `{name}` in {module} depends on per-execution data"),
                 };
+                let attribute = if *controller { "controller" } else { "injectable" };
                 let help = match (declared, by_closure) {
                     (_, true) => "help: declare the closure `with(execution) = ..`, or register it with `.execution(..)`".to_owned(),
-                    (ScopeKind::Singleton, false) => format!("help: declare {name} #[injectable(execution)], or inject a factory"),
-                    _ => "help: declare it #[injectable(execution)]".to_owned(),
+                    (ScopeKind::Singleton, false) => format!("help: declare {name} #[{attribute}(execution)], or inject a factory"),
+                    _ => format!("help: declare it #[{attribute}(execution)]"),
                 };
                 let item = match path.first() {
                     None => help,

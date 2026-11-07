@@ -70,7 +70,8 @@ pub trait GatewayConfig: Construct {
 /// `Connection::send`, opening an execution per unit of work with `Connection::open_execution`.
 ///
 /// It is a controller: `impl Controller for G { fn mount(m: &mut Mount<'_>) { <G as Gateway>::mount(m) } }`,
-/// listed in a module's `controllers`, beside an import of `WsModule`.
+/// or, on a `#[controller]` type, the same `mount` in `impl Handlers for G`, listed in a module's
+/// `controllers`, beside an import of `WsModule`.
 ///
 /// The gateway instance `on_message` runs on is resolved once per connection, in the connection
 /// phase's execution, and kept while the connection lasts. That execution ends with the

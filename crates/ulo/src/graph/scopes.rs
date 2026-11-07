@@ -211,6 +211,7 @@ pub(crate) fn check_scopes(graph: &Graph, errors: &mut Vec<WiringError>) {
                 binding: graph.key_name(binding.id),
                 declared: record.scope,
                 by_closure: record.by_closure(),
+                controller: binding.role == Role::Controller,
                 module: graph.module_name(binding.origin),
                 path: printed_path(graph, binding.id),
             });

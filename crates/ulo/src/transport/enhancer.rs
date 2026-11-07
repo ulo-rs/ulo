@@ -49,7 +49,7 @@ impl<T: Transport> EnhancerSpec<T> {
     }
 
     /// A guard already built and shared with other handlers: a controller-level `value = expr`,
-    /// which `Controller::mount` builds once into an `Arc` and hands to every handler's mount
+    /// which `Handlers::mount` builds once into an `Arc` and hands to every handler's mount
     /// function (transports DESIGN §2.1, X2). Each handler unsizes its own clone of the `Arc`
     /// into its transport's role, so the role is checked per handler.
     pub fn guard_arc<G: Guard<T>>(&mut self, guard: Arc<G>) -> &mut Self {

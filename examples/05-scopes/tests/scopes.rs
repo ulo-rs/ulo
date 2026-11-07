@@ -54,7 +54,7 @@ fn a_singleton_reading_a_per_execution_binding_is_refused_with_the_path() {
     let Err(StartupError::Wiring(errors)) = App::builder(PinnedModule).wire() else {
         panic!("wiring should fail");
     };
-    let [WiringError::ScopeViolation { binding, declared, by_closure, module, path }] =
+    let [WiringError::ScopeViolation { binding, declared, by_closure, controller, module, path }] =
         errors.iter().collect::<Vec<_>>()[..]
     else {
         panic!("expected one scope violation, got {errors}");
@@ -62,6 +62,7 @@ fn a_singleton_reading_a_per_execution_binding_is_refused_with_the_path() {
     assert_eq!(binding.to_string(), "Pinned");
     assert_eq!(*declared, ScopeKind::Singleton);
     assert!(!by_closure);
+    assert!(!controller);
     assert_eq!(module.to_string(), "PinnedModule");
     assert_eq!(path.join(" -> "), "Pinned -> PerCall (execution)");
 }

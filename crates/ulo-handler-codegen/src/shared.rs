@@ -1,6 +1,6 @@
 //! Impl-level shared values (transports DESIGN §2.1, X2).
 //!
-//! A controller-level `value = expr` is built once, in the `Controller::mount` `#[handlers]`
+//! A controller-level `value = expr` is built once, in the `Handlers::mount` `#[handlers]`
 //! generates, into an `Arc`, and every handler's mount function receives the same
 //! `::ulo::__private::Shared((Arc<V0>, Arc<V1>, ..))`. `#[handlers]` cannot name a value's type, so
 //! each `Vi` is a type parameter of the mount function, inferred at its call. The position of a
@@ -47,12 +47,12 @@ pub fn type_param(index: usize) -> Ident {
     Ident::new(&format!("__UloV{index}"), proc_macro2::Span::mixed_site())
 }
 
-/// `__ulo_shared`, the mount function's parameter and `Controller::mount`'s local.
+/// `__ulo_shared`, the mount function's parameter and `Handlers::mount`'s local.
 pub fn shared_ident() -> Ident {
     Ident::new("__ulo_shared", proc_macro2::Span::mixed_site())
 }
 
-/// What `Controller::mount` evaluates once: `::ulo::__private::Shared((Arc::new(e0), ..,))`, or
+/// What `Handlers::mount` evaluates once: `::ulo::__private::Shared((Arc::new(e0), ..,))`, or
 /// `Shared(())` with no value.
 pub fn construct(values: &[SharedValue]) -> TokenStream {
     let elements = values.iter().map(|value| {
@@ -67,7 +67,7 @@ pub fn construct(values: &[SharedValue]) -> TokenStream {
 /// of the transport `key`: `<__UloV0: ::ulo::Guard<Marker>, __UloV1>` and
 /// `&::ulo::__private::Shared<(Arc<__UloV0>, Arc<__UloV1>,)>`. A value that applies to this
 /// transport is bounded by its role, spanned at the handler's name, so a value lacking the role
-/// fails E0277 at `Controller::mount`'s call of this handler's mount function.
+/// fails E0277 at `Handlers::mount`'s call of this handler's mount function.
 pub fn mount_generics(values: &[SharedValue], key: &str, handler: &Ident, paths: &Paths) -> (TokenStream, TokenStream) {
     let core = &paths.core;
     let marker = &paths.marker;

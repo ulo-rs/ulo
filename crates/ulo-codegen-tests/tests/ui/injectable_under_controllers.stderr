@@ -1,17 +1,17 @@
-error[E0277]: `Checkout` is listed under `controllers` but is not a `#[controller]` type
-  --> tests/ui/injectable_under_controllers.rs:16:25
-   |
-16 | #[module(controllers = [Checkout])]
-   |                         ^^^^^^^^ a controller is declared with `#[controller]`
-   |
-help: the trait `ulo::__private::controller_entry::IsController` is not implemented for `Checkout`
-  --> tests/ui/injectable_under_controllers.rs:6:1
-   |
- 6 | struct Checkout;
-   | ^^^^^^^^^^^^^^^
-   = note: write `#[controller]` on `Checkout`, in place of `#[injectable]` where that is written: `#[injectable]` declares a type the container injects into others, and a controller is reached through its transport; a module written by hand registers a controller without the mark, `m.controller::<Checkout>()`
-note: required by a bound in `ulo::__private::controller_entry::controller`
-  --> $WORKSPACE/crates/ulo/src/__private.rs
-   |
-   |     pub fn controller<C: IsController>() {}
-   |                          ^^^^^^^^^^^^ required by this bound in `controller`
+error[E0277]: `Checkout` is not a controller
+ --> tests/ui/injectable_under_controllers.rs:8:25
+  |
+8 | #[module(controllers = [Checkout])]
+  |                         ^^^^^^^^ a controller is declared with `#[controller]`
+  |
+help: the trait `ulo::Controller` is not implemented for `Checkout`
+ --> tests/ui/injectable_under_controllers.rs:6:1
+  |
+6 | struct Checkout;
+  | ^^^^^^^^^^^^^^^
+  = note: write `#[controller]` on `Checkout`, in place of `#[injectable]` where that is written: `#[injectable]` declares a type the container injects into others, and a controller is reached through its transport; a controller written by hand implements `ulo::Controller` and mounts its handlers in `Controller::mount`
+note: required by a bound in `ModuleDef::<'a>::controller`
+ --> $WORKSPACE/crates/ulo/src/module/def.rs
+  |
+  |     pub fn controller<C: Controller>(&mut self) -> ControllerHandle<'_> {
+  |                          ^^^^^^^^^^ required by this bound in `ModuleDef::<'a>::controller`
