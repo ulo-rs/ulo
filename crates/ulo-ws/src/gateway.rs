@@ -24,6 +24,7 @@ use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
 use ulo_transport::{CallError, Count, ErrorKind};
 
 use crate::handler::{GatewayHooks, HandlerFn, WsHandler};
+use crate::close::{CloseCode, CloseCodeError, check_reason, truncated};
 use crate::codec::Codec;
 use crate::connection::Connection;
 use crate::envelope::Frame;
@@ -320,42 +321,43 @@ pub enum DisconnectReason {
     RuntimeShutDown,
 }
 
-/// A connection refused in the connect phase, with the close code it ends with: by kind, 1008 for
-/// `Unauthorized` and `Forbidden`, 1013 for `TooManyRequests` and `Unavailable`, 1011 for
-/// `Internal`; or one set with [`code`](Self::code), as graphql-transport-ws sets 4401.
+/// A connection refused in the connect phase, with the close code it ends with: by kind, as
+/// [`CloseCode::of_kind`] maps it, or one set with [`code`](Self::code), as graphql-transport-ws
+/// sets 4401.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConnectRefused {
-    pub(crate) close_code: u16,
+    pub(crate) close_code: CloseCode,
     pub(crate) reason: String,
     pub(crate) kind: Option<ErrorKind>,
 }
 
-/// The longest close reason a Close frame carries (RFC 6455 §5.5.1: 125 bytes of payload, two of
-/// them the code).
-pub(crate) const REASON_LIMIT: usize = 123;
-
 impl ConnectRefused {
     /// A refusal with the close code `code` and `reason`. Refused: a reason over 123 bytes of
-    /// UTF-8 (RFC 6455 §5.5.1), 1004, 1005, 1006 and 1015, which are never sent in a frame, and a
-    /// code outside 1000–4999.
-    pub fn code(code: u16, reason: impl Into<String>) -> Result<Self, CloseCodeError> {
+    /// UTF-8 (RFC 6455 §5.5.1).
+    pub fn code(code: CloseCode, reason: impl Into<String>) -> Result<Self, CloseCodeError> {
         let reason = reason.into();
-        check_close(code, &reason)?;
+        check_reason(&reason)?;
         Ok(ConnectRefused { close_code: code, reason, kind: None })
     }
 
-    /// A refusal of kind `kind`, closing with the code the kind maps to; under `refuse =
-    /// handshake`, answered 401 for `Unauthorized` and 403 otherwise. A reason over 123 bytes is
-    /// cut at the last character boundary within them.
+    /// A refusal of kind `kind`, closing with the code [`CloseCode::of_kind`] gives; under
+    /// `refuse = handshake`, answered 401 for `Unauthorized` and 403 otherwise. A reason over 123
+    /// bytes is cut at the last character boundary within them.
     ///
-    /// The kinds the design names map as it states; the others, the client's own mistakes
-    /// (`BadRequest`, `NotFound`, `Conflict`, `Unprocessable`) close with 1008 and the server's
-    /// (`Timeout`, `Unimplemented`, and any kind added later) with 1011.
+    /// `BadRequest`, `NotFound`, `Conflict` and `Unprocessable` share 1008, so their reason
+    /// starts with the kind as the envelope spells it, then `: ` and `reason`:
+    /// `not_found: no such room`. A client reads the kind back from the reason.
     pub fn kind(kind: ErrorKind, reason: impl Into<String>) -> Self {
-        ConnectRefused { close_code: close_code_for(kind), reason: truncated(reason.into()), kind: Some(kind) }
+        let close_code = CloseCode::of_kind(kind);
+        let reason = if close_code == CloseCode::POLICY_VIOLATION {
+            format!("{kind}: {}", reason.into())
+        } else {
+            reason.into()
+        };
+        ConnectRefused { close_code, reason: truncated(reason), kind: Some(kind) }
     }
 
-    pub fn close_code(&self) -> u16 {
+    pub fn close_code(&self) -> CloseCode {
         self.close_code
     }
 
@@ -371,10 +373,18 @@ impl ConnectRefused {
         }
     }
 
-    /// An error the connect phase's error handlers left unclaimed, refused by its kind.
+    /// An error the connect phase's error handlers left unclaimed, refused by its kind, or with
+    /// the close code [`WithCloseCode`](crate::WithCloseCode) set on it and its message as the
+    /// reason. A stored code no [`CloseCode`] accepts, which only the doc-hidden store can write,
+    /// is read as unset.
     pub(crate) fn of_error(err: BoxError) -> Self {
         let error = CallError::from_boxed(err);
-        ConnectRefused::kind(error.kind(), error.message())
+        match error.__close_code().map(CloseCode::new) {
+            Some(Ok(close_code)) => {
+                ConnectRefused { close_code, reason: truncated(error.message().to_owned()), kind: Some(error.kind()) }
+            }
+            _ => ConnectRefused::kind(error.kind(), error.message()),
+        }
     }
 }
 
@@ -385,71 +395,6 @@ impl fmt::Display for ConnectRefused {
 }
 
 impl Error for ConnectRefused {}
-
-/// Why [`ConnectRefused::code`] refused its arguments.
-#[non_exhaustive]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CloseCodeError {
-    /// The reason is over 123 bytes of UTF-8.
-    ReasonTooLong { len: usize },
-    /// 1004, 1005, 1006 or 1015.
-    Reserved { code: u16 },
-    /// Outside 1000–4999.
-    OutOfRange { code: u16 },
-}
-
-impl fmt::Display for CloseCodeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CloseCodeError::ReasonTooLong { len } => {
-                write!(f, "a close reason is at most 123 bytes of UTF-8, and this one is {len}")
-            }
-            CloseCodeError::Reserved { code } => write!(f, "close code {code} is never sent in a Close frame"),
-            CloseCodeError::OutOfRange { code } => write!(f, "close code {code} is outside 1000–4999"),
-        }
-    }
-}
-
-impl Error for CloseCodeError {}
-
-/// The checks `ConnectRefused::code` and `Connection::close` apply to a code and reason.
-pub(crate) fn check_close(code: u16, reason: &str) -> Result<(), CloseCodeError> {
-    if !(1000..=4999).contains(&code) {
-        return Err(CloseCodeError::OutOfRange { code });
-    }
-    if matches!(code, 1004 | 1005 | 1006 | 1015) {
-        return Err(CloseCodeError::Reserved { code });
-    }
-    if reason.len() > REASON_LIMIT {
-        return Err(CloseCodeError::ReasonTooLong { len: reason.len() });
-    }
-    Ok(())
-}
-
-fn close_code_for(kind: ErrorKind) -> u16 {
-    match kind {
-        ErrorKind::Unauthorized
-        | ErrorKind::Forbidden
-        | ErrorKind::BadRequest
-        | ErrorKind::NotFound
-        | ErrorKind::Conflict
-        | ErrorKind::Unprocessable => 1008,
-        ErrorKind::TooManyRequests | ErrorKind::Unavailable => 1013,
-        _ => 1011,
-    }
-}
-
-/// `reason` cut to at most 123 bytes at a character boundary.
-pub(crate) fn truncated(mut reason: String) -> String {
-    if reason.len() > REASON_LIMIT {
-        let mut end = REASON_LIMIT;
-        while !reason.is_char_boundary(end) {
-            end -= 1;
-        }
-        reason.truncate(end);
-    }
-    reason
-}
 
 /// The gateway instance a hand-written gateway's messages run on, erased.
 pub(crate) type Instance = Arc<dyn Any + Send + Sync>;

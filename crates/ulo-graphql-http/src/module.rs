@@ -76,7 +76,9 @@ impl<Q: Send + Sync + 'static> Module for GraphqlModule<Q> {
                 config.connection_init_timeout,
                 "close every connection before its `connection_init` could arrive",
             ));
-            m.try_value(failures.into_result().map(|()| InitTimeout(config.connection_init_timeout)));
+            // The setting's own refusal names `.connection_init_timeout(..)`, which the user wrote;
+            // the constructor then holds the same rule for every binding.
+            m.try_value(failures.into_result().and_then(|()| Ok(InitTimeout::new(config.connection_init_timeout)?)));
             m.controller::<GraphqlWs<Q>>().at(subscriptions);
         }
     }

@@ -1,7 +1,8 @@
-//! The HTTP error model: every `ErrorKind` renders its status as a problem document, a derived
-//! `Classify` maps each variant to its kind, details travel in the document and in `Retry-After`,
-//! an error nothing classified is withheld, a panic is a 500, and the error chain lets a handler
-//! claim, pass on or reshape an error.
+//! The HTTP error model: every `ErrorKind` renders its status as a problem document, an error's
+//! own status from `WithHttpStatus` replaces its kind's, a derived `Classify` maps each variant to
+//! its kind, details travel in the document and in `Retry-After`, an error nothing classified is
+//! withheld, a panic is a 500, and the error chain lets a handler claim, pass on or reshape an
+//! error.
 
 mod o1_support;
 
@@ -14,7 +15,7 @@ use std::time::Duration;
 use http::StatusCode;
 use o1_support::{Call, start};
 use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, controller, handlers};
-use ulo_http::{Http, HttpBody, HttpCx, Path, Response};
+use ulo_http::{Http, HttpBody, HttpCx, Path, Response, WithHttpStatus};
 use ulo_transport::{CallError, Classify, Detail, Details, ErrorKind};
 
 /// A domain error whose variants are classified by the derive.
@@ -102,6 +103,19 @@ impl Faults {
     #[ulo_http::get("/kind/{name}")]
     fn kind(&self, Path(name): Path<String>) -> Result<&'static str, CallError> {
         Err(CallError::new(kind_named(&name), "the message"))
+    }
+
+    /// A `Conflict` sent with the status the path names.
+    #[ulo_http::get("/status/{code}")]
+    fn status(&self, Path(code): Path<u16>) -> Result<&'static str, CallError> {
+        let status = StatusCode::from_u16(code).expect("the test names a valid status");
+        Err(CallError::new(ErrorKind::Conflict, "the version changed").with_http_status(status))
+    }
+
+    /// A `Throttled`, whose details carry `RetryAfter`, sent as a 503.
+    #[ulo_http::get("/status-unavailable")]
+    fn status_unavailable(&self) -> Result<&'static str, CallError> {
+        Err(CallError::from(Throttled).with_http_status(StatusCode::SERVICE_UNAVAILABLE))
     }
 
     #[ulo_http::get("/challenge")]
@@ -229,6 +243,30 @@ async fn every_error_kind_renders_its_status_as_a_problem_document_of_that_statu
         assert_eq!((&problem["type"], &problem["title"]), (&serde_json::json!("about:blank"), &serde_json::json!(title)), "{name}");
         assert_eq!(problem["status"], status.as_u16(), "{name}: the document repeats the status");
         assert_eq!(problem["detail"], "the message", "{name}");
+    }
+    app.stop().await;
+}
+
+/// The status `WithHttpStatus` names replaces the kind's in the response and in the problem
+/// document, and the headers follow the status: a 401 challenges and a 503 carries `Retry-After`.
+/// A status outside 400 to 599 is ignored and the kind's 409 sent.
+#[tokio::test]
+async fn an_error_s_own_status_replaces_its_kind_s_and_the_headers_follow_the_status() {
+    let app = start(plain).await;
+    for (code, title) in [(412, "Precondition Failed"), (418, "I'm a teapot"), (507, "Insufficient Storage")] {
+        let reply = app.send(Call::get(&format!("/status/{code}"))).await;
+        assert_eq!(reply.status.as_u16(), code, "with_http_status({code})");
+        let problem = reply.json();
+        assert_eq!((&problem["status"], &problem["title"]), (&serde_json::json!(code), &serde_json::json!(title)), "{code}");
+        assert_eq!(problem["detail"], "the version changed", "{code}");
+    }
+    let challenged = app.send(Call::get("/status/401")).await;
+    assert_eq!((challenged.status, challenged.header("www-authenticate")), (StatusCode::UNAUTHORIZED, Some("Bearer")));
+    let unavailable = app.send(Call::get("/status-unavailable")).await;
+    assert_eq!((unavailable.status, unavailable.header("retry-after")), (StatusCode::SERVICE_UNAVAILABLE, Some("2")));
+    for code in [200, 302] {
+        let reply = app.send(Call::get(&format!("/status/{code}"))).await;
+        assert_eq!(reply.status, StatusCode::CONFLICT, "with_http_status({code}) is not an error's status");
     }
     app.stop().await;
 }

@@ -159,7 +159,7 @@ impl Module for Root {
         m.import(WsModule::for_root());
         m.value(Scripted(Arc::clone(&self.0))).also_as::<dyn Engine>(|engine| engine);
         // The init timeout is `runtime.rs`'s; here no connection closes for waiting.
-        m.value(InitTimeout(Bound::Unbounded));
+        m.value(InitTimeout::new(Bound::Unbounded).expect("an unbounded timeout"));
         m.controller::<GraphqlWs>().at("/graphql");
     }
 }

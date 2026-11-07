@@ -36,6 +36,8 @@ tracing.workspace = true
 conformance-probe = []
 
 [dev-dependencies]
+# `WithHttpStatus`, which `tests/http_status.rs` sets on an error the RPC rendering does not read.
+ulo-http = { path = "../ulo-http" }
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 # For `RpcClient::new`'s example, which runs, so a link it names refuses it if the example drifts.
 ulo-rpc-tcp = { path = "../ulo-rpc-tcp" }

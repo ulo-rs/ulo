@@ -102,7 +102,7 @@ impl Module for Root {
     fn register(&self, m: &mut ModuleDef<'_>) {
         m.import(WsModule::for_root());
         m.value(Ticks).also_as::<dyn Engine>(|engine| engine);
-        m.value(InitTimeout(Bound::After(self.init_timeout)));
+        m.value(InitTimeout::new(Bound::After(self.init_timeout)).expect("a timeout above zero"));
         m.controller::<GraphqlWs>().at("/graphql");
     }
 }

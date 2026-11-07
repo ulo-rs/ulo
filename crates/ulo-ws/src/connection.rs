@@ -16,7 +16,7 @@ use std::task::{Context, Poll};
 use async_tungstenite::WebSocketStream;
 use async_tungstenite::tungstenite::error::ProtocolError;
 use async_tungstenite::tungstenite::handshake::derive_accept_key;
-use async_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use async_tungstenite::tungstenite::protocol::frame::coding::CloseCode as WireCode;
 use async_tungstenite::tungstenite::protocol::{CloseFrame, Role, WebSocketConfig};
 use async_tungstenite::tungstenite::{Error as WsError, Message};
 use bytes::Bytes;
@@ -42,10 +42,8 @@ use crate::handler::HandlerFn;
 use crate::broadcast::NodeId;
 use crate::codec::Codec;
 use crate::envelope::{self, Frame, Head, MessageId};
-use crate::gateway::{
-    ConnectRefused, DisconnectReason, GatewayRuntime, GatewaySettings, Instance, Messages, Overflow, Refuse, check_close,
-    truncated,
-};
+use crate::close::{CloseCode, CloseCodeError, check_reason, truncated};
+use crate::gateway::{ConnectRefused, DisconnectReason, GatewayRuntime, GatewaySettings, Instance, Messages, Overflow, Refuse};
 use crate::rooms::{BroadcastError, Hub};
 use crate::session::SessionHandle;
 use crate::table::{AnswerHold, MessagesRead};
@@ -128,16 +126,15 @@ impl Connection {
     }
 
     /// Closes the connection with `code` and `reason`, which `on_disconnect` receives as
-    /// `DisconnectReason::ServerClose`. `code` and `reason` are checked as `ConnectRefused::code`
-    /// checks them; an invalid pair closes with 1011.
+    /// `DisconnectReason::ServerClose`. Refused, with nothing queued: a reason over 123 bytes of
+    /// UTF-8 (RFC 6455 §5.5.1), as `ConnectRefused::code` refuses it.
     ///
     /// The Close frame is written after the messages already queued; the call returns once it is
-    /// queued.
-    pub async fn close(&self, code: u16, reason: &str) {
-        match check_close(code, reason) {
-            Ok(()) => self.inner.outbound.request_close(code, reason.to_owned()),
-            Err(_) => self.inner.outbound.request_close(1011, String::new()),
-        }
+    /// queued. A close requested after another is not sent: the first stands.
+    pub async fn close(&self, code: CloseCode, reason: &str) -> Result<(), CloseCodeError> {
+        check_reason(reason)?;
+        self.inner.outbound.request_close(code.get(), reason.to_owned());
+        Ok(())
     }
 
     /// An execution in the gateway's module with this connection's inputs seeded:
@@ -721,7 +718,7 @@ async fn run<Io, U>(
         Decided::Later => match connect(&accept, head, peer, protocol).await {
             Connected::Admitted(admitted) => admitted,
             Connected::Full => return refuse(&mut ws, &accept, 1013, TOO_MANY).await,
-            Connected::Refused(refused) => return refuse(&mut ws, &accept, refused.close_code(), refused.reason()).await,
+            Connected::Refused(refused) => return refuse(&mut ws, &accept, refused.close_code().get(), refused.reason()).await,
         },
     };
     let why = serve(ws, &admitted, &accept).await;
@@ -862,7 +859,7 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
         opts = opts.trace(ctx);
     }
     let Ok(exec) = Execution::open(connect.module(), opts) else {
-        return Connected::Refused(ConnectRefused { close_code: 1001, reason: ulo_transport::SHUTDOWN_MESSAGE.to_owned(), kind: None });
+        return Connected::Refused(ConnectRefused { close_code: CloseCode::GOING_AWAY, reason: ulo_transport::SHUTDOWN_MESSAGE.to_owned(), kind: None });
     };
     let id = accept.hub.next_id();
     let info = ConnectionInfo { peer, path: Arc::clone(&gateway.path), id };
@@ -1006,7 +1003,7 @@ async fn send_close<Io>(ws: &mut WebSocketStream<Io>, code: u16, reason: &str) -
 where
     Io: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let frame = CloseFrame { code: CloseCode::from(code), reason: truncated(reason.to_owned()).into() };
+    let frame = CloseFrame { code: WireCode::from(code), reason: truncated(reason.to_owned()).into() };
     ws.close(Some(frame)).await
 }
 

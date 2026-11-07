@@ -16,12 +16,12 @@ use serde_json::{Value, json};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode as WireCode;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use ulo::app::Bound as Serving;
 use ulo::{App, BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Timer, controller, handlers, injectable};
 use ulo_transport::Classify;
-use ulo_ws::{ConnectCx, ConnectRefused, Frame, OnConnect, Payload, Reply, Session, UpgradeHead, WsConnect};
+use ulo_ws::{CloseCode, ConnectCx, ConnectRefused, Frame, OnConnect, Payload, Reply, Session, UpgradeHead, WsConnect};
 
 /// The upgrade header the connect guard admits on, and the value it admits.
 const TOKEN_HEADER: &str = "x-token";
@@ -32,7 +32,10 @@ const USER_HEADER: &str = "x-user";
 
 /// The visitor `on_connect` refuses, and the close code it refuses with.
 const BANNED: &str = "mallory";
-const BANNED_CODE: u16 = 4000;
+const BANNED_CODE: CloseCode = match CloseCode::new(4000) {
+    Ok(code) => code,
+    Err(_) => panic!("4000 is an application's code"),
+};
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -169,7 +172,7 @@ impl OnConnect for Chat {
     async fn on_connect(&self, cx: &ConnectCx) -> Result<(), ConnectRefused> {
         if cx.head().headers().get(USER_HEADER).is_some_and(|name| name == BANNED) {
             return Err(ConnectRefused::code(BANNED_CODE, "banned")
-                .unwrap_or_else(|error| panic!("{BANNED_CODE} is a close code a frame carries: {error}")));
+                .unwrap_or_else(|error| panic!("the reason fits a Close frame: {error}")));
         }
         Ok(())
     }
@@ -440,7 +443,7 @@ async fn session_with_builds_one_session_per_connection_from_the_upgrade_request
 }
 
 /// The close code the server ends `socket` with, skipping any text before the Close frame.
-async fn closed_with(socket: &mut Socket) -> Option<CloseCode> {
+async fn closed_with(socket: &mut Socket) -> Option<WireCode> {
     let close = loop {
         match tokio::time::timeout(FRAME_WAIT, socket.next()).await {
             Ok(Some(Ok(Message::Close(frame)))) => break frame,
@@ -453,10 +456,10 @@ async fn closed_with(socket: &mut Socket) -> Option<CloseCode> {
 }
 
 #[tokio::test]
-async fn connect_guard_refusal_closes_the_connection_with_policy_violation() {
+async fn connect_guard_refusal_closes_the_connection_with_forbidden() {
     let app = Running::start().await;
     let mut socket = app.connect(&[(USER_HEADER, "ada")]).await;
-    assert_eq!(closed_with(&mut socket).await, Some(CloseCode::Policy), "expected 1008 for a refused connect guard");
+    assert_eq!(closed_with(&mut socket).await, Some(WireCode::from(3003)), "expected 3003 for a refused connect guard");
     hang_up(socket).await;
     app.stop().await;
 }
@@ -465,7 +468,7 @@ async fn connect_guard_refusal_closes_the_connection_with_policy_violation() {
 async fn on_connect_refusal_closes_with_its_own_code() {
     let app = Running::start().await;
     let mut socket = app.connect(&[(TOKEN_HEADER, TOKEN), (USER_HEADER, BANNED)]).await;
-    assert_eq!(closed_with(&mut socket).await, Some(CloseCode::from(BANNED_CODE)));
+    assert_eq!(closed_with(&mut socket).await, Some(WireCode::from(BANNED_CODE.get())));
     hang_up(socket).await;
     app.stop().await;
 }

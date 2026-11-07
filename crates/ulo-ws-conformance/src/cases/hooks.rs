@@ -11,7 +11,7 @@ use crate::app::{OWN, OWN_CODE, REFUSE};
 pub async fn on_connect_refusal<H: Host>() {
     let app = Served::<H>::start().await;
     let mut refused = app.connect("/refused", &[(REFUSE, OWN_CODE)]).await;
-    assert_eq!(refused.close_frame().await, Some((OWN.0, OWN.1.to_owned())), "`OnConnect`'s refusal");
+    assert_eq!(refused.close_frame().await, Some((OWN.0.get(), OWN.1.to_owned())), "`OnConnect`'s refusal");
     refused.hang_up().await;
 
     let mut admitted = app.connect("/refused", &[]).await;

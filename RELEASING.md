@@ -45,6 +45,12 @@ at the first step that fails:
    and `ulo-cli`, a binary, have no library API to compare and are named apart in the job's last
    line.
 
+cargo-semver-checks has no lint for a changed type: a parameter or return type that changes, or a
+tuple struct's field that stops being public, passes step 3. A change making such a break adds a
+comment line to `semver-breaks.txt` in the form `# unchecked <package> <item>  # reason`, which
+the script skips. The pull request that cuts a release lists those lines in the release's notes
+beside the `break` entries, and the first change after the tag removes both.
+
 ## Reading a failure
 
 Each finding starts a line on stderr, prefixed with its step; a finding about a break lists the

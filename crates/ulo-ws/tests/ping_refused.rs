@@ -433,7 +433,7 @@ impl Timer for Closer {
         let opened = self.1.0.lock().unwrap().clone();
         match opened {
             Some(conn) if d == PING => Box::pin(async move {
-                conn.close(4000, "bye").await;
+                conn.close(ulo_ws::CloseCode::new(4000).expect("an application's code"), "bye").await.expect("the reason fits a Close frame");
                 Err(ulo::Refused)
             }),
             _ => self.0.try_sleep(d),

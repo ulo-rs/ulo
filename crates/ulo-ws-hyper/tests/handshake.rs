@@ -11,13 +11,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde_json::json;
 use ulo::{BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_transport::ErrorKind;
-use ulo_ws::{ConnectCx, ConnectRefused, OnConnect, Session, UpgradeHead, WsConnect};
+use ulo_ws::{CloseCode, ConnectCx, ConnectRefused, OnConnect, Session, UpgradeHead, WsConnect};
 
 use support::{Running, close_frame, hang_up, next_json, send_json, upgrade};
 
 /// The close code graphql-transport-ws's reference server refuses a connection with when the
 /// client offered none of its subprotocols.
-const SUBPROTOCOL_NOT_ACCEPTABLE: u16 = 4406;
+const SUBPROTOCOL_NOT_ACCEPTABLE: CloseCode = match CloseCode::new(4406) {
+    Ok(code) => code,
+    Err(_) => panic!("4406 is an application's code"),
+};
 
 /// Speaks two versions of a protocol and refuses a connection that agreed on neither.
 #[controller]
@@ -38,7 +41,7 @@ impl OnConnect for Versioned {
             return Ok(());
         }
         Err(ConnectRefused::code(SUBPROTOCOL_NOT_ACCEPTABLE, "no subprotocol agreed")
-            .unwrap_or_else(|error| panic!("4406 is a close code a frame carries: {error}")))
+            .unwrap_or_else(|error| panic!("the reason fits a Close frame: {error}")))
     }
 }
 
@@ -202,7 +205,7 @@ async fn no_offered_subprotocol_gets_a_101_without_one_and_the_gateway_refuses()
         assert_eq!(answer.status, 101, "offered {headers:?}: {}", answer.body);
         assert_eq!(answer.header("sec-websocket-protocol"), None, "offered {headers:?}");
         let mut socket = answer.socket.take().unwrap_or_else(|| panic!("a 101 carries a socket"));
-        assert_eq!(close_frame(&mut socket).await, Some((SUBPROTOCOL_NOT_ACCEPTABLE, "no subprotocol agreed".to_owned())));
+        assert_eq!(close_frame(&mut socket).await, Some((SUBPROTOCOL_NOT_ACCEPTABLE.get(), "no subprotocol agreed".to_owned())));
         hang_up(socket).await;
     }
     app.stop().await;
@@ -252,7 +255,7 @@ async fn connect_guards_by_value_and_by_closure_each_refuse_on_their_own() {
         let headers: Vec<(&str, &str)> = all.iter().enumerate().filter(|(at, _)| *at != missing).map(|(_, header)| *header).collect();
         let mut socket = app.connect("/gated", &headers).await;
         let refused = close_frame(&mut socket).await.map(|(code, _)| code);
-        assert_eq!(refused, Some(1008), "without {:?} the connection should close with 1008", all[missing]);
+        assert_eq!(refused, Some(3003), "without {:?} the connection should close with 3003", all[missing]);
         hang_up(socket).await;
     }
     app.stop().await;

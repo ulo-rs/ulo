@@ -9629,6 +9629,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ulo",
+ "ulo-http",
  "ulo-rpc-macros",
  "ulo-rpc-tcp",
  "ulo-runtime-tokio",

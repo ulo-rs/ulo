@@ -20,3 +20,10 @@ break ulo-rpc struct_pub_field_now_doc_hidden 4  # #409: the four of those field
 break ulo-ws inherent_method_now_doc_hidden 2  # `GatewayDefaults::answer_hold` and `messages_read`, compiled under `conformance-probe`, are test support and doc-hidden, outside the semver promise
 break ulo-ws struct_now_doc_hidden 2  # `AnswerHold` and `MessagesRead`, the same feature's test support, doc-hidden
 break ulo-ws-hyper inherent_method_now_doc_hidden 1  # `ServerOn::messages_read`, under `conformance-probe`, test support and doc-hidden
+
+# Breaks cargo-semver-checks does not lint, listed for the release notes (RELEASING.md, step 3).
+# unchecked ulo-ws ConnectRefused::code  # takes a `CloseCode` in place of a `u16`
+# unchecked ulo-ws ConnectRefused::close_code  # answers a `CloseCode` in place of a `u16`
+# unchecked ulo-ws Connection::close  # takes a `CloseCode` and answers `Result<(), CloseCodeError>`, refusing a reason over 123 bytes where it clamped to 1011
+# unchecked ulo-ws ConnectRefused::kind  # closes `Unauthorized`, `Forbidden` and `Timeout` with 3000, 3003 and 3008, and prefixes the kind to the reason of the four that close with 1008
+# unchecked ulo-graphql-ws InitTimeout  # its field is private; `InitTimeout::new` builds one and refuses a zero bound

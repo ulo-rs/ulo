@@ -82,9 +82,16 @@ use crate::upgrade::UpgradeHandler;
 ///    `CancelReason::Disconnected`. The request counts against the in-flight bound, and its
 ///    execution stays open, until the backend drops that body. A stream the backend never writes,
 ///    on a `HEAD` answer or a 1xx, 204 or 304, reports `Completed` instead, when the service
-///    answers: the outcome concerns the body, and such a response owes the client none. A peer
-///    leaving before the head is written is a connection failure, not an incomplete body. A status
+///    answers: the outcome concerns the body, and such a response owes the client none. A status
 ///    that forbids a body carrying a stream is logged at `warn`.
+///
+/// The future [`call`](AppService::call) answers cancels the execution with
+/// `CancelReason::Disconnected` when it is dropped before it answers: a backend drops it when the
+/// peer closes the connection or resets its HTTP/2 stream before the response's head is produced,
+/// as hyper does. The reason is written before the pipeline inside the future drops, so a
+/// handler's future dropped at its current await reads it; once the future has answered, the
+/// response body carries the disconnect instead. A host that keeps a call running after its peer
+/// has left declares so in its `EmbedLimits`, through `pending_close` and `pending_reset`.
 ///
 /// A call still running when the end of the drain cancels its execution with
 /// `CancelReason::Drain` is abandoned. Before the response is produced, the pipeline is dropped
@@ -217,7 +224,9 @@ impl ServiceInner {
             None => self.unscoped(Arc::clone(&exec), req, call_span.clone(), Arc::clone(&tracking)),
         };
         let pipeline = pipeline.instrument(call_span.clone());
-        let mut response = match until_drained(pipeline, &handle).await {
+        // No await follows this one before the response is returned with its body in `ExecBody`,
+        // which takes over the disconnect from there.
+        let mut response = match (CancelOnDrop { fut: until_drained(pipeline, &handle), exec: handle.clone(), done: false }).await {
             // A stream answered once the drain's end has cancelled the call would be cut at its
             // first poll, and a backend that has not yet written the head then closes the
             // connection with nothing written. The refusal is the answer instead, with the
@@ -705,6 +714,42 @@ async fn until_drained(pipeline: impl Future<Output = Response>, exec: &Executio
         Poll::Pending
     })
     .await
+}
+
+pin_project_lite::pin_project! {
+    /// `fut`, cancelling `exec` with `CancelReason::Disconnected` when dropped before `fut`
+    /// completes: the backend dropped the call before the response's head was produced, the peer
+    /// having closed the connection or reset its HTTP/2 stream. The cancellation is written before
+    /// `fut` drops, so a handler's future dropped inside it reads the reason. Once `fut` has
+    /// completed, the drop does nothing.
+    struct CancelOnDrop<F> {
+        #[pin]
+        fut: F,
+        exec: ExecutionRef,
+        done: bool,
+    }
+
+    impl<F> PinnedDrop for CancelOnDrop<F> {
+        fn drop(this: Pin<&mut Self>) {
+            let this = this.project();
+            if !*this.done {
+                this.exec.cancel_with(CancelReason::Disconnected);
+            }
+        }
+    }
+}
+
+impl<F: Future> Future for CancelOnDrop<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+        let this = self.project();
+        let polled = this.fut.poll(cx);
+        if polled.is_ready() {
+            *this.done = true;
+        }
+        polled
+    }
 }
 
 /// `fut` raced against the grace, polled first: `None` when the grace runs out, `fut` dropped at

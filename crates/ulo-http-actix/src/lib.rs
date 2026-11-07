@@ -80,6 +80,8 @@ impl Embed for Actix {
             )
             .without_tls_info("the adapter reads no TLS state off actix's request, so `ConnInfo::tls` is `None`")
             .without_strips_prefix("`web::scope` leaves `req.path()` whole, with the rest in `match_info`")
+            .without_pending_close("actix-http keeps running a call whose connection the peer closed until the call answers")
+            .without_pending_reset("actix-http keeps running a call whose HTTP/2 stream the peer reset until the call answers")
             .disconnect(Disconnect::AtNextWrite)
             .drain_pending(DrainPending::Closed)
             .drain_http2(DrainHttp2::Reset)

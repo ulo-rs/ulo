@@ -213,7 +213,7 @@ pub async fn goaway<H: Host>(mode: Mode) {
 /// An HTTP/2 connection to the host through `h2` itself, which reports the GOAWAY frame, over the
 /// harness's stream seen through tokio's I/O traits, which are what `h2` reads; driven on a task of
 /// the app's runtime until it ends.
-async fn h2_connect<H: Host>(host: &Running<H>) -> h2::client::SendRequest<Bytes> {
+pub(crate) async fn h2_connect<H: Host>(host: &Running<H>) -> h2::client::SendRequest<Bytes> {
     let stream = host.connection().await;
     let handshake = within(host.timer(), PATIENCE, h2::client::handshake(stream.compat())).await.unwrap_or_else(|| {
         panic!("the HTTP/2 handshake did not finish within {PATIENCE:?}, which is neither an answer nor a refusal")

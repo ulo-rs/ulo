@@ -362,6 +362,8 @@ macro_rules! http_conformance_suite {
             sse_error_event => sse::error_event,
             sse_delivered_as_produced => sse::delivered_as_produced,
             disconnect_mid_stream => disconnect::mid_stream,
+            disconnect_before_head => disconnect::before_head,
+            reset_before_head => disconnect::reset_before_head,
             upgrade_echoes_a_frame => upgrade::echo,
             host_value_present_and_absent => host_values::present_and_absent,
             routing_extension => routing_ext::routing,

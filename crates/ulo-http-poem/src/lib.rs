@@ -48,6 +48,9 @@ impl Embed for Poem {
         EmbedLimits::NONE
             .without_forward_miss("a poem `Endpoint` answers every request it is handed, and poem offers no way to hand one back to the router")
             .without_tls_info("the adapter reads no TLS state off poem's request, so `ConnInfo::tls` is `None`")
+            .without_pending_close(
+                "poem awaits hyper's connection again after it ends on the peer's close, which keeps an HTTP/1.1 call running until it answers",
+            )
             .disconnect(Disconnect::AtNextWrite)
     }
 

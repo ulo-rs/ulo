@@ -38,7 +38,7 @@ HTTP
 
 WebSocket
 22. Gateways at a path, optionally namespaced; message handlers dispatched by an event field in each frame, the field name configurable (graphql-ws uses `type`).
-23. Connect guards that refuse the upgrade with a protocol-correct close code (policy, rate limit, server fault, or a protocol-specific refusal code).
+23. Connect guards that refuse the upgrade with a protocol-correct close code (the registry's unauthorized, forbidden or timeout, policy, rate limit, server fault, or a protocol-specific refusal code).
 24. Per-connection session state, created before connect guards run and dropped with the connection; per-message state lives in the execution.
 25. Connection hooks: on connect (able to refuse), on disconnect (knowing why), after the gateway initialises.
 26. A message handler answers with nothing, one message, or a stream of messages; control frames are answered by the protocol, not by handlers; every failure answers one canonical error envelope.
