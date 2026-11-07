@@ -1,4 +1,4 @@
-use std::any::{Any, type_name};
+use std::any::Any;
 use std::fmt;
 use std::marker::PhantomData;
 use std::panic::Location;
@@ -25,7 +25,7 @@ use crate::redact::Secret;
 use crate::scope::{Auto, PerExecution, Scope, ScopeKind, Singleton, Transient};
 use crate::timer::{BoxError, Bound};
 use crate::transport::Role;
-use crate::transport::controller::{Controller, ControllerHandle, ControllerRecord};
+use crate::transport::controller::{ControllerHandle, ControllerRecord, Handlers};
 use crate::type_name::TypeName;
 
 /// What `Module::register` writes into: imports, bindings, contributions, controllers, exports,
@@ -140,11 +140,12 @@ impl<'a> ModuleDef<'a> {
     /// A `Construct` type under its own key, with its declared scope, `CONSTRUCT_TIMEOUT` and
     /// trait hooks. The trait const writes the construction's bound, so the handle starts `Set`.
     ///
-    /// A controller goes in [`controller`](Self::controller): `wire()` refuses one registered
+    /// A controller goes in [`controller`](Self::controller). `wire()` refuses one registered
     /// here, or through `provide_with`, `try_provide_with` or `Contribute::provide`, as
-    /// `WiringError::ControllerProvided`, when its `Construct` impl is one `#[injectable]` or
-    /// `#[controller]` wrote. A hand-written `Construct` impl does not say whether its type is a
-    /// controller, and such a type is registered here as written.
+    /// `WiringError::ControllerProvided`, when the graph also registers the type as a controller,
+    /// or when its `Construct::dependencies` marks it: the impl `#[injectable]` and `#[controller]`
+    /// write marks a controller, and a hand-written one marks it with [`Dependencies::mark`]. A
+    /// type that is neither is registered here as written.
     #[track_caller]
     pub fn provide<T: Construct>(&mut self) -> Handle<'_, T, Binding<T::Scope, Set>> {
         let location = Location::caller();
@@ -382,15 +383,20 @@ impl<'a> ModuleDef<'a> {
         Input::new(&mut *self.node)
     }
 
-    /// A controller: a `Construct` type whose handlers `C::mount` declares, written with
-    /// `#[controller]` and a `#[handlers]` impl or by hand, implementing `Controller` either way.
-    /// With `Auto` scope it is built per call when anything below it needs an execution.
+    /// A controller: a `Construct` type whose handlers `<C as Handlers>::mount` declares, written
+    /// with `#[controller]` and a `#[handlers]` impl or by hand, implementing `Controller` and
+    /// `Handlers` either way. With `Auto` scope it is built per call when anything below it needs
+    /// an execution.
+    ///
+    /// A type registered here and also as a provider anywhere in the graph, by `provide`, a
+    /// factory, a value or a contribution, is refused by `wire()` as
+    /// `WiringError::ControllerProvided`, naming both registrations.
     ///
     /// The handle sets a runtime prefix for every route and gateway path of the controller,
     /// `m.controller::<GraphqlEndpoint>().at(config.path.clone())` (transports DESIGN §2.5, X3);
     /// dropped, the controller has none.
     #[track_caller]
-    pub fn controller<C: Controller>(&mut self) -> ControllerHandle<'_> {
+    pub fn controller<C: Handlers>(&mut self) -> ControllerHandle<'_> {
         let location = Location::caller();
         let mut dependencies = Dependencies::default();
         C::dependencies(&mut dependencies);
@@ -399,7 +405,7 @@ impl<'a> ModuleDef<'a> {
         record.controller = true;
         let binding = self.node.bindings.len();
         self.node.bindings.push(record);
-        self.node.controllers.push(ControllerRecord { binding, mount: C::mount, prefix: None });
+        self.node.controllers.push(ControllerRecord { binding, mount: <C as Handlers>::mount, prefix: None });
         let index = self.node.controllers.len() - 1;
         ControllerHandle { record: &mut self.node.controllers[index] }
     }
@@ -475,10 +481,10 @@ impl<'a> ModuleDef<'a> {
 /// `T::hooks` either way.
 fn construct_record<T: Construct>(recipe: Recipe, dependencies: Dependencies, location: &'static Location<'static>) -> BindingRecord {
     let kind = <T::Scope as Scope>::KIND;
-    let mut record = BindingRecord::new(Key::of::<T, ()>(), type_name::<T>(), BindingKind::Single, kind, recipe, dependencies, location);
+    let mut record = BindingRecord::new(Key::of::<T, ()>(), TypeName::of::<T>(), BindingKind::Single, kind, recipe, dependencies, location);
     record.hooks = erase_trait_hooks::<T>(location);
     record.constructs = true;
-    record.controller_type = crate::construct::marked_controller::<T>().then(crate::type_name::TypeName::of::<T>);
+    record.controller_type = crate::construct::marked_controller::<T>().then(TypeName::of::<T>);
     record
 }
 
@@ -487,13 +493,13 @@ fn factory_record<S: Scope, T: 'static>(
     dependencies: Dependencies,
     location: &'static Location<'static>,
 ) -> BindingRecord {
-    BindingRecord::new(Key::of::<T, ()>(), type_name::<T>(), BindingKind::Single, S::KIND, Recipe::Factory(ctor), dependencies, location)
+    BindingRecord::new(Key::of::<T, ()>(), TypeName::of::<T>(), BindingKind::Single, S::KIND, Recipe::Factory(ctor), dependencies, location)
 }
 
 fn value_record<T: 'static>(recipe: Recipe, location: &'static Location<'static>) -> BindingRecord {
     BindingRecord::new(
         Key::of::<T, ()>(),
-        type_name::<T>(),
+        TypeName::of::<T>(),
         BindingKind::Single,
         ScopeKind::Singleton,
         recipe,

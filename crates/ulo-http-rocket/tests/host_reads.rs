@@ -5,8 +5,8 @@
 
 use ulo::scope::Auto;
 use ulo::{
-    App, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Module, ModuleDef, ModuleIdentity, Mount,
-    Resolver, StartupError, controller, handlers, injectable,
+    App, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Handlers, Module, ModuleDef,
+    ModuleIdentity, Mount, Resolver, StartupError, controller, handlers, injectable,
 };
 use ulo_http::middleware::Next;
 use ulo_http::{Host, Http, HttpCx, HttpHandler, IntoReply, Method, Middleware, PreDispatch, Request, Response};
@@ -35,7 +35,9 @@ struct Written;
 impl Construct for Written {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Written)
@@ -46,7 +48,9 @@ async fn region(cx: HttpCx) -> Result<Response, BoxError> {
     Ok("region".into_reply(&cx)?)
 }
 
-impl Controller for Written {
+impl Controller for Written {}
+
+impl Handlers for Written {
     fn mount(m: &mut Mount<'_>) {
         let handler = HttpHandler::new(Method::GET, region).reads_host::<Region>();
         m.handler(HandlerSpec::<Http, _>::new("region", handler).route("/region"));

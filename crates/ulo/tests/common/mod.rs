@@ -357,7 +357,9 @@ macro_rules! controller {
     ($name:ident, $scope:ty, [$($field:ident : $ty:ty),*], |$m:ident| $body:expr) => {
         reader!($name, $scope $(, $field : $ty)*);
 
-        impl ulo::Controller for $name {
+        impl ulo::Controller for $name {}
+
+        impl ulo::Handlers for $name {
             fn mount($m: &mut ulo::Mount<'_>) {
                 $body
             }

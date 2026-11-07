@@ -19,7 +19,7 @@ pub(crate) enum Kind {
     Event,
 }
 
-/// One RPC handler: the value a controller's [`mount`](ulo::Controller::mount) passes to
+/// One RPC handler: the value a controller's [`mount`](ulo::Handlers::mount) passes to
 /// [`HandlerSpec::new`](ulo::HandlerSpec::new), which the server reads back when it prepares.
 /// `#[ulo_rpc::message]` and `#[ulo_rpc::event]` build this value, and a controller written
 /// without them builds it by hand.
@@ -44,7 +44,7 @@ pub(crate) enum Kind {
 ///
 /// ```
 /// use ulo::scope::Auto;
-/// use ulo::{BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Mount, Resolver};
+/// use ulo::{BoxError, Construct, ConstructError, Controller, Dependencies, Handlers, HandlerSpec, Mount, Resolver};
 /// use ulo_rpc::{FromCall, Payload, Reply, Rpc, RpcCx, RpcHandler};
 ///
 /// struct Adder;
@@ -52,7 +52,9 @@ pub(crate) enum Kind {
 /// impl Construct for Adder {
 ///     type Scope = Auto;
 ///
-///     fn dependencies(_: &mut Dependencies) {}
+///     fn dependencies(d: &mut Dependencies) {
+///         d.mark::<Self>();
+///     }
 ///
 ///     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
 ///         Ok(Adder)
@@ -64,7 +66,9 @@ pub(crate) enum Kind {
 ///     Ok(cx.reply(&(a + b))?)
 /// }
 ///
-/// impl Controller for Adder {
+/// impl Controller for Adder {}
+///
+/// impl Handlers for Adder {
 ///     fn mount(m: &mut Mount<'_>) {
 ///         m.handler(HandlerSpec::<Rpc, _>::new("add", RpcHandler::message(add)).route("math.add"));
 ///     }

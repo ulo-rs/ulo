@@ -1,8 +1,10 @@
 //! `#[handlers]`, `#[controller]` and `#[injectable]` read and remove the attributes they carry,
 //! and write beside the item a hidden import of each, through which an editor resolves it. The
-//! attributes still mean what they meant: written several times on one impl, with a path of their
-//! own, behind `cfg`, inside a fn body, on a generic controller, and beside a module or attribute
-//! macro of the same name, each of them compiles and each guard written runs.
+//! attributes still mean what they meant: written several times on one impl, bare and under
+//! `ulo` (`ulo::guards`, `::ulo::guards`), behind `cfg`, inside a fn body, on a generic
+//! controller, and beside a module or attribute macro of the same name, each of them compiles and
+//! each guard written runs. Any other qualifier is refused at compile time
+//! (`ulo-codegen-tests/tests/ui/marker_qualifier_*.rs`).
 
 mod o1_support;
 
@@ -77,10 +79,9 @@ struct Gated;
 
 #[handlers]
 impl Gated {
-    // `foo` resolves to nothing: `#[handlers]` reads the attribute by its last segment.
-    #[foo::guards(value = Deny)]
-    #[ulo_http::get("/foreign-path")]
-    fn foreign_path(&self) -> &'static str {
+    #[::ulo::guards(value = Deny)]
+    #[ulo_http::get("/absolute-path")]
+    fn absolute_path(&self) -> &'static str {
         "unreachable"
     }
 
@@ -170,10 +171,10 @@ async fn markers_written_several_times_before_and_after_the_transport_attribute_
 }
 
 #[tokio::test]
-async fn a_marker_under_a_foreign_path_still_guards_and_one_compiled_out_does_not() {
+async fn a_marker_under_an_absolute_ulo_path_guards_and_one_compiled_out_does_not() {
     let app = start(app).await;
 
-    assert_eq!(app.send(Call::get("/foreign-path")).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(app.send(Call::get("/absolute-path")).await.status, StatusCode::FORBIDDEN);
     let open = app.send(Call::get("/compiled-out")).await;
     assert_eq!((open.status, open.text()), (StatusCode::OK, "open".to_owned()));
     assert_eq!(app.send(Call::get("/absent")).await.status, StatusCode::NOT_FOUND);

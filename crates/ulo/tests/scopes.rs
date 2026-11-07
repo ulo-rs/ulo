@@ -253,6 +253,7 @@ macro_rules! counting_controller {
             type Scope = $scope;
 
             fn dependencies(d: &mut ulo::Dependencies) {
+                d.mark::<Self>();
                 $( d.field::<$ty>(stringify!($field)); )*
                 let _ = d;
             }
@@ -265,7 +266,9 @@ macro_rules! counting_controller {
             }
         }
 
-        impl ulo::Controller for $name {
+        impl ulo::Controller for $name {}
+
+        impl ulo::Handlers for $name {
             fn mount(m: &mut ulo::Mount<'_>) {
                 m.handler::<TA, _>(HandlerSpec::new("h", ()));
             }

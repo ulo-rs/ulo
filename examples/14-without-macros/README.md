@@ -1,6 +1,6 @@
 # 14 without macros
 
-The macros expand to calls on the value API. This example writes example 06's providers, controller and modules by hand: `impl Construct` for each provider and for the controller, `impl Controller` whose `mount` registers the `GET /` route with an `ulo_http::HttpHandler`, and `impl Module` with `ModuleDef` for each module.
+The macros expand to calls on the value API. This example writes example 06's providers, controller and modules by hand: `impl Construct` for each provider and for the controller, whose `dependencies` marks it with `d.mark::<Self>()`, `impl Controller` as its mark and `impl Handlers` whose `mount` registers the `GET /` route with an `ulo_http::HttpHandler`, and `impl Module` with `ModuleDef` for each module.
 
 ```
 cargo run -p ex-14-without-macros

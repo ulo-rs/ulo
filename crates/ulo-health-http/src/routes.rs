@@ -4,8 +4,8 @@ use std::sync::Arc;
 use http::header::{CONTENT_TYPE, HeaderValue};
 use ulo::scope::Auto;
 use ulo::{
-    BoxError, Construct, ConstructError, Controller, Dep, Dependencies, HandlerSpec, Module, ModuleDef, ModuleIdentity,
-    Mount, Resolver,
+    BoxError, Construct, ConstructError, Controller, Dep, Dependencies, HandlerSpec, Handlers, Module, ModuleDef,
+    ModuleIdentity, Mount, Resolver,
 };
 use ulo_health::{Readiness, Report};
 use ulo_http::{Http, HttpBody, HttpCx, HttpHandler, Method, Response, StatusCode};
@@ -126,6 +126,7 @@ impl<P: Kind> Construct for ProbeRoute<P> {
     type Scope = Auto;
 
     fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
         d.field::<Dep<Readiness>>("readiness").field::<Dep<Detail>>("detail");
     }
 
@@ -134,7 +135,9 @@ impl<P: Kind> Construct for ProbeRoute<P> {
     }
 }
 
-impl<P: Kind> Controller for ProbeRoute<P> {
+impl<P: Kind> Controller for ProbeRoute<P> {}
+
+impl<P: Kind> Handlers for ProbeRoute<P> {
     fn mount(m: &mut Mount<'_>) {
         m.handler(HandlerSpec::<Http, _>::new(P::NAME, HttpHandler::new(Method::GET, answer::<P>)).route("/"));
     }

@@ -23,10 +23,11 @@
 //! 5. `impl ::ulo::Handlers for Self`, whose `mount` builds the impl-level `value` entries once
 //!    into a `::ulo::__private::Shared` and calls every `__ulo_mount_<name>` with it, in method
 //!    order (X2). `Handlers: Controller`, so on a type that is not a controller, one declared
-//!    `#[injectable]` among them, the impl fails to compile naming `Controller`; the
-//!    `Controller::mount` that `#[controller]` writes calls this `mount`.
+//!    `#[injectable]` among them, the impl fails to compile naming `Controller`; a module that
+//!    registers the controller calls this `mount`.
 //! 6. The hidden import of every enhancer and `#[meta]` attribute it removed, through which an
-//!    editor resolves each one (`crate::shared::editor`).
+//!    editor resolves each one (`crate::shared::editor`). Each is written bare or under `ulo`,
+//!    and any other qualifier fails the expansion at the attribute (`crate::shared::attrs`).
 //!
 //! A handler's `#[cfg]` and `#[cfg_attr]` reach `#[handlers]` unevaluated, and rustc removes a
 //! cfg'd-out method, or expands a `cfg_attr` around its transport attribute, only after `#[handlers]`
@@ -68,7 +69,7 @@ pub(crate) fn expand_impl(mut item: ItemImpl, original: &TokenStream) -> syn::Re
         ));
     }
     let ulo = ulo();
-    let imports = editor::marker_imports(&written_markers(&item));
+    let imports = editor::marker_imports(&written_markers(&item)?);
     let controller = take_enhancers(&mut item.attrs)?;
     let controller_meta = protocol::take_meta(&mut item.attrs)?;
 
@@ -141,20 +142,26 @@ pub(crate) fn expand_impl(mut item: ItemImpl, original: &TokenStream) -> syn::Re
     })
 }
 
-/// The last path segment of every enhancer and `#[meta]` attribute `#[handlers]` reads, on the
-/// impl and on its methods, inside `cfg_attr` or not, in the order written.
-fn written_markers(item: &ItemImpl) -> Vec<syn::Ident> {
+/// The path of every enhancer and `#[meta]` attribute `#[handlers]` reads, on the impl and on its
+/// methods, inside `cfg_attr` or not, in the order written; an error at each one written under a
+/// qualifier other than `ulo` (`shared::attrs`).
+fn written_markers(item: &ItemImpl) -> syn::Result<Vec<syn::Path>> {
     let methods = item.items.iter().filter_map(|impl_item| match impl_item {
         ImplItem::Fn(method) => Some(cfg::leaves(&method.attrs).into_iter().map(|leaf| leaf.attr)),
         _ => None,
     });
-    item.attrs
+    let paths: Vec<syn::Path> = item
+        .attrs
         .iter()
         .cloned()
         .chain(methods.flatten())
         .filter(|attr| role_of(attr).is_some() || protocol::is_meta(attr))
-        .filter_map(|attr| attr.path().segments.last().map(|segment| segment.ident.clone()))
-        .collect()
+        .map(|attr| attr.path().clone())
+        .collect();
+    match combine(paths.iter().filter_map(|path| attrs::check_marker(path).err()).collect()) {
+        Some(e) => Err(e),
+        None => Ok(paths),
+    }
 }
 
 /// A handler method; its enhancer attributes and metadata travel in the `__handler` attribute.

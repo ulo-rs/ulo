@@ -32,7 +32,7 @@
 //!
 //! The call shape comes from the signature: an [`Inbound<T>`] parameter is a streamed request, a
 //! stream return a streamed reply. The attributes build an [`RpcHandler`] for each handler, and a
-//! controller written without them builds the same value in its `Controller::mount`.
+//! controller written without them builds the same value in its `Handlers::mount`.
 
 mod client;
 mod client_module;

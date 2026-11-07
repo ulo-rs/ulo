@@ -21,7 +21,9 @@ use proc_macro::TokenStream;
 /// which is set from `Default`. On an impl block, the constructor is the fn named `new`, or the
 /// one marked `#[construct]`; its parameters are injection points, it may be `async`, and it may
 /// return `Self` or a `Result<Self, E>`. Both marks are read and removed, and a hidden import of
-/// each written beside the item lets an editor answer hover and go-to-definition on it.
+/// each written beside the item lets an editor answer hover and go-to-definition on it. A mark,
+/// like the attribute itself, is written bare or under `ulo`, `#[ulo::construct]`; any other
+/// qualifier is a compile error at it.
 ///
 /// Arguments: a scope, `singleton`, `execution` or `transient` (none means `Auto`), and
 /// `timeout = <Duration expr>`, which writes `CONSTRUCT_TIMEOUT`. `Construct::hooks` is filled by
@@ -32,7 +34,8 @@ use proc_macro::TokenStream;
 /// `controllers` both refuse it at compile time.
 #[proc_macro_attribute]
 pub fn injectable(attr: TokenStream, item: TokenStream) -> TokenStream {
-    construct::expand(construct::Kind::Injectable, attr.into(), item.into())
+    shared::attrs::check_invocation("injectable")
+        .and_then(|()| construct::expand(construct::Kind::Injectable, attr.into(), item.into()))
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -47,19 +50,25 @@ pub fn injectable(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// nothing below it needs an execution, and built per call otherwise. It takes no route prefix;
 /// the module mounts a controller under one with `m.controller::<T>().at(prefix)`.
 ///
-/// It also writes `impl ulo::Controller`, the trait that makes a type a controller, whose `mount`
-/// mounts the `ulo::Handlers` impl `#[handlers]` writes. `#[module]` accepts under `controllers`
-/// only a `Controller` and refuses one under `providers`, and `wire()` refuses one registered
-/// with `provide`. A WebSocket gateway is a controller and takes `#[controller]` too. A
-/// `#[controller]` type whose handlers are mounted by hand, a gateway implementing `Gateway` among
-/// them, implements `Handlers` itself; a type implementing `Controller` by hand mounts its handlers
-/// in its own `mount`.
+/// It also writes `impl ulo::Controller`, the mark that makes a type a controller, holding where
+/// the type implements `ulo::Handlers`, the impl `#[handlers]` writes, so a `#[controller]` type
+/// with no handler impl fails to compile here. `#[module]` accepts under `controllers` only a
+/// type implementing `Handlers` and refuses a `Controller` under `providers`, and `wire()` refuses
+/// a controller registered as a provider. A WebSocket gateway is a controller and takes
+/// `#[controller]` too. A `#[controller]` type whose handlers are mounted by hand, a gateway
+/// implementing `Gateway` among them, implements `Handlers` itself.
+///
+/// It is written bare, `#[controller]`, or as `#[ulo::controller]`; under any other qualifier,
+/// a renamed dependency's included, it is a compile error, and a crate depending on `ulo` under
+/// another name aliases it, `extern crate framework as ulo;`. The same holds for `#[injectable]`,
+/// `#[handlers]` and every marker they read.
 ///
 /// On an impl block it stacks with `#[handlers]` in either order, so the constructor and the
 /// handlers can share one impl, `#[controller] #[handlers] impl Greeter { fn new(..) .. }`.
 #[proc_macro_attribute]
 pub fn controller(attr: TokenStream, item: TokenStream) -> TokenStream {
-    construct::expand(construct::Kind::Controller, attr.into(), item.into())
+    shared::attrs::check_invocation("controller")
+        .and_then(|()| construct::expand(construct::Kind::Controller, attr.into(), item.into()))
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -82,8 +91,9 @@ pub fn construct(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `K: with(<scope>) = |..| ..` (the same binding, also bound under the trait key `K` with
 /// `also_as::<K>(|a| a)`), and `into dyn Trait: [..]` (contributions). A bare path reads as a
 /// type, so a constant is bound by value with a block, `{ LIMITS }`. Export entries: `Type` and
-/// `reexport Type`. A `controllers` entry implements `Controller`, through `#[controller]` or by
-/// hand, and an entry under `providers`, by type or by value, does not; each mistake is a compile
+/// `reexport Type`. A `controllers` entry implements `Handlers`, and through it `Controller`, by
+/// `#[controller]` and `#[handlers]` or by hand, and an entry under `providers`, by type or by
+/// value, implements no `Controller`; each mistake is a compile
 /// error at the entry. A closure under `providers` is not checked. A controller may be exported,
 /// for another controller to read.
 ///
@@ -169,9 +179,10 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// as written. A handler is a method carrying its transport's attribute, `#[ulo_http::get(..)]`,
 /// `#[ulo_rpc::message(..)]`, `#[ulo_ws::message(..)]` or `#[ulo_grpc::method]`. The controller
 /// itself is declared with `#[controller]`, on the struct or stacked on this impl in either order,
-/// where `new` or the `#[construct]` fn builds it, and its `Controller::mount` mounts these
-/// handlers. `Handlers` requires `Controller`, so on a type that is not a controller, one declared
-/// `#[injectable]` among them, `#[handlers]` is a compile error naming `Controller`.
+/// where `new` or the `#[construct]` fn builds it, and a module that registers the controller
+/// mounts these handlers through `Handlers::mount`. `Handlers` requires `Controller`, so on a type
+/// that is not a controller, one declared `#[injectable]` among them, `#[handlers]` is a compile
+/// error naming `Controller`.
 ///
 /// An impl-level `value = expr` is built once by `Handlers::mount` and shared by every handler
 /// it applies to, so a rate limiter declared on the impl limits the controller as a whole. A
@@ -196,7 +207,9 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// `#[handlers]` reads and removes every enhancer and `#[meta]` attribute it takes, and writes
 /// beside the impl a hidden import of each, through which an editor answers hover and
-/// go-to-definition on the attribute's last path segment.
+/// go-to-definition on the attribute's name, and on its `ulo` segment when it is written
+/// `#[ulo::guards]`. A marker is written bare or under `ulo`; any other qualifier,
+/// `#[framework::guards]` or a typo, is a compile error at the attribute.
 ///
 /// A method carrying an attribute outside the language's own (`doc`, `allow`, `cfg`, `inline` and
 /// the like), the enhancer and `#[meta]` markers and `#[construct]`, such as
@@ -210,7 +223,8 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// generic.
 #[proc_macro_attribute]
 pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
-    handlers::expand(attr.into(), item.into()).unwrap_or_else(syn::Error::into_compile_error).into()
+    shared::attrs::check_invocation("handlers")
+        .and_then(|()| handlers::expand(attr.into(), item.into())).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
 /// Guards for every handler of a `#[handlers]` impl, or for one method: by type (`AuthGuard`),

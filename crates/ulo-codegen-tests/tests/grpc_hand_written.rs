@@ -18,8 +18,8 @@ use ulo::app::Bound as Listening;
 use ulo::scope::Auto;
 use ulo::{
     App, BoxError, Construct, ConstructError, Controller, Dependencies, EnhancerSpec, ErrorHandler, Guard, HandlerInfo,
-    HandlerSpec, Interceptor, MetaTier, Metadata, Module, ModuleDef, ModuleIdentity, Mount, Next, Resolver, Shape,
-    StartupError, TypeName, controller, handlers,
+    HandlerSpec, Handlers, Interceptor, MetaTier, Metadata, Module, ModuleDef, ModuleIdentity, Mount, Next, Resolver,
+    Shape, StartupError, TypeName, controller, handlers,
 };
 use ulo_codegen_tests::pb::counter_client::CounterClient;
 use ulo_codegen_tests::pb::{self, AddRequest, CountRequest, Number, Sum};
@@ -122,7 +122,9 @@ struct HandCounter;
 impl Construct for HandCounter {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(HandCounter)
@@ -159,7 +161,9 @@ async fn double(cx: GrpcCx) -> Result<Reply, BoxError> {
     Ok(cx.reply_stream(items.map(|item| item.map(|n| Number { value: n.value * 2 }).map_err(|_| Refusal))))
 }
 
-impl Controller for HandCounter {
+impl Controller for HandCounter {}
+
+impl Handlers for HandCounter {
     fn mount(m: &mut Mount<'_>) {
         let mut controller = EnhancerSpec::<Grpc>::new();
         controller.guard_value(NoDeny);
@@ -378,14 +382,18 @@ macro_rules! controller {
         impl Construct for $name {
             type Scope = Auto;
 
-            fn dependencies(_: &mut Dependencies) {}
+            fn dependencies(d: &mut Dependencies) {
+                d.mark::<Self>();
+            }
 
             async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
                 Ok($name)
             }
         }
 
-        impl Controller for $name {
+        impl Controller for $name {}
+
+        impl Handlers for $name {
             fn mount($m: &mut Mount<'_>) {
                 $mount;
             }

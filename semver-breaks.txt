@@ -6,6 +6,7 @@
 
 break ulo enum_no_repr_variant_discriminant_changed 33  # #408 adds `WiringError::DuplicateSetting` ahead of later variants; every variant carries fields and the enum is `#[non_exhaustive]`, so no caller reads a discriminant
 break ulo enum_struct_variant_field_added 1  # `WiringError::ScopeViolation` carries `controller`, which chooses the attribute its hint names, `#[controller(execution)]` for a controller and `#[injectable(execution)]` for any other type; a pattern written without `..` names the new field
+break ulo trait_method_missing 1  # `Controller` is a mark with no methods and a controller's handlers mount through `Handlers::mount` alone, so no `Controller` impl can mount something in their place; a hand-written controller moves its `mount` into `impl Handlers`, which `ModuleDef::controller` now requires (`C: Handlers`, a tightened bound the tool does not report)
 break ulo-handler-codegen function_missing 1  # #412: `protocol::outside_routes` is `outside_handlers`, the helper that names the handler-impl attribute `#[handlers]`; a macro-support crate, called by the framework's own macros
 break ulo-http method_parameter_count_changed 10  # #409: each ability of `BackendLimits` and `EmbedLimits` is a `bool` accessor taking no argument, declared absent through a `without_` setter that takes the reason, in place of a setter taking the `bool`
 break ulo-http struct_pub_field_missing 10  # #409: the public `bool` fields of `BackendLimits` and `EmbedLimits` are private, read through the accessors

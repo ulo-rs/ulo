@@ -288,14 +288,18 @@ macro_rules! closure_enhancer_controller {
         impl ulo::Construct for $name {
             type Scope = Auto;
 
-            fn dependencies(_d: &mut ulo::Dependencies) {}
+            fn dependencies(d: &mut ulo::Dependencies) {
+                d.mark::<Self>();
+            }
 
             async fn construct(_r: &ulo::Resolver<'_>) -> Result<Self, ulo::ConstructError> {
                 Ok($name)
             }
         }
 
-        impl ulo::Controller for $name {
+        impl ulo::Controller for $name {}
+
+        impl ulo::Handlers for $name {
             fn mount(m: &mut ulo::Mount<'_>) {
                 let mut $c = EnhancerSpec::<TP>::new();
                 let mut $m = EnhancerSpec::<TP>::new();

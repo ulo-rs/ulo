@@ -145,12 +145,30 @@ pub enum WiringError {
     KindMix { key: KeyName, module: ModuleName, single: &'static Location<'static>, collection: &'static Location<'static> },
     /// Step 2: an alias whose target nothing visible binds.
     DanglingAlias { alias: KeyName, target: KeyName, module: ModuleName, at: &'static Location<'static> },
-    /// Step 2: a controller registered as a provider, through `ModuleDef::provide`, its `_with`
-    /// forms or `Contribute::provide`, where its handlers would never mount. The type is known to
-    /// be a controller when the `Construct` impl `#[injectable]` or `#[controller]` writes finds
-    /// it implements `Controller`; a `Construct` impl written by hand records nothing to read.
+    /// Step 2: a controller registered as a provider, where its handlers would never mount. The
+    /// type is known to be a controller in two ways, and an entry is reported once whichever
+    /// holds:
+    /// - the graph registers it as a controller too, with `ModuleDef::controller` in any module:
+    ///   `controller_at` names that module and registration, and the provider registration is
+    ///   any of them, `provide`, a factory (`with`, `singleton`, `provide_with` and the rest), a
+    ///   value or a contribution;
+    /// - its `Construct::dependencies` marks it ([`Dependencies::mark`](crate::Dependencies::mark)),
+    ///   as the impl `#[injectable]` and `#[controller]` write does for a `Controller`, and it is
+    ///   registered through `provide`, `provide_with`, `try_provide_with` or `Contribute::provide`:
+    ///   `controller_at` is `None`.
+    ///
+    /// Neither sees a type the graph never registers as a controller when it is bound by a value,
+    /// a factory closure or a `Construct` impl that does not mark it; a contribution by value,
+    /// already an `Arc` of the collection's type; or a generic type whose `Controller` impl covers
+    /// some instantiations only, which the macro's probe cannot read where the type is generic.
     /// `key` is the binding's key, a contribution's the collection's.
-    ControllerProvided { key: KeyName, controller: TypeName, module: ModuleName, at: &'static Location<'static> },
+    ControllerProvided {
+        key: KeyName,
+        controller: TypeName,
+        module: ModuleName,
+        at: &'static Location<'static>,
+        controller_at: Option<(ModuleName, &'static Location<'static>)>,
+    },
     /// Step 2: the `Err` a `try_value` recorded, redacted: `ModuleDef::try_value`, or
     /// `Contribute::try_value`, whose `key` is the collection's.
     ValueFailed { module: ModuleName, key: KeyName, error: Redacted, at: &'static Location<'static> },
@@ -402,7 +420,6 @@ impl WiringError {
             | WiringError::DuplicateBinding { module, .. }
             | WiringError::KindMix { module, .. }
             | WiringError::DanglingAlias { module, .. }
-            | WiringError::ControllerProvided { module, .. }
             | WiringError::ValueFailed { module, .. }
             | WiringError::QualifiedRoleContribution { module, .. }
             | WiringError::SingleRoleBinding { module, .. }
@@ -414,6 +431,9 @@ impl WiringError {
             | WiringError::DuplicateSetting { module, .. }
             | WiringError::ZeroBound { module, .. } => vec![module],
             WiringError::ControllerRead { module, controller_module, .. } => vec![module, controller_module],
+            WiringError::ControllerProvided { module, controller_at, .. } => {
+                std::iter::once(module).chain(controller_at.iter().map(|(controller_module, _)| controller_module)).collect()
+            }
             WiringError::DifferingSettings { module, first, second, .. } => {
                 std::iter::once(module).chain(first.importer()).chain(second.importer()).collect()
             }
@@ -535,7 +555,7 @@ impl WiringError {
                     ],
                 )
             }
-            WiringError::ControllerProvided { key, controller, module, at } => {
+            WiringError::ControllerProvided { key, controller, module, at, controller_at } => {
                 let controller = show_type(*controller);
                 let module = show_module(module);
                 let head = if key.kind() == BindingKind::Collection {
@@ -543,15 +563,21 @@ impl WiringError {
                 } else {
                     format!("the controller `{controller}` in {module} is registered as a provider")
                 };
-                tree(
-                    f,
-                    head,
-                    vec![
-                        format!("registered at {}", place(at)),
-                        "a controller is reached through its transport, and a provider registration never mounts its handlers".to_owned(),
-                        format!("help: register it with `m.controller::<{controller}>()`, or list it under `controllers`"),
-                    ],
-                )
+                let mut items = vec![format!("registered as a provider at {}", place(at))];
+                let help = match controller_at {
+                    Some((controller_module, controller_at)) => {
+                        items.push(format!(
+                            "registered as a controller in {} at {}",
+                            show_module(controller_module),
+                            place(controller_at)
+                        ));
+                        "help: remove the provider registration; a type the controllers share is a separate `#[injectable]` type".to_owned()
+                    }
+                    None => format!("help: register it with `m.controller::<{controller}>()`, or list it under `controllers`"),
+                };
+                items.push("a controller is reached through its transport, and a provider registration never mounts its handlers".to_owned());
+                items.push(help);
+                tree(f, head, items)
             }
             WiringError::ValueFailed { module, key, error, at } => tree(
                 f,
@@ -742,9 +768,18 @@ impl WiringError {
                     _ => format!("scope violation: `{name}` in {module} depends on per-execution data"),
                 };
                 let attribute = if *controller { "controller" } else { "injectable" };
-                let help = match (declared, by_closure) {
-                    (_, true) => "help: declare the closure `with(execution) = ..`, or register it with `.execution(..)`".to_owned(),
-                    (ScopeKind::Singleton, false) => format!("help: declare {name} #[{attribute}(execution)], or inject a factory"),
+                let help = match (declared, by_closure, controller) {
+                    (_, true, _) => {
+                        "help: declare the closure `with(execution) = ..`, or register it with `.execution(..)`".to_owned()
+                    }
+                    // `Auto` builds a controller per call when what it reads needs an execution,
+                    // so dropping the explicit scope comes first and the attribute's
+                    // `execution` last.
+                    (ScopeKind::Singleton, false, true) => "help: remove `singleton` (an `Auto` controller is built per call when it \
+                                                            needs to be), or inject a factory.\n\
+                                                            `#[controller(execution)]` also builds it per call, whatever it reads"
+                        .to_owned(),
+                    (ScopeKind::Singleton, false, false) => format!("help: declare {name} #[{attribute}(execution)], or inject a factory"),
                     _ => format!("help: declare it #[{attribute}(execution)]"),
                 };
                 let item = match path.first() {

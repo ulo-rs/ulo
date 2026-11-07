@@ -120,9 +120,17 @@ fn a_controller_declared_singleton_that_reads_execution_data_is_refused() {
     assert_eq!((declared, by_closure), (ScopeKind::Singleton, false), "opting out of the inference makes the read a violation");
     assert!(entry!(errors, WiringError::ScopeViolation { controller, .. } => *controller));
     let report = errors.to_string();
+    let help = report.lines().position(|line| line.contains("help: ")).expect("a help line");
+    let lines: Vec<&str> = report.lines().collect();
     assert!(
-        report.contains("help: declare Pinned #[controller(execution)], or inject a factory"),
-        "a controller's scope is written on its `#[controller]`: {report}"
+        lines[help].ends_with(
+            "help: remove `singleton` (an `Auto` controller is built per call when it needs to be), or inject a factory."
+        ),
+        "dropping the scope comes first, since `Auto` builds a controller per call when it needs to be: {report}"
+    );
+    assert!(
+        lines.get(help + 1).is_some_and(|line| line.contains("`#[controller(execution)]` also builds it per call")),
+        "the attribute's `execution` follows, third: {report}"
     );
     assert_eq!(errors.len(), 1, "{errors}");
 }
@@ -145,6 +153,7 @@ impl ulo::Construct for TraitHooked {
     type Scope = Auto;
 
     fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
         d.field::<Ext<User>>("user");
     }
 
@@ -163,7 +172,9 @@ impl ulo::OnModuleInit for TraitHooked {
     }
 }
 
-impl ulo::Controller for TraitHooked {
+impl ulo::Controller for TraitHooked {}
+
+impl ulo::Handlers for TraitHooked {
     fn mount(m: &mut ulo::Mount<'_>) {
         m.handler::<TA, _>(HandlerSpec::new("h", ()));
     }
@@ -215,14 +226,18 @@ macro_rules! guard_closure_controller {
         impl ulo::Construct for $name {
             type Scope = Auto;
 
-            fn dependencies(_d: &mut Dependencies) {}
+            fn dependencies(d: &mut Dependencies) {
+                d.mark::<Self>();
+            }
 
             async fn construct(_r: &ulo::Resolver<'_>) -> Result<Self, ulo::ConstructError> {
                 Ok($name)
             }
         }
 
-        impl ulo::Controller for $name {
+        impl ulo::Controller for $name {}
+
+        impl ulo::Handlers for $name {
             fn mount(m: &mut ulo::Mount<'_>) {
                 let mut spec = ulo::EnhancerSpec::<TA>::new();
                 ($build)(&mut spec);

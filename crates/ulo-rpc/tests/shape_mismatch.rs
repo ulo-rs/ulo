@@ -13,8 +13,8 @@ use tracing::{Event as TraceEvent, Level, Metadata};
 use ulo::app::Bound as Listening;
 use ulo::scope::Auto;
 use ulo::{
-    App, AppHandle, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Module, ModuleDef, ModuleIdentity, Mount,
-    Resolver, Shape, Signal,
+    App, AppHandle, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Handlers, Module,
+    ModuleDef, ModuleIdentity, Mount, Resolver, Shape, Signal,
 };
 use ulo_rpc::{CallError, ErrorKind, Reply, Rpc, RpcClient, RpcCx, RpcHandler};
 use ulo_rpc_tcp::Tcp;
@@ -27,7 +27,9 @@ struct Shapes;
 impl Construct for Shapes {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Shapes)
@@ -42,7 +44,9 @@ async fn one_payload(cx: RpcCx) -> Result<Reply, BoxError> {
     Ok(cx.reply(&7u32)?)
 }
 
-impl Controller for Shapes {
+impl Controller for Shapes {}
+
+impl Handlers for Shapes {
     fn mount(m: &mut Mount<'_>) {
         m.handler(HandlerSpec::<Rpc, _>::new("unary_streams", RpcHandler::message(stream_of_two)).route("s.unary_streams"));
         m.handler(HandlerSpec::<Rpc, _>::new("unary_matches", RpcHandler::message(one_payload)).route("s.unary_matches"));

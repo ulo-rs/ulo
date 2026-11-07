@@ -10,7 +10,7 @@ use crate::transport::{Grpc, GrpcCx, Reply};
 /// after every guard admits.
 pub(crate) type HandlerFn = Arc<dyn Fn(GrpcCx) -> BoxFuture<'static, Result<Reply, BoxError>> + Send + Sync>;
 
-/// One gRPC handler: the value a controller's [`mount`](ulo::Controller::mount) passes to
+/// One gRPC handler: the value a controller's [`mount`](ulo::Handlers::mount) passes to
 /// [`HandlerSpec::new`](ulo::HandlerSpec::new), which the server reads back when it prepares.
 /// `#[ulo_grpc::method(Marker)]` builds this value, and a controller written without it builds it
 /// by hand.
@@ -36,7 +36,7 @@ pub(crate) type HandlerFn = Arc<dyn Fn(GrpcCx) -> BoxFuture<'static, Result<Repl
 ///
 /// ```
 /// use ulo::scope::Auto;
-/// use ulo::{BoxError, Construct, ConstructError, Controller, Dependencies, Mount, Resolver};
+/// use ulo::{BoxError, Construct, ConstructError, Controller, Dependencies, Handlers, Mount, Resolver};
 /// use ulo_grpc::{FromCall, Grpc, GrpcCx, GrpcHandler, Message, Reply, Shape};
 ///
 /// #[derive(Clone, PartialEq, prost::Message)]
@@ -66,7 +66,9 @@ pub(crate) type HandlerFn = Arc<dyn Fn(GrpcCx) -> BoxFuture<'static, Result<Repl
 /// impl Construct for Users {
 ///     type Scope = Auto;
 ///
-///     fn dependencies(_: &mut Dependencies) {}
+///     fn dependencies(d: &mut Dependencies) {
+///         d.mark::<Self>();
+///     }
 ///
 ///     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
 ///         Ok(Users)
@@ -79,7 +81,9 @@ pub(crate) type HandlerFn = Arc<dyn Fn(GrpcCx) -> BoxFuture<'static, Result<Repl
 ///     Ok(cx.reply(User { id: request.id }))
 /// }
 ///
-/// impl Controller for Users {
+/// impl Controller for Users {}
+///
+/// impl Handlers for Users {
 ///     fn mount(m: &mut Mount<'_>) {
 ///         m.handler(GrpcHandler::new::<GetUser, _, _>(get_user).spec("get_user"));
 ///     }

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use ulo::{
     Bound, CancelReason, Construct, ConstructError, Controller, Cut, Dep, Dependencies, Execution, ExecutionRef, Expiry,
-    FromContainer, Mount, Resolver, scope::Auto,
+    FromContainer, Handlers, Mount, Resolver, scope::Auto,
 };
 use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse, Outcome};
 use ulo_transport::{ErrorKind, Tracked};
@@ -185,6 +185,7 @@ impl<Q: Send + Sync + 'static> Construct for GraphqlWs<Q> {
     type Scope = Auto;
 
     fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
         d.field::<Dep<dyn Engine, Q>>("engine").field::<Option<Dep<InitTimeout>>>("init_timeout");
     }
 
@@ -305,7 +306,9 @@ impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
     }
 }
 
-impl<Q: Send + Sync + 'static> Controller for GraphqlWs<Q> {
+impl<Q: Send + Sync + 'static> Controller for GraphqlWs<Q> {}
+
+impl<Q: Send + Sync + 'static> Handlers for GraphqlWs<Q> {
     fn mount(m: &mut Mount<'_>) {
         <Self as Gateway>::mount(m);
     }

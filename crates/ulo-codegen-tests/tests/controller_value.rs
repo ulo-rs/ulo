@@ -98,9 +98,9 @@ impl PerMethod {
     }
 }
 
-struct Root<C: ulo::Controller + ulo::Construct>(std::marker::PhantomData<fn() -> C>);
+struct Root<C: ulo::Handlers>(std::marker::PhantomData<fn() -> C>);
 
-impl<C: ulo::Controller + ulo::Construct + 'static> Module for Root<C> {
+impl<C: ulo::Handlers + 'static> Module for Root<C> {
     fn identity(&self) -> ModuleIdentity {
         ModuleIdentity::of_type::<Self>()
     }
@@ -110,7 +110,7 @@ impl<C: ulo::Controller + ulo::Construct + 'static> Module for Root<C> {
     }
 }
 
-fn root<C: ulo::Controller + ulo::Construct + 'static>() -> Root<C> {
+fn root<C: ulo::Handlers + 'static>() -> Root<C> {
     Root(std::marker::PhantomData)
 }
 
