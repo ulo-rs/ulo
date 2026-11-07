@@ -31,6 +31,6 @@ rpc_soak RpcSoak
 channel_soak ChannelSoak
 status_code_and_message StatusCodeAndMessage
 special_status_message SpecialStatusMessage
-custom_metadata CustomMetadata allow F525 "Expected exactly one trailer from server. Received 0" a successful reply carries no trailing metadata: `ulo_grpc::Response::metadata` writes the initial headers only, so the `x-grpc-test-echo-trailing-bin` the case reads from the trailers is never written
+custom_metadata CustomMetadata
 unimplemented_method UnimplementedMethod
 unimplemented_service UnimplementedService

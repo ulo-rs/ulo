@@ -2,7 +2,8 @@
 //!
 //! The behaviour follows the project's `doc/interop-test-descriptions.md`: payloads are zero
 //! bytes of the requested size, `response_status` fails a call with the code and message it names,
-//! and `x-grpc-test-echo-initial` is echoed on the reply's headers. `UnimplementedCall` and the
+//! `x-grpc-test-echo-initial` is echoed on the reply's headers and `x-grpc-test-echo-trailing-bin`
+//! on its trailers, on the unary and the full-duplex call. `UnimplementedCall` and the
 //! `UnimplementedService` have no handler, which is how the cases `unimplemented_method` and
 //! `unimplemented_service` are answered.
 
@@ -12,7 +13,7 @@ use std::time::Duration;
 use futures_util::{Stream, StreamExt, stream};
 use tonic::{Code, Status};
 use ulo::{App, AppBuilder, controller, handlers, module};
-use ulo_grpc::{CallError, ErrorKind, GrpcMetadata, Message, Request, Response, Streaming};
+use ulo_grpc::{CallError, GrpcMetadata, Message, MetadataEntry, Request, Response, Streaming};
 
 pub mod pb {
     ulo_grpc::include_proto!("grpc.testing");
@@ -26,6 +27,24 @@ use pb::{
 /// The request metadata key whose value the reply's headers echo.
 const ECHO_INITIAL: &str = "x-grpc-test-echo-initial";
 
+/// The request metadata key whose binary value the reply's trailers echo.
+const ECHO_TRAILING: &str = "x-grpc-test-echo-trailing-bin";
+
+/// `response` with the two metadata entries `custom_metadata` sends echoed: the initial one on its
+/// headers and the trailing one on its trailers.
+fn echoed<T>(response: Response<T>, metadata: &GrpcMetadata) -> Result<Response<T>, Status> {
+    let mut response = response;
+    if let Some(value) = metadata.get(ECHO_INITIAL) {
+        response = response.metadata(ECHO_INITIAL, value);
+    }
+    if let Some(value) = metadata.map().get_bin(ECHO_TRAILING) {
+        let bytes = value.to_bytes().map_err(|_| Status::invalid_argument(format!("`{ECHO_TRAILING}` is not base64")))?;
+        let entry = MetadataEntry::binary(ECHO_TRAILING, bytes).map_err(|error| Status::internal(error.to_string()))?;
+        response = response.trailer_entry(entry);
+    }
+    Ok(response)
+}
+
 /// The status a `response_status` asks for, `None` for an absent or OK one.
 fn demanded(status: Option<&EchoStatus>) -> Option<Status> {
     status.filter(|status| status.code != 0).map(|status| Status::new(Code::from_i32(status.code), status.message.clone()))
@@ -36,10 +55,9 @@ fn payload(size: i32) -> Result<Payload, Status> {
     Ok(Payload { r#type: PayloadType::Compressable.into(), body: vec![0; size] })
 }
 
-/// A reply stream's item error must convert into a `CallError`, which `tonic::Status` does not;
-/// the code travels through `with_grpc_code` and the message as the public message.
+/// A reply stream's item error converts into a `CallError`; `from_status` carries the status whole.
 fn failure(status: Status) -> CallError {
-    CallError::new(ErrorKind::Internal, status.message()).with_grpc_code(status.code() as i32)
+    ulo_grpc::from_status(status)
 }
 
 fn interval(microseconds: i32) -> Duration {
@@ -108,11 +126,7 @@ impl TestService {
             return Err(status);
         }
         let reply = SimpleResponse { payload: Some(payload(request.message().response_size)?), ..Default::default() };
-        let mut response = Response::new(reply);
-        if let Some(value) = request.metadata().get(ECHO_INITIAL) {
-            response = response.metadata(ECHO_INITIAL, value);
-        }
-        Ok(response)
+        echoed(Response::new(reply), request.metadata())
     }
 
     #[ulo_grpc::method(pb::test_service::StreamingOutputCall)]
@@ -142,13 +156,9 @@ impl TestService {
         &self,
         metadata: GrpcMetadata,
         requests: Streaming<StreamingOutputCallRequest>,
-    ) -> Response<impl Stream<Item = Result<StreamingOutputCallResponse, CallError>>> {
+    ) -> Result<Response<impl Stream<Item = Result<StreamingOutputCallResponse, CallError>>>, Status> {
         let replies = stream::unfold(Duplex { requests, queued: VecDeque::new(), done: false }, Duplex::next);
-        let response = Response::new(replies);
-        match metadata.get(ECHO_INITIAL) {
-            Some(value) => response.metadata(ECHO_INITIAL, value),
-            None => response,
-        }
+        echoed(Response::new(replies), &metadata)
     }
 }
 
