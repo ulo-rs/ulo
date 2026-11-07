@@ -14,7 +14,7 @@
 //!
 //! The assertions read `Param<T, _>`, whose marker inference covers a `FromContainer` parameter
 //! as well as a `FromCall` one; `<UserType as FromCall<T>>` would not compile for a container
-//! type. They sit inside the `__ULO_CHECKS_<name>` constant, which `#[routes]` evaluates.
+//! type. They sit inside the `__ULO_CHECKS_<name>` constant, which `#[handlers]` evaluates.
 
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};

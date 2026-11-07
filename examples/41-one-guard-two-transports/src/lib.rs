@@ -1,7 +1,7 @@
 //! One guard type serving two transports: the same `Guard<T>` impl, generic over the transport,
 //! guards an HTTP route and an RPC message, and each transport renders the refusal its own way.
 
-use ulo::{App, AppBuilder, BoxError, ExecutionRef, Guard, Transport, injectable, module, routes};
+use ulo::{App, AppBuilder, BoxError, ExecutionRef, Guard, Transport, controller, handlers, injectable, module};
 
 /// Declared with `#[meta(..)]` on a handler that is shut.
 pub struct Shut;
@@ -21,10 +21,10 @@ where
     }
 }
 
-#[injectable]
+#[controller]
 pub struct ShopHttp;
 
-#[routes]
+#[handlers]
 #[guards(Maintenance)]
 impl ShopHttp {
     #[ulo_http::get("/shop")]
@@ -39,10 +39,10 @@ impl ShopHttp {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct ShopRpc;
 
-#[routes]
+#[handlers]
 #[guards(Maintenance)]
 impl ShopRpc {
     #[ulo_rpc::message("shop.open")]

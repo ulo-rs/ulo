@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use tokio::sync::Notify;
-use ulo::{App, AppHandle, Dep, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, AppHandle, Dep, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_http::{AppService, ConnInfo, HttpBody, Request, Response, StatusCode};
 use ulo_transport::Count;
 
@@ -26,12 +26,12 @@ struct Gate {
     open: Arc<Notify>,
 }
 
-#[injectable]
+#[controller]
 struct Held {
     gate: Dep<Gate>,
 }
 
-#[routes]
+#[handlers]
 impl Held {
     #[ulo_http::get("/held")]
     async fn held(&self) -> &'static str {

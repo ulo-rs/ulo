@@ -1,4 +1,4 @@
-use ulo::{App, AppBuilder, Dep, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, controller, handlers, injectable, module};
 
 /// A trait a provider is bound under. `Send + Sync` is what `Dep<dyn UserRepo>` requires.
 pub trait UserRepo: Send + Sync {
@@ -28,14 +28,14 @@ pub struct Db(pub &'static str);
 )]
 pub struct DbModule;
 
-#[injectable]
+#[controller]
 pub struct UserController {
     repo: Dep<dyn UserRepo>,
     primary: Dep<Db, Primary>,
     replica: Dep<Db, Replica>,
 }
 
-#[routes]
+#[handlers]
 impl UserController {
     #[ulo_http::get("/repo")]
     fn repo(&self) -> &'static str {

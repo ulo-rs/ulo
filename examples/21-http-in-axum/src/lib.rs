@@ -1,7 +1,7 @@
 use axum::Router;
 use axum::routing::get;
 use tokio::sync::Semaphore;
-use ulo::{App, AppBuilder, Dep, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, controller, handlers, injectable, module};
 use ulo_http_axum::{Embedded, Handle};
 
 /// Holds `/api/work` until released; `entered` counts the handlers that have started.
@@ -17,13 +17,13 @@ impl Gate {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct ApiController {
     gate: Dep<Gate>,
 }
 
 /// Routes are written as in any ulo app; the host strips `/api` before ulo sees the path.
-#[routes]
+#[handlers]
 impl ApiController {
     #[ulo_http::get("/hello")]
     fn hello(&self) -> &'static str {

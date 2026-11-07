@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use futures_util::{Stream, StreamExt, stream};
 use tokio::sync::{Notify, mpsc};
-use ulo::{App, BoxError, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, injectable, routes};
+use ulo::{App, BoxError, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, controller, handlers, injectable};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, ReplyPath};
 use ulo_transport::CallError;
@@ -40,12 +40,12 @@ impl Drop for Audit {
     }
 }
 
-#[injectable]
+#[controller]
 struct Audited {
     audit: Dep<Audit>,
 }
 
-#[routes]
+#[handlers]
 impl Audited {
     #[ulo_rpc::message("end.unary")]
     async fn unary(&self) -> u32 {

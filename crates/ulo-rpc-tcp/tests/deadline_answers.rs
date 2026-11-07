@@ -19,7 +19,7 @@ use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Level, Metadata};
 use ulo::app::Connected;
-use ulo::{App, BoxError, Bound, ErrorHandler, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, BoxError, Bound, ErrorHandler, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_rpc::{Reply, Rpc, RpcClient, RpcClientModule, RpcCx};
 use ulo_rpc_conformance::Stamped;
 use ulo_rpc_tcp::Tcp;
@@ -64,10 +64,10 @@ fn timed_out(err: &BoxError) -> bool {
     err.downcast_ref::<CallError>().is_some_and(|call| call.kind() == ErrorKind::Timeout)
 }
 
-#[injectable]
+#[controller]
 struct Clock;
 
-#[routes]
+#[handlers]
 impl Clock {
     /// Answers once its execution is cancelled, which the deadline does first.
     #[ulo_rpc::message("clock.stall_streamed")]

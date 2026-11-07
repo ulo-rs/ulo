@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use futures_util::{Stream, StreamExt, stream};
 use tokio::sync::{Notify, mpsc, watch};
 use tonic::Code;
-use ulo::{App, BoxError, BoxFuture, CancelReason, ErrorHandler, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, StreamOutcome, Timer, injectable, routes};
+use ulo::{App, BoxError, BoxFuture, CancelReason, ErrorHandler, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, StreamOutcome, Timer, controller, handlers};
 use ulo_codegen_tests::probe::ends_client::EndsClient;
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
 use ulo_grpc::{Grpc, GrpcCx, Message, Reply};
@@ -88,12 +88,12 @@ impl ErrorHandler<Grpc> for Hang {
     }
 }
 
-#[injectable]
+#[controller]
 struct Streams {
     shared: ulo::Dep<SharedHandle>,
 }
 
-#[routes]
+#[handlers]
 impl Streams {
     /// Six ticks, every one ready, the third cancelling the execution with the drain's reason as
     /// it is produced: the item and the cancellation are ready in one poll.

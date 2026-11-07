@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
 use http_body::Body as _;
-use ulo::{App, AppHandle, BoxError, Bound, CancelReason, ErrorHandler, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, StreamOutcome, injectable, routes};
+use ulo::{App, AppHandle, BoxError, Bound, CancelReason, ErrorHandler, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, StreamOutcome, controller, handlers};
 use ulo_http::{AppService, Bytes, ConnInfo, Http, HttpBody, HttpCx, MB, Request, Response, StatusCode, Timeout};
 use ulo_transport::{CallError, ErrorKind, IntoReply};
 
@@ -130,10 +130,10 @@ impl ErrorHandler<Http> for CountedOnTimeout {
     }
 }
 
-#[injectable]
+#[controller]
 struct Slow;
 
-#[routes]
+#[handlers]
 #[meta(Timeout::after(DEADLINE))]
 impl Slow {
     #[ulo_http::get("/tracked")]

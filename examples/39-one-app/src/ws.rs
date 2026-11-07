@@ -1,15 +1,15 @@
-use ulo::{Dep, injectable, routes};
+use ulo::{Dep, controller, handlers};
 use ulo_ws::Payload;
 
 use crate::store::{Gate, Store};
 
-#[injectable]
+#[controller]
 pub struct WsApi {
     store: Dep<Store>,
     gate: Dep<Gate>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/notes", port = own)]
 impl WsApi {
     #[ulo_ws::message("add")]

@@ -1,12 +1,12 @@
 //! Impl-level shared values (transports DESIGN §2.1, X2).
 //!
-//! A controller-level `value = expr` is built once, in the `Controller::mount` `#[routes]`
+//! A controller-level `value = expr` is built once, in the `Controller::mount` `#[handlers]`
 //! generates, into an `Arc`, and every handler's mount function receives the same
-//! `::ulo::__private::Shared((Arc<V0>, Arc<V1>, ..))`. `#[routes]` cannot name a value's type, so
+//! `::ulo::__private::Shared((Arc<V0>, Arc<V1>, ..))`. `#[handlers]` cannot name a value's type, so
 //! each `Vi` is a type parameter of the mount function, inferred at its call. The position of a
 //! `value` entry, in the order written across the impl's three enhancer attributes and counting
 //! entries scoped to other transports, is part of the `__handler` contract: [`shared_values`]
-//! computes it the same way in `#[routes]` and in every transport attribute.
+//! computes it the same way in `#[handlers]` and in every transport attribute.
 
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};

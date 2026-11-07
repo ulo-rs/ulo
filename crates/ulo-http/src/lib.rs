@@ -7,7 +7,7 @@
 //!
 //! ```
 //! # use serde::Serialize;
-//! # use ulo::{guards, injectable, routes, BoxError, Dep, Guard};
+//! # use ulo::{guards, controller, injectable, handlers, BoxError, Dep, Guard};
 //! # use ulo_http::{CallError, ErrorKind, Http, HttpCx, Json, Path};
 //! # #[derive(Serialize)]
 //! # struct User;
@@ -28,11 +28,11 @@
 //! # impl Guard<Http> for AuthGuard {
 //! #     async fn can_activate(&self, _cx: &HttpCx) -> Result<bool, BoxError> { Ok(true) }
 //! # }
-//! # #[injectable]
+//! # #[controller]
 //! # struct UsersController {
 //! #     users: Dep<Users>,
 //! # }
-//! #[routes]
+//! #[handlers]
 //! #[guards(http = AuthGuard)]
 //! impl UsersController {
 //!     #[ulo_http::get("/users/{id}")]

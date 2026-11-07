@@ -65,7 +65,7 @@ pub(crate) fn expand_kind(kind: Kind, attr: TokenStream, item: TokenStream) -> s
     let original = item.clone();
     let mut item: ImplItemFn = syn::parse2(item)?;
     let Some(tokens) = protocol::take_handler_attr(&mut item.attrs)? else {
-        return Err(protocol::outside_routes(attr_name));
+        return Err(protocol::outside_handlers(attr_name));
     };
     let sig = params::analyze(&item.sig)?;
     let output_span = match &item.sig.output {

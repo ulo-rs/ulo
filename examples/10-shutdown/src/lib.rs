@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use tokio::sync::Semaphore;
-use ulo::{App, AppBuilder, Dep, ExecutionRef, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, ExecutionRef, controller, handlers, injectable, module};
 
 pub mod dying;
 
@@ -23,12 +23,12 @@ impl Gate {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct WorkController {
     gate: Dep<Gate>,
 }
 
-#[routes]
+#[handlers]
 impl WorkController {
     /// Answers when released. A request still here when the drain window ends is abandoned.
     #[ulo_http::get("/work")]

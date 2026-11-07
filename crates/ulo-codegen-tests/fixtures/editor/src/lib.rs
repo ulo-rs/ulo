@@ -3,24 +3,26 @@
 //!
 //! Each macro that writes its item back through `syn` restores that item's attributes, so each
 //! carries one attribute only it hands on: the `#[ulo::injectable]` structs inside the handler
-//! bodies and the constructor go through `#[routes]` and then the transport attribute or
+//! bodies and the constructor go through `#[handlers]` and then the transport attribute or
 //! `#[injectable]`, and the two attributes on `M` and `N` through `#[module]` and `#[injectable]`.
 //!
-//! The markers `#[routes]` and `#[injectable]` read and remove answer through the hidden import
-//! each macro writes for them: below, on an impl and on its methods before and after the
-//! transport attribute, bare, pathed, inside `cfg_attr` and repeated, in a fn body and on a
-//! generic impl, and as `#[construct]` and a field's `#[injectable(default)]`.
+//! The markers `#[handlers]`, `#[injectable]` and `#[controller]` read and remove answer through
+//! the hidden import each macro writes for them: below, on an impl and on its methods before and
+//! after the transport attribute, bare, pathed, inside `cfg_attr` and repeated, in a fn body and on
+//! a generic impl, and as `#[construct]` and a field's `#[injectable(default)]` or
+//! `#[controller(default)]`, the `#[construct]` of a controller included where `#[controller]` and
+//! `#[handlers]` stack on one impl, in either order.
 
 use std::marker::PhantomData;
 
-use ulo::{BoxError, Guard, injectable, module, routes};
+use ulo::{BoxError, Guard, controller, handlers, injectable, module};
 use ulo_http::{Http, HttpCx};
 use ulo_rpc::Payload;
 
-#[injectable]
+#[controller]
 pub struct Users;
 
-#[routes]
+#[handlers]
 impl Users {
     #[ulo_http::get("/x")]
     fn show(&self) -> String {
@@ -36,10 +38,10 @@ impl Users {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct Billing;
 
-#[routes]
+#[handlers]
 impl Billing {
     #[ulo_rpc::message("invoice.create")]
     fn create(&self, input: Payload<String>) -> String {
@@ -55,10 +57,10 @@ impl Billing {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct Chat;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/chat")]
 impl Chat {
     #[ulo_ws::message("say")]
@@ -100,15 +102,15 @@ impl Guard<Http> for G {
 
 pub struct Stamp(pub &'static str);
 
-#[injectable]
+#[controller]
 pub struct Marked {
-    #[injectable(default)]
+    #[controller(default)]
     count: u32,
-    #[ulo::injectable(default)]
+    #[ulo::controller(default)]
     total: u32,
 }
 
-#[routes]
+#[handlers]
 #[ulo::guards(value = G)]
 #[ulo::interceptors()]
 #[ulo::error_handlers()]
@@ -134,13 +136,13 @@ impl Marked {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct Generic<T: Send + Sync + 'static> {
-    #[injectable(default)]
+    #[controller(default)]
     of: PhantomData<fn() -> T>,
 }
 
-#[routes]
+#[handlers]
 #[guards(value = G)]
 impl<T: Send + Sync + 'static> Generic<T> {
     #[ulo_http::get("/generic")]
@@ -152,10 +154,10 @@ impl<T: Send + Sync + 'static> Generic<T> {
 }
 
 pub fn in_a_body() {
-    #[injectable]
+    #[controller]
     struct Local;
 
-    #[routes]
+    #[handlers]
     #[guards(value = G)]
     impl Local {
         #[ulo_http::get("/local")]
@@ -163,6 +165,20 @@ pub fn in_a_body() {
         fn local(&self) -> &'static str {
             "local"
         }
+    }
+}
+
+#[injectable]
+pub struct Defaults {
+    #[injectable(default)]
+    count: u32,
+    #[ulo::injectable(default)]
+    total: u32,
+}
+
+impl Defaults {
+    pub fn sum(&self) -> u32 {
+        self.count + self.total
     }
 }
 
@@ -183,5 +199,39 @@ impl BuiltBare {
     #[construct]
     pub fn build() -> Self {
         BuiltBare
+    }
+}
+
+pub struct Counter;
+
+#[controller]
+#[handlers]
+impl Counter {
+    #[construct]
+    pub fn build() -> Self {
+        Counter
+    }
+
+    #[ulo_http::get("/counter")]
+    #[guards(value = G)]
+    fn count(&self) -> &'static str {
+        "counter"
+    }
+}
+
+pub struct Tally;
+
+#[handlers]
+#[controller]
+impl Tally {
+    #[ulo::construct]
+    pub fn build() -> Self {
+        Tally
+    }
+
+    #[ulo_http::get("/tally")]
+    #[guards(value = G)]
+    fn tally(&self) -> &'static str {
+        "tally"
     }
 }

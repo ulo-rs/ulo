@@ -8,6 +8,11 @@
 //! `register` writes, in order: `global`, the secrets, the imports, the providers, the
 //! controllers, the exports. Imports and providers keep the order written, which is part of
 //! collection order.
+//!
+//! A `controllers` entry must be a `#[controller]` type, and an entry under `providers` must not
+//! be one; each is checked against the mark `#[controller]` writes
+//! (`ulo::__private::controller_entry`), at the entry. A controller may be exported for another
+//! controller to read, so `exports` is not checked.
 
 mod args;
 mod providers;
@@ -60,6 +65,7 @@ pub(crate) fn expand_struct(args: ModuleArgs, item: ItemStruct, original: &Token
     let providers = args.providers.iter().map(ProviderEntry::lower);
     let controllers = args.controllers.iter().map(|controller| {
         quote_spanned! {controller.span()=>
+            #ulo::__private::controller_entry::controller::<#controller>();
             #m.controller::<#controller>();
         }
     });

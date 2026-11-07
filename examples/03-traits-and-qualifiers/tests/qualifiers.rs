@@ -1,6 +1,6 @@
 use ex_03_traits_and_qualifiers::{Db, DbModule, PgUserRepo, UserRepo, builder};
 use ex_support::{get, start};
-use ulo::{App, Dep, StartupError, WiringError, injectable, module, routes};
+use ulo::{App, Dep, StartupError, WiringError, controller, handlers, module};
 
 #[tokio::test]
 async fn each_handler_reads_the_instance_its_type_or_qualifier_names() {
@@ -19,12 +19,12 @@ async fn each_handler_reads_the_instance_its_type_or_qualifier_names() {
     server.stop().await.unwrap();
 }
 
-#[injectable]
+#[controller]
 struct Unqualified {
     _db: Dep<Db>,
 }
 
-#[routes]
+#[handlers]
 impl Unqualified {
     #[ulo_http::get("/")]
     fn read(&self) -> &'static str {

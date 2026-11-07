@@ -1,0 +1,5 @@
+error: this struct is #[injectable]: a field set from `Default` is marked `#[injectable(default)]`
+ --> tests/ui/controller_marker_on_an_injectable_field.rs:7:5
+  |
+7 |     #[controller(default)]
+  |     ^^^^^^^^^^^^^^^^^^^^^^

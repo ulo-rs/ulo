@@ -261,7 +261,7 @@ impl Who {
 /// order: one failure per declaration, however many routes it reaches.
 struct ZeroTimeout {
     controller: TypeName,
-    /// The handler declaring it, `None` for the `#[routes]` impl.
+    /// The handler declaring it, `None` for the `#[handlers]` impl.
     handler: Option<&'static str>,
     routes: Vec<String>,
 }
@@ -273,7 +273,7 @@ impl ZeroTimeout {
         Failure::naming(vec![controller], move |names| {
             let declared = match handler {
                 Some(name) => format!("on the handler {}", Who { controller, name }.text(names)),
-                None => format!("on the `#[routes]` impl of `{}`", names.of(controller)),
+                None => format!("on the `#[handlers]` impl of `{}`", names.of(controller)),
             };
             format!(
                 "`#[meta(Timeout(..))]` {declared} would cancel every request on {routes}; write `Timeout::OFF` to turn the \

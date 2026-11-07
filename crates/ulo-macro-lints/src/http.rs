@@ -1,4 +1,4 @@
-//! `#[routes]` over every HTTP verb attribute, with the extractors, the reply forms, the enhancer
+//! `#[handlers]` over every HTTP verb attribute, with the extractors, the reply forms, the enhancer
 //! spellings at both tiers, `#[meta]`, a generic controller, one declared inside a fn body, two
 //! written by a `macro_rules!` macro and `self: Arc<Self>`.
 
@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use futures_util::stream::{self, BoxStream};
 use serde::Deserialize;
-use ulo::{Dep, Runtime, Timer, injectable, routes};
+use ulo::{Dep, Runtime, Timer, controller, handlers};
 use ulo_http::{Event, HttpCx, Json, Path, Query, Sse, Timeout};
 use ulo_transport::Valid;
 
@@ -23,12 +23,12 @@ pub struct Page {
     pub page: u32,
 }
 
-#[injectable]
+#[controller]
 pub struct Pages {
     pub store: Dep<Store>,
 }
 
-#[routes]
+#[handlers]
 #[guards(Allow, http = Allow, value = Allow, with = || Allow)]
 #[interceptors(Pass, value = Pass)]
 #[error_handlers(Relay, value = Relay)]
@@ -96,13 +96,13 @@ impl Pages {
 }
 
 /// A generic controller.
-#[injectable]
+#[controller]
 pub struct Generic<T: Send + Sync + 'static> {
-    #[injectable(default)]
+    #[controller(default)]
     pub marker: PhantomData<fn() -> T>,
 }
 
-#[routes]
+#[handlers]
 impl<T: Send + Sync + 'static> Generic<T> {
     #[ulo_http::get("/generic")]
     fn generic(&self) -> &'static str {
@@ -113,15 +113,15 @@ impl<T: Send + Sync + 'static> Generic<T> {
 /// A controller declared inside a fn body, whose markers repeat, carry a path, follow the
 /// transport attribute and sit inside `cfg_attr`.
 pub fn local() {
-    #[injectable]
+    #[controller]
     struct Local {
-        #[injectable(default)]
+        #[controller(default)]
         a: u8,
-        #[ulo::injectable(default)]
+        #[ulo::controller(default)]
         b: u8,
     }
 
-    #[routes]
+    #[handlers]
     #[guards(value = Allow)]
     #[ulo::guards(value = Allow)]
     impl Local {
@@ -135,14 +135,14 @@ pub fn local() {
     }
 }
 
-/// Writes a controller whose markers reach `#[routes]` spanned in this macro's body, a span local to
-/// the crate, so a lint the generated code trips is reported here as it is in hand-written code.
-macro_rules! controller {
+/// Writes a controller whose markers reach `#[handlers]` spanned in this macro's body, a span local
+/// to the crate, so a lint the generated code trips is reported here as it is in hand-written code.
+macro_rules! generated_controller {
     ($name:ident, $path:literal) => {
-        #[injectable]
+        #[controller]
         pub struct $name;
 
-        #[routes]
+        #[handlers]
         #[guards(value = Allow)]
         #[meta(Tag("generated"))]
         impl $name {
@@ -156,5 +156,5 @@ macro_rules! controller {
     };
 }
 
-controller!(GeneratedA, "/generated-a");
-controller!(GeneratedB, "/generated-b");
+generated_controller!(GeneratedA, "/generated-a");
+generated_controller!(GeneratedB, "/generated-b");

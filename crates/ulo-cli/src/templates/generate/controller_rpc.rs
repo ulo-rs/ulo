@@ -1,10 +1,10 @@
-use ulo::{injectable, routes};
+use ulo::{controller, handlers};
 
 /// RPC patterns under `@@pattern@@`. Bind it with `m.controller::<@@pascal@@Controller>()`.
-#[injectable]
+#[controller]
 pub struct @@pascal@@Controller;
 
-#[routes]
+#[handlers]
 impl @@pascal@@Controller {
     #[ulo_rpc::message("@@pattern@@.list")]
     async fn list(&self) -> Vec<String> {

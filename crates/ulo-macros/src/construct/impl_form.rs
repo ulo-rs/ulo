@@ -12,18 +12,21 @@ use syn::{FnArg, ImplItem, ImplItemFn, ItemImpl, Pat, ReturnType};
 
 use ulo_handler_codegen::restore::restore_item;
 
-use crate::injectable::InjectableArgs;
+use crate::construct::{ConstructArgs, Kind};
 use crate::shared::attrs;
 use crate::shared::dependencies::{self, DependencyLabel, DependencySpec};
 use crate::shared::{ConstructImpl, editor, ulo};
 
 /// The impl as written, minus `#[construct]`, followed by the `Construct` impl for its self type and
 /// the hidden import of each `#[construct]` removed (`crate::shared::editor`).
-pub(crate) fn expand(args: InjectableArgs, mut item: ItemImpl, original: &TokenStream) -> syn::Result<TokenStream> {
+pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemImpl, original: &TokenStream) -> syn::Result<TokenStream> {
     if let Some((_, path, _)) = &item.trait_ {
         return Err(syn::Error::new_spanned(
             path,
-            "#[injectable] goes on the type's inherent impl block holding its constructor, not on a trait impl",
+            format!(
+                "#[{}] goes on the type's inherent impl block holding its constructor, not on a trait impl",
+                kind.name()
+            ),
         ));
     }
     let ulo = ulo();
@@ -68,11 +71,13 @@ pub(crate) fn expand(args: InjectableArgs, mut item: ItemImpl, original: &TokenS
         construct_span,
     }
     .emit();
+    let mark = kind.mark(&item.self_ty, &item.generics);
 
     let item = restore_item(original, &item);
     Ok(quote! {
         #item
         #construct_impl
+        #mark
         #imports
     })
 }

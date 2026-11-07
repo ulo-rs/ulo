@@ -10,7 +10,7 @@ use std::fmt;
 
 use http::{HeaderValue, StatusCode};
 use tonic::{Code, Status};
-use ulo::{BoxError, ErrorHandler, Guard, Interceptor, Module, ModuleDef, ModuleIdentity, Next, injectable, routes};
+use ulo::{BoxError, ErrorHandler, Guard, Interceptor, Module, ModuleDef, ModuleIdentity, Next, controller, handlers, injectable};
 use ulo_codegen_tests::probe::known_client::KnownClient;
 use ulo_codegen_tests::probe::vault_client::VaultClient;
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
@@ -75,10 +75,10 @@ impl ErrorHandler<Grpc> for Mend {
     }
 }
 
-#[injectable]
+#[controller]
 struct Vault;
 
-#[routes]
+#[handlers]
 #[guards(grpc = TokenGuard)]
 #[interceptors(grpc(value = Header("x-served-by", "vault")))]
 impl Vault {
@@ -102,10 +102,10 @@ impl Vault {
 }
 
 /// A second service, outside the scoped entry's paths.
-#[injectable]
+#[controller]
 struct Known;
 
-#[routes]
+#[handlers]
 impl Known {
     #[ulo_grpc::method(probe::known::Upper)]
     fn upper(&self, text: Message<String>) -> String {

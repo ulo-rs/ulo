@@ -37,7 +37,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     if item.trait_.is_some() {
         return Err(syn::Error::new_spanned(
             &item.self_ty,
-            "#[ulo_ws::gateway] goes on the `#[routes]` impl holding the `#[ulo_ws::message]` handlers, not on a trait impl",
+            "#[ulo_ws::gateway] goes on the `#[handlers]` impl holding the `#[ulo_ws::message]` handlers, not on a trait impl",
         ));
     }
     if !item.items.iter().any(|entry| matches!(entry, ImplItem::Fn(method) if method.attrs.iter().any(is_message))) {
@@ -74,7 +74,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
 }
 
 /// Whether `attr` is a message attribute, written plainly or inside a `cfg_attr`. Read by the
-/// attribute's last path segment: `#[routes]` has not expanded the methods' attributes when this
+/// attribute's last path segment: `#[handlers]` has not expanded the methods' attributes when this
 /// runs, so the transport attribute is still present as written.
 fn is_message(attr: &Attribute) -> bool {
     let named = |path: &syn::Path| path.segments.last().is_some_and(|segment| segment.ident == "message");

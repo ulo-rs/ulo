@@ -1,8 +1,8 @@
-//! `#[routes]` and `#[injectable]` read and remove the attributes they carry, and write beside the
-//! item a hidden import of each, through which an editor resolves it. The attributes still mean
-//! what they meant: written several times on one impl, with a path of their own, behind `cfg`,
-//! inside a fn body, on a generic controller, and beside a module or attribute macro of the same
-//! name, each of them compiles and each guard written runs.
+//! `#[handlers]`, `#[controller]` and `#[injectable]` read and remove the attributes they carry,
+//! and write beside the item a hidden import of each, through which an editor resolves it. The
+//! attributes still mean what they meant: written several times on one impl, with a path of their
+//! own, behind `cfg`, inside a fn body, on a generic controller, and beside a module or attribute
+//! macro of the same name, each of them compiles and each guard written runs.
 
 mod o1_support;
 
@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 use http::StatusCode;
 use o1_support::{Call, start};
-use ulo::{BoxError, Construct, Guard, ModuleDef, injectable, routes};
+use ulo::{BoxError, Construct, Guard, ModuleDef, controller, handlers, injectable};
 use ulo_http::{Http, HttpCx};
 
 /// Admits, and records its label in `SEEN` when it runs.
@@ -48,10 +48,10 @@ mod meta {}
 #[derive(Debug)]
 struct Tag(&'static str);
 
-#[injectable]
+#[controller]
 struct Repeated;
 
-#[routes]
+#[handlers]
 #[guards(value = Mark("repeated:impl"))]
 #[meta(Tag("impl"))]
 impl Repeated {
@@ -72,12 +72,12 @@ impl Repeated {
     }
 }
 
-#[injectable]
+#[controller]
 struct Gated;
 
-#[routes]
+#[handlers]
 impl Gated {
-    // `foo` resolves to nothing: `#[routes]` reads the attribute by its last segment.
+    // `foo` resolves to nothing: `#[handlers]` reads the attribute by its last segment.
     #[foo::guards(value = Deny)]
     #[ulo_http::get("/foreign-path")]
     fn foreign_path(&self) -> &'static str {
@@ -98,13 +98,13 @@ impl Gated {
     }
 }
 
-#[injectable]
+#[controller]
 struct Generic<T: Send + Sync + 'static> {
-    #[injectable(default)]
+    #[controller(default)]
     _of: PhantomData<T>,
 }
 
-#[routes]
+#[handlers]
 #[guards(value = Mark("generic:impl"))]
 impl<T: Send + Sync + 'static> Generic<T> {
     #[ulo_http::get("/generic")]
@@ -114,10 +114,10 @@ impl<T: Send + Sync + 'static> Generic<T> {
     }
 }
 
-/// A user's own attribute macro named `guards`, imported explicitly beside a `#[routes]` impl that
+/// A user's own attribute macro named `guards`, imported explicitly beside a `#[handlers]` impl that
 /// writes the marker of that name.
 mod own_guards {
-    use ulo::{injectable, routes};
+    use ulo::{controller, handlers};
     pub use ulo::injectable as guards;
 
     use super::Deny;
@@ -125,10 +125,10 @@ mod own_guards {
     #[guards]
     pub struct Own;
 
-    #[injectable]
+    #[controller]
     pub struct Beside;
 
-    #[routes]
+    #[handlers]
     impl Beside {
         #[ulo_http::get("/beside")]
         #[guards(value = Deny)]
@@ -199,10 +199,10 @@ fn the_users_own_guards_attribute_is_still_theirs() {
 
 #[tokio::test]
 async fn markers_inside_a_fn_body_apply() {
-    #[injectable]
+    #[controller]
     struct Local;
 
-    #[routes]
+    #[handlers]
     #[guards(value = Mark("local:impl"))]
     impl Local {
         #[ulo_http::get("/local")]

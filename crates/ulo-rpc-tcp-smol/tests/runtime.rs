@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use ulo::{App, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Spawn, TaskHandle, Timer, injectable, routes};
+use ulo::{App, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Spawn, TaskHandle, Timer, controller, handlers};
 use ulo_rpc::{Link, Payload, RpcClient, RpcClientModule};
 use ulo_rpc_conformance::{Harness, OnSmol};
 use ulo_rpc_tcp_smol::Tcp;
@@ -31,10 +31,10 @@ impl Classify for Never {
     }
 }
 
-#[injectable]
+#[controller]
 struct Adder;
 
-#[routes]
+#[handlers]
 impl Adder {
     #[ulo_rpc::message("runtime.add")]
     async fn add(&self, n: Payload<u32>) -> Result<u32, Never> {

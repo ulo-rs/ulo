@@ -54,7 +54,7 @@ pub fn rewrite_opaque_returns(sig: &mut Signature) {
 
 /// [`rewrite_opaque_returns`] for a handler of a generic controller, whose impl's type and const
 /// parameters are in scope of every opaque return type and so must be named in its `use<..>`:
-/// appends `+ use<T, N, ..>` listing them. `#[routes]` calls it before the transport attribute
+/// appends `+ use<T, N, ..>` listing them. `#[handlers]` calls it before the transport attribute
 /// expands, which then finds a `use<..>` and leaves the type as written; the transport attribute
 /// sees the method alone and cannot learn the impl's parameters.
 pub fn rewrite_opaque_returns_in(sig: &mut Signature, impl_generics: &Generics) {

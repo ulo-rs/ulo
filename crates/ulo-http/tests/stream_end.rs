@@ -23,7 +23,7 @@ use tracing::span::{Attributes, Id, Record};
 use tracing::{Event as TraceEvent, Level, Metadata};
 use ulo::{
     App, AppHandle, BoxError, CancelReason, Dep, ErrorHandler, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, Signal,
-    StreamOutcome, injectable, routes,
+    StreamOutcome, controller, handlers,
 };
 use ulo_http::{AppService, Bytes, ConnInfo, Event, Http, HttpBody, HttpCx, Request, Response, Sse, StatusCode};
 use ulo_transport::{CallError, ErrorKind};
@@ -82,12 +82,12 @@ impl Interceptor<Http> for Answer {
     }
 }
 
-#[injectable]
+#[controller]
 struct Streams {
     ended: Dep<Ended>,
 }
 
-#[routes]
+#[handlers]
 impl Streams {
     #[ulo_http::head("/head")]
     async fn head(&self, exec: ExecutionRef) -> Response {

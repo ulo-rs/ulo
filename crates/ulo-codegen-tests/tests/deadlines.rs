@@ -20,7 +20,7 @@ use http_body_util::{BodyExt, Full, StreamBody};
 use prost::Message as _;
 use prost::bytes::Bytes;
 use tonic::{Code, Status};
-use ulo::{BoxError, Bound, Dep, ErrorHandler, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, injectable, routes};
+use ulo::{BoxError, Bound, Dep, ErrorHandler, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, controller, handlers, injectable};
 use ulo_codegen_tests::probe::clock_client::ClockClient;
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
 use ulo_grpc::{Grpc, GrpcCx, Message, Reply};
@@ -179,7 +179,7 @@ fn burst() -> impl http_body::Body<Data = Bytes, Error = Status> + Send + 'stati
     }))
 }
 
-#[injectable]
+#[controller]
 struct ClockService {
     seen: Dep<Seen>,
 }
@@ -192,7 +192,7 @@ impl ClockService {
     }
 }
 
-#[routes]
+#[handlers]
 impl ClockService {
     #[ulo_grpc::method(probe::clock::Stall)]
     async fn stall_unclaimed(&self, _req: Message<Ticks>, exec: ExecutionRef) -> Tick {

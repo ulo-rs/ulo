@@ -10,16 +10,16 @@ mod support;
 use http::Request;
 use http_body_util::Full;
 use prost::bytes::Bytes;
-use ulo::{Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_codegen_tests::probe;
 use ulo_grpc::Message;
 
 use support::{Capture, Running};
 
-#[injectable]
+#[controller]
 struct Known;
 
-#[routes]
+#[handlers]
 impl Known {
     #[ulo_grpc::method(probe::known::Upper)]
     fn upper(&self, text: Message<String>) -> String {

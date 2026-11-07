@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use ulo::{App, AppBuilder, Dep, Timer, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, Timer, controller, handlers, injectable, module};
 
 pub trait Mailer: Send + Sync {
     fn send(&self, to: &str) -> String;
@@ -46,14 +46,14 @@ impl Uptime {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct SignupController {
     mailer: Dep<dyn Mailer>,
     stamp: Dep<Stamp>,
     ledger: Dep<Ledger>,
 }
 
-#[routes]
+#[handlers]
 impl SignupController {
     #[ulo_http::get("/signup")]
     fn signup(&self) -> String {

@@ -17,7 +17,7 @@ use serde::Deserialize;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Level, Metadata};
-use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ExecutionRef, Guard, ModuleDef, injectable, routes};
+use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ExecutionRef, Guard, ModuleDef, controller, handlers};
 use ulo_http::{BodyStream, Bytes, Form, FromCall, Http, HttpBody, HttpCx, Json, Multipart, Response, Timeout};
 use ulo_transport::{CallError, ExtractError, Valid, Validate};
 
@@ -37,10 +37,10 @@ impl Guard<Http> for TakesBody {
     }
 }
 
-#[injectable]
+#[controller]
 struct Taken;
 
-#[routes]
+#[handlers]
 impl Taken {
     #[ulo_http::post("/taken/json")]
     #[guards(value = TakesBody)]

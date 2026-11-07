@@ -18,7 +18,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use bytes::Bytes;
 use futures_util::stream::BoxStream;
-use ulo::{App, BoxError, BoxFuture, ConnectError, Dep, FailureReason, Module, ModuleDef, ModuleIdentity, Signal, StartupError, Timer, injectable, routes};
+use ulo::{App, BoxError, BoxFuture, ConnectError, Dep, FailureReason, Module, ModuleDef, ModuleIdentity, Signal, StartupError, Timer, controller, handlers};
 use ulo_transport::Count;
 use ulo_ws::{
     AfterInit, BroadcastAdapter, ConnId, ConnectCx, ConnectRefused, GatewayRef, NodeId, OnConnect, Payload, Rooms, Target, WsCx, WsModule,
@@ -53,13 +53,13 @@ struct Whisper {
     text: String,
 }
 
-#[injectable]
+#[controller]
 struct Lobby {
     directory: Dep<Directory>,
     inits: Dep<Inits>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/lobby", namespace = "lobby")]
 impl Lobby {
     /// To everyone in the room but the sender.
@@ -124,10 +124,10 @@ impl AfterInit for Lobby {
 }
 
 /// A second gateway on the same port, in no room: `to_all` reaches it, a room broadcast does not.
-#[injectable]
+#[controller]
 struct Annex;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/annex")]
 impl Annex {
     #[ulo_ws::message("ping")]
@@ -138,10 +138,10 @@ impl Annex {
 
 /// A gateway declared for the standalone server, which this app does not bind: the HTTP port does
 /// not serve it.
-#[injectable]
+#[controller]
 struct Elsewhere;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/elsewhere", port = own)]
 impl Elsewhere {
     #[ulo_ws::message("ping")]
@@ -150,10 +150,10 @@ impl Elsewhere {
     }
 }
 
-#[injectable]
+#[controller]
 struct Status;
 
-#[routes]
+#[handlers]
 impl Status {
     #[ulo_http::get("/status")]
     async fn status(&self) -> &'static str {
@@ -446,12 +446,12 @@ struct Held {
 }
 
 /// One gateway on the HTTP port whose `hold` waits for the test.
-#[injectable]
+#[controller]
 struct Holding {
     held: Dep<Held>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/holding")]
 impl Holding {
     #[ulo_ws::message("hold")]

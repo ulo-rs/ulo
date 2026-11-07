@@ -1,12 +1,12 @@
-use ulo::{injectable, routes};
+use ulo::{controller, handlers};
 use ulo_codegen_tests::pb::{self, AddRequest, Sum};
 use ulo_grpc::Message;
 use ulo_http::BodyLimit;
 
-#[injectable]
+#[controller]
 struct Counter;
 
-#[routes]
+#[handlers]
 impl Counter {
     #[ulo_grpc::method(pb::counter::Add)]
     #[meta(BodyLimit(1024))]

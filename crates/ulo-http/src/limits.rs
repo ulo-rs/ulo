@@ -32,7 +32,7 @@ impl TransportMetadata for BodyLimit {
 /// grace runs out, an `Sse` among them, or a waited-on body yielding more than 1 MiB before it
 /// ends, it renders 504.
 ///
-/// The most specific declaration wins, as for all metadata, so under a `#[routes]` impl that
+/// The most specific declaration wins, as for all metadata, so under a `#[handlers]` impl that
 /// declares a timeout, a handler's own declaration decides:
 ///
 /// | Handler declares | Effect |
@@ -57,7 +57,7 @@ impl TransportMetadata for Timeout {
 }
 
 impl Timeout {
-    /// No timeout, lifting one the `#[routes]` impl declares: `#[meta(Timeout::OFF)]`.
+    /// No timeout, lifting one the `#[handlers]` impl declares: `#[meta(Timeout::OFF)]`.
     pub const OFF: Timeout = Timeout(Bound::Unbounded);
 
     /// A timeout of `d`: `Timeout(Bound::After(d))`.

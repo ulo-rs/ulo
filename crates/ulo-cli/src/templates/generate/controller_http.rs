@@ -1,5 +1,5 @@
 use serde::Serialize;
-use ulo::{injectable, routes};
+use ulo::{controller, handlers};
 use ulo_http::Json;
 
 #[derive(Debug, Serialize)]
@@ -8,10 +8,10 @@ pub struct @@pascal@@Listing {
 }
 
 /// HTTP routes under `/@@route@@`. Bind it with `m.controller::<@@pascal@@Controller>()`.
-#[injectable]
+#[controller]
 pub struct @@pascal@@Controller;
 
-#[routes]
+#[handlers]
 impl @@pascal@@Controller {
     #[ulo_http::get("/@@route@@")]
     fn list(&self) -> Json<@@pascal@@Listing> {

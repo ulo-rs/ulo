@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use futures_util::stream;
 use tokio::sync::{Notify, mpsc, watch};
 use tokio::task::JoinHandle;
-use ulo::{App, AppHandle, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Shutdown, ShutdownError, Signal, Timer, injectable, routes};
+use ulo::{App, AppHandle, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Shutdown, ShutdownError, Signal, Timer, controller, handlers};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, ErrorBody, Frame, Link, Outbound, Pattern, Payload, ReplyPath};
 use ulo_transport::{Classify, Count, Detail, Details, ErrorKind};
@@ -56,12 +56,12 @@ impl Classify for Never {
 #[derive(Clone, Default)]
 struct Entered(Arc<Notify>);
 
-#[injectable]
+#[controller]
 struct Waiter {
     entered: ulo::Dep<Entered>,
 }
 
-#[routes]
+#[handlers]
 impl Waiter {
     /// Waits for nothing that ever comes, so only its execution's cancellation ends it.
     #[ulo_rpc::message("held.wait")]

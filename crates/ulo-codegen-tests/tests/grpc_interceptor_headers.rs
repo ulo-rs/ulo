@@ -13,7 +13,7 @@ use std::fmt;
 use futures_util::{Stream, StreamExt, stream};
 use http::HeaderValue;
 use tonic::{Code, Status};
-use ulo::{BoxError, ErrorHandler, Interceptor, Module, ModuleDef, ModuleIdentity, Next, injectable, routes};
+use ulo::{BoxError, ErrorHandler, Interceptor, Module, ModuleDef, ModuleIdentity, Next, controller, handlers};
 use ulo_codegen_tests::probe;
 use ulo_codegen_tests::probe::known_client::KnownClient;
 use ulo_codegen_tests::probe::shapes_client::ShapesClient;
@@ -76,10 +76,10 @@ impl ErrorHandler<Grpc> for Mend {
     }
 }
 
-#[injectable]
+#[controller]
 struct Known;
 
-#[routes]
+#[handlers]
 #[error_handlers(grpc(value = Mend))]
 impl Known {
     #[ulo_grpc::method(probe::known::Upper)]
@@ -96,10 +96,10 @@ impl Known {
     async fn ping(&self) {}
 }
 
-#[injectable]
+#[controller]
 struct Shapes;
 
-#[routes]
+#[handlers]
 impl Shapes {
     #[ulo_grpc::method(probe::shapes::Watch)]
     #[interceptors(value = Forge)]

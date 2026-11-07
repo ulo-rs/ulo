@@ -1,11 +1,11 @@
-//! Declared metadata on an RPC handler: the `#[routes]` impl's declarations apply to every handler
+//! Declared metadata on an RPC handler: the `#[handlers]` impl's declarations apply to every handler
 //! in it, the method's own come first and win per type, and every declaration is
 //! listable. Capability: declared metadata on RPC (G15).
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use ulo::{App, AppHandle, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, AppHandle, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_rpc::{RpcClient, RpcCx};
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
@@ -26,10 +26,10 @@ fn describe(cx: &RpcCx) -> String {
     format!("{winner}|{}|{}", all.join(","), info.meta::<Audited>().is_some())
 }
 
-#[injectable]
+#[controller]
 struct Guarded;
 
-#[routes]
+#[handlers]
 #[meta(Roles("user"), Audited)]
 impl Guarded {
     #[ulo_rpc::message("meta.inherits")]

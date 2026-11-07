@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
-use ulo::{Dep, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{Dep, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_ws::{ConnectCx, ConnectRefused, Connection, DisconnectReason, OnConnect, OnDisconnect};
 
 use support::{Record, Running, within};
@@ -31,12 +31,12 @@ struct Gate {
     open: Arc<Notify>,
 }
 
-#[injectable]
+#[controller]
 struct Gated {
     gate: Dep<Gate>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/gated", port = own, refuse = handshake)]
 impl Gated {
     #[ulo_ws::message("noop")]

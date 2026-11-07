@@ -32,7 +32,7 @@ pub struct Metadata {
 /// Which tier declared a metadata value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MetaTier {
-    /// `#[meta(..)]` on the `#[routes]` impl, applying to every handler in it.
+    /// `#[meta(..)]` on the `#[handlers]` impl, applying to every handler in it.
     Controller,
     /// `#[meta(..)]` on the handler method.
     Method,

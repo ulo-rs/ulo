@@ -1,11 +1,11 @@
-use ulo::{App, AppBuilder, injectable, module, routes};
+use ulo::{App, AppBuilder, controller, handlers, module};
 use ulo_http_hyper::Server;
 use ulo_net::Tls;
 
-#[injectable]
+#[controller]
 pub struct HelloController;
 
-#[routes]
+#[handlers]
 impl HelloController {
     #[ulo_http::get("/")]
     fn hello(&self) -> &'static str {

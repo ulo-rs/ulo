@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Poll, Waker};
 use std::time::{Duration, Instant};
 
-use ulo::{BoxFuture, Module, ModuleDef, ModuleIdentity, Spawn, TaskHandle, Timer, injectable, routes};
+use ulo::{BoxFuture, Module, ModuleDef, ModuleIdentity, Spawn, TaskHandle, Timer, controller, handlers};
 use ulo_conformance_support::ScriptedTimer;
 use ulo_runtime_tokio::Tokio;
 use ulo_ws::{Connection, DisconnectReason, OnDisconnect, WsModule};
@@ -100,12 +100,12 @@ impl Spawn for Late {
 #[derive(Clone)]
 struct Departures(Record<DisconnectReason>);
 
-#[injectable]
+#[controller]
 struct Ticking {
     ends: ulo::Dep<Departures>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/ticking", ping_interval = ulo::Bound::After(PING), pong_timeout = ulo::Bound::After(PONG))]
 impl Ticking {
     #[ulo_ws::message("echo")]
@@ -372,13 +372,13 @@ async fn both_waits_refused_once_the_pong_was_due_end_as_lost_in_any_poll_order(
 #[derive(Clone, Default)]
 struct Opened(std::sync::Arc<std::sync::Mutex<Option<Connection>>>);
 
-#[injectable]
+#[controller]
 struct Closing {
     ends: ulo::Dep<Departures>,
     opened: ulo::Dep<Opened>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/closing", ping_interval = ulo::Bound::After(PING), pong_timeout = ulo::Bound::After(PONG))]
 impl Closing {
     #[ulo_ws::message("echo")]

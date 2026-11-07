@@ -38,11 +38,11 @@ const BODY: &str = "body";
 /// A handler reads the body once, so a second body extractor beside it fails to compile:
 ///
 /// ```compile_fail
-/// # use ulo::{injectable, routes};
+/// # use ulo::{controller, handlers};
 /// # use ulo_http::{Bytes, Json};
-/// # #[injectable]
+/// # #[controller]
 /// # struct Notes;
-/// #[routes]
+/// #[handlers]
 /// impl Notes {
 ///     #[ulo_http::post("/notes")]
 ///     fn create(&self, note: Json<String>, raw: Bytes) -> String {
@@ -55,11 +55,11 @@ const BODY: &str = "body";
 /// The same handler with one of the two compiles:
 ///
 /// ```
-/// # use ulo::{injectable, routes};
+/// # use ulo::{controller, handlers};
 /// # use ulo_http::{Bytes, Json};
-/// # #[injectable]
+/// # #[controller]
 /// # struct Notes;
-/// #[routes]
+/// #[handlers]
 /// impl Notes {
 ///     #[ulo_http::post("/notes")]
 ///     fn create(&self, note: Json<String>) -> String {

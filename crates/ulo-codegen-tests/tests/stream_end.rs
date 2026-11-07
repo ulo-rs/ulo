@@ -19,7 +19,7 @@ use std::time::Duration;
 use futures_util::{Stream, StreamExt, stream};
 use tokio::sync::mpsc;
 use tonic::Code;
-use ulo::{BoxError, Bound, CancelReason, ErrorHandler, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, StreamOutcome, injectable, routes};
+use ulo::{BoxError, Bound, CancelReason, ErrorHandler, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, StreamOutcome, controller, handlers};
 use ulo_codegen_tests::probe::ends_client::EndsClient;
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
 use ulo_grpc::{Grpc, GrpcCx, Message, Reply};
@@ -88,10 +88,10 @@ impl ErrorHandler<Grpc> for EndlessOnTimeout {
     }
 }
 
-#[injectable]
+#[controller]
 struct EndsService;
 
-#[routes]
+#[handlers]
 impl EndsService {
     #[ulo_grpc::method(probe::ends::Discarded)]
     #[interceptors(value = AnswerOne)]

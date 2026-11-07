@@ -3,7 +3,7 @@
 //! route would match once the prefix were stripped, a `\` or a dot segment included, is answered
 //! forwardable. Under the prefix, the app refuses such a path with its 400.
 
-use ulo::{App, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{App, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_http::embed::{Embed, EmbedLimits, Embedded, Forwardable, Miss, Service};
 use ulo_http::{ConnInfo, Cors, HttpBody, PreDispatch, Request, Response};
 use ulo_runtime_tokio::Tokio;
@@ -23,10 +23,10 @@ impl Embed for FullPath {
     }
 }
 
-#[injectable]
+#[controller]
 struct Api;
 
-#[routes]
+#[handlers]
 impl Api {
     #[ulo_http::get("/api/{name}")]
     fn named(&self) -> &'static str {

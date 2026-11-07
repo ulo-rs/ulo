@@ -5,16 +5,17 @@
 //! assertions are emitted with `quote_spanned!`, so a compile error points at the field,
 //! parameter or attribute rather than at the macro invocation.
 
+mod construct;
 mod construct_attr;
 mod enhancers;
-mod injectable;
+mod handlers;
 mod module_attr;
-mod routes;
 mod shared;
 
 use proc_macro::TokenStream;
 
-/// A type the container builds.
+/// A type the container builds and injects into others: a provider, listed under a module's
+/// `providers`.
 ///
 /// On a struct, every field is an injection point except one marked `#[injectable(default)]`,
 /// which is set from `Default`. On an impl block, the constructor is the fn named `new`, or the
@@ -25,13 +26,41 @@ use proc_macro::TokenStream;
 /// Arguments: a scope, `singleton`, `execution` or `transient` (none means `Auto`), and
 /// `timeout = <Duration expr>`, which writes `CONSTRUCT_TIMEOUT`. `Construct::hooks` is filled by
 /// probing the five lifecycle traits.
+///
+/// A type whose handlers a transport calls is a controller and takes `#[controller]` instead;
+/// `#[module]` refuses an `#[injectable]` type under `controllers`.
 #[proc_macro_attribute]
 pub fn injectable(attr: TokenStream, item: TokenStream) -> TokenStream {
-    injectable::expand(attr.into(), item.into()).unwrap_or_else(syn::Error::into_compile_error).into()
+    construct::expand(construct::Kind::Injectable, attr.into(), item.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
-/// Marks the constructor inside an `#[injectable]` impl when it is not named `new`; `#[injectable]`
-/// reads and removes it. Anywhere else it is an error.
+/// A controller: a type the container builds and its transports reach, through the handlers of
+/// its `#[handlers]` impl. Only another controller injects one; `wire()` refuses a read of a
+/// controller by any other binding.
+///
+/// It writes what `#[injectable]` writes, from a struct (`#[controller(default)]` marks a field
+/// set from `Default`) or from an impl block's `new` or `#[construct]` fn, and takes the same
+/// arguments: a scope and `timeout = <Duration expr>`. With no scope it is `Auto`: a singleton if
+/// nothing below it needs an execution, and built per call otherwise. It takes no route prefix;
+/// the module mounts a controller under one with `m.controller::<T>().at(prefix)`.
+///
+/// It also marks the type as a controller. `#[module]` accepts under `controllers` only a type
+/// with that mark, and refuses one under `providers`. A WebSocket gateway is a controller and
+/// takes `#[controller]` too.
+///
+/// On an impl block it stacks with `#[handlers]` in either order, so the constructor and the
+/// handlers can share one impl, `#[controller] #[handlers] impl Greeter { fn new(..) .. }`.
+#[proc_macro_attribute]
+pub fn controller(attr: TokenStream, item: TokenStream) -> TokenStream {
+    construct::expand(construct::Kind::Controller, attr.into(), item.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Marks the constructor inside an `#[injectable]` or `#[controller]` impl when it is not named
+/// `new`; the attribute on the impl reads and removes it. Anywhere else it is an error.
 #[proc_macro_attribute]
 pub fn construct(attr: TokenStream, item: TokenStream) -> TokenStream {
     construct_attr::expand(attr.into(), item.into()).unwrap_or_else(syn::Error::into_compile_error).into()
@@ -48,7 +77,10 @@ pub fn construct(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `K: with(<scope>) = |..| ..` (the same binding, also bound under the trait key `K` with
 /// `also_as::<K>(|a| a)`), and `into dyn Trait: [..]` (contributions). A bare path reads as a
 /// type, so a constant is bound by value with a block, `{ LIMITS }`. Export entries: `Type` and
-/// `reexport Type`.
+/// `reexport Type`. A `controllers` entry is a `#[controller]` type, and an entry under
+/// `providers`, by type or by value, is not one; each mistake is a compile error at the entry. A
+/// closure under `providers` is not checked. A controller may be exported, for another controller
+/// to read.
 ///
 /// A qualified binding is written with the `@` that reports print for a key. `Type @ Q`
 /// (`provide::<Type>().qualified::<Q>()`), `Type as dyn Trait @ Q` (both keys qualified), `expr @ Q`
@@ -126,9 +158,13 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
     module_attr::expand(attr.into(), item.into()).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
-/// A controller's handler impl: writes `impl Controller` whose `mount` registers each handler,
-/// with the impl's `#[guards]`, `#[interceptors]`, `#[error_handlers]` and `#[meta]` as the
-/// controller tier and each method's as the method tier; every other item stays as written.
+/// A controller's handler impl, on every transport: writes `impl Controller` whose `mount`
+/// registers each handler, with the impl's `#[guards]`, `#[interceptors]`, `#[error_handlers]` and
+/// `#[meta]` as the controller tier and each method's as the method tier; every other item stays
+/// as written. A handler is a method carrying its transport's attribute, `#[ulo_http::get(..)]`,
+/// `#[ulo_rpc::message(..)]`, `#[ulo_ws::message(..)]` or `#[ulo_grpc::method]`. The controller
+/// itself is declared with `#[controller]`, on the struct or stacked on this impl in either order,
+/// where `new` or the `#[construct]` fn builds it.
 ///
 /// An impl-level `value = expr` is built once by `Controller::mount` and shared by every handler
 /// it applies to, so a rate limiter declared on the impl limits the controller as a whole. A
@@ -138,9 +174,9 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// A handler behind `#[cfg]` is mounted, and its transport key counted, only in a build that
 /// compiles it. A scoped entry for a transport whose handlers all sit behind
 /// `#[cfg(feature = "rpc")]` goes in `#[cfg_attr(feature = "rpc", guards(rpc = ..))]` on the impl,
-/// which rustc evaluates before `#[routes]` reads the impl's attributes.
+/// which rustc evaluates before `#[handlers]` reads the impl's attributes.
 ///
-/// `#[routes]` reads a method's attributes through `cfg_attr`, at any depth:
+/// `#[handlers]` reads a method's attributes through `cfg_attr`, at any depth:
 /// - `#[cfg_attr(feature = "x", ulo_http::get("/beta"))]` makes the method a handler only where
 ///   the predicate holds, gated like a handler behind `#[cfg]`: mounted, and its key counted, only
 ///   in that build. Elsewhere it is a plain method, dead code unless something calls it;
@@ -148,31 +184,32 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `#[cfg_attr(feature = "x", guards(..))]`, and likewise `interceptors`, `error_handlers` and
 ///   `meta`, on a handler applies its entries only where the predicate holds.
 /// - One `cfg_attr` may hold several of these beside unrelated attributes,
-///   `#[cfg_attr(feature = "x", ulo_http::get("/beta"), guards(AuthGuard), inline)]`; `#[routes]`
-///   takes the enhancers and `meta` and leaves the rest in place.
+///   `#[cfg_attr(feature = "x", ulo_http::get("/beta"), guards(AuthGuard), inline)]`;
+///   `#[handlers]` takes the enhancers and `meta` and leaves the rest in place.
 ///
-/// `#[routes]` reads and removes every enhancer and `#[meta]` attribute it takes, and writes beside
-/// the impl a hidden import of each, through which an editor answers hover and go-to-definition on
-/// the attribute's last path segment.
+/// `#[handlers]` reads and removes every enhancer and `#[meta]` attribute it takes, and writes
+/// beside the impl a hidden import of each, through which an editor answers hover and
+/// go-to-definition on the attribute's last path segment.
 ///
 /// A method carrying an attribute outside the language's own (`doc`, `allow`, `cfg`, `inline` and
-/// the like) and the enhancer and `#[meta]` markers, such as `#[tracing::instrument]`, inside
-/// `cfg_attr` or not, is treated as a handler, so helpers go in a separate `impl` block. One such
-/// attribute written outside any `cfg_attr` makes the method a handler in every build; when every
+/// the like), the enhancer and `#[meta]` markers and `#[construct]`, such as
+/// `#[tracing::instrument]`, inside `cfg_attr` or not, is treated as a handler, so helpers go in a
+/// separate `impl` block. One such attribute written outside any `cfg_attr` makes the method a
+/// handler in every build; when every
 /// one sits inside a `cfg_attr`, the first decides, so the transport attribute goes first. A
 /// transport attribute inside `cfg_attr` beside another attribute macro outside one fails to
 /// compile where the predicate fails. A handler takes `&self`, or `self: Arc<Self>` for a reply
 /// that outlives the call, and declares no type or const parameter; the controller itself may be
 /// generic.
 #[proc_macro_attribute]
-pub fn routes(attr: TokenStream, item: TokenStream) -> TokenStream {
-    routes::expand(attr.into(), item.into()).unwrap_or_else(syn::Error::into_compile_error).into()
+pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
+    handlers::expand(attr.into(), item.into()).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
-/// Guards for every handler of a `#[routes]` impl, or for one method: by type (`AuthGuard`),
+/// Guards for every handler of a `#[handlers]` impl, or for one method: by type (`AuthGuard`),
 /// transport-scoped by type (`http = AuthGuard`), by value (`value = expr`), or by closure
-/// (`with = |u: Ext<CurrentUser>| ..`). Read and removed by `#[routes]`, so on the impl it goes
-/// below `#[routes]`; on a method it may sit inside `cfg_attr`; anywhere else it is an error.
+/// (`with = |u: Ext<CurrentUser>| ..`). Read and removed by `#[handlers]`, so on the impl it goes
+/// below `#[handlers]`; on a method it may sit inside `cfg_attr`; anywhere else it is an error.
 ///
 /// On the impl, an entry applies to every handler and must have the role for each handler's
 /// transport; `http = AuthGuard` limits it to that transport's handlers. `value = expr` is built
@@ -206,17 +243,17 @@ pub fn error_handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
     enhancers::marker("error_handlers", attr.into(), item.into()).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
-/// Declared metadata on a handler or on its `#[routes]` impl: plain `Send + Sync + 'static`
+/// Declared metadata on a handler or on its `#[handlers]` impl: plain `Send + Sync + 'static`
 /// values, built once when the handler mounts, which guards and interceptors read through
 /// `cx.exec().handler()`. The method's declaration of a type wins over the impl's. Read and
-/// removed by `#[routes]`, so on the impl it goes below `#[routes]`; on a method it may sit inside
+/// removed by `#[handlers]`, so on the impl it goes below `#[handlers]`; on a method it may sit inside
 /// `cfg_attr`; anywhere else it is an error.
 #[proc_macro_attribute]
 pub fn meta(attr: TokenStream, item: TokenStream) -> TokenStream {
     enhancers::meta_marker(attr.into(), item.into()).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
-/// Carries a handler's controller-tier and method-tier enhancers and metadata from `#[routes]` to
+/// Carries a handler's controller-tier and method-tier enhancers and metadata from `#[handlers]` to
 /// the transport's handler attribute, which consumes it (`ulo_handler_codegen::protocol`).
 /// Reaching expansion means no transport attribute consumed it.
 #[doc(hidden)]

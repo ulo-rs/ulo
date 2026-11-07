@@ -6,7 +6,7 @@ use futures_util::{Stream, StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use ulo::{Dep, ExecutionRef, Runtime, Timer, injectable, routes};
+use ulo::{Dep, ExecutionRef, Runtime, Timer, controller, handlers};
 use ulo_rpc::{CallHeaders, Inbound, Payload, RpcCx};
 
 use crate::derives::Refusal;
@@ -17,10 +17,10 @@ pub struct Order {
     pub id: u64,
 }
 
-#[injectable]
+#[controller]
 pub struct Orders;
 
-#[routes]
+#[handlers]
 #[guards(rpc = Allow)]
 #[interceptors(Pass)]
 #[error_handlers(value = Relay)]

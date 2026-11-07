@@ -1,10 +1,10 @@
 //! The HTTP handler attributes, re-exported by `ulo-http`: `#[get]`, `#[post]`, `#[put]`,
 //! `#[patch]`, `#[delete]`, `#[head]`, `#[options]`. Each is a thin layer over
-//! `ulo-handler-codegen`, and each goes on a method of a `#[routes]` impl:
+//! `ulo-handler-codegen`, and each goes on a method of a `#[handlers]` impl:
 //!
 //! ```ignore
 //! # // reason: a proc-macro crate cannot depend on the crates the expansion names
-//! #[routes]
+//! #[handlers]
 //! impl UsersController {
 //!     #[ulo_http::get("/users/{id}")]
 //!     async fn get(&self, id: Path<u64>) -> Result<Json<User>, UserError> { /* .. */ }

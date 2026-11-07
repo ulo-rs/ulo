@@ -1,11 +1,11 @@
-use ulo::{injectable, routes};
+use ulo::{controller, handlers};
 use ulo_http::BodyLimit;
 use ulo_rpc::Payload;
 
-#[injectable]
+#[controller]
 struct Orders;
 
-#[routes]
+#[handlers]
 #[meta(BodyLimit(1024))]
 impl Orders {
     #[ulo_rpc::message("orders.get")]

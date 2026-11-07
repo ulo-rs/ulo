@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use ulo::{App, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{App, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_runtime_tokio::Tokio;
 use ulo_ws::{Rooms, WsModule};
 use ulo_ws_redis::Redis;
@@ -19,10 +19,10 @@ use standin::Standin;
 /// How long a drop has to reach the stand-in.
 const PATIENCE: Duration = Duration::from_secs(5);
 
-#[injectable]
+#[controller]
 struct Members;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/members", port = own)]
 impl Members {
     #[ulo_ws::message("ping")]

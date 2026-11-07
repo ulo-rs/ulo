@@ -1,7 +1,7 @@
 use diesel::dsl::sql;
 use diesel::sql_types::BigInt;
 use diesel_async::RunQueryDsl;
-use ulo::{App, AppBuilder, BoxError, Dep, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{App, AppBuilder, BoxError, Dep, Module, ModuleDef, ModuleIdentity, controller, handlers, injectable};
 use ulo_config::{Config, Env, Values};
 use ulo_db_diesel::{DieselModule, Sqlite, SqlitePool};
 use ulo_http::Path;
@@ -23,12 +23,12 @@ impl Counter {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct CountController {
     counter: Dep<Counter>,
 }
 
-#[routes]
+#[handlers]
 impl CountController {
     #[ulo_http::get("/count/{n}")]
     async fn count(&self, Path(n): Path<i64>) -> Result<String, BoxError> {

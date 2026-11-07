@@ -4,7 +4,7 @@ use futures_util::{Stream, stream};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use ulo::{Dep, Runtime, Timer, injectable, routes};
+use ulo::{Dep, Runtime, Timer, controller, handlers};
 use ulo_ws::{Frame, Payload, Rooms, WsCx};
 
 use crate::derives::Refusal;
@@ -20,10 +20,10 @@ pub struct Echoed {
     pub text: String,
 }
 
-#[injectable]
+#[controller]
 pub struct Chat;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/chat")]
 #[guards(ws = Allow)]
 #[interceptors(value = Pass)]

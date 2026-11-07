@@ -2,12 +2,12 @@
 // refused at its name: "a handler is a method: it takes `&self`, or `self: Arc<Self>`". Example 15's
 // README points here. The two E0599 errors after it name items the attribute did not write for the
 // refused handler.
-use ulo::{injectable, routes};
+use ulo::{controller, handlers};
 
-#[injectable]
+#[controller]
 struct Status;
 
-#[routes]
+#[handlers]
 impl Status {
     #[ulo_http::get("/status")]
     fn status() -> &'static str {

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use http::{HeaderName, Method, StatusCode};
 use o1_support::{Call, Running, refused, refusals, start};
-use ulo::{ModuleDef, injectable, routes};
+use ulo::{ModuleDef, controller, handlers};
 use ulo_http::{Cors, PreDispatch, Routing, WithHeaders};
 
 const FIRST: &str = "https://first.example";
@@ -18,10 +18,10 @@ const STRANGER: &str = "https://stranger.example";
 const FIRST_UPPER: &str = "HTTPS://FIRST.EXAMPLE";
 const FIRST_EXTENDED: &str = "https://first.example.evil";
 
-#[injectable]
+#[controller]
 struct Pages;
 
-#[routes]
+#[handlers]
 impl Pages {
     #[ulo_http::get("/hit")]
     fn hit(&self) -> &'static str {

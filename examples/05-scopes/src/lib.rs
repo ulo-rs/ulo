@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ulo::{App, AppBuilder, Dep, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, controller, handlers, injectable, module};
 
 /// Numbers every instance below, so a response shows which instance each read reached.
 #[injectable]
@@ -61,13 +61,13 @@ pub struct Second {
 }
 
 /// Reads an execution-scoped dependency, so `Auto` makes the controller per-execution too.
-#[injectable]
+#[controller]
 pub struct ScopesController {
     first: Dep<First>,
     second: Dep<Second>,
 }
 
-#[routes]
+#[handlers]
 impl ScopesController {
     /// `scope=first/second`, one pair per scope.
     #[ulo_http::get("/")]

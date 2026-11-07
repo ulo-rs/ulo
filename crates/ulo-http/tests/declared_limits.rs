@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Metadata};
-use ulo::{App, AppHandle, BoxError, BoxFuture, Dep, Module, ModuleDef, ModuleIdentity, StartupError, injectable, routes};
+use ulo::{App, AppHandle, BoxError, BoxFuture, Dep, Module, ModuleDef, ModuleIdentity, StartupError, controller, handlers};
 use ulo_http::embed::{Embed, EmbedLimits, Embedded, Miss, Service};
 use ulo_http::{AppService, Backend, BackendLimits, ClientAddr, ConnInfo, Host, HttpBody, HttpConfig, Request, Response, UpgradeHandler, Upgrades};
 use ulo_net::{BoundListener, Endpoint, Tls};
@@ -45,12 +45,12 @@ impl Embed for Lacking {
 #[derive(Clone)]
 struct Tenant;
 
-#[injectable]
+#[controller]
 struct Peer {
     addr: Dep<ClientAddr>,
 }
 
-#[routes]
+#[handlers]
 impl Peer {
     #[ulo_http::get("/peer")]
     fn peer(&self) -> String {

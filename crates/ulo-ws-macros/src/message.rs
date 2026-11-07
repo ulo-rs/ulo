@@ -44,7 +44,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     let original = item.clone();
     let mut item: ImplItemFn = syn::parse2(item)?;
     let Some(tokens) = protocol::take_handler_attr(&mut item.attrs)? else {
-        return Err(protocol::outside_routes("message"));
+        return Err(protocol::outside_handlers("message"));
     };
     let sig = params::analyze(&item.sig)?;
     reply::rewrite_opaque_returns(&mut item.sig);

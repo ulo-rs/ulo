@@ -8,7 +8,7 @@ use axum::Router;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
-use ulo::{App, BoxError, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, BoxError, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers, injectable};
 use ulo_http::middleware::Next;
 use ulo_http::{Host, Middleware, PreDispatch, Request, Response};
 use ulo_http_axum::Embedded;
@@ -28,10 +28,10 @@ impl Middleware for Supplier {
     }
 }
 
-#[injectable]
+#[controller]
 struct AdminHealth;
 
-#[routes]
+#[handlers]
 impl AdminHealth {
     #[ulo_http::get("/admin/health")]
     fn health(&self) -> &'static str {
@@ -39,10 +39,10 @@ impl AdminHealth {
     }
 }
 
-#[injectable]
+#[controller]
 struct AdminPage;
 
-#[routes]
+#[handlers]
 impl AdminPage {
     #[ulo_http::get("/admin/{page}")]
     fn page(&self, _tenant: Host<Tenant>) -> &'static str {

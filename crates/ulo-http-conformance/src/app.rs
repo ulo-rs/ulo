@@ -13,7 +13,7 @@ use futures_util::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use ulo::{
     AnyErrorHandler, BoxError, BoxFuture, CancelReason, Dep, ErrorHandler, Module, ModuleDef, ModuleIdentity, Runtime,
-    StreamOutcome, Timer, injectable, routes,
+    StreamOutcome, Timer, controller, handlers, injectable,
 };
 use ulo_http::embed::EmbedLimits;
 use ulo_http::{
@@ -116,10 +116,10 @@ impl ErrorHandler<Http> for Substitute {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct Suite;
 
-#[routes]
+#[handlers]
 impl Suite {
     #[ulo_http::get("/hit")]
     fn hit(&self) -> &'static str {

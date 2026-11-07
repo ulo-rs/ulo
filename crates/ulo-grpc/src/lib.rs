@@ -11,7 +11,12 @@
 //! // src/pb.rs
 //! ulo_grpc::include_proto!("users.v1");
 //!
-//! #[routes]
+//! #[controller]
+//! pub struct UsersGrpc {
+//!     users: Dep<Users>,
+//! }
+//!
+//! #[handlers]
 //! #[guards(grpc = TokenGuard)]
 //! impl UsersGrpc {
 //!     #[ulo_grpc::method(pb::user_service::GetUser)]

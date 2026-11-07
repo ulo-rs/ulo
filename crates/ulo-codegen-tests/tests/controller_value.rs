@@ -1,4 +1,4 @@
-//! A `value = expr` written on a `#[routes]` impl is built once for the whole impl and shared by
+//! A `value = expr` written on a `#[handlers]` impl is built once for the whole impl and shared by
 //! every handler on it (transports DESIGN X2); written on a method it is that handler's alone.
 //!
 //! Each guard instance takes an id from a counter when its `new` runs and records `(id, n)` when
@@ -11,7 +11,7 @@ mod support;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ulo::{BoxError, Guard, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{BoxError, Guard, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_codegen_tests::probe::vault_client::VaultClient;
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
 use ulo_grpc::{Grpc, GrpcCx, Message};
@@ -63,10 +63,10 @@ macro_rules! tally {
 tally!(on_the_impl);
 tally!(on_the_methods);
 
-#[injectable]
+#[controller]
 struct Shared;
 
-#[routes]
+#[handlers]
 #[guards(value = on_the_impl::Tally::new())]
 impl Shared {
     #[ulo_grpc::method(probe::vault::Open)]
@@ -80,10 +80,10 @@ impl Shared {
     }
 }
 
-#[injectable]
+#[controller]
 struct PerMethod;
 
-#[routes]
+#[handlers]
 impl PerMethod {
     #[ulo_grpc::method(probe::vault::Open)]
     #[guards(value = on_the_methods::Tally::new())]

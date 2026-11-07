@@ -13,7 +13,7 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use std::sync::Mutex;
 
-use ulo::{App, Bound, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, Runtime, Signal, StartupError, injectable, routes};
+use ulo::{App, Bound, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, Runtime, Signal, StartupError, controller, handlers};
 use ulo_rpc::{Link, Payload, RpcClient, RpcClientModule};
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
@@ -36,10 +36,10 @@ impl Classify for Never {
     }
 }
 
-#[injectable]
+#[controller]
 struct Adder;
 
-#[routes]
+#[handlers]
 impl Adder {
     #[ulo_rpc::message("handle.add")]
     async fn add(&self, n: Payload<u32>) -> Result<u32, Never> {

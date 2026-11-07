@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use futures_util::{Stream, StreamExt, stream};
 use serde_json::json;
 use tokio::sync::Notify;
-use ulo::{Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, controller, handlers, injectable};
 use ulo_transport::CallError;
 use ulo_ws::WsModule;
 
@@ -45,12 +45,12 @@ impl Drop for Audit {
     }
 }
 
-#[injectable]
+#[controller]
 struct Audited {
     audit: Dep<Audit>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/audited")]
 impl Audited {
     #[ulo_ws::message("once")]

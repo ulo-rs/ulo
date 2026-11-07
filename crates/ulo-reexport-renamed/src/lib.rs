@@ -1,5 +1,5 @@
-//! The attributes `#[routes]` and `#[injectable]` read and remove compile with `ulo` renamed in
-//! the manifest, `framework = { package = "ulo", .. }`.
+//! The attributes `#[handlers]`, `#[controller]` and `#[injectable]` read and remove compile with
+//! `ulo` renamed in the manifest, `framework = { package = "ulo", .. }`.
 //!
 //! Beside the item, each macro writes a hidden import of every such attribute, so an editor
 //! resolves it. That import, like the rest of the generated code, names `::ulo`, which the
@@ -14,7 +14,7 @@ pub use framework::*;
 
 #[cfg(test)]
 mod markers {
-    use framework::{BoxError, Construct, Controller, Guard, injectable, routes};
+    use framework::{BoxError, Construct, Controller, Guard, controller, handlers, injectable};
     use ulo_http::{Http, HttpCx};
 
     struct Deny;
@@ -25,13 +25,13 @@ mod markers {
         }
     }
 
-    #[injectable]
+    #[controller]
     struct Orders {
-        #[injectable(default)]
+        #[controller(default)]
         seen: u32,
     }
 
-    #[routes]
+    #[handlers]
     #[guards(value = Deny)]
     #[meta(1u8)]
     impl Orders {

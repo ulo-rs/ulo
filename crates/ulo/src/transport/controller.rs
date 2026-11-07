@@ -18,7 +18,8 @@ use crate::transport::{AnyErrorHandler, AnyGuard, AnyInterceptor, Transport};
 use crate::type_name::TypeName;
 
 /// A dispatch target: a `Construct` type whose handlers `mount` declares, one per transport
-/// route, message pattern, gRPC method or WebSocket event. `#[routes]` writes the impl.
+/// route, message pattern, gRPC method or WebSocket event. `#[handlers]` writes the impl, and
+/// `#[controller]` the `Construct` impl beside it.
 ///
 /// A controller takes part in the container like any binding. With `Auto` scope it is a
 /// singleton if nothing below it needs an execution and is built per call otherwise.

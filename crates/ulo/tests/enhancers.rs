@@ -577,7 +577,7 @@ async fn an_explicit_scope_overrides_the_closure_inference() {
 }
 
 typed_controller!(Valued, Singleton, |m| {
-    // One value built here, handed to both handlers' controller tier, as `#[routes]` does for an
+    // One value built here, handed to both handlers' controller tier, as `#[handlers]` does for an
     // impl-level `value = expr`; each handler's own method-tier value is a value of its own.
     let shared = Arc::new(Counting::new("limit"));
     for (name, own) in [("first", "own1"), ("second", "own2")] {

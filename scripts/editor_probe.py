@@ -4,9 +4,10 @@
 usage: editor_probe.py <rust-analyzer> <project root> <file> [--target-dir DIR] [--point NAME:LINE:COL]...
 
 Without --point, every pathed attribute `#[a::b(..)]` in <file> yields two points, one on `a` and
-one on `b`, and a bare `#[routes]` or `#[injectable]` one control point. A marker attribute, one
-that `#[routes]` or `#[injectable]` reads and removes (`guards`, `interceptors`, `error_handlers`,
-`meta`, `construct`, and `injectable(default)` on a field), yields one point on its last segment,
+one on `b`, and a bare `#[handlers]`, `#[injectable]` or `#[controller]` one control point. A marker
+attribute, one that `#[handlers]`, `#[injectable]` or `#[controller]` reads and removes (`guards`,
+`interceptors`, `error_handlers`, `meta`, `construct`, and `injectable(default)` or
+`controller(default)` on a field), yields one point on its last segment,
 bare, pathed or inside a `#[cfg_attr(..)]`: the editor resolves it through the import the macro
 writes for that segment alone. An attribute on a `//` comment line yields none, and neither does
 one inside a `macro_rules!` body, which the editor resolves only where the macro is invoked. The server is started over stdio, waited on until it
@@ -38,10 +39,10 @@ import threading
 import time
 
 ATTR = re.compile(r"#\[\s*((?:[A-Za-z_]\w*::)+)([A-Za-z_]\w*)")
-BARE = re.compile(r"#\[\s*(routes|injectable)\s*\]")
+BARE = re.compile(r"#\[\s*(handlers|injectable|controller)\s*\]")
 MARKERS = r"guards|interceptors|error_handlers|meta|construct"
 # A marker's last segment: after `#[` or, inside a `cfg_attr`, after a comma, with any path before it.
-MARKER = re.compile(r"(?:#\[|,)\s*(?:[A-Za-z_]\w*::)*(?:(" + MARKERS + r")\b(?!\s*::)|(injectable)(?=\s*\(\s*default\s*\)))")
+MARKER = re.compile(r"(?:#\[|,)\s*(?:[A-Za-z_]\w*::)*(?:(" + MARKERS + r")\b(?!\s*::)|(injectable|controller)(?=\s*\(\s*default\s*\)))")
 
 
 def macro_rules_lines(text):

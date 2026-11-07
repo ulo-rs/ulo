@@ -16,7 +16,7 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use serde_json::json;
-use ulo::{App, BoundAddr, BoxError, BoxFuture, DrainToken, Module, ModuleDef, ModuleIdentity, Mounted, Server, Signal, StartupError, Timer, injectable, routes};
+use ulo::{App, BoundAddr, BoxError, BoxFuture, DrainToken, Module, ModuleDef, ModuleIdentity, Mounted, Server, Signal, StartupError, Timer, controller, handlers};
 use ulo_http::Http;
 use ulo_runtime_tokio::Tokio;
 use ulo_transport::Count;
@@ -72,10 +72,10 @@ impl BroadcastAdapter for Watched {
     }
 }
 
-#[injectable]
+#[controller]
 struct Lobby;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/lobby")]
 impl Lobby {
     #[ulo_ws::message("ping")]

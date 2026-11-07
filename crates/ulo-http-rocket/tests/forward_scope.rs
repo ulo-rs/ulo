@@ -7,7 +7,7 @@ use rocket::fairing::AdHoc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
-use ulo::{App, BoxError, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, BoxError, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers, injectable};
 use ulo_http::embed::Miss;
 use ulo_http::middleware::Next;
 use ulo_http::{CallError, Middleware, PreDispatch, Request, Response};
@@ -40,10 +40,10 @@ impl Middleware for Rewrite {
     }
 }
 
-#[injectable]
+#[controller]
 struct Admin;
 
-#[routes]
+#[handlers]
 impl Admin {
     #[ulo_http::get("/admin/app")]
     fn app(&self) -> &'static str {

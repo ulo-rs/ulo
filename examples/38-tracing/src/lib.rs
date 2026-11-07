@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use serde::{Deserialize, Serialize};
 use tonic::Request;
 use tonic::transport::Channel;
-use ulo::{App, AppBuilder, BoxError, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{App, AppBuilder, BoxError, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_grpc::{GrpcClientModule, GrpcEndpoint, Message};
 use ulo_http::{Json, Path};
 use ulo_otel::Otel;
@@ -25,10 +25,10 @@ fn traceparent(exec: &ExecutionRef) -> String {
 pub struct Stock;
 
 /// Hop 3, gRPC: reports the context its own call carried.
-#[injectable]
+#[controller]
 pub struct PricingService;
 
-#[routes]
+#[handlers]
 impl PricingService {
     #[ulo_grpc::method(pb::pricing::Quote)]
     async fn quote(&self, req: Message<pb::QuoteRequest>, exec: ExecutionRef) -> pb::Price {
@@ -45,12 +45,12 @@ pub struct Reserved {
 
 /// Hop 2, RPC: calls Pricing from inside its own execution. `outgoing` writes the execution's
 /// context into the call's metadata.
-#[injectable]
+#[controller]
 pub struct StockService {
     pricing: Dep<PricingClient<Channel>>,
 }
 
-#[routes]
+#[handlers]
 impl StockService {
     #[ulo_rpc::message("stock.reserve")]
     async fn reserve(&self, sku: Payload<String>, exec: ExecutionRef) -> Result<Reserved, BoxError> {
@@ -70,12 +70,12 @@ pub struct Quoted {
 }
 
 /// Hop 1, HTTP: `.within(&exec)` writes the execution's context into the RPC call.
-#[injectable]
+#[controller]
 pub struct EdgeService {
     stock: Dep<RpcClient, Stock>,
 }
 
-#[routes]
+#[handlers]
 impl EdgeService {
     #[ulo_http::get("/quote/{sku}")]
     async fn quote(&self, Path(sku): Path<String>, exec: ExecutionRef) -> Result<Json<Quoted>, BoxError> {

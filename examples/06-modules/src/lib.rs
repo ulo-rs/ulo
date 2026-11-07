@@ -1,4 +1,4 @@
-use ulo::{App, AppBuilder, Dep, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, controller, handlers, injectable, module};
 
 /// Private to `UsersModule`: bound there and not exported.
 #[injectable]
@@ -30,7 +30,7 @@ pub struct InvoiceService {
     users: Dep<UserService>,
 }
 
-#[injectable]
+#[controller]
 pub struct InvoiceController {
     invoices: Dep<InvoiceService>,
 }
@@ -41,7 +41,7 @@ impl InvoiceService {
     }
 }
 
-#[routes]
+#[handlers]
 impl InvoiceController {
     #[ulo_http::get("/")]
     fn open(&self) -> String {

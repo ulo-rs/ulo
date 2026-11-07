@@ -15,7 +15,7 @@ use async_net::TcpStream;
 use futures_rustls::TlsConnector;
 use futures_rustls::client::TlsStream;
 use futures_util::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use ulo::{App, Module, ModuleDef, ModuleIdentity, Signal, Timer, injectable, routes};
+use ulo::{App, Module, ModuleDef, ModuleIdentity, Signal, Timer, controller, handlers};
 use ulo_net::Tls;
 use ulo_net::rustls::pki_types::ServerName;
 use ulo_net::rustls::{self, ClientConfig};
@@ -67,10 +67,10 @@ async fn within<T>(what: &str, fut: impl Future<Output = T>) -> T {
     }
 }
 
-#[injectable]
+#[controller]
 struct Holder;
 
-#[routes]
+#[handlers]
 impl Holder {
     #[ulo_rpc::message("late_goaway.hold")]
     async fn hold(&self) -> Result<u32, Never> {

@@ -1,5 +1,5 @@
 use serde::Serialize;
-use ulo::{Dep, injectable, routes};
+use ulo::{Dep, controller, handlers};
 use ulo_http::{Json, Path};
 
 use crate::greeter::Greeter;
@@ -9,12 +9,12 @@ pub struct Greeting {
     pub message: String,
 }
 
-#[injectable]
+#[controller]
 pub struct GreetingController {
     greeter: Dep<Greeter>,
 }
 
-#[routes]
+#[handlers]
 impl GreetingController {
     #[ulo_http::get("/greetings/{name}")]
     fn greet(&self, name: Path<String>) -> Json<Greeting> {

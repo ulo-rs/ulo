@@ -19,7 +19,7 @@ use futures_util::{StreamExt, stream};
 use http_body_util::BodyExt;
 use o1_support::{Call, PATIENCE, read, start_draining};
 use tokio::sync::{Notify, Semaphore};
-use ulo::{BoxError, CancelReason, Dep, ExecutionRef, ModuleDef, StreamOutcome, injectable, routes};
+use ulo::{BoxError, CancelReason, Dep, ExecutionRef, ModuleDef, StreamOutcome, controller, handlers};
 use ulo_http::{Bytes, HttpBody, Response, Routing, StatusCode};
 use ulo_transport::{CallError, ErrorKind};
 
@@ -88,12 +88,12 @@ impl Hold {
     }
 }
 
-#[injectable]
+#[controller]
 struct Held {
     hold: Dep<Hold>,
 }
 
-#[routes]
+#[handlers]
 impl Held {
     /// Answers once released.
     #[ulo_http::get("/hold")]

@@ -276,18 +276,18 @@ macro_rules! gateways {
         use std::time::Duration;
 
         use futures_util::Stream;
-        use ulo::{Dep, ExecutionRef, ModuleDef, injectable, routes};
+        use ulo::{Dep, ExecutionRef, ModuleDef, controller, handlers};
         use ulo_ws::{ConnectCx, ConnectRefused, Connection, DisconnectReason, OnConnect, OnDisconnect, Payload, UpgradeHead, WsCx};
 
         use super::{AnswerOne, Fault, HeaderIs, NotRefusedByGuard, Probe, TOKEN};
 
         /// The plain gateway: a round trip, a stream, and every `on_disconnect` recorded.
-        #[injectable]
+        #[controller]
         pub(crate) struct Echo {
             probe: Dep<Probe>,
         }
 
-        #[routes]
+        #[handlers]
         #[ulo_ws::gateway(path = "/echo", port = $port)]
         impl Echo {
             #[ulo_ws::message("echo")]
@@ -303,10 +303,10 @@ macro_rules! gateways {
 
         /// Speaks two versions of a protocol; the 101 echoes the first it lists among those the
         /// client offered.
-        #[injectable]
+        #[controller]
         pub(crate) struct Versioned;
 
-        #[routes]
+        #[handlers]
         #[ulo_ws::gateway(path = "/versioned", port = $port, subprotocols = ["v2.chat", "v1.chat"])]
         impl Versioned {
             #[ulo_ws::message("which")]
@@ -316,10 +316,10 @@ macro_rules! gateways {
         }
 
         /// Refuses before the upgrade: no token is 403, a token without a user is 401.
-        #[injectable]
+        #[controller]
         pub(crate) struct Strict;
 
-        #[routes]
+        #[handlers]
         #[ulo_ws::gateway(
             path = "/strict",
             port = $port,
@@ -340,12 +340,12 @@ macro_rules! gateways {
         }
 
         /// Refuses after the upgrade, as its `x-refuse` header names.
-        #[injectable]
+        #[controller]
         pub(crate) struct Refused {
             probe: Dep<Probe>,
         }
 
-        #[routes]
+        #[handlers]
         #[ulo_ws::gateway(path = "/refused", port = $port, connect_guards(value = NotRefusedByGuard))]
         impl Refused {
             #[ulo_ws::message("echo")]
@@ -361,12 +361,12 @@ macro_rules! gateways {
         }
 
         /// A 128-byte message limit and room for one connection.
-        #[injectable]
+        #[controller]
         pub(crate) struct Small {
             probe: Dep<Probe>,
         }
 
-        #[routes]
+        #[handlers]
         #[ulo_ws::gateway(path = "/small", port = $port, message_limit = 128, max_connections = 1)]
         impl Small {
             #[ulo_ws::message("echo")]
@@ -376,12 +376,12 @@ macro_rules! gateways {
         }
 
         /// One message in flight per connection.
-        #[injectable]
+        #[controller]
         pub(crate) struct Serial {
             probe: Dep<Probe>,
         }
 
-        #[routes]
+        #[handlers]
         #[ulo_ws::gateway(path = "/serial", port = $port, max_inflight = 1)]
         impl Serial {
             #[ulo_ws::message("hold")]
@@ -400,12 +400,12 @@ macro_rules! gateways {
         }
 
         /// One queued outbound message per connection.
-        #[injectable]
+        #[controller]
         pub(crate) struct Outbound {
             probe: Dep<Probe>,
         }
 
-        #[routes]
+        #[handlers]
         #[ulo_ws::gateway(path = "/outbound", port = $port, max_outbound = 1)]
         impl Outbound {
             #[ulo_ws::message("burst")]
@@ -425,12 +425,12 @@ macro_rules! gateways {
         }
 
         /// A Ping every 100 ms, and 150 ms for its Pong.
-        #[injectable]
+        #[controller]
         pub(crate) struct Heartbeat {
             probe: Dep<Probe>,
         }
 
-        #[routes]
+        #[handlers]
         #[ulo_ws::gateway(
             path = "/heartbeat",
             port = $port,
@@ -445,12 +445,12 @@ macro_rules! gateways {
         }
 
         /// Two streamed answers reporting their end: one written, one an interceptor discards.
-        #[injectable]
+        #[controller]
         pub(crate) struct Streams {
             probe: Dep<Probe>,
         }
 
-        #[routes]
+        #[handlers]
         #[ulo_ws::gateway(path = "/streams", port = $port)]
         impl Streams {
             #[ulo_ws::message("written")]

@@ -4,7 +4,7 @@
 //! unbuilt. Error handlers are asked method tier first, then controller, then global, and within a
 //! tier the last one declared first; the first to answer claims the error.
 
-use ulo::{BoxError, Dep, ErrorHandler, Guard, injectable, routes};
+use ulo::{BoxError, Dep, ErrorHandler, Guard, controller, handlers, injectable};
 use ulo_http::{CallError, ErrorKind, Http, HttpBody, HttpCx, Path, Response, StatusCode};
 
 use crate::Trace;
@@ -106,12 +106,12 @@ impl ErrorHandler<Http> for Shape {
     }
 }
 
-#[injectable]
+#[controller]
 pub struct OrderedController {
     trace: Dep<Trace>,
 }
 
-#[routes]
+#[handlers]
 #[error_handlers(Controller)]
 impl OrderedController {
     #[ulo_http::get("/lazy/closed")]

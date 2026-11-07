@@ -1,4 +1,4 @@
-//! `#[routes]` on a controller's handler impl (§7, transports DESIGN §2.1, §2.5).
+//! `#[handlers]` on a controller's handler impl (§7, transports DESIGN §2.1, §2.5).
 //!
 //! It runs before the transports' handler attributes, which sit on the methods inside it, so it
 //! hands each handler's enhancers and metadata to them rather than registering handlers itself:
@@ -26,8 +26,8 @@
 //! 6. The hidden import of every enhancer and `#[meta]` attribute it removed, through which an
 //!    editor resolves each one (`crate::shared::editor`).
 //!
-//! A handler's `#[cfg]` and `#[cfg_attr]` reach `#[routes]` unevaluated, and rustc removes a
-//! cfg'd-out method, or expands a `cfg_attr` around its transport attribute, only after `#[routes]`
+//! A handler's `#[cfg]` and `#[cfg_attr]` reach `#[handlers]` unevaluated, and rustc removes a
+//! cfg'd-out method, or expands a `cfg_attr` around its transport attribute, only after `#[handlers]`
 //! has expanded. Each read of a handler's `__ULO_KEY_*` or `__ULO_CHECKS_*` in step 4, and its
 //! mount call in step 5, carries the handler's gates: its `cfg` gates
 //! (`ulo_handler_codegen::cfg::presence_gates`) and the predicates of the `cfg_attr` around its
@@ -49,7 +49,7 @@ use crate::shared::{attrs, combine, editor, ulo};
 
 pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     if !attr.is_empty() {
-        return Err(syn::Error::new_spanned(attr, "#[routes] takes no arguments"));
+        return Err(syn::Error::new_spanned(attr, "#[handlers] takes no arguments"));
     }
     let original = item.clone();
     let item: ItemImpl = syn::parse2(item)?;
@@ -62,7 +62,7 @@ pub(crate) fn expand_impl(mut item: ItemImpl, original: &TokenStream) -> syn::Re
     if let Some((_, path, _)) = &item.trait_ {
         return Err(syn::Error::new_spanned(
             path,
-            "#[routes] goes on the controller's inherent impl block holding its handlers, not on a trait impl",
+            "#[handlers] goes on the controller's inherent impl block holding its handlers, not on a trait impl",
         ));
     }
     let ulo = ulo();
@@ -139,7 +139,7 @@ pub(crate) fn expand_impl(mut item: ItemImpl, original: &TokenStream) -> syn::Re
     })
 }
 
-/// The last path segment of every enhancer and `#[meta]` attribute `#[routes]` reads, on the
+/// The last path segment of every enhancer and `#[meta]` attribute `#[handlers]` reads, on the
 /// impl and on its methods, inside `cfg_attr` or not, in the order written.
 fn written_markers(item: &ItemImpl) -> Vec<syn::Ident> {
     let methods = item.items.iter().filter_map(|impl_item| match impl_item {

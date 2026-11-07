@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bytes::Bytes;
 use futures_util::stream::BoxStream;
-use ulo::{App, BoxError, BoxFuture, Dep, Module, ModuleDef, ModuleIdentity, Signal, StartupError, Timer, injectable, routes};
+use ulo::{App, BoxError, BoxFuture, Dep, Module, ModuleDef, ModuleIdentity, Signal, StartupError, Timer, controller, handlers};
 use ulo_ws::{AfterInit, BroadcastAdapter, GatewayRef, NodeId, Target, WsModule};
 
 const REFUSAL: &str = "the adapter's subscription was refused";
@@ -34,12 +34,12 @@ impl BroadcastAdapter for Unsubscribable {
 #[derive(Clone, Default)]
 struct Inits(Arc<AtomicUsize>);
 
-#[injectable]
+#[controller]
 struct Lobby {
     inits: Dep<Inits>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/lobby")]
 impl Lobby {
     #[ulo_ws::message("ping")]

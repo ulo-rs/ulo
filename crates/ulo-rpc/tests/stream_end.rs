@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use ulo::{
     App, AppHandle, BoxError, CancelReason, ErrorHandler, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, Runtime,
-    Signal, StreamOutcome, injectable, routes,
+    Signal, StreamOutcome, controller, handlers,
 };
 use ulo_rpc::link::{Inbound, UNARY_ONLY};
 use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, Reply, ReplyPath, Rpc, RpcCx};
@@ -100,10 +100,10 @@ impl ErrorHandler<Rpc> for StreamOnTimeout {
     }
 }
 
-#[injectable]
+#[controller]
 struct Streams;
 
-#[routes]
+#[handlers]
 impl Streams {
     #[ulo_rpc::message("stream_end.discarded")]
     #[interceptors(value = AnswerOne)]
@@ -135,10 +135,10 @@ impl Streams {
 }
 
 /// Mounted on the unary link, whose server refuses a streamed handler at startup.
-#[injectable]
+#[controller]
 struct Unary;
 
-#[routes]
+#[handlers]
 impl Unary {
     /// A unary handler whose interceptor answers a stream, which only a link carrying streamed
     /// replies can write.

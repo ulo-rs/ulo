@@ -6,7 +6,7 @@
 use ulo::scope::Auto;
 use ulo::{
     App, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Module, ModuleDef, ModuleIdentity, Mount,
-    Resolver, StartupError, injectable, routes,
+    Resolver, StartupError, controller, handlers, injectable,
 };
 use ulo_http::middleware::Next;
 use ulo_http::{Host, Http, HttpCx, HttpHandler, IntoReply, Method, Middleware, PreDispatch, Request, Response};
@@ -19,10 +19,10 @@ struct Tenant;
 #[derive(Clone)]
 struct Region;
 
-#[injectable]
+#[controller]
 struct Attributed;
 
-#[routes]
+#[handlers]
 impl Attributed {
     #[ulo_http::get("/tenant")]
     fn tenant(&self, _tenant: Host<Tenant>) -> &'static str {
@@ -89,10 +89,10 @@ impl Middleware for Supplier {
     }
 }
 
-#[injectable]
+#[controller]
 struct Paged;
 
-#[routes]
+#[handlers]
 impl Paged {
     #[ulo_http::get("/pages/{page}")]
     fn page(&self, _tenant: Host<Tenant>) -> &'static str {
@@ -123,10 +123,10 @@ async fn a_supplies_after_a_scoped_entry_matching_some_paths_of_a_route_does_not
     assert!(text.contains("page` on `GET /pages/{page}` reads `Host<"), "{text}");
 }
 
-#[injectable]
+#[controller]
 struct AdminHealth;
 
-#[routes]
+#[handlers]
 impl AdminHealth {
     #[ulo_http::get("/admin/health")]
     fn health(&self) -> &'static str {
@@ -134,10 +134,10 @@ impl AdminHealth {
     }
 }
 
-#[injectable]
+#[controller]
 struct AdminPage;
 
-#[routes]
+#[handlers]
 impl AdminPage {
     #[ulo_http::get("/admin/{page}")]
     fn page(&self, _tenant: Host<Tenant>) -> &'static str {

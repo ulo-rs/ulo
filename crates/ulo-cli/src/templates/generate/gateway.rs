@@ -1,11 +1,11 @@
-use ulo::{injectable, routes};
+use ulo::{controller, handlers};
 
 /// A WebSocket gateway at `/@@route@@`, served on the HTTP server's port once the application
 /// imports `ulo_ws::WsModule::for_root()`. Bind it with `m.controller::<@@pascal@@Gateway>()`.
-#[injectable]
+#[controller]
 pub struct @@pascal@@Gateway;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/@@route@@")]
 impl @@pascal@@Gateway {
     #[ulo_ws::message("ping")]

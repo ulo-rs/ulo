@@ -1,6 +1,6 @@
-//! The attributes `#[routes]` and `#[injectable]` read and remove compile in a crate that reaches
-//! `ulo` only through a crate re-exporting it, `ulo-reexport-renamed`, and lists no `ulo` in its
-//! manifest.
+//! The attributes `#[handlers]`, `#[controller]` and `#[injectable]` read and remove compile in a
+//! crate that reaches `ulo` only through a crate re-exporting it, `ulo-reexport-renamed`, and lists
+//! no `ulo` in its manifest.
 //!
 //! The generated code, the hidden import for an editor included, names `::ulo`, which the
 //! `extern crate` alias below provides.
@@ -9,7 +9,7 @@ extern crate ulo_reexport_renamed as ulo;
 
 #[cfg(test)]
 mod markers {
-    use ulo::{BoxError, Construct, Controller, Guard, injectable, routes};
+    use ulo::{BoxError, Construct, Controller, Guard, controller, handlers, injectable};
     use ulo_http::{Http, HttpCx};
 
     struct Deny;
@@ -20,13 +20,13 @@ mod markers {
         }
     }
 
-    #[injectable]
+    #[controller]
     struct Orders {
-        #[injectable(default)]
+        #[controller(default)]
         seen: u32,
     }
 
-    #[routes]
+    #[handlers]
     #[guards(value = Deny)]
     #[meta(1u8)]
     impl Orders {

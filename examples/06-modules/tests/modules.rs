@@ -1,6 +1,6 @@
 use ex_06_modules::{PasswordHasher, UsersModule, builder};
 use ex_support::{get, start};
-use ulo::{App, Dep, StartupError, WiringError, injectable, module, routes};
+use ulo::{App, Dep, StartupError, WiringError, controller, handlers, module};
 
 #[tokio::test]
 async fn billing_reads_what_users_exports() {
@@ -9,12 +9,12 @@ async fn billing_reads_what_users_exports() {
     server.stop().await.unwrap();
 }
 
-#[injectable]
+#[controller]
 struct Snooper {
     _hasher: Dep<PasswordHasher>,
 }
 
-#[routes]
+#[handlers]
 impl Snooper {
     #[ulo_http::get("/")]
     fn snoop(&self) -> &'static str {

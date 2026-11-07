@@ -5,17 +5,17 @@ use futures_util::{Stream, StreamExt, stream};
 use tonic::Status;
 use std::time::Duration;
 
-use ulo::{Dep, Runtime, Timer, injectable, routes};
+use ulo::{Dep, Runtime, Timer, controller, handlers};
 use ulo_grpc::{GrpcCx, GrpcMetadata, Message, Request, Response, Streaming};
 
 use crate::derives::Refusal;
 use crate::enhancers::{Allow, Pass, Relay, Tag};
 use crate::lints::{self, Number};
 
-#[injectable]
+#[controller]
 pub struct LintsService;
 
-#[routes]
+#[handlers]
 #[guards(grpc = Allow)]
 #[interceptors(value = Pass)]
 #[error_handlers(Relay)]

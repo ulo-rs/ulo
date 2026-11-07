@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use async_net::TcpListener;
 use futures_io::{AsyncRead, AsyncWrite};
-use ulo::{App, Bound, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, Bound, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_conformance_support::starvation::{Flood, Meter, Probe, Starvation};
 use ulo_net::BoundListener;
 use ulo_net::rustls::ServerConfig;
@@ -130,10 +130,10 @@ impl Listener for Held {
     }
 }
 
-#[injectable]
+#[controller]
 struct Echo;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/flood", port = own)]
 impl Echo {
     #[ulo_ws::message("echo")]
@@ -144,10 +144,10 @@ impl Echo {
 
 /// Refuses every connection once the upgrade is done, so the refusal's loop is what the peer's
 /// frames meet.
-#[injectable]
+#[controller]
 struct Refusing;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/refuse", port = own)]
 impl Refusing {
     #[ulo_ws::message("echo")]

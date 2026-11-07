@@ -1,4 +1,4 @@
-use ulo::{App, AppBuilder, Dep, Many, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, Many, controller, handlers, injectable, module};
 
 pub trait Plugin: Send + Sync {
     fn name(&self) -> &'static str;
@@ -31,12 +31,12 @@ pub struct Host {
     pub mailer: Option<Dep<dyn Mailer>>,
 }
 
-#[injectable]
+#[controller]
 pub struct HostController {
     host: Dep<Host>,
 }
 
-#[routes]
+#[handlers]
 impl HostController {
     #[ulo_http::get("/plugins")]
     fn plugins(&self) -> String {

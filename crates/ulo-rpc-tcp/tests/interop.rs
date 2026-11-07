@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{Stream, StreamExt, stream};
-use ulo::{App, Bound, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, Bound, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_rpc::{Link, Payload, RpcClient};
 use ulo_runtime_tokio::Tokio;
 use ulo_transport::{Classify, ErrorKind};
@@ -31,10 +31,10 @@ impl Classify for Never {
     }
 }
 
-#[injectable]
+#[controller]
 struct Counter;
 
-#[routes]
+#[handlers]
 impl Counter {
     #[ulo_rpc::message("interop.add")]
     async fn add(&self, n: Payload<u32>) -> Result<u32, Never> {

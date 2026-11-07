@@ -12,7 +12,7 @@ use tokio_tungstenite::tungstenite::Message;
 use ulo::scope::Auto;
 use ulo::{
     BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Module, ModuleDef, ModuleIdentity, Mount,
-    Resolver, injectable, routes,
+    Resolver, controller, handlers,
 };
 use ulo_ws::{
     CallError, Codec, ErrorKind, FromCall, GatewayConfig, GatewayHooks, GatewaySettings, Payload, Reply, Ws, WsCx, WsHandler,
@@ -25,10 +25,10 @@ fn taken() -> CallError {
     CallError::new(ErrorKind::Conflict, "taken")
 }
 
-#[injectable]
+#[controller]
 struct Macro;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/m")]
 impl Macro {
     #[ulo_ws::message("unit")]

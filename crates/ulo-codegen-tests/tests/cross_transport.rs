@@ -23,7 +23,7 @@ use tokio::sync::Semaphore;
 use tokio_tungstenite::tungstenite::Message;
 use ulo::{
     App, CancelReason, Dep, ExecutionRef, FailureReason, HookKind, Key, Limit, Module, ModuleDef, ModuleIdentity, ShutdownFailure, Signal, Transport, TypeName,
-    injectable, routes,
+    controller, handlers,
 };
 use ulo_codegen_tests::pb::counter_client::CounterClient;
 use ulo_codegen_tests::pb::{self, AddRequest, Number, Sum};
@@ -60,12 +60,12 @@ impl Gate {
     }
 }
 
-#[injectable]
+#[controller]
 struct Web {
     gate: Dep<Gate>,
 }
 
-#[routes]
+#[handlers]
 impl Web {
     #[ulo_http::get("/slow")]
     async fn slow(&self, exec: ExecutionRef) -> String {
@@ -82,12 +82,12 @@ impl Web {
     }
 }
 
-#[injectable]
+#[controller]
 struct Chat {
     gate: Dep<Gate>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/ws", port = own)]
 impl Chat {
     #[ulo_ws::message("slow")]
@@ -115,12 +115,12 @@ impl Chat {
 
 /// `Counter.Pause` as the two `Chat` handlers above: 1 cancels its own execution, yields and
 /// answers; any other value waits for the cancellation and answers. Either answer is the value.
-#[injectable]
+#[controller]
 struct Observer {
     gate: Dep<Gate>,
 }
 
-#[routes]
+#[handlers]
 impl Observer {
     #[ulo_grpc::method(pb::counter::Pause)]
     async fn pause(&self, req: Grpc<Number>, exec: ExecutionRef) -> Result<Number, CallError> {
@@ -135,12 +135,12 @@ impl Observer {
     }
 }
 
-#[injectable]
+#[controller]
 struct Bus {
     gate: Dep<Gate>,
 }
 
-#[routes]
+#[handlers]
 impl Bus {
     #[ulo_rpc::message("cross.slow")]
     async fn slow(&self, n: Payload<u32>, exec: ExecutionRef) -> u32 {
@@ -630,15 +630,15 @@ async fn a_call_its_own_handler_cancels_is_not_answered_as_the_drain() {
     let _ = within("serve", app.serving).await;
 }
 
-/// One controller, one `#[routes]` impl, a handler on HTTP and a handler on RPC; the number of
+/// One controller, one `#[handlers]` impl, a handler on HTTP and a handler on RPC; the number of
 /// calls it has taken is its own state, so both transports reading one count shows one instance.
-#[injectable]
+#[controller]
 struct Both {
-    #[injectable(default)]
+    #[controller(default)]
     calls: AtomicUsize,
 }
 
-#[routes]
+#[handlers]
 impl Both {
     #[ulo_http::get("/both")]
     fn over_http(&self) -> String {
@@ -769,10 +769,10 @@ async fn frozen_ws(addr: SocketAddr) -> impl Sized {
 }
 
 /// `Counter.Count` as a flood: `up_to` numbers, every one ready, each a ten-byte varint.
-#[injectable]
+#[controller]
 struct Flood;
 
-#[routes]
+#[handlers]
 impl Flood {
     #[ulo_grpc::method(pb::counter::Count)]
     async fn count(&self, req: Grpc<pb::CountRequest>) -> impl futures_util::Stream<Item = Result<Number, CallError>> {

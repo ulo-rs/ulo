@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use http::StatusCode;
 use o1_support::{Call, start};
-use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, injectable, routes};
+use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, controller, handlers};
 use ulo_http::{Http, HttpBody, HttpCx, Path, Response};
 use ulo_transport::{CallError, Classify, Detail, Details, ErrorKind};
 
@@ -94,10 +94,10 @@ fn kind_named(name: &str) -> ErrorKind {
     }
 }
 
-#[injectable]
+#[controller]
 struct Faults;
 
-#[routes]
+#[handlers]
 impl Faults {
     #[ulo_http::get("/kind/{name}")]
     fn kind(&self, Path(name): Path<String>) -> Result<&'static str, CallError> {

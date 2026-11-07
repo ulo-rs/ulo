@@ -1,4 +1,4 @@
-use ulo::{Dep, injectable, routes};
+use ulo::{Dep, controller, handlers};
 use ulo_grpc::Message;
 
 use crate::greeter::Greeter;
@@ -7,12 +7,12 @@ mod pb {
     ulo_grpc::include_proto!("greeter.v1");
 }
 
-#[injectable]
+#[controller]
 pub struct GreeterController {
     greeter: Dep<Greeter>,
 }
 
-#[routes]
+#[handlers]
 impl GreeterController {
     #[ulo_grpc::method(pb::greeter::Greet)]
     fn greet(&self, request: Message<pb::GreetRequest>) -> pb::GreetReply {

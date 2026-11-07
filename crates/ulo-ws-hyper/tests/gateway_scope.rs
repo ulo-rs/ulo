@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use ulo::{BoxError, Controller, Dep, Ext, Guard, Module, ModuleDef, ModuleIdentity, Mount, injectable, routes};
+use ulo::{BoxError, Controller, Dep, Ext, Guard, Module, ModuleDef, ModuleIdentity, Mount, controller, handlers};
 use ulo_ws::{ConnectCx, Connection, ConnectionInfo, Frame, Gateway, GatewayConfig, GatewaySettings, Port, WsConnect, WsCx};
 
 use tokio_tungstenite::tungstenite::Message;
@@ -92,14 +92,14 @@ struct Once {
     id: u64,
 }
 
-#[injectable]
+#[controller]
 impl Once {
     fn new(built: Dep<Built>) -> Self {
         Once { id: built.0.once.fetch_add(1, Ordering::SeqCst) + 1 }
     }
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/once", port = own)]
 impl Once {
     #[ulo_ws::message("who")]
@@ -116,7 +116,7 @@ struct Each {
     tenant: &'static str,
 }
 
-#[injectable]
+#[controller]
 impl Each {
     fn new(built: Dep<Built>, tenant: Ext<Tenant>) -> Self {
         let mut built = built.0.each.lock().unwrap_or_else(PoisonError::into_inner);
@@ -125,7 +125,7 @@ impl Each {
     }
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/each", port = own, connect_guards(value = ConnectTag))]
 #[guards(value = MessageTag)]
 impl Each {
@@ -141,7 +141,7 @@ struct MessageOnly {
     tenant: &'static str,
 }
 
-#[injectable]
+#[controller]
 impl MessageOnly {
     fn new(built: Dep<Built>, tenant: Ext<Tenant>) -> Self {
         let mut built = built.0.message_only.lock().unwrap_or_else(PoisonError::into_inner);
@@ -150,7 +150,7 @@ impl MessageOnly {
     }
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/message-only", port = own)]
 #[guards(value = MessageTag)]
 impl MessageOnly {
@@ -167,14 +167,14 @@ struct Counted {
     id: u64,
 }
 
-#[injectable(execution)]
+#[controller(execution)]
 impl Counted {
     fn new(built: Dep<Built>) -> Self {
         Counted { id: built.0.counted.fetch_add(1, Ordering::SeqCst) + 1 }
     }
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/counted", port = own, refuse = handshake)]
 impl Counted {
     #[ulo_ws::message("who")]
@@ -189,7 +189,7 @@ struct Manual {
     connection: String,
 }
 
-#[injectable]
+#[controller]
 impl Manual {
     fn new(built: Dep<Built>, info: Dep<ConnectionInfo>) -> Self {
         Manual { id: built.0.manual.fetch_add(1, Ordering::SeqCst) + 1, connection: info.id().to_string() }

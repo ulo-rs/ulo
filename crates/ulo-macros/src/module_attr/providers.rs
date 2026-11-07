@@ -76,9 +76,13 @@
 //! walk over a role's contributions never reaches.
 //!
 //! A type that does not implement `Construct` fails at `provide::<T>()`; the generated call is
-//! spanned at the entry, where the error is reported.
+//! spanned at the entry, where the error is reported. A type entry, `T`, `T as dyn K`, `T @ Q` or
+//! an `into` item `T`, is first checked not to be a `#[controller]` type, and so is the type of a
+//! value entry, `expr`, `expr?` or an `into` item `value = ..`: a controller is listed under
+//! `controllers`, and only another controller injects it. A closure binding is not checked; what
+//! it builds is known only from its future's output.
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -311,29 +315,29 @@ impl ProviderEntry {
         match self {
             ProviderEntry::Provide { ty, qualifier } => {
                 let qualified = qualified(qualifier);
+                let refuse = refuse_controller(ty);
                 quote_spanned! {ty.span()=>
+                    #refuse
                     #m.provide::<#ty>()#qualified;
                 }
             }
             ProviderEntry::ProvideAs { ty, as_ty, qualifier } => {
                 let qualified = qualified(qualifier);
+                let refuse = refuse_controller(ty);
                 quote_spanned! {ty.span()=>
+                    #refuse
                     #m.provide::<#ty>().also_as::<#as_ty>(|a| a)#qualified;
                 }
             }
             ProviderEntry::TryValue { expr, qualifier } => {
                 let expr = unbraced(expr);
                 let qualified = qualified(qualifier);
-                quote_spanned! {expr.span()=>
-                    #m.try_value(#expr)#qualified;
-                }
+                refuse_controller_value(&expr, quote_spanned! {expr.span()=> #m.try_value(#expr)#qualified })
             }
             ProviderEntry::Value { expr, qualifier } => {
                 let expr = unbraced(expr);
                 let qualified = qualified(qualifier);
-                quote_spanned! {expr.span()=>
-                    #m.value(#expr)#qualified;
-                }
+                refuse_controller_value(&expr, quote_spanned! {expr.span()=> #m.value(#expr)#qualified })
             }
             ProviderEntry::With { key, scope, closure } => {
                 let closure = wrap_async(closure);
@@ -361,6 +365,36 @@ impl ProviderEntry {
                     #(#contributions)*
                 }
             }
+        }
+    }
+}
+
+/// `bind`, a value entry's `m.value(..)` or `m.try_value(..)`, followed by the check that the
+/// bound type is not a `#[controller]` type, as [`refuse_controller`] does for a type entry. The
+/// type is read off the `Handle` the call returns rather than off the expression, so an expression
+/// of the wrong type gets the one error the call reports.
+fn refuse_controller_value(expr: &Expr, bind: TokenStream) -> TokenStream {
+    let ulo = ulo();
+    let handle = Ident::new("handle", Span::mixed_site());
+    quote_spanned! {expr.span()=>
+        {
+            let #handle = #bind;
+            #[allow(unused_imports)]
+            use #ulo::__private::controller_entry::{ControllerArm as _, ProviderArm as _};
+            (&#ulo::__private::controller_entry::Probe::of_handle(&#handle)).__ulo_check_provider();
+        }
+    }
+}
+
+/// The check that `ty`, bound by a providers entry, is not a `#[controller]` type, spanned at the
+/// type so the refusal points there.
+fn refuse_controller(ty: &Type) -> TokenStream {
+    let ulo = ulo();
+    quote_spanned! {ty.span()=>
+        {
+            #[allow(unused_imports)]
+            use #ulo::__private::controller_entry::{ControllerArm as _, ProviderArm as _};
+            (&#ulo::__private::controller_entry::Probe::<#ty>::new()).__ulo_check_provider();
         }
     }
 }
@@ -394,16 +428,31 @@ impl Contribution {
         let ulo = ulo();
         let m = module_def_param();
         match self {
-            Contribution::Type(ty) => quote_spanned! {ty.span()=>
-                #m.contribute::<#into>().provide::<#ty>(|a| a);
-            },
+            Contribution::Type(ty) => {
+                let refuse = refuse_controller(ty);
+                quote_spanned! {ty.span()=>
+                    #refuse
+                    #m.contribute::<#into>().provide::<#ty>(|a| a);
+                }
+            }
             Contribution::Value(expr) => quote_spanned! {expr.span()=>
-                #m.contribute::<#into>().value(#ulo::__private::Arc::new(#expr));
+                #m.contribute::<#into>().value(#ulo::__private::Arc::new({
+                    let v = #expr;
+                    #[allow(unused_imports)]
+                    use #ulo::__private::controller_entry::{ControllerArm as _, ProviderArm as _};
+                    (&#ulo::__private::controller_entry::Probe::of(&v)).__ulo_check_provider();
+                    v
+                }));
             },
             Contribution::TryValue(expr) => quote_spanned! {expr.span()=>
                 #m.contribute::<#into>().try_value(::core::result::Result::map(
                     #expr,
-                    |v| -> #ulo::__private::Arc<#into> { #ulo::__private::Arc::new(v) },
+                    |v| -> #ulo::__private::Arc<#into> {
+                        #[allow(unused_imports)]
+                        use #ulo::__private::controller_entry::{ControllerArm as _, ProviderArm as _};
+                        (&#ulo::__private::controller_entry::Probe::of(&v)).__ulo_check_provider();
+                        #ulo::__private::Arc::new(v)
+                    },
                 ));
             },
             Contribution::With { scope, closure } => {

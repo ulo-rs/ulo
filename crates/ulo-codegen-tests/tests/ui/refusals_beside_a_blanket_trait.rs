@@ -6,7 +6,7 @@
 // per use, which rests on a supertrait bound and calls no method.
 use std::time::Duration;
 
-use ulo::{OnModuleDestroy, injectable, routes};
+use ulo::{OnModuleDestroy, controller, handlers, injectable};
 use ulo_codegen_tests::pb::{self, AddRequest, Number, Sum};
 use ulo_grpc::Message;
 use ulo_http::Timeout;
@@ -21,10 +21,10 @@ trait Blanket {
 
 impl<T: ?Sized> Blanket for T {}
 
-#[injectable]
+#[controller]
 struct Orders;
 
-#[routes]
+#[handlers]
 impl Orders {
     #[ulo_rpc::message("orders.get")]
     #[meta(Timeout::after(Duration::from_secs(5)))]
@@ -33,10 +33,10 @@ impl Orders {
     }
 }
 
-#[injectable]
+#[controller]
 struct Counter;
 
-#[routes]
+#[handlers]
 impl Counter {
     // `Add` takes an `AddRequest`.
     #[ulo_grpc::method(pb::counter::Add)]
@@ -45,10 +45,10 @@ impl Counter {
     }
 }
 
-#[injectable]
+#[controller]
 struct Replier;
 
-#[routes]
+#[handlers]
 impl Replier {
     // `Add` replies a `Sum`.
     #[ulo_grpc::method(pb::counter::Add)]

@@ -374,8 +374,9 @@ impl<'a> ModuleDef<'a> {
         Input::new(&mut *self.node)
     }
 
-    /// A controller: a `Construct` type whose handlers `C::mount` declares. With `Auto` scope it
-    /// is built per call when anything below it needs an execution.
+    /// A controller: a `Construct` type whose handlers `C::mount` declares, written with
+    /// `#[controller]` and a `#[handlers]` impl or by hand. With `Auto` scope it is built per call
+    /// when anything below it needs an execution.
     ///
     /// The handle sets a runtime prefix for every route and gateway path of the controller,
     /// `m.controller::<GraphqlEndpoint>().at(config.path.clone())` (transports DESIGN §2.5, X3);

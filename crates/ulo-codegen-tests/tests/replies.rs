@@ -11,7 +11,7 @@ use std::fmt;
 
 use futures_util::{Stream, StreamExt, stream};
 use tonic::{Code, Status};
-use ulo::{BoxError, Dep, ErrorHandler, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{BoxError, Dep, ErrorHandler, Module, ModuleDef, ModuleIdentity, controller, handlers, injectable};
 use ulo_codegen_tests::bare::{self, Word, bare_client::BareClient};
 use ulo_codegen_tests::probe::known_client::KnownClient;
 use ulo_codegen_tests::probe::shapes_client::ShapesClient;
@@ -37,10 +37,10 @@ impl fmt::Display for Refusal {
 
 impl Error for Refusal {}
 
-#[injectable]
+#[controller]
 struct KnownTypes;
 
-#[routes]
+#[handlers]
 impl KnownTypes {
     /// `google.protobuf.Empty` both ways: no message read, `()` answered.
     #[ulo_grpc::method(probe::known::Ping)]
@@ -59,10 +59,10 @@ impl KnownTypes {
     }
 }
 
-#[injectable]
+#[controller]
 struct BareService;
 
-#[routes]
+#[handlers]
 impl BareService {
     #[ulo_grpc::method(bare::bare::Echo)]
     fn echo(&self, word: Message<Word>) -> Word {
@@ -133,10 +133,10 @@ fn refused(err: &BoxError) -> bool {
     err.downcast_ref::<CallError>().and_then(|call| call.source_as::<Refusal>()).is_some()
 }
 
-#[injectable]
+#[controller]
 struct ShapesService;
 
-#[routes]
+#[handlers]
 impl ShapesService {
     #[ulo_grpc::method(probe::shapes::Watch)]
     fn watch(&self, req: Message<Ticks>) -> Response<impl Stream<Item = Result<Tick, Refusal>>> {

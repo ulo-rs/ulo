@@ -19,7 +19,7 @@ use std::time::Duration;
 use serde_json::json;
 use tokio::sync::{Semaphore, watch};
 use tokio_tungstenite::tungstenite::Message;
-use ulo::{Dep, Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{Dep, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_transport::Count;
 use ulo_ws::{Connection, DisconnectReason, Frame, MessagesRead, OnDisconnect, Payload, WsCx};
 
@@ -111,12 +111,12 @@ impl Turnstile {
 }
 
 /// Every message a turnstile's handler, the gateway's `max_inflight` left at its default.
-#[injectable]
+#[controller]
 struct Queue {
     turnstile: Dep<Turnstile>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/queue", port = own)]
 impl Queue {
     #[ulo_ws::message("pass")]
@@ -125,12 +125,12 @@ impl Queue {
     }
 }
 
-#[injectable]
+#[controller]
 struct Parallel {
     gate: Dep<Gate>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/parallel", port = own, max_inflight = Count::Max(2))]
 impl Parallel {
     #[ulo_ws::message("hold")]
@@ -148,12 +148,12 @@ impl Parallel {
     fn noop(&self) {}
 }
 
-#[injectable]
+#[controller]
 struct Strict {
     ended: Dep<Ended>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/strict", port = own, max_outbound = 1)]
 impl Strict {
     #[ulo_ws::message("burst")]
@@ -167,12 +167,12 @@ impl Strict {
     }
 }
 
-#[injectable]
+#[controller]
 struct Lossy {
     ended: Dep<Ended>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/lossy", port = own, max_outbound = 2, overflow = drop_oldest)]
 impl Lossy {
     #[ulo_ws::message("burst")]
@@ -186,12 +186,12 @@ impl Lossy {
     }
 }
 
-#[injectable]
+#[controller]
 struct Small {
     ended: Dep<Ended>,
 }
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/small", port = own, message_limit = 128, max_connections = 1)]
 impl Small {
     #[ulo_ws::message("echo")]

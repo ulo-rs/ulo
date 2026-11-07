@@ -17,7 +17,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use tonic::codegen::Service;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tonic::{Code, Status};
-use ulo::{App, Dep, ExecOptions, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, Dep, ExecOptions, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers, injectable};
 use ulo_codegen_tests::probe::clock_client::ClockClient;
 use ulo_codegen_tests::probe::known_client::KnownClient;
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
@@ -28,12 +28,12 @@ use support::{Running, within};
 /// The name a server answers `Upper` with, so a caller can tell two servers apart.
 struct ServerName(&'static str);
 
-#[injectable]
+#[controller]
 struct Known {
     name: Dep<ServerName>,
 }
 
-#[routes]
+#[handlers]
 impl Known {
     #[ulo_grpc::method(probe::known::Upper)]
     fn upper(&self, text: Message<String>) -> String {
@@ -58,12 +58,12 @@ impl Ran {
     }
 }
 
-#[injectable]
+#[controller]
 struct Clock {
     ran: Dep<Ran>,
 }
 
-#[routes]
+#[handlers]
 impl Clock {
     /// The time left before the call's deadline, in whole milliseconds rounded up; `0` for none.
     #[ulo_grpc::method(probe::clock::Quick)]

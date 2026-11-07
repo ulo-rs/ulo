@@ -18,7 +18,7 @@ use futures::channel::mpsc;
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use futures_util::stream;
 use tokio::sync::{Notify, oneshot, watch};
-use ulo::{App, BoxFuture, Dep, Module, ModuleDef, ModuleIdentity, Signal, Timer, injectable, routes};
+use ulo::{App, BoxFuture, Dep, Module, ModuleDef, ModuleIdentity, Signal, Timer, controller, handlers};
 use ulo_http::{Bytes, HttpBody, Response};
 use ulo_net::BoundListener;
 use ulo_net::rustls::ServerConfig;
@@ -97,12 +97,12 @@ fn connection() -> (Pipe, Pipe) {
     (Pipe { read: to_client_read, write: to_server_write }, Pipe { read: to_server_read, write: to_client_write })
 }
 
-#[injectable]
+#[controller]
 struct Flood {
     entered: Dep<Entered>,
 }
 
-#[routes]
+#[handlers]
 impl Flood {
     /// An endless stream of 64 KiB chunks, every one ready.
     #[ulo_http::get("/flood")]

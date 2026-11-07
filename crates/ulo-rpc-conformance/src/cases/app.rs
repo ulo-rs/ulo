@@ -21,7 +21,7 @@ use ulo::app::{Bound as Serving, Connected};
 use ulo::{
     App, AppBuilder, AppHandle, BoundAddr, BoxError, Bound, CancelReason, Dep, ErrorHandler, ExecOptions, Execution, ExecutionRef, Guard,
     Module, ModuleDef, ModuleIdentity, ModuleRef, Shape, Shutdown, ShutdownError, Signal, StartupError, TaskEnd, Timer,
-    ValueHandle, injectable, routes,
+    ValueHandle, controller, handlers, injectable,
 };
 use ulo_rpc::{
     CallHeaders, Capabilities, Data, Inbound, Link, Payload, Reply, Rpc, RpcClient, RpcClientModule, RpcCx, RpcError,
@@ -379,12 +379,12 @@ impl Guard<Rpc> for Deny {
 
 /// The handlers wait on the app's clock, the scenario's runtime, taken as a `Dep<dyn Timer>`
 /// parameter.
-#[injectable]
+#[controller]
 pub(crate) struct CoreController {
     probe: Dep<Probe>,
 }
 
-#[routes]
+#[handlers]
 impl CoreController {
     #[ulo_rpc::message("conformance.add")]
     async fn add(&self, req: Payload<Add>, _end: Dep<AddEnd>) -> Result<Sum, Refusal> {
@@ -511,12 +511,12 @@ impl CoreController {
     }
 }
 
-#[injectable]
+#[controller]
 pub(crate) struct StreamController {
     probe: Dep<Probe>,
 }
 
-#[routes]
+#[handlers]
 impl StreamController {
     #[ulo_rpc::message("conformance.count")]
     async fn count(&self, n: Payload<u32>) -> impl Stream<Item = Result<u32, Refusal>> {
@@ -630,10 +630,10 @@ impl StreamController {
     }
 }
 
-#[injectable]
+#[controller]
 pub(crate) struct BinaryController;
 
-#[routes]
+#[handlers]
 impl BinaryController {
     #[ulo_rpc::message("conformance.bytes")]
     async fn bytes(&self, data: Payload<Bytes>) -> Result<Bytes, Refusal> {

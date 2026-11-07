@@ -14,7 +14,7 @@ use tonic_health::ServingStatus;
 use tonic_health::pb::health_check_response::ServingStatus as Wire;
 use tonic_health::pb::health_client::HealthClient;
 use tonic_health::pb::{HealthCheckRequest, HealthCheckResponse};
-use ulo::{Module, ModuleDef, ModuleIdentity, injectable, routes};
+use ulo::{Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
 use ulo_grpc::{GrpcHealth, Message};
 
@@ -23,10 +23,10 @@ use support::{Running, within};
 const KNOWN: &str = "codegen.probe.v1.Known";
 const VAULT: &str = "codegen.probe.v1.Vault";
 
-#[injectable]
+#[controller]
 struct Known;
 
-#[routes]
+#[handlers]
 impl Known {
     #[ulo_grpc::method(probe::known::Upper)]
     fn upper(&self, text: Message<String>) -> String {
@@ -34,10 +34,10 @@ impl Known {
     }
 }
 
-#[injectable]
+#[controller]
 struct Vault;
 
-#[routes]
+#[handlers]
 impl Vault {
     #[ulo_grpc::method(probe::vault::Open)]
     fn open(&self, req: Message<Ticks>) -> Tick {

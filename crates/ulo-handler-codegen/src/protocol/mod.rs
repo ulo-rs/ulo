@@ -1,7 +1,7 @@
-//! The hidden `__handler` protocol between `#[routes]` and a transport's handler attribute
+//! The hidden `__handler` protocol between `#[handlers]` and a transport's handler attribute
 //! (transports DESIGN §2.1, §2.5, X1, X2).
 //!
-//! `#[routes]` expands first. For each handler it removes the method's enhancer and `#[meta]`
+//! `#[handlers]` expands first. For each handler it removes the method's enhancer and `#[meta]`
 //! attributes and appends, after the transport attribute,
 //!
 //! ```text
@@ -23,13 +23,13 @@
 //!
 //! 1. `const __ULO_KEY_<name>: &'static str = <Tr as ::ulo::Transport>::KEY;` (X1).
 //! 2. `const __ULO_CHECKS_<name>: () = { .. };`, the pairwise body-consumer assertions, `()` when
-//!    the handler has fewer than two parameters. `#[routes]` reads it from a free
+//!    the handler has fewer than two parameters. `#[handlers]` reads it from a free
 //!    `const _: () = <Ctrl>::__ULO_CHECKS_<name>;`, which evaluates it unconditionally, or on a
 //!    generic controller from `Controller::mount`, which evaluates it when `mount` is instantiated.
 //! 3. `fn __ulo_mount_<name><__UloV0, ..>(m: &mut ::ulo::Mount<'_>, shared: &::ulo::__private::Shared<(Arc<__UloV0>, ..)>)`,
 //!    one type parameter per impl-level `value` entry in the order written across the impl's
 //!    enhancer attributes, each bounded by its role for this transport when the entry applies to
-//!    it and unbounded otherwise (X2). `#[routes]`'s `Controller::mount` builds the `Shared` once
+//!    it and unbounded otherwise (X2). `#[handlers]`'s `Controller::mount` builds the `Shared` once
 //!    and calls every mount function with it.
 //!
 //! [`crate::emit::MountFn`] writes all three.
@@ -87,13 +87,13 @@ impl ToTokens for MetaExpr {
 }
 
 impl HandlerTokens {
-    /// The attribute `#[routes]` appends: `#[::ulo::__private::__handler(..)]`.
+    /// The attribute `#[handlers]` appends: `#[::ulo::__private::__handler(..)]`.
     pub fn to_attribute(&self) -> TokenStream {
         let meta = self.to_meta();
         quote!(#[#meta])
     }
 
-    /// The attribute's contents, `::ulo::__private::__handler(..)`, for `#[routes]` to place
+    /// The attribute's contents, `::ulo::__private::__handler(..)`, for `#[handlers]` to place
     /// inside a `cfg_attr`.
     pub fn to_meta(&self) -> TokenStream {
         let tokens = self;
@@ -171,8 +171,8 @@ fn keyword(input: ParseStream<'_>, name: &str) -> syn::Result<()> {
     Ok(())
 }
 
-/// Removes the `__handler` attribute `#[routes]` appended to a handler and parses it. `None` when
-/// the method carries none, which the transport attribute reports with [`outside_routes`].
+/// Removes the `__handler` attribute `#[handlers]` appended to a handler and parses it. `None` when
+/// the method carries none, which the transport attribute reports with [`outside_handlers`].
 pub fn take_handler_attr(attrs: &mut Vec<Attribute>) -> syn::Result<Option<HandlerTokens>> {
     let Some(position) = attrs.iter().position(|attr| attr.path().segments.last().is_some_and(|s| s.ident == "__handler")) else {
         return Ok(None);
@@ -214,15 +214,15 @@ pub fn meta_exprs(attr: &Attribute, gates: &[Attribute]) -> syn::Result<Vec<Meta
 }
 
 /// The error a transport attribute named `attr_name` reports when [`take_handler_attr`] finds no
-/// `__handler`: it sits outside a `#[routes]` impl, or inside one on a method where `#[routes]`
+/// `__handler`: it sits outside a `#[handlers]` impl, or inside one on a method where `#[handlers]`
 /// took another attribute for the transport attribute and gated the hand-off on that one's
 /// `cfg_attr`.
-pub fn outside_routes(attr_name: &str) -> syn::Error {
+pub fn outside_handlers(attr_name: &str) -> syn::Error {
     syn::Error::new(
         proc_macro2::Span::call_site(),
         format!(
-            "#[{attr_name}] goes on a method of a `#[routes]` impl, which hands it the handler's enhancers; \
-             if this method is in one, `#[routes]` took another attribute for its transport attribute: \
+            "#[{attr_name}] goes on a method of a `#[handlers]` impl, which hands it the handler's enhancers; \
+             if this method is in one, `#[handlers]` took another attribute for its transport attribute: \
              a method has one, and when every attribute macro on it sits inside `cfg_attr`, the first is taken"
         ),
     )

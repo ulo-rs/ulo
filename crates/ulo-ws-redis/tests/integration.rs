@@ -33,7 +33,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use ulo::app::Bound as Serving;
-use ulo::{App, AppHandle, Dep, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, AppHandle, Dep, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_rpc_conformance::relay::{reachable, unshadowed};
 use ulo_rpc_conformance::{report, startup_failed};
 use tracing::field::{Field, Visit};
@@ -61,10 +61,10 @@ const BOOT: Duration = Duration::from_secs(60);
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-#[injectable]
+#[controller]
 struct Members;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/members", port = own)]
 impl Members {
     /// Answered once the connection's connect phase, its join included, has finished.

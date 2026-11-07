@@ -1,12 +1,12 @@
 use futures_util::StreamExt;
-use ulo::{injectable, routes};
+use ulo::{controller, handlers};
 use ulo_codegen_tests::pb::{self, AddRequest, Sum};
 use ulo_grpc::Streaming;
 
-#[injectable]
+#[controller]
 struct Counter;
 
-#[routes]
+#[handlers]
 impl Counter {
     // `Add` takes one request message.
     #[ulo_grpc::method(pb::counter::Add)]

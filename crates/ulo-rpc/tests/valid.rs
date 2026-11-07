@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use ulo::{App, AppHandle, Dep, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, AppHandle, Dep, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_rpc::{Payload, RpcClient, RpcError};
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
@@ -32,12 +32,12 @@ impl Ran {
     }
 }
 
-#[injectable]
+#[controller]
 struct Forms {
     ran: Dep<Ran>,
 }
 
-#[routes]
+#[handlers]
 impl Forms {
     #[ulo_rpc::message("forms.signup")]
     fn signup(&self, form: Valid<Payload<Signup>>) -> String {

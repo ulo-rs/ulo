@@ -25,7 +25,7 @@ use std::time::Duration;
 use futures_util::{Stream, StreamExt, stream};
 use serde_json::json;
 use tokio::sync::{Notify, mpsc};
-use ulo::{BoxError, CancelReason, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, StreamOutcome, injectable, routes};
+use ulo::{BoxError, CancelReason, ExecutionRef, Interceptor, Module, ModuleDef, ModuleIdentity, Next, StreamOutcome, controller, handlers};
 use ulo_transport::{Classify, ErrorKind};
 use ulo_ws::{Frame, Reply, Ws, WsCx, WsModule};
 
@@ -107,10 +107,10 @@ impl Interceptor<Ws> for AnswerStream {
     }
 }
 
-#[injectable]
+#[controller]
 struct Streams;
 
-#[routes]
+#[handlers]
 #[ulo_ws::gateway(path = "/streams", port = own)]
 impl Streams {
     #[ulo_ws::message("replaced")]

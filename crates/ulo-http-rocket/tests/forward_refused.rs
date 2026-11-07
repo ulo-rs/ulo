@@ -12,7 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use ulo::{App, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_http::embed::Miss;
 use ulo_http::middleware::Next;
 use ulo_http::{Cors, HttpBody, Middleware, PreDispatch, Request, Response, UpgradeHandler, Upgrades};
@@ -34,10 +34,10 @@ impl Middleware for Record {
     }
 }
 
-#[injectable]
+#[controller]
 struct Api;
 
-#[routes]
+#[handlers]
 impl Api {
     #[ulo_http::get("/api/{name}")]
     fn named(&self) -> &'static str {
@@ -286,10 +286,10 @@ async fn nested_at_a_prefix_the_app_owns_what_it_routes_under_the_prefix() {
     host.stop().await;
 }
 
-#[injectable]
+#[controller]
 struct Unreachable;
 
-#[routes]
+#[handlers]
 impl Unreachable {
     #[ulo_http::get("/files/a%5Cb")]
     fn encoded(&self) -> &'static str {

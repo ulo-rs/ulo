@@ -15,7 +15,7 @@ use futures_util::StreamExt;
 use http::StatusCode;
 use http_body::Body as _;
 use o1_support::{Call, PATIENCE, start};
-use ulo::{ModuleDef, injectable, routes};
+use ulo::{ModuleDef, controller, handlers};
 use ulo_http::{Event, EventId, EventName, LastEventId, Sse};
 use ulo_transport::{CallError, ErrorKind};
 
@@ -25,10 +25,10 @@ fn events(events: Vec<Event>) -> Events {
     Sse::new(stream::iter(events))
 }
 
-#[injectable]
+#[controller]
 struct Feeds;
 
-#[routes]
+#[handlers]
 impl Feeds {
     #[ulo_http::get("/framing")]
     fn framing(&self) -> Events {

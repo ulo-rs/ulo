@@ -17,7 +17,7 @@ use tokio::net::TcpStream;
 use tokio::sync::Notify;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
-use ulo::{App, Module, ModuleDef, ModuleIdentity, Signal, injectable, routes};
+use ulo::{App, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
 use ulo_net::Tls;
 use ulo_net::rustls::pki_types::ServerName;
 use ulo_net::rustls::{self, ClientConfig};
@@ -59,10 +59,10 @@ fn release() -> &'static Notify {
     RELEASE.get_or_init(Notify::new)
 }
 
-#[injectable]
+#[controller]
 struct Holder;
 
-#[routes]
+#[handlers]
 impl Holder {
     #[ulo_rpc::message("late_goaway.hold")]
     async fn hold(&self) -> Result<u32, Never> {

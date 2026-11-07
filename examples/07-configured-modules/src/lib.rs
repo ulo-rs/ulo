@@ -1,4 +1,4 @@
-use ulo::{App, AppBuilder, Dep, Keyed, Module, injectable, module, routes};
+use ulo::{App, AppBuilder, Dep, Keyed, Module, controller, handlers, module};
 
 pub struct AppConfig {
     pub name: &'static str,
@@ -29,14 +29,14 @@ impl StoreModule {
 pub struct Primary;
 pub struct Replica;
 
-#[injectable]
+#[controller]
 pub struct LedgerController {
     config: Dep<AppConfig>,
     primary: Dep<Store, Primary>,
     replica: Dep<Store, Replica>,
 }
 
-#[routes]
+#[handlers]
 impl LedgerController {
     #[ulo_http::get("/config")]
     fn config(&self) -> &'static str {

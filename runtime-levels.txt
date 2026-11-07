@@ -188,7 +188,7 @@ ulo-reexport-ws               runtime-free           --all-features
 ulo-reexport-rpc              runtime-free           --all-features
 ulo-reexport-grpc             tokio-bound
 
-# Each writes the attributes `#[routes]` and `#[injectable]` remove, with `ulo` renamed in the
+# Each writes the attributes `#[handlers]`, `#[controller]` and `#[injectable]` remove, with `ulo` renamed in the
 # manifest and with no `ulo` in it; its tree is `ulo` and `ulo-http`.
 ulo-reexport-renamed          runtime-free
 ulo-reexport-facade           runtime-free
