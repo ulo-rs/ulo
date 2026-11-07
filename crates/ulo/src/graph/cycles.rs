@@ -1,4 +1,6 @@
-//! Import cycles (step 1) and dependency cycles (step 4), each printed as a full path.
+//! Self-imports (step 1) and dependency cycles (step 4), each printed as a full path. An import
+//! cycle through other modules is not refused: an import is a visibility fact, and nothing the
+//! graph orders by reads the import graph as acyclic (§8.2, §9.2).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -7,12 +9,13 @@ use crate::graph::register::Registry;
 use crate::graph::{BindingId, Graph};
 use crate::module::ModuleName;
 
-/// Every import cycle the registration walk met, as the path of module names. `names` is the
+/// Every self-import the registration walk met, its path the module's name twice. `names` is the
 /// registry's, by node.
-pub(crate) fn import_cycles(registry: &Registry, names: &[ModuleName], errors: &mut Vec<WiringError>) {
-    for cycle in &registry.import_cycles {
-        let path = cycle.iter().filter_map(|&node| names.get(node).cloned()).collect();
-        errors.push(WiringError::ImportCycle { path });
+pub(crate) fn self_imports(registry: &Registry, names: &[ModuleName], errors: &mut Vec<WiringError>) {
+    for &node in &registry.self_imports {
+        if let Some(name) = names.get(node) {
+            errors.push(WiringError::ImportCycle { path: vec![name.clone(), name.clone()] });
+        }
     }
 }
 

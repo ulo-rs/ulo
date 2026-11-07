@@ -251,7 +251,7 @@ fn add_timer_module(registry: &mut Registry, timer: &Arc<dyn Timer>, runtime: Op
 
 /// Appends the registry's modules to `graph` in collection order, assigning ids and roles,
 /// requalifying keyed exports, mounting controllers, and freezing metadata. Along the way it
-/// reports import cycles and setting names a module writes twice (step 1) and, for step 2, the
+/// reports self-imports and setting names a module writes twice (step 1) and, for step 2, the
 /// `try_value` failures (redacted), a replacement's missing exports, a replacement whose original
 /// nothing imports, a second replacement of one original, the test plan's overrides as it applies
 /// them, and qualified contributions and single bindings under a role key. `load` numbers the modules of a lazy load.
@@ -267,7 +267,7 @@ fn freeze(
     steps: &mut Steps,
 ) -> Declared {
     let names = registry.names(Some(&*graph));
-    cycles::import_cycles(&registry, &names, &mut steps.modules);
+    cycles::self_imports(&registry, &names, &mut steps.modules);
 
     // Before the differing settings are rendered, which print their values redacted.
     for text in registry.nodes.iter().flat_map(|node| &node.secrets) {
@@ -822,8 +822,8 @@ fn declare_transport_inputs(graph: &mut Graph, decl: &HandlerDecl, seen: &mut Ha
 }
 
 /// Step 1: re-exports a module cannot see unambiguously, exports of keys a module does not bind,
-/// and inputs declared inside a keyed module. Import cycles are reported by `freeze`, which
-/// still has the registry.
+/// and inputs declared inside a keyed module. Self-imports are reported by `freeze`, which still
+/// has the registry.
 fn check_modules(graph: &Graph, declared: &Declared, errors: &mut Vec<WiringError>) {
     for (module, export) in &declared.exports {
         let key = export.key.name(BindingKind::Single);

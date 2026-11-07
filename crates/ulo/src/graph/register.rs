@@ -23,8 +23,8 @@ pub(crate) struct Registry {
     pub(crate) imports: Vec<Vec<Import>>,
     /// Depth-first post-order over imports from the root: collection order.
     pub(crate) post_order: Vec<usize>,
-    /// Each import cycle, as the node path from the first module back to itself.
-    pub(crate) import_cycles: Vec<Vec<usize>>,
+    /// Each module that imports an identity equal to its own, once per such import.
+    pub(crate) self_imports: Vec<usize>,
     /// The modules a test's `replace_module` swapped out, each with what it would have exported.
     pub(crate) replaced: Vec<Replaced>,
     /// Each later registration of an identity already claimed whose settings differ from the
@@ -166,8 +166,8 @@ struct Walk<'a> {
     registry: Registry,
     base: Option<&'a Graph>,
     plan: Option<&'a TestPlan>,
-    /// The nodes on the import path being walked, root first: an import of one of them closes
-    /// a cycle.
+    /// The nodes on the import path being walked, root first: the last one is the importer, and
+    /// the nearest keyed one is what a newly registered module inherits.
     path: Vec<usize>,
 }
 
@@ -179,7 +179,7 @@ impl<'a> Walk<'a> {
                 by_identity: HashMap::new(),
                 imports: Vec::new(),
                 post_order: Vec::new(),
-                import_cycles: Vec::new(),
+                self_imports: Vec::new(),
                 replaced: Vec::new(),
                 differing: Vec::new(),
                 repeats: Vec::new(),
@@ -232,12 +232,11 @@ impl<'a> Walk<'a> {
     fn enter(&mut self, identity: ModuleIdentity, module: &dyn Module, site: Site) -> Import {
         if let Some(&node) = self.registry.by_identity.get(&identity) {
             let found = Import::New(node);
-            // An import closing a cycle is one mistake, reported as the cycle: the settings it
-            // would differ in are not compared.
-            if let Some(start) = self.path.iter().position(|&on_path| on_path == node) {
-                let mut cycle = self.path[start..].to_vec();
-                cycle.push(node);
-                self.registry.import_cycles.push(cycle);
+            // A module importing itself is one mistake, reported as the self-import: the settings
+            // it would differ in are not compared. An import closing a cycle through other
+            // modules links to the module like any later import of an identity, settings compared.
+            if self.path.last() == Some(&node) {
+                self.registry.self_imports.push(node);
                 return found;
             }
             let claimed = &self.registry.nodes[node];
@@ -247,14 +246,15 @@ impl<'a> Walk<'a> {
             return found;
         }
 
-        // The identity is claimed before `register` runs, so a module importing itself, directly
-        // or through others, meets its own node and closes a cycle instead of registering again.
+        // The identity is claimed before `register` runs, so an import closing a cycle, a module
+        // importing itself among them, meets the node already claimed instead of registering again.
         let index = self.registry.nodes.len();
         let mut node = ModuleNode::new(identity.clone());
         node.settings = module.settings();
         node.site = site;
         // Every module on the path has registered and been pushed already, its `keyed` set, so the
-        // nearest keyed one is known here.
+        // nearest keyed one is known here. A module in an import cycle reads the path the walk
+        // reached it by first, as a module two importers share does (`ModuleDef::qualifier`).
         node.inherited_keyed = self.path.iter().rev().find_map(|&ancestor| self.registry.nodes[ancestor].keyed);
         module.register(&mut ModuleDef::new(&mut node));
         let imports = std::mem::take(&mut node.imports);

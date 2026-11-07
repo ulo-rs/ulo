@@ -1,4 +1,4 @@
-//! Section 10.1 step 1, the module graph: import cycles, re-exports, exports of unbound keys,
+//! Section 10.1 step 1, the module graph: self-imports, re-exports, exports of unbound keys,
 //! inputs declared by keyed modules, a keyed module keyed again and two registrations of one
 //! identity with different settings. Each test makes `wire()` fail with one `WiringError` variant
 //! and asserts the variant and its fields.
@@ -24,27 +24,14 @@ struct Primary;
 
 trait Repo: Send + Sync {}
 
+/// Planted break: `enter` linking a self-import like an import closing a longer cycle.
 #[test]
-fn an_import_cycle_is_refused_with_its_path() {
-    let root = Mod::<A>::new(|m| m.import(Mod::<B>::new(|m| m.import(Mod::<A>::bare()))));
-    let errors = wire_err(root);
-
-    let path = entry!(errors, WiringError::ImportCycle { path } => path.iter().map(|n| n.to_string()).collect::<Vec<_>>());
-    assert_eq!(path, [mod_name::<A>(), mod_name::<B>(), mod_name::<A>()]);
-    assert_eq!(errors.len(), 1, "a cycle is one entry and nothing else:\n{errors}");
-}
-
-#[test]
-fn a_three_module_cycle_and_a_module_importing_itself_are_refused() {
-    // A -> B -> C -> A
-    let root = Mod::<A>::new(|m| m.import(Mod::<B>::new(|m| m.import(Mod::<C>::new(|m| m.import(Mod::<A>::bare()))))));
-    let errors = wire_err(root);
-    let path = entry!(errors, WiringError::ImportCycle { path } => path.iter().map(|n| n.to_string()).collect::<Vec<_>>());
-    assert_eq!(path, [mod_name::<A>(), mod_name::<B>(), mod_name::<C>(), mod_name::<A>()]);
-
+fn a_module_importing_itself_is_refused_naming_it_twice() {
     let errors = wire_err(Mod::<A>::new(|m| m.import(Mod::<A>::bare())));
     let path = entry!(errors, WiringError::ImportCycle { path } => path.iter().map(|n| n.to_string()).collect::<Vec<_>>());
     assert_eq!(path, [mod_name::<A>(), mod_name::<A>()]);
+    assert_eq!(errors.len(), 1, "the self-import and nothing else:\n{errors}");
+    assert!(errors.to_string().contains(&format!("{} imports itself", mod_name::<A>())), "{errors}");
 }
 
 #[test]
@@ -556,19 +543,33 @@ impl Module for SelfImporting {
     }
 }
 
-/// An import that closes a cycle and differs in its settings is one mistake, reported once as the
-/// cycle. Planted break: `enter` comparing settings before returning on a cycle.
+/// A self-import that differs in its settings is one mistake, reported once as the self-import.
+/// Planted break: `enter` comparing settings before returning on a self-import.
 #[test]
 fn a_self_import_with_other_settings_is_reported_as_the_cycle_alone() {
     let errors = wire_err(SelfImporting { knob: 1, next: Some(2), through: false });
     let path = entry!(errors, WiringError::ImportCycle { path } => path.iter().map(|n| n.to_string()).collect::<Vec<_>>());
     assert_eq!(path, ["SelfImporting", "SelfImporting"]);
     assert_eq!(errors.len(), 1, "the cycle and nothing else:\n{errors}");
+}
 
+/// An import closing a cycle through another module is a later registration of an identity like
+/// any other, so other settings are `DifferingSettings` and the cycle is not an entry. Planted
+/// break: `enter` returning before the comparison for every import closing a cycle.
+#[test]
+fn an_import_closing_a_cycle_with_other_settings_is_refused_as_differing_settings() {
     let errors = wire_err(SelfImporting { knob: 1, next: Some(2), through: true });
-    let path = entry!(errors, WiringError::ImportCycle { path } => path.iter().map(|n| n.to_string()).collect::<Vec<_>>());
-    assert_eq!(path, ["SelfImporting".to_owned(), mod_name::<B>(), "SelfImporting".to_owned()]);
-    assert_eq!(errors.len(), 1, "a cycle through another module is the cycle alone too:\n{errors}");
+    let (module, first, second, settings) = entry!(errors, WiringError::DifferingSettings { module, first, second, settings } =>
+        (module.to_string(), first.clone(), second.clone(), sides(settings)));
+    assert_eq!(module, "SelfImporting");
+    assert!(matches!(first, ModuleSite::Root), "the first registration is the root: {first:?}");
+    assert!(
+        matches!(&second, ModuleSite::Import { importer, .. } if importer.to_string() == mod_name::<B>()),
+        "the second is the import written in {}: {second:?}",
+        mod_name::<B>()
+    );
+    assert_eq!(settings, [("knob", Some("1".to_owned()), Some("2".to_owned()))]);
+    assert_eq!(errors.len(), 1, "the differing settings and nothing else:\n{errors}");
 }
 
 /// A setting value holding a secret the graph registered is printed redacted, and kept whole in
