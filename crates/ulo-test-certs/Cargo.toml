@@ -7,8 +7,10 @@ description = "Test certificates generated at run time for the Ulo crates' TLS t
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-# A dev-dependency of the crates whose tests serve TLS, and of nothing else. Cargo strips
-# dev-dependencies when publishing them, so this never needs a crates.io release.
+# A dev-dependency of the crates whose tests serve TLS, and a dependency of `ulo-grpc-interop`,
+# whose `certs DIR` writes the interop job's TLS certificates with it. Cargo strips
+# dev-dependencies when publishing, and `ulo-grpc-interop` is `publish = false`, so this never
+# needs a crates.io release.
 publish = false
 
 [dependencies]

@@ -3,12 +3,13 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use futures_core::Stream;
 use tonic::Status;
-use tonic::metadata::{Ascii, MetadataKey, MetadataMap, MetadataValue};
+use tonic::metadata::MetadataMap;
 use ulo::{AppHandle, ExecutionRef, Ext, Extensions, Inputs, LookupError, MountedHandler, Timer, Transport};
 use ulo_http::HttpBody;
 use ulo_transport::{CallError, ExtractError, FromCall};
 
 use crate::dispatch;
+use crate::metadata::MetadataEntry;
 
 /// The gRPC transport, key `"grpc"`: one execution per call. `#[guards(grpc = ..)]` scopes an entry
 /// to its handlers. Its inputs, [`GrpcMetadata`] and [`PeerAddr`], are seeded into every call's
@@ -196,31 +197,74 @@ pub struct PeerAddr(pub SocketAddr);
 
 /// A reply message with reply metadata: `Response::new(user).metadata("x-cache", "miss")`. Wraps a
 /// reply stream the same way, `Response::new(stream)`, for a streaming method's reply headers.
+///
+/// [`metadata`](Self::metadata) and [`metadata_entry`](Self::metadata_entry) write the reply's
+/// headers, its initial metadata; [`trailer`](Self::trailer) and
+/// [`trailer_entry`](Self::trailer_entry) its trailers, the trailing metadata written beside
+/// `grpc-status` when the reply ends. A unary reply's trailers follow its message. A stream's are
+/// set when the reply is built and written when the stream ends on its own: after its last item,
+/// or with the status of an `Err` item, beside that status's own metadata. A stream the server
+/// ends, at the deadline, at the drain's end or after a panic, ends with the status alone.
+///
+/// ```
+/// use ulo_grpc::{MetadataEntry, MetadataError, Response};
+///
+/// let reply = Response::new(())
+///     .metadata("x-cache", "miss")
+///     .trailer("x-rows", "12")
+///     .trailer_entry(MetadataEntry::binary("x-digest-bin", vec![0x00, 0xff])?);
+/// # let _ = reply;
+/// # Ok::<(), MetadataError>(())
+/// ```
 #[derive(Debug)]
 pub struct Response<T> {
     pub(crate) message: T,
     pub(crate) metadata: MetadataMap,
+    pub(crate) trailers: MetadataMap,
 }
 
 impl<T> Response<T> {
     pub fn new(message: T) -> Self {
-        Response { message, metadata: MetadataMap::new() }
+        Response { message, metadata: MetadataMap::new(), trailers: MetadataMap::new() }
     }
 
-    /// One ASCII metadata entry on the reply's headers; a key or value that is not valid ASCII
-    /// metadata is dropped and logged at `warn`. A key written twice carries both values.
+    /// One ASCII entry on the reply's headers, built as [`MetadataEntry::ascii`] builds it; a key
+    /// or value it refuses, a reserved name among them, is dropped and logged at `warn`. A key
+    /// written twice carries both values.
     pub fn metadata(mut self, key: &'static str, value: &str) -> Self {
-        match (MetadataKey::<Ascii>::from_bytes(key.as_bytes()), MetadataValue::<Ascii>::try_from(value)) {
-            (Ok(name), Ok(value)) => {
-                self.metadata.append(name, value);
-            }
-            _ => tracing::warn!(key, "reply metadata dropped: the key or the value is not valid ASCII metadata"),
-        }
+        append_or_warn(&mut self.metadata, key, value, "reply metadata");
+        self
+    }
+
+    /// One entry on the reply's headers, ASCII or binary. A key written twice carries both values.
+    pub fn metadata_entry(mut self, entry: MetadataEntry) -> Self {
+        entry.append_to(&mut self.metadata);
+        self
+    }
+
+    /// One ASCII entry on the reply's trailers, built as [`MetadataEntry::ascii`] builds it; a key
+    /// or value it refuses, a reserved name among them, is dropped and logged at `warn`. A key
+    /// written twice carries both values.
+    pub fn trailer(mut self, key: &'static str, value: &str) -> Self {
+        append_or_warn(&mut self.trailers, key, value, "reply trailer");
+        self
+    }
+
+    /// One entry on the reply's trailers, ASCII or binary. A key written twice carries both values.
+    pub fn trailer_entry(mut self, entry: MetadataEntry) -> Self {
+        entry.append_to(&mut self.trailers);
         self
     }
 
     pub fn into_inner(self) -> T {
         self.message
+    }
+}
+
+fn append_or_warn(map: &mut MetadataMap, key: &'static str, value: &str, what: &'static str) {
+    match MetadataEntry::ascii(key, value) {
+        Ok(entry) => entry.append_to(map),
+        Err(error) => tracing::warn!(key, %error, "{what} dropped"),
     }
 }
 
@@ -236,7 +280,7 @@ impl<T: prost::Message + Default + Send + 'static> IntoGrpcReply for T {
     type Message = T;
 
     fn into_grpc_reply(self) -> Reply {
-        dispatch::encode_one(self, MetadataMap::new())
+        dispatch::encode_one(self, MetadataMap::new(), MetadataMap::new())
     }
 }
 
@@ -244,7 +288,7 @@ impl<T: prost::Message + Default + Send + 'static> IntoGrpcReply for Response<T>
     type Message = T;
 
     fn into_grpc_reply(self) -> Reply {
-        dispatch::encode_one(self.message, self.metadata)
+        dispatch::encode_one(self.message, self.metadata, self.trailers)
     }
 }
 
@@ -263,7 +307,7 @@ where
     type Message = <S::Item as IntoGrpcItem>::Message;
 
     fn into_grpc_stream(self, cx: &GrpcCx) -> Reply {
-        dispatch::encode_stream(self, MetadataMap::new(), cx)
+        dispatch::encode_stream(self, MetadataMap::new(), MetadataMap::new(), cx)
     }
 }
 
@@ -275,12 +319,14 @@ where
     type Message = <S::Item as IntoGrpcItem>::Message;
 
     fn into_grpc_stream(self, cx: &GrpcCx) -> Reply {
-        dispatch::encode_stream(self.message, self.metadata, cx)
+        dispatch::encode_stream(self.message, self.metadata, self.trailers, cx)
     }
 }
 
 /// One item of a reply stream: a message, or an error whose kind survives into the error handlers
-/// on the late path, since it converts into a `CallError`.
+/// on the late path, since it converts into a `CallError`. An item ending the stream with a
+/// `tonic::Status` of its own, its trailing metadata included, is
+/// [`from_status(status)`](crate::from_status).
 pub trait IntoGrpcItem: Send + 'static {
     type Message: prost::Message + Default + Send + 'static;
     fn into_grpc_item(self) -> Result<Self::Message, CallError>;

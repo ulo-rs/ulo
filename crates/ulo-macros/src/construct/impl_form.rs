@@ -15,7 +15,7 @@ use ulo_handler_codegen::restore::restore_item;
 use crate::construct::{ConstructArgs, Kind};
 use crate::shared::attrs;
 use crate::shared::dependencies::{self, DependencyLabel, DependencySpec};
-use crate::shared::{ConstructImpl, editor, ulo};
+use crate::shared::{ConstructImpl, combine, editor, ulo};
 
 /// The impl as written, minus `#[construct]`, followed by the `Construct` impl for its self type and
 /// the hidden import of each `#[construct]` removed (`crate::shared::editor`).
@@ -30,14 +30,17 @@ pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemImpl, origin
         ));
     }
     let ulo = ulo();
-    let written: Vec<syn::Ident> = item
+    let written: Vec<syn::Path> = item
         .items
         .iter()
         .filter_map(|impl_item| if let ImplItem::Fn(method) = impl_item { Some(&method.attrs) } else { None })
         .flatten()
         .filter(|attr| attrs::is(attr, "construct"))
-        .filter_map(|attr| attr.path().segments.last().map(|segment| segment.ident.clone()))
+        .map(|attr| attr.path().clone())
         .collect();
+    if let Some(e) = combine(written.iter().filter_map(|path| attrs::check_marker(path).err()).collect()) {
+        return Err(e);
+    }
     let imports = editor::marker_imports(&written);
     let ctor = find_constructor(&mut item)?;
     let dependency_specs = params(ctor)?;

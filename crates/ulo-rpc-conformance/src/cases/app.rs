@@ -663,7 +663,9 @@ pub(crate) struct GarbledStreamController;
 impl ulo::Construct for GarbledStreamController {
     type Scope = ulo::scope::Auto;
 
-    fn dependencies(_: &mut ulo::Dependencies) {}
+    fn dependencies(d: &mut ulo::Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &ulo::Resolver<'_>) -> Result<Self, ulo::ConstructError> {
         Ok(GarbledStreamController)
@@ -676,7 +678,9 @@ async fn garbled_stream(cx: RpcCx) -> Result<Reply, BoxError> {
     Ok(Reply::Many(items))
 }
 
-impl ulo::Controller for GarbledStreamController {
+impl ulo::Controller for GarbledStreamController {}
+
+impl ulo::Handlers for GarbledStreamController {
     fn mount(m: &mut ulo::Mount<'_>) {
         m.handler(
             ulo::HandlerSpec::<Rpc, _>::new("garbled_stream", ulo_rpc::RpcHandler::message(garbled_stream))

@@ -1,10 +1,10 @@
 //! Example 06 without a macro: `Construct` by hand for the providers and the controller,
-//! `Controller::mount` for its route, `Module::register` for the modules.
+//! `Controller` as its mark, `Handlers::mount` for its route, `Module::register` for the modules.
 
 use ulo::scope::Auto;
 use ulo::{
-    App, AppBuilder, BoxError, Construct, ConstructError, Controller, Dep, Dependencies, HandlerSpec, Module, ModuleDef,
-    ModuleIdentity, Mount, Resolver,
+    App, AppBuilder, BoxError, Construct, ConstructError, Controller, Dep, Dependencies, HandlerSpec, Handlers, Module,
+    ModuleDef, ModuleIdentity, Mount, Resolver,
 };
 use ulo_http::{Http, HttpCx, HttpHandler, IntoReply, Method, Response};
 
@@ -84,6 +84,7 @@ impl Construct for InvoiceController {
     type Scope = Auto;
 
     fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
         d.field::<Dep<InvoiceService>>("invoices");
     }
 
@@ -92,8 +93,11 @@ impl Construct for InvoiceController {
     }
 }
 
+/// What `#[controller]` writes beside the `Construct` impl: the mark of a controller.
+impl Controller for InvoiceController {}
+
 /// What `#[ulo_http::get("/")]` on `open` writes: one GET handler at `/`, named after the method.
-impl Controller for InvoiceController {
+impl Handlers for InvoiceController {
     fn mount(m: &mut Mount<'_>) {
         m.handler(HandlerSpec::<Http, _>::new("open", HttpHandler::new(Method::GET, open)).route("/"));
     }

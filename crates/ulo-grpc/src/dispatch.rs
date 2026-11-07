@@ -96,6 +96,7 @@ use ulo_http::{ConnInfo, HttpBody, Request, Response};
 use ulo_transport::{Admission, CallError, ConnectionAdmission, Permit, span};
 
 use crate::handler::HandlerFn;
+use crate::metadata;
 use crate::pre_dispatch::StageCx;
 use crate::status::{self, code_for_http};
 use crate::trace;
@@ -107,16 +108,10 @@ const GRPC_ACCEPT_ENCODING: HeaderName = HeaderName::from_static("grpc-accept-en
 const GRPC_TIMEOUT: HeaderName = HeaderName::from_static("grpc-timeout");
 const GRPC_RETRY_PUSHBACK_MS: HeaderName = HeaderName::from_static("grpc-retry-pushback-ms");
 
-/// The headers a reply's metadata never sets besides the `grpc-` family: HTTP/2's own, which the
-/// reply writes.
-const RESERVED: [&str; 3] = ["te", "content-type", "content-length"];
-
-/// Whether a reply's metadata may not carry `name`. Every name beginning `grpc-` is the protocol's:
-/// gRPC over HTTP/2 reserves the prefix, and the reply and its trailers write the ones in use.
-/// Header names are lowercase by the time they get here, so the prefix is compared as written.
+/// Whether a reply's metadata may not carry `name`, by [`metadata::reserved`]. Header names are
+/// lowercase by the time they get here, so the prefix is compared as written.
 fn reserved(name: &HeaderName) -> bool {
-    let name = name.as_str();
-    name.starts_with("grpc-") || RESERVED.contains(&name)
+    metadata::reserved(name.as_str())
 }
 
 /// A service the server answers beside the handlers, health and reflection, called with the
@@ -418,9 +413,13 @@ where
 }
 
 /// One message as a reply: status 200, `application/grpc`, `metadata` in the headers, the message
-/// in one data frame, and `grpc-status: 0` in the trailers.
-pub(crate) fn encode_one<T: prost::Message + Default + Send + 'static>(message: T, metadata: MetadataMap) -> Reply {
-    let messages = futures_util::stream::once(futures_util::future::ready(Ok::<T, Status>(message)));
+/// in one data frame, and `grpc-status: 0` in the trailers beside `trailers`.
+pub(crate) fn encode_one<T: prost::Message + Default + Send + 'static>(message: T, metadata: MetadataMap, trailers: MetadataMap) -> Reply {
+    use futures_util::StreamExt as _;
+    // tonic's server body writes the trailers of an `Err` item as they are, and of a clean end as
+    // `grpc-status: 0` alone, so trailing metadata travels on an OK status ending the items.
+    let ended = (!trailers.is_empty()).then(|| Err(ok_with(trailers)));
+    let messages = futures_util::stream::once(futures_util::future::ready(Ok::<T, Status>(message))).chain(futures_util::stream::iter(ended));
     let body = EncodeBody::new_server(
         ProstEncoder::<T>::new(BufferSettings::default()),
         messages,
@@ -435,8 +434,9 @@ pub(crate) fn encode_one<T: prost::Message + Default + Send + 'static>(message: 
 /// An `Err` item runs the matched handler's error handlers through `ulo::dispatch_late` and,
 /// unless they end the stream with `EndStream`, is written as the trailers `grpc-status`,
 /// `grpc-message` and `grpc-status-details-bin`, which end the stream: once data frames are sent,
-/// the status travels in the trailers.
-pub(crate) fn encode_stream<S>(stream: S, metadata: MetadataMap, cx: &GrpcCx) -> Reply
+/// the status travels in the trailers. `trailers` are written in the trailers of a stream that
+/// ends on its own, cleanly or at an `Err` item.
+pub(crate) fn encode_stream<S>(stream: S, metadata: MetadataMap, trailers: MetadataMap, cx: &GrpcCx) -> Reply
 where
     S: Stream + Send + 'static,
     S::Item: IntoGrpcItem,
@@ -444,7 +444,15 @@ where
     // A stream built once the deadline has passed is the error handlers' answer to it, which
     // `single` reads under the grace; the deadline ends only a stream it finds running.
     let settled = cx.exec().cancel_reason() == Some(CancelReason::Deadline);
-    let items = LateItems { stream: Box::pin(stream), cx: cx.clone(), state: Late::Streaming, cancelled: None, waiting: false, settled };
+    let items = LateItems {
+        stream: Box::pin(stream),
+        cx: cx.clone(),
+        state: Late::Streaming,
+        cancelled: None,
+        waiting: false,
+        settled,
+        trailers: (!trailers.is_empty()).then_some(trailers),
+    };
     let body = EncodeBody::new_server(
         ProstEncoder::<<S::Item as IntoGrpcItem>::Message>::new(BufferSettings::default()),
         items,
@@ -474,9 +482,24 @@ fn with_metadata(body: tonic::body::Body, metadata: MetadataMap) -> Reply {
     written(reply)
 }
 
-/// `status` as a trailers-only reply.
+/// `status` as a trailers-only reply, its metadata screened as a handler's.
 pub(crate) fn status_reply(status: Status) -> Reply {
-    written(status.into_http())
+    written(status::screened(status).into_http())
+}
+
+/// An OK status carrying `trailers`, the item that ends a reply whose trailers carry metadata.
+fn ok_with(trailers: MetadataMap) -> Status {
+    Status::with_metadata(Code::Ok, "", trailers)
+}
+
+/// `status` with `trailers` appended to its metadata, after its own.
+fn with_trailers(mut status: Status, trailers: MetadataMap) -> Status {
+    let mut all = std::mem::take(status.metadata_mut()).into_headers();
+    for (name, value) in &trailers.into_headers() {
+        all.append(name.clone(), value.clone());
+    }
+    *status.metadata_mut() = MetadataMap::from_headers(all);
+    status
 }
 
 /// In a reply the framework built, a health or reflection reply among them, before any
@@ -927,21 +950,38 @@ struct LateItems<S> {
     /// The execution was cancelled, by neither the drain nor the deadline: the stream runs on
     /// unwatched.
     settled: bool,
+    /// The reply's trailers, taken by the end of a stream that ends on its own.
+    trailers: Option<MetadataMap>,
 }
 
 enum Late {
     Streaming,
     /// An `Err` item in the error handlers, with the canonical form of the original kept for an
-    /// error handler answering `Ok`.
-    Recovering { original: CallError, outcome: BoxFuture<'static, LateOutcome> },
+    /// error handler answering `Ok`, and the `tonic::Status` it carries as `from_status` built it,
+    /// which is what the original is sent as.
+    Recovering { original: CallError, carried: Option<Status>, outcome: BoxFuture<'static, LateOutcome> },
     Done,
 }
 
 impl<S> LateItems<S> {
-    /// The status that ends the stream for `error`; its non-zero trailers report the stream cut
-    /// off.
-    fn failed(&self, error: BoxError) -> Status {
-        status::render(error, self.cx.exec())
+    /// The status that ends the stream for `error`, with the reply's trailers; its non-zero
+    /// trailers report the stream cut off.
+    fn failed(&mut self, error: BoxError) -> Status {
+        let status = status::render(error, self.cx.exec());
+        match self.trailers.take() {
+            Some(trailers) => with_trailers(status, trailers),
+            None => status,
+        }
+    }
+
+    /// The item ending a stream that ran to its end: an OK status carrying the reply's trailers,
+    /// `None` when it has none, which tonic's body ends with `grpc-status: 0`.
+    fn finished(&mut self) -> Option<Result<<S::Item as IntoGrpcItem>::Message, Status>>
+    where
+        S: Stream,
+        S::Item: IntoGrpcItem,
+    {
+        self.trailers.take().map(|trailers| Err(ok_with(trailers)))
     }
 
     /// The status that ends the stream for the execution's cancellation: the drain's and the
@@ -1013,6 +1053,7 @@ where
                             Ok(message) => return Poll::Ready(Some(Ok(message))),
                             Err(error) => {
                                 let original = error.summary();
+                                let carried = status::carried(&error).cloned();
                                 match this.cx.inner.handler.clone() {
                                     Some(handler) => {
                                         let exec = this.cx.exec().clone();
@@ -1020,7 +1061,7 @@ where
                                         let outcome: BoxFuture<'static, LateOutcome> = Box::pin(async move {
                                             ulo::dispatch_late(&handler, &exec, &call_cx, BoxError::from(error)).await
                                         });
-                                        this.state = Late::Recovering { original, outcome };
+                                        this.state = Late::Recovering { original, carried, outcome };
                                     }
                                     None => {
                                         this.state = Late::Done;
@@ -1031,15 +1072,21 @@ where
                         },
                         None => {
                             this.state = Late::Done;
-                            return Poll::Ready(None);
+                            return Poll::Ready(this.finished());
                         }
                     }
                 }
-                Late::Recovering { original, outcome } => {
+                Late::Recovering { original, carried, outcome } => {
+                    let as_sent = |original: &CallError, carried: &mut Option<Status>| -> BoxError {
+                        match carried.take() {
+                            Some(status) => Box::new(status),
+                            None => Box::new(original.summary()),
+                        }
+                    };
                     let error: BoxError = match ready!(outcome.as_mut().poll(cx)) {
                         LateOutcome::End => {
                             this.state = Late::Done;
-                            return Poll::Ready(None);
+                            return Poll::Ready(this.finished());
                         }
                         LateOutcome::Render(error) => error,
                         LateOutcome::Ignored => {
@@ -1047,9 +1094,9 @@ where
                                 handler = this.cx.inner.handler.as_ref().map(|handler| handler.name()),
                                 "an error handler answered `Ok` to an error raised after the reply stream began; its reply is dropped and the original error is written"
                             );
-                            Box::new(original.summary())
+                            as_sent(original, carried)
                         }
-                        _ => Box::new(original.summary()),
+                        _ => as_sent(original, carried),
                     };
                     this.state = Late::Done;
                     return Poll::Ready(Some(Err(this.failed(error))));

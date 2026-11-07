@@ -1,0 +1,5 @@
+error[E0407]: method `mount` is not a member of trait `Controller`
+  --> tests/ui/controller_mount_by_hand.rs:22:5
+   |
+22 |     fn mount(_: &mut Mount<'_>) {}
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not a member of trait `Controller`

@@ -9,10 +9,10 @@
 //! controllers, the exports. Imports and providers keep the order written, which is part of
 //! collection order.
 //!
-//! A `controllers` entry must implement `ulo::Controller`, the mark of a controller, which the
-//! entry's `m.controller::<T>()` call, spanned at the entry, requires. An entry under `providers`
-//! must not implement it, which the probe in `ulo::__private::controller_entry` checks at the
-//! entry. A controller may be exported for another controller to read, so `exports` is not
+//! A `controllers` entry must implement `ulo::Handlers`, and through it `ulo::Controller`, the
+//! mark of a controller, which the entry's `m.controller::<T>()` call, spanned at the entry,
+//! requires. An entry under `providers` must not implement `Controller`, which the probe in
+//! `ulo::__private::controller_entry` checks at the entry. A controller may be exported for another controller to read, so `exports` is not
 //! checked.
 
 mod args;

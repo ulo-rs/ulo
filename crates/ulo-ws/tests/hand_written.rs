@@ -10,8 +10,9 @@ use futures_util::stream::{self, Stream};
 use serde_json::json;
 use ulo::scope::Auto;
 use ulo::{
-    App, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Module, ModuleDef, ModuleIdentity, Mount,
-    PrepareEntry, PrepareError, Resolver, Shape, StartupError, TypeName, Unreached, controller, handlers,
+    App, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Handlers, Module, ModuleDef,
+    ModuleIdentity, Mount, PrepareEntry, PrepareError, Resolver, Shape, StartupError, TypeName, Unreached, controller,
+    handlers,
 };
 use ulo_ws::{
     CallError, ConnectCx, ConnectRefused, Connection, ErrorKind, Frame, FromCall, Gateway, GatewayConfig, GatewayHooks,
@@ -58,7 +59,9 @@ struct Hand;
 impl Construct for Hand {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Hand)
@@ -92,7 +95,9 @@ async fn count(cx: WsCx) -> Result<Reply, BoxError> {
     Ok(cx.reply_stream(stream::iter((1..=n).map(Ok::<_, CallError>))))
 }
 
-impl Controller for Hand {
+impl Controller for Hand {}
+
+impl Handlers for Hand {
     fn mount(m: &mut Mount<'_>) {
         m.once::<Self>(<Self as GatewayConfig>::mount_gateway);
         m.handler(HandlerSpec::<Ws, _>::new("echo", WsHandler::new(echo)).route("echo"));
@@ -155,7 +160,9 @@ struct Eventless;
 impl Construct for Eventless {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Eventless)
@@ -176,7 +183,9 @@ async fn nothing(_cx: WsCx) -> Result<Reply, BoxError> {
     Ok(Reply::None)
 }
 
-impl Controller for Eventless {
+impl Controller for Eventless {}
+
+impl Handlers for Eventless {
     fn mount(m: &mut Mount<'_>) {
         m.once::<Self>(<Self as GatewayConfig>::mount_gateway);
         m.handler(HandlerSpec::<Ws, _>::new("lost", WsHandler::new(nothing)));
@@ -209,14 +218,18 @@ struct Gatewayless;
 impl Construct for Gatewayless {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Gatewayless)
     }
 }
 
-impl Controller for Gatewayless {
+impl Controller for Gatewayless {}
+
+impl Handlers for Gatewayless {
     fn mount(m: &mut Mount<'_>) {
         m.handler(HandlerSpec::<Ws, _>::new("echo", WsHandler::new(nothing)).route("echo"));
     }
@@ -227,7 +240,9 @@ struct Valueless;
 impl Construct for Valueless {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Valueless)
@@ -244,7 +259,9 @@ impl GatewayConfig for Valueless {
     }
 }
 
-impl Controller for Valueless {
+impl Controller for Valueless {}
+
+impl Handlers for Valueless {
     fn mount(m: &mut Mount<'_>) {
         m.once::<Self>(<Self as GatewayConfig>::mount_gateway);
         m.handler(HandlerSpec::<Ws, _>::new("five", 5u32).route("five"));
@@ -282,7 +299,9 @@ struct Raw;
 impl Construct for Raw {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Raw)
@@ -303,7 +322,9 @@ impl Gateway for Raw {
     async fn on_message(&self, _conn: &Connection, _frame: Frame) {}
 }
 
-impl Controller for Raw {
+impl Controller for Raw {}
+
+impl Handlers for Raw {
     fn mount(m: &mut Mount<'_>) {
         <Self as Gateway>::mount(m);
         m.handler(HandlerSpec::<Ws, _>::new("echo", WsHandler::new(nothing)).route("echo"));

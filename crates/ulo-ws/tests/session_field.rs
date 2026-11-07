@@ -7,8 +7,8 @@ mod support;
 use serde_json::json;
 use ulo::scope::Auto;
 use ulo::{
-    BoxError, Construct, ConstructError, Controller, Dependencies, FailureReason, HandlerSpec, LookupError, Module, ModuleDef,
-    ModuleIdentity, Mount, Permanent, Resolver, UndeclaredRead, injectable,
+    BoxError, Construct, ConstructError, Controller, Dependencies, FailureReason, HandlerSpec, Handlers, LookupError,
+    Module, ModuleDef, ModuleIdentity, Mount, Permanent, Resolver, UndeclaredRead, injectable,
 };
 use ulo_ws::{GatewayConfig, GatewayHooks, GatewaySettings, Reply, Session, SessionFactory, Ws, WsCx, WsHandler, WsModule};
 
@@ -47,7 +47,9 @@ macro_rules! gateway {
         struct $name;
         impl Construct for $name {
             type Scope = Auto;
-            fn dependencies(_: &mut Dependencies) {}
+            fn dependencies(d: &mut Dependencies) {
+                d.mark::<Self>();
+            }
             async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
                 Ok($name)
             }
@@ -63,7 +65,9 @@ macro_rules! gateway {
                 GatewayHooks::<Self>::new().mount(m);
             }
         }
-        impl Controller for $name {
+        impl Controller for $name {}
+
+        impl Handlers for $name {
             fn mount(m: &mut Mount<'_>) {
                 m.once::<Self>(<Self as GatewayConfig>::mount_gateway);
                 m.handler(HandlerSpec::<Ws, _>::new("probe", WsHandler::new(probe)).route("probe"));

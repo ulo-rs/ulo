@@ -1,0 +1,11 @@
+error: write the marker bare, or as `ulo::injectable`; under a renamed dependency, alias it at the crate root, `extern crate <name> as ulo;`
+ --> tests/ui/marker_qualifier_on_a_field.rs:8:7
+  |
+8 |     #[wrong::injectable(default)]
+  |       ^^^^^^^^^^^^^^^^^
+
+error: write the marker bare, or as `ulo::controller`; under a renamed dependency, alias it at the crate root, `extern crate <name> as ulo;`
+  --> tests/ui/marker_qualifier_on_a_field.rs:14:7
+   |
+14 |     #[framework::controller(default)]
+   |       ^^^^^^^^^^^^^^^^^^^^^

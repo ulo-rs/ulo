@@ -13,7 +13,7 @@ use crate::response::Response;
 /// every guard admits.
 pub(crate) type HandlerFn = Arc<dyn Fn(HttpCx) -> BoxFuture<'static, Result<Response, BoxError>> + Send + Sync>;
 
-/// One HTTP handler: the value a controller's [`mount`](ulo::Controller::mount) passes to
+/// One HTTP handler: the value a controller's [`mount`](ulo::Handlers::mount) passes to
 /// [`HandlerSpec::new`](ulo::HandlerSpec::new), which the server reads back when it prepares. The
 /// method attributes (`#[ulo_http::get("/users/{id}")]` and the rest) build this value, and a
 /// controller written without them builds it by hand.
@@ -35,7 +35,7 @@ pub(crate) type HandlerFn = Arc<dyn Fn(HttpCx) -> BoxFuture<'static, Result<Resp
 ///
 /// ```
 /// use ulo::scope::Auto;
-/// use ulo::{Construct, ConstructError, Controller, Dependencies, HandlerSpec, Mount, Resolver};
+/// use ulo::{Construct, ConstructError, Controller, Dependencies, Handlers, HandlerSpec, Mount, Resolver};
 /// use ulo_http::{FromCall, Http, HttpCx, HttpHandler, IntoReply, Method, Path, Response};
 ///
 /// struct Greeter;
@@ -43,7 +43,9 @@ pub(crate) type HandlerFn = Arc<dyn Fn(HttpCx) -> BoxFuture<'static, Result<Resp
 /// impl Construct for Greeter {
 ///     type Scope = Auto;
 ///
-///     fn dependencies(_: &mut Dependencies) {}
+///     fn dependencies(d: &mut Dependencies) {
+///         d.mark::<Self>();
+///     }
 ///
 ///     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
 ///         Ok(Greeter)
@@ -62,7 +64,9 @@ pub(crate) type HandlerFn = Arc<dyn Fn(HttpCx) -> BoxFuture<'static, Result<Resp
 ///     Ok(greeter.greet(&name).into_reply(&cx)?)
 /// }
 ///
-/// impl Controller for Greeter {
+/// impl Controller for Greeter {}
+///
+/// impl Handlers for Greeter {
 ///     fn mount(m: &mut Mount<'_>) {
 ///         let handler = HttpHandler::new(Method::GET, greet).reads_path::<String>();
 ///         m.handler(HandlerSpec::<Http, _>::new("greet", handler).route("/greet/{name}"));

@@ -441,6 +441,7 @@ macro_rules! typed_controller {
             type Scope = $scope;
 
             fn dependencies(d: &mut ulo::Dependencies) {
+                d.mark::<Self>();
                 d.field::<ulo::Dep<$crate::common::Log>>("log");
             }
 
@@ -451,7 +452,9 @@ macro_rules! typed_controller {
             }
         }
 
-        impl ulo::Controller for $name {
+        impl ulo::Controller for $name {}
+
+        impl ulo::Handlers for $name {
             fn mount($m: &mut ulo::Mount<'_>) {
                 $body
             }

@@ -14,6 +14,8 @@ publish = false
 ulo = { path = "../ulo" }
 ulo-grpc = { path = "../ulo-grpc" }
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# `certs DIR`: the CA and server certificate of the runner's TLS pass, generated per run.
+ulo-test-certs = { path = "../ulo-test-certs" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 futures-util.workspace = true
 # What the generated code names.

@@ -2,7 +2,6 @@
 //! that depend on a missing piece skip only the affected edges, so one missing binding does not
 //! hide unrelated errors.
 
-use std::any::type_name;
 use std::collections::{HashMap, HashSet};
 use std::panic::Location;
 use std::sync::Arc;
@@ -221,7 +220,7 @@ fn add_timer_module(registry: &mut Registry, timer: &Arc<dyn Timer>, runtime: Op
     let key = Key::of::<dyn Timer, ()>();
     node.bindings.push(BindingRecord::new(
         key,
-        type_name::<dyn Timer>(),
+        TypeName::of::<dyn Timer>(),
         BindingKind::Single,
         ScopeKind::Singleton,
         Recipe::Value(instance_of::<dyn Timer>(Arc::clone(timer))),
@@ -233,7 +232,7 @@ fn add_timer_module(registry: &mut Registry, timer: &Arc<dyn Timer>, runtime: Op
         let key = Key::of::<dyn Runtime, ()>();
         node.bindings.push(BindingRecord::new(
             key,
-            type_name::<dyn Runtime>(),
+            TypeName::of::<dyn Runtime>(),
             BindingKind::Single,
             ScopeKind::Singleton,
             Recipe::Value(instance_of::<dyn Runtime>(Arc::clone(runtime))),
@@ -690,7 +689,7 @@ fn replace_recipe(node: &mut ModuleNode, position: usize, ov: &Override) {
     record.also.retain(|also| also.key.with_qualifier(qualifier.id, qualifier.name) != ov.key);
     let mut split = BindingRecord::new(
         unqualified(ov.key),
-        ov.key.type_name().full(),
+        ov.key.type_name(),
         BindingKind::Single,
         scope,
         ov.recipe.clone(),
@@ -729,7 +728,7 @@ fn apply_collections(registry: &mut Registry, collections: Vec<CollectionOverrid
             // `into_primary`.
             let mut record = BindingRecord::new(
                 unqualified(co.key),
-                co.key.type_name().full(),
+                co.key.type_name(),
                 BindingKind::Collection,
                 ScopeKind::Singleton,
                 Recipe::Value(item),
@@ -927,18 +926,39 @@ fn check_bindings(graph: &Graph, declared: &Declared, errors: &mut Vec<WiringErr
         }
     }
 
+    // A type registered as a controller in any module and bound as a provider in any module,
+    // reported once per provider registration where either side is new to this wiring. An alias
+    // builds nothing of its own and is not a provider registration.
+    let mut controllers: HashMap<std::any::TypeId, BindingId> = HashMap::new();
+    for binding in graph.bindings.iter().filter(|binding| binding.record.controller) {
+        controllers.entry(binding.record.built.id()).or_insert(binding.id);
+    }
+    for binding in &graph.bindings {
+        let record = &binding.record;
+        if record.controller || matches!(record.recipe, Recipe::Alias { .. }) {
+            continue;
+        }
+        let new = binding.id.0 as usize >= declared.first_binding;
+        let controller_at = match controllers.get(&record.built.id()) {
+            Some(&controller) if new || controller.0 as usize >= declared.first_binding => {
+                let controller = graph.binding(controller);
+                Some((graph.module_name(controller.origin), controller.record.location))
+            }
+            Some(_) => continue,
+            None if new && record.controller_type.is_some() => None,
+            None => continue,
+        };
+        errors.push(WiringError::ControllerProvided {
+            key: graph.key_name(binding.id),
+            controller: record.controller_type.unwrap_or(record.built),
+            module: graph.module_name(binding.origin),
+            at: record.location,
+            controller_at,
+        });
+    }
+
     for binding in graph.bindings.iter().skip(declared.first_binding) {
         let record = &binding.record;
-        if let Some(controller) = record.controller_type
-            && !record.controller
-        {
-            errors.push(WiringError::ControllerProvided {
-                key: graph.key_name(binding.id),
-                controller,
-                module: graph.module_name(binding.origin),
-                at: record.location,
-            });
-        }
         if let Recipe::Alias { target } = &record.recipe {
             match graph.lookup(binding.origin, *target) {
                 Some(Visible::Binding(_)) => {}

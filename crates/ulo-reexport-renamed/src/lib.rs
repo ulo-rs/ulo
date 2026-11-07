@@ -3,7 +3,9 @@
 //!
 //! Beside the item, each macro writes a hidden import of every such attribute, so an editor
 //! resolves it. That import, like the rest of the generated code, names `::ulo`, which the
-//! `extern crate` alias below provides.
+//! `extern crate` alias below provides. A marker is written bare or through that alias,
+//! `#[ulo::guards]`; `#[framework::guards]` is refused at the attribute, since `ulo` is the one
+//! qualifier the generated code names.
 //!
 //! The crate also re-exports `framework` whole, so `ulo-reexport-facade` reaches the macros
 //! through it without listing `ulo` at all.
@@ -14,7 +16,7 @@ pub use framework::*;
 
 #[cfg(test)]
 mod markers {
-    use framework::{BoxError, Construct, Controller, Guard, controller, handlers, injectable};
+    use framework::{BoxError, Construct, Guard, Handlers, controller, handlers, injectable};
     use ulo_http::{Http, HttpCx};
 
     struct Deny;
@@ -36,7 +38,7 @@ mod markers {
     #[meta(1u8)]
     impl Orders {
         #[ulo_http::get("/orders")]
-        #[framework::guards(value = Deny)]
+        #[ulo::guards(value = Deny)]
         fn list(&self) -> String {
             self.seen.to_string()
         }
@@ -54,7 +56,7 @@ mod markers {
 
     #[test]
     fn the_markers_compile_under_the_renamed_crate() {
-        fn controller<T: Controller>() {}
+        fn controller<T: Handlers>() {}
         fn constructs<T: Construct>() {}
         controller::<Orders>();
         constructs::<Orders>();

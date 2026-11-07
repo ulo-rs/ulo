@@ -1,0 +1,29 @@
+error: write the marker bare, or as `ulo::guards`; under a renamed dependency, alias it at the crate root, `extern crate <name> as ulo;`
+  --> tests/ui/marker_qualifier_on_handlers.rs:22:3
+   |
+22 | #[wrong::guards(value = Allow)]
+   |   ^^^^^^^^^^^^^
+
+error: write the marker bare, or as `ulo::interceptors`; under a renamed dependency, alias it at the crate root, `extern crate <name> as ulo;`
+  --> tests/ui/marker_qualifier_on_handlers.rs:30:7
+   |
+30 |     #[a::b::interceptors()]
+   |       ^^^^^^^^^^^^^^^^^^
+
+error: write the marker bare, or as `ulo::error_handlers`; under a renamed dependency, alias it at the crate root, `extern crate <name> as ulo;`
+  --> tests/ui/marker_qualifier_on_handlers.rs:31:7
+   |
+31 |     #[framework::error_handlers()]
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: write the marker bare, or as `ulo::meta`; under a renamed dependency, alias it at the crate root, `extern crate <name> as ulo;`
+  --> tests/ui/marker_qualifier_on_handlers.rs:32:7
+   |
+32 |     #[wrng::meta(2u8)]
+   |       ^^^^^^^^^^
+
+error: write the marker bare, or as `ulo::guards`; under a renamed dependency, alias it at the crate root, `extern crate <name> as ulo;`
+  --> tests/ui/marker_qualifier_on_handlers.rs:33:23
+   |
+33 |     #[cfg_attr(all(), framework::guards(value = Allow))]
+   |                       ^^^^^^^^^^^^^^^^^

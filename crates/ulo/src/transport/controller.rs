@@ -17,17 +17,24 @@ use crate::transport::metadata::Metadata;
 use crate::transport::{AnyErrorHandler, AnyGuard, AnyInterceptor, Transport};
 use crate::type_name::TypeName;
 
-/// A dispatch target: a `Construct` type whose handlers `mount` declares, one per transport
-/// route, message pattern, gRPC method or WebSocket event.
+/// The mark of a dispatch target: a `Construct` type a transport reaches through the handlers
+/// its [`Handlers`] impl declares, one per transport route, message pattern, gRPC method or
+/// WebSocket event. The trait has no methods; what a controller mounts is [`Handlers::mount`],
+/// and `Handlers: Controller`.
 ///
-/// The trait is what makes a type a controller. [`ModuleDef::controller`](crate::ModuleDef::controller)
-/// and `#[module]`'s `controllers` take a type that implements it, `#[handlers]` refuses a type that
-/// does not, and a controller bound as a provider is refused: by `#[module]`'s `providers` at
-/// compile time, and by `wire()` for a `provide` call naming a type whose `Construct` impl
-/// `#[injectable]` or `#[controller]` wrote.
+/// The trait is what makes a type a controller. `#[handlers]` refuses a type that does not
+/// implement it, and a controller bound as a provider is refused: by `#[module]`'s `providers` at
+/// compile time, and by `wire()` for a provider registration of a type the graph also registers
+/// as a controller, or whose `Construct::dependencies` records it with
+/// [`Dependencies::mark`](crate::Dependencies::mark) (`WiringError::ControllerProvided`). Neither
+/// `wire()` check sees a type the graph never registers as a controller when it is bound by
+/// value, by a factory closure or through a `Construct` impl that does not mark it; a
+/// contribution by value of an `Arc<dyn K>`, whose record names the collection's type alone; or
+/// a generic type whose `Controller` impl covers some instantiations only, which the macros'
+/// probe reads as unmarked where the type is generic.
 ///
-/// `#[controller]` writes the impl, whose `mount` mounts the type's [`Handlers`]. A controller
-/// written by hand implements it with its own `mount`.
+/// `#[controller]` writes the impl. A controller written by hand implements `Construct`, this
+/// trait and [`Handlers`], and calls `d.mark::<Self>()` in its `dependencies`.
 ///
 /// A controller takes part in the container like any binding. With `Auto` scope it is a
 /// singleton if nothing below it needs an execution and is built per call otherwise.
@@ -36,22 +43,24 @@ use crate::type_name::TypeName;
     label = "a controller is declared with `#[controller]`",
     note = "write `#[controller]` on `{Self}`, in place of `#[injectable]` where that is written: `#[injectable]` declares a \
             type the container injects into others, and a controller is reached through its transport; a controller \
-            written by hand implements `ulo::Controller` and mounts its handlers in `Controller::mount`"
+            written by hand implements `ulo::Controller` as its mark and declares its handlers in `ulo::Handlers::mount`"
 )]
-pub trait Controller: Construct {
-    fn mount(m: &mut Mount<'_>);
-}
+pub trait Controller: Construct {}
 
-/// The handlers of a `#[controller]` type, which the `Controller` impl `#[controller]` writes
-/// mounts. `#[handlers]` writes the impl. A `#[controller]` type that mounts its handlers by hand,
-/// a WebSocket gateway implementing `Gateway` among them, implements it itself. A type that
-/// implements `Controller` by hand needs no `Handlers` impl, and a `#[handlers]` impl on it mounts
-/// only when its own `mount` calls `<Self as Handlers>::mount`.
+/// The handlers of a controller, which [`ModuleDef::controller`](crate::ModuleDef::controller) and
+/// `#[module]`'s `controllers` mount: a type registered there implements it, and through it
+/// [`Controller`]. `#[handlers]` writes the impl, whose `mount` declares each handler of the impl
+/// block. A controller that mounts its handlers by hand, a WebSocket gateway implementing
+/// `Gateway` among them, implements it itself, `<Self as Gateway>::mount(m)` for a gateway.
+///
+/// `#[controller]` writes `impl Controller for Self where Self: Handlers`, so a `#[controller]`
+/// type with no `Handlers` impl fails to compile at the attribute.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is a `#[controller]` type with no `#[handlers]` impl",
-    label = "its `Controller::mount` mounts the handlers of its `#[handlers]` impl",
-    note = "write `#[handlers]` on the impl block holding `{Self}`'s handlers; a `#[controller]` type that mounts its \
-            handlers by hand implements `ulo::Handlers`"
+    message = "`{Self}` is not a controller with handlers",
+    label = "a controller is declared with `#[controller]`, and its handlers with `#[handlers]`",
+    note = "`#[handlers]` on the impl block holding `{Self}`'s handlers writes its `Handlers` impl, and `#[controller]` on \
+            `{Self}`, in place of `#[injectable]` where that is written, its `Controller` mark; a controller written by \
+            hand implements both, declaring its handlers in `ulo::Handlers::mount`"
 )]
 pub trait Handlers: Controller {
     fn mount(m: &mut Mount<'_>);

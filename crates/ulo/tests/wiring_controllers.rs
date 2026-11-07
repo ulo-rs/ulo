@@ -197,14 +197,18 @@ struct GuardedByRead;
 impl ulo::Construct for GuardedByRead {
     type Scope = Auto;
 
-    fn dependencies(_d: &mut ulo::Dependencies) {}
+    fn dependencies(d: &mut ulo::Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_r: &ulo::Resolver<'_>) -> Result<Self, ulo::ConstructError> {
         Ok(GuardedByRead)
     }
 }
 
-impl ulo::Controller for GuardedByRead {
+impl ulo::Controller for GuardedByRead {}
+
+impl ulo::Handlers for GuardedByRead {
     fn mount(m: &mut ulo::Mount<'_>) {
         let mut spec = ulo::EnhancerSpec::<TA>::new();
         spec.guard_with(|_c: Dep<NoHandlers>| async { GuardA });

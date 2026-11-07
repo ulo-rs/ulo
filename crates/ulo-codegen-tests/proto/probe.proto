@@ -60,6 +60,14 @@ service Vault {
   rpc Fragile(Ticks) returns (Tick);
 }
 
+// Trailing metadata in each position a reply carries it: after a unary reply's message, in a
+// trailers-only error, at a stream's end, and with a stream's `Err` item.
+service Trailing {
+  rpc One(Ticks) returns (Tick);
+  rpc Feed(Ticks) returns (stream Tick);
+  rpc Chat(stream Ticks) returns (stream Tick);
+}
+
 message Ticks {
   uint32 count = 1;
   bool fail = 2;

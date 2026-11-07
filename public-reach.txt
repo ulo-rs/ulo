@@ -60,6 +60,7 @@ allow ulo_grpc ulo_grpc::GrpcMetadata tonic::metadata::map::MetadataMap  # a gRP
 allow ulo_grpc ulo_grpc::PreDispatch ulo_http::pre_dispatch::PreDispatch  # the type behind the alias `ulo_grpc::PreDispatch`, which is the name a user writes
 allow ulo_grpc ulo_grpc::Reply tonic::body::Body  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
 allow ulo_grpc ulo_grpc::Streaming futures_core::stream::Stream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
+allow ulo_grpc ulo_grpc::from_status tonic::status::Status  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
 allow ulo_grpc ulo_grpc::code_for tonic::status::Code  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
 allow ulo_grpc ulo_grpc::code_for_http tonic::status::Code  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
 allow ulo_grpc ulo_grpc::outgoing tonic::request::Request  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`

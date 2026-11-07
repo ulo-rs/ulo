@@ -64,6 +64,63 @@ pub fn to_status(err: &CallError) -> Status {
     with_details(code, err.message(), err.details())
 }
 
+/// `status` as a `CallError` that is sent as `status`, its code, message, details and metadata
+/// as built: what a reply stream's `Err` item, whose error converts into a `CallError`, carries to
+/// end the stream with a status of its own. The status's metadata is written in the trailers that
+/// end the stream, beside the trailers the reply set, a name gRPC over HTTP/2 reserves dropped as
+/// [`MetadataEntry`](crate::MetadataEntry) refuses it.
+///
+/// The error handlers see a `CallError` whose kind is the code's, `NOT_FOUND` a `NotFound` and a
+/// code no kind names `Internal`, with `status` as its source, `source_as::<tonic::Status>()`.
+/// A `CallError` that names a status as its cause with a kind, message, details or code of its
+/// own renders by those: `CallError::new(ErrorKind::Unavailable, "the upstream failed")
+/// .with_source(status)` is sent as UNAVAILABLE, so a status a handler received from another
+/// server is not sent on as its reply.
+///
+/// ```
+/// use futures_util::stream;
+/// use tonic::Status;
+/// use tonic::metadata::MetadataValue;
+/// use ulo_grpc::CallError;
+///
+/// let mut status = Status::aborted("the feed was reset");
+/// status.metadata_mut().insert_bin("x-cursor-bin", MetadataValue::from_bytes(&[0x01, 0x02]));
+/// let items = stream::iter([Ok::<u32, CallError>(1), Err(ulo_grpc::from_status(status))]);
+/// # let _ = items;
+/// ```
+pub fn from_status(status: Status) -> CallError {
+    CallError::new(kind_for(status.code()), status.message().to_owned()).with_source(status)
+}
+
+/// The status `call` is sent as: its source, while `call` is as [`from_status`] built it, the kind
+/// the code reads as and the status's message, with no details, code or challenge of its own.
+pub(crate) fn carried(call: &CallError) -> Option<&Status> {
+    let status = call.source_as::<Status>()?;
+    let as_built = call.kind() == kind_for(status.code())
+        && call.message() == status.message()
+        && call.details().is_empty()
+        && call.grpc_code().is_none()
+        && call.challenge().is_none();
+    as_built.then_some(status)
+}
+
+/// The kind a canonical code is read as, the inverse of [`code_for`] where one exists:
+/// ALREADY_EXISTS a `Conflict` beside ABORTED, and every code no kind names `Internal`.
+fn kind_for(code: Code) -> ErrorKind {
+    match code {
+        Code::InvalidArgument | Code::OutOfRange | Code::FailedPrecondition => ErrorKind::BadRequest,
+        Code::Unauthenticated => ErrorKind::Unauthorized,
+        Code::PermissionDenied => ErrorKind::Forbidden,
+        Code::NotFound => ErrorKind::NotFound,
+        Code::Aborted | Code::AlreadyExists => ErrorKind::Conflict,
+        Code::ResourceExhausted => ErrorKind::TooManyRequests,
+        Code::DeadlineExceeded => ErrorKind::Timeout,
+        Code::Unavailable => ErrorKind::Unavailable,
+        Code::Unimplemented => ErrorKind::Unimplemented,
+        _ => ErrorKind::Internal,
+    }
+}
+
 /// The status a failed call is answered with, `err` being what the error handlers left: the
 /// `tonic::Status` a handler or an error handler returned as it stands, DEADLINE_EXCEEDED when the
 /// call's deadline cancelled it, and otherwise the error as `CallError::from_boxed` recognises it.
@@ -76,12 +133,28 @@ pub(crate) fn render(err: BoxError, exec: &ExecutionRef) -> Status {
 
 /// The status for `err` whatever the execution's cancel reason: what the error handlers of a
 /// passed deadline return, which is the `Timeout` it offered or their reshaping of it. A
-/// `tonic::Status` as it stands, any other error as `CallError::from_boxed` recognises it.
+/// `tonic::Status` as it stands, a `CallError` [`from_status`] built as that status, any other error
+/// as `CallError::from_boxed` recognises it; the status's metadata screened by [`screened`].
 pub(crate) fn render_as_is(err: BoxError) -> Status {
-    match err.downcast::<Status>() {
+    let status = match err.downcast::<Status>() {
         Ok(status) => *status,
-        Err(err) => to_status(&CallError::from_boxed(err)),
-    }
+        Err(err) => {
+            let call = CallError::from_boxed(err);
+            match carried(&call) {
+                Some(status) => status.clone(),
+                None => to_status(&call),
+            }
+        }
+    };
+    screened(status)
+}
+
+/// `status` without the metadata names gRPC over HTTP/2 reserves, each dropped logged at `warn`:
+/// a handler's `tonic::Status` sets no `grpc-` name beside the ones its code, message and details
+/// write.
+pub(crate) fn screened(mut status: Status) -> Status {
+    crate::metadata::screened(status.metadata_mut());
+    status
 }
 
 /// The `Timeout` a passed deadline offers the error handlers.

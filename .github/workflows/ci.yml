@@ -325,8 +325,9 @@ jobs:
     name: grpc interop
     runs-on: ubuntu-latest
     # A hung case fails the job, not the runner's six hours: each case is also bounded by the
-    # script's own per-case timeout.
-    timeout-minutes: 30
+    # script's own per-case timeout, and the job bound exceeds the script's worst case (two passes
+    # of 17 runs at 60 s each) so the script reports its reasons before the job is cancelled.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -335,25 +336,43 @@ jobs:
       # binary of it that runs on a runner, so it is built from a tag. Both pins are exact and
       # older than two weeks when chosen: grpc-go v1.84.0 (2026-09-17) declares `go 1.25.0`, which
       # is the toolchain installed. `go install` checks the module against the checksum database.
-      # Moving either pin is its own change.
-      - uses: actions/setup-go@v5
+      # Moving either pin is its own change, and changes the cache key with it.
+      #
+      # The built client is cached under a key naming both pins and the runner's OS and architecture, so a run that
+      # finds it neither installs Go nor reaches the Go module proxy, whose outage would otherwise
+      # fail a job that changed nothing.
+      - id: interop-client
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/interop-client
+          key: grpc-go-v1.84.0-go1.25.0-${{ runner.os }}-${{ runner.arch }}
+      - if: steps.interop-client.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
         with:
           go-version: "1.25.0"
           cache: false
+      - if: steps.interop-client.outputs.cache-hit != 'true'
+        run: GOBIN="$RUNNER_TEMP/interop-client" go install google.golang.org/grpc/interop/client@v1.84.0
       - run: cargo build -p ulo-grpc-interop --locked
-      - run: GOBIN="$RUNNER_TEMP/interop-client" go install google.golang.org/grpc/interop/client@v1.84.0
       # The runner judges each case from its own client process, so a failure names the case. The
       # script self-tests its verdicts first. `--expect` repeats the length of
-      # `crates/ulo-grpc-interop/interop/cases.txt`: a list or a run of any other length fails,
+      # `crates/ulo-grpc-interop/interop/cases.txt`: a list or a pass of any other length fails,
       # as does a case failing that the file does not allow, an allowed case that passes and an
       # allowed case failing on another line than the one its allowance quotes. The allowances,
       # each with the reason the framework does not pass the case, are in that file.
+      #
+      # `--tls` runs the list a second time over TLS: the server binary generates a CA and a server
+      # certificate per run, so no key is kept in the repository, and the client trusts the CA
+      # through `--use_test_ca --ca_file`. The client runs with `GRPC_ENFORCE_ALPN_ENABLED=true`,
+      # refusing a handshake in which the server selected no ALPN protocol, so the pass also
+      # checks that the server negotiated `h2`. Both passes are counted against `--expect`.
       - run: python3 crates/ulo-grpc-interop/interop/run.py --self-test
       - run: >-
           python3 crates/ulo-grpc-interop/interop/run.py
           --server target/debug/ulo-grpc-interop
           --client "$RUNNER_TEMP/interop-client/client --server_host={host} --server_port={port} --test_case={case}"
           --expect 16
+          --tls
 
   bench-build:
     name: bench build

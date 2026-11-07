@@ -9,7 +9,7 @@ extern crate ulo_reexport_renamed as ulo;
 
 #[cfg(test)]
 mod markers {
-    use ulo::{BoxError, Construct, Controller, Guard, controller, handlers, injectable};
+    use ulo::{BoxError, Construct, Guard, Handlers, controller, handlers, injectable};
     use ulo_http::{Http, HttpCx};
 
     struct Deny;
@@ -49,7 +49,7 @@ mod markers {
 
     #[test]
     fn the_markers_compile_with_no_ulo_in_the_manifest() {
-        fn controller<T: Controller>() {}
+        fn controller<T: Handlers>() {}
         fn constructs<T: Construct>() {}
         controller::<Orders>();
         constructs::<Orders>();

@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 use ulo::scope::Auto;
 use ulo::{
-    BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Module, ModuleDef, ModuleIdentity, Mount,
-    Resolver, controller, handlers,
+    BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Handlers, Module, ModuleDef,
+    ModuleIdentity, Mount, Resolver, controller, handlers,
 };
 use ulo_ws::{
     CallError, Codec, ErrorKind, FromCall, GatewayConfig, GatewayHooks, GatewaySettings, Payload, Reply, Ws, WsCx, WsHandler,
@@ -45,7 +45,9 @@ struct Hand;
 impl Construct for Hand {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Hand)
@@ -70,7 +72,9 @@ async fn failing(cx: WsCx) -> Result<Reply, BoxError> {
     Ok(cx.reply_stream(stream::iter([Ok::<u32, CallError>(1), Err(taken()), Ok(2)])))
 }
 
-impl Controller for Hand {
+impl Controller for Hand {}
+
+impl Handlers for Hand {
     fn mount(m: &mut Mount<'_>) {
         m.once::<Self>(<Self as GatewayConfig>::mount_gateway);
         m.handler(HandlerSpec::<Ws, _>::new("answer_nothing", WsHandler::new(unit)).route("unit"));
@@ -83,7 +87,9 @@ struct Packed;
 impl Construct for Packed {
     type Scope = Auto;
 
-    fn dependencies(_: &mut Dependencies) {}
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
 
     async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
         Ok(Packed)
@@ -105,7 +111,9 @@ async fn echo(cx: WsCx) -> Result<Reply, BoxError> {
     Ok(cx.reply(&format!("echo:{text}"))?)
 }
 
-impl Controller for Packed {
+impl Controller for Packed {}
+
+impl Handlers for Packed {
     fn mount(m: &mut Mount<'_>) {
         m.once::<Self>(<Self as GatewayConfig>::mount_gateway);
         m.handler(HandlerSpec::<Ws, _>::new("echo", WsHandler::new(echo)).route("echo"));
