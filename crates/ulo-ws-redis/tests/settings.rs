@@ -1,5 +1,6 @@
-//! The Redis adapter's settings, which `WsModule` compares: `redis`, the URL's scheme, host, port
-//! and path, never its userinfo, query or fragment, the database the URL selects, and
+//! The Redis adapter's settings, which `WsModule` compares: `redis`, where the URL connects,
+//! canonical and never with its userinfo, query, fragment or database, the database, the protocol
+//! and, for TLS, whether the certificate is verified, each as the redis client reads the URL, and
 //! `connect_within`. Nothing connects: `wire()` reads the settings alone, and `prepare` reads the
 //! URL.
 
@@ -55,14 +56,15 @@ fn wired(root: impl Module + 'static) -> Result<(), WiringErrors> {
 }
 
 /// Planted breaks: `Redis::settings` left at the trait's default; the URL written with its
-/// userinfo; the URL written with its query.
+/// userinfo; the URL written with its query; the URL written with its database.
 #[test]
 fn the_settings_name_redis_and_the_url_without_its_userinfo_or_query() {
     let settings = Redis::url("redis://user:userinfo-credential-value@cache:6379/0?pass=query-credential-value#f").settings();
     let expected = ulo::ModuleSettings::new()
         .with("broadcast", format_args!("redis"))
-        .with("url", format_args!("redis://cache:6379/0"))
+        .with("url", format_args!("redis://cache:6379"))
         .with("database", 0)
+        .with("protocol", format_args!("resp2"))
         .with("connect_within", Duration::from_secs(30));
     assert_eq!(settings, expected);
     let socket = Redis::url("redis+unix:///run/redis.sock?pass=query-credential-value&db=1").settings();
@@ -94,16 +96,53 @@ async fn two_urls_under_one_identity_are_refused_without_their_credentials() {
     assert!(!holds_a_password(&format!("{errors:?}")), "{errors:?}");
 }
 
-/// One URL is one module, and so are two differing only in their userinfo or their query.
+/// One URL is one module, and so are two differing only in their userinfo, in a query parameter
+/// that selects nothing, or in spelling the default port, database or protocol out. Planted
+/// breaks: the URL written as given; the URL written with its database.
 #[tokio::test]
 async fn one_url_is_one_module_whatever_its_userinfo_or_query() {
     wired(Root(vec!["redis://a:6379", "redis://a:6379"])).unwrap_or_else(|errors| panic!("{errors}"));
     wired(Root(vec!["redis://:one@a:6379", "redis://:two@a:6379"])).unwrap_or_else(|errors| panic!("{errors}"));
-    wired(Root(vec!["redis://a:6379?protocol=resp2", "redis://a:6379?protocol=resp3"])).unwrap_or_else(|errors| panic!("{errors}"));
+    wired(Root(vec!["redis://a:6379", "redis://a:6379/0"])).unwrap_or_else(|errors| panic!("{errors}"));
+    wired(Root(vec!["redis://a", "redis://a:6379/?protocol=resp2&name=x"])).unwrap_or_else(|errors| panic!("{errors}"));
+    wired(Root(vec!["rediss://a", "rediss://a:6379/"])).unwrap_or_else(|errors| panic!("{errors}"));
 }
 
-/// The path identifies the database, so two URLs differing only there are refused. Planted
-/// break: the URL reported without its path.
+/// `#insecure` turns certificate verification off, so two TLS URLs differing only there are
+/// refused naming `tls_verify` rather than resolved to whichever came first. Planted break:
+/// `Redis::settings` without `tls_verify`.
+#[tokio::test]
+async fn verified_and_unverified_tls_under_one_identity_are_refused() {
+    let errors = match wired(Root(vec!["rediss://a:6380", "rediss://a:6380/#insecure"])) {
+        Err(errors) => errors,
+        Ok(()) => panic!("wired; a verified and an unverified TLS URL under one identity should be refused"),
+    };
+    assert_eq!(errors.len(), 1, "{errors}");
+    let Some(WiringError::DifferingSettings { settings, .. }) = errors.iter().next() else {
+        panic!("expected `DifferingSettings`:\n{errors}");
+    };
+    let settings: Vec<_> = settings.iter().map(|s| (s.name, s.first.clone(), s.second.clone())).collect();
+    assert_eq!(settings, [("tls_verify", Some("true".to_owned()), Some("false".to_owned()))]);
+}
+
+/// The `protocol` query parameter selects RESP3, so two URLs differing only there are refused
+/// naming `protocol`. Planted break: `Redis::settings` without `protocol`.
+#[tokio::test]
+async fn two_protocols_under_one_identity_are_refused() {
+    let errors = match wired(Root(vec!["redis://a:6379?protocol=resp2", "redis://a:6379?protocol=resp3"])) {
+        Err(errors) => errors,
+        Ok(()) => panic!("wired; two protocols under one identity should be refused"),
+    };
+    assert_eq!(errors.len(), 1, "{errors}");
+    let Some(WiringError::DifferingSettings { settings, .. }) = errors.iter().next() else {
+        panic!("expected `DifferingSettings`:\n{errors}");
+    };
+    let settings: Vec<_> = settings.iter().map(|s| (s.name, s.first.clone(), s.second.clone())).collect();
+    assert_eq!(settings, [("protocol", Some("resp2".to_owned()), Some("resp3".to_owned()))]);
+}
+
+/// The path identifies the database, so two URLs differing only there are refused naming
+/// `database`. Planted break: `Redis::settings` without `database`.
 #[tokio::test]
 async fn two_databases_under_one_identity_are_refused() {
     let errors = match wired(Root(vec!["redis://a:6379/0", "redis://a:6379/1"])) {
@@ -114,13 +153,7 @@ async fn two_databases_under_one_identity_are_refused() {
         panic!("expected `DifferingSettings`:\n{errors}");
     };
     let settings: Vec<_> = settings.iter().map(|s| (s.name, s.first.clone(), s.second.clone())).collect();
-    assert_eq!(
-        settings,
-        [
-            ("url", Some("redis://a:6379/0".to_owned()), Some("redis://a:6379/1".to_owned())),
-            ("database", Some("0".to_owned()), Some("1".to_owned())),
-        ]
-    );
+    assert_eq!(settings, [("database", Some("0".to_owned()), Some("1".to_owned()))]);
 }
 
 /// A Unix socket's database is its `db` query parameter, which the URL setting leaves out: two
@@ -142,13 +175,15 @@ async fn two_unix_socket_databases_under_one_identity_are_refused() {
         .unwrap_or_else(|errors| panic!("one database on one socket: {errors}"));
 }
 
-/// A `db` that is not a number is a URL the redis client does not read: the setting says so and
+/// A `db` that is not a number is a URL the redis client does not read: the settings say so and
 /// `prepare` refuses the adapter. Planted break: `prepare` not reading the URL.
 #[tokio::test]
 async fn a_database_that_is_not_a_number_is_unreadable_and_refused_by_prepare() {
     let adapter = Redis::url("redis+unix:///run/redis.sock?db=one&pass=query-credential-value");
     let settings = format!("{:?}", adapter.settings());
     assert!(settings.contains("\"database\": \"[unreadable]\""), "{settings}");
+    assert!(settings.contains("\"protocol\": \"[unreadable]\""), "{settings}");
+    assert!(settings.contains("\"url\": \"redis+unix:///run/redis.sock\""), "{settings}");
     let refused = adapter.prepare().err().unwrap_or_else(|| panic!("prepare accepted a database that is not a number"));
     let text = refused.to_string();
     assert!(text.contains("the Redis broadcast adapter's URL is not one the redis client reads"), "{text}");

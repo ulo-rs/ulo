@@ -9,8 +9,10 @@ section (`## Install` up to the next `## ` heading) of the root `README.md` and 
 - a `tag = "v.."`, which must be `v` plus the workspace version;
 - a `ulo` or `ulo-*` dependency's version, `ulo = "x.y.z"` or `ulo = { version = "x.y.z", .. }`,
   which must be the workspace version, a leading `=`, `^` or `~` aside; a partial `"x.y"` or `"x"`
-  is read too, and differs from it;
+  is read too, and differs from it, and any other operator, `>=` or `<` among them, is refused;
 - `cargo add ulo[-*]@x.y.z`, which must be the workspace version, a partial one read as above;
+- while the workspace version is a pre-release, each of those two written with `=`: a caret on a
+  pre-release also takes a later pre-release of the same version, which may break the first;
 - a backticked tag in prose, `` `vx.y.z` ``, which must be `v` plus the workspace version.
 
 A README with no Install section, or an Install section that names no version, fails too: a check
@@ -33,12 +35,14 @@ VERSION = r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?"
 # What a dependency or `cargo add` may write: cargo reads `"0.1"` as `^0.1`, a claim about the
 # version as much as `"0.1.0"` is.
 REQUIREMENT = r"[0-9]+(?:\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.+-]+)?"
+# Every comparison operator cargo reads, so a `>=` is read and refused rather than left unread.
+OPERATOR = r"[=^~<>]*\s*"
 GIT = re.compile(r"""\bgit\s*=\s*["']|--git\b""")
 CLAIMS = [
     ("a git tag", re.compile(r'\btag\s*=\s*"(v' + VERSION + r')"'), True),
-    ("a dependency version", re.compile(r'^\s*ulo[\w-]*\s*=\s*"[=^~]?(' + REQUIREMENT + r')"', re.M), False),
-    ("a dependency version", re.compile(r'^\s*ulo[\w-]*\s*=\s*\{[^}]*\bversion\s*=\s*"[=^~]?(' + REQUIREMENT + r')"', re.M), False),
-    ("a `cargo add` version", re.compile(r"\bcargo\s+add\s+ulo[\w-]*@(" + REQUIREMENT + r")"), False),
+    ("a dependency version", re.compile(r'^\s*ulo[\w-]*\s*=\s*"(' + OPERATOR + r')(' + REQUIREMENT + r')"', re.M), False),
+    ("a dependency version", re.compile(r'^\s*ulo[\w-]*\s*=\s*\{[^}]*\bversion\s*=\s*"(' + OPERATOR + r')(' + REQUIREMENT + r')"', re.M), False),
+    ("a `cargo add` version", re.compile(r"\bcargo\s+add\s+ulo[\w-]*@(" + OPERATOR + r")(" + REQUIREMENT + r")"), False),
     ("a tag in prose", re.compile(r"`(v" + VERSION + r")`"), True),
 ]
 
@@ -62,12 +66,14 @@ def install_section(text):
 
 
 def claims(section):
-    """Every `(what, version as written, line number within the section)`."""
+    """Every `(what, operator, version as written, line number within the section, tagged)`; a tag
+    has no operator."""
     found = []
     for what, pattern, tagged in CLAIMS:
         for m in pattern.finditer(section):
-            found.append((what, m.group(1), section.count("\n", 0, m.start(1)) + 1, tagged))
-    return sorted(found, key=lambda c: c[2])
+            operator, written, at = ("", m.group(1), m.start(1)) if tagged else (m.group(1).strip(), m.group(2), m.start(2))
+            found.append((what, operator, written, section.count("\n", 0, at) + 1, tagged))
+    return sorted(found, key=lambda c: c[3])
 
 
 def check(root):
@@ -88,11 +94,15 @@ def check(root):
         found = claims(section)
         if not found:
             problems.append((name, "Install section names no version, so nothing was compared"))
-        for what, written, line, tagged in found:
+        for what, operator, written, line, tagged in found:
             want = "v" + version if tagged else version
-            read.append((name, f"{what} `{written}` (Install line {line})"))
-            if written != want:
+            read.append((name, f"{what} `{operator}{written}` (Install line {line})"))
+            if operator not in ("", "=", "^", "~"):
+                problems.append((name, f"Install line {line}: {what} `{operator}{written}` has an operator the check does not read; pin it `={version}`"))
+            elif written != want:
                 problems.append((name, f"Install line {line}: {what} `{written}`, the workspace version is `{version}` (want `{want}`)"))
+            elif not tagged and "-" in version and operator != "=":
+                problems.append((name, f"Install line {line}: {what} `{operator}{written}` on a pre-release; pin it `={version}`"))
     return problems, read
 
 
@@ -126,6 +136,7 @@ BAD = {
     "literal-string git": GOOD.replace('ulo = "1.2.3"', "ulo = { git = 'https://example.test/ulo', tag = 'v1.2.3' }"),
     "cargo add --git": GOOD.replace("cargo add ulo@1.2.3", "cargo add ulo@1.2.3 --git https://example.test/ulo"),
     "partial version": GOOD.replace('ulo-http = "1.2.3"', 'ulo-http = "1.2"'),
+    "range": GOOD.replace('ulo-http = "1.2.3"', 'ulo-http = ">=1.2.3"'),
     "no section": GOOD.replace("## Install", "## Setup"),
     "no version": "# x\n\n## Install\n\nrun cargo add ulo\n",
 }
@@ -148,14 +159,26 @@ def self_test():
         fixture(root, "1.2.4", GOOD)
         if len(check(root)[0]) != 2 * 5:
             sys.exit("check_readme_install.py: self-test: a workspace version bump did not flag every claim")
-        prerelease = GOOD.replace("1.2.3", "1.2.3-alpha.2")
+        prerelease = (
+            GOOD.replace('"1.2.3"', '"=1.2.3"').replace("ulo@1.2.3", "ulo@=1.2.3").replace("1.2.3", "1.2.3-alpha.2")
+        )
         fixture(root, "1.2.3-alpha.2", prerelease)
         problems, read = check(root)
         if problems or len(read) != 2 * 5:
             sys.exit(f"check_readme_install.py: self-test: the prerelease fixture read {len(read)} claims and gave {problems}")
-        fixture(root, "1.2.3-alpha.2", prerelease.replace('ulo-http = "1.2.3-alpha.2"', 'ulo-http = "1.2.3-alpha.1"'))
+        fixture(root, "1.2.3-alpha.2", prerelease.replace('ulo-http = "=1.2.3-alpha.2"', 'ulo-http = "=1.2.3-alpha.1"'))
         if not check(root)[0]:
             sys.exit("check_readme_install.py: self-test: the prerelease mismatch was not refused")
+        for label, unpinned in {
+            "caret on a pre-release": prerelease.replace('ulo-http = "=1.2.3-alpha.2"', 'ulo-http = "1.2.3-alpha.2"'),
+            "explicit caret on a pre-release": prerelease.replace('ulo-http = "=1.2.3-alpha.2"', 'ulo-http = "^1.2.3-alpha.2"'),
+            "tilde in a table on a pre-release": prerelease.replace('"=1.2.3-alpha.2", default', '"~1.2.3-alpha.2", default'),
+            "unpinned `cargo add` on a pre-release": prerelease.replace("ulo@=1.2.3-alpha.2", "ulo@1.2.3-alpha.2"),
+            "range on a pre-release": prerelease.replace('ulo-http = "=1.2.3-alpha.2"', 'ulo-http = ">=1.2.3-alpha.2"'),
+        }.items():
+            fixture(root, "1.2.3-alpha.2", unpinned)
+            if unpinned == prerelease or len(check(root)[0]) != 2:
+                sys.exit(f"check_readme_install.py: self-test: the {label} was not refused once per README")
         for label, text in BAD.items():
             fixture(root, "1.2.3", text)
             if not check(root)[0]:

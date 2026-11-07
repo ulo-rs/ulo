@@ -3,7 +3,7 @@ use std::time::Duration;
 use ulo_db::Store;
 use ulo_health::HealthModule;
 
-use crate::cases::{PATIENT, Root, bounded, builder, closed, connecting, describe, readiness, readiness_reads, store_reads};
+use crate::cases::{PATIENT, Root, bounded, builder, closed, connecting, describe, readiness, readiness_reads, store, store_reads};
 use crate::{Host, report};
 
 /// How long a lazy start may take with the store out: it builds the client and waits for nothing.
@@ -20,11 +20,14 @@ const START: Duration = Duration::from_secs(5);
 /// reads up during the outage.
 pub async fn waits_for_the_first_ping<H: Host>() {
     let host = H::start().await;
-    assert!(
-        host.capabilities().lazy,
-        "the host declares `{}` without `.lazy()`: declare this scenario not applicable",
-        <H::Store as Store>::NAME
-    );
+    if let Some(reason) = host.capabilities().why_not_lazy() {
+        if <H::Store as Store>::create_connects(&host.options()) {
+            refuses_lazy::<H>(&host);
+            return;
+        }
+        crate::skipped("lazy_readiness_waits_for_the_first_ping", "lazy", reason);
+        return;
+    }
     assert!(
         !<H::Store as Store>::create_connects(&host.options()),
         "the host declares `.lazy()` for `{}`, whose `create` connects for the host's options, and which therefore refuses it",
@@ -57,4 +60,20 @@ pub async fn waits_for_the_first_ping<H: Host>() {
     let (up, after) = readiness_reads::<H>(&readiness, true, budget.recovery).await;
     assert!(up, "readiness did not turn true within {:?} of the store's restore: {}", budget.recovery, describe(&after));
     closed(app, "the lazy app").await;
+}
+
+/// On a host declared without `lazy` whose options make `create` connect, `.lazy()` is refused at
+/// `wire`, naming the store. Planted break: the registration accepting `.lazy()` on such options.
+fn refuses_lazy<H: Host>(host: &H) {
+    let name = <H::Store as Store>::NAME;
+    match builder::<H>(Root::new().import(store::<H>(host.options()).lazy())).wire() {
+        Ok(_) => panic!("`.lazy()` wired on `{name}` options whose `create` connects"),
+        Err(error) => {
+            let text = report(&error);
+            assert!(
+                text.contains(&format!("the {name} store module cannot be lazy")),
+                "`.lazy()` on `{name}` options whose `create` connects was refused otherwise: {text}"
+            );
+        }
+    }
 }

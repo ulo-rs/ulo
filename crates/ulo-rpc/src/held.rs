@@ -52,7 +52,9 @@ impl HoldUntil {
 ///
 /// Test support: compiled only under `ulo-rpc`'s `conformance-probe` feature, which a link turns
 /// on from its own feature of that name, enabled by its dev-dependency, so an application build
-/// contains it only when the application turns that feature on.
+/// contains it only when the application turns that feature on. Hidden from the documentation and
+/// outside the crate's semver promise.
+#[doc(hidden)]
 #[cfg(feature = "conformance-probe")]
 #[derive(Default)]
 pub struct ClientProbe {

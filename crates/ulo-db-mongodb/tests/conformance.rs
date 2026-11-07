@@ -67,12 +67,10 @@ impl ulo_db_conformance::Host for Host {
     }
 
     fn capabilities(&self) -> ulo_db_conformance::Capabilities {
-        ulo_db_conformance::Capabilities::default().migrations(false)
+        ulo_db_conformance::Capabilities::new().without_migrations("MongoDB has no migrator")
     }
 }
 
 ulo_db_conformance::conformance_suite!(Host; not_applicable {
     a_connecting_create_is_retried_and_stops_on_permanent: "the host's `mongodb://` URI resolves nothing in `create`; only a `mongodb+srv://` URI connects there, and no DNS exists in the harness",
-    migrations_run_only_on_request: "MongoDB has no migrator",
-    migrations_run_once_across_replicas: "MongoDB has no migrator",
 });

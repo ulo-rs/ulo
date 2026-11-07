@@ -120,6 +120,7 @@ impl<L: Listener> ServerOn<L> {
     /// [`server_max_inflight`](Self::server_max_inflight) is taken it rises by at most one message
     /// per connection, the connections having stopped reading. Built by the `conformance-probe`
     /// feature, which is for the conformance tests, not an application feature.
+    #[doc(hidden)]
     #[cfg(feature = "conformance-probe")]
     pub fn messages_read(&self) -> MessagesRead {
         self.defaults.messages_read()

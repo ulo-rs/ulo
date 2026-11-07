@@ -54,7 +54,7 @@ pub async fn two_instances<B: Broker>() {
 
 /// Two server instances answering requests on one pattern.
 ///
-/// A link declaring `delivers_requests_once` runs each request's handler on one instance; one
+/// A link declaring `single_delivery` runs each request's handler on one instance; one
 /// declaring it `false` runs it on both, the client answering the first reply. Under `Addressed`
 /// the scenario runs one instance, as [`two_instances`] does, and asserts each request ran once.
 pub async fn requests_across_two_instances<B: Broker>() {
@@ -76,17 +76,17 @@ pub async fn requests_across_two_instances<B: Broker>() {
         let sum = caller.rpc.request::<_, Sum>(ADD, &Add { a: n, b: 1 }).await.expect("the request is answered");
         assert_eq!(sum, Sum { sum: n + 1 });
     }
-    let expected = if capabilities.delivers_requests_once() { REQUESTS } else { servers.len() * REQUESTS };
+    let expected = if capabilities.single_delivery() { REQUESTS } else { servers.len() * REQUESTS };
     let ran = || total() - before;
-    let once = capabilities.delivers_requests_once();
+    let once = capabilities.single_delivery();
     assert!(
         eventually::<B>(budget.boot + budget.settle, || ran() >= expected).await,
-        "{} of {expected} executions ran across {} instances, `delivers_requests_once: {once}`",
+        "{} of {expected} executions ran across {} instances, `single_delivery: {once}`",
         ran(),
         servers.len()
     );
     sleep::<B>(budget.settle).await;
-    assert_eq!(ran(), expected, "executions of {REQUESTS} requests across {} instances, `delivers_requests_once: {once}`", servers.len());
+    assert_eq!(ran(), expected, "executions of {REQUESTS} requests across {} instances, `single_delivery: {once}`", servers.len());
 
     first.stop().await;
     if let Some(second) = second {

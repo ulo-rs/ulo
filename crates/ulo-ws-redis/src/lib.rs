@@ -47,8 +47,8 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures_core::stream::BoxStream;
 use futures_util::StreamExt;
-use redis::IntoConnectionInfo;
 use redis::aio::MultiplexedConnection;
+use redis::{ConnectionAddr, IntoConnectionInfo, ProtocolVersion};
 use tokio::runtime::Handle;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use ulo::{BoxError, BoxFuture, Cut, ModuleSettings, Permanent, Refused, RuntimeShutDown, Spawn, Timer, timeout};
@@ -106,11 +106,43 @@ impl Redis {
         self.runtime.clone().ok_or_else(|| NO_RUNTIME.into())
     }
 
-    /// The database the URL selects, as the redis client reads it: the path of a TCP URL, the
-    /// `db` query parameter of a Unix socket's, 0 when it names none.
-    fn database(&self) -> redis::RedisResult<i64> {
-        self.url.as_str().into_connection_info().map(|info| info.redis_settings().db())
+    /// The URL as the redis client reads it, the one reading `prepare`, a publish and the
+    /// subscription all share.
+    fn reading(&self) -> redis::RedisResult<Reading> {
+        let info = self.url.as_str().into_connection_info()?;
+        let (url, tls_verify) = match info.addr() {
+            ConnectionAddr::Tcp(host, port) => (format!("redis://{}:{port}", bracketed(host)), None),
+            ConnectionAddr::TcpTls { host, port, insecure, .. } => (format!("rediss://{}:{port}", bracketed(host)), Some(!insecure)),
+            ConnectionAddr::Unix(path) => (format!("redis+unix://{}", path.display()), None),
+            other => (format!("redis://{}", other), None),
+        };
+        let redis = info.redis_settings();
+        let protocol = match redis.protocol() {
+            ProtocolVersion::RESP2 => "resp2",
+            ProtocolVersion::RESP3 => "resp3",
+            _ => "other",
+        };
+        Ok(Reading { url, database: redis.db(), protocol, tls_verify })
     }
+}
+
+/// What the redis client reads from an adapter's URL, as its settings report it.
+struct Reading {
+    /// Where the client connects: `redis://`, `rediss://` or `redis+unix://` by the connection it
+    /// makes, then the host and port, the default port filled in, or the socket's path. The
+    /// client's reading carries no userinfo, query, fragment or database.
+    url: String,
+    database: i64,
+    protocol: &'static str,
+    /// Whether a TLS connection verifies the server's certificate, `None` for a connection without
+    /// TLS.
+    tls_verify: Option<bool>,
+}
+
+/// `host` as a URL writes it: an IPv6 address, which the redis client holds without its
+/// brackets, in brackets.
+fn bracketed(host: &str) -> std::borrow::Cow<'_, str> {
+    if host.contains(':') { format!("[{host}]").into() } else { host.into() }
 }
 
 const NO_RUNTIME: &str = "the Redis broadcast adapter has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
@@ -215,11 +247,12 @@ fn dropped(refused: &Undecodable, channel: &str) {
 impl BroadcastAdapter for Redis {
     /// Refuses an adapter with no tokio runtime, naming `.with_handle(..)`, one whose runtime was
     /// built without its IO driver ([`Tokio::require_io`]), a URL the redis client does not read,
-    /// a `db` that is not a number among them, and a zero
-    /// [`connect_within`](Redis::connect_within).
+    /// a `db` that is not a number and a `protocol` it does not know among them, and a zero
+    /// [`connect_within`](Redis::connect_within). The URL is refused exactly where
+    /// `redis::Client::open` refuses it.
     fn prepare(&self) -> Result<(), BoxError> {
         self.runtime()?.require_io()?;
-        if let Err(error) = self.database() {
+        if let Err(error) = self.reading() {
             return Err(format!("the Redis broadcast adapter's URL is not one the redis client reads: {error}").into());
         }
         if self.connect_within.is_zero() {
@@ -228,24 +261,48 @@ impl BroadcastAdapter for Redis {
         Ok(())
     }
 
-    /// `broadcast` = `redis`; `url`, the adapter's URL as its scheme, host, port and path:
-    /// `redis://:key@cache:6379/2` is `redis://cache:6379/2`, and
-    /// `redis+unix:///run/redis.sock?pass=key&db=1` is `redis+unix:///run/redis.sock`; and
-    /// `database`, the database the redis client selects from the URL, the path of a TCP URL and
-    /// the `db` query parameter of a Unix socket's, 0 when the URL names none. Two URLs differing
-    /// in their path or in the database compare unequal, a Unix socket's `db` among them, and two
-    /// differing only in their userinfo, their fragment or a query parameter that selects no
-    /// database compare equal. A URL the client does not read, a `db` that is not a number among
-    /// them, has the database `[unreadable]`, and `prepare` refuses it. Then `connect_within`, so
-    /// a second import with another bound is refused rather than running on the first's. The
-    /// runtime `with_handle` names is not compared.
+    /// `broadcast` = `redis`, then what the redis client reads from the URL, each part that
+    /// selects anything beyond where to connect a setting of its own:
+    ///
+    /// - `url`, where the client connects, canonical: the scheme of the connection it makes,
+    ///   `redis`, `rediss` or `redis+unix` (a `valkey` scheme connects as its `redis` one, and
+    ///   `unix` as `redis+unix`), then the host and port, the default 6379 filled in, or a Unix
+    ///   socket's path. `redis://:key@cache/2` is `redis://cache:6379`, and
+    ///   `redis+unix:///run/redis.sock?pass=key&db=1` is `redis+unix:///run/redis.sock`. No
+    ///   userinfo, query, fragment or database reaches it.
+    /// - `database`, the path of a TCP URL and the `db` query parameter of a Unix socket's, 0 when
+    ///   the URL names none, so `redis://a:6379` and `redis://a:6379/0` compare equal.
+    /// - `protocol`, `resp2` or `resp3`, from the `protocol` query parameter, `resp2` when the URL
+    ///   names none.
+    /// - `tls_verify`, on a `rediss` URL alone: `false` under the `#insecure` fragment, which turns
+    ///   certificate verification off, and `true` otherwise. Two registrations differing only
+    ///   there are refused rather than resolved to the first, so verification is not switched off
+    ///   by a registration nobody sees.
+    ///
+    /// Two URLs differing only in their userinfo or in a query parameter the client reads as a
+    /// credential compare equal, and neither credential is printed. A URL the client does not read,
+    /// a `db` that is not a number or a `protocol` it does not know among them, is reported
+    /// through `ulo::secrets::setting_url`, its scheme, host, port and path, with `database` and
+    /// `protocol` `[unreadable]`, and `prepare` refuses it. Then `connect_within`, so a second
+    /// import with another bound is refused rather than running on the first's. The runtime
+    /// `with_handle` names is not compared.
     fn settings(&self) -> ModuleSettings {
-        let settings = ModuleSettings::new()
-            .with("broadcast", format_args!("redis"))
-            .with("url", format_args!("{}", ulo::secrets::setting_url(&self.url)));
-        let settings = match self.database() {
-            Ok(database) => settings.with("database", database),
-            Err(_) => settings.with("database", format_args!("[unreadable]")),
+        let settings = ModuleSettings::new().with("broadcast", format_args!("redis"));
+        let settings = match self.reading() {
+            Ok(reading) => {
+                let settings = settings
+                    .with("url", format_args!("{}", reading.url))
+                    .with("database", reading.database)
+                    .with("protocol", format_args!("{}", reading.protocol));
+                match reading.tls_verify {
+                    Some(verify) => settings.with("tls_verify", verify),
+                    None => settings,
+                }
+            }
+            Err(_) => settings
+                .with("url", format_args!("{}", ulo::secrets::setting_url(&self.url)))
+                .with("database", format_args!("[unreadable]"))
+                .with("protocol", format_args!("[unreadable]")),
         };
         settings.with("connect_within", self.connect_within)
     }

@@ -279,9 +279,10 @@ impl Link for Loopback {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities::new(DeliveryMode::Competing)
+            .binary(true)
             .ordering(Ordering::PerConnection)
             .without_native_backpressure("the hub hands a server every request as it is sent, and holds none back at the server's bound")
-            .without_holds_unserved("the hub routes a request when it is sent, to a server subscribed then, and keeps none for a server that subscribes later")
+            .without_unserved_hold("the hub routes a request when it is sent, to a server subscribed then, and keeps none for a server that subscribes later")
             .without_durable_replies("a reply travels the client's own queue, which a severed client loses")
     }
 

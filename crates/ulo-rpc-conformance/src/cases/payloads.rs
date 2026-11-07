@@ -12,13 +12,13 @@ use crate::cases::app::{BYTES, ECHO, Fixture, Mounts, failed, refused_at_startup
 /// every broker that has one.
 const LARGE: usize = 8 * 1024 * 1024;
 
-/// A binary payload round trip where the link has `binary`, the pre-I/O refusal with `binary_unsupported` where it is declared without it.
+/// A binary payload round trip where the link reports `binary`, the pre-I/O refusal with `binary_unsupported` where it reports JSON.
 pub async fn binary<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     let payload = Bytes::from_static(&[0x00, 0x01, 0xfe, 0xff]);
     let outcome = fixture.rpc().request::<_, Bytes>(BYTES, &payload).timeout(Duration::from_secs(5)).await;
     let capabilities = fixture.capabilities();
-    if capabilities.binary() {
+    if capabilities.binary {
         assert_eq!(outcome.expect("the binary call is answered"), payload);
     } else {
         let error = failed(outcome, ErrorKind::BadRequest);

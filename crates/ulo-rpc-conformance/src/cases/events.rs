@@ -29,7 +29,7 @@ pub async fn reaches_handler<B: Broker>() {
 /// An event the server refuses is settled so its broker never hands it over again: one whose
 /// `deadline-ms` the server cannot read, written by a [`Stamped`] link, is rejected, and the
 /// server's own link has delivered it once two settle budgets later, its handler never run. On a
-/// link declaring `holds_unserved`, whose broker hands what it holds to the next instance, the next
+/// link declaring `unserved_hold`, whose broker hands what it holds to the next instance, the next
 /// instance in the server's place is handed an event emitted once it serves, and that alone: the
 /// rejection settled the refused event at the broker, not only at the first instance.
 pub async fn refused_event_is_not_redelivered<B: Broker>() {
@@ -48,7 +48,7 @@ pub async fn refused_event_is_not_redelivered<B: Broker>() {
 
     let Fixture { broker, server, client } = fixture;
     server.stop().await;
-    if broker.link().capabilities().holds_unserved() {
+    if broker.link().capabilities().unserved_hold() {
         let next_tap = Tap::default();
         let next = server_over(&broker, Tapped { link: broker.link(), tap: next_tap.clone() }, Count::Default).await;
         ready(&broker, &client.rpc, &[&next]).await;
@@ -89,14 +89,14 @@ async fn ended_once<B: Broker>(runs: impl Fn() -> Vec<SlowRun>, wait: Duration, 
 /// An event emitted `.within` an execution carries none of the execution's deadline: emitted from
 /// one with a tenth of a settle budget left, to a handler running four times that, the event's
 /// frame carries no `deadline-ms`, its handler's execution has no deadline, and the handler
-/// completes. On a link declaring `holds_unserved` the event is emitted while no instance serves,
+/// completes. On a link declaring `unserved_hold` the event is emitted while no instance serves,
 /// so the broker holds it past the emitter's deadline and hands it to the next instance.
 pub async fn emitter_s_deadline_is_not_the_event_s<B: Broker>() {
     let tap = Tap::default();
     let fixture = Fixture::<B>::start_over(Count::Default, |broker| Tapped { link: broker.link(), tap: tap.clone() }).await;
     let budget = fixture.broker.budget();
     let (left, runs) = (left_of(budget), runs_of(budget));
-    let holds = fixture.capabilities().holds_unserved();
+    let holds = fixture.capabilities().unserved_hold();
     let Fixture { broker, server, client } = fixture;
     let (server, tap) = if holds {
         server.stop().await;

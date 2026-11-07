@@ -8,9 +8,11 @@
 //! the link's hold runs out for an `open` carrying none, so a call whose `opened` never comes
 //! holds nothing until the link closes.
 //!
-//! On a link declared without `ordered_control` a request's control frames travel a lane of their
-//! own and the broker can deliver a `cancel` ahead of its request, so there the first scenario's
-//! order is not observable and the scenario is skipped, naming the declared reason.
+//! On a link whose shapes carry no streamed request the scenarios opening one assert the startup
+//! refusal of a streamed handler instead. On a link declared without `ordered_control` a request's
+//! control frames travel a lane of their own and the broker can deliver a `cancel` ahead of its
+//! request, so there the first scenario's order is not observable and the scenario is skipped,
+//! naming the declared reason.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -22,6 +24,7 @@ use ulo::app::Connected;
 use ulo_rpc::link::ClientProbe;
 use ulo_rpc::{CallHeaders, Codec, Delivery, Frame, Link, Outbound, Pattern, ReplyTo};
 
+use crate::cases::app::{Mounts, refused_at_startup};
 use crate::rt::{sleep, timeout};
 use crate::{Broker, Budget, Harness, report};
 
@@ -80,8 +83,18 @@ struct Linked<B: Broker> {
 }
 
 impl<B: Broker> Linked<B> {
-    async fn start() -> Self {
-        Linked::on(B::start().await).await
+    /// The two links over a fresh environment, or `None` once a link carrying no streamed request
+    /// has refused a streamed handler at startup, which is what a scenario opening one asserts
+    /// there.
+    async fn streamed() -> Option<Self> {
+        let broker = B::start().await;
+        let shapes = broker.link().capabilities().shapes;
+        if shapes.contains(&Shape::ClientStreaming) || shapes.contains(&Shape::Bidi) {
+            Some(Linked::on(broker).await)
+        } else {
+            refused_at_startup(&broker, Mounts { streaming: true, binary: false }).await;
+            None
+        }
     }
 
     async fn on(broker: B) -> Self {
@@ -153,7 +166,7 @@ pub async fn cancel_follows_its_request<B: Broker>() {
     }
     let mut linked = Linked::on(broker).await;
     let pattern = Pattern::from(ORDERED);
-    let codec = if linked.server.capabilities().binary() { Codec::Cbor } else { Codec::Json };
+    let codec = if linked.server.capabilities().binary { Codec::Cbor } else { Codec::Json };
     let null = codec.encode(&()).expect("a unit encodes");
     for id in 1..=ROUNDS {
         let request = Frame::Req { id, pattern: ORDERED.to_owned(), headers: CallHeaders::new(), data: null.clone() };
@@ -171,15 +184,10 @@ pub async fn cancel_follows_its_request<B: Broker>() {
 /// server can have acknowledged it, and requires the server's link to deliver every `open` and
 /// then its `cancel`, holding no call afterwards. A link holding a streamed request's control
 /// frames until the server acknowledges the `open` holds the `cancel` too, and sends it once the
-/// acknowledgment arrives. A link carrying no streamed request fails here, and declares the
-/// scenario not applicable.
+/// acknowledgment arrives. On a link carrying no streamed request a streamed handler is refused at
+/// startup.
 pub async fn cancel_before_opened<B: Broker>() {
-    let mut linked = Linked::<B>::start().await;
-    let shapes = linked.server.capabilities().shapes;
-    assert!(
-        shapes.contains(&Shape::ClientStreaming) || shapes.contains(&Shape::Bidi),
-        "the link carries no streamed request: declare `cancel_before_opened` not applicable with the reason"
-    );
+    let Some(mut linked) = Linked::<B>::streamed().await else { return };
     let pattern = Pattern::from(ORDERED);
     for id in 1..=OPENS {
         let open = Frame::Open { id, pattern: ORDERED.to_owned(), headers: CallHeaders::new() };
@@ -240,9 +248,10 @@ impl<B: Broker> Linked<B> {
 
 /// A streamed request cancelled before its `opened` reached the client, as a timeout or a drop
 /// cancels it, keeps its `cancel`; the `opened` arriving half a settle budget afterwards, within the
-/// link's hold, sends it, and the server receives it for the call it holds. The client's table is then empty.
+/// link's hold, sends it, and the server receives it for the call it holds. The client's table is
+/// then empty. On a link carrying no streamed request a streamed handler is refused at startup.
 pub async fn late_opened<B: Broker>() {
-    let mut linked = Linked::<B>::start().await;
+    let Some(mut linked) = Linked::<B>::streamed().await else { return };
     let late = short_hold(linked.broker.budget());
     linked.cancel_with_opened_withheld(1, CallHeaders::new()).await;
     // Late by the short hold, and well inside the link's own.
@@ -259,9 +268,10 @@ pub async fn late_opened<B: Broker>() {
 
 /// A streamed request cancelled before its `opened` reached the client, whose `opened` never
 /// comes and whose `open` carried no deadline, leaves no entry in the client's table once the
-/// link's hold runs out, shortened here to half the broker's settle budget.
+/// link's hold runs out, shortened here to half the broker's settle budget. On a link carrying no
+/// streamed request a streamed handler is refused at startup.
 pub async fn hold_runs_out<B: Broker>() {
-    let mut linked = Linked::<B>::start().await;
+    let Some(mut linked) = Linked::<B>::streamed().await else { return };
     let hold = short_hold(linked.broker.budget());
     probe(&linked).set_hold(hold);
     let cancelled = Instant::now();
@@ -274,9 +284,10 @@ pub async fn hold_runs_out<B: Broker>() {
 /// A held `cancel` whose call's `open` carried a `deadline-ms` of the broker's settle budget and a
 /// fifth is dropped with its entry once that deadline passes, the server ending the call there
 /// itself. The link's hold for an `open` with no deadline is set to 30 s, longer than the scenario
-/// waits, so only the deadline can drop it in time.
+/// waits, so only the deadline can drop it in time. On a link carrying no streamed request a
+/// streamed handler is refused at startup.
 pub async fn held_until_deadline<B: Broker>() {
-    let mut linked = Linked::<B>::start().await;
+    let Some(mut linked) = Linked::<B>::streamed().await else { return };
     let deadline = call_deadline(linked.broker.budget());
     probe(&linked).set_hold(Duration::from_secs(30));
     let mut headers = CallHeaders::new();

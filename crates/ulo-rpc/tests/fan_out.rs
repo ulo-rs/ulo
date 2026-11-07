@@ -1,4 +1,4 @@
-//! A link declared without `delivers_requests_once` hands each request to every server instance
+//! A link declared without `single_delivery` hands each request to every server instance
 //! listening on its pattern, so `Server::prepare` logs one `warn` per server that mounts a request
 //! handler, naming how many request patterns it mounts and the link's reason, and refuses
 //! nothing. A server mounting only events on such a link, and one on a link delivering once, log
@@ -147,7 +147,7 @@ macro_rules! tcp_link {
     };
 }
 
-tcp_link!(Fanned, "fanned", |this| this.tcp.capabilities().without_delivers_requests_once(this.reason));
+tcp_link!(Fanned, "fanned", |this| this.tcp.capabilities().without_single_delivery(this.reason));
 tcp_link!(Once, "once", |this| this.tcp.capabilities());
 
 /// Binds `link` under `root` and closes the app at once.
@@ -192,7 +192,7 @@ async fn a_server_on_a_link_delivering_requests_once_logs_nothing() {
     let lines = capture();
     let link = Once { tcp: Tcp::new("127.0.0.1:0") };
     let capabilities = link.capabilities();
-    assert!(capabilities.delivers_requests_once() && capabilities.why_not_delivers_requests_once().is_none(), "{capabilities:?}");
+    assert!(capabilities.single_delivery() && capabilities.why_not_single_delivery().is_none(), "{capabilities:?}");
     bind_and_close(MixedRoot, link).await;
     let warned = lines.matching("link=\"once\"");
     assert!(warned.is_empty(), "{warned:?}");

@@ -71,7 +71,9 @@ pub struct GatewayDefaults {
 /// is taken it rises by at most one message per connection.
 ///
 /// Exported and counting under the `conformance-probe` feature, which is for the conformance
-/// tests, not an application feature; without it the read loop counts nothing.
+/// tests, not an application feature; without it the read loop counts nothing. Hidden from the
+/// documentation and outside the crate's semver promise.
+#[doc(hidden)]
 #[derive(Clone, Debug, Default)]
 pub struct MessagesRead(#[cfg(feature = "conformance-probe")] Arc<AtomicUsize>);
 
@@ -94,7 +96,9 @@ impl MessagesRead {
 /// bound of one delays.
 ///
 /// Exported and holding under the `conformance-probe` feature, which is for the conformance tests,
-/// not an application feature; without it the connection awaits nothing there.
+/// not an application feature; without it the connection awaits nothing there. Hidden from the
+/// documentation and outside the crate's semver promise.
+#[doc(hidden)]
 #[derive(Clone, Default)]
 pub struct AnswerHold(#[cfg(feature = "conformance-probe")] Option<Arc<HoldFn>>);
 
@@ -127,7 +131,8 @@ impl fmt::Debug for AnswerHold {
 
 impl GatewayDefaults {
     /// The hold the connections of the table these defaults build await before queueing each
-    /// answer.
+    /// answer. Test support under the `conformance-probe` feature.
+    #[doc(hidden)]
     #[cfg(feature = "conformance-probe")]
     pub fn answer_hold(mut self, hold: AnswerHold) -> Self {
         self.answer_hold = hold;
@@ -136,7 +141,8 @@ impl GatewayDefaults {
 
     /// The count of data messages read by the connections of the table these defaults build,
     /// shared with every clone of them. A server holding them hands it out before it moves into
-    /// the app.
+    /// the app. Test support under the `conformance-probe` feature.
+    #[doc(hidden)]
     #[cfg(feature = "conformance-probe")]
     pub fn messages_read(&self) -> MessagesRead {
         self.messages_read.clone()

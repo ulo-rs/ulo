@@ -82,7 +82,7 @@ impl Redis {
         Redis { url: url.into(), codec: Codec::Json, runtime: Tokio::try_current(), state: Mutex::new(State::default()) }
     }
 
-    /// `Codec::Cbor` carries raw bytes and has `binary`; JSON unset, which is declared without it.
+    /// `Codec::Cbor` carries raw bytes and reports `binary: true`; JSON unset.
     pub fn codec(mut self, codec: Codec) -> Self {
         self.codec = codec;
         self
@@ -115,9 +115,9 @@ impl Link for Redis {
             .without_native_backpressure(
                 "Redis Pub/Sub pushes each message to its subscriber as it is published, so the link holds no request over the server's bound, which the server refuses",
             )
-            .without_holds_unserved("Redis Pub/Sub keeps no message: a request published while no instance subscribes reaches no one")
+            .without_unserved_hold("Redis Pub/Sub keeps no message: a request published while no instance subscribes reaches no one")
             .without_durable_replies("Redis Pub/Sub keeps no message for a subscriber whose connection is down, so a reply published meanwhile is gone")
-            .without_delivers_requests_once(FAN_OUT)
+            .without_single_delivery(FAN_OUT)
     }
 
     fn usable(&self) -> Result<(), BoxError> {

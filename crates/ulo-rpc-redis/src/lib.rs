@@ -3,7 +3,7 @@
 //! channel; `FanOut`, documented, the client dropping a second reply for an `id` it already
 //! answered. A request too runs its handler on every server instance subscribed to its pattern,
 //! so the request side supports one server instance: the link is declared without
-//! `delivers_requests_once`, and a server mounting a request handler on it logs a `warn`
+//! `single_delivery`, and a server mounting a request handler on it logs a `warn`
 //! saying so. A `PUBLISH` receiver count of zero maps to `Unavailable`, and so does a call waiting
 //! when the client's Pub/Sub connection drops; `rediss://` selects TLS
 //! under the crate's `tls` feature.

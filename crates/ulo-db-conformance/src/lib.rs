@@ -19,11 +19,13 @@
 //! ```
 //!
 //! A store that lacks a capability, [`Capabilities::lazy`] or [`Capabilities::migrations`], declares
-//! the scenarios that need it not applicable with its reason, stamped `#[ignore]` so the report
-//! counts them as ignored, and run on a store they do not apply to they fail. A scenario a store
-//! should pass but does not yet is declared `pending`, with the ruling that settles it and the
-//! batch that must un-ignore it; it is also ignored, and also fails when run. Every scenario names
-//! the planted break it is shown failing against.
+//! it absent with its reason in [`Host::capabilities`], and the scenarios that need it skip from the
+//! declaration, writing the reason to standard error through [`skipped`]. A scenario that cannot
+//! apply to a host for any other reason is declared not applicable with its reason, stamped
+//! `#[ignore]` so the report counts it as ignored, and run on a host it does not apply to it fails.
+//! A scenario a store should pass but does not yet is declared `pending`, with the ruling that
+//! settles it and the batch that must un-ignore it; it is also ignored, and also fails when run.
+//! Every scenario names the planted break it is shown failing against.
 //!
 //! | Scenario | Applies to |
 //! | --- | --- |
@@ -53,7 +55,7 @@ pub mod cases;
 
 #[cfg(feature = "tokio")]
 pub use ulo_conformance_support::OnTokio;
-pub use ulo_conformance_support::{Budget, Harness, PARALLEL_VAR, failures_dir, relay, report, startup_failed};
+pub use ulo_conformance_support::{Budget, Harness, PARALLEL_VAR, failures_dir, relay, report, skipped, startup_failed};
 // The macro expands to `$crate::__private::Slots`.
 #[doc(hidden)]
 pub use ulo_conformance_support::__private;
@@ -62,30 +64,81 @@ pub use ulo_conformance_support::__private;
 /// refusal or error prints it.
 pub const PASSWORD: &str = "hunter2";
 
-/// What a store offers, named positively and true by default, so a store lacking one declares
-/// `not_applicable` with its reason.
+/// What a store offers, read by the scenarios that need it.
+///
+/// Each capability is held from [`Capabilities::new`] and from `default`, the strict reading, so a
+/// host that declares nothing is held to each and a scenario fails where the store cannot keep
+/// one. A host declares one absent only through its `without_` setter, which takes the reason, and
+/// the `why_not_` accessor answers it: a scenario needing the capability then skips, writing that
+/// reason through [`skipped`].
+///
+/// ```
+/// use ulo_db_conformance::Capabilities;
+///
+/// let declared = Capabilities::new();
+/// assert!(declared.lazy() && declared.migrations());
+/// let redis = declared.without_migrations("Redis has no migrator");
+/// assert!(!redis.migrations());
+/// assert_eq!(redis.why_not_migrations(), Some("Redis has no migrator"));
+/// ```
+///
+/// The fields are private, so no host declares an absence without its reason:
+///
+/// ```compile_fail,E0616
+/// use ulo_db_conformance::Capabilities;
+///
+/// let mut capabilities = Capabilities::new();
+/// capabilities.migrations = Some("");
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
-    /// The host's options take `.lazy()`: `Store::create_connects` answers false for them.
-    pub lazy: bool,
-    /// The store offers `.migrate(..)`.
-    pub migrations: bool,
+    lazy: Absent,
+    migrations: Absent,
 }
+
+/// `None` where the store has the capability, and why it has not otherwise.
+type Absent = Option<&'static str>;
 
 impl Default for Capabilities {
     fn default() -> Self {
-        Capabilities { lazy: true, migrations: true }
+        Capabilities::new()
     }
 }
 
 impl Capabilities {
-    pub const fn lazy(self, on: bool) -> Self {
-        Capabilities { lazy: on, ..self }
+    /// A store holding every capability.
+    pub const fn new() -> Self {
+        Capabilities { lazy: None, migrations: None }
     }
 
-    pub const fn migrations(self, on: bool) -> Self {
-        Capabilities { migrations: on, ..self }
+    /// The host's options take `.lazy()`: `Store::create_connects` answers false for them, and
+    /// `lazy_readiness_waits_for_the_first_ping` runs. On a host declared without it whose options
+    /// make `create` connect, the scenario asserts the registration's refusal of `.lazy()` instead,
+    /// and on any other host declared without it the scenario skips.
+    pub const fn lazy(&self) -> bool {
+        self.lazy.is_none()
+    }
+
+    pub const fn without_lazy(self, reason: &'static str) -> Self {
+        Capabilities { lazy: Some(reason), ..self }
+    }
+
+    pub const fn why_not_lazy(&self) -> Option<&'static str> {
+        self.lazy
+    }
+
+    /// The store offers `.migrate(..)`, and the two migration scenarios run.
+    pub const fn migrations(&self) -> bool {
+        self.migrations.is_none()
+    }
+
+    pub const fn without_migrations(self, reason: &'static str) -> Self {
+        Capabilities { migrations: Some(reason), ..self }
+    }
+
+    pub const fn why_not_migrations(&self) -> Option<&'static str> {
+        self.migrations
     }
 }
 
@@ -205,7 +258,7 @@ pub trait Host: Sized + Send + Sync + 'static {
     fn restore(&self) -> impl Future<Output = ()> + Send;
 
     /// `module.lazy()`, or `module` unchanged for a store whose options make `create` connect, which
-    /// refuses `.lazy()` at registration; that store declares the lazy scenarios not applicable.
+    /// refuses `.lazy()` at registration; that host declares its capabilities without `lazy`.
     fn lazily(&self, module: StoreModule<Self::Store>) -> StoreModule<Self::Store>;
 
     /// `module.migrate(..)` with the migrations the lock scenario runs, ordinary DDL that records
@@ -214,8 +267,10 @@ pub trait Host: Sized + Send + Sync + 'static {
     /// apply one set.
     fn migrating(&self, module: StoreModule<Self::Store>, run: MigrationProbe) -> StoreModule<Self::Store>;
 
+    /// What the store offers; every capability is held unless the host declares it absent with
+    /// its reason.
     fn capabilities(&self) -> Capabilities {
-        Capabilities::default()
+        Capabilities::new()
     }
 
     /// How long this environment takes, which a slow server raises.
@@ -227,19 +282,19 @@ pub trait Host: Sized + Send + Sync + 'static {
 /// Stamps every scenario as a `#[test]` for the host type `$host`, each running its scenario through
 /// the host's [`Harness::block_on`].
 ///
-/// A scenario that cannot apply to a store is declared with its reason, and stamped
-/// `#[ignore = "not applicable: <reason>"]`:
+/// A scenario that cannot apply to a store for a reason no [`Capabilities`] entry names is
+/// declared with its reason, and stamped `#[ignore = "not applicable: <reason>"]`:
 ///
 /// ```ignore
 /// # // reason: names a host type defined in the store crate's own tests/conformance.rs
 /// ulo_db_conformance::conformance_suite!(RedisHost; not_applicable {
-///     migrations_run_only_on_request: "Redis has no migrator",
+///     a_connecting_create_is_retried_and_stops_on_permanent: "`create` connects nothing; `.ready` is the retry loop",
 /// });
 /// ```
 ///
 /// A scenario a store should pass and does not yet is declared `pending`, with the ruling that
 /// settles it and the batch that must remove the line; it is stamped
-/// `#[ignore = "<reason>"]` (`not_applicable` is for a store lacking a capability, not for a defect),
+/// `#[ignore = "<reason>"]` (`not_applicable` is for a scenario that cannot apply, not for a defect),
 /// and run with `--ignored` it fails until the store is fixed:
 ///
 /// ```ignore

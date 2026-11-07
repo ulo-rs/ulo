@@ -69,12 +69,10 @@ impl ulo_db_conformance::Host for Host {
     }
 
     fn capabilities(&self) -> ulo_db_conformance::Capabilities {
-        ulo_db_conformance::Capabilities::default().migrations(false)
+        ulo_db_conformance::Capabilities::new().without_migrations("Redis has no migrator")
     }
 }
 
 ulo_db_conformance::conformance_suite!(Host; not_applicable {
     a_connecting_create_is_retried_and_stops_on_permanent: "`create` connects nothing; `.ready` is the retry loop",
-    migrations_run_only_on_request: "Redis has no migrator",
-    migrations_run_once_across_replicas: "Redis has no migrator",
 });

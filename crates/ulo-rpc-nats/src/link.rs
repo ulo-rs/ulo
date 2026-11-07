@@ -199,7 +199,7 @@ impl Nats {
         self
     }
 
-    /// `Codec::Cbor` carries raw bytes and has `binary`; JSON unset, which is declared without it.
+    /// `Codec::Cbor` carries raw bytes and reports `binary: true`; JSON unset.
     pub fn codec(mut self, codec: Codec) -> Self {
         self.codec = codec;
         self
@@ -301,11 +301,11 @@ impl Link for Nats {
             .without_native_backpressure(
                 "NATS core pushes each message to its subscriber as it is published, so the link holds no request over the server's bound, which the server refuses",
             )
-            .without_holds_unserved("NATS core keeps no message: a request published while no instance subscribes reaches no one")
+            .without_unserved_hold("NATS core keeps no message: a request published while no instance subscribes reaches no one")
             .without_durable_replies(
                 "async-nats resubscribes the client's inbox when it reconnects, but what was published to it meanwhile is gone",
             )
-            .without_confirms_drain(
+            .without_confirmed_drain(
                 "async-nats removes a drained subscription before the server has processed the `UNSUB` and discards what arrives for it afterwards",
             )
             .without_ordered_control(CONTROL_LANE)
@@ -955,7 +955,7 @@ async fn request_lane(side: Arc<ServerSide>, mut subscriber: Subscriber, deliver
                     // processed the UNSUB, and the subscriber ends. async-nats removes the
                     // subscription on its connection task's next poll, without waiting for the
                     // server, and discards a message for it that arrives later, which the link
-                    // declares with `without_confirms_drain`.
+                    // declares with `without_confirmed_drain`.
                     Phase::Draining => {
                         draining = true;
                         if let Err(error) = subscriber.drain().await {
