@@ -1,57 +1,40 @@
-//! The conformance suite every `ulo-rpc` link runs (transports DESIGN §5.2): one scenario list,
-//! stamped per link by [`conformance_suite!`] from a [`Broker`] the link crate implements in its
-//! `tests/`.
+#![doc = include_str!("../README.md")]
 //!
-//! ```ignore
-//! # // reason: a template for a link crate's tests/conformance.rs: it needs a live broker and elides the host's bodies
-//! // crates/ulo-rpc-nats/tests/conformance.rs
-//! struct NatsBroker { url: String }
-//!
-//! impl ulo_rpc_conformance::Broker for NatsBroker {
-//!     type Harness = ulo_rpc_conformance::OnTokio;
-//!     type Link = ulo_rpc_nats::Nats;
-//!     async fn start() -> Self { /* a fresh broker or subject space */ }
-//!     fn link(&self) -> ulo_rpc_nats::Nats { ulo_rpc_nats::Nats::url(&self.url) }
-//!     async fn disrupt(&self) { /* sever the connection */ }
-//! }
-//!
-//! ulo_rpc_conformance::conformance_suite!(NatsBroker);
-//! ```
+//! ## What the scenarios assert
 //!
 //! A scenario asserts kinds and reason strings, never message text, with one exception: the
 //! spent-cap scenario compares the shutdown phrase, through the `ulo_transport::SHUTDOWN_MESSAGE`
 //! constant and never a literal, the only thing telling the server's `unavailable` from the
-//! client's own for a connection that closed. A scenario a link's
-//! capabilities exclude asserts the refusal the capability declares instead: a streamed shape on
-//! UDP is refused at startup, and the scenarios below the server that open a streamed request are
-//! declared not applicable there, a binary payload on a JSON link before any I/O and its handler at startup, a miss on a link without `miss_signal` is the client's `Timeout`, the two-instance
-//! scenarios run one instance on an `Addressed` link, where a second cannot share the address, a
-//! request runs on both instances on a link without `single_delivery`, and an event declared
-//! `every_instance` is refused at startup on a link without `every_instance`. A scenario that
-//! needs a capability to run at all, `cancel_follows_its_request` on `ordered_control` and
-//! `an_event_reaches_one_instance` on `single_delivery`, is skipped on a link declared without it,
-//! writing the declared reason to standard error through [`skipped`].
-//!
-//! Every capability a `Capabilities` accessor names is `true` unless the link declares it absent
-//! with a reason, so a link that declares nothing is held to each: the scenario runs, and fails
-//! where the link cannot keep it.
+//! client's own for a connection that closed. A scenario a link's capabilities exclude asserts the
+//! refusal the capability declares instead: a streamed shape on UDP is refused at startup, and the
+//! scenarios below the server that open a streamed request are declared not applicable there, a
+//! binary payload on a JSON link before any I/O and its handler at startup, a miss on a link without
+//! `miss_signal` is the client's `Timeout`, the two-instance scenarios run one instance on an
+//! `Addressed` link, where a second cannot share the address, a request runs on both instances on a
+//! link without `single_delivery`, and an event declared `every_instance` is refused at startup on
+//! a link without `every_instance`. A scenario that needs a capability to run at all,
+//! `cancel_follows_its_request` on `ordered_control` and `an_event_reaches_one_instance` on
+//! `single_delivery`, is skipped on a link declared without it, writing the declared reason to
+//! standard error through [`skipped`].
 //!
 //! No scenario passes on silence. The client's own `Timeout` passes only where it is the declared
 //! answer: a scenario about the client's timeout or `deadline-ms`, a call nothing takes on a link
 //! without `miss_signal`, a call reaching a draining server on a link that declares
 //! `unserved_hold`, where an event emitted then has to reach the next instance, and a call sent
 //! during the drain on a link declared without `confirmed_drain`, where a call sent once the
-//! server has closed has to be refused `Unavailable`; a link that does not declare it is held to the
-//! confirmed drain. A scenario that cannot apply to a link is declared not applicable
-//! in [`conformance_suite!`] and reported as ignored; run on that link, it fails.
+//! server has closed has to be refused `Unavailable`; a link that does not declare it is held to
+//! the confirmed drain. A scenario that cannot apply to a link is declared not applicable in
+//! [`conformance_suite!`] and reported as ignored; run on that link, it fails.
+//!
+//! ## Runtimes
 //!
 //! The suite names no runtime. A broker's [`Harness`] is its runtime half, as the HTTP and runtime
 //! suites' are: the app's runtime, which every server and client in a scenario runs on and every
 //! wait and task of the scenario's own goes through, and a `block_on` each scenario runs inside,
 //! beside a one-thread `block_on` for the scenario that shows a link's connect does not stall its
-//! thread. `OnTokio`, behind the `tokio` feature, is the harness of every link built on tokio; `OnSmol`,
-//! behind `smol`, runs the scenarios on an `async-executor` `Executor`. The [`relay`] runs on
-//! threads of its own, on `std` sockets, so it carries a link on either.
+//! thread. `OnTokio`, behind the `tokio` feature, is the harness of every link built on tokio;
+//! `OnSmol`, behind `smol`, runs the scenarios on an `async-executor` `Executor`. The [`relay`]
+//! runs on threads of its own, on `std` sockets, so it carries a link on either.
 //!
 //! A host short of memory bounds how many scenarios hold an environment at once by setting
 //! [`PARALLEL_VAR`], `ULO_CONFORMANCE_PARALLEL`, to a positive integer: the bound is the smaller of
@@ -73,17 +56,13 @@ pub mod cases;
 mod rt;
 
 pub use cases::deadlines::Stamped;
-// The harness pieces live in `ulo-conformance-support`, shared with the database suite; every one
-// is re-exported at the path it had here, so the cases and every link's `tests/conformance.rs`
-// read them unchanged.
+// The harness pieces live in `ulo-conformance-support`, shared with the database suite, and are
+// re-exported here, so a link's `tests/conformance.rs` depends on this crate alone.
 #[cfg(feature = "smol")]
 pub use ulo_conformance_support::OnSmol;
 #[cfg(feature = "tokio")]
 pub use ulo_conformance_support::OnTokio;
-pub use ulo_conformance_support::{Budget, Harness, PARALLEL_VAR, failures_dir, relay, report, skipped, startup_failed};
-// The macros expand to `$crate::__private::{Slots, startup_failed}`.
-#[doc(hidden)]
-pub use ulo_conformance_support::__private;
+pub use ulo_conformance_support::{Budget, Harness, PARALLEL_VAR, Slots, failures_dir, relay, report, skipped, startup_failed};
 
 use crate::relay::Outage;
 
@@ -94,6 +73,8 @@ pub trait Broker: Sized + Send + Sync + 'static {
     /// tokio.
     type Harness: Harness;
 
+    /// The link under test, which [`link`](Self::link) answers for the server and
+    /// [`client_link`](Self::client_link) for the client.
     type Link: Link;
 
     /// How many scenarios hold an environment at once; `None`, the default, leaves the scenarios
@@ -166,6 +147,12 @@ pub trait Broker: Sized + Send + Sync + 'static {
     /// streamed requests and holding no `cancel` declares those scenarios not applicable, and so
     /// does one carrying none, whose streamed scenarios assert its startup refusal of a streamed
     /// handler.
+    ///
+    /// Hidden from the documentation and outside the crate's semver promise, as `ClientProbe` is:
+    /// `ulo-rpc`'s test support under its `conformance-probe` feature, which the first-party broker
+    /// links attach. A link that answers no probe declares the held-`cancel` scenarios not
+    /// applicable.
+    #[doc(hidden)]
     fn probe(link: &Self::Link) -> Option<&ClientProbe> {
         let _ = link;
         None
@@ -176,8 +163,8 @@ pub trait Broker: Sized + Send + Sync + 'static {
 /// through the broker's [`Harness::block_on`].
 ///
 /// A scenario that cannot apply to a link is declared with its reason, and stamped
-/// `#[ignore = "not applicable: <reason>"]`, so the test report counts it as ignored rather than
-/// passed:
+/// `#[ignore = "<reason>"]`, so the test report counts it as ignored rather than passed and prints
+/// the reason beside it:
 ///
 /// ```ignore
 /// # // reason: names a link type defined in the transport crate's own tests/conformance.rs
@@ -202,7 +189,9 @@ macro_rules! conformance_suite {
             $(
                 ($skip, $d($d test:tt)*) => {
                     #[test]
-                    #[ignore = concat!("not applicable: ", $why)]
+                    // A literal: libtest prints an `ignore` reason only when it is one, and drops
+                    // a `concat!`'s.
+                    #[ignore = $why]
                     $d($d test)*
                 };
             )*
@@ -211,8 +200,10 @@ macro_rules! conformance_suite {
                 $d($d test)*
             };
         }
-        // A declared name that is no scenario names no function here.
-        $(const _: fn() = $skip;)*
+        // A declared name that is no scenario names no constant in `__ulo_rpc_conformance_scenarios`,
+        // a test build or any other: the stamped functions exist in a test build alone, and a
+        // doctest is none.
+        $(const _: () = __ulo_rpc_conformance_scenarios::$skip;)*
         $crate::conformance_suite!(@cases $broker;
             unary_round_trip => unary::round_trip,
             handler_takes_its_context => unary::context_parameter,
@@ -278,7 +269,11 @@ macro_rules! conformance_suite {
         );
     };
     (@cases $broker:ty; $($name:ident => $module:ident :: $case:ident $([$runner:ident])?),* $(,)?) => {
-        static __ULO_RPC_CONFORMANCE_SLOTS: $crate::__private::Slots = $crate::__private::Slots::new();
+        static __ULO_RPC_CONFORMANCE_SLOTS: $crate::Slots = $crate::Slots::new();
+        #[allow(dead_code, non_upper_case_globals)]
+        mod __ulo_rpc_conformance_scenarios {
+            $(pub(super) const $name: () = ();)*
+        }
         $(
             __ulo_rpc_conformance_stamp!($name, fn $name() {
                 let _slot = __ULO_RPC_CONFORMANCE_SLOTS.hold(<$broker as $crate::Broker>::PARALLEL);

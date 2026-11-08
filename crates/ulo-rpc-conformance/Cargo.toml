@@ -7,9 +7,9 @@ description = "The conformance suite every Ulo RPC link runs"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-# A dev-dependency of the link crates and of nothing else. Cargo strips dev-dependencies when
-# publishing them, so this never needs a crates.io release.
-publish = false
+readme = "README.md"
+keywords = ["ulo", "rpc", "conformance", "testing"]
+categories = ["development-tools::testing", "network-programming"]
 
 [features]
 # `OnTokio`, the runtime half of every link built on tokio.
@@ -21,8 +21,9 @@ smol = ["ulo-conformance-support/smol"]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
 # `conformance-probe`: `Broker::probe` names the broker links' `ClientProbe`.
 ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.2", features = ["conformance-probe"] }
-# The harness pieces shared with the database suite; this crate re-exports them at their old paths.
-ulo-conformance-support = { path = "../ulo-conformance-support" }
+# The harness pieces shared with the database suite, re-exported here, the macro's `Slots` among
+# them.
+ulo-conformance-support = { path = "../ulo-conformance-support", version = "=0.1.0-alpha.2" }
 ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.2" }
 # `serde` lets the binary scenario send and receive `Bytes` as raw bytes.
 bytes = { workspace = true, features = ["serde"] }
@@ -30,6 +31,12 @@ bytes = { workspace = true, features = ["serde"] }
 futures-executor.workspace = true
 futures-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+# The README's first run, compiled as a doctest of this crate: the suite stamped over the TCP link,
+# with `OnTokio`. A dev-dependency cycle Cargo allows.
+ulo-rpc-conformance = { path = ".", features = ["tokio"] }
+ulo-rpc-tcp = { path = "../ulo-rpc-tcp" }
 
 # Runs where both harnesses are built: `--features tokio,smol`, or a workspace build, where the link
 # crates turn both on.

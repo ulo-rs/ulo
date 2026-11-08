@@ -7,10 +7,8 @@ description = "The harness pieces the Ulo conformance suites share"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-# A dependency of the suite crates, none of which is published, and a dev-dependency of the
-# crates whose tests run on its harnesses or time on its `ScriptedTimer`. Cargo strips
-# dev-dependencies when publishing, so this never needs a crates.io release.
-publish = false
+keywords = ["ulo", "conformance", "testing"]
+categories = ["development-tools::testing"]
 
 [features]
 # `OnTokio`, the runtime half of every suite run on tokio.

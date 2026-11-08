@@ -17,5 +17,5 @@ futures-core = "0.3"
 futures-util = "0.3"
 
 [dev-dependencies]
-# `publish = false`: a link outside this repository reaches the suite through a git dependency.
+# By path, the suite in this tree; a link outside the repository depends on the published crate.
 ulo-rpc-conformance = { path = "../../../ulo-rpc-conformance", features = ["tokio"] }

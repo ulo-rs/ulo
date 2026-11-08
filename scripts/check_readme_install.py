@@ -1,8 +1,8 @@
 """Fails when a README's Install section names a `ulo` version other than the workspace's.
 
 The workspace version is `[workspace.package] version` in the root `Cargo.toml`. The Install
-section (`## Install` up to the next `## ` heading) of the root `README.md` and of
-`crates/ulo/README.md` is read for every claim about a version:
+section (`## Install` up to the next `## ` heading) of each README in `READMES`, the root
+`README.md` and the published crates' own, is read for every claim about a version:
 
 - a git dependency, `git = ".."` or `git = '..'` in a manifest or `--git` on a `cargo add`, which
   is refused outright: the released version is on crates.io, so nobody is sent to a git tag;
@@ -30,7 +30,7 @@ import re
 import sys
 import tempfile
 
-READMES = ["README.md", "crates/ulo/README.md"]
+READMES = ["README.md", "crates/ulo/README.md", "crates/ulo-rpc-conformance/README.md"]
 VERSION = r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?"
 # What a dependency or `cargo add` may write: cargo reads `"0.1"` as `^0.1`, a claim about the
 # version as much as `"0.1.0"` is.
@@ -143,9 +143,9 @@ BAD = {
 
 
 def fixture(root, version, text):
-    (root / "crates" / "ulo").mkdir(parents=True, exist_ok=True)
     (root / "Cargo.toml").write_text(f'[workspace]\nmembers = []\n\n[workspace.package]\nversion = "{version}"\n\n[workspace.dependencies]\nulo = "0.0.1"\n')
     for name in READMES:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text(text)
 
 
@@ -154,17 +154,17 @@ def self_test():
         root = pathlib.Path(tmp)
         fixture(root, "1.2.3", GOOD)
         problems, read = check(root)
-        if problems or len(read) != 2 * 5:
+        if problems or len(read) != len(READMES) * 5:
             sys.exit(f"check_readme_install.py: self-test: the matching fixture read {len(read)} claims and gave {problems}")
         fixture(root, "1.2.4", GOOD)
-        if len(check(root)[0]) != 2 * 5:
+        if len(check(root)[0]) != len(READMES) * 5:
             sys.exit("check_readme_install.py: self-test: a workspace version bump did not flag every claim")
         prerelease = (
             GOOD.replace('"1.2.3"', '"=1.2.3"').replace("ulo@1.2.3", "ulo@=1.2.3").replace("1.2.3", "1.2.3-alpha.2")
         )
         fixture(root, "1.2.3-alpha.2", prerelease)
         problems, read = check(root)
-        if problems or len(read) != 2 * 5:
+        if problems or len(read) != len(READMES) * 5:
             sys.exit(f"check_readme_install.py: self-test: the prerelease fixture read {len(read)} claims and gave {problems}")
         fixture(root, "1.2.3-alpha.2", prerelease.replace('ulo-http = "=1.2.3-alpha.2"', 'ulo-http = "=1.2.3-alpha.1"'))
         if not check(root)[0]:
@@ -177,7 +177,7 @@ def self_test():
             "range on a pre-release": prerelease.replace('ulo-http = "=1.2.3-alpha.2"', 'ulo-http = ">=1.2.3-alpha.2"'),
         }.items():
             fixture(root, "1.2.3-alpha.2", unpinned)
-            if unpinned == prerelease or len(check(root)[0]) != 2:
+            if unpinned == prerelease or len(check(root)[0]) != len(READMES):
                 sys.exit(f"check_readme_install.py: self-test: the {label} was not refused once per README")
         for label, text in BAD.items():
             fixture(root, "1.2.3", text)

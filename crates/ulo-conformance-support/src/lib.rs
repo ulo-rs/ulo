@@ -1,8 +1,9 @@
 //! The harness pieces the conformance suites share (integrations DESIGN §9, I11): the runtime half
 //! a suite's scenarios run on, the budget a scenario waits within, startup failures written to
-//! files, the slots that bound how many scenarios hold an environment at once, and the TCP relay.
-//! `ulo-rpc-conformance` and `ulo-db-conformance` depend on this crate; the first re-exports every
-//! item at the path it had before the move.
+//! files, the [`Slots`] that bound how many scenarios hold an environment at once, and the TCP
+//! relay. `ulo-rpc-conformance` and `ulo-db-conformance` depend on this crate and re-export what a
+//! link or host author names, so that author depends on the suite alone; a crate writing a suite
+//! depends on this one.
 //!
 //! The crate names no runtime at default features. A suite's [`Harness`] is its runtime half:
 //! the app's runtime, which every server and client in a scenario runs on and every wait and task
@@ -29,6 +30,7 @@ use ulo::Runtime;
 
 mod failures;
 pub mod relay;
+mod slots;
 #[cfg(feature = "smol")]
 mod smol_harness;
 #[cfg(feature = "smol")]
@@ -36,7 +38,8 @@ pub mod starvation;
 #[cfg(feature = "tokio")]
 mod tokio_harness;
 
-pub use failures::failures_dir;
+pub use failures::{failures_dir, startup_failed};
+pub use slots::{Slot, Slots};
 /// Defined in core, where a user's tests reach it; kept here so the suites' existing paths hold.
 pub use ulo::testing::ScriptedTimer;
 #[cfg(feature = "smol")]
@@ -84,7 +87,7 @@ pub fn skipped(scenario: &str, capability: &str, reason: &str) {
 #[macro_export]
 macro_rules! startup_failed {
     ($($arg:tt)+) => {
-        $crate::__private::startup_failed(::std::format!($($arg)+))
+        $crate::startup_failed(::std::format!($($arg)+))
     };
 }
 
@@ -146,101 +149,5 @@ impl Budget {
 impl Default for Budget {
     fn default() -> Self {
         Budget::new(Duration::from_secs(5), Duration::from_millis(500), Duration::from_secs(10))
-    }
-}
-
-#[doc(hidden)]
-pub mod __private {
-    use std::num::NonZeroUsize;
-
-    pub use crate::failures::startup_failed;
-    use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
-
-    use crate::PARALLEL_VAR;
-
-    /// The slots one stamped suite's scenarios share. Each scenario runs on its own test thread,
-    /// so a slot is waited for by blocking that thread before the scenario's runtime starts.
-    pub struct Slots {
-        held: Mutex<usize>,
-        freed: Condvar,
-    }
-
-    impl Slots {
-        pub const fn new() -> Self {
-            Slots { held: Mutex::new(0), freed: Condvar::new() }
-        }
-
-        /// A slot when the suite's `declared` bound or the host's [`PARALLEL_VAR`] bounds the
-        /// suite, the smaller when both do, held until the guard drops; `None` otherwise.
-        pub fn hold(&'static self, declared: Option<NonZeroUsize>) -> Option<Slot> {
-            let parallel = bound(declared, host_parallel())?;
-            let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
-            while *held >= parallel.get() {
-                held = self.freed.wait(held).unwrap_or_else(PoisonError::into_inner);
-            }
-            *held += 1;
-            Some(Slot(self))
-        }
-    }
-
-    impl Default for Slots {
-        fn default() -> Self {
-            Slots::new()
-        }
-    }
-
-    /// One held slot, given back on drop, a scenario's panic included.
-    pub struct Slot(&'static Slots);
-
-    impl Drop for Slot {
-        fn drop(&mut self) {
-            *self.0.held.lock().unwrap_or_else(PoisonError::into_inner) -= 1;
-            self.0.freed.notify_one();
-        }
-    }
-
-    fn bound(declared: Option<NonZeroUsize>, host: Option<NonZeroUsize>) -> Option<NonZeroUsize> {
-        match (declared, host) {
-            (Some(declared), Some(host)) => Some(declared.min(host)),
-            (declared, host) => declared.or(host),
-        }
-    }
-
-    /// [`PARALLEL_VAR`] as the host set it, read once per test binary: `None` unset or empty.
-    fn host_parallel() -> Option<NonZeroUsize> {
-        static HOST: OnceLock<Option<NonZeroUsize>> = OnceLock::new();
-        *HOST.get_or_init(|| match std::env::var(PARALLEL_VAR) {
-            Err(std::env::VarError::NotPresent) => None,
-            Ok(value) if value.trim().is_empty() => None,
-            Ok(value) => match value.trim().parse::<NonZeroUsize>() {
-                Ok(parallel) => Some(parallel),
-                Err(_) => startup_failed(format!("{PARALLEL_VAR} is `{value}`, not a positive integer")),
-            },
-            Err(std::env::VarError::NotUnicode(value)) => startup_failed(format!("{PARALLEL_VAR} is {value:?}, not a positive integer")),
-        })
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use std::num::NonZeroUsize;
-
-        use super::bound;
-
-        fn n(value: usize) -> Option<NonZeroUsize> {
-            NonZeroUsize::new(value)
-        }
-
-        #[test]
-        fn the_smaller_of_two_bounds_applies() {
-            assert_eq!(bound(n(4), n(6)), n(4), "a broker's bound below the host's");
-            assert_eq!(bound(n(6), n(4)), n(4), "a host's bound below the broker's");
-        }
-
-        #[test]
-        fn either_bound_alone_applies() {
-            assert_eq!(bound(n(4), None), n(4), "the broker's bound, the host setting none");
-            assert_eq!(bound(None, n(6)), n(6), "the host's bound, the broker declaring none");
-            assert_eq!(bound(None, None), None, "neither bound");
-        }
     }
 }
