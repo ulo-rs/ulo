@@ -23,6 +23,3 @@ allow ulo-ws ulo_transport::__derive  # re-exported for the derives, as in `ulo-
 allow ulo-grpc ulo_transport::__derive  # re-exported for the derives, as in `ulo-http`
 
 allow ulo-grpc ulo_http::__private::Carried  # the seal of `ulo_http::HttpCarried`, which `Grpc` implements so a gRPC call runs HTTP's pre-dispatch stage; a doc-hidden supertrait is what seals it to the two transports
-
-allow ulo-rpc-conformance ulo_conformance_support::__private  # re-exported for `conformance_suite!`'s expansion, `$crate::__private::{Slots, startup_failed}`; both crates are `publish = false` test support
-allow ulo-db-conformance ulo_conformance_support::__private  # re-exported for `conformance_suite!`'s expansion, `$crate::__private::Slots`; both crates are `publish = false` test support

@@ -24,6 +24,14 @@ the GraphQL examples, each a leaf or unpublished. Neither declares a `#[doc(hidd
 core crate's source names `ulo_graphql` or `ulo_graphql_ws`. `python3 scripts/release_check.py
 lockstep` derives the same group.
 
+`ulo-conformance-support` and `ulo-rpc-conformance`, the RPC conformance suite and its harness,
+are leaves by the same two conditions. Neither owns a doc-hidden module: `conformance_suite!` and
+`startup_failed!` expand to `Slots` and `startup_failed`, public items of the support crate that
+the suite re-exports, so the code a suite stamps reaches no hidden path. No core crate depends on
+either through a normal or build dependency: `ulo-http`, `ulo-ws` and `ulo-server-hyper` take the
+support crate as a dev-dependency, which Cargo strips when publishing, and the suite's dependents
+are the RPC links, `ulo-ws-redis` and the community-link fixture, each through a dev-dependency.
+
 ## What `release check` checks
 
 The job checks out the last release, the nearest tag matching `v[0-9]*` among the ancestors of the
@@ -43,7 +51,8 @@ at the first step that fails:
    in the log, since a major release type skips every lint. Every crate must report more than zero
    checks run, so a run that skipped its lints fails rather than passing empty. Proc-macro crates
    and `ulo-cli`, a binary, have no library API to compare and are named apart in the job's last
-   line.
+   line, and so is a crate the last release does not publish, which has no release to compare
+   with: one added since, or one made publishable since.
 
 cargo-semver-checks has no lint for a changed type: a parameter or return type that changes, or a
 tuple struct's field that stops being public, passes step 3. A change making such a break adds a
@@ -99,11 +108,33 @@ needs first.
 ## Cutting a release
 
 One pull request moves `[workspace.package] version` and every `=` pin to the new version,
-regenerates `Cargo.lock` for the workspace members, and updates the Install sections of `README.md`
-and `crates/ulo/README.md`, which `scripts/check_readme_install.py` holds to the workspace version.
+regenerates `Cargo.lock` for the workspace members, and updates the Install sections of `README.md`,
+`crates/ulo/README.md` and `crates/ulo-rpc-conformance/README.md`, which
+`scripts/check_readme_install.py` holds to the workspace version.
 While that version is a pre-release the Install sections pin each crate `=<version>`, and the
 script refuses any other operator: a caret on a pre-release also takes a later pre-release of the
 same version, which may break the first.
 The release is tagged `v<version>`. From that tag on, `release check` compares with the new release,
 every entry in `semver-breaks.txt` stops matching, and the first change after the tag removes them.
 Until that change merges, the job fails on `master` and on every other pull request.
+
+## Publishing a crate for the first time
+
+`cargo publish --workspace` packages every publishable crate, verifies each against the others at
+the version being released, and uploads them in the order of their normal and build dependencies,
+each after the crates it pins. A crate checked alone, `cargo package -p <crate>` or
+`cargo publish --dry-run -p <crate>`, resolves its `=` pins on crates.io instead, and fails while a
+crate it pins is not on crates.io at that version. Dev-dependencies name no version, and Cargo
+strips them from the published manifest, so they impose no order; `ulo-rpc-conformance` and
+`ulo-rpc-tcp` are each a dev-dependency of the other.
+
+crates.io limits how many new crate names one account creates: a burst of a few, then about one
+every ten minutes. A release adding more names than the burst spaces them or waits out the limit
+when crates.io answers 429.
+
+crates.io makes the account that publishes a new crate its only owner. Once a new crate is
+published, the publishers team is added as an owner:
+
+```sh
+cargo owner --add github:ulo-rs:publishers <crate>
+```

@@ -674,3 +674,26 @@ Breaks planted in the working tree, one at a time, each anchor asserted once and
 | a caret on a pre-release README pin | the real check, naming the line |
 | the pre-release pin rule removed from the README check | its self-test |
 
+### Q28-14 status (the RPC suite published)
+
+- Leaves: `scripts/release_check.py lockstep` derives `ulo-conformance-support` and `ulo-rpc-conformance` as leaves, 17 core crates and 40 leaves, since neither owns a doc-hidden module and no core crate depends on either through a normal or build dependency (transports decision 166).
+- The stamping macros expand to `Slots` and `startup_failed`, public items of the support crate; `ulo-rpc-conformance`'s `tests/harness.rs` holds `Slots` at its public path, and `private-paths.txt` carries no allowance for either suite.
+- First publication: `release_check.py --self-test` plants a crate absent from the baseline, which the semver step names in its summary, and requires every crate in both trees checked or listed apart.
+- The README's first run compiles as a doctest of `ulo-rpc-conformance`: the suite stamped over the TCP link, declaring the three held-`cancel` scenarios not applicable as `ulo-rpc-tcp`'s own `tests/conformance.rs` does. The doctest is no test build, so the scenarios are not stamped in it, and the macro refuses a declared name that is no scenario against a module of the scenario names, present in every build. `check_readme_install.py` holds the Install section to the workspace version.
+- `failures_dir`: `ulo-conformance-support`'s `failures::tests` read the target directory off a test binary's path, with and without a target triple, and beside a binary in no `deps` directory.
+- `public-reach.txt` lists both crates; `Broker::probe` is doc-hidden, as the `ClientProbe` it names is.
+
+Breaks planted, each in a scratch copy, the working tree untouched:
+
+| Break | Red |
+| --- | --- |
+| a doc-hidden `__private` module in the support crate | `lockstep`: the support crate and both runtime crates placed in the core |
+| the suite re-exporting a `__` module of the support crate | `lockstep`: both suite crates and both runtime crates placed in the core |
+| the semver step's list of crates absent from the baseline left empty | the self-test |
+| every crate read as absent from the baseline | the self-test, twice |
+| a caret on the suite README's pin | the real check, naming the line |
+| the community-link fixture naming `ulo_conformance_support::__private` or `ulo_rpc::__private` | `private_paths.py scan`, naming the path |
+| a `not_applicable` name that is no scenario, in a link crate's test build | the build, `E0425` naming it |
+| a `not_applicable` name that is no scenario, in the README's first run | the suite's doctest, `E0425` naming it |
+| the README's first run with `disrupt` answering the wrong type | the suite's doctest |
+

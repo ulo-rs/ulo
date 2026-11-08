@@ -5,6 +5,8 @@
 crate ulo-transport
 crate ulo-http
 crate ulo-rpc
+crate ulo-rpc-conformance
+crate ulo-conformance-support
 crate ulo-ws
 crate ulo-grpc
 crate ulo-graphql
@@ -96,3 +98,5 @@ allow ulo_ws ulo_ws::Reply futures_core::stream::BoxStream  # a futures trait or
 allow ulo_transport ulo_transport::span::call tracing::span::Span  # the span a transport opens per call, `tracing`'s own type; every transport crate depends on `tracing`, and re-exporting it from this crate is open
 allow ulo_transport ulo_transport::Detail serde_json::value::Value  # a detail's JSON payload; re-exporting `serde_json` from this crate is open
 allow ulo_transport ulo_transport::Tracked futures_core::stream::Stream  # the `Stream` impl of a reply's stream-end tracker; re-exporting `futures_core::Stream` from this crate is open
+allow ulo_rpc_conformance ulo_rpc_conformance::Stamped ulo_rpc::link::Link  # the `Link` the wrapper implements is `ulo-rpc`'s SPI, which a link crate running the suite depends on to implement its own; a second path to it from the suite is not re-exported
+allow ulo_rpc_conformance ulo_rpc_conformance::cases::deadlines::Stamped ulo_rpc::link::Link  # the same wrapper at its defining path

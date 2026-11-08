@@ -55,10 +55,7 @@ pub mod cases;
 
 #[cfg(feature = "tokio")]
 pub use ulo_conformance_support::OnTokio;
-pub use ulo_conformance_support::{Budget, Harness, PARALLEL_VAR, failures_dir, relay, report, skipped, startup_failed};
-// The macro expands to `$crate::__private::Slots`.
-#[doc(hidden)]
-pub use ulo_conformance_support::__private;
+pub use ulo_conformance_support::{Budget, Harness, PARALLEL_VAR, Slots, failures_dir, relay, report, skipped, startup_failed};
 
 /// The password the suite asks a host to put in the URLs it plants, so a scenario can assert that no
 /// refusal or error prints it.
@@ -356,7 +353,7 @@ macro_rules! conformance_suite {
         );
     };
     (@cases $host:ty; $($name:ident => $module:ident :: $case:ident $([$runner:ident])?),* $(,)?) => {
-        static __ULO_DB_CONFORMANCE_SLOTS: $crate::__private::Slots = $crate::__private::Slots::new();
+        static __ULO_DB_CONFORMANCE_SLOTS: $crate::Slots = $crate::Slots::new();
         $(
             __ulo_db_conformance_stamp!($name, fn $name() {
                 let _slot = __ULO_DB_CONFORMANCE_SLOTS.hold(<$host as $crate::Host>::PARALLEL);

@@ -9,9 +9,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use ulo_rpc_conformance::__private::Slots;
 use ulo_rpc_conformance::relay::Relay;
-use ulo_rpc_conformance::{Harness, OnSmol, OnTokio};
+use ulo_rpc_conformance::{Harness, OnSmol, OnTokio, Slots};
 
 /// How long a read here waits before it counts as no answer.
 const PATIENCE: Duration = Duration::from_secs(5);

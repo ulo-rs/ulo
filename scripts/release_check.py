@@ -30,7 +30,8 @@ three steps against it and stops at the first that fails:
    permits every break. A major release is therefore checked as a minor one: its breaks are listed
    in the log and need no entry, since the version accepts them. Each crate must report a run of
    more than zero checks, and each break of a crate that is not a major release must be accepted
-   in `semver-breaks.txt`.
+   in `semver-breaks.txt`. A crate BASELINE does not publish, one added since or made publishable
+   since, has no release to compare with; the summary names each one.
 
 `semver-breaks.txt` lists `break <package> <lint> <count>  # reason`: a break since the last
 release that is accepted, with the number of distinct items the lint reports in that package. The
@@ -347,11 +348,15 @@ def semver_findings(report, expected, accepted, skipped=(), major=()):
 
 
 def semver_targets(base_pkgs, cur_pkgs, skipped=()):
-    """`({release type: [crate]}, [crate with no library], findings)` for the crates in both trees.
+    """`({release type: [crate]}, [crate with no library], [crate the release does not publish],
+    findings)` for the publishable crates of the current tree.
 
     cargo-semver-checks reads a library's rustdoc and passes over a proc-macro or binary-only
-    crate named with `-p` without a word, so those are listed apart rather than asked for."""
+    crate named with `-p` without a word, so those are listed apart rather than asked for. A crate
+    the release does not publish has nothing to be compared with, and is listed apart too, so the
+    summary names it rather than leaving it out of the count."""
     by_type, no_library, found = {}, [], []
+    unreleased = sorted(set(cur_pkgs) - set(base_pkgs) - set(skipped))
     for name in sorted(set(base_pkgs) & set(cur_pkgs)):
         if name in skipped:
             continue
@@ -364,7 +369,7 @@ def semver_targets(base_pkgs, cur_pkgs, skipped=()):
                          f"{base_pkgs[name]['version']}")
             continue
         by_type.setdefault(kind, []).append(name)
-    return by_type, no_library, found
+    return by_type, no_library, unreleased, found
 
 
 def semver_command(root, baseline, kind, names):
@@ -439,7 +444,7 @@ def check(root, baseline, skipped):
         print(f"release-plz: {len(cur)} crates versioned, the core at {after[ANCHOR]['version']}")
 
     accepted = read_breaks((root / BREAKS).read_text()) if (root / BREAKS).exists() else {}
-    by_type, no_library, found = semver_targets(base, cur, set(skipped))
+    by_type, no_library, unreleased, found = semver_targets(base, cur, set(skipped))
     expected = {n for names in by_type.values() for n in names}
     report = parse_semver_log(run_semver(root, baseline, by_type, env))
     found += semver_findings(report, expected, accepted, set(skipped), set(by_type.get("major", ())))
@@ -447,6 +452,8 @@ def check(root, baseline, skipped):
         return 1
     print(f"semver: {len(report)} of {len(expected)} library crates checked against "
           f"{base[ANCHOR]['version']}; no library API in {len(no_library)} ({', '.join(no_library)})"
+          + (f"; not published at {base[ANCHOR]['version']}, so not compared: {', '.join(unreleased)}"
+             if unreleased else "")
           + (f"; skipped {', '.join(skipped)}" if skipped else ""))
     return 0
 
@@ -583,10 +590,16 @@ def self_test():
     cur = dict(legal_tree(), **{"ulo-cli": pkg(library=False), "ulo-new": pkg()})
     cur["ulo-db"] = pkg(version="4.0.0")
     cur["ulo-net"] = pkg(version="0.9.0")
-    by_type, no_library, found = semver_targets(base, cur, skipped={"ulo-build"})
+    by_type, no_library, unreleased, found = semver_targets(base, cur, skipped={"ulo-build"})
     if by_type != {"minor": ["ulo", "ulo-codegen", "ulo-http"], "major": ["ulo-db"]} \
             or no_library != ["ulo-macros"] or len(found) != 1:
         failures.append(f"semver targets read as {by_type}, {no_library}, {found}")
+    # `ulo-cli` and `ulo-new` are publishable here and absent from the release; every other crate
+    # is in both trees and is checked or listed apart above.
+    if unreleased != ["ulo-cli", "ulo-new"]:
+        failures.append(f"crates the release does not publish read as {unreleased}, not ulo-cli and ulo-new")
+    if semver_targets(cur, cur)[2]:
+        failures.append("a crate the release publishes was read as one it does not")
 
     report = parse_semver_log(SEMVER_LOG)
     want = {"ulo": {"checks": 202, "breaks": {"struct_pub_field_missing": {

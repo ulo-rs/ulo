@@ -9647,6 +9647,8 @@ dependencies = [
  "ulo",
  "ulo-conformance-support",
  "ulo-rpc",
+ "ulo-rpc-conformance",
+ "ulo-rpc-tcp",
  "ulo-transport",
 ]
 
