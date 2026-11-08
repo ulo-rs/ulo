@@ -12,6 +12,7 @@ use serde::de::DeserializeOwned;
 use ulo_transport::{ExtractError, FieldViolation, FromCall, Validate};
 
 use crate::frame::Data;
+use crate::queue::Overflow;
 use crate::transport::{Body, Rpc, RpcCx};
 
 /// The name an extraction failure gives the payload.
@@ -71,9 +72,10 @@ fn decode<T: DeserializeOwned>(cx: &RpcCx, data: &Data) -> Result<T, ExtractErro
 /// A streamed request's items, `in` frames until `in_end`, each decoded as `T`: a parameter of
 /// this type makes the handler's shape a streamed request. An item that does not decode yields
 /// `Err` and ends the stream. A request whose items overflow the server's `max_queued_items` ends
-/// the same way, with [`ExtractError::Overflowed`], the items not yet read dropped, on whatever
-/// task reads it; the call is answered `unavailable` with the reason `overflow` whatever the
-/// handler returns.
+/// the same way, with [`ExtractError::Overflowed`], and one whose items overflow its
+/// `max_queued_bytes` with [`ExtractError::OverflowedBytes`], the items not yet read dropped, on
+/// whatever task reads it; the call is answered `unavailable` with the reason `overflow` whatever
+/// the handler returns.
 pub struct Inbound<T> {
     pub(crate) items: BoxStream<'static, Result<T, ExtractError>>,
 }
@@ -91,9 +93,13 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Rpc> for Inbound<T> {
             async move {
                 let mut receiver = receiver?;
                 let Some(data) = receiver.next().await else {
-                    let limit = receiver.halted_at()?;
-                    let limit = u64::try_from(limit).unwrap_or(u64::MAX);
-                    return Some((Err(ExtractError::Overflowed { param: PAYLOAD, limit }), None));
+                    let failed = match receiver.halted_at()? {
+                        Overflow::Items { limit } => {
+                            ExtractError::Overflowed { param: PAYLOAD, limit: u64::try_from(limit).unwrap_or(u64::MAX) }
+                        }
+                        Overflow::Bytes { limit, .. } => ExtractError::OverflowedBytes { param: PAYLOAD, limit },
+                    };
+                    return Some((Err(failed), None));
                 };
                 match decode::<T>(&cx, &data) {
                     Ok(item) => Some((Ok(item), Some(receiver))),

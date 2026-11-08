@@ -25,6 +25,7 @@ use std::error::Error;
 use std::fmt;
 use std::future::{Future, IntoFuture};
 use std::marker::PhantomData;
+use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
@@ -43,7 +44,7 @@ use crate::codec::Codec;
 use crate::dispatch::{SHAPE_UNSUPPORTED, quote, reason};
 use crate::frame::{Data, ErrorBody, Frame};
 use crate::link::{ConnectTimedOut, FrameTooLarge, FrameUnencodable, Link, Misconfigured, NoDestination, Outbound, Pattern, ReplyTo};
-use crate::queue::{self, Drain, Feed};
+use crate::queue::{self, Drain, Feed, Overflow};
 use crate::server::shape_name;
 use crate::trace;
 use crate::transport::CallHeaders;
@@ -173,6 +174,46 @@ impl fmt::Display for ZeroCount {
 
 impl Error for ZeroCount {}
 
+/// A zero `max_queued_bytes` given to an RPC client, which would end every stream at its first
+/// reply item: refused by [`RpcClient::max_queued_bytes`] where it is written, and by
+/// `RpcClientModule::max_queued_bytes` when the app wires. `u64::MAX` is the spelling of no limit.
+///
+/// ```
+/// # use std::sync::Arc;
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() {
+/// use ulo_rpc::{RpcClient, ZeroBytes};
+///
+/// let client = RpcClient::new(ulo_rpc_tcp::Tcp::new("127.0.0.1:7000"), Arc::new(ulo_runtime_tokio::Tokio::current())).expect("a usable link");
+/// let refused: ZeroBytes = client.max_queued_bytes(0).err().expect("a zero byte bound is refused");
+/// assert_eq!(refused.link(), "tcp");
+/// # }
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ZeroBytes {
+    setter: &'static str,
+    link: &'static str,
+}
+
+impl ZeroBytes {
+    pub(crate) fn new(setter: &'static str, link: &'static str) -> Self {
+        ZeroBytes { setter, link }
+    }
+
+    /// The link's name, `Link::NAME`.
+    pub fn link(&self) -> &'static str {
+        self.link
+    }
+}
+
+impl fmt::Display for ZeroBytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "`{}(0)` on the {} link would end every stream at its first reply item; write `u64::MAX` to remove the limit", self.setter, self.link)
+    }
+}
+
+impl Error for ZeroBytes {}
+
 /// A link a client cannot use, refused before any call: its [`Link::usable`] failed, a tokio-based
 /// link built outside a runtime and given none, or a TCP link given a host name. [`RpcClient::new`]
 /// answers it, and `RpcClientModule`'s init hook fails the app's `connect` with it.
@@ -234,7 +275,8 @@ impl Error for UnusableLink {
 /// `Bound::Unbounded` is: no timer is armed for it and no `deadline-ms` is sent.
 ///
 /// The reply items of one call that have arrived and that its caller has not read are held up to
-/// [`max_queued_items`](Self::max_queued_items), 1,024 unset. The item past that ends the call
+/// [`max_queued_items`](Self::max_queued_items), 1,024 unset, carrying up to
+/// [`max_queued_bytes`](Self::max_queued_bytes), 4 MiB unset. The item past either ends the call
 /// `Unavailable` with the reason `overflow`, and its server is sent `cancel` first.
 #[derive(Clone)]
 pub struct RpcClient {
@@ -245,9 +287,8 @@ pub struct RpcClient {
     /// Every stream's idle timeout unless the call sets its own; `None` for `Bound::Unbounded`
     /// and `Bound::Default`. Held by the handle, as `timeout` is.
     idle: Option<Duration>,
-    /// Every call's queue limit; `None` for `Count::Unlimited`. Held by the handle, as `timeout`
-    /// is.
-    queued: Option<usize>,
+    /// Every call's queue limits. Held by the handle, as `timeout` is.
+    queued: queue::Limits,
 }
 
 type Connect = Box<dyn Fn() -> BoxFuture<'static, Result<Outbound, BoxError>> + Send + Sync>;
@@ -389,13 +430,13 @@ impl RpcClient {
             }),
             timeout: timeout_of(timeout),
             idle: idle_of(idle),
-            queued: queue::limit_of(Count::Default),
+            queued: queue::Limits::default(),
         }
     }
 
-    /// `RpcClientModule`'s queue limit, refused at zero before the client is built.
-    pub(crate) fn with_queued(mut self, items: Count) -> Self {
-        self.queued = queue::limit_of(items);
+    /// `RpcClientModule`'s queue limits, each refused at zero before the client is built.
+    pub(crate) fn with_queued(mut self, items: Count, bytes: u64) -> Self {
+        self.queued = queue::Limits::of(items, bytes);
         self
     }
 
@@ -442,8 +483,8 @@ impl RpcClient {
 
     /// The reply items of one `stream` or `duplex` call held for its caller once they have arrived
     /// and before it reads them, as `RpcClientModule::max_queued_items` sets it for a module's
-    /// client: 1,024 at `Count::Default`, none at `Count::Unlimited`, which lets a server streaming
-    /// faster than its caller reads grow the client's memory without limit. The connection's reply
+    /// client: 1,024 at `Count::Default`, none at `Count::Unlimited`, which leaves
+    /// [`max_queued_bytes`](Self::max_queued_bytes) alone bounding the queue. The connection's reply
     /// lane, which serves every call on it, never waits for room. The item arriving past the limit
     /// ends that call: the client sends its server `cancel`, so the server stops producing, drops
     /// whatever else arrives for the call, and the caller reads the items already held, then
@@ -454,9 +495,8 @@ impl RpcClient {
     /// The limit holds without telling the server how much room is left: the reserved `credit`
     /// frame is that window, and no link sends it.
     ///
-    /// An item count is not a memory bound: the worst case is the item bound times the link's
-    /// `Capabilities::max_frame` per call, and a link declaring none, Redis and RabbitMQ, bounds an
-    /// item only by what its broker accepts.
+    /// An item count is not a memory bound; [`max_queued_bytes`](Self::max_queued_bytes) is, and
+    /// the call ends at whichever of the two its next item would pass first.
     ///
     /// `Count::Max(0)`, which would end every stream at its first item, is refused as
     /// [`ZeroCount`].
@@ -464,7 +504,29 @@ impl RpcClient {
         if items == Count::Max(0) {
             return Err(ZeroCount::new("RpcClient::max_queued_items", self.inner.link));
         }
-        self.queued = queue::limit_of(items);
+        self.queued.items = queue::limit_of(items);
+        Ok(self)
+    }
+
+    /// The bytes the reply items of one `stream` or `duplex` call held for its caller may carry,
+    /// counted as each item's encoded payload, `d`, as `RpcClientModule::max_queued_bytes` sets it
+    /// for a module's client: 4 MiB unset, four frames at the TCP link's 1 MiB `max_frame` default,
+    /// and the item bound's worth of 4 KiB items, so a stream of smaller items meets
+    /// [`max_queued_items`](Self::max_queued_items) first and one of larger items this. The item
+    /// that would take the bytes held past it ends the call as an item past `max_queued_items`
+    /// does: the client sends its server `cancel`, and the caller reads the items already held,
+    /// then `Unavailable` with the reason `"overflow"`. An item over the bound on its own ends the
+    /// call the same way at once, the message naming its size. A call's last frame, `res`, `err` or
+    /// `end`, always fits, so a call answered by one reply is never ended by it. This handle and the
+    /// clones made from it after carry it, as [`timeout`](Self::timeout)'s do. `u64::MAX` removes
+    /// the bound.
+    ///
+    /// `0`, which would end every stream at its first item, is refused as [`ZeroBytes`].
+    pub fn max_queued_bytes(mut self, bytes: u64) -> Result<Self, ZeroBytes> {
+        if bytes == 0 {
+            return Err(ZeroBytes::new("RpcClient::max_queued_bytes", self.inner.link));
+        }
+        self.queued.bytes = bytes;
         Ok(self)
     }
 
@@ -780,8 +842,8 @@ impl ClientInner {
     /// registration is replaced once by a new one; a second that ends as fast fails the call
     /// `Unavailable`.
     ///
-    /// The call's reply frames queue up to `limit` items, `None` for no limit.
-    async fn register(&self, limit: Option<usize>, pattern: &Pattern) -> Result<(Arc<Conn>, u64, Waiting, Drain<Result<Frame, RpcError>>), RpcError> {
+    /// The call's reply frames queue up to `limit`.
+    async fn register(&self, limit: queue::Limits, pattern: &Pattern) -> Result<(Arc<Conn>, u64, Waiting, Drain<Result<Frame, RpcError>>), RpcError> {
         for _ in 0..2 {
             let conn = self.connection().await?;
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -807,7 +869,7 @@ impl ClientInner {
             runtime: Arc::clone(&self.runtime),
         });
         // Detached: it ends with the reply lane, or at the next frame once the connection is gone.
-        drop(self.runtime.spawn(Box::pin(route_replies(Arc::downgrade(&conn), replies))));
+        drop(self.runtime.spawn(Box::pin(route_replies(Arc::downgrade(&conn), self.link, replies))));
         *slot = Some(Arc::clone(&conn));
         Ok(conn)
     }
@@ -815,9 +877,16 @@ impl ClientInner {
 
 /// The reply lane of one connection, routed by id. It holds the connection weakly, so a client
 /// dropped with no call in flight releases it at the next frame. A call's last frame always fits
-/// its queue; any other that does not fit ends the call through [`overflow`].
-async fn route_replies(conn: Weak<Conn>, mut replies: BoxStream<'static, Frame>) {
-    while let Some(frame) = replies.next().await {
+/// its queue; any other that does not fit ends the call through [`overflow`]. A lane that panics,
+/// a link's task raising its panic through `TaskPanics::guard`, ends the connection through
+/// [`lane_panicked`].
+async fn route_replies(conn: Weak<Conn>, link: &'static str, mut replies: BoxStream<'static, Frame>) {
+    loop {
+        let frame = match AssertUnwindSafe(replies.next()).catch_unwind().await {
+            Ok(Some(frame)) => frame,
+            Ok(None) => break,
+            Err(payload) => return lane_panicked(&conn, link, payload).await,
+        };
         let Some(conn) = conn.upgrade() else { return };
         if matches!(frame, Frame::Goaway) {
             conn.open.store(false, Ordering::Release);
@@ -830,10 +899,11 @@ async fn route_replies(conn: Weak<Conn>, mut replies: BoxStream<'static, Frame>)
             if ends { pending.remove(&id) } else { pending.get(&id).cloned() }
         };
         let Some(waiting) = waiting else { continue };
+        let bytes = queued_bytes(&frame);
         if ends {
-            waiting.feed.finish(Ok(frame));
-        } else if !waiting.feed.offer(Ok(frame)) {
-            overflow(&conn, id, &waiting);
+            waiting.feed.finish(Ok(frame), bytes);
+        } else if let Err(passed) = waiting.feed.offer(Ok(frame), bytes) {
+            overflow(&conn, id, &waiting, passed);
         }
     }
     if let Some(conn) = conn.upgrade() {
@@ -841,11 +911,68 @@ async fn route_replies(conn: Weak<Conn>, mut replies: BoxStream<'static, Frame>)
     }
 }
 
+/// Ends a connection whose reply lane panicked: no call registers on it from here, and every call
+/// waiting on it fails `Unavailable` holding the panic, its message redacted on the client's
+/// runtime as a task's panic is, so [`ulo::is_panic`] is true of the call's error. The next call
+/// connects again.
+async fn lane_panicked(conn: &Weak<Conn>, link: &'static str, payload: Box<dyn std::any::Any + Send>) {
+    let Some(conn) = conn.upgrade() else { return };
+    // Closed under the table's lock, as `register` reads it, before the redaction's await.
+    {
+        let _pending = conn.pending();
+        conn.open.store(false, Ordering::Release);
+    }
+    let message = crate::link::panic_redacted(&*conn.runtime, payload).await;
+    let waiting: Vec<Waiting> = conn.pending().drain().map(|(_, waiting)| waiting).collect();
+    for waiting in waiting {
+        let error = match &message {
+            Some(message) => {
+                let mut error = RpcError::new(ErrorKind::Unavailable, format!("the {link} link's reply lane failed: {message}"));
+                error.source = Some(Box::new(LanePanicked(Arc::clone(message))));
+                error
+            }
+            None => RpcError::new(
+                ErrorKind::Unavailable,
+                format!("the {link} link's reply lane panicked, and its message was not redacted: the client's runtime has shut down"),
+            )
+            .with_reason(ulo::RUNTIME_SHUT_DOWN),
+        };
+        waiting.feed.finish(Err(error), 0);
+    }
+}
+
+/// A reply lane's panic, as a call's error keeps it: its `source()` is the redacted panic, which
+/// `ulo::is_panic` finds.
+#[derive(Debug)]
+struct LanePanicked(Arc<ulo::Redacted>);
+
+impl fmt::Display for LanePanicked {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl Error for LanePanicked {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&*self.0)
+    }
+}
+
+/// What a reply frame weighs against `max_queued_bytes`: its payload, or an `err`'s message.
+fn queued_bytes(frame: &Frame) -> u64 {
+    let bytes = match frame {
+        Frame::Item { data, .. } | Frame::Res { data, .. } => data.len(),
+        Frame::Err { error, .. } => error.message.len(),
+        _ => 0,
+    };
+    u64::try_from(bytes).unwrap_or(u64::MAX)
+}
+
 /// Ends call `id`, whose queue held its limit's worth of reply frames unread when another
 /// arrived: nothing more is routed to it, `cancel` is sent so its server stops producing, and only
 /// then is the error queued behind the frames already held. The error marks no call settled, and
 /// a settled call sends no `cancel` when it drops, so the `cancel` goes here or not at all.
-fn overflow(conn: &Conn, id: u64, waiting: &Waiting) {
+fn overflow(conn: &Conn, id: u64, waiting: &Waiting, passed: Overflow) {
     conn.pending().remove(&id);
     // A caller dropping its stream at this moment sends the `cancel` from its `Pending`; whichever
     // of the two marks the call first sends it.
@@ -855,11 +982,18 @@ fn overflow(conn: &Conn, id: u64, waiting: &Waiting) {
             let _ = cancel.await;
         })));
     }
-    let limit = waiting.feed.limit().unwrap_or_default();
-    let message = format!(
-        "the stream had {limit} reply items its caller had not read, the client's `max_queued_items`, and the next one ended the call; its server was sent `cancel`"
-    );
-    waiting.feed.finish(Err(RpcError::new(ErrorKind::Unavailable, message).with_reason("overflow")));
+    let message = match passed {
+        Overflow::Bytes { limit, item } if item > limit => format!(
+            "the stream's next reply item, of {item} bytes, is over the client's `max_queued_bytes` of {limit} on its own, and ended the call; its server was sent `cancel`"
+        ),
+        Overflow::Bytes { limit, item } => format!(
+            "the stream's reply items its caller had not read and the next one, of {item} bytes, would have passed {limit} bytes, the client's `max_queued_bytes`, and it ended the call; its server was sent `cancel`"
+        ),
+        Overflow::Items { limit } => format!(
+            "the stream had {limit} reply items its caller had not read, the client's `max_queued_items`, and the next one ended the call; its server was sent `cancel`"
+        ),
+    };
+    waiting.feed.finish(Err(RpcError::new(ErrorKind::Unavailable, message).with_reason("overflow")), 0);
 }
 
 /// A streamed request's items as `in` frames, then `in_end`. A failure goes to the waiting call,
@@ -879,17 +1013,17 @@ async fn pump(conn: Arc<Conn>, pattern: Pattern, id: u64, mut items: BoxStream<'
         let data = match item {
             Ok(data) => data,
             Err(err) => {
-                waiting.feed.finish(Err(err));
+                waiting.feed.finish(Err(err), 0);
                 return;
             }
         };
         if let Err(err) = conn.send(&pattern, Frame::In { id, data }, None).await {
-            waiting.feed.finish(Err(send_error(err)));
+            waiting.feed.finish(Err(send_error(err)), 0);
             return;
         }
     }
     if let Err(err) = conn.send(&pattern, Frame::InEnd { id }, None).await {
-        waiting.feed.finish(Err(send_error(err)));
+        waiting.feed.finish(Err(send_error(err)), 0);
     }
 }
 
@@ -1031,6 +1165,12 @@ fn send_error(err: BoxError) -> RpcError {
         RpcError::new(ErrorKind::BadRequest, err.to_string()).with_reason("payload_too_large")
     } else if err.is::<FrameUnencodable>() {
         RpcError::new(ErrorKind::Internal, err.to_string())
+    } else if ulo::is_panic(&err) {
+        // A link task's panic, from `TaskPanics::explain`, kept as the call's source so
+        // `ulo::is_panic` finds it.
+        let mut error = RpcError::new(ErrorKind::Unavailable, format!("the link failed: {err}"));
+        error.source = Some(err);
+        error
     } else {
         RpcError::new(ErrorKind::Unavailable, format!("the link refused the frame: {err}"))
     }
@@ -2476,6 +2616,37 @@ mod tests {
         assert_eq!(link.cancels(id), 0, "a stream that ended cleanly sent `cancel`: {:?}", link.sent());
     }
 
+    /// F584: the bytes an item held are released when its caller reads it: a caller reading each
+    /// round of four 25-byte items, a full byte bound of 100, moves ten bounds' worth with no
+    /// overflow and no `cancel`.
+    #[tokio::test]
+    async fn a_stream_read_as_its_items_arrive_moves_ten_times_its_byte_bound() {
+        let link = FedLink::default();
+        let client = RpcClient::of_module(Arc::new(link.clone()), Bound::Default, Bound::Unbounded, Arc::new(ulo_runtime_tokio::Tokio::current()))
+            .max_queued_bytes(100)
+            .expect("a bound of 100 bytes");
+        let mut stream = client.stream::<_, u32>("fed.stream", &()).await.expect("the stream opens");
+        let id = link.opened();
+        let wide = |n: u32| Frame::Item { id, data: Data::new(format!("{n:>25}")) };
+        let mut read = Vec::new();
+        for round in 0..10 {
+            for n in 0..4 {
+                link.reply(wide(round * 4 + n));
+            }
+            if round == 9 {
+                link.reply(Frame::End { id });
+            }
+            for _ in 0..4 {
+                read.push(next_within_5s(&mut stream, "the round's item").await.expect("an item").expect("no overflow"));
+            }
+        }
+        assert!(next_within_5s(&mut stream, "the stream's end").await.is_none(), "the stream did not end at its `end`");
+        assert_eq!(read, (0..40).collect::<Vec<_>>());
+        drop(stream);
+        tokio::task::yield_now().await;
+        assert_eq!(link.cancels(id), 0, "a stream that ended cleanly sent `cancel`: {:?}", link.sent());
+    }
+
     /// F364: a call handed a connection whose reply lane then ended, before the call registered,
     /// waited for its own timeout, since the lane had already failed every call registered on it.
     #[tokio::test(flavor = "current_thread")]
@@ -2493,12 +2664,12 @@ mod tests {
         }
         assert!(!handed.open.load(Ordering::Acquire), "the first connection's reply lane did not end");
 
-        let (feed, _replies) = queue::queue(None);
+        let (feed, _replies) = queue::queue(queue::Limits::default());
         let waiting = Waiting { feed, pattern: Pattern::from("ending.call"), cancelled: Arc::default() };
         assert!(!handed.register(1, waiting), "a call was registered on a connection whose reply lane had ended");
         assert!(handed.pending().is_empty(), "the ended connection holds a call no reply can reach");
 
-        let (conn, _, _, _) = client.inner.register(None, &Pattern::from("ending.call")).await.expect("the call registers on a new connection");
+        let (conn, _, _, _) = client.inner.register(queue::Limits::default(), &Pattern::from("ending.call")).await.expect("the call registers on a new connection");
         assert!(!Arc::ptr_eq(&conn, &handed), "the call was registered on the ended connection");
         assert_eq!(connects.load(Ordering::Relaxed), 2, "the call did not go over a new connection");
     }

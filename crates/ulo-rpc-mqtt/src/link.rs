@@ -22,7 +22,7 @@ use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Redacted, Refused, Runtime,
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::link::ClientProbe;
-use ulo_rpc::link::{HoldUntil, Inbound, panic_redacted};
+use ulo_rpc::link::{HoldUntil, Inbound, TaskPanics, panic_redacted};
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured, NoTimer,
     Instances, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
@@ -85,6 +85,11 @@ const CUT_GRACE: Duration = Duration::from_secs(2);
 ///
 /// A link dropped without `close`, as a server's is when its app drops before the close step,
 /// aborts its event loops, so its connections close, without the DISCONNECT `close` writes.
+///
+/// A panic in one of the link's event loops ends a server as a transport failure, the app's
+/// shutdown outcome naming the link and the task and holding the panic redacted with the app's
+/// secrets; on a client it fails the calls waiting on the connection `Unavailable` holding the
+/// panic, and the next call connects again ([`TaskPanics`](ulo_rpc::link::TaskPanics)).
 pub struct Mqtt {
     pub(crate) url: String,
     pub(crate) group: Option<String>,
@@ -100,9 +105,18 @@ pub struct Mqtt {
     pub(crate) max_packet: Arc<AtomicU64>,
     /// The root certificates an `mqtts://` url connects with.
     pub(crate) roots: Roots,
+    /// The app's runtime, read by `prepare`, which redacts a server task's panic with the app's
+    /// secrets when it is logged.
+    pub(crate) app_runtime: Option<Arc<dyn Runtime>>,
     pub(crate) state: Mutex<State>,
     #[cfg(feature = "conformance-probe")]
     pub(crate) probe: Arc<ClientProbe>,
+    /// The task [`Mqtt::panic_in`] names, and what it panics with.
+    #[cfg(feature = "conformance-probe")]
+    pub(crate) planted: Option<ulo_rpc::link::PlantedPanic>,
+    /// The link's watched tasks whose futures live, read through [`Mqtt::live_tasks`].
+    #[cfg(feature = "conformance-probe")]
+    pub(crate) live_tasks: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[derive(Default)]
@@ -202,9 +216,14 @@ impl Mqtt {
             default_group: None,
             max_packet: Arc::new(AtomicU64::new(0)),
             roots: Roots::platform(),
+            app_runtime: None,
             state: Mutex::new(State::default()),
             #[cfg(feature = "conformance-probe")]
             probe: Arc::default(),
+            #[cfg(feature = "conformance-probe")]
+            planted: None,
+            #[cfg(feature = "conformance-probe")]
+            live_tasks: Arc::default(),
         }
     }
 
@@ -214,6 +233,34 @@ impl Mqtt {
     #[cfg(feature = "conformance-probe")]
     pub fn probe(&self) -> &ClientProbe {
         &self.probe
+    }
+
+    /// Makes the link's task `planted` names, `event loop`, panic once `planted` fires.
+    /// For the link's own tests, under the `conformance-probe` feature.
+    #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
+    pub fn panic_in(mut self, planted: ulo_rpc::link::PlantedPanic) -> Self {
+        self.planted = Some(planted);
+        self
+    }
+
+    /// How many of the link's lanes, writers, reply routers and event loops have a future that
+    /// has not yet dropped, on both sides. For the link's own tests, under the
+    /// `conformance-probe` feature.
+    #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
+    pub fn live_tasks(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        Arc::clone(&self.live_tasks)
+    }
+
+    /// Where one side's tasks report a panic: redacted on `runtime` when it is logged.
+    fn panics(&self, runtime: Arc<dyn Runtime>) -> TaskPanics {
+        let panics = TaskPanics::new("MQTT", runtime);
+        #[cfg(feature = "conformance-probe")]
+        panics.plant(self.planted.clone());
+        #[cfg(feature = "conformance-probe")]
+        panics.count_into(Arc::clone(&self.live_tasks));
+        panics
     }
 
     /// The shared-subscription group server instances share, in place of the root module's full
@@ -323,6 +370,7 @@ impl Link for Mqtt {
             None => self.default_group = Some(share_name(&format!("{:#}", app.root().name()))),
         }
         self.timer = app.timer().cloned();
+        self.app_runtime = app.runtime().cloned();
         // A server loads its roots here, so a store that yields none fails `bind` before `listen`.
         if let Err(error) = self.tls(&target, &runtime).await {
             // Raised again here, so the app reports it as this server's panic in `prepare`,
@@ -378,9 +426,13 @@ impl Link for Mqtt {
             unconfirmed: watch::channel(0).0,
         });
 
+        // The sender lives in the side, which the link's state holds, so the event loop does not
+        // feed the stream: its panic is raised through the stream's next poll.
+        let panics = self.panics(self.app_runtime.clone().unwrap_or_else(|| Arc::new(runtime.clone())));
+        let inbound = panics.guard(receiver_stream(inbound));
         let (ready, bound) = oneshot::channel();
         let served = Arc::clone(&side);
-        let event_loop = Loop::spawn(&runtime, timer, move |written| serve(served, eventloop, ready, written));
+        let event_loop = Loop::spawn(&runtime, timer, move |written| panics.watch("event loop", serve(served, eventloop, ready, written)));
         // Until the broker answers, a `listen` dropped mid-handshake takes the event loop with it.
         let pending = AbortOnDrop::new(event_loop.task.abort_handle());
         // `bind`'s outcome waits for the first CONNACK and the SUBACK of every subscription, so a
@@ -392,7 +444,7 @@ impl Link for Mqtt {
         }
         pending.disarm();
         lock(&self.state).server = Some((side, event_loop));
-        Ok(receiver_stream(inbound))
+        Ok(inbound)
     }
 
     async fn connect(&self, handed: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
@@ -437,7 +489,11 @@ impl Link for Mqtt {
         // The clock of the runtime the client was handed, the app's inside an app.
         let timer = Arc::clone(handed) as Arc<dyn Timer>;
         let looped = Arc::clone(&side);
-        let event_loop = Loop::spawn(&runtime, timer, move |written| client_loop(looped, eventloop, frames, ready, written));
+        let panics = self.panics(Arc::clone(handed));
+        let replies = panics.guard(receiver_stream(replies));
+        let explaining = panics.clone();
+        let event_loop =
+            Loop::spawn(&runtime, timer, move |written| panics.watch_feeder("event loop", client_loop(looped, eventloop, frames, ready, written)));
         // Until the broker answers, a `connect` dropped mid-handshake, a call's timeout cutting it
         // short, takes the event loop with it.
         let pending = AbortOnDrop::new(event_loop.task.abort_handle());
@@ -449,10 +505,17 @@ impl Link for Mqtt {
 
         Ok(Outbound {
             send: Box::new(move |pattern: Pattern, frame: Frame, _reply_to: Option<ReplyTo>| -> BoxFuture<'static, Result<(), BoxError>> {
-                let side = Arc::clone(&side);
-                Box::pin(async move { side.send(pattern, frame).await })
+                let (side, explaining) = (Arc::clone(&side), explaining.clone());
+                // A task that panicked closed what the send went through: the call is told the
+                // panic.
+                Box::pin(async move {
+                    match side.send(pattern, frame).await {
+                        Ok(()) => Ok(()),
+                        Err(error) => Err(explaining.explain(error).await),
+                    }
+                })
             }),
-            replies: receiver_stream(replies),
+            replies,
         })
     }
 

@@ -52,7 +52,8 @@ pub(crate) struct CxInner {
 }
 
 /// What a call carries as its payload: one `d`, or a streamed request's `in` items until
-/// `in_end`, which closes the queue, held up to the server's `max_queued_items`.
+/// `in_end`, which closes the queue, held up to the server's `max_queued_items` and
+/// `max_queued_bytes`.
 pub(crate) enum Body {
     Data(Data),
     Stream(Drain<Data>),

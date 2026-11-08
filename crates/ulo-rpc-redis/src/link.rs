@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -11,7 +12,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
 use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Runtime};
 use ulo_runtime_tokio::Tokio;
-use ulo_rpc::link::Inbound;
+use ulo_rpc::link::{Inbound, TaskPanics};
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, Link, NoDestination, Ordering as Order,
     Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
@@ -47,30 +48,52 @@ const WRITE_QUEUE: usize = 64;
 /// takes the link and a server's `listen()` fails, and in `connect`.
 ///
 /// A link dropped without `close`, as a server's is when its app drops before the close step,
-/// aborts the tasks reading its Pub/Sub connections, so its connections close.
+/// aborts the tasks reading its Pub/Sub connections and its writers, so its connections close.
+///
+/// A panic in one of the link's tasks, a Pub/Sub reader or a writer, ends a server as a transport
+/// failure, the app's shutdown outcome naming the link and the task and holding the panic redacted
+/// with the app's secrets; on a client it fails the calls waiting on the connection `Unavailable`
+/// holding the panic, and the next call connects again ([`TaskPanics`]).
 pub struct Redis {
     pub(crate) url: String,
     pub(crate) codec: Codec,
     pub(crate) runtime: Option<Tokio>,
+    /// The app's runtime, read by `prepare`, which redacts a server task's panic with the app's
+    /// secrets when it is logged. Asserted unwind-safe, so the link stays `UnwindSafe`: it is
+    /// only spawned on.
+    pub(crate) app_runtime: AssertUnwindSafe<Option<Arc<dyn Runtime>>>,
     pub(crate) state: Mutex<State>,
+    /// The task [`Redis::panic_in`] names, and what it panics with.
+    #[cfg(feature = "conformance-probe")]
+    pub(crate) planted: Option<ulo_rpc::link::PlantedPanic>,
+    /// The link's watched tasks whose futures live, read through [`Redis::live_tasks`].
+    #[cfg(feature = "conformance-probe")]
+    pub(crate) live_tasks: Arc<std::sync::atomic::AtomicUsize>,
 }
 
+/// Each side with its Pub/Sub reader and its writer.
 #[derive(Default)]
 pub(crate) struct State {
-    server: Option<(Arc<ServerSide>, AbortHandle)>,
-    client: Option<(Arc<ClientSide>, AbortHandle)>,
+    server: Option<(Arc<ServerSide>, Tasks)>,
+    client: Option<(Arc<ClientSide>, Tasks)>,
 }
 
-/// A link dropped without `close` aborts the Pub/Sub readers `close` would have aborted: an
-/// `AbortHandle` dropped leaves its task running, and a reader holds its side, so the Pub/Sub
-/// connection, the side's writer and its publisher connection would stay until the process ends.
+/// A side's two tasks.
+pub(crate) struct Tasks {
+    reader: AbortHandle,
+    writer: AbortHandle,
+}
+
+/// A link dropped without `close` aborts the Pub/Sub readers `close` would have aborted, and the
+/// writers `close` lets finish: an `AbortHandle` dropped leaves its task running, and a reader
+/// holds its side, so the Pub/Sub connection, the side's writer and its publisher connection would
+/// stay until the process ends.
 impl Drop for State {
     fn drop(&mut self) {
-        if let Some((_, task)) = &self.server {
-            task.abort();
-        }
-        if let Some((_, task)) = &self.client {
-            task.abort();
+        let sides = [self.server.as_ref().map(|(_, tasks)| tasks), self.client.as_ref().map(|(_, tasks)| tasks)];
+        for tasks in sides.into_iter().flatten() {
+            tasks.reader.abort();
+            tasks.writer.abort();
         }
     }
 }
@@ -79,7 +102,45 @@ impl Redis {
     /// The link on `url`, `redis://host:6379` or `rediss://host:6380`, parsed in `prepare` and
     /// connected lazily. `rediss://` needs the crate's `tls` feature.
     pub fn url(url: impl Into<String>) -> Self {
-        Redis { url: url.into(), codec: Codec::Json, runtime: Tokio::try_current(), state: Mutex::new(State::default()) }
+        Redis {
+            url: url.into(),
+            codec: Codec::Json,
+            runtime: Tokio::try_current(),
+            app_runtime: AssertUnwindSafe(None),
+            state: Mutex::new(State::default()),
+            #[cfg(feature = "conformance-probe")]
+            planted: None,
+            #[cfg(feature = "conformance-probe")]
+            live_tasks: Arc::default(),
+        }
+    }
+
+    /// Makes the link's task `planted` names, `Pub/Sub reader` or `writer`, panic once
+    /// `planted` fires. For the link's own tests, under the `conformance-probe` feature.
+    #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
+    pub fn panic_in(mut self, planted: ulo_rpc::link::PlantedPanic) -> Self {
+        self.planted = Some(planted);
+        self
+    }
+
+    /// How many of the link's lanes, writers, reply routers and event loops have a future that
+    /// has not yet dropped, on both sides. For the link's own tests, under the
+    /// `conformance-probe` feature.
+    #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
+    pub fn live_tasks(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        Arc::clone(&self.live_tasks)
+    }
+
+    /// Where one side's tasks report a panic: redacted on `runtime` when it is logged.
+    fn panics(&self, runtime: Arc<dyn Runtime>) -> TaskPanics {
+        let panics = TaskPanics::new("Redis", runtime);
+        #[cfg(feature = "conformance-probe")]
+        panics.plant(self.planted.clone());
+        #[cfg(feature = "conformance-probe")]
+        panics.count_into(Arc::clone(&self.live_tasks));
+        panics
     }
 
     /// `Codec::Cbor` carries raw bytes and reports `binary: true`; JSON unset.
@@ -126,7 +187,7 @@ impl Link for Redis {
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
-        let _ = app;
+        self.app_runtime = AssertUnwindSafe(app.runtime().cloned());
         // `listen` binds on the link's runtime: one that has shut down, or has no IO driver, is
         // refused here, before the configuration and before any server binds. The shutdown is
         // asked first, since a runtime that has shut down answers nothing about its driver.
@@ -162,8 +223,12 @@ impl Link for Redis {
 
         let (phase, _) = watch::channel(Phase::Serving);
         let (deliveries, inbound) = mpsc::unbounded_channel();
+        // The sender lives in the side, which the link's state holds, so neither task feeds the
+        // stream: a panic in either is raised through its next poll.
+        let panics = self.panics(self.app_runtime.0.clone().unwrap_or_else(|| Arc::new(runtime.clone())));
+        let inbound = panics.guard(receiver_stream(inbound));
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
-        runtime.handle().spawn(server_writer(publisher, queued));
+        let writer = runtime.handle().spawn(panics.watch("writer", server_writer(publisher, queued))).abort_handle();
         let side = Arc::new(ServerSide {
             client,
             writes,
@@ -175,12 +240,12 @@ impl Link for Redis {
             phase,
             deliveries: Mutex::new(Some(deliveries)),
         });
-        let task = runtime.handle().spawn(server_lane(Arc::clone(&side), stream));
-        lock(&self.state).server = Some((side, task.abort_handle()));
-        Ok(receiver_stream(inbound))
+        let reader = runtime.handle().spawn(panics.watch("Pub/Sub reader", server_lane(Arc::clone(&side), stream))).abort_handle();
+        lock(&self.state).server = Some((side, Tasks { reader, writer }));
+        Ok(inbound)
     }
 
-    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+    async fn connect(&self, client_runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let runtime = self.runtime()?;
         let client = client(&self.url)?;
         let channel = format!("ulo:rpc:reply:{}", uuid::Uuid::new_v4().simple());
@@ -203,22 +268,33 @@ impl Link for Redis {
             base: uuid::Uuid::new_v4().as_u64_pair().0,
         });
         let (frames, replies) = mpsc::unbounded_channel();
-        let task = runtime.handle().spawn(client_lane(Arc::clone(&side), sink, stream, frames));
-        lock(&self.state).client = Some((Arc::clone(&side), task.abort_handle()));
+        let panics = self.panics(Arc::clone(client_runtime));
+        let replies = panics.guard(receiver_stream(replies));
+        let explaining = panics.clone();
+        let reader = runtime.handle().spawn(panics.watch_feeder("Pub/Sub reader", client_lane(Arc::clone(&side), sink, stream, frames))).abort_handle();
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
-        runtime.handle().spawn(client_writer(side, queued));
+        let writer = runtime.handle().spawn(panics.watch("writer", client_writer(Arc::clone(&side), queued))).abort_handle();
+        lock(&self.state).client = Some((side, Tasks { reader, writer }));
 
         Ok(Outbound {
             // Queued at the call, so frames are published in the order their sends were called.
             send: Box::new(move |pattern: Pattern, frame: Frame, _reply_to: Option<ReplyTo>| -> BoxFuture<'static, Result<(), BoxError>> {
                 let (answer, answered) = oneshot::channel();
                 let room = writes.send(Outgoing { pattern, frame, answer });
+                let explaining = explaining.clone();
                 Box::pin(async move {
-                    room.await.map_err(|_| BoxError::from(CLOSED))?;
-                    answered.await.map_err(|_| BoxError::from(CLOSED))?
+                    let sent = async {
+                        room.await.map_err(|_| BoxError::from(CLOSED))?;
+                        answered.await.map_err(|_| BoxError::from(CLOSED))?
+                    };
+                    // A writer that panicked dropped the answer: the call is told the panic.
+                    match sent.await {
+                        Ok(()) => Ok(()),
+                        Err(error) => Err(explaining.explain(error).await),
+                    }
                 })
             }),
-            replies: receiver_stream(replies),
+            replies,
         })
     }
 
@@ -254,19 +330,20 @@ impl Link for Redis {
             let mut state = lock(&self.state);
             (state.server.take(), state.client.take())
         };
-        if let Some((side, task)) = server {
+        // Each writer is left to publish what is queued, and ends with its queue.
+        if let Some((side, tasks)) = server {
             side.phase.send_replace(Phase::Closed);
             // Taken before the table is cleared, so no call is held once it is.
             lock(&side.deliveries).take();
             side.calls.clear();
             lock(&side.sink).take();
-            task.abort();
+            tasks.reader.abort();
         }
-        if let Some((side, task)) = client {
+        if let Some((side, tasks)) = client {
             // The `RpcClient` keeps the connection's send half until its next call replaces it,
             // so the publisher is taken out of it here, closing its connection.
             lock(&side.publisher).take();
-            task.abort();
+            tasks.reader.abort();
         }
         Ok(())
     }

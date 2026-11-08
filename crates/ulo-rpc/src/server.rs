@@ -35,7 +35,8 @@ const DEFAULT_SHED_RETRY_AFTER: Duration = Duration::from_secs(1);
 /// an `#[event]` handler with a streamed shape, a request handler declared `every_instance`, an
 /// event declared `every_instance` on a link declaring `without_every_instance` (TCP, UDP), a
 /// `Binary` payload on a JSON link, `max_inflight(Count::Max(0))`,
-/// `max_queued_items(Count::Max(0))` and `timeout_grace(Bound::After(Duration::ZERO))`.
+/// `max_queued_items(Count::Max(0))`, `max_queued_bytes(0)` and
+/// `timeout_grace(Bound::After(Duration::ZERO))`.
 /// On a link declaring `without_single_delivery` it logs one `warn` naming how many request
 /// patterns and how many one-instance event patterns it mounts and the reason, and refuses
 /// nothing. `bind` calls `Link::listen` with every mounted pattern and the [`Instances`] its
@@ -56,6 +57,7 @@ pub struct Server<L: Link> {
     pub(crate) link: L,
     pub(crate) max_inflight: Count,
     pub(crate) max_queued_items: Count,
+    pub(crate) max_queued_bytes: u64,
     pub(crate) timeout_grace: Bound,
     pub(crate) shed_retry_after: Duration,
     /// Set by `prepare`.
@@ -72,6 +74,7 @@ impl<L: Link> Server<L> {
             link,
             max_inflight: Count::Default,
             max_queued_items: Count::Default,
+            max_queued_bytes: queue::DEFAULT_MAX_QUEUED_BYTES,
             timeout_grace: Bound::Default,
             shed_retry_after: DEFAULT_SHED_RETRY_AFTER,
             shared: None,
@@ -103,9 +106,9 @@ impl<L: Link> Server<L> {
     }
 
     /// The items of one streamed request that may wait for its handler to read them: 1,024 at
-    /// `Count::Default`, none at `Count::Unlimited`, which lets a client sending faster than its
-    /// handler reads grow the server's memory without limit. `Count::Max(0)` is refused in
-    /// `prepare`. The item arriving past the limit ends that call: its handler's execution is
+    /// `Count::Default`, none at `Count::Unlimited`, which leaves
+    /// [`max_queued_bytes`](Self::max_queued_bytes) alone bounding the queue. `Count::Max(0)` is
+    /// refused in `prepare`. The item arriving past the limit ends that call: its handler's execution is
     /// cancelled `CancelReason::Explicit`, the items it had not read are dropped and its request
     /// ends failing, `ExtractError::Overflowed` its last item on whatever task reads it, never
     /// with the end `in_end` gives, and the call is answered `err` of kind `unavailable` with the
@@ -114,11 +117,29 @@ impl<L: Link> Server<L> {
     /// telling the client how much room is left: the reserved `credit` frame is that window, and no
     /// link sends it.
     ///
-    /// An item count is not a memory bound: the worst case is the item bound times the link's
-    /// `Capabilities::max_frame` per call, and a link declaring none, Redis and RabbitMQ, bounds an
-    /// item only by what its broker accepts.
+    /// An item count is not a memory bound; [`max_queued_bytes`](Self::max_queued_bytes) is, and
+    /// the call ends at whichever of the two its next item would pass first.
     pub fn max_queued_items(mut self, items: Count) -> Self {
         self.max_queued_items = items;
+        self
+    }
+
+    /// The bytes the items of one streamed request waiting for its handler may carry, counted as
+    /// each item's encoded payload, `d`: 4 MiB unset, four frames at the TCP link's 1 MiB
+    /// `max_frame` default, and the item bound's worth of 4 KiB items, so a stream of smaller items
+    /// meets `max_queued_items` first and one of larger items this. The item that would take the
+    /// bytes waiting past it ends the call as an item past `max_queued_items` does: the handler's
+    /// execution is cancelled `CancelReason::Explicit`, its request ends failing with
+    /// `ExtractError::OverflowedBytes`, and the call is answered `err` of kind `unavailable` with
+    /// the reason `overflow`. An item over the bound on its own ends the call the same way at once,
+    /// the message naming its size; a stream carrying such items needs a larger bound, on a link
+    /// whose `max_frame` lets them through. A request or event carried in one frame, `req` or
+    /// `evt`, is never queued, and neither bound applies to it. Both apply on every link alike: a
+    /// link declaring `native_backpressure` paces whole calls under `max_inflight`, never one
+    /// call's items. `u64::MAX` removes the bound, and `0`, which would end every streamed request
+    /// at its first item, is refused in `prepare`.
+    pub fn max_queued_bytes(mut self, bytes: u64) -> Self {
+        self.max_queued_bytes = bytes;
         self
     }
 
@@ -143,6 +164,11 @@ impl<L: Link> ulo::Server for Server<L> {
         self.link.max_inflight(self.max_inflight);
         failures.extend(zero_count("max_inflight", self.max_inflight, "shed every call"));
         failures.extend(zero_count("max_queued_items", self.max_queued_items, "end every streamed request at its first item"));
+        if self.max_queued_bytes == 0 {
+            failures.push(Failure::plain(
+                "`.max_queued_bytes(0)` would end every streamed request at its first item; write `u64::MAX` to remove the limit",
+            ));
+        }
         failures.extend(zero_bound(
             "timeout_grace",
             self.timeout_grace,
@@ -268,7 +294,7 @@ impl<L: Link> ulo::Server for Server<L> {
             link: L::NAME,
             admission: Admission::new(limit).retry_after(self.shed_retry_after),
             grace: grace_of(self.timeout_grace),
-            queued: queue::limit_of(self.max_queued_items),
+            queued: queue::Limits::of(self.max_queued_items, self.max_queued_bytes),
             calls: Mutex::new(HashMap::new()),
             serial: AtomicU64::new(0),
             unhandled_events: AtomicU64::new(0),

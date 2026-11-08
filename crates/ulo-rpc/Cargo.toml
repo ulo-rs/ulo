@@ -20,6 +20,8 @@ ciborium.workspace = true
 # No runtime here, as in the core: tasks are spawned through the app's `Runtime`, and these are
 # the runtime-free primitives in place of `tokio::sync`. The client's connection lock.
 async-lock.workspace = true
+# What `link::TaskPanics::explain` waits on: a watched task leaving a poll.
+event-listener.workspace = true
 # A streamed request's items and each call's reply frames.
 futures-channel.workspace = true
 futures-core.workspace = true
@@ -32,7 +34,9 @@ tracing.workspace = true
 # For the conformance suite; not an application feature. It builds `link::ClientProbe`, which
 # a broker link holds under its own `conformance-probe` so the suite's held-`cancel` scenarios can
 # withhold a server's `opened` and shorten the link's hold. Without it no link compiles the paths
-# that withhold or delay an `opened`.
+# that withhold or delay an `opened`. It also builds `link::PlantedPanic` and `TaskPanics`'s
+# `plant` and `count_into`, through which a link's own tests make one of its tasks panic and count
+# the tasks still alive.
 conformance-probe = []
 
 [dev-dependencies]

@@ -90,6 +90,8 @@ allow ulo_rpc ulo_rpc::Reply futures_core::stream::BoxStream  # a futures trait 
 allow ulo_rpc ulo_rpc::RpcStream futures_core::stream::Stream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_rpc ulo_rpc::link::Inbound futures_core::stream::BoxStream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_rpc ulo_rpc::link::Outbound futures_core::stream::BoxStream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
+allow ulo_rpc ulo_rpc::link::TaskPanics futures_core::stream::BoxStream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
+allow ulo_rpc ulo_rpc::link::TaskPanics futures_core::stream::Stream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_ws ulo_ws::BroadcastAdapter futures_core::stream::BoxStream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_ws ulo_ws::Frame serde_json::error::Error  # a JSON encoder's error, propagated with `?`; re-exporting `serde_json` for it is open
 allow ulo_ws ulo_ws::GatewayTable ulo_transport::prepare::Failures  # a server's `prepare` SPI; a server crate builds its failures through `ulo-transport`

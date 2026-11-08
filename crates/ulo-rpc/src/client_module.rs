@@ -7,7 +7,7 @@ use std::time::Duration;
 use ulo::{Bound, BoxError, Dep, Module, ModuleDef, ModuleIdentity, Runtime};
 use ulo_transport::Count;
 
-use crate::client::{RpcClient, UnusableLink, ZeroCount, ZeroTimeout};
+use crate::client::{RpcClient, UnusableLink, ZeroBytes, ZeroCount, ZeroTimeout};
 use crate::link::Link;
 
 /// Binds `RpcClient` over link `L`, exported, usually keyed so two clients coexist:
@@ -40,6 +40,7 @@ pub struct RpcClientModule<L: Link> {
     pub(crate) timeout: Bound,
     pub(crate) idle: Bound,
     pub(crate) queued: Count,
+    pub(crate) queued_bytes: u64,
     pub(crate) instance: u64,
 }
 
@@ -56,6 +57,7 @@ impl<L: Link> RpcClientModule<L> {
             timeout: Bound::Default,
             idle: Bound::Default,
             queued: Count::Default,
+            queued_bytes: crate::queue::DEFAULT_MAX_QUEUED_BYTES,
             instance: INSTANCES.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -87,10 +89,20 @@ impl<L: Link> RpcClientModule<L> {
     /// one `stream` or `duplex` call held unread for its caller, 1,024 at `Count::Default`, none at
     /// `Count::Unlimited`. The item past it ends the call `Unavailable` with the reason
     /// `"overflow"`, after the client sends its server `cancel`. `Count::Max(0)` is refused when the
-    /// app wires, as [`ZeroCount`]. An item count is not a memory bound: the worst case is the item
-    /// bound times the link's `Capabilities::max_frame` per call.
+    /// app wires, as [`ZeroCount`]. An item count is not a memory bound;
+    /// [`max_queued_bytes`](Self::max_queued_bytes) is.
     pub fn max_queued_items(mut self, items: Count) -> Self {
         self.queued = items;
+        self
+    }
+
+    /// The client's byte bound, as [`RpcClient::max_queued_bytes`] sets it: the bytes the reply
+    /// items of one `stream` or `duplex` call held unread for its caller may carry, 4 MiB unset.
+    /// The item that would take them past it ends the call `Unavailable` with the reason
+    /// `"overflow"`, after the client sends its server `cancel`. `u64::MAX` removes it; `0` is
+    /// refused when the app wires, as [`ZeroBytes`].
+    pub fn max_queued_bytes(mut self, bytes: u64) -> Self {
+        self.queued_bytes = bytes;
         self
     }
 }
@@ -108,6 +120,8 @@ impl<L: Link> Module for RpcClientModule<L> {
             Some(ZeroTimeout::of_module("RpcClientModule::idle_timeout", L::NAME, "every stream").into())
         } else if self.queued == Count::Max(0) {
             Some(ZeroCount::new("RpcClientModule::max_queued_items", L::NAME).into())
+        } else if self.queued_bytes == 0 {
+            Some(ZeroBytes::new("RpcClientModule::max_queued_bytes", L::NAME).into())
         } else {
             None
         };
@@ -118,11 +132,11 @@ impl<L: Link> Module for RpcClientModule<L> {
         } else {
             let link = Arc::clone(&self.link);
             let closing = Arc::clone(&self.link);
-            let (timeout, idle, queued) = (self.timeout, self.idle, self.queued);
+            let (timeout, idle, queued, queued_bytes) = (self.timeout, self.idle, self.queued, self.queued_bytes);
             let checked = Arc::clone(&self.link);
             m.singleton(move |runtime: Dep<dyn Runtime>| {
                 let link = Arc::clone(&link);
-                async move { RpcClient::of_module(link, timeout, idle, runtime.into_arc()).with_queued(queued) }
+                async move { RpcClient::of_module(link, timeout, idle, runtime.into_arc()).with_queued(queued, queued_bytes) }
             })
             .on_destroy(move || {
                 let link = Arc::clone(&closing);

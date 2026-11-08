@@ -25,7 +25,7 @@ use ulo::{AppHandle, BoxError, BoxFuture, Cut, Permanent, Redacted, Refused, Run
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::link::ClientProbe;
-use ulo_rpc::link::{HoldUntil, Inbound};
+use ulo_rpc::link::{HoldUntil, Inbound, TaskPanics};
 use ulo_transport::sync::ordered;
 use ulo_transport::{Count, Details, ErrorKind, SHUTDOWN_MESSAGE};
 use ulo_rpc::{
@@ -100,6 +100,12 @@ const CUT_GRACE: Duration = Duration::from_secs(2);
 /// A link dropped without `close`, as a server's is when its app drops before the close step,
 /// aborts the tasks holding its channels, so its connections close, and a client connect still
 /// running.
+///
+/// A panic in one of the link's tasks, a request lane, the control lane, a writer or the reply
+/// router, ends a server as a transport failure, the app's shutdown outcome naming the link and
+/// the task and holding the panic redacted with the app's secrets; on a client it fails the calls
+/// waiting on the connection `Unavailable` holding the panic, and the next call connects again
+/// ([`TaskPanics`](ulo_rpc::link::TaskPanics)).
 pub struct RabbitMq {
     pub(crate) url: String,
     pub(crate) codec: Codec,
@@ -108,9 +114,18 @@ pub struct RabbitMq {
     pub(crate) connect_within: Duration,
     /// The app's clock, kept by `prepare` for `listen`.
     pub(crate) timer: Option<Arc<dyn Timer>>,
+    /// The app's runtime, read by `prepare`, which redacts a server task's panic with the app's
+    /// secrets when it is logged.
+    pub(crate) app_runtime: Option<Arc<dyn Runtime>>,
     pub(crate) state: Mutex<State>,
     #[cfg(feature = "conformance-probe")]
     pub(crate) probe: Arc<ClientProbe>,
+    /// The task [`RabbitMq::panic_in`] names, and what it panics with.
+    #[cfg(feature = "conformance-probe")]
+    pub(crate) planted: Option<ulo_rpc::link::PlantedPanic>,
+    /// The link's watched tasks whose futures live, read through [`RabbitMq::live_tasks`].
+    #[cfg(feature = "conformance-probe")]
+    pub(crate) live_tasks: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[derive(Default)]
@@ -278,9 +293,14 @@ impl RabbitMq {
             runtime: Tokio::try_current(),
             connect_within: CONNECT_WITHIN,
             timer: None,
+            app_runtime: None,
             state: Mutex::new(State::default()),
             #[cfg(feature = "conformance-probe")]
             probe: Arc::default(),
+            #[cfg(feature = "conformance-probe")]
+            planted: None,
+            #[cfg(feature = "conformance-probe")]
+            live_tasks: Arc::default(),
         }
     }
 
@@ -290,6 +310,35 @@ impl RabbitMq {
     #[cfg(feature = "conformance-probe")]
     pub fn probe(&self) -> &ClientProbe {
         &self.probe
+    }
+
+    /// Makes the link's task `planted` names, `request lane`, `control lane`, `writer` or `reply
+    /// router`, panic once `planted` fires. For the link's own tests, under the
+    /// `conformance-probe` feature.
+    #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
+    pub fn panic_in(mut self, planted: ulo_rpc::link::PlantedPanic) -> Self {
+        self.planted = Some(planted);
+        self
+    }
+
+    /// How many of the link's lanes, writers, reply routers and event loops have a future that
+    /// has not yet dropped, on both sides. For the link's own tests, under the
+    /// `conformance-probe` feature.
+    #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
+    pub fn live_tasks(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        Arc::clone(&self.live_tasks)
+    }
+
+    /// Where one side's tasks report a panic: redacted on `runtime` when it is logged.
+    fn panics(&self, runtime: Arc<dyn Runtime>) -> TaskPanics {
+        let panics = TaskPanics::new("RabbitMQ", runtime);
+        #[cfg(feature = "conformance-probe")]
+        panics.plant(self.planted.clone());
+        #[cfg(feature = "conformance-probe")]
+        panics.count_into(Arc::clone(&self.live_tasks));
+        panics
     }
 
     /// `Codec::Cbor` carries raw bytes and reports `binary: true`; JSON unset.
@@ -338,7 +387,7 @@ impl RabbitMq {
 
     /// The client side on a connection its connect opened: its writer and reply router spawned on
     /// the link's runtime and the connection written to the link's state, with no await between.
-    fn client_side(&self, runtime: Tokio, (connection, channel, replies): Opened) -> Outbound {
+    fn client_side(&self, runtime: Tokio, client: &Arc<dyn Runtime>, (connection, channel, replies): Opened) -> Outbound {
         let side = Arc::new(ClientSide {
             channel,
             codec: self.codec,
@@ -359,9 +408,12 @@ impl RabbitMq {
                 move || counted.upgrade().map_or(0, |side| lock(&side.calls).len()),
             );
         }
-        let writing = runtime.handle().spawn(client_writer(Arc::clone(&side), queued));
+        let panics = self.panics(Arc::clone(client));
+        let writing = runtime.handle().spawn(panics.watch("writer", client_writer(Arc::clone(&side), queued)));
         let (frames, replies_out) = mpsc::unbounded_channel();
-        let routing = runtime.handle().spawn(route_replies(Arc::clone(&side), replies, frames, writes.clone()));
+        let replies_out = panics.guard(receiver_stream(replies_out));
+        let explaining = panics.clone();
+        let routing = runtime.handle().spawn(panics.watch_feeder("reply router", route_replies(Arc::clone(&side), replies, frames, writes.clone())));
         lock(&self.state).client = Some((connection, runtime.clone(), [writing.abort_handle(), routing.abort_handle()]));
 
         Outbound {
@@ -369,12 +421,20 @@ impl RabbitMq {
             send: Box::new(move |pattern: Pattern, frame: Frame, _reply_to: Option<ReplyTo>| -> BoxFuture<'static, Result<(), BoxError>> {
                 let (answer, answered) = oneshot::channel();
                 let room = writes.send(Job::Send { pattern, frame, answer });
+                let explaining = explaining.clone();
                 Box::pin(async move {
-                    room.await.map_err(|_| BoxError::from(CLOSED))?;
-                    answered.await.map_err(|_| BoxError::from(CLOSED))?
+                    let sent = async {
+                        room.await.map_err(|_| BoxError::from(CLOSED))?;
+                        answered.await.map_err(|_| BoxError::from(CLOSED))?
+                    };
+                    // A writer that panicked dropped the answer: the call is told the panic.
+                    match sent.await {
+                        Ok(()) => Ok(()),
+                        Err(error) => Err(explaining.explain(error).await),
+                    }
                 })
             }),
-            replies: receiver_stream(replies_out),
+            replies: replies_out,
         }
     }
 
@@ -419,6 +479,7 @@ impl Link for RabbitMq {
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
         self.timer = app.timer().cloned();
+        self.app_runtime = app.runtime().cloned();
         // `listen` binds on the link's runtime: one that has shut down, or has no IO driver, is
         // refused here, before the configuration and before any server binds. The shutdown is
         // asked first, since a runtime that has shut down answers nothing about its driver.
@@ -472,8 +533,12 @@ impl Link for RabbitMq {
         };
         let (phase, _) = watch::channel(Phase::Serving);
         let (deliveries, inbound) = mpsc::unbounded_channel();
+        // The sender lives in the side, which the link's state holds, so no task feeds the
+        // stream: a panic in one is raised through the stream's next poll.
+        let panics = self.panics(self.app_runtime.clone().unwrap_or_else(|| Arc::new(runtime.clone())));
+        let inbound = panics.guard(receiver_stream(inbound));
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
-        let writer = runtime.handle().spawn(server_writer(channel.clone(), queued)).abort_handle();
+        let writer = runtime.handle().spawn(panics.watch("writer", server_writer(channel.clone(), queued))).abort_handle();
         let side = Arc::new(ServerSide {
             connection,
             channel,
@@ -488,11 +553,13 @@ impl Link for RabbitMq {
             deliveries: Mutex::new(Some(deliveries)),
         });
         let handle = runtime.handle();
-        let mut tasks: Vec<AbortHandle> =
-            consumers.into_iter().map(|consumer| handle.spawn(request_lane(Arc::clone(&side), consumer)).abort_handle()).collect();
-        tasks.push(handle.spawn(control_lane(Arc::clone(&side), control)).abort_handle());
+        let mut tasks: Vec<AbortHandle> = consumers
+            .into_iter()
+            .map(|consumer| handle.spawn(panics.watch("request lane", request_lane(Arc::clone(&side), consumer))).abort_handle())
+            .collect();
+        tasks.push(handle.spawn(panics.watch("control lane", control_lane(Arc::clone(&side), control))).abort_handle());
         lock(&self.state).server = Some((side, tasks));
-        Ok(receiver_stream(inbound))
+        Ok(inbound)
     }
 
     // Waits on the link's one client connect, starting it when none is running, its bound timed
@@ -533,7 +600,7 @@ impl Link for RabbitMq {
                 }
             };
             return match taken {
-                Ok(opened) => Ok(self.client_side(runtime, opened)),
+                Ok(opened) => Ok(self.client_side(runtime, client, opened)),
                 Err(Some(failure)) => Err(self.failed(failure, &uri)),
                 // Another `connect` took the connection: this one starts the next.
                 Err(None) if answered => continue,
@@ -615,6 +682,12 @@ impl Link for RabbitMq {
                 // The task was dropped unfinished, its runtime having shut down.
                 Err(_) => failure = Some(RuntimeShutDown::new(Refused).into()),
             }
+        }
+        // The probe's hooks hold a sender of the client writer's queue, which would keep the writer
+        // past the close in a probe build; production builds have no probe.
+        #[cfg(feature = "conformance-probe")]
+        if client.is_some() {
+            self.probe.attach(|_| {}, || 0);
         }
         if let Some((connection, runtime, _)) = client
             && let Err(error) = close_on(&runtime, async move { connection.close(200, "close".into()).await }).await

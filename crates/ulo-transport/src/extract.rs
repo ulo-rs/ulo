@@ -124,6 +124,10 @@ pub enum ExtractError {
     /// server answers the call `unavailable` with the reason `overflow` whatever the handler
     /// returns.
     Overflowed { param: &'static str, limit: u64 },
+    /// A streamed body's items arrived faster than its reader took them, and the next one would
+    /// have taken the bytes waiting unread past `limit`, the transport's byte bound, or was past it
+    /// on its own. It ends the stream and classifies as `Overflowed` does.
+    OverflowedBytes { param: &'static str, limit: u64 },
 }
 
 impl ExtractError {
@@ -138,7 +142,8 @@ impl ExtractError {
             | ExtractError::Dependency { param, .. }
             | ExtractError::HostMissing { param, .. }
             | ExtractError::BodyTaken { param, .. }
-            | ExtractError::Overflowed { param, .. } => param,
+            | ExtractError::Overflowed { param, .. }
+            | ExtractError::OverflowedBytes { param, .. } => param,
         }
     }
 }
@@ -164,6 +169,9 @@ impl fmt::Display for ExtractError {
             ExtractError::Overflowed { param, limit } => {
                 write!(f, "`{param}` had {limit} items waiting to be read, and the next one ended the call")
             }
+            ExtractError::OverflowedBytes { param, limit } => {
+                write!(f, "`{param}`'s next item would have taken the bytes waiting to be read past {limit}, and it ended the call")
+            }
         }
     }
 }
@@ -182,15 +190,15 @@ impl Error for ExtractError {
 /// on HTTP; a `Dependency` takes the kind, message and details its lookup error maps to, so a
 /// lookup failure's text, which names keys, is withheld as `CallError::from_boxed` withholds it.
 /// `HostMissing` and `BodyTaken` are `Internal` with the message withheld: the fault is the
-/// deployment's or the server's own, and the text names a type. `Overflowed` is `Unavailable`: the
-/// request was well formed and the server did not keep up with it.
+/// deployment's or the server's own, and the text names a type. `Overflowed` and `OverflowedBytes`
+/// are `Unavailable`: the request was well formed and the server did not keep up with it.
 impl Classify for ExtractError {
     fn classify(&self) -> ErrorKind {
         match self {
             ExtractError::Invalid { .. } | ExtractError::Mismatched { .. } => ErrorKind::Unprocessable,
             ExtractError::Dependency { source, .. } => from_lookup(source, 0).kind(),
             ExtractError::HostMissing { .. } | ExtractError::BodyTaken { .. } => ErrorKind::Internal,
-            ExtractError::Overflowed { .. } => ErrorKind::Unavailable,
+            ExtractError::Overflowed { .. } | ExtractError::OverflowedBytes { .. } => ErrorKind::Unavailable,
             _ => ErrorKind::BadRequest,
         }
     }

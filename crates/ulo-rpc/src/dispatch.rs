@@ -41,7 +41,7 @@ use crate::handler::{HandlerFn, Kind};
 use crate::codec::Codec;
 use crate::frame::{Data, ErrorBody, Frame};
 use crate::link::{Ack, Capabilities, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Instances, Pattern, ReplyPath};
-use crate::queue::{self, Feed, Halted};
+use crate::queue::{self, Feed, Halted, Overflow};
 use crate::trace;
 use crate::transport::{Body, CallHeaders, CxInner, LinkInfo, NoHandler, Reply, Rpc, RpcCx};
 
@@ -62,8 +62,8 @@ pub(crate) struct Shared {
     pub(crate) admission: Admission,
     /// `Server::timeout_grace` as a duration; `None` waits for the error handlers.
     pub(crate) grace: Option<Duration>,
-    /// `Server::max_queued_items` as a limit; `None` for `Count::Unlimited`.
-    pub(crate) queued: Option<usize>,
+    /// `Server::max_queued_items` and `Server::max_queued_bytes`, a streamed request's limits.
+    pub(crate) queued: queue::Limits,
     pub(crate) calls: Mutex<HashMap<u64, Live>>,
     pub(crate) serial: AtomicU64,
     /// Events no handler took, counted for the log line each one writes.
@@ -160,10 +160,11 @@ pub(crate) fn accept(shared: &Arc<Shared>, delivery: Delivery, tasks: &mut TaskS
         Frame::In { id, data } => {
             // Offered, never awaited: waiting for room here would stall every call on the link
             // behind one handler that does not read.
+            let size = u64::try_from(data.len()).unwrap_or(u64::MAX);
             let overflowed = {
                 let mut calls = shared.calls();
                 match calls.get_mut(&id) {
-                    Some(live) if live.inbound.as_ref().is_some_and(|feed| !feed.offer(data)) => {
+                    Some(live) if live.inbound.as_ref().is_some_and(|feed| feed.offer(data, size).is_err()) => {
                         if let Some(feed) = live.inbound.take() {
                             feed.halt();
                         }
@@ -624,13 +625,13 @@ async fn late(handler: Option<&MountedHandler<Rpc>>, exec: &ExecutionRef, cx: &R
 /// explicit cancel, and `unavailable` with the reason `overflow` for a call cancelled because its
 /// streamed request's queue overflowed.
 async fn cancelled(reply: &ReplyPath, exec: &ExecutionRef, id: u64, reason: Option<CancelReason>, halted: Option<&Halted>) {
-    // Only an unlimited queue has no limit, and it never overflows.
-    let overflow = halted.filter(|halted| halted.get()).and_then(Halted::limit);
+    // A queue is halted only at an overflow, which records the bound it passed.
+    let overflow = halted.filter(|halted| halted.get()).and_then(Halted::overflow);
     let error = match (reason, overflow) {
         (Some(CancelReason::ClientCancelled | CancelReason::Disconnected), _) => return,
         (Some(CancelReason::Deadline), _) => timed_out(),
         (Some(CancelReason::Drain), _) => ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()),
-        (Some(CancelReason::Explicit), Some(limit)) => overflow_answer(limit),
+        (Some(CancelReason::Explicit), Some(passed)) => overflow_answer(passed),
         _ => ErrorBody::new(ErrorKind::Unavailable, "the call was cancelled", Details::new()),
     };
     send(reply, exec, id, Frame::Err { id, error }).await;
@@ -650,11 +651,20 @@ fn cut_short(exec: &ExecutionRef) -> Option<CancelReason> {
     exec.cancel_reason()
 }
 
-/// The answer to a call whose streamed request queued `limit` items its handler had not read.
-fn overflow_answer(limit: usize) -> ErrorBody {
-    let message = format!(
-        "the streamed request had {limit} items waiting for its handler, the server's `max_queued_items`, and the next one ended the call"
-    );
+/// The answer to a call whose streamed request's next item passed `passed`, one of the bounds on
+/// the items waiting for its handler.
+fn overflow_answer(passed: Overflow) -> ErrorBody {
+    let message = match passed {
+        Overflow::Items { limit } => format!(
+            "the streamed request had {limit} items waiting for its handler, the server's `max_queued_items`, and the next one ended the call"
+        ),
+        Overflow::Bytes { limit, item } if item > limit => format!(
+            "the streamed request's next item, of {item} bytes, is over the server's `max_queued_bytes` of {limit} on its own, and ended the call"
+        ),
+        Overflow::Bytes { limit, item } => format!(
+            "the streamed request's items waiting for its handler and the next one, of {item} bytes, would have passed {limit} bytes, the server's `max_queued_bytes`, and it ended the call"
+        ),
+    };
     ErrorBody::new(ErrorKind::Unavailable, message, Details::new().with(reason("overflow")))
 }
 
