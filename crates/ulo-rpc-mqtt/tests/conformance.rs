@@ -1000,3 +1000,29 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connection() {
     }
     client.close().await.expect("the client's link closes");
 }
+
+mod tasks;
+
+/// Q22-P10: a panic in the server's event loop ends the server as a transport failure naming the
+/// link and the task, the panic redacted.
+#[tokio::test]
+async fn a_panicking_server_task_is_a_panicked_failure_the_core_recognises() {
+    let broker = Mosquitto::start().await;
+    let plant = ulo_rpc::link::PlantedPanic::new("event loop", tasks::PANIC_TEXT);
+    tasks::server_task_panics(broker.link().panic_in(plant.clone()), plant, "the MQTT link's event loop panicked: ").await;
+}
+
+/// Q22-P10: a panic in the client's event loop fails the call waiting on it holding the panic.
+#[tokio::test]
+async fn a_panicking_client_task_fails_the_waiting_call_holding_the_redacted_panic() {
+    let broker = Mosquitto::start().await;
+    let plant = ulo_rpc::link::PlantedPanic::new("event loop", tasks::PANIC_TEXT);
+    tasks::client_task_panics(broker.link(), broker.link().panic_in(plant.clone()), plant, "the MQTT link's event loop panicked: ").await;
+}
+
+/// F585: the link's event loops end with their owner, closed or dropped.
+#[tokio::test]
+async fn start_stop_cycles_leave_no_task_running() {
+    let broker = Mosquitto::start().await;
+    tasks::cycles_leave_no_task_running(|handle| broker.link().with_handle(handle), Mqtt::live_tasks, tasks::Counted::LinkAndRuntime).await;
+}

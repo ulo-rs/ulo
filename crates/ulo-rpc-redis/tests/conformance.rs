@@ -363,3 +363,142 @@ async fn one_request_runs_on_each_of_two_servers() {
 async fn one_request_runs_on_each_of_three_servers() {
     fan_out(3).await;
 }
+
+mod tasks;
+
+/// Q22-P10: a panic in each of the server's tasks, its Pub/Sub reader and its writer, ends the
+/// server as a transport failure naming the link and the task, the panic redacted.
+#[tokio::test]
+async fn a_panicking_server_task_is_a_panicked_failure_the_core_recognises() {
+    let broker = RedisServer::start().await;
+    for task in ["Pub/Sub reader", "writer"] {
+        let plant = ulo_rpc::link::PlantedPanic::new(task, tasks::PANIC_TEXT);
+        tasks::server_task_panics(broker.link().panic_in(plant.clone()), plant, &format!("the Redis link's {task} panicked: ")).await;
+    }
+}
+
+/// Q22-P10: a panic in each of the client's tasks, its Pub/Sub reader and its writer, fails the
+/// call waiting on it holding the panic.
+#[tokio::test]
+async fn a_panicking_client_task_fails_the_waiting_call_holding_the_redacted_panic() {
+    let broker = RedisServer::start().await;
+    for task in ["Pub/Sub reader", "writer"] {
+        let plant = ulo_rpc::link::PlantedPanic::new(task, tasks::PANIC_TEXT);
+        tasks::client_task_panics(broker.link(), broker.link().panic_in(plant.clone()), plant, &format!("the Redis link's {task} panicked: ")).await;
+    }
+}
+
+/// F585: the link's readers and writers end with their owner, closed or dropped.
+#[tokio::test]
+async fn start_stop_cycles_leave_no_task_running() {
+    let broker = RedisServer::start().await;
+    tasks::cycles_leave_no_task_running(|handle| broker.link().with_handle(handle), Redis::live_tasks, tasks::Counted::LinkAndRuntime).await;
+}
+
+/// F585: a server writer holding answers its broker does not take ends when its link drops
+/// without `close`: the drop aborts it. Without the abort the writer outlives the link by each
+/// queued answer's publish timing out in turn, half a second apiece at redis-rs's default.
+mod writer_abort {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tokio::sync::watch;
+    use ulo::{App, Dep, Module, ModuleDef, ModuleIdentity, Signal, controller, handlers};
+    use ulo_rpc::RpcClient;
+    use ulo_runtime_tokio::Tokio;
+
+    use super::*;
+
+    const CALLS: usize = 30;
+
+    #[derive(Clone)]
+    pub struct Gate {
+        entered: Arc<AtomicUsize>,
+        open: watch::Receiver<bool>,
+    }
+
+    #[controller]
+    pub struct Gated {
+        gate: Dep<Gate>,
+    }
+
+    #[handlers]
+    impl Gated {
+        /// Answers once the test opens its gate.
+        #[ulo_rpc::message("writer.gated")]
+        async fn gated(&self) -> Result<u32, super::tasks::Never> {
+            self.gate.entered.fetch_add(1, Ordering::SeqCst);
+            let mut open = self.gate.open.clone();
+            let _ = open.wait_for(|open| *open).await;
+            Ok(7)
+        }
+    }
+
+    pub struct Root(Gate);
+
+    impl Module for Root {
+        fn identity(&self) -> ModuleIdentity {
+            ModuleIdentity::of_type::<Self>()
+        }
+
+        fn register(&self, m: &mut ModuleDef<'_>) {
+            m.value(self.0.clone());
+            m.controller::<Gated>();
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_server_writer_holding_answers_a_silent_broker_ends_when_its_link_drops() {
+        let broker = RedisServer::start().await;
+        let tasks = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("the link's runtime");
+        let link = broker.link().with_handle(tasks.handle().clone());
+        let live = link.live_tasks();
+        let (opening, open) = watch::channel(false);
+        let gate = Gate { entered: Arc::default(), open };
+        let app = App::builder(Root(gate.clone()))
+            .runtime(Tokio::current())
+            .wire()
+            .expect("the app wires")
+            .connect()
+            .await
+            .expect("the app connects")
+            .bind(ulo_rpc::Server::new(link))
+            .listen()
+            .await
+            .map_err(Box::new)
+            .expect("the server binds");
+        let serving = tokio::spawn(app.serve(std::future::pending::<Signal>()));
+        let rpc = RpcClient::new(broker.link(), Arc::new(Tokio::current())).expect("the link is usable");
+        let calling: Vec<_> = (0..CALLS)
+            .map(|_| {
+                let caller = rpc.clone();
+                tokio::spawn(async move { caller.request::<_, u32>("writer.gated", &()).timeout(Duration::from_secs(60)).await })
+            })
+            .collect();
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while gate.entered.load(Ordering::SeqCst) < CALLS {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("every call reached its handler");
+        broker._container.pause().await.expect("the broker pauses");
+        opening.send_replace(true);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let before = live.load(Ordering::Acquire);
+        serving.abort();
+        let _ = serving.await;
+        let waited = tokio::time::timeout(Duration::from_secs(5), async {
+            while live.load(Ordering::Acquire) != 0 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        let after = live.load(Ordering::Acquire);
+        broker._container.unpause().await.expect("the broker resumes");
+        calling.iter().for_each(tokio::task::JoinHandle::abort);
+        drop(rpc);
+        tasks.shutdown_background();
+        assert!(before > 0, "no link task was alive before the drop");
+        assert!(waited.is_ok(), "{after} of the link's tasks alive 5 s after its app dropped, {before} before");
+    }
+}

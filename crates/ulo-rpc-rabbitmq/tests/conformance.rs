@@ -440,3 +440,37 @@ async fn a_client_dropped_holding_an_untaken_connection_closes_it() {
     drop(client);
     released(&broker.relay, "a client dropped holding an untaken connection").await;
 }
+
+mod tasks;
+
+/// Q22-P10: a panic in each of the server's tasks, a request lane, the control lane and the
+/// writer, ends the server as a transport failure naming the link and the task, the panic
+/// redacted.
+#[tokio::test]
+async fn a_panicking_server_task_is_a_panicked_failure_the_core_recognises() {
+    let broker = RabbitMqBroker::start().await;
+    for task in ["request lane", "control lane", "writer"] {
+        let plant = ulo_rpc::link::PlantedPanic::new(task, tasks::PANIC_TEXT);
+        tasks::server_task_panics(broker.link().panic_in(plant.clone()), plant, &format!("the RabbitMQ link's {task} panicked: ")).await;
+    }
+}
+
+/// Q22-P10: a panic in each of the client's tasks, its reply router and its writer, fails the
+/// call waiting on it holding the panic.
+#[tokio::test]
+async fn a_panicking_client_task_fails_the_waiting_call_holding_the_redacted_panic() {
+    let broker = RabbitMqBroker::start().await;
+    for task in ["reply router", "writer"] {
+        let plant = ulo_rpc::link::PlantedPanic::new(task, tasks::PANIC_TEXT);
+        tasks::client_task_panics(broker.link(), broker.link().panic_in(plant.clone()), plant, &format!("the RabbitMQ link's {task} panicked: ")).await;
+    }
+}
+
+/// F585: the link's lanes, writers and reply routers end with their owner, closed or dropped.
+#[tokio::test]
+async fn start_stop_cycles_leave_no_task_running() {
+    let broker = RabbitMqBroker::start().await;
+    tasks::cycles_leave_no_task_running(|handle| broker.link().with_handle(handle), RabbitMq::live_tasks, tasks::Counted::LinkOnly).await;
+}
+
+

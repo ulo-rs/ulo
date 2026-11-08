@@ -78,7 +78,7 @@ pub mod __private;
 #[doc(hidden)]
 pub use ulo_transport::__derive;
 
-pub use client::{Call, Emit, RpcClient, RpcError, RpcStream, StreamCall, UnusableLink, ZeroCount, ZeroTimeout};
+pub use client::{Call, Emit, RpcClient, RpcError, RpcStream, StreamCall, UnusableLink, ZeroBytes, ZeroCount, ZeroTimeout};
 pub use client_module::RpcClientModule;
 pub use codec::Codec;
 pub use extract::{Inbound, Payload};

@@ -20,8 +20,9 @@
 //! Beside the SPI, this module holds what the authors of transport links share with the
 //! first-party links, so a link outside this repository keeps the same timing and redaction:
 //! [`CANCEL_HOLD`] and [`HoldUntil`], how long a link that holds a streamed request's `cancel`
-//! until the server's `opened` keeps it; and [`panic_redacted`], the redacted error a panic caught
-//! outside a task answers. Behind the `conformance-probe` feature it also holds `ClientProbe`, the
+//! until the server's `opened` keeps it; [`panic_redacted`], the redacted error a panic caught
+//! outside a task answers; and [`TaskPanics`], through which a panic in a link's own long-lived
+//! task ends its server or fails its client's calls. Behind the `conformance-probe` feature it also holds `ClientProbe`, the
 //! conformance suite's view of a held `cancel`, which is test support, hidden from the
 //! documentation and outside the semver promise. Semver applies to the others as to the rest of
 //! the crate's public API: from 0.1.0, a change that breaks a link is released under a new breaking
@@ -33,7 +34,7 @@ use std::error::Error;
 use std::fmt;
 use std::future::Future;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
 use futures_core::stream::BoxStream;
@@ -819,5 +820,665 @@ pub async fn panic_redacted<R: ulo::Spawn + ?Sized>(runtime: &R, payload: Box<dy
     match raised.await {
         Err(ulo::TaskEnd::Panicked(message)) => Some(message),
         _ => None,
+    }
+}
+
+/// Where the long-lived tasks of one side of a link report a panic: a server's lanes and writer, a
+/// client's writer and reply router, an event loop. A link spawns such a task on a runtime of its
+/// own and holds it through an abort handle, so its end reaches nothing; spawned as
+/// [`watch`](Self::watch) or [`watch_feeder`](Self::watch_feeder) wraps it, a panic is kept, and
+/// the side's stream raises it at its next poll, through [`guard`](Self::guard). The text raised
+/// names the link and the task, `the NATS link's request lane panicked: …`, and is redacted where
+/// it is caught:
+///
+/// - a server's inbound stream raises it inside `ulo_rpc::Server::serve`, whose panic the app
+///   catches at each poll, so the shutdown begins as for a transport failure and its outcome is
+///   `ServeEnd::Panicked` holding the message with the app's secrets replaced, `ulo::is_panic`
+///   true of it;
+/// - a client's reply lane raises it inside `RpcClient`'s reply router, which fails every call
+///   waiting on the connection `Unavailable` holding the panic redacted on the client's runtime,
+///   `ulo::is_panic` true of the call's error, and connects again for the next call;
+/// - a client's send that fails answers its failure through [`explain`](Self::explain), which
+///   answers the panic in its place: a writer holding a send's answer until its broker settles it
+///   drops the answer as it unwinds, before its panic is kept, so the send would otherwise fail
+///   on a closed client.
+///
+/// A panic kept when no stream is guarded, or after one has been raised, is logged at `error`, its
+/// message redacted on `runtime` as a task's panic is: the app's runtime redacts with the app's
+/// secrets, a runtime outside any app strips a url's userinfo alone. A panic that unwinds out of
+/// a watched task runs the process's panic hook first, which prints the unredacted message unless
+/// the application installs one of its own; this type governs what the link reports.
+///
+/// ```
+/// use std::sync::Arc;
+/// use futures_util::StreamExt;
+/// use ulo_rpc::link::TaskPanics;
+///
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() {
+/// let runtime = Arc::new(ulo_runtime_tokio::Tokio::current());
+/// let panics = TaskPanics::new("Example", runtime);
+/// let (frames, received) = futures_channel::mpsc::unbounded::<u32>();
+/// let mut inbound = panics.guard(received);
+/// let lane = tokio::spawn(panics.watch_feeder("request lane", async move {
+///     let _frames = frames;
+///     panic!("the lane failed");
+/// }));
+/// lane.await.expect("a watched task completes, its panic kept");
+/// let raised = std::panic::AssertUnwindSafe(inbound.next()).catch_unwind().await;
+/// let payload = raised.err().expect("the guarded stream raises the kept panic");
+/// assert_eq!(payload.downcast_ref::<String>().map(String::as_str), Some("the Example link's request lane panicked: the lane failed"));
+/// # }
+/// # use futures_util::FutureExt;
+/// ```
+#[derive(Clone)]
+pub struct TaskPanics(Arc<Panics>);
+
+struct Panics {
+    /// The transport's name as it reads in prose, `NATS`.
+    link: &'static str,
+    runtime: Arc<dyn Runtime>,
+    state: Mutex<PanicState>,
+    /// Each watched task's poll count, for [`TaskPanics::explain`]'s wait.
+    slots: Mutex<Vec<Weak<Slot>>>,
+    /// Notified each time a watched task leaves a poll.
+    left: event_listener::Event,
+    #[cfg(feature = "conformance-probe")]
+    planted: Mutex<Option<PlantedPanic>>,
+    /// The watched tasks not yet dropped, for a link's own tests.
+    #[cfg(feature = "conformance-probe")]
+    live: Mutex<Option<Arc<std::sync::atomic::AtomicUsize>>>,
+}
+
+/// One watched task counted live, until its future drops.
+#[cfg(feature = "conformance-probe")]
+struct Live(Option<Arc<std::sync::atomic::AtomicUsize>>);
+
+#[cfg(feature = "conformance-probe")]
+impl Drop for Live {
+    fn drop(&mut self) {
+        if let Some(live) = &self.0 {
+            live.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        }
+    }
+}
+
+#[derive(Default)]
+struct PanicState {
+    /// A stream is guarded and has raised nothing.
+    guarded: bool,
+    /// The panic the guarded stream raises at its next poll, with its task's name.
+    kept: Option<(&'static str, String)>,
+    /// The guarded stream's reader, woken when a panic is kept or the last feeder ends.
+    waker: Option<std::task::Waker>,
+    /// Feeders whose watch has not ended.
+    feeders: usize,
+    /// The first panic any watched task raised, kept after it is raised or logged, for
+    /// [`TaskPanics::explain`].
+    first: Option<String>,
+}
+
+/// One watched task's polls: odd while a poll is under way, even between polls.
+#[derive(Default)]
+struct Slot {
+    polls: std::sync::atomic::AtomicU64,
+}
+
+/// A watched task under its catch: each poll is counted in its [`Slot`], and the slot leaves the
+/// poll only once a panic in it is kept, so a wait for the poll's end finds the panic. Answers the
+/// panic's text when nothing kept it, to log.
+struct Caught<F> {
+    /// `None` once it has ended.
+    task: Option<std::pin::Pin<Box<F>>>,
+    panics: Arc<Panics>,
+    name: &'static str,
+    slot: Arc<Slot>,
+}
+
+impl<F: Future<Output = ()>> Future for Caught<F> {
+    type Output = Option<String>;
+
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<String>> {
+        use std::sync::atomic::Ordering::AcqRel;
+        use std::task::Poll;
+        let this = self.get_mut();
+        let Some(task) = this.task.as_mut() else { return Poll::Ready(None) };
+        this.slot.polls.fetch_add(1, AcqRel);
+        let polled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| task.as_mut().poll(cx)));
+        let answer = match polled {
+            Ok(Poll::Pending) => Poll::Pending,
+            Ok(Poll::Ready(())) => Poll::Ready(None),
+            Err(payload) => {
+                let text = format!("the {} link's {} panicked: {}", this.panics.link, this.name, payload_text(&*payload));
+                let kept = this.panics.keep(this.name, text);
+                drop_caught(payload);
+                Poll::Ready(kept)
+            }
+        };
+        if answer.is_ready() {
+            // Its state, dropped as the panic unwound, or ended: the future is not polled again.
+            drop_caught(this.task.take());
+        }
+        this.slot.polls.fetch_add(1, AcqRel);
+        this.panics.left.notify(usize::MAX);
+        answer
+    }
+}
+
+/// Drops `value` under a catch, inside the poll that [`Caught`] counts: a drop that panics, a
+/// panic payload's own among them, would otherwise unwind out of the poll with its slot still odd,
+/// and [`TaskPanics::explain`] would wait on it forever. The caught payload is forgotten, since
+/// its drop could panic again.
+fn drop_caught<T>(value: T) {
+    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(value))) {
+        std::mem::forget(payload);
+    }
+}
+
+/// A watched task's panic, as [`TaskPanics::explain`] answers it: its `source()` is the redacted
+/// panic, which `ulo::is_panic` finds.
+#[derive(Debug)]
+struct TaskPanicked(Arc<ulo::Redacted>);
+
+impl fmt::Display for TaskPanicked {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl Error for TaskPanicked {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&*self.0)
+    }
+}
+
+/// One feeder counted, until its watch drops.
+struct Feeding(Arc<Panics>);
+
+impl Drop for Feeding {
+    fn drop(&mut self) {
+        let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.feeders -= 1;
+        if state.feeders == 0
+            && let Some(waker) = state.waker.take()
+        {
+            waker.wake();
+        }
+    }
+}
+
+impl TaskPanics {
+    /// The panics of one side of the `link` link, `link` the transport's name as it reads in prose,
+    /// whose messages a log line redacts on `runtime`: the app's for a server's side, from
+    /// `AppHandle::runtime`, and the client's, from [`Link::connect`], for a client's.
+    pub fn new(link: &'static str, runtime: Arc<dyn Runtime>) -> Self {
+        TaskPanics(Arc::new(Panics {
+            link,
+            runtime,
+            state: Mutex::new(PanicState::default()),
+            slots: Mutex::new(Vec::new()),
+            left: event_listener::Event::new(),
+            #[cfg(feature = "conformance-probe")]
+            planted: Mutex::new(None),
+            #[cfg(feature = "conformance-probe")]
+            live: Mutex::new(None),
+        }))
+    }
+
+    /// `task` under a catch, to spawn in its place: a panic in it ends it, and is kept for the
+    /// guarded stream to raise, or logged. `name` says which task it is in the text, `writer`,
+    /// `event loop`. A task holding a sender of the guarded stream is a
+    /// [`watch_feeder`](Self::watch_feeder).
+    pub fn watch<F>(&self, name: &'static str, task: F) -> impl Future<Output = ()> + Send + 'static + use<F>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.watched(name, task, None)
+    }
+
+    /// [`watch`](Self::watch) for a task holding a sender of the guarded stream, a lane or a reply
+    /// router: the stream's end waits for the task's end, so a panic that drops the stream's last
+    /// sender, while it unwinds and before it is kept, is raised rather than read as the stream's
+    /// end. Counted from this call, so a feeder spawned after the stream is guarded is counted
+    /// before the stream can end.
+    pub fn watch_feeder<F>(&self, name: &'static str, task: F) -> impl Future<Output = ()> + Send + 'static + use<F>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.0.state.lock().unwrap_or_else(PoisonError::into_inner).feeders += 1;
+        self.watched(name, task, Some(Feeding(Arc::clone(&self.0))))
+    }
+
+    fn watched<F>(&self, name: &'static str, task: F, feeding: Option<Feeding>) -> impl Future<Output = ()> + Send + 'static + use<F>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let panics = Arc::clone(&self.0);
+        #[cfg(feature = "conformance-probe")]
+        let planted = panics.planted.lock().unwrap_or_else(PoisonError::into_inner).clone().filter(|planted| planted.task == name);
+        #[cfg(feature = "conformance-probe")]
+        let live = {
+            let live = panics.live.lock().unwrap_or_else(PoisonError::into_inner).clone();
+            if let Some(live) = &live {
+                live.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            }
+            Live(live)
+        };
+        let slot = Arc::new(Slot::default());
+        panics.slots.lock().unwrap_or_else(PoisonError::into_inner).push(Arc::downgrade(&slot));
+        async move {
+            // Dropped with this future, at its end or its abort, after the panic is kept.
+            let _feeding = feeding;
+            #[cfg(feature = "conformance-probe")]
+            let _live = live;
+            #[cfg(feature = "conformance-probe")]
+            let task = async move {
+                let Some(planted) = planted else { return task.await };
+                let fired = async move {
+                    planted.fired.wait_for(|fired| *fired).await;
+                    panic!("{}", planted.message);
+                };
+                futures_util::future::select(std::pin::pin!(task), std::pin::pin!(fired)).await;
+            };
+            let caught = Caught { task: Some(Box::pin(task)), panics: Arc::clone(&panics), name, slot };
+            if let Some(unraised) = caught.await {
+                panics.log(name, unraised).await;
+            }
+        }
+    }
+
+    /// `error`, a send's failure on this side, or the panic of one of its watched tasks when one
+    /// has panicked: a writer that panics drops the answers it holds while it unwinds, before its
+    /// panic is kept, so a send can fail on the dropped answer first. The wait first lets every
+    /// watched task that is inside a poll leave it, so a panic that dropped the answer is kept by
+    /// then; no clock is read. The panic answers as an error whose `source()` is the panic, its
+    /// message redacted on the side's runtime, so `ulo::is_panic` is true of it. It is the side's
+    /// first panic, whatever failed the send, and `error` answers in its place once the side's
+    /// runtime has shut down, the panic then having no redaction.
+    pub async fn explain(&self, error: BoxError) -> BoxError {
+        self.0.polls_ended().await;
+        let first = self.0.state.lock().unwrap_or_else(PoisonError::into_inner).first.clone();
+        let Some(text) = first else { return error };
+        match panic_redacted(&*self.0.runtime, Box::new(text)).await {
+            Some(message) => Box::new(TaskPanicked(message)),
+            None => error,
+        }
+    }
+
+    /// `stream`, raising a kept panic at its next poll, its payload the text naming the link and
+    /// the task; called once per side, on the stream the side hands to the server or the client.
+    /// Dropped with a panic kept and not raised, it logs the panic.
+    pub fn guard<S>(&self, stream: S) -> BoxStream<'static, S::Item>
+    where
+        S: futures_core::Stream + Send + 'static,
+    {
+        self.0.state.lock().unwrap_or_else(PoisonError::into_inner).guarded = true;
+        Box::pin(Guarded { stream: Box::pin(stream), panics: Arc::clone(&self.0), ended: false })
+    }
+
+    /// The watched tasks `planted` names panic once it fires, for a link's own tests, which have no
+    /// other way to make a lane panic.
+    #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
+    pub fn plant(&self, planted: Option<PlantedPanic>) {
+        *self.0.planted.lock().unwrap_or_else(PoisonError::into_inner) = planted;
+    }
+
+    /// Counts every task watched from here into `live` while its future lives, for a link's own
+    /// tests: a task that ends, or is aborted and dropped, leaves the count.
+    #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
+    pub fn count_into(&self, live: Arc<std::sync::atomic::AtomicUsize>) {
+        *self.0.live.lock().unwrap_or_else(PoisonError::into_inner) = Some(live);
+    }
+}
+
+/// A panic a link's test plants in the tasks of one name, `request lane` or `writer`, through its
+/// link's `panic_in`: each such task, spawned under [`TaskPanics`], panics with `message` once
+/// [`fire`](Self::fire) has been called, at its first poll when it was before. Test support under
+/// `conformance-probe`, outside the semver promise.
+#[doc(hidden)]
+#[cfg(feature = "conformance-probe")]
+#[derive(Clone)]
+pub struct PlantedPanic {
+    task: &'static str,
+    message: &'static str,
+    fired: Arc<ulo_transport::sync::Watch<bool>>,
+}
+
+#[cfg(feature = "conformance-probe")]
+impl PlantedPanic {
+    pub fn new(task: &'static str, message: &'static str) -> Self {
+        PlantedPanic { task, message, fired: Arc::new(ulo_transport::sync::Watch::new(false)) }
+    }
+
+    pub fn fire(&self) {
+        self.fired.modify(|fired| *fired = true);
+    }
+}
+
+impl Panics {
+    /// Resolves once every watched task that was inside a poll when it was called has left that
+    /// poll. Each slot's count changes as its poll ends, so a task polled again later does not hold
+    /// the wait.
+    async fn polls_ended(&self) {
+        use std::sync::atomic::Ordering::Acquire;
+        let polling: Vec<(Arc<Slot>, u64)> = {
+            let mut slots = self.slots.lock().unwrap_or_else(PoisonError::into_inner);
+            slots.retain(|slot| slot.strong_count() > 0);
+            slots
+                .iter()
+                .filter_map(Weak::upgrade)
+                .filter_map(|slot| {
+                    let polls = slot.polls.load(Acquire);
+                    (polls % 2 == 1).then_some((slot, polls))
+                })
+                .collect()
+        };
+        loop {
+            let left = self.left.listen();
+            if polling.iter().all(|(slot, at)| slot.polls.load(Acquire) != *at) {
+                return;
+            }
+            left.await;
+        }
+    }
+
+    /// Keeps `text` for the guarded stream, waking its reader; answers it back when no stream is
+    /// guarded or one panic is already kept or raised.
+    fn keep(&self, task: &'static str, text: String) -> Option<String> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.first.get_or_insert_with(|| text.clone());
+        if !state.guarded || state.kept.is_some() {
+            return Some(text);
+        }
+        state.kept = Some((task, text));
+        if let Some(waker) = state.waker.take() {
+            waker.wake();
+        }
+        None
+    }
+
+    async fn log(&self, task: &'static str, text: String) {
+        match panic_redacted(&*self.runtime, Box::new(text)).await {
+            Some(message) => tracing::error!(link = self.link, task, %message, "a task of the {} link panicked and was not raised to its server or client", self.link),
+            None => tracing::error!(
+                link = self.link,
+                task,
+                "a task of the {} link panicked; its message is not logged, the runtime that redacts it having shut down",
+                self.link
+            ),
+        }
+    }
+}
+
+/// What [`TaskPanics::guard`] answers.
+struct Guarded<T> {
+    stream: BoxStream<'static, T>,
+    panics: Arc<Panics>,
+    /// The inner stream answered its end, and is not polled again.
+    ended: bool,
+}
+
+impl<T> futures_core::Stream for Guarded<T> {
+    type Item = T;
+
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<T>> {
+        use std::task::Poll;
+        if !self.ended {
+            self.panics.raise_kept(cx, false);
+            match self.stream.as_mut().poll_next(cx) {
+                Poll::Ready(None) => self.ended = true,
+                other => return other,
+            }
+        }
+        // A feeder's panic drops the stream's last sender while it unwinds, before the panic is
+        // kept, so the end waits for every feeder's watch to end.
+        if self.panics.raise_kept(cx, true) { Poll::Pending } else { Poll::Ready(None) }
+    }
+}
+
+impl Panics {
+    /// Raises the kept panic, if there is one. Otherwise registers `cx`'s waker for the next panic
+    /// kept, and answers whether a feeder is still counted, the waker then woken at its end too;
+    /// `ending` registers the waker only while one is.
+    fn raise_kept(&self, cx: &mut std::task::Context<'_>, ending: bool) -> bool {
+        let kept = {
+            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            match state.kept.take() {
+                Some(kept) => {
+                    state.guarded = false;
+                    kept
+                }
+                None => {
+                    let feeding = state.feeders > 0;
+                    if feeding || !ending {
+                        state.waker = Some(cx.waker().clone());
+                    }
+                    return feeding;
+                }
+            }
+        };
+        std::panic::resume_unwind(Box::new(kept.1));
+    }
+}
+
+impl<T> Drop for Guarded<T> {
+    fn drop(&mut self) {
+        let kept = {
+            let mut state = self.panics.state.lock().unwrap_or_else(PoisonError::into_inner);
+            state.guarded = false;
+            state.waker = None;
+            state.kept.take()
+        };
+        if let Some((task, text)) = kept {
+            let panics = Arc::clone(&self.panics);
+            drop(self.panics.runtime.spawn(Box::pin(async move { panics.log(task, text).await })));
+        }
+    }
+}
+
+/// A panic payload's message, as the core reads one.
+fn payload_text(payload: &(dyn std::any::Any + Send)) -> &str {
+    if let Some(text) = payload.downcast_ref::<&'static str>() {
+        text
+    } else if let Some(text) = payload.downcast_ref::<String>() {
+        text
+    } else {
+        "a panic whose payload is not a string"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::task::{Context, Poll, Waker};
+
+    use futures_util::{FutureExt, StreamExt};
+
+    use super::*;
+
+    type Guarded = Arc<Mutex<Option<BoxStream<'static, u32>>>>;
+
+    /// Drops the guarded stream's last sender while the feeder holding it unwinds, then polls the
+    /// stream once, recording whether it answered its end, as a reader on another thread could at
+    /// that moment.
+    struct Probe {
+        guarded: Guarded,
+        ended: Arc<Mutex<Option<bool>>>,
+        sender: Option<futures_channel::mpsc::UnboundedSender<u32>>,
+    }
+
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            drop(self.sender.take());
+            let mut guarded = self.guarded.lock().unwrap_or_else(PoisonError::into_inner);
+            let stream = guarded.as_mut().expect("the guarded stream");
+            let mut cx = Context::from_waker(Waker::noop());
+            let polled = catch_unwind(AssertUnwindSafe(|| stream.poll_next_unpin(&mut cx)));
+            *self.ended.lock().unwrap_or_else(PoisonError::into_inner) = Some(matches!(polled, Ok(Poll::Ready(None))));
+        }
+    }
+
+    /// A feeder whose panic drops the stream's last sender while it unwinds, before the panic is
+    /// kept, does not end the stream: a poll in that moment waits, and the next poll, once the
+    /// feeder's watch has ended, raises the panic.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_feeder_s_panic_is_raised_and_not_read_as_the_stream_s_end() {
+        let panics = TaskPanics::new("Test", Arc::new(ulo_runtime_tokio::Tokio::current()));
+        let (sender, received) = futures_channel::mpsc::unbounded::<u32>();
+        let guarded: Guarded = Arc::new(Mutex::new(Some(panics.guard(received))));
+        let ended = Arc::new(Mutex::new(None));
+        let probe = Probe { guarded: Arc::clone(&guarded), ended: Arc::clone(&ended), sender: Some(sender) };
+        panics
+            .watch_feeder("lane", async move {
+                let _probe = probe;
+                tokio::task::yield_now().await;
+                panic!("the lane failed");
+            })
+            .await;
+        assert_eq!(*ended.lock().unwrap_or_else(PoisonError::into_inner), Some(false), "the unwinding feeder's dropped sender ended the stream");
+        let mut stream = guarded.lock().unwrap_or_else(PoisonError::into_inner).take().expect("the guarded stream");
+        let raised = AssertUnwindSafe(stream.next()).catch_unwind().await.err().expect("the stream raised the feeder's panic");
+        assert_eq!(raised.downcast_ref::<String>().map(String::as_str), Some("the Test link's lane panicked: the lane failed"));
+    }
+
+    /// Drops a send's answer while the writer holding it unwinds, then starts the send's
+    /// [`TaskPanics::explain`] there, as a caller on another thread could at that moment, keeping
+    /// the wait for the test.
+    struct Answer {
+        answer: Option<futures_channel::oneshot::Sender<()>>,
+        panics: TaskPanics,
+        /// The wait, and whether its first poll, inside the unwinding, was still waiting.
+        explained: Arc<Mutex<Option<(BoxFuture<'static, BoxError>, bool)>>>,
+    }
+
+    impl Drop for Answer {
+        fn drop(&mut self) {
+            drop(self.answer.take());
+            let panics = self.panics.clone();
+            let mut explaining: BoxFuture<'static, BoxError> = Box::pin(async move { panics.explain("the link's client is closed".into()).await });
+            let mut cx = Context::from_waker(Waker::noop());
+            let waiting = explaining.as_mut().poll(&mut cx).is_pending();
+            *self.explained.lock().unwrap_or_else(PoisonError::into_inner) = Some((explaining, waiting));
+        }
+    }
+
+    /// A send that fails on an answer its writer dropped while panicking is told the panic, not
+    /// the closed client: the wait started inside the writer's unwinding ends once its poll does,
+    /// with the panic kept, and answers it redacted, `ulo::is_panic` true of it. A send failing
+    /// with no panic keeps its own error.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_send_failing_on_a_panicked_writer_s_dropped_answer_is_told_the_panic() {
+        let panics = TaskPanics::new("Test", Arc::new(ulo_runtime_tokio::Tokio::current()));
+        let (answer, _answered) = futures_channel::oneshot::channel();
+        let explained = Arc::new(Mutex::new(None));
+        let held = Answer { answer: Some(answer), panics: panics.clone(), explained: Arc::clone(&explained) };
+        panics
+            .watch("writer", async move {
+                let _held = held;
+                tokio::task::yield_now().await;
+                panic!("the writer failed with redis://ulo:hunter2@cache");
+            })
+            .await;
+        let (explaining, waiting) = explained.lock().unwrap_or_else(PoisonError::into_inner).take().expect("the send's wait");
+        assert!(waiting, "the send's error was explained inside the writer's unwinding, before its panic was kept");
+        let error = explaining.await;
+        assert!(ulo::is_panic(&error), "the send's error does not hold the panic: {error}");
+        assert_eq!(error.to_string(), "the Test link's writer panicked: the writer failed with redis://[redacted]@cache");
+
+        let calm = TaskPanics::new("Test", Arc::new(ulo_runtime_tokio::Tokio::current()));
+        let error = calm.explain("the link's client is closed".into()).await;
+        assert!(!ulo::is_panic(&error), "a send with no panic was told one");
+        assert_eq!(error.to_string(), "the link's client is closed");
+    }
+
+    /// A panic payload whose drop starts a send's [`TaskPanics::explain`], as a caller on another
+    /// thread could at that moment, then panics itself.
+    struct Payload {
+        panics: TaskPanics,
+        explained: Arc<Mutex<Option<BoxFuture<'static, BoxError>>>>,
+    }
+
+    impl Drop for Payload {
+        fn drop(&mut self) {
+            let panics = self.panics.clone();
+            let mut explaining: BoxFuture<'static, BoxError> = Box::pin(async move { panics.explain("the link's client is closed".into()).await });
+            let _ = explaining.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+            *self.explained.lock().unwrap_or_else(PoisonError::into_inner) = Some(explaining);
+            panic!("the payload's drop panicked");
+        }
+    }
+
+    /// A panic whose payload panics as it drops still ends the poll it came from, the task's end
+    /// a completion and not a panic, so a send's wait started inside that poll answers the panic.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_panic_whose_payload_panics_on_drop_still_ends_its_poll() {
+        let panics = TaskPanics::new("Test", Arc::new(ulo_runtime_tokio::Tokio::current()));
+        let explained = Arc::new(Mutex::new(None));
+        let payload = Payload { panics: panics.clone(), explained: Arc::clone(&explained) };
+        let ended = AssertUnwindSafe(panics.watch("writer", async move {
+            tokio::task::yield_now().await;
+            std::panic::panic_any(payload);
+        }))
+        .catch_unwind()
+        .await;
+        assert!(ended.is_ok(), "the payload's panic unwound out of the watched task");
+        let explaining = explained.lock().unwrap_or_else(PoisonError::into_inner).take().expect("the send's wait");
+        let error = tokio::time::timeout(std::time::Duration::from_secs(5), explaining).await.expect("the send's wait ended");
+        assert!(ulo::is_panic(&error), "the send's error does not hold the panic: {error}");
+    }
+
+    /// Records whether it was woken.
+    struct Woken(std::sync::atomic::AtomicBool);
+
+    impl std::task::Wake for Woken {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// A send's wait is woken as the polls under way at its start end, and ends though their task
+    /// is inside a later poll by then: here the task waiting is the watched one, so its own poll is
+    /// under way at the start, and the wait answers inside its next poll.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_task_inside_a_later_poll_does_not_hold_the_wait() {
+        let panics = TaskPanics::new("Test", Arc::new(ulo_runtime_tokio::Tokio::current()));
+        let waiting = panics.clone();
+        let woken = Arc::new(Woken(std::sync::atomic::AtomicBool::new(false)));
+        let waker = Waker::from(Arc::clone(&woken));
+        let (told, answered) = futures_channel::oneshot::channel();
+        panics
+            .watch("writer", async move {
+                let mut explaining = Box::pin(waiting.explain("the link's client is closed".into()));
+                let first = explaining.as_mut().poll(&mut Context::from_waker(&waker)).is_pending();
+                tokio::task::yield_now().await;
+                let second = explaining.as_mut().poll(&mut Context::from_waker(Waker::noop())).map(|error| error.to_string());
+                let _ = told.send((first, second));
+            })
+            .await;
+        let (first, second) = answered.await.expect("the task reported");
+        assert!(first, "the wait ended while the poll under way at its start was");
+        assert!(woken.0.load(std::sync::atomic::Ordering::SeqCst), "the wait was not woken as the poll ended");
+        assert_eq!(second, Poll::Ready("the link's client is closed".to_owned()), "a later poll of the same task held the wait");
+    }
+
+    /// A stream that ends while no task has panicked ends cleanly, and a panic kept with no stream
+    /// guarded is not raised by a stream guarded after it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_clean_end_raises_nothing_and_an_unguarded_panic_is_not_raised_later() {
+        let panics = TaskPanics::new("Test", Arc::new(ulo_runtime_tokio::Tokio::current()));
+        let (sender, received) = futures_channel::mpsc::unbounded::<u32>();
+        let mut guarded = panics.guard(received);
+        panics.watch_feeder("lane", async move { drop(sender) }).await;
+        assert_eq!(guarded.next().await, None, "a clean end yielded an item");
+
+        let panics = TaskPanics::new("Test", Arc::new(ulo_runtime_tokio::Tokio::current()));
+        panics.watch("lane", async { panic!("before any stream was guarded") }).await;
+        let (sender, received) = futures_channel::mpsc::unbounded::<u32>();
+        let mut guarded = panics.guard(received);
+        drop(sender);
+        let polled = AssertUnwindSafe(guarded.next()).catch_unwind().await;
+        assert!(matches!(polled, Ok(None)), "a panic kept before the stream was guarded was raised");
     }
 }

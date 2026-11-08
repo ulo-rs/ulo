@@ -1,8 +1,8 @@
 //! The per-call queues (transports DESIGN §5.2, flow control): the client's queue of one call's
 //! reply items and the server's of one streamed request's items, each held to `max_queued_items`
-//! with no window on the wire. An item past the limit ends that call `Unavailable` with the reason
-//! `overflow`, and whoever was producing is told to stop: the client sends `cancel` to a streaming
-//! server, the server's `err` ends a client's pump.
+//! and `max_queued_bytes` with no window on the wire. An item past either bound ends that call
+//! `Unavailable` with the reason `overflow`, and whoever was producing is told to stop: the client
+//! sends `cancel` to a streaming server, the server's `err` ends a client's pump.
 //!
 //! The end-to-end tests run over the TCP link. The one that counts a server's queue exactly runs
 //! over a link the test feeds frame by frame, since over a socket the items a client has sent
@@ -21,7 +21,7 @@ use ulo::{App, AppHandle, BoxError, CancelReason, Dep, ExecutionRef, Module, Mod
 use ulo_rpc::link::Inbound as Deliveries;
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, Inbound, Link, Outbound, Subscription, Payload, ReplyPath, RpcClient,
-    RpcClientModule, RpcError, ZeroCount,
+    RpcClientModule, RpcError, ZeroBytes, ZeroCount,
 };
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
@@ -33,6 +33,7 @@ const PATIENCE: Duration = Duration::from_secs(10);
 const LIMIT: u32 = 8;
 
 const FLOOD: &str = "queue.flood";
+const WIDE: &str = "queue.wide";
 const IGNORE: &str = "queue.ignore";
 const COUNT: &str = "queue.count";
 const SUM: &str = "queue.sum";
@@ -139,6 +140,21 @@ impl Queues {
         stream::unfold(recorder, |recorder| async move {
             let n = recorder.seen.0.produced.fetch_add(1, Ordering::SeqCst);
             Some((Ok(n), recorder))
+        })
+    }
+
+    /// Yields strings of `width` characters as fast as the link takes them, until its stream is
+    /// dropped.
+    #[ulo_rpc::message("queue.wide")]
+    async fn wide(&self, width: Payload<usize>, exec: ExecutionRef) -> impl Stream<Item = Result<String, Never>> {
+        let recorder = Recorder { exec, seen: (*self.seen).clone() };
+        let item = "x".repeat(width.0);
+        stream::unfold(recorder, move |recorder| {
+            let item = item.clone();
+            async move {
+                recorder.seen.0.produced.fetch_add(1, Ordering::SeqCst);
+                Some((Ok(item), recorder))
+            }
         })
     }
 
@@ -351,6 +367,74 @@ async fn a_client_s_default_limit_is_1024_reply_items() {
     running.stop().await;
 }
 
+/// What a reply stream of `width`-character strings yields: the items read before its end, and
+/// the error it ends with, which is an overflow.
+fn overflowed_reply(items: Vec<Result<String, RpcError>>, width: usize) -> (usize, RpcError) {
+    let read = items.iter().take_while(|item| item.is_ok()).count();
+    assert!(items.iter().take(read).all(|item| item.as_ref().is_ok_and(|text| text.len() == width)), "an item arrived altered");
+    assert_eq!(items.len(), read + 1, "the stream did not end at its overflow: {} items", items.len());
+    let error = items.into_iter().last().and_then(Result::err).expect("the stream ends with the overflow");
+    assert_eq!((error.kind(), error.reason()), (ErrorKind::Unavailable, Some("overflow")), "{error}");
+    (read, error)
+}
+
+/// F584: a few large reply items meet the client's byte bound with its item bound, 1,024, far
+/// away: three items of 302 encoded bytes fit 1,000 and the fourth ends the call, the producer
+/// cancelled before the caller reads anything.
+#[tokio::test]
+async fn a_few_large_reply_items_meet_the_client_s_byte_bound_far_below_its_item_bound() {
+    let running = start(Count::Default).await;
+    let client = running.client.clone().max_queued_bytes(1000).expect("a bound of 1,000 bytes");
+    let items = client.stream::<_, String>(WIDE, &300usize).await.expect("the stream opens");
+    let seen = running.seen.clone();
+    eventually("the producer's cancellation, with nothing read", || seen.dropped().is_some()).await;
+    assert_eq!(seen.dropped().flatten(), Some(CancelReason::ClientCancelled), "how the producer ended");
+    let (read, error) = overflowed_reply(drained(items).await, 300);
+    assert_eq!(read, 3, "the items held at the byte bound");
+    assert!(error.message().contains("of 302 bytes, would have passed 1000 bytes, the client's `max_queued_bytes`"), "{error}");
+    running.stop().await;
+}
+
+/// F584: the client's byte bound is 4 MiB unset: 63 items of 65,538 encoded bytes fit, the 64th
+/// would pass 4,194,304.
+#[tokio::test]
+async fn a_client_s_default_byte_bound_is_4_mib() {
+    let running = start(Count::Default).await;
+    let items = running.client.stream::<_, String>(WIDE, &65_536usize).await.expect("the stream opens");
+    let seen = running.seen.clone();
+    eventually("the producer's cancellation, with nothing read", || seen.dropped().is_some()).await;
+    let (read, error) = overflowed_reply(drained(items).await, 65_536);
+    assert_eq!(read, 63, "the items held at the default byte bound");
+    assert!(error.message().contains("would have passed 4194304 bytes"), "{error}");
+    running.stop().await;
+}
+
+/// F584: a reply item over the client's byte bound on its own ends the call at its arrival, the
+/// message naming the item's size, rather than waiting for room no read can make.
+#[tokio::test]
+async fn a_reply_item_over_the_client_s_byte_bound_on_its_own_ends_the_call_at_once() {
+    let running = start(Count::Default).await;
+    let client = running.client.clone().max_queued_bytes(100).expect("a bound of 100 bytes");
+    let items = client.stream::<_, String>(WIDE, &300usize).await.expect("the stream opens");
+    let (read, error) = overflowed_reply(drained(items).await, 300);
+    assert_eq!(read, 0, "an item over the bound on its own was held");
+    assert!(error.message().contains("the stream's next reply item, of 302 bytes, is over the client's `max_queued_bytes` of 100 on its own"), "{error}");
+    running.stop().await;
+}
+
+/// F584: a streamed request of large items meets the server's byte bound, 4 MiB unset, with its
+/// item bound far away, and the caller is answered `overflow` naming the byte bound.
+#[tokio::test]
+async fn a_server_s_default_byte_bound_is_4_mib() {
+    let running = start(Count::Default).await;
+    let source = stream::iter(std::iter::repeat_with(|| "x".repeat(65_536)));
+    let answer = tokio::time::timeout(PATIENCE, running.client.send_stream::<_, u64>(IGNORE, source)).await.expect("answered in time");
+    let error = answer.expect_err("the overflow ends the call");
+    assert_eq!((error.kind(), error.reason()), (ErrorKind::Unavailable, Some("overflow")), "{error}");
+    assert!(error.message().contains("would have passed 4194304 bytes, the server's `max_queued_bytes`"), "{error}");
+    running.stop().await;
+}
+
 /// F548: a streamed request whose handler reads none of it fills the server's queue, and the item
 /// past the limit ends the call: the caller is answered `Unavailable` with the reason `overflow`,
 /// and its pump stops pulling from the source, which would otherwise run without end. The source
@@ -497,6 +581,34 @@ async fn a_zero_limit_is_refused_on_the_client_its_module_and_the_server() {
     );
 }
 
+/// F584: a zero byte bound would end every stream at its first item, and is refused where each
+/// side's bound is written, as a zero item limit is.
+#[tokio::test]
+async fn a_zero_byte_bound_is_refused_on_the_client_its_module_and_the_server() {
+    let client = RpcClient::new(Tcp::new("127.0.0.1:9"), Arc::new(Tokio::current())).expect("a client");
+    let refused: ZeroBytes = client.max_queued_bytes(0).err().expect("the client refuses a zero byte bound");
+    assert_eq!(refused.link(), "tcp");
+    assert_eq!(
+        refused.to_string(),
+        "`RpcClient::max_queued_bytes(0)` on the tcp link would end every stream at its first reply item; write `u64::MAX` to remove the limit"
+    );
+
+    let wired = App::builder(ClientRoot(Mutex::new(Some(RpcClientModule::for_root(Tcp::new("127.0.0.1:9")).max_queued_bytes(0)))))
+        .runtime(Tokio::current())
+        .wire();
+    let error = wired.err().expect("the module refuses a zero byte bound when the app wires").to_string();
+    assert!(error.contains("`RpcClientModule::max_queued_bytes(0)` on the tcp link"), "{error}");
+
+    let server = ulo_rpc::Server::new(Tcp::new("127.0.0.1:0")).max_queued_bytes(0);
+    let error = serving(server, Seen::default()).await.err().expect("the server refuses a zero byte bound");
+    assert!(matches!(error, StartupError::Configure(_)), "a zero byte bound is a `Configure` refusal: {error}");
+    let text = chain(&error);
+    assert!(
+        text.contains("`.max_queued_bytes(0)` would end every streamed request at its first item; write `u64::MAX` to remove the limit"),
+        "{text}"
+    );
+}
+
 /// `error` and every source under it, joined.
 fn chain(error: &(dyn Error + 'static)) -> String {
     let mut text = error.to_string();
@@ -638,11 +750,16 @@ struct Feeding {
 
 impl Feeding {
     async fn start() -> Feeding {
+        Feeding::start_with(|server| server.max_queued_items(Count::Max(LIMIT))).await
+    }
+
+    /// A server over a [`Fed`] link configured by `configure`.
+    async fn start_with(configure: impl FnOnce(ulo_rpc::Server<Fed>) -> ulo_rpc::Server<Fed>) -> Feeding {
         let (deliveries, mut inbound) = mpsc::unbounded_channel::<Delivery>();
         let drained = Arc::new(Notify::new());
         let link = Fed { inbound: Mutex::new(Some(Box::pin(stream::poll_fn(move |cx| inbound.poll_recv(cx))))), drained: Arc::clone(&drained) };
         let seen = Seen::default();
-        let app = listening(link, Count::Max(LIMIT), seen.clone()).await.map_err(Box::new).expect("the server binds");
+        let app = serving(configure(ulo_rpc::Server::new(link)), seen.clone()).await.map_err(Box::new).expect("the server binds");
         let handle = app.handle();
         let serving = tokio::spawn(async move {
             let _ = app.serve(std::future::pending::<Signal>()).await;
@@ -664,8 +781,14 @@ impl Feeding {
     /// Sends call 1 the items `items`, with no await between them, so the server routes them all
     /// before any reader runs.
     fn items(&self, items: std::ops::Range<u64>) {
+        self.wide_items(items, 1);
+    }
+
+    /// [`items`](Self::items), each number written `width` bytes wide, padded with the leading
+    /// spaces JSON allows.
+    fn wide_items(&self, items: std::ops::Range<u64>, width: usize) {
         for n in items {
-            let item = Frame::In { id: 1, data: Data::new(n.to_string()) };
+            let item = Frame::In { id: 1, data: Data::new(format!("{n:>width$}")) };
             self.deliveries.send(delivery(item, None)).expect("the server reads its link");
         }
     }
@@ -738,6 +861,84 @@ async fn a_relayed_reply_ends_overflow_and_not_cleanly() {
     let answers = feeding.answers();
     let [Frame::Item { .. }, last] = answers.as_slice() else { panic!("the relayed item, then the call's end: {answers:?}") };
     is_overflow_answer(last);
+    feeding.stop().await;
+}
+
+/// The one answer call 1 received, an `err` of kind `unavailable` with the reason `overflow`, and
+/// its message.
+fn overflow_message(answers: &[Frame]) -> String {
+    let [Frame::Err { error, .. }] = answers else { panic!("the call's one answer is an `err`: {answers:?}") };
+    let reason = error.details.iter().find_map(|detail| match detail {
+        ulo_transport::Detail::ErrorInfo { reason, .. } => Some(reason.as_str()),
+        _ => None,
+    });
+    assert_eq!((error.kind, reason), (ErrorKind::Unavailable, Some("overflow")), "{error:?}");
+    error.message.clone()
+}
+
+/// F584: the server's queue holds exactly its byte bound with its item bound far away: two items
+/// of 40 bytes leave the call running under a bound of 100, and the third, which would take the
+/// queue to 120, answers `overflow` naming the byte bound and cancels the handler `Explicit`.
+#[tokio::test]
+async fn a_server_s_queue_holds_exactly_its_byte_bound() {
+    let feeding = Feeding::start_with(|server| server.max_queued_bytes(100)).await;
+    feeding.open(IGNORE);
+    let seen = feeding.seen.clone();
+    eventually("the handler's start", || seen.ignoring() == 1).await;
+    feeding.wide_items(0..2, 40);
+    // A unary call after the items is answered once every item before it has been routed.
+    let echoed = Arc::clone(&feeding.sent);
+    let reply = ReplyPath::new(move |frame| {
+        lock(&echoed).push(frame);
+        Box::pin(async { Ok(()) })
+    });
+    let echo = Frame::Req { id: 2, pattern: ECHO.to_owned(), headers: CallHeaders::new(), data: Data::new("3") };
+    feeding.deliveries.send(delivery(echo, Some(reply))).expect("the server reads its link");
+    eventually("the unary call's answer", || feeding.answers().iter().any(|frame| frame.id() == Some(2))).await;
+    assert!(feeding.answers().iter().all(|frame| frame.id() != Some(1)), "the call was answered under its byte bound: {:?}", feeding.answers());
+    assert_eq!(seen.dropped(), None, "the handler ended with its queue under the byte bound");
+
+    feeding.wide_items(2..3, 40);
+    eventually("the overflow's answer", || feeding.answers().iter().any(|frame| frame.id() == Some(1))).await;
+    eventually("the handler's end", || seen.dropped().is_some()).await;
+    assert_eq!(seen.dropped(), Some(Some(CancelReason::Explicit)), "how the handler's execution ended");
+    let answers: Vec<Frame> = feeding.answers().into_iter().filter(|frame| frame.id() == Some(1)).collect();
+    let message = overflow_message(&answers);
+    assert!(message.contains("the next one, of 40 bytes, would have passed 100 bytes, the server's `max_queued_bytes`"), "{message}");
+    feeding.stop().await;
+}
+
+/// F584: a request item over the server's byte bound on its own ends the call at once, on an empty
+/// queue, the answer naming the item's size.
+#[tokio::test]
+async fn a_request_item_over_the_server_s_byte_bound_on_its_own_ends_the_call_at_once() {
+    let feeding = Feeding::start_with(|server| server.max_queued_bytes(100)).await;
+    feeding.open(IGNORE);
+    feeding.wide_items(0..1, 101);
+    eventually("the overflow's answer", || !feeding.answers().is_empty()).await;
+    let message = overflow_message(&feeding.answers());
+    assert!(message.contains("the streamed request's next item, of 101 bytes, is over the server's `max_queued_bytes` of 100 on its own"), "{message}");
+    feeding.stop().await;
+}
+
+/// F584: a reader on another task reads a byte overflow once, as `OverflowedBytes` naming the
+/// bound, and the call is answered `overflow`.
+#[tokio::test]
+async fn a_request_cut_short_by_its_byte_bound_ends_failing_with_overflowed_bytes() {
+    let feeding = Feeding::start_with(|server| server.max_queued_bytes(100)).await;
+    feeding.open(STRICT);
+    feeding.items(0..1);
+    let seen = feeding.seen.clone();
+    eventually("the reader's first item", || seen.0.read.load(Ordering::SeqCst) == 1).await;
+    feeding.wide_items(1..4, 40);
+    eventually("the call's answer", || !feeding.answers().is_empty()).await;
+    overflow_message(&feeding.answers());
+    let failures = lock(&seen.0.failures).clone();
+    assert_eq!(
+        failures,
+        vec![(ErrorKind::Unavailable, "OverflowedBytes { param: \"payload\", limit: 100 }".to_owned())],
+        "the reader read the byte overflow once, as an `Unavailable` failure"
+    );
     feeding.stop().await;
 }
 

@@ -25,7 +25,7 @@ use ulo::{AppHandle, Bound, BoxError, BoxFuture, Permanent, Redacted, Refused, R
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::link::ClientProbe;
-use ulo_rpc::link::{HoldUntil, Inbound, panic_redacted};
+use ulo_rpc::link::{HoldUntil, Inbound, TaskPanics, panic_redacted};
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link,
     Instances, Misconfigured, NoTimer, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
@@ -67,6 +67,12 @@ const CUT_GRACE: Duration = Duration::from_secs(2);
 /// `usable`, so a client is refused where it takes the link and a server's `listen()` fails, and
 /// in `connect`. A link dropped without `close` aborts its lanes and reply routers, and the
 /// connections they held close with them.
+///
+/// A panic in one of the link's tasks, a request lane, the control lane or a reply router, ends a
+/// server as a transport failure, the app's shutdown outcome naming the link and the task and
+/// holding the panic redacted with the app's secrets; on a client it fails the calls waiting on
+/// the connection `Unavailable` holding the panic, and the next call connects again
+/// ([`TaskPanics`](ulo_rpc::link::TaskPanics)).
 ///
 /// A connection over TLS trusts the platform's root certificates. The process reads them once
 /// while any link holds them, off the runtime's workers, on the blocking pool of the link that
@@ -118,9 +124,18 @@ pub struct Nats {
     pub(crate) connect_within: Duration,
     /// The app's clock, read by `prepare`; `listen` refuses without one.
     pub(crate) timer: Option<Arc<dyn Timer>>,
+    /// The app's runtime, read by `prepare`, which redacts a server task's panic with the app's
+    /// secrets when it is logged.
+    pub(crate) app_runtime: Option<Arc<dyn Runtime>>,
     pub(crate) state: Mutex<State>,
     #[cfg(feature = "conformance-probe")]
     pub(crate) probe: Arc<ClientProbe>,
+    /// The task [`Nats::panic_in`] names, and what it panics with.
+    #[cfg(feature = "conformance-probe")]
+    pub(crate) planted: Option<ulo_rpc::link::PlantedPanic>,
+    /// The link's watched tasks whose futures live, read through [`Nats::live_tasks`].
+    #[cfg(feature = "conformance-probe")]
+    pub(crate) live_tasks: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[derive(Default)]
@@ -179,9 +194,14 @@ impl Nats {
             roots_timeout: Bound::Default,
             connect_within: CONNECT_WITHIN,
             timer: None,
+            app_runtime: None,
             state: Mutex::new(State::default()),
             #[cfg(feature = "conformance-probe")]
             probe: Arc::default(),
+            #[cfg(feature = "conformance-probe")]
+            planted: None,
+            #[cfg(feature = "conformance-probe")]
+            live_tasks: Arc::default(),
         }
     }
 
@@ -191,6 +211,35 @@ impl Nats {
     #[cfg(feature = "conformance-probe")]
     pub fn probe(&self) -> &ClientProbe {
         &self.probe
+    }
+
+    /// Makes the link's task `planted` names, `request lane`, `control lane` or `reply router`,
+    /// panic once `planted` fires. For the link's own tests, under the
+    /// `conformance-probe` feature.
+    #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
+    pub fn panic_in(mut self, planted: ulo_rpc::link::PlantedPanic) -> Self {
+        self.planted = Some(planted);
+        self
+    }
+
+    /// How many of the link's lanes, writers, reply routers and event loops have a future that
+    /// has not yet dropped, on both sides. For the link's own tests, under the
+    /// `conformance-probe` feature.
+    #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
+    pub fn live_tasks(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        Arc::clone(&self.live_tasks)
+    }
+
+    /// Where one side's tasks report a panic: redacted on `runtime` when it is logged.
+    fn panics(&self, runtime: Arc<dyn Runtime>) -> TaskPanics {
+        let panics = TaskPanics::new("NATS", runtime);
+        #[cfg(feature = "conformance-probe")]
+        panics.plant(self.planted.clone());
+        #[cfg(feature = "conformance-probe")]
+        panics.count_into(Arc::clone(&self.live_tasks));
+        panics
     }
 
     /// The queue group server instances share, in place of the root module's full type path.
@@ -341,6 +390,7 @@ impl Link for Nats {
             None => self.default_group = Some(queue_group(&format!("{:#}", app.root().name()))),
         }
         self.timer = app.timer().cloned();
+        self.app_runtime = app.runtime().cloned();
         // A server starts its roots' load here, so over `tls://` a store that yields none fails
         // `bind` before `listen`; over `nats://` `listen` waits for it. With no `Timer` nothing
         // here waits: the load starts, and `listen` refuses before it would wait.
@@ -442,14 +492,18 @@ impl Link for Nats {
             _roots: roots,
         });
         let (deliveries, inbound) = mpsc::unbounded_channel();
+        // Guarded before any lane runs, so a lane's panic ends the server through its stream.
+        let panics = self.panics(self.app_runtime.clone().unwrap_or_else(|| Arc::new(runtime.clone())));
+        let inbound = panics.guard(receiver_stream(inbound));
         let handle = runtime.handle();
         let mut state = lock(&self.state);
         for subscriber in lanes {
-            state.hold(handle.spawn(request_lane(Arc::clone(&side), subscriber, deliveries.clone())).abort_handle());
+            let lane = request_lane(Arc::clone(&side), subscriber, deliveries.clone());
+            state.hold(handle.spawn(panics.watch_feeder("request lane", lane)).abort_handle());
         }
-        state.hold(handle.spawn(control_lane(Arc::clone(&side), control, deliveries)).abort_handle());
+        state.hold(handle.spawn(panics.watch_feeder("control lane", control_lane(Arc::clone(&side), control, deliveries))).abort_handle());
         state.server = Some(side);
-        Ok(receiver_stream(inbound))
+        Ok(inbound)
     }
 
     async fn connect(&self, client_runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
@@ -509,7 +563,10 @@ impl Link for Nats {
             );
         }
         let (frames, replies_out) = mpsc::unbounded_channel();
-        let router = runtime.handle().spawn(route_replies(Arc::clone(&side), replies, frames, disconnected));
+        let panics = self.panics(Arc::clone(client_runtime));
+        let replies_out = panics.guard(receiver_stream(replies_out));
+        let explaining = panics.clone();
+        let router = runtime.handle().spawn(panics.watch_feeder("reply router", route_replies(Arc::clone(&side), replies, frames, disconnected)));
         let mut state = lock(&self.state);
         state.client = Some(client);
         state.hold(router.abort_handle());
@@ -517,10 +574,18 @@ impl Link for Nats {
 
         Ok(Outbound {
             send: Box::new(move |pattern: Pattern, frame: Frame, _reply_to: Option<ReplyTo>| -> BoxFuture<'static, Result<(), BoxError>> {
-                let side = Arc::clone(&side);
-                Box::pin(async move { side.send(pattern, frame).await })
+                let (side, explaining) = (Arc::clone(&side), explaining.clone());
+                // The send goes through the NATS client, whose connection outlives a reply router's
+                // panic, so the panic does not fail it; a send failing on a side whose router has
+                // panicked is told the panic, as the calls waiting on its reply lane are.
+                Box::pin(async move {
+                    match side.send(pattern, frame).await {
+                        Ok(()) => Ok(()),
+                        Err(error) => Err(explaining.explain(error).await),
+                    }
+                })
             }),
-            replies: receiver_stream(replies_out),
+            replies: replies_out,
         })
     }
 

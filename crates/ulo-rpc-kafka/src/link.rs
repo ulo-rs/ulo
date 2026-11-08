@@ -25,7 +25,7 @@ use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Refused, Runtime, RuntimeSh
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::link::ClientProbe;
-use ulo_rpc::link::{HoldUntil, Inbound};
+use ulo_rpc::link::{HoldUntil, Inbound, TaskPanics};
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Instances, Link, NoDestination, NoTimer,
     Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
@@ -81,8 +81,14 @@ const WRITE_QUEUE: usize = 64;
 /// takes the link and a server's `listen()` fails, and in `connect`.
 ///
 /// A link dropped without `close`, as a server's is when its app drops before the close step,
-/// aborts the tasks reading its consumers, so each consumer leaves its group and its connections
-/// close, on a thread of its own as at `close`.
+/// aborts the tasks reading its consumers and its writers, so each consumer leaves its group and
+/// its connections close, on a thread of its own as at `close`.
+///
+/// A panic in one of the link's tasks, a request lane, the control lane, a writer or the reply
+/// router, ends a server as a transport failure, the app's shutdown outcome naming the link and
+/// the task and holding the panic redacted with the app's secrets; on a client it fails the calls
+/// waiting on the connection `Unavailable` holding the panic, and the next call connects again
+/// ([`TaskPanics`](ulo_rpc::link::TaskPanics)).
 pub struct Kafka {
     pub(crate) brokers: String,
     pub(crate) runtime: Option<Tokio>,
@@ -100,9 +106,18 @@ pub struct Kafka {
     /// The client's producer, made in `connect` after its reply consumer: [`producer`], which a
     /// test replaces.
     pub(crate) client_producer: fn(&ClientConfig) -> Result<FutureProducer, BoxError>,
+    /// The app's runtime, read by `prepare`, which redacts a server task's panic with the app's
+    /// secrets when it is logged.
+    pub(crate) app_runtime: Option<Arc<dyn Runtime>>,
     pub(crate) state: Mutex<State>,
     #[cfg(feature = "conformance-probe")]
     pub(crate) probe: Arc<ClientProbe>,
+    /// The task [`Kafka::panic_in`] names, and what it panics with.
+    #[cfg(feature = "conformance-probe")]
+    pub(crate) planted: Option<ulo_rpc::link::PlantedPanic>,
+    /// The link's watched tasks whose futures live, read through [`Kafka::live_tasks`].
+    #[cfg(feature = "conformance-probe")]
+    pub(crate) live_tasks: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[derive(Default)]
@@ -112,8 +127,9 @@ pub(crate) struct State {
     client: Option<Arc<ClientSide>>,
 }
 
-/// A link dropped without `close` aborts the tasks reading its consumers: an `AbortHandle` or a
-/// `JoinHandle` dropped leaves its task running, and each holds its side, so its consumers stay in
+/// A link dropped without `close` aborts the tasks reading its consumers and its writers, which
+/// `close` lets finish: an `AbortHandle` or a `JoinHandle` dropped leaves its task running, and
+/// each holds its side, so its consumers stay in
 /// their groups and its producers connected until the process ends. Each consumer is `Detached`,
 /// so its drop runs on a thread of its own; the client's producer is dropped on one too, as
 /// `close` drops it.
@@ -125,6 +141,9 @@ impl Drop for State {
         if let Some(side) = &self.client {
             if let Some(routing) = lock(&side.routing).take() {
                 routing.abort();
+            }
+            if let Some(writing) = lock(&side.writing).take() {
+                writing.abort();
             }
             if let Some(producer) = lock(&side.producer).take() {
                 drop(drop_detached(producer));
@@ -150,9 +169,14 @@ impl Kafka {
             max_inflight: Count::Default.max_inflight(),
             timer: None,
             client_producer: producer,
+            app_runtime: None,
             state: Mutex::new(State::default()),
             #[cfg(feature = "conformance-probe")]
             probe: Arc::default(),
+            #[cfg(feature = "conformance-probe")]
+            planted: None,
+            #[cfg(feature = "conformance-probe")]
+            live_tasks: Arc::default(),
         }
     }
 
@@ -162,6 +186,35 @@ impl Kafka {
     #[cfg(feature = "conformance-probe")]
     pub fn probe(&self) -> &ClientProbe {
         &self.probe
+    }
+
+    /// Makes the link's task `planted` names, `request lane`, `control lane`, `writer` or `reply
+    /// router`, panic once `planted` fires. For the link's own tests, under the
+    /// `conformance-probe` feature.
+    #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
+    pub fn panic_in(mut self, planted: ulo_rpc::link::PlantedPanic) -> Self {
+        self.planted = Some(planted);
+        self
+    }
+
+    /// How many of the link's lanes, writers, reply routers and event loops have a future that
+    /// has not yet dropped, on both sides. For the link's own tests, under the
+    /// `conformance-probe` feature.
+    #[doc(hidden)]
+    #[cfg(feature = "conformance-probe")]
+    pub fn live_tasks(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        Arc::clone(&self.live_tasks)
+    }
+
+    /// Where one side's tasks report a panic: redacted on `runtime` when it is logged.
+    fn panics(&self, runtime: Arc<dyn Runtime>) -> TaskPanics {
+        let panics = TaskPanics::new("Kafka", runtime);
+        #[cfg(feature = "conformance-probe")]
+        panics.plant(self.planted.clone());
+        #[cfg(feature = "conformance-probe")]
+        panics.count_into(Arc::clone(&self.live_tasks));
+        panics
     }
 
     /// The consumer group server instances share, in place of the root module's full type path.
@@ -249,6 +302,7 @@ impl Link for Kafka {
             None => self.default_group = Some(format!("{:#}", app.root().name())),
         }
         self.timer = app.timer().cloned();
+        self.app_runtime = app.runtime().cloned();
         // `listen` connects on the link's runtime: one that has shut down is refused here, beside
         // the configuration, before any server binds.
         self.runtime()?.run(async {}).await.map_err(Permanent::new)?;
@@ -323,8 +377,12 @@ impl Link for Kafka {
 
         let (phase, _) = watch::channel(Phase::Serving);
         let (deliveries, inbound) = mpsc::unbounded_channel();
+        // The sender lives in the side, which the link's state holds, so no task feeds the
+        // stream: a panic in one is raised through the stream's next poll.
+        let panics = self.panics(self.app_runtime.clone().unwrap_or_else(|| Arc::new(runtime.clone())));
+        let inbound = panics.guard(receiver_stream(inbound));
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
-        runtime.handle().spawn(server_writer(producer, queued));
+        let writer = runtime.handle().spawn(panics.watch("writer", server_writer(producer, queued))).abort_handle();
         let side = Arc::new(ServerSide {
             consumer,
             every: every.clone(),
@@ -337,18 +395,20 @@ impl Link for Kafka {
             inflight: Arc::new(watch::channel(0).0),
             limit: self.max_inflight,
         });
+        // The writer is aborted with the lanes when the link drops; `close` lets it finish.
         let mut tasks = vec![
-            runtime.handle().spawn(request_lane(Arc::clone(&side), Arc::clone(&side.consumer))).abort_handle(),
-            runtime.handle().spawn(control_lane(Arc::clone(&side), control)).abort_handle(),
+            runtime.handle().spawn(panics.watch("request lane", request_lane(Arc::clone(&side), Arc::clone(&side.consumer)))).abort_handle(),
+            runtime.handle().spawn(panics.watch("control lane", control_lane(Arc::clone(&side), control))).abort_handle(),
+            writer,
         ];
         if let Some(every) = every {
-            tasks.push(runtime.handle().spawn(request_lane(Arc::clone(&side), every)).abort_handle());
+            tasks.push(runtime.handle().spawn(panics.watch("request lane", request_lane(Arc::clone(&side), every))).abort_handle());
         }
         lock(&self.state).server = Some((side, tasks));
-        Ok(receiver_stream(inbound))
+        Ok(inbound)
     }
 
-    async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+    async fn connect(&self, client_runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let runtime = self.runtime()?;
         let base = Brokers::parse(&self.brokers)?.config();
         let id = uuid::Uuid::new_v4().simple().to_string();
@@ -382,6 +442,7 @@ impl Link for Kafka {
             calls: Mutex::new(HashMap::new()),
             closed: Mutex::new(Some(closed)),
             routing: Mutex::new(None),
+            writing: Mutex::new(None),
             runtime: runtime.clone(),
             #[cfg(feature = "conformance-probe")]
             probe: Arc::clone(&self.probe),
@@ -396,9 +457,13 @@ impl Link for Kafka {
                 move || counted.upgrade().map_or(0, |side| lock(&side.calls).len()),
             );
         }
-        runtime.handle().spawn(client_writer(Arc::clone(&side), queued));
+        let panics = self.panics(Arc::clone(client_runtime));
+        let writing = runtime.handle().spawn(panics.watch("writer", client_writer(Arc::clone(&side), queued)));
+        *lock(&side.writing) = Some(writing.abort_handle());
         let (frames, replies_out) = mpsc::unbounded_channel();
-        let routing = runtime.handle().spawn(route_replies(Arc::clone(&side), replies, frames, closing, writes.clone()));
+        let replies_out = panics.guard(receiver_stream(replies_out));
+        let explaining = panics.clone();
+        let routing = runtime.handle().spawn(panics.watch_feeder("reply router", route_replies(Arc::clone(&side), replies, frames, closing, writes.clone())));
         *lock(&side.routing) = Some(routing);
         lock(&self.state).client = Some(Arc::clone(&side));
 
@@ -407,12 +472,20 @@ impl Link for Kafka {
             send: Box::new(move |pattern: Pattern, frame: Frame, _reply_to: Option<ReplyTo>| -> BoxFuture<'static, Result<(), BoxError>> {
                 let (answer, answered) = oneshot::channel();
                 let room = writes.send(Job::Send { pattern, frame, answer });
+                let explaining = explaining.clone();
                 Box::pin(async move {
-                    room.await.map_err(|_| BoxError::from(CLOSED))?;
-                    answered.await.map_err(|_| BoxError::from(CLOSED))?
+                    let sent = async {
+                        room.await.map_err(|_| BoxError::from(CLOSED))?;
+                        answered.await.map_err(|_| BoxError::from(CLOSED))?
+                    };
+                    // A writer that panicked dropped the answer: the call is told the panic.
+                    match sent.await {
+                        Ok(()) => Ok(()),
+                        Err(error) => Err(explaining.explain(error).await),
+                    }
                 })
             }),
-            replies: receiver_stream(replies_out),
+            replies: replies_out,
         })
     }
 
@@ -457,6 +530,10 @@ impl Link for Kafka {
             }
         }
         if let Some(side) = client {
+            // The probe's hooks hold a sender of the client writer's queue, which would keep the
+            // writer and the side past the close in a probe build; production builds have no probe.
+            #[cfg(feature = "conformance-probe")]
+            self.probe.attach(|_| {}, || 0);
             side.close().await;
         }
         Ok(())
@@ -1076,6 +1153,8 @@ struct ClientSide {
     closed: Mutex<Option<oneshot::Sender<()>>>,
     /// The reply router, which `close` awaits: it drops the reply consumer as it ends.
     routing: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The writer, aborted when the link drops; `close` lets it end with its queue.
+    writing: Mutex<Option<AbortHandle>>,
     /// The link's runtime, on which a held `cancel`'s hold runs out.
     runtime: Tokio,
     #[cfg(feature = "conformance-probe")]
