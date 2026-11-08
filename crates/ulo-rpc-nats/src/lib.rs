@@ -2,7 +2,8 @@
 //! NATS headers, replies on the `_INBOX` subject, stream items on the inbox. At-most-once;
 //! ordered per publisher and subject; the maximum payload read from the server's `INFO`;
 //! `Competing` through a queue group, the application's root module's full type path unless
-//! `.group(..)` names one; no-responders maps to `Unavailable`, and so does a call waiting when
+//! `.group(..)` names one, and an event declared `every_instance` through a plain subscription,
+//! which reaches every instance; no-responders maps to `Unavailable`, and so does a call waiting when
 //! the client's connection drops, since async-nats resubscribes the inbox but what was published
 //! to it meanwhile is gone; the drain is NATS's drain protocol, which async-nats ends without
 //! waiting for the server to stop routing, so a request routed to the draining instance in between

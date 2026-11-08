@@ -1,5 +1,7 @@
-//! The RabbitMQ link for `ulo-rpc`, AMQP 0-9-1 (transports DESIGN §5.3): a queue per pattern
-//! through the default exchange, the payload as the body with AMQP headers, replies through
+//! The RabbitMQ link for `ulo-rpc`, AMQP 0-9-1 (transports DESIGN §5.3): a queue per pattern, a
+//! request reaching it through the default exchange and an event through the pattern's fanout
+//! exchange `ulo.rpc.event.<pattern>`, which an event declared `every_instance` also copies to an
+//! exclusive auto-delete queue of each instance's own, the payload as the body with AMQP headers, replies through
 //! `reply_to` and `correlation_id`. At-least-once with the ack after the handler completes, so
 //! handlers must be idempotent; ordered per queue with a single consumer; `Competing`; one
 //! prefetch window for every pattern following the server's `max_inflight`, 1,024 unset and 64

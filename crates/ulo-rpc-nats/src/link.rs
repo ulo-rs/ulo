@@ -28,7 +28,7 @@ use ulo_rpc::link::ClientProbe;
 use ulo_rpc::link::{HoldUntil, Inbound, panic_redacted};
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link,
-    Misconfigured, NoTimer, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
+    Instances, Misconfigured, NoTimer, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 use ulo_transport::prepare::{Failure, Failures, zero_bound};
 use ulo_transport::{Detail, Details, ErrorKind, SHUTDOWN_MESSAGE};
@@ -361,7 +361,10 @@ impl Link for Nats {
         Ok(())
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    /// A pattern reaching one instance is subscribed in the queue group, so NATS hands each
+    /// message to one member; one reaching every instance, an event declared `every_instance`, is
+    /// a plain subscription, which NATS hands every message.
+    async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
         let group = self
             .group
             .clone()
@@ -388,9 +391,13 @@ impl Link for Nats {
 
             // Every subscription is made before any lane starts, so a failure leaves nothing
             // subscribed: a dropped `Subscriber` unsubscribes.
-            let mut lanes = Vec::with_capacity(patterns.len());
-            for pattern in patterns {
-                match client.queue_subscribe(pattern.as_str().to_owned(), group.clone()).await {
+            let mut lanes = Vec::with_capacity(subscriptions.len());
+            for Subscription { pattern, instances, .. } in subscriptions {
+                let subscribed = match instances {
+                    Instances::Every => client.subscribe(pattern.as_str().to_owned()).await,
+                    _ => client.queue_subscribe(pattern.as_str().to_owned(), group.clone()).await,
+                };
+                match subscribed {
                     Ok(subscriber) => lanes.push(subscriber),
                     Err(error) => {
                         drop(lanes);
@@ -2576,7 +2583,7 @@ mod tests {
             let app = app().await;
             let mut serving = link(&format!("nats://{relay}"), test_root::<25>, std::env::temp_dir).group(group);
             serving.prepare(&app.handle()).await.expect("the server's link prepares");
-            let mut inbound = serving.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
+            let mut inbound = serving.listen(&[Pattern::from(pattern).into()]).await.expect("the server's link listens");
             let caller = link(&format!("nats://{server}"), test_root::<25>, std::env::temp_dir);
             let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
             let outbound = caller.connect(&runtime).await.expect("the caller's link connects");
@@ -2886,7 +2893,7 @@ mod tests {
                 .expect("the app connects");
             let mut serving = link(&format!("nats://{server}"), test_root::<25>, std::env::temp_dir).group("timed");
             serving.prepare(&app.handle()).await.expect("the server's link prepares");
-            let _inbound = serving.listen(&[Pattern::from("timed.grace")]).await.expect("the server's link listens");
+            let _inbound = serving.listen(&[Pattern::from("timed.grace").into()]).await.expect("the server's link listens");
             let side = lock(&serving.state).server.clone().expect("a listening link holds its server side");
             let before = lock(&clock.0).asked.len();
 
@@ -2913,7 +2920,7 @@ mod tests {
             let app = app().await;
             let mut serving = link(&format!("nats://{server}"), test_root::<25>, std::env::temp_dir).group("gate");
             serving.prepare(&app.handle()).await.expect("the server's link prepares");
-            let _inbound = serving.listen(&[Pattern::from(LATE)]).await.expect("the server's link listens");
+            let _inbound = serving.listen(&[Pattern::from(LATE).into()]).await.expect("the server's link listens");
             let caller = link(&format!("nats://{server}"), test_root::<25>, std::env::temp_dir);
             let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
             let outbound = caller.connect(&runtime).await.expect("the caller's link connects");
@@ -3002,7 +3009,7 @@ mod tests {
             let app = app().await;
             let mut serving = link(&format!("nats://{server}"), test_root::<14>, std::env::temp_dir);
             serving.prepare(&app.handle()).await.expect("the server's link prepares");
-            let mut inbound = serving.listen(&[Pattern::from(PATTERN)]).await.expect("the server's link listens");
+            let mut inbound = serving.listen(&[Pattern::from(PATTERN).into()]).await.expect("the server's link listens");
             let client = link(&format!("nats://{server}"), test_root::<14>, std::env::temp_dir);
             let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
             let outbound = client.connect(&runtime).await.expect("the client's link connects");
@@ -3040,7 +3047,7 @@ mod tests {
             let app = app().await;
             let mut serving = link(&url, test_root::<20>, std::env::temp_dir);
             serving.prepare(&app.handle()).await.expect("the server's link prepares");
-            let mut inbound = serving.listen(&[Pattern::from(PATTERN)]).await.expect("the server's link listens");
+            let mut inbound = serving.listen(&[Pattern::from(PATTERN).into()]).await.expect("the server's link listens");
             let client = Nats::url(&url);
             let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
             let outbound = client.connect(&runtime).await.expect("the client's link connects");
@@ -3104,7 +3111,7 @@ mod tests {
             let mut serving = link(&format!("nats://{server}"), gated::<23, 3>, std::env::temp_dir).roots_timeout(Bound::After(SHORT));
             serving.prepare(&app.handle()).await.expect("the server's link prepares");
             let began = Instant::now();
-            let listened = serving.listen(&[Pattern::from(PATTERN)]).await;
+            let listened = serving.listen(&[Pattern::from(PATTERN).into()]).await;
             let took = began.elapsed();
             GATES[3].open();
             let _inbound = listened.expect("the server's link listens without its roots");
@@ -3150,7 +3157,7 @@ mod tests {
             let app = app().await;
             let mut serving = link(&url, test_root::<24>, std::env::temp_dir);
             serving.prepare(&app.handle()).await.expect("the server's link prepares");
-            let mut inbound = serving.listen(&[Pattern::from(PATTERN)]).await.expect("the server's link listens");
+            let mut inbound = serving.listen(&[Pattern::from(PATTERN).into()]).await.expect("the server's link listens");
             let client = link(&url, test_root::<24>, std::env::temp_dir);
             let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
             let outbound = client.connect(&runtime).await.expect("the client's link connects");
@@ -3947,7 +3954,7 @@ mod tests {
                 let app = app().await;
                 let mut server = broker.relayed();
                 server.prepare(&app.handle()).await.expect("the server's link prepares");
-                let mut inbound = server.listen(&[Pattern::from(PATTERN)]).await.expect("the server's link listens");
+                let mut inbound = server.listen(&[Pattern::from(PATTERN).into()]).await.expect("the server's link listens");
                 phase("connecting a client");
                 let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
                 let client = broker.relayed();
@@ -4034,7 +4041,7 @@ mod tests {
                 server.roots.own = Some(Loader { load: past_boot::<4>, dir: std::env::temp_dir });
                 let began = Instant::now();
                 server.prepare(&app.handle()).await.expect("the server's link prepares");
-                let mut inbound = server.listen(&[Pattern::from(PATTERN)]).await.expect("the server's link listens over the upgrade");
+                let mut inbound = server.listen(&[Pattern::from(PATTERN).into()]).await.expect("the server's link listens over the upgrade");
                 let waited = began.elapsed();
                 assert!(waited >= PAST_BOOT, "the server's `listen` returned after {waited:?}, before its roots' load of {PAST_BOOT:?} ended");
                 let side = lock(&server.state).server.clone().expect("the server's side is held");

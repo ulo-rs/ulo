@@ -1,7 +1,8 @@
 //! The TCP link for `ulo-rpc` on smol's sockets (transports DESIGN §5.3): `ulo-rpc-tcp`'s wire,
 //! calls multiplexed by `id` over one connection, each frame a 4-byte big-endian length then the
 //! frame, over `async-net`'s sockets, with `futures-rustls` for TLS. A client of either link talks
-//! to a server of the other. Ordered per connection; every call shape; `Addressed`; TLS through
+//! to a server of the other. Ordered per connection; every call shape; `Addressed`, an event
+//! declared `every_instance` refused at startup; TLS through
 //! `ulo_net::Tls` with no ALPN; `goaway` on every connection at the drain.
 //!
 //! No tokio is involved: the sockets are `async-io`'s, whose reactor runs on a thread of its own,

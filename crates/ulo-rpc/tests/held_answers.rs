@@ -26,7 +26,7 @@ use tokio::sync::{Notify, mpsc, watch};
 use tokio::task::JoinHandle;
 use ulo::{App, AppHandle, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Shutdown, ShutdownError, Signal, Timer, controller, handlers};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, ErrorBody, Frame, Link, Outbound, Pattern, Payload, ReplyPath};
+use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, ErrorBody, Frame, Link, Outbound, Subscription, Payload, ReplyPath};
 use ulo_transport::{Classify, Count, Detail, Details, ErrorKind};
 
 const HELD: &str = "held.wait";
@@ -104,7 +104,7 @@ impl Link for Scripted {
         Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
-    async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         lock(&self.0.inbound).take().ok_or_else(|| "the scripted link listened twice".into())
     }
 

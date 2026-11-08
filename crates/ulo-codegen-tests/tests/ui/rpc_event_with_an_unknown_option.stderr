@@ -1,0 +1,31 @@
+error: unknown option `broadcast`; the one option is `every_instance`, on `#[event]`
+ --> tests/ui/rpc_event_with_an_unknown_option.rs:9:39
+  |
+9 |     #[ulo_rpc::event("orders.placed", broadcast)]
+  |                                       ^^^^^^^^^
+
+warning: unused import: `ulo_rpc::Payload`
+ --> tests/ui/rpc_event_with_an_unknown_option.rs:2:5
+  |
+2 | use ulo_rpc::Payload;
+  |     ^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0599]: no associated function or constant named `__ulo_mount_placed` found for struct `Orders` in the current scope
+  --> tests/ui/rpc_event_with_an_unknown_option.rs:10:14
+   |
+ 5 | struct Orders;
+   | ------------- associated function or constant `__ulo_mount_placed` not found for this struct
+...
+10 |     async fn placed(&self, id: Payload<u64>) {
+   |              ^^^^^^ associated function or constant not found in `Orders`
+
+error[E0599]: no associated function or constant named `__ULO_CHECKS_placed` found for struct `Orders` in the current scope
+  --> tests/ui/rpc_event_with_an_unknown_option.rs:10:14
+   |
+ 5 | struct Orders;
+   | ------------- associated function or constant `__ULO_CHECKS_placed` not found for this struct
+...
+10 |     async fn placed(&self, id: Payload<u64>) {
+   |              ^^^^^^ associated function or constant not found in `Orders`

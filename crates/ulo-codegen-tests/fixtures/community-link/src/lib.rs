@@ -6,7 +6,8 @@
 //! The link carries frames between servers and clients in one process. A [`Hub`] stands for the
 //! broker: a server's link subscribes its patterns there, and a client's `send` routes each
 //! request at the call to one subscribed server, round-robin, or fails with `NoDestination` when
-//! none is. Every frame one side sends goes through one bounded `ordered` queue towards the other
+//! none is. An event goes to one of the servers subscribed for one instance, round-robin, and to
+//! every server subscribed for every instance (`Instances::Every`). Every frame one side sends goes through one bounded `ordered` queue towards the other
 //! side, so frames arrive in the order their sends were called, and a full queue holds the sender
 //! back.
 
@@ -19,7 +20,7 @@ use futures_util::StreamExt;
 use futures_util::stream;
 use ulo::{BoxError, BoxFuture, Runtime};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Ack, Capabilities, Delivery, DeliveryMode, Frame, Link, NoDestination, Ordering, Outbound, Pattern, ReplyPath, ReplyTo};
+use ulo_rpc::{Ack, Capabilities, Delivery, DeliveryMode, Frame, Instances, Link, NoDestination, Ordering, Outbound, Pattern, ReplyPath, ReplyTo, Subscription};
 use ulo_transport::sync::ordered;
 
 /// Deliveries queued for one server ahead of the next send's wait.
@@ -42,7 +43,8 @@ struct HubInner {
 
 #[derive(Default)]
 struct HubState {
-    subscribers: HashMap<Pattern, Vec<Weak<Instance>>>,
+    /// Each pattern's servers, with how many of them its messages reach.
+    subscribers: HashMap<Pattern, Vec<(Weak<Instance>, Instances)>>,
     /// The next subscriber each pattern's requests go to.
     turn: HashMap<Pattern, usize>,
     clients: Vec<Weak<Client>>,
@@ -70,34 +72,46 @@ impl Hub {
         state.clients.len()
     }
 
-    /// The next server subscribed to `pattern`, round-robin among those not draining.
-    fn pick(&self, pattern: &Pattern) -> Option<Arc<Instance>> {
-        let mut state = lock(&self.inner.state);
-        let live: Vec<Arc<Instance>> = state
+    /// The servers subscribed to `pattern` for `instances` and not draining.
+    fn live(&self, pattern: &Pattern, instances: Instances) -> Vec<Arc<Instance>> {
+        lock(&self.inner.state)
             .subscribers
             .get(pattern)
-            .map(|subs| subs.iter().filter_map(Weak::upgrade).filter(|i| !i.draining.load(AtomicOrdering::Acquire)).collect())
-            .unwrap_or_default();
+            .map(|subs| {
+                subs.iter()
+                    .filter(|(_, reach)| *reach == instances)
+                    .filter_map(|(sub, _)| sub.upgrade())
+                    .filter(|i| !i.draining.load(AtomicOrdering::Acquire))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The next server subscribed to `pattern` for one instance, round-robin among those not
+    /// draining.
+    fn pick(&self, pattern: &Pattern) -> Option<Arc<Instance>> {
+        let live = self.live(pattern, Instances::One);
         if live.is_empty() {
             return None;
         }
+        let mut state = lock(&self.inner.state);
         let turn = state.turn.entry(pattern.clone()).or_insert(0);
         let picked = Arc::clone(&live[*turn % live.len()]);
         *turn = turn.wrapping_add(1);
         Some(picked)
     }
 
-    fn subscribe(&self, instance: &Arc<Instance>, patterns: &[Pattern]) {
+    fn subscribe(&self, instance: &Arc<Instance>, subscriptions: &[Subscription]) {
         let mut state = lock(&self.inner.state);
-        for pattern in patterns {
-            state.subscribers.entry(pattern.clone()).or_default().push(Arc::downgrade(instance));
+        for subscription in subscriptions {
+            state.subscribers.entry(subscription.pattern.clone()).or_default().push((Arc::downgrade(instance), subscription.instances));
         }
     }
 
     fn unsubscribe(&self, instance: &Arc<Instance>) {
         let mut state = lock(&self.inner.state);
         for subs in state.subscribers.values_mut() {
-            subs.retain(|sub| sub.upgrade().is_some_and(|sub| !Arc::ptr_eq(&sub, instance)));
+            subs.retain(|(sub, _)| sub.upgrade().is_some_and(|sub| !Arc::ptr_eq(&sub, instance)));
         }
     }
 
@@ -190,10 +204,20 @@ impl Client {
                 lock(&self.routes).insert(id, Route { instance: Arc::downgrade(&instance), id: server_id, reply: reply.clone() });
                 instance.deliver(Delivery { frame: with_id(frame, server_id), reply: Some(reply), ack: Ack::none() })
             }
-            Frame::Evt { .. } => match hub.pick(&pattern) {
-                Some(instance) => instance.deliver(Delivery { frame, reply: None, ack: Ack::none() }),
-                None => Box::pin(ready(Err(BoxError::from(NoDestination { pattern: pattern.as_str().to_owned() })))),
-            },
+            Frame::Evt { .. } => {
+                let mut reached = hub.live(&pattern, Instances::Every);
+                reached.extend(hub.pick(&pattern));
+                if reached.is_empty() {
+                    return Box::pin(ready(Err(BoxError::from(NoDestination { pattern: pattern.as_str().to_owned() }))));
+                }
+                let sent: Vec<_> = reached.iter().map(|instance| instance.deliver(Delivery { frame: frame.clone(), reply: None, ack: Ack::none() })).collect();
+                Box::pin(async move {
+                    for delivered in sent {
+                        delivered.await?;
+                    }
+                    Ok(())
+                })
+            }
             Frame::In { id, .. } | Frame::InEnd { id } | Frame::Cancel { id } => {
                 let cancel = matches!(frame, Frame::Cancel { .. });
                 let route = {
@@ -286,7 +310,7 @@ impl Link for Loopback {
             .without_durable_replies("a reply travels the client's own queue, which a severed client loses")
     }
 
-    fn listen(&self, patterns: &[Pattern]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
+    fn listen(&self, subscriptions: &[Subscription]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
         let (sender, mut receiver) = ordered::channel(INBOUND_QUEUE);
         let instance = Arc::new(Instance {
             inbound: Mutex::new(Some(sender)),
@@ -294,7 +318,7 @@ impl Link for Loopback {
             draining: AtomicBool::new(false),
             next_id: AtomicU64::new(1),
         });
-        self.hub.subscribe(&instance, patterns);
+        self.hub.subscribe(&instance, subscriptions);
         *lock(&self.server) = Some(instance);
         let inbound: Inbound = stream::poll_fn(move |cx| receiver.poll_recv(cx)).boxed();
         ready(Ok(inbound))

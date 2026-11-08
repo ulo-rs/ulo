@@ -43,7 +43,7 @@ fn a_server_that_reads_nothing_holds_the_sender_back_until_it_reads() {
     let hub = Hub::new();
     let server = Loopback::on(&hub);
     let pattern = Pattern::new("p");
-    let mut inbound = server.listen(std::slice::from_ref(&pattern)).now_or_never().unwrap().unwrap();
+    let mut inbound = server.listen(&[pattern.clone().into()]).now_or_never().unwrap().unwrap();
     let runtime: Arc<dyn Runtime> = Arc::new(Unused);
     let client = Loopback::on(&hub).connect(&runtime).now_or_never().unwrap().unwrap();
     let mut cx = Context::from_waker(noop_waker_ref());

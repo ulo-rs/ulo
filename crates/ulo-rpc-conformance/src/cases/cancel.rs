@@ -12,7 +12,7 @@ use crate::cases::app::{Fixture, Mounts, TICKS, eventually, refused_at_startup, 
 pub async fn mid_stream<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         return fixture.stop().await;
     }
     let settle = fixture.broker.budget().settle;

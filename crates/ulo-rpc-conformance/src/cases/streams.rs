@@ -32,7 +32,7 @@ fn shape_refused(call: &str, outcome: Option<RpcError>) {
 pub async fn server_stream<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         shape_refused("stream", fixture.rpc().stream::<_, u32>(COUNT, &3u32).await.err());
         return fixture.stop().await;
     }
@@ -47,7 +47,7 @@ pub async fn server_stream<B: Broker>() {
 pub async fn client_stream<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         shape_refused("send_stream", fixture.rpc().send_stream::<_, i64>(SUM, stream::iter(vec![1i64])).timeout(WAIT).await.err());
         return fixture.stop().await;
     }
@@ -63,7 +63,7 @@ pub async fn client_stream<B: Broker>() {
 pub async fn client_stream_in_order<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         return fixture.stop().await;
     }
     let sent: Vec<u32> = (0..ITEMS).collect();
@@ -83,7 +83,7 @@ pub async fn client_stream_in_order<B: Broker>() {
 pub async fn bidi_stream<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         shape_refused("duplex", fixture.rpc().duplex::<_, i64>(DOUBLE, stream::iter(vec![1i64])).await.err());
         return fixture.stop().await;
     }

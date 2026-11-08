@@ -58,7 +58,7 @@ async fn dropped() {
         .expect("the app connects");
     let mut tcp = Tcp::new("127.0.0.1:0");
     tcp.prepare(&app.handle()).await.expect("the link prepares");
-    let inbound = tcp.listen(&[Pattern::from("dropped_link.add")]).await.expect("the link listens");
+    let inbound = tcp.listen(&[Pattern::from("dropped_link.add").into()]).await.expect("the link listens");
     let addr = tcp.bound().first().map(|bound| bound.addr).expect("the link's address");
 
     let mut accepted = TcpStream::connect(addr).expect("the listening link accepts a connection");

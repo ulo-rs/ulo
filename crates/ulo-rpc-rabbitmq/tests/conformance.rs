@@ -108,7 +108,7 @@ async fn a_server_link_dropped_without_close_closes_its_connection() {
     let broker = RabbitMqBroker::start().await;
     let relay = Relay::start(broker.server).await;
     let server = prepared(RabbitMq::url(format!("amqp://guest:guest@{}/%2f", relay.addr()))).await;
-    let inbound = server.listen(&[Pattern::from("link.dropped")]).await.expect("the server's link listens");
+    let inbound = server.listen(&[Pattern::from("link.dropped").into()]).await.expect("the server's link listens");
     assert!(relay.open().await > 0, "the listening server's link holds no connection through its relay");
     drop(inbound);
     drop(server);
@@ -149,7 +149,7 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connection() {
         let pattern = if drained { "link.held.drained" } else { "link.held" };
         let relay = Relay::start(broker.server).await;
         let server = prepared(RabbitMq::url(format!("amqp://guest:guest@{}/%2f", relay.addr()))).await;
-        let mut inbound = server.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
+        let mut inbound = server.listen(&[Pattern::from(pattern).into()]).await.expect("the server's link listens");
         let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
         (outbound.send)(Pattern::from(pattern), request, Some(ReplyTo { id })).await.expect("the request is published");
         let delivery = tokio::time::timeout(PATIENCE, inbound.next())
@@ -196,7 +196,7 @@ async fn the_server_s_connection_recovers_after_the_broker_closes_it() {
     let broker = RabbitMqBroker::start().await;
     let server = prepared(broker.link()).await;
     let pattern = "link.recovered";
-    let mut inbound = server.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
+    let mut inbound = server.listen(&[Pattern::from(pattern).into()]).await.expect("the server's link listens");
     let listening = std::time::Instant::now();
     let held = loop {
         let held = peer_ports(&broker).await;

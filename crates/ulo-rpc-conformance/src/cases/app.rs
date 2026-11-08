@@ -40,6 +40,7 @@ pub(crate) const BOOM: &str = "conformance.boom";
 pub(crate) const HEADERS: &str = "conformance.headers";
 pub(crate) const EVENT: &str = "conformance.event";
 pub(crate) const TALLY: &str = "conformance.tally";
+pub(crate) const EVERY: &str = "conformance.every";
 pub(crate) const SLOW_EVENT: &str = "conformance.slow_event";
 pub(crate) const STALL: &str = "conformance.stall";
 pub(crate) const HOLD: &str = "conformance.hold";
@@ -119,6 +120,8 @@ pub(crate) struct ProbeState {
     events: AtomicUsize,
     last_event: Mutex<Option<u32>>,
     tallies: AtomicUsize,
+    /// How many events declared `every_instance` this instance has handled.
+    everyone: AtomicUsize,
     /// The ticking stream's execution's reason, written when the stream is dropped.
     cancelled: Mutex<Option<Option<CancelReason>>>,
     stopped: AtomicBool,
@@ -198,6 +201,10 @@ impl Probe {
 
     pub(crate) fn tallies(&self) -> usize {
         self.0.tallies.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn everyone(&self) -> usize {
+        self.0.everyone.load(Ordering::SeqCst)
     }
 
     pub(crate) fn cancelled(&self) -> Option<Option<CancelReason>> {
@@ -630,6 +637,22 @@ impl StreamController {
     }
 }
 
+/// The event every instance receives, mounted on a link declaring `every_instance` and refused at
+/// startup on one declared without it.
+#[controller]
+pub(crate) struct EveryInstanceController {
+    probe: Dep<Probe>,
+}
+
+#[handlers]
+impl EveryInstanceController {
+    #[ulo_rpc::event("conformance.every", every_instance)]
+    async fn every(&self, _value: Payload<u32>) -> Result<(), Refusal> {
+        self.probe.0.everyone.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
 #[controller]
 pub(crate) struct BinaryController;
 
@@ -646,12 +669,13 @@ impl BinaryController {
 pub(crate) struct Mounts {
     pub(crate) streaming: bool,
     pub(crate) binary: bool,
+    pub(crate) every_instance: bool,
 }
 
 impl Mounts {
     /// What the link carries: every scenario it can run.
     pub(crate) fn carried(capabilities: &Capabilities) -> Mounts {
-        Mounts { streaming: streams(capabilities), binary: capabilities.binary }
+        Mounts { streaming: streams(capabilities), binary: capabilities.binary, every_instance: capabilities.every_instance() }
     }
 }
 
@@ -715,6 +739,9 @@ impl Module for ServerRoot {
         }
         if self.mounts.binary {
             m.controller::<BinaryController>();
+        }
+        if self.mounts.every_instance {
+            m.controller::<EveryInstanceController>();
         }
     }
 }
@@ -817,8 +844,13 @@ async fn serving<B: Broker, L: Link>(broker: &B, link: L, settings: Settings) ->
 /// Asserts that a server mounting `mounts` is refused at startup as a `Configure` error: what a
 /// link's capabilities exclude is refused in `prepare`, before anything binds.
 pub(crate) async fn refused_at_startup<B: Broker>(broker: &B, mounts: Mounts) {
+    refusal_at_startup(broker, mounts).await;
+}
+
+/// [`refused_at_startup`], answering the refusal as the startup report prints it.
+pub(crate) async fn refusal_at_startup<B: Broker>(broker: &B, mounts: Mounts) -> String {
     match bound::<B, _>(broker.link(), Probe::default(), mounts, Settings::bounded(Count::Default)).await {
-        Err(StartupError::Configure(_)) => {}
+        Err(refused @ StartupError::Configure(_)) => report(&refused),
         Err(other) => crate::startup_failed!("expected a `Configure` refusal for {mounts:?}, got: {}", report(&other)),
         Ok(app) => {
             let _ = app.handle().close(Signal::new("conformance")).await;

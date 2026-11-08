@@ -23,7 +23,7 @@ pub async fn binary<B: Broker>() {
     } else {
         let error = failed(outcome, ErrorKind::BadRequest);
         assert_eq!(error.reason(), Some("binary_unsupported"));
-        refused_at_startup(&fixture.broker, Mounts { streaming: streams(&capabilities), binary: true }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: streams(&capabilities), binary: true, every_instance: false }).await;
     }
     fixture.stop().await;
 }

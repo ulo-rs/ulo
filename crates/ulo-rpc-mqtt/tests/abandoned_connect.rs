@@ -83,7 +83,7 @@ async fn a_listen_dropped_before_the_broker_answers_ends_its_event_loop() {
         .await
         .expect("the app connects");
     link.prepare(&app.handle()).await.expect("the link prepares");
-    let listening = tokio::spawn(async move { link.listen(&[Pattern::from("abandoned.call")]).await.map(drop) });
+    let listening = tokio::spawn(async move { link.listen(&[Pattern::from("abandoned.call").into()]).await.map(drop) });
     let stream = handshake_begun(&listener).await;
     listening.abort();
     let dropped: Result<Result<(), BoxError>, _> = listening.await;

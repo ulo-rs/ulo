@@ -17,7 +17,7 @@ use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
 use ulo::{App, AppHandle, BoxError, BoxFuture, CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, controller, handlers};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, ReplyPath};
+use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Subscription, ReplyPath};
 use ulo_transport::{CallError, Classify, ErrorKind};
 
 const OBSERVE: &str = "cancelled.observe";
@@ -163,7 +163,7 @@ impl Link for Scripted {
         Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
-    async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         lock(&self.0).take().ok_or_else(|| "the scripted link listened twice".into())
     }
 

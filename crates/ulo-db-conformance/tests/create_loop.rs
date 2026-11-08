@@ -105,7 +105,7 @@ impl<const DECLARED: bool> ulo_db_conformance::Host for Host<DECLARED> {
 
     fn capabilities(&self) -> Capabilities {
         if DECLARED {
-            Capabilities::new().without_lazy("`create` connects, so `.lazy()` is refused").without_migrations("no migrator")
+            Capabilities::new().without_lazy_start("`create` connects, so `.lazy()` is refused").without_migrations("no migrator")
         } else {
             Capabilities::new()
         }

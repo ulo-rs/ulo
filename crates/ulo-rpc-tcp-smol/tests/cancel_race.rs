@@ -22,7 +22,7 @@ use futures_util::{Stream, StreamExt, stream};
 use ulo::{App, AppHandle, BoundAddr, BoxError, BoxFuture, CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Timer, controller, handlers};
 use ulo_rpc_conformance::{Harness, OnSmol};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Capabilities, Delivery, Frame, Link, Outbound, Pattern, ReplyPath, RpcClient};
+use ulo_rpc::{Capabilities, Delivery, Frame, Link, Outbound, Subscription, ReplyPath, RpcClient};
 use ulo_rpc_tcp_smol::Tcp;
 use ulo_transport::sync::Watch;
 use ulo_transport::{CallError, Count};
@@ -143,7 +143,7 @@ impl<L: Link> Link for Gated<L> {
         self.link.max_inflight(calls);
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         let inbound = self.link.listen(patterns).await?;
         let gate = (inbound, self.race.clone(), Arc::clone(&self.timer));
         Ok(Box::pin(stream::unfold(gate, |(mut inbound, race, timer)| async move {

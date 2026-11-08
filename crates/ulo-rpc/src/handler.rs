@@ -4,6 +4,7 @@ use std::sync::Arc;
 use ulo::{BoxError, BoxFuture};
 
 use crate::frame::PayloadKind;
+use crate::link::Instances;
 use crate::transport::{Reply, RpcCx};
 
 /// A handler's call: extraction, the controller, the handler and the reply, run by `dispatch`
@@ -33,7 +34,9 @@ pub(crate) enum Kind {
 /// handler may answer a streamed call that way. The caller gets `Internal` with the reason `shape_mismatch` and the
 /// server logs one `warn` naming the handler. The server refuses, when it prepares, a handler with
 /// no pattern or an empty one, a pattern holding whitespace or a control character, an event of
-/// any shape but `Unary`, and a shape or a binary payload the link does not carry.
+/// any shape but `Unary`, a request handler declared [`every_instance`](Self::every_instance), an
+/// event declared so on a link without the `every_instance` capability, and a shape or a binary
+/// payload the link does not carry.
 ///
 /// The call runs once per call, after every guard admits, and inside the interceptors. It reads
 /// its parameters through [`FromCall`](crate::FromCall), its controller through
@@ -78,6 +81,7 @@ pub struct RpcHandler {
     pub(crate) kind: Kind,
     pub(crate) call: HandlerFn,
     pub(crate) payload: PayloadKind,
+    pub(crate) instances: Instances,
 }
 
 impl RpcHandler {
@@ -107,13 +111,25 @@ impl RpcHandler {
         Fut: Future<Output = Result<Reply, BoxError>> + Send + 'static,
     {
         let call: HandlerFn = Arc::new(move |cx| Box::pin(call(cx)));
-        RpcHandler { kind, call, payload: PayloadKind::Serde }
+        RpcHandler { kind, call, payload: PayloadKind::Serde, instances: Instances::One }
     }
 
     /// The payload the call reads: [`PayloadKind::Binary`] for a `Payload<Bytes>` or `Bytes`,
     /// which a link whose codec is JSON cannot carry; `Serde`, the default, for anything else.
     pub fn payload(mut self, kind: PayloadKind) -> Self {
         self.payload = kind;
+        self
+    }
+
+    /// An event delivered to every server instance listening on its pattern, as
+    /// `#[ulo_rpc::event("pattern", every_instance)]` declares one: a cache invalidation, a
+    /// configuration reload, anything each instance has to see. Unset, an event reaches one
+    /// instance, as every request does, so a side effect runs once however many instances run.
+    /// The server refuses it on a request handler, which reaches one instance on every link, and
+    /// on a link declared without the `every_instance` capability, TCP and UDP, whose caller
+    /// addresses one server.
+    pub fn every_instance(mut self) -> Self {
+        self.instances = Instances::Every;
         self
     }
 }

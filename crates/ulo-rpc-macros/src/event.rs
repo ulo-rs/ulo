@@ -1,6 +1,7 @@
-//! `#[event("pattern")]`: one `Rpc` fire-and-forget handler over `ulo-handler-codegen`, expanded as
-//! `#[message]` is with `Kind::Event`. A stream return is refused here, an `Inbound<T>` parameter
-//! in `prepare`.
+//! `#[event("pattern")]` and `#[event("pattern", every_instance)]`: one `Rpc` fire-and-forget
+//! handler over `ulo-handler-codegen`, expanded as `#[message]` is with `Kind::Event`, the option
+//! adding `.every_instance()` to the handler value. A stream return is refused here, an
+//! `Inbound<T>` parameter in `prepare`.
 
 use proc_macro2::TokenStream;
 

@@ -25,13 +25,19 @@
 //!
 //!     #[ulo_rpc::event("user.created")]
 //!     async fn on_user(&self, evt: Payload<UserCreated>) -> Result<(), BillingError> { Ok(()) }
+//!
+//!     #[ulo_rpc::event("prices.changed", every_instance)]
+//!     async fn on_prices(&self, evt: Payload<UserCreated>) -> Result<(), BillingError> { Ok(()) }
 //! }
 //!
 //! // then: app.bind(ulo_rpc::Server::new(ulo_rpc_tcp::Tcp::new("0.0.0.0:7000")))
 //! ```
 //!
 //! The call shape comes from the signature: an [`Inbound<T>`] parameter is a streamed request, a
-//! stream return a streamed reply. The attributes build an [`RpcHandler`] for each handler, and a
+//! stream return a streamed reply. A request reaches one server instance, and so does an event
+//! unless its attribute says `every_instance`, which delivers it to each instance listening on its
+//! pattern ([`Instances`]); the server's side alone decides it, and a client emits the same way
+//! under either. The attributes build an [`RpcHandler`] for each handler, and a
 //! controller written without them builds the same value in its `Handlers::mount`.
 
 mod client;
@@ -79,8 +85,8 @@ pub use extract::{Inbound, Payload};
 pub use frame::{Data, ErrorBody, Frame, PayloadKind};
 pub use handler::RpcHandler;
 pub use link::{
-    Ack, Capabilities, ConnectTimedOut, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Link, Misconfigured, NoDestination, NoTimer, Ordering,
-    Outbound, Pattern, ReplyPath, ReplyTo,
+    Ack, Capabilities, ConnectTimedOut, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Instances, Link, Misconfigured, NoDestination, NoTimer,
+    Ordering, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 pub use server::Server;
 pub use transport::{CallHeaders, LinkInfo, NoHandler, Reply, Rpc, RpcCx};

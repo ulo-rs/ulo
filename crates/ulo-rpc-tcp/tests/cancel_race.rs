@@ -29,7 +29,7 @@ use ulo::{App, AppHandle, BoundAddr, BoxError, BoxFuture, CancelReason, Dep, Exe
 use ulo_rpc::link::Inbound;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use ulo_rpc::{CallHeaders, Capabilities, Codec, Data, Delivery, Frame, Link, Outbound, Pattern, ReplyPath, RpcClient};
+use ulo_rpc::{CallHeaders, Capabilities, Codec, Data, Delivery, Frame, Link, Outbound, Subscription, ReplyPath, RpcClient};
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
 use ulo_transport::sync::Watch;
@@ -180,7 +180,7 @@ impl<L: Link> Link for Gated<L> {
         self.link.max_inflight(calls);
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         let inbound = self.link.listen(patterns).await?;
         // Deliveries read past a held `cancel`, handed on after it in their order.
         let gate = (inbound, self.race.clone(), Arc::clone(&self.timer), VecDeque::<Delivery>::new());

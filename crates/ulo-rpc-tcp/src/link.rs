@@ -11,7 +11,7 @@ use ulo::{AppHandle, BoundAddr, BoxError, Permanent, Runtime, Timer};
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{BoundListener, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Capabilities, Codec, Link, Outbound, Pattern};
+use ulo_rpc::{Capabilities, Codec, Link, Outbound, Subscription};
 use ulo_rpc_tcp_core::{Accept, Core, Incoming, Reader, Writer};
 use ulo_runtime_tokio::{NoIoDriver, Tokio};
 
@@ -129,9 +129,9 @@ impl Link for Tcp {
         self.core.prepare(usable, app.timer().cloned())
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
         // The server routes by the `p` each frame carries; the socket takes every pattern.
-        let _ = patterns;
+        let _ = subscriptions;
         let runtime = self.runtime()?;
         // Adopted on a runtime that has shut down, the socket fails as an I/O error naming tokio's
         // context, which reads as the address's.

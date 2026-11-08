@@ -10,6 +10,9 @@
 //!
 //!     #[ulo_rpc::event("user.created")]
 //!     async fn on_user(&self, evt: Payload<UserCreated>) -> Result<(), BillingError> { /* .. */ }
+//!
+//!     #[ulo_rpc::event("prices.changed", every_instance)]
+//!     async fn on_prices(&self, evt: Payload<PricesChanged>) -> Result<(), BillingError> { /* .. */ }
 //! }
 //! ```
 //!
@@ -27,7 +30,9 @@ pub fn message(attr: TokenStream, item: TokenStream) -> TokenStream {
     message::expand(attr.into(), item.into()).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
-/// A fire-and-forget handler for `pattern`.
+/// A fire-and-forget handler for `pattern`, delivered to one of the server instances listening on
+/// it; `#[event("pattern", every_instance)]` delivers it to each of them
+/// (`ulo_rpc::RpcHandler::every_instance`).
 #[proc_macro_attribute]
 pub fn event(attr: TokenStream, item: TokenStream) -> TokenStream {
     event::expand(attr.into(), item.into()).unwrap_or_else(syn::Error::into_compile_error).into()

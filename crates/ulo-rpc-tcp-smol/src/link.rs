@@ -8,7 +8,7 @@ use ulo::{AppHandle, BoundAddr, BoxError, Runtime, Timer};
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{BoundListener, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Capabilities, Codec, Link, Outbound, Pattern};
+use ulo_rpc::{Capabilities, Codec, Link, Outbound, Subscription};
 use ulo_rpc_tcp_core::{Accept, Core, Incoming};
 
 /// The TCP link on `async-io`'s sockets: a server binds its endpoint, a client connects to it.
@@ -119,9 +119,9 @@ impl Link for Tcp {
         self.core.prepare(usable, app.timer().cloned())
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
         // The server routes by the `p` each frame carries; the socket takes every pattern.
-        let _ = patterns;
+        let _ = subscriptions;
         self.core.listen(self.server_runtime()?, SmolListener::adopt)
     }
 

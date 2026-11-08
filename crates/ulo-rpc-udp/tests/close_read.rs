@@ -41,7 +41,7 @@ async fn close_answers_the_requests_its_socket_already_holds() {
         .expect("the app connects");
     let mut udp = Udp::new("127.0.0.1:0");
     udp.prepare(&app.handle()).await.expect("the link prepares");
-    let inbound = udp.listen(&[Pattern::from("close_read.add")]).await.expect("the link listens");
+    let inbound = udp.listen(&[Pattern::from("close_read.add").into()]).await.expect("the link listens");
     let addr = udp.bound().first().map(|bound| bound.addr).expect("the link's address");
     // The receive task reads the empty socket and waits.
     tokio::task::yield_now().await;

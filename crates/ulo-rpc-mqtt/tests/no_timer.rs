@@ -23,7 +23,7 @@ async fn a_server_on_an_app_with_no_timer_refuses_to_listen() {
     assert!(app.handle().timer().is_none(), "the app has a timer");
     let mut link = Mqtt::url("mqtt://127.0.0.1:1").group("no_timer");
     link.prepare(&app.handle()).await.expect("the link prepares");
-    let Err(refused) = link.listen(&[Pattern::from("no_timer.add")]).await else {
+    let Err(refused) = link.listen(&[Pattern::from("no_timer.add").into()]).await else {
         panic!("a link listened on an app with no timer");
     };
     let no_timer = refused.downcast_ref::<NoTimer>().unwrap_or_else(|| panic!("the refusal is not a `NoTimer`: {refused}"));

@@ -209,6 +209,7 @@ impl Core {
             )
             .without_unserved_hold("the caller connects to one server, and no broker keeps a request while that server is not serving")
             .without_durable_replies("a reply travels the caller's connection, and a connection lost loses what it was carrying")
+            .without_every_instance("the caller connects to one server, so an event reaches the server it names and no other instance")
     }
 
     /// Everything that can fail before a socket, reported together with `usable`, the link's own

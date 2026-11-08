@@ -58,7 +58,15 @@ pub(crate) fn expand_kind(kind: Kind, attr: TokenStream, item: TokenStream) -> s
             format!("#[{attr_name}] takes the pattern, as in #[{attr_name}(\"invoices.create\")]"),
         ));
     }
-    let pattern: LitStr = syn::parse2(attr)?;
+    let Args { pattern, every_instance } = syn::parse2(attr)?;
+    if let Some(option) = &every_instance
+        && kind == Kind::Message
+    {
+        return Err(syn::Error::new(
+            option.span(),
+            "`every_instance` is an `#[event]` option: a request reaches one instance, and its caller takes one reply",
+        ));
+    }
     if let Err(reason) = check_pattern(&pattern.value()) {
         return Err(syn::Error::new(pattern.span(), format!("invalid pattern: {reason}")));
     }
@@ -80,7 +88,7 @@ pub(crate) fn expand_kind(kind: Kind, attr: TokenStream, item: TokenStream) -> s
         sig: &sig,
         key: KEY,
         paths: &paths,
-        handler_value: handler_value(kind, &sig, &paths),
+        handler_value: handler_value(kind, every_instance.is_some(), &sig, &paths),
         route: Some(quote!(#pattern)),
         shape: Some(shape(kind, &sig, output_span, &paths)),
     }
@@ -91,6 +99,37 @@ pub(crate) fn expand_kind(kind: Kind, attr: TokenStream, item: TokenStream) -> s
         #item
         #mount
     })
+}
+
+/// The attribute's arguments: the pattern, then, on `#[event]` alone, `every_instance`.
+struct Args {
+    pattern: LitStr,
+    every_instance: Option<Ident>,
+}
+
+impl syn::parse::Parse for Args {
+    fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
+        let pattern: LitStr = input.parse()?;
+        if input.is_empty() {
+            return Ok(Args { pattern, every_instance: None });
+        }
+        input.parse::<syn::Token![,]>()?;
+        if input.is_empty() {
+            return Ok(Args { pattern, every_instance: None });
+        }
+        let option: Ident = input.parse()?;
+        if option != "every_instance" {
+            return Err(syn::Error::new(option.span(), format!("unknown option `{option}`; the one option is `every_instance`, on `#[event]`")));
+        }
+        if input.peek(syn::Token![=]) {
+            return Err(input.error("`every_instance` takes no value: write it bare, as in #[event(\"prices.changed\", every_instance)]"));
+        }
+        input.parse::<Option<syn::Token![,]>>()?;
+        if !input.is_empty() {
+            return Err(input.error("`every_instance` is the last argument"));
+        }
+        Ok(Args { pattern, every_instance: Some(option) })
+    }
 }
 
 /// `ulo-rpc`'s paths, `transport` naming `ulo-rpc` itself: the generated call reads `Param` and
@@ -113,8 +152,9 @@ fn check_pattern(pattern: &str) -> Result<(), &'static str> {
 }
 
 /// The `RpcHandler` the mount function hands `HandlerSpec::new`: the kind's constructor over the
-/// call closure, then one payload-kind probe per parameter, spanned at its type.
-fn handler_value(kind: Kind, sig: &HandlerSig, paths: &Paths) -> TokenStream {
+/// call closure, `.every_instance()` where the attribute says so, then one payload-kind probe per
+/// parameter, spanned at its type.
+fn handler_value(kind: Kind, every_instance: bool, sig: &HandlerSig, paths: &Paths) -> TokenStream {
     let this = &paths.this;
     let call = emit::call_ident();
     let handler = Ident::new("__ulo_h", Span::mixed_site());
@@ -122,6 +162,7 @@ fn handler_value(kind: Kind, sig: &HandlerSig, paths: &Paths) -> TokenStream {
         Kind::Message => quote!(#this::RpcHandler::message),
         Kind::Event => quote!(#this::RpcHandler::event),
     };
+    let reach = every_instance.then(|| quote!(.every_instance()));
     let probes = sig.params.iter().map(|param| {
         let ty = &param.ty;
         quote_spanned! {param.span=>
@@ -132,7 +173,7 @@ fn handler_value(kind: Kind, sig: &HandlerSig, paths: &Paths) -> TokenStream {
         {
             #[allow(unused_imports)]
             use #this::__private::{NotPayload as _, ViaBinary as _, ViaSerde as _};
-            let #handler = #constructor(#call);
+            let #handler = #constructor(#call)#reach;
             #(#probes)*
             #handler
         }

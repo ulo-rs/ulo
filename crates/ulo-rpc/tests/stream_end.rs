@@ -24,7 +24,7 @@ use ulo::{
     Signal, StreamOutcome, controller, handlers,
 };
 use ulo_rpc::link::{Inbound, UNARY_ONLY};
-use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, Reply, ReplyPath, Rpc, RpcCx};
+use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Subscription, Reply, ReplyPath, Rpc, RpcCx};
 use ulo_transport::{Classify, Detail, ErrorKind};
 
 const DISCARDED: &str = "stream_end.discarded";
@@ -196,7 +196,7 @@ impl Link for Scripted {
         if self.unary { capabilities.shapes(UNARY_ONLY) } else { capabilities }
     }
 
-    async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         self.inbound.lock().unwrap_or_else(PoisonError::into_inner).take().ok_or_else(|| "the scripted link listened twice".into())
     }
 

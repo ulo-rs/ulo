@@ -23,7 +23,7 @@ use tracing::span::{Attributes, Id, Record};
 use tracing::{Event as TraceEvent, Level, Metadata};
 use ulo::{App, AppHandle, BoxError, BoxFuture, Module, ModuleDef, ModuleIdentity, Runtime, Signal, controller, handlers};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, Payload, ReplyPath};
+use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Subscription, Payload, ReplyPath};
 use ulo_transport::{Classify, ErrorKind};
 
 const ADD: &str = "drain.add";
@@ -94,7 +94,7 @@ impl Link for Scripted {
         Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
-    async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         lock(&self.0.inbound).take().ok_or_else(|| "the scripted link listened twice".into())
     }
 

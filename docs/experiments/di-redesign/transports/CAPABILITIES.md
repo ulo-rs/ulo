@@ -45,7 +45,7 @@ WebSocket
 27. Rooms and broadcast: to everyone, a room, a client, everyone except some; rooms joined and left at runtime; a multi-process mode over Redis with the same API.
 
 RPC (message patterns)
-28. Request-reply and fire-and-forget event patterns, matched by a pattern string, with per-call headers.
+28. Request-reply and fire-and-forget event patterns, matched by a pattern string, with per-call headers. A request reaches one server instance, and so does an event unless its pattern is declared to reach every instance listening on it, the declaration the listening server's alone; a transport that cannot keep either reach declares so, a server on it refusing the every-instance declaration or warning that the one-instance default is not kept.
 29. All four call shapes: one request and one reply, a streamed reply, a streamed request, and both streaming; a caller can cancel mid-stream.
 30. Pluggable transports with one wire grammar: TCP, UDP, NATS, Redis, RabbitMQ, MQTT v5 and Kafka, each a separate crate, connecting lazily, with documented per-transport limits (datagram size, ordering).
 31. A client that calls remote patterns (request, emit, stream) with a timeout, injectable like any binding.

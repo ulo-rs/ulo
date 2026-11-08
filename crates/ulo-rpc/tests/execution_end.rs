@@ -12,7 +12,7 @@ use futures_util::{Stream, StreamExt, stream};
 use tokio::sync::{Notify, mpsc};
 use ulo::{App, BoxError, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, controller, handlers, injectable};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, ReplyPath};
+use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Subscription, ReplyPath};
 use ulo_transport::CallError;
 
 const PATIENCE: Duration = Duration::from_secs(5);
@@ -100,7 +100,7 @@ impl Link for Scripted {
         Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
-    async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         self.inbound.lock().unwrap_or_else(PoisonError::into_inner).take().ok_or_else(|| "the scripted link listened twice".into())
     }
 

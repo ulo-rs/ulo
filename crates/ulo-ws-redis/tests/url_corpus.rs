@@ -1,8 +1,10 @@
 //! `prepare` refuses a URL exactly where `redis::Client::open` refuses it, over a corpus of the
 //! URLs the redis client reads differently: TLS with and without `#insecure`, Unix sockets under
 //! both schemes, databases in the path and in the query, passwords holding `@`, `%`, `#` and `?`,
-//! IPv6 hosts, the `protocol` parameter, and URLs it does not read at all. No password in the
-//! corpus reaches the adapter's settings or `prepare`'s refusal. Nothing connects.
+//! a username alone, a password alone and both, hosts in capitals, in mixed case, IDNA-encoded and
+//! non-ASCII, IPv4 and IPv6 hosts, the `protocol` parameter, and URLs it does not read at all. No
+//! password in the corpus reaches the adapter's settings or `prepare`'s refusal, and no TCP `url`
+//! setting keeps an ASCII capital. Nothing connects.
 
 use ulo_ws::BroadcastAdapter;
 use ulo_ws_redis::Redis;
@@ -46,9 +48,29 @@ const CORPUS: &[&str] = &[
     "redis://:corpus?secret@a",
     "redis://%ff:corpus-secret@a",
     "redis://:%ff@a",
+    "redis://corpus-user@a",
+    "redis://corpus-user:@a",
+    "redis://:corpus-secret@a",
+    "redis://Corpus-User:corpus-secret@CACHE",
+    "redis+unix:///run/redis.sock?user=corpus-user",
+    "redis+unix:///Run/Redis.sock?user=Corpus-User&pass=corpus-secret",
+    "redis://CACHE",
+    "redis://CaChE.Example:6379/3",
+    "rediss://Cache.Example:6380/#insecure",
+    "valkey://CACHE",
+    "redis://xn--bcher-kva.example",
+    "redis://XN--BCHER-KVA.example",
+    "redis://bücher.example",
+    "redis://BÜCHER.example",
+    "redis://b%C3%BCcher.example",
     "redis://[::1]:6379",
     "redis://[::1]",
     "redis://::1:6379",
+    "redis://[2001:DB8::1]:6379",
+    "rediss://[2001:db8::1]",
+    "redis://[::ffff:192.0.2.1]",
+    "redis://[fe80::1%25eth0]",
+    "redis://192.0.2.1",
     "redis://a:6379/?protocol=resp3",
     "redis://a/?protocol=3",
     "redis://a/?protocol=resp2",
@@ -71,6 +93,7 @@ const CORPUS: &[&str] = &[
 #[tokio::test]
 async fn prepare_refuses_a_url_exactly_where_the_redis_client_does() {
     let mut disagreements = Vec::new();
+    let mut uppercase = Vec::new();
     let (mut accepted, mut refused) = (0, 0);
     for url in CORPUS {
         let client = redis::Client::open(*url).map(drop).map_err(|error| error.to_string());
@@ -82,11 +105,23 @@ async fn prepare_refuses_a_url_exactly_where_the_redis_client_does() {
         if client.is_ok() { accepted += 1 } else { refused += 1 }
         let settings = format!("{:?}", adapter.settings());
         assert!(!settings.contains(PASSWORD) && !settings.contains("corpus%"), "{url:?} reached the settings: {settings}");
+        let reported = reported_url(&settings);
+        if client.is_ok() && !reported.starts_with("redis+unix://") && reported.chars().any(|c| c.is_ascii_uppercase()) {
+            uppercase.push(format!("{url:?}: {reported}"));
+        }
         if let Err(text) = &prepared {
             assert!(!text.contains(PASSWORD), "{url:?} reached the refusal: {text}");
         }
     }
     assert!(disagreements.is_empty(), "`prepare` and the redis client disagree:\n{}", disagreements.join("\n"));
+    assert!(uppercase.is_empty(), "a TCP `url` setting kept an ASCII capital:\n{}", uppercase.join("\n"));
     // A corpus the client reads whole, or refuses whole, shows nothing about the refusal.
     assert!(accepted >= 10 && refused >= 10, "{accepted} URLs accepted and {refused} refused");
+}
+
+/// The `url` setting's value out of the settings as `Debug` writes them.
+fn reported_url(settings: &str) -> &str {
+    let start = settings.find(r#""url": ""#).map(|at| at + r#""url": ""#.len()).unwrap_or_else(|| panic!("no `url` in {settings}"));
+    let end = settings[start..].find('"').unwrap_or_else(|| panic!("an unterminated `url` in {settings}"));
+    &settings[start..start + end]
 }

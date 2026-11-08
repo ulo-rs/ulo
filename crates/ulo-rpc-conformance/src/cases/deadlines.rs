@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 
 use ulo::{AppHandle, Bound, BoundAddr, BoxError, CancelReason, ExecOptions, ExecutionRef, Runtime, Timer};
-use ulo_rpc::{CallHeaders, Capabilities, Frame, Link, Outbound, Pattern, RpcClient, RpcError, RpcStream, ZeroTimeout};
+use ulo_rpc::{CallHeaders, Capabilities, Frame, Link, Outbound, Subscription, RpcClient, RpcError, RpcStream, ZeroTimeout};
 use ulo_rpc::link::Inbound;
 use ulo_transport::{Count, ErrorKind};
 
@@ -90,7 +90,7 @@ fn silence_of(budget: Budget) -> Duration {
 pub async fn stream_idle_timeout_is_per_frame<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         return fixture.stop().await;
     }
     let idle = idle_of(fixture.broker.budget());
@@ -112,7 +112,7 @@ pub async fn stream_idle_timeout_is_per_frame<B: Broker>() {
 pub async fn idle_timeout_ends_a_silent_stream<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         return fixture.stop().await;
     }
     let idle = idle_of(fixture.broker.budget());
@@ -138,7 +138,7 @@ pub async fn idle_timeout_ends_a_silent_stream<B: Broker>() {
 pub async fn stream_deadline_is_the_server_s<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         return fixture.stop().await;
     }
     let settle = fixture.broker.budget().settle;
@@ -175,7 +175,7 @@ pub async fn stream_deadline_is_the_server_s<B: Broker>() {
 pub async fn stream_with_neither_bound_runs_on<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         return fixture.stop().await;
     }
     let budget = fixture.broker.budget();
@@ -239,7 +239,7 @@ async fn ends_at<B: Broker>(mut replies: RpcStream<u64>, idle: Duration, silence
 pub async fn unbounded_idle_timeout_outlasts_the_client_s<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         return fixture.stop().await;
     }
     let budget = fixture.broker.budget();
@@ -255,7 +255,7 @@ pub async fn unbounded_idle_timeout_outlasts_the_client_s<B: Broker>() {
 pub async fn default_idle_timeout_is_the_client_s<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         return fixture.stop().await;
     }
     let budget = fixture.broker.budget();
@@ -271,7 +271,7 @@ pub async fn default_idle_timeout_is_the_client_s<B: Broker>() {
 pub async fn shorter_idle_timeout_replaces_the_client_s<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         return fixture.stop().await;
     }
     let budget = fixture.broker.budget();
@@ -323,7 +323,7 @@ pub async fn zero_idle_timeout_is_refused_before_any_frame<B: Broker>() {
 pub async fn longest_idle_timeout_does_not_panic<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         return fixture.stop().await;
     }
     let budget = fixture.broker.budget();
@@ -914,7 +914,7 @@ impl<L: Link> Link for SlowConnect<L> {
         self.link.max_inflight(calls);
     }
 
-    fn listen(&self, patterns: &[Pattern]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
+    fn listen(&self, patterns: &[Subscription]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
         self.link.listen(patterns)
     }
 
@@ -1004,7 +1004,7 @@ impl<L: Link> Link for Tapped<L> {
         self.link.max_inflight(calls);
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         let inbound = self.link.listen(patterns).await?;
         let tap = self.tap.clone();
         Ok(Box::pin(inbound.inspect(move |delivery| {
@@ -1068,7 +1068,7 @@ impl<L: Link> Link for Counted<L> {
         self.link.max_inflight(calls);
     }
 
-    fn listen(&self, patterns: &[Pattern]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
+    fn listen(&self, patterns: &[Subscription]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
         self.link.listen(patterns)
     }
 
@@ -1120,7 +1120,7 @@ impl<L: Link> Link for MutedCancel<L> {
         self.0.max_inflight(calls);
     }
 
-    fn listen(&self, patterns: &[Pattern]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
+    fn listen(&self, patterns: &[Subscription]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
         self.0.listen(patterns)
     }
 
@@ -1176,7 +1176,7 @@ impl<L: Link> Link for Stamped<L> {
         self.link.max_inflight(calls);
     }
 
-    fn listen(&self, patterns: &[Pattern]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
+    fn listen(&self, patterns: &[Subscription]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
         self.link.listen(patterns)
     }
 

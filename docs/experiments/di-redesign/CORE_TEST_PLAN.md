@@ -635,10 +635,10 @@ Breaks planted in the working tree, one at a time, each anchor asserted once and
 
 - `binary` is a report of configuration: the `Capabilities::new` doctest requires it `false` from `new`, and `ulo-rpc`'s `client::tests::a_binary_payload_on_a_json_link_is_refused_before_any_io` runs a link declaring nothing, whose call with a binary payload is refused `binary_unsupported` before its failing connect. `hand_written.rs`'s two refusals require the handler refused on a JSON link, naming `.codec(Codec::Cbor)`.
 - The abilities are named as nouns, `confirmed_drain`, `unserved_hold` and `single_delivery`, each set by `without_<noun>(reason)`; the `single_delivery` doctest holds the setter and both accessors.
-- Refusal in place of a skip: on UDP, whose shapes carry no streamed request, `cancel_before_opened` and the three held-cancel scenarios assert the startup refusal of a streamed handler, and UDP's suite declares only `recovery_after_disrupt` not applicable. TCP and TCP-smol, each in its plain, TLS and CBOR suite, Redis and the community fixture keep the three held-cancel entries: they carry streamed requests and hold no `cancel`, so no refusal is there to assert.
+- Refusal in place of a skip: on UDP, whose shapes carry no streamed request, `client_stream`, `client_stream_in_order` and `bidi_stream` assert the startup refusal of a streamed handler, and UDP's suite declares `recovery_after_disrupt`, `cancel_before_opened` and the three held-cancel scenarios not applicable, each of the four below the server failing on a link with no streamed request (Q27-6). TCP and TCP-smol, each in its plain, TLS and CBOR suite, Redis and the community fixture keep the three held-cancel entries: they carry streamed requests and hold no `cancel`, so no refusal is there to assert.
 - UDP's `ordered_control`: `ulo-rpc-udp/tests/conformance.rs :: the_link_is_declared_without_ordered_control` pins the declaration, since loopback keeps datagram order and the ordered-cancel scenario passes there without it; the suite run prints the skip line with the declared reason.
-- The database suite's `Capabilities`: private fields, `without_lazy(reason)` and `without_migrations(reason)`, a `compile_fail,E0616` doctest; the lazy and migration scenarios skip from the declaration, and `ulo-db-conformance/tests/create_loop.rs` holds the gate both ways, its stamped host declaring both absent and skipping, and the same host declaring nothing failing each scenario at what the store cannot do.
-- `ulo-ws-redis`'s settings: `tests/settings.rs` requires the canonical `url`, `database`, `protocol` and `tls_verify` and two registrations differing in `#insecure` or `?protocol=` refused naming the setting; `tests/url_corpus.rs` requires `prepare`'s verdict equal to `redis::Client::open`'s over fifty-three URLs, no password reaching a setting or a refusal.
+- The database suite's `Capabilities`: private fields, `without_lazy_start(reason)` and `without_migrations(reason)`, a `compile_fail,E0616` doctest; the lazy and migration scenarios skip from the declaration, and `ulo-db-conformance/tests/create_loop.rs` holds the gate both ways, its stamped host declaring both absent and skipping, and the same host declaring nothing failing each scenario at what the store cannot do.
+- `ulo-ws-redis`'s settings: `tests/settings.rs` requires the canonical `url`, its host lowercased and a socket's path kept as written, `username`, `database`, `protocol` and `tls_verify`, two registrations differing in the ACL user, `#insecure` or `?protocol=` refused naming the setting, and registrations differing only in a password, or in a username sent without one, compared equal; `tests/url_corpus.rs` requires `prepare`'s verdict equal to `redis::Client::open`'s over seventy-three URLs, no password reaching a setting or a refusal, and no TCP `url` setting keeping an ASCII capital.
 - gRPC's restored-header record: `ulo-grpc`'s `dispatch::tests` feed a hundred names to the record, which keeps sixty-four, warns each of them once and the sixty-fifth as full, and records a name once per writer.
 - Install pins: `scripts/check_readme_install.py --self-test` refuses a caret, an explicit `^`, a `~` and an unpinned `cargo add` on a pre-release workspace version, once per README.
 
@@ -650,8 +650,8 @@ Breaks planted in the working tree, one at a time, each anchor asserted once and
 | `Capabilities::codec` reporting `binary` for JSON | 3 (the `codec` doctest; `hand_written.rs`'s two refusals) |
 | the server's binary-payload refusal removed | 2 (`hand_written.rs`) |
 | an ability field made public | 1 (the `compile_fail` doctest on `Capabilities`) |
-| the streamed-request refusal branch removed from `order.rs` | 3 (UDP's three held-cancel scenarios; `cancel_before_opened` sends its frames below the server and passes on loopback) |
-| the streamed-request refusal branch taken on every link | 1 (TCP's `cancel_before_opened`) |
+| UDP's four scenarios below the server run with `--ignored` | 4 (each at `Linked::streamed`'s assertion that the link carries a streamed request) |
+| that assertion made to fail on every link | 1 (TCP's `cancel_before_opened`) |
 | UDP's `without_ordered_control` removed | 1 (`the_link_is_declared_without_ordered_control`) |
 | the database lazy skip removed | 1 (`create_loop.rs`, the stamped lazy scenario) |
 | the database lazy skip taken on every host | 1 (`create_loop.rs`, the `should_panic` lazy test) |
@@ -662,6 +662,11 @@ Breaks planted in the working tree, one at a time, each anchor asserted once and
 | `ulo-ws-redis` settings without `protocol` | 2 (`settings.rs`) |
 | `ulo-ws-redis`'s `url` written as given, through `setting_url` | 4 (`settings.rs`) |
 | `ulo-ws-redis` settings without `database` | 3 (`settings.rs`) |
+| `ulo-ws-redis` settings without `username` | 4 (`settings.rs`) |
+| `ulo-ws-redis`'s `username` carrying the password | 4 (`settings.rs`), 1 (`url_corpus.rs`, the leak check) |
+| `ulo-ws-redis`'s `username` as the URL writes it, with a password or without | 1 (`settings.rs`) |
+| `ulo-ws-redis`'s `url` with the host's case as given | 1 (`settings.rs`), 1 (`url_corpus.rs`, ten URLs) |
+| `ulo-ws-redis`'s whole `url` lowercased, a socket's path included | 1 (`settings.rs`) |
 | `prepare` refusing a URL that does not start `redis` | 1 (`url_corpus.rs`) |
 | a TCP URL's password written into `url` | 3 (`settings.rs`) |
 | the restored-header record unbounded | 1 (`dispatch::tests`) |

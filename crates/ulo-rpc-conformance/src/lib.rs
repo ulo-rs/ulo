@@ -23,13 +23,14 @@
 //! constant and never a literal, the only thing telling the server's `unavailable` from the
 //! client's own for a connection that closed. A scenario a link's
 //! capabilities exclude asserts the refusal the capability declares instead: a streamed shape on
-//! UDP is refused at startup, the scenarios below the server that open a streamed request among
-//! them, a binary payload on a JSON link before any I/O and its handler at startup, a miss on a link without `miss_signal` is the client's `Timeout`, the two-instance
-//! scenarios run one instance on an `Addressed` link, where a second cannot share the address, and
-//! a request runs on both instances on a link without `single_delivery`. A scenario that
-//! needs a capability to run at all, `cancel_follows_its_request` on `ordered_control`, is skipped
-//! on a link declared without it, writing the declared reason to standard error through
-//! [`skipped`].
+//! UDP is refused at startup, and the scenarios below the server that open a streamed request are
+//! declared not applicable there, a binary payload on a JSON link before any I/O and its handler at startup, a miss on a link without `miss_signal` is the client's `Timeout`, the two-instance
+//! scenarios run one instance on an `Addressed` link, where a second cannot share the address, a
+//! request runs on both instances on a link without `single_delivery`, and an event declared
+//! `every_instance` is refused at startup on a link without `every_instance`. A scenario that
+//! needs a capability to run at all, `cancel_follows_its_request` on `ordered_control` and
+//! `an_event_reaches_one_instance` on `single_delivery`, is skipped on a link declared without it,
+//! writing the declared reason to standard error through [`skipped`].
 //!
 //! Every capability a `Capabilities` accessor names is `true` unless the link declares it absent
 //! with a reason, so a link that declares nothing is held to each: the scenario runs, and fails
@@ -162,8 +163,9 @@ pub trait Broker: Sized + Send + Sync + 'static {
     /// The client side of `link` as the held-`cancel` scenarios read it, on a link that holds a
     /// streamed request's `cancel` until the server acknowledges its `open`: NATS, RabbitMQ, MQTT
     /// and Kafka answer the link's own probe. `None`, the default, elsewhere: a link carrying
-    /// streamed requests and holding no `cancel` declares those scenarios not applicable, and on
-    /// one carrying none they assert the startup refusal of a streamed handler.
+    /// streamed requests and holding no `cancel` declares those scenarios not applicable, and so
+    /// does one carrying none, whose streamed scenarios assert its startup refusal of a streamed
+    /// handler.
     fn probe(link: &Self::Link) -> Option<&ClientProbe> {
         let _ = link;
         None
@@ -263,7 +265,8 @@ macro_rules! conformance_suite {
             a_call_held_past_a_spent_cap_is_answered_unavailable_on_one_thread => drain::spent_cap [block_on_one_thread],
             recovery_after_disrupt => recovery::after_disrupt,
             client_close => client_close::client_close,
-            two_instances => delivery::two_instances,
+            an_event_reaches_one_instance => delivery::one_instance,
+            an_every_instance_event_reaches_each_instance => delivery::every_instance,
             two_instances_answering_requests => delivery::requests_across_two_instances,
             over_the_bound => admission::over_the_bound,
             client_on_a_thread_without_a_runtime => threads::plain_thread,
